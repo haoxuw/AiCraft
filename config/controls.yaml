@@ -1,0 +1,27 @@
+# AiCraft Key Bindings
+# Format: action_name: KeyName
+# Supported keys: A-Z, 0-9, F1-F12, Space, Escape, Tab, Enter,
+#   LeftShift, RightShift, LeftControl, RightControl, LeftAlt, RightAlt,
+#   Up, Down, Left, Right, Backspace, Delete, Insert, Home, End,
+#   PageUp, PageDown, MouseLeft, MouseRight, MouseMiddle
+
+# Movement
+move_forward: W
+move_backward: S
+move_left: A
+move_right: D
+jump: Space
+descend: LeftControl
+sprint: LeftShift
+
+# Camera
+cycle_view: V
+
+# Interaction
+break_block: MouseLeft
+place_block: MouseRight
+
+# UI
+screenshot: F2
+toggle_debug: F3
+menu_back: Escape

@@ -1,0 +1,29 @@
+#version 410 core
+
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aColor;
+layout(location = 2) in vec3 aNormal;
+layout(location = 3) in float aAO;
+layout(location = 4) in float aShade;
+layout(location = 5) in float aAlpha;
+
+uniform mat4 uView;
+uniform mat4 uProj;
+
+out vec3 vColor;
+out vec3 vNormal;
+out vec3 vWorldPos;
+out float vAO;
+out float vShade;
+out float vAlpha;
+
+void main() {
+	vWorldPos = aPos;
+	vColor = aColor;
+	vNormal = aNormal;
+	vAO = aAO;
+	vShade = aShade;
+	vAlpha = aAlpha;
+
+	gl_Position = uProj * uView * vec4(aPos, 1.0);
+}

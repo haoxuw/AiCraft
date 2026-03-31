@@ -1,0 +1,29 @@
+# Build
+build/
+cmake-build-*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cache/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+*.so
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Binaries
+*.o
+*.a
+*.out
