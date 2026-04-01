@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/types.h"
-#include "common/world.h"
+#include "shared/types.h"
+#include "shared/chunk_source.h"
 #include "client/shader.h"
 #include "client/camera.h"
 #include "client/chunk_mesher.h"
@@ -16,8 +16,8 @@ public:
 	bool init(const std::string& shaderDir);
 	void shutdown();
 
-	void updateChunks(World& world, const Camera& cam, int renderDistance);
-	void meshAllPending(World& world, const Camera& cam, int renderDistance);
+	void updateChunks(ChunkSource& world, const Camera& cam, int renderDistance);
+	void meshAllPending(ChunkSource& world, const Camera& cam, int renderDistance);
 	void render(const Camera& cam, float aspect, glm::ivec3* highlight = nullptr,
 	            int selectedSlot = 0, int hotbarSize = 7);
 	ModelRenderer& modelRenderer() { return m_modelRenderer; }

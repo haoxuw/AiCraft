@@ -8,7 +8,7 @@ namespace aicraft {
 enum class CameraMode {
 	FirstPerson,  // FPS: camera at player eyes
 	ThirdPerson,  // Behind player, orbiting
-	GodView,      // Minecraft Dungeons style, fixed angle from above
+	RPG,      // Minecraft Dungeons style, fixed angle from above
 	RTS,          // Top-down, free camera, mouse select
 };
 
@@ -38,16 +38,24 @@ public:
 
 	// Third-person orbit
 	float orbitDistance = 6.0f;
+	float orbitDistanceTarget = 6.0f;  // scroll sets target, actual lerps
 	float orbitYaw = -90.0f;
 	float orbitPitch = 25.0f;    // angle above horizontal
 
 	// God view
 	float godDistance = 20.0f;
+	float godDistanceTarget = 20.0f;
 	float godAngle = 55.0f;      // degrees from horizontal
+	float godOrbitYaw = -90.0f;  // camera orbit (independent of player yaw)
+
+	// God view helpers: camera-relative directions on XZ plane
+	glm::vec3 godCameraForward() const;
+	glm::vec3 godCameraRight() const;
 
 	// RTS
 	glm::vec3 rtsCenter = {0, 0, 0};  // camera looks at this point
 	float rtsHeight = 40.0f;
+	float rtsHeightTarget = 40.0f;
 	float rtsAngle = 65.0f;
 	float rtsPanSpeed = 30.0f;
 
@@ -70,17 +78,19 @@ public:
 	// Smoothed feet position for model rendering (same X/Z, smoothed Y)
 	glm::vec3 smoothedFeetPos() const {
 		if (!m_smoothInit) return player.feetPos;
-		float feetSmoothY = m_smoothY - player.eyeHeight;
-		return {player.feetPos.x, feetSmoothY, player.feetPos.z};
+		return {player.feetPos.x, m_smoothY, player.feetPos.z};
 	}
 
 	// Reset smooth tracking (call on spawn/teleport)
-	void resetSmoothing() { m_smoothY = player.eyePos().y; m_smoothInit = true; }
+	void resetSmoothing() { m_smoothY = player.feetPos.y; m_smoothInit = true; }
+
+	// Reset mouse delta tracking (prevents camera jump after cursor release)
+	void resetMouseTracking() { m_firstMouse = true; }
 
 private:
 	void updateFirstPerson(GLFWwindow* window, float dt);
 	void updateThirdPerson(GLFWwindow* window, float dt);
-	void updateGodView(GLFWwindow* window, float dt);
+	void updateRPG(GLFWwindow* window, float dt);
 	void updateRTS(GLFWwindow* window, float dt);
 	void processMouse(GLFWwindow* window);
 

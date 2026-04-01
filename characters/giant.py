@@ -29,7 +29,6 @@ giant = Character(
     walk_cycle_speed=1.8,
     walk_bob_amount=0.09,
     idle_bob_amount=0.005,
-    lateral_sway_amount=0.10,
     parts=[
         # -- Legs (thick, heavy) --
         Part("leg_L",  (-0.22, 0.28, 0), (0.36, 0.56, 0.40), IRON,

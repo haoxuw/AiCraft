@@ -2,11 +2,24 @@
 
 uniform vec4 uColor;
 uniform vec3 uSunDir;
-out vec4 fragColor;
+uniform sampler2D uPartTex;
+uniform int uUseTexture; // 0 = flat color, 1 = textured
 
 in vec3 vNormal;
+in vec2 vUV;
+
+out vec4 fragColor;
 
 void main() {
+	// Base color: texture or flat uniform
+	vec4 baseColor;
+	if (uUseTexture == 1) {
+		baseColor = texture(uPartTex, vUV);
+		if (baseColor.a < 0.01) discard;
+	} else {
+		baseColor = uColor;
+	}
+
 	vec3 n = normalize(vNormal);
 
 	// Hemisphere ambient: top faces brighter, bottom darker
@@ -18,5 +31,5 @@ void main() {
 
 	float lighting = min(ambient + diffuse, 1.0);
 
-	fragColor = vec4(uColor.rgb * lighting, uColor.a);
+	fragColor = vec4(baseColor.rgb * lighting, baseColor.a);
 }

@@ -32,8 +32,7 @@ void Camera::cycleMode() {
 	int m = ((int)mode + 1) % 4;
 	mode = (CameraMode)m;
 	m_firstMouse = true; // reset mouse tracking on mode change
-	const char* names[] = {"First Person", "Third Person", "God View", "RTS"};
-	printf("Camera: %s\n", names[m]);
+	const char* names[] = {"First Person", "Third Person", "RPG", "RTS"};
 }
 
 void Camera::processMouse(GLFWwindow* window) {
@@ -55,9 +54,12 @@ void Camera::processMouse(GLFWwindow* window) {
 		orbitPitch = std::clamp(orbitPitch, 5.0f, 80.0f);
 		player.yaw = orbitYaw; // player faces where camera orbits
 		break;
-	case CameraMode::GodView:
-		// Mouse rotates player facing direction
-		player.yaw += dx;
+	case CameraMode::RPG:
+		// Mouse orbits camera around player (player yaw unchanged)
+		// X: rotate orbit, Y: raise/lower camera angle
+		godOrbitYaw += dx;
+		godAngle += dy;
+		godAngle = std::clamp(godAngle, 15.0f, 80.0f);
 		break;
 	case CameraMode::RTS:
 		break; // no mouse look in RTS, mouse used for selection
@@ -71,7 +73,7 @@ void Camera::processInput(GLFWwindow* window, float dt) {
 	switch (mode) {
 	case CameraMode::FirstPerson: updateFirstPerson(window, dt); break;
 	case CameraMode::ThirdPerson: updateThirdPerson(window, dt); break;
-	case CameraMode::GodView:     updateGodView(window, dt); break;
+	case CameraMode::RPG:     updateRPG(window, dt); break;
 	case CameraMode::RTS:         updateRTS(window, dt); break;
 	}
 }
@@ -107,12 +109,15 @@ float Camera::smoothVertical(float targetY, float dt) {
 }
 
 void Camera::updateFirstPerson(GLFWwindow* window, float dt) {
-	// Camera tracks player eye position with smoothed vertical
-	float smoothedY = smoothVertical(player.eyePos().y, dt);
-	position = glm::vec3(player.feetPos.x, smoothedY, player.feetPos.z);
+	// Always smooth feetPos.y, then add eye height offset
+	float smoothedFeetY = smoothVertical(player.feetPos.y, dt);
+	position = glm::vec3(player.feetPos.x, smoothedFeetY + player.eyeHeight, player.feetPos.z);
 }
 
 void Camera::updateThirdPerson(GLFWwindow* window, float dt) {
+	// Smooth zoom
+	orbitDistance += (orbitDistanceTarget - orbitDistance) * std::min(dt * 10.0f, 1.0f);
+
 	float yaw = glm::radians(orbitYaw);
 	float pitch = glm::radians(orbitPitch);
 
@@ -122,11 +127,8 @@ void Camera::updateThirdPerson(GLFWwindow* window, float dt) {
 		-sin(yaw) * cos(pitch) * orbitDistance
 	);
 
-	// Smooth the target Y so camera doesn't jerk on step-ups
-	float targetY = player.feetPos.y + player.eyeHeight * 0.8f;
-	float smoothedY = smoothVertical(targetY, dt);
-
-	glm::vec3 target(player.feetPos.x, smoothedY, player.feetPos.z);
+	float smoothedFeetY = smoothVertical(player.feetPos.y, dt);
+	glm::vec3 target(player.feetPos.x, smoothedFeetY + player.eyeHeight * 0.8f, player.feetPos.z);
 	position = target + offset;
 
 	glm::vec3 dir = glm::normalize(target - position);
@@ -134,9 +136,12 @@ void Camera::updateThirdPerson(GLFWwindow* window, float dt) {
 	lookPitch = glm::degrees(asin(dir.y));
 }
 
-void Camera::updateGodView(GLFWwindow* window, float dt) {
+void Camera::updateRPG(GLFWwindow* window, float dt) {
+	// Smooth zoom
+	godDistance += (godDistanceTarget - godDistance) * std::min(dt * 10.0f, 1.0f);
+
 	float angle = glm::radians(godAngle);
-	float yaw = glm::radians(player.yaw);
+	float yaw = glm::radians(godOrbitYaw);
 
 	glm::vec3 offset(
 		-cos(yaw) * cos(angle) * godDistance,
@@ -144,10 +149,8 @@ void Camera::updateGodView(GLFWwindow* window, float dt) {
 		-sin(yaw) * cos(angle) * godDistance
 	);
 
-	float targetY = player.feetPos.y + 1.0f;
-	float smoothedY = smoothVertical(targetY, dt);
-
-	glm::vec3 target(player.feetPos.x, smoothedY, player.feetPos.z);
+	float smoothedFeetY = smoothVertical(player.feetPos.y, dt);
+	glm::vec3 target(player.feetPos.x, smoothedFeetY + 1.0f, player.feetPos.z);
 	position = target + offset;
 
 	glm::vec3 dir = glm::normalize(target - position);
@@ -177,8 +180,8 @@ void Camera::updateRTS(GLFWwindow* window, float dt) {
 	if (my < edgeMargin) rtsCenter.z -= speed;
 	if (my > h - edgeMargin) rtsCenter.z += speed;
 
-	// Scroll to zoom
-	// (handled externally)
+	// Smooth zoom
+	rtsHeight += (rtsHeightTarget - rtsHeight) * std::min(dt * 10.0f, 1.0f);
 
 	float angle = glm::radians(rtsAngle);
 	position = rtsCenter + glm::vec3(0, sin(angle) * rtsHeight, cos(angle) * rtsHeight * 0.3f);
@@ -186,6 +189,15 @@ void Camera::updateRTS(GLFWwindow* window, float dt) {
 	glm::vec3 dir = glm::normalize(rtsCenter - position);
 	lookYaw = glm::degrees(atan2(dir.z, dir.x));
 	lookPitch = glm::degrees(asin(dir.y));
+}
+
+glm::vec3 Camera::godCameraForward() const {
+	float y = glm::radians(godOrbitYaw);
+	return glm::normalize(glm::vec3(cos(y), 0, sin(y)));
+}
+
+glm::vec3 Camera::godCameraRight() const {
+	return glm::normalize(glm::cross(godCameraForward(), glm::vec3(0, 1, 0)));
 }
 
 } // namespace aicraft

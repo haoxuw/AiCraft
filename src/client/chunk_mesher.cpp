@@ -57,7 +57,7 @@ static inline int padIdx(int x, int y, int z) {
 	return (y + PAD) * PADDED * PADDED + (z + PAD) * PADDED + (x + PAD);
 }
 
-void ChunkMesher::fillPaddedVolume(World& world, ChunkPos cpos) {
+void ChunkMesher::fillPaddedVolume(ChunkSource& world, ChunkPos cpos) {
 	// Fetch center + all 26 neighbors in a single mutex lock
 	auto neighborhood = world.getChunkNeighborhood(cpos);
 	// Index: (dy+1)*9 + (dz+1)*3 + (dx+1), center = index 13
@@ -100,7 +100,7 @@ void ChunkMesher::fillPaddedVolume(World& world, ChunkPos cpos) {
 			}
 }
 
-std::vector<ChunkVertex> ChunkMesher::buildMesh(World& world, ChunkPos cpos) {
+std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 	std::vector<ChunkVertex> verts;
 	verts.reserve(4096);
 
@@ -110,7 +110,7 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(World& world, ChunkPos cpos) {
 	// Fill padded volume with cached block data (eliminates per-block mutex/hash lookups)
 	fillPaddedVolume(world, cpos);
 
-	const BlockRegistry& reg = world.blocks;
+	const BlockRegistry& reg = world.blockRegistry();
 	int ox = cpos.x * CHUNK_SIZE;
 	int oy = cpos.y * CHUNK_SIZE;
 	int oz = cpos.z * CHUNK_SIZE;

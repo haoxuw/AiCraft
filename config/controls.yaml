@@ -24,4 +24,5 @@ place_block: MouseRight
 # UI
 screenshot: F2
 toggle_debug: F3
+toggle_inventory: I
 menu_back: Escape

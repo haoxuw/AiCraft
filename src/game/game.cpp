@@ -1,9 +1,11 @@
 #include "game/game.h"
-#include "builtin/models.h"
-#include "builtin/characters.h"
-#include "builtin/faces.h"
-#include "common/entity_manager.h"
-#include "common/constants.h"
+#include "content/models.h"
+#include "content/characters.h"
+#include "content/faces.h"
+#include "server/entity_manager.h"
+#include "shared/constants.h"
+#include "server/python_bridge.h"
+#include "server/behavior.h"
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -39,6 +41,7 @@ bool Game::init(int argc, char** argv) {
 	m_controls.load("config/controls.yaml");
 
 	m_hud.init(m_renderer.highlightShader());
+	m_behaviorStore.init("artifacts/behaviors");
 
 	// Characters + faces
 	builtin::registerAllCharacters(m_characters);
@@ -60,21 +63,38 @@ bool Game::init(int argc, char** argv) {
 	m_pigModel = builtin::pigModel();
 	m_chickenModel = builtin::chickenModel();
 
-	// Scroll callback
-	struct ScrollData { int* slot; Camera* cam; };
-	static ScrollData sd = {&m_player.selectedSlot, &m_camera};
+	// Scroll callback — reads selected slot from player entity
+	struct ScrollData { Game* game; Camera* cam; };
+	static ScrollData sd = {this, &m_camera};
 	glfwSetWindowUserPointer(m_window.handle(), &sd);
 	glfwSetScrollCallback(m_window.handle(), [](GLFWwindow* w, double, double y) {
 		auto* d = (ScrollData*)glfwGetWindowUserPointer(w);
 		if (d->cam->mode == CameraMode::FirstPerson) {
-			*d->slot = ((*d->slot - (int)y) % HOTBAR_SIZE + HOTBAR_SIZE) % HOTBAR_SIZE;
+			Entity* pe = d->game->playerEntity();
+			if (pe) {
+				int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
+				slot = ((slot - (int)y) % HOTBAR_SIZE + HOTBAR_SIZE) % HOTBAR_SIZE;
+				pe->setProp(Prop::SelectedSlot, slot);
+			}
 		} else if (d->cam->mode == CameraMode::ThirdPerson) {
-			d->cam->orbitDistance = std::clamp(d->cam->orbitDistance - (float)y, 2.0f, 20.0f);
-		} else if (d->cam->mode == CameraMode::GodView) {
-			d->cam->godDistance = std::clamp(d->cam->godDistance - (float)y * 2, 8.0f, 50.0f);
+			d->cam->orbitDistanceTarget = std::clamp(d->cam->orbitDistanceTarget - (float)y, 2.0f, 20.0f);
+		} else if (d->cam->mode == CameraMode::RPG) {
+			d->cam->godDistanceTarget = std::clamp(d->cam->godDistanceTarget - (float)y * 2, 3.0f, 50.0f);
 		} else if (d->cam->mode == CameraMode::RTS) {
-			d->cam->rtsHeight = std::clamp(d->cam->rtsHeight - (float)y * 3, 15.0f, 80.0f);
+			d->cam->rtsHeightTarget = std::clamp(d->cam->rtsHeightTarget - (float)y * 3, 15.0f, 80.0f);
 		}
+	});
+
+	// Character input callback (for code editor)
+	glfwSetCharCallback(m_window.handle(), [](GLFWwindow* w, unsigned int c) {
+		auto* d = (ScrollData*)glfwGetWindowUserPointer(w);
+		d->game->m_codeEditor.onChar(c);
+	});
+
+	// Key callback (for code editor special keys)
+	glfwSetKeyCallback(m_window.handle(), [](GLFWwindow* w, int key, int, int action, int mods) {
+		auto* d = (ScrollData*)glfwGetWindowUserPointer(w);
+		d->game->m_codeEditor.onKey(key, action, mods);
 	});
 
 	m_lastTime = std::chrono::steady_clock::now();
@@ -124,6 +144,9 @@ void Game::handleGlobalInput() {
 		saveScreenshot();
 	if (m_controls.pressed(Action::ToggleDebug))
 		m_showDebug = !m_showDebug;
+
+	if (m_controls.pressed(Action::ToggleInventory))
+		m_showInventory = !m_showInventory;
 }
 
 void Game::endFrame() {
@@ -169,6 +192,12 @@ void Game::updateAndRender(float dt, float aspect) {
 	case GameState::SURVIVAL:
 		updatePlaying(dt, aspect);
 		break;
+	case GameState::ENTITY_INSPECT:
+		updateEntityInspect(dt, aspect);
+		break;
+	case GameState::CODE_EDITOR:
+		updateCodeEditor(dt, aspect);
+		break;
 	}
 }
 
@@ -199,54 +228,41 @@ void Game::handleMenuAction(const MenuAction& action) {
 }
 
 // ============================================================
-// World creation
+// World creation — player is now an Entity, same as pigs
 // ============================================================
 void Game::enterGame(int templateIndex, GameState targetState) {
-	m_world = std::make_unique<World>(42, m_templates[templateIndex]);
-	World& world = *m_world;
+	// Create a local server — each client runs its own server when creating a game.
+	// Later, clients can join a global server instead of creating a local one.
+	auto localServer = std::make_unique<LocalServer>(m_templates);
+	localServer->createGame(42, templateIndex, targetState == GameState::CREATIVE);
+
+	// Set callbacks for visual effects
+	localServer->setEffectCallbacks(
+		[this](ChunkPos cp) { m_renderer.markChunkDirty(cp); },
+		[this](glm::vec3 pos, glm::vec3 color, int count) { m_particles.emitBlockBreak(pos, color, count); },
+		[this](glm::vec3 pos, glm::vec3 color) { m_particles.emitItemPickup(pos, color); }
+	);
+
+	m_server = std::move(localServer);
 
 	m_state = targetState;
 	glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	m_camera.mode = CameraMode::FirstPerson;
 
-	if (targetState == GameState::CREATIVE)
-		m_player.fillCreativeInventory(world.blocks);
-	else
-		m_player.fillSurvivalInventory();
-
-	// Find spawn position
-	float sx = 30, sz = 30;
-	for (int t = 0; t < 50; t++) {
-		float h = world.surfaceHeight(sx, sz);
-		if (h > 2 && h < 15) break;
-		sx += 7; sz += 3;
-	}
-	float sh = world.surfaceHeight(sx, sz);
-
-	m_player.reset({sx, sh + 1, sz}, m_camera.player.feetPos);
+	// Camera setup from server's spawn position
+	glm::vec3 spawn = m_server->spawnPos();
+	m_camera.player.feetPos = spawn;
 	m_camera.player.yaw = -90;
 	m_camera.lookYaw = -90;
 	m_camera.lookPitch = -5;
 	m_camera.resetSmoothing();
-	m_camera.rtsCenter = m_camera.player.feetPos;
+	m_camera.rtsCenter = spawn;
 
 	// Generate and mesh chunks around spawn
-	world.ensureChunksAround(World::worldToChunk((int)sx, (int)sh, (int)sz), 8);
-	m_renderer.meshAllPending(world, m_camera, 8);
-
-	// Spawn mobs
-	for (int m = 0; m < 4; m++) {
-		float emx = sx + (m % 2 == 0 ? 8.0f : -6.0f) + m * 3;
-		float emz = sz + (m % 2 == 0 ? 5.0f : -8.0f) + m * 2;
-		float emh = world.surfaceHeight(emx, emz) + 1;
-		world.entities.spawn(EntityType::Pig, {emx, emh, emz});
-	}
-	for (int m = 0; m < 3; m++) {
-		float emx = sx + 4.0f + m * 5;
-		float emz = sz - 3.0f + m * 4;
-		float emh = world.surfaceHeight(emx, emz) + 1;
-		world.entities.spawn(EntityType::Chicken, {emx, emh, emz});
-	}
+	ChunkSource& chunks = m_server->chunks();
+	int sx = (int)spawn.x, sh = (int)spawn.y, sz = (int)spawn.z;
+	chunks.ensureChunksAround(worldToChunk(sx, sh, sz), 8);
+	m_renderer.meshAllPending(chunks, m_camera, 8);
 
 	m_worldTime = 0.30f;
 	m_autoScreenDone = false;
@@ -261,8 +277,14 @@ void Game::enterGame(int templateIndex, GameState targetState) {
 // Playing state
 // ============================================================
 void Game::updatePlaying(float dt, float aspect) {
-	if (!m_world) { m_state = GameState::MENU; return; }
-	World& world = *m_world;
+	if (!m_server || !m_server->isConnected()) { m_state = GameState::MENU; return; }
+	// Get World reference — for local server, this is direct access.
+	// For network server, gameplay will use ServerInterface methods instead.
+	auto* localSrv = dynamic_cast<LocalServer*>(m_server.get());
+	if (!localSrv) { m_state = GameState::MENU; return; }
+	World& world = localSrv->server()->world();
+	Entity* pe = playerEntity();
+	if (!pe) { m_state = GameState::MENU; return; }
 
 	if (m_controls.pressed(Action::MenuBack)) {
 		m_state = GameState::MENU;
@@ -270,19 +292,32 @@ void Game::updatePlaying(float dt, float aspect) {
 		return;
 	}
 
-	// Day/night
-	m_worldTime += m_daySpeed * dt;
+	// Client-side: gather input → ActionProposals
+	float jumpVel = (m_characters.count() > 0) ? m_characters.selected().jumpVelocity : 17.0f;
+	m_gameplay.update(dt, m_state, world, *pe, m_camera, m_controls,
+	                  m_renderer, m_particles, m_window, jumpVel);
+
+	// Server tick: resolve actions → physics → active blocks → item pickup
+	m_server->tick(dt);
+
+	// Sync server state to client
+	m_camera.player.feetPos = pe->position;
+	m_worldTime = m_server->worldTime();
 	m_renderer.setTimeOfDay(m_worldTime);
 
-	// Gameplay: movement, block interaction, entity ticking, item pickup
-	m_gameplay.update(dt, m_state, world, m_player, m_camera, m_controls,
-	                  m_renderer, m_particles, m_window);
+	// Check if player right-clicked an entity → enter inspection
+	if (m_gameplay.inspectedEntity() != ENTITY_NONE) {
+		m_state = GameState::ENTITY_INSPECT;
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+	}
 
 	renderPlaying(dt, aspect);
 }
 
 void Game::renderPlaying(float dt, float aspect) {
-	World& world = *m_world;
+	World& world = dynamic_cast<LocalServer*>(m_server.get())->server()->world();
+	Entity* pe = playerEntity();
+	if (!pe) return;
 
 	// Update chunks
 	m_renderer.updateChunks(world, m_camera, 8);
@@ -295,29 +330,73 @@ void Game::renderPlaying(float dt, float aspect) {
 		hlPos = hit->blockPos;
 		hlPtr = &hlPos;
 	}
-	m_renderer.render(m_camera, aspect, hlPtr, m_player.selectedSlot);
+	int selectedSlot = pe->getProp<int>(Prop::SelectedSlot, 0);
+	m_renderer.render(m_camera, aspect, hlPtr, selectedSlot);
 
 	// 3D models
 	glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
 	auto& mr = m_renderer.modelRenderer();
 
-	// Player walk animation
+	// Player walk animation (from entity velocity + walk distance)
 	m_globalTime += dt;
-	float playerSpeed = glm::length(glm::vec2(m_player.velocity.x, m_player.velocity.z));
+	float playerSpeed = glm::length(glm::vec2(pe->velocity.x, pe->velocity.z));
 	m_playerWalkDist += playerSpeed * dt;
 	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime};
 
 	if (m_camera.mode != CameraMode::FirstPerson) {
 		if (m_characters.count() > 0 && m_faces.count() > 0) {
-			BoxModel activeModel = m_characters.buildSelectedModel(m_faces.selected());
+			BoxModel activeModel = m_characters.buildSelectedModel(
+				m_faces.selected(), pe->inventory.get());
 			mr.draw(activeModel, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
 		} else {
-			mr.draw(m_playerModel, vp, m_camera.player.feetPos, m_camera.player.yaw, playerAnim);
+			mr.draw(m_playerModel, vp, pe->position, m_camera.player.yaw, playerAnim);
 		}
 	}
 
-	// Mob models
+	// Data-driven item particle effects (defined in Python, mirrored in C++ builtins).
+	// The client reads entity props (set by server) to know WHEN to emit.
+	// The emitter definitions (from ItemVisual.effects) define WHAT to emit.
+	if (m_camera.mode != CameraMode::FirstPerson && pe->inventory) {
+		auto activeEmitters = m_characters.getActiveEffects(
+			m_characters.selectedIndex(), *pe->inventory,
+			[&](const std::string& trigger) { return pe->getProp<int>(trigger, 0) > 0; });
+
+		glm::vec3 feetPos = m_camera.smoothedFeetPos();
+		float yawRad = glm::radians(-m_camera.player.yaw - 90.0f);
+		float cy = std::cos(yawRad), sy = std::sin(yawRad);
+
+		static unsigned int effectSeed = 0;
+		for (auto& ae : activeEmitters) {
+			glm::vec3 lo = ae.slot.offset + ae.emitter.offset;
+			glm::vec3 worldOff = {lo.x*cy - lo.z*sy, lo.y, lo.x*sy + lo.z*cy};
+			glm::vec3 emitPos = feetPos + worldOff;
+
+			int numColors = (int)ae.emitter.colors.size();
+			for (int i = 0; i < ae.emitter.rate; i++) {
+				effectSeed++;
+				float r1 = ((effectSeed * 73856093u) & 0xFFFF) / 65535.0f;
+				float r2 = ((effectSeed * 19349663u) & 0xFFFF) / 65535.0f;
+				float r3 = ((effectSeed * 83492791u) & 0xFFFF) / 65535.0f;
+
+				Particle p;
+				float sp = ae.emitter.velocitySpread;
+				p.pos = emitPos + glm::vec3((r1-0.5f)*sp*0.1f, 0, (r2-0.5f)*sp*0.1f);
+				p.vel = ae.emitter.velocity + glm::vec3((r1-0.5f)*sp, r3*sp*0.5f, (r2-0.5f)*sp);
+				// Pick color layer based on particle index
+				int ci = std::min(i, numColors - 1);
+				p.color = (numColors > 0) ? ae.emitter.colors[ci] : glm::vec4(1,1,1,1);
+				p.life = ae.emitter.lifeMin + r3 * (ae.emitter.lifeMax - ae.emitter.lifeMin);
+				p.maxLife = p.life;
+				p.size = ae.emitter.sizeMin + r1 * (ae.emitter.sizeMax - ae.emitter.sizeMin);
+				m_particles.addParticle(p);
+			}
+		}
+	}
+
+	// Mob models — all entities (except the player, already drawn above)
 	world.entities.forEach([&](Entity& e) {
+		if (e.id() == m_server->localPlayerId()) return; // skip player (drawn separately with character model)
+
 		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
 		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);
 		AnimState mobAnim = {mobDist, mobSpeed, m_globalTime};
@@ -339,17 +418,42 @@ void Game::renderPlaying(float dt, float aspect) {
 		}
 	});
 
+	// Lightbulbs above living entities (behavior indicator)
+	static BoxModel lightbulb = builtin::lightbulbModel();
+	world.entities.forEach([&](Entity& e) {
+		if (e.id() == m_server->localPlayerId()) return;
+		if (e.def().category != Category::Animal) return;
+
+		float entityTop = e.def().collision_box_max.y;
+		float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;
+		glm::vec3 bulbPos = e.position + glm::vec3(0, entityTop + 0.3f + bobY, 0);
+
+		// Red tint if behavior has error
+		BoxModel bulb = lightbulb;
+		if (e.hasError) {
+			for (auto& p : bulb.parts)
+				p.color = {1.0f, 0.2f, 0.2f, 0.9f};
+		}
+
+		mr.draw(bulb, vp, bulbPos, m_camera.lookYaw, {}); // billboard: face camera
+	});
+
 	// Particles
 	m_particles.render(vp);
 
-	// HUD
+	// HUD — read all player state from entity
+	int playerHP = pe->getProp<int>(Prop::HP, pe->def().max_hp);
+	float playerHunger = pe->getProp<float>(Prop::Hunger, 20.0f);
+	Inventory emptyInv;
 	HUDContext ctx{
-		aspect, m_state, m_player.selectedSlot,
-		m_player.inventory, m_camera, world,
-		m_worldTime, m_currentFPS, m_showDebug,
-		hit, m_renderer.sunStrength(),
+		aspect, m_state, selectedSlot,
+		pe->inventory ? *pe->inventory : emptyInv,
+		m_camera, world,
+		m_worldTime, m_currentFPS, m_showDebug, m_showInventory,
+		hit, m_gameplay.currentEntityHit(),
+		m_renderer.sunStrength(),
 		world.entities.count(), m_particles.count(),
-		m_player.hp, m_player.maxHP, m_player.hunger
+		playerHP, pe->def().max_hp, playerHunger
 	};
 	m_hud.render(ctx, m_text, m_renderer.highlightShader());
 
@@ -378,7 +482,7 @@ void Game::renderPlaying(float dt, float aspect) {
 		if (m_demoStep == 3 && m_demoTimer > 1.5f) {
 			writeScreenshot(m_window.width(), m_window.height(), "/tmp/aicraft_view_3_god.ppm");
 			m_camera.cycleMode();
-			m_camera.rtsCenter = m_camera.player.feetPos;
+			m_camera.rtsCenter = pe->position;
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			m_demoStep = 4; m_demoTimer = 0;
 		}
@@ -388,6 +492,192 @@ void Game::renderPlaying(float dt, float aspect) {
 			glfwSetWindowShouldClose(m_window.handle(), true);
 			m_demoStep = 99;
 		}
+	}
+}
+
+// ============================================================
+// Entity inspection overlay
+// ============================================================
+void Game::updateEntityInspect(float dt, float aspect) {
+	if (!m_server) { m_state = GameState::MENU; return; }
+	World& world = dynamic_cast<LocalServer*>(m_server.get())->server()->world();
+	Entity* pe = playerEntity();
+	if (!pe) { m_state = GameState::MENU; return; }
+
+	// ESC or right-click closes inspection
+	if (m_controls.pressed(Action::MenuBack) || m_controls.pressed(Action::PlaceBlock)) {
+		m_gameplay.clearInspection();
+		// Return to previous playing state
+		m_state = (pe->getProp<bool>("fly_mode", false)) ? GameState::CREATIVE : GameState::SURVIVAL;
+		// Re-determine state from entity presence
+		m_state = GameState::CREATIVE; // TODO: track previous state properly
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		return;
+	}
+
+	// Still render the world in background
+	m_globalTime += dt;
+	m_worldTime += m_daySpeed * dt;
+	m_renderer.setTimeOfDay(m_worldTime);
+	renderPlaying(dt, aspect);
+
+	// Draw inspection panel overlay
+	EntityId eid = m_gameplay.inspectedEntity();
+	Entity* target = world.entities.get(eid);
+	if (!target) {
+		m_gameplay.clearInspection();
+		return;
+	}
+
+	// Semi-transparent background
+	float panelW = 0.6f;
+	float panelH = 0.5f;
+	float px = -panelW / 2;
+	float py = -panelH / 2;
+	m_text.drawRect(px, py, panelW, panelH, {0.05f, 0.05f, 0.1f, 0.85f});
+
+	// Border
+	m_text.drawRect(px, py + panelH - 0.002f, panelW, 0.002f, {0.4f, 0.6f, 1.0f, 0.8f});
+	m_text.drawRect(px, py, panelW, 0.002f, {0.4f, 0.6f, 1.0f, 0.8f});
+
+	float textX = px + 0.03f;
+	float textY = py + panelH - 0.06f;
+	float lineH = 0.045f;
+
+	// Title
+	char buf[256];
+	snprintf(buf, sizeof(buf), "%s", target->def().display_name.c_str());
+	m_text.drawText(buf, textX, textY, 1.0f, {1.0f, 0.9f, 0.5f, 1.0f}, aspect);
+	textY -= lineH;
+
+	// Type ID
+	snprintf(buf, sizeof(buf), "Type: %s", target->typeId().c_str());
+	m_text.drawText(buf, textX, textY, 0.65f, {0.7f, 0.7f, 0.7f, 1.0f}, aspect);
+	textY -= lineH;
+
+	// HP
+	int hp = target->getProp<int>(Prop::HP, target->def().max_hp);
+	snprintf(buf, sizeof(buf), "HP: %d / %d", hp, target->def().max_hp);
+	m_text.drawText(buf, textX, textY, 0.7f, {0.4f, 1.0f, 0.4f, 1.0f}, aspect);
+	textY -= lineH;
+
+	// Position
+	snprintf(buf, sizeof(buf), "Pos: %.1f, %.1f, %.1f", target->position.x, target->position.y, target->position.z);
+	m_text.drawText(buf, textX, textY, 0.65f, {0.8f, 0.8f, 0.8f, 1.0f}, aspect);
+	textY -= lineH;
+
+	// Goal
+	snprintf(buf, sizeof(buf), "Goal: %s", target->goalText.empty() ? "(none)" : target->goalText.c_str());
+	m_text.drawText(buf, textX, textY, 0.7f, {0.5f, 1.0f, 0.8f, 1.0f}, aspect);
+	textY -= lineH;
+
+	// Behavior error (if any)
+	if (target->hasError) {
+		snprintf(buf, sizeof(buf), "ERROR: %s", target->errorText.c_str());
+		m_text.drawText(buf, textX, textY, 0.6f, {1.0f, 0.3f, 0.3f, 1.0f}, aspect);
+		textY -= lineH;
+	}
+
+	// Behavior source preview (first 3 lines)
+	auto behaviorInfo = m_server->getBehaviorInfo(eid);
+	if (!behaviorInfo.sourceCode.empty()) {
+		textY -= lineH * 0.5f;
+		m_text.drawText("--- Behavior Code ---", textX, textY, 0.6f, {0.6f, 0.6f, 0.8f, 1.0f}, aspect);
+		textY -= lineH;
+
+		std::string src = behaviorInfo.sourceCode;
+		// Show first few lines
+		int lineCount = 0;
+		size_t pos = 0;
+		while (pos < src.size() && lineCount < 4) {
+			size_t nl = src.find('\n', pos);
+			if (nl == std::string::npos) nl = src.size();
+			std::string line = src.substr(pos, std::min(nl - pos, (size_t)60));
+			m_text.drawText(line.c_str(), textX, textY, 0.55f, {0.5f, 0.8f, 0.5f, 0.9f}, aspect);
+			textY -= lineH * 0.85f;
+			pos = nl + 1;
+			lineCount++;
+		}
+		if (pos < src.size()) {
+			m_text.drawText("  ...", textX, textY, 0.55f, {0.5f, 0.5f, 0.5f, 0.7f}, aspect);
+		}
+	}
+
+	// Close hint
+	// [E] key opens code editor
+	if (glfwGetKey(m_window.handle(), GLFW_KEY_E) == GLFW_PRESS && !behaviorInfo.sourceCode.empty()) {
+		m_codeEditor.open(eid, behaviorInfo.sourceCode, target->goalText);
+		m_state = GameState::CODE_EDITOR;
+	}
+
+	m_text.drawText("[ESC] Close    [E] Edit Behavior", px + 0.03f, py + 0.02f,
+	                0.55f, {0.6f, 0.6f, 0.6f, 0.8f}, aspect);
+}
+
+// ============================================================
+// Code editor overlay
+// ============================================================
+void Game::updateCodeEditor(float dt, float aspect) {
+	if (!m_server) { m_state = GameState::MENU; return; }
+
+	m_globalTime += dt;
+
+	// Render world in background (frozen, no gameplay update)
+	m_worldTime += m_daySpeed * dt;
+	m_renderer.setTimeOfDay(m_worldTime);
+	renderPlaying(dt, aspect);
+
+	// Render code editor on top
+	m_codeEditor.render(m_text, aspect, m_globalTime);
+
+	// Check editor actions
+	if (m_codeEditor.wantsCancel()) {
+		m_codeEditor.close();
+		m_state = GameState::ENTITY_INSPECT;
+		m_codeEditor.clearFlags();
+	}
+
+	if (m_codeEditor.wantsApply()) {
+		std::string newCode = m_codeEditor.getCode();
+		EntityId eid = m_codeEditor.editingEntity();
+
+		// Save to artifacts/ (persists across restarts)
+		char filename[64];
+		snprintf(filename, sizeof(filename), "entity_%u_behavior", eid);
+		m_behaviorStore.save(filename, newCode);
+
+		// Load and execute via Python bridge
+		std::string error;
+		auto handle = pythonBridge().loadBehavior(newCode, error);
+		if (handle >= 0) {
+			// Replace the entity's behavior with the Python version
+			auto* ls = dynamic_cast<LocalServer*>(m_server.get());
+			if (ls && ls->server()) {
+				auto* behaviorState = ls->server()->world().entities.getBehaviorState(eid);
+				if (behaviorState) {
+					behaviorState->behavior = std::make_unique<PythonBehavior>(handle, newCode);
+					printf("[CodeEditor] Python behavior applied to entity %u\n", eid);
+				}
+			}
+			m_codeEditor.clearError();
+		} else {
+			printf("[CodeEditor] Python error: %s\n", error.c_str());
+			m_codeEditor.setError(error);
+			m_codeEditor.clearFlags();
+			return; // keep editor open on error
+		}
+
+		m_codeEditor.clearError();
+		m_codeEditor.close();
+		m_state = GameState::ENTITY_INSPECT;
+		m_codeEditor.clearFlags();
+	}
+
+	if (m_codeEditor.wantsReset()) {
+		EntityId eid = m_codeEditor.editingEntity();
+		auto info = m_server->getBehaviorInfo(eid);
+		m_codeEditor.open(eid, info.sourceCode, info.goal);
+		m_codeEditor.clearFlags();
 	}
 }
 

@@ -1,10 +1,11 @@
 #pragma once
 
 #include "common/types.h"
-#include "common/world.h"
-#include "common/inventory.h"
-#include "common/constants.h"
-#include "common/block_registry.h"
+#include "server/world.h"
+#include "shared/inventory.h"
+#include "shared/constants.h"
+#include "shared/block_registry.h"
+#include "shared/physics.h"
 #include "game/types.h"
 #include <algorithm>
 #include <cmath>
@@ -22,76 +23,111 @@ public:
 	int hp = 20;
 	int maxHP = 20;
 	float hunger = 20.0f;
+	float jumpCD = 0.0f;
+	bool jetpackActive = false;     // true while jetpack is thrusting (for HUD/particles)
+	static constexpr float JUMP_COOLDOWN = 0.3f;
 
-	Player() : inventory(HOTBAR_SIZE) {}
+	Player() {}
 
 	// --------------------------------------------------------
 	// Inventory helpers
 	// --------------------------------------------------------
 
-	void fillCreativeInventory(const BlockRegistry& blocks) {
-		const char* blockTypes[] = {
-			BlockType::Stone, BlockType::Dirt, BlockType::Grass, BlockType::Sand,
-			BlockType::Wood, BlockType::Leaves, BlockType::Snow, BlockType::TNT,
-			BlockType::Cobblestone,
-		};
-		for (int i = 0; i < HOTBAR_SIZE && i < 9; i++) {
-			inventory.slot(i).type = blockTypes[i];
-			inventory.slot(i).count = 64;
-		}
+	void fillCreativeInventory() {
+		inventory.clear();
+		inventory.add(BlockType::Stone, 999);
+		inventory.add(BlockType::Dirt, 999);
+		inventory.add(BlockType::Grass, 999);
+		inventory.add(BlockType::Sand, 999);
+		inventory.add(BlockType::Wood, 999);
+		inventory.add(BlockType::Leaves, 999);
+		inventory.add(BlockType::Snow, 999);
+		inventory.add(BlockType::TNT, 999);
+		inventory.add(BlockType::Cobblestone, 999);
+		inventory.add(ItemId::Jetpack, 1);
+
+		// Default hotbar: 1-9 = common blocks, 0 = TNT
+		inventory.setHotbar(0, BlockType::Stone);
+		inventory.setHotbar(1, BlockType::Dirt);
+		inventory.setHotbar(2, BlockType::Grass);
+		inventory.setHotbar(3, BlockType::Sand);
+		inventory.setHotbar(4, BlockType::Wood);
+		inventory.setHotbar(5, BlockType::Leaves);
+		inventory.setHotbar(6, BlockType::Snow);
+		inventory.setHotbar(7, BlockType::Cobblestone);
+		inventory.setHotbar(8, ItemId::Jetpack);
+		inventory.setHotbar(9, BlockType::TNT);
 	}
 
 	void fillSurvivalInventory() {
-		inventory.slot(0).type = BlockType::Stone;
-		inventory.slot(0).count = 10;
-		inventory.slot(1).type = BlockType::Wood;
-		inventory.slot(1).count = 10;
+		inventory.clear();
+		inventory.add(BlockType::Stone, 10);
+		inventory.add(BlockType::Wood, 10);
+		inventory.add(ItemId::Jetpack, 1);
+
+		inventory.setHotbar(0, BlockType::Stone);
+		inventory.setHotbar(1, BlockType::Wood);
+		inventory.setHotbar(2, ItemId::Jetpack);
 	}
 
 	// --------------------------------------------------------
 	// Movement
 	// --------------------------------------------------------
 
-	void applySurvivalMovement(glm::vec3 horizontalMove, float speed, float dt,
-	                           bool jump, World& world, glm::vec3& feetPos) {
+	// Unified movement for ALL modes. Uses shared physics.
+	// Creative mode: fly=true, no gravity, ascend/descend with Space/Ctrl
+	// Survival mode: fly=false, gravity + jump + step-up
+	void applyMovement(glm::vec3 horizontalMove, float speed, float dt,
+	                   bool jump, bool fly, bool ascend, bool descend,
+	                   float jumpVelocity,
+	                   World& world, glm::vec3& feetPos) {
 		velocity.x = horizontalMove.x * speed;
 		velocity.z = horizontalMove.z * speed;
-		velocity.y -= 28.0f * dt;
-		velocity.y = std::max(velocity.y, -50.0f);
 
-		if (jump && onGround) {
-			velocity.y = 8.5f;
-			onGround = false;
-		}
+		jumpCD -= dt;
+		jetpackActive = false;
 
-		glm::vec3 oldPos = feetPos;
-		bool stepped = false;
-		feetPos = collideAndSlide(world, oldPos, velocity * dt, 0.375f, 2.5f, onGround, &stepped);
-
-		if (stepped) {
+		if (fly) {
 			velocity.y = 0;
-			onGround = true;
-		} else if (std::abs(feetPos.y - oldPos.y) < 0.001f && velocity.y <= 0) {
-			velocity.y = 0;
-			onGround = true;
-		} else if (feetPos.y < oldPos.y + velocity.y * dt && velocity.y > 0) {
-			velocity.y = 0;
+			if (ascend)  velocity.y = speed;
+			if (descend) velocity.y = -speed;
 		} else {
-			onGround = false;
+			bool hasJetpack = inventory.has(ItemId::Jetpack);
+			if (jump && jumpCD <= 0 && onGround) {
+				// Normal ground jump
+				velocity.y = jumpVelocity;
+				onGround = false;
+				jumpCD = JUMP_COOLDOWN;
+			} else if (jump && hasJetpack && !onGround) {
+				// Jetpack: continuous upward thrust while holding space in air.
+				// Counteracts gravity and adds lift. Feels like a real jetpack.
+				float thrust = 35.0f; // must exceed gravity (28) to gain altitude
+				velocity.y += thrust * dt;
+				velocity.y = std::min(velocity.y, jumpVelocity * 0.8f); // cap upward speed
+				jetpackActive = true;
+			}
 		}
 
-		// Hunger drains slowly
-		hunger -= 0.005f * dt;
-		if (hunger < 0) hunger = 0;
-	}
+		MoveParams params;
+		params.halfWidth = 0.375f;
+		params.height = 2.5f;
+		params.gravity = 28.0f;
+		params.stepHeight = 1.0f;
+		params.canFly = fly;
 
-	void applyCreativeMovement(glm::vec3 moveDir, float speed, float dt,
-	                           bool ascend, bool descend, glm::vec3& feetPos) {
-		feetPos += moveDir * speed * dt;
-		if (ascend)
-			feetPos.y += speed * dt;
-		if (descend)
-			feetPos.y -= speed * dt;
+		BlockSolidFn solidFn = [&](int x, int y, int z) {
+			return world.blocks.get(world.getBlock(x, y, z)).solid;
+		};
+		auto result = moveAndCollide(solidFn, feetPos, velocity, dt, params, onGround);
+
+		feetPos = result.position;
+		velocity = result.velocity;
+		onGround = result.onGround;
+
+		if (!fly) {
+			hunger -= 0.005f * dt;
+			if (hunger < 0) hunger = 0;
+		}
 	}
 
 	// --------------------------------------------------------
@@ -154,74 +190,6 @@ public:
 	}
 
 private:
-	// --------------------------------------------------------
-	// Collision
-	// --------------------------------------------------------
-
-	// Step-up height: automatically climb ledges up to this height.
-	// 0.6 matches Luanti/Minecraft -- enough for slabs and stairs,
-	// small enough that the visual transition is gentle.
-	static constexpr float STEP_HEIGHT = 0.6f;
-
-	// Smooth step: instead of teleporting up, we give a vertical
-	// velocity boost that carries the player up over several frames.
-	static constexpr float STEP_BOOST_VEL = 9.0f;
-
-	static glm::vec3 collideAndSlide(World& world, glm::vec3 pos, glm::vec3 vel,
-	                                  float halfW, float height, bool onGround,
-	                                  bool* stepped = nullptr) {
-		auto blocked = [&](glm::vec3 p) -> bool {
-			int x0 = (int)std::floor(p.x - halfW), x1 = (int)std::floor(p.x + halfW);
-			int y0 = (int)std::floor(p.y),          y1 = (int)std::floor(p.y + height);
-			int z0 = (int)std::floor(p.z - halfW), z1 = (int)std::floor(p.z + halfW);
-			for (int y = y0; y <= y1; y++)
-				for (int z = z0; z <= z1; z++)
-					for (int x = x0; x <= x1; x++)
-						if (world.blocks.get(world.getBlock(x, y, z)).solid)
-							return true;
-			return false;
-		};
-
-		glm::vec3 r = pos;
-		bool didStep = false;
-
-		// X: try direct move; if blocked and on ground, check if steppable
-		if (!blocked({pos.x + vel.x, pos.y, pos.z})) {
-			r.x += vel.x;
-		} else if (onGround && vel.x != 0.0f) {
-			// Find exact step height needed (check 0.1 increments up to STEP_HEIGHT)
-			for (float sh = 0.1f; sh <= STEP_HEIGHT + 0.01f; sh += 0.1f) {
-				if (!blocked({pos.x + vel.x, pos.y + sh, pos.z})) {
-					r.x += vel.x;
-					r.y = pos.y + sh; // raise to minimum needed height
-					didStep = true;
-					break;
-				}
-			}
-		}
-
-		// Y: gravity / jump — skip if we just stepped (velocity will be set outside)
-		if (!didStep) {
-			if (!blocked({r.x, pos.y + vel.y, pos.z})) r.y += vel.y;
-		}
-
-		// Z: try direct move; if blocked and on ground, try step
-		if (!blocked({r.x, r.y, pos.z + vel.z})) {
-			r.z += vel.z;
-		} else if (onGround && !didStep && vel.z != 0.0f) {
-			for (float sh = 0.1f; sh <= STEP_HEIGHT + 0.01f; sh += 0.1f) {
-				if (!blocked({r.x, r.y + sh, pos.z + vel.z})) {
-					r.z += vel.z;
-					r.y += sh;
-					didStep = true;
-					break;
-				}
-			}
-		}
-
-		if (stepped) *stepped = didStep;
-		return r;
-	}
 };
 
 } // namespace aicraft

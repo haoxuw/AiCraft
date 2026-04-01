@@ -5,9 +5,9 @@
 #include "client/window.h"
 #include "client/controls.h"
 #include "client/model.h"
-#include "common/world_template.h"
-#include "common/character.h"
-#include "common/face.h"
+#include "server/world_template.h"
+#include "shared/character.h"
+#include "shared/face.h"
 
 #include <memory>
 #include <vector>

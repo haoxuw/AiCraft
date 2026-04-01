@@ -1,9 +1,9 @@
 #pragma once
 
-#include "common/types.h"
-#include "common/chunk.h"
-#include "common/block_registry.h"
-#include "common/world.h"
+#include "shared/types.h"
+#include "shared/chunk.h"
+#include "shared/block_registry.h"
+#include "shared/chunk_source.h"
 #include <glad/gl.h>
 #include <vector>
 #include <array>
@@ -32,11 +32,11 @@ struct ChunkMesh {
 
 class ChunkMesher {
 public:
-	std::vector<ChunkVertex> buildMesh(World& world, ChunkPos pos);
+	std::vector<ChunkVertex> buildMesh(ChunkSource& world, ChunkPos pos);
 
 private:
 	float computeAO(bool side1, bool side2, bool corner);
-	void fillPaddedVolume(World& world, ChunkPos cpos);
+	void fillPaddedVolume(ChunkSource& world, ChunkPos cpos);
 
 	// 18x18x18 cached block volume (chunk + 1-block border from neighbors)
 	// Eliminates per-block getBlock()/mutex/hash-lookup during meshing

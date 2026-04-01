@@ -27,7 +27,6 @@ skeleton = Character(
     walk_cycle_speed=2.7,
     walk_bob_amount=0.03,
     idle_bob_amount=0.008,
-    lateral_sway_amount=0.02,
     parts=[
         # -- Skull --
         Part("skull",    (0, 1.78, 0),    (0.46, 0.46, 0.46), BONE,

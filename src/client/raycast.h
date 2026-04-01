@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/types.h"
-#include "common/world.h"
+#include "shared/types.h"
+#include "server/world.h"
 #include <glm/glm.hpp>
 #include <optional>
 

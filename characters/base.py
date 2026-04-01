@@ -45,6 +45,6 @@ class Character:
     walk_cycle_speed: float = 3.0
     walk_bob_amount: float = 0.05
     idle_bob_amount: float = 0.012
-    lateral_sway_amount: float = 0.03
+    jump_velocity: float = 17.0       # upward velocity on jump
     stats: Stats = field(default_factory=Stats)
     parts: list = field(default_factory=list)

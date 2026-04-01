@@ -5,6 +5,7 @@
 #include "common/block_registry.h"
 #include "common/entity_manager.h"
 #include "common/world_template.h"
+#include "common/action.h"
 #include "builtin/builtin.h"
 #include <unordered_map>
 #include <memory>
@@ -31,6 +32,7 @@ class World {
 public:
 	BlockRegistry blocks;
 	EntityManager entities;
+	ActionQueue actions;        // proposals queued by input/behaviors, drained in Phase 1
 
 	World(int seed = 42, std::shared_ptr<WorldTemplate> tmpl = nullptr)
 		: m_seed(seed), m_template(tmpl ? tmpl : std::make_shared<VillageWorldTemplate>()) {
@@ -243,7 +245,10 @@ public:
 	}
 
 	void step(float dt) {
-		entities.step(dt);
+		BlockSolidFn solidFn = [this](int x, int y, int z) {
+			return blocks.get(getBlock(x, y, z)).solid;
+		};
+		entities.step(dt, solidFn);
 	}
 
 	static ChunkPos worldToChunk(int wx, int wy, int wz) {

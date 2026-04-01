@@ -31,7 +31,6 @@ crewmate = Character(
     walk_cycle_speed=2.0,       # slow deliberate waddle
     walk_bob_amount=0.055,      # pronounced bounce per step
     idle_bob_amount=0.015,      # suit breathing
-    lateral_sway_amount=0.12,   # THE signature: whole body rocks left-right
     parts=[
         # -- Body: egg shape (3 tapered boxes, wide base → narrow dome) --
         Part("body_low",   (0, 0.64, 0),   (0.68, 0.68, 0.52), SUIT),      # widest: belly

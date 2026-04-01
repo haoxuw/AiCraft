@@ -176,9 +176,9 @@ void Renderer::markChunkDirty(ChunkPos pos) {
 	m_dirtyChunks.erase(pos);
 }
 
-void Renderer::meshAllPending(World& world, const Camera& cam, int renderDistance) {
+void Renderer::meshAllPending(ChunkSource& world, const Camera& cam, int renderDistance) {
 	// Called once at world load — no throttle, mesh everything
-	ChunkPos center = World::worldToChunk(
+	ChunkPos center = worldToChunk(
 		(int)std::floor(cam.position.x),
 		(int)std::floor(cam.position.y),
 		(int)std::floor(cam.position.z));
@@ -198,8 +198,8 @@ void Renderer::meshAllPending(World& world, const Camera& cam, int renderDistanc
 			}
 }
 
-void Renderer::updateChunks(World& world, const Camera& cam, int renderDistance) {
-	ChunkPos center = World::worldToChunk(
+void Renderer::updateChunks(ChunkSource& world, const Camera& cam, int renderDistance) {
+	ChunkPos center = worldToChunk(
 		(int)std::floor(cam.position.x),
 		(int)std::floor(cam.position.y),
 		(int)std::floor(cam.position.z));

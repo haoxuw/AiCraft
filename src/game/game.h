@@ -1,8 +1,11 @@
 #pragma once
 
 #include "game/types.h"
-#include "game/player.h"
 #include "game/menu.h"
+#include "game/code_editor.h"
+#include "shared/server_interface.h"
+#include "server/local_server.h"
+#include "server/behavior_store.h"
 #include "game/gameplay.h"
 #include "game/hud.h"
 #include "client/window.h"
@@ -12,10 +15,9 @@
 #include "client/particles.h"
 #include "client/controls.h"
 #include "client/model.h"
-#include "common/world.h"
-#include "common/world_template.h"
-#include "common/character.h"
-#include "common/face.h"
+#include "server/world_template.h"
+#include "shared/character.h"
+#include "shared/face.h"
 #include <chrono>
 #include <memory>
 #include <vector>
@@ -43,6 +45,12 @@ private:
 	void updatePlaying(float dt, float aspect);
 	void renderPlaying(float dt, float aspect);
 
+	// Entity inspection overlay
+	void updateEntityInspect(float dt, float aspect);
+
+	// Code editor overlay
+	void updateCodeEditor(float dt, float aspect);
+
 	// Screenshot
 	void saveScreenshot();
 
@@ -54,12 +62,22 @@ private:
 	ControlManager  m_controls;
 	Camera          m_camera;
 
-	// Game objects
-	std::unique_ptr<World>  m_world;
-	Player                  m_player;
-	GameplayController      m_gameplay;
-	MenuSystem              m_menu;
-	HUD                     m_hud;
+	// Server interface — abstracts local vs network server
+	// Local: each client runs its own server when creating a game
+	// Network: client connects to a remote/global server
+	std::unique_ptr<ServerInterface> m_server;
+
+	GameplayController          m_gameplay;
+	CodeEditor                  m_codeEditor;
+	BehaviorStore               m_behaviorStore;
+	MenuSystem                  m_menu;
+	HUD                         m_hud;
+
+	// Player entity (from server)
+	Entity* playerEntity() {
+		return m_server && m_server->isConnected()
+			? m_server->getEntity(m_server->localPlayerId()) : nullptr;
+	}
 
 	// World templates
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;
@@ -89,8 +107,9 @@ private:
 
 	// Display
 	bool m_showDebug = false;
+	bool m_showInventory = false;
 
-	// Models (lazily initialized)
+	// Models
 	BoxModel m_playerModel, m_pigModel, m_chickenModel;
 	float m_playerWalkDist = 0;
 	float m_globalTime = 0;

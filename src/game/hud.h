@@ -6,8 +6,9 @@
 #include "client/camera.h"
 #include "client/particles.h"
 #include "client/raycast.h"
-#include "common/world.h"
-#include "common/inventory.h"
+#include "client/entity_raycast.h"
+#include "server/world.h"
+#include "shared/inventory.h"
 #include <glad/gl.h>
 
 namespace aicraft {
@@ -22,7 +23,9 @@ struct HUDContext {
 	float worldTime;
 	float fps;
 	bool showDebug;
+	bool showInventory;
 	const std::optional<RayHit>& hit;
+	std::optional<EntityHit> entityHit;  // entity under crosshair
 	float sunStrength;
 	size_t entityCount;
 	size_t particleCount;
@@ -37,13 +40,13 @@ public:
 	void render(const HUDContext& ctx, TextRenderer& text, Shader& highlightShader);
 
 private:
-	void renderHotbar(const HUDContext& ctx, TextRenderer& text, Shader& highlightShader);
+	void renderHotbar(const HUDContext& ctx, TextRenderer& text);
+	void renderInventoryPanel(const HUDContext& ctx, TextRenderer& text);
 	void renderHealthBars(const HUDContext& ctx, TextRenderer& text);
 	void renderModeLabel(const HUDContext& ctx, TextRenderer& text);
 	void renderTimeOfDay(const HUDContext& ctx, TextRenderer& text);
 	void renderDebugOverlay(const HUDContext& ctx, TextRenderer& text);
-
-	GLuint m_quadVAO = 0, m_quadVBO = 0;
+	void renderEntityTooltip(const HUDContext& ctx, TextRenderer& text);
 };
 
 } // namespace aicraft

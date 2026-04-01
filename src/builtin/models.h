@@ -14,10 +14,10 @@ inline BoxModel playerModel() {
 	BoxModel m;
 	m.totalHeight   = 2.0f;
 	m.modelScale    = 1.25f;      // 25% bigger than base (1.25x visual size)
-	m.walkCycleSpeed = 2.5f;      // longer strides: fewer cycles per meter
+	m.walkCycleSpeed = 2.0f;
 	m.idleBobAmount  = 0.012f;
 	m.walkBobAmount  = 0.06f;
-	m.lateralSwayAmount = 0.03f;
+
 
 	// Head -- nods once per step (2x walk freq)
 	m.parts.push_back({
@@ -76,7 +76,7 @@ inline BoxModel pigModel() {
 	m.walkCycleSpeed = 7.0f;
 	m.idleBobAmount = 0.008f;
 	m.walkBobAmount = 0.02f;
-	m.lateralSwayAmount = 0.02f;
+
 
 	// Body (fat)
 	m.parts.push_back({
@@ -163,7 +163,7 @@ inline BoxModel chickenModel() {
 	m.walkCycleSpeed = 9.0f;
 	m.idleBobAmount = 0.005f;
 	m.walkBobAmount = 0.015f;
-	m.lateralSwayAmount = 0.01f;
+
 
 	// Body (round-ish)
 	m.parts.push_back({

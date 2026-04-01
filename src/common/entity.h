@@ -1,12 +1,14 @@
 #pragma once
 
 #include "common/constants.h"
+#include "common/inventory.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
 #include <variant>
 #include <vector>
 #include <set>
+#include <memory>
 #include <cstdint>
 
 namespace aicraft {
@@ -43,6 +45,8 @@ struct EntityDef {
 
 	// Living
 	int max_hp = 0;
+	float eye_height = 0.0f;     // eye position above feet (0 = use collision_box_max.y * 0.75)
+	bool has_inventory = false;   // true = allocate Inventory on spawn
 
 	// Default property values (template for new instances)
 	std::unordered_map<std::string, PropValue> default_props;
@@ -55,7 +59,10 @@ class Entity {
 public:
 	Entity(EntityId id, const std::string& typeId, const EntityDef& def)
 		: m_id(id), m_typeId(typeId), m_def(&def)
-		, m_props(def.default_props) {}
+		, m_props(def.default_props) {
+		if (def.has_inventory)
+			inventory = std::make_unique<Inventory>();
+	}
 
 	// --- Identity ---
 	EntityId id() const { return m_id; }
@@ -103,6 +110,22 @@ public:
 	// --- Dirty tracking (for network sync) ---
 	const std::set<std::string>& dirtyProps() const { return m_dirty; }
 	void clearDirty() { m_dirty.clear(); }
+
+	// --- Inventory (allocated only for entities with has_inventory) ---
+	std::unique_ptr<Inventory> inventory;
+
+	// --- Eye position (for camera when possessed) ---
+	glm::vec3 eyePos() const {
+		float eh = m_def->eye_height;
+		if (eh <= 0) eh = m_def->collision_box_max.y * 0.75f;
+		return position + glm::vec3(0, eh, 0);
+	}
+
+	// --- Behavior ---
+	std::string goalText;      // current goal ("Wandering", "Fleeing!")
+	std::string errorText;     // last Python error traceback (empty = ok)
+	bool hasError = false;     // true if behavior code has a runtime error
+	bool onGround = false;     // physics: is entity standing on solid ground
 
 	// --- Alive/active ---
 	bool removed = false;  // marked for removal

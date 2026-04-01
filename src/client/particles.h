@@ -26,6 +26,7 @@ public:
 
 	void emitBlockBreak(glm::vec3 pos, glm::vec3 color, int count = 14);
 	void emitItemPickup(glm::vec3 pos, glm::vec3 color);
+	void addParticle(const Particle& p) { m_particles.push_back(p); }
 
 	size_t count() const { return m_particles.size(); }
 

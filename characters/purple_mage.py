@@ -28,7 +28,6 @@ purple_mage = Character(
     walk_cycle_speed=2.6,
     walk_bob_amount=0.040,
     idle_bob_amount=0.010,
-    lateral_sway_amount=0.020,
     parts=[
         # -- Robe body (wide hem → narrow chest) --
         Part("hem",        (0, 0.40, 0),    (0.68, 0.20, 0.48), ROBE_DARK),
