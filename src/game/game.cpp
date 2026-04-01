@@ -6,6 +6,7 @@
 #include "shared/constants.h"
 #include "server/python_bridge.h"
 #include "server/behavior.h"
+#include "server/world_save.h"
 #ifndef __EMSCRIPTEN__
 #include "client/network_server.h"
 #endif
@@ -207,6 +208,9 @@ bool Game::init(int argc, char** argv) {
 }
 
 void Game::shutdown() {
+	// Save world on quit
+	saveCurrentWorld();
+
 	m_ui.shutdown();
 	m_hud.shutdown();
 	m_particles.shutdown();
@@ -373,6 +377,7 @@ void Game::handleMenuAction(const MenuAction& action) {
 		m_menu.resetCooldown(0.5f);
 		break;
 	case MenuAction::EnterGame:
+		m_currentWorldPath = action.worldPath;
 		enterGame(action.templateIndex, action.targetState);
 		break;
 	case MenuAction::JoinServer:
@@ -383,6 +388,26 @@ void Game::handleMenuAction(const MenuAction& action) {
 			m_state = m_preMenuState;
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 		}
+		break;
+	case MenuAction::LoadWorld: {
+		m_currentWorldPath = action.worldPath;
+		printf("[Game] Loading world from %s\n", action.worldPath.c_str());
+		auto localServer = std::make_unique<LocalServer>(m_templates);
+		// Create server without init (loadWorld will init)
+		localServer->createServerOnly();
+		if (loadWorld(*localServer->server(), action.worldPath, m_templates)) {
+			localServer->finishLoad(); // register client after load
+			m_server = std::move(localServer);
+			setupAfterConnect(GameState::SURVIVAL);
+		} else {
+			printf("[Game] Failed to load world, creating new\n");
+			enterGame(action.templateIndex, GameState::SURVIVAL);
+		}
+		break;
+	}
+	case MenuAction::DeleteWorld:
+		m_imguiMenu.worldManager().deleteWorld(action.worldPath);
+		m_imguiMenu.worldManager().refresh();
 		break;
 	}
 }
@@ -466,6 +491,26 @@ void Game::setupAfterConnect(GameState targetState) {
 	m_demoTimer = 0;
 	m_playerWalkDist = 0;
 	m_globalTime = 0;
+}
+
+void Game::saveCurrentWorld() {
+	if (m_currentWorldPath.empty() || !m_server) return;
+	auto* ls = dynamic_cast<LocalServer*>(m_server.get());
+	if (!ls || !ls->server()) return;
+
+	WorldMetadata meta;
+	meta.name = m_currentWorldPath.substr(m_currentWorldPath.rfind('/') + 1);
+	meta.seed = ls->server()->world().seed();
+	meta.templateIndex = ls->server()->world().templateIndex();
+	meta.gameMode = ls->server()->isCreative() ? "admin" : "survival";
+	meta.version = 1;
+
+	// Get template name from index
+	if (meta.templateIndex < (int)m_templates.size())
+		meta.templateName = m_templates[meta.templateIndex]->name();
+
+	saveWorld(*ls->server(), m_currentWorldPath, meta);
+	m_imguiMenu.worldManager().refresh();
 }
 
 // ============================================================

@@ -38,6 +38,18 @@ public:
 		return true;
 	}
 
+	// Create GameServer object without initializing a world (for loadWorld)
+	void createServerOnly() {
+		m_server = std::make_unique<GameServer>();
+	}
+
+	// After loadWorld() populates the server, connect the local player
+	void finishLoad() {
+		m_clientId = 1;
+		m_playerId = m_server->addClient(m_clientId);
+		m_connected = true;
+	}
+
 	void disconnect() override {
 		if (m_server && m_connected) {
 			m_server->removeClient(m_clientId);

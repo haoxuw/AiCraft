@@ -48,6 +48,7 @@ private:
 	void enterGame(int templateIndex, GameState targetState);
 	void joinServer(const std::string& host, int port, GameState targetState);
 	void setupAfterConnect(GameState targetState);
+	void saveCurrentWorld();
 
 	// Playing state
 	void updatePlaying(float dt, float aspect);
@@ -106,6 +107,7 @@ private:
 	// Connection (from --host/--port CLI args)
 	std::string m_connectHost;  // empty = singleplayer
 	int m_connectPort = 7777;
+	std::string m_currentWorldPath;  // save directory for current game
 
 	// Timing
 	std::chrono::steady_clock::time_point m_lastTime;

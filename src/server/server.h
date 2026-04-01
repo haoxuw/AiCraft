@@ -50,7 +50,7 @@ public:
 	          const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		auto tmpl = (config.templateIndex < (int)templates.size())
 			? templates[config.templateIndex] : templates[0];
-		m_world = std::make_unique<World>(config.seed, tmpl);
+		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
 		m_creative = config.creative;
 		m_worldTime = 0.30f;
 

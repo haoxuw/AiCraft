@@ -23,6 +23,7 @@
 
 #include "game/types.h"
 #include "game/handbook_ui.h"
+#include "game/world_manager.h"
 #include "shared/artifact_registry.h"
 #include "server/world_template.h"
 #ifndef __EMSCRIPTEN__
@@ -31,6 +32,7 @@
 #include <imgui.h>
 #include <vector>
 #include <memory>
+#include <random>
 
 namespace agentworld {
 
@@ -38,6 +40,8 @@ class ImGuiMenu {
 public:
 	void init(const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		m_templates = templates;
+		m_worldMgr.setSavesDir("saves");
+		m_worldMgr.refresh();
 	}
 
 	MenuAction render(const ArtifactRegistry& registry, float W, float H) {
@@ -180,6 +184,7 @@ public:
 		else if (p == 2) m_page = Page::Settings;
 	}
 	void setGameRunning(bool running) { m_gameRunning = running; }
+	WorldManager& worldManager() { return m_worldMgr; }
 
 private:
 	enum class Page { Play, Handbook, Settings };
@@ -189,6 +194,10 @@ private:
 	int m_selectedTemplate = 0;
 	int m_gameMode = 0;  // 0=survival (default), 1=admin
 	bool m_gameRunning = false;
+	bool m_showCreateWorld = false;
+	char m_newWorldName[64] = "My World";
+	char m_newWorldSeed[16] = "";
+	WorldManager m_worldMgr;
 
 	// Server detection
 	struct DetectedServer { std::string host; int port; };
@@ -272,73 +281,155 @@ private:
 			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 		}
 
-		// ── New World section ──
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
-		ImGui::SetWindowFontScale(1.2f);
-		ImGui::Text("New World");
-		ImGui::SetWindowFontScale(1.0f);
-		ImGui::PopStyleColor();
-
-		ImGui::Spacing();
-		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
-			"Choose a world template to start playing.");
-		ImGui::Spacing(); ImGui::Spacing();
-
-		// Template cards
-		ImGui::Text("World Template");
-		ImGui::Spacing();
-
+		// ── Saved Worlds ──
 		float cardW = std::min(contentW - 80, 500.0f);
-		for (int i = 0; i < (int)m_templates.size(); i++) {
-			bool selected = (m_selectedTemplate == i);
-
-			ImGui::PushStyleColor(ImGuiCol_ChildBg,
-				selected ? ImVec4(0.98f, 0.94f, 0.88f, 1) : ImVec4(0.98f, 0.97f, 0.96f, 1));
-
-			char id[32]; snprintf(id, sizeof(id), "##tmpl%d", i);
-			ImGui::BeginChild(id, ImVec2(cardW, 64), true);
-			{
-				ImGui::SetCursorPos(ImVec2(16, 8));
-
-				if (selected) {
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.65f, 0.15f, 1));
-				} else {
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1));
-				}
-				ImGui::SetWindowFontScale(1.1f);
-				ImGui::Text("%s", m_templates[i]->name().c_str());
-				ImGui::SetWindowFontScale(1.0f);
-				ImGui::PopStyleColor();
-
-				ImGui::SetCursorPosX(16);
-				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "%s",
-					m_templates[i]->description().c_str());
-			}
-			// Click to select
-			if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0))
-				m_selectedTemplate = i;
-			ImGui::EndChild();
+		auto& worlds = m_worldMgr.worlds();
+		if (!worlds.empty()) {
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+			ImGui::SetWindowFontScale(1.2f);
+			ImGui::Text("Your Worlds");
+			ImGui::SetWindowFontScale(1.0f);
 			ImGui::PopStyleColor();
 			ImGui::Spacing();
+
+			for (size_t i = 0; i < worlds.size(); i++) {
+				auto& w = worlds[i];
+				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.98f, 0.97f, 0.96f, 1));
+				char wid[32]; snprintf(wid, sizeof(wid), "##world%zu", i);
+				ImGui::BeginChild(wid, ImVec2(cardW, 56), true);
+				{
+					ImGui::SetCursorPos(ImVec2(16, 8));
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+					ImGui::SetWindowFontScale(1.1f);
+					ImGui::Text("%s", w.name.c_str());
+					ImGui::SetWindowFontScale(1.0f);
+					ImGui::PopStyleColor();
+
+					ImGui::SetCursorPosX(16);
+					ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "%s  |  %s",
+						w.templateName.c_str(), w.lastPlayed.c_str());
+
+					// Play button
+					ImGui::SameLine(cardW - 160);
+					ImGui::SetCursorPosY(12);
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.65f, 0.15f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+					char playId[32]; snprintf(playId, sizeof(playId), "Play##w%zu", i);
+					if (ImGui::Button(playId, ImVec2(70, 32))) {
+						action.type = MenuAction::LoadWorld;
+						action.worldPath = w.path;
+						action.worldName = w.name;
+						action.templateIndex = w.templateIndex;
+					}
+					ImGui::PopStyleColor(2);
+
+					// Delete button
+					ImGui::SameLine();
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.25f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+					char delId[32]; snprintf(delId, sizeof(delId), "Del##w%zu", i);
+					if (ImGui::Button(delId, ImVec2(50, 32))) {
+						action.type = MenuAction::DeleteWorld;
+						action.worldPath = w.path;
+					}
+					ImGui::PopStyleColor(2);
+				}
+				ImGui::EndChild();
+				ImGui::PopStyleColor();
+				ImGui::Spacing();
+			}
+			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 		}
 
-		ImGui::Spacing(); ImGui::Spacing();
+		// ── Create New World ──
+		if (!m_showCreateWorld) {
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.65f, 0.15f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.72f, 0.28f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.90f, 0.55f, 0.10f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+			if (ImGui::Button("+ Create New World", ImVec2(220, 42))) {
+				m_showCreateWorld = true;
+			}
+			ImGui::PopStyleColor(4);
+		} else {
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+			ImGui::SetWindowFontScale(1.2f);
+			ImGui::Text("Create New World");
+			ImGui::SetWindowFontScale(1.0f);
+			ImGui::PopStyleColor();
+			ImGui::Spacing();
 
-		// Start button — always Survival mode (F12 toggles admin in-game)
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.65f, 0.15f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.72f, 0.28f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.90f, 0.55f, 0.10f, 1));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-		if (ImGui::Button("Start Game", ImVec2(220, 48))) {
-			action.type = MenuAction::EnterGame;
-			action.templateIndex = m_selectedTemplate;
-			action.targetState = GameState::SURVIVAL;
+			ImGui::Text("Name");
+			ImGui::SetNextItemWidth(300);
+			ImGui::InputText("##worldname", m_newWorldName, sizeof(m_newWorldName));
+
+			ImGui::Spacing();
+			ImGui::Text("Seed (blank = random)");
+			ImGui::SetNextItemWidth(150);
+			ImGui::InputText("##worldseed", m_newWorldSeed, sizeof(m_newWorldSeed));
+
+			ImGui::Spacing();
+			ImGui::Text("Template");
+			ImGui::Spacing();
+			for (int i = 0; i < (int)m_templates.size(); i++) {
+				bool selected = (m_selectedTemplate == i);
+				ImGui::PushStyleColor(ImGuiCol_ChildBg,
+					selected ? ImVec4(0.98f, 0.94f, 0.88f, 1) : ImVec4(0.98f, 0.97f, 0.96f, 1));
+				char id[32]; snprintf(id, sizeof(id), "##tmpl%d", i);
+				ImGui::BeginChild(id, ImVec2(cardW, 52), true);
+				{
+					ImGui::SetCursorPos(ImVec2(16, 6));
+					ImGui::PushStyleColor(ImGuiCol_Text,
+						selected ? ImVec4(0.96f, 0.65f, 0.15f, 1) : ImVec4(0.25f, 0.25f, 0.28f, 1));
+					ImGui::Text("%s", m_templates[i]->name().c_str());
+					ImGui::PopStyleColor();
+					ImGui::SetCursorPosX(16);
+					ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "%s",
+						m_templates[i]->description().c_str());
+				}
+				if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0))
+					m_selectedTemplate = i;
+				ImGui::EndChild();
+				ImGui::PopStyleColor();
+				ImGui::Spacing();
+			}
+
+			ImGui::Spacing();
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.65f, 0.15f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.72f, 0.28f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.90f, 0.55f, 0.10f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+			if (ImGui::Button("Create & Play", ImVec2(180, 42))) {
+				int seed = 0;
+				if (strlen(m_newWorldSeed) > 0) {
+					seed = atoi(m_newWorldSeed);
+				} else {
+					std::random_device rd;
+					seed = (int)rd();
+				}
+				std::string tmplName = (m_selectedTemplate < (int)m_templates.size())
+					? m_templates[m_selectedTemplate]->name() : "Village";
+				std::string path = m_worldMgr.createWorld(m_newWorldName, seed, m_selectedTemplate, tmplName);
+				action.type = MenuAction::EnterGame;
+				action.templateIndex = m_selectedTemplate;
+				action.seed = seed;
+				action.worldPath = path;
+				action.worldName = m_newWorldName;
+				action.targetState = GameState::SURVIVAL;
+				m_showCreateWorld = false;
+				m_worldMgr.refresh();
+			}
+			ImGui::PopStyleColor(4);
+
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel", ImVec2(100, 42))) {
+				m_showCreateWorld = false;
+			}
 		}
-		ImGui::PopStyleColor(4);
 
 		ImGui::Spacing();
 		ImGui::TextColored(ImVec4(0.65f, 0.67f, 0.70f, 1),
-			"Press F12 in-game for admin mode (fly, debug).");
+			"Press F12 in-game for admin mode.");
 
 		return action;
 	}

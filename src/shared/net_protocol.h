@@ -54,6 +54,7 @@ struct MsgHeader {
 
 class WriteBuffer {
 public:
+	void writeU8(uint8_t v) { write(&v, 1); }
 	void writeU32(uint32_t v) { write(&v, 4); }
 	void writeI32(int32_t v) { write(&v, 4); }
 	void writeF32(float v) { write(&v, 4); }
@@ -80,6 +81,7 @@ class ReadBuffer {
 public:
 	ReadBuffer(const uint8_t* data, size_t size) : m_data(data), m_size(size) {}
 
+	uint8_t readU8() { uint8_t v; read(&v, 1); return v; }
 	uint32_t readU32() { uint32_t v; read(&v, 4); return v; }
 	int32_t readI32() { int32_t v; read(&v, 4); return v; }
 	float readF32() { float v; read(&v, 4); return v; }
@@ -94,6 +96,7 @@ public:
 	}
 
 	bool hasMore() const { return m_pos < m_size; }
+	size_t remaining() const { return (m_pos < m_size) ? m_size - m_pos : 0; }
 
 private:
 	void read(void* ptr, size_t n) {

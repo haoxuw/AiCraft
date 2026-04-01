@@ -23,14 +23,18 @@ struct MenuAction {
 		StartGame,         // → probe servers, show browser or auto-start
 		ShowControls,
 		ShowCharacter,
-		EnterGame,         // → actually join a server/create world
+		EnterGame,         // → create new world from template
 		JoinServer,        // → connect to a specific server
 		ResumeGame,        // → return to running game
+		LoadWorld,         // → load a saved world
+		DeleteWorld,       // → delete a saved world
 	};
 	Type type = None;
 	int templateIndex = 0;
+	int seed = 0;              // 0 = random
 	GameState targetState = GameState::SURVIVAL;
-	// For JoinServer
+	std::string worldName;     // for LoadWorld/EnterGame
+	std::string worldPath;     // save directory path
 	std::string serverHost;
 	int serverPort = 7777;
 };

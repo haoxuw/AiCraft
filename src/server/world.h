@@ -35,8 +35,9 @@ public:
 	EntityManager entities;
 	ActionQueue actions;        // proposals queued by input/behaviors, drained in Phase 1
 
-	World(int seed = 42, std::shared_ptr<WorldTemplate> tmpl = nullptr)
-		: m_seed(seed), m_template(tmpl ? tmpl : std::make_shared<VillageWorldTemplate>()) {
+	World(int seed = 42, std::shared_ptr<WorldTemplate> tmpl = nullptr, int templateIndex = 1)
+		: m_seed(seed), m_templateIndex(templateIndex),
+		  m_template(tmpl ? tmpl : std::make_shared<VillageWorldTemplate>()) {
 		registerAllBuiltins(blocks, entities);
 	}
 
@@ -253,6 +254,13 @@ public:
 	}
 
 	int seed() const { return m_seed; }
+	int templateIndex() const { return m_templateIndex; }
+
+	// Iterate all loaded chunks (for saving)
+	void forEachChunk(std::function<void(ChunkPos, const Chunk&)> fn) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		for (auto& [pos, chunk] : m_chunks) fn(pos, *chunk);
+	}
 
 private:
 	Chunk* generateChunk(ChunkPos pos) {
@@ -264,6 +272,7 @@ private:
 	}
 
 	int m_seed;
+	int m_templateIndex = 1;
 	std::shared_ptr<WorldTemplate> m_template;
 	std::mutex m_mutex;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunks;
