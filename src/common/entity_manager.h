@@ -147,6 +147,7 @@ public:
 			mp.gravity = 20.0f * def.gravity_scale;
 			mp.stepHeight = (def.category == Category::Animal || def.category == Category::Player) ? 1.0f : 0.0f;
 			mp.canFly = e.getProp<bool>("fly_mode", false);
+			mp.smoothStep = (def.category == Category::Animal);
 
 			auto result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
 			e.position = result.position;
@@ -161,23 +162,6 @@ public:
 					e.removed = true;
 			}
 		}
-	}
-
-	// Legacy: runs both phases in one call (for backward compat)
-	void step(float dt, const BlockSolidFn& isSolid) {
-		ActionQueue tmpQueue;
-		gatherDecisions(dt, tmpQueue);
-		// Resolve move proposals
-		for (auto& p : tmpQueue.drain()) {
-			if (p.type == ActionProposal::Move) {
-				Entity* e = get(p.actorId);
-				if (e) {
-					e->velocity = p.desiredVel;
-					e->yaw += 0; // yaw is set locally in behaviorToMoveProposal
-				}
-			}
-		}
-		stepPhysics(dt, isSolid);
 	}
 
 	// Attract item entities toward a position. Returns items close enough to pick up.

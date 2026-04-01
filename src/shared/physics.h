@@ -28,6 +28,7 @@ struct MoveParams {
 	float maxFallSpeed = 50.0f;
 	float stepHeight = 1.0f;
 	bool canFly = false;
+	bool smoothStep = false; // true = jump arc instead of instant step-up (for creatures)
 };
 
 // Block query: returns true if block at (x,y,z) is solid.
@@ -84,9 +85,16 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	} else if (wasOnGround && params.stepHeight > 0 && delta.x != 0.0f) {
 		float sh = tryStepUp(pos.x + delta.x, pos.y, pos.z);
 		if (sh > 0) {
-			r.x += delta.x;
-			r.y = pos.y + sh;
-			didStep = true;
+			if (params.smoothStep) {
+				// Creatures: apply jump impulse, don't teleport
+				// Jump velocity = sqrt(2 * gravity * stepHeight) to reach the ledge
+				result.velocity.y = std::sqrt(2.0f * params.gravity * sh * 1.3f);
+				// Don't move horizontally this frame — next frame we'll be airborne and clear it
+			} else {
+				r.x += delta.x;
+				r.y = pos.y + sh;
+				didStep = true;
+			}
 		}
 	}
 
@@ -102,9 +110,13 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	} else if (wasOnGround && !didStep && params.stepHeight > 0 && delta.z != 0.0f) {
 		float sh = tryStepUp(r.x, r.y, pos.z + delta.z);
 		if (sh > 0) {
-			r.z += delta.z;
-			r.y += sh;
-			didStep = true;
+			if (params.smoothStep) {
+				result.velocity.y = std::sqrt(2.0f * params.gravity * sh * 1.3f);
+			} else {
+				r.z += delta.z;
+				r.y += sh;
+				didStep = true;
+			}
 		}
 	}
 

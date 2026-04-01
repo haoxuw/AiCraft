@@ -247,13 +247,6 @@ public:
 		}
 	}
 
-	void step(float dt) {
-		BlockSolidFn solidFn = [this](int x, int y, int z) {
-			return blocks.get(getBlock(x, y, z)).solid;
-		};
-		entities.step(dt, solidFn);
-	}
-
 	static ChunkPos worldToChunk(int wx, int wy, int wz) {
 		auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 		return {div(wx, CHUNK_SIZE), div(wy, CHUNK_SIZE), div(wz, CHUNK_SIZE)};
