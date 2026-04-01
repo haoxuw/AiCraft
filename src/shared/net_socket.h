@@ -7,10 +7,12 @@
 
 #include "shared/net_protocol.h"
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <cerrno>
 #include <vector>
 #include <cstring>
 #include <cstdio>
@@ -136,20 +138,53 @@ private:
 
 class TcpClient {
 public:
-	bool connect(const char* host, int port) {
+	// Connect with a short timeout (default 1 second).
+	// Uses non-blocking connect + select() to avoid hanging for 30+ seconds
+	// when no server is running.
+	bool connect(const char* host, int port, float timeoutSec = 1.0f) {
 		m_fd = socket(AF_INET, SOCK_STREAM, 0);
 		if (m_fd < 0) { perror("socket"); return false; }
+
+		setNonBlocking(m_fd);
 
 		sockaddr_in addr{};
 		addr.sin_family = AF_INET;
 		addr.sin_port = htons(port);
 		inet_pton(AF_INET, host, &addr.sin_addr);
 
-		if (::connect(m_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
-			perror("connect"); close(m_fd); m_fd = -1; return false;
+		int ret = ::connect(m_fd, (sockaddr*)&addr, sizeof(addr));
+		if (ret < 0 && errno != EINPROGRESS) {
+			close(m_fd); m_fd = -1; return false;
 		}
 
-		setNonBlocking(m_fd);
+		if (ret == 0) {
+			// Connected immediately (unlikely but possible on localhost)
+			printf("[Net] Connected to %s:%d\n", host, port);
+			return true;
+		}
+
+		// Wait for connection with timeout using select()
+		fd_set wfds;
+		FD_ZERO(&wfds);
+		FD_SET(m_fd, &wfds);
+		struct timeval tv;
+		tv.tv_sec = (int)timeoutSec;
+		tv.tv_usec = (int)((timeoutSec - (int)timeoutSec) * 1000000);
+
+		ret = select(m_fd + 1, nullptr, &wfds, nullptr, &tv);
+		if (ret <= 0) {
+			// Timeout or error
+			close(m_fd); m_fd = -1; return false;
+		}
+
+		// Check if connection succeeded
+		int err = 0;
+		socklen_t len = sizeof(err);
+		getsockopt(m_fd, SOL_SOCKET, SO_ERROR, &err, &len);
+		if (err != 0) {
+			close(m_fd); m_fd = -1; return false;
+		}
+
 		printf("[Net] Connected to %s:%d\n", host, port);
 		return true;
 	}

@@ -3,8 +3,28 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <string>
 
 namespace aicraft {
+
+// Portability: replace #version line for WebGL (GLSL ES 3.00).
+// Shaders are authored as GLSL 4.10 core. On web builds, we strip
+// the version directive and prepend the ES equivalent + precision.
+static std::string adaptShaderSource(const std::string& src) {
+#ifdef __EMSCRIPTEN__
+	std::string out = src;
+	// Replace #version line
+	auto pos = out.find("#version");
+	if (pos != std::string::npos) {
+		auto end = out.find('\n', pos);
+		out.replace(pos, end - pos,
+			"#version 300 es\nprecision mediump float;\nprecision mediump int;");
+	}
+	return out;
+#else
+	return src;
+#endif
+}
 
 Shader::~Shader() {
 	if (m_program)
@@ -23,8 +43,8 @@ bool Shader::loadFromFile(const std::string& vertPath, const std::string& fragPa
 		return ss.str();
 	};
 
-	std::string vertSrc = readFile(vertPath);
-	std::string fragSrc = readFile(fragPath);
+	std::string vertSrc = adaptShaderSource(readFile(vertPath));
+	std::string fragSrc = adaptShaderSource(readFile(fragPath));
 	if (vertSrc.empty() || fragSrc.empty())
 		return false;
 

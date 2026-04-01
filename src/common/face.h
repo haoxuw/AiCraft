@@ -14,7 +14,7 @@
  *   Bottom = skin
  */
 
-#include <glad/gl.h>
+#include "client/gl.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>

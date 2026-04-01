@@ -79,7 +79,9 @@ void ParticleSystem::render(const glm::mat4& viewProj) {
 	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
 	glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
 
-	glEnable(GL_PROGRAM_POINT_SIZE);
+#ifndef __EMSCRIPTEN__
+	glEnable(GL_PROGRAM_POINT_SIZE); // WebGL: always enabled via shader
+#endif
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glDepthMask(GL_FALSE);
@@ -90,7 +92,9 @@ void ParticleSystem::render(const glm::mat4& viewProj) {
 
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
+#ifndef __EMSCRIPTEN__
 	glDisable(GL_PROGRAM_POINT_SIZE);
+#endif
 	glBindVertexArray(0);
 }
 

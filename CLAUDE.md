@@ -35,6 +35,45 @@ AiCraft uses a **server-authoritative** model:
 - In multiplayer, ActionProposals are serialized as TOSERVER_* packets.
   The server broadcasts results as TOCLIENT_* packets.
 
+### Key Design Choice: ALL Intelligence Runs on the Client
+
+**The server has ZERO intelligence. All AI, pathfinding, and decision-making
+runs on the client side.**
+
+Why: A single server may host hundreds of players and NPCs. If the server ran
+AI behaviors for every NPC, it would become the bottleneck. Instead:
+
+- **Client runs behaviors** — each client executes `decide()` for the entities
+  it controls (its player character + any NPCs it owns).
+- **Client reads the world** — pathfinding, block scanning, entity targeting
+  all use the client's local world cache (received from server).
+- **Client sends intents** — the result is an ActionProposal: "move to (x,y,z)"
+  or "break block at (x,y,z)". Just coordinates, no logic.
+- **Server validates** — "can you move there?" (collision check), "can you break
+  that?" (in range? block exists? breakable?). Simple yes/no checks.
+- **Server executes** — applies physics, modifies chunks, broadcasts results.
+
+This means:
+- Server CPU scales with world size, not with NPC count.
+- Adding 100 NPCs = adding 100 headless AI clients, NOT loading the server.
+- Python behavior code NEVER runs on the server.
+- The server never imports pybind11 for behavior execution (only for artifact validation).
+
+```
+Client (runs Python behaviors)          Server (dumb validator)
+┌─────────────────────────┐            ┌──────────────────────────┐
+│ behavior.decide()       │            │                          │
+│   → reads world cache   │            │ Receives ActionProposal  │
+│   → finds nearest tree  │  ───────►  │   "break block (5,3,7)" │
+│   → returns BreakBlock  │            │ Validates: in range? yes │
+│                         │            │ Executes: remove block   │
+│ behavior.decide()       │            │ Broadcasts: chunk update │
+│   → finds player nearby │  ───────►  │   "move to (10,0,15)"   │
+│   → returns Follow      │            │ Validates: path clear?   │
+│                         │            │ Executes: apply physics  │
+└─────────────────────────┘            └──────────────────────────┘
+```
+
 ### Three Modes of Control
 
 Any character can be controlled in three interchangeable ways:
@@ -84,22 +123,35 @@ of the game loop. In multiplayer, it means a different machine entirely.
 ### Python-Everything Architecture
 
 **No game content should be C++ source code.** Everything is Python data that C++ loads.
+All built-in content ships as Python files in the artifact store. Players can view,
+fork, and modify ANY built-in definition from the in-game editor.
 
+- **Creatures** (pig, chicken, dog, villager) — Python defines stats, collision,
+  walk speed, default behavior, model reference. `python/aicraft/creatures/*.py`
+- **Behaviors** (wander, peck, dog follow, villager work) — Python `decide(self, world)`
+  runs on server, returns actions. `artifacts/behaviors/base/*.py`
 - **Items** (jetpack, tools, food) — Python defines visual pieces, particle emitters,
-  active effects. C++ renders generically from the definitions.
-- **Behaviors** (pig wander, chicken peck) — Python `decide()` runs on server, returns
-  ActionProposals. C++ executes them through physics.
+  active effects. C++ renders generically from definitions.
 - **Actions** (mine, place, attack) — Python `validate()` + `execute()` with WorldView.
-  Server validates all actions before mutation.
-- **Blocks** (TNT, wheat, wire) — Python ObjectMeta defines properties. Active blocks
-  have Python `decide()` for ticking behavior.
+- **Blocks** (TNT, wheat, wire) — Python ObjectMeta defines properties.
+
+**Artifact store structure:**
+```
+artifacts/
+  behaviors/
+    base/          ← built-in (wander.py, peck.py, dog.py, villager.py)
+    player/        ← player-modified (forkable, saveable)
+  creatures/
+    base/          ← built-in (pig.py, chicken.py, dog.py, villager.py)
+    player/        ← player-created creatures
+```
 
 **Data flow:** Server sets entity props (e.g., `"jetpack_active" = 1`). Client reads
-props and looks up visual definitions. Server knows nothing about flames; client knows
-nothing about thrust physics. They communicate through entity properties.
+props and looks up visual definitions. Server knows nothing about rendering; client
+knows nothing about physics. They communicate through entity properties.
 
-**Artifact upload:** Client creates Python code → sends to server → server validates
-(AST scan, sandbox) → registers globally → other players see it live.
+**Artifact upload:** Client creates/edits Python code → sends to server → server
+validates (AST scan, sandbox) → registers globally → other players see it live.
 
 ### Network Protocol (implemented)
 - Binary TCP with 8-byte header (type + payload length)
@@ -126,7 +178,16 @@ make client   # network client (connects to localhost:7777)
 make clean    # remove build directory
 ```
 
-Dependencies (GLFW, GLM, GLAD) are fetched automatically via CMake FetchContent.
+Dependencies (GLFW, GLM, GLAD, pybind11) fetched automatically via CMake FetchContent.
+
+### Web build (Emscripten → WASM + WebGL)
+```bash
+source /path/to/emsdk/emsdk_env.sh
+emcmake cmake -B build-web -DAICRAFT_TARGET=web
+cmake --build build-web -j$(nproc)
+# Outputs: aicraft.html, aicraft.js, aicraft.wasm, aicraft.data
+```
+See `18_WEB_CLIENT.md` for full design.
 
 ## Running
 
@@ -216,12 +277,15 @@ src/
 - In multiplayer, server and client communicate through TCP via `shared/net_protocol.h`
 
 ### Design Docs (read these for context)
+- `19_OBJECT_MODEL.md` -- **Object hierarchy, Python-everything architecture, all game concepts**
+- `21_BEHAVIOR_API.md` -- **Behavior API reference: self, world, actions, examples**
 - `00_OVERVIEW.md` -- Project vision, the three abstractions (Object/Action/World)
 - `09_CORE_LOOP.md` -- 3-phase step loop (Resolve/Render/Gather)
 - `14_ARCHITECTURE_DIAGRAM.md` -- Layer separation rules
 - `15_BLOCK_AND_ENTITY_MODEL.md` -- Block storage (compact grid + sparse state)
 - `13_MILESTONE_1.md` -- Current milestone deliverables
 - `17_RESOURCE_GUIDE.md` -- Open-source textures, sounds, models, rendering references
+- `18_WEB_CLIENT.md` -- **Web browser client: dual-target build (native + WASM/WebGL)**
 
 ## Commit Guidelines
 

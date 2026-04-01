@@ -10,6 +10,7 @@
 #include <vector>
 #include <functional>
 #include <cmath>
+#include <algorithm>
 #include <glm/trigonometric.hpp>
 
 namespace aicraft {
@@ -85,7 +86,13 @@ public:
 	// Phase 3 (GATHER): AI behaviors decide and push ActionProposals.
 	// Player input is handled separately in gameplay.cpp.
 	// ---------------------------------------------------------------
-	void gatherDecisions(float dt, ActionQueue& actions) {
+	// Block query function: returns block type string at world position
+	using BlockTypeFn = std::function<std::string(int, int, int)>;
+
+	// Gather AI decisions. Block scanning is done by the caller (client-side)
+	// since pathfinding and world reading is a client concern.
+	// Server only validates the resulting ActionProposals.
+	void gatherDecisions(float dt, ActionQueue& actions, BlockTypeFn blockTypeFn = nullptr) {
 		for (auto& [id, entity] : m_entities) {
 			auto& e = *entity;
 			const auto& def = e.def();
@@ -101,12 +108,18 @@ public:
 				state.decideTimer -= dt;
 				if (state.decideTimer <= 0) {
 					state.decideTimer = 0.25f;
-					BehaviorWorldView view{e, gatherNearby(e, 16.0f), dt};
+
+					// Only scan blocks for entities that need them (villagers).
+					// Uses cache: scan once, then verify 1 lookup per type per tick.
+					bool needsBlocks = (e.typeId() == EntityType::Villager);
+					auto blocks = (needsBlocks && blockTypeFn)
+						? getKnownBlocks(e, 30, blockTypeFn)
+						: std::vector<NearbyBlock>{};
+
+					BehaviorWorldView view{e, gatherNearby(e, 16.0f), blocks, dt};
 					state.currentAction = state.behavior->decide(view);
 				}
 
-				// Convert behavior action to ActionProposal::Move
-				// (the action executor will set velocity from this)
 				behaviorToMoveProposal(e, state, state.currentAction, dt, actions);
 			}
 		}
@@ -121,6 +134,7 @@ public:
 		for (auto it = m_entities.begin(); it != m_entities.end(); ) {
 			if (it->second->removed) {
 				m_behaviors.erase(it->first);
+				m_blockCaches.erase(it->first);
 				it = m_entities.erase(it);
 			} else ++it;
 		}
@@ -299,9 +313,87 @@ private:
 		case BehaviorAction::Attack:
 			p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
 			break;
+
+		case BehaviorAction::BreakBlock: {
+			// Push a BreakBlock ActionProposal to the server queue
+			ActionProposal bp;
+			bp.type = ActionProposal::BreakBlock;
+			bp.actorId = e.id();
+			bp.blockPos = glm::ivec3((int)action.targetPos.x, (int)action.targetPos.y, (int)action.targetPos.z);
+			actions.propose(bp);
+			p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+			break;
 		}
+		} // end switch
 
 		actions.propose(p);
+	}
+
+	// Scan blocks near a position, return non-air blocks
+	// Block cache: one sample position per block type, per entity.
+	// Instead of scanning 100K blocks every tick, we:
+	//   1. First time: scan once, cache one position per type
+	//   2. Every tick: verify cached positions still valid (1 lookup each)
+	//   3. If a cached block is gone: scan to find a replacement
+	struct BlockCache {
+		// type_id → position of a known block of that type
+		std::unordered_map<std::string, glm::ivec3> known;
+		bool initialized = false;
+	};
+	std::unordered_map<EntityId, BlockCache> m_blockCaches;
+
+	std::vector<NearbyBlock> getKnownBlocks(Entity& e, int radius, const BlockTypeFn& getType) {
+		auto& cache = m_blockCaches[e.id()];
+
+		if (!cache.initialized) {
+			// First time: do a full scan (expensive, but only once)
+			cache.initialized = true;
+			int cx = (int)e.position.x, cy = (int)e.position.y, cz = (int)e.position.z;
+			for (int dy = -2; dy <= 12; dy++)
+				for (int dz = -radius; dz <= radius; dz += 3)
+					for (int dx = -radius; dx <= radius; dx += 3) {
+						if (dx*dx + dz*dz > radius*radius) continue;
+						std::string type = getType(cx+dx, cy+dy, cz+dz);
+						if (type.empty() || type == "base:air" ||
+						    type == "base:dirt" || type == "base:grass" ||
+						    type == "base:stone" || type == "base:sand") continue;
+						// Store first occurrence of each type
+						if (cache.known.find(type) == cache.known.end())
+							cache.known[type] = {cx+dx, cy+dy, cz+dz};
+					}
+		} else {
+			// Subsequent calls: just verify cached positions still exist
+			std::vector<std::string> gone;
+			for (auto& [type, pos] : cache.known) {
+				std::string actual = getType(pos.x, pos.y, pos.z);
+				if (actual != type) gone.push_back(type);
+			}
+			// Remove stale entries — next call will find replacements lazily
+			for (auto& g : gone) {
+				cache.known.erase(g);
+				// Quick local search for a replacement (small radius)
+				int cx = (int)e.position.x, cy = (int)e.position.y, cz = (int)e.position.z;
+				for (int dy = 0; dy <= 10; dy++)
+					for (int dz = -radius; dz <= radius; dz += 4)
+						for (int dx = -radius; dx <= radius; dx += 4) {
+							if (dx*dx + dz*dz > radius*radius) continue;
+							std::string t = getType(cx+dx, cy+dy, cz+dz);
+							if (t == g) { cache.known[g] = {cx+dx, cy+dy, cz+dz}; goto found; }
+						}
+				found:;
+			}
+		}
+
+		// Build result from cache
+		std::vector<NearbyBlock> result;
+		for (auto& [type, pos] : cache.known) {
+			float dist = glm::length(glm::vec3(pos) - e.position);
+			result.push_back({pos, type, dist});
+		}
+		std::sort(result.begin(), result.end(), [](const NearbyBlock& a, const NearbyBlock& b) {
+			return a.distance < b.distance;
+		});
+		return result;
 	}
 
 	// Gather nearby entity info for a behavior's world view

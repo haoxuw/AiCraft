@@ -9,14 +9,19 @@ bool Window::init(int width, int height, const std::string& title) {
 		return false;
 	}
 
-	// Request OpenGL 4.1 core profile
+#ifdef __EMSCRIPTEN__
+	// WebGL 2.0 (GL ES 3.0)
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+	glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+#else
+	// OpenGL 4.1 core profile
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-
-	// MSAA 4x for anti-aliasing
 	glfwWindowHint(GLFW_SAMPLES, 4);
+#endif
 
 	m_window = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
 	if (!m_window) {
@@ -27,6 +32,10 @@ bool Window::init(int width, int height, const std::string& title) {
 
 	glfwMakeContextCurrent(m_window);
 
+#ifdef __EMSCRIPTEN__
+	// Emscripten provides GL ES 3.0 directly, no loader needed
+	printf("WebGL 2.0 context ready\n");
+#else
 	// Load OpenGL functions via GLAD
 	int version = gladLoadGL(glfwGetProcAddress);
 	if (!version) {
@@ -34,12 +43,17 @@ bool Window::init(int width, int height, const std::string& title) {
 		return false;
 	}
 	printf("OpenGL %d.%d loaded\n", GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version));
+#endif
 
 	// VSync
 	glfwSwapInterval(1);
 
-	// Capture mouse
+#ifndef __EMSCRIPTEN__
+	// Native: capture mouse immediately (menu will release it)
 	glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+#endif
+	// Web: don't capture here -- pointer lock requires user gesture.
+	// The game captures when entering play mode via a click.
 
 	// Track size
 	m_width = width;
@@ -47,8 +61,10 @@ bool Window::init(int width, int height, const std::string& title) {
 	glfwSetWindowUserPointer(m_window, this);
 	glfwSetFramebufferSizeCallback(m_window, framebufferCallback);
 
-	// Enable MSAA
+#ifndef __EMSCRIPTEN__
+	// MSAA (not available in WebGL 2 via this path -- use canvas MSAA instead)
 	glEnable(GL_MULTISAMPLE);
+#endif
 
 	return true;
 }

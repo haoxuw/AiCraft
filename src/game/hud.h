@@ -9,7 +9,7 @@
 #include "client/entity_raycast.h"
 #include "server/world.h"
 #include "shared/inventory.h"
-#include <glad/gl.h>
+#include "client/gl.h"
 
 namespace aicraft {
 

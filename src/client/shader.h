@@ -1,6 +1,6 @@
 #pragma once
 
-#include <glad/gl.h>
+#include "client/gl.h"
 #include <glm/glm.hpp>
 #include <string>
 

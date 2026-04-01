@@ -43,6 +43,7 @@ struct BehaviorAction {
 		Follow,     // move toward targetEntity
 		Flee,       // move away from targetEntity/targetPos
 		Attack,     // damage targetEntity (future)
+		BreakBlock, // break block at targetPos (x,y,z)
 	};
 
 	Type type = Idle;
@@ -69,11 +70,28 @@ struct NearbyEntity {
 // BehaviorWorldView -- what a behavior can see
 // ================================================================
 
+// Block info visible to behaviors
+struct NearbyBlock {
+	glm::ivec3 pos;
+	std::string typeId;
+	float distance;
+};
+
 struct BehaviorWorldView {
 	Entity& self;
 	std::vector<NearbyEntity> nearbyEntities;
+	std::vector<NearbyBlock> nearbyBlocks;
 	float dt;
 	float timeOfDay = 0.0f;
+
+	// Find closest block matching a type
+	const NearbyBlock* closestBlock(const std::string& type) const {
+		const NearbyBlock* best = nullptr;
+		for (auto& nb : nearbyBlocks)
+			if (nb.typeId == type && (!best || nb.distance < best->distance))
+				best = &nb;
+		return best;
+	}
 
 	// Find closest entity matching a category
 	const NearbyEntity* closestByCategory(const std::string& cat) const {
@@ -386,12 +404,288 @@ private:
 // Factory: create default behavior for an entity category/type
 // ================================================================
 
+// ================================================================
+// Built-in: DogBehavior — follows players or villagers
+// ================================================================
+
+class DogBehavior : public Behavior {
+public:
+	std::string name() const override { return "Dog"; }
+
+	BehaviorAction decide(BehaviorWorldView& view) override {
+		auto& e = view.self;
+		float speed = e.def().walk_speed;
+
+		// Look for nearest player first, then villager
+		const NearbyEntity* target = view.closestByCategory(Category::Player);
+		if (!target) {
+			// No player nearby — look for a villager to follow
+			for (auto& ne : view.nearbyEntities) {
+				if (ne.typeId == EntityType::Villager) {
+					if (!target || ne.distance < target->distance)
+						target = &ne;
+				}
+			}
+		}
+
+		if (!target) {
+			e.goalText = "Looking for someone";
+			BehaviorAction a;
+			a.type = BehaviorAction::Wander;
+			a.speed = speed * 0.5f;
+			a.param = 1.0f;
+			return a;
+		}
+
+		// Close enough — sit
+		if (target->distance < 3.0f) {
+			e.goalText = "Sitting by " + target->typeId.substr(5); // strip "base:"
+			return {BehaviorAction::Idle};
+		}
+
+		// Follow them
+		e.goalText = "Following " + target->typeId.substr(5);
+		BehaviorAction a;
+		a.type = BehaviorAction::Follow;
+		a.targetPos = target->position;
+		a.targetEntity = target->id;
+		a.speed = speed;
+		a.param = 2.5f; // min distance
+		return a;
+	}
+
+	std::string sourceCode() const override {
+		return R"py("""Dog — follows nearest player or villager.
+
+Dogs look for the nearest player. If no player is nearby,
+they follow the nearest villager instead. They sit when close.
+"""
+from aicraft_engine import Idle, Wander, Follow
+
+FOLLOW_DISTANCE = 3.0
+FOLLOW_SPEED = 4.0
+
+def decide(self, world):
+    # Find nearest player
+    players = [e for e in world["nearby"] if e.category == "player"]
+    villagers = [e for e in world["nearby"] if e.type_id == "base:villager"]
+
+    target = None
+    if players:
+        target = min(players, key=lambda e: e.distance)
+    elif villagers:
+        target = min(villagers, key=lambda e: e.distance)
+
+    if not target:
+        self["goal"] = "Looking for someone"
+        return Wander(speed=self["walk_speed"] * 0.5)
+
+    if target.distance < FOLLOW_DISTANCE:
+        self["goal"] = f"Sitting by {target.type_id.split(':')[1]}"
+        return Idle()
+
+    self["goal"] = f"Following {target.type_id.split(':')[1]}"
+    return Follow(target.id, speed=FOLLOW_SPEED, min_distance=FOLLOW_DISTANCE)
+)py";
+	}
+};
+
+// ================================================================
+// Built-in: VillagerBehavior — finds and chops trees
+// ================================================================
+
+class VillagerBehavior : public Behavior {
+	enum State { Idle_S, Searching, WalkingToTree, Chopping, Resting };
+	State m_state = Idle_S;
+	float m_timer = 0;
+	glm::vec3 m_treePos = {0, 0, 0};
+
+public:
+	std::string name() const override { return "Villager"; }
+
+	BehaviorAction decide(BehaviorWorldView& view) override {
+		auto& e = view.self;
+		float speed = e.def().walk_speed;
+		m_timer -= view.dt * 4.0f;
+
+		switch (m_state) {
+		case Idle_S:
+			// Always exploring — check for wood first, then wander
+			{
+				auto* wood = view.closestBlock("base:wood");
+				if (wood) {
+					m_treePos = glm::vec3(wood->pos) + glm::vec3(0.5f, 0, 0.5f);
+					m_state = WalkingToTree;
+					m_timer = 15.0f;
+					e.goalText = "Found a tree!";
+					BehaviorAction a;
+					a.type = BehaviorAction::MoveTo;
+					a.targetPos = m_treePos;
+					a.speed = speed;
+					return a;
+				}
+			}
+			// No wood nearby — walk in one direction for a while, then pick a new one
+			e.goalText = "Exploring for trees...";
+			{
+				m_timer -= view.dt * 4.0f;
+				BehaviorAction a;
+				a.type = BehaviorAction::Wander;
+				a.speed = speed * 1.2f;
+				a.param = (m_timer <= 0) ? 1.0f : 0.0f; // pick new dir only when timer expires
+				if (m_timer <= 0) m_timer = 3.0f; // walk same dir for 3 seconds
+				return a;
+			}
+
+		case Searching:
+			// Merged into Idle_S — always exploring
+			m_state = Idle_S;
+			return {BehaviorAction::Idle};
+
+		case WalkingToTree: {
+			// Horizontal distance only — trees are tall, villager walks on ground
+			float dx = e.position.x - m_treePos.x;
+			float dz = e.position.z - m_treePos.z;
+			float dist = std::sqrt(dx*dx + dz*dz);
+			if (dist < 2.5f) {
+				m_state = Chopping;
+				m_timer = 2.0f; // chop for 2 seconds
+				e.goalText = "Chopping tree!";
+				return {BehaviorAction::Idle};
+			}
+			if (m_timer <= 0) {
+				// Timed out walking — give up
+				m_state = Idle_S;
+				m_timer = 2.0f;
+				e.goalText = "Can't reach tree";
+				return {BehaviorAction::Idle};
+			}
+			e.goalText = "Walking to tree";
+			BehaviorAction a;
+			a.type = BehaviorAction::MoveTo;
+			a.targetPos = m_treePos;
+			a.speed = speed;
+			return a;
+		}
+
+		case Chopping:
+			e.goalText = "Chopping!";
+			if (m_timer <= 0) {
+				// Break the tree block!
+				m_state = Resting;
+				m_timer = 3.0f;
+
+				BehaviorAction a;
+				a.type = BehaviorAction::BreakBlock;
+				a.targetPos = glm::vec3(
+					std::floor(m_treePos.x),
+					std::floor(m_treePos.y),
+					std::floor(m_treePos.z)
+				);
+				return a;
+			}
+			return {BehaviorAction::Idle};
+
+		case Resting:
+			e.goalText = "Taking a break";
+			if (m_timer <= 0) {
+				m_state = Idle_S;
+				m_timer = 1.0f;
+			}
+			return {BehaviorAction::Idle};
+		}
+
+		return {BehaviorAction::Idle};
+	}
+
+	std::string sourceCode() const override {
+		return R"py("""Villager — finds nearby trees and chops them down.
+
+Villagers search for wood blocks, walk to them, chop them,
+then rest before searching again.
+"""
+from aicraft_engine import Idle, Wander, MoveTo
+
+SEARCH_RADIUS = 16.0
+
+_state = "idle"
+_timer = 0
+_tree_x, _tree_y, _tree_z = 0, 0, 0
+
+def decide(self, world):
+    global _state, _timer, _tree_x, _tree_y, _tree_z
+
+    dt = world["dt"]
+    _timer -= dt
+
+    if _state == "idle":
+        if _timer <= 0:
+            _state = "searching"
+            _timer = 1.0
+        self["goal"] = "Resting"
+        return Idle()
+
+    if _state == "searching":
+        # Find nearest wood block
+        wood_blocks = [b for b in world["blocks"] if b["type"] == "base:wood"]
+        if wood_blocks:
+            nearest = min(wood_blocks, key=lambda b: b["distance"])
+            _tree_x, _tree_y, _tree_z = nearest["x"], nearest["y"], nearest["z"]
+            _state = "walking"
+            _timer = 8.0
+            self["goal"] = "Found a tree!"
+            return MoveTo(_tree_x + 0.5, _tree_y, _tree_z + 0.5, speed=self["walk_speed"])
+
+        self["goal"] = "Searching for trees"
+        if _timer <= 0:
+            _state = "idle"
+            _timer = 2.0
+        return Wander(speed=self["walk_speed"] * 0.7)
+
+    if _state == "walking":
+        dx = self["x"] - _tree_x
+        dz = self["z"] - _tree_z
+        dist = (dx*dx + dz*dz) ** 0.5
+        if dist < 2.5:
+            _state = "chopping"
+            _timer = 2.0
+            self["goal"] = "Chopping tree!"
+            return Idle()
+        if _timer <= 0:
+            _state = "idle"
+            _timer = 2.0
+        self["goal"] = "Walking to tree"
+        return MoveTo(_tree_x + 0.5, _tree_y, _tree_z + 0.5, speed=self["walk_speed"])
+
+    if _state == "chopping":
+        self["goal"] = "Chopping!"
+        if _timer <= 0:
+            _state = "resting"
+            _timer = 3.0
+        return Idle()
+
+    if _state == "resting":
+        self["goal"] = "Taking a break"
+        if _timer <= 0:
+            _state = "idle"
+            _timer = 1.0
+        return Idle()
+
+    return Idle()
+)py";
+	}
+};
+
+// Create behavior from entity type.
 inline std::unique_ptr<Behavior> createDefaultBehavior(const std::string& typeId) {
 	if (typeId == EntityType::Chicken)
 		return std::make_unique<PeckBehavior>();
 	if (typeId == EntityType::Pig)
 		return std::make_unique<WanderBehavior>();
-	// Default for unknown living entities
+	if (typeId == EntityType::Dog)
+		return std::make_unique<DogBehavior>();
+	if (typeId == EntityType::Villager)
+		return std::make_unique<VillagerBehavior>();
 	return std::make_unique<IdleBehavior>();
 }
 

@@ -1,0 +1,283 @@
+#pragma once
+
+/**
+ * NetworkServer — connects to a remote GameServer via TCP.
+ *
+ * Implements ServerInterface so the Game class can use it
+ * identically to LocalServer. Sends ActionProposals over TCP,
+ * receives entity/chunk/time updates.
+ *
+ * Used when a dedicated server is already running.
+ * The client generates a random UUID as its player name.
+ */
+
+#include "shared/server_interface.h"
+#include "shared/net_socket.h"
+#include "shared/net_protocol.h"
+#include "shared/block_registry.h"
+#include "shared/chunk.h"
+#include <unordered_map>
+#include <functional>
+#include <string>
+#include <random>
+#include <thread>
+#include <chrono>
+
+namespace aicraft {
+
+class NetworkServer : public ServerInterface {
+public:
+	NetworkServer(const std::string& host, int port)
+		: m_host(host), m_port(port) {
+		// Generate random UUID for this client
+		std::random_device rd;
+		std::mt19937 gen(rd());
+		std::uniform_int_distribution<uint32_t> dist;
+		char buf[40];
+		snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%08x%04x",
+			dist(gen), dist(gen) & 0xFFFF, dist(gen) & 0xFFFF,
+			dist(gen) & 0xFFFF, dist(gen), dist(gen) & 0xFFFF);
+		m_clientUUID = buf;
+		printf("[Net] Client UUID: %s\n", m_clientUUID.c_str());
+	}
+
+	bool createGame(int seed, int templateIndex, bool creative) override {
+		if (!m_tcp.connect(m_host.c_str(), m_port)) {
+			printf("[Net] Cannot connect to %s:%d\n", m_host.c_str(), m_port);
+			return false;
+		}
+
+		m_connected = true;
+		m_creative = creative;
+
+		// Wait for S_WELCOME (polling for up to 3 seconds)
+		auto start = std::chrono::steady_clock::now();
+		while (true) {
+			m_recv.readFrom(m_tcp.fd()); // non-blocking, may return EAGAIN
+
+			net::MsgHeader hdr;
+			std::vector<uint8_t> payload;
+			if (m_recv.tryExtract(hdr, payload)) {
+				if (hdr.type == net::S_WELCOME) {
+					net::ReadBuffer rb(payload.data(), payload.size());
+					m_localPlayerId = rb.readU32();
+					m_spawnPos = rb.readVec3();
+					printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f)\n",
+						m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+					return true;
+				}
+			}
+
+			auto elapsed = std::chrono::steady_clock::now() - start;
+			if (std::chrono::duration<float>(elapsed).count() > 3.0f) {
+				printf("[Net] Timeout waiting for welcome\n");
+				break;
+			}
+
+			// Don't spin at 100% CPU while waiting
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		disconnect();
+		return false;
+	}
+
+	void disconnect() override {
+		m_tcp.disconnect();
+		m_connected = false;
+	}
+
+	bool isConnected() const override { return m_connected; }
+
+	void tick(float dt) override {
+		if (!m_connected) return;
+
+		// Read incoming messages
+		if (!m_recv.readFrom(m_tcp.fd())) {
+			printf("[Net] Connection lost\n");
+			m_connected = false;
+			return;
+		}
+
+		net::MsgHeader hdr;
+		std::vector<uint8_t> payload;
+		while (m_recv.tryExtract(hdr, payload)) {
+			handleMessage(hdr.type, payload);
+		}
+	}
+
+	void sendAction(const ActionProposal& action) override {
+		if (!m_connected) return;
+		net::WriteBuffer buf;
+		net::serializeAction(buf, action);
+		net::sendMessage(m_tcp.fd(), net::C_ACTION, buf);
+	}
+
+	// --- State access ---
+	ChunkSource& chunks() override { return m_chunks; }
+	EntityId localPlayerId() const override { return m_localPlayerId; }
+
+	Entity* getEntity(EntityId id) override {
+		auto it = m_entities.find(id);
+		return it != m_entities.end() ? it->second.get() : nullptr;
+	}
+
+	void forEachEntity(std::function<void(Entity&)> fn) override {
+		for (auto& [id, e] : m_entities)
+			if (!e->removed) fn(*e);
+	}
+
+	size_t entityCount() const override { return m_entities.size(); }
+
+	BehaviorInfo getBehaviorInfo(EntityId) override { return {}; }
+	float worldTime() const override { return m_worldTime; }
+	glm::vec3 spawnPos() const override { return m_spawnPos; }
+	bool isCreative() const override { return m_creative; }
+	const BlockRegistry& blockRegistry() const override { return m_blocks; }
+	ActionQueue& actionQueue() override { return m_actions; }
+
+	void setEffectCallbacks(
+		std::function<void(ChunkPos)> onChunkDirty,
+		std::function<void(glm::vec3, glm::vec3, int)> onBlockBreak,
+		std::function<void(glm::vec3, glm::vec3)> onItemPickup) override {
+		m_onChunkDirty = onChunkDirty;
+		m_onBlockBreak = onBlockBreak;
+		m_onItemPickup = onItemPickup;
+	}
+
+	const std::string& clientUUID() const { return m_clientUUID; }
+
+	// Try to connect (non-blocking check for game.cpp)
+	static bool canConnect(const char* host, int port) {
+		net::TcpClient probe;
+		bool ok = probe.connect(host, port);
+		probe.disconnect();
+		return ok;
+	}
+
+private:
+	void handleMessage(uint32_t type, const std::vector<uint8_t>& payload) {
+		net::ReadBuffer rb(payload.data(), payload.size());
+
+		switch (type) {
+		case net::S_ENTITY: {
+			EntityId id = rb.readU32();
+			std::string typeId = rb.readString();
+			glm::vec3 pos = rb.readVec3();
+			glm::vec3 vel = rb.readVec3();
+			float yaw = rb.readF32();
+
+			auto it = m_entities.find(id);
+			if (it == m_entities.end()) {
+				// New entity -- create with default def
+				auto* def = m_entityDefs.count(typeId) ? &m_entityDefs[typeId] : &m_defaultDef;
+				auto ent = std::make_unique<Entity>(id, typeId, *def);
+				ent->position = pos;
+				ent->velocity = vel;
+				ent->yaw = yaw;
+				m_entities[id] = std::move(ent);
+			} else {
+				it->second->position = pos;
+				it->second->velocity = vel;
+				it->second->yaw = yaw;
+			}
+
+			// Read additional props if present
+			while (rb.hasMore()) {
+				std::string key = rb.readString();
+				if (key.empty()) break;
+				int val = rb.readI32();
+				m_entities[id]->setProp(key, val);
+			}
+			break;
+		}
+		case net::S_CHUNK: {
+			int cx = rb.readI32(), cy = rb.readI32(), cz = rb.readI32();
+			ChunkPos cp = {cx, cy, cz};
+			auto chunk = std::make_unique<Chunk>();
+			for (int ly = 0; ly < CHUNK_SIZE; ly++)
+				for (int lz = 0; lz < CHUNK_SIZE; lz++)
+					for (int lx = 0; lx < CHUNK_SIZE; lx++)
+						chunk->set(lx, ly, lz, (BlockId)rb.readU32());
+			m_chunkData[cp] = std::move(chunk);
+			if (m_onChunkDirty) m_onChunkDirty(cp);
+			break;
+		}
+		case net::S_REMOVE: {
+			EntityId id = rb.readU32();
+			m_entities.erase(id);
+			break;
+		}
+		case net::S_TIME: {
+			m_worldTime = rb.readF32();
+			break;
+		}
+		case net::S_BLOCK: {
+			int bx = rb.readI32(), by = rb.readI32(), bz = rb.readI32();
+			BlockId bid = (BlockId)rb.readU32();
+			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
+			auto it = m_chunkData.find(cp);
+			if (it != m_chunkData.end()) {
+				int lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+				int ly = ((by % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+				int lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+				it->second->set(lx, ly, lz, bid);
+			}
+			if (m_onChunkDirty) m_onChunkDirty(cp);
+			break;
+		}
+		}
+	}
+
+	// Chunk source that reads from received chunk data
+	class NetChunkSource : public ChunkSource {
+	public:
+		NetChunkSource(NetworkServer& ns) : m_ns(ns) {}
+		Chunk* getChunk(ChunkPos pos) override {
+			auto it = m_ns.m_chunkData.find(pos);
+			return it != m_ns.m_chunkData.end() ? it->second.get() : nullptr;
+		}
+		Chunk* getChunkIfLoaded(ChunkPos pos) override { return getChunk(pos); }
+		BlockId getBlock(int x, int y, int z) override {
+			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+			ChunkPos cp = {div(x, CHUNK_SIZE), div(y, CHUNK_SIZE), div(z, CHUNK_SIZE)};
+			Chunk* c = getChunk(cp);
+			if (!c) return BLOCK_AIR;
+			int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			return c->get(lx, ly, lz);
+		}
+		const BlockRegistry& blockRegistry() const override { return m_ns.m_blocks; }
+	private:
+		NetworkServer& m_ns;
+	};
+
+	std::string m_host;
+	int m_port;
+	std::string m_clientUUID;
+	bool m_connected = false;
+	bool m_creative = false;
+
+	net::TcpClient m_tcp;
+	net::RecvBuffer m_recv;
+
+	EntityId m_localPlayerId = ENTITY_NONE;
+	glm::vec3 m_spawnPos = {0, 0, 0};
+	float m_worldTime = 0.3f;
+
+	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
+	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;
+	NetChunkSource m_chunks{*this};
+
+	BlockRegistry m_blocks;
+	ActionQueue m_actions;
+	EntityDef m_defaultDef;
+	std::unordered_map<std::string, EntityDef> m_entityDefs;
+
+	std::function<void(ChunkPos)> m_onChunkDirty;
+	std::function<void(glm::vec3, glm::vec3, int)> m_onBlockBreak;
+	std::function<void(glm::vec3, glm::vec3)> m_onItemPickup;
+};
+
+} // namespace aicraft

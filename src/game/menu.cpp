@@ -1,9 +1,13 @@
 #include "game/menu.h"
 
-#include <glad/gl.h>
+#include "client/gl.h"
 #include <GLFW/glfw3.h>
 #include <cstdio>
 #include <cstring>
+
+#ifndef __EMSCRIPTEN__
+#include "shared/net_socket.h"
+#endif
 
 namespace aicraft {
 
@@ -11,13 +15,12 @@ namespace aicraft {
 struct MenuButton { float x, y, w, h; const char* label; GameState target; };
 
 static MenuButton s_buttons[] = {
-	{-0.28f,  0.20f, 0.56f, 0.11f, "Single Player", GameState::TEMPLATE_SELECT},
-	{-0.28f,  0.05f, 0.56f, 0.11f, "Creative Mode", GameState::TEMPLATE_SELECT},
-	{-0.28f, -0.10f, 0.56f, 0.11f, "Character",     GameState::CHARACTER},
-	{-0.28f, -0.25f, 0.56f, 0.11f, "Controls",      GameState::CONTROLS},
-	{-0.28f, -0.40f, 0.56f, 0.11f, "Quit",           GameState::MENU},
+	{-0.28f,  0.14f, 0.56f, 0.12f, "Start Game",    GameState::SERVER_BROWSER},
+	{-0.28f, -0.02f, 0.56f, 0.12f, "Character",     GameState::CHARACTER},
+	{-0.28f, -0.18f, 0.56f, 0.12f, "Controls",      GameState::CONTROLS},
+	{-0.28f, -0.34f, 0.56f, 0.12f, "Quit",           GameState::MENU},
 };
-static const int BUTTON_COUNT = 5;
+static const int BUTTON_COUNT = 4;
 
 // -----------------------------------------------------------------
 // init
@@ -80,12 +83,12 @@ MenuAction MenuSystem::updateMainMenu(float dt, Window& window, TextRenderer& te
 					m_prevClick = click;
 					return result;
 				}
-				// Single Player (i==0) → Survival, Creative (i==1) → Creative
-				m_pendingGameState = (i == 0) ? GameState::SURVIVAL : GameState::CREATIVE;
-				m_cooldown = 0.3f;
-				result.type = MenuAction::ShowTemplateSelect;
-				m_prevClick = click;
-				return result;
+				// Start Game → probe for servers
+				if (b.target == GameState::SERVER_BROWSER) {
+					result.type = MenuAction::StartGame;
+					m_prevClick = click;
+					return result;
+				}
 			}
 		}
 	}
@@ -501,6 +504,171 @@ MenuAction MenuSystem::updateCharacterSelect(float dt, Window& window, TextRende
 	text.drawRect(backX, backY, backW, backH, {0.25f, 0.30f, 0.35f, 0.9f});
 	text.drawText("Back", backX + 0.065f, backY + 0.02f, 1.0f, {1, 1, 1, 1}, aspect);
 
+	window.swapBuffers();
+	return result;
+}
+
+// -----------------------------------------------------------------
+// probeServers — check if a server is running on default port
+// -----------------------------------------------------------------
+void MenuSystem::probeServers() {
+	m_detectedServers.clear();
+	m_probed = true;
+
+#ifndef __EMSCRIPTEN__
+	// Try connecting to localhost:7777 with a 0.5s timeout
+	net::TcpClient probe;
+	if (probe.connect("127.0.0.1", 7777, 0.5f)) {
+		m_detectedServers.push_back({"127.0.0.1", 7777, "Local Server (127.0.0.1:7777)"});
+		probe.disconnect();
+		printf("[Menu] Found server at 127.0.0.1:7777\n");
+	} else {
+		printf("[Menu] No server found on port 7777\n");
+	}
+#endif
+}
+
+// -----------------------------------------------------------------
+// SERVER BROWSER
+// -----------------------------------------------------------------
+MenuAction MenuSystem::updateServerBrowser(float dt, Window& window, TextRenderer& text,
+                                            ControlManager& controls, float aspect)
+{
+	(void)dt;
+	glfwSetInputMode(window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+	MenuAction result;
+
+	if (controls.pressed(Action::MenuBack)) {
+		m_cooldown = 0.3f;
+		m_probed = false;
+		result.type = MenuAction::BackToMenu;
+		return result;
+	}
+
+	// Probe once when entering this screen
+	if (!m_probed)
+		probeServers();
+
+	bool click = glfwGetMouseButton(window.handle(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+
+	glClearColor(0.12f, 0.14f, 0.18f, 1);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	text.drawTitle("Start Game", -0.20f, 0.78f, 2.2f, {0.95f, 0.95f, 1.0f, 1}, aspect);
+
+	float btnW = 0.56f, btnH = 0.12f, btnX = -0.28f;
+
+	if (!m_detectedServers.empty()) {
+		// Show detected servers
+		text.drawText("Servers found:", -0.26f, 0.60f, 0.8f, {0.7f, 0.9f, 0.7f, 1}, aspect);
+
+		for (int i = 0; i < (int)m_detectedServers.size(); i++) {
+			float btnY = 0.44f - i * 0.16f;
+			text.drawRect(btnX, btnY, btnW, btnH, {0.20f, 0.30f, 0.25f, 0.9f});
+
+			text.drawText(m_detectedServers[i].label.c_str(),
+				btnX + 0.04f, btnY + 0.04f, 0.9f, {1, 1, 1, 1}, aspect);
+			text.drawText("Click to join", btnX + 0.04f, btnY + 0.01f, 0.5f,
+				{0.6f, 0.8f, 0.6f, 1}, aspect);
+
+			if (click && !m_prevClick) {
+				double mx, my;
+				glfwGetCursorPos(window.handle(), &mx, &my);
+				float nx = (float)(mx / window.width()) * 2 - 1;
+				float ny = 1 - (float)(my / window.height()) * 2;
+				if (nx >= btnX && nx <= btnX + btnW && ny >= btnY && ny <= btnY + btnH) {
+					result.type = MenuAction::JoinServer;
+					result.serverHost = m_detectedServers[i].host;
+					result.serverPort = m_detectedServers[i].port;
+					m_prevClick = click;
+					return result;
+				}
+			}
+		}
+
+		// Also offer to start a new local game
+		float newY = 0.44f - (int)m_detectedServers.size() * 0.16f - 0.08f;
+		text.drawText("Or start a new world:", -0.26f, newY + 0.14f, 0.7f,
+			{0.6f, 0.6f, 0.7f, 1}, aspect);
+
+		for (int i = 0; i < (int)m_templates.size(); i++) {
+			float ty = newY - i * 0.16f;
+			text.drawRect(btnX, ty, btnW, btnH, {0.25f, 0.30f, 0.35f, 0.9f});
+			std::string label = m_templates[i]->name();
+			float tw = label.size() * 0.018f * 1.0f;
+			text.drawText(label.c_str(), btnX + (btnW - tw) * 0.5f, ty + 0.04f, 1.0f,
+				{1, 1, 1, 1}, aspect);
+
+			if (click && !m_prevClick) {
+				double mx, my;
+				glfwGetCursorPos(window.handle(), &mx, &my);
+				float nx = (float)(mx / window.width()) * 2 - 1;
+				float ny = 1 - (float)(my / window.height()) * 2;
+				if (nx >= btnX && nx <= btnX + btnW && ny >= ty && ny <= ty + btnH) {
+					result.type = MenuAction::EnterGame;
+					result.templateIndex = i;
+					result.targetState = GameState::CREATIVE;
+					m_prevClick = click;
+					return result;
+				}
+			}
+		}
+	} else {
+		// No servers found — show world templates to start a new game
+		text.drawText("Select a world to start:", -0.22f, 0.60f, 0.8f,
+			{0.7f, 0.7f, 0.8f, 1}, aspect);
+
+		for (int i = 0; i < (int)m_templates.size(); i++) {
+			float btnY = 0.40f - i * 0.18f;
+			text.drawRect(btnX, btnY, btnW, btnH, {0.25f, 0.30f, 0.35f, 0.9f});
+
+			std::string label = m_templates[i]->name();
+			float tw = label.size() * 0.018f * 1.2f;
+			text.drawText(label.c_str(), btnX + (btnW - tw) * 0.5f, btnY + 0.055f,
+				1.2f, {1, 1, 1, 1}, aspect);
+
+			std::string desc = m_templates[i]->description();
+			float dw = desc.size() * 0.018f * 0.7f;
+			text.drawText(desc.c_str(), btnX + (btnW - dw) * 0.5f, btnY + 0.015f,
+				0.7f, {0.6f, 0.6f, 0.6f, 1}, aspect);
+
+			if (click && !m_prevClick) {
+				double mx, my;
+				glfwGetCursorPos(window.handle(), &mx, &my);
+				float nx = (float)(mx / window.width()) * 2 - 1;
+				float ny = 1 - (float)(my / window.height()) * 2;
+				if (nx >= btnX && nx <= btnX + btnW && ny >= btnY && ny <= btnY + btnH) {
+					result.type = MenuAction::EnterGame;
+					result.templateIndex = i;
+					result.targetState = GameState::CREATIVE;
+					m_prevClick = click;
+					return result;
+				}
+			}
+		}
+
+		text.drawText("A local server will start automatically",
+			-0.30f, -0.10f, 0.55f, {0.5f, 0.5f, 0.5f, 0.7f}, aspect);
+	}
+
+	// Back button
+	float backY = -0.80f;
+	text.drawRect(btnX, backY, btnW, btnH, {0.25f, 0.30f, 0.35f, 0.9f});
+	text.drawText("Back", btnX + (btnW - 0.07f) * 0.5f, backY + 0.03f, 1.2f,
+		{1, 1, 1, 1}, aspect);
+	if (click && !m_prevClick) {
+		double mx, my;
+		glfwGetCursorPos(window.handle(), &mx, &my);
+		float nx = (float)(mx / window.width()) * 2 - 1;
+		float ny = 1 - (float)(my / window.height()) * 2;
+		if (nx >= btnX && nx <= btnX + btnW && ny >= backY && ny <= backY + btnH) {
+			m_probed = false;
+			result.type = MenuAction::BackToMenu;
+		}
+	}
+
+	m_prevClick = click;
 	window.swapBuffers();
 	return result;
 }

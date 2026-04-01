@@ -6,9 +6,16 @@
 #include "shared/constants.h"
 #include "server/python_bridge.h"
 #include "server/behavior.h"
+#ifndef __EMSCRIPTEN__
+#include "client/network_server.h"
+#endif
+#include "imgui.h"
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 namespace aicraft {
 
@@ -39,6 +46,7 @@ bool Game::init(int argc, char** argv) {
 	if (!m_particles.init("shaders")) return false;
 
 	m_controls.load("config/controls.yaml");
+	m_ui.init(m_window.handle());
 
 	m_hud.init(m_renderer.highlightShader());
 	m_behaviorStore.init("artifacts/behaviors");
@@ -62,6 +70,8 @@ bool Game::init(int argc, char** argv) {
 	m_playerModel = builtin::playerModel();
 	m_pigModel = builtin::pigModel();
 	m_chickenModel = builtin::chickenModel();
+	m_dogModel = builtin::dogModel();
+	m_villagerModel = builtin::villagerModel();
 
 	// Scroll callback — reads selected slot from player entity
 	struct ScrollData { Game* game; Camera* cam; };
@@ -102,6 +112,7 @@ bool Game::init(int argc, char** argv) {
 }
 
 void Game::shutdown() {
+	m_ui.shutdown();
 	m_hud.shutdown();
 	m_particles.shutdown();
 	m_text.shutdown();
@@ -112,14 +123,26 @@ void Game::shutdown() {
 // ============================================================
 // Main loop
 // ============================================================
+void Game::runOneFrame() {
+	float dt = beginFrame();
+	float aspect = m_window.aspectRatio();
+	handleGlobalInput();
+	updateAndRender(dt, aspect);
+	endFrame();
+}
+
 void Game::run() {
+#ifdef __EMSCRIPTEN__
+	// Browser: yield to event loop each frame
+	emscripten_set_main_loop_arg([](void* arg) {
+		static_cast<Game*>(arg)->runOneFrame();
+	}, this, 0, true);
+#else
+	// Native: blocking loop
 	while (!m_window.shouldClose()) {
-		float dt = beginFrame();
-		float aspect = m_window.aspectRatio();
-		handleGlobalInput();
-		updateAndRender(dt, aspect);
-		endFrame();
+		runOneFrame();
 	}
+#endif
 }
 
 float Game::beginFrame() {
@@ -171,6 +194,11 @@ void Game::updateAndRender(float dt, float aspect) {
 		handleMenuAction(action);
 		break;
 	}
+	case GameState::SERVER_BROWSER: {
+		auto action = m_menu.updateServerBrowser(dt, m_window, m_text, m_controls, aspect);
+		handleMenuAction(action);
+		break;
+	}
 	case GameState::TEMPLATE_SELECT: {
 		auto action = m_menu.updateTemplateSelect(dt, m_window, m_text, m_controls, aspect);
 		handleMenuAction(action);
@@ -208,9 +236,15 @@ void Game::handleMenuAction(const MenuAction& action) {
 	case MenuAction::Quit:
 		glfwSetWindowShouldClose(m_window.handle(), true);
 		break;
-	case MenuAction::ShowTemplateSelect:
-		m_state = GameState::TEMPLATE_SELECT;
+	case MenuAction::StartGame:
+		if (m_demoMode) {
+			// Demo mode: skip server browser, go straight to game
+			enterGame(0, GameState::CREATIVE);
+		} else {
+			m_state = GameState::SERVER_BROWSER;
+		}
 		break;
+	// ShowTemplateSelect removed -- server browser handles this now
 	case MenuAction::ShowControls:
 		m_state = GameState::CONTROLS;
 		break;
@@ -224,32 +258,53 @@ void Game::handleMenuAction(const MenuAction& action) {
 	case MenuAction::EnterGame:
 		enterGame(action.templateIndex, action.targetState);
 		break;
+	case MenuAction::JoinServer:
+		joinServer(action.serverHost, action.serverPort, action.targetState);
+		break;
 	}
+}
+
+void Game::joinServer(const std::string& host, int port, GameState targetState) {
+#ifndef __EMSCRIPTEN__
+	printf("[Game] Joining server at %s:%d\n", host.c_str(), port);
+	bool creative = (targetState == GameState::CREATIVE);
+	auto netServer = std::make_unique<NetworkServer>(host, port);
+	if (netServer->createGame(42, 0, creative)) {
+		printf("[Game] Connected as %s\n", netServer->clientUUID().c_str());
+		m_server = std::move(netServer);
+		setupAfterConnect(targetState);
+		return;
+	}
+	printf("[Game] Failed to join server\n");
+#endif
+	// Fallback: start local
+	enterGame(0, targetState);
 }
 
 // ============================================================
 // World creation — player is now an Entity, same as pigs
 // ============================================================
 void Game::enterGame(int templateIndex, GameState targetState) {
-	// Create a local server — each client runs its own server when creating a game.
-	// Later, clients can join a global server instead of creating a local one.
+	printf("[Game] Starting local server\n");
+	bool creative = (targetState == GameState::CREATIVE);
 	auto localServer = std::make_unique<LocalServer>(m_templates);
-	localServer->createGame(42, templateIndex, targetState == GameState::CREATIVE);
+	localServer->createGame(42, templateIndex, creative);
+	m_server = std::move(localServer);
+	setupAfterConnect(targetState);
+}
 
+void Game::setupAfterConnect(GameState targetState) {
 	// Set callbacks for visual effects
-	localServer->setEffectCallbacks(
+	m_server->setEffectCallbacks(
 		[this](ChunkPos cp) { m_renderer.markChunkDirty(cp); },
 		[this](glm::vec3 pos, glm::vec3 color, int count) { m_particles.emitBlockBreak(pos, color, count); },
 		[this](glm::vec3 pos, glm::vec3 color) { m_particles.emitItemPickup(pos, color); }
 	);
 
-	m_server = std::move(localServer);
-
 	m_state = targetState;
 	glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	m_camera.mode = CameraMode::FirstPerson;
 
-	// Camera setup from server's spawn position
 	glm::vec3 spawn = m_server->spawnPos();
 	m_camera.player.feetPos = spawn;
 	m_camera.player.yaw = -90;
@@ -258,7 +313,6 @@ void Game::enterGame(int templateIndex, GameState targetState) {
 	m_camera.resetSmoothing();
 	m_camera.rtsCenter = spawn;
 
-	// Generate and mesh chunks around spawn
 	ChunkSource& chunks = m_server->chunks();
 	int sx = (int)spawn.x, sh = (int)spawn.y, sz = (int)spawn.z;
 	chunks.ensureChunksAround(worldToChunk(sx, sh, sz), 8);
@@ -405,6 +459,10 @@ void Game::renderPlaying(float dt, float aspect) {
 			mr.draw(m_pigModel, vp, e.position, e.yaw, mobAnim);
 		else if (e.typeId() == EntityType::Chicken)
 			mr.draw(m_chickenModel, vp, e.position, e.yaw, mobAnim);
+		else if (e.typeId() == EntityType::Dog)
+			mr.draw(m_dogModel, vp, e.position, e.yaw, mobAnim);
+		else if (e.typeId() == EntityType::Villager)
+			mr.draw(m_villagerModel, vp, e.position, e.yaw, mobAnim);
 		else if (e.typeId() == EntityType::ItemEntity) {
 			float bobY = std::sin(e.getProp<float>(Prop::Age, 0.0f) * 3.0f) * 0.08f;
 			float spinYaw = e.getProp<float>(Prop::Age, 0.0f) * 90.0f;
@@ -456,6 +514,19 @@ void Game::renderPlaying(float dt, float aspect) {
 		playerHP, pe->def().max_hp, playerHunger
 	};
 	m_hud.render(ctx, m_text, m_renderer.highlightShader());
+
+	// ImGui overlay (renders on top of everything)
+	m_ui.beginFrame();
+	// Demo: show FPS in ImGui as proof of concept
+	ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+	ImGui::SetNextWindowBgAlpha(0.5f);
+	if (ImGui::Begin("##fps", nullptr,
+		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+		ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
+		ImGui::Text("FPS: %.0f", m_currentFPS);
+	}
+	ImGui::End();
+	m_ui.endFrame();
 
 	// Auto screenshot
 	m_autoScreenTimer += dt;

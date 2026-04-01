@@ -48,9 +48,17 @@ public:
 	// Provides a WorldView context with nearby entities and block info.
 	// Returns the BehaviorAction the Python code chose.
 	// On error: returns Idle, errorOut contains the traceback.
+	// Block info passed to Python behaviors
+	struct NearbyBlock {
+		int x, y, z;
+		std::string typeId;
+		float distance;
+	};
+
 	BehaviorAction callDecide(BehaviorHandle handle,
 	                           Entity& self,
 	                           const std::vector<NearbyEntity>& nearby,
+	                           const std::vector<NearbyBlock>& nearbyBlocks,
 	                           float dt,
 	                           std::string& goalOut,
 	                           std::string& errorOut);

@@ -1,9 +1,11 @@
 #pragma once
 
 #include <GLFW/glfw3.h>
+#include "client/input_source.h"
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <memory>
 
 namespace aicraft {
 
@@ -26,22 +28,40 @@ namespace Action {
 }
 
 struct ActionBinding {
-	std::string action;       // "move_forward"
-	std::string displayName;  // "Move Forward"
-	std::string keyName;      // "W"
-	int glfwKey = -1;         // GLFW_KEY_W or -1 if mouse
-	int mouseButton = -1;     // GLFW_MOUSE_BUTTON_LEFT or -1 if keyboard
+	std::string action;
+	std::string displayName;
+	std::string keyName;
+	int glfwKey = -1;
+	int mouseButton = -1;
 };
 
+/**
+ * ControlManager -- maps actions to input, queries multiple InputSources.
+ *
+ * Architecture:
+ *   1. Load bindings from config (action → key/button)
+ *   2. Add one or more InputSources (keyboard, gamepad, touch)
+ *   3. Each frame: call update() which polls ALL sources
+ *   4. Query: held("jump") / pressed("jump") -- returns true if
+ *      ANY source has that input active
+ *
+ * This means a gamepad and keyboard work simultaneously with
+ * zero extra code in the game logic.
+ */
 class ControlManager {
 public:
-	// Load bindings from a config file. Returns false if file not found.
+	// Load bindings from YAML config. Returns false if file not found.
 	bool load(const std::string& path);
+
+	// Add an input source. Manager takes ownership.
+	void addSource(std::unique_ptr<InputSource> source) {
+		m_sources.push_back(std::move(source));
+	}
 
 	// Call once per frame BEFORE querying actions.
 	void update(GLFWwindow* window);
 
-	// Is the action currently held down?
+	// Is the action currently held down (by ANY source)?
 	bool held(const char* action) const;
 
 	// Was the action just pressed this frame (edge-triggered)?
@@ -50,17 +70,20 @@ public:
 	// All bindings for display in the controls screen.
 	const std::vector<ActionBinding>& bindings() const { return m_bindingList; }
 
+	// Get all connected sources (for debug/settings display)
+	const std::vector<std::unique_ptr<InputSource>>& sources() const { return m_sources; }
+
 private:
-	// Key name <-> GLFW code mapping
 	static int keyNameToGLFW(const std::string& name);
 	static std::string displayNameForAction(const std::string& action);
 
 	std::unordered_map<std::string, ActionBinding> m_bindings;
-	std::vector<ActionBinding> m_bindingList; // ordered for display
+	std::vector<ActionBinding> m_bindingList;
 
-	// Per-frame state
 	struct InputState { bool current = false; bool previous = false; };
 	std::unordered_map<std::string, InputState> m_state;
+
+	std::vector<std::unique_ptr<InputSource>> m_sources;
 };
 
 } // namespace aicraft

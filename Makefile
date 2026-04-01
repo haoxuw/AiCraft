@@ -1,22 +1,25 @@
 BUILD_DIR := build
+BUILD_WEB := build-web
 BUILD_TYPE := Debug
 HOST := 127.0.0.1
 PORT := 7777
+WEB_PORT := 8080
+EMSDK := $(HOME)/emsdk
 
-.PHONY: build configure clean server client game
+.PHONY: game build configure clean server client web web-build web-configure web-clean
 
-# Play the game (full experience: menu, characters, world)
-# Runs server + client in one process (singleplayer)
-game: build
+# ── Native (Linux) ─────────────────────────────────────────
+
+stop:
+	@-pkill -f "aicraft" 2>/dev/null; sleep 1
+
+game: build stop
 	./$(BUILD_DIR)/aicraft
 
-# Dedicated server (headless, for hosting multiplayer)
-server: build
+server: build stop
 	./$(BUILD_DIR)/aicraft-server --port $(PORT)
 
-# Multiplayer client (connects to a running server)
-# Server must be started first with 'make server'
-client: build
+client: build stop
 	./$(BUILD_DIR)/aicraft-client --host $(HOST) --port $(PORT)
 
 build: configure
@@ -29,3 +32,20 @@ configure:
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# ── Web (WASM + WebGL) ────────────────────────────────────
+
+web: web-build
+	python3 tools/serve_web.py $(WEB_PORT) $(BUILD_WEB)
+
+web-build: web-configure
+	cmake --build $(BUILD_WEB) -j$$(nproc)
+
+web-configure:
+	@if [ ! -f $(BUILD_WEB)/CMakeCache.txt ]; then \
+		. $(EMSDK)/emsdk_env.sh 2>/dev/null && \
+		emcmake cmake -B $(BUILD_WEB) -DCMAKE_BUILD_TYPE=Release; \
+	fi
+
+web-clean:
+	rm -rf $(BUILD_WEB)

@@ -15,6 +15,7 @@
 #include <thread>
 #include <csignal>
 #include <unordered_map>
+#include <fcntl.h>
 
 #include "server/python_bridge.h"
 
@@ -85,6 +86,9 @@ int main(int argc, char** argv) {
 		// Accept new clients
 		int newFd = listener.acceptClient();
 		if (newFd >= 0) {
+			// Temporarily set blocking for initial data send (chunks are large)
+			int flags = fcntl(newFd, F_GETFL, 0);
+			fcntl(newFd, F_SETFL, flags & ~O_NONBLOCK);
 			aicraft::ClientId cid = nextClientId++;
 			aicraft::EntityId eid = server.addClient(cid);
 
@@ -96,13 +100,14 @@ int main(int argc, char** argv) {
 			wb.writeVec3(server.spawnPos());
 			aicraft::net::sendMessage(newFd, aicraft::net::S_WELCOME, wb);
 
-			// Send initial chunk data around spawn
+			// Send surface chunks around spawn (9×9 horizontal, 2 Y levels)
+			// Includes forest area outside village clearing
 			auto sp = server.spawnPos();
-			auto cp = aicraft::World::worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
-			for (int dy = -2; dy <= 2; dy++)
+			auto cp = aicraft::worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
+			for (int dy = 0; dy <= 1; dy++)
 			for (int dz = -4; dz <= 4; dz++)
 			for (int dx = -4; dx <= 4; dx++) {
-				aicraft::ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
+				aicraft::ChunkPos pos = {cp.x + dx, cp.y, cp.z + dz};
 				aicraft::Chunk* chunk = server.world().getChunk(pos);
 				if (chunk) {
 					aicraft::net::WriteBuffer cb;
@@ -113,6 +118,9 @@ int main(int argc, char** argv) {
 					aicraft::net::sendMessage(newFd, aicraft::net::S_CHUNK, cb);
 				}
 			}
+
+			// Now set non-blocking for regular updates
+			aicraft::net::setNonBlocking(newFd);
 		}
 
 		// Receive from clients

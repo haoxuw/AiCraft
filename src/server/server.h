@@ -38,7 +38,7 @@ struct ServerCallbacks {
 
 struct ServerConfig {
 	int seed = 42;
-	int templateIndex = 0;
+	int templateIndex = 1;  // VillageWorld (has trees)
 	bool creative = true;
 	int port = 7777;
 };
@@ -75,6 +75,21 @@ public:
 			float emz = sz - 3.0f + m * 4;
 			float emh = m_world->surfaceHeight(emx, emz) + 1;
 			m_world->entities.spawn(EntityType::Chicken, {emx, emh, emz});
+		}
+
+		// Dog (near spawn, follows player)
+		{
+			float dx = sx + 3, dz = sz + 2;
+			float dh = m_world->surfaceHeight(dx, dz) + 1;
+			m_world->entities.spawn(EntityType::Dog, {dx, dh, dz});
+		}
+
+		// Villagers — spawn outside village clearing where trees grow
+		for (int m = 0; m < 2; m++) {
+			float vx = sx + 25.0f + m * 10;  // further out, past village clearing
+			float vz = sz + 25.0f + m * 8;
+			float vh = m_world->surfaceHeight(vx, vz) + 1;
+			m_world->entities.spawn(EntityType::Villager, {vx, vh, vz});
 		}
 
 		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f\n",
@@ -134,7 +149,12 @@ public:
 		};
 
 		// Phase 3: AI behaviors gather decisions
-		m_world->entities.gatherDecisions(dt, m_world->actions);
+		// Pass block query so behaviors can find trees, resources, etc.
+		EntityManager::BlockTypeFn blockQuery = [&](int x, int y, int z) -> std::string {
+			BlockId bid = m_world->getBlock(x, y, z);
+			return m_world->blocks.get(bid).string_id;
+		};
+		m_world->entities.gatherDecisions(dt, m_world->actions, blockQuery);
 
 		// Phase 1: Resolve all proposals
 		resolveActions(dt);

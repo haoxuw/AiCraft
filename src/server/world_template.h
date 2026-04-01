@@ -117,8 +117,8 @@ public:
 		}
 
 		// --- Trees (skip chunk border to avoid cross-chunk leaf issues) ---
-		for (int lz = 2; lz < CHUNK_SIZE - 2; lz++) {
-			for (int lx = 2; lx < CHUNK_SIZE - 2; lx++) {
+		for (int lz = 3; lz < CHUNK_SIZE - 3; lz++) {
+			for (int lx = 3; lx < CHUNK_SIZE - 3; lx++) {
 				int wx = ox + lx, wz = oz + lz;
 
 				// Deterministic tree placement via hash
@@ -131,7 +131,7 @@ public:
 				if (isVillageArea(seed, wx, wz)) continue;
 
 				int trunkBase = surfaceY + 1;
-				int trunkHeight = 4 + (int)(hashFloat(wx + 99, wz + 99) * 3);
+				int trunkHeight = 7 + (int)(hashFloat(wx + 99, wz + 99) * 4);
 				int trunkTop = trunkBase + trunkHeight - 1;
 
 				// Trunk
@@ -142,7 +142,7 @@ public:
 				}
 
 				// Leaves (sphere around trunk top)
-				int leafR = 2;
+				int leafR = 3;
 				for (int dy = -1; dy <= leafR; dy++) {
 					int r = (dy == leafR) ? 1 : leafR;
 					for (int dx = -r; dx <= r; dx++) {
@@ -179,7 +179,7 @@ private:
 	static bool isVillageArea(int seed, int wx, int wz) {
 		auto vc = villageCenter(seed);
 		int dx = wx - vc.x, dz = wz - vc.y;
-		return dx*dx + dz*dz < 20*20;
+		return dx*dx + dz*dz < 28*28;
 	}
 
 	void generateVillage(Chunk& chunk, ChunkPos cpos, int seed,
@@ -192,15 +192,16 @@ private:
 		// Houses around the village center
 		struct House { int cx, cz, w, d, h; };
 		House houses[] = {
-			{vc.x,      vc.y,      5, 5, 4},
-			{vc.x + 10, vc.y - 2,  4, 6, 3},
-			{vc.x - 8,  vc.y + 5,  6, 4, 4},
-			{vc.x + 3,  vc.y + 12, 5, 5, 3},
+			{vc.x,      vc.y,      7, 7, 5},
+			{vc.x + 14, vc.y - 3,  6, 8, 5},
+			{vc.x - 12, vc.y + 7,  8, 6, 5},
+			{vc.x + 5,  vc.y + 16, 7, 7, 5},
 		};
 
 		for (auto& h : houses) {
 			int floorY = (int)std::round(terrainHeight(seed, (float)h.cx, (float)h.cz)) + 1;
 
+			// Walls and interior
 			for (int dy = 0; dy < h.h; dy++) {
 				int ly = floorY + dy - oy;
 				if (ly < 0 || ly >= CHUNK_SIZE) continue;
@@ -212,20 +213,44 @@ private:
 						if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
 
 						bool wall = (dx == 0 || dx == h.w-1 || dz == 0 || dz == h.d-1);
-						bool door = (dx == h.w/2 && dz == 0 && dy < 2);
+						bool door = ((dx == h.w/2 || dx == h.w/2 - 1) && dz == 0 && dy < 3);
+						bool window = wall && dy == 2 && (
+							((dz == 0 || dz == h.d-1) && (dx == 1 || dx == h.w-2)) ||
+							((dx == 0 || dx == h.w-1) && (dz == 1 || dz == h.d-2))
+						);
 
-						if (door)           chunk.set(lx, ly, lz, BLOCK_AIR);
-						else if (dy == 0)   chunk.set(lx, ly, lz, cobble); // floor
-						else if (dy == h.h-1) chunk.set(lx, ly, lz, wood); // roof
-						else if (wall)      chunk.set(lx, ly, lz, cobble);
-						else                chunk.set(lx, ly, lz, BLOCK_AIR); // interior
+						if (door || window)  chunk.set(lx, ly, lz, BLOCK_AIR);
+						else if (dy == 0)    chunk.set(lx, ly, lz, cobble); // floor
+						else if (dy == h.h-1) chunk.set(lx, ly, lz, wood); // ceiling
+						else if (wall)       chunk.set(lx, ly, lz, cobble);
+						else                 chunk.set(lx, ly, lz, BLOCK_AIR); // interior
+					}
+				}
+			}
+
+			// Peaked roof (gable along X axis, 1-block overhang front/back)
+			int roofLayers = (h.w + 2) / 2;
+			for (int ry = 0; ry < roofLayers; ry++) {
+				int ly = floorY + h.h + ry - oy;
+				if (ly < 0 || ly >= CHUNK_SIZE) continue;
+
+				for (int dz = -1; dz <= h.d; dz++) {
+					for (int dx = ry; dx < h.w - ry; dx++) {
+						int lx = h.cx + dx - ox;
+						int lz = h.cz + dz - oz;
+						if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
+
+						bool gableEnd = (dz == 0 || dz == h.d - 1);
+						bool roofEdge = (dx == ry || dx == h.w - ry - 1 || ry == roofLayers - 1);
+						if (gableEnd || roofEdge)
+							chunk.set(lx, ly, lz, wood);
 					}
 				}
 			}
 		}
 
 		// Cobblestone path through village
-		for (int dz = -15; dz <= 15; dz++) {
+		for (int dz = -20; dz <= 25; dz++) {
 			int wx = vc.x + 2, wz = vc.y + dz;
 			int lx = wx - ox, lz = wz - oz;
 			if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;

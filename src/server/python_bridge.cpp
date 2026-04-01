@@ -1,4 +1,33 @@
 #include "server/python_bridge.h"
+
+#ifdef __EMSCRIPTEN__
+// ================================================================
+// Web build stub: Python bridge is server-only, not available in WASM.
+// All methods return safe defaults.
+// ================================================================
+namespace aicraft {
+bool PythonBridge::init(const std::string&) { return false; }
+void PythonBridge::shutdown() {}
+BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) {
+	err = "Python not available in web build";
+	return -1;
+}
+BehaviorAction PythonBridge::callDecide(BehaviorHandle, Entity&,
+                                         const std::vector<NearbyEntity>&,
+                                         const std::vector<NearbyBlock>&,
+                                         float, std::string&, std::string& err) {
+	err = "Python not available in web build";
+	return {BehaviorAction::Idle};
+}
+std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
+void PythonBridge::unloadBehavior(BehaviorHandle) {}
+PythonBridge& pythonBridge() { static PythonBridge b; return b; }
+BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { return {BehaviorAction::Idle}; }
+} // namespace aicraft
+#else
+// ================================================================
+// Native build: full pybind11 implementation
+// ================================================================
 #include <pybind11/embed.h>
 #include <pybind11/stl.h>
 #include <cstdio>
@@ -69,6 +98,9 @@ PYBIND11_EMBEDDED_MODULE(aicraft_engine, m) {
 	m.def("Flee", [](EntityId target, float speed) {
 		PyAction a; a.type = "flee"; a.target_id = target; a.speed = speed; return a;
 	}, py::arg("target"), py::arg("speed") = 4.0f);
+	m.def("BreakBlock", [](int x, int y, int z) {
+		PyAction a; a.type = "break_block"; a.x = (float)x; a.y = (float)y; a.z = (float)z; return a;
+	}, py::arg("x"), py::arg("y"), py::arg("z"));
 }
 
 // ================================================================
@@ -142,6 +174,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
                                          Entity& self,
                                          const std::vector<NearbyEntity>& nearby,
+                                         const std::vector<NearbyBlock>& nearbyBlocks,
                                          float dt,
                                          std::string& goalOut,
                                          std::string& errorOut) {
@@ -182,9 +215,22 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		pySelf["on_ground"] = self.onGround;
 		pySelf["goal"] = self.goalText;
 
+		// Build nearby blocks list for Python
+		py::list pyBlocks;
+		for (auto& nb : nearbyBlocks) {
+			py::dict block;
+			block["x"] = nb.x;
+			block["y"] = nb.y;
+			block["z"] = nb.z;
+			block["type"] = nb.typeId;
+			block["distance"] = nb.distance;
+			pyBlocks.append(block);
+		}
+
 		// Build world view
 		py::dict pyWorld;
 		pyWorld["nearby"] = pyNearby;
+		pyWorld["blocks"] = pyBlocks;
 		pyWorld["dt"] = dt;
 
 		// Call decide(self, world)
@@ -209,6 +255,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		else if (pyAction.type == "follow") action.type = BehaviorAction::Follow;
 		else if (pyAction.type == "flee") action.type = BehaviorAction::Flee;
 		else if (pyAction.type == "attack") action.type = BehaviorAction::Attack;
+		else if (pyAction.type == "break_block") action.type = BehaviorAction::BreakBlock;
 		else action.type = BehaviorAction::Idle;
 
 		action.targetPos = {pyAction.x, pyAction.y, pyAction.z};
@@ -260,8 +307,11 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 		return {BehaviorAction::Idle};
 	}
 
+	// Pass empty block list for now — C++ behaviors gather blocks via entity_manager
+	// When behavior system is fully Python, block scanning will be done here
+	std::vector<PythonBridge::NearbyBlock> emptyBlocks;
 	std::string goal, error;
-	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities, view.dt, goal, error);
+	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities, emptyBlocks, view.dt, goal, error);
 
 	if (!error.empty()) {
 		view.self.goalText = "ERROR: " + error.substr(0, 60);
@@ -279,3 +329,4 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 }
 
 } // namespace aicraft
+#endif // __EMSCRIPTEN__

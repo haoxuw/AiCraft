@@ -18,6 +18,8 @@ namespace EntityType {
 	constexpr const char* Player      = "base:player";
 	constexpr const char* Pig         = "base:pig";
 	constexpr const char* Chicken     = "base:chicken";
+	constexpr const char* Dog         = "base:dog";
+	constexpr const char* Villager    = "base:villager";
 	constexpr const char* ItemEntity  = "base:item_entity";
 }
 

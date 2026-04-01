@@ -159,14 +159,33 @@ bool ControlManager::load(const std::string& path) {
 // ============================================================
 
 void ControlManager::update(GLFWwindow* window) {
+	// If no sources registered, add default keyboard+mouse
+	if (m_sources.empty()) {
+		m_sources.push_back(std::make_unique<GLFWInputSource>());
+		// Auto-detect gamepad
+		if (glfwJoystickPresent(GLFW_JOYSTICK_1))
+			m_sources.push_back(std::make_unique<GamepadInputSource>());
+	}
+
+	// Poll all sources
+	for (auto& src : m_sources)
+		src->beginFrame(window);
+
+	// Update action states: true if ANY source has the key/button down
 	for (auto& [action, binding] : m_bindings) {
 		auto& state = m_state[action];
 		state.previous = state.current;
+		state.current = false;
 
-		if (binding.mouseButton >= 0) {
-			state.current = glfwGetMouseButton(window, binding.mouseButton) == GLFW_PRESS;
-		} else if (binding.glfwKey >= 0) {
-			state.current = glfwGetKey(window, binding.glfwKey) == GLFW_PRESS;
+		for (auto& src : m_sources) {
+			if (binding.mouseButton >= 0 && src->isMouseButtonDown(binding.mouseButton)) {
+				state.current = true;
+				break;
+			}
+			if (binding.glfwKey >= 0 && src->isKeyDown(binding.glfwKey)) {
+				state.current = true;
+				break;
+			}
 		}
 	}
 }

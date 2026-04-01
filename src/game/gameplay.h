@@ -4,7 +4,7 @@
 #include "server/world.h"
 #include "shared/entity.h"
 #include "shared/constants.h"
-#include <glad/gl.h>
+#include "client/gl.h"
 #include "client/camera.h"
 #include "client/renderer.h"
 #include "client/controls.h"

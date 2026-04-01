@@ -15,6 +15,7 @@
 #include "client/particles.h"
 #include "client/controls.h"
 #include "client/model.h"
+#include "client/ui.h"
 #include "server/world_template.h"
 #include "shared/character.h"
 #include "shared/face.h"
@@ -28,6 +29,7 @@ class Game {
 public:
 	bool init(int argc, char** argv);
 	void run();
+	void runOneFrame();
 	void shutdown();
 
 private:
@@ -40,6 +42,8 @@ private:
 	// State transitions
 	void handleMenuAction(const MenuAction& action);
 	void enterGame(int templateIndex, GameState targetState);
+	void joinServer(const std::string& host, int port, GameState targetState);
+	void setupAfterConnect(GameState targetState);
 
 	// Playing state
 	void updatePlaying(float dt, float aspect);
@@ -61,6 +65,7 @@ private:
 	ParticleSystem  m_particles;
 	ControlManager  m_controls;
 	Camera          m_camera;
+	UI              m_ui;
 
 	// Server interface — abstracts local vs network server
 	// Local: each client runs its own server when creating a game
@@ -110,7 +115,7 @@ private:
 	bool m_showInventory = false;
 
 	// Models
-	BoxModel m_playerModel, m_pigModel, m_chickenModel;
+	BoxModel m_playerModel, m_pigModel, m_chickenModel, m_dogModel, m_villagerModel;
 	float m_playerWalkDist = 0;
 	float m_globalTime = 0;
 };

@@ -4,7 +4,7 @@
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
 #include "shared/chunk_source.h"
-#include <glad/gl.h>
+#include "client/gl.h"
 #include <vector>
 #include <array>
 
