@@ -25,7 +25,7 @@
 #include <functional>
 #include <cstdio>
 
-namespace aicraft {
+namespace agentworld {
 
 using ClientId = uint32_t;
 
@@ -39,7 +39,7 @@ struct ServerCallbacks {
 struct ServerConfig {
 	int seed = 42;
 	int templateIndex = 1;  // VillageWorld (has trees)
-	bool creative = true;
+	bool creative = false;  // survival by default
 	int port = 7777;
 };
 
@@ -84,16 +84,40 @@ public:
 			m_world->entities.spawn(EntityType::Dog, {dx, dh, dz});
 		}
 
-		// Villagers — spawn outside village clearing where trees grow
+		// Cats (roam near chickens)
 		for (int m = 0; m < 2; m++) {
-			float vx = sx + 25.0f + m * 10;  // further out, past village clearing
+			float cx = sx + 5.0f + m * 7;
+			float cz = sz - 4.0f + m * 6;
+			float ch = m_world->surfaceHeight(cx, cz) + 1;
+			m_world->entities.spawn(EntityType::Cat, {cx, ch, cz});
+		}
+
+		// Place a chest at the village center
+		{
+			int chestX = (int)sx, chestZ = (int)sz;
+			int chestY = (int)m_world->surfaceHeight((float)chestX, (float)chestZ) + 1;
+			BlockId chestId = m_world->blocks.getId(BlockType::Chest);
+			if (chestId != BLOCK_AIR) {
+				ChunkPos cp = worldToChunk(chestX, chestY, chestZ);
+				Chunk* c = m_world->getChunk(cp);
+				if (c) {
+					c->set(((chestX%16)+16)%16, ((chestY%16)+16)%16, ((chestZ%16)+16)%16, chestId);
+				}
+			}
+			m_chestPos = {(float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f};
+		}
+
+		// Villagers — spawn in forest area where trees grow
+		for (int m = 0; m < 2; m++) {
+			float vx = sx + 25.0f + m * 10;
 			float vz = sz + 25.0f + m * 8;
 			float vh = m_world->surfaceHeight(vx, vz) + 1;
 			m_world->entities.spawn(EntityType::Villager, {vx, vh, vz});
 		}
 
-		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f\n",
-		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f (chest at %.0f,%.0f,%.0f)\n",
+		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z,
+		       m_chestPos.x, m_chestPos.y, m_chestPos.z);
 	}
 
 	// Add a client. Returns the player's EntityId.
@@ -115,6 +139,10 @@ public:
 				pe->inventory->add(BlockType::Stone, 10);
 				pe->inventory->add(BlockType::Wood, 10);
 			}
+			// Starting equipment
+			pe->inventory->add("base:sword", 1);
+			pe->inventory->add("base:shield", 1);
+			pe->inventory->add("base:potion", 3);
 		}
 		m_clients[clientId] = {eid};
 		printf("[Server] Client %u joined. Player entity: %u\n", clientId, eid);
@@ -215,6 +243,7 @@ private:
 	float m_worldTime = 0.30f;
 	float m_activeBlockTimer = 0;
 	glm::vec3 m_spawnPos = {30, 10, 30};
+	glm::vec3 m_chestPos = {30, 10, 30};
 
 	struct ClientState {
 		EntityId playerEntityId;
@@ -222,4 +251,4 @@ private:
 	std::unordered_map<ClientId, ClientState> m_clients;
 };
 
-} // namespace aicraft
+} // namespace agentworld

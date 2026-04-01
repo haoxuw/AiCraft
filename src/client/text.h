@@ -5,7 +5,7 @@
 #include <string>
 #include "client/shader.h"
 
-namespace aicraft {
+namespace agentworld {
 
 // Minimal bitmap font renderer. 8x8 pixel font, ASCII 32-126.
 // Font data from font8x8_basic (public domain).
@@ -37,4 +37,4 @@ private:
 // Classic 8x8 bitmap font (public domain font8x8_basic)
 extern const unsigned char FONT_8X8[96][8];
 
-} // namespace aicraft
+} // namespace agentworld

@@ -1,10 +1,10 @@
-"""Dog — loyal companion that follows the nearest player or villager.
+"""Follow — loyal companion that follows the nearest player or villager.
 
-Dogs look for the nearest player first. If no player is nearby,
-they follow the nearest villager. They sit when close to their target.
+Follows the nearest player first. If no player is nearby,
+follows the nearest villager. Sits when close to their target.
 """
 
-from aicraft_engine import Idle, Wander, Follow
+from agentworld_engine import Idle, Wander, Follow
 
 FOLLOW_DISTANCE = 3.0
 FOLLOW_SPEED = 4.0

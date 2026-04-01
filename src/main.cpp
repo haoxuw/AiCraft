@@ -19,13 +19,13 @@ int main(int argc, char** argv) {
 	});
 #endif
 
-	aicraft::pythonBridge().init("python");
+	agentworld::pythonBridge().init("python");
 
-	aicraft::Game game;
+	agentworld::Game game;
 	if (!game.init(argc, argv)) return 1;
 	game.run();
 	game.shutdown();
 
-	aicraft::pythonBridge().shutdown();
+	agentworld::pythonBridge().shutdown();
 	return 0;
 }

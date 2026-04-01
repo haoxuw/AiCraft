@@ -15,7 +15,7 @@
 #include "server/world_template.h"
 #include <vector>
 
-namespace aicraft {
+namespace agentworld {
 
 class LocalServer : public ServerInterface {
 public:
@@ -131,4 +131,4 @@ private:
 	bool m_connected = false;
 };
 
-} // namespace aicraft
+} // namespace agentworld

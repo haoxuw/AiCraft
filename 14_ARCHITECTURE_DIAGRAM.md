@@ -1,4 +1,4 @@
-# AiCraft - Architecture Diagram
+# AgentWorld - Architecture Diagram
 
 Transcribed from the design diagram. Three cleanly separated layers.
 

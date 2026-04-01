@@ -4,7 +4,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace aicraft {
+namespace agentworld {
 
 // ================================================================
 // update -- called each gameplay frame
@@ -115,7 +115,7 @@ void GameplayController::processMovement(float dt, GameState state,
 				m_hasMoveTarget = false;
 			}
 		}
-	} else if (state == GameState::CREATIVE) {
+	} else if (state == GameState::ADMIN) {
 		glm::vec3 fwd = camera.front();
 		glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0, 1, 0)));
 		if (controls.held(Action::MoveForward))  move += fwd;
@@ -142,7 +142,7 @@ void GameplayController::processMovement(float dt, GameState state,
 	moveAction.jumpVelocity = jumpVelocity;
 
 	// Client REQUESTS fly — server validates against game rules
-	bool wantsFly = (state == GameState::CREATIVE) &&
+	bool wantsFly = (state == GameState::ADMIN) &&
 	                (camera.mode == CameraMode::FirstPerson || camera.mode == CameraMode::ThirdPerson);
 	moveAction.fly = wantsFly;
 
@@ -336,7 +336,7 @@ void GameplayController::resolveActions(float dt, World& world, Entity& player,
 			if (actor && actor->inventory) {
 				std::string dropType = bdef.drop.empty() ? bdef.string_id : bdef.drop;
 				if (!dropType.empty() && dropType != BlockType::Air) {
-					if (state == GameState::CREATIVE) {
+					if (state == GameState::ADMIN) {
 						actor->inventory->add(dropType, 1);
 					} else {
 						glm::vec3 dropPos = glm::vec3(bp) + glm::vec3(0.5f, 0.5f, 0.5f);
@@ -502,4 +502,4 @@ void GameplayController::markBlockDirty(Renderer& renderer,
 	}
 }
 
-} // namespace aicraft
+} // namespace agentworld

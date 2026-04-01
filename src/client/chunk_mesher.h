@@ -8,7 +8,7 @@
 #include <vector>
 #include <array>
 
-namespace aicraft {
+namespace agentworld {
 
 struct ChunkVertex {
 	glm::vec3 position;
@@ -44,4 +44,4 @@ private:
 	std::array<BlockId, PADDED_SIZE * PADDED_SIZE * PADDED_SIZE> m_padded;
 };
 
-} // namespace aicraft
+} // namespace agentworld

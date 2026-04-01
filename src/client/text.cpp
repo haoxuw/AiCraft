@@ -4,7 +4,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace aicraft {
+namespace agentworld {
 
 // font8x8_basic - public domain 8x8 font, ASCII 32-127
 const unsigned char FONT_8X8[96][8] = {
@@ -313,4 +313,4 @@ void TextRenderer::drawRect(float x, float y, float w, float h, glm::vec4 color)
 	glEnable(GL_DEPTH_TEST);
 }
 
-} // namespace aicraft
+} // namespace agentworld

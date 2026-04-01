@@ -1,8 +1,8 @@
-"""Player Idle - default player auto-pilot behavior.
+"""Idle — default behavior. Just stands still.
 
-When auto-pilot is enabled, this behavior controls the player.
-By default it just stands still. Edit this to make your character
-do things automatically!
+Assign this to any creature to make it do nothing.
+When auto-pilot is enabled on a player, this is the default.
+Edit this to make your character do things automatically!
 
 Ideas to try:
   - Make the player follow the nearest pig
@@ -11,7 +11,7 @@ Ideas to try:
   - Build a simple structure automatically
 """
 
-from aicraft.api import Idle, Follow, MoveTo
+from agentworld.api import Idle, Follow, MoveTo
 
 goal = "Idle (auto-pilot off)"
 

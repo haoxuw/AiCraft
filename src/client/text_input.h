@@ -12,7 +12,7 @@
 #include <functional>
 #include <algorithm>
 
-namespace aicraft {
+namespace agentworld {
 
 class TextInput {
 public:
@@ -173,4 +173,4 @@ private:
 	int m_visibleLines = 20;
 };
 
-} // namespace aicraft
+} // namespace agentworld

@@ -2,7 +2,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace aicraft {
+namespace agentworld {
 
 static const float PI = 3.14159265f;
 
@@ -460,4 +460,4 @@ void Renderer::renderCrosshair(float aspect) {
 
 // Old renderPlayerModel removed -- use ModelRenderer::draw() instead
 
-} // namespace aicraft
+} // namespace agentworld

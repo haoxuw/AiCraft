@@ -1,4 +1,4 @@
-# AiCraft - Python Client
+# AgentWorld - Python Client
 
 The client handles rendering, input, the in-game code editor, and local preview/testing. Written in Python for consistency with the scripting model -- players use the same language to play and create.
 
@@ -8,7 +8,7 @@ The client handles rendering, input, the in-game code editor, and local preview/
 
 ```
 +====================================================================+
-|                        AiCraft Python Client                        |
+|                        AgentWorld Python Client                        |
 +====================================================================+
 |                                                                      |
 |  +------------------------+   +---------------------------+         |
@@ -178,18 +178,18 @@ Non-predicted (wait for server):
 
 ## 4. In-Game Code Editor
 
-The centerpiece of AiCraft -- players write Python inside the game.
+The centerpiece of AgentWorld -- players write Python inside the game.
 
 ```
 +====================================================================+
-|  AiCraft Code Editor (in-game overlay)                              |
+|  AgentWorld Code Editor (in-game overlay)                              |
 +====================================================================+
 |                                                                      |
 |  +----Tab Bar---------------------------------------------+         |
 |  | pig.py  |  fireball.py* |  magic_ore.py |  + New      |         |
 |  +---------------------------------------------------------+         |
 |  |                                                         |         |
-|  |  1  from aicraft.api import LivingObject, ObjectMeta    |         |
+|  |  1  from agentworld.api import LivingObject, ObjectMeta    |         |
 |  |  2                                                      |         |
 |  |  3  class FlyingPig(LivingObject):                      |         |
 |  |  4      """A pig that can fly!"""                        |         |
@@ -231,11 +231,11 @@ Editing:
   - Undo/redo (Ctrl+Z / Ctrl+Shift+Z)
   - Copy/paste (system clipboard)
   - Find/replace (Ctrl+F)
-  - Tab completion for aicraft.api members
+  - Tab completion for agentworld.api members
 
 Assistance:
   - Inline error markers (red squiggly)
-  - Type hints from aicraft.api stubs
+  - Type hints from agentworld.api stubs
   - Auto-complete for ObjectMeta/ActionMeta fields
   - Hover tooltips for API functions
   - Template gallery (start from examples)
@@ -260,7 +260,7 @@ Upload:
 
 ```python
 # Template: Basic Block
-from aicraft.api import PassiveObject, ObjectMeta
+from agentworld.api import PassiveObject, ObjectMeta
 
 class MyBlock(PassiveObject):
     meta = ObjectMeta(
@@ -274,7 +274,7 @@ class MyBlock(PassiveObject):
     )
 
 # Template: Basic Mob
-from aicraft.api import LivingObject, ObjectMeta
+from agentworld.api import LivingObject, ObjectMeta
 
 class MyMob(LivingObject):
     meta = ObjectMeta(
@@ -291,7 +291,7 @@ class MyMob(LivingObject):
         pass  # Add behavior here
 
 # Template: Basic Action
-from aicraft.api import Action, ActionMeta
+from agentworld.api import Action, ActionMeta
 
 @Action
 class MyAction:
@@ -348,7 +348,7 @@ Asset upload with code:
 ## 6. Client Directory Layout
 
 ```
-aicraft-client/
+agentworld-client/
   src/
     main.py                      # Entry point
     client.py                    # Client class, main loop

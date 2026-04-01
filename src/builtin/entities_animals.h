@@ -3,7 +3,7 @@
 #include "common/entity_manager.h"
 #include "common/constants.h"
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 inline void registerAnimalEntities(EntityManager& mgr) {
 	{
@@ -49,4 +49,4 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 	}
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

@@ -16,7 +16,7 @@
  * at runtime via the ArtifactRegistry (Python hot-load).
  */
 
-namespace aicraft {
+namespace agentworld {
 
 class BlockRegistry;
 class EntityManager;
@@ -24,4 +24,4 @@ class EntityManager;
 // Register all built-in content. Called once at startup.
 void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities);
 
-} // namespace aicraft
+} // namespace agentworld

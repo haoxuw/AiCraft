@@ -16,7 +16,7 @@
 #include <filesystem>
 #include <cstdio>
 
-namespace aicraft {
+namespace agentworld {
 
 class BehaviorStore {
 public:
@@ -88,4 +88,4 @@ private:
 	std::string m_basePath;
 };
 
-} // namespace aicraft
+} // namespace agentworld

@@ -74,7 +74,7 @@ main()
 ## File Structure
 
 ```
-AiCraft/
+AgentWorld/
   CMakeLists.txt
   src/
     main.cpp                 -- entry point, game loop

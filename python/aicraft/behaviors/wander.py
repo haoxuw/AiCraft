@@ -13,7 +13,7 @@ Try changing:
 """
 
 import random
-from aicraft.api import Wander, Flee, MoveTo, Idle
+from agentworld.api import Wander, Flee, MoveTo, Idle
 
 # How close a player must be before the animal runs
 FLEE_DISTANCE = 5.0

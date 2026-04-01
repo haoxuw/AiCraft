@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace aicraft {
+namespace agentworld {
 
 // Simple hash-based value noise for terrain generation.
 // All functions are inline so they can live in a header with no .cpp.
@@ -38,4 +38,4 @@ inline float terrainHeight(int seed, float x, float z) {
 	return h;
 }
 
-} // namespace aicraft
+} // namespace agentworld

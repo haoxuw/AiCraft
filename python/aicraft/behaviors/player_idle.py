@@ -11,7 +11,7 @@ Ideas to try:
   - Build a simple structure automatically
 """
 
-from aicraft.api import Idle, Follow, MoveTo
+from agentworld.api import Idle, Follow, MoveTo
 
 goal = "Idle (auto-pilot off)"
 

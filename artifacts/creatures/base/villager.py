@@ -4,7 +4,7 @@ Villagers work autonomously: they search for trees, chop wood,
 and build simple structures. They have a work/rest cycle.
 
 Try modifying:
-  - behavior to 'wander' for a lazy villager
+  - behavior to 'wander' for a lazy villager, or 'follow' for a companion
   - walk_speed to make them more/less efficient
   - Create a new behavior .py file for custom NPC jobs!
 """
@@ -13,7 +13,7 @@ creature = {
     "id": "base:villager",
     "name": "Villager",
     "category": "animal",  # uses same AI dispatch
-    "behavior": "villager",  # references artifacts/behaviors/base/villager.py
+    "behavior": "woodcutter",  # references artifacts/behaviors/base/woodcutter.py
 
     "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 1.8, 0.3]},
     "gravity": 1.0,

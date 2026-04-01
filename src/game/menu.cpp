@@ -9,7 +9,7 @@
 #include "shared/net_socket.h"
 #endif
 
-namespace aicraft {
+namespace agentworld {
 
 // Main-menu button layout (matches original main.cpp)
 struct MenuButton { float x, y, w, h; const char* label; GameState target; };
@@ -98,7 +98,7 @@ MenuAction MenuSystem::updateMainMenu(float dt, Window& window, TextRenderer& te
 	if (demoMode && autoScreenTimer > 0.3f) {
 		result.type = MenuAction::EnterGame;
 		result.templateIndex = 1;
-		result.targetState = GameState::CREATIVE;
+		result.targetState = GameState::SURVIVAL;
 		return result;
 	}
 
@@ -106,7 +106,7 @@ MenuAction MenuSystem::updateMainMenu(float dt, Window& window, TextRenderer& te
 	glClearColor(0.15f, 0.18f, 0.22f, 1);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	text.drawTitle("AiCraft", -0.18f, 0.42f, 3.0f, {0.95f, 0.95f, 1.0f, 1}, aspect);
+	text.drawTitle("AgentWorld", -0.18f, 0.42f, 3.0f, {0.95f, 0.95f, 1.0f, 1}, aspect);
 	text.drawText("v0.9.0", -0.07f, 0.30f, 1.0f, {0.5f, 0.5f, 0.6f, 1}, aspect);
 
 	for (int i = 0; i < BUTTON_COUNT; i++) {
@@ -174,7 +174,7 @@ MenuAction MenuSystem::updateTemplateSelect(float dt, Window& window, TextRender
 	glClearColor(0.15f, 0.18f, 0.22f, 1);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	const char* modeLabel = (m_pendingGameState == GameState::CREATIVE) ? "Creative" : "Survival";
+	const char* modeLabel = (m_pendingGameState == GameState::ADMIN) ? "Creative" : "Survival";
 	char title[64];
 	snprintf(title, sizeof(title), "Select World - %s", modeLabel);
 	float titleW = strlen(title) * 0.018f * 1.5f;
@@ -608,7 +608,7 @@ MenuAction MenuSystem::updateServerBrowser(float dt, Window& window, TextRendere
 				if (nx >= btnX && nx <= btnX + btnW && ny >= ty && ny <= ty + btnH) {
 					result.type = MenuAction::EnterGame;
 					result.templateIndex = i;
-					result.targetState = GameState::CREATIVE;
+					result.targetState = GameState::SURVIVAL;
 					m_prevClick = click;
 					return result;
 				}
@@ -641,7 +641,7 @@ MenuAction MenuSystem::updateServerBrowser(float dt, Window& window, TextRendere
 				if (nx >= btnX && nx <= btnX + btnW && ny >= btnY && ny <= btnY + btnH) {
 					result.type = MenuAction::EnterGame;
 					result.templateIndex = i;
-					result.targetState = GameState::CREATIVE;
+					result.targetState = GameState::SURVIVAL;
 					m_prevClick = click;
 					return result;
 				}
@@ -673,4 +673,4 @@ MenuAction MenuSystem::updateServerBrowser(float dt, Window& window, TextRendere
 	return result;
 }
 
-} // namespace aicraft
+} // namespace agentworld

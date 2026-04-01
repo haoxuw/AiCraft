@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 
-namespace aicraft {
+namespace agentworld {
 
 // ============================================================
 // Key name -> GLFW code mapping
@@ -200,4 +200,4 @@ bool ControlManager::pressed(const char* action) const {
 	return it != m_state.end() && it->second.current && !it->second.previous;
 }
 
-} // namespace aicraft
+} // namespace agentworld

@@ -4,6 +4,7 @@ item = {
     "id": "base:sword",
     "name": "Sword",
     "category": "weapon",
+    "equip_slot": "left_hand",
     "stack_max": 1,
     "cooldown": 0.5,
 

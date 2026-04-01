@@ -3,7 +3,7 @@
 #include "common/block_registry.h"
 #include "common/constants.h"
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 // Natural terrain blocks: stone, dirt, grass, sand, snow, ice, water.
 inline void registerTerrainBlocks(BlockRegistry& reg) {
@@ -53,4 +53,4 @@ inline void registerTerrainBlocks(BlockRegistry& reg) {
 		{{GR::Crumbly,3},{GR::Snowy,1}}, "",SN::DigSnow,SN::StepSnow});
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

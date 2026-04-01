@@ -4,11 +4,11 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-AiCraft is a voxel game where the world is code. Players write Python to define new objects and actions, then upload them into a shared world. C++ server + C++ client, with Python hot-loading planned.
+AgentWorld is a voxel game where the world is code. Players write Python to define new objects and actions, then upload them into a shared world. C++ server + C++ client, with Python hot-loading planned.
 
 ## Multiplayer Architecture
 
-AiCraft uses a **server-authoritative** model:
+AgentWorld uses a **server-authoritative** model:
 - **One server** owns world state (chunks, entities, physics, game rules)
 - **Multiple clients** connect to the server (real players or AI agents)
 - **Singleplayer** runs server + client in the same process
@@ -127,8 +127,8 @@ All built-in content ships as Python files in the artifact store. Players can vi
 fork, and modify ANY built-in definition from the in-game editor.
 
 - **Creatures** (pig, chicken, dog, villager) — Python defines stats, collision,
-  walk speed, default behavior, model reference. `python/aicraft/creatures/*.py`
-- **Behaviors** (wander, peck, dog follow, villager work) — Python `decide(self, world)`
+  walk speed, default behavior, model reference. `python/agentworld/creatures/*.py`
+- **Behaviors** (wander, peck, follow, prowl, woodcutter) — Python `decide(self, world)`
   runs on server, returns actions. `artifacts/behaviors/base/*.py`
 - **Items** (jetpack, tools, food) — Python defines visual pieces, particle emitters,
   active effects. C++ renders generically from definitions.
@@ -139,7 +139,7 @@ fork, and modify ANY built-in definition from the in-game editor.
 ```
 artifacts/
   behaviors/
-    base/          ← built-in (wander.py, peck.py, dog.py, villager.py)
+    base/          ← built-in (wander.py, peck.py, follow.py, prowl.py, woodcutter.py)
     player/        ← player-modified (forkable, saveable)
   creatures/
     base/          ← built-in (pig.py, chicken.py, dog.py, villager.py)
@@ -183,25 +183,25 @@ Dependencies (GLFW, GLM, GLAD, pybind11) fetched automatically via CMake FetchCo
 ### Web build (Emscripten → WASM + WebGL)
 ```bash
 source /path/to/emsdk/emsdk_env.sh
-emcmake cmake -B build-web -DAICRAFT_TARGET=web
+emcmake cmake -B build-web -DAGENTWORLD_TARGET=web
 cmake --build build-web -j$(nproc)
-# Outputs: aicraft.html, aicraft.js, aicraft.wasm, aicraft.data
+# Outputs: agentworld.html, agentworld.js, agentworld.wasm, agentworld.data
 ```
 See `18_WEB_CLIENT.md` for full design.
 
 ## Running
 
 ```bash
-./build/aicraft                          # singleplayer (server + client in one process)
-./build/aicraft --demo                   # automated screenshot mode
-./build/aicraft-server --port 7777       # dedicated server (headless, TCP)
-./build/aicraft-client --host 127.0.0.1 --port 7777  # network client
+./build/agentworld                          # singleplayer (server + client in one process)
+./build/agentworld --demo                   # automated screenshot mode
+./build/agentworld-server --port 7777       # dedicated server (headless, TCP)
+./build/agentworld-client --host 127.0.0.1 --port 7777  # network client
 ```
 
 ## Code Style
 
 - Tabs for indentation in C++ and GLSL
-- `namespace aicraft { }` wraps all code
+- `namespace agentworld { }` wraps all code
 - String IDs use `"base:name"` format (defined in `src/shared/constants.h`)
 - Header-only for small classes, .h+.cpp split for larger ones
 

@@ -5,9 +5,9 @@ not by player input.
 """
 
 import random
-from aicraft.api.actions import Action, ActionMeta
-from aicraft.api.world_view import WorldView
-from aicraft.api.types import BlockPos
+from agentworld.api.actions import Action, ActionMeta
+from agentworld.api.world_view import WorldView
+from agentworld.api.types import BlockPos
 
 
 class GrassSpread(Action):

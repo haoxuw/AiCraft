@@ -14,7 +14,7 @@
 #include "client/window.h"
 #include <optional>
 
-namespace aicraft {
+namespace agentworld {
 
 class GameplayController {
 public:
@@ -65,4 +65,4 @@ private:
 	glm::vec3 m_moveTarget = {0, 0, 0};
 };
 
-} // namespace aicraft
+} // namespace agentworld

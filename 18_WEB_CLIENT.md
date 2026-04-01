@@ -1,4 +1,4 @@
-# AiCraft -- Web Client Design
+# AgentWorld -- Web Client Design
 
 Dual-target architecture: same C++ source builds natively (Linux/Mac/Win) and as WebAssembly for browsers. Both connect to the same server.
 
@@ -8,7 +8,7 @@ Dual-target architecture: same C++ source builds natively (Linux/Mac/Win) and as
 
 ```
                     ┌─────────────────────────────────────┐
-                    │         AiCraft Server (C++)         │
+                    │         AgentWorld Server (C++)         │
                     │                                     │
                     │   World ─ Physics ─ Behaviors       │
                     │   Action Queue ─ Entity Manager     │
@@ -52,24 +52,24 @@ cmake --build build -j$(nproc)
 source /path/to/emsdk/emsdk_env.sh
 emcmake cmake -B build-web \
   -DCMAKE_BUILD_TYPE=Release \
-  -DAICRAFT_TARGET=web
+  -DAGENTWORLD_TARGET=web
 cmake --build build-web -j$(nproc)
-# Outputs: aicraft.html, aicraft.js, aicraft.wasm, aicraft.data
+# Outputs: agentworld.html, agentworld.js, agentworld.wasm, agentworld.data
 ```
 
 ### CMake target detection
 
 ```cmake
-option(AICRAFT_TARGET "Build target: native or web" "native")
+option(AGENTWORLD_TARGET "Build target: native or web" "native")
 
-if(AICRAFT_TARGET STREQUAL "web")
+if(AGENTWORLD_TARGET STREQUAL "web")
   set(CMAKE_EXECUTABLE_SUFFIX ".html")
-  set(AICRAFT_WEB ON)
+  set(AGENTWORLD_WEB ON)
   # Emscripten provides GLFW, OpenGL ES
   set(USE_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1")
   set(LINK_FLAGS "-sALLOW_MEMORY_GROWTH=1 --preload-file shaders --preload-file config")
 else()
-  set(AICRAFT_WEB OFF)
+  set(AGENTWORLD_WEB OFF)
   # Native: GLFW, GLAD, system OpenGL
   find_package(OpenGL REQUIRED)
   FetchContent_MakeAvailable(glfw glad)
@@ -110,10 +110,10 @@ Only 6 shader files need this header change: `terrain`, `sky`, `crosshair`, `hig
 - **Native:** GLAD generates GL 4.1 Core loader
 - **Web:** Emscripten provides GL ES 3.0 headers directly (`<GLES3/gl3.h>`)
 
-Abstraction: `#ifdef AICRAFT_WEB` chooses the include.
+Abstraction: `#ifdef AGENTWORLD_WEB` chooses the include.
 
 ```cpp
-#ifdef AICRAFT_WEB
+#ifdef AGENTWORLD_WEB
   #include <GLES3/gl3.h>
 #else
   #include <glad/gl.h>
@@ -144,7 +144,7 @@ while (!window.shouldClose()) {
 ### Web (Emscripten)
 
 ```cpp
-#ifdef AICRAFT_WEB
+#ifdef AGENTWORLD_WEB
   emscripten_set_main_loop_arg([](void* arg) {
       auto* game = static_cast<Game*>(arg);
       float dt = game->beginFrame();
@@ -173,13 +173,13 @@ Browsers cannot open raw TCP sockets. Two options:
 
 **Option A: WebSocket proxy (simple)**
 ```
-Browser ──WebSocket──► Proxy (ws→tcp) ──TCP──► AiCraft Server
+Browser ──WebSocket──► Proxy (ws→tcp) ──TCP──► AgentWorld Server
 ```
 A lightweight proxy (e.g., `websockify`) converts WebSocket to TCP. Server unchanged.
 
 **Option B: Native WebSocket support in server (better)**
 ```
-Browser ──WebSocket──► AiCraft Server (listens on both TCP and WS)
+Browser ──WebSocket──► AgentWorld Server (listens on both TCP and WS)
 ```
 Server accepts both TCP (native clients) and WebSocket (browser clients) on different ports. Same binary protocol over both transports.
 
@@ -188,7 +188,7 @@ Server accepts both TCP (native clients) and WebSocket (browser clients) on diff
 ### Emscripten WebSocket API
 
 ```cpp
-#ifdef AICRAFT_WEB
+#ifdef AGENTWORLD_WEB
   #include <emscripten/websocket.h>
   // Connect: emscripten_websocket_new()
   // Send:    emscripten_websocket_send_binary()
@@ -243,7 +243,7 @@ emcc ... --preload-file shaders --preload-file config
 Replace `glReadPixels` → PPM file with a browser download:
 
 ```cpp
-#ifdef AICRAFT_WEB
+#ifdef AGENTWORLD_WEB
   // Use emscripten_run_script() to trigger JS download of canvas
 #else
   // Existing PPM save
@@ -256,11 +256,11 @@ Replace `glReadPixels` → PPM file with a browser download:
 
 ### Phase 1: Shader portability (1 day)
 - Add `#ifdef GL_ES` header to all 6 shader files
-- Add `#ifdef AICRAFT_WEB` for GL include in client code
+- Add `#ifdef AGENTWORLD_WEB` for GL include in client code
 - Test both paths compile
 
 ### Phase 2: Emscripten build target (2 days)
-- Add `AICRAFT_TARGET=web` to CMakeLists.txt
+- Add `AGENTWORLD_TARGET=web` to CMakeLists.txt
 - Configure Emscripten GLFW, WebGL 2, VFS
 - Refactor game loop for `emscripten_set_main_loop`
 - First render in browser (terrain + sky)
@@ -293,22 +293,22 @@ The web client is a static site:
 ```
 dist/
   index.html          ← entry point
-  aicraft.js          ← Emscripten glue
-  aicraft.wasm        ← compiled game (~3-5MB)
-  aicraft.data        ← bundled shaders + config (~100KB)
+  agentworld.js          ← Emscripten glue
+  agentworld.wasm        ← compiled game (~3-5MB)
+  agentworld.data        ← bundled shaders + config (~100KB)
 ```
 
 Host on any CDN (Cloudflare Pages, Vercel, S3). No server-side rendering needed.
 
 ### Global server
 
-Run the dedicated AiCraft server on a cloud VM:
+Run the dedicated AgentWorld server on a cloud VM:
 ```bash
-./aicraft-server --port 7777 --ws-port 8080
+./agentworld-server --port 7777 --ws-port 8080
 ```
 
-Browser clients connect via WebSocket to `wss://play.aicraft.io:8080`.
-Native clients connect via TCP to `play.aicraft.io:7777`.
+Browser clients connect via WebSocket to `wss://play.agentworld.io:8080`.
+Native clients connect via TCP to `play.agentworld.io:7777`.
 Both use the same binary protocol.
 
 ---

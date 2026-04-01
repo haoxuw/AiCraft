@@ -6,7 +6,7 @@
 #include "content/entities_animals.h"
 #include "content/entities_items.h"
 
-namespace aicraft {
+namespace agentworld {
 
 void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	// Blocks (order matters: Air must be ID 0)
@@ -20,4 +20,4 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	builtin::registerItemEntities(entities);
 }
 
-} // namespace aicraft
+} // namespace agentworld

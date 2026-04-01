@@ -4,12 +4,12 @@
  * All string constants used as identifiers throughout the engine.
  * Single source of truth -- never use raw string literals for IDs.
  *
- * These match the Python definitions in python/aicraft/objects/ and python/aicraft/actions/.
+ * These match the Python definitions in python/agentworld/objects/ and python/agentworld/actions/.
  * When the pybind11 bridge is connected, these constants will be validated against
  * the Python registry at startup.
  */
 
-namespace aicraft {
+namespace agentworld {
 
 // ============================================================
 // Entity Type IDs
@@ -20,6 +20,7 @@ namespace EntityType {
 	constexpr const char* Chicken     = "base:chicken";
 	constexpr const char* Dog         = "base:dog";
 	constexpr const char* Villager    = "base:villager";
+	constexpr const char* Cat         = "base:cat";
 	constexpr const char* ItemEntity  = "base:item_entity";
 }
 
@@ -42,6 +43,7 @@ namespace BlockType {
 	constexpr const char* Wire        = "base:wire";
 	constexpr const char* NANDGate    = "base:nand_gate";
 	constexpr const char* WheatSeeds  = "base:wheat_seeds";
+	constexpr const char* Chest       = "base:chest";
 }
 
 // ============================================================
@@ -195,4 +197,4 @@ namespace PyClass {
 	constexpr const char* NANDGateBlock  = "base:nand_gate_block";
 }
 
-} // namespace aicraft
+} // namespace agentworld

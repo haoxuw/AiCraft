@@ -11,7 +11,7 @@
 #include "shared/character.h"
 #include <cmath>
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 // ======================================================================
 // Blue Knight -- steel-trimmed blue plate armor, cape, pauldrons
@@ -20,8 +20,8 @@ namespace aicraft::builtin {
 inline CharacterDef blueKnightDef() {
 	const float PI = 3.14159265f;
 	CharacterDef c;
-	c.id = "base:blue_knight";
-	c.name = "Blue Knight";
+	c.id = "base:knight";
+	c.name = "Knight";
 	c.description = "Stalwart defender in steel-trimmed blue plate.";
 	c.stats = {4, 4, 2, 2};
 	c.jumpVelocity = 11.2f;  // AGI 2 → ~2.25 blocks
@@ -250,7 +250,7 @@ inline CharacterDef giantDef() {
 	CharacterDef c;
 	c.id = "base:giant";
 	c.name = "Giant";
-	c.description = "A massive iron guardian. Each step shakes the ground.";
+	c.description = "Massive iron guardian.";
 	c.stats = {5, 5, 1, 1};
 	c.jumpVelocity = 10.6f;  // AGI 1 → ~2.0 blocks
 	c.skinColor = {0.42f, 0.40f, 0.38f};
@@ -319,8 +319,8 @@ inline CharacterDef giantDef() {
 inline CharacterDef purpleMageDef() {
 	const float PI = 3.14159265f;
 	CharacterDef c;
-	c.id = "base:purple_mage";
-	c.name = "Purple Mage";
+	c.id = "base:mage";
+	c.name = "Mage";
 	c.description = "Wielder of arcane arts, draped in star-dusted robes.";
 	c.stats = {1, 2, 3, 5};
 	c.jumpVelocity = 11.8f;  // AGI 3 → ~2.5 blocks
@@ -480,4 +480,4 @@ inline void registerAllCharacters(CharacterManager& mgr) {
 	}});
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

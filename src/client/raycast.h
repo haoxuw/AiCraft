@@ -5,7 +5,7 @@
 #include <glm/glm.hpp>
 #include <optional>
 
-namespace aicraft {
+namespace agentworld {
 
 struct RayHit {
 	glm::ivec3 blockPos;
@@ -51,4 +51,4 @@ inline std::optional<RayHit> raycastBlocks(World& world, glm::vec3 origin,
 	return std::nullopt;
 }
 
-} // namespace aicraft
+} // namespace agentworld

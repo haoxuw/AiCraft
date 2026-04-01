@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace aicraft {
+namespace agentworld {
 
 class Player {
 public:
@@ -192,4 +192,4 @@ public:
 private:
 };
 
-} // namespace aicraft
+} // namespace agentworld

@@ -3,7 +3,7 @@
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 inline void registerAnimalEntities(EntityManager& mgr) {
 	{
@@ -48,6 +48,27 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		mgr.registerType(def);
 	}
 
+	// Cat — independent, chases chickens
+	{
+		EntityDef def;
+		def.string_id = EntityType::Cat;
+		def.display_name = "Cat";
+		def.category = Category::Animal;
+		def.color = {0.90f, 0.55f, 0.20f}; // orange tabby
+		def.collision_box_min = {-0.2f, 0.0f, -0.2f};
+		def.collision_box_max = { 0.2f, 0.5f,  0.2f};
+		def.gravity_scale = 1.0f;
+		def.walk_speed = 3.5f;  // quick and agile
+		def.run_speed = 7.0f;
+		def.max_hp = 8;
+		def.default_props = {
+			{Prop::HP, 8}, {Prop::Age, 0.0f},
+			{Prop::WanderTimer, 0.0f}, {Prop::WalkDistance, 0.0f},
+			{Prop::BehaviorId, std::string("prowl")},
+		};
+		mgr.registerType(def);
+	}
+
 	// Dog — loyal companion
 	{
 		EntityDef def;
@@ -64,7 +85,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.default_props = {
 			{Prop::HP, 15}, {Prop::Age, 0.0f},
 			{Prop::WanderTimer, 0.0f}, {Prop::WalkDistance, 0.0f},
-			{Prop::BehaviorId, std::string("dog")},
+			{Prop::BehaviorId, std::string("follow")},
 		};
 		mgr.registerType(def);
 	}
@@ -86,10 +107,10 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.default_props = {
 			{Prop::HP, 20}, {Prop::Age, 0.0f},
 			{Prop::WanderTimer, 0.0f}, {Prop::WalkDistance, 0.0f},
-			{Prop::BehaviorId, std::string("villager")},
+			{Prop::BehaviorId, std::string("woodcutter")},
 		};
 		mgr.registerType(def);
 	}
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

@@ -4,17 +4,17 @@ Block types are ObjectMeta INSTANCES (data).
 Block classes only exist when they add new member functions.
 """
 
-from aicraft.api.base import (
+from agentworld.api.base import (
     PassiveObject, ReactiveObject, ActiveObject,
     CropObject, SignalObject, LogicGateObject, FluidObject,
     LivingObject, PlayerObject, MobObject, ItemObject,
     ObjectMeta,
 )
 
-from aicraft.objects.terrain import ALL_TERRAIN
-from aicraft.objects.plants import ALL_PLANTS
-from aicraft.objects.crafted import ALL_CRAFTED
-from aicraft.objects.active_blocks import (
+from agentworld.objects.terrain import ALL_TERRAIN
+from agentworld.objects.plants import ALL_PLANTS
+from agentworld.objects.crafted import ALL_CRAFTED
+from agentworld.objects.active_blocks import (
     ALL_CROP_METAS, ALL_SIGNAL_METAS, TNT_META,
     ACTIVE_BLOCK_CLASSES,
 )

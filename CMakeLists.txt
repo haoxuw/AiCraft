@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(AiCraft VERSION 0.1.0 LANGUAGES C CXX)
+project(AgentWorld VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -170,21 +170,21 @@ if(EMSCRIPTEN)
 	# =================================================================
 	# Web build (WASM + WebGL 2) — client-only, connects to remote server
 	# =================================================================
-	add_executable(aicraft
+	add_executable(agentworld
 		src/main.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 		${GAME_SOURCES}
 	)
-	target_include_directories(aicraft PRIVATE src)
-	target_compile_definitions(aicraft PRIVATE AICRAFT_WEB=1)
-	target_link_libraries(aicraft PRIVATE glm::glm imgui_lib)
+	target_include_directories(agentworld PRIVATE src)
+	target_compile_definitions(agentworld PRIVATE AGENTWORLD_WEB=1)
+	target_link_libraries(agentworld PRIVATE glm::glm imgui_lib)
 
 	# Emscripten compile + link flags
 	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576")
 	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/config@config")
-	set_target_properties(aicraft PROPERTIES
+	set_target_properties(agentworld PROPERTIES
 		SUFFIX ".html"
 		COMPILE_FLAGS "${EM_FLAGS}"
 		LINK_FLAGS "${EM_FLAGS} ${EM_LINK}"
@@ -196,54 +196,58 @@ else()
 	# =================================================================
 
 	# === Singleplayer (server + client in one process) ===
-	add_executable(aicraft
+	add_executable(agentworld
 		src/main.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 		${GAME_SOURCES}
 	)
-	target_include_directories(aicraft PRIVATE src)
-	target_link_libraries(aicraft PRIVATE
+	target_include_directories(agentworld PRIVATE src)
+	target_link_libraries(agentworld PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib
 	)
 
 	# === Dedicated server (headless, no OpenGL) ===
-	add_executable(aicraft-server
+	add_executable(agentworld-server
 		src/main_server.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 	)
-	target_include_directories(aicraft-server PRIVATE src)
-	target_link_libraries(aicraft-server PRIVATE
+	target_include_directories(agentworld-server PRIVATE src)
+	target_link_libraries(agentworld-server PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 	)
 
 	# === Network client (connects to remote server) ===
-	add_executable(aicraft-client
+	add_executable(agentworld-client
 		src/main_client.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 		${GAME_SOURCES}
 	)
-	target_include_directories(aicraft-client PRIVATE src)
-	target_link_libraries(aicraft-client PRIVATE
+	target_include_directories(agentworld-client PRIVATE src)
+	target_link_libraries(agentworld-client PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib
 	)
 
 	# Copy assets to build directory
-	add_custom_command(TARGET aicraft POST_BUILD
+	add_custom_command(TARGET agentworld POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:aicraft>/shaders
+		${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:agentworld>/shaders
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/config $<TARGET_FILE_DIR:aicraft>/config
+		${CMAKE_SOURCE_DIR}/config $<TARGET_FILE_DIR:agentworld>/config
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:aicraft>/python
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentworld>/python
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:agentworld>/fonts
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentworld>/artifacts
 	)
 endif()

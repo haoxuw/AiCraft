@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace aicraft {
+namespace agentworld {
 
 constexpr int CHUNK_SIZE = 16;
 constexpr int CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
@@ -53,4 +53,4 @@ constexpr float FACE_SHADE[6] = {
 	0.90f, // -Z
 };
 
-} // namespace aicraft
+} // namespace agentworld

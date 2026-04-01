@@ -17,7 +17,7 @@
 
 #include "common/face.h"
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 using namespace FC;
 
@@ -327,4 +327,4 @@ inline void registerAllFaces(FaceLibrary& lib) {
 	lib.add(faceRobot());
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

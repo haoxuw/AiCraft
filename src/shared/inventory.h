@@ -3,7 +3,7 @@
 /**
  * Inventory: a Counter of items (item_id -> count).
  *
- * Unlike Minecraft's slot-based grid, AiCraft uses a simple
+ * Unlike Minecraft's slot-based grid, AgentWorld uses a simple
  * counter. No stack limits, no slot management. Items are
  * displayed sorted by ID, skipping zero-count entries.
  *
@@ -14,7 +14,28 @@
 #include <map>
 #include <vector>
 
-namespace aicraft {
+namespace agentworld {
+
+// Equipment slots — what a character can wear/hold
+enum class WearSlot {
+	LeftHand  = 0,  // sword, shield, tool
+	RightHand = 1,  // sword, shield, tool
+	Helmet    = 2,  // head armor
+	Body      = 3,  // shoes + pants (combined slot)
+	Back      = 4,  // cape, backpack, quiver
+};
+constexpr int WEAR_SLOT_COUNT = 5;
+
+inline const char* equipSlotName(WearSlot slot) {
+	switch (slot) {
+	case WearSlot::LeftHand:  return "Left Hand";
+	case WearSlot::RightHand: return "Right Hand";
+	case WearSlot::Helmet:    return "Helmet";
+	case WearSlot::Body:      return "Body";
+	case WearSlot::Back:      return "Back";
+	default: return "?";
+	}
+}
 
 class Inventory {
 public:
@@ -92,9 +113,44 @@ public:
 
 	static constexpr int HOTBAR_SLOTS = 10; // keys 1-9, 0
 
+	// ---- Equipment (wearable items) ----
+
+	void equip(WearSlot slot, const std::string& itemId) {
+		int idx = (int)slot;
+		if (idx < 0 || idx >= WEAR_SLOT_COUNT) return;
+		// Unequip current item first (return to inventory)
+		if (!m_equipped[idx].empty())
+			add(m_equipped[idx], 1);
+		m_equipped[idx] = itemId;
+		// Remove from inventory (it's now worn)
+		if (!itemId.empty())
+			remove(itemId, 1);
+	}
+
+	void unequip(WearSlot slot) {
+		int idx = (int)slot;
+		if (idx < 0 || idx >= WEAR_SLOT_COUNT) return;
+		if (!m_equipped[idx].empty()) {
+			add(m_equipped[idx], 1);
+			m_equipped[idx].clear();
+		}
+	}
+
+	const std::string& equipped(WearSlot slot) const {
+		static const std::string empty;
+		int idx = (int)slot;
+		if (idx < 0 || idx >= WEAR_SLOT_COUNT) return empty;
+		return m_equipped[idx];
+	}
+
+	bool hasEquipped(WearSlot slot) const {
+		return !equipped(slot).empty();
+	}
+
 private:
 	std::map<std::string, int> m_items;
-	std::string m_hotbar[10]; // shortcut slots
+	std::string m_hotbar[10];
+	std::string m_equipped[WEAR_SLOT_COUNT];
 };
 
-} // namespace aicraft
+} // namespace agentworld

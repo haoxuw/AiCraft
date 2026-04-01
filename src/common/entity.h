@@ -11,7 +11,7 @@
 #include <memory>
 #include <cstdint>
 
-namespace aicraft {
+namespace agentworld {
 
 using EntityId = uint32_t;
 constexpr EntityId ENTITY_NONE = 0;
@@ -138,4 +138,4 @@ private:
 	std::set<std::string> m_dirty;
 };
 
-} // namespace aicraft
+} // namespace agentworld

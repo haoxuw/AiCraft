@@ -1,7 +1,7 @@
 #include "server/server.h"
 #include <cmath>
 
-namespace aicraft {
+namespace agentworld {
 
 void GameServer::resolveActions(float dt) {
 	auto proposals = m_world->actions.drain();
@@ -166,4 +166,4 @@ void GameServer::resolveActions(float dt) {
 	}
 }
 
-} // namespace aicraft
+} // namespace agentworld

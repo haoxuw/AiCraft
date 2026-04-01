@@ -4,7 +4,7 @@
 #include <glm/glm.hpp>
 #include <string>
 
-namespace aicraft {
+namespace agentworld {
 
 class Shader {
 public:
@@ -25,4 +25,4 @@ private:
 	GLuint m_program = 0;
 };
 
-} // namespace aicraft
+} // namespace agentworld

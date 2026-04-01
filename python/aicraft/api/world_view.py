@@ -10,11 +10,11 @@ This Python class defines the interface and serves as a reference impl.
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
-from aicraft.api.types import Vec3, BlockPos, EntityId
+from agentworld.api.types import Vec3, BlockPos, EntityId
 
 if TYPE_CHECKING:
-    from aicraft.api.base import Object, ActiveObject
-    from aicraft.api.actions import Action
+    from agentworld.api.base import Object, ActiveObject
+    from agentworld.api.actions import Action
 
 
 class WorldView:

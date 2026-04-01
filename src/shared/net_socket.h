@@ -17,7 +17,7 @@
 #include <cstring>
 #include <cstdio>
 
-namespace aicraft::net {
+namespace agentworld::net {
 
 // Make a socket non-blocking
 inline void setNonBlocking(int fd) {
@@ -200,4 +200,4 @@ private:
 	int m_fd = -1;
 };
 
-} // namespace aicraft::net
+} // namespace agentworld::net

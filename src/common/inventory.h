@@ -3,7 +3,7 @@
 /**
  * Inventory: a Counter of items (item_id -> count).
  *
- * Unlike Minecraft's slot-based grid, AiCraft uses a simple
+ * Unlike Minecraft's slot-based grid, AgentWorld uses a simple
  * counter. No stack limits, no slot management. Items are
  * displayed sorted by ID, skipping zero-count entries.
  *
@@ -14,7 +14,7 @@
 #include <map>
 #include <vector>
 
-namespace aicraft {
+namespace agentworld {
 
 class Inventory {
 public:
@@ -97,4 +97,4 @@ private:
 	std::string m_hotbar[10]; // shortcut slots
 };
 
-} // namespace aicraft
+} // namespace agentworld

@@ -11,16 +11,16 @@ EMSDK := $(HOME)/emsdk
 # ── Native (Linux) ─────────────────────────────────────────
 
 stop:
-	@-pkill -f "aicraft" 2>/dev/null; sleep 1
+	@-pkill -f "agentworld" 2>/dev/null; sleep 1
 
 game: build stop
-	./$(BUILD_DIR)/aicraft
+	./$(BUILD_DIR)/agentworld
 
 server: build stop
-	./$(BUILD_DIR)/aicraft-server --port $(PORT)
+	./$(BUILD_DIR)/agentworld-server --port $(PORT)
 
 client: build stop
-	./$(BUILD_DIR)/aicraft-client --host $(HOST) --port $(PORT)
+	./$(BUILD_DIR)/agentworld-client --host $(HOST) --port $(PORT)
 
 build: configure
 	cmake --build $(BUILD_DIR) -j$$(nproc)

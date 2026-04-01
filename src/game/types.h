@@ -1,13 +1,13 @@
 #pragma once
 #include <string>
 
-namespace aicraft {
+namespace agentworld {
 
 enum class GameState {
 	MENU,
 	SERVER_BROWSER,   // show detected servers / start local
 	TEMPLATE_SELECT,
-	CREATIVE,
+	ADMIN,        // admin mode (F12 to toggle)
 	SURVIVAL,
 	CONTROLS,
 	CHARACTER,
@@ -34,4 +34,4 @@ struct MenuAction {
 	int serverPort = 7777;
 };
 
-} // namespace aicraft
+} // namespace agentworld

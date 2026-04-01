@@ -17,7 +17,7 @@
 #include <emscripten.h>
 #endif
 
-namespace aicraft {
+namespace agentworld {
 
 // ============================================================
 // Screenshot utility
@@ -38,9 +38,9 @@ static void writeScreenshot(int w, int h, const char* path) {
 // Init / Shutdown
 // ============================================================
 bool Game::init(int argc, char** argv) {
-	printf("=== AiCraft v0.9.0 ===\n");
+	printf("=== AgentWorld v0.9.0 ===\n");
 
-	if (!m_window.init(1600, 900, "AiCraft")) return false;
+	if (!m_window.init(1600, 900, "AgentWorld")) return false;
 	if (!m_renderer.init("shaders")) return false;
 	if (!m_text.init("shaders")) return false;
 	if (!m_particles.init("shaders")) return false;
@@ -61,6 +61,11 @@ bool Game::init(int argc, char** argv) {
 		std::make_shared<VillageWorldTemplate>(),
 	};
 	m_menu.init(m_templates, &m_characters, &m_faces);
+	m_imguiMenu.init(m_templates);
+
+	// Load all artifact definitions (Python files from artifacts/)
+	m_artifacts.setPlayerNamespace(ArtifactRegistry::generatePlayerNamespace());
+	m_artifacts.loadAll("artifacts");
 
 	// Parse args
 	for (int i = 1; i < argc; i++)
@@ -71,13 +76,100 @@ bool Game::init(int argc, char** argv) {
 	m_pigModel = builtin::pigModel();
 	m_chickenModel = builtin::chickenModel();
 	m_dogModel = builtin::dogModel();
+	m_catModel = builtin::catModel();
 	m_villagerModel = builtin::villagerModel();
+	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
+
+	// Register ALL models for Handbook 3D preview
+	auto& hb = m_imguiMenu.handbook();
+	hb.setPreview(&m_modelPreview, &m_renderer.modelRenderer());
+	hb.setRegistry(&m_artifacts);
+
+	// Creatures
+	hb.registerModel("pig", m_pigModel);
+	hb.registerModel("chicken", m_chickenModel);
+	hb.registerModel("dog", m_dogModel);
+	hb.registerModel("cat", m_catModel);
+	hb.registerModel("villager", m_villagerModel);
+
+	// Characters — build from CharacterManager definitions
+	for (int i = 0; i < m_characters.count(); i++) {
+		auto& cdef = m_characters.get(i);
+		// Use lowercase name for model lookup
+		std::string lower = cdef.name;
+		for (auto& c : lower) c = std::tolower(c);
+		// Build the visual model (body only, no face)
+		hb.registerModel(lower, cdef.model);
+	}
+
+	// Items — simple box models for preview
+	{
+		BoxModel sword;
+		sword.totalHeight = 1.0f;
+		sword.parts.push_back({{0, 0.35f, 0}, {0.03f, 0.30f, 0.03f}, {0.72f, 0.72f, 0.78f, 1}}); // blade
+		sword.parts.push_back({{0, 0.04f, 0}, {0.02f, 0.06f, 0.04f}, {0.40f, 0.28f, 0.12f, 1}}); // handle
+		sword.parts.push_back({{0, 0.08f, 0}, {0.08f, 0.015f, 0.015f}, {0.60f, 0.55f, 0.45f, 1}}); // guard
+		hb.registerModel("sword", sword);
+	}
+	{
+		BoxModel shield;
+		shield.totalHeight = 0.8f;
+		shield.parts.push_back({{0, 0.30f, 0}, {0.02f, 0.22f, 0.18f}, {0.45f, 0.30f, 0.15f, 1}}); // face
+		shield.parts.push_back({{0.02f, 0.30f, 0}, {0.02f, 0.08f, 0.08f}, {0.55f, 0.50f, 0.40f, 1}}); // boss
+		hb.registerModel("shield", shield);
+	}
+	{
+		BoxModel potion;
+		potion.totalHeight = 0.5f;
+		potion.parts.push_back({{0, 0.12f, 0}, {0.06f, 0.10f, 0.06f}, {0.80f, 0.20f, 0.30f, 1}}); // bottle
+		potion.parts.push_back({{0, 0.24f, 0}, {0.03f, 0.04f, 0.03f}, {0.70f, 0.15f, 0.20f, 1}}); // neck
+		potion.parts.push_back({{0, 0.29f, 0}, {0.04f, 0.02f, 0.04f}, {0.50f, 0.45f, 0.35f, 1}}); // cork
+		hb.registerModel("potion", potion);
+	}
+	{
+		BoxModel bucket;
+		bucket.totalHeight = 0.5f;
+		bucket.parts.push_back({{0, 0.10f, 0}, {0.08f, 0.10f, 0.08f}, {0.60f, 0.60f, 0.62f, 1}}); // body
+		bucket.parts.push_back({{0, 0.10f, 0}, {0.09f, 0.02f, 0.09f}, {0.55f, 0.55f, 0.58f, 1}}); // rim
+		bucket.parts.push_back({{0, 0.22f, 0}, {0.06f, 0.01f, 0.01f}, {0.50f, 0.50f, 0.52f, 1}}); // handle
+		hb.registerModel("bucket", bucket);
+	}
+	{
+		BoxModel torch;
+		torch.totalHeight = 0.6f;
+		torch.parts.push_back({{0, 0.12f, 0}, {0.03f, 0.14f, 0.03f}, {0.40f, 0.28f, 0.12f, 1}}); // stick
+		torch.parts.push_back({{0, 0.28f, 0}, {0.04f, 0.04f, 0.04f}, {1.00f, 0.80f, 0.20f, 1}}); // flame
+		torch.parts.push_back({{0, 0.34f, 0}, {0.02f, 0.03f, 0.02f}, {1.00f, 0.90f, 0.40f, 0.8f}}); // tip
+		hb.registerModel("torch", torch);
+	}
+
+	// Blocks — simple single cube
+	{
+		BoxModel block;
+		block.totalHeight = 1.0f;
+		block.parts.push_back({{0, 0.5f, 0}, {0.4f, 0.4f, 0.4f}, {0.48f, 0.48f, 0.50f, 1}});
+		hb.registerModel("terrain", block); // generic block
+		hb.registerModel("stone", block);
+	}
+	{
+		BoxModel dirt;
+		dirt.totalHeight = 1.0f;
+		dirt.parts.push_back({{0, 0.5f, 0}, {0.4f, 0.4f, 0.4f}, {0.45f, 0.32f, 0.18f, 1}});
+		hb.registerModel("dirt", dirt);
+	}
 
 	// Scroll callback — reads selected slot from player entity
 	struct ScrollData { Game* game; Camera* cam; };
 	static ScrollData sd = {this, &m_camera};
 	glfwSetWindowUserPointer(m_window.handle(), &sd);
-	glfwSetScrollCallback(m_window.handle(), [](GLFWwindow* w, double, double y) {
+	glfwSetScrollCallback(m_window.handle(), [](GLFWwindow* w, double xoff, double y) {
+		// Always forward to ImGui first
+		ImGuiIO& io = ImGui::GetIO();
+		io.AddMouseWheelEvent((float)xoff, (float)y);
+
+		// If ImGui wants the mouse (hovering a window), don't handle in gameplay
+		if (io.WantCaptureMouse) return;
+
 		auto* d = (ScrollData*)glfwGetWindowUserPointer(w);
 		if (d->cam->mode == CameraMode::FirstPerson) {
 			Entity* pe = d->game->playerEntity();
@@ -168,8 +260,26 @@ void Game::handleGlobalInput() {
 	if (m_controls.pressed(Action::ToggleDebug))
 		m_showDebug = !m_showDebug;
 
-	if (m_controls.pressed(Action::ToggleInventory))
+	// F12: toggle admin mode (fly, unlimited blocks, debug)
+	static bool prevF12 = false;
+	bool f12 = glfwGetKey(m_window.handle(), GLFW_KEY_F12) == GLFW_PRESS;
+	if (f12 && !prevF12 && (m_state == GameState::ADMIN || m_state == GameState::SURVIVAL)) {
+		if (m_state == GameState::ADMIN) {
+			m_state = GameState::SURVIVAL;
+			printf("[Game] Admin mode OFF\n");
+		} else {
+			m_state = GameState::ADMIN;
+			printf("[Game] Admin mode ON (fly, unlimited blocks)\n");
+		}
+	}
+	prevF12 = f12;
+
+	if (m_controls.pressed(Action::ToggleInventory)) {
 		m_showInventory = !m_showInventory;
+		m_equipUI.toggle();
+		if (m_equipUI.isOpen())
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+	}
 }
 
 void Game::endFrame() {
@@ -178,7 +288,7 @@ void Game::endFrame() {
 
 void Game::saveScreenshot() {
 	char p[256];
-	snprintf(p, 256, "/tmp/aicraft_screenshot_%d.ppm", m_screenshotCounter++);
+	snprintf(p, 256, "/tmp/agentworld_screenshot_%d.ppm", m_screenshotCounter++);
 	writeScreenshot(m_window.width(), m_window.height(), p);
 }
 
@@ -188,9 +298,37 @@ void Game::saveScreenshot() {
 void Game::updateAndRender(float dt, float aspect) {
 	switch (m_state) {
 	case GameState::MENU: {
-		auto action = m_menu.updateMainMenu(dt, m_window, m_text, m_controls,
-		                                    aspect, m_demoMode, m_autoScreenTimer);
+		// Show cursor for menu interaction
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+		// ImGui-based menu
+		m_ui.beginFrame();
+		auto action = m_imguiMenu.render(m_artifacts,
+			(float)m_window.width(), (float)m_window.height());
+		m_ui.endFrame();
 		m_autoScreenTimer += dt;
+
+		// Demo mode: capture menu → handbook → enter game
+		if (m_demoMode && m_autoScreenTimer > 0.8f && m_autoScreenTimer < 0.9f) {
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_menu_screenshot.ppm");
+			// Switch to handbook, show creature with 3D preview
+			m_imguiMenu.setPage(1);
+			m_imguiMenu.handbook().selectEntry("base:pig");
+		}
+		if (m_demoMode && m_autoScreenTimer > 1.8f && m_autoScreenTimer < 1.9f) {
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_handbook_creature.ppm");
+			// Now show a character
+			m_imguiMenu.handbook().selectEntry("base:knight");
+		}
+		if (m_demoMode && m_autoScreenTimer > 2.6f && m_autoScreenTimer < 2.7f) {
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_handbook_character.ppm");
+		}
+		if (m_demoMode && m_autoScreenTimer > 2.0f) {
+			action.type = MenuAction::EnterGame;
+			action.templateIndex = 1;
+			action.targetState = GameState::ADMIN;
+		}
+
 		handleMenuAction(action);
 		break;
 	}
@@ -216,7 +354,7 @@ void Game::updateAndRender(float dt, float aspect) {
 		handleMenuAction(action);
 		break;
 	}
-	case GameState::CREATIVE:
+	case GameState::ADMIN:
 	case GameState::SURVIVAL:
 		updatePlaying(dt, aspect);
 		break;
@@ -239,7 +377,7 @@ void Game::handleMenuAction(const MenuAction& action) {
 	case MenuAction::StartGame:
 		if (m_demoMode) {
 			// Demo mode: skip server browser, go straight to game
-			enterGame(0, GameState::CREATIVE);
+			enterGame(0, GameState::ADMIN);
 		} else {
 			m_state = GameState::SERVER_BROWSER;
 		}
@@ -267,7 +405,7 @@ void Game::handleMenuAction(const MenuAction& action) {
 void Game::joinServer(const std::string& host, int port, GameState targetState) {
 #ifndef __EMSCRIPTEN__
 	printf("[Game] Joining server at %s:%d\n", host.c_str(), port);
-	bool creative = (targetState == GameState::CREATIVE);
+	bool creative = (targetState == GameState::ADMIN);
 	auto netServer = std::make_unique<NetworkServer>(host, port);
 	if (netServer->createGame(42, 0, creative)) {
 		printf("[Game] Connected as %s\n", netServer->clientUUID().c_str());
@@ -286,7 +424,7 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 // ============================================================
 void Game::enterGame(int templateIndex, GameState targetState) {
 	printf("[Game] Starting local server\n");
-	bool creative = (targetState == GameState::CREATIVE);
+	bool creative = (targetState == GameState::ADMIN);
 	auto localServer = std::make_unique<LocalServer>(m_templates);
 	localServer->createGame(42, templateIndex, creative);
 	m_server = std::move(localServer);
@@ -361,6 +499,7 @@ void Game::updatePlaying(float dt, float aspect) {
 
 	// Check if player right-clicked an entity → enter inspection
 	if (m_gameplay.inspectedEntity() != ENTITY_NONE) {
+		m_preInspectState = m_state; // remember so we restore correctly
 		m_state = GameState::ENTITY_INSPECT;
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 	}
@@ -369,12 +508,12 @@ void Game::updatePlaying(float dt, float aspect) {
 }
 
 void Game::renderPlaying(float dt, float aspect) {
-	World& world = dynamic_cast<LocalServer*>(m_server.get())->server()->world();
+	auto& srv = *m_server; // ServerInterface — works for both local and network
 	Entity* pe = playerEntity();
 	if (!pe) return;
 
 	// Update chunks
-	m_renderer.updateChunks(world, m_camera, 8);
+	m_renderer.updateChunks(srv.chunks(), m_camera, 8);
 
 	// Render terrain + sky + crosshair
 	auto& hit = m_gameplay.currentHit();
@@ -398,13 +537,54 @@ void Game::renderPlaying(float dt, float aspect) {
 	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime};
 
 	if (m_camera.mode != CameraMode::FirstPerson) {
+		BoxModel activeModel;
 		if (m_characters.count() > 0 && m_faces.count() > 0) {
-			BoxModel activeModel = m_characters.buildSelectedModel(
+			activeModel = m_characters.buildSelectedModel(
 				m_faces.selected(), pe->inventory.get());
-			mr.draw(activeModel, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
 		} else {
-			mr.draw(m_playerModel, vp, pe->position, m_camera.player.yaw, playerAnim);
+			activeModel = m_playerModel;
 		}
+
+		// Add equipped weapon/shield to the character model
+		if (pe->inventory) {
+			const float PI = 3.14159265f;
+			if (pe->inventory->hasEquipped(WearSlot::LeftHand)) {
+				// Sword blade (swings with left arm)
+				activeModel.parts.push_back({
+					{-0.42f, 0.65f, -0.15f}, {0.03f, 0.22f, 0.03f},
+					{0.72f, 0.72f, 0.78f, 1},
+					{-0.37f, 1.40f, 0}, {1,0,0}, 55.0f, PI, 1.0f
+				});
+				// Handle
+				activeModel.parts.push_back({
+					{-0.42f, 0.42f, -0.15f}, {0.02f, 0.06f, 0.04f},
+					{0.40f, 0.28f, 0.12f, 1},
+					{-0.37f, 1.40f, 0}, {1,0,0}, 55.0f, PI, 1.0f
+				});
+				// Crossguard
+				activeModel.parts.push_back({
+					{-0.42f, 0.46f, -0.15f}, {0.06f, 0.015f, 0.015f},
+					{0.60f, 0.55f, 0.45f, 1},
+					{-0.37f, 1.40f, 0}, {1,0,0}, 55.0f, PI, 1.0f
+				});
+			}
+			if (pe->inventory->hasEquipped(WearSlot::RightHand)) {
+				// Shield face (swings with right arm)
+				activeModel.parts.push_back({
+					{0.46f, 0.90f, -0.10f}, {0.02f, 0.18f, 0.14f},
+					{0.45f, 0.30f, 0.15f, 1},
+					{0.37f, 1.40f, 0}, {1,0,0}, 55.0f, 0, 1.0f
+				});
+				// Shield boss
+				activeModel.parts.push_back({
+					{0.48f, 0.90f, -0.10f}, {0.02f, 0.06f, 0.06f},
+					{0.55f, 0.50f, 0.40f, 1},
+					{0.37f, 1.40f, 0}, {1,0,0}, 55.0f, 0, 1.0f
+				});
+			}
+		}
+
+		mr.draw(activeModel, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
 	}
 
 	// Data-driven item particle effects (defined in Python, mirrored in C++ builtins).
@@ -448,7 +628,7 @@ void Game::renderPlaying(float dt, float aspect) {
 	}
 
 	// Mob models — all entities (except the player, already drawn above)
-	world.entities.forEach([&](Entity& e) {
+	srv.forEachEntity([&](Entity& e) {
 		if (e.id() == m_server->localPlayerId()) return; // skip player (drawn separately with character model)
 
 		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
@@ -461,13 +641,15 @@ void Game::renderPlaying(float dt, float aspect) {
 			mr.draw(m_chickenModel, vp, e.position, e.yaw, mobAnim);
 		else if (e.typeId() == EntityType::Dog)
 			mr.draw(m_dogModel, vp, e.position, e.yaw, mobAnim);
+		else if (e.typeId() == EntityType::Cat)
+			mr.draw(m_catModel, vp, e.position, e.yaw, mobAnim);
 		else if (e.typeId() == EntityType::Villager)
 			mr.draw(m_villagerModel, vp, e.position, e.yaw, mobAnim);
 		else if (e.typeId() == EntityType::ItemEntity) {
 			float bobY = std::sin(e.getProp<float>(Prop::Age, 0.0f) * 3.0f) * 0.08f;
 			float spinYaw = e.getProp<float>(Prop::Age, 0.0f) * 90.0f;
 			std::string itemType = e.getProp<std::string>(Prop::ItemType);
-			const BlockDef* idef = world.blocks.find(itemType);
+			const BlockDef* idef = srv.blockRegistry().find(itemType);
 			glm::vec3 itemColor = idef ? idef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
 			BoxModel itemModel;
 			itemModel.parts.push_back({{0, 0.15f, 0}, {0.12f, 0.12f, 0.12f},
@@ -478,7 +660,7 @@ void Game::renderPlaying(float dt, float aspect) {
 
 	// Lightbulbs above living entities (behavior indicator)
 	static BoxModel lightbulb = builtin::lightbulbModel();
-	world.entities.forEach([&](Entity& e) {
+	srv.forEachEntity([&](Entity& e) {
 		if (e.id() == m_server->localPlayerId()) return;
 		if (e.def().category != Category::Animal) return;
 
@@ -506,18 +688,27 @@ void Game::renderPlaying(float dt, float aspect) {
 	HUDContext ctx{
 		aspect, m_state, selectedSlot,
 		pe->inventory ? *pe->inventory : emptyInv,
-		m_camera, world,
+		m_camera, srv.blockRegistry(), &srv.chunks(),
 		m_worldTime, m_currentFPS, m_showDebug, m_showInventory,
 		hit, m_gameplay.currentEntityHit(),
 		m_renderer.sunStrength(),
-		world.entities.count(), m_particles.count(),
+		srv.entityCount(), m_particles.count(),
 		playerHP, pe->def().max_hp, playerHunger
 	};
 	m_hud.render(ctx, m_text, m_renderer.highlightShader());
 
-	// ImGui overlay (renders on top of everything)
+	// ImGui overlays (equipment, FPS)
 	m_ui.beginFrame();
-	// Demo: show FPS in ImGui as proof of concept
+
+	// Equipment/Inventory UI ([I] to toggle)
+	if (pe->inventory) {
+		auto* ls = dynamic_cast<LocalServer*>(m_server.get());
+		const BlockRegistry& blocks = ls ? ls->server()->world().blocks : m_server->blockRegistry();
+		m_equipUI.render(*pe->inventory, blocks,
+			(float)m_window.width(), (float)m_window.height());
+	}
+
+	// FPS counter
 	ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
 	ImGui::SetNextWindowBgAlpha(0.5f);
 	if (ImGui::Begin("##fps", nullptr,
@@ -531,7 +722,7 @@ void Game::renderPlaying(float dt, float aspect) {
 	// Auto screenshot
 	m_autoScreenTimer += dt;
 	if (!m_autoScreenDone && m_autoScreenTimer > 3.0f) {
-		writeScreenshot(m_window.width(), m_window.height(), "/tmp/aicraft_auto_screenshot.ppm");
+		writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_auto_screenshot.ppm");
 		m_autoScreenDone = true;
 	}
 
@@ -539,26 +730,39 @@ void Game::renderPlaying(float dt, float aspect) {
 	if (m_demoMode && m_state != GameState::MENU && m_demoStep >= 1) {
 		m_demoTimer += dt;
 		if (m_demoStep == 1 && m_demoTimer > 2.0f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/aicraft_view_1_fps.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_1_fps.ppm");
 			m_camera.cycleMode();
 			m_camera.orbitYaw = m_camera.player.yaw + 30;
 			m_camera.orbitPitch = 25;
 			m_demoStep = 2; m_demoTimer = 0;
 		}
 		if (m_demoStep == 2 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/aicraft_view_2_3rd.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_2_3rd.ppm");
+			// Open inventory for screenshot
+			if (pe->inventory) {
+				pe->inventory->equip(WearSlot::LeftHand, "base:sword");
+				pe->inventory->equip(WearSlot::RightHand, "base:shield");
+			}
+			m_equipUI.toggle();
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			m_demoStep = 25; m_demoTimer = 0;
+		}
+		if (m_demoStep == 25 && m_demoTimer > 1.0f) {
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_25_inventory.ppm");
+			m_equipUI.close();
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 			m_camera.cycleMode();
 			m_demoStep = 3; m_demoTimer = 0;
 		}
 		if (m_demoStep == 3 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/aicraft_view_3_god.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_3_god.ppm");
 			m_camera.cycleMode();
 			m_camera.rtsCenter = pe->position;
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			m_demoStep = 4; m_demoTimer = 0;
 		}
 		if (m_demoStep == 4 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/aicraft_view_4_rts.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_4_rts.ppm");
 			printf("Demo complete.\n");
 			glfwSetWindowShouldClose(m_window.handle(), true);
 			m_demoStep = 99;
@@ -571,17 +775,16 @@ void Game::renderPlaying(float dt, float aspect) {
 // ============================================================
 void Game::updateEntityInspect(float dt, float aspect) {
 	if (!m_server) { m_state = GameState::MENU; return; }
-	World& world = dynamic_cast<LocalServer*>(m_server.get())->server()->world();
+	auto* localSrv = dynamic_cast<LocalServer*>(m_server.get());
+	if (!localSrv) { m_state = m_preInspectState; return; }
+	World& world = localSrv->server()->world();
 	Entity* pe = playerEntity();
 	if (!pe) { m_state = GameState::MENU; return; }
 
 	// ESC or right-click closes inspection
 	if (m_controls.pressed(Action::MenuBack) || m_controls.pressed(Action::PlaceBlock)) {
 		m_gameplay.clearInspection();
-		// Return to previous playing state
-		m_state = (pe->getProp<bool>("fly_mode", false)) ? GameState::CREATIVE : GameState::SURVIVAL;
-		// Re-determine state from entity presence
-		m_state = GameState::CREATIVE; // TODO: track previous state properly
+		m_state = m_preInspectState; // restore survival/creative
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 		return;
 	}
@@ -594,7 +797,7 @@ void Game::updateEntityInspect(float dt, float aspect) {
 
 	// Draw inspection panel overlay
 	EntityId eid = m_gameplay.inspectedEntity();
-	Entity* target = world.entities.get(eid);
+	Entity* target = m_server->getEntity(eid);
 	if (!target) {
 		m_gameplay.clearInspection();
 		return;
@@ -752,4 +955,4 @@ void Game::updateCodeEditor(float dt, float aspect) {
 	}
 }
 
-} // namespace aicraft
+} // namespace agentworld

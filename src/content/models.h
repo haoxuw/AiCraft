@@ -3,7 +3,7 @@
 #include "shared/box_model.h"
 #include <cmath>
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 // ======================================================================
 // Lightbulb: tiny icon floating above living entities
@@ -257,6 +257,83 @@ inline BoxModel chickenModel() {
 }
 
 // ======================================================================
+// Cat: ~0.5 blocks tall, sleek body, pointy ears, long tail
+// ======================================================================
+inline BoxModel catModel() {
+	const float PI = 3.14159265f;
+	BoxModel m;
+	m.totalHeight = 0.5f;
+	m.modelScale  = 1.0f;
+	m.walkCycleSpeed = 6.0f;
+	m.idleBobAmount = 0.004f;
+	m.walkBobAmount = 0.018f;
+
+	// Body (sleek, elongated)
+	m.parts.push_back({
+		{0, 0.25f, 0}, {0.12f, 0.10f, 0.28f},
+		{0.90f, 0.55f, 0.20f, 1}
+	});
+
+	// Head (round)
+	m.parts.push_back({
+		{0, 0.36f, -0.30f}, {0.12f, 0.11f, 0.11f},
+		{0.92f, 0.58f, 0.22f, 1},
+		{0, 0.34f, -0.18f}, {1,0,0}, 8.0f, 0, 0.5f
+	});
+
+	// Left ear (pointy)
+	m.parts.push_back({
+		{-0.08f, 0.48f, -0.28f}, {0.03f, 0.06f, 0.03f},
+		{0.85f, 0.50f, 0.18f, 1}
+	});
+
+	// Right ear
+	m.parts.push_back({
+		{0.08f, 0.48f, -0.28f}, {0.03f, 0.06f, 0.03f},
+		{0.85f, 0.50f, 0.18f, 1}
+	});
+
+	// Front legs (thin)
+	m.parts.push_back({
+		{-0.06f, 0.08f, -0.16f}, {0.03f, 0.10f, 0.03f},
+		{0.88f, 0.52f, 0.18f, 1},
+		{-0.06f, 0.18f, -0.16f}, {1,0,0}, 35.0f, 0, 1.0f
+	});
+	m.parts.push_back({
+		{0.06f, 0.08f, -0.16f}, {0.03f, 0.10f, 0.03f},
+		{0.88f, 0.52f, 0.18f, 1},
+		{0.06f, 0.18f, -0.16f}, {1,0,0}, 35.0f, PI, 1.0f
+	});
+
+	// Back legs
+	m.parts.push_back({
+		{-0.06f, 0.08f, 0.16f}, {0.03f, 0.10f, 0.03f},
+		{0.88f, 0.52f, 0.18f, 1},
+		{-0.06f, 0.18f, 0.16f}, {1,0,0}, 35.0f, PI, 1.0f
+	});
+	m.parts.push_back({
+		{0.06f, 0.08f, 0.16f}, {0.03f, 0.10f, 0.03f},
+		{0.88f, 0.52f, 0.18f, 1},
+		{0.06f, 0.18f, 0.16f}, {1,0,0}, 35.0f, 0, 1.0f
+	});
+
+	// Tail (long, curved up)
+	m.parts.push_back({
+		{0, 0.32f, 0.32f}, {0.02f, 0.02f, 0.12f},
+		{0.85f, 0.50f, 0.18f, 1},
+		{0, 0.28f, 0.28f}, {1,0,0}, 15.0f, 0, 1.5f
+	});
+	// Tail tip
+	m.parts.push_back({
+		{0, 0.38f, 0.44f}, {0.02f, 0.02f, 0.06f},
+		{0.80f, 0.45f, 0.15f, 1},
+		{0, 0.28f, 0.28f}, {1,0,0}, 20.0f, 0.5f, 1.5f
+	});
+
+	return m;
+}
+
+// ======================================================================
 // Dog: ~0.7 blocks tall, 4 legs, pointy ears, tail
 // ======================================================================
 inline BoxModel dogModel() {
@@ -439,4 +516,4 @@ inline BoxModel villagerModel() {
 	return m;
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

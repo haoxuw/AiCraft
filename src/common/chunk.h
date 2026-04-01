@@ -4,7 +4,7 @@
 #include "shared/block_registry.h"
 #include <array>
 
-namespace aicraft {
+namespace agentworld {
 
 class Chunk {
 public:
@@ -41,4 +41,4 @@ private:
 	bool m_dirty = true;
 };
 
-} // namespace aicraft
+} // namespace agentworld

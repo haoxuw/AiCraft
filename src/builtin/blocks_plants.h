@@ -3,7 +3,7 @@
 #include "common/block_registry.h"
 #include "common/constants.h"
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 // Plant blocks: wood logs, leaves.
 inline void registerPlantBlocks(BlockRegistry& reg) {
@@ -24,4 +24,4 @@ inline void registerPlantBlocks(BlockRegistry& reg) {
 		{{GR::Snappy,3},{GR::Flammable,2}}, "",SN::DigLeaves,""});
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

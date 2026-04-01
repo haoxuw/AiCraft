@@ -1,7 +1,7 @@
 /**
  * Dedicated server — runs headless, accepts TCP client connections.
  *
- * Usage: ./aicraft-server [--port PORT] [--seed SEED] [--survival]
+ * Usage: ./agentworld-server [--port PORT] [--seed SEED] [--survival]
  */
 
 #include "server/server.h"
@@ -24,20 +24,20 @@ static void signalHandler(int) { g_running = false; }
 
 struct ConnectedClient {
 	int fd;
-	aicraft::ClientId id;
-	aicraft::EntityId playerId;
-	aicraft::net::RecvBuffer recvBuf;
+	agentworld::ClientId id;
+	agentworld::EntityId playerId;
+	agentworld::net::RecvBuffer recvBuf;
 };
 
 int main(int argc, char** argv) {
-	printf("=== AiCraft Dedicated Server ===\n");
+	printf("=== AgentWorld Dedicated Server ===\n");
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
 
-	aicraft::pythonBridge().init("python");
+	agentworld::pythonBridge().init("python");
 
 	// Parse args
-	aicraft::ServerConfig config;
+	agentworld::ServerConfig config;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
 			config.port = atoi(argv[++i]);
@@ -48,17 +48,17 @@ int main(int argc, char** argv) {
 	}
 
 	// World templates
-	std::vector<std::shared_ptr<aicraft::WorldTemplate>> templates = {
-		std::make_shared<aicraft::FlatWorldTemplate>(),
-		std::make_shared<aicraft::VillageWorldTemplate>(),
+	std::vector<std::shared_ptr<agentworld::WorldTemplate>> templates = {
+		std::make_shared<agentworld::FlatWorldTemplate>(),
+		std::make_shared<agentworld::VillageWorldTemplate>(),
 	};
 
 	// Initialize server
-	aicraft::GameServer server;
+	agentworld::GameServer server;
 	server.init(config, templates);
 
 	// Start TCP listener
-	aicraft::net::TcpServer listener;
+	agentworld::net::TcpServer listener;
 	if (!listener.listen(config.port)) {
 		printf("[Server] Failed to start listener.\n");
 		return 1;
@@ -66,8 +66,8 @@ int main(int argc, char** argv) {
 
 	printf("[Server] Waiting for clients on port %d...\n", config.port);
 
-	std::unordered_map<aicraft::ClientId, ConnectedClient> clients;
-	aicraft::ClientId nextClientId = 1;
+	std::unordered_map<agentworld::ClientId, ConnectedClient> clients;
+	agentworld::ClientId nextClientId = 1;
 
 	// Fixed timestep server loop (60 tps)
 	const float TICK_RATE = 1.0f / 60.0f;
@@ -89,42 +89,42 @@ int main(int argc, char** argv) {
 			// Temporarily set blocking for initial data send (chunks are large)
 			int flags = fcntl(newFd, F_GETFL, 0);
 			fcntl(newFd, F_SETFL, flags & ~O_NONBLOCK);
-			aicraft::ClientId cid = nextClientId++;
-			aicraft::EntityId eid = server.addClient(cid);
+			agentworld::ClientId cid = nextClientId++;
+			agentworld::EntityId eid = server.addClient(cid);
 
 			clients[cid] = {newFd, cid, eid, {}};
 
 			// Send welcome message with player entity ID and spawn pos
-			aicraft::net::WriteBuffer wb;
+			agentworld::net::WriteBuffer wb;
 			wb.writeU32(eid);
 			wb.writeVec3(server.spawnPos());
-			aicraft::net::sendMessage(newFd, aicraft::net::S_WELCOME, wb);
+			agentworld::net::sendMessage(newFd, agentworld::net::S_WELCOME, wb);
 
 			// Send surface chunks around spawn (9×9 horizontal, 2 Y levels)
 			// Includes forest area outside village clearing
 			auto sp = server.spawnPos();
-			auto cp = aicraft::worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
+			auto cp = agentworld::worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
 			for (int dy = 0; dy <= 1; dy++)
 			for (int dz = -4; dz <= 4; dz++)
 			for (int dx = -4; dx <= 4; dx++) {
-				aicraft::ChunkPos pos = {cp.x + dx, cp.y, cp.z + dz};
-				aicraft::Chunk* chunk = server.world().getChunk(pos);
+				agentworld::ChunkPos pos = {cp.x + dx, cp.y, cp.z + dz};
+				agentworld::Chunk* chunk = server.world().getChunk(pos);
 				if (chunk) {
-					aicraft::net::WriteBuffer cb;
+					agentworld::net::WriteBuffer cb;
 					cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
 					// Send raw block data
 					for (int i = 0; i < 16*16*16; i++)
 						cb.writeU32(chunk->getRaw(i));
-					aicraft::net::sendMessage(newFd, aicraft::net::S_CHUNK, cb);
+					agentworld::net::sendMessage(newFd, agentworld::net::S_CHUNK, cb);
 				}
 			}
 
 			// Now set non-blocking for regular updates
-			aicraft::net::setNonBlocking(newFd);
+			agentworld::net::setNonBlocking(newFd);
 		}
 
 		// Receive from clients
-		std::vector<aicraft::ClientId> disconnected;
+		std::vector<agentworld::ClientId> disconnected;
 		for (auto& [cid, client] : clients) {
 			if (!client.recvBuf.readFrom(client.fd)) {
 				disconnected.push_back(cid);
@@ -132,21 +132,21 @@ int main(int argc, char** argv) {
 			}
 
 			// Process received messages
-			aicraft::net::MsgHeader hdr;
+			agentworld::net::MsgHeader hdr;
 			std::vector<uint8_t> payload;
 			while (client.recvBuf.tryExtract(hdr, payload)) {
-				aicraft::net::ReadBuffer rb(payload.data(), payload.size());
+				agentworld::net::ReadBuffer rb(payload.data(), payload.size());
 
 				switch (hdr.type) {
-				case aicraft::net::C_ACTION: {
-					auto action = aicraft::net::deserializeAction(rb);
+				case agentworld::net::C_ACTION: {
+					auto action = agentworld::net::deserializeAction(rb);
 					server.receiveAction(cid, action);
 					break;
 				}
-				case aicraft::net::C_SLOT: {
+				case agentworld::net::C_SLOT: {
 					uint32_t slot = rb.readU32();
 					auto* pe = server.world().entities.get(client.playerId);
-					if (pe) pe->setProp(aicraft::Prop::SelectedSlot, (int)slot);
+					if (pe) pe->setProp(agentworld::Prop::SelectedSlot, (int)slot);
 					break;
 				}
 				default: break;
@@ -175,8 +175,8 @@ int main(int argc, char** argv) {
 		if (broadcastTimer >= 0.05f && !clients.empty()) {
 			broadcastTimer = 0;
 		for (auto& [cid, client] : clients) {
-			server.world().entities.forEach([&](aicraft::Entity& e) {
-				aicraft::net::EntityState es;
+			server.world().entities.forEach([&](agentworld::Entity& e) {
+				agentworld::net::EntityState es;
 				es.id = e.id();
 				es.typeId = e.typeId();
 				es.position = e.position;
@@ -187,15 +187,15 @@ int main(int argc, char** argv) {
 				es.hp = e.hp();
 				es.maxHp = e.def().max_hp;
 
-				aicraft::net::WriteBuffer wb;
-				aicraft::net::serializeEntityState(wb, es);
-				aicraft::net::sendMessage(client.fd, aicraft::net::S_ENTITY, wb);
+				agentworld::net::WriteBuffer wb;
+				agentworld::net::serializeEntityState(wb, es);
+				agentworld::net::sendMessage(client.fd, agentworld::net::S_ENTITY, wb);
 			});
 
 			// Send world time
-			aicraft::net::WriteBuffer tb;
+			agentworld::net::WriteBuffer tb;
 			tb.writeF32(server.worldTime());
-			aicraft::net::sendMessage(client.fd, aicraft::net::S_TIME, tb);
+			agentworld::net::sendMessage(client.fd, agentworld::net::S_TIME, tb);
 		}
 		} // end broadcast throttle
 
@@ -219,6 +219,6 @@ int main(int argc, char** argv) {
 
 	printf("[Server] Shut down.\n");
 
-	aicraft::pythonBridge().shutdown();
+	agentworld::pythonBridge().shutdown();
 	return 0;
 }

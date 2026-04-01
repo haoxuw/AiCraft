@@ -5,7 +5,7 @@
  * When entering a game, connects to the server via TCP instead of
  * creating a local GameServer.
  *
- * Usage: ./aicraft-client [--host HOST] [--port PORT]
+ * Usage: ./agentworld-client [--host HOST] [--port PORT]
  *        Default: 127.0.0.1:7777
  */
 
@@ -13,13 +13,13 @@
 #include "server/python_bridge.h"
 
 int main(int argc, char** argv) {
-	aicraft::pythonBridge().init("python");
+	agentworld::pythonBridge().init("python");
 
-	aicraft::Game game;
+	agentworld::Game game;
 	if (!game.init(argc, argv)) return 1;
 	game.run();
 	game.shutdown();
 
-	aicraft::pythonBridge().shutdown();
+	agentworld::pythonBridge().shutdown();
 	return 0;
 }

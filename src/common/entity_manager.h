@@ -12,7 +12,7 @@
 #include <cmath>
 #include <glm/trigonometric.hpp>
 
-namespace aicraft {
+namespace agentworld {
 
 class EntityManager {
 public:
@@ -328,4 +328,4 @@ private:
 	EntityId m_nextId = 1;
 };
 
-} // namespace aicraft
+} // namespace agentworld

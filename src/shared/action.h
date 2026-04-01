@@ -21,7 +21,7 @@
 #include <vector>
 #include <mutex>
 
-namespace aicraft {
+namespace agentworld {
 
 // ================================================================
 // ActionProposal — what an entity wants to happen
@@ -99,4 +99,4 @@ private:
 	std::vector<ActionProposal> m_pending;
 };
 
-} // namespace aicraft
+} // namespace agentworld

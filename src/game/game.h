@@ -2,7 +2,10 @@
 
 #include "game/types.h"
 #include "game/menu.h"
+#include "game/imgui_menu.h"
 #include "game/code_editor.h"
+#include "game/equipment_ui.h"
+#include "shared/artifact_registry.h"
 #include "shared/server_interface.h"
 #include "server/local_server.h"
 #include "server/behavior_store.h"
@@ -15,6 +18,7 @@
 #include "client/particles.h"
 #include "client/controls.h"
 #include "client/model.h"
+#include "client/model_preview.h"
 #include "client/ui.h"
 #include "server/world_template.h"
 #include "shared/character.h"
@@ -23,7 +27,7 @@
 #include <memory>
 #include <vector>
 
-namespace aicraft {
+namespace agentworld {
 
 class Game {
 public:
@@ -74,8 +78,11 @@ private:
 
 	GameplayController          m_gameplay;
 	CodeEditor                  m_codeEditor;
+	EquipmentUI                 m_equipUI;
 	BehaviorStore               m_behaviorStore;
 	MenuSystem                  m_menu;
+	ImGuiMenu                   m_imguiMenu;
+	ArtifactRegistry            m_artifacts;
 	HUD                         m_hud;
 
 	// Player entity (from server)
@@ -112,12 +119,14 @@ private:
 
 	// Display
 	bool m_showDebug = false;
+	GameState m_preInspectState = GameState::SURVIVAL;
 	bool m_showInventory = false;
 
 	// Models
-	BoxModel m_playerModel, m_pigModel, m_chickenModel, m_dogModel, m_villagerModel;
+	BoxModel m_playerModel, m_pigModel, m_chickenModel, m_dogModel, m_catModel, m_villagerModel;
+	ModelPreview m_modelPreview;
 	float m_playerWalkDist = 0;
 	float m_globalTime = 0;
 };
 
-} // namespace aicraft
+} // namespace agentworld

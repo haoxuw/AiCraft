@@ -5,9 +5,9 @@ and the engine's physics system determines the actual path.
 Objects NEVER set their own position directly.
 """
 
-from aicraft.api.actions import Action, ActionMeta
-from aicraft.api.world_view import WorldView
-from aicraft.api.types import BlockPos, EntityId, Vec3
+from agentworld.api.actions import Action, ActionMeta
+from agentworld.api.world_view import WorldView
+from agentworld.api.types import BlockPos, EntityId, Vec3
 
 
 class MoveTo(Action):

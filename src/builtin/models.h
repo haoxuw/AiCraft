@@ -3,7 +3,7 @@
 #include "client/model.h"
 #include <cmath>
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 // ======================================================================
 // Player: 2 blocks tall, Minecraft-style proportions
@@ -238,4 +238,4 @@ inline BoxModel chickenModel() {
 	return m;
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

@@ -2,7 +2,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <cstdio>
 
-namespace aicraft {
+namespace agentworld {
 
 void HUD::init(Shader& highlightShader) {
 	// No longer needed for hotbar (using TextRenderer), but kept for future use
@@ -59,7 +59,7 @@ void HUD::renderHotbar(const HUDContext& ctx, TextRenderer& text) {
 		std::string itemId = ctx.inventory.hotbar(i);
 		int itemCount = ctx.inventory.hotbarCount(i);
 		if (!itemId.empty() && itemCount > 0) {
-			const BlockDef* bdef = ctx.world.blocks.find(itemId);
+			const BlockDef* bdef = ctx.blocks.find(itemId);
 			glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.45f, 0.55f, 0.70f);
 
 			float inset = slotW * 0.15f;
@@ -135,7 +135,7 @@ void HUD::renderInventoryPanel(const HUDContext& ctx, TextRenderer& text) {
 				{0.14f, 0.14f, 0.18f, 0.4f});
 
 		// Item color swatch
-		const BlockDef* bdef = ctx.world.blocks.find(id);
+		const BlockDef* bdef = ctx.blocks.find(id);
 		glm::vec3 swatchColor = bdef ? bdef->color_top : glm::vec3(0.45f, 0.55f, 0.70f);
 		float swatchSz = rowH * 0.6f;
 		text.drawRect(nameX - 0.01f, rowY + 0.003f, swatchSz, swatchSz,
@@ -260,8 +260,8 @@ void HUD::renderDebugOverlay(const HUDContext& ctx, TextRenderer& text) {
 
 	if (ctx.hit) {
 		auto& bp = ctx.hit->blockPos;
-		BlockId bid = const_cast<World&>(ctx.world).getBlock(bp.x, bp.y, bp.z);
-		const BlockDef& bdef = ctx.world.blocks.get(bid);
+		BlockId bid = ctx.chunkSource ? ctx.chunkSource->getBlock(bp.x, bp.y, bp.z) : BLOCK_AIR;
+		const BlockDef& bdef = ctx.blocks.get(bid);
 		snprintf(dbg, sizeof(dbg), "Looking at: %s (%d,%d,%d)",
 			bdef.display_name.c_str(), bp.x, bp.y, bp.z);
 		text.drawText(dbg, -0.98f, 0.54f, 0.7f, {1,1,1,0.8f}, ctx.aspect);
@@ -300,4 +300,4 @@ void HUD::renderEntityTooltip(const HUDContext& ctx, TextRenderer& text) {
 	}
 }
 
-} // namespace aicraft
+} // namespace agentworld

@@ -4,6 +4,7 @@ item = {
     "id": "base:shield",
     "name": "Shield",
     "category": "shield",
+    "equip_slot": "right_hand",
     "stack_max": 1,
     "cooldown": 0.0,
 

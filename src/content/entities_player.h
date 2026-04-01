@@ -4,7 +4,7 @@
 #include "shared/constants.h"
 #include "game/types.h"
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 inline void registerPlayerEntity(EntityManager& mgr) {
 	EntityDef def;
@@ -32,4 +32,4 @@ inline void registerPlayerEntity(EntityManager& mgr) {
 	mgr.registerType(def);
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

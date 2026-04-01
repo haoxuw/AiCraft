@@ -1,4 +1,4 @@
-# AiCraft - Block & Entity Model
+# AgentWorld - Block & Entity Model
 
 How the world stores everything: blocks in a compact grid, entities as full objects, and the bridge between them for active blocks.
 

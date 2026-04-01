@@ -1,6 +1,6 @@
 """Crafted block definitions -- data, not classes."""
 
-from aicraft.api.base import ObjectMeta
+from agentworld.api.base import ObjectMeta
 
 GLASS = ObjectMeta(
     id="base:glass", display_name="Glass", category="crafted",

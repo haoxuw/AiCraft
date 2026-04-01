@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <glm/trigonometric.hpp>
 
-namespace aicraft {
+namespace agentworld {
 
 class EntityManager {
 public:
@@ -339,15 +339,26 @@ private:
 		// type_id → position of a known block of that type
 		std::unordered_map<std::string, glm::ivec3> known;
 		bool initialized = false;
+		glm::vec3 scanCenter = {0, 0, 0}; // where the last scan was done
 	};
 	std::unordered_map<EntityId, BlockCache> m_blockCaches;
 
 	std::vector<NearbyBlock> getKnownBlocks(Entity& e, int radius, const BlockTypeFn& getType) {
 		auto& cache = m_blockCaches[e.id()];
 
+		// Rescan if entity has moved far from original scan center
+		if (cache.initialized) {
+			float movedDist = glm::length(e.position - cache.scanCenter);
+			if (movedDist > (float)radius * 0.5f) {
+				cache.initialized = false; // trigger full rescan from new position
+			}
+		}
+
 		if (!cache.initialized) {
-			// First time: do a full scan (expensive, but only once)
+			// Full scan (runs on first call and when entity moves to new area)
 			cache.initialized = true;
+			cache.scanCenter = e.position;
+			cache.known.clear();
 			int cx = (int)e.position.x, cy = (int)e.position.y, cz = (int)e.position.z;
 			for (int dy = -2; dy <= 12; dy++)
 				for (int dz = -radius; dz <= radius; dz += 3)
@@ -420,4 +431,4 @@ private:
 	EntityId m_nextId = 1;
 };
 
-} // namespace aicraft
+} // namespace agentworld

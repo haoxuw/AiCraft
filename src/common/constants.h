@@ -4,12 +4,12 @@
  * All string constants used as identifiers throughout the engine.
  * Single source of truth -- never use raw string literals for IDs.
  *
- * These match the Python definitions in python/aicraft/objects/ and python/aicraft/actions/.
+ * These match the Python definitions in python/agentworld/objects/ and python/agentworld/actions/.
  * When the pybind11 bridge is connected, these constants will be validated against
  * the Python registry at startup.
  */
 
-namespace aicraft {
+namespace agentworld {
 
 // ============================================================
 // Entity Type IDs
@@ -193,4 +193,4 @@ namespace PyClass {
 	constexpr const char* NANDGateBlock  = "base:nand_gate_block";
 }
 
-} // namespace aicraft
+} // namespace agentworld

@@ -3,7 +3,7 @@
 Import these in your behavior code to simplify common tasks.
 
 Usage:
-    from aicraft.behaviors.helpers import nearest_entity, is_threatened
+    from agentworld.behaviors.helpers import nearest_entity, is_threatened
 """
 
 import math
@@ -48,7 +48,7 @@ def random_wander_target(pos, radius=8.0):
     """
     angle = random.uniform(0, 2 * math.pi)
     dist = random.uniform(2.0, radius)
-    from aicraft.api.types import Vec3
+    from agentworld.api.types import Vec3
     return Vec3(
         pos.x + math.cos(angle) * dist,
         pos.y,

@@ -1,4 +1,4 @@
-# AiCraft - Overview
+# AgentWorld - Overview
 
 A voxel game where the world is code. Players don't just play -- they write Python to define new objects and actions, then upload them into a shared world.
 
@@ -23,7 +23,7 @@ The game ships with a base set of objects (dirt, stone, water, trees, pigs, etc.
 
 ```
 +================================================================+
-|                         AiCraft                                 |
+|                         AgentWorld                                 |
 +================================================================+
 |                                                                  |
 |   C++ Server (single source of truth)                           |
@@ -53,7 +53,7 @@ The game ships with a base set of objects (dirt, stone, water, trees, pigs, etc.
 
 ## The Three Abstractions
 
-Everything in AiCraft is built from three primitives:
+Everything in AgentWorld is built from three primitives:
 
 ### 1. Object -- "What exists"
 
@@ -86,7 +86,7 @@ The World is the container: a voxel grid of blocks, plus all entities (players, 
 
 ## What Makes This Different
 
-| Traditional modding (Luanti/Minecraft) | AiCraft |
+| Traditional modding (Luanti/Minecraft) | AgentWorld |
 |---------------------------------------|---------|
 | Mods written outside the game | Code written inside the game |
 | Restart server to load mods | Hot-load while playing |
@@ -122,7 +122,7 @@ The World is the container: a voxel grid of blocks, plus all entities (players, 
 | Document | Contents |
 |----------|---------|
 | [07_PLAYER_CODING.md](07_PLAYER_CODING.md) | In-game code editor, upload flow, sandboxing, artifact system |
-| [08_BUILTIN_CONTENT.md](08_BUILTIN_CONTENT.md) | Base game objects and actions that ship with AiCraft |
+| [08_BUILTIN_CONTENT.md](08_BUILTIN_CONTENT.md) | Base game objects and actions that ship with AgentWorld |
 
 ### Technical Validation & Milestones
 

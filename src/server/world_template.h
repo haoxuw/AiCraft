@@ -8,7 +8,7 @@
 #include <string>
 #include <cmath>
 
-namespace aicraft {
+namespace agentworld {
 
 // ============================================================
 // Base class for world generation templates
@@ -265,4 +265,4 @@ private:
 	}
 };
 
-} // namespace aicraft
+} // namespace agentworld

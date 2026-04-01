@@ -11,7 +11,7 @@
 #include "common/character.h"
 #include <cmath>
 
-namespace aicraft::builtin {
+namespace agentworld::builtin {
 
 // ======================================================================
 // Blue Knight -- steel-trimmed blue plate armor, cape, pauldrons
@@ -24,7 +24,7 @@ inline CharacterDef blueKnightDef() {
 	c.name = "Blue Knight";
 	c.description = "Stalwart defender in steel-trimmed blue plate.";
 	c.stats = {4, 4, 2, 2};
-	c.jumpVelocity = 11.2f;  // AGI 2 → ~2.25 blocks
+	c.jumpVelocity = 7.8f;   // AGI 2 → ~1.1 blocks
 	c.skinColor = {0.85f, 0.70f, 0.55f};
 	c.hairColor = {0.25f, 0.18f, 0.12f};
 	c.headOffset = {0, 1.75f, 0};
@@ -113,7 +113,7 @@ inline CharacterDef skeletonDef() {
 	c.name = "Skeleton";
 	c.description = "An undead warrior draped in rusted iron.";
 	c.stats = {3, 2, 4, 3};
-	c.jumpVelocity = 12.4f;  // AGI 4 → ~2.75 blocks
+	c.jumpVelocity = 8.7f;   // AGI 4 → ~1.35 blocks
 	c.skinColor = {0.88f, 0.85f, 0.78f};
 	c.hairColor = {0.70f, 0.65f, 0.58f}; // dark bone (top of skull)
 	c.headOffset = {0, 1.78f, 0};
@@ -191,7 +191,7 @@ inline CharacterDef crewmateDef() {
 	c.name = "Crewmate";
 	c.description = "The iconic Among Us astronaut. Sus.";
 	c.stats = {2, 3, 3, 4};
-	c.jumpVelocity = 11.8f;  // AGI 3 → ~2.5 blocks
+	c.jumpVelocity = 8.3f;   // AGI 3 → ~1.2 blocks
 	c.skinColor = {0.38f, 0.92f, 0.85f};
 	c.hairColor = {0.85f, 0.18f, 0.18f}; // suit red (top of helmet)
 	c.headOffset = {0, 1.08f, -0.21f};
@@ -252,7 +252,7 @@ inline CharacterDef giantDef() {
 	c.name = "Giant";
 	c.description = "A massive iron guardian. Each step shakes the ground.";
 	c.stats = {5, 5, 1, 1};
-	c.jumpVelocity = 10.6f;  // AGI 1 → ~2.0 blocks
+	c.jumpVelocity = 7.4f;   // AGI 1 → ~1.0 blocks
 	c.skinColor = {0.42f, 0.40f, 0.38f};
 	c.hairColor = {0.32f, 0.30f, 0.28f};
 	c.headOffset = {0, 1.62f, 0};
@@ -323,7 +323,7 @@ inline CharacterDef purpleMageDef() {
 	c.name = "Purple Mage";
 	c.description = "Wielder of arcane arts, draped in star-dusted robes.";
 	c.stats = {1, 2, 3, 5};
-	c.jumpVelocity = 11.8f;  // AGI 3 → ~2.5 blocks
+	c.jumpVelocity = 8.3f;   // AGI 3 → ~1.2 blocks
 	c.skinColor = {0.92f, 0.82f, 0.70f};
 	c.hairColor = {0.22f, 0.05f, 0.34f}; // hat purple
 	c.headOffset = {0, 1.65f, 0};
@@ -480,4 +480,4 @@ inline void registerAllCharacters(CharacterManager& mgr) {
 	}});
 }
 
-} // namespace aicraft::builtin
+} // namespace agentworld::builtin

@@ -1,4 +1,4 @@
-# AiCraft - Objects
+# AgentWorld - Objects
 
 Everything in the world is an Object. Objects are defined as Python classes with Pydantic models for their attributes.
 
@@ -49,7 +49,7 @@ Every object type is a Python file with a class that extends `PassiveObject` or 
 
 ```python
 # artifacts/objects/dirt.py
-from aicraft.api import PassiveObject, BlockPos, Attribute, ObjectMeta
+from agentworld.api import PassiveObject, BlockPos, Attribute, ObjectMeta
 
 class DirtBlock(PassiveObject):
     """A basic dirt block. Can have grass on top."""
@@ -104,7 +104,7 @@ class DirtBlock(PassiveObject):
 
 ```python
 # artifacts/objects/pig.py
-from aicraft.api import (
+from agentworld.api import (
     LivingObject, ActiveObject, ObjectMeta, Attribute,
     Vec3, WorldView, LootTable, LootEntry
 )
@@ -213,7 +213,7 @@ class Pig(LivingObject):
 
 ```python
 # artifacts/objects/water.py
-from aicraft.api import FluidObject, ObjectMeta, Attribute, BlockPos, WorldView
+from agentworld.api import FluidObject, ObjectMeta, Attribute, BlockPos, WorldView
 
 class Water(FluidObject):
     """Flowing water. Spreads horizontally, falls with gravity."""
@@ -273,7 +273,7 @@ class Water(FluidObject):
 
 ```python
 # artifacts/objects/player.py
-from aicraft.api import PlayerObject, ObjectMeta, Attribute, Inventory
+from agentworld.api import PlayerObject, ObjectMeta, Attribute, Inventory
 
 class Player(PlayerObject):
     """The player-controlled entity."""
@@ -468,7 +468,7 @@ Server receives Python source
   |
   v
 Sandbox validator checks:
-  - No imports outside aicraft.api whitelist
+  - No imports outside agentworld.api whitelist
   - No file I/O, network, subprocess, eval/exec
   - No infinite loops (timeout on step)
   - Class extends PassiveObject or ActiveObject

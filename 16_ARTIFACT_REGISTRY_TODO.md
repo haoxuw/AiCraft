@@ -124,7 +124,7 @@ Server: ArtifactRegistry.upload_artifact()
 - [ ] `register_block_meta()` assigns BlockId, adds to C++ BlockRegistry
 - [ ] `register_action()` adds to action dispatch
 - [ ] `create_instance()` instantiates correct class + meta
-- [ ] Startup: register all built-ins from `aicraft.objects` and `aicraft.actions`
+- [ ] Startup: register all built-ins from `agentworld.objects` and `agentworld.actions`
 
 ### Phase 2: Upload Pipeline
 - [ ] Server receives TOSERVER_UPLOAD_ARTIFACT packets
@@ -135,7 +135,7 @@ Server: ArtifactRegistry.upload_artifact()
 
 ### Phase 3: Sandbox
 - [ ] AST validator: reject `os`, `sys`, `subprocess`, `eval`, `exec`, `open`
-- [ ] Import whitelist: only `aicraft.api`, `math`, `random`, `typing`, `enum`
+- [ ] Import whitelist: only `agentworld.api`, `math`, `random`, `typing`, `enum`
 - [ ] CPU timeout: `signal.alarm` or thread-based timeout on decide()/execute()
 - [ ] Memory limit: `resource.setrlimit` per player
 - [ ] WorldView scoping: radius limit around action origin

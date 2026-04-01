@@ -23,7 +23,7 @@
 #include <thread>
 #include <chrono>
 
-namespace aicraft {
+namespace agentworld {
 
 class NetworkServer : public ServerInterface {
 public:
@@ -280,4 +280,4 @@ private:
 	std::function<void(glm::vec3, glm::vec3)> m_onItemPickup;
 };
 
-} // namespace aicraft
+} // namespace agentworld

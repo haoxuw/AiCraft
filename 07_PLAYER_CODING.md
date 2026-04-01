@@ -1,4 +1,4 @@
-# AiCraft - Player Coding System
+# AgentWorld - Player Coding System
 
 The defining feature: players write Python code inside the game to create new Objects and Actions, test them locally, then upload them to become real in the shared world.
 
@@ -112,10 +112,10 @@ Players CANNOT create:
 ### What the API Exposes
 
 ```python
-# aicraft.api -- the ONLY module players interact with
+# agentworld.api -- the ONLY module players interact with
 
 # Base classes (extend these)
-from aicraft.api import (
+from agentworld.api import (
     PassiveObject, ActiveObject, LivingObject,
     PlayerObject, MobObject, NPCObject,
     FluidObject, EffectObject, ItemEntity,
@@ -123,10 +123,10 @@ from aicraft.api import (
 )
 
 # Metadata
-from aicraft.api import ObjectMeta, ActionMeta
+from agentworld.api import ObjectMeta, ActionMeta
 
 # Types
-from aicraft.api import (
+from agentworld.api import (
     Vec3, BlockPos, EntityId,
     Attribute, Inventory, ItemStack,
     SoundSet, LootTable, LootEntry,
@@ -134,7 +134,7 @@ from aicraft.api import (
 )
 
 # WorldView (passed to step/execute, NOT instantiable)
-from aicraft.api import WorldView
+from agentworld.api import WorldView
 
 # Utilities (safe subset)
 import math

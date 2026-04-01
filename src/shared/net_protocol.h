@@ -26,7 +26,7 @@
 #include <vector>
 #include <string>
 
-namespace aicraft::net {
+namespace agentworld::net {
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -182,4 +182,4 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	return e;
 }
 
-} // namespace aicraft::net
+} // namespace agentworld::net

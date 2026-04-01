@@ -1,12 +1,12 @@
-"""Villager — finds nearby trees and chops them down.
+"""Woodcutter — finds nearby trees and chops them down.
 
-Villagers search for wood blocks within 16 blocks, walk to them,
-stand and chop for 2 seconds, then rest before searching again.
+Searches for wood blocks within 16 blocks, walks to them,
+stands and chops for 2 seconds, then rests before searching again.
 
 State machine: searching → walking → chopping → resting → searching
 """
 
-from aicraft_engine import Idle, Wander, MoveTo, BreakBlock
+from agentworld_engine import Idle, Wander, MoveTo, BreakBlock
 
 SEARCH_RADIUS = 16.0
 

@@ -1,8 +1,36 @@
 # Object Model — Everything is Python
 
-## Principle
+## Principles
 
 Every game concept is a Python definition that players can view, fork, and modify from the in-game editor. The C++ engine is a generic runtime that loads and executes Python data. No game content is C++ source code.
+
+### Built-in Naming Rule
+
+**All built-in content uses plain, single-word names.** No adjectives, no modifiers, no compound names.
+
+- YES: Sword, Shield, Boots, Helmet, Cape, Potion
+- NO: Iron Sword, Leather Boots, Traveler's Cape, Health Potion
+- YES: Pig, Dog, Cat, Villager, Chicken
+- NO: Wild Pig, Guard Dog, Orange Tabby Cat
+
+Built-ins are archetypes — the simplest version of each concept. Players create variants (Diamond Sword, Fire Potion) by forking and modifying. The built-in is always the plain, unadorned version.
+
+---
+
+## Handbook Grouping
+
+```
+Built-in | Custom
+├── Living          — things with HP, behaviors, AI
+│   ├── Creatures   — AI-driven (pig, chicken, dog, cat, villager)
+│   └── Characters  — player skins
+├── Objects         — things in the world or inventory
+│   ├── Items       — holdable/wearable (sword, shield, potion, boots)
+│   └── Blocks      — placed in voxel grid (dirt, stone, wood)
+└── Logic           — rules and code
+    ├── Effects     — what happens (heal, damage, haste, poison)
+    └── Behaviors   — AI scripts (wander, peck, follow, prowl, woodcutter)
+```
 
 ---
 
@@ -134,8 +162,9 @@ No granite, diorite, andesite, etc. Just the basics.
 | `base:player` | player | keyboard input / auto-pilot | Human-controlled. Can switch to Python auto-pilot. |
 | `base:pig` | animal | `wander` | Flees from players, groups with other pigs |
 | `base:chicken` | animal | `peck` | Skittish, pecks at ground, scatters from players |
-| `base:dog` | animal | `dog` | Follows nearest player, sits when close |
-| `base:villager` | npc | `villager` | Searches for trees, works, returns home |
+| `base:dog` | animal | `follow` | Follows nearest player, sits when close |
+| `base:cat` | animal | `prowl` | Chases chickens, naps frequently |
+| `base:villager` | npc | `woodcutter` | Searches for trees, works, returns home |
 
 ### Creature Definition Format
 
@@ -146,7 +175,7 @@ creature = {
     "id": "base:dog",
     "name": "Dog",
     "category": "animal",
-    "behavior": "dog",              # → artifacts/behaviors/base/dog.py
+    "behavior": "follow",           # → artifacts/behaviors/base/follow.py
 
     "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 0.7, 0.3]},
     "gravity": 1.0,
@@ -310,7 +339,7 @@ artifacts/
     base/               ← built-in (pig, chicken, dog, villager)
     player/             ← player-created creatures
   behaviors/
-    base/               ← built-in (wander, peck, dog, villager)
+    base/               ← built-in (wander, peck, follow, prowl, woodcutter)
     player/             ← player-modified behaviors
   items/
     base/               ← built-in (sword, shield, potion, bucket, torch)

@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace aicraft {
+namespace agentworld {
 
 class EntityManager;
 
@@ -226,7 +226,7 @@ Animals roam randomly, flee from nearby players,
 and group with others of the same species.
 """
 import random
-from aicraft.api import Wander, Flee, MoveTo, Idle
+from agentworld.api import Wander, Flee, MoveTo, Idle
 
 goal = "Wandering"
 
@@ -277,7 +277,7 @@ public:
 The simplest possible behavior. A good starting
 point for writing your own!
 """
-from aicraft.api import Idle
+from agentworld.api import Idle
 
 goal = "Idle"
 
@@ -354,7 +354,7 @@ Chickens peck at the ground with frequent short pauses,
 and scatter quickly when players get close.
 """
 import random
-from aicraft.api import Wander, Flee, Idle
+from agentworld.api import Wander, Flee, Idle
 
 goal = "Pecking at ground"
 
@@ -405,12 +405,12 @@ private:
 // ================================================================
 
 // ================================================================
-// Built-in: DogBehavior — follows players or villagers
+// Built-in: FollowBehavior — follows players or villagers
 // ================================================================
 
-class DogBehavior : public Behavior {
+class FollowBehavior : public Behavior {
 public:
-	std::string name() const override { return "Dog"; }
+	std::string name() const override { return "Follow"; }
 
 	BehaviorAction decide(BehaviorWorldView& view) override {
 		auto& e = view.self;
@@ -460,7 +460,7 @@ public:
 Dogs look for the nearest player. If no player is nearby,
 they follow the nearest villager instead. They sit when close.
 """
-from aicraft_engine import Idle, Wander, Follow
+from agentworld_engine import Idle, Wander, Follow
 
 FOLLOW_DISTANCE = 3.0
 FOLLOW_SPEED = 4.0
@@ -491,17 +491,127 @@ def decide(self, world):
 };
 
 // ================================================================
-// Built-in: VillagerBehavior — finds and chops trees
+// ================================================================
+// Built-in: ProwlBehavior — independent, chases prey, naps
 // ================================================================
 
-class VillagerBehavior : public Behavior {
-	enum State { Idle_S, Searching, WalkingToTree, Chopping, Resting };
+class ProwlBehavior : public Behavior {
+	float m_napTimer = 0;
+	bool m_napping = false;
+
+public:
+	std::string name() const override { return "Prowl"; }
+
+	BehaviorAction decide(BehaviorWorldView& view) override {
+		auto& e = view.self;
+		float speed = e.def().walk_speed;
+
+		// Nap cycle: cats nap for 5-10 seconds, then wander for 10-20
+		m_napTimer -= view.dt * 4.0f;
+
+		if (m_napping) {
+			if (m_napTimer <= 0) {
+				m_napping = false;
+				m_napTimer = 10.0f + (float)(e.id() % 10); // wander for 10-20s
+			}
+			e.goalText = "Napping...";
+			return {BehaviorAction::Idle};
+		}
+
+		// Check for chickens to chase
+		const NearbyEntity* chicken = nullptr;
+		for (auto& ne : view.nearbyEntities) {
+			if (ne.typeId == EntityType::Chicken && ne.distance < 10.0f) {
+				if (!chicken || ne.distance < chicken->distance)
+					chicken = &ne;
+			}
+		}
+
+		if (chicken && chicken->distance < 8.0f) {
+			e.goalText = "Chasing chicken!";
+			BehaviorAction a;
+			a.type = BehaviorAction::Follow;
+			a.targetPos = chicken->position;
+			a.targetEntity = chicken->id;
+			a.speed = speed * 1.5f; // sprint after chicken
+			a.param = 1.0f; // get close
+			return a;
+		}
+
+		// Time to nap?
+		if (m_napTimer <= 0) {
+			m_napping = true;
+			m_napTimer = 5.0f + (float)(e.id() % 5); // nap 5-10s
+			e.goalText = "Finding a spot to nap...";
+			return {BehaviorAction::Idle};
+		}
+
+		// Wander
+		e.goalText = "Prowling";
+		BehaviorAction a;
+		a.type = BehaviorAction::Wander;
+		a.speed = speed * 0.6f; // cats stroll slowly
+		a.param = (m_napTimer > 9.5f) ? 1.0f : 0.0f; // new direction periodically
+		return a;
+	}
+
+	std::string sourceCode() const override {
+		return R"py("""Cat — independent, chases chickens, naps.
+
+Cats wander slowly, chase any chicken that gets too close,
+and take frequent naps. Very independent.
+"""
+from agentworld_engine import Idle, Wander, Follow
+
+_nap_timer = 0
+_napping = False
+
+def decide(self, world):
+    global _nap_timer, _napping
+    _nap_timer -= world["dt"]
+
+    if _napping:
+        if _nap_timer <= 0:
+            _napping = False
+            _nap_timer = 15.0
+        self["goal"] = "Napping..."
+        return Idle()
+
+    # Chase chickens
+    chickens = [e for e in world["nearby"]
+                if e.type_id == "base:chicken" and e.distance < 8]
+    if chickens:
+        target = min(chickens, key=lambda e: e.distance)
+        self["goal"] = "Chasing chicken!"
+        return Follow(target.id, speed=self["walk_speed"] * 1.5, min_distance=1)
+
+    # Time for a nap?
+    if _nap_timer <= 0:
+        _napping = True
+        _nap_timer = 7.0
+        self["goal"] = "Finding a nap spot..."
+        return Idle()
+
+    self["goal"] = "Prowling"
+    return Wander(speed=self["walk_speed"] * 0.6)
+)py";
+	}
+};
+
+// ================================================================
+// Built-in: WoodcutterBehavior — finds and chops trees
+// ================================================================
+
+class WoodcutterBehavior : public Behavior {
+	enum State { Idle_S, Searching, WalkingToTree, Chopping, ReturningToChest, Depositing, Resting };
 	State m_state = Idle_S;
 	float m_timer = 0;
 	glm::vec3 m_treePos = {0, 0, 0};
+	int m_woodCarried = 0;
+	bool m_needsRescan = false; // set when villager needs to find new blocks (e.g., chest)
 
 public:
-	std::string name() const override { return "Villager"; }
+	std::string name() const override { return "Woodcutter"; }
 
 	BehaviorAction decide(BehaviorWorldView& view) override {
 		auto& e = view.self;
@@ -518,6 +628,9 @@ public:
 					m_state = WalkingToTree;
 					m_timer = 15.0f;
 					e.goalText = "Found a tree!";
+					printf("[Villager %u] Found wood at (%d,%d,%d) dist=%.1f\n",
+					       e.id(), wood->pos.x, wood->pos.y, wood->pos.z, wood->distance);
+					fflush(stdout);
 					BehaviorAction a;
 					a.type = BehaviorAction::MoveTo;
 					a.targetPos = m_treePos;
@@ -571,9 +684,18 @@ public:
 		case Chopping:
 			e.goalText = "Chopping!";
 			if (m_timer <= 0) {
-				// Break the tree block!
-				m_state = Resting;
-				m_timer = 3.0f;
+				m_woodCarried++;
+				// After chopping 3 trees, return to chest to deposit
+				if (m_woodCarried >= 3) {
+					m_state = ReturningToChest;
+					m_timer = 30.0f;
+					m_needsRescan = true;
+					printf("[Villager %u] Carrying %d wood, heading to chest\n", e.id(), m_woodCarried);
+					fflush(stdout);
+				} else {
+					// Chop more before returning
+					m_state = Idle_S;
+				}
 
 				BehaviorAction a;
 				a.type = BehaviorAction::BreakBlock;
@@ -583,6 +705,48 @@ public:
 					std::floor(m_treePos.z)
 				);
 				return a;
+			}
+			return {BehaviorAction::Idle};
+
+		case ReturningToChest: {
+			// Walk toward the chest
+			auto* chest = view.closestBlock("base:chest");
+			glm::vec3 chestTarget = chest ? glm::vec3(chest->pos) + glm::vec3(0.5f, 0, 0.5f)
+			                              : glm::vec3(0, 0, 0); // fallback
+
+			float dx = e.position.x - chestTarget.x;
+			float dz = e.position.z - chestTarget.z;
+			float dist = std::sqrt(dx*dx + dz*dz);
+
+			if (dist < 2.0f || !chest) {
+				m_state = Depositing;
+				m_timer = 1.5f;
+				e.goalText = "Depositing wood...";
+				return {BehaviorAction::Idle};
+			}
+
+			if (m_timer <= 0) {
+				m_state = Idle_S;
+				e.goalText = "Can't find chest";
+				return {BehaviorAction::Idle};
+			}
+
+			char buf[64];
+			snprintf(buf, sizeof(buf), "Carrying %d wood to chest (%.0fm)", m_woodCarried, dist);
+			e.goalText = buf;
+			BehaviorAction a;
+			a.type = BehaviorAction::MoveTo;
+			a.targetPos = chestTarget;
+			a.speed = speed;
+			return a;
+		}
+
+		case Depositing:
+			e.goalText = "Depositing wood!";
+			if (m_timer <= 0) {
+				m_woodCarried = 0;
+				m_state = Resting;
+				m_timer = 2.0f;
 			}
 			return {BehaviorAction::Idle};
 
@@ -604,7 +768,7 @@ public:
 Villagers search for wood blocks, walk to them, chop them,
 then rest before searching again.
 """
-from aicraft_engine import Idle, Wander, MoveTo
+from agentworld_engine import Idle, Wander, MoveTo
 
 SEARCH_RADIUS = 16.0
 
@@ -683,9 +847,11 @@ inline std::unique_ptr<Behavior> createDefaultBehavior(const std::string& typeId
 	if (typeId == EntityType::Pig)
 		return std::make_unique<WanderBehavior>();
 	if (typeId == EntityType::Dog)
-		return std::make_unique<DogBehavior>();
+		return std::make_unique<FollowBehavior>();
+	if (typeId == EntityType::Cat)
+		return std::make_unique<ProwlBehavior>();
 	if (typeId == EntityType::Villager)
-		return std::make_unique<VillagerBehavior>();
+		return std::make_unique<WoodcutterBehavior>();
 	return std::make_unique<IdleBehavior>();
 }
 
@@ -804,4 +970,4 @@ inline void executeBehaviorAction(Entity& e, BehaviorState& state,
 	}
 }
 
-} // namespace aicraft
+} // namespace agentworld

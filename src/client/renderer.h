@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace aicraft {
+namespace agentworld {
 
 class Renderer {
 public:
@@ -57,4 +57,4 @@ private:
 	float m_sunStrength = 1.0f;
 };
 
-} // namespace aicraft
+} // namespace agentworld

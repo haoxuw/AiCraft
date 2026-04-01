@@ -3,7 +3,7 @@
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
 
-namespace aicraft {
+namespace agentworld {
 
 enum class CameraMode {
 	FirstPerson,  // FPS: camera at player eyes
@@ -103,4 +103,4 @@ private:
 	double m_lastX = 0, m_lastY = 0;
 };
 
-} // namespace aicraft
+} // namespace agentworld

@@ -29,7 +29,7 @@
 #include <functional>
 #include <memory>
 
-namespace aicraft {
+namespace agentworld {
 
 class ServerInterface {
 public:
@@ -94,4 +94,4 @@ public:
 	) = 0;
 };
 
-} // namespace aicraft
+} // namespace agentworld

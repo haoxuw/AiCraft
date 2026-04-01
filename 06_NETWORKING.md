@@ -1,4 +1,4 @@
-# AiCraft - Networking
+# AgentWorld - Networking
 
 How the C++ server and Python clients communicate. TCP-based with delta compression.
 
@@ -8,7 +8,7 @@ How the C++ server and Python clients communicate. TCP-based with delta compress
 
 ```
 Luanti uses custom reliable UDP (MTP).
-AiCraft uses TCP + custom binary framing.
+AgentWorld uses TCP + custom binary framing.
 
 Why TCP instead of UDP:
   - Simpler implementation (reliability built-in)

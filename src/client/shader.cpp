@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <string>
 
-namespace aicraft {
+namespace agentworld {
 
 // Portability: replace #version line for WebGL (GLSL ES 3.00).
 // Shaders are authored as GLSL 4.10 core. On web builds, we strip
@@ -95,4 +95,4 @@ void Shader::setVec3(const char* n, const glm::vec3& v) const { glUniform3fv(glG
 void Shader::setFloat(const char* n, float v) const { glUniform1f(glGetUniformLocation(m_program, n), v); }
 void Shader::setInt(const char* n, int v) const { glUniform1i(glGetUniformLocation(m_program, n), v); }
 
-} // namespace aicraft
+} // namespace agentworld

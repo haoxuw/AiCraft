@@ -5,7 +5,7 @@
 #include <vector>
 #include "client/shader.h"
 
-namespace aicraft {
+namespace agentworld {
 
 struct Particle {
 	glm::vec3 pos;
@@ -36,4 +36,4 @@ private:
 	GLuint m_vao = 0, m_vbo = 0;
 };
 
-} // namespace aicraft
+} // namespace agentworld

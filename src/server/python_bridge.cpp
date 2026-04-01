@@ -5,7 +5,7 @@
 // Web build stub: Python bridge is server-only, not available in WASM.
 // All methods return safe defaults.
 // ================================================================
-namespace aicraft {
+namespace agentworld {
 bool PythonBridge::init(const std::string&) { return false; }
 void PythonBridge::shutdown() {}
 BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) {
@@ -23,7 +23,7 @@ std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
 void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
 BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { return {BehaviorAction::Idle}; }
-} // namespace aicraft
+} // namespace agentworld
 #else
 // ================================================================
 // Native build: full pybind11 implementation
@@ -34,7 +34,7 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { return {BehaviorActi
 
 namespace py = pybind11;
 
-namespace aicraft {
+namespace agentworld {
 
 // ================================================================
 // pybind11 module: expose C++ types to Python behaviors
@@ -59,8 +59,8 @@ struct PyAction {
 	float param = 0.0f;
 };
 
-PYBIND11_EMBEDDED_MODULE(aicraft_engine, m) {
-	m.doc() = "AiCraft engine bridge — exposes world view to Python behaviors";
+PYBIND11_EMBEDDED_MODULE(agentworld_engine, m) {
+	m.doc() = "AgentWorld engine bridge — exposes world view to Python behaviors";
 
 	py::class_<PyEntityInfo>(m, "EntityInfo")
 		.def_readonly("id", &PyEntityInfo::id)
@@ -114,7 +114,7 @@ bool PythonBridge::init(const std::string& pythonPath) {
 	if (m_initialized) return true;
 	try {
 		py::initialize_interpreter();
-		// Add python/ directory to sys.path so behaviors can import aicraft
+		// Add python/ directory to sys.path so behaviors can import agentworld
 		py::module_::import("sys").attr("path").cast<py::list>().append(pythonPath);
 		m_initialized = true;
 		printf("[PythonBridge] Initialized. Python path: %s\n", pythonPath.c_str());
@@ -145,7 +145,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 		py::dict locals;
 
 		// Import the engine module so behaviors can use Idle(), Wander(), etc.
-		py::exec("from aicraft_engine import *", globals);
+		py::exec("from agentworld_engine import *", globals);
 
 		// Execute the behavior source code
 		py::exec(sourceCode, globals, locals);
@@ -328,5 +328,5 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 	return action;
 }
 
-} // namespace aicraft
+} // namespace agentworld
 #endif // __EMSCRIPTEN__

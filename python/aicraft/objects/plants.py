@@ -1,6 +1,6 @@
 """Plant block definitions -- data, not classes."""
 
-from aicraft.api.base import ObjectMeta
+from agentworld.api.base import ObjectMeta
 
 WOOD_OAK = ObjectMeta(
     id="base:wood_oak", display_name="Oak Log", category="plant",

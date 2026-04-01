@@ -25,7 +25,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace aicraft {
+namespace agentworld {
 
 using BehaviorHandle = int;
 
@@ -86,4 +86,4 @@ private:
 // Global bridge instance (owned by server)
 PythonBridge& pythonBridge();
 
-} // namespace aicraft
+} // namespace agentworld

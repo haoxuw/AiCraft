@@ -5,7 +5,7 @@ They sit when the player is nearby and idle.
 
 Try modifying:
   - walk_speed to make the dog faster/slower
-  - behavior to change from 'dog' to 'wander' for a stray dog
+  - behavior to change from 'follow' to 'wander' for a stray dog
   - max_hp to make a tougher guard dog
 """
 
@@ -13,7 +13,7 @@ creature = {
     "id": "base:dog",
     "name": "Dog",
     "category": "animal",
-    "behavior": "dog",  # references artifacts/behaviors/base/dog.py
+    "behavior": "follow",  # references artifacts/behaviors/base/follow.py
 
     "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 0.7, 0.3]},
     "gravity": 1.0,

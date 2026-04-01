@@ -14,7 +14,7 @@
 #include "shared/block_registry.h"
 #include <array>
 
-namespace aicraft {
+namespace agentworld {
 
 class ChunkSource {
 public:
@@ -44,4 +44,4 @@ public:
 	virtual void unloadDistantChunks(ChunkPos center, int keepRadius) { (void)center; (void)keepRadius; }
 };
 
-} // namespace aicraft
+} // namespace agentworld

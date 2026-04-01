@@ -3,7 +3,7 @@
 Client-side visual only. Attached to right_hand slot.
 """
 
-from aicraft.items.base import ItemVisual, ItemPiece
+from agentworld.items.base import ItemVisual, ItemPiece
 
 WOOD_HANDLE = (0.50, 0.35, 0.15, 1)
 STONE_HEAD  = (0.50, 0.50, 0.52, 1)

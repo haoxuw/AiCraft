@@ -6,7 +6,7 @@ The client reads entity prop "jetpack_active" and fires the
 flame particle emitters.
 """
 
-from aicraft.items.base import ItemVisual, ItemPiece, ActiveEffect, ParticleEmitter
+from agentworld.items.base import ItemVisual, ItemPiece, ActiveEffect, ParticleEmitter
 
 STEEL      = (0.38, 0.38, 0.42, 1)
 STEEL_LITE = (0.50, 0.52, 0.55, 1)

@@ -11,7 +11,7 @@
 #include "shared/inventory.h"
 #include "client/gl.h"
 
-namespace aicraft {
+namespace agentworld {
 
 struct HUDContext {
 	float aspect;
@@ -19,7 +19,8 @@ struct HUDContext {
 	int selectedSlot;
 	const Inventory& inventory;
 	const Camera& camera;
-	const World& world;
+	const BlockRegistry& blocks;
+	ChunkSource* chunkSource; // for debug block lookup (nullable)
 	float worldTime;
 	float fps;
 	bool showDebug;
@@ -49,4 +50,4 @@ private:
 	void renderEntityTooltip(const HUDContext& ctx, TextRenderer& text);
 };
 
-} // namespace aicraft
+} // namespace agentworld

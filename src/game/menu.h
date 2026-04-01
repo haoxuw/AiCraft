@@ -12,7 +12,7 @@
 #include <memory>
 #include <vector>
 
-namespace aicraft {
+namespace agentworld {
 
 class MenuSystem {
 public:
@@ -61,4 +61,4 @@ private:
 	bool m_probed = false;
 };
 
-} // namespace aicraft
+} // namespace agentworld

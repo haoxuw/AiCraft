@@ -13,7 +13,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
-namespace aicraft {
+namespace agentworld {
 
 // A body part = a colored 3D box with optional animation.
 struct BodyPart {
@@ -50,4 +50,4 @@ struct AnimState {
 	float time = 0.0f;         // global time (for idle animation)
 };
 
-} // namespace aicraft
+} // namespace agentworld
