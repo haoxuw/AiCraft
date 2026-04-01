@@ -176,6 +176,7 @@ public:
 		else if (p == 1) m_page = Page::Handbook;
 		else if (p == 2) m_page = Page::Settings;
 	}
+	void setGameRunning(bool running) { m_gameRunning = running; }
 
 private:
 	enum class Page { Play, Handbook, Settings };
@@ -184,9 +185,25 @@ private:
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;
 	int m_selectedTemplate = 0;
 	int m_gameMode = 1;
+	bool m_gameRunning = false;
 
 	MenuAction renderPlayContent(float contentW) {
 		MenuAction action;
+
+		// Resume button — shown when a game is already running
+		if (m_gameRunning) {
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.72f, 0.40f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.55f, 0.28f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+			if (ImGui::Button("Resume Game", ImVec2(220, 48))) {
+				action.type = MenuAction::ResumeGame;
+			}
+			ImGui::PopStyleColor(4);
+			ImGui::Spacing(); ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::Spacing(); ImGui::Spacing();
+		}
 
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
 		ImGui::SetWindowFontScale(1.4f);

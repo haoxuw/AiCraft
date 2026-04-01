@@ -110,8 +110,20 @@ bool Renderer::init(const std::string& dir) {
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
 	glEnableVertexAttribArray(0);
 
-	// Crosshair
-	float ch[] = { -0.012f,0, 0.012f,0, 0,-0.018f, 0,0.018f };
+	// Crosshair — 4 lines with gap in center + center dot
+	// Gap = inner 0.006, outer = 0.024 (each arm)
+	float g = 0.006f, o = 0.024f;
+	float ch[] = {
+		// Horizontal arms (left, right)
+		-o, 0,  -g, 0,
+		 g, 0,   o, 0,
+		// Vertical arms (bottom, top)
+		0, -o*1.5f,  0, -g*1.5f,
+		0,  g*1.5f,  0,  o*1.5f,
+		// Center dot (small quad as 2 triangles — 6 verts)
+		-0.003f,-0.003f,  0.003f,-0.003f,  0.003f, 0.003f,
+		-0.003f,-0.003f,  0.003f, 0.003f, -0.003f, 0.003f,
+	};
 	glGenVertexArrays(1, &m_crosshairVAO);
 	glGenBuffers(1, &m_crosshairVBO);
 	glBindVertexArray(m_crosshairVAO);
@@ -286,15 +298,15 @@ void Renderer::updateChunks(ChunkSource& world, const Camera& cam, int renderDis
 }
 
 void Renderer::render(const Camera& cam, float aspect, glm::ivec3* highlight,
-                      int selectedSlot, int hotbarSize) {
+                      int selectedSlot, int hotbarSize,
+                      glm::vec2 crosshairOffset, bool showCrosshair) {
 	glClearColor(m_skyColor.r, m_skyColor.g, m_skyColor.b, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	renderSky(cam, aspect);
 	renderTerrain(cam, aspect);
 	if (highlight) renderHighlight(cam, aspect, *highlight);
-	// Hotbar is now drawn in main.cpp (inventory-driven)
-	renderCrosshair(aspect);
+	if (showCrosshair) renderCrosshair(aspect, crosshairOffset);
 }
 
 void Renderer::renderSky(const Camera& cam, float aspect) {
@@ -442,17 +454,30 @@ void Renderer::renderHotbar(float aspect, int selectedSlot, int hotbarSize) {
 	glEnable(GL_DEPTH_TEST);
 }
 
-void Renderer::renderCrosshair(float aspect) {
+void Renderer::renderCrosshair(float aspect, glm::vec2 center) {
 	glDisable(GL_DEPTH_TEST);
 	glEnable(GL_BLEND);
-	glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_ZERO);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	m_crosshairShader.use();
 	m_crosshairShader.setFloat("uAspect", aspect);
+	m_crosshairShader.setVec2("uCenter", center);
 
 	glBindVertexArray(m_crosshairVAO);
-	glLineWidth(2.0f);
-	glDrawArrays(GL_LINES, 0, 4);
+
+	// Draw the 4 line arms (8 verts = 4 lines)
+	// White with black outline effect: draw black slightly thicker first, then white
+	m_crosshairShader.setVec4("uColor", {0, 0, 0, 0.6f});
+	glLineWidth(3.0f);
+	glDrawArrays(GL_LINES, 0, 8);
+
+	m_crosshairShader.setVec4("uColor", {1, 1, 1, 0.9f});
+	glLineWidth(1.5f);
+	glDrawArrays(GL_LINES, 0, 8);
+
+	// Draw center dot (6 verts = 2 triangles, starting at vertex 8)
+	m_crosshairShader.setVec4("uColor", {1, 1, 1, 0.85f});
+	glDrawArrays(GL_TRIANGLES, 8, 6);
 
 	glDisable(GL_BLEND);
 	glEnable(GL_DEPTH_TEST);

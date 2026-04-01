@@ -25,6 +25,7 @@ struct MenuAction {
 		ShowCharacter,
 		EnterGame,         // → actually join a server/create world
 		JoinServer,        // → connect to a specific server
+		ResumeGame,        // → return to running game
 	};
 	Type type = None;
 	int templateIndex = 0;

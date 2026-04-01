@@ -120,6 +120,7 @@ private:
 	// Display
 	bool m_showDebug = false;
 	GameState m_preInspectState = GameState::SURVIVAL;
+	GameState m_preMenuState = GameState::SURVIVAL;
 	bool m_showInventory = false;
 
 	// Models

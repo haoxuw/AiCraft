@@ -19,7 +19,8 @@ public:
 	void updateChunks(ChunkSource& world, const Camera& cam, int renderDistance);
 	void meshAllPending(ChunkSource& world, const Camera& cam, int renderDistance);
 	void render(const Camera& cam, float aspect, glm::ivec3* highlight = nullptr,
-	            int selectedSlot = 0, int hotbarSize = 7);
+	            int selectedSlot = 0, int hotbarSize = 7,
+	            glm::vec2 crosshairOffset = {0, 0}, bool showCrosshair = true);
 	ModelRenderer& modelRenderer() { return m_modelRenderer; }
 	Shader& highlightShader() { return m_highlightShader; }
 	void markChunkDirty(ChunkPos pos);
@@ -31,7 +32,7 @@ private:
 	void renderTerrain(const Camera& cam, float aspect);
 	void renderHighlight(const Camera& cam, float aspect, glm::ivec3 pos);
 	void renderHotbar(float aspect, int selectedSlot, int hotbarSize);
-	void renderCrosshair(float aspect);
+	void renderCrosshair(float aspect, glm::vec2 center = {0, 0});
 
 	Shader m_terrainShader;
 	Shader m_skyShader;

@@ -399,6 +399,12 @@ void Game::handleMenuAction(const MenuAction& action) {
 	case MenuAction::JoinServer:
 		joinServer(action.serverHost, action.serverPort, action.targetState);
 		break;
+	case MenuAction::ResumeGame:
+		if (m_server) {
+			m_state = m_preMenuState;
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		}
+		break;
 	}
 }
 
@@ -479,7 +485,10 @@ void Game::updatePlaying(float dt, float aspect) {
 	if (!pe) { m_state = GameState::MENU; return; }
 
 	if (m_controls.pressed(Action::MenuBack)) {
+		m_preMenuState = m_state;
 		m_state = GameState::MENU;
+		m_imguiMenu.setGameRunning(true);
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 		m_menu.resetCooldown(0.5f);
 		return;
 	}
@@ -524,7 +533,33 @@ void Game::renderPlaying(float dt, float aspect) {
 		hlPtr = &hlPos;
 	}
 	int selectedSlot = pe->getProp<int>(Prop::SelectedSlot, 0);
-	m_renderer.render(m_camera, aspect, hlPtr, selectedSlot);
+
+	// Crosshair position depends on camera mode:
+	// - FPS: center of screen
+	// - ThirdPerson/RPG: project aim point in front of player to screen space
+	// - RTS: no crosshair (mouse cursor visible)
+	glm::vec2 crosshairOffset = {0, 0};
+	bool showCrosshair = true;
+
+	if (m_camera.mode == CameraMode::RTS) {
+		showCrosshair = false;
+	} else if (m_camera.mode == CameraMode::ThirdPerson || m_camera.mode == CameraMode::RPG) {
+		// Over-the-shoulder style: project an aim point in front of the player.
+		// The aim point is where the player is looking, ~10 blocks ahead at eye height.
+		float yawRad = glm::radians(pe->yaw);
+		glm::vec3 lookDir = {std::cos(yawRad), 0, std::sin(yawRad)};
+		glm::vec3 aimPoint = pe->position + glm::vec3(0, pe->def().eye_height, 0) + lookDir * 10.0f;
+
+		glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
+		glm::vec4 clip = vp * glm::vec4(aimPoint, 1.0f);
+		if (clip.w > 0.01f) {
+			// NDC coordinates (-1 to 1)
+			crosshairOffset = {clip.x / clip.w, clip.y / clip.w};
+		}
+	}
+	// FPS: crosshairOffset stays at (0,0) — screen center
+
+	m_renderer.render(m_camera, aspect, hlPtr, selectedSlot, 7, crosshairOffset, showCrosshair);
 
 	// 3D models
 	glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
