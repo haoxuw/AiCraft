@@ -204,6 +204,12 @@ bool Game::init(int argc, char** argv) {
 	});
 
 	m_lastTime = std::chrono::steady_clock::now();
+
+	// If --host was provided, auto-join the server immediately
+	if (!m_connectHost.empty()) {
+		joinServer(m_connectHost, m_connectPort, GameState::SURVIVAL);
+	}
+
 	return true;
 }
 
@@ -418,39 +424,23 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 	bool creative = (targetState == GameState::ADMIN);
 	auto netServer = std::make_unique<NetworkServer>(host, port);
 	if (netServer->createGame(42, 0, creative)) {
-		printf("[Game] Connected as %s\n", netServer->clientUUID().c_str());
+		printf("[Game] Connected to %s:%d\n", host.c_str(), port);
 		m_server = std::move(netServer);
 		setupAfterConnect(targetState);
 		return;
 	}
-	printf("[Game] Failed to join server\n");
+	printf("[Game] Failed to join %s:%d\n", host.c_str(), port);
 #endif
-	// Fallback: start local
-	enterGame(0, targetState);
+	// Stay in menu on failure — don't fallback to local (would cause infinite loop)
+	m_state = GameState::MENU;
 }
 
 // ============================================================
-// World creation — player is now an Entity, same as pigs
+// World creation — always creates a local server
 // ============================================================
 void Game::enterGame(int templateIndex, GameState targetState) {
-#ifndef __EMSCRIPTEN__
-	// If --host was provided, always connect to that server
-	if (!m_connectHost.empty()) {
-		joinServer(m_connectHost, m_connectPort, targetState);
-		return;
-	}
-	// Auto-detect a running server on localhost before creating a new one
-	{
-		net::TcpClient probe;
-		if (probe.connect("127.0.0.1", 7777, 0.3f)) {
-			probe.disconnect();
-			printf("[Game] Detected server on port 7777, joining...\n");
-			joinServer("127.0.0.1", 7777, targetState);
-			return;
-		}
-	}
-#endif
-	// No server found — start local
+	// enterGame always creates a local server. To join a remote server,
+	// use joinServer() directly (from the server browser UI).
 	printf("[Game] Starting local server\n");
 	bool creative = (targetState == GameState::ADMIN);
 	auto localServer = std::make_unique<LocalServer>(m_templates);

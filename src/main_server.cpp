@@ -1,11 +1,16 @@
 /**
  * Dedicated server — runs headless, accepts TCP client connections.
  *
- * Usage: ./agentworld-server [--port PORT] [--seed SEED] [--survival]
+ * Usage:
+ *   ./agentworld-server                              # interactive world selection
+ *   ./agentworld-server --world saves/my_village      # load saved world
+ *   ./agentworld-server --port 7778 --template 1      # new world on custom port
  */
 
 #include "server/server.h"
 #include "server/world_template.h"
+#include "server/world_save.h"
+#include "game/world_manager.h"
 #include "content/builtin.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
@@ -16,6 +21,8 @@
 #include <csignal>
 #include <unordered_map>
 #include <fcntl.h>
+#include <iostream>
+#include <string>
 
 #include "server/python_bridge.h"
 
@@ -27,7 +34,91 @@ struct ConnectedClient {
 	agentworld::ClientId id;
 	agentworld::EntityId playerId;
 	agentworld::net::RecvBuffer recvBuf;
+	// Pending chunk sends (non-blocking, sent over multiple ticks)
+	std::vector<std::pair<agentworld::ChunkPos, std::vector<uint8_t>>> pendingChunks;
 };
+
+// Interactive CLI: let user pick a world or create new
+static void interactiveWorldSelect(agentworld::ServerConfig& config,
+                                    std::string& worldPath,
+                                    const std::vector<std::shared_ptr<agentworld::WorldTemplate>>& templates) {
+	agentworld::WorldManager mgr;
+	mgr.setSavesDir("saves");
+	mgr.refresh();
+
+	auto& worlds = mgr.worlds();
+
+	printf("\n");
+	printf("  ┌─────────────────────────────────┐\n");
+	printf("  │       AGENTWORLD SERVER          │\n");
+	printf("  └─────────────────────────────────┘\n\n");
+
+	if (!worlds.empty()) {
+		printf("  Saved worlds:\n");
+		for (size_t i = 0; i < worlds.size(); i++) {
+			printf("    [%zu] %s (%s, seed=%d)\n",
+			       i + 1, worlds[i].name.c_str(), worlds[i].templateName.c_str(), worlds[i].seed);
+		}
+		printf("\n");
+	}
+
+	printf("  New world templates:\n");
+	for (size_t i = 0; i < templates.size(); i++) {
+		printf("    [%c] %s — %s\n",
+		       (char)('a' + i), templates[i]->name().c_str(), templates[i]->description().c_str());
+	}
+
+	printf("\n  Enter choice (number for saved, letter for new, or 'q' to quit): ");
+	fflush(stdout);
+
+	std::string input;
+	if (!std::getline(std::cin, input) || input.empty() || input == "q") {
+		printf("Cancelled.\n");
+		exit(0);
+	}
+
+	// Check if it's a number (saved world)
+	if (input[0] >= '1' && input[0] <= '9') {
+		int idx = atoi(input.c_str()) - 1;
+		if (idx >= 0 && idx < (int)worlds.size()) {
+			worldPath = worlds[idx].path;
+			config.seed = worlds[idx].seed;
+			config.templateIndex = worlds[idx].templateIndex;
+			printf("  Loading: %s\n\n", worlds[idx].name.c_str());
+			return;
+		}
+	}
+
+	// Check if it's a letter (new template)
+	if (input[0] >= 'a' && input[0] < (char)('a' + templates.size())) {
+		int tmplIdx = input[0] - 'a';
+		config.templateIndex = tmplIdx;
+
+		printf("  World name: ");
+		fflush(stdout);
+		std::string name;
+		std::getline(std::cin, name);
+		if (name.empty()) name = "New World";
+
+		printf("  Seed (blank = random): ");
+		fflush(stdout);
+		std::string seedStr;
+		std::getline(std::cin, seedStr);
+		if (!seedStr.empty()) {
+			config.seed = atoi(seedStr.c_str());
+		} else {
+			srand(time(nullptr));
+			config.seed = rand();
+		}
+
+		// Create save directory
+		worldPath = mgr.createWorld(name, config.seed, tmplIdx, templates[tmplIdx]->name());
+		printf("  Created: %s (seed=%d)\n\n", name.c_str(), config.seed);
+		return;
+	}
+
+	printf("  Invalid choice. Starting default world.\n\n");
+}
 
 int main(int argc, char** argv) {
 	printf("=== AgentWorld Dedicated Server ===\n");
@@ -38,12 +129,19 @@ int main(int argc, char** argv) {
 
 	// Parse args
 	agentworld::ServerConfig config;
+	std::string worldPath;
+	bool interactive = true;
+
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
 			config.port = atoi(argv[++i]);
-		else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc)
-			config.seed = atoi(argv[++i]);
-		else if (strcmp(argv[i], "--survival") == 0)
+		else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+			config.seed = atoi(argv[++i]); interactive = false;
+		} else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) {
+			config.templateIndex = atoi(argv[++i]); interactive = false;
+		} else if (strcmp(argv[i], "--world") == 0 && i + 1 < argc) {
+			worldPath = argv[++i]; interactive = false;
+		} else if (strcmp(argv[i], "--survival") == 0)
 			config.creative = false;
 	}
 
@@ -53,18 +151,34 @@ int main(int argc, char** argv) {
 		std::make_shared<agentworld::VillageWorldTemplate>(),
 	};
 
+	// Interactive world selection if no --world/--seed/--template provided
+	if (interactive && isatty(fileno(stdin))) {
+		interactiveWorldSelect(config, worldPath, templates);
+	}
+
 	// Initialize server
 	agentworld::GameServer server;
-	server.init(config, templates);
+	if (!worldPath.empty() && std::filesystem::exists(worldPath + "/world.json")) {
+		// Load existing world
+		printf("[Server] Loading world from %s\n", worldPath.c_str());
+		if (!agentworld::loadWorld(server, worldPath, templates)) {
+			printf("[Server] Failed to load world, creating new\n");
+			server.init(config, templates);
+		}
+	} else {
+		server.init(config, templates);
+	}
 
 	// Start TCP listener
 	agentworld::net::TcpServer listener;
 	if (!listener.listen(config.port)) {
-		printf("[Server] Failed to start listener.\n");
+		printf("[Server] Failed to start listener on port %d\n", config.port);
 		return 1;
 	}
 
-	printf("[Server] Waiting for clients on port %d...\n", config.port);
+	printf("[Server] Listening on port %d (seed=%d, template=%d)\n",
+	       config.port, config.seed, config.templateIndex);
+	printf("[Server] Press Ctrl+C to save and stop.\n");
 
 	std::unordered_map<agentworld::ClientId, ConnectedClient> clients;
 	agentworld::ClientId nextClientId = 1;
@@ -86,41 +200,64 @@ int main(int argc, char** argv) {
 		// Accept new clients
 		int newFd = listener.acceptClient();
 		if (newFd >= 0) {
-			// Temporarily set blocking for initial data send (chunks are large)
-			int flags = fcntl(newFd, F_GETFL, 0);
-			fcntl(newFd, F_SETFL, flags & ~O_NONBLOCK);
 			agentworld::ClientId cid = nextClientId++;
 			agentworld::EntityId eid = server.addClient(cid);
 
-			clients[cid] = {newFd, cid, eid, {}};
+			// Set non-blocking immediately (send chunks over multiple ticks)
+			agentworld::net::setNonBlocking(newFd);
 
-			// Send welcome message with player entity ID and spawn pos
-			agentworld::net::WriteBuffer wb;
-			wb.writeU32(eid);
-			wb.writeVec3(server.spawnPos());
-			agentworld::net::sendMessage(newFd, agentworld::net::S_WELCOME, wb);
+			// Send S_WELCOME first (small message, should send immediately)
+			{
+				agentworld::net::WriteBuffer wb;
+				wb.writeU32(eid);
+				wb.writeVec3(server.spawnPos());
+				agentworld::net::sendMessage(newFd, agentworld::net::S_WELCOME, wb);
+			}
 
-			// Send surface chunks around spawn (9×9 horizontal, 2 Y levels)
-			// Includes forest area outside village clearing
+			// Queue chunk data for non-blocking send over next ticks
+			ConnectedClient cc = {newFd, cid, eid, {}};
+
 			auto sp = server.spawnPos();
 			auto cp = agentworld::worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
 			for (int dy = 0; dy <= 1; dy++)
 			for (int dz = -4; dz <= 4; dz++)
 			for (int dx = -4; dx <= 4; dx++) {
-				agentworld::ChunkPos pos = {cp.x + dx, cp.y, cp.z + dz};
+				agentworld::ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
 				agentworld::Chunk* chunk = server.world().getChunk(pos);
 				if (chunk) {
 					agentworld::net::WriteBuffer cb;
 					cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
-					// Send raw block data
 					for (int i = 0; i < 16*16*16; i++)
 						cb.writeU32(chunk->getRaw(i));
-					agentworld::net::sendMessage(newFd, agentworld::net::S_CHUNK, cb);
+
+					// Pre-serialize the full message (header + payload)
+					std::vector<uint8_t> msg;
+					agentworld::net::MsgHeader hdr;
+					hdr.type = agentworld::net::S_CHUNK;
+					hdr.length = (uint32_t)cb.size();
+					msg.resize(8 + cb.size());
+					memcpy(msg.data(), &hdr, 8);
+					memcpy(msg.data() + 8, cb.data().data(), cb.size());
+					cc.pendingChunks.push_back({pos, std::move(msg)});
 				}
 			}
 
-			// Now set non-blocking for regular updates
-			agentworld::net::setNonBlocking(newFd);
+			clients[cid] = std::move(cc);
+			printf("[Server] Client %u joined (entity %u). Sending %zu chunks...\n",
+			       cid, eid, clients[cid].pendingChunks.size());
+		}
+
+		// Send pending chunks to clients (non-blocking, a few per tick)
+		for (auto& [cid, client] : clients) {
+			int sent = 0;
+			while (!client.pendingChunks.empty() && sent < 10) {
+				auto& msg = client.pendingChunks.front().second;
+				ssize_t n = send(client.fd, msg.data(), msg.size(), MSG_NOSIGNAL);
+				if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+				if (n <= 0) break; // error or disconnected
+				client.pendingChunks.erase(client.pendingChunks.begin());
+				sent++;
+			}
 		}
 
 		// Receive from clients
@@ -169,35 +306,34 @@ int main(int argc, char** argv) {
 			tickCount++;
 		}
 
-		// Broadcast entity state (throttled: 20 Hz, not every tick)
+		// Broadcast entity state (throttled: 20 Hz)
 		static float broadcastTimer = 0;
 		broadcastTimer += dt;
 		if (broadcastTimer >= 0.05f && !clients.empty()) {
 			broadcastTimer = 0;
-		for (auto& [cid, client] : clients) {
-			server.world().entities.forEach([&](agentworld::Entity& e) {
-				agentworld::net::EntityState es;
-				es.id = e.id();
-				es.typeId = e.typeId();
-				es.position = e.position;
-				es.velocity = e.velocity;
-				es.yaw = e.yaw;
-				es.onGround = e.onGround;
-				es.goalText = e.goalText;
-				es.hp = e.hp();
-				es.maxHp = e.def().max_hp;
+			for (auto& [cid, client] : clients) {
+				server.world().entities.forEach([&](agentworld::Entity& e) {
+					agentworld::net::EntityState es;
+					es.id = e.id();
+					es.typeId = e.typeId();
+					es.position = e.position;
+					es.velocity = e.velocity;
+					es.yaw = e.yaw;
+					es.onGround = e.onGround;
+					es.goalText = e.goalText;
+					es.hp = e.hp();
+					es.maxHp = e.def().max_hp;
 
-				agentworld::net::WriteBuffer wb;
-				agentworld::net::serializeEntityState(wb, es);
-				agentworld::net::sendMessage(client.fd, agentworld::net::S_ENTITY, wb);
-			});
+					agentworld::net::WriteBuffer wb;
+					agentworld::net::serializeEntityState(wb, es);
+					agentworld::net::sendMessage(client.fd, agentworld::net::S_ENTITY, wb);
+				});
 
-			// Send world time
-			agentworld::net::WriteBuffer tb;
-			tb.writeF32(server.worldTime());
-			agentworld::net::sendMessage(client.fd, agentworld::net::S_TIME, tb);
+				agentworld::net::WriteBuffer tb;
+				tb.writeF32(server.worldTime());
+				agentworld::net::sendMessage(client.fd, agentworld::net::S_TIME, tb);
+			}
 		}
-		} // end broadcast throttle
 
 		// Status logging
 		if (statusTimer >= 5.0f) {
@@ -210,6 +346,20 @@ int main(int argc, char** argv) {
 		}
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+
+	// Save world on shutdown
+	if (!worldPath.empty()) {
+		printf("[Server] Saving world to %s...\n", worldPath.c_str());
+		agentworld::WorldMetadata meta;
+		meta.name = worldPath.substr(worldPath.rfind('/') + 1);
+		meta.seed = config.seed;
+		meta.templateIndex = config.templateIndex;
+		meta.gameMode = config.creative ? "admin" : "survival";
+		meta.version = 1;
+		if (config.templateIndex < (int)templates.size())
+			meta.templateName = templates[config.templateIndex]->name();
+		agentworld::saveWorld(server, worldPath, meta);
 	}
 
 	// Cleanup
