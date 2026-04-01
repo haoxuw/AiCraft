@@ -473,11 +473,6 @@ void Game::setupAfterConnect(GameState targetState) {
 // ============================================================
 void Game::updatePlaying(float dt, float aspect) {
 	if (!m_server || !m_server->isConnected()) { m_state = GameState::MENU; return; }
-	// Get World reference — for local server, this is direct access.
-	// For network server, gameplay will use ServerInterface methods instead.
-	auto* localSrv = dynamic_cast<LocalServer*>(m_server.get());
-	if (!localSrv) { m_state = GameState::MENU; return; }
-	World& world = localSrv->server()->world();
 	Entity* pe = playerEntity();
 	if (!pe) { m_state = GameState::MENU; return; }
 
@@ -490,9 +485,9 @@ void Game::updatePlaying(float dt, float aspect) {
 		return;
 	}
 
-	// Client-side: gather input → ActionProposals
+	// Client-side: gather input → ActionProposals (works for local AND network)
 	float jumpVel = (m_characters.count() > 0) ? m_characters.selected().jumpVelocity : 17.0f;
-	m_gameplay.update(dt, m_state, world, *pe, m_camera, m_controls,
+	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
 	// Server tick: resolve actions → physics → active blocks → item pickup
@@ -734,9 +729,7 @@ void Game::renderPlaying(float dt, float aspect) {
 
 	// Equipment/Inventory UI ([I] to toggle)
 	if (pe->inventory) {
-		auto* ls = dynamic_cast<LocalServer*>(m_server.get());
-		const BlockRegistry& blocks = ls ? ls->server()->world().blocks : m_server->blockRegistry();
-		m_equipUI.render(*pe->inventory, blocks,
+		m_equipUI.render(*pe->inventory, m_server->blockRegistry(),
 			(float)m_window.width(), (float)m_window.height());
 	}
 
@@ -807,9 +800,6 @@ void Game::renderPlaying(float dt, float aspect) {
 // ============================================================
 void Game::updateEntityInspect(float dt, float aspect) {
 	if (!m_server) { m_state = GameState::MENU; return; }
-	auto* localSrv = dynamic_cast<LocalServer*>(m_server.get());
-	if (!localSrv) { m_state = m_preInspectState; return; }
-	World& world = localSrv->server()->world();
 	Entity* pe = playerEntity();
 	if (!pe) { m_state = GameState::MENU; return; }
 
@@ -957,6 +947,8 @@ void Game::updateCodeEditor(float dt, float aspect) {
 		auto handle = pythonBridge().loadBehavior(newCode, error);
 		if (handle >= 0) {
 			// Replace the entity's behavior with the Python version
+			// Note: behavior replacement only works on local server (singleplayer).
+			// For network play, this would need a C_SET_BEHAVIOR protocol message.
 			auto* ls = dynamic_cast<LocalServer*>(m_server.get());
 			if (ls && ls->server()) {
 				auto* behaviorState = ls->server()->world().entities.getBehaviorState(eid);
@@ -964,6 +956,8 @@ void Game::updateCodeEditor(float dt, float aspect) {
 					behaviorState->behavior = std::make_unique<PythonBehavior>(handle, newCode);
 					printf("[CodeEditor] Python behavior applied to entity %u\n", eid);
 				}
+			} else {
+				printf("[CodeEditor] Behavior replacement not supported on remote server yet\n");
 			}
 			m_codeEditor.clearError();
 		} else {

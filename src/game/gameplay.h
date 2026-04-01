@@ -1,7 +1,7 @@
 #pragma once
 
 #include "game/types.h"
-#include "server/world.h"
+#include "shared/server_interface.h"
 #include "shared/entity.h"
 #include "shared/constants.h"
 #include "client/gl.h"
@@ -18,8 +18,9 @@ namespace agentworld {
 
 class GameplayController {
 public:
-	// Called each gameplay frame. Player is an Entity like any other.
-	void update(float dt, GameState state, World& world, Entity& player,
+	// Called each gameplay frame. Gathers client input → ActionProposals.
+	// Server handles resolution, physics, active blocks, item pickup.
+	void update(float dt, GameState state, ServerInterface& server, Entity& player,
 	            Camera& camera, ControlManager& controls, Renderer& renderer,
 	            ParticleSystem& particles, Window& window,
 	            float jumpVelocity = 17.0f);
@@ -35,26 +36,15 @@ public:
 private:
 	void handleCameraInput(float dt, ControlManager& controls, Camera& camera, Window& window);
 	void processMovement(float dt, GameState state, ControlManager& controls,
-	                     Camera& camera, Entity& player, World& world,
+	                     Camera& camera, Entity& player, ServerInterface& server,
 	                     float jumpVelocity);
-	void processBlockInteraction(float dt, GameState state, World& world,
+	void processBlockInteraction(float dt, GameState state, ServerInterface& server,
 	                             Entity& player, Camera& camera, ControlManager& controls,
-	                             Renderer& renderer, ParticleSystem& particles,
 	                             Window& window);
-	void tickActiveBlocks(float dt, World& world, Renderer& renderer,
-	                      ParticleSystem& particles);
-	void processItemPickup(float dt, World& world, Entity& player,
-	                        Camera& camera, ParticleSystem& particles);
-
-	void resolveActions(float dt, World& world, Entity& player,
-	                    Renderer& renderer, ParticleSystem& particles,
-	                    GameState state);
-	void markBlockDirty(Renderer& renderer, int bx, int by, int bz);
 
 	std::optional<RayHit> m_hit;
 	std::optional<EntityHit> m_entityHit;
 	EntityId m_inspectedEntity = ENTITY_NONE;
-	float m_activeBlockTimer = 0;
 
 	// Client-side input cooldowns (anti-spam, not authoritative)
 	float m_breakCD = 0;

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "shared/types.h"
-#include "server/world.h"
+#include "shared/chunk_source.h"
 #include <glm/glm.hpp>
 #include <optional>
 
@@ -15,7 +15,7 @@ struct RayHit {
 	BlockId    blockId;
 };
 
-inline std::optional<RayHit> raycastBlocks(World& world, glm::vec3 origin,
+inline std::optional<RayHit> raycastBlocks(ChunkSource& world, glm::vec3 origin,
                                             glm::vec3 dir, float maxDist) {
 	dir = glm::normalize(dir);
 	glm::ivec3 pos((int)std::floor(origin.x), (int)std::floor(origin.y), (int)std::floor(origin.z));
@@ -34,7 +34,7 @@ inline std::optional<RayHit> raycastBlocks(World& world, glm::vec3 origin,
 
 	for (int i = 0; i < (int)(maxDist * 3); i++) {
 		BlockId block = world.getBlock(pos.x, pos.y, pos.z);
-		if (world.blocks.get(block).solid) {
+		if (world.blockRegistry().get(block).solid) {
 			glm::ivec3 normal = prevPos - pos;
 			return RayHit{pos, prevPos, glm::vec3(normal), dist, block};
 		}
