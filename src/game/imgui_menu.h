@@ -25,6 +25,9 @@
 #include "game/handbook_ui.h"
 #include "shared/artifact_registry.h"
 #include "server/world_template.h"
+#ifndef __EMSCRIPTEN__
+#include "shared/net_socket.h"
+#endif
 #include <imgui.h>
 #include <vector>
 #include <memory>
@@ -184,8 +187,28 @@ private:
 	HandbookUI m_handbook;
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;
 	int m_selectedTemplate = 0;
-	int m_gameMode = 1;
+	int m_gameMode = 0;  // 0=survival (default), 1=admin
 	bool m_gameRunning = false;
+
+	// Server detection
+	struct DetectedServer { std::string host; int port; };
+	std::vector<DetectedServer> m_detectedServers;
+	bool m_probed = false;
+
+	void probeServers() {
+#ifndef __EMSCRIPTEN__
+		m_detectedServers.clear();
+		// Probe localhost ports 7777-7787 for running servers
+		for (int port = 7777; port <= 7787; port++) {
+			net::TcpClient probe;
+			if (probe.connect("127.0.0.1", port, 0.15f)) {
+				probe.disconnect();
+				m_detectedServers.push_back({"127.0.0.1", port});
+			}
+		}
+		m_probed = true;
+#endif
+	}
 
 	MenuAction renderPlayContent(float contentW) {
 		MenuAction action;
@@ -205,15 +228,60 @@ private:
 			ImGui::Spacing(); ImGui::Spacing();
 		}
 
+		// ── Servers section ──
+		if (!m_probed) probeServers();
+
+		if (!m_detectedServers.empty()) {
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+			ImGui::SetWindowFontScale(1.2f);
+			ImGui::Text("Servers");
+			ImGui::SetWindowFontScale(1.0f);
+			ImGui::PopStyleColor();
+			ImGui::Spacing();
+
+			float cardW = std::min(contentW - 80, 500.0f);
+			for (auto& srv : m_detectedServers) {
+				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.96f, 0.94f, 1));
+				char srvId[64]; snprintf(srvId, sizeof(srvId), "##srv_%d", srv.port);
+				ImGui::BeginChild(srvId, ImVec2(cardW, 48), true);
+				{
+					ImGui::SetCursorPos(ImVec2(16, 14));
+					ImGui::TextColored(ImVec4(0.20f, 0.55f, 0.25f, 1),
+						"%s:%d", srv.host.c_str(), srv.port);
+					ImGui::SameLine(cardW - 90);
+					ImGui::SetCursorPosY(8);
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+					char btnId[32]; snprintf(btnId, sizeof(btnId), "Join##%d", srv.port);
+					if (ImGui::Button(btnId, ImVec2(70, 32))) {
+						action.type = MenuAction::JoinServer;
+						action.serverHost = srv.host;
+						action.serverPort = srv.port;
+					}
+					ImGui::PopStyleColor(2);
+				}
+				ImGui::EndChild();
+				ImGui::PopStyleColor();
+				ImGui::Spacing();
+			}
+
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Refresh")) {
+				m_probed = false;
+			}
+			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+		}
+
+		// ── New World section ──
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
-		ImGui::SetWindowFontScale(1.4f);
+		ImGui::SetWindowFontScale(1.2f);
 		ImGui::Text("New World");
 		ImGui::SetWindowFontScale(1.0f);
 		ImGui::PopStyleColor();
 
 		ImGui::Spacing();
 		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
-			"Choose a world template and game mode to start playing.");
+			"Choose a world template to start playing.");
 		ImGui::Spacing(); ImGui::Spacing();
 
 		// Template cards

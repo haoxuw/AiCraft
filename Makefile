@@ -13,13 +13,15 @@ EMSDK := $(HOME)/emsdk
 stop:
 	@-pkill -f "agentworld" 2>/dev/null; sleep 1
 
-game: build stop
+game: build
+	@-pkill -x "agentworld" 2>/dev/null; sleep 0.5
 	./$(BUILD_DIR)/agentworld
 
-server: build stop
+server: build
+	@-pkill -x "agentworld-server" 2>/dev/null; sleep 0.5
 	./$(BUILD_DIR)/agentworld-server --port $(PORT)
 
-client: build stop
+client: build
 	./$(BUILD_DIR)/agentworld-client --host $(HOST) --port $(PORT)
 
 build: configure

@@ -68,8 +68,11 @@ bool Game::init(int argc, char** argv) {
 	m_artifacts.loadAll("artifacts");
 
 	// Parse args
-	for (int i = 1; i < argc; i++)
+	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--demo") == 0) m_demoMode = true;
+		else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) m_connectHost = argv[++i];
+		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) m_connectPort = atoi(argv[++i]);
+	}
 
 	// Models
 	m_playerModel = builtin::playerModel();
@@ -332,28 +335,13 @@ void Game::updateAndRender(float dt, float aspect) {
 		handleMenuAction(action);
 		break;
 	}
-	case GameState::SERVER_BROWSER: {
-		auto action = m_menu.updateServerBrowser(dt, m_window, m_text, m_controls, aspect);
-		handleMenuAction(action);
+	// Legacy screens — redirect to ImGui menu
+	case GameState::SERVER_BROWSER:
+	case GameState::TEMPLATE_SELECT:
+	case GameState::CONTROLS:
+	case GameState::CHARACTER:
+		m_state = GameState::MENU;
 		break;
-	}
-	case GameState::TEMPLATE_SELECT: {
-		auto action = m_menu.updateTemplateSelect(dt, m_window, m_text, m_controls, aspect);
-		handleMenuAction(action);
-		break;
-	}
-	case GameState::CONTROLS: {
-		auto action = m_menu.updateControls(dt, m_window, m_text, m_controls, aspect);
-		handleMenuAction(action);
-		break;
-	}
-	case GameState::CHARACTER: {
-		auto action = m_menu.updateCharacterSelect(dt, m_window, m_text, m_controls,
-		                                           m_renderer.modelRenderer(), aspect, m_globalTime);
-		m_globalTime += dt;
-		handleMenuAction(action);
-		break;
-	}
 	case GameState::ADMIN:
 	case GameState::SURVIVAL:
 		updatePlaying(dt, aspect);
@@ -374,20 +362,11 @@ void Game::handleMenuAction(const MenuAction& action) {
 	case MenuAction::Quit:
 		glfwSetWindowShouldClose(m_window.handle(), true);
 		break;
+	// Legacy actions — no longer emitted by ImGui menu
 	case MenuAction::StartGame:
-		if (m_demoMode) {
-			// Demo mode: skip server browser, go straight to game
-			enterGame(0, GameState::ADMIN);
-		} else {
-			m_state = GameState::SERVER_BROWSER;
-		}
-		break;
-	// ShowTemplateSelect removed -- server browser handles this now
 	case MenuAction::ShowControls:
-		m_state = GameState::CONTROLS;
-		break;
 	case MenuAction::ShowCharacter:
-		m_state = GameState::CHARACTER;
+		m_state = GameState::MENU;
 		break;
 	case MenuAction::BackToMenu:
 		m_state = GameState::MENU;
@@ -429,6 +408,24 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 // World creation — player is now an Entity, same as pigs
 // ============================================================
 void Game::enterGame(int templateIndex, GameState targetState) {
+#ifndef __EMSCRIPTEN__
+	// If --host was provided, always connect to that server
+	if (!m_connectHost.empty()) {
+		joinServer(m_connectHost, m_connectPort, targetState);
+		return;
+	}
+	// Auto-detect a running server on localhost before creating a new one
+	{
+		net::TcpClient probe;
+		if (probe.connect("127.0.0.1", 7777, 0.3f)) {
+			probe.disconnect();
+			printf("[Game] Detected server on port 7777, joining...\n");
+			joinServer("127.0.0.1", 7777, targetState);
+			return;
+		}
+	}
+#endif
+	// No server found — start local
 	printf("[Game] Starting local server\n");
 	bool creative = (targetState == GameState::ADMIN);
 	auto localServer = std::make_unique<LocalServer>(m_templates);

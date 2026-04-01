@@ -103,6 +103,10 @@ private:
 	float m_worldTime = 0.30f;
 	float m_daySpeed = 1.0f / 600.0f;
 
+	// Connection (from --host/--port CLI args)
+	std::string m_connectHost;  // empty = singleplayer
+	int m_connectPort = 7777;
+
 	// Timing
 	std::chrono::steady_clock::time_point m_lastTime;
 	float m_fpsTimer = 0;
