@@ -1,6 +1,7 @@
 #include "game/gameplay.h"
 #include "client/entity_raycast.h"
 #include "shared/physics.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <algorithm>
 
@@ -35,7 +36,7 @@ void GameplayController::update(float dt, GameState state, ServerInterface& serv
 	if (glfwGetKey(window.handle(), GLFW_KEY_0) == GLFW_PRESS)
 		player.setProp(Prop::SelectedSlot, 9);
 
-	processMovement(dt, state, controls, camera, player, server, jumpVelocity);
+	processMovement(dt, state, controls, camera, player, server, window, jumpVelocity);
 	processBlockInteraction(dt, state, server, player, camera, controls, window);
 
 	// Particles (client-side animation only)
@@ -50,12 +51,38 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 {
 	if (controls.pressed(Action::CycleView)) {
 		camera.cycleMode();
-		if (camera.mode == CameraMode::RTS)
-			glfwSetInputMode(window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-		else
-			glfwSetInputMode(window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		camera.resetMouseTracking();
 	}
-	camera.processInput(window.handle(), dt);
+
+	// Cursor state per mode:
+	//   FPS/TPS: captured (mouse drives camera look)
+	//   RPG: free cursor, right-click-drag orbits camera (WoW-style)
+	//   RTS: free cursor (StarCraft-style)
+	bool wantCapture = (camera.mode == CameraMode::FirstPerson ||
+	                    camera.mode == CameraMode::ThirdPerson);
+
+	// RPG: only capture while right-click held
+	bool rpgOrbit = false;
+	if (camera.mode == CameraMode::RPG) {
+		rpgOrbit = glfwGetMouseButton(window.handle(), GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+		wantCapture = rpgOrbit;
+	}
+
+	glfwSetInputMode(window.handle(), GLFW_CURSOR,
+		wantCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+
+	if (wantCapture) {
+		camera.processInput(window.handle(), dt);
+	} else {
+		// Free cursor — still update camera position but skip mouse look
+		camera.resetMouseTracking(); // prevent jump on next capture
+		// Manually call update without mouse processing
+		switch (camera.mode) {
+		case CameraMode::RPG: camera.updateRPGPosition(dt); break;
+		case CameraMode::RTS: camera.updateRTS(window.handle(), dt); break;
+		default: break;
+		}
+	}
 }
 
 // ================================================================
@@ -66,7 +93,8 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 void GameplayController::processMovement(float dt, GameState state,
                                          ControlManager& controls,
                                          Camera& camera, Entity& player,
-                                         ServerInterface& server, float jumpVelocity)
+                                         ServerInterface& server, Window& window,
+                                         float jumpVelocity)
 {
 	if (camera.mode == CameraMode::RTS)
 		return;
@@ -89,10 +117,28 @@ void GameplayController::processMovement(float dt, GameState state,
 		if (controls.held(Action::MoveRight))    move += camRight;
 		if (hasWASD) m_hasMoveTarget = false;
 
-		// Click-to-move
+		// Click-to-move: raycast from camera through mouse cursor position
 		if (controls.pressed(Action::BreakBlock)) {
+			// Get mouse position in NDC
+			double mx, my;
+			glfwGetCursorPos(window.handle(), &mx, &my);
+			int ww, wh;
+			glfwGetWindowSize(window.handle(), &ww, &wh);
+			float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
+			float ndcY = 1.0f - (float)(my / wh) * 2.0f;
+
+			// Unproject mouse to world ray
+			float aspect = (float)ww / (float)wh;
+			glm::mat4 invVP = glm::inverse(
+				camera.projectionMatrix(aspect) * camera.viewMatrix());
+			glm::vec4 nearPt = invVP * glm::vec4(ndcX, ndcY, -1, 1);
+			glm::vec4 farPt  = invVP * glm::vec4(ndcX, ndcY,  1, 1);
+			nearPt /= nearPt.w;
+			farPt  /= farPt.w;
+			glm::vec3 rayDir = glm::normalize(glm::vec3(farPt - nearPt));
+
 			auto& chunks = server.chunks();
-			auto hit = raycastBlocks(chunks, camera.position, camera.front(), 80.0f);
+			auto hit = raycastBlocks(chunks, glm::vec3(nearPt), rayDir, 80.0f);
 			if (hit) {
 				auto& bp = hit->blockPos;
 				glm::vec3 target = glm::vec3(bp) + glm::vec3(0.5f, 1.0f, 0.5f);

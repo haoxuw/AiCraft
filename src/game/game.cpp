@@ -548,29 +548,10 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
-	// Client-side prediction: run local physics for the player entity
-	// so movement feels instant. Server corrections arrive via S_ENTITY
-	// and are applied as smooth nudges (see NetworkServer::handleMessage).
-	// For LocalServer this is redundant (server tick already ran physics)
-	// but harmless since positions will match.
-	if (dynamic_cast<NetworkServer*>(m_server.get())) {
-		auto& chunks = m_server->chunks();
-		BlockSolidFn solidFn = [&](int x, int y, int z) {
-			return chunks.blockRegistry().get(chunks.getBlock(x, y, z)).solid;
-		};
-		MoveParams mp;
-		mp.halfWidth = (pe->def().collision_box_max.x - pe->def().collision_box_min.x) * 0.5f;
-		mp.height = pe->def().collision_box_max.y - pe->def().collision_box_min.y;
-		mp.gravity = 20.0f * pe->def().gravity_scale;
-		mp.stepHeight = 1.0f;
-		mp.canFly = pe->getProp<bool>("fly_mode", false);
-		auto result = moveAndCollide(solidFn, pe->position, pe->velocity, dt, mp, pe->onGround);
-		pe->position = result.position;
-		pe->velocity = result.velocity;
-		pe->onGround = result.onGround;
-	}
-
-	// Camera tracks player position (locally predicted)
+	// Camera tracks entity position — same for all modes.
+	// LocalServer: server tick already ran physics this frame.
+	// NetworkServer: tick() interpolated ALL entities toward server
+	//   positions. Player, animals, villagers — all same code path.
 	m_camera.player.feetPos = pe->position;
 	m_worldTime = m_server->worldTime();
 	m_renderer.setTimeOfDay(m_worldTime);
@@ -629,6 +610,12 @@ void Game::renderPlaying(float dt, float aspect) {
 	// FPS: crosshairOffset stays at (0,0) — screen center
 
 	m_renderer.render(m_camera, aspect, hlPtr, selectedSlot, 7, crosshairOffset, showCrosshair);
+
+	// Move target highlight (RPG/RTS click-to-move destination)
+	if (m_gameplay.hasMoveTarget()) {
+		glm::ivec3 targetBlock = glm::ivec3(glm::floor(m_gameplay.moveTarget() - glm::vec3(0, 1, 0)));
+		m_renderer.renderMoveTarget(m_camera, aspect, targetBlock);
+	}
 
 	// 3D models
 	glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();

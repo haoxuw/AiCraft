@@ -37,7 +37,7 @@ private:
 	void handleCameraInput(float dt, ControlManager& controls, Camera& camera, Window& window);
 	void processMovement(float dt, GameState state, ControlManager& controls,
 	                     Camera& camera, Entity& player, ServerInterface& server,
-	                     float jumpVelocity);
+	                     Window& window, float jumpVelocity);
 	void processBlockInteraction(float dt, GameState state, ServerInterface& server,
 	                             Entity& player, Camera& camera, ControlManager& controls,
 	                             Window& window);
@@ -50,9 +50,13 @@ private:
 	float m_breakCD = 0;
 	float m_placeCD = 0;
 
-	// Click-to-move for god view
+	// Click-to-move for RPG/RTS
 	bool m_hasMoveTarget = false;
 	glm::vec3 m_moveTarget = {0, 0, 0};
+public:
+	bool hasMoveTarget() const { return m_hasMoveTarget; }
+	glm::vec3 moveTarget() const { return m_moveTarget; }
+private:
 };
 
 } // namespace agentworld

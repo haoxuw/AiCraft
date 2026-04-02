@@ -110,21 +110,24 @@ public:
 			handleMessage(hdr.type, payload);
 		}
 
-		// Interpolate ALL entities (except local player) toward server targets.
-		// All Living entities (animals, villagers, other players) are treated
-		// identically — they're all just entities with server-authoritative
-		// positions that we interpolate smoothly on the client.
-		const float INTERP_SPEED = 15.0f;
+		// Interpolate ALL entities toward server targets — same code for
+		// player, animals, villagers, other players. No special cases.
+		// Server is authoritative for positions. Client smoothly tracks.
+		const float INTERP_SPEED = 18.0f; // fast tracking for responsive feel
 		for (auto& [id, target] : m_interpTargets) {
-			if (id == m_localPlayerId) continue;
 			auto it = m_entities.find(id);
 			if (it == m_entities.end()) continue;
 			auto& e = *it->second;
 
-			// Smooth position: lerp toward target + velocity extrapolation
-			glm::vec3 predicted = target.position + target.velocity * target.age;
+			// For local player, use WASD velocity (already set by gameplay.cpp)
+			// for better extrapolation. For others, use server velocity.
+			glm::vec3 useVel = (id == m_localPlayerId) ? e.velocity : target.velocity;
+
+			// Predicted position = server pos + velocity × time since update
+			glm::vec3 predicted = target.position + useVel * target.age;
 			glm::vec3 diff = predicted - e.position;
 			float dist = glm::length(diff);
+
 			if (dist > 8.0f) {
 				e.position = predicted; // snap if too far
 			} else if (dist > 0.005f) {
@@ -132,33 +135,22 @@ public:
 				e.position += diff * t;
 			}
 
-			// Smooth yaw
-			float yawDiff = target.yaw - e.yaw;
-			while (yawDiff > 180.0f) yawDiff -= 360.0f;
-			while (yawDiff < -180.0f) yawDiff += 360.0f;
-			e.yaw += yawDiff * std::min(dt * INTERP_SPEED, 1.0f);
+			// Smooth yaw (skip for local player — camera controls yaw)
+			if (id != m_localPlayerId) {
+				float yawDiff = target.yaw - e.yaw;
+				while (yawDiff > 180.0f) yawDiff -= 360.0f;
+				while (yawDiff < -180.0f) yawDiff += 360.0f;
+				e.yaw += yawDiff * std::min(dt * INTERP_SPEED, 1.0f);
+				e.velocity = target.velocity;
+			}
 
-			e.velocity = target.velocity;
 			target.age += dt;
 
-			// Client-side walk distance for animation (same calc as server)
+			// Walk distance for animation — same for all entities
 			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
 			if (hSpeed > 0.01f) {
 				float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
 				e.setProp(Prop::WalkDistance, wd + hSpeed * dt);
-			}
-		}
-
-		// Also update local player's walk distance for animation
-		{
-			auto it = m_entities.find(m_localPlayerId);
-			if (it != m_entities.end()) {
-				auto& e = *it->second;
-				float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
-				if (hSpeed > 0.01f) {
-					float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
-					e.setProp(Prop::WalkDistance, wd + hSpeed * dt);
-				}
 			}
 		}
 	}
@@ -239,24 +231,13 @@ private:
 			} else {
 				auto& e = *it->second;
 
-				// Local player: DON'T overwrite position/velocity.
-				// Client predicts movement locally; server pos used only
-				// for smooth correction when they diverge too much.
-				if (es.id == m_localPlayerId) {
-					float drift = glm::length(es.position - e.position);
-					if (drift > 3.0f) {
-						// Large desync: snap to server position
-						e.position = es.position;
-						e.velocity = es.velocity;
-					}
-					// Small desync: client prediction is authoritative
-					// (server will validate via ActionProposal)
-				} else {
-					// Remote entity: set new interpolation target, reset age
-					m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f};
-				}
+				// ALL entities use the same code path — server is authoritative.
+				// Set interpolation target from server data. The tick() loop
+				// smoothly interpolates every entity toward its target.
+				// No special case for local player vs animals vs other players.
+				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f};
 
-				// Always sync non-positional state
+				// Sync non-positional state immediately
 				e.onGround = es.onGround;
 				e.goalText = es.goalText;
 				if (e.def().max_hp > 0)
