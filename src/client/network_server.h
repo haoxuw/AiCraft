@@ -110,28 +110,27 @@ public:
 			handleMessage(hdr.type, payload);
 		}
 
-		// Interpolate remote entities toward their server target positions
-		// This smooths out the 20Hz server broadcasts into 60fps motion
-		const float INTERP_SPEED = 12.0f; // higher = snappier tracking
+		// Interpolate ALL entities (except local player) toward server targets.
+		// All Living entities (animals, villagers, other players) are treated
+		// identically — they're all just entities with server-authoritative
+		// positions that we interpolate smoothly on the client.
+		const float INTERP_SPEED = 15.0f;
 		for (auto& [id, target] : m_interpTargets) {
-			if (id == m_localPlayerId) continue; // local player is predicted, not interpolated
+			if (id == m_localPlayerId) continue;
 			auto it = m_entities.find(id);
 			if (it == m_entities.end()) continue;
 			auto& e = *it->second;
 
-			// Smooth position: lerp toward target
-			glm::vec3 diff = target.position - e.position;
+			// Smooth position: lerp toward target + velocity extrapolation
+			glm::vec3 predicted = target.position + target.velocity * target.age;
+			glm::vec3 diff = predicted - e.position;
 			float dist = glm::length(diff);
-			if (dist > 5.0f) {
-				// Too far behind — snap
-				e.position = target.position;
-			} else if (dist > 0.01f) {
+			if (dist > 8.0f) {
+				e.position = predicted; // snap if too far
+			} else if (dist > 0.005f) {
 				float t = std::min(dt * INTERP_SPEED, 1.0f);
 				e.position += diff * t;
 			}
-
-			// Extrapolate using velocity for prediction between updates
-			target.position += target.velocity * dt;
 
 			// Smooth yaw
 			float yawDiff = target.yaw - e.yaw;
@@ -140,6 +139,27 @@ public:
 			e.yaw += yawDiff * std::min(dt * INTERP_SPEED, 1.0f);
 
 			e.velocity = target.velocity;
+			target.age += dt;
+
+			// Client-side walk distance for animation (same calc as server)
+			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
+			if (hSpeed > 0.01f) {
+				float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
+				e.setProp(Prop::WalkDistance, wd + hSpeed * dt);
+			}
+		}
+
+		// Also update local player's walk distance for animation
+		{
+			auto it = m_entities.find(m_localPlayerId);
+			if (it != m_entities.end()) {
+				auto& e = *it->second;
+				float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
+				if (hSpeed > 0.01f) {
+					float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
+					e.setProp(Prop::WalkDistance, wd + hSpeed * dt);
+				}
+			}
 		}
 	}
 
@@ -232,8 +252,8 @@ private:
 					// Small desync: client prediction is authoritative
 					// (server will validate via ActionProposal)
 				} else {
-					// Remote entity: set interpolation target
-					m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0};
+					// Remote entity: set new interpolation target, reset age
+					m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f};
 				}
 
 				// Always sync non-positional state
