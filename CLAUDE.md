@@ -171,11 +171,16 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j$(nproc)
 
 # Or use the Makefile shortcuts:
-make build    # configure + build (all three executables)
-make game     # singleplayer (server + client in one process)
-make server   # dedicated server (headless, TCP port 7777)
-make client   # network client (connects to localhost:7777)
-make clean    # remove build directory
+make game                  # singleplayer (server + client in one process)
+make game PORT=7890        # LAN debug: server + client on port 7890, skips menu
+make play                  # alias for LAN debug on default port 7777
+make server                # dedicated server (interactive world select)
+make server PORT=7890      # dedicated server on custom port
+make client                # network client (connects to localhost:7777)
+make client HOST=192.168.1.5 PORT=7890  # connect to LAN server
+make stop                  # kill all agentworld processes
+make build                 # configure + build (all three executables)
+make clean                 # remove build directory
 ```
 
 Dependencies (GLFW, GLM, GLAD, pybind11) fetched automatically via CMake FetchContent.
@@ -192,10 +197,21 @@ See `18_WEB_CLIENT.md` for full design.
 ## Running
 
 ```bash
-./build/agentworld                          # singleplayer (server + client in one process)
-./build/agentworld --demo                   # automated screenshot mode
-./build/agentworld-server --port 7777       # dedicated server (headless, TCP)
-./build/agentworld-client --host 127.0.0.1 --port 7777  # network client
+# Singleplayer
+./build/agentworld                          # full menu experience
+
+# LAN debug (quick test — server + client in one command)
+make game PORT=7890                         # starts server bg, client joins, skips menu
+
+# Multiplayer (separate terminals)
+./build/agentworld-server --port 7777       # Terminal 1: dedicated server
+./build/agentworld-client --host 127.0.0.1 --port 7777  # Terminal 2: player 1
+./build/agentworld-client --host 127.0.0.1 --port 7777  # Terminal 3: player 2
+
+# Server world management
+./build/agentworld-server                   # interactive: pick saved world or create new
+./build/agentworld-server --world saves/my_village  # load specific world
+./build/agentworld-server --template 1 --seed 42    # create new village world
 ```
 
 ## Code Style
