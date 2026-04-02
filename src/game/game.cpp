@@ -7,6 +7,7 @@
 #include "server/python_bridge.h"
 #include "server/behavior.h"
 #include "server/world_save.h"
+#include "shared/physics.h"
 #ifndef __EMSCRIPTEN__
 #include "client/network_server.h"
 #endif
@@ -547,7 +548,29 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
-	// Sync server state to client
+	// Client-side prediction: run local physics for the player entity
+	// so movement feels instant. Server corrections arrive via S_ENTITY
+	// and are applied as smooth nudges (see NetworkServer::handleMessage).
+	// For LocalServer this is redundant (server tick already ran physics)
+	// but harmless since positions will match.
+	if (dynamic_cast<NetworkServer*>(m_server.get())) {
+		auto& chunks = m_server->chunks();
+		BlockSolidFn solidFn = [&](int x, int y, int z) {
+			return chunks.blockRegistry().get(chunks.getBlock(x, y, z)).solid;
+		};
+		MoveParams mp;
+		mp.halfWidth = (pe->def().collision_box_max.x - pe->def().collision_box_min.x) * 0.5f;
+		mp.height = pe->def().collision_box_max.y - pe->def().collision_box_min.y;
+		mp.gravity = 20.0f * pe->def().gravity_scale;
+		mp.stepHeight = 1.0f;
+		mp.canFly = pe->getProp<bool>("fly_mode", false);
+		auto result = moveAndCollide(solidFn, pe->position, pe->velocity, dt, mp, pe->onGround);
+		pe->position = result.position;
+		pe->velocity = result.velocity;
+		pe->onGround = result.onGround;
+	}
+
+	// Camera tracks player position (locally predicted)
 	m_camera.player.feetPos = pe->position;
 	m_worldTime = m_server->worldTime();
 	m_renderer.setTimeOfDay(m_worldTime);

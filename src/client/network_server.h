@@ -109,6 +109,38 @@ public:
 		while (m_recv.tryExtract(hdr, payload)) {
 			handleMessage(hdr.type, payload);
 		}
+
+		// Interpolate remote entities toward their server target positions
+		// This smooths out the 20Hz server broadcasts into 60fps motion
+		const float INTERP_SPEED = 12.0f; // higher = snappier tracking
+		for (auto& [id, target] : m_interpTargets) {
+			if (id == m_localPlayerId) continue; // local player is predicted, not interpolated
+			auto it = m_entities.find(id);
+			if (it == m_entities.end()) continue;
+			auto& e = *it->second;
+
+			// Smooth position: lerp toward target
+			glm::vec3 diff = target.position - e.position;
+			float dist = glm::length(diff);
+			if (dist > 5.0f) {
+				// Too far behind — snap
+				e.position = target.position;
+			} else if (dist > 0.01f) {
+				float t = std::min(dt * INTERP_SPEED, 1.0f);
+				e.position += diff * t;
+			}
+
+			// Extrapolate using velocity for prediction between updates
+			target.position += target.velocity * dt;
+
+			// Smooth yaw
+			float yawDiff = target.yaw - e.yaw;
+			while (yawDiff > 180.0f) yawDiff -= 360.0f;
+			while (yawDiff < -180.0f) yawDiff += 360.0f;
+			e.yaw += yawDiff * std::min(dt * INTERP_SPEED, 1.0f);
+
+			e.velocity = target.velocity;
+		}
 	}
 
 	void sendAction(const ActionProposal& action) override {
@@ -166,7 +198,6 @@ private:
 
 		switch (type) {
 		case net::S_ENTITY: {
-			// Deserialize full entity state (matches serializeEntityState)
 			auto es = net::deserializeEntityState(rb);
 
 			auto it = m_entities.find(es.id);
@@ -180,20 +211,36 @@ private:
 				ent->yaw = es.yaw;
 				ent->onGround = es.onGround;
 				ent->goalText = es.goalText;
-				if (def->max_hp > 0) {
+				if (def->max_hp > 0)
 					ent->setProp(Prop::HP, es.hp);
-				}
 				m_entities[es.id] = std::move(ent);
+				// Initialize interpolation target
+				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0};
 			} else {
 				auto& e = *it->second;
-				e.position = es.position;
-				e.velocity = es.velocity;
-				e.yaw = es.yaw;
+
+				// Local player: DON'T overwrite position/velocity.
+				// Client predicts movement locally; server pos used only
+				// for smooth correction when they diverge too much.
+				if (es.id == m_localPlayerId) {
+					float drift = glm::length(es.position - e.position);
+					if (drift > 3.0f) {
+						// Large desync: snap to server position
+						e.position = es.position;
+						e.velocity = es.velocity;
+					}
+					// Small desync: client prediction is authoritative
+					// (server will validate via ActionProposal)
+				} else {
+					// Remote entity: set interpolation target
+					m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0};
+				}
+
+				// Always sync non-positional state
 				e.onGround = es.onGround;
 				e.goalText = es.goalText;
-				if (e.def().max_hp > 0) {
+				if (e.def().max_hp > 0)
 					e.setProp(Prop::HP, es.hp);
-				}
 			}
 			break;
 		}
@@ -276,6 +323,15 @@ private:
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;
 	NetChunkSource m_chunks{*this};
+
+	// Interpolation: smooth remote entity movement between 20Hz server updates
+	struct InterpTarget {
+		glm::vec3 position;
+		glm::vec3 velocity;
+		float yaw;
+		float age; // time since last server update
+	};
+	std::unordered_map<EntityId, InterpTarget> m_interpTargets;
 
 	BlockRegistry m_blocks;
 	ActionQueue m_actions;
