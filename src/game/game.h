@@ -1,7 +1,6 @@
 #pragma once
 
 #include "game/types.h"
-#include "game/menu.h"
 #include "game/imgui_menu.h"
 #include "game/code_editor.h"
 #include "game/equipment_ui.h"
@@ -81,7 +80,6 @@ private:
 	CodeEditor                  m_codeEditor;
 	EquipmentUI                 m_equipUI;
 	BehaviorStore               m_behaviorStore;
-	MenuSystem                  m_menu;
 	ImGuiMenu                   m_imguiMenu;
 	ArtifactRegistry            m_artifacts;
 	HUD                         m_hud;
@@ -108,6 +106,8 @@ private:
 	std::string m_connectHost;  // empty = singleplayer
 	int m_connectPort = 7777;
 	std::string m_currentWorldPath;  // save directory for current game
+
+	float m_connectTimer = 0;  // timeout waiting for player entity from server
 
 	// Timing
 	std::chrono::steady_clock::time_point m_lastTime;

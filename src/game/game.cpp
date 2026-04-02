@@ -505,8 +505,31 @@ void Game::saveCurrentWorld() {
 // ============================================================
 void Game::updatePlaying(float dt, float aspect) {
 	if (!m_server || !m_server->isConnected()) { m_state = GameState::MENU; return; }
+
+	// Tick server (polls for entity updates from network)
+	m_server->tick(dt);
+
 	Entity* pe = playerEntity();
-	if (!pe) { m_state = GameState::MENU; return; }
+	if (!pe) {
+		// Player entity not received yet — wait for server to broadcast it.
+		// This happens on network clients: S_WELCOME arrives before S_ENTITY.
+		m_connectTimer += dt;
+		if (m_connectTimer > 10.0f) {
+			printf("[Game] Timeout waiting for player entity\n");
+			m_state = GameState::MENU;
+			return;
+		}
+		// Show loading message
+		m_ui.beginFrame();
+		ImGui::SetNextWindowPos(ImVec2(m_window.width() * 0.5f - 100, m_window.height() * 0.5f - 20));
+		ImGui::Begin("##connecting", nullptr,
+			ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize);
+		ImGui::Text("Connecting to server...");
+		ImGui::End();
+		m_ui.endFrame();
+		return;
+	}
+	m_connectTimer = 0;
 
 	if (m_controls.pressed(Action::MenuBack)) {
 		m_preMenuState = m_state;
@@ -520,9 +543,6 @@ void Game::updatePlaying(float dt, float aspect) {
 	float jumpVel = (m_characters.count() > 0) ? m_characters.selected().jumpVelocity : 17.0f;
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
-
-	// Server tick: resolve actions → physics → active blocks → item pickup
-	m_server->tick(dt);
 
 	// Sync server state to client
 	m_camera.player.feetPos = pe->position;
