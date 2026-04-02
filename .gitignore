@@ -29,3 +29,14 @@ Thumbs.db
 *.o
 *.a
 *.out
+
+# Audio/media assets (downloaded separately)
+resources/sounds/
+
+# Screenshots
+/tmp/agentworld_*.ppm
+*.ppm
+
+# Stale directories
+src/common/
+src/builtin/

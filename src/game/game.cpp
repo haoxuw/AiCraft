@@ -585,14 +585,6 @@ void Game::saveCurrentWorld() {
 void Game::updatePlaying(float dt, float aspect) {
 	if (!m_server || !m_server->isConnected()) { m_state = GameState::MENU; return; }
 
-	static int frameNum = 0;
-	frameNum++;
-	if (frameNum <= 5 || frameNum % 60 == 0) {
-		Entity* dbgPe = playerEntity();
-		printf("[Game] frame %d: player=%p, entities=%zu, connected=%d\n",
-		       frameNum, (void*)dbgPe, m_server->entityCount(), m_server->isConnected());
-	}
-
 	// Tick server (polls for entity updates from network)
 	m_server->tick(dt);
 
@@ -639,6 +631,13 @@ void Game::updatePlaying(float dt, float aspect) {
 	// NetworkServer: tick() interpolated ALL entities toward server
 	//   positions. Player, animals, villagers — all same code path.
 	m_camera.player.feetPos = pe->position;
+	// Player model yaw: FPS = look direction, all others = server-set entity yaw (smooth)
+	if (m_camera.mode != CameraMode::FirstPerson) {
+		float diff = pe->yaw - m_camera.player.yaw;
+		while (diff > 180.0f) diff -= 360.0f;
+		while (diff < -180.0f) diff += 360.0f;
+		m_camera.player.yaw += diff * std::min(dt * 10.0f, 1.0f);
+	}
 	m_worldTime = m_server->worldTime();
 	m_renderer.setTimeOfDay(m_worldTime);
 
