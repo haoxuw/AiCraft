@@ -337,9 +337,14 @@ int main(int argc, char** argv) {
 
 		// Status logging
 		if (statusTimer >= 5.0f) {
-			printf("[Server] %d ticks, %.1f tps, %zu entities, %zu clients\n",
+			int moving = 0;
+			server.world().entities.forEach([&](agentworld::Entity& e) {
+				float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
+				if (hSpeed > 0.01f) moving++;
+			});
+			printf("[Server] %d ticks, %.1f tps, %zu entities (%d moving), %zu clients\n",
 			       tickCount, tickCount / statusTimer,
-			       server.world().entities.count(),
+			       server.world().entities.count(), moving,
 			       clients.size());
 			tickCount = 0;
 			statusTimer = 0;

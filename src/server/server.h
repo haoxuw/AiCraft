@@ -63,33 +63,34 @@ public:
 		}
 		m_spawnPos = {sx, m_world->surfaceHeight(sx, sz) + 1, sz};
 
-		// Spawn mobs
+		// Spawn mobs above the surface — gravity will drop them down.
+		// +3 ensures they clear any trees/blocks and land naturally.
+		auto safeSpawnHeight = [&](float x, float z) {
+			return m_world->surfaceHeight(x, z) + 3.0f;
+		};
+
 		for (int m = 0; m < 4; m++) {
 			float emx = sx + (m % 2 == 0 ? 8.0f : -6.0f) + m * 3;
 			float emz = sz + (m % 2 == 0 ? 5.0f : -8.0f) + m * 2;
-			float emh = m_world->surfaceHeight(emx, emz) + 1;
-			m_world->entities.spawn(EntityType::Pig, {emx, emh, emz});
+			m_world->entities.spawn(EntityType::Pig, {emx, safeSpawnHeight(emx, emz), emz});
 		}
 		for (int m = 0; m < 3; m++) {
 			float emx = sx + 4.0f + m * 5;
 			float emz = sz - 3.0f + m * 4;
-			float emh = m_world->surfaceHeight(emx, emz) + 1;
-			m_world->entities.spawn(EntityType::Chicken, {emx, emh, emz});
+			m_world->entities.spawn(EntityType::Chicken, {emx, safeSpawnHeight(emx, emz), emz});
 		}
 
 		// Dog (near spawn, follows player)
 		{
 			float dx = sx + 3, dz = sz + 2;
-			float dh = m_world->surfaceHeight(dx, dz) + 1;
-			m_world->entities.spawn(EntityType::Dog, {dx, dh, dz});
+			m_world->entities.spawn(EntityType::Dog, {dx, safeSpawnHeight(dx, dz), dz});
 		}
 
 		// Cats (roam near chickens)
 		for (int m = 0; m < 2; m++) {
 			float cx = sx + 5.0f + m * 7;
 			float cz = sz - 4.0f + m * 6;
-			float ch = m_world->surfaceHeight(cx, cz) + 1;
-			m_world->entities.spawn(EntityType::Cat, {cx, ch, cz});
+			m_world->entities.spawn(EntityType::Cat, {cx, safeSpawnHeight(cx, cz), cz});
 		}
 
 		// Place a chest at the village center
@@ -111,8 +112,7 @@ public:
 		for (int m = 0; m < 2; m++) {
 			float vx = sx + 25.0f + m * 10;
 			float vz = sz + 25.0f + m * 8;
-			float vh = m_world->surfaceHeight(vx, vz) + 1;
-			m_world->entities.spawn(EntityType::Villager, {vx, vh, vz});
+			m_world->entities.spawn(EntityType::Villager, {vx, safeSpawnHeight(vx, vz), vz});
 		}
 
 		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f (chest at %.0f,%.0f,%.0f)\n",
