@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cerrno>
+#include <netinet/tcp.h>
 #include <vector>
 #include <cstring>
 #include <cstdio>
@@ -23,6 +24,13 @@ namespace agentworld::net {
 inline void setNonBlocking(int fd) {
 	int flags = fcntl(fd, F_GETFL, 0);
 	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+// Disable Nagle's algorithm — send small packets immediately.
+// Without this, TCP buffers small writes for ~40ms causing visible input lag.
+inline void setNoDelay(int fd) {
+	int flag = 1;
+	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 }
 
 // Send a complete message (header + payload)
@@ -116,6 +124,7 @@ public:
 		int fd = accept(m_fd, (sockaddr*)&addr, &len);
 		if (fd >= 0) {
 			setNonBlocking(fd);
+			setNoDelay(fd);
 			printf("[Net] Client connected from %s:%d\n",
 			       inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
 		}
@@ -158,7 +167,7 @@ public:
 		}
 
 		if (ret == 0) {
-			// Connected immediately (unlikely but possible on localhost)
+			setNoDelay(m_fd);
 			printf("[Net] Connected to %s:%d\n", host, port);
 			return true;
 		}
@@ -185,6 +194,7 @@ public:
 			close(m_fd); m_fd = -1; return false;
 		}
 
+		setNoDelay(m_fd);
 		printf("[Net] Connected to %s:%d\n", host, port);
 		return true;
 	}

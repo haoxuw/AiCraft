@@ -153,6 +153,17 @@ void GameplayController::processMovement(float dt, GameState state,
 		moveAction.jump = controls.held(Action::Jump);
 	}
 
+	// Apply velocity locally for client-side prediction.
+	// Server will validate and may correct, but this makes movement feel instant.
+	player.velocity.x = moveAction.desiredVel.x;
+	player.velocity.z = moveAction.desiredVel.z;
+	if (moveAction.fly) {
+		player.velocity.y = moveAction.desiredVel.y;
+	} else if (moveAction.jump && player.onGround) {
+		player.velocity.y = jumpVelocity;
+		player.onGround = false;
+	}
+
 	server.sendAction(moveAction);
 
 	// God view / third person: player model faces movement direction
