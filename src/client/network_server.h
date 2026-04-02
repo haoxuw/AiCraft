@@ -16,6 +16,8 @@
 #include "shared/net_protocol.h"
 #include "shared/block_registry.h"
 #include "shared/chunk.h"
+#include "server/entity_manager.h"
+#include "content/builtin.h"
 #include <unordered_map>
 #include <functional>
 #include <string>
@@ -29,6 +31,10 @@ class NetworkServer : public ServerInterface {
 public:
 	NetworkServer(const std::string& host, int port)
 		: m_host(host), m_port(port) {
+		// Register all block and entity definitions (same as server)
+		// so entities have proper collision boxes, HP, inventory, etc.
+		registerAllBuiltins(m_blocks, m_entityDefs);
+
 		// Generate random UUID for this client
 		std::random_device rd;
 		std::mt19937 gen(rd());
@@ -160,33 +166,34 @@ private:
 
 		switch (type) {
 		case net::S_ENTITY: {
-			EntityId id = rb.readU32();
-			std::string typeId = rb.readString();
-			glm::vec3 pos = rb.readVec3();
-			glm::vec3 vel = rb.readVec3();
-			float yaw = rb.readF32();
+			// Deserialize full entity state (matches serializeEntityState)
+			auto es = net::deserializeEntityState(rb);
 
-			auto it = m_entities.find(id);
+			auto it = m_entities.find(es.id);
 			if (it == m_entities.end()) {
-				// New entity -- create with default def
-				auto* def = m_entityDefs.count(typeId) ? &m_entityDefs[typeId] : &m_defaultDef;
-				auto ent = std::make_unique<Entity>(id, typeId, *def);
-				ent->position = pos;
-				ent->velocity = vel;
-				ent->yaw = yaw;
-				m_entities[id] = std::move(ent);
+				// New entity — look up proper EntityDef from registered builtins
+				const EntityDef* def = m_entityDefs.getTypeDef(es.typeId);
+				if (!def) def = &m_defaultDef;
+				auto ent = std::make_unique<Entity>(es.id, es.typeId, *def);
+				ent->position = es.position;
+				ent->velocity = es.velocity;
+				ent->yaw = es.yaw;
+				ent->onGround = es.onGround;
+				ent->goalText = es.goalText;
+				if (def->max_hp > 0) {
+					ent->setProp(Prop::HP, es.hp);
+				}
+				m_entities[es.id] = std::move(ent);
 			} else {
-				it->second->position = pos;
-				it->second->velocity = vel;
-				it->second->yaw = yaw;
-			}
-
-			// Read additional props if present
-			while (rb.hasMore()) {
-				std::string key = rb.readString();
-				if (key.empty()) break;
-				int val = rb.readI32();
-				m_entities[id]->setProp(key, val);
+				auto& e = *it->second;
+				e.position = es.position;
+				e.velocity = es.velocity;
+				e.yaw = es.yaw;
+				e.onGround = es.onGround;
+				e.goalText = es.goalText;
+				if (e.def().max_hp > 0) {
+					e.setProp(Prop::HP, es.hp);
+				}
 			}
 			break;
 		}
@@ -273,7 +280,7 @@ private:
 	BlockRegistry m_blocks;
 	ActionQueue m_actions;
 	EntityDef m_defaultDef;
-	std::unordered_map<std::string, EntityDef> m_entityDefs;
+	EntityManager m_entityDefs;  // holds type defs for entity creation
 
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, glm::vec3, int)> m_onBlockBreak;
