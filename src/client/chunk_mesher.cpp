@@ -117,7 +117,9 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 
 	// Local block access via padded cache - no mutex, no hash lookup
 	auto cachedBlock = [&](int lx, int ly, int lz) -> BlockId {
-		return m_padded[padIdx(lx, ly, lz)];
+		int idx = padIdx(lx, ly, lz);
+		if (idx < 0 || idx >= (int)m_padded.size()) return BLOCK_AIR;
+		return m_padded[idx];
 	};
 
 	for (int ly = 0; ly < CHUNK_SIZE; ly++)

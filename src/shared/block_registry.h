@@ -58,7 +58,10 @@ public:
 		return id;
 	}
 
-	const BlockDef& get(BlockId id) const { return m_defs[id]; }
+	const BlockDef& get(BlockId id) const {
+		if (id >= m_defs.size()) return m_defs[0]; // fallback to Air if out of range
+		return m_defs[id];
+	}
 
 	BlockId getId(const std::string& stringId) const {
 		auto it = m_nameToId.find(stringId);
