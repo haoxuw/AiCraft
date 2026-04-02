@@ -128,7 +128,8 @@ public:
 	bool onGround = false;     // physics: is entity standing on solid ground
 
 	// --- Alive/active ---
-	bool removed = false;  // marked for removal
+	bool removed = false;           // marked for removal
+	bool removalBroadcast = false;  // S_REMOVE sent to clients
 
 private:
 	EntityId m_id;

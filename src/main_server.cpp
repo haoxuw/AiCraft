@@ -40,6 +40,17 @@ struct ConnectedClient {
 	// Track which chunks this client has, to send new ones as they move
 	agentworld::ChunkPos lastChunkPos = {0, 0, 0};
 	std::unordered_set<agentworld::ChunkPos, agentworld::ChunkPosHash> sentChunks;
+	// Connection info for logging
+	std::string ip;
+	int port = 0;
+	std::string name;  // from C_HELLO (UUID or display name)
+
+	// Formatted label for log messages: "Client 1 (name@ip:port)" or "Client 1 (ip:port)"
+	std::string label() const {
+		if (!name.empty())
+			return "Client " + std::to_string(id) + " (" + name + "@" + ip + ":" + std::to_string(port) + ")";
+		return "Client " + std::to_string(id) + " (" + ip + ":" + std::to_string(port) + ")";
+	}
 };
 
 // Interactive CLI: let user pick a world or create new
@@ -187,6 +198,35 @@ int main(int argc, char** argv) {
 	std::unordered_map<agentworld::ClientId, ConnectedClient> clients;
 	agentworld::ClientId nextClientId = 1;
 
+	// Network broadcast callbacks — send state changes to all connected clients
+	agentworld::ServerCallbacks cbs;
+	cbs.onBlockChange = [&](glm::ivec3 pos, agentworld::BlockId bid) {
+		agentworld::net::WriteBuffer wb;
+		wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
+		wb.writeU32(bid);
+		for (auto& [cid, c] : clients)
+			agentworld::net::sendMessage(c.fd, agentworld::net::S_BLOCK, wb);
+	};
+	cbs.onEntityRemove = [&](agentworld::EntityId id) {
+		agentworld::net::WriteBuffer wb;
+		wb.writeU32(id);
+		for (auto& [cid, c] : clients)
+			agentworld::net::sendMessage(c.fd, agentworld::net::S_REMOVE, wb);
+	};
+	cbs.onInventoryChange = [&](agentworld::EntityId id, const agentworld::Inventory& inv) {
+		agentworld::net::WriteBuffer wb;
+		wb.writeU32(id);
+		auto items = inv.items(); // copy (returns by value)
+		wb.writeU32((uint32_t)items.size());
+		for (auto& [itemId, count] : items) {
+			wb.writeString(itemId);
+			wb.writeI32(count);
+		}
+		for (auto& [cid, c] : clients)
+			agentworld::net::sendMessage(c.fd, agentworld::net::S_INVENTORY, wb);
+	};
+	server.setCallbacks(cbs);
+
 	// Fixed timestep server loop
 	const float TICK_RATE = agentworld::ServerTuning::tickRate;
 	auto lastTime = std::chrono::steady_clock::now();
@@ -202,25 +242,39 @@ int main(int argc, char** argv) {
 		statusTimer += dt;
 
 		// Accept new clients
-		int newFd = listener.acceptClient();
-		if (newFd >= 0) {
+		auto accepted = listener.acceptClient();
+		if (accepted.fd >= 0) {
 			agentworld::ClientId cid = nextClientId++;
 			agentworld::EntityId eid = server.addClient(cid);
 
-			// Set non-blocking immediately (send chunks over multiple ticks)
-			agentworld::net::setNonBlocking(newFd);
-
-			// Send S_WELCOME first (small message, should send immediately)
+			// Send S_WELCOME (player entity ID + spawn position)
 			{
 				agentworld::net::WriteBuffer wb;
 				wb.writeU32(eid);
 				wb.writeVec3(server.spawnPos());
-				agentworld::net::sendMessage(newFd, agentworld::net::S_WELCOME, wb);
+				agentworld::net::sendMessage(accepted.fd, agentworld::net::S_WELCOME, wb);
+			}
+
+			// Send initial inventory
+			{
+				agentworld::Entity* pe = server.world().entities.get(eid);
+				if (pe && pe->inventory) {
+					agentworld::net::WriteBuffer wb;
+					wb.writeU32(eid);
+					auto items = pe->inventory->items();
+					wb.writeU32((uint32_t)items.size());
+					for (auto& [itemId, count] : items) {
+						wb.writeString(itemId);
+						wb.writeI32(count);
+					}
+					agentworld::net::sendMessage(accepted.fd, agentworld::net::S_INVENTORY, wb);
+				}
 			}
 
 			// Queue initial chunks around spawn
 			ConnectedClient cc;
-			cc.fd = newFd; cc.id = cid; cc.playerId = eid;
+			cc.fd = accepted.fd; cc.id = cid; cc.playerId = eid;
+			cc.ip = accepted.ip; cc.port = accepted.port;
 
 			auto sp = server.spawnPos();
 			auto cp = agentworld::worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
@@ -253,8 +307,8 @@ int main(int argc, char** argv) {
 				queueChunk({cp.x + dx, cp.y + dy, cp.z + dz});
 
 			clients[cid] = std::move(cc);
-			printf("[Server] Client %u joined (entity %u). Sending %zu chunks...\n",
-			       cid, eid, clients[cid].pendingChunks.size());
+			printf("[Server] %s joined (entity %u). Sending %zu chunks...\n",
+			       clients[cid].label().c_str(), eid, clients[cid].pendingChunks.size());
 		}
 
 		// Send pending chunks to clients (non-blocking, a few per tick)
@@ -296,6 +350,11 @@ int main(int argc, char** argv) {
 					if (pe) pe->setProp(agentworld::Prop::SelectedSlot, (int)slot);
 					break;
 				}
+				case agentworld::net::C_HELLO: {
+					client.name = rb.readString();
+					printf("[Server] %s identified itself\n", client.label().c_str());
+					break;
+				}
 				default: break;
 				}
 			}
@@ -303,7 +362,7 @@ int main(int argc, char** argv) {
 
 		// Remove disconnected clients
 		for (auto cid : disconnected) {
-			printf("[Server] Client %u disconnected.\n", cid);
+			printf("[Server] %s disconnected.\n", clients[cid].label().c_str());
 			close(clients[cid].fd);
 			server.removeClient(cid);
 			clients.erase(cid);

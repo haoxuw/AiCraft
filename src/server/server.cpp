@@ -73,9 +73,9 @@ void GameServer::resolveActions(float dt) {
 
 			c->set(((bp.x % 16) + 16) % 16, ((bp.y % 16) + 16) % 16,
 			       ((bp.z % 16) + 16) % 16, BLOCK_AIR);
+			if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(bp, BLOCK_AIR);
 			if (m_callbacks.onChunkDirty) {
 				m_callbacks.onChunkDirty(cp);
-				// Mark neighbor chunks on boundary
 				for (int a = 0; a < 3; a++) {
 					int coords[] = {bp.x, bp.y, bp.z};
 					int l = ((coords[a] % 16) + 16) % 16;
@@ -85,6 +85,9 @@ void GameServer::resolveActions(float dt) {
 					}
 				}
 			}
+			// Sync inventory if actor broke a block and gained items
+			if (actor && actor->inventory && m_callbacks.onInventoryChange)
+				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 			break;
 		}
 
@@ -118,9 +121,10 @@ void GameServer::resolveActions(float dt) {
 			Chunk* c = m_world->getChunk(cp);
 			if (!c) break;
 
+			BlockId placedBid = m_world->blocks.getId(p.blockType);
 			c->set(((pp.x % 16) + 16) % 16, ((pp.y % 16) + 16) % 16,
-			       ((pp.z % 16) + 16) % 16,
-			       m_world->blocks.getId(p.blockType));
+			       ((pp.z % 16) + 16) % 16, placedBid);
+			if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pp, placedBid);
 
 			if (m_callbacks.onChunkDirty) {
 				m_callbacks.onChunkDirty(cp);
@@ -142,6 +146,9 @@ void GameServer::resolveActions(float dt) {
 
 			if (actor && actor->inventory && !m_creative)
 				actor->inventory->remove(p.blockType, 1);
+			// Sync inventory after block place
+			if (actor && actor->inventory && m_callbacks.onInventoryChange)
+				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 			break;
 		}
 

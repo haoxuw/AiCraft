@@ -35,6 +35,10 @@ struct ServerCallbacks {
 	std::function<void(glm::vec3 pos, glm::vec3 color, int count)> onBlockBreak;
 	std::function<void(glm::vec3 pos, glm::vec3 color)> onItemPickup;
 	std::function<void(glm::vec3 pos, const std::string& soundPlace)> onBlockPlace;
+	// Network broadcast callbacks (set by main_server.cpp for dedicated server)
+	std::function<void(glm::ivec3 pos, BlockId bid)> onBlockChange;     // block placed/broken
+	std::function<void(EntityId id)> onEntityRemove;                     // entity despawned
+	std::function<void(EntityId id, const Inventory&)> onInventoryChange; // inventory updated
 };
 
 struct ServerConfig {
@@ -164,10 +168,15 @@ public:
 
 	// Receive an action from a client
 	void receiveAction(ClientId clientId, ActionProposal action) {
-		// Validate that the actor belongs to this client
 		auto it = m_clients.find(clientId);
 		if (it == m_clients.end()) return;
-		if (action.actorId != it->second.playerEntityId) return; // anti-cheat
+
+		// Anti-cheat: block/item actions must come from the client's own player.
+		// Move actions are allowed for any entity (RTS commanding).
+		if (action.type != ActionProposal::Move &&
+		    action.actorId != it->second.playerEntityId)
+			return;
+
 		m_world->actions.propose(action);
 	}
 
@@ -206,12 +215,28 @@ public:
 			m_activeBlockTimer = 0;
 		}
 
+		// Broadcast entity removals BEFORE physics purges them
+		if (m_callbacks.onEntityRemove) {
+			m_world->entities.forEach([&](Entity& e) {
+				// This iterates non-removed only, but items about to be removed
+				// have item->removed = true already from pickup below or combat
+			});
+			// Check for removed entities directly
+			m_world->entities.forEachIncludingRemoved([&](Entity& e) {
+				if (e.removed && !e.removalBroadcast) {
+					m_callbacks.onEntityRemove(e.id());
+					e.removalBroadcast = true;
+				}
+			});
+		}
+
 		// Item pickup for all player entities
 		for (auto& [cid, cs] : m_clients) {
 			Entity* pe = m_world->entities.get(cs.playerEntityId);
 			if (!pe || !pe->inventory) continue;
 			glm::vec3 center = pe->position + glm::vec3(0, 1, 0);
 			auto pickups = m_world->entities.attractItemsToward(center, 3.0f, 1.2f, dt);
+			bool inventoryChanged = false;
 			for (auto* item : pickups) {
 				std::string itemType = item->getProp<std::string>(Prop::ItemType);
 				int count = item->getProp<int>(Prop::Count, 1);
@@ -219,7 +244,10 @@ public:
 				if (m_callbacks.onItemPickup)
 					m_callbacks.onItemPickup(item->position, {0.8f, 0.9f, 1.0f});
 				item->removed = true;
+				inventoryChanged = true;
 			}
+			if (inventoryChanged && m_callbacks.onInventoryChange)
+				m_callbacks.onInventoryChange(pe->id(), *pe->inventory);
 		}
 
 		// Advance world time

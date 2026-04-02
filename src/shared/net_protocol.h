@@ -9,6 +9,7 @@
  * Client → Server:
  *   C_ACTION    — ActionProposal (movement, block interaction)
  *   C_SLOT      — Selected hotbar slot change
+ *   C_HELLO     — Client UUID + display name (sent after S_WELCOME)
  *
  * Server → Client:
  *   S_WELCOME   — Your player EntityId + spawn position
@@ -32,6 +33,7 @@ enum MsgType : uint32_t {
 	// Client → Server
 	C_ACTION     = 0x0001,
 	C_SLOT       = 0x0002,
+	C_HELLO      = 0x0003,  // client identifies itself (UUID + name)
 
 	// Server → Client
 	S_WELCOME    = 0x1001,
@@ -39,7 +41,8 @@ enum MsgType : uint32_t {
 	S_CHUNK      = 0x1003,
 	S_REMOVE     = 0x1004,
 	S_TIME       = 0x1005,
-	S_BLOCK      = 0x1006,  // single block change
+	S_BLOCK      = 0x1006,  // single block change (x,y,z,blockId)
+	S_INVENTORY  = 0x1007,  // full inventory sync (entityId + item list)
 };
 
 // Message header (8 bytes)

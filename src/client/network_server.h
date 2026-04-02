@@ -70,6 +70,12 @@ public:
 					m_spawnPos = rb.readVec3();
 					printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f)\n",
 						m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+
+					// Identify ourselves to the server
+					net::WriteBuffer hello;
+					hello.writeString(m_clientUUID);
+					net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
+
 					return true;
 				}
 			}
@@ -262,6 +268,7 @@ private:
 		case net::S_REMOVE: {
 			EntityId id = rb.readU32();
 			m_entities.erase(id);
+			m_interpTargets.erase(id);
 			break;
 		}
 		case net::S_TIME: {
@@ -281,6 +288,21 @@ private:
 				it->second->set(lx, ly, lz, bid);
 			}
 			if (m_onChunkDirty) m_onChunkDirty(cp);
+			break;
+		}
+		case net::S_INVENTORY: {
+			EntityId id = rb.readU32();
+			auto it = m_entities.find(id);
+			if (it != m_entities.end() && it->second->inventory) {
+				auto& inv = *it->second->inventory;
+				inv.clear();
+				uint32_t count = rb.readU32();
+				for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
+					std::string itemId = rb.readString();
+					int amount = rb.readI32();
+					inv.add(itemId, amount);
+				}
+			}
 			break;
 		}
 		}

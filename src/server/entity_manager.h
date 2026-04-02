@@ -202,6 +202,11 @@ public:
 			if (!e->removed) fn(*e);
 	}
 
+	void forEachIncludingRemoved(std::function<void(Entity&)> fn) {
+		for (auto& [id, e] : m_entities)
+			fn(*e);
+	}
+
 	size_t count() const { return m_entities.size(); }
 
 	// --- Behavior access ---
