@@ -5,6 +5,7 @@
 #include "shared/block_registry.h"
 #include "shared/constants.h"
 #include "server/noise.h"
+#include "server/world_gen_config.h"
 #include <string>
 #include <cmath>
 
@@ -69,6 +70,9 @@ public:
 	std::string name() const override { return "Village"; }
 	std::string description() const override { return "Rolling hills, trees, and a village"; }
 
+	void setConfig(const WorldGenConfig& cfg) { m_cfg = cfg; }
+	const WorldGenConfig& config() const { return m_cfg; }
+
 	float surfaceHeight(int seed, float x, float z) override {
 		return terrainHeight(seed, x, z);
 	}
@@ -122,7 +126,7 @@ public:
 				int wx = ox + lx, wz = oz + lz;
 
 				// Deterministic tree placement via hash
-				if (hashFloat(wx * 7 + seed, wz * 13) < 0.97f) continue;
+				if (hashFloat(wx * 7 + seed, wz * 13) < (1.0f - m_cfg.treeDensity)) continue;
 
 				int surfaceY = (int)std::round(terrainHeight(seed, (float)wx, (float)wz));
 				if (surfaceY < 0 || surfaceY > 16) continue;
@@ -131,7 +135,7 @@ public:
 				if (isVillageArea(seed, wx, wz)) continue;
 
 				int trunkBase = surfaceY + 1;
-				int trunkHeight = 7 + (int)(hashFloat(wx + 99, wz + 99) * 4);
+				int trunkHeight = m_cfg.trunkHeightBase + (int)(hashFloat(wx + 99, wz + 99) * m_cfg.trunkHeightVariation);
 				int trunkTop = trunkBase + trunkHeight - 1;
 
 				// Trunk
@@ -142,7 +146,7 @@ public:
 				}
 
 				// Leaves (sphere around trunk top)
-				int leafR = 3;
+				int leafR = m_cfg.leafRadius;
 				for (int dy = -1; dy <= leafR; dy++) {
 					int r = (dy == leafR) ? 1 : leafR;
 					for (int dx = -r; dx <= r; dx++) {
@@ -165,6 +169,8 @@ public:
 		generateVillage(chunk, cpos, seed, cobble, wood);
 	}
 
+	WorldGenConfig m_cfg;
+
 private:
 	// Village center location (deterministic from seed)
 	static glm::ivec2 villageCenter(int seed) {
@@ -176,10 +182,11 @@ private:
 		return {(int)sx + 15, (int)sz + 15};
 	}
 
-	static bool isVillageArea(int seed, int wx, int wz) {
+	bool isVillageArea(int seed, int wx, int wz) const {
 		auto vc = villageCenter(seed);
 		int dx = wx - vc.x, dz = wz - vc.y;
-		return dx*dx + dz*dz < 28*28;
+		int r = m_cfg.villageClearingRadius;
+		return dx*dx + dz*dz < r*r;
 	}
 
 	void generateVillage(Chunk& chunk, ChunkPos cpos, int seed,
@@ -189,13 +196,14 @@ private:
 		int oy = cpos.y * CHUNK_SIZE;
 		int oz = cpos.z * CHUNK_SIZE;
 
-		// Houses around the village center
+		// Houses around the village center — height from config
+		int hh = m_cfg.houseHeight;
 		struct House { int cx, cz, w, d, h; };
 		House houses[] = {
-			{vc.x,      vc.y,      7, 7, 5},
-			{vc.x + 14, vc.y - 3,  6, 8, 5},
-			{vc.x - 12, vc.y + 7,  8, 6, 5},
-			{vc.x + 5,  vc.y + 16, 7, 7, 5},
+			{vc.x,      vc.y,      8, 8, hh},
+			{vc.x + 16, vc.y - 4,  7, 9, hh},
+			{vc.x - 14, vc.y + 8,  9, 7, hh},
+			{vc.x + 6,  vc.y + 18, 8, 8, hh},
 		};
 
 		for (auto& h : houses) {
@@ -213,8 +221,8 @@ private:
 						if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
 
 						bool wall = (dx == 0 || dx == h.w-1 || dz == 0 || dz == h.d-1);
-						bool door = ((dx == h.w/2 || dx == h.w/2 - 1) && dz == 0 && dy < 3);
-						bool window = wall && dy == 2 && (
+						bool door = ((dx == h.w/2 || dx == h.w/2 - 1) && dz == 0 && dy < m_cfg.houseDoorHeight);
+						bool window = wall && dy == m_cfg.houseWindowRow && (
 							((dz == 0 || dz == h.d-1) && (dx == 1 || dx == h.w-2)) ||
 							((dx == 0 || dx == h.w-1) && (dz == 1 || dz == h.d-2))
 						);

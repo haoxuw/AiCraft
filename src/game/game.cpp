@@ -68,6 +68,8 @@ bool Game::init(int argc, char** argv) {
 		std::make_shared<VillageWorldTemplate>(),
 	};
 	m_imguiMenu.init(m_templates);
+	m_imguiMenu.setControls(&m_controls);
+	m_imguiMenu.setAudio(&m_audio);
 
 	// Load all artifact definitions (Python files from artifacts/)
 	m_artifacts.setPlayerNamespace(ArtifactRegistry::generatePlayerNamespace());
@@ -297,6 +299,31 @@ void Game::handleGlobalInput() {
 	}
 	prevF12 = f12;
 
+	// Ctrl+M: toggle background music
+	static bool prevM = false;
+	bool mKey = glfwGetKey(m_window.handle(), GLFW_KEY_M) == GLFW_PRESS;
+	bool ctrl = glfwGetKey(m_window.handle(), GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+	            glfwGetKey(m_window.handle(), GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+	if (mKey && !prevM && ctrl) {
+		if (m_audio.musicPlaying()) {
+			m_audio.stopMusic();
+			printf("[Audio] Music OFF (Ctrl+M)\n");
+		} else {
+			m_audio.startMusic();
+			printf("[Audio] Music ON (Ctrl+M)\n");
+		}
+	}
+	prevM = mKey;
+
+	// Ctrl+N: toggle effect sounds (creature, footstep, dig, etc.)
+	static bool prevN = false;
+	bool nKey = glfwGetKey(m_window.handle(), GLFW_KEY_N) == GLFW_PRESS;
+	if (nKey && !prevN && ctrl) {
+		m_audio.setEffectsMuted(!m_audio.effectsMuted());
+		printf("[Audio] Effects %s (Ctrl+N)\n", m_audio.effectsMuted() ? "OFF" : "ON");
+	}
+	prevN = nKey;
+
 	if (m_controls.pressed(Action::ToggleInventory)) {
 		m_showInventory = !m_showInventory;
 		m_equipUI.toggle();
@@ -392,6 +419,7 @@ void Game::handleMenuAction(const MenuAction& action) {
 		break;
 	case MenuAction::EnterGame:
 		m_currentWorldPath = action.worldPath;
+		m_currentSeed = action.seed ? action.seed : (int)std::random_device{}();
 		enterGame(action.templateIndex, action.targetState);
 		break;
 	case MenuAction::JoinServer:
@@ -455,7 +483,7 @@ void Game::enterGame(int templateIndex, GameState targetState) {
 	printf("[Game] Starting local server\n");
 	bool creative = (targetState == GameState::ADMIN);
 	auto localServer = std::make_unique<LocalServer>(m_templates);
-	localServer->createGame(42, templateIndex, creative);
+	localServer->createGame(m_currentSeed, templateIndex, creative);
 	m_server = std::move(localServer);
 	setupAfterConnect(targetState);
 }

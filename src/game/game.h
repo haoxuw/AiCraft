@@ -107,6 +107,7 @@ private:
 	std::string m_connectHost;  // empty = singleplayer
 	int m_connectPort = 7777;
 	std::string m_currentWorldPath;  // save directory for current game
+	int m_currentSeed = 42;
 
 	float m_connectTimer = 0;  // timeout waiting for player entity from server
 

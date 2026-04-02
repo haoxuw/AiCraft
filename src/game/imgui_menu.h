@@ -26,6 +26,8 @@
 #include "game/world_manager.h"
 #include "shared/artifact_registry.h"
 #include "server/world_template.h"
+#include "client/controls.h"
+#include "client/audio.h"
 #ifndef __EMSCRIPTEN__
 #include "shared/net_socket.h"
 #endif
@@ -186,6 +188,10 @@ public:
 	void setGameRunning(bool running) { m_gameRunning = running; }
 	WorldManager& worldManager() { return m_worldMgr; }
 
+	// Set references for settings UI
+	void setControls(ControlManager* c) { m_controls = c; }
+	void setAudio(AudioManager* a) { m_audio = a; }
+
 private:
 	enum class Page { Play, Handbook, Settings };
 	Page m_page = Page::Play;
@@ -195,9 +201,13 @@ private:
 	int m_gameMode = 0;  // 0=survival (default), 1=admin
 	bool m_gameRunning = false;
 	bool m_showCreateWorld = false;
+	WorldGenConfig m_worldGenConfig;  // advanced options for new world
 	char m_newWorldName[64] = "My World";
 	char m_newWorldSeed[16] = "";
 	WorldManager m_worldMgr;
+	ControlManager* m_controls = nullptr;
+	AudioManager* m_audio = nullptr;
+	int m_settingsTab = 0; // 0=Controls, 1=Audio
 
 	// Server detection
 	struct DetectedServer { std::string host; int port; };
@@ -397,6 +407,35 @@ private:
 				ImGui::Spacing();
 			}
 
+			// Advanced options (collapsed by default)
+			ImGui::Spacing();
+			if (ImGui::CollapsingHeader("Advanced Options")) {
+				ImGui::Indent(16);
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Terrain");
+				ImGui::SliderFloat("Terrain Scale", &m_worldGenConfig.terrainScale, 0.2f, 3.0f, "%.1fx");
+				ImGui::SliderInt("Snow Threshold", &m_worldGenConfig.snowThreshold, 5, 40);
+				ImGui::SliderInt("Water Level", &m_worldGenConfig.waterLevel, -10, 5);
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Village");
+				ImGui::SliderInt("House Height", &m_worldGenConfig.houseHeight, 5, 12);
+				ImGui::SliderInt("Clearing Radius", &m_worldGenConfig.villageClearingRadius, 15, 60);
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Trees");
+				ImGui::SliderFloat("Tree Density", &m_worldGenConfig.treeDensity, 0.0f, 0.15f, "%.2f");
+				ImGui::SliderInt("Trunk Height", &m_worldGenConfig.trunkHeightBase, 3, 15);
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Creatures");
+				ImGui::SliderInt("Pigs", &m_worldGenConfig.pigCount, 0, 20);
+				ImGui::SliderInt("Chickens", &m_worldGenConfig.chickenCount, 0, 20);
+				ImGui::SliderInt("Dogs", &m_worldGenConfig.dogCount, 0, 10);
+				ImGui::SliderInt("Cats", &m_worldGenConfig.catCount, 0, 10);
+				ImGui::SliderInt("Villagers", &m_worldGenConfig.villagerCount, 0, 10);
+				ImGui::Unindent(16);
+			}
+
 			ImGui::Spacing();
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.65f, 0.15f, 1));
 			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.72f, 0.28f, 1));
@@ -463,10 +502,204 @@ private:
 
 		ImGui::Spacing();
 		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
-			"Controls, character selection, and audio settings.");
+			"Controls, audio, and display settings.");
 		ImGui::Spacing(); ImGui::Spacing();
 
-		ImGui::Text("Coming soon — use the in-game settings for now.");
+		// Tab bar
+		if (ImGui::BeginTabBar("SettingsTabs")) {
+			if (ImGui::BeginTabItem("Controls")) {
+				m_settingsTab = 0;
+				ImGui::Spacing();
+				renderControlsTab(contentW);
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Audio")) {
+				m_settingsTab = 1;
+				ImGui::Spacing();
+				renderAudioTab(contentW);
+				ImGui::EndTabItem();
+			}
+			ImGui::EndTabBar();
+		}
+	}
+
+	void renderControlsTab(float contentW) {
+		float tableW = std::min(contentW - 80, 600.0f);
+
+		// --- Configurable bindings ---
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Key Bindings");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
+			"Edit config/controls.yaml to remap keys.");
+		ImGui::Spacing();
+
+		if (m_controls) {
+			ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12, 6));
+			if (ImGui::BeginTable("Bindings", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH,
+			                       ImVec2(tableW, 0))) {
+				ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, tableW * 0.55f);
+				ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableHeadersRow();
+
+				for (auto& b : m_controls->bindings()) {
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::TextColored(ImVec4(0.20f, 0.20f, 0.22f, 1), "%s", b.displayName.c_str());
+					ImGui::TableSetColumnIndex(1);
+
+					// Key badge
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.92f, 0.93f, 0.95f, 1));
+					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.92f, 0.93f, 0.95f, 1));
+					ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.92f, 0.93f, 0.95f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.30f, 0.32f, 0.35f, 1));
+					ImGui::SmallButton(b.keyName.c_str());
+					ImGui::PopStyleColor(4);
+				}
+				ImGui::EndTable();
+			}
+			ImGui::PopStyleVar();
+		}
+
+		ImGui::Spacing(); ImGui::Spacing();
+
+		// --- Shortcut keys (hardcoded with modifiers) ---
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Shortcuts");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		struct Shortcut { const char* key; const char* desc; };
+		Shortcut shortcuts[] = {
+			{"Ctrl+M",  "Toggle background music"},
+			{"Ctrl+N",  "Toggle effect sounds"},
+			{"F12",     "Toggle admin mode"},
+			{"Tab / I", "Toggle inventory"},
+			{"V",       "Cycle camera mode"},
+			{"F2",      "Screenshot"},
+			{"F3",      "Toggle debug overlay"},
+			{"Escape",  "Open/close menu"},
+		};
+
+		ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12, 6));
+		if (ImGui::BeginTable("Shortcuts", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH,
+		                       ImVec2(tableW, 0))) {
+			ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, tableW * 0.25f);
+			ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableHeadersRow();
+
+			for (auto& s : shortcuts) {
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.92f, 0.93f, 0.95f, 1));
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.92f, 0.93f, 0.95f, 1));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.92f, 0.93f, 0.95f, 1));
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.30f, 0.32f, 0.35f, 1));
+				ImGui::SmallButton(s.key);
+				ImGui::PopStyleColor(4);
+				ImGui::TableSetColumnIndex(1);
+				ImGui::TextColored(ImVec4(0.20f, 0.20f, 0.22f, 1), "%s", s.desc);
+			}
+			ImGui::EndTable();
+		}
+		ImGui::PopStyleVar();
+	}
+
+	void renderAudioTab(float contentW) {
+		float sliderW = std::min(contentW - 120, 400.0f);
+
+		if (!m_audio) {
+			ImGui::Text("Audio not available.");
+			return;
+		}
+
+		// --- Volume ---
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Volume");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		float masterVol = m_audio->masterVolume();
+		ImGui::SetNextItemWidth(sliderW);
+		if (ImGui::SliderFloat("Master Volume", &masterVol, 0.0f, 1.0f, "%.0f%%")) {
+			m_audio->setMasterVolume(masterVol);
+		}
+
+		float musicVol = m_audio->musicVolume();
+		ImGui::SetNextItemWidth(sliderW);
+		if (ImGui::SliderFloat("Music Volume", &musicVol, 0.0f, 0.5f, "%.0f%%")) {
+			m_audio->setMusicVolume(musicVol);
+		}
+
+		ImGui::Spacing(); ImGui::Spacing();
+
+		// --- Toggles ---
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Toggles");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		bool musicOn = m_audio->musicPlaying();
+		if (ImGui::Checkbox("Background Music (Ctrl+M)", &musicOn)) {
+			if (musicOn) m_audio->startMusic();
+			else m_audio->stopMusic();
+		}
+
+		bool effectsOn = !m_audio->effectsMuted();
+		if (ImGui::Checkbox("Effect Sounds (Ctrl+N)", &effectsOn)) {
+			m_audio->setEffectsMuted(!effectsOn);
+		}
+
+		bool globalMute = m_audio->muted();
+		if (ImGui::Checkbox("Mute All", &globalMute)) {
+			m_audio->setMuted(globalMute);
+		}
+
+		ImGui::Spacing(); ImGui::Spacing();
+
+		// --- Now playing ---
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Now Playing");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		if (m_audio->musicPlaying()) {
+			std::string track = m_audio->currentTrackName();
+			if (!track.empty()) {
+				ImGui::TextColored(ImVec4(0.96f, 0.65f, 0.15f, 1), "%s", track.c_str());
+			}
+			ImGui::Spacing();
+			if (ImGui::Button("Next Track", ImVec2(120, 32))) {
+				m_audio->nextTrack();
+			}
+		} else {
+			ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Music is off. Enable above to listen.");
+		}
+
+		ImGui::Spacing(); ImGui::Spacing();
+
+		// --- Stats ---
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Library");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		auto groups = m_audio->groupNames();
+		auto& sounds = m_audio->allSounds();
+		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
+			"%zu sound effects in %zu groups", sounds.size(), groups.size());
 	}
 };
 

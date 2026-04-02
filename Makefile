@@ -79,6 +79,12 @@ stop:
 	@-pkill -f "agentworld" 2>/dev/null; sleep 1
 	@echo "All agentworld processes stopped."
 
+# Kill only servers (find by listening port)
+killservers:
+	@echo "Looking for agentworld server processes..."
+	@-pgrep -fa "agentworld-server" 2>/dev/null && pkill -f "agentworld-server" && echo "Killed." || echo "No servers running."
+	@-pgrep -fa "agentworld.*--port" 2>/dev/null && pkill -f "agentworld.*--port" && echo "Killed port processes." || true
+
 build: configure
 	cmake --build $(BUILD_DIR) -j$$(nproc)
 

@@ -14,6 +14,7 @@
 
 #include "server/world.h"
 #include "server/entity_manager.h"
+#include "server/world_gen_config.h"
 #include "shared/action.h"
 #include "shared/constants.h"
 #include "server/world_template.h"
@@ -46,6 +47,7 @@ struct ServerConfig {
 	int templateIndex = 1;  // VillageWorld (has trees)
 	bool creative = false;  // survival by default
 	int port = 7777;
+	WorldGenConfig worldGenConfig;
 };
 
 // All server tuning constants in one header
@@ -58,18 +60,38 @@ public:
 	               const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		auto tmpl = (config.templateIndex < (int)templates.size())
 			? templates[config.templateIndex] : templates[0];
+
+		// Pass world gen config to template
+		auto* village = dynamic_cast<VillageWorldTemplate*>(tmpl.get());
+		if (village) village->setConfig(config.worldGenConfig);
+
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
 		m_creative = config.creative;
 		m_worldTime = 0.30f;
 
-		// Find spawn position
+		// Find spawn position — search for flat terrain, guarantee surface placement
 		float sx = 30, sz = 30;
 		for (int t = 0; t < 50; t++) {
 			float h = m_world->surfaceHeight(sx, sz);
 			if (h > 2 && h < 15) break;
 			sx += 7; sz += 3;
 		}
-		m_spawnPos = {sx, m_world->surfaceHeight(sx, sz) + 1, sz};
+		float surfaceY = m_world->surfaceHeight(sx, sz);
+
+		// Scan upward to find clear air (3 blocks for character height)
+		// This prevents spawning inside mountains, trees, or structures
+		BlockSolidFn solidFn = [&](int x, int y, int z) {
+			return m_world->blocks.get(m_world->getBlock(x, y, z)).solid;
+		};
+		int spawnY = (int)std::round(surfaceY) + 1;
+		for (int scan = 0; scan < 20; scan++) {
+			bool clear = !solidFn((int)sx, spawnY, (int)sz) &&
+			             !solidFn((int)sx, spawnY + 1, (int)sz) &&
+			             !solidFn((int)sx, spawnY + 2, (int)sz);
+			if (clear) break;
+			spawnY++;
+		}
+		m_spawnPos = {sx, (float)spawnY, sz};
 	}
 
 	// Initialize server with world + spawn default entities (new world)
@@ -79,31 +101,26 @@ public:
 
 		// Spawn mobs above the surface — gravity will drop them down.
 		float sx = m_spawnPos.x, sz = m_spawnPos.z;
+		auto& wgc = config.worldGenConfig;
 		auto safeSpawnHeight = [&](float x, float z) {
 			return m_world->surfaceHeight(x, z) + ServerTuning::spawnHeightOffset;
 		};
 
-		for (int m = 0; m < 4; m++) {
-			float emx = sx + (m % 2 == 0 ? 8.0f : -6.0f) + m * 3;
-			float emz = sz + (m % 2 == 0 ? 5.0f : -8.0f) + m * 2;
-			m_world->entities.spawn(EntityType::Pig, {emx, safeSpawnHeight(emx, emz), emz});
-		}
-		for (int m = 0; m < 3; m++) {
-			float emx = sx + 4.0f + m * 5;
-			float emz = sz - 3.0f + m * 4;
-			m_world->entities.spawn(EntityType::Chicken, {emx, safeSpawnHeight(emx, emz), emz});
-		}
+		// Spawn mobs in a ring around spawn point
+		auto spawnMobs = [&](const std::string& typeId, int count, float baseOffset) {
+			for (int m = 0; m < count; m++) {
+				float angle = (float)m / (float)count * 6.28318f + baseOffset;
+				float r = 8.0f + (float)m * 3.0f;
+				float emx = sx + std::cos(angle) * r;
+				float emz = sz + std::sin(angle) * r;
+				m_world->entities.spawn(typeId, {emx, safeSpawnHeight(emx, emz), emz});
+			}
+		};
 
-		{
-			float dx = sx + 3, dz = sz + 2;
-			m_world->entities.spawn(EntityType::Dog, {dx, safeSpawnHeight(dx, dz), dz});
-		}
-
-		for (int m = 0; m < 2; m++) {
-			float cx = sx + 5.0f + m * 7;
-			float cz = sz - 4.0f + m * 6;
-			m_world->entities.spawn(EntityType::Cat, {cx, safeSpawnHeight(cx, cz), cz});
-		}
+		spawnMobs(EntityType::Pig, wgc.pigCount, 0.0f);
+		spawnMobs(EntityType::Chicken, wgc.chickenCount, 1.0f);
+		spawnMobs(EntityType::Dog, wgc.dogCount, 2.0f);
+		spawnMobs(EntityType::Cat, wgc.catCount, 3.0f);
 
 		{
 			int chestX = (int)sx, chestZ = (int)sz;
@@ -117,11 +134,7 @@ public:
 			m_chestPos = {(float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f};
 		}
 
-		for (int m = 0; m < 2; m++) {
-			float vx = sx + 25.0f + m * 10;
-			float vz = sz + 25.0f + m * 8;
-			m_world->entities.spawn(EntityType::Villager, {vx, safeSpawnHeight(vx, vz), vz});
-		}
+		spawnMobs(EntityType::Villager, wgc.villagerCount, 4.0f);
 
 		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f (chest at %.0f,%.0f,%.0f)\n",
 		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z,
