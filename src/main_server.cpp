@@ -136,6 +136,8 @@ static void interactiveWorldSelect(agentworld::ServerConfig& config,
 }
 
 int main(int argc, char** argv) {
+	setvbuf(stdout, nullptr, _IONBF, 0);
+	setvbuf(stderr, nullptr, _IONBF, 0);
 	printf("=== AgentWorld Dedicated Server ===\n");
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);

@@ -36,6 +36,8 @@ static void crashHandler(int sig) {
 }
 
 int main(int argc, char** argv) {
+	setvbuf(stdout, nullptr, _IONBF, 0); // unbuffered stdout for crash debugging
+	setvbuf(stderr, nullptr, _IONBF, 0);
 	signal(SIGSEGV, crashHandler);
 	signal(SIGABRT, crashHandler);
 

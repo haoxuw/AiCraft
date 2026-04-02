@@ -557,6 +557,14 @@ void Game::saveCurrentWorld() {
 void Game::updatePlaying(float dt, float aspect) {
 	if (!m_server || !m_server->isConnected()) { m_state = GameState::MENU; return; }
 
+	static int frameNum = 0;
+	frameNum++;
+	if (frameNum <= 5 || frameNum % 60 == 0) {
+		Entity* dbgPe = playerEntity();
+		printf("[Game] frame %d: player=%p, entities=%zu, connected=%d\n",
+		       frameNum, (void*)dbgPe, m_server->entityCount(), m_server->isConnected());
+	}
+
 	// Tick server (polls for entity updates from network)
 	m_server->tick(dt);
 
@@ -640,16 +648,10 @@ void Game::updatePlaying(float dt, float aspect) {
 }
 
 void Game::renderPlaying(float dt, float aspect) {
-	if (!m_server) return;
+	if (!m_server) { printf("[Game] renderPlaying: no server\n"); return; }
 	auto& srv = *m_server;
 	Entity* pe = playerEntity();
-	if (!pe) return;
-
-	// Safety: verify entity has valid def (prevents crash on network desync)
-	if (pe->def().string_id.empty()) {
-		printf("[Game] WARNING: player entity has empty def, skipping render\n");
-		return;
-	}
+	if (!pe) { printf("[Game] renderPlaying: no player entity\n"); return; }
 
 	// Update chunks
 	m_renderer.updateChunks(srv.chunks(), m_camera, 8);
