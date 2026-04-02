@@ -49,9 +49,9 @@ struct ServerConfig {
 
 class GameServer {
 public:
-	// Initialize server with world
-	void init(const ServerConfig& config,
-	          const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
+	// Initialize world only (no entity spawning) — used by loadWorld
+	void initWorld(const ServerConfig& config,
+	               const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		auto tmpl = (config.templateIndex < (int)templates.size())
 			? templates[config.templateIndex] : templates[0];
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
@@ -66,8 +66,15 @@ public:
 			sx += 7; sz += 3;
 		}
 		m_spawnPos = {sx, m_world->surfaceHeight(sx, sz) + 1, sz};
+	}
+
+	// Initialize server with world + spawn default entities (new world)
+	void init(const ServerConfig& config,
+	          const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
+		initWorld(config, templates);
 
 		// Spawn mobs above the surface — gravity will drop them down.
+		float sx = m_spawnPos.x, sz = m_spawnPos.z;
 		auto safeSpawnHeight = [&](float x, float z) {
 			return m_world->surfaceHeight(x, z) + ServerTuning::spawnHeightOffset;
 		};
@@ -83,20 +90,17 @@ public:
 			m_world->entities.spawn(EntityType::Chicken, {emx, safeSpawnHeight(emx, emz), emz});
 		}
 
-		// Dog (near spawn, follows player)
 		{
 			float dx = sx + 3, dz = sz + 2;
 			m_world->entities.spawn(EntityType::Dog, {dx, safeSpawnHeight(dx, dz), dz});
 		}
 
-		// Cats (roam near chickens)
 		for (int m = 0; m < 2; m++) {
 			float cx = sx + 5.0f + m * 7;
 			float cz = sz - 4.0f + m * 6;
 			m_world->entities.spawn(EntityType::Cat, {cx, safeSpawnHeight(cx, cz), cz});
 		}
 
-		// Place a chest at the village center
 		{
 			int chestX = (int)sx, chestZ = (int)sz;
 			int chestY = (int)m_world->surfaceHeight((float)chestX, (float)chestZ) + 1;
@@ -104,14 +108,11 @@ public:
 			if (chestId != BLOCK_AIR) {
 				ChunkPos cp = worldToChunk(chestX, chestY, chestZ);
 				Chunk* c = m_world->getChunk(cp);
-				if (c) {
-					c->set(((chestX%16)+16)%16, ((chestY%16)+16)%16, ((chestZ%16)+16)%16, chestId);
-				}
+				if (c) c->set(((chestX%16)+16)%16, ((chestY%16)+16)%16, ((chestZ%16)+16)%16, chestId);
 			}
 			m_chestPos = {(float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f};
 		}
 
-		// Villagers — spawn in forest area where trees grow
 		for (int m = 0; m < 2; m++) {
 			float vx = sx + 25.0f + m * 10;
 			float vz = sz + 25.0f + m * 8;
@@ -279,7 +280,9 @@ public:
 	World& world() { return *m_world; }
 	const World& world() const { return *m_world; }
 	float worldTime() const { return m_worldTime; }
+	void setWorldTime(float t) { m_worldTime = t; }
 	glm::vec3 spawnPos() const { return m_spawnPos; }
+	void setSpawnPos(glm::vec3 p) { m_spawnPos = p; }
 	bool isCreative() const { return m_creative; }
 
 	EntityId getPlayerEntity(ClientId clientId) const {

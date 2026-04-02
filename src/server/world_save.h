@@ -224,12 +224,16 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 		return false;
 	}
 
-	// Initialize server with the saved template + seed
+	// Initialize world only (no default entity spawning — save has its own entities)
 	ServerConfig config;
 	config.seed = meta.seed;
 	config.templateIndex = meta.templateIndex;
 	config.creative = (meta.gameMode == "admin");
-	server.init(config, templates);
+	server.initWorld(config, templates);
+
+	// Restore saved spawn position and world time
+	server.setSpawnPos(meta.spawnPos);
+	server.setWorldTime(meta.worldTime);
 
 	auto& world = server.world();
 
