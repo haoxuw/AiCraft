@@ -34,6 +34,7 @@ struct ServerCallbacks {
 	std::function<void(ChunkPos cp)> onChunkDirty;
 	std::function<void(glm::vec3 pos, glm::vec3 color, int count)> onBlockBreak;
 	std::function<void(glm::vec3 pos, glm::vec3 color)> onItemPickup;
+	std::function<void(glm::vec3 pos, const std::string& soundPlace)> onBlockPlace;
 };
 
 struct ServerConfig {
@@ -42,6 +43,9 @@ struct ServerConfig {
 	bool creative = false;  // survival by default
 	int port = 7777;
 };
+
+// All server tuning constants in one header
+#include "server/server_tuning.h"
 
 class GameServer {
 public:
@@ -64,9 +68,8 @@ public:
 		m_spawnPos = {sx, m_world->surfaceHeight(sx, sz) + 1, sz};
 
 		// Spawn mobs above the surface — gravity will drop them down.
-		// +3 ensures they clear any trees/blocks and land naturally.
 		auto safeSpawnHeight = [&](float x, float z) {
-			return m_world->surfaceHeight(x, z) + 3.0f;
+			return m_world->surfaceHeight(x, z) + ServerTuning::spawnHeightOffset;
 		};
 
 		for (int m = 0; m < 4; m++) {
@@ -220,6 +223,56 @@ public:
 
 		// Advance world time
 		m_worldTime += (1.0f / 600.0f) * dt;
+
+		// Stuck detection: periodically check if walking entities haven't moved
+		m_stuckTimer += dt;
+		if (m_stuckTimer >= ServerTuning::stuckCheckInterval) {
+			m_stuckTimer = 0;
+
+			m_world->entities.forEach([&](Entity& e) {
+				// Only check non-player Living entities
+				if (e.def().category != Category::Animal) return;
+
+				EntityId id = e.id();
+				auto it = m_lastPositions.find(id);
+				if (it == m_lastPositions.end()) {
+					// First check — record position
+					m_lastPositions[id] = e.position;
+					return;
+				}
+
+				// Was the entity trying to walk?
+				float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
+				if (hSpeed < ServerTuning::stuckMinSpeed) {
+					it->second = e.position;
+					return; // not trying to move, not stuck
+				}
+
+				// Did it actually move?
+				float displacement = glm::length(glm::vec2(
+					e.position.x - it->second.x, e.position.z - it->second.z));
+
+				if (displacement < ServerTuning::stuckMaxDisplacement) {
+					// Stuck! Nudge up and slightly sideways to clear the obstacle
+					float nudgeX = (e.velocity.x > 0 ? 1 : -1) * ServerTuning::unstuckNudgeHoriz;
+					float nudgeZ = (e.velocity.z > 0 ? 1 : -1) * ServerTuning::unstuckNudgeHoriz;
+					e.position.y += ServerTuning::unstuckNudgeHeight;
+					e.position.x += nudgeX;
+					e.position.z += nudgeZ;
+					e.velocity.y = 0; // let gravity handle the drop
+				}
+
+				it->second = e.position;
+			});
+
+			// Clean up entries for removed entities
+			for (auto it = m_lastPositions.begin(); it != m_lastPositions.end(); ) {
+				if (!m_world->entities.get(it->first))
+					it = m_lastPositions.erase(it);
+				else
+					++it;
+			}
+		}
 	}
 
 	// Accessors
@@ -242,8 +295,12 @@ private:
 	bool m_creative = true;
 	float m_worldTime = 0.30f;
 	float m_activeBlockTimer = 0;
+	float m_stuckTimer = 0;
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	glm::vec3 m_chestPos = {30, 10, 30};
+
+	// Stuck detection: last known position per entity (checked every stuckCheckInterval)
+	std::unordered_map<EntityId, glm::vec3> m_lastPositions;
 
 	struct ClientState {
 		EntityId playerEntityId;

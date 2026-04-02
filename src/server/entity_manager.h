@@ -4,6 +4,7 @@
 #include "shared/constants.h"
 #include "shared/physics.h"
 #include "server/behavior.h"
+#include "server/server_tuning.h"
 #include "shared/action.h"
 #include <unordered_map>
 #include <memory>
@@ -158,8 +159,8 @@ public:
 			MoveParams mp;
 			mp.halfWidth = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
 			mp.height = def.collision_box_max.y - def.collision_box_min.y;
-			mp.gravity = 20.0f * def.gravity_scale;
-			mp.stepHeight = (def.category == Category::Animal || def.category == Category::Player) ? 1.0f : 0.0f;
+			mp.gravity = ServerTuning::gravity * def.gravity_scale;
+			mp.stepHeight = (def.category == Category::Animal || def.category == Category::Player) ? ServerTuning::entityStepHeight : 0.0f;
 			mp.canFly = e.getProp<bool>("fly_mode", false);
 			// Creatures jump over ledges naturally; player gets instant step-up
 			mp.smoothStep = (def.category == Category::Animal);

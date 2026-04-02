@@ -183,8 +183,8 @@ int main(int argc, char** argv) {
 	std::unordered_map<agentworld::ClientId, ConnectedClient> clients;
 	agentworld::ClientId nextClientId = 1;
 
-	// Fixed timestep server loop (60 tps)
-	const float TICK_RATE = 1.0f / 60.0f;
+	// Fixed timestep server loop
+	const float TICK_RATE = agentworld::ServerTuning::tickRate;
 	auto lastTime = std::chrono::steady_clock::now();
 	float accumulator = 0;
 	int tickCount = 0;
@@ -309,7 +309,7 @@ int main(int argc, char** argv) {
 		// Broadcast entity state (throttled: 20 Hz)
 		static float broadcastTimer = 0;
 		broadcastTimer += dt;
-		if (broadcastTimer >= 0.05f && !clients.empty()) {
+		if (broadcastTimer >= agentworld::ServerTuning::broadcastInterval && !clients.empty()) {
 			broadcastTimer = 0;
 			for (auto& [cid, client] : clients) {
 				server.world().entities.forEach([&](agentworld::Entity& e) {
@@ -336,7 +336,7 @@ int main(int argc, char** argv) {
 		}
 
 		// Status logging
-		if (statusTimer >= 5.0f) {
+		if (statusTimer >= agentworld::ServerTuning::statusLogInterval) {
 			int moving = 0;
 			server.world().entities.forEach([&](agentworld::Entity& e) {
 				float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
