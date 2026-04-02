@@ -118,8 +118,16 @@ public:
 	// Fork an entry to the player's local directory.
 	// Returns the new entry's ID, or "" on failure.
 	std::string forkEntry(const std::string& id) {
+		printf("[ArtifactRegistry::forkEntry] Looking up '%s'\n", id.c_str());
 		const ArtifactEntry* src = findById(id);
-		if (!src) return "";
+		if (!src) {
+			printf("[ArtifactRegistry::forkEntry] Entry NOT FOUND in %zu entries\n", m_entries.size());
+			for (auto& e : m_entries)
+				printf("  - '%s' (%s)\n", e.id.c_str(), e.filePath.c_str());
+			return "";
+		}
+		printf("[ArtifactRegistry::forkEntry] Found: category='%s', file='%s', source=%zuB\n",
+			src->category.c_str(), src->filePath.c_str(), src->source.size());
 
 		// category → directory name (creature→creatures, item→items, etc.)
 		std::string dirName = src->category + "s";
@@ -204,23 +212,41 @@ private:
 	}
 
 	void parseFields(ArtifactEntry& e) {
-		// Simple line-based parsing of Python dict fields
-		// Looks for patterns like: "name": "Pig", "category": "animal"
+		// Parse Python dict fields: handles both "key": "string" and "key": number
 		auto extract = [&](const std::string& key) -> std::string {
 			std::string pattern = "\"" + key + "\"";
 			auto pos = e.source.find(pattern);
 			if (pos == std::string::npos) return "";
 
-			// Find the value after ": "
+			// Find the colon after the key
 			auto colon = e.source.find(':', pos + pattern.size());
 			if (colon == std::string::npos) return "";
 
-			auto start = e.source.find('"', colon + 1);
-			if (start == std::string::npos) return "";
-			auto end = e.source.find('"', start + 1);
-			if (end == std::string::npos) return "";
+			// Skip whitespace after colon
+			size_t valStart = colon + 1;
+			while (valStart < e.source.size() && (e.source[valStart] == ' ' || e.source[valStart] == '\t'))
+				valStart++;
 
-			return e.source.substr(start + 1, end - start - 1);
+			if (valStart >= e.source.size()) return "";
+
+			// Check if value is a quoted string
+			if (e.source[valStart] == '"') {
+				auto end = e.source.find('"', valStart + 1);
+				if (end == std::string::npos) return "";
+				return e.source.substr(valStart + 1, end - valStart - 1);
+			}
+
+			// Otherwise, extract until comma, newline, or comment
+			size_t valEnd = valStart;
+			while (valEnd < e.source.size() && e.source[valEnd] != ',' &&
+			       e.source[valEnd] != '\n' && e.source[valEnd] != '#' &&
+			       e.source[valEnd] != '}')
+				valEnd++;
+			// Trim trailing whitespace
+			while (valEnd > valStart && (e.source[valEnd-1] == ' ' || e.source[valEnd-1] == '\t'))
+				valEnd--;
+			if (valEnd <= valStart) return "";
+			return e.source.substr(valStart, valEnd - valStart);
 		};
 
 		std::string name = extract("name");

@@ -54,71 +54,41 @@ public:
 			return;
 		}
 
-		// Top-level tabs: Built-in | Custom
-		if (ImGui::BeginTabBar("HandbookTabs")) {
-			if (ImGui::BeginTabItem("Built-in")) {
-				renderCategoryTabs(registry, true);
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem("Custom")) {
-				renderCategoryTabs(registry, false);
-				ImGui::EndTabItem();
-			}
-			ImGui::EndTabBar();
-		}
+		renderGroupTabs(registry);
 
 		ImGui::End();
 	}
 
-	// Public for embedding in other UI panels
+	// Render all content (both built-in and custom) with flat group tabs
+	void renderAllContent(const ArtifactRegistry& registry) {
+		renderGroupTabs(registry);
+	}
+
+	// Legacy: for standalone handbook window
 	void renderCategoryTabsPublic(const ArtifactRegistry& registry, bool builtin) {
-		renderCategoryTabs(registry, builtin);
+		renderGroupTabs(registry);
 	}
 
 private:
-	void renderCategoryTabs(const ArtifactRegistry& registry, bool builtin) {
-		// 3-group structure: Living / Objects / Logic
-		struct GroupDef {
-			const char* groupLabel;
-			const char* groupColor; // not used yet, for future icons
-			struct TabDef { const char* label; const char* category; };
-			TabDef tabs[3];
-			int tabCount;
+	void renderGroupTabs(const ArtifactRegistry& registry) {
+		// Flat structure: 6 tabs directly (no nesting)
+		struct TabDef { const char* label; const char* category; };
+		TabDef tabs[] = {
+			{"Creatures", "creature"},
+			{"Characters", "character"},
+			{"Items", "item"},
+			{"Blocks", "block"},
+			{"Behaviors", "behavior"},
+			{"Effects", "effect"},
 		};
 
-		GroupDef groups[] = {
-			{"Living", "",
-				{{"Creatures", "creature"}, {"Characters", "character"}}, 2},
-			{"Objects", "",
-				{{"Items", "item"}, {"Blocks", "block"}}, 2},
-			{"Logic", "",
-				{{"Effects", "effect"}, {"Behaviors", "behavior"}}, 2},
-		};
-
-		if (ImGui::BeginTabBar("GroupTabs")) {
-			for (auto& group : groups) {
-				// Count total entries in this group
-				size_t groupTotal = 0;
-				for (int i = 0; i < group.tabCount; i++)
-					groupTotal += registry.byCategory(group.tabs[i].category, builtin).size();
-
-				char groupLabel[64];
-				snprintf(groupLabel, sizeof(groupLabel), "%s (%zu)", group.groupLabel, groupTotal);
-
-				if (ImGui::BeginTabItem(groupLabel)) {
-					// Sub-tabs for categories within this group
-					if (ImGui::BeginTabBar("SubTabs")) {
-						for (int i = 0; i < group.tabCount; i++) {
-							auto entries = registry.byCategory(group.tabs[i].category, builtin);
-							char label[64];
-							snprintf(label, sizeof(label), "%s (%zu)", group.tabs[i].label, entries.size());
-							if (ImGui::BeginTabItem(label)) {
-								renderEntryList(entries, group.tabs[i].category);
-								ImGui::EndTabItem();
-							}
-						}
-						ImGui::EndTabBar();
-					}
+		if (ImGui::BeginTabBar("HandbookTabs")) {
+			for (auto& tab : tabs) {
+				auto entries = registry.byCategory(tab.category);
+				char label[64];
+				snprintf(label, sizeof(label), "%s (%zu)", tab.label, entries.size());
+				if (ImGui::BeginTabItem(label)) {
+					renderEntryList(entries, tab.category);
 					ImGui::EndTabItem();
 				}
 			}
@@ -200,23 +170,36 @@ private:
 			ImGui::Spacing();
 		}
 
-		// Properties table
-		if (!entry->fields.empty()) {
-			if (ImGui::CollapsingHeader("Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
-				if (ImGui::BeginTable("Props", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-					ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 120);
-					ImGui::TableSetupColumn("Value");
-					ImGui::TableHeadersRow();
+		// Properties table — show user-meaningful fields only
+		{
+			// Collect displayable properties
+			std::vector<std::pair<std::string, std::string>> displayProps;
+			for (auto& [key, val] : entry->fields) {
+				// Skip internal/duplicate fields
+				if (key == "name" || key == "id" || key == "description" ||
+				    key == "subcategory") continue;
+				// Format key: replace underscores with spaces, capitalize
+				std::string label = key;
+				for (auto& c : label) if (c == '_') c = ' ';
+				if (!label.empty()) label[0] = toupper(label[0]);
+				displayProps.push_back({label, val});
+			}
 
-					for (auto& [key, val] : entry->fields) {
-						if (key == "name" || key == "id" || key == "description") continue;
-						ImGui::TableNextRow();
-						ImGui::TableNextColumn();
-						ImGui::TextColored(ImVec4(0.96f, 0.65f, 0.15f, 1), "%s", key.c_str());
-						ImGui::TableNextColumn();
-						ImGui::Text("%s", val.c_str());
+			if (!displayProps.empty()) {
+				if (ImGui::CollapsingHeader("Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+					if (ImGui::BeginTable("Props", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+						ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130);
+						ImGui::TableSetupColumn("Value");
+
+						for (auto& [label, val] : displayProps) {
+							ImGui::TableNextRow();
+							ImGui::TableNextColumn();
+							ImGui::TextColored(ImVec4(0.50f, 0.52f, 0.56f, 1), "%s", label.c_str());
+							ImGui::TableNextColumn();
+							ImGui::Text("%s", val.c_str());
+						}
+						ImGui::EndTable();
 					}
-					ImGui::EndTable();
 				}
 			}
 		}
@@ -268,13 +251,26 @@ private:
 		if (entry->isBuiltin && m_registry) {
 			ImGui::SameLine();
 			if (ImGui::SmallButton("Fork to Custom")) {
+				printf("[Handbook] Fork clicked for '%s' (file: %s)\n",
+					entry->id.c_str(), entry->filePath.c_str());
+				printf("[Handbook] Registry basePath='%s', playerNS='%s'\n",
+					m_registry->basePath().c_str(), m_registry->playerNS().c_str());
+				printf("[Handbook] Source length: %zu bytes\n", entry->source.size());
 				std::string newId = m_registry->forkEntry(entry->id);
 				if (!newId.empty()) {
+					printf("[Handbook] Fork succeeded → %s\n", newId.c_str());
 					m_selectedId = newId;
 					m_forkedMsg = "Forked to " + newId;
 					m_forkedMsgTimer = 3.0f;
+				} else {
+					printf("[Handbook] Fork FAILED (forkEntry returned empty)\n");
+					m_forkedMsg = "Fork failed!";
+					m_forkedMsgTimer = 3.0f;
 				}
 			}
+		} else if (entry->isBuiltin && !m_registry) {
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "(Fork unavailable: no registry)");
 		}
 
 		// Show fork confirmation

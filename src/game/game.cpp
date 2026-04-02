@@ -61,7 +61,6 @@ bool Game::init(int argc, char** argv) {
 		std::make_shared<FlatWorldTemplate>(),
 		std::make_shared<VillageWorldTemplate>(),
 	};
-	m_menu.init(m_templates, &m_characters, &m_faces);
 	m_imguiMenu.init(m_templates);
 
 	// Load all artifact definitions (Python files from artifacts/)
@@ -321,22 +320,21 @@ void Game::updateAndRender(float dt, float aspect) {
 		m_ui.endFrame();
 		m_autoScreenTimer += dt;
 
-		// Demo mode: capture menu → handbook → enter game
-		if (m_demoMode && m_autoScreenTimer > 0.8f && m_autoScreenTimer < 0.9f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_menu_screenshot.ppm");
-			// Switch to handbook, show creature with 3D preview
+		// Demo mode: capture Play page → Handbook → enter game
+		if (m_demoMode && m_autoScreenTimer > 0.5f && m_autoScreenTimer < 0.6f) {
+			// Capture Play page (world list + create new)
+			m_imguiMenu.setPage(0);
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_menu_play.ppm");
+		}
+		if (m_demoMode && m_autoScreenTimer > 1.0f && m_autoScreenTimer < 1.1f) {
+			// Switch to handbook, show pig with 3D preview
 			m_imguiMenu.setPage(1);
 			m_imguiMenu.handbook().selectEntry("base:pig");
 		}
 		if (m_demoMode && m_autoScreenTimer > 1.8f && m_autoScreenTimer < 1.9f) {
 			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_handbook_creature.ppm");
-			// Now show a character
-			m_imguiMenu.handbook().selectEntry("base:knight");
 		}
-		if (m_demoMode && m_autoScreenTimer > 2.6f && m_autoScreenTimer < 2.7f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_handbook_character.ppm");
-		}
-		if (m_demoMode && m_autoScreenTimer > 2.0f) {
+		if (m_demoMode && m_autoScreenTimer > 2.2f) {
 			action.type = MenuAction::EnterGame;
 			action.templateIndex = 1;
 			action.targetState = GameState::ADMIN;
@@ -380,7 +378,6 @@ void Game::handleMenuAction(const MenuAction& action) {
 		break;
 	case MenuAction::BackToMenu:
 		m_state = GameState::MENU;
-		m_menu.resetCooldown(0.5f);
 		break;
 	case MenuAction::EnterGame:
 		m_currentWorldPath = action.worldPath;
@@ -516,7 +513,6 @@ void Game::updatePlaying(float dt, float aspect) {
 		m_state = GameState::MENU;
 		m_imguiMenu.setGameRunning(true);
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-		m_menu.resetCooldown(0.5f);
 		return;
 	}
 

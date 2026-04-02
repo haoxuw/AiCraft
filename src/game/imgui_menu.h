@@ -248,7 +248,7 @@ private:
 			ImGui::PopStyleColor();
 			ImGui::Spacing();
 
-			float cardW = std::min(contentW - 80, 500.0f);
+			float cardW = std::min(contentW - 80, 640.0f);
 			for (auto& srv : m_detectedServers) {
 				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.96f, 0.94f, 1));
 				char srvId[64]; snprintf(srvId, sizeof(srvId), "##srv_%d", srv.port);
@@ -282,7 +282,7 @@ private:
 		}
 
 		// ── Saved Worlds ──
-		float cardW = std::min(contentW - 80, 500.0f);
+		float cardW = std::min(contentW - 80, 640.0f);
 		auto& worlds = m_worldMgr.worlds();
 		if (!worlds.empty()) {
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
@@ -296,9 +296,9 @@ private:
 				auto& w = worlds[i];
 				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.98f, 0.97f, 0.96f, 1));
 				char wid[32]; snprintf(wid, sizeof(wid), "##world%zu", i);
-				ImGui::BeginChild(wid, ImVec2(cardW, 56), true);
+				ImGui::BeginChild(wid, ImVec2(cardW, 64), true);
 				{
-					ImGui::SetCursorPos(ImVec2(16, 8));
+					ImGui::SetCursorPos(ImVec2(16, 12));
 					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
 					ImGui::SetWindowFontScale(1.1f);
 					ImGui::Text("%s", w.name.c_str());
@@ -306,16 +306,19 @@ private:
 					ImGui::PopStyleColor();
 
 					ImGui::SetCursorPosX(16);
+					// Format last played nicely
+					std::string timeStr = w.lastPlayed;
+					if (timeStr.size() > 10) timeStr = timeStr.substr(0, 10); // just date
 					ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "%s  |  %s",
-						w.templateName.c_str(), w.lastPlayed.c_str());
+						w.templateName.c_str(), timeStr.c_str());
 
-					// Play button
-					ImGui::SameLine(cardW - 160);
-					ImGui::SetCursorPosY(12);
+					// Play button (right-aligned, inside card bounds)
+					float btnX = cardW - 170;
+					ImGui::SetCursorPos(ImVec2(btnX, 16));
 					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.65f, 0.15f, 1));
 					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
 					char playId[32]; snprintf(playId, sizeof(playId), "Play##w%zu", i);
-					if (ImGui::Button(playId, ImVec2(70, 32))) {
+					if (ImGui::Button(playId, ImVec2(80, 32))) {
 						action.type = MenuAction::LoadWorld;
 						action.worldPath = w.path;
 						action.worldName = w.name;
@@ -325,10 +328,10 @@ private:
 
 					// Delete button
 					ImGui::SameLine();
-					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.25f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.30f, 0.30f, 1));
 					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-					char delId[32]; snprintf(delId, sizeof(delId), "Del##w%zu", i);
-					if (ImGui::Button(delId, ImVec2(50, 32))) {
+					char delId[32]; snprintf(delId, sizeof(delId), "Delete##w%zu", i);
+					if (ImGui::Button(delId, ImVec2(55, 32))) {
 						action.type = MenuAction::DeleteWorld;
 						action.worldPath = w.path;
 					}
@@ -442,26 +445,12 @@ private:
 		ImGui::PopStyleColor();
 
 		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
-			"Browse all creatures, items, blocks, and behaviors defined in the game.");
+			"Browse all game content. Custom entries marked with *.");
 		ImGui::Spacing();
 
-		// Embedded handbook (full width)
-		bool open = true;
+		// Show all content directly (no Built-in/Custom split)
 		ImGui::BeginChild("HandbookEmbed", ImVec2(contentW - 64, contentH - 100), false);
-		{
-			// Use handbook tabs directly
-			if (ImGui::BeginTabBar("HBTabs")) {
-				if (ImGui::BeginTabItem("Built-in")) {
-					m_handbook.renderCategoryTabsPublic(registry, true);
-					ImGui::EndTabItem();
-				}
-				if (ImGui::BeginTabItem("Custom")) {
-					m_handbook.renderCategoryTabsPublic(registry, false);
-					ImGui::EndTabItem();
-				}
-				ImGui::EndTabBar();
-			}
-		}
+		m_handbook.renderAllContent(registry);
 		ImGui::EndChild();
 	}
 
