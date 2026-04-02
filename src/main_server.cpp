@@ -20,6 +20,7 @@
 #include <thread>
 #include <csignal>
 #include <unordered_map>
+#include <unordered_set>
 #include <fcntl.h>
 #include <iostream>
 #include <string>
@@ -36,6 +37,9 @@ struct ConnectedClient {
 	agentworld::net::RecvBuffer recvBuf;
 	// Pending chunk sends (non-blocking, sent over multiple ticks)
 	std::vector<std::pair<agentworld::ChunkPos, std::vector<uint8_t>>> pendingChunks;
+	// Track which chunks this client has, to send new ones as they move
+	agentworld::ChunkPos lastChunkPos = {0, 0, 0};
+	std::unordered_set<agentworld::ChunkPos, agentworld::ChunkPosHash> sentChunks;
 };
 
 // Interactive CLI: let user pick a world or create new
@@ -214,33 +218,39 @@ int main(int argc, char** argv) {
 				agentworld::net::sendMessage(newFd, agentworld::net::S_WELCOME, wb);
 			}
 
-			// Queue chunk data for non-blocking send over next ticks
-			ConnectedClient cc = {newFd, cid, eid, {}};
+			// Queue initial chunks around spawn
+			ConnectedClient cc;
+			cc.fd = newFd; cc.id = cid; cc.playerId = eid;
 
 			auto sp = server.spawnPos();
 			auto cp = agentworld::worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
+			cc.lastChunkPos = cp;
+
+			auto queueChunk = [&](agentworld::ChunkPos pos) {
+				if (cc.sentChunks.count(pos)) return;
+				agentworld::Chunk* chunk = server.world().getChunk(pos);
+				if (!chunk) return;
+
+				agentworld::net::WriteBuffer cb;
+				cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
+				for (int i = 0; i < 16*16*16; i++)
+					cb.writeU32(chunk->getRaw(i));
+
+				std::vector<uint8_t> msg;
+				agentworld::net::MsgHeader hdr;
+				hdr.type = agentworld::net::S_CHUNK;
+				hdr.length = (uint32_t)cb.size();
+				msg.resize(8 + cb.size());
+				memcpy(msg.data(), &hdr, 8);
+				memcpy(msg.data() + 8, cb.data().data(), cb.size());
+				cc.pendingChunks.push_back({pos, std::move(msg)});
+				cc.sentChunks.insert(pos);
+			};
+
 			for (int dy = 0; dy <= 1; dy++)
 			for (int dz = -4; dz <= 4; dz++)
-			for (int dx = -4; dx <= 4; dx++) {
-				agentworld::ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
-				agentworld::Chunk* chunk = server.world().getChunk(pos);
-				if (chunk) {
-					agentworld::net::WriteBuffer cb;
-					cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
-					for (int i = 0; i < 16*16*16; i++)
-						cb.writeU32(chunk->getRaw(i));
-
-					// Pre-serialize the full message (header + payload)
-					std::vector<uint8_t> msg;
-					agentworld::net::MsgHeader hdr;
-					hdr.type = agentworld::net::S_CHUNK;
-					hdr.length = (uint32_t)cb.size();
-					msg.resize(8 + cb.size());
-					memcpy(msg.data(), &hdr, 8);
-					memcpy(msg.data() + 8, cb.data().data(), cb.size());
-					cc.pendingChunks.push_back({pos, std::move(msg)});
-				}
-			}
+			for (int dx = -4; dx <= 4; dx++)
+				queueChunk({cp.x + dx, cp.y + dy, cp.z + dz});
 
 			clients[cid] = std::move(cc);
 			printf("[Server] Client %u joined (entity %u). Sending %zu chunks...\n",
@@ -328,6 +338,41 @@ int main(int argc, char** argv) {
 					agentworld::net::serializeEntityState(wb, es);
 					agentworld::net::sendMessage(client.fd, agentworld::net::S_ENTITY, wb);
 				});
+
+				// Stream chunks around player — preemptively load wider area.
+				// Sends up to 4 new chunks per broadcast tick (20Hz × 4 = 80 chunks/sec).
+				// R=6 means ~13×13×2 = 338 chunks total. Initial 81 + ~260 streamed.
+				agentworld::Entity* pe = server.world().entities.get(client.playerId);
+				if (pe && client.pendingChunks.size() < 20) { // don't queue too many
+					auto cp = agentworld::worldToChunk(
+						(int)pe->position.x, (int)pe->position.y, (int)pe->position.z);
+					const int R = 6; // wider than render distance (8 chunks = 128 blocks)
+					int queued = 0;
+					for (int dy = -1; dy <= 2 && queued < 4; dy++)
+					for (int dz = -R; dz <= R && queued < 4; dz++)
+					for (int dx = -R; dx <= R && queued < 4; dx++) {
+						agentworld::ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
+						if (client.sentChunks.count(pos)) continue;
+						agentworld::Chunk* chunk = server.world().getChunk(pos);
+						if (!chunk) continue;
+
+						agentworld::net::WriteBuffer cb;
+						cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
+						for (int i = 0; i < 16*16*16; i++)
+							cb.writeU32(chunk->getRaw(i));
+
+						std::vector<uint8_t> msg;
+						agentworld::net::MsgHeader hdr;
+						hdr.type = agentworld::net::S_CHUNK;
+						hdr.length = (uint32_t)cb.size();
+						msg.resize(8 + cb.size());
+						memcpy(msg.data(), &hdr, 8);
+						memcpy(msg.data() + 8, cb.data().data(), cb.size());
+						client.pendingChunks.push_back({pos, std::move(msg)});
+						client.sentChunks.insert(pos);
+						queued++;
+					}
+				}
 
 				agentworld::net::WriteBuffer tb;
 				tb.writeF32(server.worldTime());

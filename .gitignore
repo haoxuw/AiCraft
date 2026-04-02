@@ -1,4 +1,5 @@
 # Build
+saves/
 build/
 build-web/
 cmake-build-*/
