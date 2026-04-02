@@ -59,6 +59,7 @@ public:
 		loadCategory("behaviors", "behavior");
 		loadCategory("effects", "effect");
 		loadCategory("characters", "character");
+		loadCategory("resources", "resource");
 
 		printf("[ArtifactRegistry] Loaded %zu artifacts from %s\n",
 		       m_entries.size(), basePath.c_str());
@@ -292,6 +293,12 @@ private:
 		// Extract on_use
 		std::string onUse = extract("on_use");
 		if (!onUse.empty()) e.fields["on_use"] = onUse;
+
+		// Resource-specific fields
+		for (auto& key : {"source", "license", "source_url", "file_count", "format", "groups", "status"}) {
+			std::string val = extract(key);
+			if (!val.empty()) e.fields[key] = val;
+		}
 	}
 
 	std::string m_basePath;

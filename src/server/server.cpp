@@ -137,6 +137,9 @@ void GameServer::resolveActions(float dt) {
 			if (placedDef->behavior == BlockBehavior::Active)
 				m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
 
+			if (m_callbacks.onBlockPlace)
+				m_callbacks.onBlockPlace(glm::vec3(pp), placedDef->sound_place);
+
 			if (actor && actor->inventory && !m_creative)
 				actor->inventory->remove(p.blockType, 1);
 			break;

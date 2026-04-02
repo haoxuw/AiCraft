@@ -52,7 +52,8 @@ void Camera::processMouse(GLFWwindow* window) {
 	case CameraMode::ThirdPerson:
 		orbitYaw += dx; orbitPitch -= dy;
 		orbitPitch = std::clamp(orbitPitch, 5.0f, 80.0f);
-		player.yaw = orbitYaw; // player faces where camera orbits
+		// Don't set player.yaw here — character faces movement direction,
+		// handled by gameplay.cpp smooth turn logic (like Fortnite)
 		break;
 	case CameraMode::RPG:
 		// Mouse orbits camera around player (player yaw unchanged)
@@ -136,8 +137,8 @@ void Camera::updateThirdPerson(GLFWwindow* window, float dt) {
 	lookPitch = glm::degrees(asin(dir.y));
 }
 
-void Camera::updateRPG(GLFWwindow* window, float dt) {
-	// Smooth zoom
+// RPG camera position update (no mouse processing)
+void Camera::updateRPGPosition(float dt) {
 	godDistance += (godDistanceTarget - godDistance) * std::min(dt * 10.0f, 1.0f);
 
 	float angle = glm::radians(godAngle);
@@ -156,6 +157,10 @@ void Camera::updateRPG(GLFWwindow* window, float dt) {
 	glm::vec3 dir = glm::normalize(target - position);
 	lookYaw = glm::degrees(atan2(dir.z, dir.x));
 	lookPitch = glm::degrees(asin(dir.y));
+}
+
+void Camera::updateRPG(GLFWwindow* window, float dt) {
+	updateRPGPosition(dt);
 }
 
 void Camera::updateRTS(GLFWwindow* window, float dt) {

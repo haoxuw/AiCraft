@@ -384,6 +384,35 @@ void Renderer::renderHighlight(const Camera& cam, float aspect, glm::ivec3 pos) 
 	glDisable(GL_BLEND);
 }
 
+void Renderer::renderMoveTarget(const Camera& cam, float aspect, glm::ivec3 pos) {
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	// Slightly expanded, green tint
+	glm::mat4 model = glm::translate(glm::mat4(1.0f),
+		glm::vec3(pos) + glm::vec3(-0.01f));
+	model = glm::scale(model, glm::vec3(1.02f));
+
+	glm::mat4 mvp = cam.projectionMatrix(aspect) * cam.viewMatrix() * model;
+
+	m_highlightShader.use();
+	m_highlightShader.setMat4("uMVP", mvp);
+	m_highlightShader.setMat4("uModel", model);
+	m_highlightShader.setVec3("uSunDir", m_sunDir);
+
+	GLint loc = glGetUniformLocation(m_highlightShader.id(), "uColor");
+	glUniform4f(loc, 0.1f, 0.8f, 0.2f, 0.6f); // green
+
+	glBindVertexArray(m_highlightVAO);
+	glLineWidth(3.0f);
+	glDrawArrays(GL_LINES, 0, 24);
+
+	glDepthFunc(GL_LESS);
+	glDisable(GL_BLEND);
+}
+
 void Renderer::renderHotbar(float aspect, int selectedSlot, int hotbarSize) {
 	glDisable(GL_DEPTH_TEST);
 	glEnable(GL_BLEND);

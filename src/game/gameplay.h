@@ -33,6 +33,9 @@ public:
 	EntityId inspectedEntity() const { return m_inspectedEntity; }
 	void clearInspection() { m_inspectedEntity = ENTITY_NONE; }
 
+	// Set by game loop: true when inventory/ImGui/chat is open and wants cursor
+	void setUIWantsCursor(bool v) { m_uiWantsCursor = v; }
+
 private:
 	void handleCameraInput(float dt, ControlManager& controls, Camera& camera, Window& window);
 	void processMovement(float dt, GameState state, ControlManager& controls,
@@ -50,12 +53,27 @@ private:
 	float m_breakCD = 0;
 	float m_placeCD = 0;
 
+	bool m_uiWantsCursor = false;
+
 	// Click-to-move for RPG/RTS
 	bool m_hasMoveTarget = false;
 	glm::vec3 m_moveTarget = {0, 0, 0};
+
+	// RTS box selection
+	bool m_boxDragging = false;
+	glm::vec2 m_boxStart = {0, 0}; // NDC coords
+	glm::vec2 m_boxEnd = {0, 0};
+	std::vector<EntityId> m_selectedEntities;
+
 public:
 	bool hasMoveTarget() const { return m_hasMoveTarget; }
 	glm::vec3 moveTarget() const { return m_moveTarget; }
+
+	// RTS selection
+	bool isBoxDragging() const { return m_boxDragging; }
+	glm::vec2 boxStart() const { return m_boxStart; }
+	glm::vec2 boxEnd() const { return m_boxEnd; }
+	const std::vector<EntityId>& selectedEntities() const { return m_selectedEntities; }
 private:
 };
 

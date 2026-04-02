@@ -2,6 +2,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <cstdio>
 
 namespace agentworld {
 
@@ -13,7 +14,11 @@ bool UI::init(GLFWwindow* window) {
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
 	// Load Roboto font (Google's friendly, readable font)
-	io.Fonts->AddFontFromFileTTF("fonts/Roboto-Medium.ttf", 18.0f);
+	ImFont* font = io.Fonts->AddFontFromFileTTF("fonts/Roboto-Medium.ttf", 18.0f);
+	if (!font) {
+		printf("[UI] Custom font not found, using ImGui default\n");
+		io.Fonts->AddFontDefault();
+	}
 
 	// Google-inspired bright, clean theme
 	ImGui::StyleColorsLight();

@@ -65,6 +65,7 @@ public:
 	float lookPitch = 0.0f;
 
 	void processInput(GLFWwindow* window, float dt);
+	void updateRPGPosition(float dt); // position only, no mouse
 	glm::mat4 viewMatrix() const;
 	glm::mat4 projectionMatrix(float aspect) const;
 	glm::vec3 front() const;         // camera look direction
@@ -86,12 +87,12 @@ public:
 
 	// Reset mouse delta tracking (prevents camera jump after cursor release)
 	void resetMouseTracking() { m_firstMouse = true; }
+	void updateRTS(GLFWwindow* window, float dt); // public: called directly when cursor free
 
 private:
 	void updateFirstPerson(GLFWwindow* window, float dt);
 	void updateThirdPerson(GLFWwindow* window, float dt);
 	void updateRPG(GLFWwindow* window, float dt);
-	void updateRTS(GLFWwindow* window, float dt);
 	void processMouse(GLFWwindow* window);
 
 	// Smoothed vertical tracking for step-up / step-down

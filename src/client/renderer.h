@@ -25,6 +25,7 @@ public:
 	Shader& highlightShader() { return m_highlightShader; }
 	void markChunkDirty(ChunkPos pos);
 	void setTimeOfDay(float t); // 0=midnight, 0.5=noon
+	void renderMoveTarget(const Camera& cam, float aspect, glm::ivec3 pos);
 	float sunStrength() const { return m_sunStrength; }
 
 private:

@@ -13,7 +13,7 @@
 #include "shared/box_model.h"
 #include "client/model.h"
 #include "client/shader.h"
-#include <glad/gl.h>
+#include "client/gl.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>

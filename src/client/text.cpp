@@ -164,8 +164,14 @@ void TextRenderer::generateFontTexture() {
 	// Step 3: upload with LINEAR filtering for smooth interpolation
 	glGenTextures(1, &m_fontTexture);
 	glBindTexture(GL_TEXTURE_2D, m_fontTexture);
+#ifdef __EMSCRIPTEN__
+	// WebGL 2 requires sized internal format GL_R8
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, TEX_W, TEX_H, 0,
+		GL_RED, GL_UNSIGNED_BYTE, sdf.data());
+#else
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, TEX_W, TEX_H, 0,
 		GL_RED, GL_UNSIGNED_BYTE, sdf.data());
+#endif
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

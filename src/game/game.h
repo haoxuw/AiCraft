@@ -19,6 +19,7 @@
 #include "client/model.h"
 #include "client/model_preview.h"
 #include "client/ui.h"
+#include "client/audio.h"
 #include "server/world_template.h"
 #include "shared/character.h"
 #include "shared/face.h"
@@ -128,6 +129,10 @@ private:
 	GameState m_preInspectState = GameState::SURVIVAL;
 	GameState m_preMenuState = GameState::SURVIVAL;
 	bool m_showInventory = false;
+
+	// Audio
+	AudioManager m_audio;
+	float m_creatureSoundTimer = 3.0f;
 
 	// Models
 	BoxModel m_playerModel, m_pigModel, m_chickenModel, m_dogModel, m_catModel, m_villagerModel;

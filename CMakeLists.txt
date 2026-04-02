@@ -64,6 +64,9 @@ if(NOT EMSCRIPTEN)
 	glad_add_library(glad_gl_core_41 REPRODUCIBLE API gl:core=4.1)
 endif()
 
+# miniaudio: single-header audio library, placed directly in src/client/miniaudio.h
+# No FetchContent needed — CC0 licensed, downloaded from github.com/mackron/miniaudio
+
 # pybind11 (Python embedding — required for behavior system, native only)
 if(NOT EMSCRIPTEN)
 	set(Python3_ROOT_DIR "/usr")
@@ -142,14 +145,14 @@ set(CLIENT_SOURCES
 	src/client/controls.cpp
 	src/client/ui.h
 	src/client/ui.cpp
+	src/client/audio.h
+	src/client/audio.cpp
 )
 
 set(GAME_SOURCES
 	src/game/types.h
 	src/game/game.h
 	src/game/game.cpp
-	src/game/menu.h
-	src/game/menu.cpp
 	src/game/gameplay.h
 	src/game/gameplay.cpp
 	src/game/hud.h
@@ -183,7 +186,7 @@ if(EMSCRIPTEN)
 
 	# Emscripten compile + link flags
 	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576")
-	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/config@config")
+	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/config@config --preload-file ${CMAKE_SOURCE_DIR}/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/artifacts@artifacts")
 	set_target_properties(agentworld PROPERTIES
 		SUFFIX ".html"
 		COMPILE_FLAGS "${EM_FLAGS}"
@@ -249,5 +252,7 @@ else()
 		${CMAKE_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:agentworld>/fonts
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
 		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentworld>/artifacts
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_SOURCE_DIR}/resources $<TARGET_FILE_DIR:agentworld>/resources
 	)
 endif()

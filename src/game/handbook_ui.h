@@ -80,6 +80,7 @@ private:
 			{"Blocks", "block"},
 			{"Behaviors", "behavior"},
 			{"Effects", "effect"},
+			{"Resources", "resource"},
 		};
 
 		if (ImGui::BeginTabBar("HandbookTabs")) {

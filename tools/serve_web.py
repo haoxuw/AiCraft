@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local web server for AiCraft WASM build with required CORS headers."""
+"""Local web server for AgentWorld WASM build with required CORS headers."""
 
 import sys
 import os
@@ -16,5 +16,7 @@ if __name__ == '__main__':
     directory = sys.argv[2] if len(sys.argv) > 2 else '.'
     os.chdir(directory)
     server = HTTPServer(('', port), CORSHandler)
-    print(f'\n  AiCraft Web: http://localhost:{port}/aicraft.html\n')
+    # Auto-detect the HTML file
+    html = 'agentworld.html' if os.path.exists('agentworld.html') else 'aicraft.html'
+    print(f'\n  AgentWorld Web: http://localhost:{port}/{html}\n')
     server.serve_forever()

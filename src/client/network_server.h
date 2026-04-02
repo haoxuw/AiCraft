@@ -188,10 +188,12 @@ public:
 	void setEffectCallbacks(
 		std::function<void(ChunkPos)> onChunkDirty,
 		std::function<void(glm::vec3, glm::vec3, int)> onBlockBreak,
-		std::function<void(glm::vec3, glm::vec3)> onItemPickup) override {
+		std::function<void(glm::vec3, glm::vec3)> onItemPickup,
+		std::function<void(glm::vec3, const std::string&)> onBlockPlace = nullptr) override {
 		m_onChunkDirty = onChunkDirty;
 		m_onBlockBreak = onBlockBreak;
 		m_onItemPickup = onItemPickup;
+		m_onBlockPlace = onBlockPlace;
 	}
 
 	const std::string& clientUUID() const { return m_clientUUID; }
@@ -342,6 +344,7 @@ private:
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, glm::vec3, int)> m_onBlockBreak;
 	std::function<void(glm::vec3, glm::vec3)> m_onItemPickup;
+	std::function<void(glm::vec3, const std::string&)> m_onBlockPlace;
 };
 
 } // namespace agentworld

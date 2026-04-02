@@ -54,19 +54,19 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 		camera.resetMouseTracking();
 	}
 
-	// Cursor state per mode:
-	//   FPS/TPS: captured (mouse drives camera look)
-	//   RPG: free cursor, right-click-drag orbits camera (WoW-style)
-	//   RTS: free cursor (StarCraft-style)
+	// Cursor state: determined by camera mode + UI overlay
 	bool wantCapture = (camera.mode == CameraMode::FirstPerson ||
 	                    camera.mode == CameraMode::ThirdPerson);
 
-	// RPG: only capture while right-click held
 	bool rpgOrbit = false;
 	if (camera.mode == CameraMode::RPG) {
 		rpgOrbit = glfwGetMouseButton(window.handle(), GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
 		wantCapture = rpgOrbit;
 	}
+
+	// UI overlay overrides: free cursor when inventory/ImGui is active
+	if (m_uiWantsCursor)
+		wantCapture = false;
 
 	glfwSetInputMode(window.handle(), GLFW_CURSOR,
 		wantCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
@@ -74,13 +74,12 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 	if (wantCapture) {
 		camera.processInput(window.handle(), dt);
 	} else {
-		// Free cursor — still update camera position but skip mouse look
-		camera.resetMouseTracking(); // prevent jump on next capture
-		// Manually call update without mouse processing
+		// Cursor free: update camera position but don't process mouse look
+		camera.resetMouseTracking();
 		switch (camera.mode) {
 		case CameraMode::RPG: camera.updateRPGPosition(dt); break;
 		case CameraMode::RTS: camera.updateRTS(window.handle(), dt); break;
-		default: break;
+		default: break; // FPS/TPS: camera frozen when UI is open
 		}
 	}
 }
@@ -96,8 +95,97 @@ void GameplayController::processMovement(float dt, GameState state,
                                          ServerInterface& server, Window& window,
                                          float jumpVelocity)
 {
-	if (camera.mode == CameraMode::RTS)
+	if (camera.mode == CameraMode::RTS) {
+		// RTS: box selection + click-to-move for selected units
+		double mx, my;
+		glfwGetCursorPos(window.handle(), &mx, &my);
+		int ww, wh;
+		glfwGetWindowSize(window.handle(), &ww, &wh);
+		float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
+		float ndcY = 1.0f - (float)(my / wh) * 2.0f;
+
+		bool lmb = controls.held(Action::BreakBlock);
+		bool lmbPressed = controls.pressed(Action::BreakBlock);
+
+		// Start box drag
+		if (lmbPressed) {
+			m_boxDragging = true;
+			m_boxStart = {ndcX, ndcY};
+			m_boxEnd = {ndcX, ndcY};
+		}
+		// Update box while dragging
+		if (m_boxDragging && lmb) {
+			m_boxEnd = {ndcX, ndcY};
+		}
+		// Release: select entities in box
+		if (m_boxDragging && !lmb) {
+			m_boxDragging = false;
+			float x0 = std::min(m_boxStart.x, m_boxEnd.x);
+			float x1 = std::max(m_boxStart.x, m_boxEnd.x);
+			float y0 = std::min(m_boxStart.y, m_boxEnd.y);
+			float y1 = std::max(m_boxStart.y, m_boxEnd.y);
+
+			// Small drag = click (single select or move order)
+			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
+
+			if (isClick && !m_selectedEntities.empty()) {
+				// Click-to-move selected entities to terrain hit point
+				if (m_hit) {
+					auto& bp = m_hit->blockPos;
+					glm::vec3 target = glm::vec3(bp) + glm::vec3(0.5f, 1.0f, 0.5f);
+					auto& bl = server.blockRegistry();
+					bool ok = bl.get(server.chunks().getBlock(bp.x, bp.y, bp.z)).solid;
+					if (ok) {
+						m_moveTarget = target;
+						m_hasMoveTarget = true;
+						// Send move action for each selected entity
+						for (EntityId eid : m_selectedEntities) {
+							ActionProposal p;
+							p.type = ActionProposal::Move;
+							p.actorId = eid;
+							glm::vec3 toTarget = target - player.position;
+							toTarget.y = 0;
+							if (glm::length(toTarget) > 0.1f)
+								toTarget = glm::normalize(toTarget) * camera.moveSpeed;
+							p.desiredVel = {toTarget.x, 0, toTarget.z};
+							server.sendAction(p);
+						}
+					}
+				}
+			} else if (!isClick) {
+				// Box select: find living entities whose screen positions fall inside box
+				m_selectedEntities.clear();
+				float aspect = (float)ww / (float)wh;
+				glm::mat4 vp = camera.projectionMatrix(aspect) * camera.viewMatrix();
+
+				server.forEachEntity([&](Entity& e) {
+					if (e.id() == player.id()) return;
+					if (e.def().category != Category::Animal &&
+					    e.def().category != Category::Player) return;
+
+					// Project entity position to NDC
+					glm::vec4 clip = vp * glm::vec4(e.position + glm::vec3(0, 0.5f, 0), 1.0f);
+					if (clip.w <= 0) return;
+					float sx = clip.x / clip.w;
+					float sy = clip.y / clip.w;
+
+					if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) {
+						m_selectedEntities.push_back(e.id());
+					}
+				});
+				printf("[RTS] Selected %zu entities\n", m_selectedEntities.size());
+			}
+		}
+
+		// Right-click: move selected entities
+		if (controls.pressed(Action::PlaceBlock) && !m_selectedEntities.empty() && m_hit) {
+			auto& bp = m_hit->blockPos;
+			glm::vec3 target = glm::vec3(bp) + glm::vec3(0.5f, 1.0f, 0.5f);
+			m_moveTarget = target;
+			m_hasMoveTarget = true;
+		}
 		return;
+	}
 
 	float speed = camera.moveSpeed;
 	if (controls.held(Action::Sprint)) speed *= 2.5f;
@@ -170,7 +258,17 @@ void GameplayController::processMovement(float dt, GameState state,
 		if (controls.held(Action::MoveBackward)) move -= fwd;
 		if (controls.held(Action::MoveLeft))     move -= right;
 		if (controls.held(Action::MoveRight))    move += right;
+	} else if (camera.mode == CameraMode::ThirdPerson) {
+		// TPS (Fortnite): WASD relative to camera orbit (not player facing)
+		float orbRad = glm::radians(camera.orbitYaw);
+		glm::vec3 camFwd = glm::normalize(glm::vec3(std::cos(orbRad), 0, std::sin(orbRad)));
+		glm::vec3 camRight = glm::normalize(glm::cross(camFwd, glm::vec3(0, 1, 0)));
+		if (controls.held(Action::MoveForward))  move += camFwd;
+		if (controls.held(Action::MoveBackward)) move -= camFwd;
+		if (controls.held(Action::MoveLeft))     move -= camRight;
+		if (controls.held(Action::MoveRight))    move += camRight;
 	} else {
+		// FPS: WASD relative to look direction
 		glm::vec3 pFwd = camera.playerForward();
 		glm::vec3 pRight = camera.playerRight();
 		if (controls.held(Action::MoveForward))  move += pFwd;
@@ -239,13 +337,38 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	auto& chunks = server.chunks();
 	auto& blocks = server.blockRegistry();
 
-	// Raycast blocks
-	glm::vec3 rayOrigin = camera.position;
-	glm::vec3 rayDir = camera.front();
-	if (camera.mode == CameraMode::FirstPerson)
-		rayOrigin = player.eyePos();
+	// Raycast: origin + direction depends on camera mode
+	glm::vec3 rayOrigin, rayDir;
 
-	m_hit = raycastBlocks(chunks, rayOrigin, rayDir, 6.0f);
+	if (camera.mode == CameraMode::FirstPerson) {
+		// FPS: ray from player eyes in camera look direction
+		rayOrigin = player.eyePos();
+		rayDir = camera.front();
+	} else if (camera.mode == CameraMode::ThirdPerson) {
+		// TPS: ray from player eyes in camera direction (aim PAST player)
+		rayOrigin = player.eyePos();
+		rayDir = camera.front();
+	} else {
+		// RPG/RTS: ray from camera through mouse cursor position
+		double mx, my;
+		glfwGetCursorPos(window.handle(), &mx, &my);
+		int ww, wh;
+		glfwGetWindowSize(window.handle(), &ww, &wh);
+		float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
+		float ndcY = 1.0f - (float)(my / wh) * 2.0f;
+		float aspect = (float)ww / (float)wh;
+		glm::mat4 invVP = glm::inverse(
+			camera.projectionMatrix(aspect) * camera.viewMatrix());
+		glm::vec4 nearPt = invVP * glm::vec4(ndcX, ndcY, -1, 1);
+		glm::vec4 farPt  = invVP * glm::vec4(ndcX, ndcY,  1, 1);
+		nearPt /= nearPt.w;
+		farPt  /= farPt.w;
+		rayOrigin = glm::vec3(nearPt);
+		rayDir = glm::normalize(glm::vec3(farPt - nearPt));
+	}
+
+	float rayDist = (camera.mode == CameraMode::RTS || camera.mode == CameraMode::RPG) ? 80.0f : 6.0f;
+	m_hit = raycastBlocks(chunks, rayOrigin, rayDir, rayDist);
 
 	// Entity raycast: detect entities under crosshair for tooltips
 	{

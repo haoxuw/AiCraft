@@ -90,7 +90,8 @@ public:
 	virtual void setEffectCallbacks(
 		std::function<void(ChunkPos)> onChunkDirty,
 		std::function<void(glm::vec3, glm::vec3, int)> onBlockBreak,
-		std::function<void(glm::vec3, glm::vec3)> onItemPickup
+		std::function<void(glm::vec3, glm::vec3)> onItemPickup,
+		std::function<void(glm::vec3, const std::string&)> onBlockPlace = nullptr
 	) = 0;
 };
 
