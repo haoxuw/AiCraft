@@ -224,7 +224,11 @@ private:
 			if (it == m_entities.end()) {
 				// New entity — look up proper EntityDef from registered builtins
 				const EntityDef* def = m_entityDefs.getTypeDef(es.typeId);
-				if (!def) def = &m_defaultDef;
+				if (!def) {
+					printf("[Net] WARNING: unknown entity type '%s' (id=%u), using default def\n",
+					       es.typeId.c_str(), es.id);
+					def = &m_defaultDef;
+				}
 				auto ent = std::make_unique<Entity>(es.id, es.typeId, *def);
 				ent->position = es.position;
 				ent->velocity = es.velocity;

@@ -1,18 +1,44 @@
 /**
  * Network client — full game experience connecting to a remote server.
  *
- * Has the complete menu, character select, world rendering.
- * When entering a game, connects to the server via TCP instead of
- * creating a local GameServer.
- *
  * Usage: ./agentworld-client [--host HOST] [--port PORT]
  *        Default: 127.0.0.1:7777
  */
 
 #include "game/game.h"
 #include "server/python_bridge.h"
+#include <csignal>
+#include <cstdio>
+#include <execinfo.h>
+
+// Crash handler: dump backtrace to file + stderr on segfault
+static void crashHandler(int sig) {
+	fprintf(stderr, "\n[CRASH] Signal %d (%s)\n", sig, strsignal(sig));
+
+	void* frames[32];
+	int n = backtrace(frames, 32);
+	backtrace_symbols_fd(frames, n, 2); // dump to stderr
+
+	// Also write to log file
+	FILE* f = fopen("/tmp/agentworld_crash.log", "w");
+	if (f) {
+		fprintf(f, "Signal %d (%s)\n", sig, strsignal(sig));
+		char** syms = backtrace_symbols(frames, n);
+		if (syms) {
+			for (int i = 0; i < n; i++) fprintf(f, "  %s\n", syms[i]);
+			free(syms);
+		}
+		fclose(f);
+		fprintf(stderr, "[CRASH] Backtrace written to /tmp/agentworld_crash.log\n");
+	}
+
+	_exit(1);
+}
 
 int main(int argc, char** argv) {
+	signal(SIGSEGV, crashHandler);
+	signal(SIGABRT, crashHandler);
+
 	agentworld::pythonBridge().init("python");
 
 	agentworld::Game game;

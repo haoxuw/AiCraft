@@ -93,6 +93,7 @@ bool Game::init(int argc, char** argv) {
 	auto& hb = m_imguiMenu.handbook();
 	hb.setPreview(&m_modelPreview, &m_renderer.modelRenderer());
 	hb.setRegistry(&m_artifacts);
+	hb.setAudio(&m_audio);
 
 	// Creatures
 	hb.registerModel("pig", m_pigModel);
@@ -399,7 +400,10 @@ void Game::handleMenuAction(const MenuAction& action) {
 	case MenuAction::ResumeGame:
 		if (m_server) {
 			m_state = m_preMenuState;
-			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+			                    m_camera.mode == CameraMode::ThirdPerson);
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+				needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 		}
 		break;
 	case MenuAction::LoadWorld: {
@@ -501,6 +505,10 @@ void Game::setupAfterConnect(GameState targetState) {
 	glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	m_camera.mode = CameraMode::FirstPerson;
 
+	// Start background music
+	if (!m_audio.musicPlaying())
+		m_audio.startMusic();
+
 	glm::vec3 spawn = m_server->spawnPos();
 	m_camera.player.feetPos = spawn;
 	m_camera.player.yaw = -90;
@@ -598,8 +606,9 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_worldTime = m_server->worldTime();
 	m_renderer.setTimeOfDay(m_worldTime);
 
-	// Update audio listener to camera position
+	// Update audio listener + background music
 	m_audio.setListener(m_camera.position, m_camera.front());
+	m_audio.updateMusic();
 
 	// Creature ambient sounds — play occasional sounds for nearby animals
 	m_creatureSoundTimer -= dt;
@@ -631,9 +640,16 @@ void Game::updatePlaying(float dt, float aspect) {
 }
 
 void Game::renderPlaying(float dt, float aspect) {
-	auto& srv = *m_server; // ServerInterface — works for both local and network
+	if (!m_server) return;
+	auto& srv = *m_server;
 	Entity* pe = playerEntity();
 	if (!pe) return;
+
+	// Safety: verify entity has valid def (prevents crash on network desync)
+	if (pe->def().string_id.empty()) {
+		printf("[Game] WARNING: player entity has empty def, skipping render\n");
+		return;
+	}
 
 	// Update chunks
 	m_renderer.updateChunks(srv.chunks(), m_camera, 8);
@@ -982,9 +998,15 @@ void Game::updateEntityInspect(float dt, float aspect) {
 	if (m_controls.pressed(Action::MenuBack) || m_controls.pressed(Action::PlaceBlock)) {
 		m_gameplay.clearInspection();
 		m_state = m_preInspectState; // restore survival/creative
-		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+		                    m_camera.mode == CameraMode::ThirdPerson);
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 		return;
 	}
+
+	// Keep server running (other clients / AI behaviors shouldn't freeze)
+	m_server->tick(dt);
 
 	// Still render the world in background
 	m_globalTime += dt;
@@ -1091,9 +1113,12 @@ void Game::updateEntityInspect(float dt, float aspect) {
 void Game::updateCodeEditor(float dt, float aspect) {
 	if (!m_server) { m_state = GameState::MENU; return; }
 
+	// Keep server running (other clients / AI behaviors shouldn't freeze)
+	m_server->tick(dt);
+
 	m_globalTime += dt;
 
-	// Render world in background (frozen, no gameplay update)
+	// Render world in background
 	m_worldTime += m_daySpeed * dt;
 	m_renderer.setTimeOfDay(m_worldTime);
 	renderPlaying(dt, aspect);
