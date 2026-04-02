@@ -6,27 +6,39 @@ PORT := 7777
 WEB_PORT := 8080
 EMSDK := $(HOME)/emsdk
 
+# If a port number is passed as an extra arg (e.g., make game 7890),
+# treat it as PORT and suppress "no rule" error
+ifneq ($(filter-out game play server client build configure clean stop web web-build web-configure web-clean,$(MAKECMDGOALS)),)
+  PORT := $(filter-out game play server client build configure clean stop web web-build web-configure web-clean,$(MAKECMDGOALS))
+endif
+
+# Suppress "no rule to make target '7890'" error
+%:
+	@:
+
 .PHONY: game play build configure clean server client stop web web-build web-configure web-clean
 
 # ── Native ─────────────────────────────────────────────────
 #
 # Quick reference:
 #   make game             Singleplayer (server + client in one process)
-#   make game PORT=7890   LAN debug: server + client on port 7890, skip menu
-#   make play             Same as: make game PORT=7777 (LAN debug on default port)
+#   make game 7890        LAN debug: server + client on port 7890, skip menu
+#   make play             LAN debug on default port (7777)
 #   make server           Dedicated server (interactive world select)
-#   make client           Network client (connects to running server)
+#   make server 7890      Dedicated server on port 7890
+#   make client           Network client → localhost:7777
+#   make client 7890      Network client → localhost:7890
 #   make stop             Kill all agentworld processes
 #
 # Multiplayer (separate terminals):
-#   Terminal 1: make server PORT=7777
-#   Terminal 2: make client PORT=7777
-#   Terminal 3: make client PORT=7777   (second player)
+#   Terminal 1: make server 7777
+#   Terminal 2: make client 7777
+#   Terminal 3: make client 7777   (second player)
 #
 
-# Singleplayer (default) or LAN debug (when PORT is overridden)
-# - make game           → singleplayer, shows menu
-# - make game PORT=7890 → starts server on 7890, client auto-joins, skips menu
+# Singleplayer or LAN debug
+# - make game      → singleplayer with menu
+# - make game 7890 → server on 7890 + client auto-joins, skips menu
 game: build
 ifeq ($(PORT),7777)
 	@-pkill -x "agentworld" 2>/dev/null; sleep 0.5
@@ -36,37 +48,33 @@ else
 	@echo "[make] LAN debug: server on port $(PORT)..."
 	@./$(BUILD_DIR)/agentworld-server --port $(PORT) --template 1 --seed 42 &
 	@sleep 1
-	@echo "[make] Starting client → 127.0.0.1:$(PORT)..."
+	@echo "[make] Client → 127.0.0.1:$(PORT)..."
 	./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $(PORT)
-	@echo "[make] Client exited, stopping server..."
+	@echo "[make] Stopping server..."
 	@-pkill -x "agentworld-server" 2>/dev/null
 endif
 
-# Alias: make play = make game PORT=7777 with LAN debug mode
+# LAN debug on default port
 play: build
 	@-pkill -x "agentworld-server" 2>/dev/null; sleep 0.3
 	@echo "[make] Starting server on port $(PORT)..."
 	@./$(BUILD_DIR)/agentworld-server --port $(PORT) --template 1 --seed 42 &
 	@sleep 1
-	@echo "[make] Starting client → 127.0.0.1:$(PORT)..."
+	@echo "[make] Client → 127.0.0.1:$(PORT)..."
 	./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $(PORT)
-	@echo "[make] Client exited, stopping server..."
+	@echo "[make] Stopping server..."
 	@-pkill -x "agentworld-server" 2>/dev/null
 
-# Dedicated server — headless, accepts multiple clients
-# Usage: make server             (port 7777, interactive world select)
-#        make server PORT=7890   (custom port)
+# Dedicated server
 server: build
 	@-pkill -x "agentworld-server" 2>/dev/null; sleep 0.5
 	./$(BUILD_DIR)/agentworld-server --port $(PORT)
 
-# Network client — connects to a running server
-# Usage: make client                              (localhost:7777)
-#        make client HOST=192.168.1.5 PORT=7890   (custom)
+# Network client
 client: build
 	./$(BUILD_DIR)/agentworld-client --host $(HOST) --port $(PORT)
 
-# Kill all agentworld processes
+# Kill everything
 stop:
 	@-pkill -f "agentworld" 2>/dev/null; sleep 1
 	@echo "All agentworld processes stopped."

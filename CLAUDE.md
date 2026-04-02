@@ -172,12 +172,12 @@ cmake --build build -j$(nproc)
 
 # Or use the Makefile shortcuts:
 make game                  # singleplayer (server + client in one process)
-make game PORT=7890        # LAN debug: server + client on port 7890, skips menu
-make play                  # alias for LAN debug on default port 7777
+make game 7890             # LAN debug: server + client on port 7890, skips menu
+make play                  # LAN debug on default port (7777)
 make server                # dedicated server (interactive world select)
-make server PORT=7890      # dedicated server on custom port
-make client                # network client (connects to localhost:7777)
-make client HOST=192.168.1.5 PORT=7890  # connect to LAN server
+make server 7890           # dedicated server on port 7890
+make client                # network client → localhost:7777
+make client 7890           # network client → localhost:7890
 make stop                  # kill all agentworld processes
 make build                 # configure + build (all three executables)
 make clean                 # remove build directory
@@ -201,7 +201,7 @@ See `18_WEB_CLIENT.md` for full design.
 ./build/agentworld                          # full menu experience
 
 # LAN debug (quick test — server + client in one command)
-make game PORT=7890                         # starts server bg, client joins, skips menu
+make game 7890                              # starts server bg, client joins, skips menu
 
 # Multiplayer (separate terminals)
 ./build/agentworld-server --port 7777       # Terminal 1: dedicated server

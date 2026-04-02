@@ -204,9 +204,12 @@ bool Game::init(int argc, char** argv) {
 
 	m_lastTime = std::chrono::steady_clock::now();
 
-	// If --host was provided, auto-join the server immediately
+	// If --host was provided, auto-join the server immediately (skip menu)
 	if (!m_connectHost.empty()) {
+		printf("[Game] Auto-joining %s:%d...\n", m_connectHost.c_str(), m_connectPort);
 		joinServer(m_connectHost, m_connectPort, GameState::SURVIVAL);
+		printf("[Game] After joinServer: state=%d, server=%s\n",
+		       (int)m_state, m_server ? "connected" : "null");
 	}
 
 	return true;
