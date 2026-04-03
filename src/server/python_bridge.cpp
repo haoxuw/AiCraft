@@ -147,18 +147,20 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 	}
 
 	try {
-		// Compile the source code into a module
-		py::dict globals = py::globals();
-		py::dict locals;
+		// Create an isolated namespace per behavior so module-level variables
+		// (constants, global state) and function __globals__ share the same dict.
+		// Without this, exec(code, globals, locals) puts top-level assignments
+		// in locals while `global` declarations inside decide() look in globals.
+		py::dict ns;
 
 		// Import the engine module so behaviors can use Idle(), Wander(), etc.
-		py::exec("from agentworld_engine import *", globals);
+		py::exec("from agentworld_engine import *", ns);
 
-		// Execute the behavior source code
-		py::exec(sourceCode, globals, locals);
+		// Execute the behavior source code (ns is both globals and locals)
+		py::exec(sourceCode, ns);
 
 		// Check that decide() function exists
-		if (!locals.contains("decide")) {
+		if (!ns.contains("decide")) {
 			errorOut = "Behavior must define a decide(self, world) function";
 			return -1;
 		}
@@ -167,7 +169,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 		auto& beh = m_behaviors[handle];
 		beh.source = sourceCode;
 		// Store the compiled module namespace (heap-allocate py::object)
-		beh.moduleObj = new py::dict(locals);
+		beh.moduleObj = new py::dict(ns);
 
 		printf("[PythonBridge] Loaded behavior (handle=%d)\n", handle);
 		return handle;
@@ -194,19 +196,19 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 	try {
 		py::dict& ns = *static_cast<py::dict*>(it->second.moduleObj);
 
-		// Build the world view for Python
+		// Build the world view for Python — entities as dicts (consistent with blocks)
 		py::list pyNearby;
 		for (auto& ne : nearby) {
-			PyEntityInfo info;
-			info.id = ne.id;
-			info.type_id = ne.typeId;
-			info.category = ne.category;
-			info.x = ne.position.x;
-			info.y = ne.position.y;
-			info.z = ne.position.z;
-			info.distance = ne.distance;
-			info.hp = ne.hp;
-			pyNearby.append(py::cast(info));
+			py::dict info;
+			info["id"] = ne.id;
+			info["type_id"] = ne.typeId;
+			info["category"] = ne.category;
+			info["x"] = ne.position.x;
+			info["y"] = ne.position.y;
+			info["z"] = ne.position.z;
+			info["distance"] = ne.distance;
+			info["hp"] = ne.hp;
+			pyNearby.append(info);
 		}
 
 		// Build self info
