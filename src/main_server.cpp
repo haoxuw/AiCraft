@@ -382,7 +382,15 @@ int main(int argc, char** argv) {
 				}
 				case agentworld::net::C_HELLO: {
 					client.name = rb.readString();
-					printf("[Server] %s identified itself\n", client.label().c_str());
+					std::string displayName = rb.hasMore() ? rb.readString() : "";
+					std::string creatureType = rb.hasMore() ? rb.readString() : "";
+					if (!displayName.empty())
+						client.name = displayName + " (" + client.name.substr(0, 8) + ")";
+					printf("[Server] %s identified: creature=%s\n",
+						client.label().c_str(),
+						creatureType.empty() ? "default" : creatureType.c_str());
+					// TODO: respawn as requested creature type (requires removing old
+					// entity and spawning new one — deferred to avoid mid-tick mutation)
 					break;
 				}
 				default: break;

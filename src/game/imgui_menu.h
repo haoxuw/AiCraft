@@ -78,9 +78,15 @@ public:
 			ImGui::SetWindowFontScale(1.0f);
 			ImGui::PopStyleColor();
 
-			ImGui::SameLine(W - 160);
-			ImGui::SetCursorPosY(20);
-			ImGui::TextColored(ImVec4(0.65f, 0.67f, 0.70f, 1), "v0.9.0  |  The world is code");
+			// Player name on right side of top bar
+			if (m_playerName && !m_playerName->empty()) {
+				std::string display = *m_playerName;
+				ImGui::SameLine(W - 300);
+				ImGui::SetCursorPosY(18);
+				ImGui::TextColored(ImVec4(0.40f, 0.42f, 0.45f, 1), "Playing as:");
+				ImGui::SameLine();
+				ImGui::TextColored(ImVec4(0.96f, 0.65f, 0.15f, 1), "%s", display.c_str());
+			}
 		}
 		ImGui::EndChild();
 		ImGui::PopStyleColor();
@@ -225,6 +231,12 @@ public:
 	// Set references for settings UI
 	void setControls(ControlManager* c) { m_controls = c; }
 	void setAudio(AudioManager* a) { m_audio = a; }
+	void setPlayerInfo(std::string* name, std::string* creature) {
+		m_playerName = name;
+		m_selectedCreature = creature;
+	}
+	const std::string& playerName() const { return m_playerName ? *m_playerName : m_emptyStr; }
+	const std::string& selectedCreature() const { return m_selectedCreature ? *m_selectedCreature : m_emptyStr; }
 
 private:
 	enum class Page { Singleplayer, Multiplayer, Handbook, Settings };
@@ -243,6 +255,12 @@ private:
 	AudioManager* m_audio = nullptr;
 	int m_settingsTab = 0; // 0=Controls, 1=Audio
 	BehaviorEditorState m_behaviorEditor;
+
+	// Player identity
+	std::string* m_playerName = nullptr;
+	std::string* m_selectedCreature = nullptr;
+	std::string m_emptyStr;
+	char m_nameEditBuf[64] = {};
 
 	// Direct connect fields
 	char m_directHost[128] = "127.0.0.1";
@@ -278,6 +296,68 @@ private:
 	}
 
 	// ── Singleplayer: saved worlds + create new ──
+	// Shared player identity UI (name + creature picker)
+	void renderPlayerIdentity(float contentW) {
+		if (!m_playerName || !m_selectedCreature) return;
+
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Your Character");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		// Name input
+		if (m_nameEditBuf[0] == '\0' && !m_playerName->empty())
+			snprintf(m_nameEditBuf, sizeof(m_nameEditBuf), "%s", m_playerName->c_str());
+		ImGui::Text("Name");
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(200);
+		if (ImGui::InputText("##playername", m_nameEditBuf, sizeof(m_nameEditBuf)))
+			*m_playerName = m_nameEditBuf;
+
+		// Creature type picker — show available creatures as selectable cards
+		ImGui::Spacing();
+		ImGui::Text("Character Type");
+		ImGui::Spacing();
+
+		static const char* creatures[] = {
+			"base:player", "base:villager", "base:pig",
+			"base:chicken", "base:dog", "base:cat"
+		};
+		float cardSz = 80.0f;
+		for (int i = 0; i < 6; i++) {
+			if (i > 0) ImGui::SameLine();
+			bool selected = (*m_selectedCreature == creatures[i]);
+			std::string label = creatures[i];
+			auto colon = label.find(':');
+			if (colon != std::string::npos) label = label.substr(colon + 1);
+			if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
+
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, selected ? 2.0f : 1.0f);
+			ImGui::PushStyleColor(ImGuiCol_Button,
+				selected ? ImVec4(0.96f, 0.65f, 0.15f, 1) : ImVec4(0.96f, 0.96f, 0.97f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+				selected ? ImVec4(0.98f, 0.72f, 0.28f, 1) : ImVec4(0.92f, 0.93f, 0.95f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+				selected ? ImVec4(0.90f, 0.55f, 0.10f, 1) : ImVec4(0.88f, 0.89f, 0.92f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Text,
+				selected ? ImVec4(1, 1, 1, 1) : ImVec4(0.25f, 0.27f, 0.30f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Border,
+				selected ? ImVec4(0.90f, 0.55f, 0.10f, 1) : ImVec4(0.82f, 0.84f, 0.86f, 1));
+
+			char btnId[64]; snprintf(btnId, sizeof(btnId), "%s##creature%d", label.c_str(), i);
+			if (ImGui::Button(btnId, ImVec2(cardSz, 48)))
+				*m_selectedCreature = creatures[i];
+
+			ImGui::PopStyleColor(5);
+			ImGui::PopStyleVar(2);
+		}
+
+		ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+	}
+
 	MenuAction renderSingleplayerContent(float contentW) {
 		MenuAction action;
 
@@ -287,6 +367,8 @@ private:
 		ImGui::SetWindowFontScale(1.0f);
 		ImGui::PopStyleColor();
 		ImGui::Spacing();
+
+		renderPlayerIdentity(contentW);
 
 		// Resume button
 		if (m_gameRunning) {
@@ -627,6 +709,8 @@ private:
 		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
 			"Join a server on your local network or by address.");
 		ImGui::Spacing(); ImGui::Spacing();
+
+		renderPlayerIdentity(contentW);
 
 		// Resume button (if connected to a server)
 		if (m_gameRunning) {

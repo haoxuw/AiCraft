@@ -22,6 +22,8 @@ public:
 	LocalServer(const std::vector<std::shared_ptr<WorldTemplate>>& templates)
 		: m_templates(templates) {}
 
+	void setCreatureType(const std::string& type) { m_creatureType = type; }
+
 	bool createGame(int seed, int templateIndex, bool creative,
 	                const WorldGenConfig& wgc = WorldGenConfig{}) override {
 		ServerConfig config;
@@ -35,7 +37,7 @@ public:
 
 		// Connect as the local player
 		m_clientId = 1;
-		m_playerId = m_server->addClient(m_clientId);
+		m_playerId = m_server->addClient(m_clientId, m_creatureType);
 		m_connected = true;
 		return true;
 	}
@@ -48,7 +50,7 @@ public:
 	// After loadWorld() populates the server, connect the local player
 	void finishLoad() {
 		m_clientId = 1;
-		m_playerId = m_server->addClient(m_clientId);
+		m_playerId = m_server->addClient(m_clientId, m_creatureType);
 		m_connected = true;
 	}
 
@@ -141,6 +143,7 @@ public:
 private:
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;
 	std::unique_ptr<GameServer> m_server;
+	std::string m_creatureType; // selected creature type (empty = base:player)
 	ClientId m_clientId = 0;
 	EntityId m_playerId = ENTITY_NONE;
 	bool m_connected = false;

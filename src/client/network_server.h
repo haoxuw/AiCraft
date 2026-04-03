@@ -75,6 +75,8 @@ public:
 					// Identify ourselves to the server
 					net::WriteBuffer hello;
 					hello.writeString(m_clientUUID);
+					hello.writeString(m_displayName);
+					hello.writeString(m_creatureType);
 					net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
 
 					return true;
@@ -235,6 +237,8 @@ public:
 	}
 
 	const std::string& clientUUID() const { return m_clientUUID; }
+	void setDisplayName(const std::string& name) { m_displayName = name; }
+	void setCreatureType(const std::string& type) { m_creatureType = type; }
 
 	// Try to connect (non-blocking check for game.cpp)
 	static bool canConnect(const char* host, int port) {
@@ -378,6 +382,8 @@ private:
 	std::string m_host;
 	int m_port;
 	std::string m_clientUUID;
+	std::string m_displayName;   // player name
+	std::string m_creatureType;  // requested creature type
 	bool m_connected = false;
 	bool m_creative = false;
 

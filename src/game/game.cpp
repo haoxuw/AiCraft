@@ -50,6 +50,17 @@ bool Game::init(int argc, char** argv) {
 	m_controls.load("config/controls.yaml");
 	m_ui.init(m_window.handle());
 
+	// Generate random player name
+	{
+		static const char* adj[] = {"Swift","Brave","Sneaky","Lucky","Mighty",
+			"Clever","Bold","Calm","Fierce","Noble","Gentle","Wild"};
+		static const char* noun[] = {"Fox","Bear","Eagle","Wolf","Owl",
+			"Hawk","Lynx","Stag","Crow","Hare","Pike","Wren"};
+		srand((unsigned)time(nullptr));
+		m_playerName = std::string(adj[rand()%12]) + noun[rand()%12];
+	}
+	m_imguiMenu.setPlayerInfo(&m_playerName, &m_selectedCreature);
+
 	// Audio system
 	if (m_audio.init()) {
 		m_audio.loadSoundsFrom("resources/sounds");
@@ -506,8 +517,11 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 	printf("[Game] Joining server at %s:%d\n", host.c_str(), port);
 	bool creative = (targetState == GameState::ADMIN);
 	auto netServer = std::make_unique<NetworkServer>(host, port);
+	netServer->setDisplayName(m_playerName);
+	netServer->setCreatureType(m_selectedCreature);
 	if (netServer->createGame(42, 0, creative)) {
-		printf("[Game] Connected to %s:%d\n", host.c_str(), port);
+		printf("[Game] Connected to %s:%d as %s (%s)\n",
+		       host.c_str(), port, m_playerName.c_str(), m_selectedCreature.c_str());
 		m_server = std::move(netServer);
 		setupAfterConnect(targetState);
 		return;
@@ -539,8 +553,10 @@ void Game::enterGame(int templateIndex, GameState targetState, const WorldGenCon
 
 	bool creative = (targetState == GameState::ADMIN);
 	auto localServer = std::make_unique<LocalServer>(m_templates);
+	localServer->setCreatureType(m_selectedCreature);
 	localServer->createGame(m_currentSeed, templateIndex, creative, wgc);
 	m_server = std::move(localServer);
+	printf("[Game] Playing as %s (%s)\n", m_playerName.c_str(), m_selectedCreature.c_str());
 	setupAfterConnect(targetState);
 }
 
