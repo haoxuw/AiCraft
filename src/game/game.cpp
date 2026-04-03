@@ -1405,40 +1405,84 @@ void Game::updatePaused(float dt, float aspect) {
 	m_server->tick(dt);
 	if (!m_server->isConnected()) { m_state = GameState::MENU; return; }
 
-	// Render the world behind the overlay
-	renderPlaying(dt, aspect);
+	// Render the world behind the overlay — but NOT the ImGui frame
+	// from renderPlaying (we need our own single ImGui frame for the
+	// pause overlay buttons to actually receive input).
+	{
+		auto& srv = *m_server;
+		Entity* pe = playerEntity();
+		if (!pe) { m_state = GameState::MENU; return; }
+		m_globalTime += dt;
+		m_worldTime = m_server->worldTime();
+		m_renderer.setTimeOfDay(m_worldTime);
+		m_renderer.updateChunks(srv.chunks(), m_camera, m_renderDistance);
+		glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
+		m_renderer.render(m_camera, aspect, nullptr, 0, 7, {0,0}, false);
+		// Draw entities
+		auto& mr = m_renderer.modelRenderer();
+		srv.forEachEntity([&](Entity& e) {
+			if (e.typeId() == EntityType::ItemEntity) return;
+			std::string mk = e.def().model;
+			auto dot = mk.rfind('.'); if (dot != std::string::npos) mk = mk.substr(0, dot);
+			auto it = m_models.find(mk);
+			if (it != m_models.end()) {
+				float spd = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
+				AnimState anim = {e.getProp<float>(Prop::WalkDistance, 0.0f), spd, m_globalTime};
+				mr.draw(it->second, vp, e.position, e.yaw, anim);
+			}
+		});
+		m_particles.update(dt);
+		m_particles.render(vp);
+	}
 
-	// Esc again = back to game (check before ImGui consumes input)
-	bool escPressed = m_controls.pressed(Action::MenuBack);
-
-	// Game menu overlay
+	// Single ImGui frame for the pause overlay
 	m_ui.beginFrame();
+
+	// Dim overlay
 	ImDrawList* bg = ImGui::GetBackgroundDrawList();
 	bg->AddRectFilled({0, 0}, {(float)m_window.width(), (float)m_window.height()},
-		IM_COL32(0, 0, 0, 120));
+		IM_COL32(0, 0, 0, 140));
 
-	float pw = 340, ph = 360;
+	float pw = 360, ph = 380;
 	float px = (m_window.width() - pw) * 0.5f;
 	float py = (m_window.height() - ph) * 0.5f;
 
 	ImGui::SetNextWindowPos({px, py});
 	ImGui::SetNextWindowSize({pw, ph});
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 16));
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.98f, 0.97f, 0.96f, 0.98f));
 	ImGui::Begin("##gamemenu", nullptr,
 		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
 		ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
 
 	// Title
+	ImGui::SetWindowFontScale(1.3f);
 	float titleW = ImGui::CalcTextSize("Game Menu").x;
-	ImGui::SetCursorPosX((pw - titleW) * 0.5f);
-	ImGui::TextColored({0.95f, 0.85f, 0.5f, 1.0f}, "Game Menu");
+	ImGui::SetCursorPosX((pw - titleW) * 0.5f - 20);
+	ImGui::TextColored({0.25f, 0.25f, 0.28f, 1.0f}, "Game Menu");
+	ImGui::SetWindowFontScale(1.0f);
 	ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-	float btnW = pw - 40;
-	auto centerBtn = [&]() { ImGui::SetCursorPosX(20); };
+	float btnW = pw - 44;
+	auto styledButton = [&](const char* label, ImVec4 bg, ImVec4 bgHover, ImVec4 bgActive,
+	                        ImVec4 text, float height = 42.0f) {
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+		ImGui::PushStyleColor(ImGuiCol_Button, bg);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bgHover);
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, bgActive);
+		ImGui::PushStyleColor(ImGuiCol_Text, text);
+		ImGui::SetCursorPosX(22);
+		bool clicked = ImGui::Button(label, {btnW, height});
+		ImGui::PopStyleColor(4);
+		ImGui::PopStyleVar();
+		return clicked;
+	};
 
 	// Back to Game
-	centerBtn();
-	if (ImGui::Button("Back to Game", {btnW, 38}) || escPressed) {
+	if (styledButton("Back to Game",
+		{0.96f, 0.65f, 0.15f, 1}, {0.98f, 0.72f, 0.28f, 1}, {0.90f, 0.55f, 0.10f, 1},
+		{1, 1, 1, 1}) || m_controls.pressed(Action::MenuBack)) {
 		m_state = m_preMenuState;
 		bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
 		                    m_camera.mode == CameraMode::ThirdPerson);
@@ -1448,7 +1492,6 @@ void Game::updatePaused(float dt, float aspect) {
 	ImGui::Spacing();
 
 	// Options
-	centerBtn();
 	if (ImGui::CollapsingHeader("Options...")) {
 		ImGui::SliderFloat("FOV", &m_camera.fov, 50.0f, 120.0f, "%.0f");
 		ImGui::SliderInt("Render Distance", &m_renderDistance, 4, 16);
@@ -1465,21 +1508,20 @@ void Game::updatePaused(float dt, float aspect) {
 
 	ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-	// Disconnect / Quit to Menu
-	centerBtn();
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.78f, 0.25f, 0.25f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-	if (ImGui::Button("Disconnect", {btnW, 38})) {
+	// Disconnect
+	if (styledButton("Disconnect",
+		{0.72f, 0.20f, 0.20f, 1}, {0.82f, 0.28f, 0.28f, 1}, {0.62f, 0.15f, 0.15f, 1},
+		{1, 1, 1, 1})) {
 		m_state = GameState::MENU;
-		m_imguiMenu.setGameRunning(false); // disconnected — no game to resume
+		m_imguiMenu.setGameRunning(false);
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 		m_server->disconnect();
 		m_server.reset();
 	}
-	ImGui::PopStyleColor(3);
 
 	ImGui::End();
+	ImGui::PopStyleColor();
+	ImGui::PopStyleVar(2);
 	m_ui.endFrame();
 }
 
