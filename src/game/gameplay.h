@@ -72,6 +72,10 @@ public:
 	bool isBreaking() const { return m_breaking.active; }
 	glm::ivec3 breakTarget() const { return m_breaking.target; }
 	float breakProgress() const { return m_breaking.active ? (float)m_breaking.hits / 3.0f : 0; }
+
+	// Per-hit event (for particles/sound on each mining swing)
+	struct HitEvent { bool happened = false; glm::vec3 pos; glm::vec3 color; };
+	const HitEvent& hitEvent() const { return m_hitEvent; }
 private:
 	struct BreakState {
 		glm::ivec3 target = {0,0,0};
@@ -79,6 +83,7 @@ private:
 		float timer = 0;      // decays → reset if idle too long
 		bool active = false;
 	} m_breaking;
+	HitEvent m_hitEvent;
 
 	// --- Right-click state (RPG/RTS: drag → orbit, quick click → action) ---
 

@@ -27,6 +27,8 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include <deque>
+#include <string>
 
 namespace agentworld {
 
@@ -139,6 +141,20 @@ private:
 	// Audio
 	AudioManager m_audio;
 	float m_creatureSoundTimer = 3.0f;
+
+	// Floating text (damage numbers, pickup notifications, Minecraft Dungeons style)
+	struct FloatingText {
+		glm::vec3 pos;
+		float velY;
+		float offsetX;
+		std::string text;
+		glm::vec4 color;
+		float life, maxLife;
+		float baseScale;
+	};
+	std::deque<FloatingText> m_floatingTexts;
+	void addFloatingText(glm::vec3 pos, const std::string& text,
+	                     glm::vec4 color, float scale = 1.8f);
 
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;

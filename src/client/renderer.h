@@ -26,6 +26,7 @@ public:
 	void markChunkDirty(ChunkPos pos);
 	void setTimeOfDay(float t); // 0=midnight, 0.5=noon
 	void renderMoveTarget(const Camera& cam, float aspect, glm::ivec3 pos);
+	void renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 pos, float progress);
 	float sunStrength() const { return m_sunStrength; }
 
 private:

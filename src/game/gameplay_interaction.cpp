@@ -70,6 +70,16 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	}
 
 	m_breakCD -= dt;
+	m_hitEvent.happened = false;
+
+	// Break progress decay: cancel if no hit for 2 seconds
+	if (m_breaking.active) {
+		m_breaking.timer += dt;
+		if (m_breaking.timer > 2.0f) {
+			m_breaking.active = false;
+			m_breaking.hits = 0;
+		}
+	}
 
 	// ── Entity inspect: right-click in all modes ──
 	if (m_entityHit) {
@@ -90,18 +100,48 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 			BlockId bid = chunks.getBlock(bp.x, bp.y, bp.z);
 			const BlockDef& bdef = blocks.get(bid);
 
-			ActionProposal p;
-			p.actorId = player.id();
-			p.blockPos = bp;
-
 			if (bdef.string_id == BlockType::TNT) {
+				ActionProposal p;
+				p.actorId = player.id();
+				p.blockPos = bp;
 				p.type = ActionProposal::IgniteTNT;
 				m_breakCD = 0.3f;
-			} else {
+				server.sendAction(p);
+			} else if (state == GameState::ADMIN) {
+				// Admin: instant break
+				ActionProposal p;
+				p.actorId = player.id();
+				p.blockPos = bp;
 				p.type = ActionProposal::BreakBlock;
 				m_breakCD = 0.15f;
+				server.sendAction(p);
+			} else {
+				// Survival: 3 hits to break
+				if (m_breaking.active && m_breaking.target == bp) {
+					m_breaking.hits++;
+				} else {
+					m_breaking.target = bp;
+					m_breaking.hits = 1;
+					m_breaking.active = true;
+				}
+				m_breaking.timer = 0;
+				m_breakCD = 0.25f;
+
+				// Per-hit feedback event (particles + sound handled by game.cpp)
+				m_hitEvent.happened = true;
+				m_hitEvent.pos = glm::vec3(bp) + glm::vec3(0.5f);
+				m_hitEvent.color = bdef.color_top;
+
+				if (m_breaking.hits >= 3) {
+					ActionProposal p;
+					p.actorId = player.id();
+					p.blockPos = bp;
+					p.type = ActionProposal::BreakBlock;
+					server.sendAction(p);
+					m_breaking.active = false;
+					m_breaking.hits = 0;
+				}
 			}
-			server.sendAction(p);
 		}
 
 		// Right-click: place block (only if no entity is closer)

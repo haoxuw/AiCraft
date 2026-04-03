@@ -61,6 +61,7 @@ void GameServer::resolveActions(float dt) {
 			}
 
 			if (m_callbacks.onBlockBreak) m_callbacks.onBlockBreak(glm::vec3(bp), bdef.color_top, 1);
+			if (m_callbacks.onBreakText) m_callbacks.onBreakText(glm::vec3(bp), bdef.display_name);
 			m_world->removeBlockState(bp.x, bp.y, bp.z);
 
 			if (actor && actor->inventory) {

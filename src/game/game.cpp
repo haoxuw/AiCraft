@@ -723,6 +723,22 @@ void Game::updatePlaying(float dt, float aspect) {
 	}
 	// Re-enable when proper gentle animal sounds are available.
 
+	// Per-hit mining feedback (particles + sound on each survival swing)
+	auto& hitEvt = m_gameplay.hitEvent();
+	if (hitEvt.happened) {
+		m_particles.emitBlockBreak(hitEvt.pos, hitEvt.color, 5);
+		// Play dig sound based on color
+		float r = hitEvt.color.r, g = hitEvt.color.g, b = hitEvt.color.b;
+		if (r > 0.7f && g > 0.7f && b > 0.7f)
+			m_audio.play("dig_snow", hitEvt.pos, 0.4f);
+		else if (r < 0.5f && g < 0.5f && b < 0.5f)
+			m_audio.play("dig_stone", hitEvt.pos, 0.5f);
+		else if (g > r && g > b)
+			m_audio.play("dig_leaves", hitEvt.pos, 0.3f);
+		else
+			m_audio.play("dig_dirt", hitEvt.pos, 0.4f);
+	}
+
 	// Check if player right-clicked an entity → enter inspection
 	if (m_gameplay.inspectedEntity() != ENTITY_NONE) {
 		m_preInspectState = m_state; // remember so we restore correctly

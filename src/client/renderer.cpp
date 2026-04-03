@@ -132,11 +132,19 @@ bool Renderer::init(const std::string& dir) {
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
 	glEnableVertexAttribArray(0);
 
-	// Block highlight wireframe (unit cube lines, 24 vertices = 12 edges)
+	// Block highlight: 24 line vertices (wireframe) + 36 triangle vertices (filled faces for break overlay)
 	float h[] = {
+		// Lines: 12 edges (24 vertices)
 		0,0,0, 1,0,0,  1,0,0, 1,0,1,  1,0,1, 0,0,1,  0,0,1, 0,0,0,  // bottom
 		0,1,0, 1,1,0,  1,1,0, 1,1,1,  1,1,1, 0,1,1,  0,1,1, 0,1,0,  // top
 		0,0,0, 0,1,0,  1,0,0, 1,1,0,  1,0,1, 1,1,1,  0,0,1, 0,1,1,  // verticals
+		// Faces: 6 faces × 2 triangles (36 vertices) — for break overlay
+		0,0,1, 1,0,1, 1,1,1,  0,0,1, 1,1,1, 0,1,1,  // front  (z=1)
+		1,0,0, 0,0,0, 0,1,0,  1,0,0, 0,1,0, 1,1,0,  // back   (z=0)
+		1,0,0, 1,0,1, 1,1,1,  1,0,0, 1,1,1, 1,1,0,  // right  (x=1)
+		0,0,1, 0,0,0, 0,1,0,  0,0,1, 0,1,0, 0,1,1,  // left   (x=0)
+		0,1,0, 1,1,0, 1,1,1,  0,1,0, 1,1,1, 0,1,1,  // top    (y=1)
+		0,0,0, 1,0,0, 1,0,1,  0,0,0, 1,0,1, 0,0,1,  // bottom (y=0)
 	};
 	glGenVertexArrays(1, &m_highlightVAO);
 	glGenBuffers(1, &m_highlightVBO);
@@ -515,6 +523,39 @@ void Renderer::renderCrosshair(float aspect, glm::vec2 center) {
 
 	glDisable(GL_BLEND);
 	glEnable(GL_DEPTH_TEST);
+}
+
+void Renderer::renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 pos, float progress) {
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	glm::mat4 model = glm::translate(glm::mat4(1.0f),
+		glm::vec3(pos) + glm::vec3(-0.003f));
+	model = glm::scale(model, glm::vec3(1.006f));
+	glm::mat4 mvp = cam.projectionMatrix(aspect) * cam.viewMatrix() * model;
+
+	m_highlightShader.use();
+	m_highlightShader.setMat4("uMVP", mvp);
+	GLint loc = glGetUniformLocation(m_highlightShader.id(), "uColor");
+	glBindVertexArray(m_highlightVAO);
+
+	// Color ramp: green(0.33) → yellow(0.66) → red(1.0)
+	float r = progress < 0.5f ? progress * 2.0f : 1.0f;
+	float g = progress < 0.5f ? 1.0f : 1.0f - (progress - 0.5f) * 2.0f;
+
+	// Semi-transparent face fill (36 triangle verts starting at vertex 24)
+	glUniform4f(loc, r, g, 0.0f, 0.18f + progress * 0.22f);
+	glDrawArrays(GL_TRIANGLES, 24, 36);
+
+	// Colored wireframe on top
+	glUniform4f(loc, r, g, 0.0f, 0.85f);
+	glLineWidth(3.0f);
+	glDrawArrays(GL_LINES, 0, 24);
+
+	glDepthFunc(GL_LESS);
+	glDisable(GL_BLEND);
 }
 
 // Old renderPlayerModel removed -- use ModelRenderer::draw() instead
