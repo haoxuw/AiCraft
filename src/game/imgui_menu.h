@@ -108,22 +108,31 @@ public:
 
 			auto navButton = [&](const char* label, Page page) {
 				bool active = (m_page == page);
+				ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+				ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, active ? 0.0f : 1.0f);
 				if (active) {
-					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.98f, 0.94f, 0.88f, 1));
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.65f, 0.15f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.65f, 0.15f, 1));
+					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.72f, 0.28f, 1));
+					ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.90f, 0.55f, 0.10f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+					ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
 				} else {
-					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 1));
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.30f, 0.32f, 0.35f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.97f, 0.97f, 0.98f, 1));
+					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.93f, 0.94f, 0.96f, 1));
+					ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.88f, 0.89f, 0.92f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.27f, 0.30f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.82f, 0.84f, 0.86f, 1));
 				}
 				ImGui::SetCursorPosX(12);
 				bool clicked = ImGui::Button(label, ImVec2(btnW, btnH));
-				ImGui::PopStyleColor(2);
+				ImGui::PopStyleColor(5);
+				ImGui::PopStyleVar(2);
 
-				// Active indicator — blue bar on left
+				// Active indicator — accent bar on left
 				if (active) {
 					ImVec2 p = ImGui::GetItemRectMin();
-					dl->AddRectFilled(ImVec2(0, p.y), ImVec2(4, p.y + btnH),
-						IM_COL32(244, 166, 38, 255));
+					dl->AddRectFilled(ImVec2(0, p.y + 4), ImVec2(4, p.y + btnH - 4),
+						IM_COL32(244, 166, 38, 255), 2.0f);
 				}
 
 				return clicked;
@@ -140,12 +149,18 @@ public:
 			// Quit at bottom
 			ImGui::SetCursorPosY(contentH - btnH - 20);
 			ImGui::SetCursorPosX(12);
-			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 1));
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.25f, 0.25f, 1));
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.97f, 0.97f, 0.98f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.90f, 0.90f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.90f, 0.82f, 0.82f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.72f, 0.22f, 0.22f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.82f, 0.84f, 0.86f, 1));
 			if (ImGui::Button("Quit", ImVec2(btnW, btnH))) {
 				action.type = MenuAction::Quit;
 			}
-			ImGui::PopStyleColor(2);
+			ImGui::PopStyleColor(5);
+			ImGui::PopStyleVar(2);
 		}
 		ImGui::EndChild();
 		ImGui::PopStyleColor();
