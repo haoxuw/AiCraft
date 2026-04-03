@@ -566,6 +566,13 @@ void Game::setupAfterConnect(GameState targetState) {
 				if (m_serverLog) fprintf(m_serverLog, "[break] %s at (%.0f,%.0f,%.0f)\n",
 					blockName.c_str(), pos.x, pos.y, pos.z);
 			};
+			cb.onPickupDenied = [this](glm::vec3 pos, const std::string& item) {
+				std::string name = item;
+				if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
+				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
+				addFloatingText(pos + glm::vec3(0, 0.5f, 0), name + " X",
+				                {0.90f, 0.25f, 0.20f, 1.0f}, 1.6f);
+			};
 		}
 	}
 
@@ -704,6 +711,62 @@ void Game::updatePlaying(float dt, float aspect) {
 	// Update audio listener + background music
 	m_audio.setListener(m_camera.position, m_camera.front());
 	m_audio.updateMusic();
+
+	// Client-initiated item pickup: scan nearby items, send PickupItem action.
+	// pickup_range comes from EntityDef (character definition, like HP/speed).
+	{
+		float pickupRange = pe->def().pickup_range;
+		auto& srv = *m_server;
+		EntityId playerId = srv.localPlayerId();
+		srv.forEachEntity([&](Entity& e) {
+			if (e.typeId() != EntityType::ItemEntity) return;
+			if (e.removed) return;
+			if (m_pendingPickups.count(e.id())) return;
+			float dist = glm::length(e.position - pe->position);
+			if (dist < pickupRange) {
+				ActionProposal p;
+				p.type = ActionProposal::PickupItem;
+				p.actorId = playerId;
+				p.targetEntity = e.id();
+				srv.sendAction(p);
+				m_pendingPickups.insert(e.id());
+
+				// Start fly-toward-player animation (optimistic, client-side)
+				std::string itemType = e.getProp<std::string>(Prop::ItemType);
+				const BlockDef* bdef = srv.blockRegistry().find(itemType);
+				glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
+				std::string name = itemType;
+				if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
+				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
+				for (auto& c : name) if (c == '_') c = ' ';
+				int count = e.getProp<int>(Prop::Count, 1);
+				m_pickupAnims.push_back({e.id(), e.position, color, name, count, 0, 0.35f});
+			}
+		});
+		// Clean stale pending entries
+		for (auto it = m_pendingPickups.begin(); it != m_pendingPickups.end(); ) {
+			Entity* check = srv.getEntity(*it);
+			if (!check || check->removed) it = m_pendingPickups.erase(it);
+			else ++it;
+		}
+	}
+
+	// Update pickup animations — animate item toward player, then fire effects
+	for (auto it = m_pickupAnims.begin(); it != m_pickupAnims.end(); ) {
+		it->t += dt / it->duration;
+		if (it->t >= 1.0f) {
+			// Arrived at player — puff + sound + floating text
+			glm::vec3 arrivePos = pe->position + glm::vec3(0, 0.8f, 0);
+			m_particles.emitItemPickup(arrivePos, it->color);
+			m_audio.play("item_pickup", arrivePos, 0.5f);
+			char buf[64];
+			snprintf(buf, sizeof(buf), "+%d %s", it->count, it->itemName.c_str());
+			addFloatingText(arrivePos, buf, {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
+			it = m_pickupAnims.erase(it);
+		} else {
+			++it;
+		}
+	}
 
 	// Creature ambient sounds: very rare, within 5 blocks only, whisper-quiet.
 	m_creatureSoundTimer -= dt;
@@ -1004,17 +1067,42 @@ void Game::renderPlaying(float dt, float aspect) {
 				printf("[Render] WARNING: no model for key '%s' (entity %s)\n",
 					modelKey.c_str(), e.typeId().c_str());
 		} else if (e.typeId() == EntityType::ItemEntity) {
-			float bobY = std::sin(e.getProp<float>(Prop::Age, 0.0f) * 3.0f) * 0.08f;
-			float spinYaw = e.getProp<float>(Prop::Age, 0.0f) * 90.0f;
+			// If pickup is pending, don't render the server entity at all.
+			// The pickup animation (below) renders the flying version.
+			if (m_pendingPickups.count(e.id())) return;
+
+			// Floating in place — bob + bounce + spin + XZ scatter (client-side)
+			unsigned int h = e.id() * 2654435761u; // hash for deterministic scatter
+			float bob = std::sin(m_globalTime * 2.5f + e.id() * 1.7f) * 0.06f;
+			float bounce = std::abs(std::sin(m_globalTime * 4.0f + e.id() * 2.3f)) * 0.04f;
+			float bobY = bob + bounce;
+			float spinYaw = m_globalTime * 90.0f + e.id() * 47.0f;
+			// Scatter: small XZ offset so stacked items don't overlap
+			float ox = ((h & 0xFF) / 255.0f - 0.5f) * 0.3f;
+			float oz = (((h >> 8) & 0xFF) / 255.0f - 0.5f) * 0.3f;
 			std::string itemType = e.getProp<std::string>(Prop::ItemType);
 			const BlockDef* idef = srv.blockRegistry().find(itemType);
 			glm::vec3 itemColor = idef ? idef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
 			BoxModel itemModel;
 			itemModel.parts.push_back({{0, 0.15f, 0}, {0.12f, 0.12f, 0.12f},
 				{itemColor.r, itemColor.g, itemColor.b, 1.0f}});
-			mr.draw(itemModel, vp, e.position + glm::vec3(0, bobY, 0), spinYaw, {});
+			mr.draw(itemModel, vp, e.position + glm::vec3(ox, bobY + 0.3f, oz), spinYaw, {});
 		}
 	});
+
+	// Render pickup animations (items flying toward player)
+	for (auto& pa : m_pickupAnims) {
+		float ease = pa.t * pa.t * (3.0f - 2.0f * pa.t);
+		glm::vec3 target = pe->position + glm::vec3(0, 0.8f, 0);
+		glm::vec3 drawPos = glm::mix(pa.startPos, target, ease);
+		float scale = 1.0f - ease * 0.5f;
+		float spinYaw = m_globalTime * 720.0f;
+		BoxModel flyModel;
+		float hs = 0.12f * scale;
+		flyModel.parts.push_back({{0, 0.15f, 0}, {hs, hs, hs},
+			{pa.color.r, pa.color.g, pa.color.b, 1.0f}});
+		mr.draw(flyModel, vp, drawPos, spinYaw, {});
+	}
 
 	// Selection circles under selected entities (RTS mode)
 	{

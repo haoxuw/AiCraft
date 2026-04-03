@@ -112,6 +112,9 @@ public:
 	glm::vec3 spawnPos() const override {
 		return m_server ? m_server->spawnPos() : glm::vec3(0, 10, 0);
 	}
+	float pickupRange() const override {
+		return m_server ? m_server->worldGenConfig().pickupRange : 1.5f;
+	}
 
 
 	const BlockRegistry& blockRegistry() const override {

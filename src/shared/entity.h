@@ -69,6 +69,7 @@ struct EntityDef {
 	int max_hp = 0;
 	float eye_height = 0.0f;     // eye position above feet (0 = use collision_box_max.y * 0.75)
 	bool playable = false;        // true = appears in character selection menu
+	float pickup_range = 1.5f;   // max distance to pick up items (0 = cannot pickup)
 
 	// Kind helpers
 	bool isLiving()    const { return kind == EntityKind::Living || kind == EntityKind::Creature || kind == EntityKind::Character; }

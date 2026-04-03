@@ -71,12 +71,7 @@ void GameServer::resolveActions(float dt) {
 					glm::vec3 dropPos = glm::vec3(bp) + glm::vec3(0.5f, 0.5f, 0.5f);
 					EntityId itemId = m_world->entities.spawn(EntityType::ItemEntity, dropPos,
 						{{Prop::ItemType, dropType}, {Prop::Count, 1}, {Prop::Age, 0.0f}});
-					Entity* ie = m_world->entities.get(itemId);
-					if (ie && actor) {
-						glm::vec3 toPlayer = (actor->position + glm::vec3(0, 0.5f, 0)) - dropPos;
-						float d = glm::length(toPlayer);
-						if (d > 0.1f) ie->velocity = glm::normalize(toPlayer) * std::min(d * 3.0f, 12.0f);
-					}
+					// Item floats at block center. Client initiates pickup when in range.
 				}
 			}
 
@@ -196,11 +191,45 @@ void GameServer::resolveActions(float dt) {
 		}
 
 		case ActionProposal::GrowCrop:
+			break;
 		case ActionProposal::Attack:
-		case ActionProposal::PickupItem:
+			break;
+		case ActionProposal::PickupItem: {
+			Entity* actor = m_world->entities.get(p.actorId);
+			Entity* item = m_world->entities.get(p.targetEntity);
+			if (!actor || !item) break;
+			if (!actor->inventory) break;
+			if (item->typeId() != EntityType::ItemEntity) break;
+			if (item->removed) break;
+
+			// Server validates max pickup distance (anti-cheat ceiling)
+			float dist = glm::length(item->position - actor->position);
+			float range = std::min(m_wgc.pickupRange, 5.0f); // server cap: 5 blocks
+			if (dist > range) {
+				// Denied — too far
+				std::string itemType = item->getProp<std::string>(Prop::ItemType);
+				if (m_callbacks.onPickupDenied)
+					m_callbacks.onPickupDenied(item->position, itemType);
+				break;
+			}
+
+			// Approved — collect item
+			std::string itemType = item->getProp<std::string>(Prop::ItemType);
+			int count = item->getProp<int>(Prop::Count, 1);
+			actor->inventory->add(itemType, count);
+			if (m_callbacks.onItemPickup)
+				m_callbacks.onItemPickup(actor->position, item->def().color);
+			if (m_callbacks.onPickupText)
+				m_callbacks.onPickupText(actor->position, itemType, count);
+			item->removed = true;
+
+			actor->inventory->autoPopulateHotbar();
+			if (m_callbacks.onInventoryChange)
+				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 			break;
 		}
-	}
-}
+		} // switch
+	} // for
+} // resolveActions
 
 } // namespace agentworld

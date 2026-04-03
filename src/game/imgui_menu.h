@@ -878,8 +878,8 @@ private:
 				ImGui::Text("Break Hits (Survival): 3");
 				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Items");
-				ImGui::Text("Pickup Radius: 1.2 blocks");
-				ImGui::Text("Attraction Radius: 3.0 blocks");
+				ImGui::SliderFloat("Max Pickup Range", &m_worldGenConfig.pickupRange, 0.5f, 5.0f, "%.1f blocks");
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "  (Server anti-cheat cap. Character pickup range from Python def.)");
 				ImGui::Text("Despawn Time: 300s");
 				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "TNT");

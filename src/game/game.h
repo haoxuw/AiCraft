@@ -149,6 +149,21 @@ private:
 	AudioManager m_audio;
 	float m_creatureSoundTimer = 3.0f;
 
+	// Items the client has sent a PickupItem request for — hidden from rendering immediately
+	std::unordered_set<EntityId> m_pendingPickups;
+
+	// Pickup animation: tracks items flying toward the player (client-side visual)
+	struct PickupAnim {
+		EntityId itemId;
+		glm::vec3 startPos;
+		glm::vec3 color;
+		std::string itemName;
+		int count;
+		float t = 0;         // 0→1 progress
+		float duration = 0.35f;
+	};
+	std::vector<PickupAnim> m_pickupAnims;
+
 	// Floating text (damage numbers, pickup notifications, Minecraft Dungeons style)
 	struct FloatingText {
 		glm::vec3 pos;

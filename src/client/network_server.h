@@ -220,6 +220,7 @@ public:
 	BehaviorInfo getBehaviorInfo(EntityId) override { return {}; }
 	float worldTime() const override { return m_worldTime; }
 	glm::vec3 spawnPos() const override { return m_spawnPos; }
+	float pickupRange() const override { return 1.5f; } // TODO: sync from server
 	const BlockRegistry& blockRegistry() const override { return m_blocks; }
 	ActionQueue& actionQueue() override { return m_actions; }
 

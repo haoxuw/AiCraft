@@ -80,6 +80,7 @@ public:
 	// World state
 	virtual float worldTime() const = 0;
 	virtual glm::vec3 spawnPos() const = 0;
+	virtual float pickupRange() const = 0;
 
 	// Block registry (for HUD, raycast)
 	virtual const BlockRegistry& blockRegistry() const = 0;

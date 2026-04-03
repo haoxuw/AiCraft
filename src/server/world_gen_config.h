@@ -40,6 +40,9 @@ struct WorldGenConfig {
 
 	// Per-creature starting items (typeId → [(itemId, count), ...])
 	std::unordered_map<std::string, std::vector<std::pair<std::string, int>>> startingItems;
+
+	// Gameplay tuning
+	float pickupRange = 1.5f;  // how close player must be to pick up items (blocks)
 };
 
 } // namespace agentworld

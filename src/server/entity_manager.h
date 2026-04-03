@@ -172,35 +172,20 @@ public:
 			e.velocity = result.velocity;
 			e.onGround = result.onGround;
 
-			// Item entity: bob offset + despawn
+			// Item entity: freeze on ground (no bouncing), despawn after timeout
 			if (e.typeId() == EntityType::ItemEntity) {
+				if (e.onGround) {
+					e.velocity = {0, 0, 0}; // stop moving once landed
+				}
 				float age = e.getProp<float>(Prop::Age);
-				e.position.y += std::sin(age * 3.0f) * 0.003f;
 				if (age > e.getProp<float>(Prop::DespawnTime, 300.0f))
 					e.removed = true;
 			}
 		}
 	}
 
-	// Attract item entities toward a position. Returns items close enough to pick up.
-	// Velocity is SET (not added) so the attraction overcomes gravity.
-	std::vector<Entity*> attractItemsToward(glm::vec3 pos, float attractRadius = 6.0f, float pickupRadius = 1.2f, float dt = 0.016f) {
-		std::vector<Entity*> picked;
-		for (auto& [id, e] : m_entities) {
-			if (e->removed || e->typeId() != EntityType::ItemEntity) continue;
-			float dist = glm::length(e->position - pos);
-			if (dist < pickupRadius) {
-				picked.push_back(e.get());
-			} else if (dist < attractRadius) {
-				// Teleport item toward player each tick (bypass physics/gravity issues)
-				glm::vec3 dir = glm::normalize(pos - e->position);
-				float step = std::min(8.0f * dt, dist * 0.5f); // move up to 8 units/sec
-				e->position = e->position + dir * step;
-				e->velocity = dir * 4.0f; // gentle drift in same direction
-			}
-		}
-		return picked;
-	}
+	// Item pickup is client-initiated via ActionProposal::PickupItem.
+	// NPC pickup is handled by Python behavior code sending the same action.
 
 	void forEach(std::function<void(Entity&)> fn) {
 		for (auto& [id, e] : m_entities)

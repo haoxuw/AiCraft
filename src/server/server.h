@@ -43,6 +43,8 @@ struct ServerCallbacks {
 	// Floating text triggers (client-only HUD effects)
 	std::function<void(glm::vec3 pos, const std::string& name, int count)> onPickupText;
 	std::function<void(glm::vec3 pos, const std::string& blockName)> onBreakText;
+	// Pickup denied — client renders "X" text
+	std::function<void(glm::vec3 pos, const std::string& name)> onPickupDenied;
 };
 
 struct ServerConfig {
@@ -229,10 +231,20 @@ public:
 		};
 		m_world->entities.gatherDecisions(dt, m_world->actions, blockQuery);
 
-		// Phase 1: Resolve all proposals
+		// Phase 1: Resolve all proposals (may set entity.removed = true)
 		resolveActions(dt);
 
-		// Physics for all entities
+		// Broadcast entity removals BEFORE stepPhysics erases them from the map
+		if (m_callbacks.onEntityRemove) {
+			m_world->entities.forEachIncludingRemoved([&](Entity& e) {
+				if (e.removed && !e.removalBroadcast) {
+					m_callbacks.onEntityRemove(e.id());
+					e.removalBroadcast = true;
+				}
+			});
+		}
+
+		// Physics for all entities (purges removed entities from the map)
 		m_world->entities.stepPhysics(dt, solidFn);
 
 		// Active block ticking (TNT, wheat, wire)
@@ -247,46 +259,9 @@ public:
 			m_activeBlockTimer = 0;
 		}
 
-		// Broadcast entity removals BEFORE physics purges them
-		if (m_callbacks.onEntityRemove) {
-			m_world->entities.forEach([&](Entity& e) {
-				// This iterates non-removed only, but items about to be removed
-				// have item->removed = true already from pickup below or combat
-			});
-			// Check for removed entities directly
-			m_world->entities.forEachIncludingRemoved([&](Entity& e) {
-				if (e.removed && !e.removalBroadcast) {
-					m_callbacks.onEntityRemove(e.id());
-					e.removalBroadcast = true;
-				}
-			});
-		}
-
-		// Item pickup — only player-controlled entities attract items.
-		// Animals have inventory (for loot/trading) but don't auto-pickup.
-		m_world->entities.forEach([&](Entity& e) {
-			if (!e.inventory) return;
-			if (e.typeId() != EntityType::Player) return;
-			glm::vec3 center = e.position;
-			auto pickups = m_world->entities.attractItemsToward(center, 6.0f, 1.2f, dt);
-			bool inventoryChanged = false;
-			for (auto* item : pickups) {
-				std::string itemType = item->getProp<std::string>(Prop::ItemType);
-				int count = item->getProp<int>(Prop::Count, 1);
-				e.inventory->add(itemType, count);
-				if (m_callbacks.onItemPickup)
-					m_callbacks.onItemPickup(item->position, {0.8f, 0.9f, 1.0f});
-				if (m_callbacks.onPickupText)
-					m_callbacks.onPickupText(item->position, itemType, count);
-				item->removed = true;
-				inventoryChanged = true;
-			}
-			if (inventoryChanged) {
-				e.inventory->autoPopulateHotbar();
-				if (m_callbacks.onInventoryChange)
-					m_callbacks.onInventoryChange(e.id(), *e.inventory);
-			}
-		});
+		// Item pickup is CLIENT-INITIATED: clients send PickupItem actions.
+		// Server validates and executes in resolveActions().
+		// NPC pickup is handled by Python behavior → PickupItem action.
 
 		// Advance world time
 		m_worldTime += (1.0f / 600.0f) * dt;
@@ -349,6 +324,7 @@ public:
 	void setWorldTime(float t) { m_worldTime = t; }
 	glm::vec3 spawnPos() const { return m_spawnPos; }
 	void setSpawnPos(glm::vec3 p) { m_spawnPos = p; }
+	const WorldGenConfig& worldGenConfig() const { return m_wgc; }
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;

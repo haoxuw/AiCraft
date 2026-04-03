@@ -102,6 +102,28 @@ static void moveAndTick(LocalServer& srv, EntityId actor, glm::vec3 vel, bool ju
 	srv.tick(1.0f / 60.0f);
 }
 
+// Send PickupItem actions for all nearby item entities, then tick.
+static int pickupNearbyItems(LocalServer& srv, EntityId actor, float range = 1.5f) {
+	Entity* p = srv.getEntity(actor);
+	if (!p) return 0;
+	int sent = 0;
+	srv.forEachEntity([&](Entity& e) {
+		if (e.typeId() != EntityType::ItemEntity) return;
+		if (e.removed) return;
+		float dist = glm::length(e.position - p->position);
+		if (dist < range) {
+			ActionProposal a;
+			a.type = ActionProposal::PickupItem;
+			a.actorId = actor;
+			a.targetEntity = e.id();
+			srv.sendAction(a);
+			sent++;
+		}
+	});
+	if (sent > 0) srv.tick(1.0f / 60.0f);
+	return sent;
+}
+
 // Send a BreakBlock action and tick one frame.
 static void breakAndTick(LocalServer& srv, EntityId actor, glm::ivec3 pos) {
 	ActionProposal p;
@@ -359,8 +381,9 @@ static std::string t12_item_pickup_after_break() {
 	// Break block — item spawns near player's feet
 	breakAndTick(*srv, pid, blockPos);
 
-	// Tick more frames to let item get attracted and picked up
-	tickN(*srv, 20);
+	// Client-initiated pickup: scan and send PickupItem action
+	pickupNearbyItems(*srv, pid, 3.0f);
+	tickN(*srv, 5);
 
 	// Total items in inventory should be >= before (item picked up)
 	// We compare total count (sum of all item counts)
@@ -650,7 +673,9 @@ static std::string t22_pickup_fires_onpickuptext() {
 	};
 
 	breakAndTick(*srv, pid, blockPos);
-	if (!pickupFired) tickN(*srv, 5); // give a few more ticks in case item drifted slightly
+	// Client-initiated: send pickup action for nearby items
+	pickupNearbyItems(*srv, pid, 3.0f);
+	if (!pickupFired) tickN(*srv, 5);
 
 	if (!pickupFired) return "onPickupText was not called after item pickup";
 	return "";
@@ -684,8 +709,9 @@ static std::string t22b_break_underfoot_fires_callbacks() {
 	};
 
 	breakAndTick(*srv, pid, blockPos);
-	// Item spawns underfoot — should be attracted and picked up within a few ticks
-	tickN(*srv, 10);
+	// Client-initiated pickup
+	pickupNearbyItems(*srv, pid, 3.0f);
+	tickN(*srv, 5);
 
 	std::string failures;
 	if (!pickupTextFired) failures += "onPickupText not called; ";
@@ -706,54 +732,33 @@ static std::string t22c_item_reaches_player() {
 
 	tickN(*srv, 30);
 
-	// Break a block 3 blocks in front of the player (at distance — not directly under feet)
+	// Break a block 2 blocks away (within reach but outside pickup range)
 	glm::vec3 pos = p->position;
-	glm::ivec3 blockPos = {(int)std::floor(pos.x) + 3, (int)std::floor(pos.y) - 1,
+	glm::ivec3 blockPos = {(int)std::floor(pos.x) + 2, (int)std::floor(pos.y) - 1,
 	                       (int)std::floor(pos.z)};
 
 	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
 	if (bid == BLOCK_AIR) return "no block at target position";
 
-	// Count items before
-	int inv_before = p->inventory ? p->inventory->distinctCount() : 0;
-
 	breakAndTick(*srv, pid, blockPos);
 
-	// Count item entities
 	int itemCount = countByType(*srv, EntityType::ItemEntity);
-	printf("\n    [DEBUG] item entities after break: %d", itemCount);
+	if (itemCount == 0) return "no item entity spawned after break";
 
-	// Tick 120 frames (2 seconds) to let item reach player
+	// Item is ~2.5 blocks away. Walk player toward it.
+	for (int i = 0; i < 30; i++)
+		moveAndTick(*srv, pid, {4.0f, 0, 0}); // walk east toward item
+
+	// Now try pickup — should be in range
 	bool pickupTextFired = false;
-	srv->server()->callbacks().onPickupText = [&](glm::vec3, const std::string& name, int count) {
+	srv->server()->callbacks().onPickupText = [&](glm::vec3, const std::string&, int) {
 		pickupTextFired = true;
-		printf("\n    [DEBUG] onPickupText: +%d %s", count, name.c_str());
 	};
-
-	for (int i = 0; i < 120; i++) {
-		srv->tick(1.0f / 60.0f);
-		// Check if item was picked up
-		int remaining = countByType(*srv, EntityType::ItemEntity);
-		if (remaining == 0 && itemCount > 0) {
-			printf("\n    [DEBUG] item collected after %d ticks (%.1fs)", i + 1, (i + 1) / 60.0f);
-			break;
-		}
-	}
+	pickupNearbyItems(*srv, pid, 2.0f);
+	tickN(*srv, 5);
 
 	int remaining = countByType(*srv, EntityType::ItemEntity);
-	if (remaining > 0) {
-		// Item still floating — check where it is
-		srv->forEachEntity([&](Entity& e) {
-			if (e.typeId() == EntityType::ItemEntity) {
-				float dist = glm::length(e.position - p->position);
-				printf("\n    [DEBUG] item at (%.1f,%.1f,%.1f), player at (%.1f,%.1f,%.1f), dist=%.1f",
-					e.position.x, e.position.y, e.position.z,
-					p->position.x, p->position.y, p->position.z, dist);
-			}
-		});
-		return "item entity not picked up after 2 seconds (still " + std::to_string(remaining) + " items)";
-	}
-
+	if (remaining > 0) return "item not picked up after walking to it";
 	if (!pickupTextFired) return "item collected but onPickupText not called";
 	return "";
 }
