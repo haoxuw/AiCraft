@@ -1320,6 +1320,7 @@ void Game::updateEntityInspect(float dt, float aspect) {
 
 	// Keep server running (other clients / AI behaviors shouldn't freeze)
 	m_server->tick(dt);
+	if (!m_server->isConnected()) { m_state = GameState::MENU; return; }
 
 	// Still render the world in background
 	m_globalTime += dt;
@@ -1428,6 +1429,7 @@ void Game::updateCodeEditor(float dt, float aspect) {
 
 	// Keep server running (other clients / AI behaviors shouldn't freeze)
 	m_server->tick(dt);
+	if (!m_server->isConnected()) { m_state = GameState::MENU; return; }
 
 	m_globalTime += dt;
 
@@ -1502,6 +1504,7 @@ void Game::updatePaused(float dt, float aspect) {
 
 	// Keep ticking the server so multiplayer doesn't freeze
 	m_server->tick(dt);
+	if (!m_server->isConnected()) { m_state = GameState::MENU; return; }
 
 	// Render the world behind the overlay (full render with HUD)
 	renderPlaying(dt, aspect);
@@ -1570,7 +1573,8 @@ void Game::updatePaused(float dt, float aspect) {
 	ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 	ImGui::SetCursorPosX(20);
 	if (ImGui::Button("Quit to Menu", {btnW, 36})) {
-		m_preMenuState = m_state;
+		// m_preMenuState already holds the pre-pause gameplay state (SURVIVAL/ADMIN)
+		// — don't overwrite it with PAUSED or Resume from menu would get stuck
 		m_state = GameState::MENU;
 		m_imguiMenu.setGameRunning(true);
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
