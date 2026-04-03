@@ -1032,6 +1032,122 @@ void Game::renderPlaying(float dt, float aspect) {
 	// ImGui overlays (equipment, FPS)
 	m_ui.beginFrame();
 
+	// ── ImGui Hotbar (Roboto font + rotating 3D block preview) ──
+	{
+		ImDrawList* dl = ImGui::GetForegroundDrawList();
+		float ww = (float)m_window.width(), wh = (float)m_window.height();
+		int slots = Inventory::HOTBAR_SLOTS;
+		float slotPx = 60.0f;          // slot size in pixels
+		float gapPx = 4.0f;
+		float totalW = slots * (slotPx + gapPx) - gapPx;
+		float startX = (ww - totalW) * 0.5f;
+		float startY = wh - slotPx - 12.0f;
+
+		// Backdrop panel
+		float pad = 8.0f;
+		dl->AddRectFilled(
+			{startX - pad, startY - pad},
+			{startX + totalW + pad, startY + slotPx + pad},
+			IM_COL32(16, 14, 10, 185), 8.0f);
+		dl->AddRect(
+			{startX - pad, startY - pad},
+			{startX + totalW + pad, startY + slotPx + pad},
+			IM_COL32(90, 72, 45, 170), 8.0f, 0, 1.5f);
+
+		Inventory emptyInv;
+		const Inventory& inv = pe->inventory ? *pe->inventory : emptyInv;
+		auto& blocks = srv.blockRegistry();
+
+		for (int i = 0; i < slots; i++) {
+			float sx = startX + i * (slotPx + gapPx);
+			float sy = startY;
+			bool selected = (i == selectedSlot);
+
+			// Slot bg
+			ImU32 slotBg = selected ? IM_COL32(72, 58, 30, 230) : IM_COL32(28, 24, 18, 210);
+			dl->AddRectFilled({sx, sy}, {sx + slotPx, sy + slotPx}, slotBg, 4.0f);
+
+			// Selection glow
+			if (selected) {
+				dl->AddRect({sx - 2, sy - 2}, {sx + slotPx + 2, sy + slotPx + 2},
+					IM_COL32(225, 175, 50, 230), 5.0f, 0, 2.5f);
+			} else {
+				dl->AddRect({sx, sy}, {sx + slotPx, sy + slotPx},
+					IM_COL32(65, 52, 36, 140), 4.0f, 0, 1.0f);
+			}
+
+			// Item content: rotating isometric block
+			std::string itemId = inv.hotbar(i);
+			int itemCount = inv.hotbarCount(i);
+			if (!itemId.empty() && itemCount > 0) {
+				const BlockDef* bdef = blocks.find(itemId);
+				glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
+
+				// Rotating isometric cube
+				float cx = sx + slotPx * 0.5f;
+				float cy = sy + slotPx * 0.40f;
+				float sz = slotPx * 0.34f;
+				float angle = m_globalTime * 0.8f + i * 0.5f; // slow rotation, offset per slot
+
+				// 8 corners of unit cube
+				float ca = std::cos(angle), sa = std::sin(angle);
+				ImVec2 proj[8];
+				float cubeCorners[8][3] = {
+					{-1,-1,-1},{1,-1,-1},{1,-1,1},{-1,-1,1}, // bottom
+					{-1, 1,-1},{1, 1,-1},{1, 1,1},{-1, 1,1}, // top
+				};
+				for (int v = 0; v < 8; v++) {
+					float rx = cubeCorners[v][0]*ca - cubeCorners[v][2]*sa;
+					float rz = cubeCorners[v][0]*sa + cubeCorners[v][2]*ca;
+					float ry = cubeCorners[v][1];
+					proj[v] = {cx + (rx - rz) * sz * 0.5f,
+					           cy - (rx + rz) * sz * 0.25f - ry * sz * 0.5f};
+				}
+
+				// Determine visible side faces
+				auto drawFace = [&](int a, int b, int c2, int d, float shade) {
+					ImVec2 pts[] = {proj[a], proj[b], proj[c2], proj[d]};
+					ImU32 col = IM_COL32(
+						(int)(c.r * shade * 255), (int)(c.g * shade * 255),
+						(int)(c.b * shade * 255), 230);
+					dl->AddConvexPolyFilled(pts, 4, col);
+					dl->AddPolyline(pts, 4, IM_COL32(0,0,0,80), true, 1.0f);
+				};
+
+				// Top face (always visible)
+				drawFace(7, 6, 5, 4, 1.0f);
+
+				// Side faces: check normals
+				float nx_r = ca + sa;    // dot(right_normal, iso_camera)
+				float nx_f = -sa + ca;   // dot(front_normal, iso_camera)
+				if (nx_r > 0) drawFace(1, 2, 6, 5, 0.72f);  // right face
+				else          drawFace(3, 0, 4, 7, 0.72f);    // left face
+				if (nx_f > 0) drawFace(2, 3, 7, 6, 0.85f);   // front face
+				else          drawFace(0, 1, 5, 4, 0.85f);    // back face
+
+				// Stack count (large, Roboto, bottom-right with shadow)
+				if (itemCount > 1) {
+					char buf[8]; snprintf(buf, sizeof(buf), "%d", itemCount);
+					ImFont* bigFont = ImGui::GetIO().Fonts->Fonts.Size > 1
+						? ImGui::GetIO().Fonts->Fonts[1] : ImGui::GetFont();
+					float tx = sx + slotPx - 8.0f;
+					float ty = sy + slotPx - 6.0f;
+					// Shadow
+					dl->AddText(bigFont, 26.0f, {tx - strlen(buf)*13.0f + 1.5f, ty - 22.0f},
+						IM_COL32(0,0,0,200), buf);
+					// Main text
+					dl->AddText(bigFont, 26.0f, {tx - strlen(buf)*13.0f, ty - 23.0f},
+						IM_COL32(255,255,255,240), buf);
+				}
+			}
+
+			// Key label (top-left, small)
+			char key[4]; snprintf(key, sizeof(key), "%d", (i + 1) % 10);
+			dl->AddText(ImGui::GetFont(), 14.0f, {sx + 4, sy + 2},
+				IM_COL32(140, 130, 110, 130), key);
+		}
+	}
+
 	// Equipment/Inventory UI ([I] to toggle)
 	if (pe->inventory) {
 		m_equipUI.render(*pe->inventory, m_server->blockRegistry(),

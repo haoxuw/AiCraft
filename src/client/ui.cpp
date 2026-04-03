@@ -13,12 +13,15 @@ bool UI::init(GLFWwindow* window) {
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-	// Load Roboto font (Google's friendly, readable font)
+	// Load Roboto font at two sizes: UI (18px) and HUD (26px bold counts)
 	ImFont* font = io.Fonts->AddFontFromFileTTF("fonts/Roboto-Medium.ttf", 18.0f);
+	ImFont* fontHUD = io.Fonts->AddFontFromFileTTF("fonts/Roboto-Medium.ttf", 26.0f);
 	if (!font) {
 		printf("[UI] Custom font not found, using ImGui default\n");
 		io.Fonts->AddFontDefault();
+		io.Fonts->AddFontDefault(); // dummy for HUD slot
 	}
+	(void)fontHUD; // accessed via io.Fonts->Fonts[1]
 
 	// Google-inspired bright, clean theme
 	ImGui::StyleColorsLight();

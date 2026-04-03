@@ -49,7 +49,7 @@ void Camera::processMouse(GLFWwindow* window) {
 		player.yaw = lookYaw;
 		break;
 	case CameraMode::ThirdPerson:
-		orbitYaw += dx; orbitPitch += dy;  // inverted Y: mouse up → camera rises
+		orbitYaw += dx; orbitPitch -= dy;  // Minecraft-style: mouse up → look up (camera lowers)
 		orbitPitch = std::clamp(orbitPitch, 5.0f, 80.0f);
 		// Don't set player.yaw here — character faces movement direction,
 		// handled by gameplay.cpp smooth turn logic (like Fortnite)
