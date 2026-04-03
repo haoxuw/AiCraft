@@ -1401,39 +1401,44 @@ void Game::updateCodeEditor(float dt, float aspect) {
 void Game::updatePaused(float dt, float aspect) {
 	if (!m_server) { m_state = GameState::MENU; return; }
 
-	// Keep ticking the server so multiplayer doesn't freeze
+	// Game keeps running (DST/Minecraft multiplayer style — no pause)
 	m_server->tick(dt);
 	if (!m_server->isConnected()) { m_state = GameState::MENU; return; }
 
-	// Render the world behind the overlay (full render with HUD)
+	// Render the world behind the overlay
 	renderPlaying(dt, aspect);
 
-	// Pause overlay on top — new ImGui frame
+	// Esc again = back to game (check before ImGui consumes input)
+	bool escPressed = m_controls.pressed(Action::MenuBack);
+
+	// Game menu overlay
 	m_ui.beginFrame();
 	ImDrawList* bg = ImGui::GetBackgroundDrawList();
 	bg->AddRectFilled({0, 0}, {(float)m_window.width(), (float)m_window.height()},
-		IM_COL32(0, 0, 0, 140));
+		IM_COL32(0, 0, 0, 120));
 
-	// Pause panel
-	float pw = 380, ph = 340;
+	float pw = 340, ph = 360;
 	float px = (m_window.width() - pw) * 0.5f;
 	float py = (m_window.height() - ph) * 0.5f;
 
 	ImGui::SetNextWindowPos({px, py});
 	ImGui::SetNextWindowSize({pw, ph});
-	ImGui::Begin("##pause", nullptr,
+	ImGui::Begin("##gamemenu", nullptr,
 		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
 		ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
 
 	// Title
-	ImGui::SetCursorPosX((pw - ImGui::CalcTextSize("PAUSED").x) * 0.5f);
-	ImGui::TextColored({0.95f, 0.85f, 0.5f, 1.0f}, "PAUSED");
+	float titleW = ImGui::CalcTextSize("Game Menu").x;
+	ImGui::SetCursorPosX((pw - titleW) * 0.5f);
+	ImGui::TextColored({0.95f, 0.85f, 0.5f, 1.0f}, "Game Menu");
 	ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
 	float btnW = pw - 40;
-	ImGui::SetCursorPosX(20);
+	auto centerBtn = [&]() { ImGui::SetCursorPosX(20); };
 
-	if (ImGui::Button("Resume", {btnW, 36})) {
+	// Back to Game
+	centerBtn();
+	if (ImGui::Button("Back to Game", {btnW, 38}) || escPressed) {
 		m_state = m_preMenuState;
 		bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
 		                    m_camera.mode == CameraMode::ThirdPerson);
@@ -1442,51 +1447,37 @@ void Game::updatePaused(float dt, float aspect) {
 	}
 	ImGui::Spacing();
 
-	if (ImGui::Button("Save World", {btnW, 36})) {
-		saveCurrentWorld();
-		printf("[Game] World saved.\n");
-	}
-	ImGui::Spacing();
-
-	// ── Graphics settings inline ──
-	if (ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
+	// Options
+	centerBtn();
+	if (ImGui::CollapsingHeader("Options...")) {
 		ImGui::SliderFloat("FOV", &m_camera.fov, 50.0f, 120.0f, "%.0f");
 		ImGui::SliderInt("Render Distance", &m_renderDistance, 4, 16);
-		if (ImGui::Checkbox("VSync", &m_vsync)) {
+		if (ImGui::Checkbox("VSync", &m_vsync))
 			glfwSwapInterval(m_vsync ? 1 : 0);
-		}
-	}
-
-	// ── Audio settings inline ──
-	if (ImGui::CollapsingHeader("Audio")) {
+		ImGui::Spacing();
 		float master = m_audio.masterVolume();
-		if (ImGui::SliderFloat("Master", &master, 0.0f, 1.0f, "%.0f%%")) {
+		if (ImGui::SliderFloat("Master Volume", &master, 0.0f, 1.0f, "%.0f%%"))
 			m_audio.setMasterVolume(master);
-		}
 		float music = m_audio.musicVolume();
-		if (ImGui::SliderFloat("Music", &music, 0.0f, 1.0f, "%.0f%%")) {
+		if (ImGui::SliderFloat("Music Volume", &music, 0.0f, 1.0f, "%.0f%%"))
 			m_audio.setMusicVolume(music);
-		}
 	}
 
 	ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-	ImGui::SetCursorPosX(20);
-	if (ImGui::Button("Quit to Menu", {btnW, 36})) {
-		// m_preMenuState already holds the pre-pause gameplay state (SURVIVAL/ADMIN)
-		// — don't overwrite it with PAUSED or Resume from menu would get stuck
-		m_state = GameState::MENU;
-		m_imguiMenu.setGameRunning(true);
-		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-	}
 
-	// Esc again = resume
-	if (m_controls.pressed(Action::MenuBack)) {
-		m_state = m_preMenuState;
-		bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
-		                    m_camera.mode == CameraMode::ThirdPerson);
-		glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
-			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+	// Disconnect / Quit to Menu
+	centerBtn();
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.78f, 0.25f, 0.25f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+	if (ImGui::Button("Disconnect", {btnW, 38})) {
+		m_state = GameState::MENU;
+		m_imguiMenu.setGameRunning(false); // disconnected — no game to resume
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		m_server->disconnect();
+		m_server.reset();
 	}
+	ImGui::PopStyleColor(3);
 
 	ImGui::End();
 	m_ui.endFrame();

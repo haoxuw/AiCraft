@@ -133,6 +133,8 @@ public:
 			ImGui::Spacing();
 			if (navButton("Handbook", Page::Handbook)) m_page = Page::Handbook;
 			ImGui::Spacing();
+			if (navButton("Configurables", Page::Configurables)) m_page = Page::Configurables;
+			ImGui::Spacing();
 			if (navButton("Settings", Page::Settings)) m_page = Page::Settings;
 
 			// Quit at bottom
@@ -169,6 +171,9 @@ public:
 			case Page::Handbook:
 				renderHandbookContent(registry, W - sideW, contentH);
 				break;
+			case Page::Configurables:
+				renderConfigurablesContent(W - sideW);
+				break;
 			case Page::Settings:
 				renderSettingsContent(W - sideW);
 				break;
@@ -191,7 +196,8 @@ public:
 	void setPage(int p) {
 		if (p == 0) m_page = Page::Play;
 		else if (p == 1) m_page = Page::Handbook;
-		else if (p == 2) m_page = Page::Settings;
+		else if (p == 2) m_page = Page::Configurables;
+		else if (p == 3) m_page = Page::Settings;
 	}
 	void setGameRunning(bool running) { m_gameRunning = running; }
 
@@ -206,7 +212,7 @@ public:
 	void setAudio(AudioManager* a) { m_audio = a; }
 
 private:
-	enum class Page { Play, Handbook, Settings };
+	enum class Page { Play, Handbook, Configurables, Settings };
 	Page m_page = Page::Play;
 	HandbookUI m_handbook;
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;
@@ -646,6 +652,103 @@ private:
 		ImGui::BeginChild("HandbookEmbed", ImVec2(contentW - 64, contentH - 100), false);
 		m_handbook.renderAllContent(registry);
 		ImGui::EndChild();
+	}
+
+	void renderConfigurablesContent(float contentW) {
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+		ImGui::SetWindowFontScale(1.4f);
+		ImGui::Text("Configurables");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+
+		ImGui::Spacing();
+		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
+			"Gameplay constants applied to new worlds. Modify these to change game rules.");
+		ImGui::Spacing(); ImGui::Spacing();
+
+		auto& wgc = m_worldGenConfig;
+
+		if (ImGui::BeginTabBar("ConfigTabs")) {
+			// ── World Generation ──
+			if (ImGui::BeginTabItem("World Generation")) {
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Terrain");
+				ImGui::SliderFloat("Terrain Scale", &wgc.terrainScale, 0.3f, 3.0f, "%.2f");
+				ImGui::SliderInt("Water Level", &wgc.waterLevel, -10, 10);
+				ImGui::SliderInt("Snow Threshold", &wgc.snowThreshold, 5, 30);
+				ImGui::SliderInt("Dirt Depth", &wgc.dirtDepth, 1, 8);
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Trees");
+				ImGui::SliderFloat("Tree Density", &wgc.treeDensity, 0.0f, 0.15f, "%.3f");
+				ImGui::SliderInt("Trunk Height", &wgc.trunkHeightBase, 3, 15);
+				ImGui::SliderInt("Trunk Variation", &wgc.trunkHeightVariation, 0, 8);
+				ImGui::SliderInt("Leaf Radius", &wgc.leafRadius, 1, 6);
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Village");
+				ImGui::SliderInt("Village Clearing", &wgc.villageClearingRadius, 10, 50);
+				ImGui::SliderInt("House Height", &wgc.houseHeight, 4, 12);
+				ImGui::SliderInt("House Count", &wgc.houseCount, 0, 8);
+				ImGui::EndTabItem();
+			}
+
+			// ── Creatures ──
+			if (ImGui::BeginTabItem("Creatures")) {
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Spawn Counts");
+				for (auto& mob : wgc.mobs) {
+					std::string label = mob.typeId;
+					auto colon = label.find(':');
+					if (colon != std::string::npos) label = label.substr(colon + 1);
+					if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
+					ImGui::SliderInt(label.c_str(), &mob.count, 0, 20);
+				}
+				ImGui::SliderFloat("Spawn Radius", &wgc.mobSpawnRadius, 5.0f, 60.0f, "%.0f");
+				ImGui::EndTabItem();
+			}
+
+			// ── Gameplay Rules ──
+			if (ImGui::BeginTabItem("Gameplay Rules")) {
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
+					"These constants are currently compiled into the C++ engine.");
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
+					"Future: will be loaded from Python at server startup.");
+				ImGui::Spacing();
+
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Block Interaction");
+				ImGui::Text("Break/Place Distance: 8.0 blocks");
+				ImGui::Text("Break Hits (Survival): 3");
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Items");
+				ImGui::Text("Pickup Radius: 1.2 blocks");
+				ImGui::Text("Attraction Radius: 3.0 blocks");
+				ImGui::Text("Despawn Time: 300s");
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "TNT");
+				ImGui::Text("Fuse: 60 ticks (1s)");
+				ImGui::Text("Explosion Radius: 3 blocks");
+				ImGui::Text("Chain Fuse: 20 ticks");
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Entity AI");
+				ImGui::Text("Decision Rate: 4 Hz (0.25s)");
+				ImGui::Text("Block Scan Radius: 30 blocks");
+				ImGui::Text("Turn Speed: 4 deg/frame");
+
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Physics");
+				ImGui::Text("Gravity: 20.0");
+				ImGui::Text("Step Height: 1.0 blocks");
+				ImGui::Text("Tick Rate: 60 TPS");
+				ImGui::EndTabItem();
+			}
+
+			ImGui::EndTabBar();
+		}
 	}
 
 	void renderSettingsContent(float contentW) {
