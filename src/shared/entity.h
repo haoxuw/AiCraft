@@ -66,7 +66,7 @@ public:
 	Entity(EntityId id, const std::string& typeId, const EntityDef& def)
 		: m_id(id), m_typeId(typeId), m_def(&def)
 		, m_props(def.default_props) {
-		if (def.has_inventory)
+		if (def.has_inventory || def.max_hp > 0)
 			inventory = std::make_unique<Inventory>();
 	}
 
