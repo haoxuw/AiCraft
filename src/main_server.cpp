@@ -19,6 +19,7 @@
 #include <chrono>
 #include <thread>
 #include <csignal>
+#include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <fcntl.h>
@@ -138,9 +139,30 @@ static void interactiveWorldSelect(agentworld::ServerConfig& config,
 int main(int argc, char** argv) {
 	setvbuf(stdout, nullptr, _IONBF, 0);
 	setvbuf(stderr, nullptr, _IONBF, 0);
-	printf("=== AgentWorld Dedicated Server ===\n");
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
+
+	// Server log file: /tmp/agentica_log_{port}.log
+	// Determine port from args first (default 7777)
+	int logPort = 7777;
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
+			logPort = atoi(argv[i + 1]);
+	}
+	char logPath[256];
+	snprintf(logPath, sizeof(logPath), "/tmp/agentica_log_%d.log", logPort);
+	FILE* logFile = fopen(logPath, "w");
+	if (logFile) {
+		// Duplicate to both file and original stdout
+		// Redirect stdout to log file; stderr stays on console
+		setvbuf(logFile, nullptr, _IONBF, 0);
+		// Redirect stdout to log file
+		dup2(fileno(logFile), fileno(stdout));
+		// Also write startup info to stderr so console sees it
+		fprintf(stderr, "[Server] Logging to %s\n", logPath);
+	}
+
+	printf("=== AgentWorld Dedicated Server ===\n");
 
 	agentworld::pythonBridge().init("python");
 
@@ -389,11 +411,15 @@ int main(int argc, char** argv) {
 		}
 
 		// Broadcast entity state (throttled: 20 Hz)
+		// Skip clients still receiving initial chunks — their TCP buffer
+		// is full of chunk data and sendMessage() would fail silently.
 		static float broadcastTimer = 0;
 		broadcastTimer += dt;
 		if (broadcastTimer >= agentworld::ServerTuning::broadcastInterval && !clients.empty()) {
 			broadcastTimer = 0;
 			for (auto& [cid, client] : clients) {
+				if (!client.pendingChunks.empty()) continue; // still loading
+
 				server.world().entities.forEach([&](agentworld::Entity& e) {
 					agentworld::net::EntityState es;
 					es.id = e.id();
@@ -463,6 +489,14 @@ int main(int argc, char** argv) {
 			       tickCount, tickCount / statusTimer,
 			       server.world().entities.count(), moving,
 			       clients.size());
+			for (auto& [cid, c] : clients) {
+				auto* pe = server.world().entities.get(c.playerId);
+				if (pe) {
+					printf("[Server]   Client %u (player %u): pos=(%.1f,%.1f,%.1f) vel=(%.1f,%.1f,%.1f) ground=%d\n",
+						cid, c.playerId, pe->position.x, pe->position.y, pe->position.z,
+						pe->velocity.x, pe->velocity.y, pe->velocity.z, pe->onGround);
+				}
+			}
 			tickCount = 0;
 			statusTimer = 0;
 		}

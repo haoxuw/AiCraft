@@ -145,6 +145,9 @@ private:
 	GameState m_preMenuState = GameState::SURVIVAL;
 	bool m_showInventory = false;
 
+	// Server log file (local server → /tmp/agentica_log_local.log)
+	FILE* m_serverLog = nullptr;
+
 	// Audio
 	AudioManager m_audio;
 	float m_creatureSoundTimer = 3.0f;

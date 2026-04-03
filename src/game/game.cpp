@@ -234,6 +234,7 @@ void Game::shutdown() {
 	// Save world on quit
 	saveCurrentWorld();
 
+	if (m_serverLog) { fclose(m_serverLog); m_serverLog = nullptr; }
 	m_audio.shutdown();
 	m_ui.shutdown();
 	m_hud.shutdown();
@@ -522,6 +523,18 @@ void Game::enterGame(int templateIndex, GameState targetState, const WorldGenCon
 	// enterGame always creates a local server. To join a remote server,
 	// use joinServer() directly (from the server browser UI).
 	printf("[Game] Starting local server\n");
+
+	// Open server log file: /tmp/agentica_log_local.log
+	if (m_serverLog) { fclose(m_serverLog); m_serverLog = nullptr; }
+	m_serverLog = fopen("/tmp/agentica_log_local.log", "w");
+	if (m_serverLog) {
+		setvbuf(m_serverLog, nullptr, _IONBF, 0);
+		fprintf(m_serverLog, "=== AgentWorld Local Server ===\n");
+		fprintf(m_serverLog, "seed=%d template=%d creative=%d\n",
+		        m_currentSeed, templateIndex, (targetState == GameState::ADMIN));
+		printf("[Game] Server log: /tmp/agentica_log_local.log\n");
+	}
+
 	bool creative = (targetState == GameState::ADMIN);
 	auto localServer = std::make_unique<LocalServer>(m_templates);
 	localServer->createGame(m_currentSeed, templateIndex, creative, wgc);
@@ -582,10 +595,14 @@ void Game::setupAfterConnect(GameState targetState) {
 				char buf[64];
 				snprintf(buf, sizeof(buf), "+%d %s", count, name.c_str());
 				addFloatingText(pos, buf, {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
+				if (m_serverLog) fprintf(m_serverLog, "[pickup] %s x%d at (%.0f,%.0f,%.0f)\n",
+					item.c_str(), count, pos.x, pos.y, pos.z);
 			};
 			cb.onBreakText = [this](glm::vec3 pos, const std::string& blockName) {
 				addFloatingText(pos + glm::vec3(0, 0.5f, 0), blockName,
 				                {0.85f, 0.85f, 0.85f, 0.9f}, 1.4f);
+				if (m_serverLog) fprintf(m_serverLog, "[break] %s at (%.0f,%.0f,%.0f)\n",
+					blockName.c_str(), pos.x, pos.y, pos.z);
 			};
 		}
 	}
