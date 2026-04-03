@@ -13,7 +13,8 @@ enum class GameState {
 	CONTROLS,
 	CHARACTER,
 	ENTITY_INSPECT,
-	CODE_EDITOR
+	CODE_EDITOR,
+	PAUSED
 };
 
 constexpr int HOTBAR_SIZE = 10; // keys 1-9, 0

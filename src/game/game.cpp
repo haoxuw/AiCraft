@@ -436,6 +436,9 @@ void Game::updateAndRender(float dt, float aspect) {
 	case GameState::CODE_EDITOR:
 		updateCodeEditor(dt, aspect);
 		break;
+	case GameState::PAUSED:
+		updatePaused(dt, aspect);
+		break;
 	}
 }
 
@@ -606,7 +609,7 @@ void Game::setupAfterConnect(GameState targetState) {
 	ChunkSource& chunks = m_server->chunks();
 	int sx = (int)spawn.x, sh = (int)spawn.y, sz = (int)spawn.z;
 	chunks.ensureChunksAround(worldToChunk(sx, sh, sz), 8);
-	m_renderer.meshAllPending(chunks, m_camera, 8);
+	m_renderer.meshAllPending(chunks, m_camera, m_renderDistance);
 
 	m_worldTime = 0.30f;
 	m_autoScreenDone = false;
@@ -670,8 +673,7 @@ void Game::updatePlaying(float dt, float aspect) {
 
 	if (m_controls.pressed(Action::MenuBack)) {
 		m_preMenuState = m_state;
-		m_state = GameState::MENU;
-		m_imguiMenu.setGameRunning(true);
+		m_state = GameState::PAUSED;
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 		return;
 	}
@@ -703,27 +705,27 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_audio.setListener(m_camera.position, m_camera.front());
 	m_audio.updateMusic();
 
-	// Creature ambient sounds — rare, only when very close (within 2 blocks).
-	// Pick ONE random nearby creature per interval to avoid sound spam.
+	// Creature ambient sounds: rare, close range only (within 5 blocks), very quiet.
 	m_creatureSoundTimer -= dt;
 	if (m_creatureSoundTimer <= 0) {
-		m_creatureSoundTimer = 12.0f + (float)(rand() % 80) / 10.0f; // every 12-20s
+		m_creatureSoundTimer = 20.0f + (float)(rand() % 100) / 10.0f; // every 20-30s
 
-		// Collect candidates within 2 blocks
-		struct SoundCandidate { std::string group; glm::vec3 pos; };
+		struct SoundCandidate { std::string group; glm::vec3 pos; float dist; };
 		std::vector<SoundCandidate> candidates;
 		m_server->forEachEntity([&](Entity& e) {
 			float dist = glm::length(e.position - pe->position);
-			if (dist > 2.5f || dist < 0.3f) return;
+			if (dist > 5.0f || dist < 0.3f) return;
 			const auto& tid = e.typeId();
-			if (tid == "base:pig")          candidates.push_back({"creature_pig", e.position});
-			else if (tid == "base:chicken") candidates.push_back({"creature_chicken", e.position});
-			else if (tid == "base:dog")     candidates.push_back({"creature_dog", e.position});
-			else if (tid == "base:cat")     candidates.push_back({"creature_cat", e.position});
+			if (tid == "base:pig")          candidates.push_back({"creature_pig", e.position, dist});
+			else if (tid == "base:chicken") candidates.push_back({"creature_chicken", e.position, dist});
+			else if (tid == "base:dog")     candidates.push_back({"creature_dog", e.position, dist});
+			else if (tid == "base:cat")     candidates.push_back({"creature_cat", e.position, dist});
 		});
 		if (!candidates.empty()) {
 			auto& c = candidates[rand() % candidates.size()];
-			m_audio.play(c.group, c.pos, 0.12f);
+			// Volume fades with distance: 0.08 at 0 blocks, ~0 at 5 blocks
+			float vol = 0.08f * (1.0f - c.dist / 5.0f);
+			m_audio.play(c.group, c.pos, vol);
 		}
 	}
 
@@ -760,7 +762,7 @@ void Game::renderPlaying(float dt, float aspect) {
 	if (!pe) { printf("[Game] renderPlaying: no player entity\n"); return; }
 
 	// Update chunks
-	m_renderer.updateChunks(srv.chunks(), m_camera, 8);
+	m_renderer.updateChunks(srv.chunks(), m_camera, m_renderDistance);
 
 	// Render terrain + sky + crosshair
 	auto& hit = m_gameplay.currentHit();
@@ -1445,6 +1447,101 @@ void Game::updateCodeEditor(float dt, float aspect) {
 		m_codeEditor.open(eid, info.sourceCode, info.goal);
 		m_codeEditor.clearFlags();
 	}
+}
+
+// ============================================================
+// Pause menu overlay (Esc during gameplay)
+// ============================================================
+void Game::updatePaused(float dt, float aspect) {
+	if (!m_server) { m_state = GameState::MENU; return; }
+
+	// Keep ticking the server so multiplayer doesn't freeze
+	m_server->tick(dt);
+
+	// Render the world behind the overlay (full render with HUD)
+	renderPlaying(dt, aspect);
+
+	// Pause overlay on top — new ImGui frame
+	m_ui.beginFrame();
+	ImDrawList* bg = ImGui::GetBackgroundDrawList();
+	bg->AddRectFilled({0, 0}, {(float)m_window.width(), (float)m_window.height()},
+		IM_COL32(0, 0, 0, 140));
+
+	// Pause panel
+	float pw = 380, ph = 340;
+	float px = (m_window.width() - pw) * 0.5f;
+	float py = (m_window.height() - ph) * 0.5f;
+
+	ImGui::SetNextWindowPos({px, py});
+	ImGui::SetNextWindowSize({pw, ph});
+	ImGui::Begin("##pause", nullptr,
+		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+		ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+
+	// Title
+	ImGui::SetCursorPosX((pw - ImGui::CalcTextSize("PAUSED").x) * 0.5f);
+	ImGui::TextColored({0.95f, 0.85f, 0.5f, 1.0f}, "PAUSED");
+	ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+	float btnW = pw - 40;
+	ImGui::SetCursorPosX(20);
+
+	if (ImGui::Button("Resume", {btnW, 36})) {
+		m_state = m_preMenuState;
+		bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+		                    m_camera.mode == CameraMode::ThirdPerson);
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+	}
+	ImGui::Spacing();
+
+	if (ImGui::Button("Save World", {btnW, 36})) {
+		saveCurrentWorld();
+		printf("[Game] World saved.\n");
+	}
+	ImGui::Spacing();
+
+	// ── Graphics settings inline ──
+	if (ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::SliderFloat("FOV", &m_camera.fov, 50.0f, 120.0f, "%.0f");
+		ImGui::SliderInt("Render Distance", &m_renderDistance, 4, 16);
+		if (ImGui::Checkbox("VSync", &m_vsync)) {
+			glfwSwapInterval(m_vsync ? 1 : 0);
+		}
+	}
+
+	// ── Audio settings inline ──
+	if (ImGui::CollapsingHeader("Audio")) {
+		float master = m_audio.masterVolume();
+		if (ImGui::SliderFloat("Master", &master, 0.0f, 1.0f, "%.0f%%")) {
+			m_audio.setMasterVolume(master);
+		}
+		float music = m_audio.musicVolume();
+		if (ImGui::SliderFloat("Music", &music, 0.0f, 1.0f, "%.0f%%")) {
+			m_audio.setMusicVolume(music);
+		}
+	}
+
+	ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+	ImGui::SetCursorPosX(20);
+	if (ImGui::Button("Quit to Menu", {btnW, 36})) {
+		m_preMenuState = m_state;
+		m_state = GameState::MENU;
+		m_imguiMenu.setGameRunning(true);
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+	}
+
+	// Esc again = resume
+	if (m_controls.pressed(Action::MenuBack)) {
+		m_state = m_preMenuState;
+		bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+		                    m_camera.mode == CameraMode::ThirdPerson);
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+	}
+
+	ImGui::End();
+	m_ui.endFrame();
 }
 
 } // namespace agentworld

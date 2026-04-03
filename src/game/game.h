@@ -64,6 +64,9 @@ private:
 	// Code editor overlay
 	void updateCodeEditor(float dt, float aspect);
 
+	// Pause overlay (Esc during gameplay)
+	void updatePaused(float dt, float aspect);
+
 	// Screenshot
 	void saveScreenshot();
 
@@ -131,6 +134,10 @@ private:
 	float m_autoScreenTimer = 0;
 	bool m_autoScreenDone = false;
 	int m_screenshotCounter = 0;
+
+	// Graphics settings (exposed in pause menu)
+	int m_renderDistance = 8;
+	bool m_vsync = true;
 
 	// Display
 	bool m_showDebug = false;
