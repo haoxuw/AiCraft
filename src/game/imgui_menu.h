@@ -190,6 +190,11 @@ public:
 		else if (p == 2) m_page = Page::Settings;
 	}
 	void setGameRunning(bool running) { m_gameRunning = running; }
+
+	// Pre-populate a server from --host/--port CLI args
+	void addServerHint(const std::string& host, int port) {
+		m_serverHints.push_back({host, port});
+	}
 	WorldManager& worldManager() { return m_worldMgr; }
 
 	// Set references for settings UI
@@ -219,13 +224,22 @@ private:
 	// Server detection
 	struct DetectedServer { std::string host; int port; };
 	std::vector<DetectedServer> m_detectedServers;
+	std::vector<DetectedServer> m_serverHints; // from --host CLI
 	bool m_probed = false;
 
 	void probeServers() {
 #ifndef __EMSCRIPTEN__
 		m_detectedServers.clear();
+		// Include CLI hints (--host/--port)
+		for (auto& h : m_serverHints)
+			m_detectedServers.push_back(h);
 		// Probe localhost ports 7777-7787 for running servers
 		for (int port = 7777; port <= 7787; port++) {
+			// Skip if already in hints
+			bool skip = false;
+			for (auto& h : m_serverHints)
+				if (h.host == "127.0.0.1" && h.port == port) { skip = true; break; }
+			if (skip) continue;
 			net::TcpClient probe;
 			if (probe.connect("127.0.0.1", port, 0.15f)) {
 				probe.disconnect();
@@ -300,21 +314,25 @@ private:
 			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 		}
 
-		// ── Servers section ──
+		// ── Join Server section ──
 		if (!m_probed) probeServers();
 
-		if (!m_detectedServers.empty()) {
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
-			ImGui::SetWindowFontScale(1.2f);
-			ImGui::Text("Servers");
-			ImGui::SetWindowFontScale(1.0f);
-			ImGui::PopStyleColor();
-			ImGui::Spacing();
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+		ImGui::SetWindowFontScale(1.2f);
+		ImGui::Text("Join Server");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
 
+		{
 			float cardW = std::min(contentW - 80, 640.0f);
+			if (m_detectedServers.empty()) {
+				ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1),
+					"No servers detected on localhost");
+			}
 			for (auto& srv : m_detectedServers) {
 				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.96f, 0.94f, 1));
-				char srvId[64]; snprintf(srvId, sizeof(srvId), "##srv_%d", srv.port);
+				char srvId[64]; snprintf(srvId, sizeof(srvId), "##srv_%s_%d", srv.host.c_str(), srv.port);
 				ImGui::BeginChild(srvId, ImVec2(cardW, 48), true);
 				{
 					ImGui::SetCursorPos(ImVec2(16, 14));
@@ -324,7 +342,7 @@ private:
 					ImGui::SetCursorPosY(8);
 					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
 					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-					char btnId[32]; snprintf(btnId, sizeof(btnId), "Join##%d", srv.port);
+					char btnId[32]; snprintf(btnId, sizeof(btnId), "Join##%s_%d", srv.host.c_str(), srv.port);
 					if (ImGui::Button(btnId, ImVec2(70, 32))) {
 						action.type = MenuAction::JoinServer;
 						action.serverHost = srv.host;
@@ -337,12 +355,11 @@ private:
 				ImGui::Spacing();
 			}
 
-			ImGui::SameLine();
 			if (ImGui::SmallButton("Refresh")) {
 				m_probed = false;
 			}
-			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 		}
+		ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
 		// ── Saved Worlds ──
 		float cardW = std::min(contentW - 80, 640.0f);

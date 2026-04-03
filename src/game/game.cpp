@@ -4,6 +4,7 @@
 #include "content/faces.h"
 #include "server/entity_manager.h"
 #include "shared/constants.h"
+#include "shared/model_loader.h"
 #include "server/python_bridge.h"
 #include "server/behavior.h"
 #include "server/world_save.h"
@@ -84,13 +85,27 @@ bool Game::init(int argc, char** argv) {
 		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) m_connectPort = atoi(argv[++i]);
 	}
 
-	// Models — keyed by base name (filename without .gltf extension)
-	m_models["player"]   = builtin::playerModel();
-	m_models["pig"]      = builtin::pigModel();
-	m_models["chicken"]  = builtin::chickenModel();
-	m_models["dog"]      = builtin::dogModel();
-	m_models["cat"]      = builtin::catModel();
-	m_models["villager"] = builtin::villagerModel();
+	// Models — load from Python files (artifacts/models/) with C++ fallback
+	{
+		auto pyModels = model_loader::loadAllModels("artifacts");
+		const char* names[] = {"player", "pig", "chicken", "dog", "cat", "villager"};
+		// C++ fallbacks
+		std::unordered_map<std::string, BoxModel> fallbacks;
+		fallbacks["player"]   = builtin::playerModel();
+		fallbacks["pig"]      = builtin::pigModel();
+		fallbacks["chicken"]  = builtin::chickenModel();
+		fallbacks["dog"]      = builtin::dogModel();
+		fallbacks["cat"]      = builtin::catModel();
+		fallbacks["villager"] = builtin::villagerModel();
+		for (auto* name : names) {
+			auto it = pyModels.find(name);
+			if (it != pyModels.end()) {
+				m_models[name] = std::move(it->second);
+			} else {
+				m_models[name] = std::move(fallbacks[name]);
+			}
+		}
+	}
 	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
 
 	// Register ALL models for Handbook 3D preview
@@ -117,10 +132,11 @@ bool Game::init(int argc, char** argv) {
 	// Items — simple box models for preview
 	{
 		BoxModel sword;
-		sword.totalHeight = 1.0f;
-		sword.parts.push_back({{0, 0.35f, 0}, {0.03f, 0.30f, 0.03f}, {0.72f, 0.72f, 0.78f, 1}}); // blade
-		sword.parts.push_back({{0, 0.04f, 0}, {0.02f, 0.06f, 0.04f}, {0.40f, 0.28f, 0.12f, 1}}); // handle
-		sword.parts.push_back({{0, 0.08f, 0}, {0.08f, 0.015f, 0.015f}, {0.60f, 0.55f, 0.45f, 1}}); // guard
+		sword.totalHeight = 1.2f;
+		sword.parts.push_back({{0, 0.55f, 0}, {0.05f, 0.45f, 0.05f}, {0.75f, 0.75f, 0.82f, 1}}); // blade (big!)
+		sword.parts.push_back({{0, 0.06f, 0}, {0.03f, 0.10f, 0.06f}, {0.40f, 0.28f, 0.12f, 1}}); // handle
+		sword.parts.push_back({{0, 0.14f, 0}, {0.12f, 0.025f, 0.025f}, {0.60f, 0.55f, 0.45f, 1}}); // guard
+		sword.parts.push_back({{0, -0.02f, 0}, {0.04f, 0.03f, 0.04f}, {0.55f, 0.50f, 0.40f, 1}}); // pommel
 		hb.registerModel("sword", sword);
 	}
 	{
@@ -219,12 +235,12 @@ bool Game::init(int argc, char** argv) {
 		enterGame(1, GameState::SURVIVAL);
 	}
 
-	// If --host was provided, auto-join the server immediately (skip menu)
+	// If --host was provided, pre-populate the server list but show menu
+	// (user clicks "Join" from the menu rather than auto-connecting)
 	if (!m_connectHost.empty()) {
-		printf("[Game] Auto-joining %s:%d...\n", m_connectHost.c_str(), m_connectPort);
-		joinServer(m_connectHost, m_connectPort, GameState::SURVIVAL);
-		printf("[Game] After joinServer: state=%d, server=%s\n",
-		       (int)m_state, m_server ? "connected" : "null");
+		printf("[Game] Server hint: %s:%d (join from menu)\n",
+		       m_connectHost.c_str(), m_connectPort);
+		m_imguiMenu.addServerHint(m_connectHost, m_connectPort);
 	}
 
 	return true;
@@ -722,10 +738,10 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_audio.setListener(m_camera.position, m_camera.front());
 	m_audio.updateMusic();
 
-	// Creature ambient sounds: rare, close range only (within 5 blocks), very quiet.
+	// Creature ambient sounds: very rare, within 5 blocks only, whisper-quiet.
 	m_creatureSoundTimer -= dt;
 	if (m_creatureSoundTimer <= 0) {
-		m_creatureSoundTimer = 20.0f + (float)(rand() % 100) / 10.0f; // every 20-30s
+		m_creatureSoundTimer = 30.0f + (float)(rand() % 200) / 10.0f; // every 30-50s
 
 		struct SoundCandidate { std::string group; glm::vec3 pos; float dist; };
 		std::vector<SoundCandidate> candidates;
@@ -740,8 +756,8 @@ void Game::updatePlaying(float dt, float aspect) {
 		});
 		if (!candidates.empty()) {
 			auto& c = candidates[rand() % candidates.size()];
-			// Volume fades with distance: 0.08 at 0 blocks, ~0 at 5 blocks
-			float vol = 0.08f * (1.0f - c.dist / 5.0f);
+			// Volume fades with distance: 0.04 at 0 blocks, ~0 at 5 blocks
+			float vol = 0.04f * (1.0f - c.dist / 5.0f);
 			m_audio.play(c.group, c.pos, vol);
 		}
 	}
@@ -856,37 +872,49 @@ void Game::renderPlaying(float dt, float aspect) {
 		if (pe->inventory) {
 			const float PI = 3.14159265f;
 			if (pe->inventory->hasEquipped(WearSlot::LeftHand)) {
-				// Sword blade (swings with left arm)
+				// Sword blade — BIG, extends well past the hand (swings with left arm)
 				activeModel.parts.push_back({
-					{-0.42f, 0.65f, -0.15f}, {0.03f, 0.22f, 0.03f},
-					{0.72f, 0.72f, 0.78f, 1},
-					{-0.37f, 1.40f, 0}, {1,0,0}, 55.0f, PI, 1.0f
+					{-0.42f, 0.55f, -0.18f}, {0.04f, 0.40f, 0.04f},
+					{0.75f, 0.75f, 0.82f, 1},
+					{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
 				});
-				// Handle
+				// Handle (below blade)
 				activeModel.parts.push_back({
-					{-0.42f, 0.42f, -0.15f}, {0.02f, 0.06f, 0.04f},
+					{-0.42f, 0.14f, -0.18f}, {0.03f, 0.08f, 0.05f},
 					{0.40f, 0.28f, 0.12f, 1},
-					{-0.37f, 1.40f, 0}, {1,0,0}, 55.0f, PI, 1.0f
+					{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
 				});
-				// Crossguard
+				// Crossguard (wide)
 				activeModel.parts.push_back({
-					{-0.42f, 0.46f, -0.15f}, {0.06f, 0.015f, 0.015f},
+					{-0.42f, 0.20f, -0.18f}, {0.10f, 0.02f, 0.02f},
 					{0.60f, 0.55f, 0.45f, 1},
-					{-0.37f, 1.40f, 0}, {1,0,0}, 55.0f, PI, 1.0f
+					{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
+				});
+				// Pommel
+				activeModel.parts.push_back({
+					{-0.42f, 0.06f, -0.18f}, {0.03f, 0.03f, 0.03f},
+					{0.55f, 0.50f, 0.40f, 1},
+					{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
 				});
 			}
 			if (pe->inventory->hasEquipped(WearSlot::RightHand)) {
-				// Shield face (swings with right arm)
+				// Shield face — bigger, visible (swings with right arm)
 				activeModel.parts.push_back({
-					{0.46f, 0.90f, -0.10f}, {0.02f, 0.18f, 0.14f},
+					{0.48f, 0.90f, -0.12f}, {0.03f, 0.22f, 0.18f},
 					{0.45f, 0.30f, 0.15f, 1},
-					{0.37f, 1.40f, 0}, {1,0,0}, 55.0f, 0, 1.0f
+					{0.37f, 1.40f, 0}, {1,0,0}, 50.0f, 0, 1.0f
 				});
 				// Shield boss
 				activeModel.parts.push_back({
-					{0.48f, 0.90f, -0.10f}, {0.02f, 0.06f, 0.06f},
+					{0.50f, 0.90f, -0.12f}, {0.03f, 0.08f, 0.08f},
 					{0.55f, 0.50f, 0.40f, 1},
-					{0.37f, 1.40f, 0}, {1,0,0}, 55.0f, 0, 1.0f
+					{0.37f, 1.40f, 0}, {1,0,0}, 50.0f, 0, 1.0f
+				});
+				// Shield rim
+				activeModel.parts.push_back({
+					{0.47f, 0.90f, -0.12f}, {0.02f, 0.24f, 0.20f},
+					{0.35f, 0.22f, 0.10f, 1},
+					{0.37f, 1.40f, 0}, {1,0,0}, 50.0f, 0, 1.0f
 				});
 			}
 		}
