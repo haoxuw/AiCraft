@@ -22,11 +22,13 @@ public:
 	LocalServer(const std::vector<std::shared_ptr<WorldTemplate>>& templates)
 		: m_templates(templates) {}
 
-	bool createGame(int seed, int templateIndex, bool creative) override {
+	bool createGame(int seed, int templateIndex, bool creative,
+	                const WorldGenConfig& wgc = WorldGenConfig{}) override {
 		ServerConfig config;
 		config.seed = seed;
 		config.templateIndex = templateIndex;
 		config.creative = creative;
+		config.worldGenConfig = wgc;
 
 		m_server = std::make_unique<GameServer>();
 		m_server->init(config, m_templates);

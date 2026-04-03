@@ -47,7 +47,8 @@ public:
 		printf("[Net] Client UUID: %s\n", m_clientUUID.c_str());
 	}
 
-	bool createGame(int seed, int templateIndex, bool creative) override {
+	bool createGame(int seed, int templateIndex, bool creative,
+	                const WorldGenConfig& /*wgc*/ = WorldGenConfig{}) override {
 		if (!m_tcp.connect(m_host.c_str(), m_port)) {
 			printf("[Net] Cannot connect to %s:%d\n", m_host.c_str(), m_port);
 			return false;

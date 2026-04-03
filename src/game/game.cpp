@@ -418,7 +418,7 @@ void Game::handleMenuAction(const MenuAction& action) {
 	case MenuAction::EnterGame:
 		m_currentWorldPath = action.worldPath;
 		m_currentSeed = action.seed ? action.seed : (int)std::random_device{}();
-		enterGame(action.templateIndex, action.targetState);
+		enterGame(action.templateIndex, action.targetState, action.worldGenConfig);
 		break;
 	case MenuAction::JoinServer:
 		joinServer(action.serverHost, action.serverPort, action.targetState);
@@ -475,13 +475,13 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 // ============================================================
 // World creation — always creates a local server
 // ============================================================
-void Game::enterGame(int templateIndex, GameState targetState) {
+void Game::enterGame(int templateIndex, GameState targetState, const WorldGenConfig& wgc) {
 	// enterGame always creates a local server. To join a remote server,
 	// use joinServer() directly (from the server browser UI).
 	printf("[Game] Starting local server\n");
 	bool creative = (targetState == GameState::ADMIN);
 	auto localServer = std::make_unique<LocalServer>(m_templates);
-	localServer->createGame(m_currentSeed, templateIndex, creative);
+	localServer->createGame(m_currentSeed, templateIndex, creative, wgc);
 	m_server = std::move(localServer);
 	setupAfterConnect(targetState);
 }
@@ -643,18 +643,8 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_audio.setListener(m_camera.position, m_camera.front());
 	m_audio.updateMusic();
 
-	// Creature ambient sounds — play occasional sounds for nearby animals
-	m_creatureSoundTimer -= dt;
-	if (m_creatureSoundTimer <= 0) {
-		m_creatureSoundTimer = 2.0f + (float)(rand() % 30) / 10.0f; // every 2-5 seconds
-		m_server->forEachEntity([&](Entity& e) {
-			float dist = glm::length(e.position - pe->position);
-			if (dist > 20.0f || dist < 1.0f) return;
-			const auto& sg = e.def().sound_group;
-			if (!sg.empty())
-				m_audio.play(sg, e.position, e.def().sound_volume);
-		});
-	}
+	// Creature ambient sounds disabled — no good CC0 animal recordings found yet.
+	// Re-enable when proper gentle animal sounds are available.
 
 	// Check if player right-clicked an entity → enter inspection
 	if (m_gameplay.inspectedEntity() != ENTITY_NONE) {

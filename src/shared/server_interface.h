@@ -25,6 +25,7 @@
 #include "shared/chunk_source.h"
 #include "shared/entity.h"
 #include "shared/action.h"
+#include "server/world_gen_config.h"
 #include <string>
 #include <functional>
 #include <memory>
@@ -38,7 +39,8 @@ public:
 	// --- Lifecycle ---
 
 	// Create/join a game world. Returns true on success.
-	virtual bool createGame(int seed, int templateIndex, bool creative) = 0;
+	virtual bool createGame(int seed, int templateIndex, bool creative,
+	                        const WorldGenConfig& wgc = WorldGenConfig{}) = 0;
 
 	// Disconnect from game (stop local server or close TCP connection)
 	virtual void disconnect() = 0;

@@ -461,6 +461,7 @@ private:
 				action.worldPath = path;
 				action.worldName = m_newWorldName;
 				action.targetState = GameState::SURVIVAL;
+				action.worldGenConfig = m_worldGenConfig;
 				m_showCreateWorld = false;
 				m_worldMgr.refresh();
 			}

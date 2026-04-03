@@ -46,7 +46,8 @@ private:
 
 	// State transitions
 	void handleMenuAction(const MenuAction& action);
-	void enterGame(int templateIndex, GameState targetState);
+	void enterGame(int templateIndex, GameState targetState,
+	               const WorldGenConfig& wgc = WorldGenConfig{});
 	void joinServer(const std::string& host, int port, GameState targetState);
 	void setupAfterConnect(GameState targetState);
 	void saveCurrentWorld();

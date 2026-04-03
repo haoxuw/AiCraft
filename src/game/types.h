@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include "server/world_gen_config.h"
 
 namespace agentworld {
 
@@ -37,6 +38,7 @@ struct MenuAction {
 	std::string worldPath;     // save directory path
 	std::string serverHost;
 	int serverPort = 7777;
+	WorldGenConfig worldGenConfig;
 };
 
 } // namespace agentworld
