@@ -70,6 +70,7 @@ bool Game::init(int argc, char** argv) {
 	m_imguiMenu.init(m_templates);
 	m_imguiMenu.setControls(&m_controls);
 	m_imguiMenu.setAudio(&m_audio);
+	m_imguiMenu.setCharacters(&m_characters);
 
 	// Load all artifact definitions (Python files from artifacts/)
 	m_artifacts.setPlayerNamespace(ArtifactRegistry::generatePlayerNamespace());
@@ -627,7 +628,7 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_gameplay.setUIWantsCursor(m_showInventory || m_equipUI.isOpen() || m_ui.wantsMouse());
 
 	// Client-side: gather input → ActionProposals (works for local AND network)
-	float jumpVel = (m_characters.count() > 0) ? m_characters.selected().jumpVelocity : 17.0f;
+	float jumpVel = (m_characters.count() > 0) ? m_characters.selected().jumpVelocity : 8.3f;
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
@@ -650,7 +651,24 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_audio.setListener(m_camera.position, m_camera.front());
 	m_audio.updateMusic();
 
-	// Creature ambient sounds disabled — no good CC0 animal recordings found yet.
+	// Creature ambient sounds — play occasional sounds for nearby animals
+	m_creatureSoundTimer -= dt;
+	if (m_creatureSoundTimer <= 0) {
+		m_creatureSoundTimer = 4.0f + (float)(rand() % 40) / 10.0f; // every 4-8s
+		m_server->forEachEntity([&](Entity& e) {
+			float dist = glm::length(e.position - pe->position);
+			if (dist > 16.0f || dist < 1.0f) return;
+			const auto& tid = e.typeId();
+			if (tid == "base:pig")
+				m_audio.play("creature_pig", e.position, 0.2f);
+			else if (tid == "base:chicken")
+				m_audio.play("creature_chicken", e.position, 0.15f);
+			else if (tid == "base:dog")
+				m_audio.play("creature_dog", e.position, 0.2f);
+			else if (tid == "base:cat")
+				m_audio.play("creature_cat", e.position, 0.15f);
+		});
+	}
 	// Re-enable when proper gentle animal sounds are available.
 
 	// Check if player right-clicked an entity → enter inspection

@@ -28,6 +28,7 @@
 #include "server/world_template.h"
 #include "client/controls.h"
 #include "client/audio.h"
+#include "shared/character.h"
 #ifndef __EMSCRIPTEN__
 #include "shared/net_socket.h"
 #endif
@@ -191,6 +192,7 @@ public:
 	// Set references for settings UI
 	void setControls(ControlManager* c) { m_controls = c; }
 	void setAudio(AudioManager* a) { m_audio = a; }
+	void setCharacters(CharacterManager* c) { m_characters = c; }
 
 private:
 	enum class Page { Play, Handbook, Settings };
@@ -207,6 +209,7 @@ private:
 	WorldManager m_worldMgr;
 	ControlManager* m_controls = nullptr;
 	AudioManager* m_audio = nullptr;
+	CharacterManager* m_characters = nullptr;
 	int m_settingsTab = 0; // 0=Controls, 1=Audio
 
 	// Server detection
@@ -245,6 +248,52 @@ private:
 			ImGui::Spacing(); ImGui::Spacing();
 			ImGui::Separator();
 			ImGui::Spacing(); ImGui::Spacing();
+		}
+
+		// ── Character selection ──
+		if (m_characters && m_characters->count() > 0) {
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+			ImGui::SetWindowFontScale(1.2f);
+			ImGui::Text("Character");
+			ImGui::SetWindowFontScale(1.0f);
+			ImGui::PopStyleColor();
+			ImGui::Spacing();
+
+			for (int i = 0; i < m_characters->count(); i++) {
+				if (i > 0) ImGui::SameLine();
+				auto& cdef = m_characters->get(i);
+				bool selected = (i == m_characters->selectedIndex());
+
+				ImVec4 btnColor = selected
+					? ImVec4(0.96f, 0.65f, 0.15f, 1)
+					: ImVec4(0.88f, 0.87f, 0.86f, 1);
+				ImVec4 textColor = selected
+					? ImVec4(1, 1, 1, 1)
+					: ImVec4(0.25f, 0.25f, 0.28f, 1);
+
+				ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+					selected ? ImVec4(0.98f, 0.72f, 0.28f, 1) : ImVec4(0.92f, 0.91f, 0.90f, 1));
+				ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+
+				char btnId[64]; snprintf(btnId, sizeof(btnId), "%s##char%d", cdef.name.c_str(), i);
+				if (ImGui::Button(btnId, ImVec2(0, 36)))
+					m_characters->select(i);
+
+				ImGui::PopStyleColor(3);
+
+				// Tooltip with stats
+				if (ImGui::IsItemHovered()) {
+					ImGui::BeginTooltip();
+					ImGui::Text("%s", cdef.name.c_str());
+					ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1), "%s", cdef.description.c_str());
+					ImGui::Text("STR %d  STA %d  AGI %d  INT %d",
+						cdef.stats.strength, cdef.stats.stamina,
+						cdef.stats.agility, cdef.stats.intelligence);
+					ImGui::EndTooltip();
+				}
+			}
+			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 		}
 
 		// ── Servers section ──

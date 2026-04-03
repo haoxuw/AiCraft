@@ -23,7 +23,7 @@ public:
 	void update(float dt, GameState state, ServerInterface& server, Entity& player,
 	            Camera& camera, ControlManager& controls, Renderer& renderer,
 	            ParticleSystem& particles, Window& window,
-	            float jumpVelocity = 17.0f);
+	            float jumpVelocity = 8.3f);
 
 	// --- Query state (for HUD / renderer) ---
 
