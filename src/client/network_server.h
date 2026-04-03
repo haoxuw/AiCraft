@@ -122,40 +122,24 @@ public:
 		m_totalMsgCount += msgCount;
 		m_uptime += dt;
 
-		// Early connection verbose logging (first 10 seconds)
-		if (m_uptime < 10.0f && msgCount > 0) {
-			printf("[Net] t=%.1fs: received %d msgs, %zu entities, %zu chunks\n",
-				m_uptime, msgCount, m_entities.size(), m_chunkData.size());
-			Entity* pe = getEntity(m_localPlayerId);
-			if (!pe)
-				printf("[Net] WARNING: local player entity %u not received yet\n", m_localPlayerId);
+		// Early connection logging — only warn if player entity is missing
+		if (m_uptime < 5.0f && !getEntity(m_localPlayerId) && msgCount > 0) {
+			printf("[Net] t=%.1fs: waiting for player entity (received %zu entities, %zu chunks)\n",
+				m_uptime, m_entities.size(), m_chunkData.size());
 		}
 
-		// Periodic diagnostics (every 5 seconds)
+		// Periodic diagnostics (every 30 seconds — quiet by default)
 		m_diagTimer += dt;
-		if (m_diagTimer >= 5.0f) {
+		if (m_diagTimer >= 30.0f) {
 			Entity* pe = m_entities.count(m_localPlayerId)
 				? m_entities[m_localPlayerId].get() : nullptr;
-			auto* pt = m_interpTargets.count(m_localPlayerId)
-				? &m_interpTargets[m_localPlayerId] : nullptr;
-
-			printf("[Net] Stats: %d msgs/5s (total=%d), %zu entities, %zu chunks, uptime=%.0fs\n",
-				m_tickMsgCount, m_totalMsgCount, m_entities.size(), m_chunkData.size(), m_uptime);
-			if (pe && pt) {
-				glm::vec3 diff = pt->position - pe->position;
-				printf("[Net] Player %u: pos=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f) diff=%.2f vel=(%.1f,%.1f,%.1f) ground=%d\n",
-					m_localPlayerId,
+			printf("[Net] %zu entities, %zu chunks, %.0fs uptime\n",
+				m_entities.size(), m_chunkData.size(), m_uptime);
+			if (pe)
+				printf("[Net] Player pos=(%.1f,%.1f,%.1f) vel=(%.1f,%.1f,%.1f) ground=%d\n",
 					pe->position.x, pe->position.y, pe->position.z,
-					pt->position.x, pt->position.y, pt->position.z,
-					glm::length(diff),
-					pe->velocity.x, pe->velocity.y, pe->velocity.z,
-					pe->onGround);
-			} else {
-				printf("[Net] Player %u: entity=%s, interp=%s\n",
-					m_localPlayerId, pe ? "yes" : "NO", pt ? "yes" : "NO");
-			}
+					pe->velocity.x, pe->velocity.y, pe->velocity.z, pe->onGround);
 			m_diagTimer = 0;
-			m_tickMsgCount = 0;
 		}
 
 		// Interpolate ALL entities toward server targets.
