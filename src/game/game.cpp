@@ -703,25 +703,29 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_audio.setListener(m_camera.position, m_camera.front());
 	m_audio.updateMusic();
 
-	// Creature ambient sounds — play occasional sounds for nearby animals
+	// Creature ambient sounds — rare, only when very close (within 2 blocks).
+	// Pick ONE random nearby creature per interval to avoid sound spam.
 	m_creatureSoundTimer -= dt;
 	if (m_creatureSoundTimer <= 0) {
-		m_creatureSoundTimer = 4.0f + (float)(rand() % 40) / 10.0f; // every 4-8s
+		m_creatureSoundTimer = 12.0f + (float)(rand() % 80) / 10.0f; // every 12-20s
+
+		// Collect candidates within 2 blocks
+		struct SoundCandidate { std::string group; glm::vec3 pos; };
+		std::vector<SoundCandidate> candidates;
 		m_server->forEachEntity([&](Entity& e) {
 			float dist = glm::length(e.position - pe->position);
-			if (dist > 16.0f || dist < 1.0f) return;
+			if (dist > 2.5f || dist < 0.3f) return;
 			const auto& tid = e.typeId();
-			if (tid == "base:pig")
-				m_audio.play("creature_pig", e.position, 0.2f);
-			else if (tid == "base:chicken")
-				m_audio.play("creature_chicken", e.position, 0.15f);
-			else if (tid == "base:dog")
-				m_audio.play("creature_dog", e.position, 0.2f);
-			else if (tid == "base:cat")
-				m_audio.play("creature_cat", e.position, 0.15f);
+			if (tid == "base:pig")          candidates.push_back({"creature_pig", e.position});
+			else if (tid == "base:chicken") candidates.push_back({"creature_chicken", e.position});
+			else if (tid == "base:dog")     candidates.push_back({"creature_dog", e.position});
+			else if (tid == "base:cat")     candidates.push_back({"creature_cat", e.position});
 		});
+		if (!candidates.empty()) {
+			auto& c = candidates[rand() % candidates.size()];
+			m_audio.play(c.group, c.pos, 0.12f);
+		}
 	}
-	// Re-enable when proper gentle animal sounds are available.
 
 	// Per-hit mining feedback (particles + sound on each survival swing)
 	auto& hitEvt = m_gameplay.hitEvent();
