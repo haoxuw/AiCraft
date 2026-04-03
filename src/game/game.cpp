@@ -878,7 +878,7 @@ void Game::renderPlaying(float dt, float aspect) {
 	}();
 	srv.forEachEntity([&](Entity& e) {
 		if (e.id() == m_server->localPlayerId()) return;
-		if (e.def().max_hp <= 0) return; // only living entities
+		if (!e.def().isLiving()) return; // only living entities
 
 		float entityTop = e.def().collision_box_max.y;
 		float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;

@@ -25,11 +25,28 @@ using PropValue = std::variant<
 	glm::vec3
 >;
 
+// ================================================================
+// Entity kind — OOP hierarchy for entity types.
+//   Object   → generic entity (no HP, no inventory)
+//   Item     → dropped item pickup
+//   Living   → has HP + inventory (generic living)
+//   Creature → Living + AI behavior (animals, NPCs)
+//   Character→ Living + playable (player characters)
+// ================================================================
+enum class EntityKind {
+	Object,
+	Item,
+	Living,
+	Creature,
+	Character,
+};
+
 // Static definition of an entity type. Mirrors Python ObjectMeta for entities.
 struct EntityDef {
+	EntityKind kind = EntityKind::Object;
 	std::string string_id;      // "base:pig"
 	std::string display_name;
-	std::string category;       // "animal", "item", "npc", "player"
+	std::string category;       // string tag for behavior targeting ("animal", "player", etc.)
 
 	// Visual
 	std::string model;          // "pig.gltf" — key into client model registry
@@ -48,11 +65,16 @@ struct EntityDef {
 	float walk_speed = 0.0f;
 	float run_speed = 0.0f;
 
-	// Living
+	// Living (Creature, Character, Living kinds only)
 	int max_hp = 0;
 	float eye_height = 0.0f;     // eye position above feet (0 = use collision_box_max.y * 0.75)
-	bool has_inventory = false;   // true = allocate Inventory on spawn
 	bool playable = false;        // true = appears in character selection menu
+
+	// Kind helpers
+	bool isLiving()    const { return kind == EntityKind::Living || kind == EntityKind::Creature || kind == EntityKind::Character; }
+	bool isItem()      const { return kind == EntityKind::Item; }
+	bool isCreature()  const { return kind == EntityKind::Creature; }
+	bool isCharacter() const { return kind == EntityKind::Character; }
 
 	// Default property values (template for new instances)
 	std::unordered_map<std::string, PropValue> default_props;
@@ -66,7 +88,7 @@ public:
 	Entity(EntityId id, const std::string& typeId, const EntityDef& def)
 		: m_id(id), m_typeId(typeId), m_def(&def)
 		, m_props(def.default_props) {
-		if (def.has_inventory || def.max_hp > 0)
+		if (def.isLiving())
 			inventory = std::make_unique<Inventory>();
 	}
 
@@ -117,7 +139,7 @@ public:
 	const std::set<std::string>& dirtyProps() const { return m_dirty; }
 	void clearDirty() { m_dirty.clear(); }
 
-	// --- Inventory (allocated only for entities with has_inventory) ---
+	// --- Inventory (allocated for Living/Creature/Character kinds) ---
 	std::unique_ptr<Inventory> inventory;
 
 	// --- Eye position (for camera when possessed) ---

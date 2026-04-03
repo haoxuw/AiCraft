@@ -104,19 +104,30 @@ public:
 		initWorld(config, templates);
 
 		// Spawn mobs above the surface — gravity will drop them down.
-		float sx = m_spawnPos.x, sz = m_spawnPos.z;
 		auto& wgc = config.worldGenConfig;
 		auto safeSpawnHeight = [&](float x, float z) {
 			return m_world->surfaceHeight(x, z) + ServerTuning::spawnHeightOffset;
 		};
 
-		// Spawn mobs in a ring around spawn point
+		// Mob spawn center: village center for VillageWorldTemplate, else player spawn.
+		// Uses mobSpawnRadius so mobs appear just outside the clearing, visible from village.
+		float mobCX = m_spawnPos.x, mobCZ = m_spawnPos.z;
+		{
+			auto* vt = dynamic_cast<VillageWorldTemplate*>(&m_world->getTemplate());
+			if (vt) {
+				auto vc = VillageWorldTemplate::villageCenter(m_world->seed());
+				mobCX = (float)vc.x;
+				mobCZ = (float)vc.y;
+			}
+		}
+
+		// Spawn mobs in a ring at mobSpawnRadius around village center
 		auto spawnMobs = [&](const std::string& typeId, int count, float baseOffset) {
+			float radius = wgc.mobSpawnRadius;
 			for (int m = 0; m < count; m++) {
 				float angle = (float)m / (float)count * 6.28318f + baseOffset;
-				float r = 8.0f + (float)m * 3.0f;
-				float emx = sx + std::cos(angle) * r;
-				float emz = sz + std::sin(angle) * r;
+				float emx = mobCX + std::cos(angle) * radius;
+				float emz = mobCZ + std::sin(angle) * radius;
 
 				// Apply behavior override if configured
 				std::unordered_map<std::string, PropValue> extraProps;
@@ -145,7 +156,7 @@ public:
 		}
 
 		{
-			int chestX = (int)sx, chestZ = (int)sz;
+			int chestX = (int)m_spawnPos.x, chestZ = (int)m_spawnPos.z;
 			int chestY = (int)m_world->surfaceHeight((float)chestX, (float)chestZ) + 1;
 			BlockId chestId = m_world->blocks.getId(BlockType::Chest);
 			if (chestId != BLOCK_AIR) {
@@ -153,7 +164,7 @@ public:
 				Chunk* c = m_world->getChunk(cp);
 				if (c) c->set(((chestX%16)+16)%16, ((chestY%16)+16)%16, ((chestZ%16)+16)%16, chestId);
 			}
-			m_chestPos = {(float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f};
+			m_chestPos = glm::vec3((float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f);
 		}
 
 		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f (chest at %.0f,%.0f,%.0f)\n",
@@ -305,7 +316,7 @@ public:
 
 			m_world->entities.forEach([&](Entity& e) {
 				// Check all living entities (anything with HP)
-				if (e.def().max_hp <= 0) return;
+				if (!e.def().isLiving()) return;
 
 				EntityId id = e.id();
 				auto it = m_lastPositions.find(id);

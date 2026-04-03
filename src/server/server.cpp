@@ -180,7 +180,7 @@ void GameServer::resolveActions(float dt) {
 			if (p.blockType.empty()) break;  // no item type specified
 
 			// Server validates: actor must be alive, count must be reasonable
-			if (actor->def().max_hp <= 0) break;
+			if (!actor->def().isLiving()) break;
 			int count = std::clamp(p.itemCount, 1, 64);
 
 			// Spawn item entity at actor's feet

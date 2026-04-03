@@ -10,6 +10,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		EntityDef def;
 		def.string_id = EntityType::Pig;
 		def.display_name = "Pig";
+		def.kind = EntityKind::Creature;
 		def.category = Category::Animal;
 		def.model = Asset::PigModel;
 		def.texture = Asset::PigTexture;
@@ -34,6 +35,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		EntityDef def;
 		def.string_id = EntityType::Chicken;
 		def.display_name = "Chicken";
+		def.kind = EntityKind::Creature;
 		def.category = Category::Animal;
 		def.model = Asset::ChickenModel;
 		def.texture = Asset::ChickenTexture;
@@ -59,6 +61,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		EntityDef def;
 		def.string_id = EntityType::Cat;
 		def.display_name = "Cat";
+		def.kind = EntityKind::Creature;
 		def.category = Category::Animal;
 		def.model = Asset::CatModel;
 		def.color = {0.90f, 0.55f, 0.20f}; // orange tabby
@@ -83,6 +86,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		EntityDef def;
 		def.string_id = EntityType::Dog;
 		def.display_name = "Dog";
+		def.kind = EntityKind::Creature;
 		def.category = Category::Animal;
 		def.model = Asset::DogModel;
 		def.color = {0.75f, 0.55f, 0.35f}; // brown
@@ -107,6 +111,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		EntityDef def;
 		def.string_id = EntityType::Villager;
 		def.display_name = "Villager";
+		def.kind = EntityKind::Creature;
 		def.category = Category::Animal; // uses same AI dispatch as animals
 		def.model = Asset::VillagerModel;
 		def.color = {0.85f, 0.75f, 0.60f}; // tan skin

@@ -171,8 +171,7 @@ public:
 
 	WorldGenConfig m_cfg;
 
-private:
-	// Village center location (deterministic from seed)
+	// Village center location (deterministic from seed) — public for mob spawning
 	static glm::ivec2 villageCenter(int seed) {
 		float sx = 30, sz = 30;
 		for (int t = 0; t < 50; t++) {

@@ -162,7 +162,7 @@ public:
 			mp.halfWidth = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
 			mp.height = def.collision_box_max.y - def.collision_box_min.y;
 			mp.gravity = ServerTuning::gravity * def.gravity_scale;
-			bool isLiving = (def.max_hp > 0);
+			bool isLiving = def.isLiving();
 			mp.stepHeight = isLiving ? ServerTuning::entityStepHeight : 0.0f;
 			mp.canFly = e.getProp<bool>("fly_mode", false);
 			mp.smoothStep = isLiving;

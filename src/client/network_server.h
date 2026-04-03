@@ -279,7 +279,7 @@ private:
 				if (es.id == m_localPlayerId)
 					printf("[Net] Local player entity created: type=%s pos=(%.1f,%.1f,%.1f)\n",
 						es.typeId.c_str(), es.position.x, es.position.y, es.position.z);
-				if (def->max_hp > 0)
+				if (def->isLiving())
 					ent->setProp(Prop::HP, es.hp);
 				m_entities[es.id] = std::move(ent);
 				// Initialize interpolation target
@@ -296,7 +296,7 @@ private:
 				// Sync non-positional state immediately
 				e.onGround = es.onGround;
 				e.goalText = es.goalText;
-				if (e.def().max_hp > 0)
+				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);
 			}
 			break;

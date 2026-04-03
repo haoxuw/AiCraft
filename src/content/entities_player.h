@@ -10,6 +10,7 @@ inline void registerPlayerEntity(EntityManager& mgr) {
 	EntityDef def;
 	def.string_id = EntityType::Player;
 	def.display_name = "Player";
+	def.kind = EntityKind::Character;
 	def.category = Category::Player;
 	def.model = Asset::PlayerModel;
 	def.texture = Asset::PlayerTexture;
@@ -21,7 +22,6 @@ inline void registerPlayerEntity(EntityManager& mgr) {
 	def.run_speed = 20.0f;    // sprint speed
 	def.max_hp = 20;
 	def.eye_height = 1.9f;    // camera eye position above feet
-	def.has_inventory = true;
 	def.playable = true;
 	def.default_props = {
 		{Prop::HP, 20},

@@ -63,7 +63,7 @@ void GameplayController::processMovement(float dt, GameState state,
 				float aspect = (float)ww / (float)wh;
 				glm::mat4 vp = camera.projectionMatrix(aspect) * camera.viewMatrix();
 				server.forEachEntity([&](Entity& e) {
-					if (e.def().max_hp <= 0) return; // only living entities
+					if (!e.def().isLiving()) return; // only living entities
 					glm::vec4 clip = vp * glm::vec4(e.position + glm::vec3(0, 0.5f, 0), 1.0f);
 					if (clip.w <= 0) return;
 					float sx = clip.x / clip.w;
@@ -242,13 +242,14 @@ void GameplayController::processMovement(float dt, GameState state,
 	}
 
 	// Apply velocity locally for client-side prediction.
-	// Don't modify onGround here — let the server set it via physics.
-	// Otherwise in LocalServer (shared entity), the client clears onGround
-	// before the server reads it, causing the server to reject the jump.
 	player.velocity.x = moveAction.desiredVel.x;
 	player.velocity.z = moveAction.desiredVel.z;
 	if (moveAction.fly) {
 		player.velocity.y = moveAction.desiredVel.y;
+	} else if (moveAction.jump && player.onGround) {
+		player.velocity.y = jumpVelocity;
+		// Don't clear onGround here — server sets it via physics.
+		// Client trusts onGround from server's moveAndCollide result.
 	}
 
 	server.sendAction(moveAction);
