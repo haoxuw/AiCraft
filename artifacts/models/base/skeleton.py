@@ -1,0 +1,77 @@
+"""Skeleton -- undead warrior in rusted iron.
+
+An undead warrior draped in rusted iron.
+STR 3  STA 2  AGI 4  INT 3
+
+Each part: offset=[x,y,z] (center), size=[w,h,d] (full size), color=[r,g,b,a]
+Optional animation: pivot, swing_axis, amplitude (degrees), phase (radians), speed
+"""
+
+import math
+
+model = {
+    "id": "skeleton",
+    "height": 2.0,
+    "scale": 1.0,
+    "walk_speed": 1.8,
+    "idle_bob": 0.008,
+    "walk_bob": 0.03,
+    "parts": [
+        # Skull (texture provides face -- must be parts[0])
+        {"offset": [0, 1.78, 0], "size": [0.46, 0.46, 0.46], "color": [0.88, 0.85, 0.78, 1],
+         "pivot": [0, 1.55, 0], "swing_axis": [1, 0, 0], "amplitude": 6, "phase": 0, "speed": 2},
+        # Jaw
+        {"offset": [0, 1.62, -0.02], "size": [0.36, 0.10, 0.34], "color": [0.82, 0.78, 0.70, 1],
+         "pivot": [0, 1.55, 0], "swing_axis": [1, 0, 0], "amplitude": 6, "phase": 0, "speed": 2},
+
+        # Spine (Y-axis counter-twist)
+        {"offset": [0, 1.10, 0], "size": [0.12, 0.60, 0.12], "color": [0.70, 0.65, 0.58, 1],
+         "pivot": [0, 1.10, 0], "swing_axis": [0, 1, 0], "amplitude": 4, "phase": math.pi, "speed": 1},
+        # Ribcage
+        {"offset": [0, 1.18, 0], "size": [0.40, 0.36, 0.22], "color": [0.88, 0.85, 0.78, 1]},
+        # Left rib detail
+        {"offset": [-0.14, 1.08, -0.06], "size": [0.16, 0.04, 0.12], "color": [0.80, 0.76, 0.68, 1]},
+        # Right rib detail
+        {"offset": [0.14, 1.08, -0.06], "size": [0.16, 0.04, 0.12], "color": [0.80, 0.76, 0.68, 1]},
+        # Pelvis
+        {"offset": [0, 0.72, 0], "size": [0.36, 0.10, 0.22], "color": [0.70, 0.65, 0.58, 1]},
+        # Rusted chestplate fragment
+        {"offset": [0, 0.88, -0.08], "size": [0.32, 0.28, 0.04], "color": [0.30, 0.28, 0.25, 0.85]},
+        # Belt
+        {"offset": [0, 0.72, -0.10], "size": [0.40, 0.06, 0.04], "color": [0.52, 0.35, 0.22, 1]},
+
+        # Left rusted pauldron
+        {"offset": [-0.32, 1.40, 0], "size": [0.24, 0.12, 0.20], "color": [0.52, 0.35, 0.22, 1],
+         "pivot": [-0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
+        # Left bone arm
+        {"offset": [-0.32, 1.10, 0], "size": [0.10, 0.52, 0.10], "color": [0.88, 0.85, 0.78, 1],
+         "pivot": [-0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
+        # Left hand
+        {"offset": [-0.32, 0.80, 0], "size": [0.12, 0.08, 0.08], "color": [0.70, 0.65, 0.58, 1],
+         "pivot": [-0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
+        # Right bare bone arm
+        {"offset": [0.32, 1.10, 0], "size": [0.10, 0.52, 0.10], "color": [0.88, 0.85, 0.78, 1],
+         "pivot": [0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
+        # Right hand
+        {"offset": [0.32, 0.80, 0], "size": [0.12, 0.08, 0.08], "color": [0.70, 0.65, 0.58, 1],
+         "pivot": [0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
+
+        # Shield fragment
+        {"offset": [0.08, 1.05, 0.16], "size": [0.28, 0.32, 0.04], "color": [0.42, 0.30, 0.18, 1]},
+        # Shield boss
+        {"offset": [0.08, 1.05, 0.13], "size": [0.08, 0.08, 0.04], "color": [0.52, 0.35, 0.22, 1]},
+
+        # Left leg
+        {"offset": [-0.12, 0.38, 0], "size": [0.12, 0.44, 0.12], "color": [0.88, 0.85, 0.78, 1],
+         "pivot": [-0.12, 0.66, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
+        # Left foot
+        {"offset": [-0.12, 0.08, -0.04], "size": [0.14, 0.10, 0.22], "color": [0.70, 0.65, 0.58, 1],
+         "pivot": [-0.12, 0.66, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
+        # Right leg
+        {"offset": [0.12, 0.38, 0], "size": [0.12, 0.44, 0.12], "color": [0.88, 0.85, 0.78, 1],
+         "pivot": [0.12, 0.66, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
+        # Right foot
+        {"offset": [0.12, 0.08, -0.04], "size": [0.14, 0.10, 0.22], "color": [0.70, 0.65, 0.58, 1],
+         "pivot": [0.12, 0.66, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
+    ]
+}

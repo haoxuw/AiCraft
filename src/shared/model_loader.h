@@ -291,13 +291,16 @@ inline bool loadModel(const std::string& artifactsDir, const std::string& name, 
 inline std::unordered_map<std::string, BoxModel> loadAllModels(const std::string& artifactsDir) {
 	std::unordered_map<std::string, BoxModel> models;
 
-	// Names to try loading from Python
-	const char* names[] = {"player", "pig", "chicken", "dog", "cat", "villager"};
-
-	for (auto* name : names) {
-		BoxModel m;
-		if (loadModel(artifactsDir, name, m)) {
-			models[name] = std::move(m);
+	// Scan artifacts/models/base/ and artifacts/models/player/ for all .py files
+	for (auto* sub : {"base", "player"}) {
+		std::string dir = artifactsDir + "/models/" + sub;
+		if (!std::filesystem::exists(dir)) continue;
+		for (auto& entry : std::filesystem::directory_iterator(dir)) {
+			if (entry.path().extension() != ".py") continue;
+			std::string name = entry.path().stem().string();
+			BoxModel m;
+			if (loadModel(artifactsDir, name, m))
+				models[name] = std::move(m);
 		}
 	}
 

@@ -95,8 +95,10 @@ bool Game::init(int argc, char** argv) {
 	// Models — load from Python files (artifacts/models/) with C++ fallback
 	{
 		auto pyModels = model_loader::loadAllModels("artifacts");
-		const char* names[] = {"player", "pig", "chicken", "dog", "cat", "villager"};
-		// C++ fallbacks
+		// Creatures + playable characters
+		const char* names[] = {"player", "pig", "chicken", "dog", "cat", "villager",
+		                       "knight", "skeleton", "crewmate", "giant", "mage"};
+		// C++ fallbacks (creatures only — characters are Python-only)
 		std::unordered_map<std::string, BoxModel> fallbacks;
 		fallbacks["player"]   = builtin::playerModel();
 		fallbacks["pig"]      = builtin::pigModel();
@@ -108,9 +110,10 @@ bool Game::init(int argc, char** argv) {
 			auto it = pyModels.find(name);
 			if (it != pyModels.end()) {
 				m_models[name] = std::move(it->second);
-			} else {
+			} else if (fallbacks.count(name)) {
 				m_models[name] = std::move(fallbacks[name]);
 			}
+			// Characters without Python model or C++ fallback → not loaded (warning logged)
 		}
 	}
 	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
@@ -132,9 +135,9 @@ bool Game::init(int argc, char** argv) {
 	hb.setRegistry(&m_artifacts);
 	hb.setAudio(&m_audio);
 
-	// Creatures
+	// Register ALL models (creatures + playable characters) for Handbook preview
 	for (auto& [key, mdl] : m_models) {
-		if (key != "player") hb.registerModel(key, mdl);
+		hb.registerModel(key, mdl);
 	}
 
 	// Items — simple box models for preview
