@@ -94,6 +94,17 @@ bool Game::init(int argc, char** argv) {
 	// Models — ALL loaded from Python (artifacts/models/base/ and models/player/)
 	m_models = model_loader::loadAllModels("artifacts");
 	printf("[Game] Loaded %zu models from Python\n", m_models.size());
+
+	// Validate: every creature, character, and item artifact should have a model
+	for (auto* cat : {"creature", "character", "item"}) {
+		for (auto* entry : m_artifacts.byCategory(cat)) {
+			std::string key = entry->name;
+			for (auto& c : key) c = (char)std::tolower((unsigned char)c);
+			if (!m_models.count(key))
+				printf("[WARNING] %s '%s' has no model in artifacts/models/ (expected %s.py)\n",
+					cat, entry->name.c_str(), key.c_str());
+		}
+	}
 	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
 
 	// Character selection preview (uses same models + preview as Handbook)

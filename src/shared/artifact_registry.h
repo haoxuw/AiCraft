@@ -63,6 +63,24 @@ public:
 
 		printf("[ArtifactRegistry] Loaded %zu artifacts from %s\n",
 		       m_entries.size(), basePath.c_str());
+
+		// Validate: creatures, characters, and items must have a model file
+		int warnings = 0;
+		for (auto& e : m_entries) {
+			if (e.category == "creature" || e.category == "character" || e.category == "item") {
+				std::string key = e.name;
+				for (auto& c : key) c = (char)std::tolower((unsigned char)c);
+				std::string modelPath = basePath + "/models/base/" + key + ".py";
+				std::string modelPathPlayer = basePath + "/models/player/" + key + ".py";
+				if (!std::filesystem::exists(modelPath) && !std::filesystem::exists(modelPathPlayer)) {
+					printf("[ArtifactRegistry] WARNING: %s '%s' has no model file (%s.py)\n",
+						e.category.c_str(), e.name.c_str(), key.c_str());
+					warnings++;
+				}
+			}
+		}
+		if (warnings > 0)
+			printf("[ArtifactRegistry] %d artifact(s) missing model files!\n", warnings);
 	}
 
 	// Get all entries
@@ -169,6 +187,20 @@ public:
 		out.close();
 
 		printf("[ArtifactRegistry] Forked %s → %s (%s)\n", id.c_str(), destPath.c_str(), newId.c_str());
+
+		// Also fork the model file if one exists (creature/character/item need models)
+		if (src->category == "creature" || src->category == "character" || src->category == "item") {
+			std::string modelSrc = m_basePath + "/models/base/" + stem + ".py";
+			if (std::filesystem::exists(modelSrc)) {
+				std::string modelDestDir = m_basePath + "/models/player";
+				std::filesystem::create_directories(modelDestDir);
+				std::string modelDest = modelDestDir + "/" + newStem + ".py";
+				if (!std::filesystem::exists(modelDest)) {
+					std::filesystem::copy_file(modelSrc, modelDest);
+					printf("[ArtifactRegistry] Forked model %s → %s\n", modelSrc.c_str(), modelDest.c_str());
+				}
+			}
+		}
 
 		// Reload to pick up the new entry
 		loadAll(m_basePath);
