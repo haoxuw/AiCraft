@@ -160,9 +160,12 @@ public:
 		{
 			ImGui::SetCursorPos(ImVec2(32, 24));
 
+			// Only overwrite action if content page produces one
+			// (sidebar Quit button may have already set it)
+			MenuAction contentAction;
 			switch (m_page) {
 			case Page::Play:
-				action = renderPlayContent(W - sideW);
+				contentAction = renderPlayContent(W - sideW);
 				break;
 			case Page::Handbook:
 				renderHandbookContent(registry, W - sideW, contentH);
@@ -171,9 +174,11 @@ public:
 				renderSettingsContent(W - sideW);
 				break;
 			default:
-				renderPlayContent(W - sideW);
+				contentAction = renderPlayContent(W - sideW);
 				break;
 			}
+			if (contentAction.type != MenuAction::None)
+				action = contentAction;
 		}
 		ImGui::EndChild();
 		ImGui::PopStyleColor();

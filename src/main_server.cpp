@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
 	signal(SIGTERM, signalHandler);
 
 	// Server log file: /tmp/agentica_log_{port}.log
-	// Determine port from args first (default 7777)
+	// Console output is NOT redirected — log file gets periodic snapshots.
 	int logPort = 7777;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
@@ -151,15 +151,10 @@ int main(int argc, char** argv) {
 	}
 	char logPath[256];
 	snprintf(logPath, sizeof(logPath), "/tmp/agentica_log_%d.log", logPort);
-	FILE* logFile = fopen(logPath, "w");
-	if (logFile) {
-		// Duplicate to both file and original stdout
-		// Redirect stdout to log file; stderr stays on console
-		setvbuf(logFile, nullptr, _IONBF, 0);
-		// Redirect stdout to log file
-		dup2(fileno(logFile), fileno(stdout));
-		// Also write startup info to stderr so console sees it
-		fprintf(stderr, "[Server] Logging to %s\n", logPath);
+	FILE* g_logFile = fopen(logPath, "w");
+	if (g_logFile) {
+		setvbuf(g_logFile, nullptr, _IONBF, 0);
+		printf("[Server] Also logging to %s\n", logPath);
 	}
 
 	printf("=== AgentWorld Dedicated Server ===\n");
@@ -489,12 +484,16 @@ int main(int argc, char** argv) {
 			       tickCount, tickCount / statusTimer,
 			       server.world().entities.count(), moving,
 			       clients.size());
+			if (g_logFile) {
+				fprintf(g_logFile, "[Server] %d ticks, %.1f tps, %zu entities (%d moving), %zu clients\n",
+				        tickCount, tickCount / statusTimer,
+				        server.world().entities.count(), moving, clients.size());
+			}
 			for (auto& [cid, c] : clients) {
 				auto* pe = server.world().entities.get(c.playerId);
 				if (pe) {
-					printf("[Server]   Client %u (player %u): pos=(%.1f,%.1f,%.1f) vel=(%.1f,%.1f,%.1f) ground=%d\n",
-						cid, c.playerId, pe->position.x, pe->position.y, pe->position.z,
-						pe->velocity.x, pe->velocity.y, pe->velocity.z, pe->onGround);
+					printf("[Server]   %s: pos=(%.1f,%.1f,%.1f)\n",
+						c.label().c_str(), pe->position.x, pe->position.y, pe->position.z);
 				}
 			}
 			tickCount = 0;
