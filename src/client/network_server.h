@@ -113,32 +113,78 @@ public:
 
 		net::MsgHeader hdr;
 		std::vector<uint8_t> payload;
+		int msgCount = 0;
 		while (m_recv.tryExtract(hdr, payload)) {
 			handleMessage(hdr.type, payload);
+			msgCount++;
+		}
+		m_tickMsgCount += msgCount;
+		m_totalMsgCount += msgCount;
+		m_uptime += dt;
+
+		// Early connection verbose logging (first 10 seconds)
+		if (m_uptime < 10.0f && msgCount > 0) {
+			printf("[Net] t=%.1fs: received %d msgs, %zu entities, %zu chunks\n",
+				m_uptime, msgCount, m_entities.size(), m_chunkData.size());
+			Entity* pe = getEntity(m_localPlayerId);
+			if (!pe)
+				printf("[Net] WARNING: local player entity %u not received yet\n", m_localPlayerId);
 		}
 
-		// Interpolate ALL entities toward server targets — same code for
-		// player, animals, villagers, other players. No special cases.
-		// Server is authoritative for positions. Client smoothly tracks.
-		const float INTERP_SPEED = 18.0f; // fast tracking for responsive feel
+		// Periodic diagnostics (every 5 seconds)
+		m_diagTimer += dt;
+		if (m_diagTimer >= 5.0f) {
+			Entity* pe = m_entities.count(m_localPlayerId)
+				? m_entities[m_localPlayerId].get() : nullptr;
+			auto* pt = m_interpTargets.count(m_localPlayerId)
+				? &m_interpTargets[m_localPlayerId] : nullptr;
+
+			printf("[Net] Stats: %d msgs/5s (total=%d), %zu entities, %zu chunks, uptime=%.0fs\n",
+				m_tickMsgCount, m_totalMsgCount, m_entities.size(), m_chunkData.size(), m_uptime);
+			if (pe && pt) {
+				glm::vec3 diff = pt->position - pe->position;
+				printf("[Net] Player %u: pos=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f) diff=%.2f vel=(%.1f,%.1f,%.1f) ground=%d\n",
+					m_localPlayerId,
+					pe->position.x, pe->position.y, pe->position.z,
+					pt->position.x, pt->position.y, pt->position.z,
+					glm::length(diff),
+					pe->velocity.x, pe->velocity.y, pe->velocity.z,
+					pe->onGround);
+			} else {
+				printf("[Net] Player %u: entity=%s, interp=%s\n",
+					m_localPlayerId, pe ? "yes" : "NO", pt ? "yes" : "NO");
+			}
+			m_diagTimer = 0;
+			m_tickMsgCount = 0;
+		}
+
+		// Interpolate ALL entities toward server targets.
+		// Server is fully authoritative for positions. Client smoothly tracks.
+		// NO special cases for local player — this prevents phasing through
+		// walls (client has no collision, so using client velocity for
+		// extrapolation causes rubber-banding against solid blocks).
+		const float INTERP_SPEED = 18.0f;
+		const float LOCAL_INTERP_SPEED = 25.0f; // faster for local player responsiveness
 		for (auto& [id, target] : m_interpTargets) {
 			auto it = m_entities.find(id);
 			if (it == m_entities.end()) continue;
 			auto& e = *it->second;
+			bool isLocal = (id == m_localPlayerId);
 
-			// For local player, use WASD velocity (already set by gameplay.cpp)
-			// for better extrapolation. For others, use server velocity.
-			glm::vec3 useVel = (id == m_localPlayerId) ? e.velocity : target.velocity;
-
-			// Predicted position = server pos + velocity × time since update
-			glm::vec3 predicted = target.position + useVel * target.age;
+			// ALL entities use server velocity for prediction — client has
+			// no physics so client velocity would phase through blocks
+			glm::vec3 predicted = target.position + target.velocity * target.age;
 			glm::vec3 diff = predicted - e.position;
 			float dist = glm::length(diff);
 
+			float speed = isLocal ? LOCAL_INTERP_SPEED : INTERP_SPEED;
 			if (dist > 8.0f) {
-				e.position = predicted; // snap if too far
+				e.position = predicted;
+				printf("[Net] SNAP entity %u to server pos (dist=%.1f) local=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f)\n",
+					id, dist, e.position.x, e.position.y, e.position.z,
+					predicted.x, predicted.y, predicted.z);
 			} else if (dist > 0.005f) {
-				float t = std::min(dt * INTERP_SPEED, 1.0f);
+				float t = std::min(dt * speed, 1.0f);
 				e.position += diff * t;
 			}
 
@@ -147,12 +193,10 @@ public:
 				float yawDiff = target.yaw - e.yaw;
 				while (yawDiff > 180.0f) yawDiff -= 360.0f;
 				while (yawDiff < -180.0f) yawDiff += 360.0f;
-				e.yaw += yawDiff * std::min(dt * INTERP_SPEED, 1.0f);
+				e.yaw += yawDiff * std::min(dt * speed, 1.0f);
 			}
-			// Velocity: skip for local player (client-side prediction handles it)
-			if (id != m_localPlayerId) {
-				e.velocity = target.velocity;
-			}
+			// Velocity: update for ALL entities (server-authoritative)
+			e.velocity = target.velocity;
 
 			target.age += dt;
 
@@ -233,12 +277,18 @@ private:
 					       es.typeId.c_str(), es.id);
 					def = &m_defaultDef;
 				}
+				printf("[Net] New entity: id=%u type=%s pos=(%.1f,%.1f,%.1f)%s\n",
+					es.id, es.typeId.c_str(), es.position.x, es.position.y, es.position.z,
+					es.id == m_localPlayerId ? " [LOCAL PLAYER]" : "");
 				auto ent = std::make_unique<Entity>(es.id, es.typeId, *def);
 				ent->position = es.position;
 				ent->velocity = es.velocity;
 				ent->yaw = es.yaw;
 				ent->onGround = es.onGround;
 				ent->goalText = es.goalText;
+				if (es.id == m_localPlayerId)
+					printf("[Net] Local player entity created: type=%s pos=(%.1f,%.1f,%.1f)\n",
+						es.typeId.c_str(), es.position.x, es.position.y, es.position.z);
 				if (def->max_hp > 0)
 					ent->setProp(Prop::HP, es.hp);
 				m_entities[es.id] = std::move(ent);
@@ -371,6 +421,12 @@ private:
 	ActionQueue m_actions;
 	EntityDef m_defaultDef;
 	EntityManager m_entityDefs;  // holds type defs for entity creation
+
+	// Diagnostics
+	float m_diagTimer = 0;
+	int m_tickMsgCount = 0;
+	int m_totalMsgCount = 0;
+	float m_uptime = 0;
 
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, glm::vec3, int)> m_onBlockBreak;
