@@ -319,4 +319,50 @@ void TextRenderer::drawRect(float x, float y, float w, float h, glm::vec4 color)
 	glEnable(GL_DEPTH_TEST);
 }
 
+void TextRenderer::drawArc(float cx, float cy, float r_inner, float r_outer,
+                           float startAngle, float endAngle,
+                           glm::vec4 color, float aspect, int segments) {
+	if (segments < 1 || r_outer <= r_inner) return;
+	float sweep = endAngle - startAngle;
+	if (sweep == 0.0f) return;
+
+	// Each segment = 2 triangles. With r_inner=0, triangle 2 is degenerate (fine).
+	std::vector<float> verts;
+	verts.reserve(segments * 6 * 4);
+	for (int i = 0; i < segments; i++) {
+		float a0 = startAngle + sweep * (float)i / segments;
+		float a1 = startAngle + sweep * (float)(i + 1) / segments;
+		float c0 = std::cos(a0), s0 = std::sin(a0);
+		float c1 = std::cos(a1), s1 = std::sin(a1);
+		// x uses r directly; y scaled by aspect so circle is round on screen
+		float ox0 = cx + r_outer * c0, oy0 = cy + r_outer * aspect * s0;
+		float ox1 = cx + r_outer * c1, oy1 = cy + r_outer * aspect * s1;
+		float ix0 = cx + r_inner * c0, iy0 = cy + r_inner * aspect * s0;
+		float ix1 = cx + r_inner * c1, iy1 = cy + r_inner * aspect * s1;
+		float seg[] = {
+			ox0, oy0, 0, 0,  ix0, iy0, 0, 0,  ox1, oy1, 0, 0,
+			ix0, iy0, 0, 0,  ix1, iy1, 0, 0,  ox1, oy1, 0, 0,
+		};
+		verts.insert(verts.end(), std::begin(seg), std::end(seg));
+	}
+
+	glDisable(GL_DEPTH_TEST);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	m_textShader.use();
+	m_textShader.setVec3("uColor", glm::vec3(color));
+	m_textShader.setFloat("uAlpha", color.a);
+	m_textShader.setInt("uFontTex", 0);
+	m_textShader.setInt("uMode", 1); // solid fill
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, m_fontTexture);
+	glBindVertexArray(m_vao);
+	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+	size_t bytes = verts.size() * sizeof(float);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)bytes, verts.data(), GL_DYNAMIC_DRAW);
+	glDrawArrays(GL_TRIANGLES, 0, (int)(verts.size() / 4));
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+}
+
 } // namespace agentworld

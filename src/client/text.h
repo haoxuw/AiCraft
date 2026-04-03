@@ -26,6 +26,13 @@ public:
 	// Draw a filled rectangle in NDC coords
 	void drawRect(float x, float y, float w, float h, glm::vec4 color);
 
+	// Draw a filled arc/ring segment in NDC coords.
+	// cx, cy: center; r_inner/r_outer: radii in NDC-x units (r_inner=0 → filled disk).
+	// Angles in radians (0=right, counterclockwise). aspect corrects for non-square screens.
+	void drawArc(float cx, float cy, float r_inner, float r_outer,
+	             float startAngle, float endAngle,
+	             glm::vec4 color, float aspect, int segments = 40);
+
 private:
 	void generateFontTexture();
 
