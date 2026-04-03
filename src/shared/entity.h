@@ -32,9 +32,14 @@ struct EntityDef {
 	std::string category;       // "animal", "item", "npc", "player"
 
 	// Visual
-	std::string model;          // "pig.gltf"
+	std::string model;          // "pig.gltf" — key into client model registry
 	std::string texture;        // "pig.png"
 	glm::vec3 color = {1, 1, 1};
+
+	// Audio — group name to play for ambient creature sounds, e.g. "creature_pig"
+	// Leave empty to suppress ambient sounds for this entity type.
+	std::string sound_group;
+	float sound_volume = 0.3f;
 
 	// Physics
 	glm::vec3 collision_box_min = {-0.4f, 0.0f, -0.4f};

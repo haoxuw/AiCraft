@@ -25,6 +25,7 @@
 #include "shared/face.h"
 #include <chrono>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace agentworld {
@@ -135,8 +136,8 @@ private:
 	AudioManager m_audio;
 	float m_creatureSoundTimer = 3.0f;
 
-	// Models
-	BoxModel m_playerModel, m_pigModel, m_chickenModel, m_dogModel, m_catModel, m_villagerModel;
+	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
+	std::unordered_map<std::string, BoxModel> m_models;
 	ModelPreview m_modelPreview;
 	float m_playerWalkDist = 0;
 	float m_globalTime = 0;

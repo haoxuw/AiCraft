@@ -30,6 +30,11 @@ void GameServer::resolveActions(float dt) {
 			e->velocity.x = p.desiredVel.x;
 			e->velocity.z = p.desiredVel.z;
 
+			// All entities face their movement direction (unified for RPG, RTS, AI)
+			if (std::abs(p.desiredVel.x) > 0.01f || std::abs(p.desiredVel.z) > 0.01f) {
+				e->yaw = glm::degrees(std::atan2(p.desiredVel.z, p.desiredVel.x));
+			}
+
 			if (p.fly) {
 				e->velocity.y = p.desiredVel.y;
 			} else if (p.jump && e->onGround) {

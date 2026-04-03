@@ -13,30 +13,40 @@
 #include "client/entity_raycast.h"
 #include "client/window.h"
 #include <optional>
+#include <unordered_map>
 
 namespace agentworld {
 
 class GameplayController {
 public:
 	// Called each gameplay frame. Gathers client input → ActionProposals.
-	// Server handles resolution, physics, active blocks, item pickup.
 	void update(float dt, GameState state, ServerInterface& server, Entity& player,
 	            Camera& camera, ControlManager& controls, Renderer& renderer,
 	            ParticleSystem& particles, Window& window,
 	            float jumpVelocity = 17.0f);
 
-	// The raycast hit from this frame (for HUD and highlight rendering)
+	// --- Query state (for HUD / renderer) ---
+
 	const std::optional<RayHit>& currentHit() const { return m_hit; }
 	const std::optional<EntityHit>& currentEntityHit() const { return m_entityHit; }
 
-	// Entity inspection: set when player right-clicks an entity
 	EntityId inspectedEntity() const { return m_inspectedEntity; }
 	void clearInspection() { m_inspectedEntity = ENTITY_NONE; }
+
+	bool hasMoveTarget() const { return m_clickToMove.active; }
+	glm::vec3 moveTarget() const { return m_clickToMove.target; }
+
+	bool isBoxDragging() const { return m_rtsSelect.dragging; }
+	glm::vec2 boxStart() const { return m_rtsSelect.start; }
+	glm::vec2 boxEnd() const { return m_rtsSelect.end; }
+	const std::vector<EntityId>& selectedEntities() const { return m_rtsSelect.selected; }
 
 	// Set by game loop: true when inventory/ImGui/chat is open and wants cursor
 	void setUIWantsCursor(bool v) { m_uiWantsCursor = v; }
 
 private:
+	// --- Subsystems (each has its own .cpp implementation) ---
+
 	void handleCameraInput(float dt, ControlManager& controls, Camera& camera, Window& window);
 	void processMovement(float dt, GameState state, ControlManager& controls,
 	                     Camera& camera, Entity& player, ServerInterface& server,
@@ -44,37 +54,45 @@ private:
 	void processBlockInteraction(float dt, GameState state, ServerInterface& server,
 	                             Entity& player, Camera& camera, ControlManager& controls,
 	                             Window& window);
+	void issueRTSMoveOrder(glm::ivec3 blockPos, ServerInterface& server, Camera& camera);
+
+	// --- Raycast results (set per frame by processBlockInteraction) ---
 
 	std::optional<RayHit> m_hit;
 	std::optional<EntityHit> m_entityHit;
 	EntityId m_inspectedEntity = ENTITY_NONE;
 
-	// Client-side input cooldowns (anti-spam, not authoritative)
-	float m_breakCD = 0;
-	float m_placeCD = 0;
+	// --- Input cooldowns ---
 
+	float m_breakCD = 0;
 	bool m_uiWantsCursor = false;
 
-	// Click-to-move for RPG/RTS
-	bool m_hasMoveTarget = false;
-	glm::vec3 m_moveTarget = {0, 0, 0};
+	// --- Right-click state (RPG/RTS: drag → orbit, quick click → action) ---
 
-	// RTS box selection
-	bool m_boxDragging = false;
-	glm::vec2 m_boxStart = {0, 0}; // NDC coords
-	glm::vec2 m_boxEnd = {0, 0};
-	std::vector<EntityId> m_selectedEntities;
+	struct RightClick {
+		bool held = false;
+		bool orbiting = false;
+		bool action = false;      // set on release if no drag
+		double startX = 0, startY = 0;
+	} m_rightClick;
 
-public:
-	bool hasMoveTarget() const { return m_hasMoveTarget; }
-	glm::vec3 moveTarget() const { return m_moveTarget; }
+	// --- Click-to-move (RPG player + RTS visual indicator) ---
 
-	// RTS selection
-	bool isBoxDragging() const { return m_boxDragging; }
-	glm::vec2 boxStart() const { return m_boxStart; }
-	glm::vec2 boxEnd() const { return m_boxEnd; }
-	const std::vector<EntityId>& selectedEntities() const { return m_selectedEntities; }
-private:
+	struct ClickToMove {
+		bool active = false;
+		glm::vec3 target = {0, 0, 0};
+	} m_clickToMove;
+
+	// --- RTS box selection + unit movement ---
+
+	struct RTSSelection {
+		bool dragging = false;
+		glm::vec2 start = {0, 0};
+		glm::vec2 end = {0, 0};
+		std::vector<EntityId> selected;
+		// Per-entity move targets (grid formation), continuously tracked
+		std::unordered_map<EntityId, glm::vec3> moveTargets;
+	} m_rtsSelect;
 };
 
 } // namespace agentworld

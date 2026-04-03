@@ -117,18 +117,28 @@ public:
 		return true;
 	}
 
-	// Accept a new connection (non-blocking). Returns fd or -1.
-	int acceptClient() {
+	struct AcceptResult {
+		int fd = -1;
+		std::string ip;
+		int port = 0;
+	};
+
+	// Accept a new connection (non-blocking). Returns fd, IP, and port.
+	AcceptResult acceptClient() {
 		sockaddr_in addr{};
 		socklen_t len = sizeof(addr);
 		int fd = accept(m_fd, (sockaddr*)&addr, &len);
 		if (fd >= 0) {
 			setNonBlocking(fd);
 			setNoDelay(fd);
-			printf("[Net] Client connected from %s:%d\n",
-			       inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+			AcceptResult r;
+			r.fd = fd;
+			r.ip = inet_ntoa(addr.sin_addr);
+			r.port = ntohs(addr.sin_port);
+			printf("[Net] Client connected from %s:%d\n", r.ip.c_str(), r.port);
+			return r;
 		}
-		return fd;
+		return {};
 	}
 
 	void shutdown() {

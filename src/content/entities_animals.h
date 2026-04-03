@@ -14,6 +14,8 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.model = Asset::PigModel;
 		def.texture = Asset::PigTexture;
 		def.color = {0.9f, 0.7f, 0.7f};
+		def.sound_group = "creature_pig";
+		def.sound_volume = 0.3f;
 		def.collision_box_min = {-0.4f, 0.0f, -0.4f};
 		def.collision_box_max = { 0.4f, 0.9f,  0.4f};
 		def.gravity_scale = 1.0f;
@@ -23,6 +25,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.default_props = {
 			{Prop::HP, 10}, {Prop::Hunger, 0.5f}, {Prop::Age, 0.0f},
 			{Prop::WanderTimer, 0.0f}, {Prop::WanderYaw, 0.0f}, {Prop::WalkDistance, 0.0f},
+			{Prop::BehaviorId, std::string("wander")},
 		};
 		mgr.registerType(def);
 	}
@@ -35,6 +38,8 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.model = Asset::ChickenModel;
 		def.texture = Asset::ChickenTexture;
 		def.color = {0.95f, 0.95f, 0.90f};
+		def.sound_group = "creature_chicken";
+		def.sound_volume = 0.25f;
 		def.collision_box_min = {-0.2f, 0.0f, -0.2f};
 		def.collision_box_max = { 0.2f, 0.6f,  0.2f};
 		def.gravity_scale = 1.0f;
@@ -44,6 +49,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.default_props = {
 			{Prop::HP, 5}, {Prop::Hunger, 0.5f}, {Prop::Age, 0.0f},
 			{Prop::WanderTimer, 0.0f}, {Prop::WanderYaw, 0.0f}, {Prop::WalkDistance, 0.0f},
+			{Prop::BehaviorId, std::string("peck")},
 		};
 		mgr.registerType(def);
 	}
@@ -54,11 +60,14 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::Cat;
 		def.display_name = "Cat";
 		def.category = Category::Animal;
+		def.model = Asset::CatModel;
 		def.color = {0.90f, 0.55f, 0.20f}; // orange tabby
+		def.sound_group = "creature_cat";
+		def.sound_volume = 0.2f;
 		def.collision_box_min = {-0.2f, 0.0f, -0.2f};
 		def.collision_box_max = { 0.2f, 0.5f,  0.2f};
 		def.gravity_scale = 1.0f;
-		def.walk_speed = 3.5f;  // quick and agile
+		def.walk_speed = 3.5f;
 		def.run_speed = 7.0f;
 		def.max_hp = 8;
 		def.default_props = {
@@ -75,11 +84,14 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::Dog;
 		def.display_name = "Dog";
 		def.category = Category::Animal;
+		def.model = Asset::DogModel;
 		def.color = {0.75f, 0.55f, 0.35f}; // brown
+		def.sound_group = "creature_dog";
+		def.sound_volume = 0.3f;
 		def.collision_box_min = {-0.3f, 0.0f, -0.3f};
 		def.collision_box_max = { 0.3f, 0.7f,  0.3f};
 		def.gravity_scale = 1.0f;
-		def.walk_speed = 4.0f;  // faster than pig, can keep up with player
+		def.walk_speed = 4.0f;
 		def.run_speed = 8.0f;
 		def.max_hp = 15;
 		def.default_props = {
@@ -96,7 +108,10 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::Villager;
 		def.display_name = "Villager";
 		def.category = Category::Animal; // uses same AI dispatch as animals
+		def.model = Asset::VillagerModel;
 		def.color = {0.85f, 0.75f, 0.60f}; // tan skin
+		def.sound_group = "creature_villager";
+		def.sound_volume = 0.25f;
 		def.collision_box_min = {-0.3f, 0.0f, -0.3f};
 		def.collision_box_max = { 0.3f, 1.8f,  0.3f};
 		def.gravity_scale = 1.0f;

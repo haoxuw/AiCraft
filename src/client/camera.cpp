@@ -32,7 +32,6 @@ void Camera::cycleMode() {
 	int m = ((int)mode + 1) % 4;
 	mode = (CameraMode)m;
 	m_firstMouse = true; // reset mouse tracking on mode change
-	const char* names[] = {"First Person", "Third Person", "RPG", "RTS"};
 }
 
 void Camera::processMouse(GLFWwindow* window) {
@@ -50,7 +49,7 @@ void Camera::processMouse(GLFWwindow* window) {
 		player.yaw = lookYaw;
 		break;
 	case CameraMode::ThirdPerson:
-		orbitYaw += dx; orbitPitch -= dy;
+		orbitYaw += dx; orbitPitch += dy;  // inverted Y: mouse up → camera rises
 		orbitPitch = std::clamp(orbitPitch, 5.0f, 80.0f);
 		// Don't set player.yaw here — character faces movement direction,
 		// handled by gameplay.cpp smooth turn logic (like Fortnite)
@@ -63,18 +62,20 @@ void Camera::processMouse(GLFWwindow* window) {
 		godAngle = std::clamp(godAngle, 15.0f, 80.0f);
 		break;
 	case CameraMode::RTS:
-		break; // no mouse look in RTS, mouse used for selection
+		rtsOrbitYaw += dx;
+		rtsAngle += dy;
+		rtsAngle = std::clamp(rtsAngle, 15.0f, 80.0f);
+		break;
 	}
 }
 
 void Camera::processInput(GLFWwindow* window, float dt) {
-	if (mode != CameraMode::RTS)
-		processMouse(window);
+	processMouse(window);
 
 	switch (mode) {
 	case CameraMode::FirstPerson: updateFirstPerson(window, dt); break;
 	case CameraMode::ThirdPerson: updateThirdPerson(window, dt); break;
-	case CameraMode::RPG:     updateRPG(window, dt); break;
+	case CameraMode::RPG:         updateRPGPosition(dt); break;
 	case CameraMode::RTS:         updateRTS(window, dt); break;
 	}
 }
@@ -159,37 +160,43 @@ void Camera::updateRPGPosition(float dt) {
 	lookPitch = glm::degrees(asin(dir.y));
 }
 
-void Camera::updateRPG(GLFWwindow* window, float dt) {
-	updateRPGPosition(dt);
-}
-
 void Camera::updateRTS(GLFWwindow* window, float dt) {
-	// Top-down camera, WASD pans, mouse for selection
+	// Top-down camera, WASD pans relative to orbit, mouse for selection
 
 	float speed = rtsPanSpeed * dt;
 	if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) speed *= 2.5f;
 
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) rtsCenter.z -= speed;
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) rtsCenter.z += speed;
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) rtsCenter.x -= speed;
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) rtsCenter.x += speed;
+	// Pan relative to camera orbit direction (so W = "forward" on screen)
+	float yaw = glm::radians(rtsOrbitYaw);
+	glm::vec3 fwd = glm::normalize(glm::vec3(-cos(yaw), 0, -sin(yaw)));
+	glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0, 1, 0)));
 
-	// Edge scrolling (move camera when mouse near screen edge)
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) rtsCenter += fwd * speed;
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) rtsCenter -= fwd * speed;
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) rtsCenter -= right * speed;
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) rtsCenter += right * speed;
+
+	// Edge scrolling relative to orbit direction
 	double mx, my;
 	glfwGetCursorPos(window, &mx, &my);
 	int w, h;
 	glfwGetWindowSize(window, &w, &h);
 	float edgeMargin = 30.0f;
-	if (mx < edgeMargin) rtsCenter.x -= speed;
-	if (mx > w - edgeMargin) rtsCenter.x += speed;
-	if (my < edgeMargin) rtsCenter.z -= speed;
-	if (my > h - edgeMargin) rtsCenter.z += speed;
+	if (mx < edgeMargin) rtsCenter -= right * speed;
+	if (mx > w - edgeMargin) rtsCenter += right * speed;
+	if (my < edgeMargin) rtsCenter += fwd * speed;
+	if (my > h - edgeMargin) rtsCenter -= fwd * speed;
 
 	// Smooth zoom
 	rtsHeight += (rtsHeightTarget - rtsHeight) * std::min(dt * 10.0f, 1.0f);
 
 	float angle = glm::radians(rtsAngle);
-	position = rtsCenter + glm::vec3(0, sin(angle) * rtsHeight, cos(angle) * rtsHeight * 0.3f);
+	float horizontalDist = cos(angle) * rtsHeight * 0.3f;
+	position = rtsCenter + glm::vec3(
+		cos(yaw) * horizontalDist,
+		sin(angle) * rtsHeight,
+		sin(yaw) * horizontalDist
+	);
 
 	glm::vec3 dir = glm::normalize(rtsCenter - position);
 	lookYaw = glm::degrees(atan2(dir.z, dir.x));

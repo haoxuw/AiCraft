@@ -428,11 +428,14 @@ private:
 
 				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Creatures");
-				ImGui::SliderInt("Pigs", &m_worldGenConfig.pigCount, 0, 20);
-				ImGui::SliderInt("Chickens", &m_worldGenConfig.chickenCount, 0, 20);
-				ImGui::SliderInt("Dogs", &m_worldGenConfig.dogCount, 0, 10);
-				ImGui::SliderInt("Cats", &m_worldGenConfig.catCount, 0, 10);
-				ImGui::SliderInt("Villagers", &m_worldGenConfig.villagerCount, 0, 10);
+				for (auto& mob : m_worldGenConfig.mobs) {
+					// Strip "base:" prefix and capitalize for display
+					std::string label = mob.typeId;
+					auto colon = label.find(':');
+					if (colon != std::string::npos) label = label.substr(colon + 1);
+					if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
+					ImGui::SliderInt(label.c_str(), &mob.count, 0, 20);
+				}
 				ImGui::Unindent(16);
 			}
 

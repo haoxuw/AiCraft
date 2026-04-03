@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 /**
  * WorldGenConfig — all world generation parameters in one struct.
  *
@@ -9,6 +12,11 @@
  */
 
 namespace agentworld {
+
+struct MobSpawn {
+	std::string typeId;
+	int         count;
+};
 
 struct WorldGenConfig {
 	// Terrain biomes
@@ -32,12 +40,14 @@ struct WorldGenConfig {
 	int   houseWindowRow       = 3;      // Y-level for windows within house
 	int   houseCount           = 4;
 
-	// Mobs
-	int   pigCount             = 4;
-	int   chickenCount         = 3;
-	int   dogCount             = 1;
-	int   catCount             = 2;
-	int   villagerCount        = 2;
+	// Mobs — order controls spawn ring offset angle
+	std::vector<MobSpawn> mobs = {
+		{"base:pig",      4},
+		{"base:chicken",  3},
+		{"base:dog",      1},
+		{"base:cat",      2},
+		{"base:villager", 2},
+	};
 	float mobSpawnRadius       = 30.0f;
 };
 

@@ -141,12 +141,15 @@ public:
 				e.position += diff * t;
 			}
 
-			// Smooth yaw (skip for local player — camera controls yaw)
-			if (id != m_localPlayerId) {
+			// Smooth yaw — same for all entities (server-authoritative)
+			{
 				float yawDiff = target.yaw - e.yaw;
 				while (yawDiff > 180.0f) yawDiff -= 360.0f;
 				while (yawDiff < -180.0f) yawDiff += 360.0f;
 				e.yaw += yawDiff * std::min(dt * INTERP_SPEED, 1.0f);
+			}
+			// Velocity: skip for local player (client-side prediction handles it)
+			if (id != m_localPlayerId) {
 				e.velocity = target.velocity;
 			}
 

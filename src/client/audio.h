@@ -50,6 +50,24 @@ public:
 	// Play a sound group at the listener position (non-positional, e.g. UI).
 	void play(const std::string& group, float volume = 1.0f);
 
+	// Play a specific file by path (for sound preview in handbook).
+	void playFile(const std::string& path, float volume = 1.0f);
+
+	// Play a procedurally-generated blip/bubble (no file needed).
+	// Uses pure sine wave with decay — tests audio pipeline without codecs.
+	// pitch: 0.5 = low bubble, 1.0 = normal blip, 2.0 = high chirp
+	void playBlip(float pitch = 1.0f, float volume = 0.5f);
+
+	// Background music control
+	void startMusic();       // start playing random music tracks
+	void stopMusic();        // stop background music
+	void nextTrack();        // skip to next track
+	void updateMusic();      // call each frame to handle track transitions
+	bool musicPlaying() const { return m_musicPlaying; }
+	void setMusicVolume(float vol);
+	float musicVolume() const { return m_musicVolume; }
+	std::string currentTrackName() const;
+
 	// Update the listener position (call each frame from camera).
 	void setListener(glm::vec3 pos, glm::vec3 forward);
 
@@ -57,9 +75,14 @@ public:
 	void setMasterVolume(float vol);
 	float masterVolume() const { return m_masterVolume; }
 
-	// Mute/unmute
+	// Mute/unmute (global)
 	void setMuted(bool muted) { m_muted = muted; }
 	bool muted() const { return m_muted; }
+
+	// Mute effects only (creature sounds, footsteps, digging, etc.)
+	// Music continues playing when effects are muted.
+	void setEffectsMuted(bool muted) { m_effectsMuted = muted; }
+	bool effectsMuted() const { return m_effectsMuted; }
 
 	// Query loaded sounds (for handbook resource browser)
 	struct SoundInfo {
@@ -73,10 +96,14 @@ public:
 	// Get all group names
 	std::vector<std::string> groupNames() const;
 
+	// Get files in a specific group (for handbook preview)
+	std::vector<std::string> filesInGroup(const std::string& group) const;
+
 private:
 	ma_engine* m_engine = nullptr;
 	bool m_initialized = false;
 	bool m_muted = false;
+	bool m_effectsMuted = false;
 	float m_masterVolume = 0.5f;
 
 	// Sound group: multiple variants for the same logical sound
@@ -90,6 +117,19 @@ private:
 
 	// Listener state
 	glm::vec3 m_listenerPos = {0, 0, 0};
+
+	// Generated blip WAV files (created at init, no external files needed)
+	std::string m_blipPath;       // soft bubble
+	std::string m_blipHighPath;   // higher pitch chirp
+	std::string m_blipLowPath;    // lower pitch bubble
+	void generateBlipWav(const std::string& path, float freqHz, float durationSec);
+
+	// Background music
+	std::vector<std::string> m_musicFiles;
+	int m_musicIndex = -1;
+	bool m_musicPlaying = false;
+	float m_musicVolume = 0.30f;  // music is quiet background
+	void* m_musicSound = nullptr; // ma_sound* (opaque to avoid header dep)
 
 	// RNG for picking random variants
 	std::mt19937 m_rng{std::random_device{}()};

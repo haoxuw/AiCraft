@@ -96,8 +96,8 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		net::WriteBuffer wb;
 		int entityCount = 0;
 		world.entities.forEach([&](Entity& e) {
-			// Skip player entities (they're per-session)
-			if (e.def().category == Category::Player) return;
+			// Skip player entities (they're per-session, re-spawned on connect)
+			if (e.typeId() == EntityType::Player) return;
 
 			wb.writeString(e.typeId());
 			wb.writeVec3(e.position);

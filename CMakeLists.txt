@@ -155,6 +155,8 @@ set(GAME_SOURCES
 	src/game/game.cpp
 	src/game/gameplay.h
 	src/game/gameplay.cpp
+	src/game/gameplay_movement.cpp
+	src/game/gameplay_interaction.cpp
 	src/game/hud.h
 	src/game/hud.cpp
 	src/game/code_editor.h
@@ -252,7 +254,6 @@ else()
 		${CMAKE_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:agentworld>/fonts
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
 		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentworld>/artifacts
-		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/resources $<TARGET_FILE_DIR:agentworld>/resources
+		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/resources $<TARGET_FILE_DIR:agentworld>/
 	)
 endif()

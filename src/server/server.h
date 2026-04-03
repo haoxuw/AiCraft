@@ -117,10 +117,10 @@ public:
 			}
 		};
 
-		spawnMobs(EntityType::Pig, wgc.pigCount, 0.0f);
-		spawnMobs(EntityType::Chicken, wgc.chickenCount, 1.0f);
-		spawnMobs(EntityType::Dog, wgc.dogCount, 2.0f);
-		spawnMobs(EntityType::Cat, wgc.catCount, 3.0f);
+		// Spawn all mob types — order in wgc.mobs determines ring offset angle
+		for (int i = 0; i < (int)wgc.mobs.size(); i++) {
+			spawnMobs(wgc.mobs[i].typeId, wgc.mobs[i].count, (float)i);
+		}
 
 		{
 			int chestX = (int)sx, chestZ = (int)sz;
@@ -133,8 +133,6 @@ public:
 			}
 			m_chestPos = {(float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f};
 		}
-
-		spawnMobs(EntityType::Villager, wgc.villagerCount, 4.0f);
 
 		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f (chest at %.0f,%.0f,%.0f)\n",
 		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z,
@@ -243,25 +241,24 @@ public:
 			});
 		}
 
-		// Item pickup for all player entities
-		for (auto& [cid, cs] : m_clients) {
-			Entity* pe = m_world->entities.get(cs.playerEntityId);
-			if (!pe || !pe->inventory) continue;
-			glm::vec3 center = pe->position + glm::vec3(0, 1, 0);
+		// Item pickup for ALL entities with inventory (not just players)
+		m_world->entities.forEach([&](Entity& e) {
+			if (!e.inventory) return;
+			glm::vec3 center = e.position + glm::vec3(0, 1, 0);
 			auto pickups = m_world->entities.attractItemsToward(center, 3.0f, 1.2f, dt);
 			bool inventoryChanged = false;
 			for (auto* item : pickups) {
 				std::string itemType = item->getProp<std::string>(Prop::ItemType);
 				int count = item->getProp<int>(Prop::Count, 1);
-				pe->inventory->add(itemType, count);
+				e.inventory->add(itemType, count);
 				if (m_callbacks.onItemPickup)
 					m_callbacks.onItemPickup(item->position, {0.8f, 0.9f, 1.0f});
 				item->removed = true;
 				inventoryChanged = true;
 			}
 			if (inventoryChanged && m_callbacks.onInventoryChange)
-				m_callbacks.onInventoryChange(pe->id(), *pe->inventory);
-		}
+				m_callbacks.onInventoryChange(e.id(), *e.inventory);
+		});
 
 		// Advance world time
 		m_worldTime += (1.0f / 600.0f) * dt;
@@ -272,8 +269,8 @@ public:
 			m_stuckTimer = 0;
 
 			m_world->entities.forEach([&](Entity& e) {
-				// Only check non-player Living entities
-				if (e.def().category != Category::Animal) return;
+				// Check all living entities (anything with HP)
+				if (e.def().max_hp <= 0) return;
 
 				EntityId id = e.id();
 				auto it = m_lastPositions.find(id);

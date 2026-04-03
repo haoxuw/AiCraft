@@ -74,18 +74,28 @@ Client (runs Python behaviors)          Server (dumb validator)
 └─────────────────────────┘            └──────────────────────────┘
 ```
 
-### Three Modes of Control
+### Four Camera Modes + Auto-Pilot
 
-Any character can be controlled in three interchangeable ways:
+The player can cycle camera modes (V key). Each mode has different controls:
 
-1. **First-Person (FPS)** -- You ARE the character. WASD/mouse input produces
-   ActionProposals directly. Camera shows their eyes.
-2. **RTS (Warcraft-like)** -- You COMMAND characters. Click to assign orders
-   (move here, attack that, build this). They execute over time.
-3. **Python Auto-Pilot** -- Behavior code decides. The decide() function
+1. **First-Person (FPS)** -- Camera at player eyes, cursor captured.
+   Left-click = break block, right-click = inspect entity.
+   WASD relative to look direction.
+2. **Third-Person (TPS)** -- Camera orbits behind player, cursor captured.
+   Same controls as FPS. WASD relative to camera orbit direction (Fortnite-style).
+   Mouse Y-axis is inverted (mouse up = camera rises).
+3. **RPG** -- Isometric-style camera above player, cursor free.
+   Left-click = click-to-move. Right-click quick = inspect entity.
+   Right-click hold+drag = orbit camera. WASD = camera-relative movement.
+4. **RTS (Warcraft-like)** -- Top-down free camera, cursor free.
+   Left-click drag = box-select entities. Left-click (with units selected) = move
+   to target (grid formation, Red Alert style). Right-click quick = inspect entity.
+   Right-click hold+drag = orbit camera. WASD/edge-scroll = pan (orbit-relative).
+   Units move continuously until arrival.
+5. **Python Auto-Pilot** -- Behavior code decides. The decide() function
    reads the world and returns ActionProposals autonomously.
 
-All three produce identical ActionProposals. The server doesn't know or care
+All modes produce identical ActionProposals. The server doesn't know or care
 which mode generated them. You can switch modes at any time. In multiplayer,
 one player can control some characters in FPS, others in RTS, others on auto-pilot.
 
@@ -129,7 +139,8 @@ fork, and modify ANY built-in definition from the in-game editor.
 - **Creatures** (pig, chicken, dog, villager) — Python defines stats, collision,
   walk speed, default behavior, model reference. `python/agentworld/creatures/*.py`
 - **Behaviors** (wander, peck, follow, prowl, woodcutter) — Python `decide(self, world)`
-  runs on server, returns actions. `artifacts/behaviors/base/*.py`
+  returns actions. All behaviors are Python-only (no C++ behavior classes).
+  `artifacts/behaviors/base/*.py`
 - **Items** (jetpack, tools, food) — Python defines visual pieces, particle emitters,
   active effects. C++ renders generically from definitions.
 - **Actions** (mine, place, attack) — Python `validate()` + `execute()` with WorldView.
@@ -247,7 +258,8 @@ src/
     server.h/.cpp           GameServer: tick loop, client mgmt, action resolver
     world.h                 World: chunk map, block access, terrain gen
     entity_manager.h        EntityManager: spawn, physics, behavior dispatch
-    behavior.h              AI behavior system (Wander, Peck, Idle)
+    behavior.h              Behavior interface types (BehaviorAction, BehaviorWorldView, PythonBehavior)
+    behavior_store.h        Load/save behavior .py files from artifacts/
     python_bridge.h/.cpp    pybind11 bridge (optional, needs python3-dev)
     noise.h                 Terrain noise generator
     world_template.h        FlatWorld, VillageWorld templates
@@ -277,7 +289,10 @@ src/
   game/                     Game loop + UI (client-side)
     types.h                 GameState, MenuAction
     game.h/.cpp             Client loop: owns GameServer + renders
-    gameplay.h/.cpp         Input → ActionProposals (client-only)
+    gameplay.h              GameplayController (camera input, movement, block interaction)
+    gameplay.cpp            update() + handleCameraInput() (camera orbit, cursor state)
+    gameplay_movement.cpp   processMovement() (WASD, click-to-move, RTS box select)
+    gameplay_interaction.cpp processBlockInteraction() (raycast, break/place, RPG right-click)
     menu.h/.cpp             Menu screens
     hud.h/.cpp              Hotbar, health, entity tooltip
     code_editor.h/.cpp      In-game Python behavior editor

@@ -42,13 +42,13 @@ public:
 	float orbitYaw = -90.0f;
 	float orbitPitch = 25.0f;    // angle above horizontal
 
-	// God view
+	// RPG camera
 	float godDistance = 20.0f;
 	float godDistanceTarget = 20.0f;
 	float godAngle = 55.0f;      // degrees from horizontal
 	float godOrbitYaw = -90.0f;  // camera orbit (independent of player yaw)
 
-	// God view helpers: camera-relative directions on XZ plane
+	// RPG camera helpers: camera-relative directions on XZ plane
 	glm::vec3 godCameraForward() const;
 	glm::vec3 godCameraRight() const;
 
@@ -57,6 +57,7 @@ public:
 	float rtsHeight = 40.0f;
 	float rtsHeightTarget = 40.0f;
 	float rtsAngle = 65.0f;
+	float rtsOrbitYaw = 90.0f;  // horizontal orbit angle (default: looking north)
 	float rtsPanSpeed = 30.0f;
 
 	// Computed camera state (updated each frame)
@@ -92,7 +93,6 @@ public:
 private:
 	void updateFirstPerson(GLFWwindow* window, float dt);
 	void updateThirdPerson(GLFWwindow* window, float dt);
-	void updateRPG(GLFWwindow* window, float dt);
 	void processMouse(GLFWwindow* window);
 
 	// Smoothed vertical tracking for step-up / step-down

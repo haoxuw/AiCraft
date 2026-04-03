@@ -21,6 +21,7 @@
 #include "shared/box_model.h"
 #include "client/model_preview.h"
 #include "client/model.h"
+#include "client/audio.h"
 #include <imgui.h>
 #include <unordered_map>
 
@@ -44,6 +45,9 @@ public:
 
 	// Set registry for fork operations
 	void setRegistry(ArtifactRegistry* reg) { m_registry = reg; }
+
+	// Set audio manager for sound preview
+	void setAudio(AudioManager* audio) { m_audio = audio; }
 
 	void render(const ArtifactRegistry& registry, bool* open) {
 		if (!*open) return;
@@ -89,6 +93,11 @@ private:
 				char label[64];
 				snprintf(label, sizeof(label), "%s (%zu)", tab.label, entries.size());
 				if (ImGui::BeginTabItem(label)) {
+					// Blip on tab switch
+					if (m_audio && m_lastTab != tab.category) {
+						m_audio->playBlip(1.0f, 0.5f);
+						m_lastTab = tab.category;
+					}
 					renderEntryList(entries, tab.category);
 					ImGui::EndTabItem();
 				}
@@ -111,6 +120,9 @@ private:
 			auto* e = entries[i];
 			bool selected = (m_selectedId == e->id);
 			if (ImGui::Selectable(e->name.c_str(), selected)) {
+				if (m_selectedId != e->id && m_audio) {
+					m_audio->playBlip(1.2f, 0.4f);  // slightly higher pitch on select
+				}
 				m_selectedId = e->id;
 			}
 		}
@@ -205,43 +217,40 @@ private:
 			}
 		}
 
-		// Source code
-		if (ImGui::CollapsingHeader("Source Code")) {
-			// Light code background (soft warm gray)
-			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.97f, 0.97f, 0.98f, 1));
-			ImGui::BeginChild("Source", ImVec2(0, 200), true);
+		// For resource entries: show sound preview instead of source code
+		if (entry->category == "resource" && m_audio) {
+			renderSoundPreview(entry);
+		} else {
+			// Source code (for behaviors, creatures, items, etc.)
+			if (ImGui::CollapsingHeader("Source Code")) {
+				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.97f, 0.97f, 0.98f, 1));
+				ImGui::BeginChild("Source", ImVec2(0, 200), true);
 
-			std::istringstream stream(entry->source);
-			std::string line;
-			int lineNum = 1;
-			while (std::getline(stream, line)) {
-				// Line numbers — soft gray
-				ImGui::TextColored(ImVec4(0.72f, 0.74f, 0.76f, 1), "%3d ", lineNum++);
-				ImGui::SameLine();
+				std::istringstream stream(entry->source);
+				std::string line;
+				int lineNum = 1;
+				while (std::getline(stream, line)) {
+					ImGui::TextColored(ImVec4(0.72f, 0.74f, 0.76f, 1), "%3d ", lineNum++);
+					ImGui::SameLine();
 
-				// Syntax colors (on white background)
-				if (line.empty() || line[0] == '#') {
-					// Comments — gray green
-					ImGui::TextColored(ImVec4(0.40f, 0.55f, 0.40f, 1), "%s", line.c_str());
-				} else if (line.find("def ") != std::string::npos ||
-				           line.find("class ") != std::string::npos) {
-					// Keywords — deep blue (readable on light bg)
-					ImGui::TextColored(ImVec4(0.15f, 0.35f, 0.75f, 1), "%s", line.c_str());
-				} else if (line.find("\"\"\"") != std::string::npos) {
-					// Docstrings — Google Green
-					ImGui::TextColored(ImVec4(0.20f, 0.66f, 0.33f, 1), "%s", line.c_str());
-				} else if (line.find("return ") != std::string::npos ||
-				           line.find("import ") != std::string::npos ||
-				           line.find("from ") != std::string::npos) {
-					// Keywords — purple
-					ImGui::TextColored(ImVec4(0.55f, 0.25f, 0.78f, 1), "%s", line.c_str());
-				} else {
-					// Normal code — dark text
-					ImGui::TextColored(ImVec4(0.22f, 0.22f, 0.25f, 1), "%s", line.c_str());
+					if (line.empty() || line[0] == '#') {
+						ImGui::TextColored(ImVec4(0.40f, 0.55f, 0.40f, 1), "%s", line.c_str());
+					} else if (line.find("def ") != std::string::npos ||
+					           line.find("class ") != std::string::npos) {
+						ImGui::TextColored(ImVec4(0.15f, 0.35f, 0.75f, 1), "%s", line.c_str());
+					} else if (line.find("\"\"\"") != std::string::npos) {
+						ImGui::TextColored(ImVec4(0.20f, 0.66f, 0.33f, 1), "%s", line.c_str());
+					} else if (line.find("return ") != std::string::npos ||
+					           line.find("import ") != std::string::npos ||
+					           line.find("from ") != std::string::npos) {
+						ImGui::TextColored(ImVec4(0.55f, 0.25f, 0.78f, 1), "%s", line.c_str());
+					} else {
+						ImGui::TextColored(ImVec4(0.22f, 0.22f, 0.25f, 1), "%s", line.c_str());
+					}
 				}
+				ImGui::EndChild();
+				ImGui::PopStyleColor();
 			}
-			ImGui::EndChild();
-			ImGui::PopStyleColor();
 		}
 
 		// File path
@@ -252,6 +261,7 @@ private:
 		if (entry->isBuiltin && m_registry) {
 			ImGui::SameLine();
 			if (ImGui::SmallButton("Fork to Custom")) {
+				if (m_audio) m_audio->playBlip(0.6f, 0.4f);
 				printf("[Handbook] Fork clicked for '%s' (file: %s)\n",
 					entry->id.c_str(), entry->filePath.c_str());
 				printf("[Handbook] Registry basePath='%s', playerNS='%s'\n",
@@ -281,11 +291,78 @@ private:
 		}
 	}
 
+	void renderSoundPreview(const ArtifactEntry* entry) {
+		// Parse the "groups" field to get sound group names
+		auto groupsIt = entry->fields.find("groups");
+		if (groupsIt == entry->fields.end()) return;
+
+		std::string groupsStr = groupsIt->second;
+		std::vector<std::string> groups;
+		size_t pos = 0;
+		while (pos < groupsStr.size()) {
+			size_t comma = groupsStr.find(',', pos);
+			if (comma == std::string::npos) comma = groupsStr.size();
+			std::string g = groupsStr.substr(pos, comma - pos);
+			// trim whitespace
+			size_t start = g.find_first_not_of(" \t");
+			size_t end = g.find_last_not_of(" \t");
+			if (start != std::string::npos)
+				groups.push_back(g.substr(start, end - start + 1));
+			pos = comma + 1;
+		}
+
+		if (groups.empty()) return;
+
+		if (ImGui::CollapsingHeader("Sound Preview", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.96f, 0.97f, 0.98f, 1));
+			ImGui::BeginChild("SoundPreview", ImVec2(0, 250), true);
+
+			for (auto& groupName : groups) {
+				auto files = m_audio->filesInGroup(groupName);
+
+				// Group header with play-random button
+				ImGui::PushID(groupName.c_str());
+
+				bool open = ImGui::TreeNodeEx("##grp", ImGuiTreeNodeFlags_DefaultOpen,
+					"%s (%zu)", groupName.c_str(), files.size());
+
+				// Play random button on same line as header
+				ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
+				if (ImGui::SmallButton("Play Random")) {
+					m_audio->play(groupName, 0.8f);
+				}
+
+				if (open) {
+					// List individual files with play buttons
+					for (auto& file : files) {
+						// Extract just the filename
+						std::string filename = std::filesystem::path(file).filename().string();
+
+						ImGui::PushID(file.c_str());
+						if (ImGui::SmallButton(">")) {
+							m_audio->playFile(file, 0.8f);
+						}
+						ImGui::SameLine();
+						ImGui::TextColored(ImVec4(0.40f, 0.42f, 0.45f, 1), "%s", filename.c_str());
+						ImGui::PopID();
+					}
+					ImGui::TreePop();
+				}
+				ImGui::PopID();
+			}
+
+			ImGui::EndChild();
+			ImGui::PopStyleColor();
+		}
+	}
+
 	std::string m_selectedId;
+	std::string m_lastTab;
 	std::unordered_map<std::string, BoxModel> m_models;
 	ModelPreview* m_preview = nullptr;
 	ModelRenderer* m_renderer = nullptr;
 	ArtifactRegistry* m_registry = nullptr;
+	AudioManager* m_audio = nullptr;
 	std::string m_forkedMsg;
 	float m_forkedMsgTimer = 0;
 };

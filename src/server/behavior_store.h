@@ -22,9 +22,12 @@ class BehaviorStore {
 public:
 	void init(const std::string& basePath = "artifacts/behaviors") {
 		m_basePath = basePath;
+		m_initialized = true;
 		std::filesystem::create_directories(m_basePath + "/base");
 		std::filesystem::create_directories(m_basePath + "/player");
 	}
+
+	bool isInitialized() const { return m_initialized; }
 
 	// Save a behavior to disk. Returns the filename.
 	std::string save(const std::string& name, const std::string& code) {
@@ -85,6 +88,7 @@ private:
 		return ss.str();
 	}
 
+	bool m_initialized = false;
 	std::string m_basePath;
 };
 

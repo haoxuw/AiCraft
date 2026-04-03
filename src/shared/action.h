@@ -95,6 +95,14 @@ public:
 	bool empty() const { return m_pending.empty(); }
 	size_t size() const { return m_pending.size(); }
 
+	// Check if the queue already contains a Move proposal for this entity
+	// (used to skip AI behavior when entity is player-commanded)
+	bool hasMove(EntityId id) const {
+		for (auto& p : m_pending)
+			if (p.type == ActionProposal::Move && p.actorId == id) return true;
+		return false;
+	}
+
 private:
 	std::vector<ActionProposal> m_pending;
 };

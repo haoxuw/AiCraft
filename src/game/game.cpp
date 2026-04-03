@@ -82,13 +82,13 @@ bool Game::init(int argc, char** argv) {
 		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) m_connectPort = atoi(argv[++i]);
 	}
 
-	// Models
-	m_playerModel = builtin::playerModel();
-	m_pigModel = builtin::pigModel();
-	m_chickenModel = builtin::chickenModel();
-	m_dogModel = builtin::dogModel();
-	m_catModel = builtin::catModel();
-	m_villagerModel = builtin::villagerModel();
+	// Models — keyed by base name (filename without .gltf extension)
+	m_models["player"]   = builtin::playerModel();
+	m_models["pig"]      = builtin::pigModel();
+	m_models["chicken"]  = builtin::chickenModel();
+	m_models["dog"]      = builtin::dogModel();
+	m_models["cat"]      = builtin::catModel();
+	m_models["villager"] = builtin::villagerModel();
 	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
 
 	// Register ALL models for Handbook 3D preview
@@ -98,11 +98,9 @@ bool Game::init(int argc, char** argv) {
 	hb.setAudio(&m_audio);
 
 	// Creatures
-	hb.registerModel("pig", m_pigModel);
-	hb.registerModel("chicken", m_chickenModel);
-	hb.registerModel("dog", m_dogModel);
-	hb.registerModel("cat", m_catModel);
-	hb.registerModel("villager", m_villagerModel);
+	for (auto& [key, mdl] : m_models) {
+		if (key != "player") hb.registerModel(key, mdl);
+	}
 
 	// Characters — build from CharacterManager definitions
 	for (int i = 0; i < m_characters.count(); i++) {
@@ -652,15 +650,9 @@ void Game::updatePlaying(float dt, float aspect) {
 		m_server->forEachEntity([&](Entity& e) {
 			float dist = glm::length(e.position - pe->position);
 			if (dist > 20.0f || dist < 1.0f) return;
-			const auto& tid = e.typeId();
-			if (tid == "base:pig")
-				m_audio.play("creature_pig", e.position, 0.3f);
-			else if (tid == "base:chicken")
-				m_audio.play("creature_chicken", e.position, 0.25f);
-			else if (tid == "base:dog")
-				m_audio.play("creature_dog", e.position, 0.3f);
-			else if (tid == "base:cat")
-				m_audio.play("creature_cat", e.position, 0.2f);
+			const auto& sg = e.def().sound_group;
+			if (!sg.empty())
+				m_audio.play(sg, e.position, e.def().sound_volume);
 		});
 	}
 
@@ -746,7 +738,8 @@ void Game::renderPlaying(float dt, float aspect) {
 			activeModel = m_characters.buildSelectedModel(
 				m_faces.selected(), pe->inventory.get());
 		} else {
-			activeModel = m_playerModel;
+			auto pit = m_models.find("player");
+			if (pit != m_models.end()) activeModel = pit->second;
 		}
 
 		// Add equipped weapon/shield to the character model
@@ -833,23 +826,21 @@ void Game::renderPlaying(float dt, float aspect) {
 
 	// Mob models — all entities (except the player, already drawn above)
 	srv.forEachEntity([&](Entity& e) {
-		if (e.id() == m_server->localPlayerId()) return; // skip player (drawn separately with character model)
+		if (e.id() == m_server->localPlayerId()) return; // skip possessed entity (drawn separately with character model)
 
 		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
 		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);
 		AnimState mobAnim = {mobDist, mobSpeed, m_globalTime};
 
-		if (e.typeId() == EntityType::Pig)
-			mr.draw(m_pigModel, vp, e.position, e.yaw, mobAnim);
-		else if (e.typeId() == EntityType::Chicken)
-			mr.draw(m_chickenModel, vp, e.position, e.yaw, mobAnim);
-		else if (e.typeId() == EntityType::Dog)
-			mr.draw(m_dogModel, vp, e.position, e.yaw, mobAnim);
-		else if (e.typeId() == EntityType::Cat)
-			mr.draw(m_catModel, vp, e.position, e.yaw, mobAnim);
-		else if (e.typeId() == EntityType::Villager)
-			mr.draw(m_villagerModel, vp, e.position, e.yaw, mobAnim);
-		else if (e.typeId() == EntityType::ItemEntity) {
+		// Derive model key from EntityDef::model (strip ".gltf" extension)
+		std::string modelKey = e.def().model;
+		auto dot = modelKey.rfind('.');
+		if (dot != std::string::npos) modelKey = modelKey.substr(0, dot);
+
+		auto mit = m_models.find(modelKey);
+		if (mit != m_models.end()) {
+			mr.draw(mit->second, vp, e.position, e.yaw, mobAnim);
+		} else if (e.typeId() == EntityType::ItemEntity) {
 			float bobY = std::sin(e.getProp<float>(Prop::Age, 0.0f) * 3.0f) * 0.08f;
 			float spinYaw = e.getProp<float>(Prop::Age, 0.0f) * 90.0f;
 			std::string itemType = e.getProp<std::string>(Prop::ItemType);
@@ -877,7 +868,7 @@ void Game::renderPlaying(float dt, float aspect) {
 	static BoxModel lightbulb = builtin::lightbulbModel();
 	srv.forEachEntity([&](Entity& e) {
 		if (e.id() == m_server->localPlayerId()) return;
-		if (e.def().category != Category::Animal) return;
+		if (e.def().max_hp <= 0) return; // only living entities
 
 		float entityTop = e.def().collision_box_max.y;
 		float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;

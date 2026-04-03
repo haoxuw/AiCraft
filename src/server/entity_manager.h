@@ -4,6 +4,8 @@
 #include "shared/constants.h"
 #include "shared/physics.h"
 #include "server/behavior.h"
+#include "server/behavior_store.h"
+#include "server/python_bridge.h"
 #include "server/server_tuning.h"
 #include "shared/action.h"
 #include <unordered_map>
@@ -90,30 +92,30 @@ public:
 	// Block query function: returns block type string at world position
 	using BlockTypeFn = std::function<std::string(int, int, int)>;
 
-	// Gather AI decisions. Block scanning is done by the caller (client-side)
-	// since pathfinding and world reading is a client concern.
-	// Server only validates the resulting ActionProposals.
+	// Gather AI decisions. All behavior logic is Python-driven.
+	// Block scanning is available to any entity whose behavior needs it.
 	void gatherDecisions(float dt, ActionQueue& actions, BlockTypeFn blockTypeFn = nullptr) {
 		for (auto& [id, entity] : m_entities) {
 			auto& e = *entity;
 			const auto& def = e.def();
 
-			// Behavior-driven AI (animals, future: NPCs)
-			if (def.category == Category::Animal) {
+			// Behavior-driven AI: any entity with a BehaviorId runs autonomous behavior.
+			// Skip if entity already has a player-issued Move this tick (RTS override).
+			std::string behaviorId = e.getProp<std::string>(Prop::BehaviorId, "");
+			if (!behaviorId.empty() && !actions.hasMove(id)) {
 				auto& state = m_behaviors[id];
 
 				if (!state.behavior)
-					state.behavior = createDefaultBehavior(e.typeId());
+					state.behavior = loadPythonBehavior(e);
 
 				// Decide at 4 Hz
 				state.decideTimer -= dt;
 				if (state.decideTimer <= 0) {
 					state.decideTimer = 0.25f;
 
-					// Only scan blocks for entities that need them (villagers).
-					// Uses cache: scan once, then verify 1 lookup per type per tick.
-					bool needsBlocks = (e.typeId() == EntityType::Villager);
-					auto blocks = (needsBlocks && blockTypeFn)
+					// Block scanning available to all entities (not just villagers).
+					// The cache makes this cheap — scan once, verify per tick.
+					auto blocks = blockTypeFn
 						? getKnownBlocks(e, 30, blockTypeFn)
 						: std::vector<NearbyBlock>{};
 
@@ -160,10 +162,10 @@ public:
 			mp.halfWidth = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
 			mp.height = def.collision_box_max.y - def.collision_box_min.y;
 			mp.gravity = ServerTuning::gravity * def.gravity_scale;
-			mp.stepHeight = (def.category == Category::Animal || def.category == Category::Player) ? ServerTuning::entityStepHeight : 0.0f;
+			bool isLiving = (def.max_hp > 0);
+			mp.stepHeight = isLiving ? ServerTuning::entityStepHeight : 0.0f;
 			mp.canFly = e.getProp<bool>("fly_mode", false);
-			// Creatures jump over ledges naturally; player gets instant step-up
-			mp.smoothStep = (def.category == Category::Animal);
+			mp.smoothStep = isLiving;
 
 			auto result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
 			e.position = result.position;
@@ -416,9 +418,44 @@ private:
 		return result;
 	}
 
+	// Load a Python behavior from the entity's BehaviorId property.
+	// Falls back to IdleFallbackBehavior if Python fails or no BehaviorId is set.
+	std::unique_ptr<Behavior> loadPythonBehavior(Entity& e) {
+		std::string behaviorId = e.getProp<std::string>(Prop::BehaviorId, "");
+		if (behaviorId.empty())
+			return std::make_unique<IdleFallbackBehavior>();
+
+		// Load Python source from artifacts/behaviors/
+		if (!m_behaviorStore.isInitialized())
+			m_behaviorStore.init();
+
+		std::string source = m_behaviorStore.load(behaviorId);
+		if (source.empty()) {
+			printf("[EntityManager] No .py file for behavior '%s' (entity %u)\n",
+			       behaviorId.c_str(), e.id());
+			return std::make_unique<IdleFallbackBehavior>();
+		}
+
+		auto& bridge = pythonBridge();
+		if (!bridge.isInitialized()) {
+			return std::make_unique<IdleFallbackBehavior>();
+		}
+
+		std::string error;
+		auto handle = bridge.loadBehavior(source, error);
+		if (handle < 0) {
+			printf("[EntityManager] Failed to load Python behavior '%s': %s\n",
+			       behaviorId.c_str(), error.c_str());
+			return std::make_unique<IdleFallbackBehavior>();
+		}
+
+		return std::make_unique<PythonBehavior>(handle, source);
+	}
+
 	std::unordered_map<std::string, EntityDef> m_typeDefs;
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	std::unordered_map<EntityId, BehaviorState> m_behaviors;
+	BehaviorStore m_behaviorStore;
 	EntityId m_nextId = 1;
 };
 

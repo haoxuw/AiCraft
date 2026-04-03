@@ -185,6 +185,9 @@ namespace Asset {
 	constexpr const char* PigTexture    = "pig.png";
 	constexpr const char* ChickenModel  = "chicken.gltf";
 	constexpr const char* ChickenTexture= "chicken.png";
+	constexpr const char* DogModel      = "dog.gltf";
+	constexpr const char* CatModel      = "cat.gltf";
+	constexpr const char* VillagerModel = "villager.gltf";
 }
 
 // ============================================================

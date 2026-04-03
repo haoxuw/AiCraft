@@ -307,11 +307,14 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 		return {BehaviorAction::Idle};
 	}
 
-	// Pass empty block list for now — C++ behaviors gather blocks via entity_manager
-	// When behavior system is fully Python, block scanning will be done here
-	std::vector<PythonBridge::NearbyBlock> emptyBlocks;
+	// Convert behavior-level NearbyBlock to PythonBridge::NearbyBlock
+	std::vector<PythonBridge::NearbyBlock> blocks;
+	blocks.reserve(view.nearbyBlocks.size());
+	for (auto& nb : view.nearbyBlocks)
+		blocks.push_back({nb.pos.x, nb.pos.y, nb.pos.z, nb.typeId, nb.distance});
+
 	std::string goal, error;
-	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities, emptyBlocks, view.dt, goal, error);
+	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities, blocks, view.dt, goal, error);
 
 	if (!error.empty()) {
 		view.self.goalText = "ERROR: " + error.substr(0, 60);
