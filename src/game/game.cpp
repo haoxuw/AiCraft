@@ -119,6 +119,13 @@ bool Game::init(int argc, char** argv) {
 	m_imguiMenu.setCharacterPreview(&m_artifacts, &m_modelPreview,
 		&m_renderer.modelRenderer(), &m_models);
 
+	// Auto-select first character if none set
+	if (m_selectedCreature.empty()) {
+		auto chars = m_artifacts.byCategory("character");
+		if (!chars.empty()) m_selectedCreature = chars[0]->id;
+		else m_selectedCreature = "base:player"; // fallback
+	}
+
 	// Register ALL models for Handbook 3D preview
 	auto& hb = m_imguiMenu.handbook();
 	hb.setPreview(&m_modelPreview, &m_renderer.modelRenderer());
