@@ -182,15 +182,7 @@ void AudioManager::registerDefaultGroups(const std::string& basePath) {
 	addGroup("item_equip",  "items", "leather");
 	addGroup("item_book",   "items", "bookFlip");
 
-	// Creature ambient sounds — gentle, friendly (real recordings + procedural)
-	addGroup("creature_pig",      "creatures", "pig_oink");      // soft snuffly oinks (procedural)
-	addGroup("creature_chicken",  "creatures", "chicken_cluck"); // short gentle clucks (procedural)
-	addGroup("creature_dog",      "creatures", "Dog Bark");      // real dog barks (pauliuw, CC0)
-	addGroup("creature_dog_sad",  "creatures", "dog_whimper");   // soft whimper (pauliuw, CC0)
-	addGroup("creature_cat",      "creatures", "cat_mew");       // real cat meows (Kerzoven, CC0)
-	addGroup("creature_cat_soft", "creatures", "cat_soft");      // soft mew (Kerzoven, CC0)
-	addGroup("creature_villager", "creatures", "villager_hmm");  // hmm mumbles (procedural)
-	addGroup("creature_sheep",    "creatures", "sheep");         // sheep baa (AntumDeluge, CC0)
+	// Creature ambient sounds disabled — no good CC0 animal recordings found yet.
 
 	// Water / liquid sounds
 	addGroup("water_splash",  "water", "splash");

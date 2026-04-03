@@ -637,7 +637,7 @@ private:
 
 		float musicVol = m_audio->musicVolume();
 		ImGui::SetNextItemWidth(sliderW);
-		if (ImGui::SliderFloat("Music Volume", &musicVol, 0.0f, 0.5f, "%.0f%%")) {
+		if (ImGui::SliderFloat("Music Volume", &musicVol, 0.0f, 1.0f, "%.0f%%")) {
 			m_audio->setMusicVolume(musicVol);
 		}
 

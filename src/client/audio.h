@@ -128,7 +128,7 @@ private:
 	std::vector<std::string> m_musicFiles;
 	int m_musicIndex = -1;
 	bool m_musicPlaying = false;
-	float m_musicVolume = 0.30f;  // music is quiet background
+	float m_musicVolume = 0.50f;  // background music volume
 	void* m_musicSound = nullptr; // ma_sound* (opaque to avoid header dep)
 
 	// RNG for picking random variants
