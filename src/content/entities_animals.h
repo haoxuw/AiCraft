@@ -15,7 +15,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.texture = Asset::PigTexture;
 		def.color = {0.9f, 0.7f, 0.7f};
 		def.sound_group = "creature_pig";
-		def.sound_volume = 0.3f;
+		def.sound_volume = 0.15f;
 		def.collision_box_min = {-0.4f, 0.0f, -0.4f};
 		def.collision_box_max = { 0.4f, 0.9f,  0.4f};
 		def.gravity_scale = 1.0f;
@@ -39,7 +39,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.texture = Asset::ChickenTexture;
 		def.color = {0.95f, 0.95f, 0.90f};
 		def.sound_group = "creature_chicken";
-		def.sound_volume = 0.25f;
+		def.sound_volume = 0.12f;
 		def.collision_box_min = {-0.2f, 0.0f, -0.2f};
 		def.collision_box_max = { 0.2f, 0.6f,  0.2f};
 		def.gravity_scale = 1.0f;
@@ -63,7 +63,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.model = Asset::CatModel;
 		def.color = {0.90f, 0.55f, 0.20f}; // orange tabby
 		def.sound_group = "creature_cat";
-		def.sound_volume = 0.2f;
+		def.sound_volume = 0.10f;
 		def.collision_box_min = {-0.2f, 0.0f, -0.2f};
 		def.collision_box_max = { 0.2f, 0.5f,  0.2f};
 		def.gravity_scale = 1.0f;
@@ -87,7 +87,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.model = Asset::DogModel;
 		def.color = {0.75f, 0.55f, 0.35f}; // brown
 		def.sound_group = "creature_dog";
-		def.sound_volume = 0.3f;
+		def.sound_volume = 0.15f;
 		def.collision_box_min = {-0.3f, 0.0f, -0.3f};
 		def.collision_box_max = { 0.3f, 0.7f,  0.3f};
 		def.gravity_scale = 1.0f;
@@ -111,7 +111,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.model = Asset::VillagerModel;
 		def.color = {0.85f, 0.75f, 0.60f}; // tan skin
 		def.sound_group = "creature_villager";
-		def.sound_volume = 0.25f;
+		def.sound_volume = 0.12f;
 		def.collision_box_min = {-0.3f, 0.0f, -0.3f};
 		def.collision_box_max = { 0.3f, 1.8f,  0.3f};
 		def.gravity_scale = 1.0f;

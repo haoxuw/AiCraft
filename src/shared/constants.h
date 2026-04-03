@@ -180,8 +180,8 @@ namespace Sound {
 // Assets (model/texture file names)
 // ============================================================
 namespace Asset {
-	constexpr const char* PlayerModel   = "character.gltf";
-	constexpr const char* PlayerTexture = "character.png";
+	constexpr const char* PlayerModel   = "player.gltf";
+	constexpr const char* PlayerTexture = "player.png";
 	constexpr const char* PigModel      = "pig.gltf";
 	constexpr const char* PigTexture    = "pig.png";
 	constexpr const char* ChickenModel  = "chicken.gltf";

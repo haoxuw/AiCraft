@@ -1,7 +1,5 @@
 #include "game/game.h"
 #include "content/models.h"
-#include "content/characters.h"
-#include "content/faces.h"
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 #include "shared/model_loader.h"
@@ -15,6 +13,7 @@
 #include "imgui.h"
 #include <cstdio>
 #include <cstring>
+#include <unordered_set>
 #include <fstream>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -60,8 +59,6 @@ bool Game::init(int argc, char** argv) {
 	m_behaviorStore.init("artifacts/behaviors");
 
 	// Characters + faces
-	builtin::registerAllCharacters(m_characters);
-	builtin::registerAllFaces(m_faces);
 
 	// World templates
 	m_templates = {
@@ -71,7 +68,6 @@ bool Game::init(int argc, char** argv) {
 	m_imguiMenu.init(m_templates);
 	m_imguiMenu.setControls(&m_controls);
 	m_imguiMenu.setAudio(&m_audio);
-	m_imguiMenu.setCharacters(&m_characters);
 
 	// Load all artifact definitions (Python files from artifacts/)
 	m_artifacts.setPlayerNamespace(ArtifactRegistry::generatePlayerNamespace());
@@ -117,16 +113,6 @@ bool Game::init(int argc, char** argv) {
 	// Creatures
 	for (auto& [key, mdl] : m_models) {
 		if (key != "player") hb.registerModel(key, mdl);
-	}
-
-	// Characters — build from CharacterManager definitions
-	for (int i = 0; i < m_characters.count(); i++) {
-		auto& cdef = m_characters.get(i);
-		// Use lowercase name for model lookup
-		std::string lower = cdef.name;
-		for (auto& c : lower) c = std::tolower(c);
-		// Build the visual model (body only, no face)
-		hb.registerModel(lower, cdef.model);
 	}
 
 	// Items — simple box models for preview
@@ -715,7 +701,7 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_gameplay.setUIWantsCursor(m_showInventory || m_equipUI.isOpen() || m_ui.wantsMouse());
 
 	// Client-side: gather input → ActionProposals (works for local AND network)
-	float jumpVel = (m_characters.count() > 0) ? m_characters.selected().jumpVelocity : 8.3f;
+	float jumpVel = 8.3f; // standard jump velocity for all living entities
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
@@ -858,113 +844,20 @@ void Game::renderPlaying(float dt, float aspect) {
 		}
 	}
 
+	// Draw local player using the SAME path as all other entities — no special model.
+	// Only skip in first-person (camera is at eyes, drawing body would block view).
 	if (m_camera.mode != CameraMode::FirstPerson) {
-		BoxModel activeModel;
-		if (m_characters.count() > 0 && m_faces.count() > 0) {
-			activeModel = m_characters.buildSelectedModel(
-				m_faces.selected(), pe->inventory.get());
-		} else {
-			auto pit = m_models.find("player");
-			if (pit != m_models.end()) activeModel = pit->second;
-		}
-
-		// Add equipped weapon/shield to the character model
-		if (pe->inventory) {
-			const float PI = 3.14159265f;
-			if (pe->inventory->hasEquipped(WearSlot::LeftHand)) {
-				// Sword blade — BIG, extends well past the hand (swings with left arm)
-				activeModel.parts.push_back({
-					{-0.42f, 0.55f, -0.18f}, {0.04f, 0.40f, 0.04f},
-					{0.75f, 0.75f, 0.82f, 1},
-					{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
-				});
-				// Handle (below blade)
-				activeModel.parts.push_back({
-					{-0.42f, 0.14f, -0.18f}, {0.03f, 0.08f, 0.05f},
-					{0.40f, 0.28f, 0.12f, 1},
-					{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
-				});
-				// Crossguard (wide)
-				activeModel.parts.push_back({
-					{-0.42f, 0.20f, -0.18f}, {0.10f, 0.02f, 0.02f},
-					{0.60f, 0.55f, 0.45f, 1},
-					{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
-				});
-				// Pommel
-				activeModel.parts.push_back({
-					{-0.42f, 0.06f, -0.18f}, {0.03f, 0.03f, 0.03f},
-					{0.55f, 0.50f, 0.40f, 1},
-					{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
-				});
-			}
-			if (pe->inventory->hasEquipped(WearSlot::RightHand)) {
-				// Shield face — bigger, visible (swings with right arm)
-				activeModel.parts.push_back({
-					{0.48f, 0.90f, -0.12f}, {0.03f, 0.22f, 0.18f},
-					{0.45f, 0.30f, 0.15f, 1},
-					{0.37f, 1.40f, 0}, {1,0,0}, 50.0f, 0, 1.0f
-				});
-				// Shield boss
-				activeModel.parts.push_back({
-					{0.50f, 0.90f, -0.12f}, {0.03f, 0.08f, 0.08f},
-					{0.55f, 0.50f, 0.40f, 1},
-					{0.37f, 1.40f, 0}, {1,0,0}, 50.0f, 0, 1.0f
-				});
-				// Shield rim
-				activeModel.parts.push_back({
-					{0.47f, 0.90f, -0.12f}, {0.02f, 0.24f, 0.20f},
-					{0.35f, 0.22f, 0.10f, 1},
-					{0.37f, 1.40f, 0}, {1,0,0}, 50.0f, 0, 1.0f
-				});
-			}
-		}
-
-		mr.draw(activeModel, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
+		std::string modelKey = pe->def().model;
+		auto dot = modelKey.rfind('.');
+		if (dot != std::string::npos) modelKey = modelKey.substr(0, dot);
+		auto pit = m_models.find(modelKey);
+		if (pit != m_models.end())
+			mr.draw(pit->second, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
 	}
 
-	// Data-driven item particle effects (defined in Python, mirrored in C++ builtins).
-	// The client reads entity props (set by server) to know WHEN to emit.
-	// The emitter definitions (from ItemVisual.effects) define WHAT to emit.
-	if (m_camera.mode != CameraMode::FirstPerson && pe->inventory) {
-		auto activeEmitters = m_characters.getActiveEffects(
-			m_characters.selectedIndex(), *pe->inventory,
-			[&](const std::string& trigger) { return pe->getProp<int>(trigger, 0) > 0; });
-
-		glm::vec3 feetPos = m_camera.smoothedFeetPos();
-		float yawRad = glm::radians(-m_camera.player.yaw - 90.0f);
-		float cy = std::cos(yawRad), sy = std::sin(yawRad);
-
-		static unsigned int effectSeed = 0;
-		for (auto& ae : activeEmitters) {
-			glm::vec3 lo = ae.slot.offset + ae.emitter.offset;
-			glm::vec3 worldOff = {lo.x*cy - lo.z*sy, lo.y, lo.x*sy + lo.z*cy};
-			glm::vec3 emitPos = feetPos + worldOff;
-
-			int numColors = (int)ae.emitter.colors.size();
-			for (int i = 0; i < ae.emitter.rate; i++) {
-				effectSeed++;
-				float r1 = ((effectSeed * 73856093u) & 0xFFFF) / 65535.0f;
-				float r2 = ((effectSeed * 19349663u) & 0xFFFF) / 65535.0f;
-				float r3 = ((effectSeed * 83492791u) & 0xFFFF) / 65535.0f;
-
-				Particle p;
-				float sp = ae.emitter.velocitySpread;
-				p.pos = emitPos + glm::vec3((r1-0.5f)*sp*0.1f, 0, (r2-0.5f)*sp*0.1f);
-				p.vel = ae.emitter.velocity + glm::vec3((r1-0.5f)*sp, r3*sp*0.5f, (r2-0.5f)*sp);
-				// Pick color layer based on particle index
-				int ci = std::min(i, numColors - 1);
-				p.color = (numColors > 0) ? ae.emitter.colors[ci] : glm::vec4(1,1,1,1);
-				p.life = ae.emitter.lifeMin + r3 * (ae.emitter.lifeMax - ae.emitter.lifeMin);
-				p.maxLife = p.life;
-				p.size = ae.emitter.sizeMin + r1 * (ae.emitter.sizeMax - ae.emitter.sizeMin);
-				m_particles.addParticle(p);
-			}
-		}
-	}
-
-	// Mob models — all entities (except the player, already drawn above)
+	// Mob models — all entities except the locally-possessed one (drawn above)
 	srv.forEachEntity([&](Entity& e) {
-		if (e.id() == m_server->localPlayerId()) return; // skip possessed entity (drawn separately with character model)
+		if (e.id() == m_server->localPlayerId()) return; // drawn above with camera position
 
 		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
 		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);
@@ -978,6 +871,12 @@ void Game::renderPlaying(float dt, float aspect) {
 		auto mit = m_models.find(modelKey);
 		if (mit != m_models.end()) {
 			mr.draw(mit->second, vp, e.position, e.yaw, mobAnim);
+		} else if (!modelKey.empty() && e.typeId() != EntityType::ItemEntity) {
+			// Warn once per model key
+			static std::unordered_set<std::string> warned;
+			if (warned.insert(modelKey).second)
+				printf("[Render] WARNING: no model for key '%s' (entity %s)\n",
+					modelKey.c_str(), e.typeId().c_str());
 		} else if (e.typeId() == EntityType::ItemEntity) {
 			float bobY = std::sin(e.getProp<float>(Prop::Age, 0.0f) * 3.0f) * 0.08f;
 			float spinYaw = e.getProp<float>(Prop::Age, 0.0f) * 90.0f;

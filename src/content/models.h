@@ -51,32 +51,32 @@ inline BoxModel playerModel() {
 		{0, 1.05f, 0}, {0,1,0}, 5.0f, PI, 1.0f
 	});
 
-	// Left arm -- large confident swing
+	// Left arm -- large Minecraft-style swing (50° each way = 100° total)
 	m.parts.push_back({
 		{-0.37f, 1.05f, 0}, {0.10f, 0.35f, 0.10f},
 		{0.80f, 0.65f, 0.50f, 1},
-		{-0.37f, 1.40f, 0}, {1,0,0}, 55.0f, PI, 1.0f
+		{-0.37f, 1.40f, 0}, {1,0,0}, 50.0f, PI, 1.0f
 	});
 
 	// Right arm
 	m.parts.push_back({
 		{0.37f, 1.05f, 0}, {0.10f, 0.35f, 0.10f},
 		{0.80f, 0.65f, 0.50f, 1},
-		{0.37f, 1.40f, 0}, {1,0,0}, 55.0f, 0, 1.0f
+		{0.37f, 1.40f, 0}, {1,0,0}, 50.0f, 0, 1.0f
 	});
 
-	// Left leg -- big stride
+	// Left leg -- big stride (50° each way = 100° total)
 	m.parts.push_back({
 		{-0.12f, 0.35f, 0}, {0.12f, 0.35f, 0.12f},
 		{0.22f, 0.22f, 0.32f, 1},
-		{-0.12f, 0.70f, 0}, {1,0,0}, 60.0f, 0, 1.0f
+		{-0.12f, 0.70f, 0}, {1,0,0}, 50.0f, 0, 1.0f
 	});
 
 	// Right leg
 	m.parts.push_back({
 		{0.12f, 0.35f, 0}, {0.12f, 0.35f, 0.12f},
 		{0.22f, 0.22f, 0.32f, 1},
-		{0.12f, 0.70f, 0}, {1,0,0}, 60.0f, PI, 1.0f
+		{0.12f, 0.70f, 0}, {1,0,0}, 50.0f, PI, 1.0f
 	});
 
 	return m;
@@ -471,35 +471,35 @@ inline BoxModel villagerModel() {
 		{0.25f, 0.15f, 0.08f, 1}
 	});
 
-	// Left arm
+	// Left arm (50° each way = 100° total)
 	m.parts.push_back({
 		{-0.32f, 1.05f, 0}, {0.08f, 0.30f, 0.08f},
 		{0.55f, 0.38f, 0.20f, 1},
-		{-0.32f, 1.35f, 0}, {1,0,0}, 45.0f, PI, 1.0f
+		{-0.32f, 1.35f, 0}, {1,0,0}, 50.0f, PI, 1.0f
 	});
 
 	// Right arm
 	m.parts.push_back({
 		{0.32f, 1.05f, 0}, {0.08f, 0.30f, 0.08f},
 		{0.55f, 0.38f, 0.20f, 1},
-		{0.32f, 1.35f, 0}, {1,0,0}, 45.0f, 0, 1.0f
+		{0.32f, 1.35f, 0}, {1,0,0}, 50.0f, 0, 1.0f
 	});
 
 	// Left hand
 	m.parts.push_back({
 		{-0.32f, 0.73f, 0}, {0.06f, 0.04f, 0.06f},
 		{0.85f, 0.72f, 0.58f, 1},
-		{-0.32f, 1.35f, 0}, {1,0,0}, 45.0f, PI, 1.0f
+		{-0.32f, 1.35f, 0}, {1,0,0}, 50.0f, PI, 1.0f
 	});
 
 	// Right hand
 	m.parts.push_back({
 		{0.32f, 0.73f, 0}, {0.06f, 0.04f, 0.06f},
 		{0.85f, 0.72f, 0.58f, 1},
-		{0.32f, 1.35f, 0}, {1,0,0}, 45.0f, 0, 1.0f
+		{0.32f, 1.35f, 0}, {1,0,0}, 50.0f, 0, 1.0f
 	});
 
-	// Left leg
+	// Left leg (50° each way = 100° total)
 	m.parts.push_back({
 		{-0.10f, 0.30f, 0}, {0.10f, 0.30f, 0.10f},
 		{0.50f, 0.35f, 0.18f, 1},

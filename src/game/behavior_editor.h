@@ -358,7 +358,6 @@ private:
 struct BehaviorEditorState {
 	// Multi-select (uint8_t avoids vector<bool> proxy issues with ImGui)
 	std::vector<uint8_t> creatureSelected;
-	std::vector<uint8_t> characterSelected;
 
 	// Shared behavior expression for selected entities
 	BehaviorExpr sharedBehavior;

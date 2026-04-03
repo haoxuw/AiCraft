@@ -1,6 +1,7 @@
 """Tool visuals -- pickaxes, axes, shovels.
 
 Client-side visual only. Attached to right_hand slot.
+All tools scaled up for visibility.
 """
 
 from agentworld.items.base import ItemVisual, ItemPiece
@@ -14,8 +15,8 @@ wood_pickaxe = ItemVisual(
     name="Wood Pickaxe",
     slot="right_hand",
     pieces=[
-        ItemPiece("handle", WOOD_HANDLE, (0, 0, 0),     (0.02, 0.28, 0.02)),
-        ItemPiece("head",   IRON_HEAD,   (0, 0.22, 0),  (0.10, 0.03, 0.02)),
+        ItemPiece("handle", WOOD_HANDLE, (0, 0, 0),     (0.03, 0.38, 0.03)),
+        ItemPiece("head",   IRON_HEAD,   (0, 0.30, 0),  (0.16, 0.05, 0.03)),
     ],
 )
 
@@ -24,8 +25,8 @@ stone_pickaxe = ItemVisual(
     name="Stone Pickaxe",
     slot="right_hand",
     pieces=[
-        ItemPiece("handle", WOOD_HANDLE, (0, 0, 0),     (0.02, 0.28, 0.02)),
-        ItemPiece("head",   STONE_HEAD,  (0, 0.22, 0),  (0.12, 0.04, 0.03)),
+        ItemPiece("handle", WOOD_HANDLE, (0, 0, 0),     (0.03, 0.38, 0.03)),
+        ItemPiece("head",   STONE_HEAD,  (0, 0.30, 0),  (0.18, 0.06, 0.04)),
     ],
 )
 
@@ -34,8 +35,8 @@ wood_axe = ItemVisual(
     name="Wood Axe",
     slot="right_hand",
     pieces=[
-        ItemPiece("handle", WOOD_HANDLE, (0, 0, 0),       (0.02, 0.28, 0.02)),
-        ItemPiece("blade",  IRON_HEAD,   (0.04, 0.20, 0), (0.06, 0.08, 0.02)),
+        ItemPiece("handle", WOOD_HANDLE, (0, 0, 0),       (0.03, 0.38, 0.03)),
+        ItemPiece("blade",  IRON_HEAD,   (0.05, 0.26, 0), (0.10, 0.12, 0.03)),
     ],
 )
 
@@ -44,7 +45,7 @@ wood_shovel = ItemVisual(
     name="Wood Shovel",
     slot="right_hand",
     pieces=[
-        ItemPiece("handle", WOOD_HANDLE,             (0, 0, 0),     (0.02, 0.30, 0.02)),
-        ItemPiece("blade",  (0.55, 0.45, 0.30, 1),  (0, 0.26, 0),  (0.05, 0.06, 0.02)),
+        ItemPiece("handle", WOOD_HANDLE,             (0, 0, 0),     (0.03, 0.40, 0.03)),
+        ItemPiece("blade",  (0.55, 0.45, 0.30, 1),  (0, 0.34, 0),  (0.08, 0.10, 0.03)),
     ],
 )

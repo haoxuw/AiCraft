@@ -70,6 +70,7 @@ public:
 
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
 		m_creative = config.creative;
+		m_wgc = config.worldGenConfig;
 		m_worldTime = 0.30f;
 
 		// Find spawn position — search for flat terrain, guarantee surface placement
@@ -165,24 +166,23 @@ public:
 		EntityId eid = m_world->entities.spawn(EntityType::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
 		if (pe && pe->inventory) {
-			if (m_creative) {
-				pe->inventory->add(BlockType::Stone, 999);
-				pe->inventory->add(BlockType::Dirt, 999);
-				pe->inventory->add(BlockType::Grass, 999);
-				pe->inventory->add(BlockType::Sand, 999);
-				pe->inventory->add(BlockType::Wood, 999);
-				pe->inventory->add(BlockType::Leaves, 999);
-				pe->inventory->add(BlockType::Snow, 999);
-				pe->inventory->add(BlockType::TNT, 999);
-				pe->inventory->add(BlockType::Cobblestone, 999);
+			// Starting items: from config if specified, else defaults
+			auto sit = m_wgc.startingItems.find(EntityType::Player);
+			if (sit != m_wgc.startingItems.end()) {
+				for (auto& [item, count] : sit->second)
+					pe->inventory->add(item, count);
+			} else if (m_creative) {
+				for (auto* bt : {BlockType::Stone, BlockType::Dirt, BlockType::Grass,
+				                 BlockType::Sand, BlockType::Wood, BlockType::Leaves,
+				                 BlockType::Snow, BlockType::TNT, BlockType::Cobblestone})
+					pe->inventory->add(bt, 999);
 			} else {
 				pe->inventory->add(BlockType::Stone, 10);
 				pe->inventory->add(BlockType::Wood, 10);
+				pe->inventory->add("base:sword", 1);
+				pe->inventory->add("base:shield", 1);
+				pe->inventory->add("base:potion", 3);
 			}
-			// Starting equipment
-			pe->inventory->add("base:sword", 1);
-			pe->inventory->add("base:shield", 1);
-			pe->inventory->add("base:potion", 3);
 			pe->inventory->autoPopulateHotbar();
 		}
 		m_clients[clientId] = {eid};
@@ -361,6 +361,7 @@ private:
 
 	std::unique_ptr<World> m_world;
 	ServerCallbacks m_callbacks;
+	WorldGenConfig m_wgc;
 	bool m_creative = true;
 	float m_worldTime = 0.30f;
 	float m_activeBlockTimer = 0;

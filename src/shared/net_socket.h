@@ -56,17 +56,23 @@ inline bool sendMessage(int fd, MsgType type, const WriteBuffer& payload) {
 // Receive buffer that accumulates partial reads
 class RecvBuffer {
 public:
-	// Try to read data from socket. Returns false if connection closed.
+	// Drain all available data from socket. Returns false if connection closed.
+	// Reads in a loop until EAGAIN to avoid starving on large payloads
+	// (each chunk is 16KB, many arrive per frame).
 	bool readFrom(int fd) {
-		uint8_t tmp[8192];
-		ssize_t n = recv(fd, tmp, sizeof(tmp), 0);
-		if (n > 0) {
-			m_buf.insert(m_buf.end(), tmp, tmp + n);
-			return true;
+		uint8_t tmp[65536]; // 64KB — handles multiple chunks per read
+		bool gotData = false;
+		for (;;) {
+			ssize_t n = recv(fd, tmp, sizeof(tmp), 0);
+			if (n > 0) {
+				m_buf.insert(m_buf.end(), tmp, tmp + n);
+				gotData = true;
+				continue; // try to read more
+			}
+			if (n == 0) return false; // connection closed
+			// EAGAIN = no more data right now (non-blocking)
+			return gotData || (errno == EAGAIN || errno == EWOULDBLOCK);
 		}
-		if (n == 0) return false; // connection closed
-		// EAGAIN/EWOULDBLOCK = no data available (non-blocking)
-		return (errno == EAGAIN || errno == EWOULDBLOCK);
 	}
 
 	// Try to extract a complete message. Returns true if one is available.

@@ -21,8 +21,6 @@
 #include "client/ui.h"
 #include "client/audio.h"
 #include "server/world_template.h"
-#include "shared/character.h"
-#include "shared/face.h"
 #include <chrono>
 #include <memory>
 #include <unordered_map>
@@ -100,10 +98,6 @@ private:
 
 	// World templates
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;
-
-	// Characters + faces
-	CharacterManager m_characters;
-	FaceLibrary m_faces;
 
 	// State
 	GameState m_state = GameState::MENU;
