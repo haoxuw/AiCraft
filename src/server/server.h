@@ -64,10 +64,6 @@ public:
 		auto tmpl = (config.templateIndex < (int)templates.size())
 			? templates[config.templateIndex] : templates[0];
 
-		// Pass world gen config to template
-		auto* village = dynamic_cast<VillageWorldTemplate*>(tmpl.get());
-		if (village) village->setConfig(config.worldGenConfig);
-
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
 		m_creative = config.creative;
 		m_wgc = config.worldGenConfig;

@@ -139,8 +139,6 @@ public:
 	std::string name()        const override { return "Village"; }
 	std::string description() const override { return "Rolling hills, trees, and a village"; }
 
-	void setConfig(const WorldGenConfig& cfg) { m_cfg = cfg; }
-	const WorldGenConfig& config() const { return m_cfg; }
 	const WorldPyConfig& pyConfig() const override { return m_py; }
 
 	float surfaceHeight(int seed, float x, float z) override {
@@ -161,19 +159,18 @@ public:
 		        (int)anchor.y + (int)m_py.villageOffsetZ};
 	}
 
-	// ── Chest: inside the center house (house[0]) ────────────────
+	// ── Chest: front-right interior of house[0] at floor level ──────
 	glm::vec3 chestPosition(int seed, glm::vec3 /*spawnPos*/) const override {
 		auto vc = villageCenter(seed);
 		if (m_py.houses.empty()) {
-			// No houses — fall back to a simple offset from village center
 			float vy = naturalTerrainHeight(seed, (float)vc.x, (float)vc.y, m_tp);
-			return {(float)vc.x + 0.5f, vy + 2.0f, (float)vc.y + 0.5f};
+			return {(float)vc.x + 0.5f, vy + 1.0f, (float)vc.y + 0.5f};
 		}
 		const auto& h0 = m_py.houses[0];
-		// Interior center of house 0 (avoid the wall)
-		float hx = (float)(vc.x + h0.cx) + h0.w * 0.5f;
-		float hz = (float)(vc.y + h0.cz) + h0.d * 0.5f;
-		float hy = naturalTerrainHeight(seed, hx, hz, m_tp) + 2.0f; // floor + 1
+		// Front-right interior corner, 2 in from right wall and 1 from front wall
+		float hx = (float)(vc.x + h0.cx) + (float)(h0.w - 3);
+		float hz = (float)(vc.y + h0.cz) + 1.0f;
+		float hy = naturalTerrainHeight(seed, hx, hz, m_tp) + 1.0f;  // floor level
 		return {hx, hy, hz};
 	}
 
@@ -294,9 +291,8 @@ public:
 	}
 
 private:
-	WorldPyConfig  m_py;
-	WorldGenConfig m_cfg;
-	TerrainParams  m_tp;
+	WorldPyConfig m_py;
+	TerrainParams m_tp;
 
 	// Per-seed spawn anchor cache (thread-safe for reading after construction)
 	mutable std::unordered_map<int, glm::vec2> m_anchorCache;
@@ -321,10 +317,17 @@ private:
 	}
 
 	// ── Spawn portal (DST-style gateway) ──────────────────────────
-	// A 9-wide × 13-tall cobblestone arch centered on the spawn anchor.
-	// Opening: 5 wide (centre ± 2) × 10 tall — player walks out the +Z face.
-	// Decorations: stone accent rings on pillars, stepped arch top,
-	// back decorative window, and battlement crenellations at the peak.
+	// 9-wide × 13-tall cobblestone arch centred on the spawn anchor.
+	// Opening: 5 wide (centre ±2) × 10 tall — player walks out the +Z face.
+	//
+	// Geometry (all offsets relative to portal centre px, pz):
+	//   Z = pz-2 : back wall (with decorative window)
+	//   Z = pz-1 : interior row 1  ← player body clears the back wall here
+	//   Z = pz   : interior row 2  ← player spawns here
+	//   Z = pz+1 : front arch face (open in centre for door)
+	//
+	// The 2-block-deep interior ensures the player (halfWidth ≈ 0.4) can
+	// never touch the back wall at spawn.  Physics step-up handles exit.
 	void generatePortal(Chunk& chunk, ChunkPos cpos, int seed,
 	                    BlockId wallB, BlockId stoneB, glm::vec2 anchor) {
 		int ox = cpos.x * CHUNK_SIZE;
@@ -336,12 +339,6 @@ private:
 		int groundY = (int)std::round(
 			naturalTerrainHeight(seed, (float)px, (float)pz, m_tp));
 
-		// Portal spans: X = px-4..px+4 (9 wide)
-		//               Y = groundY..groundY+12 (13 tall)
-		//               Z = pz-1..pz+1 (3 deep)
-		// Front arch face at Z = pz+1 (player faces +Z → looks through opening)
-		// Opening: X = px-2..px+2 (5 wide), Y = groundY+1..groundY+10 (10 tall)
-
 		auto set = [&](int wx, int wy, int wz, BlockId bid) {
 			int lx = wx - ox, ly = wy - oy, lz = wz - oz;
 			if (lx >= 0 && lx < CHUNK_SIZE &&
@@ -350,20 +347,20 @@ private:
 				chunk.set(lx, ly, lz, bid);
 		};
 
-		// Clear portal volume (remove any terrain that crept in)
+		// Wipe the full portal volume first (removes any terrain)
 		for (int dy = 0; dy <= 14; dy++)
 			for (int dx = -5; dx <= 5; dx++)
-				for (int dz = -2; dz <= 2; dz++)
+				for (int dz = -3; dz <= 2; dz++)
 					set(px + dx, groundY + dy, pz + dz, BLOCK_AIR);
 
-		// ── Base layer (dy=0): full 9-wide foundation ──
+		// ── Base layer (dy=0): 9-wide foundation, all 4 depths ──
 		for (int dx = -4; dx <= 4; dx++)
-			for (int dz = -1; dz <= 1; dz++)
+			for (int dz = -2; dz <= 1; dz++)
 				set(px + dx, groundY, pz + dz, wallB);
 
-		// ── Main side pillars (dx=±4): full height, stone accent rings every 4 rows ──
+		// ── Main side pillars (dx=±4): full height, stone accent rings ──
 		for (int sign : {-1, 1}) {
-			for (int dz = -1; dz <= 1; dz++) {
+			for (int dz = -2; dz <= 1; dz++) {
 				for (int dy = 1; dy <= 12; dy++) {
 					BlockId b = (dy % 4 == 0) ? stoneB : wallB;
 					set(px + sign * 4, groundY + dy, pz + dz, b);
@@ -371,172 +368,242 @@ private:
 			}
 		}
 
-		// ── Secondary pillars (dx=±3): height 1-12, all depths except open front ──
+		// ── Secondary pillars (dx=±3): all depths, front face open below arch ──
 		for (int sign : {-1, 1}) {
-			for (int dz = -1; dz <= 1; dz++) {
+			for (int dz = -2; dz <= 1; dz++) {
 				for (int dy = 1; dy <= 12; dy++) {
-					if (dz == 1 && dy <= 10) continue;  // front face: opening region
+					if (dz == 1 && dy <= 10) continue;  // front opening region
 					set(px + sign * 3, groundY + dy, pz + dz, wallB);
 				}
 			}
 		}
 
-		// ── Back wall (dz=-1): fill interior with decorative window ──
+		// ── Back wall (dz=-2): solid with decorative window ──
 		for (int dx = -2; dx <= 2; dx++) {
 			for (int dy = 1; dy <= 12; dy++) {
 				bool isWindow = (std::abs(dx) <= 1 && dy >= 3 && dy <= 7);
 				if (!isWindow)
-					set(px + dx, groundY + dy, pz - 1, wallB);
+					set(px + dx, groundY + dy, pz - 2, wallB);
 			}
 		}
 
 		// ── Front arch top (dz=+1): stepped arch above opening ──
-		// dy=11: 7-wide arch (dx=-3..3 come from secondary pillars + this row)
 		for (int dx = -2; dx <= 2; dx++)
 			set(px + dx, groundY + 11, pz + 1, wallB);
-		// dy=12: narrowing keystone — stone centre accent
 		for (int dx = -1; dx <= 1; dx++)
 			set(px + dx, groundY + 12, pz + 1, (dx == 0) ? stoneB : wallB);
 
-		// ── Interior (dz=0): clear between secondary pillars ──
-		for (int dy = 1; dy <= 12; dy++)
-			for (int dx = -2; dx <= 2; dx++)
-				set(px + dx, groundY + dy, pz, BLOCK_AIR);
+		// ── Interior (dz=-1 and dz=0): air between secondary pillars ──
+		for (int dz : {-1, 0}) {
+			for (int dy = 1; dy <= 12; dy++)
+				for (int dx = -2; dx <= 2; dx++)
+					set(px + dx, groundY + dy, pz + dz, BLOCK_AIR);
+		}
 
 		// ── Battlements (dy=13): crenellations atop main pillars ──
 		for (int sign : {-1, 1}) {
-			set(px + sign * 4, groundY + 13, pz - 1, stoneB);
-			set(px + sign * 4, groundY + 13, pz,     stoneB);
-			set(px + sign * 4, groundY + 13, pz + 1, stoneB);
+			for (int dz = -2; dz <= 1; dz++)
+				set(px + sign * 4, groundY + 13, pz + dz, stoneB);
 		}
-		// Peak accent centred above keystone
-		set(px, groundY + 13, pz + 1, stoneB);
+		set(px, groundY + 13, pz + 1, stoneB);  // peak accent over keystone
 	}
 
+	// ── Convenience: common generation context ───────────────────────
+	// Wraps a chunk+offsets so helpers can call set(worldX, worldY, worldZ, bid)
+	// without repeating the bounds check everywhere.
+	struct GenCtx {
+		Chunk& chunk;
+		int ox, oy, oz;
+
+		void set(int wx, int wy, int wz, BlockId bid) const {
+			int lx = wx-ox, ly = wy-oy, lz = wz-oz;
+			if (lx>=0&&lx<CHUNK_SIZE&&ly>=0&&ly<CHUNK_SIZE&&lz>=0&&lz<CHUNK_SIZE)
+				chunk.set(lx,ly,lz,bid);
+		}
+		BlockId get(int wx, int wy, int wz) const {
+			int lx = wx-ox, ly = wy-oy, lz = wz-oz;
+			if (lx>=0&&lx<CHUNK_SIZE&&ly>=0&&ly<CHUNK_SIZE&&lz>=0&&lz<CHUNK_SIZE)
+				return chunk.get(lx,ly,lz);
+			return BLOCK_AIR;
+		}
+	};
+
+	// ── House walls, floors, stairs, and roof ─────────────────────
+	void generateHouse(const GenCtx& ctx, int seed,
+	                   BlockId wallB, BlockId roofB, BlockId floorB,
+	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
+		int sh = m_py.storyHeight, dh = m_py.doorHeight, wr = m_py.windowRow;
+		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+		int floorY = (int)std::round(naturalTerrainHeight(seed, (float)hcx+h.w*0.5f,
+		                                                        (float)hcz+h.d*0.5f, m_tp)) + 1;
+		int totalH = sh * h.stories;
+
+		// Foundation row
+		for (int dx = 0; dx < h.w; dx++)
+			for (int dz = 0; dz < h.d; dz++)
+				ctx.set(hcx+dx, floorY-1, hcz+dz, floorB);
+
+		// Walls, interior, stairs, intermediate floors
+		for (int dy = 0; dy < totalH; dy++) {
+			for (int dx = 0; dx < h.w; dx++) {
+				for (int dz = 0; dz < h.d; dz++) {
+					bool wall   = (dx==0||dx==h.w-1||dz==0||dz==h.d-1);
+					bool door   = ((dx==h.w/2||dx==h.w/2-1)&&dz==0&&dy<dh);
+					bool window = wall && dy==wr && (
+						((dz==0||dz==h.d-1)&&(dx==1||dx==h.w-2))||
+						((dx==0||dx==h.w-1)&&(dz==1||dz==h.d-2)));
+
+					// Stair steps — each step is at the SAME dy as the player's
+					// current feet, so physics step-up (height ≤ 1) carries them up.
+					// Story s, step i: at (dx=1, dz=2+i, dy=s*sh+i).
+					bool stairStep = false;
+					if (h.stories >= 2) {
+						for (int s = 0; s < h.stories-1 && !stairStep; s++)
+							for (int i = 0; i < sh-1 && !stairStep; i++)
+								if (dx==1 && dz==2+i && dy==s*sh+i)
+									stairStep = true;
+					}
+
+					// Intermediate floor = ceiling of story s, walkable floor of s+1
+					bool intermFloor = false;
+					if (h.stories >= 2 && !stairStep)
+						for (int s = 1; s < h.stories; s++)
+							if (dy == s*sh-1) { intermFloor = true; break; }
+
+					BlockId bid;
+					if (door || window)          bid = BLOCK_AIR;
+					else if (stairStep||intermFloor) bid = floorB;
+					else if (dy == totalH-1)     bid = roofB;
+					else if (wall)               bid = wallB;
+					else                         bid = BLOCK_AIR;
+
+					ctx.set(hcx+dx, floorY+dy, hcz+dz, bid);
+				}
+			}
+		}
+
+		// Peaked gable roof (overhangs 1 block front/back)
+		int roofLayers = (h.w+2)/2;
+		for (int ry = 0; ry < roofLayers; ry++) {
+			for (int dz = -1; dz <= h.d; dz++) {
+				for (int dx = ry; dx < h.w-ry; dx++) {
+					bool gableEnd = (dz==0||dz==h.d-1);
+					bool roofEdge = (dx==ry||dx==h.w-ry-1||ry==roofLayers-1);
+					if (gableEnd||roofEdge)
+						ctx.set(hcx+dx, floorY+totalH+ry, hcz+dz, roofB);
+				}
+			}
+		}
+	}
+
+	// ── Porch / patio in front of the door ───────────────────────
+	// Levels a 5-wide × 3-deep platform at floorY-1 so the door is
+	// never blocked by a terrain hill.  Fills below with wall material
+	// if the porch is elevated above surrounding ground.
+	void generatePorch(const GenCtx& ctx, int seed,
+	                   BlockId pathB, BlockId wallB,
+	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
+		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+		int floorY = (int)std::round(naturalTerrainHeight(seed, (float)hcx+h.w*0.5f,
+		                                                        (float)hcz+h.d*0.5f, m_tp)) + 1;
+		int dh = m_py.doorHeight;
+		int doorMid = h.w / 2;  // x-offset of door centre from hcx
+
+		for (int pDz = 1; pDz <= 3; pDz++) {
+			int wz = hcz - pDz;
+			for (int pDx = doorMid - 2; pDx <= doorMid + 2; pDx++) {
+				int wx = hcx + pDx;
+
+				// Porch floor
+				ctx.set(wx, floorY-1, wz, pathB);
+
+				// Fill support pillars if terrain is concave below porch
+				for (int sy = floorY-2; sy >= floorY-6; sy--) {
+					if (ctx.get(wx, sy, wz) != BLOCK_AIR) break;
+					ctx.set(wx, sy, wz, wallB);
+				}
+
+				// Clear terrain hills above porch up to door height
+				for (int cy = floorY; cy < floorY+dh; cy++)
+					ctx.set(wx, cy, wz, BLOCK_AIR);
+			}
+		}
+	}
+
+	// ── Interior furniture ────────────────────────────────────────
+	// Beds (2-block foot+head), table (2 wood), chairs, and optionally
+	// a decorative chest.  House[0] skips the chest — server.h places
+	// the starter chest there from chestPosition().
+	void generateFurniture(const GenCtx& ctx, int seed,
+	                       BlockId woodB, BlockId planksB, BlockId bedB, BlockId chestB,
+	                       const WorldPyConfig::HouseLayout& h, glm::ivec2 vc,
+	                       bool isMainHouse) {
+		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+		int floorY = (int)std::round(naturalTerrainHeight(seed, (float)hcx+h.w*0.5f,
+		                                                        (float)hcz+h.d*0.5f, m_tp)) + 1;
+		// Only furnish story 0 interior (never touch walls or stair column dx=1)
+
+		// Bed: back-left corner, two blocks (foot at dz=d-2, head at dz=d-3)
+		{
+			int bx = hcx + 2, bz1 = hcz + h.d - 2, bz2 = hcz + h.d - 3;
+			ctx.set(bx, floorY, bz1, bedB);
+			ctx.set(bx, floorY, bz2, bedB);
+		}
+
+		// Chest: front-right interior corner (skip for main house, server.h owns that)
+		if (!isMainHouse && chestB != BLOCK_AIR) {
+			ctx.set(hcx + h.w - 3, floorY, hcz + 1, chestB);
+		}
+
+		// Table: 2 plank blocks (or wood), right-of-centre
+		{
+			int tx = hcx + h.w/2 + 1;
+			int tz = hcz + h.d/2;
+			ctx.set(tx,   floorY, tz,   planksB != BLOCK_AIR ? planksB : woodB);
+			ctx.set(tx+1, floorY, tz,   planksB != BLOCK_AIR ? planksB : woodB);
+			// Chairs on either side of table
+			ctx.set(tx,   floorY, tz-1, woodB);
+			ctx.set(tx+1, floorY, tz+1, woodB);
+		}
+	}
+
+	// ── Village paths ─────────────────────────────────────────────
+	void generatePaths(const GenCtx& ctx, int seed,
+	                   BlockId pathB, glm::ivec2 vc) {
+		for (int dz = -22; dz <= 26; dz++) {
+			int wx = vc.x + 2, wz = vc.y + dz;
+			int surfY = (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
+			ctx.set(wx,   surfY, wz, pathB);
+			ctx.set(wx+1, surfY, wz, pathB);
+		}
+	}
+
+	// ── Village orchestrator ──────────────────────────────────────
 	void generateVillage(Chunk& chunk, ChunkPos cpos, int seed,
 	                     BlockId wallB, BlockId roofB, BlockId floorB, BlockId pathB,
 	                     glm::ivec2 vc, const BlockRegistry& blocks) {
-		int ox = cpos.x * CHUNK_SIZE;
-		int oy = cpos.y * CHUNK_SIZE;
-		int oz = cpos.z * CHUNK_SIZE;
+		GenCtx ctx{chunk, cpos.x*CHUNK_SIZE, cpos.y*CHUNK_SIZE, cpos.z*CHUNK_SIZE};
 
-		int sh = m_py.storyHeight;
-		int dh = m_py.doorHeight;
-		int wr = m_py.windowRow;
+		BlockId woodB   = blocks.getId(BlockType::Wood);
+		BlockId planksB = blocks.getId(BlockType::Planks);
+		BlockId bedB    = blocks.getId(BlockType::Bed);
+		BlockId chestB  = blocks.getId(BlockType::Chest);
 
-		for (auto& h : m_py.houses) {
-			int hcx = vc.x + h.cx;
-			int hcz = vc.y + h.cz;
-			int floorY = (int)std::round(naturalTerrainHeight(seed, (float)hcx + h.w * 0.5f,
-			                                                         (float)hcz + h.d * 0.5f, m_tp)) + 1;
-			int totalH = sh * h.stories;
+		for (int hi = 0; hi < (int)m_py.houses.size(); hi++) {
+			const auto& h = m_py.houses[hi];
 
-			// Per-house material overrides
+			// Per-house material overrides (Python can set wall/roof per house)
 			BlockId hWallB = (!h.wallBlock.empty()) ? blocks.getId(h.wallBlock) : wallB;
 			BlockId hRoofB = (!h.roofBlock.empty()) ? blocks.getId(h.roofBlock) : roofB;
 			if (hWallB == BLOCK_AIR) hWallB = wallB;
 			if (hRoofB == BLOCK_AIR) hRoofB = roofB;
 
-			// Foundation: overwrite ground-level blocks with floor material
-			{
-				int fy = floorY - 1 - oy;
-				if (fy >= 0 && fy < CHUNK_SIZE) {
-					for (int dx = 0; dx < h.w; dx++) {
-						for (int dz = 0; dz < h.d; dz++) {
-							int lx = hcx + dx - ox;
-							int lz = hcz + dz - oz;
-							if (lx >= 0 && lx < CHUNK_SIZE && lz >= 0 && lz < CHUNK_SIZE)
-								chunk.set(lx, fy, lz, floorB);
-						}
-					}
-				}
-			}
-
-			for (int dy = 0; dy < totalH; dy++) {
-				int ly = floorY + dy - oy;
-				if (ly < 0 || ly >= CHUNK_SIZE) continue;
-
-				for (int dx = 0; dx < h.w; dx++) {
-					for (int dz = 0; dz < h.d; dz++) {
-						int lx = hcx + dx - ox;
-						int lz = hcz + dz - oz;
-						if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
-
-						bool wall   = (dx == 0 || dx == h.w-1 || dz == 0 || dz == h.d-1);
-						bool door   = ((dx == h.w/2 || dx == h.w/2 - 1) && dz == 0 && dy < dh);
-						bool window = wall && dy == wr && (
-							((dz == 0 || dz == h.d-1) && (dx == 1 || dx == h.w-2)) ||
-							((dx == 0 || dx == h.w-1) && (dz == 1 || dz == h.d-2))
-						);
-
-						// Stair steps for multi-story: ascending along the left interior
-						// wall (dx=1). For story s, step i sits at dz=2+i, dy=s*sh+i+1.
-						bool stairStep = false;
-						if (h.stories >= 2) {
-							for (int s = 0; s < h.stories - 1 && !stairStep; s++) {
-								for (int i = 0; i < sh - 1 && !stairStep; i++) {
-									if (dx == 1 && dz == 2 + i && dy == s * sh + i + 1)
-										stairStep = true;
-								}
-							}
-						}
-
-						// Intermediate floor between stories (acts as ceiling of story s
-						// and walkable floor of story s+1). All cells at dy = s*sh - 1.
-						bool intermFloor = false;
-						if (h.stories >= 2 && !stairStep) {
-							for (int s = 1; s < h.stories; s++) {
-								if (dy == s * sh - 1) { intermFloor = true; break; }
-							}
-						}
-
-						if (door || window)
-							chunk.set(lx, ly, lz, BLOCK_AIR);
-						else if (stairStep || intermFloor)
-							chunk.set(lx, ly, lz, floorB);
-						else if (dy == totalH - 1)
-							chunk.set(lx, ly, lz, hRoofB);   // top ceiling
-						else if (wall)
-							chunk.set(lx, ly, lz, hWallB);
-						else
-							chunk.set(lx, ly, lz, BLOCK_AIR);  // interior (foundation is floor)
-					}
-				}
-			}
-
-			// Peaked gable roof (overhangs by 1 block front/back)
-			int roofLayers = (h.w + 2) / 2;
-			for (int ry = 0; ry < roofLayers; ry++) {
-				int ly = floorY + totalH + ry - oy;
-				if (ly < 0 || ly >= CHUNK_SIZE) continue;
-
-				for (int dz = -1; dz <= h.d; dz++) {
-					for (int dx = ry; dx < h.w - ry; dx++) {
-						int lx = hcx + dx - ox;
-						int lz = hcz + dz - oz;
-						if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
-
-						bool gableEnd = (dz == 0 || dz == h.d - 1);
-						bool roofEdge = (dx == ry || dx == h.w - ry - 1 || ry == roofLayers - 1);
-						if (gableEnd || roofEdge) chunk.set(lx, ly, lz, hRoofB);
-					}
-				}
-			}
+			generateHouse(ctx, seed, hWallB, hRoofB, floorB, h, vc);
+			generatePorch(ctx, seed, pathB, hWallB, h, vc);
+			generateFurniture(ctx, seed, woodB, planksB, bedB, chestB, h, vc, hi == 0);
 		}
 
-		// Cobblestone path between village center and south edge
-		for (int dz = -22; dz <= 26; dz++) {
-			int wx = vc.x + 2, wz = vc.y + dz;
-			int lx = wx - ox, lz = wz - oz;
-			if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
-
-			int surfY = (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
-			int ly = surfY - oy;
-			if (ly >= 0 && ly < CHUNK_SIZE) {
-				chunk.set(lx, ly, lz, pathB);
-				if (lx + 1 < CHUNK_SIZE) chunk.set(lx + 1, ly, lz, pathB);
-			}
-		}
+		generatePaths(ctx, seed, pathB, vc);
 	}
 };
 

@@ -2,6 +2,7 @@
 #include "content/blocks_terrain.h"
 #include "content/blocks_plants.h"
 #include "content/blocks_active.h"
+#include "content/blocks_furniture.h"
 #include "content/entities_player.h"
 #include "content/entities_animals.h"
 #include "content/entities_items.h"
@@ -13,6 +14,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	builtin::registerTerrainBlocks(blocks);
 	builtin::registerPlantBlocks(blocks);
 	builtin::registerActiveBlocks(blocks);
+	builtin::registerFurnitureBlocks(blocks);
 
 	// Entities
 	builtin::registerPlayerEntity(entities);

@@ -44,6 +44,8 @@ namespace BlockType {
 	constexpr const char* NANDGate    = "base:nand_gate";
 	constexpr const char* WheatSeeds  = "base:wheat_seeds";
 	constexpr const char* Chest       = "base:chest";
+	constexpr const char* Planks      = "base:planks";
+	constexpr const char* Bed         = "base:bed";
 }
 
 // ============================================================

@@ -18,6 +18,11 @@ inline void registerPlantBlocks(BlockRegistry& reg) {
 		true,false, 2.0f,TL::Axe,"",64,0,
 		{{GR::Choppy,2},{GR::Tree,1},{GR::Flammable,2}}, "",SN::DigWood,SN::StepWood});
 
+	reg.registerBlock({BT::Planks, "Planks", CT::Plant,
+		{0.68f,0.52f,0.30f},{0.64f,0.47f,0.24f},{0.68f,0.52f,0.30f},
+		true,false, 2.0f,TL::Axe,"",64,0,
+		{{GR::Choppy,2},{GR::Flammable,2}}, "",SN::DigWood,SN::StepWood});
+
 	reg.registerBlock({BT::Leaves, "Leaves", CT::Plant,
 		{0.18f,0.48f,0.10f},{0.20f,0.45f,0.12f},{0.20f,0.45f,0.12f},
 		true,false, 0.3f,"","",64,0,

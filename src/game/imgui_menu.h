@@ -538,23 +538,8 @@ private:
 			ImGui::Spacing();
 			if (ImGui::CollapsingHeader("Advanced Options")) {
 				ImGui::Indent(16);
-				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Terrain");
-				ImGui::SliderFloat("Terrain Scale", &m_worldGenConfig.terrainScale, 0.2f, 3.0f, "%.1fx");
-				ImGui::SliderInt("Snow Threshold", &m_worldGenConfig.snowThreshold, 5, 40);
-				ImGui::SliderInt("Water Level", &m_worldGenConfig.waterLevel, -10, 5);
-
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Village");
-				ImGui::SliderInt("House Height", &m_worldGenConfig.houseHeight, 5, 12);
-				ImGui::SliderInt("Clearing Radius", &m_worldGenConfig.villageClearingRadius, 15, 60);
-
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Trees");
-				ImGui::SliderFloat("Tree Density", &m_worldGenConfig.treeDensity, 0.0f, 0.15f, "%.2f");
-				ImGui::SliderInt("Trunk Height", &m_worldGenConfig.trunkHeightBase, 3, 15);
-
-				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Creatures");
+				ImGui::TextDisabled("Terrain / village / tree params: edit artifacts/worlds/base/village.py");
 				for (auto& mob : m_worldGenConfig.mobs) {
 					// Strip "base:" prefix and capitalize for display
 					std::string label = mob.typeId;

@@ -5,11 +5,13 @@
 #include <unordered_map>
 
 /**
- * WorldGenConfig — all world generation parameters in one struct.
+ * WorldGenConfig — runtime overrides for world generation.
  *
- * Defaults match the original hardcoded values exactly, so existing
- * worlds generate identically. The ImGui menu exposes a subset as
- * "Advanced Options" when creating a new world.
+ * Terrain shape, village layout, and tree parameters come from
+ * Python artifacts (artifacts/worlds/base/village.py).  This struct
+ * holds only the things the player can tune at world-creation time
+ * that are NOT in the Python config: mob counts/types and
+ * per-creature behavior / starting-item overrides.
  */
 
 namespace agentworld {
@@ -17,32 +19,13 @@ namespace agentworld {
 struct MobSpawn {
 	std::string typeId;
 	int         count;
-	float       radius = -1.0f;  // < 0 = use WorldGenConfig::mobSpawnRadius
+	float       radius = -1.0f;  // < 0 = use template Python config radius
 };
 
 struct WorldGenConfig {
-	// Terrain biomes
-	int   waterLevel           = -2;
-	int   snowThreshold        = 18;
-	int   dirtDepth            = 4;
-
-	// Terrain noise (4 octaves)
-	float terrainScale         = 1.0f;   // multiplier for all amplitudes
-
-	// Trees
-	float treeDensity          = 0.03f;  // probability per eligible block
-	int   trunkHeightBase      = 7;
-	int   trunkHeightVariation = 4;
-	int   leafRadius           = 3;
-
-	// Village
-	int   villageClearingRadius = 28;
-	int   houseHeight          = 7;      // wall height (raised from 5 for 3-block characters)
-	int   houseDoorHeight      = 4;      // door opening (raised from 3)
-	int   houseWindowRow       = 3;      // Y-level for windows within house
-	int   houseCount           = 4;
-
-	// Mobs — order controls spawn ring offset angle
+	// Mob overrides: when non-empty, replaces the template's mob list entirely.
+	// Each entry gives the creature type, desired count, and spawn radius.
+	// If empty, the template's Python config mobs are used.
 	std::vector<MobSpawn> mobs = {
 		{"base:pig",      4},
 		{"base:chicken",  3},
@@ -50,10 +33,9 @@ struct WorldGenConfig {
 		{"base:cat",      2},
 		{"base:villager", 2},
 	};
-	float mobSpawnRadius       = 30.0f;
+	float mobSpawnRadius = 30.0f;
 
 	// Per-creature behavior overrides (typeId → behaviorId)
-	// "custom:xxx" means a custom Python behavior was generated.
 	std::unordered_map<std::string, std::string> behaviorOverrides;
 
 	// Per-creature starting items (typeId → [(itemId, count), ...])
