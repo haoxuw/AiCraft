@@ -1,5 +1,4 @@
 #include "game/game.h"
-#include "content/models.h"
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 #include "shared/model_loader.h"
@@ -92,30 +91,9 @@ bool Game::init(int argc, char** argv) {
 		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) m_connectPort = atoi(argv[++i]);
 	}
 
-	// Models — load from Python files (artifacts/models/) with C++ fallback
-	{
-		auto pyModels = model_loader::loadAllModels("artifacts");
-		// Creatures + playable characters
-		const char* names[] = {"player", "pig", "chicken", "dog", "cat", "villager",
-		                       "knight", "skeleton", "crewmate", "giant", "mage"};
-		// C++ fallbacks (creatures only — characters are Python-only)
-		std::unordered_map<std::string, BoxModel> fallbacks;
-		fallbacks["player"]   = builtin::playerModel();
-		fallbacks["pig"]      = builtin::pigModel();
-		fallbacks["chicken"]  = builtin::chickenModel();
-		fallbacks["dog"]      = builtin::dogModel();
-		fallbacks["cat"]      = builtin::catModel();
-		fallbacks["villager"] = builtin::villagerModel();
-		for (auto* name : names) {
-			auto it = pyModels.find(name);
-			if (it != pyModels.end()) {
-				m_models[name] = std::move(it->second);
-			} else if (fallbacks.count(name)) {
-				m_models[name] = std::move(fallbacks[name]);
-			}
-			// Characters without Python model or C++ fallback → not loaded (warning logged)
-		}
-	}
+	// Models — ALL loaded from Python (artifacts/models/base/ and models/player/)
+	m_models = model_loader::loadAllModels("artifacts");
+	printf("[Game] Loaded %zu models from Python\n", m_models.size());
 	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
 
 	// Character selection preview (uses same models + preview as Handbook)
@@ -135,67 +113,9 @@ bool Game::init(int argc, char** argv) {
 	hb.setRegistry(&m_artifacts);
 	hb.setAudio(&m_audio);
 
-	// Register ALL models (creatures + playable characters) for Handbook preview
-	for (auto& [key, mdl] : m_models) {
+	// Register ALL Python models for Handbook 3D preview
+	for (auto& [key, mdl] : m_models)
 		hb.registerModel(key, mdl);
-	}
-
-	// Items — simple box models for preview
-	{
-		BoxModel sword;
-		sword.totalHeight = 1.2f;
-		sword.parts.push_back({{0, 0.55f, 0}, {0.05f, 0.45f, 0.05f}, {0.75f, 0.75f, 0.82f, 1}}); // blade (big!)
-		sword.parts.push_back({{0, 0.06f, 0}, {0.03f, 0.10f, 0.06f}, {0.40f, 0.28f, 0.12f, 1}}); // handle
-		sword.parts.push_back({{0, 0.14f, 0}, {0.12f, 0.025f, 0.025f}, {0.60f, 0.55f, 0.45f, 1}}); // guard
-		sword.parts.push_back({{0, -0.02f, 0}, {0.04f, 0.03f, 0.04f}, {0.55f, 0.50f, 0.40f, 1}}); // pommel
-		hb.registerModel("sword", sword);
-	}
-	{
-		BoxModel shield;
-		shield.totalHeight = 0.8f;
-		shield.parts.push_back({{0, 0.30f, 0}, {0.02f, 0.22f, 0.18f}, {0.45f, 0.30f, 0.15f, 1}}); // face
-		shield.parts.push_back({{0.02f, 0.30f, 0}, {0.02f, 0.08f, 0.08f}, {0.55f, 0.50f, 0.40f, 1}}); // boss
-		hb.registerModel("shield", shield);
-	}
-	{
-		BoxModel potion;
-		potion.totalHeight = 0.5f;
-		potion.parts.push_back({{0, 0.12f, 0}, {0.06f, 0.10f, 0.06f}, {0.80f, 0.20f, 0.30f, 1}}); // bottle
-		potion.parts.push_back({{0, 0.24f, 0}, {0.03f, 0.04f, 0.03f}, {0.70f, 0.15f, 0.20f, 1}}); // neck
-		potion.parts.push_back({{0, 0.29f, 0}, {0.04f, 0.02f, 0.04f}, {0.50f, 0.45f, 0.35f, 1}}); // cork
-		hb.registerModel("potion", potion);
-	}
-	{
-		BoxModel bucket;
-		bucket.totalHeight = 0.5f;
-		bucket.parts.push_back({{0, 0.10f, 0}, {0.08f, 0.10f, 0.08f}, {0.60f, 0.60f, 0.62f, 1}}); // body
-		bucket.parts.push_back({{0, 0.10f, 0}, {0.09f, 0.02f, 0.09f}, {0.55f, 0.55f, 0.58f, 1}}); // rim
-		bucket.parts.push_back({{0, 0.22f, 0}, {0.06f, 0.01f, 0.01f}, {0.50f, 0.50f, 0.52f, 1}}); // handle
-		hb.registerModel("bucket", bucket);
-	}
-	{
-		BoxModel torch;
-		torch.totalHeight = 0.6f;
-		torch.parts.push_back({{0, 0.12f, 0}, {0.03f, 0.14f, 0.03f}, {0.40f, 0.28f, 0.12f, 1}}); // stick
-		torch.parts.push_back({{0, 0.28f, 0}, {0.04f, 0.04f, 0.04f}, {1.00f, 0.80f, 0.20f, 1}}); // flame
-		torch.parts.push_back({{0, 0.34f, 0}, {0.02f, 0.03f, 0.02f}, {1.00f, 0.90f, 0.40f, 0.8f}}); // tip
-		hb.registerModel("torch", torch);
-	}
-
-	// Blocks — simple single cube
-	{
-		BoxModel block;
-		block.totalHeight = 1.0f;
-		block.parts.push_back({{0, 0.5f, 0}, {0.4f, 0.4f, 0.4f}, {0.48f, 0.48f, 0.50f, 1}});
-		hb.registerModel("terrain", block); // generic block
-		hb.registerModel("stone", block);
-	}
-	{
-		BoxModel dirt;
-		dirt.totalHeight = 1.0f;
-		dirt.parts.push_back({{0, 0.5f, 0}, {0.4f, 0.4f, 0.4f}, {0.45f, 0.32f, 0.18f, 1}});
-		hb.registerModel("dirt", dirt);
-	}
 
 	// Scroll callback — reads selected slot from player entity
 	struct ScrollData { Game* game; Camera* cam; };
@@ -932,7 +852,14 @@ void Game::renderPlaying(float dt, float aspect) {
 	}
 
 	// Lightbulbs above living entities (behavior indicator)
-	static BoxModel lightbulb = builtin::lightbulbModel();
+	// Lightbulb icon (UI indicator above AI entities, not game content)
+	static BoxModel lightbulb = []() {
+		BoxModel m; m.totalHeight = 0.4f;
+		m.parts.push_back({{0,0.15f,0},{0.08f,0.10f,0.08f},{1.0f,0.92f,0.3f,0.9f}});
+		m.parts.push_back({{0,0.27f,0},{0.05f,0.04f,0.05f},{1.0f,1.0f,0.7f,0.95f}});
+		m.parts.push_back({{0,0.04f,0},{0.06f,0.05f,0.06f},{0.5f,0.5f,0.5f,0.9f}});
+		return m;
+	}();
 	srv.forEachEntity([&](Entity& e) {
 		if (e.id() == m_server->localPlayerId()) return;
 		if (e.def().max_hp <= 0) return; // only living entities
