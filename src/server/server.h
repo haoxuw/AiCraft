@@ -73,23 +73,17 @@ public:
 		m_wgc = config.worldGenConfig;
 		m_worldTime = 0.30f;
 
-		// Find spawn position — search for flat terrain, guarantee surface placement
-		float sx = 30, sz = 30;
-		for (int t = 0; t < 50; t++) {
-			float h = m_world->surfaceHeight(sx, sz);
-			if (h > 2 && h < 15) break;
-			sx += 7; sz += 3;
-		}
-		float surfaceY = m_world->surfaceHeight(sx, sz);
+		// Ask the template where the player should spawn
+		glm::vec3 rawSpawn = tmpl->preferredSpawn(config.seed);
+		float sx = rawSpawn.x, sz = rawSpawn.z;
 
-		// Scan upward to find clear air (3 blocks for character height)
-		// This prevents spawning inside mountains, trees, or structures
+		// Safety scan upward to escape any structure or tree placed at spawn
 		BlockSolidFn solidFn = [&](int x, int y, int z) {
 			return m_world->blocks.get(m_world->getBlock(x, y, z)).solid;
 		};
-		int spawnY = (int)std::round(surfaceY) + 1;
-		for (int scan = 0; scan < 20; scan++) {
-			bool clear = !solidFn((int)sx, spawnY, (int)sz) &&
+		int spawnY = (int)std::round(rawSpawn.y);
+		for (int scan = 0; scan < 24; scan++) {
+			bool clear = !solidFn((int)sx, spawnY,     (int)sz) &&
 			             !solidFn((int)sx, spawnY + 1, (int)sz) &&
 			             !solidFn((int)sx, spawnY + 2, (int)sz);
 			if (clear) break;
@@ -103,33 +97,32 @@ public:
 	          const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		initWorld(config, templates);
 
-		// Spawn mobs above the surface — gravity will drop them down.
-		auto& wgc = config.worldGenConfig;
+		auto& tmpl = m_world->getTemplate();
+		auto& wgc  = config.worldGenConfig;
+
 		auto safeSpawnHeight = [&](float x, float z) {
 			return m_world->surfaceHeight(x, z) + ServerTuning::spawnHeightOffset;
 		};
 
-		// Mob spawn center: village center for VillageWorldTemplate, else player spawn.
-		// Uses mobSpawnRadius so mobs appear just outside the clearing, visible from village.
-		float mobCX = m_spawnPos.x, mobCZ = m_spawnPos.z;
-		{
-			auto* vt = dynamic_cast<VillageWorldTemplate*>(&m_world->getTemplate());
-			if (vt) {
-				auto vc = VillageWorldTemplate::villageCenter(m_world->seed());
-				mobCX = (float)vc.x;
-				mobCZ = (float)vc.y;
-			}
+		// Village center from template (virtual — works for any template type)
+		auto vc = tmpl.villageCenter(m_world->seed());
+		float mobCX = (float)vc.x, mobCZ = (float)vc.y;
+
+		// Build mob list: prefer per-mob radius from template's Python config,
+		// fall back to wgc.mobs (which may have come from WorldGenConfig defaults or UI).
+		// If wgc.mobs is empty, use the template's Python config mobs.
+		std::vector<MobSpawn> mobList = wgc.mobs;
+		if (mobList.empty()) {
+			for (auto& mc : tmpl.pyConfig().mobs)
+				mobList.push_back({mc.type, mc.count, mc.radius});
 		}
 
-		// Spawn mobs in a ring at mobSpawnRadius around village center
-		auto spawnMobs = [&](const std::string& typeId, int count, float baseOffset) {
-			float radius = wgc.mobSpawnRadius;
+		auto spawnMob = [&](const std::string& typeId, int count, float radius, float baseOffset) {
 			for (int m = 0; m < count; m++) {
 				float angle = (float)m / (float)count * 6.28318f + baseOffset;
 				float emx = mobCX + std::cos(angle) * radius;
 				float emz = mobCZ + std::sin(angle) * radius;
 
-				// Apply behavior override if configured
 				std::unordered_map<std::string, PropValue> extraProps;
 				auto bIt = wgc.behaviorOverrides.find(typeId);
 				if (bIt != wgc.behaviorOverrides.end())
@@ -138,7 +131,6 @@ public:
 				EntityId eid = m_world->entities.spawn(typeId,
 					{emx, safeSpawnHeight(emx, emz), emz}, extraProps);
 
-				// Give starting items if configured
 				auto iIt = wgc.startingItems.find(typeId);
 				if (iIt != wgc.startingItems.end()) {
 					Entity* e = m_world->entities.get(eid);
@@ -150,58 +142,23 @@ public:
 			}
 		};
 
-		// Spawn all mob types — order in wgc.mobs determines ring offset angle
-		for (int i = 0; i < (int)wgc.mobs.size(); i++) {
-			spawnMobs(wgc.mobs[i].typeId, wgc.mobs[i].count, (float)i);
+		for (int i = 0; i < (int)mobList.size(); i++) {
+			float r = (mobList[i].radius > 0) ? mobList[i].radius : wgc.mobSpawnRadius;
+			spawnMob(mobList[i].typeId, mobList[i].count, r, (float)i);
 		}
 
-		{
-			// Find a chest position near spawn that does NOT overlap the player's body.
-			// Spiral scan outward; skip any cell that falls inside the player's
-			// collision footprint so the player never spawns inside the chest.
-			int spawnGX = (int)std::floor(m_spawnPos.x);
-			int spawnGZ = (int)std::floor(m_spawnPos.z);
-			int chestX = spawnGX + 3, chestZ = spawnGZ; // safe fallback
-			int chestY = (int)m_world->surfaceHeight((float)chestX, (float)chestZ) + 1;
+		// Place starter chest — template decides where (village: inside main house)
+		glm::vec3 cPos = tmpl.chestPosition(m_world->seed(), m_spawnPos);
+		int chestX = (int)std::round(cPos.x), chestZ = (int)std::round(cPos.z);
+		int chestY = (int)std::round(cPos.y);
 
-			// Determine player's XZ footprint in block-grid coordinates.
-			float hw = 0.4f; // conservative player half-width
-			const EntityDef* playerDef = m_world->entities.getTypeDef(EntityType::Player);
-			if (playerDef) hw = (playerDef->collision_box_max.x - playerDef->collision_box_min.x) * 0.5f;
-			int footMinX = (int)std::floor(m_spawnPos.x - hw);
-			int footMaxX = (int)std::floor(m_spawnPos.x + hw);
-			int footMinZ = (int)std::floor(m_spawnPos.z - hw);
-			int footMaxZ = (int)std::floor(m_spawnPos.z + hw);
-
-			bool chestFound = false;
-			for (int ring = 1; ring <= 8 && !chestFound; ring++) {
-				for (int dz = -ring; dz <= ring && !chestFound; dz++) {
-					for (int dx = -ring; dx <= ring && !chestFound; dx++) {
-						if (std::abs(dx) != ring && std::abs(dz) != ring) continue; // border only
-						int cx = spawnGX + dx, cz = spawnGZ + dz;
-						// Skip if cell overlaps player's collision footprint
-						if (cx >= footMinX && cx <= footMaxX && cz >= footMinZ && cz <= footMaxZ)
-							continue;
-						int cy = (int)m_world->surfaceHeight((float)cx, (float)cz) + 1;
-						BlockId below = m_world->getBlock(cx, cy - 1, cz);
-						BlockId at    = m_world->getBlock(cx, cy,     cz);
-						BlockId above = m_world->getBlock(cx, cy + 1, cz);
-						if (m_world->blocks.get(below).solid && at == BLOCK_AIR && above == BLOCK_AIR) {
-							chestX = cx; chestY = cy; chestZ = cz;
-							chestFound = true;
-						}
-					}
-				}
-			}
-
-			BlockId chestId = m_world->blocks.getId(BlockType::Chest);
-			if (chestId != BLOCK_AIR) {
-				ChunkPos cp = worldToChunk(chestX, chestY, chestZ);
-				Chunk* c = m_world->getChunk(cp);
-				if (c) c->set(((chestX%16)+16)%16, ((chestY%16)+16)%16, ((chestZ%16)+16)%16, chestId);
-			}
-			m_chestPos = glm::vec3((float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f);
+		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
+		if (chestId != BLOCK_AIR) {
+			ChunkPos cp = worldToChunk(chestX, chestY, chestZ);
+			Chunk* c = m_world->getChunk(cp);
+			if (c) c->set(((chestX%16)+16)%16, ((chestY%16)+16)%16, ((chestZ%16)+16)%16, chestId);
 		}
+		m_chestPos = glm::vec3((float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f);
 
 		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f (chest at %.0f,%.0f,%.0f)\n",
 		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z,

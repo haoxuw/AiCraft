@@ -60,6 +60,7 @@ public:
 		loadCategory("effects", "effect");
 		loadCategory("characters", "character");
 		loadCategory("resources", "resource");
+		loadCategory("worlds", "world");
 
 		printf("[ArtifactRegistry] Loaded %zu artifacts from %s\n",
 		       m_entries.size(), basePath.c_str());

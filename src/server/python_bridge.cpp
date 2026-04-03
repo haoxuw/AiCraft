@@ -1,4 +1,6 @@
 #include "server/python_bridge.h"
+#include <fstream>
+#include <iterator>
 
 #ifdef __EMSCRIPTEN__
 // ================================================================
@@ -23,6 +25,7 @@ std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
 void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
 BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { return {BehaviorAction::Idle}; }
+bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
 } // namespace agentworld
 #else
 // ================================================================
@@ -343,6 +346,138 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 	view.self.errorText.clear();
 
 	return action;
+}
+
+// ================================================================
+// World config loader — reads artifacts/worlds/*.py via pybind11
+// ================================================================
+
+bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
+	auto& bridge = pythonBridge();
+	if (!bridge.isInitialized()) return false;
+
+	std::ifstream f(filePath);
+	if (!f.is_open()) {
+		printf("[WorldConfig] File not found: %s\n", filePath.c_str());
+		return false;
+	}
+	std::string src((std::istreambuf_iterator<char>(f)), {});
+
+	try {
+		py::dict ns;
+		py::exec(src.c_str(), ns);
+		if (!ns.contains("world")) return false;
+
+		py::dict w = ns["world"].cast<py::dict>();
+
+		auto getStr = [&](py::dict& d, const char* k, const std::string& def) -> std::string {
+			return d.contains(k) ? d[k].cast<std::string>() : def;
+		};
+		auto getFloat = [&](py::dict& d, const char* k, float def) -> float {
+			return d.contains(k) ? (float)py::float_(d[k]) : def;
+		};
+		auto getInt = [&](py::dict& d, const char* k, int def) -> int {
+			return d.contains(k) ? d[k].cast<int>() : def;
+		};
+		auto getBool = [&](py::dict& d, const char* k, bool def) -> bool {
+			return d.contains(k) ? d[k].cast<bool>() : def;
+		};
+
+		// terrain
+		if (w.contains("terrain") && !w["terrain"].is_none()) {
+			py::dict t = w["terrain"].cast<py::dict>();
+			out.terrainType      = getStr(t, "type",               out.terrainType);
+			out.surfaceY         = getFloat(t, "surface_y",         out.surfaceY);
+			out.continentScale   = getFloat(t, "continent_scale",   out.continentScale);
+			out.continentAmplitude = getFloat(t, "continent_amplitude", out.continentAmplitude);
+			out.hillScale        = getFloat(t, "hill_scale",        out.hillScale);
+			out.hillAmplitude    = getFloat(t, "hill_amplitude",    out.hillAmplitude);
+			out.detailScale      = getFloat(t, "detail_scale",      out.detailScale);
+			out.detailAmplitude  = getFloat(t, "detail_amplitude",  out.detailAmplitude);
+			out.microScale       = getFloat(t, "micro_scale",       out.microScale);
+			out.microAmplitude   = getFloat(t, "micro_amplitude",   out.microAmplitude);
+			out.waterLevel       = getFloat(t, "water_level",       out.waterLevel);
+			out.snowThreshold    = getFloat(t, "snow_threshold",    out.snowThreshold);
+			out.dirtDepth        = getInt(t,   "dirt_depth",        out.dirtDepth);
+		}
+
+		// trees
+		if (w.contains("trees") && !w["trees"].is_none()) {
+			py::dict t = w["trees"].cast<py::dict>();
+			out.treeDensity    = getFloat(t, "density",          out.treeDensity);
+			out.trunkHeightMin = getInt(t,   "trunk_height_min", out.trunkHeightMin);
+			out.trunkHeightMax = getInt(t,   "trunk_height_max", out.trunkHeightMax);
+			out.leafRadius     = getInt(t,   "leaf_radius",      out.leafRadius);
+		}
+
+		// spawn
+		if (w.contains("spawn") && !w["spawn"].is_none()) {
+			py::dict s = w["spawn"].cast<py::dict>();
+			out.spawnSearchX = getFloat(s, "search_x",   out.spawnSearchX);
+			out.spawnSearchZ = getFloat(s, "search_z",   out.spawnSearchZ);
+			out.spawnMinH    = getFloat(s, "min_height", out.spawnMinH);
+			out.spawnMaxH    = getFloat(s, "max_height", out.spawnMaxH);
+			// flat world fixed spawn
+			if (s.contains("x")) out.spawnSearchX = getFloat(s, "x", out.spawnSearchX);
+			if (s.contains("z")) out.spawnSearchZ = getFloat(s, "z", out.spawnSearchZ);
+		}
+
+		// chest (flat world)
+		if (w.contains("chest") && !w["chest"].is_none()) {
+			py::dict c = w["chest"].cast<py::dict>();
+			out.chestOffsetX = getFloat(c, "offset_x", out.chestOffsetX);
+			out.chestOffsetZ = getFloat(c, "offset_z", out.chestOffsetZ);
+		}
+
+		// village
+		out.hasVillage = w.contains("village") && !w["village"].is_none();
+		if (out.hasVillage) {
+			py::dict v = w["village"].cast<py::dict>();
+			out.villageOffsetX  = getFloat(v, "offset_x",        out.villageOffsetX);
+			out.villageOffsetZ  = getFloat(v, "offset_z",        out.villageOffsetZ);
+			out.clearingRadius  = getInt(v,   "clearing_radius", out.clearingRadius);
+			out.wallBlock       = getStr(v,   "wall_block",      out.wallBlock);
+			out.roofBlock       = getStr(v,   "roof_block",      out.roofBlock);
+			out.floorBlock      = getStr(v,   "floor_block",     out.floorBlock);
+			out.pathBlock       = getStr(v,   "path_block",      out.pathBlock);
+			out.houseHeight     = getInt(v,   "house_height",    out.houseHeight);
+			out.doorHeight      = getInt(v,   "door_height",     out.doorHeight);
+			out.windowRow       = getInt(v,   "window_row",      out.windowRow);
+
+			if (v.contains("houses")) {
+				out.houses.clear();
+				for (auto& h : v["houses"].cast<py::list>()) {
+					auto hl = h.cast<py::list>();
+					WorldPyConfig::HouseLayout layout;
+					layout.cx = hl[0].cast<int>();
+					layout.cz = hl[1].cast<int>();
+					layout.w  = hl[2].cast<int>();
+					layout.d  = hl[3].cast<int>();
+					out.houses.push_back(layout);
+				}
+			}
+		}
+
+		// mobs
+		if (w.contains("mobs")) {
+			out.mobs.clear();
+			for (auto& m : w["mobs"].cast<py::list>()) {
+				py::dict md = m.cast<py::dict>();
+				WorldPyConfig::MobConfig mc;
+				mc.type   = md["type"].cast<std::string>();
+				mc.count  = md["count"].cast<int>();
+				mc.radius = getFloat(md, "radius", 20.0f);
+				out.mobs.push_back(mc);
+			}
+		}
+
+		printf("[WorldConfig] Loaded from %s\n", filePath.c_str());
+		return true;
+
+	} catch (const std::exception& e) {
+		printf("[WorldConfig] Error loading %s: %s\n", filePath.c_str(), e.what());
+		return false;
+	}
 }
 
 } // namespace agentworld

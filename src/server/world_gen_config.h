@@ -17,6 +17,7 @@ namespace agentworld {
 struct MobSpawn {
 	std::string typeId;
 	int         count;
+	float       radius = -1.0f;  // < 0 = use WorldGenConfig::mobSpawnRadius
 };
 
 struct WorldGenConfig {

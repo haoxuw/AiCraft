@@ -13,6 +13,7 @@
 
 #include "server/local_server.h"
 #include "server/world_template.h"
+#include "server/python_bridge.h"
 #include "shared/constants.h"
 #include <cstdio>
 #include <cmath>
@@ -402,9 +403,19 @@ static std::string t13_place_block() {
 
 	tickN(*srv, 30);
 
-	// Player has stone(10) in survival. Place at a known air position.
-	// Player spawn ~(30, 5, 30). Place at (35, 5, 30) — 5 blocks east, distance < 8.
-	glm::ivec3 placePos = {35, 5, 30};
+	// Find a nearby air block to place stone in.
+	// Try several positions within reach; skip any that are already occupied.
+	glm::vec3 pos = p->position;
+	glm::ivec3 placePos = {0, 0, 0};
+	bool found = false;
+	for (int dz = 2; dz <= 6 && !found; dz++) {
+		glm::ivec3 candidate = {(int)std::floor(pos.x), (int)std::floor(pos.y), (int)std::floor(pos.z) + dz};
+		if (srv->chunks().getBlock(candidate.x, candidate.y, candidate.z) == BLOCK_AIR) {
+			placePos = candidate;
+			found = true;
+		}
+	}
+	if (!found) return "could not find an air block within reach to place";
 
 	// Verify it's air
 	BlockId bid = srv->chunks().getBlock(placePos.x, placePos.y, placePos.z);
@@ -442,7 +453,9 @@ static std::string t14_place_block_rejected_without_item() {
 	if (p->inventory && p->inventory->has(BlockType::TNT))
 		return "player unexpectedly has TNT";
 
-	glm::ivec3 placePos = {35, 5, 30};
+	// Find an air block to try placing at
+	glm::vec3 pos = p->position;
+	glm::ivec3 placePos = {(int)std::floor(pos.x), (int)std::floor(pos.y), (int)std::floor(pos.z) + 3};
 	placeAndTick(*srv, pid, placePos, BlockType::TNT);
 
 	BlockId bid = srv->chunks().getBlock(placePos.x, placePos.y, placePos.z);
@@ -669,11 +682,16 @@ static std::string t23_creatures_near_village_center() {
 	auto srv = makeVillageServer();
 	tickN(*srv, 10); // let gravity drop mobs to surface
 
-	auto vc = VillageWorldTemplate::villageCenter(42); // seed=42, same as makeVillageServer
+	// Use the template's virtual villageCenter (no more static method)
+	auto* tmpl = dynamic_cast<VillageWorldTemplate*>(
+		&srv->server()->world().getTemplate());
+	if (!tmpl) return "not a village template";
+
+	auto vc = tmpl->villageCenter(42); // seed=42, same as makeVillageServer
 	float vcX = (float)vc.x, vcZ = (float)vc.y;
 
-	// mobSpawnRadius default is 30, add generous buffer for vertical variation
-	constexpr float maxDist = 80.0f;
+	// Furthest mob radius from Python config (pigs at 22) + buffer
+	constexpr float maxDist = 60.0f;
 	bool found = false;
 	srv->forEachEntity([&](Entity& e) {
 		if (!e.def().isCreature()) return;
@@ -689,13 +707,77 @@ static std::string t23_creatures_near_village_center() {
 }
 
 // ================================================================
+// T24: Chest is placed inside (or near) the village center house
+// ================================================================
+
+static std::string t24_chest_in_village() {
+	auto srv = makeVillageServer();
+
+	auto* tmpl = dynamic_cast<VillageWorldTemplate*>(
+		&srv->server()->world().getTemplate());
+	if (!tmpl) return "not a village template";
+
+	auto vc = tmpl->villageCenter(42);
+	glm::vec3 spawnPos = srv->spawnPos();
+	glm::vec3 chestPos = tmpl->chestPosition(42, spawnPos);
+
+	// Chest should be within ~15 blocks of village center (inside main house)
+	float dx = chestPos.x - (float)vc.x;
+	float dz = chestPos.z - (float)vc.y;
+	float distFromVC = std::sqrt(dx*dx + dz*dz);
+	if (distFromVC > 15.0f)
+		return "chest is " + std::to_string((int)distFromVC) +
+		       " blocks from village center — expected inside main house (<15)";
+
+	// The chest block should actually be placed in the world
+	int cx = (int)std::round(chestPos.x), cy = (int)std::round(chestPos.y),
+	    cz = (int)std::round(chestPos.z);
+	BlockId bid = srv->chunks().getBlock(cx, cy, cz);
+	if (bid == BLOCK_AIR)
+		return "no chest block at chestPosition (" +
+		       std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + ")";
+	return "";
+}
+
+// ================================================================
+// T25: Spawn is within ~60 blocks of village center
+// ================================================================
+
+static std::string t25_spawn_near_village() {
+	auto srv = makeVillageServer();
+
+	auto* tmpl = dynamic_cast<VillageWorldTemplate*>(
+		&srv->server()->world().getTemplate());
+	if (!tmpl) return "not a village template";
+
+	auto vc = tmpl->villageCenter(42);
+	glm::vec3 spawn = srv->spawnPos();
+
+	float dx = spawn.x - (float)vc.x;
+	float dz = spawn.z - (float)vc.y;
+	float dist = std::sqrt(dx*dx + dz*dz);
+
+	if (dist > 65.0f)
+		return "spawn is " + std::to_string((int)dist) +
+		       " blocks from village center — expected < 65";
+	if (dist < 10.0f)
+		return "spawn is only " + std::to_string((int)dist) +
+		       " blocks from village center — should be outside clearing";
+	return "";
+}
+
+// ================================================================
 // Main
 // ================================================================
 
 } // namespace agentworld::test
 
 int main() {
+	using namespace agentworld;
 	using namespace agentworld::test;
+
+	// Initialize Python so world templates and behaviors can load from artifacts/
+	pythonBridge().init("python");
 
 	printf("\n=== AgentWorld E2E Tests ===\n\n");
 	initTemplates();
@@ -740,6 +822,10 @@ int main() {
 
 	printf("\n--- Village ---\n");
 	run("T23: creatures spawn near village center", t23_creatures_near_village_center);
+	run("T24: chest placed inside village main house", t24_chest_in_village);
+	run("T25: player spawn within 65 blocks of village", t25_spawn_near_village);
+
+	pythonBridge().shutdown();
 
 	// Summary
 	int passed = 0, failed = 0;
