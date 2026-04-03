@@ -162,6 +162,7 @@ public:
 			pe->inventory->add("base:sword", 1);
 			pe->inventory->add("base:shield", 1);
 			pe->inventory->add("base:potion", 3);
+			pe->inventory->autoPopulateHotbar();
 		}
 		m_clients[clientId] = {eid};
 		printf("[Server] Client %u joined. Player entity: %u\n", clientId, eid);
@@ -256,8 +257,11 @@ public:
 				item->removed = true;
 				inventoryChanged = true;
 			}
-			if (inventoryChanged && m_callbacks.onInventoryChange)
-				m_callbacks.onInventoryChange(e.id(), *e.inventory);
+			if (inventoryChanged) {
+				e.inventory->autoPopulateHotbar();
+				if (m_callbacks.onInventoryChange)
+					m_callbacks.onInventoryChange(e.id(), *e.inventory);
+			}
 		});
 
 		// Advance world time

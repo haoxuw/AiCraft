@@ -81,9 +81,10 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 		}
 	}
 
-	// ── FPS/TPS only: left-click break block (crosshair) ──
+	// ── FPS/TPS only: left-click break, right-click place block ──
 	if (m_hit && (camera.mode == CameraMode::FirstPerson ||
 	              camera.mode == CameraMode::ThirdPerson) && player.inventory) {
+		// Left-click: break / ignite TNT
 		if (controls.pressed(Action::BreakBlock) && m_breakCD <= 0) {
 			auto& bp = m_hit->blockPos;
 			BlockId bid = chunks.getBlock(bp.x, bp.y, bp.z);
@@ -101,6 +102,22 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 				m_breakCD = 0.15f;
 			}
 			server.sendAction(p);
+		}
+
+		// Right-click: place block (only if no entity is closer)
+		bool entityCloser = m_entityHit && m_entityHit->distance < m_hit->distance;
+		if (controls.pressed(Action::PlaceBlock) && !entityCloser && m_breakCD <= 0) {
+			int slot = player.getProp<int>(Prop::SelectedSlot, 0);
+			const std::string& blockType = player.inventory->hotbar(slot);
+			if (!blockType.empty() && player.inventory->has(blockType)) {
+				ActionProposal p;
+				p.actorId = player.id();
+				p.type = ActionProposal::PlaceBlock;
+				p.blockPos = m_hit->placePos;
+				p.blockType = blockType;
+				server.sendAction(p);
+				m_breakCD = 0.25f;
+			}
 		}
 	}
 }

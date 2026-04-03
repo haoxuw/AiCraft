@@ -309,6 +309,7 @@ private:
 					int amount = rb.readI32();
 					inv.add(itemId, amount);
 				}
+				inv.autoPopulateHotbar();
 			}
 			break;
 		}

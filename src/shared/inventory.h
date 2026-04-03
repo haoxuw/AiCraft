@@ -93,6 +93,23 @@ public:
 			m_hotbar[slot] = itemId;
 	}
 
+	// Auto-assign items to hotbar slots 0..N in sorted order.
+	// Call after any bulk inventory change (init, network sync, load).
+	// Does not overwrite manually-assigned slots that still have items.
+	void autoPopulateHotbar() {
+		// Build set of items already explicitly assigned
+		// Refill empty or stale slots from sorted item list
+		int slot = 0;
+		for (auto& [id, cnt] : m_items) {
+			if (cnt <= 0) continue;
+			if (slot >= HOTBAR_SLOTS) break;
+			m_hotbar[slot++] = id;
+		}
+		// Clear any remaining slots (items may have been removed)
+		for (; slot < HOTBAR_SLOTS; slot++)
+			m_hotbar[slot].clear();
+	}
+
 	// Get the item type in a hotbar slot (empty string if unset).
 	const std::string& hotbar(int slot) const {
 		static const std::string empty;
