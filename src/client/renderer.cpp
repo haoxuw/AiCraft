@@ -371,13 +371,18 @@ void Renderer::renderHighlight(const Camera& cam, float aspect, glm::ivec3 pos) 
 
 	m_highlightShader.use();
 	m_highlightShader.setMat4("uMVP", mvp);
-	m_highlightShader.setVec3("uColor", glm::vec3(0.1f, 0.1f, 0.1f));
-	// Set uColor as vec4 -- need to use the uniform directly
 	GLint loc = glGetUniformLocation(m_highlightShader.id(), "uColor");
-	glUniform4f(loc, 0.05f, 0.05f, 0.05f, 0.7f);
 
 	glBindVertexArray(m_highlightVAO);
-	glLineWidth(2.5f);
+
+	// Black outline pass (slightly thicker)
+	glUniform4f(loc, 0.0f, 0.0f, 0.0f, 0.55f);
+	glLineWidth(3.5f);
+	glDrawArrays(GL_LINES, 0, 24);
+
+	// White inner pass
+	glUniform4f(loc, 1.0f, 1.0f, 1.0f, 0.65f);
+	glLineWidth(1.5f);
 	glDrawArrays(GL_LINES, 0, 24);
 
 	glDepthFunc(GL_LESS);

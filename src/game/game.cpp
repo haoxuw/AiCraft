@@ -689,12 +689,10 @@ void Game::renderPlaying(float dt, float aspect) {
 	glm::vec2 crosshairOffset = {0, 0};
 	bool showCrosshair = true;
 
-	if (m_camera.mode == CameraMode::RTS || m_camera.mode == CameraMode::RPG) {
-		// RTS/RPG: no crosshair (free cursor is the pointer)
+	if (m_camera.mode != CameraMode::FirstPerson) {
+		// TPS/RPG/RTS: no crosshair — targeted block is shown via highlight wireframe instead
 		showCrosshair = false;
 	}
-	// FPS: crosshair at screen center (0,0) — correct
-	// TPS: crosshair at screen center (0,0) — camera looks where you aim (Fortnite-style)
 
 	m_renderer.render(m_camera, aspect, hlPtr, selectedSlot, 7, crosshairOffset, showCrosshair);
 
