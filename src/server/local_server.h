@@ -133,7 +133,14 @@ public:
 		std::function<void(glm::vec3, const std::string&)> onBlockPlace = nullptr
 	) override {
 		if (m_server) {
-			m_server->setCallbacks({onChunkDirty, onBlockBreak, onItemPickup, onBlockPlace});
+			// Update only the 4 effect fields — do NOT replace the entire struct.
+			// Replacing the struct would wipe onBreakText, onPickupText, and
+			// network broadcast callbacks that may have been set independently.
+			auto& cb = m_server->callbacks();
+			cb.onChunkDirty  = onChunkDirty;
+			cb.onBlockBreak  = onBlockBreak;
+			cb.onItemPickup  = onItemPickup;
+			cb.onBlockPlace  = onBlockPlace;
 		}
 	}
 

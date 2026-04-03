@@ -16,7 +16,7 @@ endif
 %:
 	@:
 
-.PHONY: game play build configure clean server client stop web web-build web-configure web-clean
+.PHONY: game play build configure clean server client stop test_e2e web web-build web-configure web-clean
 
 # ── Native ─────────────────────────────────────────────────
 #
@@ -84,6 +84,12 @@ killservers:
 	@echo "Looking for agentworld server processes..."
 	@-pgrep -fa "agentworld-server" 2>/dev/null && pkill -f "agentworld-server" && echo "Killed." || echo "No servers running."
 	@-pgrep -fa "agentworld.*--port" 2>/dev/null && pkill -f "agentworld.*--port" && echo "Killed port processes." || true
+
+# Run headless E2E gameplay tests
+test_e2e: build
+	@echo "[test_e2e] Running headless gameplay tests..."
+	cd $(BUILD_DIR) && ./agentworld-test
+	@echo "[test_e2e] Done."
 
 build: configure
 	cmake --build $(BUILD_DIR) -j$$(nproc)

@@ -156,8 +156,44 @@ public:
 		}
 
 		{
-			int chestX = (int)m_spawnPos.x, chestZ = (int)m_spawnPos.z;
+			// Find a chest position near spawn that does NOT overlap the player's body.
+			// Spiral scan outward; skip any cell that falls inside the player's
+			// collision footprint so the player never spawns inside the chest.
+			int spawnGX = (int)std::floor(m_spawnPos.x);
+			int spawnGZ = (int)std::floor(m_spawnPos.z);
+			int chestX = spawnGX + 3, chestZ = spawnGZ; // safe fallback
 			int chestY = (int)m_world->surfaceHeight((float)chestX, (float)chestZ) + 1;
+
+			// Determine player's XZ footprint in block-grid coordinates.
+			float hw = 0.4f; // conservative player half-width
+			const EntityDef* playerDef = m_world->entities.getTypeDef(EntityType::Player);
+			if (playerDef) hw = (playerDef->collision_box_max.x - playerDef->collision_box_min.x) * 0.5f;
+			int footMinX = (int)std::floor(m_spawnPos.x - hw);
+			int footMaxX = (int)std::floor(m_spawnPos.x + hw);
+			int footMinZ = (int)std::floor(m_spawnPos.z - hw);
+			int footMaxZ = (int)std::floor(m_spawnPos.z + hw);
+
+			bool chestFound = false;
+			for (int ring = 1; ring <= 8 && !chestFound; ring++) {
+				for (int dz = -ring; dz <= ring && !chestFound; dz++) {
+					for (int dx = -ring; dx <= ring && !chestFound; dx++) {
+						if (std::abs(dx) != ring && std::abs(dz) != ring) continue; // border only
+						int cx = spawnGX + dx, cz = spawnGZ + dz;
+						// Skip if cell overlaps player's collision footprint
+						if (cx >= footMinX && cx <= footMaxX && cz >= footMinZ && cz <= footMaxZ)
+							continue;
+						int cy = (int)m_world->surfaceHeight((float)cx, (float)cz) + 1;
+						BlockId below = m_world->getBlock(cx, cy - 1, cz);
+						BlockId at    = m_world->getBlock(cx, cy,     cz);
+						BlockId above = m_world->getBlock(cx, cy + 1, cz);
+						if (m_world->blocks.get(below).solid && at == BLOCK_AIR && above == BLOCK_AIR) {
+							chestX = cx; chestY = cy; chestZ = cz;
+							chestFound = true;
+						}
+					}
+				}
+			}
+
 			BlockId chestId = m_world->blocks.getId(BlockType::Chest);
 			if (chestId != BLOCK_AIR) {
 				ChunkPos cp = worldToChunk(chestX, chestY, chestZ);
@@ -285,8 +321,8 @@ public:
 		m_world->entities.forEach([&](Entity& e) {
 			if (!e.inventory) return;
 			if (e.typeId() != EntityType::Player) return;
-			glm::vec3 center = e.position + glm::vec3(0, 1, 0);
-			auto pickups = m_world->entities.attractItemsToward(center, 3.0f, 1.2f, dt);
+			glm::vec3 center = e.position;
+			auto pickups = m_world->entities.attractItemsToward(center, 2.5f, 1.5f, dt);
 			bool inventoryChanged = false;
 			for (auto* item : pickups) {
 				std::string itemType = item->getProp<std::string>(Prop::ItemType);

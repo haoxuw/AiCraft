@@ -183,7 +183,8 @@ public:
 	}
 
 	// Attract item entities toward a position. Returns items close enough to pick up.
-	std::vector<Entity*> attractItemsToward(glm::vec3 pos, float attractRadius = 3.0f, float pickupRadius = 1.2f, float dt = 0.016f) {
+	// Velocity is SET (not added) so the attraction overcomes gravity.
+	std::vector<Entity*> attractItemsToward(glm::vec3 pos, float attractRadius = 3.0f, float pickupRadius = 1.5f, float dt = 0.016f) {
 		std::vector<Entity*> picked;
 		for (auto& [id, e] : m_entities) {
 			if (e->removed || e->typeId() != EntityType::ItemEntity) continue;
@@ -192,8 +193,7 @@ public:
 				picked.push_back(e.get());
 			} else if (dist < attractRadius) {
 				glm::vec3 dir = glm::normalize(pos - e->position);
-				float strength = 1.0f - (dist / attractRadius);
-				e->velocity += dir * strength * 15.0f * dt;
+				e->velocity = dir * 10.0f;  // set (not add) to overcome gravity
 			}
 		}
 		return picked;

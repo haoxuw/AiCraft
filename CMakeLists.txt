@@ -118,9 +118,6 @@ set(CONTENT_SOURCES
 	src/content/entities_animals.h
 	src/content/entities_player.h
 	src/content/entities_items.h
-	src/content/models.h
-	src/content/characters.h
-	src/content/faces.h
 )
 
 # Client: rendering + input + game UI
@@ -240,6 +237,25 @@ else()
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib
+	)
+
+	# === Headless E2E test runner ===
+	add_executable(agentworld-test
+		src/test/test_e2e.cpp
+		${CONTENT_SOURCES}
+		${SERVER_SIM_SOURCES}
+	)
+	target_include_directories(agentworld-test PRIVATE src)
+	target_link_libraries(agentworld-test PRIVATE
+		glm::glm
+		Python3::Python pybind11::embed
+	)
+	# Copy python/ and artifacts/ so behavior loading finds them (even if Python fails gracefully)
+	add_custom_command(TARGET agentworld-test POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentworld-test>/python
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentworld-test>/artifacts
 	)
 
 	# Copy assets to build directory
