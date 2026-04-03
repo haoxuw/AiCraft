@@ -1,16 +1,389 @@
 #include "game/hud.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cstdio>
+#include <cmath>
 
 namespace agentworld {
 
-void HUD::init(Shader& highlightShader) {
-	// No longer needed for hotbar (using TextRenderer), but kept for future use
-	(void)highlightShader;
+// ----------------------------------------------------------------
+// DST-style circular stat ring helper (HP / Hunger)
+// cx, cy: NDC center; fraction: 0–1 fill (clockwise from top)
+// r_outer / r_inner: in NDC-x units so circles are round on screen
+// ----------------------------------------------------------------
+static void drawStatRing(TextRenderer& text, float cx, float cy,
+                         float fraction, glm::vec4 fillColor,
+                         float r_outer, float r_inner, float aspect) {
+	const int segs = 40;
+	const float pi = (float)M_PI;
+	// Drop shadow (wider, very transparent)
+	text.drawArc(cx, cy, r_inner, r_outer + 0.007f, 0, 2*pi,
+	             {0.0f, 0.0f, 0.0f, 0.40f}, aspect, segs);
+	// Background ring (full circle, dark leather-brown)
+	text.drawArc(cx, cy, r_inner, r_outer, 0, 2*pi,
+	             {0.16f, 0.12f, 0.08f, 0.88f}, aspect, segs);
+	// Colored fill arc: clockwise from top (π/2) for fraction of full circle
+	if (fraction > 0.004f) {
+		float endA   = pi / 2.0f;
+		float startA = endA - std::min(fraction, 1.0f) * 2.0f * pi;
+		text.drawArc(cx, cy, r_inner + 0.002f, r_outer - 0.002f,
+		             startA, endA, fillColor, aspect, segs);
+	}
+	// Inner dark disk (the "face" of the gauge)
+	text.drawArc(cx, cy, 0, r_inner - 0.003f, 0, 2*pi,
+	             {0.10f, 0.08f, 0.06f, 0.90f}, aspect, 32);
+	// Thin inner rim
+	text.drawArc(cx, cy, r_inner - 0.004f, r_inner - 0.001f, 0, 2*pi,
+	             {0.05f, 0.04f, 0.03f, 0.75f}, aspect, 32);
 }
 
-void HUD::shutdown() {
+// ================================================================
+// Circular stat gauges: HP (red) + Hunger (amber) — bottom-left
+// ================================================================
+void HUD::renderHealthBars(const HUDContext& ctx, TextRenderer& text) {
+	if (ctx.state != GameState::SURVIVAL) return;
+
+	const float aspect  = ctx.aspect;
+	const float r_outer = 0.050f;   // NDC-x radius (~40 px on 1600px wide screen)
+	const float r_inner = 0.033f;
+	const float cy      = -0.71f;   // moved up to clear hotbar
+	const float spacing = 0.20f;
+	const float cx0     = -0.88f;   // HP center
+	const float cx1     = cx0 + spacing; // Hunger center
+
+	// Subtle backdrop panel unifying the two circles
+	{
+		float pX = cx0 - r_outer - 0.012f;
+		float pW = (cx1 + r_outer + 0.012f) - pX;
+		float pY = cy - r_outer * aspect - 0.012f;
+		float pH = r_outer * aspect * 2.0f + 0.024f;
+		text.drawRect(pX, pY, pW, pH, {0.04f, 0.03f, 0.02f, 0.55f});
+	}
+
+	// ── HP ──────────────────────────────────────────────────────────
+	float hpFrac = std::max(0.0f, (float)ctx.playerHP / ctx.playerMaxHP);
+	glm::vec4 hpFill = hpFrac > 0.30f
+	    ? glm::vec4(0.80f, 0.14f, 0.12f, 0.95f)   // deep red
+	    : glm::vec4(1.00f, 0.07f, 0.07f, 1.00f);   // bright-flash red when low
+	drawStatRing(text, cx0, cy, hpFrac, hpFill, r_outer, r_inner, aspect);
+
+	// HP value centered inside ring (large, readable)
+	char buf[16];
+	snprintf(buf, sizeof(buf), "%d", ctx.playerHP);
+	{
+		float tw = strlen(buf) * 0.018f * 1.05f, th = 0.032f * 1.05f;
+		text.drawText(buf, cx0 - tw * 0.5f, cy + th * 0.08f,
+		              1.05f, {1.0f, 0.72f, 0.72f, 0.97f}, aspect);
+		// Tiny "HP" label below number
+		text.drawText("HP", cx0 - 0.009f * 2 * 0.38f, cy - th * 0.82f,
+		              0.38f, {0.80f, 0.45f, 0.45f, 0.70f}, aspect);
+	}
+
+	// ── Hunger ──────────────────────────────────────────────────────
+	float hungerFrac = std::max(0.0f, ctx.playerHunger / 20.0f);
+	glm::vec4 hungerFill = hungerFrac > 0.25f
+	    ? glm::vec4(0.84f, 0.58f, 0.10f, 0.95f)   // amber gold
+	    : glm::vec4(1.00f, 0.28f, 0.05f, 1.00f);   // orange-red when starving
+	drawStatRing(text, cx1, cy, hungerFrac, hungerFill, r_outer, r_inner, aspect);
+
+	// Hunger value centered inside ring
+	snprintf(buf, sizeof(buf), "%.0f", ctx.playerHunger);
+	{
+		float tw = strlen(buf) * 0.018f * 1.05f, th = 0.032f * 1.05f;
+		text.drawText(buf, cx1 - tw * 0.5f, cy + th * 0.08f,
+		              1.05f, {1.0f, 0.90f, 0.60f, 0.97f}, aspect);
+		// Tiny "FD" label below number
+		text.drawText("FD", cx1 - 0.009f * 2 * 0.38f, cy - th * 0.82f,
+		              0.38f, {0.80f, 0.65f, 0.35f, 0.70f}, aspect);
+	}
 }
+
+// ================================================================
+// Hotbar: DST-inspired dark slots at bottom center
+// ================================================================
+void HUD::renderHotbar(const HUDContext& ctx, TextRenderer& text) {
+	const int slots = Inventory::HOTBAR_SLOTS;
+	const float slotW = 0.062f;
+	const float slotH = slotW * ctx.aspect;
+	const float gap   = 0.005f;
+	const float totalW = slots * (slotW + gap) - gap;
+	const float startX = -totalW / 2.0f;
+	const float startY = -0.975f;
+	const float bw     = 0.003f;
+
+	// Backdrop panel (dark, wider than slots)
+	float padX = 0.012f, padY = 0.007f;
+	text.drawRect(startX - padX, startY - padY,
+	              totalW + padX * 2.0f, slotH + padY * 2.0f,
+	              {0.06f, 0.05f, 0.04f, 0.72f});
+	// Backdrop border
+	float bpW = totalW + padX * 2.0f, bpH = slotH + padY * 2.0f;
+	float bpX = startX - padX, bpY = startY - padY;
+	text.drawRect(bpX,         bpY,          bpW, bw,  {0.35f, 0.28f, 0.18f, 0.65f});
+	text.drawRect(bpX,         bpY + bpH - bw, bpW, bw,  {0.35f, 0.28f, 0.18f, 0.65f});
+	text.drawRect(bpX,         bpY,          bw,  bpH, {0.35f, 0.28f, 0.18f, 0.65f});
+	text.drawRect(bpX + bpW - bw, bpY,       bw,  bpH, {0.35f, 0.28f, 0.18f, 0.65f});
+
+	for (int i = 0; i < slots; i++) {
+		float x = startX + i * (slotW + gap);
+		bool selected = (i == ctx.selectedSlot);
+
+		// Slot background
+		glm::vec4 slotBg = selected
+		    ? glm::vec4(0.28f, 0.22f, 0.12f, 0.90f)   // warm amber tint when selected
+		    : glm::vec4(0.11f, 0.09f, 0.07f, 0.80f);
+		text.drawRect(x, startY, slotW, slotH, slotBg);
+
+		// Selection: outer amber glow (draw wider rect behind, then slot on top)
+		if (selected) {
+			float gw = bw * 2.2f;
+			glm::vec4 gc = {0.88f, 0.68f, 0.20f, 0.90f};
+			text.drawRect(x - gw,          startY - gw,          slotW + gw*2, gw,           gc);
+			text.drawRect(x - gw,          startY + slotH,        slotW + gw*2, gw,           gc);
+			text.drawRect(x - gw,          startY - gw,          gw,           slotH + gw*2, gc);
+			text.drawRect(x + slotW,       startY - gw,          gw,           slotH + gw*2, gc);
+		} else {
+			// Subtle inner border for unselected slots
+			glm::vec4 bc = {0.25f, 0.20f, 0.14f, 0.55f};
+			text.drawRect(x, startY, slotW, bw,          bc);
+			text.drawRect(x, startY + slotH - bw, slotW, bw, bc);
+			text.drawRect(x, startY, bw,  slotH,         bc);
+			text.drawRect(x + slotW - bw, startY, bw,  slotH, bc);
+		}
+
+		// Item color swatch
+		std::string itemId = ctx.inventory.hotbar(i);
+		int itemCount = ctx.inventory.hotbarCount(i);
+		if (!itemId.empty() && itemCount > 0) {
+			const BlockDef* bdef = ctx.blocks.find(itemId);
+			glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.50f, 0.60f, 0.75f);
+			float inset = slotW * 0.14f;
+			float ih = slotH * 0.14f;
+			text.drawRect(x + inset, startY + ih,
+			              slotW - inset * 2.0f, slotH - ih * 2.0f,
+			              {c.r, c.g, c.b, 0.92f});
+			// Count badge (bottom-right)
+			char buf[8];
+			snprintf(buf, sizeof(buf), "%d", itemCount);
+			text.drawText(buf,
+			              x + slotW * 0.50f, startY + slotH * 0.06f,
+			              0.45f, {1, 1, 1, 0.85f}, ctx.aspect);
+		}
+
+		// Key number label (top-left, dim)
+		char key[4];
+		snprintf(key, sizeof(key), "%d", (i + 1) % 10);
+		text.drawText(key,
+		              x + slotW * 0.07f, startY + slotH * 0.66f,
+		              0.38f, {0.55f, 0.50f, 0.40f, 0.50f}, ctx.aspect);
+	}
+}
+
+// ================================================================
+// Circular clock: top-right. Day arc gold, night arc blue.
+// A bright dot travels the ring showing current time.
+// ================================================================
+void HUD::renderTimeOfDay(const HUDContext& ctx, TextRenderer& text) {
+	const float cx = 0.900f, cy = 0.875f;
+	const float ro = 0.042f, ri = 0.026f;
+	const float aspect = ctx.aspect;
+	const float pi = (float)M_PI;
+
+	// worldTime: 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset
+	float t = ctx.worldTime;
+
+	// Drop shadow
+	text.drawArc(cx, cy, 0, ro + 0.009f, 0, 2*pi, {0,0,0,0.38f}, aspect, 32);
+
+	// Day arc: sunrise (angle=0, rightward) to sunset (angle=π, leftward) through top
+	// angle formula: angle = -π/2 + worldTime * 2π → sunrise @worldTime=0.25 = angle 0
+	text.drawArc(cx, cy, ri, ro, 0.0f, pi,
+	             {0.76f, 0.58f, 0.12f, 0.88f}, aspect, 32); // gold day half
+	// Night arc: sunset to next sunrise (bottom half)
+	text.drawArc(cx, cy, ri, ro, pi, 2*pi,
+	             {0.10f, 0.15f, 0.32f, 0.88f}, aspect, 32); // deep blue night half
+
+	// Outer rim
+	text.drawArc(cx, cy, ro, ro + 0.004f, 0, 2*pi,
+	             {0.22f, 0.18f, 0.12f, 0.80f}, aspect, 32);
+
+	// Inner dark disk
+	text.drawArc(cx, cy, 0, ri - 0.003f, 0, 2*pi,
+	             {0.08f, 0.06f, 0.05f, 0.92f}, aspect, 24);
+
+	// Current time marker: bright dot on the ring
+	float timeAngle = -pi / 2.0f + t * 2.0f * pi;
+	float midR = (ri + ro) * 0.5f;
+	float dotCx = cx + midR * std::cos(timeAngle);
+	float dotCy = cy + midR * aspect * std::sin(timeAngle);
+	float ds = 0.010f;
+	bool isDay = (t >= 0.25f && t < 0.75f);
+	glm::vec4 dotColor = isDay ? glm::vec4(1.0f, 0.98f, 0.85f, 1.0f)
+	                           : glm::vec4(0.85f, 0.92f, 1.0f,  1.0f);
+	// Glow behind dot
+	text.drawArc(dotCx, dotCy, 0, ds * 1.6f, 0, 2*pi,
+	             {dotColor.r, dotColor.g, dotColor.b, 0.35f}, aspect, 16);
+	// Dot itself
+	text.drawArc(dotCx, dotCy, 0, ds, 0, 2*pi, dotColor, aspect, 16);
+
+	// Time text centered below clock
+	int hours = (int)(t * 24.0f) % 24;
+	int mins  = (int)(t * 24.0f * 60.0f) % 60;
+	char timeBuf[12];
+	snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hours, mins);
+	float tw = (int)strlen(timeBuf) * 0.018f * 0.48f;
+	text.drawText(timeBuf, cx - tw * 0.5f, cy - ro * aspect - 0.022f,
+	              0.48f, {0.90f, 0.83f, 0.65f, 0.80f}, aspect);
+}
+
+// ================================================================
+// Mode + hint label — top-left, minimal
+// ================================================================
+void HUD::renderModeLabel(const HUDContext& ctx, TextRenderer& text) {
+	const char* modeNames[] = {"FPS", "TPS", "RPG", "RTS"};
+	const char* gameNames[] = {"", "Creative", "Survival"};
+	char hud[64];
+	snprintf(hud, sizeof(hud), "[%s] %s  [V]cam  [Tab]inv  [F3]dbg",
+	         modeNames[(int)ctx.camera.mode], gameNames[(int)ctx.state]);
+	text.drawText(hud, -0.98f, 0.92f, 0.55f, {1,1,1,0.40f}, ctx.aspect);
+}
+
+// ================================================================
+// Inventory panel — right side (Tab key)
+// ================================================================
+void HUD::renderInventoryPanel(const HUDContext& ctx, TextRenderer& text) {
+	float panelW = 0.46f, panelH = 1.40f;
+	float panelX = 0.52f, panelY = -0.70f;
+	float bw = 0.003f;
+
+	text.drawRect(panelX, panelY, panelW, panelH, {0.07f, 0.06f, 0.04f, 0.90f});
+	glm::vec4 bc = {0.32f, 0.26f, 0.16f, 0.80f};
+	text.drawRect(panelX, panelY, panelW, bw, bc);
+	text.drawRect(panelX, panelY + panelH - bw, panelW, bw, bc);
+	text.drawRect(panelX, panelY, bw, panelH, bc);
+	text.drawRect(panelX + panelW - bw, panelY, bw, panelH, bc);
+
+	text.drawText("Inventory", panelX + 0.10f, panelY + panelH - 0.06f,
+	              0.85f, {0.90f, 0.82f, 0.55f, 1}, ctx.aspect);
+	text.drawRect(panelX + 0.02f, panelY + panelH - 0.08f,
+	              panelW - 0.04f, 0.002f, {0.32f, 0.26f, 0.16f, 0.55f});
+
+	auto items = ctx.inventory.items();
+	float rowH = 0.046f;
+	float rowY = panelY + panelH - 0.12f;
+	float nameX = panelX + 0.04f;
+	float countX = panelX + panelW - 0.10f;
+
+	text.drawText("Item",  nameX,  rowY, 0.52f, {0.55f, 0.50f, 0.38f, 0.80f}, ctx.aspect);
+	text.drawText("Qty",  countX, rowY, 0.52f, {0.55f, 0.50f, 0.38f, 0.80f}, ctx.aspect);
+	rowY -= rowH * 0.75f;
+
+	int rowIdx = 0;
+	for (auto& [id, count] : items) {
+		if (rowY < panelY + 0.02f) break;
+		if (rowIdx % 2 == 0)
+			text.drawRect(nameX - 0.02f, rowY - 0.004f,
+			              panelW - 0.04f, rowH - 0.004f,
+			              {0.15f, 0.12f, 0.08f, 0.40f});
+
+		const BlockDef* bdef = ctx.blocks.find(id);
+		glm::vec3 sc = bdef ? bdef->color_top : glm::vec3(0.50f, 0.60f, 0.75f);
+		float sz = rowH * 0.58f;
+		text.drawRect(nameX - 0.01f, rowY + 0.004f, sz, sz,
+		              {sc.r, sc.g, sc.b, 0.90f});
+
+		std::string dn = id;
+		if (dn.size() > 5 && dn.substr(0,5) == "base:") dn = dn.substr(5);
+		if (!dn.empty()) dn[0] = (char)toupper((unsigned char)dn[0]);
+		for (auto& c : dn) if (c == '_') c = ' ';
+
+		text.drawText(dn.c_str(), nameX + sz + 0.012f, rowY,
+		              0.48f, {0.85f, 0.82f, 0.75f, 1}, ctx.aspect);
+		char buf[16];
+		snprintf(buf, sizeof(buf), "%d", count);
+		text.drawText(buf, countX, rowY,
+		              0.48f, {0.70f, 0.80f, 1.0f, 1}, ctx.aspect);
+		rowY -= rowH;
+		rowIdx++;
+	}
+
+	char footer[64];
+	snprintf(footer, sizeof(footer), "%d item types", ctx.inventory.distinctCount());
+	text.drawText(footer, panelX + 0.04f, panelY + 0.02f,
+	              0.42f, {0.45f, 0.40f, 0.32f, 0.70f}, ctx.aspect);
+}
+
+// ================================================================
+// Debug overlay (F3)
+// ================================================================
+void HUD::renderDebugOverlay(const HUDContext& ctx, TextRenderer& text) {
+	if (!ctx.showDebug) return;
+	char dbg[256];
+	auto& p = ctx.camera.player.feetPos;
+	ChunkPos cp = World::worldToChunk((int)p.x, (int)p.y, (int)p.z);
+	float lineH = 0.065f;
+	float x = -0.98f, y = 0.84f;
+	snprintf(dbg, sizeof(dbg), "FPS: %.0f", ctx.fps);
+	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
+	snprintf(dbg, sizeof(dbg), "XYZ: %.1f / %.1f / %.1f", p.x, p.y, p.z);
+	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
+	snprintf(dbg, sizeof(dbg), "Chunk: %d %d %d", cp.x, cp.y, cp.z);
+	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
+	snprintf(dbg, sizeof(dbg), "Entities: %zu  Particles: %zu", ctx.entityCount, ctx.particleCount);
+	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
+	snprintf(dbg, sizeof(dbg), "Time: %.3f  Sun: %.2f", ctx.worldTime, ctx.sunStrength);
+	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
+	if (ctx.hit) {
+		auto& bp = ctx.hit->blockPos;
+		BlockId bid = ctx.chunkSource ? ctx.chunkSource->getBlock(bp.x, bp.y, bp.z) : BLOCK_AIR;
+		const BlockDef& bdef = ctx.blocks.get(bid);
+		snprintf(dbg, sizeof(dbg), "Block: %s (%d,%d,%d)", bdef.display_name.c_str(), bp.x, bp.y, bp.z);
+		text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect);
+	}
+}
+
+// ================================================================
+// Entity tooltip (crosshair on entity)
+// ================================================================
+void HUD::renderEntityTooltip(const HUDContext& ctx, TextRenderer& text) {
+	if (!ctx.entityHit) return;
+	auto& eh = *ctx.entityHit;
+
+	bool hasGoal = !eh.goalText.empty();
+	float bgW = 0.36f;
+	float bgH = hasGoal ? 0.10f : 0.058f;
+	float cx = 0.0f, cy = -0.08f;
+
+	// Background panel
+	text.drawRect(cx - bgW*0.5f, cy - bgH*0.5f, bgW, bgH, {0.04f,0.03f,0.02f,0.72f});
+	float bw = 0.002f;
+	glm::vec4 bc = {0.30f, 0.24f, 0.14f, 0.70f};
+	text.drawRect(cx-bgW*0.5f, cy-bgH*0.5f, bgW, bw, bc);
+	text.drawRect(cx-bgW*0.5f, cy+bgH*0.5f-bw, bgW, bw, bc);
+	text.drawRect(cx-bgW*0.5f, cy-bgH*0.5f, bw, bgH, bc);
+	text.drawRect(cx+bgW*0.5f-bw, cy-bgH*0.5f, bw, bgH, bc);
+
+	// Entity name
+	char label[128];
+	const char* rawId = eh.typeId.c_str();
+	const char* dispName = (strncmp(rawId, "base:", 5) == 0) ? rawId + 5 : rawId;
+	snprintf(label, sizeof(label), "%s", dispName);
+	if (label[0]) label[0] = (char)toupper((unsigned char)label[0]);
+	float nameY = hasGoal ? cy + 0.020f : cy - 0.008f;
+	text.drawText(label, cx - bgW*0.5f + 0.012f, nameY,
+	              0.65f, {1.0f, 0.88f, 0.50f, 1}, ctx.aspect);
+
+	// Goal line
+	if (hasGoal) {
+		snprintf(label, sizeof(label), "%s", eh.goalText.c_str());
+		glm::vec4 gc = eh.hasError ? glm::vec4(1,0.3f,0.3f,1) : glm::vec4(0.75f,1,0.75f,0.90f);
+		text.drawText(label, cx - bgW*0.5f + 0.012f, cy - 0.028f,
+		              0.52f, gc, ctx.aspect);
+	}
+}
+
+// ================================================================
+void HUD::init(Shader& highlightShader) { (void)highlightShader; }
+void HUD::shutdown() {}
 
 void HUD::render(const HUDContext& ctx, TextRenderer& text, Shader& highlightShader) {
 	(void)highlightShader;
@@ -22,282 +395,6 @@ void HUD::render(const HUDContext& ctx, TextRenderer& text, Shader& highlightSha
 	renderTimeOfDay(ctx, text);
 	renderEntityTooltip(ctx, text);
 	renderDebugOverlay(ctx, text);
-}
-
-// ================================================================
-// Hotbar: 10 slots at bottom of screen (keys 1-9, 0)
-// ================================================================
-void HUD::renderHotbar(const HUDContext& ctx, TextRenderer& text) {
-	const int slots = Inventory::HOTBAR_SLOTS;
-	float slotW = 0.058f;
-	float slotH = slotW * ctx.aspect;
-	float gap = 0.006f;
-	float totalW = slots * (slotW + gap) - gap;
-	float startX = -totalW / 2.0f;
-	float startY = -0.96f;
-
-	for (int i = 0; i < slots; i++) {
-		float x = startX + i * (slotW + gap);
-		bool selected = (i == ctx.selectedSlot);
-
-		// Slot background
-		glm::vec4 bg = selected ? glm::vec4(0.35f, 0.40f, 0.50f, 0.85f)
-		                        : glm::vec4(0.10f, 0.10f, 0.12f, 0.65f);
-		text.drawRect(x, startY, slotW, slotH, bg);
-
-		// Selection border
-		if (selected) {
-			float bw = 0.003f;
-			glm::vec4 bc = {0.9f, 0.9f, 1.0f, 0.9f};
-			text.drawRect(x, startY, slotW, bw, bc);
-			text.drawRect(x, startY + slotH - bw, slotW, bw, bc);
-			text.drawRect(x, startY, bw, slotH, bc);
-			text.drawRect(x + slotW - bw, startY, bw, slotH, bc);
-		}
-
-		// Item content
-		std::string itemId = ctx.inventory.hotbar(i);
-		int itemCount = ctx.inventory.hotbarCount(i);
-		if (!itemId.empty() && itemCount > 0) {
-			const BlockDef* bdef = ctx.blocks.find(itemId);
-			glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.45f, 0.55f, 0.70f);
-
-			float inset = slotW * 0.15f;
-			float insetH = slotH * 0.15f;
-			text.drawRect(x + inset, startY + insetH,
-				slotW - 2*inset, slotH - 2*insetH,
-				{c.r, c.g, c.b, 0.9f});
-
-			// Count (bottom-right of slot)
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%d", itemCount);
-			text.drawText(buf,
-				x + slotW * 0.52f, startY + slotH * 0.08f,
-				0.5f, {1, 1, 1, 0.9f}, ctx.aspect);
-		}
-
-		// Key label (top-left, small)
-		char key[4];
-		snprintf(key, sizeof(key), "%d", (i + 1) % 10);
-		text.drawText(key,
-			x + slotW * 0.08f, startY + slotH * 0.68f,
-			0.4f, {0.6f, 0.6f, 0.6f, 0.5f}, ctx.aspect);
-	}
-}
-
-// ================================================================
-// Inventory panel: Diablo-style -- all items sorted, counts shown.
-// Toggle with Tab key. Shows on right side of screen.
-// ================================================================
-void HUD::renderInventoryPanel(const HUDContext& ctx, TextRenderer& text) {
-	float panelW = 0.48f;
-	float panelH = 1.4f;
-	float panelX = 0.50f;
-	float panelY = -0.70f;
-
-	// Panel background
-	text.drawRect(panelX, panelY, panelW, panelH, {0.08f, 0.08f, 0.12f, 0.88f});
-	// Border
-	float bw = 0.003f;
-	glm::vec4 bc = {0.35f, 0.35f, 0.45f, 0.8f};
-	text.drawRect(panelX, panelY, panelW, bw, bc);
-	text.drawRect(panelX, panelY + panelH - bw, panelW, bw, bc);
-	text.drawRect(panelX, panelY, bw, panelH, bc);
-	text.drawRect(panelX + panelW - bw, panelY, bw, panelH, bc);
-
-	// Title
-	text.drawText("Inventory", panelX + 0.12f, panelY + panelH - 0.06f,
-		0.9f, {0.9f, 0.85f, 0.6f, 1}, ctx.aspect);
-	// Separator
-	text.drawRect(panelX + 0.02f, panelY + panelH - 0.08f,
-		panelW - 0.04f, 0.002f, {0.35f, 0.35f, 0.45f, 0.6f});
-
-	// Item list: sorted by ID, skip zero counts
-	auto items = ctx.inventory.items();
-	float rowH = 0.045f;
-	float rowY = panelY + panelH - 0.12f;
-	float nameX = panelX + 0.04f;
-	float countX = panelX + panelW - 0.10f;
-
-	// Column headers
-	text.drawText("Item", nameX, rowY, 0.55f, {0.6f, 0.6f, 0.5f, 0.8f}, ctx.aspect);
-	text.drawText("Qty", countX, rowY, 0.55f, {0.6f, 0.6f, 0.5f, 0.8f}, ctx.aspect);
-	rowY -= rowH * 0.8f;
-
-	int rowIdx = 0;
-	for (auto& [id, count] : items) {
-		if (rowY < panelY + 0.02f) break; // stop if we run out of panel space
-
-		// Alternate row shading
-		if (rowIdx % 2 == 0)
-			text.drawRect(nameX - 0.02f, rowY - 0.005f,
-				panelW - 0.04f, rowH - 0.005f,
-				{0.14f, 0.14f, 0.18f, 0.4f});
-
-		// Item color swatch
-		const BlockDef* bdef = ctx.blocks.find(id);
-		glm::vec3 swatchColor = bdef ? bdef->color_top : glm::vec3(0.45f, 0.55f, 0.70f);
-		float swatchSz = rowH * 0.6f;
-		text.drawRect(nameX - 0.01f, rowY + 0.003f, swatchSz, swatchSz,
-			{swatchColor.r, swatchColor.g, swatchColor.b, 0.9f});
-
-		// Item name: strip "base:" prefix for display
-		std::string displayName = id;
-		if (displayName.substr(0, 5) == "base:")
-			displayName = displayName.substr(5);
-		// Capitalize first letter
-		if (!displayName.empty())
-			displayName[0] = toupper(displayName[0]);
-		// Replace underscores with spaces
-		for (auto& c : displayName)
-			if (c == '_') c = ' ';
-
-		text.drawText(displayName.c_str(),
-			nameX + swatchSz + 0.01f, rowY,
-			0.5f, {0.85f, 0.85f, 0.85f, 1}, ctx.aspect);
-
-		// Count
-		char buf[16];
-		snprintf(buf, sizeof(buf), "%d", count);
-		text.drawText(buf, countX, rowY,
-			0.5f, {0.7f, 0.8f, 1.0f, 1}, ctx.aspect);
-
-		rowY -= rowH;
-		rowIdx++;
-	}
-
-	// Footer: total distinct items
-	char footer[64];
-	snprintf(footer, sizeof(footer), "%d items", ctx.inventory.distinctCount());
-	text.drawText(footer, panelX + 0.04f, panelY + 0.02f,
-		0.45f, {0.5f, 0.5f, 0.5f, 0.7f}, ctx.aspect);
-}
-
-// ================================================================
-// Health + Hunger bars (survival only) -- bottom-left, labeled
-// ================================================================
-void HUD::renderHealthBars(const HUDContext& ctx, TextRenderer& text) {
-	if (ctx.state != GameState::SURVIVAL)
-		return;
-
-	float barW = 0.22f;
-	float barH = 0.014f * ctx.aspect;
-	float baseX = -0.97f;
-	float hpY = -0.88f;
-	float hungerY = hpY - barH - 0.018f;
-	float labelW = 0.05f;
-
-	// -- HP --
-	// Label
-	text.drawText("HP", baseX, hpY + 0.002f, 0.45f, {0.9f, 0.3f, 0.3f, 0.9f}, ctx.aspect);
-	// Background
-	float bx = baseX + labelW;
-	text.drawRect(bx, hpY, barW, barH, {0.20f, 0.05f, 0.05f, 0.7f});
-	// Fill
-	float hpFrac = std::max(0.0f, (float)ctx.playerHP / ctx.playerMaxHP);
-	glm::vec4 hpColor = hpFrac > 0.3f ? glm::vec4(0.75f, 0.15f, 0.12f, 0.85f)
-	                                    : glm::vec4(0.90f, 0.10f, 0.10f, 0.95f); // flash red when low
-	text.drawRect(bx, hpY, barW * hpFrac, barH, hpColor);
-	// Border
-	float bw = 0.0015f;
-	text.drawRect(bx, hpY, barW, bw, {0.5f, 0.2f, 0.2f, 0.5f});
-	text.drawRect(bx, hpY + barH - bw, barW, bw, {0.5f, 0.2f, 0.2f, 0.5f});
-	// Value
-	char hpStr[16]; snprintf(hpStr, 16, "%d/%d", ctx.playerHP, ctx.playerMaxHP);
-	text.drawText(hpStr, bx + barW + 0.01f, hpY + 0.002f, 0.4f, {0.8f, 0.8f, 0.8f, 0.7f}, ctx.aspect);
-
-	// -- Hunger --
-	text.drawText("Food", baseX - 0.01f, hungerY + 0.002f, 0.45f, {0.8f, 0.65f, 0.2f, 0.9f}, ctx.aspect);
-	text.drawRect(bx, hungerY, barW, barH, {0.15f, 0.12f, 0.03f, 0.7f});
-	float hungerFrac = std::max(0.0f, ctx.playerHunger / 20.0f);
-	text.drawRect(bx, hungerY, barW * hungerFrac, barH, {0.72f, 0.55f, 0.10f, 0.85f});
-	text.drawRect(bx, hungerY, barW, bw, {0.5f, 0.4f, 0.15f, 0.5f});
-	text.drawRect(bx, hungerY + barH - bw, barW, bw, {0.5f, 0.4f, 0.15f, 0.5f});
-	char hungerStr[16]; snprintf(hungerStr, 16, "%.0f/20", ctx.playerHunger);
-	text.drawText(hungerStr, bx + barW + 0.01f, hungerY + 0.002f, 0.4f, {0.8f, 0.8f, 0.8f, 0.7f}, ctx.aspect);
-}
-
-void HUD::renderModeLabel(const HUDContext& ctx, TextRenderer& text) {
-	const char* modeNames[] = {"1st Person","3rd Person","RPG","RTS"};
-	const char* gameNames[] = {"","Creative","Survival"};
-	char hud[128];
-	snprintf(hud, sizeof(hud), "%s - %s [V]view [Tab]inventory [F3]debug",
-		gameNames[(int)ctx.state], modeNames[(int)ctx.camera.mode]);
-	text.drawText(hud, -0.98f, 0.92f, 0.65f, {1,1,1,0.5f}, ctx.aspect);
-}
-
-void HUD::renderTimeOfDay(const HUDContext& ctx, TextRenderer& text) {
-	int hours = (int)(ctx.worldTime * 24.0f) % 24;
-	int mins = (int)(ctx.worldTime * 24.0f * 60.0f) % 60;
-	char timeBuf[32];
-	snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hours, mins);
-	text.drawText(timeBuf, 0.82f, 0.92f, 0.8f, {1,1,0.7f,0.7f}, ctx.aspect);
-}
-
-void HUD::renderDebugOverlay(const HUDContext& ctx, TextRenderer& text) {
-	if (!ctx.showDebug)
-		return;
-
-	char dbg[256];
-	auto& p = ctx.camera.player.feetPos;
-	ChunkPos cp = World::worldToChunk((int)p.x, (int)p.y, (int)p.z);
-
-	snprintf(dbg, sizeof(dbg), "FPS: %.0f", ctx.fps);
-	text.drawText(dbg, -0.98f, 0.84f, 0.7f, {1,1,1,0.8f}, ctx.aspect);
-
-	snprintf(dbg, sizeof(dbg), "XYZ: %.1f / %.1f / %.1f", p.x, p.y, p.z);
-	text.drawText(dbg, -0.98f, 0.78f, 0.7f, {1,1,1,0.8f}, ctx.aspect);
-
-	snprintf(dbg, sizeof(dbg), "Chunk: %d %d %d", cp.x, cp.y, cp.z);
-	text.drawText(dbg, -0.98f, 0.72f, 0.7f, {1,1,1,0.8f}, ctx.aspect);
-
-	snprintf(dbg, sizeof(dbg), "Entities: %zu  Particles: %zu",
-		ctx.entityCount, ctx.particleCount);
-	text.drawText(dbg, -0.98f, 0.66f, 0.7f, {1,1,1,0.8f}, ctx.aspect);
-
-	snprintf(dbg, sizeof(dbg), "Time: %.3f  Sun: %.2f", ctx.worldTime, ctx.sunStrength);
-	text.drawText(dbg, -0.98f, 0.60f, 0.7f, {1,1,1,0.8f}, ctx.aspect);
-
-	if (ctx.hit) {
-		auto& bp = ctx.hit->blockPos;
-		BlockId bid = ctx.chunkSource ? ctx.chunkSource->getBlock(bp.x, bp.y, bp.z) : BLOCK_AIR;
-		const BlockDef& bdef = ctx.blocks.get(bid);
-		snprintf(dbg, sizeof(dbg), "Looking at: %s (%d,%d,%d)",
-			bdef.display_name.c_str(), bp.x, bp.y, bp.z);
-		text.drawText(dbg, -0.98f, 0.54f, 0.7f, {1,1,1,0.8f}, ctx.aspect);
-	}
-}
-
-// ================================================================
-// Entity tooltip: show name + goal when crosshair is on an entity
-// ================================================================
-void HUD::renderEntityTooltip(const HUDContext& ctx, TextRenderer& text) {
-	if (!ctx.entityHit) return;
-
-	auto& eh = *ctx.entityHit;
-
-	// Tooltip near center of screen (just below crosshair)
-	float cx = 0.0f;
-	float cy = -0.08f;
-
-	// Entity name
-	char label[128];
-	snprintf(label, sizeof(label), "%s", eh.typeId.c_str());
-
-	// Background
-	float bgW = 0.35f;
-	float bgH = eh.goalText.empty() ? 0.06f : 0.10f;
-	text.drawRect(cx - bgW/2, cy - bgH/2, bgW, bgH, {0, 0, 0, 0.6f});
-
-	// Name line
-	text.drawText(label, cx - bgW/2 + 0.01f, cy + 0.02f, 0.7f, {1, 0.9f, 0.5f, 1}, ctx.aspect);
-
-	// Goal line (green normal, red on error)
-	if (!eh.goalText.empty()) {
-		snprintf(label, sizeof(label), "Goal: %s", eh.goalText.c_str());
-		glm::vec4 goalColor = eh.hasError ? glm::vec4(1, 0.3f, 0.3f, 1) : glm::vec4(0.8f, 1, 0.8f, 0.9f);
-		text.drawText(label, cx - bgW/2 + 0.01f, cy - 0.03f, 0.6f, goalColor, ctx.aspect);
-	}
 }
 
 } // namespace agentworld

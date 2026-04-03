@@ -119,6 +119,9 @@ private:
 	int m_frameCount = 0;
 	float m_currentFPS = 0;
 
+	// Startup flags
+	bool m_skipMenu = false;   // --skip-menu: skip main menu, start survival world directly
+
 	// Demo
 	bool m_demoMode = false;
 	int m_demoStep = 1;

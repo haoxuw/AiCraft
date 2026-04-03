@@ -78,6 +78,7 @@ bool Game::init(int argc, char** argv) {
 	// Parse args
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--demo") == 0) m_demoMode = true;
+		else if (strcmp(argv[i], "--skip-menu") == 0) m_skipMenu = true;
 		else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) m_connectHost = argv[++i];
 		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) m_connectPort = atoi(argv[++i]);
 	}
@@ -210,6 +211,12 @@ bool Game::init(int argc, char** argv) {
 	});
 
 	m_lastTime = std::chrono::steady_clock::now();
+
+	// --skip-menu: jump directly into a new village world (survival)
+	if (m_skipMenu && m_connectHost.empty()) {
+		printf("[Game] --skip-menu: starting new world directly\n");
+		enterGame(1, GameState::SURVIVAL);
+	}
 
 	// If --host was provided, auto-join the server immediately (skip menu)
 	if (!m_connectHost.empty()) {
