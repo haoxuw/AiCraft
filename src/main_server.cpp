@@ -174,7 +174,6 @@ int main(int argc, char** argv) {
 			       "  --world PATH      Load saved world from PATH\n"
 			       "  --seed N          World seed (default 42)\n"
 			       "  --template N      World template: 0=flat, 1=village (default 1)\n"
-			       "  --survival        Survival mode (default)\n"
 			       "  --help, -h        Show this help\n", argv[0]);
 			return 0;
 		}
@@ -186,8 +185,7 @@ int main(int argc, char** argv) {
 			config.templateIndex = atoi(argv[++i]); interactive = false;
 		} else if (strcmp(argv[i], "--world") == 0 && i + 1 < argc) {
 			worldPath = argv[++i]; interactive = false;
-		} else if (strcmp(argv[i], "--survival") == 0)
-			config.creative = false;
+		}
 	}
 
 	// World templates
@@ -524,7 +522,7 @@ int main(int argc, char** argv) {
 		meta.name = worldPath.substr(worldPath.rfind('/') + 1);
 		meta.seed = config.seed;
 		meta.templateIndex = config.templateIndex;
-		meta.gameMode = config.creative ? "admin" : "survival";
+		meta.gameMode = "playing";
 		meta.version = 1;
 		if (config.templateIndex < (int)templates.size())
 			meta.templateName = templates[config.templateIndex]->name();

@@ -697,7 +697,7 @@ private:
 				action.seed = seed;
 				action.worldPath = path;
 				action.worldName = m_newWorldName;
-				action.targetState = GameState::SURVIVAL;
+				action.targetState = GameState::PLAYING;
 				action.worldGenConfig = m_worldGenConfig;
 				m_showCreateWorld = false;
 				m_worldMgr.refresh();

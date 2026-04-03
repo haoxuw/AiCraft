@@ -8,8 +8,8 @@ enum class GameState {
 	MENU,
 	SERVER_BROWSER,   // show detected servers / start local
 	TEMPLATE_SELECT,
-	ADMIN,        // admin mode (F12 to toggle)
-	SURVIVAL,
+	ADMIN,        // admin mode (F12: fly + instant break)
+	PLAYING,      // normal gameplay
 	CONTROLS,
 	CHARACTER,
 	ENTITY_INSPECT,
@@ -34,7 +34,7 @@ struct MenuAction {
 	Type type = None;
 	int templateIndex = 0;
 	int seed = 0;              // 0 = random
-	GameState targetState = GameState::SURVIVAL;
+	GameState targetState = GameState::PLAYING;
 	std::string worldName;     // for LoadWorld/EnterGame
 	std::string worldPath;     // save directory path
 	std::string serverHost;

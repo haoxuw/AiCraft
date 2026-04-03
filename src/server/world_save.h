@@ -30,7 +30,7 @@ struct WorldMetadata {
 	int seed = 42;
 	int templateIndex = 1;
 	std::string templateName = "Village";
-	std::string gameMode = "survival";
+	std::string gameMode = "playing";
 	float worldTime = 0.30f;
 	glm::vec3 spawnPos = {30, 5, 30};
 	std::string lastPlayed;
@@ -228,7 +228,6 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 	ServerConfig config;
 	config.seed = meta.seed;
 	config.templateIndex = meta.templateIndex;
-	config.creative = (meta.gameMode == "admin");
 	server.initWorld(config, templates);
 
 	// Restore saved spawn position and world time

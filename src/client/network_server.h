@@ -47,7 +47,7 @@ public:
 		printf("[Net] Client UUID: %s\n", m_clientUUID.c_str());
 	}
 
-	bool createGame(int seed, int templateIndex, bool creative,
+	bool createGame(int seed, int templateIndex,
 	                const WorldGenConfig& /*wgc*/ = WorldGenConfig{}) override {
 		if (!m_tcp.connect(m_host.c_str(), m_port)) {
 			printf("[Net] Cannot connect to %s:%d\n", m_host.c_str(), m_port);
@@ -55,7 +55,6 @@ public:
 		}
 
 		m_connected = true;
-		m_creative = creative;
 
 		// Wait for S_WELCOME (polling for up to 3 seconds)
 		auto start = std::chrono::steady_clock::now();
@@ -221,7 +220,6 @@ public:
 	BehaviorInfo getBehaviorInfo(EntityId) override { return {}; }
 	float worldTime() const override { return m_worldTime; }
 	glm::vec3 spawnPos() const override { return m_spawnPos; }
-	bool isCreative() const override { return m_creative; }
 	const BlockRegistry& blockRegistry() const override { return m_blocks; }
 	ActionQueue& actionQueue() override { return m_actions; }
 
@@ -387,7 +385,6 @@ private:
 	std::string m_displayName;   // player name
 	std::string m_creatureType;  // requested creature type
 	bool m_connected = false;
-	bool m_creative = false;
 
 	net::TcpClient m_tcp;
 	net::RecvBuffer m_recv;

@@ -76,6 +76,10 @@ public:
 	// Per-hit event (for particles/sound on each mining swing)
 	struct HitEvent { bool happened = false; glm::vec3 pos; glm::vec3 color; };
 	const HitEvent& hitEvent() const { return m_hitEvent; }
+
+	// Place event (for immediate client-side sound on block place)
+	struct PlaceEvent { bool happened = false; glm::vec3 pos; std::string blockType; };
+	const PlaceEvent& placeEvent() const { return m_placeEvent; }
 private:
 	struct BreakState {
 		glm::ivec3 target = {0,0,0};
@@ -84,6 +88,7 @@ private:
 		bool active = false;
 	} m_breaking;
 	HitEvent m_hitEvent;
+	PlaceEvent m_placeEvent;
 
 	// --- Right-click state (RPG/RTS: drag → orbit, quick click → action) ---
 

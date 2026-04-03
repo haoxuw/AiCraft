@@ -40,7 +40,7 @@ static void drawStatRing(TextRenderer& text, float cx, float cy,
 // Circular stat gauges: HP (red) + Hunger (amber) — bottom-left
 // ================================================================
 void HUD::renderHealthBars(const HUDContext& ctx, TextRenderer& text) {
-	if (ctx.state != GameState::SURVIVAL) return;
+	if (ctx.state != GameState::PLAYING && ctx.state != GameState::ADMIN) return;
 
 	const float aspect  = ctx.aspect;
 	const float r_outer = 0.050f;   // NDC-x radius (~40 px on 1600px wide screen)
@@ -240,10 +240,10 @@ void HUD::renderTimeOfDay(const HUDContext& ctx, TextRenderer& text) {
 // ================================================================
 void HUD::renderModeLabel(const HUDContext& ctx, TextRenderer& text) {
 	const char* modeNames[] = {"FPS", "TPS", "RPG", "RTS"};
-	const char* gameNames[] = {"", "Creative", "Survival"};
+	const char* adminTag = (ctx.state == GameState::ADMIN) ? " [ADMIN]" : "";
 	char hud[64];
-	snprintf(hud, sizeof(hud), "[%s] %s  [V]cam  [Tab]inv  [F3]dbg",
-	         modeNames[(int)ctx.camera.mode], gameNames[(int)ctx.state]);
+	snprintf(hud, sizeof(hud), "[%s]%s  [V]cam  [Tab]inv  [F3]dbg",
+	         modeNames[(int)ctx.camera.mode], adminTag);
 	text.drawText(hud, -0.98f, 0.92f, 0.55f, {1,1,1,0.40f}, ctx.aspect);
 }
 

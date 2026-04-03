@@ -67,20 +67,20 @@ static void run(const char* name, std::function<std::string()> fn) {
 // Test helpers
 // ================================================================
 
-// Create a survival flat-world LocalServer and connect one client.
-static std::unique_ptr<LocalServer> makeFlatServer(bool creative = false) {
+// Create a flat-world LocalServer and connect one client.
+static std::unique_ptr<LocalServer> makeFlatServer() {
 	auto srv = std::make_unique<LocalServer>(g_templates);
 	WorldGenConfig wgc;
 	// Flat world: templateIndex=0, no mob spawning
 	wgc.mobs.clear();
-	srv->createGame(42, 0, creative, wgc);
+	srv->createGame(42, 0, wgc);
 	return srv;
 }
 
 // Create a village world server with default mob config.
-static std::unique_ptr<LocalServer> makeVillageServer(bool creative = false) {
+static std::unique_ptr<LocalServer> makeVillageServer() {
 	auto srv = std::make_unique<LocalServer>(g_templates);
-	srv->createGame(42, 1, creative, WorldGenConfig{});
+	srv->createGame(42, 1, WorldGenConfig{});
 	return srv;
 }
 
@@ -282,8 +282,8 @@ static std::string t09_creatures_have_hp() {
 // T10 — T13: Block breaking
 // ================================================================
 
-static std::string t10_break_block_creative_inventory() {
-	auto srv = makeFlatServer(/*creative=*/true);
+static std::string t10_break_block_removes_block() {
+	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
@@ -291,32 +291,21 @@ static std::string t10_break_block_creative_inventory() {
 	tickN(*srv, 30);
 	glm::vec3 pos = p->position;
 
-	// The surface block in flat world is grass at floor(pos.y) - 1
 	glm::ivec3 blockPos = {(int)std::floor(pos.x), (int)std::floor(pos.y) - 1,
 	                       (int)std::floor(pos.z)};
 
-	// Check block exists (not air)
 	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
-	if (bid == BLOCK_AIR) return "no block under player at " +
-		std::to_string(blockPos.x) + "," + std::to_string(blockPos.y) + "," + std::to_string(blockPos.z);
+	if (bid == BLOCK_AIR) return "no block under player";
 
-	// Count items before
-	int beforeStone = p->inventory ? p->inventory->count(BlockType::Stone) : 0;
-
-	// Snap player next to block to pass distance check
 	breakAndTick(*srv, pid, blockPos);
 
-	// In creative mode: block goes directly to inventory
-	int afterTotal = p->inventory ? p->inventory->distinctCount() : 0;
-	// The broken block's item type should now be in inventory
 	bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
 	if (bid != BLOCK_AIR) return "block still exists after break";
-
 	return "";
 }
 
 static std::string t11_break_block_survival_item_spawns() {
-	auto srv = makeFlatServer(/*creative=*/false);
+	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
@@ -347,7 +336,7 @@ static std::string t11_break_block_survival_item_spawns() {
 }
 
 static std::string t12_item_pickup_after_break() {
-	auto srv = makeFlatServer(/*creative=*/false);
+	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
@@ -396,7 +385,7 @@ static std::string t12_item_pickup_after_break() {
 // ================================================================
 
 static std::string t13_place_block() {
-	auto srv = makeFlatServer(/*creative=*/false);
+	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
@@ -442,7 +431,7 @@ static std::string t13_place_block() {
 }
 
 static std::string t14_place_block_rejected_without_item() {
-	auto srv = makeFlatServer(/*creative=*/false);
+	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
@@ -469,7 +458,7 @@ static std::string t14_place_block_rejected_without_item() {
 // ================================================================
 
 static std::string t15_items_only_picked_up_by_player() {
-	auto srv = makeVillageServer(/*creative=*/false);
+	auto srv = makeVillageServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
@@ -544,7 +533,7 @@ static std::string t17_player_not_stuck_with_obstacles() {
 // ================================================================
 
 static std::string t18_hotbar_populated() {
-	auto srv = makeFlatServer(/*creative=*/false);
+	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p || !p->inventory) return "no player or inventory";
@@ -559,35 +548,28 @@ static std::string t18_hotbar_populated() {
 }
 
 // ================================================================
-// T19: Creative mode — break+place cycle
+// T19: break + place cycle deducts from inventory
 // ================================================================
 
-static std::string t19_creative_break_and_place() {
-	auto srv = makeFlatServer(/*creative=*/true);
+static std::string t19_break_and_place_cycle() {
+	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
 
 	tickN(*srv, 30);
 	glm::vec3 pos = p->position;
-	glm::ivec3 blockPos = {(int)pos.x, (int)pos.y - 1, (int)pos.z};
 	glm::ivec3 placePos = {(int)pos.x + 3, (int)pos.y, (int)pos.z};
 
-	// Break block
-	breakAndTick(*srv, pid, blockPos);
-	if (srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z) != BLOCK_AIR)
-		return "block not broken in creative";
-
-	// Place stone at placePos
 	if (!p->inventory || !p->inventory->has(BlockType::Stone))
-		return "creative player doesn't have stone";
+		return "player doesn't have stone";
+	int before = p->inventory->count(BlockType::Stone);
 	placeAndTick(*srv, pid, placePos, BlockType::Stone);
 	if (srv->chunks().getBlock(placePos.x, placePos.y, placePos.z) == BLOCK_AIR)
-		return "block not placed in creative";
-
-	// In creative mode, stone count should stay at 999 (no deduction)
-	if (p->inventory->count(BlockType::Stone) < 999)
-		return "creative mode deducted stone from inventory";
+		return "block not placed";
+	int after = p->inventory->count(BlockType::Stone);
+	if (after >= before)
+		return "placing didn't deduct from inventory";
 	return "";
 }
 
@@ -647,7 +629,7 @@ static std::string t21_break_fires_onbreaktext() {
 // ================================================================
 
 static std::string t22_pickup_fires_onpickuptext() {
-	auto srv = makeFlatServer(/*creative=*/false);
+	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
@@ -671,6 +653,108 @@ static std::string t22_pickup_fires_onpickuptext() {
 	if (!pickupFired) tickN(*srv, 5); // give a few more ticks in case item drifted slightly
 
 	if (!pickupFired) return "onPickupText was not called after item pickup";
+	return "";
+}
+
+// ================================================================
+// T22b: break underfoot — item spawns and callbacks fire quickly
+// ================================================================
+
+static std::string t22b_break_underfoot_fires_callbacks() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	tickN(*srv, 30);
+	glm::vec3 pos = p->position;
+	glm::ivec3 blockPos = {(int)std::floor(pos.x), (int)std::floor(pos.y) - 1,
+	                       (int)std::floor(pos.z)};
+
+	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	if (bid == BLOCK_AIR) return "no surface block at spawn";
+
+	bool pickupTextFired = false;
+	bool itemPickupFired = false;
+	srv->server()->callbacks().onPickupText = [&](glm::vec3, const std::string&, int) {
+		pickupTextFired = true;
+	};
+	srv->server()->callbacks().onItemPickup = [&](glm::vec3, glm::vec3) {
+		itemPickupFired = true;
+	};
+
+	breakAndTick(*srv, pid, blockPos);
+	// Item spawns underfoot — should be attracted and picked up within a few ticks
+	tickN(*srv, 10);
+
+	std::string failures;
+	if (!pickupTextFired) failures += "onPickupText not called; ";
+	if (!itemPickupFired) failures += "onItemPickup not called; ";
+	if (!failures.empty()) return failures;
+	return "";
+}
+
+// ================================================================
+// T22c: break at distance — item reaches player
+// ================================================================
+
+static std::string t22c_item_reaches_player() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	tickN(*srv, 30);
+
+	// Break a block 3 blocks in front of the player (at distance — not directly under feet)
+	glm::vec3 pos = p->position;
+	glm::ivec3 blockPos = {(int)std::floor(pos.x) + 3, (int)std::floor(pos.y) - 1,
+	                       (int)std::floor(pos.z)};
+
+	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	if (bid == BLOCK_AIR) return "no block at target position";
+
+	// Count items before
+	int inv_before = p->inventory ? p->inventory->distinctCount() : 0;
+
+	breakAndTick(*srv, pid, blockPos);
+
+	// Count item entities
+	int itemCount = countByType(*srv, EntityType::ItemEntity);
+	printf("\n    [DEBUG] item entities after break: %d", itemCount);
+
+	// Tick 120 frames (2 seconds) to let item reach player
+	bool pickupTextFired = false;
+	srv->server()->callbacks().onPickupText = [&](glm::vec3, const std::string& name, int count) {
+		pickupTextFired = true;
+		printf("\n    [DEBUG] onPickupText: +%d %s", count, name.c_str());
+	};
+
+	for (int i = 0; i < 120; i++) {
+		srv->tick(1.0f / 60.0f);
+		// Check if item was picked up
+		int remaining = countByType(*srv, EntityType::ItemEntity);
+		if (remaining == 0 && itemCount > 0) {
+			printf("\n    [DEBUG] item collected after %d ticks (%.1fs)", i + 1, (i + 1) / 60.0f);
+			break;
+		}
+	}
+
+	int remaining = countByType(*srv, EntityType::ItemEntity);
+	if (remaining > 0) {
+		// Item still floating — check where it is
+		srv->forEachEntity([&](Entity& e) {
+			if (e.typeId() == EntityType::ItemEntity) {
+				float dist = glm::length(e.position - p->position);
+				printf("\n    [DEBUG] item at (%.1f,%.1f,%.1f), player at (%.1f,%.1f,%.1f), dist=%.1f",
+					e.position.x, e.position.y, e.position.z,
+					p->position.x, p->position.y, p->position.z, dist);
+			}
+		});
+		return "item entity not picked up after 2 seconds (still " + std::to_string(remaining) + " items)";
+	}
+
+	if (!pickupTextFired) return "item collected but onPickupText not called";
 	return "";
 }
 
@@ -798,8 +882,8 @@ int main() {
 	run("T09: creatures have HP > 0",         t09_creatures_have_hp);
 
 	printf("\n--- Block Interaction ---\n");
-	run("T10: break block (creative) removes block",  t10_break_block_creative_inventory);
-	run("T11: break block (survival) spawns item",    t11_break_block_survival_item_spawns);
+	run("T10: break block removes block",               t10_break_block_removes_block);
+	run("T11: break block spawns item entity",          t11_break_block_survival_item_spawns);
 	run("T12: item pickup after break",               t12_item_pickup_after_break);
 	run("T13: place block consumed from inventory",   t13_place_block);
 	run("T14: place block rejected without item",     t14_place_block_rejected_without_item);
@@ -811,7 +895,7 @@ int main() {
 
 	printf("\n--- Inventory ---\n");
 	run("T18: hotbar populated on spawn",        t18_hotbar_populated);
-	run("T19: creative break+place cycle",       t19_creative_break_and_place);
+	run("T19: break+place deducts inventory",    t19_break_and_place_cycle);
 
 	printf("\n--- Spawn Integrity ---\n");
 	run("T20: spawn area clear (no solid in body)", t20_spawn_area_clear);
@@ -819,6 +903,8 @@ int main() {
 	printf("\n--- Callbacks ---\n");
 	run("T21: onBreakText fires on block break",    t21_break_fires_onbreaktext);
 	run("T22: onPickupText fires on item pickup",   t22_pickup_fires_onpickuptext);
+	run("T22b: break underfoot fires pickup callbacks", t22b_break_underfoot_fires_callbacks);
+	run("T22c: item reaches player from distance",     t22c_item_reaches_player);
 
 	printf("\n--- Village ---\n");
 	run("T23: creatures spawn near village center", t23_creatures_near_village_center);

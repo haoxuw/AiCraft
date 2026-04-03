@@ -39,7 +39,7 @@ public:
 	// --- Lifecycle ---
 
 	// Create/join a game world. Returns true on success.
-	virtual bool createGame(int seed, int templateIndex, bool creative,
+	virtual bool createGame(int seed, int templateIndex,
 	                        const WorldGenConfig& wgc = WorldGenConfig{}) = 0;
 
 	// Disconnect from game (stop local server or close TCP connection)
@@ -80,7 +80,6 @@ public:
 	// World state
 	virtual float worldTime() const = 0;
 	virtual glm::vec3 spawnPos() const = 0;
-	virtual bool isCreative() const = 0;
 
 	// Block registry (for HUD, raycast)
 	virtual const BlockRegistry& blockRegistry() const = 0;

@@ -71,6 +71,7 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 
 	m_breakCD -= dt;
 	m_hitEvent.happened = false;
+	m_placeEvent.happened = false;
 
 	// Break progress decay: cancel if no hit for 2 seconds
 	if (m_breaking.active) {
@@ -157,6 +158,9 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 				p.blockType = blockType;
 				server.sendAction(p);
 				m_breakCD = 0.25f;
+				m_placeEvent.happened = true;
+				m_placeEvent.pos = glm::vec3(m_hit->placePos) + glm::vec3(0.5f);
+				m_placeEvent.blockType = blockType;
 			}
 		}
 	}

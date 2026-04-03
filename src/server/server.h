@@ -48,7 +48,6 @@ struct ServerCallbacks {
 struct ServerConfig {
 	int seed = 42;
 	int templateIndex = 1;  // VillageWorld (has trees)
-	bool creative = false;  // survival by default
 	int port = 7777;
 	WorldGenConfig worldGenConfig;
 };
@@ -65,7 +64,6 @@ public:
 			? templates[config.templateIndex] : templates[0];
 
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
-		m_creative = config.creative;
 		m_wgc = config.worldGenConfig;
 		m_worldTime = 0.30f;
 
@@ -176,11 +174,6 @@ public:
 			if (sit != m_wgc.startingItems.end()) {
 				for (auto& [item, count] : sit->second)
 					pe->inventory->add(item, count);
-			} else if (m_creative) {
-				for (auto* bt : {BlockType::Stone, BlockType::Dirt, BlockType::Grass,
-				                 BlockType::Sand, BlockType::Wood, BlockType::Leaves,
-				                 BlockType::Snow, BlockType::TNT, BlockType::Cobblestone})
-					pe->inventory->add(bt, 999);
 			} else {
 				pe->inventory->add(BlockType::Stone, 10);
 				pe->inventory->add(BlockType::Wood, 10);
@@ -275,7 +268,7 @@ public:
 			if (!e.inventory) return;
 			if (e.typeId() != EntityType::Player) return;
 			glm::vec3 center = e.position;
-			auto pickups = m_world->entities.attractItemsToward(center, 2.5f, 1.5f, dt);
+			auto pickups = m_world->entities.attractItemsToward(center, 6.0f, 1.2f, dt);
 			bool inventoryChanged = false;
 			for (auto* item : pickups) {
 				std::string itemType = item->getProp<std::string>(Prop::ItemType);
@@ -356,8 +349,6 @@ public:
 	void setWorldTime(float t) { m_worldTime = t; }
 	glm::vec3 spawnPos() const { return m_spawnPos; }
 	void setSpawnPos(glm::vec3 p) { m_spawnPos = p; }
-	bool isCreative() const { return m_creative; }
-
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
@@ -369,7 +360,6 @@ private:
 	std::unique_ptr<World> m_world;
 	ServerCallbacks m_callbacks;
 	WorldGenConfig m_wgc;
-	bool m_creative = true;
 	float m_worldTime = 0.30f;
 	float m_activeBlockTimer = 0;
 	float m_stuckTimer = 0;

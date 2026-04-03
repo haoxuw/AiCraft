@@ -67,12 +67,15 @@ void GameServer::resolveActions(float dt) {
 			if (actor && actor->inventory) {
 				std::string dropType = bdef.drop.empty() ? bdef.string_id : bdef.drop;
 				if (!dropType.empty() && dropType != BlockType::Air) {
-					if (m_creative) {
-						actor->inventory->add(dropType, 1);
-					} else {
-						glm::vec3 dropPos = glm::vec3(bp) + glm::vec3(0.5f, 0.5f, 0.5f);
-						m_world->entities.spawn(EntityType::ItemEntity, dropPos,
-							{{Prop::ItemType, dropType}, {Prop::Count, 1}, {Prop::Age, 0.0f}});
+					// Spawn item entity at block center and launch toward the breaker
+					glm::vec3 dropPos = glm::vec3(bp) + glm::vec3(0.5f, 0.5f, 0.5f);
+					EntityId itemId = m_world->entities.spawn(EntityType::ItemEntity, dropPos,
+						{{Prop::ItemType, dropType}, {Prop::Count, 1}, {Prop::Age, 0.0f}});
+					Entity* ie = m_world->entities.get(itemId);
+					if (ie && actor) {
+						glm::vec3 toPlayer = (actor->position + glm::vec3(0, 0.5f, 0)) - dropPos;
+						float d = glm::length(toPlayer);
+						if (d > 0.1f) ie->velocity = glm::normalize(toPlayer) * std::min(d * 3.0f, 12.0f);
 					}
 				}
 			}
@@ -150,7 +153,7 @@ void GameServer::resolveActions(float dt) {
 			if (m_callbacks.onBlockPlace)
 				m_callbacks.onBlockPlace(glm::vec3(pp), placedDef->sound_place);
 
-			if (actor && actor->inventory && !m_creative)
+			if (actor && actor->inventory)
 				actor->inventory->remove(p.blockType, 1);
 			// Sync inventory after block place
 			if (actor && actor->inventory && m_callbacks.onInventoryChange)

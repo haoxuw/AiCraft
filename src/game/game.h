@@ -134,11 +134,12 @@ private:
 	// Graphics settings (exposed in pause menu)
 	int m_renderDistance = 8;
 	bool m_vsync = true;
+	bool m_showGoalBubbles = true;
 
 	// Display
 	bool m_showDebug = false;
-	GameState m_preInspectState = GameState::SURVIVAL;
-	GameState m_preMenuState = GameState::SURVIVAL;
+	GameState m_preInspectState = GameState::PLAYING;
+	GameState m_preMenuState = GameState::PLAYING;
 	bool m_showInventory = false;
 
 	// Server log file (local server → /tmp/agentica_log_local.log)

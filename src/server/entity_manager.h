@@ -184,7 +184,7 @@ public:
 
 	// Attract item entities toward a position. Returns items close enough to pick up.
 	// Velocity is SET (not added) so the attraction overcomes gravity.
-	std::vector<Entity*> attractItemsToward(glm::vec3 pos, float attractRadius = 3.0f, float pickupRadius = 1.5f, float dt = 0.016f) {
+	std::vector<Entity*> attractItemsToward(glm::vec3 pos, float attractRadius = 6.0f, float pickupRadius = 1.2f, float dt = 0.016f) {
 		std::vector<Entity*> picked;
 		for (auto& [id, e] : m_entities) {
 			if (e->removed || e->typeId() != EntityType::ItemEntity) continue;
@@ -192,8 +192,11 @@ public:
 			if (dist < pickupRadius) {
 				picked.push_back(e.get());
 			} else if (dist < attractRadius) {
+				// Teleport item toward player each tick (bypass physics/gravity issues)
 				glm::vec3 dir = glm::normalize(pos - e->position);
-				e->velocity = dir * 10.0f;  // set (not add) to overcome gravity
+				float step = std::min(8.0f * dt, dist * 0.5f); // move up to 8 units/sec
+				e->position = e->position + dir * step;
+				e->velocity = dir * 4.0f; // gentle drift in same direction
 			}
 		}
 		return picked;

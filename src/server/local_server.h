@@ -24,12 +24,11 @@ public:
 
 	void setCreatureType(const std::string& type) { m_creatureType = type; }
 
-	bool createGame(int seed, int templateIndex, bool creative,
+	bool createGame(int seed, int templateIndex,
 	                const WorldGenConfig& wgc = WorldGenConfig{}) override {
 		ServerConfig config;
 		config.seed = seed;
 		config.templateIndex = templateIndex;
-		config.creative = creative;
 		config.worldGenConfig = wgc;
 
 		m_server = std::make_unique<GameServer>();
@@ -114,9 +113,6 @@ public:
 		return m_server ? m_server->spawnPos() : glm::vec3(0, 10, 0);
 	}
 
-	bool isCreative() const override {
-		return m_server ? m_server->isCreative() : true;
-	}
 
 	const BlockRegistry& blockRegistry() const override {
 		return m_server->world().blocks;

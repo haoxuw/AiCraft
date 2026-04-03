@@ -175,11 +175,11 @@ bool Game::init(int argc, char** argv) {
 	if (m_skipMenu && !m_connectHost.empty()) {
 		printf("[Game] --skip-menu: auto-joining %s:%d\n",
 		       m_connectHost.c_str(), m_connectPort);
-		joinServer(m_connectHost, m_connectPort, GameState::SURVIVAL);
+		joinServer(m_connectHost, m_connectPort, GameState::PLAYING);
 	// --skip-menu alone: start a new local village world
 	} else if (m_skipMenu) {
 		printf("[Game] --skip-menu: starting new world directly\n");
-		enterGame(1, GameState::SURVIVAL);
+		enterGame(1, GameState::PLAYING);
 	// --host only: pre-populate the server list and show menu
 	} else if (!m_connectHost.empty()) {
 		printf("[Game] Server hint: %s:%d (join from menu)\n",
@@ -269,9 +269,9 @@ void Game::handleGlobalInput() {
 	// F12: toggle admin mode (fly, unlimited blocks, debug)
 	static bool prevF12 = false;
 	bool f12 = glfwGetKey(m_window.handle(), GLFW_KEY_F12) == GLFW_PRESS;
-	if (f12 && !prevF12 && (m_state == GameState::ADMIN || m_state == GameState::SURVIVAL)) {
+	if (f12 && !prevF12 && (m_state == GameState::ADMIN || m_state == GameState::PLAYING)) {
 		if (m_state == GameState::ADMIN) {
-			m_state = GameState::SURVIVAL;
+			m_state = GameState::PLAYING;
 			printf("[Game] Admin mode OFF\n");
 		} else {
 			m_state = GameState::ADMIN;
@@ -388,7 +388,7 @@ void Game::updateAndRender(float dt, float aspect) {
 		m_state = GameState::MENU;
 		break;
 	case GameState::ADMIN:
-	case GameState::SURVIVAL:
+	case GameState::PLAYING:
 		updatePlaying(dt, aspect);
 		break;
 	case GameState::ENTITY_INSPECT:
@@ -445,10 +445,10 @@ void Game::handleMenuAction(const MenuAction& action) {
 		if (loadWorld(*localServer->server(), action.worldPath, m_templates)) {
 			localServer->finishLoad(); // register client after load
 			m_server = std::move(localServer);
-			setupAfterConnect(GameState::SURVIVAL);
+			setupAfterConnect(GameState::PLAYING);
 		} else {
 			printf("[Game] Failed to load world, creating new\n");
-			enterGame(action.templateIndex, GameState::SURVIVAL);
+			enterGame(action.templateIndex, GameState::PLAYING);
 		}
 		break;
 	}
@@ -462,11 +462,10 @@ void Game::handleMenuAction(const MenuAction& action) {
 void Game::joinServer(const std::string& host, int port, GameState targetState) {
 #ifndef __EMSCRIPTEN__
 	printf("[Game] Joining server at %s:%d\n", host.c_str(), port);
-	bool creative = (targetState == GameState::ADMIN);
 	auto netServer = std::make_unique<NetworkServer>(host, port);
 	netServer->setDisplayName(m_playerName);
 	netServer->setCreatureType(m_selectedCreature);
-	if (netServer->createGame(42, 0, creative)) {
+	if (netServer->createGame(42, 0)) {
 		printf("[Game] Connected to %s:%d as %s (%s)\n",
 		       host.c_str(), port, m_playerName.c_str(), m_selectedCreature.c_str());
 		m_server = std::move(netServer);
@@ -493,15 +492,13 @@ void Game::enterGame(int templateIndex, GameState targetState, const WorldGenCon
 	if (m_serverLog) {
 		setvbuf(m_serverLog, nullptr, _IONBF, 0);
 		fprintf(m_serverLog, "=== AgentWorld Local Server ===\n");
-		fprintf(m_serverLog, "seed=%d template=%d creative=%d\n",
-		        m_currentSeed, templateIndex, (targetState == GameState::ADMIN));
+		fprintf(m_serverLog, "seed=%d template=%d\n", m_currentSeed, templateIndex);
 		printf("[Game] Server log: /tmp/agentica_log_local.log\n");
 	}
 
-	bool creative = (targetState == GameState::ADMIN);
 	auto localServer = std::make_unique<LocalServer>(m_templates);
 	localServer->setCreatureType(m_selectedCreature);
-	localServer->createGame(m_currentSeed, templateIndex, creative, wgc);
+	localServer->createGame(m_currentSeed, templateIndex, wgc);
 	m_server = std::move(localServer);
 	printf("[Game] Playing as %s (%s)\n", m_playerName.c_str(), m_selectedCreature.c_str());
 	setupAfterConnect(targetState);
@@ -632,7 +629,7 @@ void Game::saveCurrentWorld() {
 	meta.name = m_currentWorldPath.substr(m_currentWorldPath.rfind('/') + 1);
 	meta.seed = ls->server()->world().seed();
 	meta.templateIndex = ls->server()->world().templateIndex();
-	meta.gameMode = ls->server()->isCreative() ? "admin" : "survival";
+	meta.gameMode = "playing";
 	meta.version = 1;
 
 	// Get template name from index
