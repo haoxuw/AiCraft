@@ -158,6 +158,7 @@ struct EntityState {
 	float yaw;
 	bool onGround;
 	std::string goalText;
+	std::string characterSkin; // visual override (e.g., "base:knight")
 	int hp;
 	int maxHp;
 };
@@ -170,6 +171,7 @@ inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
 	buf.writeF32(e.yaw);
 	buf.writeBool(e.onGround);
 	buf.writeString(e.goalText);
+	buf.writeString(e.characterSkin);
 	buf.writeI32(e.hp);
 	buf.writeI32(e.maxHp);
 }
@@ -183,6 +185,7 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	e.yaw = buf.readF32();
 	e.onGround = buf.readBool();
 	e.goalText = buf.readString();
+	e.characterSkin = buf.readString();
 	e.hp = buf.readI32();
 	e.maxHp = buf.readI32();
 	return e;

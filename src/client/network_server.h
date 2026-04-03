@@ -274,6 +274,8 @@ private:
 				ent->yaw = es.yaw;
 				ent->onGround = es.onGround;
 				ent->goalText = es.goalText;
+				if (!es.characterSkin.empty())
+					ent->setProp("character_skin", es.characterSkin);
 				if (es.id == m_localPlayerId)
 					printf("[Net] Local player entity created: type=%s pos=(%.1f,%.1f,%.1f)\n",
 						es.typeId.c_str(), es.position.x, es.position.y, es.position.z);

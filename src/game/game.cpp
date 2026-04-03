@@ -805,13 +805,22 @@ void Game::renderPlaying(float dt, float aspect) {
 		}
 	}
 
-	// Draw local player using the SAME path as all other entities — no special model.
-	// Only skip in first-person (camera is at eyes, drawing body would block view).
+	// Resolve model key: character_skin prop overrides EntityDef.model
+	auto resolveModelKey = [](const Entity& e) -> std::string {
+		std::string skin = e.getProp<std::string>("character_skin", "");
+		if (!skin.empty()) {
+			auto colon = skin.find(':');
+			return (colon != std::string::npos) ? skin.substr(colon + 1) : skin;
+		}
+		std::string key = e.def().model;
+		auto dot = key.rfind('.');
+		if (dot != std::string::npos) key = key.substr(0, dot);
+		return key;
+	};
+
+	// Draw local player — skip in first-person (camera at eyes)
 	if (m_camera.mode != CameraMode::FirstPerson) {
-		std::string modelKey = pe->def().model;
-		auto dot = modelKey.rfind('.');
-		if (dot != std::string::npos) modelKey = modelKey.substr(0, dot);
-		auto pit = m_models.find(modelKey);
+		auto pit = m_models.find(resolveModelKey(*pe));
 		if (pit != m_models.end())
 			mr.draw(pit->second, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
 	}
@@ -824,11 +833,7 @@ void Game::renderPlaying(float dt, float aspect) {
 		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);
 		AnimState mobAnim = {mobDist, mobSpeed, m_globalTime};
 
-		// Derive model key from EntityDef::model (strip ".gltf" extension)
-		std::string modelKey = e.def().model;
-		auto dot = modelKey.rfind('.');
-		if (dot != std::string::npos) modelKey = modelKey.substr(0, dot);
-
+		std::string modelKey = resolveModelKey(e);
 		auto mit = m_models.find(modelKey);
 		if (mit != m_models.end()) {
 			mr.draw(mit->second, vp, e.position, e.yaw, mobAnim);

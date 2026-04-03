@@ -432,6 +432,7 @@ int main(int argc, char** argv) {
 					es.yaw = e.yaw;
 					es.onGround = e.onGround;
 					es.goalText = e.goalText;
+					es.characterSkin = e.getProp<std::string>("character_skin", "");
 					es.hp = e.hp();
 					es.maxHp = e.def().max_hp;
 

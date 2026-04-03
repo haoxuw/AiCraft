@@ -162,13 +162,17 @@ public:
 	}
 
 	// Add a client. Returns the player's EntityId.
-	EntityId addClient(ClientId clientId, const std::string& creatureType = "") {
-		const char* spawnType = (!creatureType.empty()) ? creatureType.c_str() : EntityType::Player;
-		EntityId eid = m_world->entities.spawn(spawnType, m_spawnPos);
+	EntityId addClient(ClientId clientId, const std::string& characterSkin = "") {
+		// Always spawn as base:player (has inventory, HP, physics).
+		// The characterSkin determines visual model, not entity type.
+		EntityId eid = m_world->entities.spawn(EntityType::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
+		// Store character skin as entity property (client reads for rendering)
+		if (pe && !characterSkin.empty())
+			pe->setProp("character_skin", characterSkin);
 		if (pe && pe->inventory) {
 			// Starting items: from config if specified, else defaults
-			auto sit = m_wgc.startingItems.find(spawnType);
+			auto sit = m_wgc.startingItems.find(EntityType::Player);
 			if (sit != m_wgc.startingItems.end()) {
 				for (auto& [item, count] : sit->second)
 					pe->inventory->add(item, count);
