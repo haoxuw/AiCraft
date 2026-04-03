@@ -154,6 +154,15 @@ bool Renderer::init(const std::string& dir) {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
 	glEnableVertexAttribArray(0);
 
+	// Crack overlay (dynamic line data for block break progress)
+	glGenVertexArrays(1, &m_crackVAO);
+	glGenBuffers(1, &m_crackVBO);
+	glBindVertexArray(m_crackVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, m_crackVBO);
+	glBufferData(GL_ARRAY_BUFFER, 2048 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+	glEnableVertexAttribArray(0);
+
 	// UI quad (2D, reusable for hotbar slots)
 	float uq[] = { 0,0, 1,0, 1,1, 0,0, 1,1, 0,1 };
 	glGenVertexArrays(1, &m_quadVAO);
@@ -181,6 +190,7 @@ void Renderer::shutdown() {
 	del(m_skyVAO, m_skyVBO);
 	del(m_crosshairVAO, m_crosshairVBO);
 	del(m_highlightVAO, m_highlightVBO);
+	del(m_crackVAO, m_crackVBO);
 	del(m_quadVAO, m_quadVBO);
 	m_modelRenderer.shutdown();
 }
@@ -526,33 +536,80 @@ void Renderer::renderCrosshair(float aspect, glm::vec2 center) {
 }
 
 void Renderer::renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 pos, float progress) {
+	// Crack line segments (u,v pairs on each face, [0,1] range).
+	// Each stage adds more cracks for a progressively shattered look.
+	static const float cracks[][4] = {
+		// Stage 1: initial fracture from center (0–4)
+		{0.50f,0.52f, 0.18f,0.85f}, {0.50f,0.52f, 0.80f,0.22f},
+		{0.50f,0.52f, 0.82f,0.70f}, {0.28f,0.73f, 0.08f,0.92f},
+		{0.72f,0.38f, 0.90f,0.15f},
+		// Stage 2: branches spread (5–10)
+		{0.50f,0.52f, 0.25f,0.15f}, {0.25f,0.15f, 0.05f,0.28f},
+		{0.82f,0.70f, 1.00f,0.82f}, {0.18f,0.85f, 0.00f,0.65f},
+		{0.50f,0.52f, 0.60f,0.90f}, {0.60f,0.90f, 0.45f,1.00f},
+		// Stage 3: dense fracture network (11–18)
+		{0.80f,0.22f, 0.95f,0.00f}, {0.05f,0.28f, 0.00f,0.05f},
+		{0.25f,0.15f, 0.40f,0.00f}, {0.82f,0.70f, 0.72f,0.95f},
+		{0.18f,0.85f, 0.30f,1.00f}, {0.90f,0.15f, 1.00f,0.00f},
+		{0.60f,0.90f, 0.80f,1.00f}, {0.08f,0.92f, 0.00f,1.00f},
+	};
+	static const int stageEnd[] = {5, 11, 19}; // segment count per stage (cumulative)
+
+	int stage = (progress < 0.34f) ? 0 : (progress < 0.67f) ? 1 : 2;
+	int numSegs = stageEnd[stage];
+
+	// Map 2D face coords (u,v) to 3D for each of the 6 cube faces.
+	// Slight offset (±0.001) to avoid z-fighting with the block surface.
+	auto facePoint = [](int face, float u, float v) -> glm::vec3 {
+		switch (face) {
+		case 0: return {u,     v,     1.001f};     // front  z=1
+		case 1: return {1-u,   v,    -0.001f};     // back   z=0
+		case 2: return {1.001f, v,    1-u};         // right  x=1
+		case 3: return {-0.001f,v,    u};           // left   x=0
+		case 4: return {u,     1.001f, v};          // top    y=1
+		case 5: return {u,    -0.001f, 1-v};        // bottom y=0
+		default: return {u, v, 0};
+		}
+	};
+
+	// Generate crack line vertices for all 6 faces
+	std::vector<float> verts;
+	verts.reserve(numSegs * 6 * 2 * 3); // segs * faces * 2 endpoints * 3 floats
+	for (int face = 0; face < 6; face++) {
+		for (int s = 0; s < numSegs; s++) {
+			glm::vec3 a = facePoint(face, cracks[s][0], cracks[s][1]);
+			glm::vec3 b = facePoint(face, cracks[s][2], cracks[s][3]);
+			verts.push_back(a.x); verts.push_back(a.y); verts.push_back(a.z);
+			verts.push_back(b.x); verts.push_back(b.y); verts.push_back(b.z);
+		}
+	}
+
+	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(pos));
+	glm::mat4 mvp = cam.projectionMatrix(aspect) * cam.viewMatrix() * model;
+
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_LEQUAL);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	glm::mat4 model = glm::translate(glm::mat4(1.0f),
-		glm::vec3(pos) + glm::vec3(-0.003f));
-	model = glm::scale(model, glm::vec3(1.006f));
-	glm::mat4 mvp = cam.projectionMatrix(aspect) * cam.viewMatrix() * model;
-
 	m_highlightShader.use();
 	m_highlightShader.setMat4("uMVP", mvp);
 	GLint loc = glGetUniformLocation(m_highlightShader.id(), "uColor");
-	glBindVertexArray(m_highlightVAO);
 
-	// Color ramp: green(0.33) → yellow(0.66) → red(1.0)
-	float r = progress < 0.5f ? progress * 2.0f : 1.0f;
-	float g = progress < 0.5f ? 1.0f : 1.0f - (progress - 0.5f) * 2.0f;
+	// Upload crack line data
+	glBindVertexArray(m_crackVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, m_crackVBO);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, verts.size() * sizeof(float), verts.data());
+	int lineCount = (int)(verts.size() / 3);
 
-	// Semi-transparent face fill (36 triangle verts starting at vertex 24)
-	glUniform4f(loc, r, g, 0.0f, 0.18f + progress * 0.22f);
-	glDrawArrays(GL_TRIANGLES, 24, 36);
+	// Draw: black outline pass then dark crack lines
+	glUniform4f(loc, 0.0f, 0.0f, 0.0f, 0.35f + progress * 0.35f);
+	glLineWidth(3.5f);
+	glDrawArrays(GL_LINES, 0, lineCount);
 
-	// Colored wireframe on top
-	glUniform4f(loc, r, g, 0.0f, 0.85f);
-	glLineWidth(3.0f);
-	glDrawArrays(GL_LINES, 0, 24);
+	glUniform4f(loc, 0.08f, 0.06f, 0.04f, 0.55f + progress * 0.35f);
+	glLineWidth(1.8f);
+	glDrawArrays(GL_LINES, 0, lineCount);
 
 	glDepthFunc(GL_LESS);
 	glDisable(GL_BLEND);

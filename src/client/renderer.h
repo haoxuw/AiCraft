@@ -44,6 +44,7 @@ private:
 	GLuint m_skyVAO = 0, m_skyVBO = 0;
 	GLuint m_crosshairVAO = 0, m_crosshairVBO = 0;
 	GLuint m_highlightVAO = 0, m_highlightVBO = 0;
+	GLuint m_crackVAO = 0, m_crackVBO = 0;
 	GLuint m_quadVAO = 0, m_quadVBO = 0;
 	ModelRenderer m_modelRenderer;
 
