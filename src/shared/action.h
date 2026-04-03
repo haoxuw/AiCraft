@@ -38,6 +38,8 @@ struct ActionProposal {
 		// Entity interaction
 		Attack,         // damage targetEntity
 		PickupItem,     // pick up targetEntity (item)
+		// Item spawning (from behavior — e.g. chicken lays egg)
+		DropItem,       // spawn item entity at actor's feet
 		// Farming/active blocks
 		GrowCrop,       // advance growth at blockPos
 	};
@@ -55,6 +57,9 @@ struct ActionProposal {
 	glm::ivec3 blockPos = {0, 0, 0};
 	std::string blockType;       // for PlaceBlock
 	int slotIndex = 0;           // inventory slot
+
+	// Item drop
+	int itemCount = 1;           // for DropItem
 
 	// Entity interaction
 	EntityId targetEntity = ENTITY_NONE;

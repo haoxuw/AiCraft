@@ -41,6 +41,7 @@ struct BehaviorAction {
 		Flee,       // move away from targetEntity/targetPos
 		Attack,     // damage targetEntity (future)
 		BreakBlock, // break block at targetPos (x,y,z)
+		DropItem,   // drop an item at entity's feet (itemType, itemCount)
 	};
 
 	Type type = Idle;
@@ -48,6 +49,8 @@ struct BehaviorAction {
 	EntityId targetEntity = ENTITY_NONE;
 	float speed = 2.0f;    // movement speed (multiplied by agility)
 	float param = 0.0f;    // action-specific: damage, radius, duration
+	std::string itemType;  // for DropItem: item to drop (e.g. "base:egg")
+	int itemCount = 1;     // for DropItem: how many to drop
 };
 
 // ================================================================

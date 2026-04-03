@@ -93,6 +93,23 @@ void GameplayController::processMovement(float dt, GameState state,
 					arrived.push_back(eid);
 					p.desiredVel = {0, 0, 0};
 				} else {
+					// Check if entity is stuck (has velocity but not moving)
+					float hSpeed = std::sqrt(e->velocity.x*e->velocity.x + e->velocity.z*e->velocity.z);
+					auto prevIt = m_rtsLastPos.find(eid);
+					if (prevIt != m_rtsLastPos.end() && hSpeed > 0.5f) {
+						float moved = glm::length(glm::vec2(
+							e->position.x - prevIt->second.x,
+							e->position.z - prevIt->second.z));
+						if (moved < 0.05f * dt) {
+							// Stuck against a wall — stop pushing
+							arrived.push_back(eid);
+							p.desiredVel = {0, 0, 0};
+							server.sendAction(p);
+							continue;
+						}
+					}
+					m_rtsLastPos[eid] = e->position;
+
 					glm::vec3 dir = glm::normalize(toTarget);
 					float spd = e->def().walk_speed;
 					if (spd <= 0) spd = camera.moveSpeed;
@@ -100,8 +117,10 @@ void GameplayController::processMovement(float dt, GameState state,
 				}
 				server.sendAction(p);
 			}
-			for (auto eid : arrived)
+			for (auto eid : arrived) {
 				m_rtsSelect.moveTargets.erase(eid);
+				m_rtsLastPos.erase(eid);
+			}
 			if (m_rtsSelect.moveTargets.empty())
 				m_clickToMove.active = false;
 		}
@@ -250,6 +269,7 @@ void GameplayController::issueRTSMoveOrder(glm::ivec3 blockPos,
 	m_clickToMove.target = center;
 	m_clickToMove.active = true;
 	m_rtsSelect.moveTargets.clear();
+	m_rtsLastPos.clear();
 
 	int n = (int)m_rtsSelect.selected.size();
 	int cols = std::max(1, (int)std::ceil(std::sqrt((float)n)));

@@ -308,13 +308,22 @@ private:
 			break;
 
 		case BehaviorAction::BreakBlock: {
-			// Push a BreakBlock ActionProposal to the server queue
 			ActionProposal bp;
 			bp.type = ActionProposal::BreakBlock;
 			bp.actorId = e.id();
 			bp.blockPos = glm::ivec3((int)action.targetPos.x, (int)action.targetPos.y, (int)action.targetPos.z);
 			actions.propose(bp);
 			p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+			break;
+		}
+		case BehaviorAction::DropItem: {
+			ActionProposal dp;
+			dp.type = ActionProposal::DropItem;
+			dp.actorId = e.id();
+			dp.blockType = action.itemType;   // reuse blockType field for item id
+			dp.itemCount = action.itemCount;
+			actions.propose(dp);
+			// Don't stop moving — entity can drop while walking/fleeing
 			break;
 		}
 		} // end switch

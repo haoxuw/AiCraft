@@ -61,6 +61,7 @@ public:
 			{"find_block",     "Go to Block",   true,  "block type (e.g. wood)"},
 			{"break_block",    "Break Block",   true,  "block type (e.g. wood)"},
 			{"attack_nearest", "Attack",        true,  "entity type (e.g. chicken)"},
+		{"drop_item",      "Drop Item",     true,  "item type (e.g. egg)"},
 		};
 		return a;
 	}
@@ -113,7 +114,7 @@ class BehaviorCompiler {
 public:
 	static std::string compile(const BehaviorExpr& root) {
 		std::string code;
-		code += "from agentworld_engine import Idle, Wander, MoveTo, Follow, Flee, BreakBlock\n";
+		code += "from agentworld_engine import Idle, Wander, MoveTo, Follow, Flee, BreakBlock, DropItem\n";
 		code += "import random as _rng\n\n";
 		code += "def decide(self, world):\n";
 		code += compileNode(root, 1);
@@ -140,6 +141,10 @@ private:
 
 		if (fn.id == "idle")    return p + "return Idle()\n";
 		if (fn.id == "wander")  return p + "return Wander()\n";
+		if (fn.id == "drop_item") {
+			std::string item = expr.param.empty() ? "egg" : expr.param;
+			return p + "return DropItem(\"base:" + item + "\", 1)\n";
+		}
 
 		// Entity-targeting actions: search nearby, act on closest
 		if (fn.id == "follow_nearest" || fn.id == "flee_nearest" || fn.id == "attack_nearest") {

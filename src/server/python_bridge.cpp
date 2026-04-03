@@ -52,11 +52,13 @@ struct PyEntityInfo {
 
 // Python-visible action types (what a behavior can return)
 struct PyAction {
-	std::string type;    // "idle", "wander", "move_to", "follow", "flee", "attack"
+	std::string type;    // "idle", "wander", "move_to", "follow", "flee", "attack", "drop_item"
 	float x = 0, y = 0, z = 0;  // target position
 	EntityId target_id = ENTITY_NONE;
 	float speed = 2.0f;
 	float param = 0.0f;
+	std::string item_type;  // for drop_item
+	int item_count = 1;     // for drop_item
 };
 
 PYBIND11_EMBEDDED_MODULE(agentworld_engine, m) {
@@ -80,7 +82,9 @@ PYBIND11_EMBEDDED_MODULE(agentworld_engine, m) {
 		.def_readwrite("z", &PyAction::z)
 		.def_readwrite("target_id", &PyAction::target_id)
 		.def_readwrite("speed", &PyAction::speed)
-		.def_readwrite("param", &PyAction::param);
+		.def_readwrite("param", &PyAction::param)
+		.def_readwrite("item_type", &PyAction::item_type)
+		.def_readwrite("item_count", &PyAction::item_count);
 
 	// Convenience action constructors
 	m.def("Idle", []() {
@@ -101,6 +105,9 @@ PYBIND11_EMBEDDED_MODULE(agentworld_engine, m) {
 	m.def("BreakBlock", [](int x, int y, int z) {
 		PyAction a; a.type = "break_block"; a.x = (float)x; a.y = (float)y; a.z = (float)z; return a;
 	}, py::arg("x"), py::arg("y"), py::arg("z"));
+	m.def("DropItem", [](const std::string& itemType, int count) {
+		PyAction a; a.type = "drop_item"; a.item_type = itemType; a.item_count = count; return a;
+	}, py::arg("item_type"), py::arg("count") = 1);
 }
 
 // ================================================================
@@ -256,6 +263,11 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		else if (pyAction.type == "flee") action.type = BehaviorAction::Flee;
 		else if (pyAction.type == "attack") action.type = BehaviorAction::Attack;
 		else if (pyAction.type == "break_block") action.type = BehaviorAction::BreakBlock;
+		else if (pyAction.type == "drop_item") {
+			action.type = BehaviorAction::DropItem;
+			action.itemType = pyAction.item_type;
+			action.itemCount = pyAction.item_count;
+		}
 		else action.type = BehaviorAction::Idle;
 
 		action.targetPos = {pyAction.x, pyAction.y, pyAction.z};

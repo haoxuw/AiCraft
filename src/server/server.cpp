@@ -174,6 +174,24 @@ void GameServer::resolveActions(float dt) {
 			break;
 		}
 
+		case ActionProposal::DropItem: {
+			Entity* actor = m_world->entities.get(p.actorId);
+			if (!actor) break;
+			if (p.blockType.empty()) break;  // no item type specified
+
+			// Server validates: actor must be alive, count must be reasonable
+			if (actor->def().max_hp <= 0) break;
+			int count = std::clamp(p.itemCount, 1, 64);
+
+			// Spawn item entity at actor's feet
+			glm::vec3 dropPos = actor->position + glm::vec3(0, 0.3f, 0);
+			m_world->entities.spawn(EntityType::ItemEntity, dropPos,
+				{{Prop::ItemType, p.blockType},
+				 {Prop::Count, count},
+				 {Prop::Age, 0.0f}});
+			break;
+		}
+
 		case ActionProposal::GrowCrop:
 		case ActionProposal::Attack:
 		case ActionProposal::PickupItem:

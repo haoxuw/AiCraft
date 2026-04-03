@@ -1,21 +1,23 @@
-"""Peck — timid chicken that scatters from threats.
+"""Peck — timid chicken that scatters from threats and lays eggs.
 
-Chickens flee from players AND cats. When startled they
-scatter with panicked clucking. Otherwise they peck at
-the ground and waddle around looking for seeds.
-
-The server handles egg-laying automatically when chickens
-are startled (20% chance per scare event).
+Chickens flee from players AND cats. When startled, they have
+a 20% chance to drop an egg. The behavior controls everything:
+when to lay, what item, how many. The server only validates.
 """
-from agentworld_engine import Idle, Wander, Flee
+from agentworld_engine import Idle, Wander, Flee, DropItem
 import random
 
 SCATTER_DISTANCE = 4.0
 PECK_CHANCE = 0.45
-_startled = False
+EGG_CHANCE = 0.20         # 20% chance to lay egg when startled
+EGG_COOLDOWN = 10.0       # minimum seconds between egg drops
+
+_was_startled = False
+_egg_cooldown = 0
 
 def decide(self, world):
-    global _startled
+    global _was_startled, _egg_cooldown
+    _egg_cooldown -= world["dt"]
 
     # Flee from players and cats
     threats = [e for e in world["nearby"]
@@ -24,15 +26,19 @@ def decide(self, world):
 
     if threats:
         closest = min(threats, key=lambda e: e["distance"])
-        if not _startled:
-            _startled = True
-            # Signal server for possible egg drop
-            self["goal"] = "BAWK!! *startled*"
-        else:
-            self["goal"] = "BAWK!! Running!"
+
+        # First moment of being startled — chance to lay egg
+        if not _was_startled and _egg_cooldown <= 0:
+            _was_startled = True
+            if random.random() < EGG_CHANCE:
+                _egg_cooldown = EGG_COOLDOWN
+                self["goal"] = "BAWK!! *lays egg!*"
+                return DropItem("base:egg", 1)
+
+        self["goal"] = "BAWK!! Scattering!"
         return Flee(closest["id"], speed=6.0)
 
-    _startled = False
+    _was_startled = False
 
     # Peck at ground or waddle around
     if random.random() < PECK_CHANCE:

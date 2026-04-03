@@ -111,6 +111,9 @@ private:
 		// Per-entity move targets (grid formation), continuously tracked
 		std::unordered_map<EntityId, glm::vec3> moveTargets;
 	} m_rtsSelect;
+
+	// RTS stuck detection: last known position per entity for wall collision check
+	std::unordered_map<EntityId, glm::vec3> m_rtsLastPos;
 };
 
 } // namespace agentworld
