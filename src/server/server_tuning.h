@@ -19,7 +19,7 @@ namespace agentworld::ServerTuning {
 	constexpr float unstuckNudgeHoriz    = 0.5f;  // nudge horizontally to clear the block
 
 	// Physics
-	constexpr float gravity              = 20.0f;
+	constexpr float gravity              = 32.0f; // ~3.2x real g, snappy Minecraft-like fall
 	constexpr float entityStepHeight     = 1.0f;
 
 	// Network

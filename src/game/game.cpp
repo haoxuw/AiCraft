@@ -662,7 +662,7 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_gameplay.setUIWantsCursor(m_showInventory || m_equipUI.isOpen() || m_ui.wantsMouse());
 
 	// Client-side: gather input → ActionProposals (works for local AND network)
-	float jumpVel = 8.3f; // standard jump velocity for all living entities
+	float jumpVel = 10.5f; // tuned for gravity=32: reaches ~1.7 blocks
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
