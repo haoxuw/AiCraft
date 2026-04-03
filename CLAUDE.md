@@ -2,234 +2,121 @@
 
 This file provides guidance to Claude Code when working with code in this repository.
 
-## Project Overview
+**Read `docs/PYTHON_EVERYTHING.md` before making ANY gameplay changes.**
 
-AgentWorld is a voxel game where the world is code. Players write Python to define new objects and actions, then upload them into a shared world. C++ server + C++ client, with Python hot-loading planned.
+## Mandatory Design Rules
 
-## Multiplayer Architecture
+These rules are NON-NEGOTIABLE. Every code change must respect them.
 
-AgentWorld uses a **server-authoritative** model:
-- **One server** owns world state (chunks, entities, physics, game rules)
-- **Multiple clients** connect to the server (real players or AI agents)
-- **Singleplayer** runs server + client in the same process
-- **Dedicated server** runs headless for multiplayer hosting
+### Rule 1: Python Is the Game, C++ Is the Engine
 
-### Client Types
-- **Real player client** -- keyboard/mouse input, OpenGL rendering, connects locally or over internet
-- **AI agent client** -- headless, Python-driven, connects via same network protocol as real players. Uses `observe()` to read world state and `decide()` to send actions
+**All game content and gameplay rules are defined in Python. C++ only provides
+the engine (physics, networking, rendering).** See `docs/PYTHON_EVERYTHING.md`.
 
-### Server-Authoritative World Ownership
+- Creature definitions (stats, collision, model) → Python artifacts
+- Behaviors (AI decision logic) → Python artifacts
+- Block definitions (properties, drops, sounds) → Python artifacts
+- Items (visual, stats, effects) → Python artifacts
+- Starting inventory → Python config or creature definition
+- **NEVER hardcode gameplay constants in C++.** If you add a magic number
+  (distance, speed, timer, radius), it MUST be configurable from Python.
+
+### Rule 2: The Player Is Not Special
+
+The player character (`base:player`) is just another creature. No special
+C++ classes, no separate rendering path, no hardcoded stats.
+
+- Same EntityDef as pig/chicken/dog
+- Same rendering path (model lookup from EntityDef.model)
+- Same physics (moveAndCollide with entity collision box)
+- Same behavior dispatch (BehaviorId → Python decide())
+- The ONLY difference: input source (WASD vs Python) and camera tracking
+- **NEVER add code that checks `EntityType::Player` for gameplay logic.**
+  Use property-based checks (`max_hp > 0`, `BehaviorId`, `has_inventory`).
+
+### Rule 3: Server-Authoritative World Ownership
 
 **The server is the sole owner and modifier of world state.**
 
-- Objects NEVER directly set their own position. They submit a MovementIntent
-  (where they want to go), and the server validates it through physics.
-- All world mutations (block break/place, entity spawn/damage) go through an
-  ActionProposal queue. The server validates and executes each proposal.
-- Direction/yaw is local-only (client-side, for animation). It is NOT
-  server-authoritative.
-- The player is an Entity like any other. There is no special Player class.
-  Player input produces the same ActionProposals as AI behavior code.
-- In singleplayer, server and client run in the same process. The action
-  queue is filled and drained within a single frame.
-- In multiplayer, ActionProposals are serialized as TOSERVER_* packets.
-  The server broadcasts results as TOCLIENT_* packets.
+- Entities submit `ActionProposal` (intent). Server validates and executes.
+- Client NEVER writes to `entity.position`, `entity.velocity`, `chunk.set()`
+- Camera state is client-only. Server doesn't know about cameras.
+- In multiplayer, all state goes through TCP. In singleplayer, same code
+  paths but in-process.
 
-### Key Design Choice: ALL Intelligence Runs on the Client
+### Rule 4: All Intelligence Runs on the Client
 
-**The server has ZERO intelligence. All AI, pathfinding, and decision-making
-runs on the client side.**
+**The server has ZERO intelligence.** All AI, pathfinding, and decision-making
+runs on the client side.
 
-Why: A single server may host hundreds of players and NPCs. If the server ran
-AI behaviors for every NPC, it would become the bottleneck. Instead:
+- Client runs `decide()` for entities it controls
+- Client sends `ActionProposal` with coordinates (no logic)
+- Server validates (in range? collision? breakable?) and executes
+- Python behavior code NEVER runs on the server
 
-- **Client runs behaviors** — each client executes `decide()` for the entities
-  it controls (its player character + any NPCs it owns).
-- **Client reads the world** — pathfinding, block scanning, entity targeting
-  all use the client's local world cache (received from server).
-- **Client sends intents** — the result is an ActionProposal: "move to (x,y,z)"
-  or "break block at (x,y,z)". Just coordinates, no logic.
-- **Server validates** — "can you move there?" (collision check), "can you break
-  that?" (in range? block exists? breakable?). Simple yes/no checks.
-- **Server executes** — applies physics, modifies chunks, broadcasts results.
+## Project Overview
 
-This means:
-- Server CPU scales with world size, not with NPC count.
-- Adding 100 NPCs = adding 100 headless AI clients, NOT loading the server.
-- Python behavior code NEVER runs on the server.
-- The server never imports pybind11 for behavior execution (only for artifact validation).
+AgentWorld is a voxel game where the world is code. Players write Python to
+define new objects and actions, then upload them into a shared world.
+C++ server + C++ client, with Python hot-loading.
 
-```
-Client (runs Python behaviors)          Server (dumb validator)
-┌─────────────────────────┐            ┌──────────────────────────┐
-│ behavior.decide()       │            │                          │
-│   → reads world cache   │            │ Receives ActionProposal  │
-│   → finds nearest tree  │  ───────►  │   "break block (5,3,7)" │
-│   → returns BreakBlock  │            │ Validates: in range? yes │
-│                         │            │ Executes: remove block   │
-│ behavior.decide()       │            │ Broadcasts: chunk update │
-│   → finds player nearby │  ───────►  │   "move to (10,0,15)"   │
-│   → returns Follow      │            │ Validates: path clear?   │
-│                         │            │ Executes: apply physics  │
-└─────────────────────────┘            └──────────────────────────┘
-```
+## Multiplayer Architecture
 
-### Four Camera Modes + Auto-Pilot
+- **One server** owns world state (chunks, entities, physics)
+- **Multiple clients** connect (real players or AI agents)
+- **Singleplayer** runs server + client in one process
+- **Dedicated server** runs headless for multiplayer hosting
+- ESC opens game menu overlay (Minecraft/DST style, no pause)
+- Only admin can pause the server (not regular clients)
 
-The player can cycle camera modes (V key). Each mode has different controls:
+### Camera Modes
 
-1. **First-Person (FPS)** -- Camera at player eyes, cursor captured.
-   Left-click = break block, right-click = inspect entity.
-   WASD relative to look direction.
-2. **Third-Person (TPS)** -- Camera orbits behind player, cursor captured.
-   Same controls as FPS. WASD relative to camera orbit direction (Fortnite-style).
-   Mouse Y-axis is inverted (mouse up = camera rises).
-3. **RPG** -- Isometric-style camera above player, cursor free.
-   Left-click = click-to-move. Right-click quick = inspect entity.
-   Right-click hold+drag = orbit camera. WASD = camera-relative movement.
-4. **RTS (Warcraft-like)** -- Top-down free camera, cursor free.
-   Left-click drag = box-select entities. Left-click (with units selected) = move
-   to target (grid formation, Red Alert style). Right-click quick = inspect entity.
-   Right-click hold+drag = orbit camera. WASD/edge-scroll = pan (orbit-relative).
-   Units move continuously until arrival.
-5. **Python Auto-Pilot** -- Behavior code decides. The decide() function
-   reads the world and returns ActionProposals autonomously.
+1. **FPS** — First-person, cursor captured, left=break, right=inspect
+2. **TPS** — Third-person orbit, Minecraft-style Y-axis
+3. **RPG** — Isometric, click-to-move, right-drag=orbit
+4. **RTS** — Top-down, box-select, grid formation move orders
+5. **Auto-Pilot** — Python behavior decides
 
-All modes produce identical ActionProposals. The server doesn't know or care
-which mode generated them. You can switch modes at any time. In multiplayer,
-one player can control some characters in FPS, others in RTS, others on auto-pilot.
+All modes produce identical ActionProposals. Any entity can be controlled
+any way, at any time.
 
-"Possessing" a character = switching it to first-person mode.
-An NPC with no player controlling it = auto-pilot by default.
+### Network Protocol
 
-This design ensures:
-1. Anti-cheat by design (server validates everything)
-2. All entities use identical code paths (player = pig = NPC)
-3. Python behavior code cannot cheat (it only proposes, never mutates)
-4. Multiplayer is a natural extension, not a rewrite
-5. Any character can be controlled any way, at any time
-
-### Client-Server Boundary Rules (anti-cheat)
-
-**Client code (src/game/, src/client/) MUST NEVER directly modify entity state.**
-
-Specifically, client code must not:
-- Write to `entity.position` or `entity.velocity`
-- Call `entity.setProp()` for physics-relevant properties (hp, fly_mode, cooldowns)
-- Call `chunk->set()` to modify blocks
-- Call `entity.onGround = ...`
-
-Client code CAN:
-- Read any entity property (for rendering, HUD, raycast)
-- Write to `camera.player.*` (client-side mirror, animation only)
-- Write to `entity.yaw` (local animation only, not server-authoritative)
-- Push `ActionProposal` to `world.actions` (the ONLY way to request changes)
-- Write to `entity.setProp(Prop::SelectedSlot, ...)` (UI-only, does not affect physics)
-
-All state changes go through `resolveActions()` which runs server-side.
-In singleplayer, "server-side" means the same process but a different phase
-of the game loop. In multiplayer, it means a different machine entirely.
-
-### Python-Everything Architecture
-
-**No game content should be C++ source code.** Everything is Python data that C++ loads.
-All built-in content ships as Python files in the artifact store. Players can view,
-fork, and modify ANY built-in definition from the in-game editor.
-
-- **Creatures** (pig, chicken, dog, villager) — Python defines stats, collision,
-  walk speed, default behavior, model reference. `python/agentworld/creatures/*.py`
-- **Behaviors** (wander, peck, follow, prowl, woodcutter) — Python `decide(self, world)`
-  returns actions. All behaviors are Python-only (no C++ behavior classes).
-  `artifacts/behaviors/base/*.py`
-- **Items** (jetpack, tools, food) — Python defines visual pieces, particle emitters,
-  active effects. C++ renders generically from definitions.
-- **Actions** (mine, place, attack) — Python `validate()` + `execute()` with WorldView.
-- **Blocks** (TNT, wheat, wire) — Python ObjectMeta defines properties.
-
-**Artifact store structure:**
-```
-artifacts/
-  behaviors/
-    base/          ← built-in (wander.py, peck.py, follow.py, prowl.py, woodcutter.py)
-    player/        ← player-modified (forkable, saveable)
-  creatures/
-    base/          ← built-in (pig.py, chicken.py, dog.py, villager.py)
-    player/        ← player-created creatures
-```
-
-**Data flow:** Server sets entity props (e.g., `"jetpack_active" = 1`). Client reads
-props and looks up visual definitions. Server knows nothing about rendering; client
-knows nothing about physics. They communicate through entity properties.
-
-**Artifact upload:** Client creates/edits Python code → sends to server → server
-validates (AST scan, sandbox) → registers globally → other players see it live.
-
-### Network Protocol (implemented)
-- Binary TCP with 8-byte header (type + payload length)
-- `TOSERVER_*` packets: `C_ACTION` (serialized ActionProposal), `C_SLOT` (hotbar)
-- `TOCLIENT_*` packets: `S_WELCOME` (player ID), `S_ENTITY` (position/velocity/goal),
-  `S_CHUNK` (16x16x16 block data), `S_TIME` (world time), `S_BLOCK` (single change)
-- Server validates all actions (anti-cheat by design)
-- Entity broadcasts throttled to 20 Hz (not every tick)
+- Binary TCP, 8-byte header (type + payload length)
+- `C_ACTION`, `C_SLOT`, `C_HELLO` (client → server)
+- `S_WELCOME`, `S_ENTITY`, `S_CHUNK`, `S_TIME`, `S_BLOCK`, `S_INVENTORY` (server → client)
+- Entity broadcasts at 20 Hz, physics at 60 TPS
+- Client interpolates all entities (no client-side physics)
 
 ## Build Commands
 
 ```bash
-# Configure (only needed once, or after CMakeLists.txt changes)
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
-
-# Build
 cmake --build build -j$(nproc)
 
-# Or use the Makefile shortcuts:
-make game                  # singleplayer (server + client in one process)
-make game 7890             # LAN debug: server + client on port 7890, skips menu
-make play                  # LAN debug on default port (7777)
-make server                # dedicated server (interactive world select)
-make server 7890           # dedicated server on port 7890
+make game                  # singleplayer
+make game 7890             # LAN debug (server + client, skips menu)
+make server                # dedicated server
 make client                # network client → localhost:7777
-make client 7890           # network client → localhost:7890
 make stop                  # kill all agentworld processes
-make build                 # configure + build (all three executables)
-make clean                 # remove build directory
 ```
-
-Dependencies (GLFW, GLM, GLAD, pybind11) fetched automatically via CMake FetchContent.
-
-### Web build (Emscripten → WASM + WebGL)
-```bash
-source /path/to/emsdk/emsdk_env.sh
-emcmake cmake -B build-web -DAGENTWORLD_TARGET=web
-cmake --build build-web -j$(nproc)
-# Outputs: agentworld.html, agentworld.js, agentworld.wasm, agentworld.data
-```
-See `18_WEB_CLIENT.md` for full design.
 
 ## Running
 
 ```bash
-# Singleplayer
-./build/agentworld                          # full menu experience
+./build/agentworld                              # singleplayer with menu
+./build/agentworld --skip-menu                  # skip menu, start village world
+./build/agentworld --skip-menu --demo           # auto-screenshot tour
 
-# LAN debug (quick test — server + client in one command)
-make game 7890                              # starts server bg, client joins, skips menu
-
-# Multiplayer (separate terminals)
-./build/agentworld-server --port 7777       # Terminal 1: dedicated server
-./build/agentworld-client --host 127.0.0.1 --port 7777  # Terminal 2: player 1
-./build/agentworld-client --host 127.0.0.1 --port 7777  # Terminal 3: player 2
-
-# Server world management
-./build/agentworld-server                   # interactive: pick saved world or create new
-./build/agentworld-server --world saves/my_village  # load specific world
-./build/agentworld-server --template 1 --seed 42    # create new village world
+./build/agentworld-server --port 7777           # dedicated server
+./build/agentworld-client --host 127.0.0.1 --port 7777  # network client
 ```
 
 ## Code Style
 
 - Tabs for indentation in C++ and GLSL
 - `namespace agentworld { }` wraps all code
-- String IDs use `"base:name"` format (defined in `src/shared/constants.h`)
+- String IDs use `"base:name"` format
 - Header-only for small classes, .h+.cpp split for larger ones
 
 ## Source Structure
@@ -237,20 +124,19 @@ make game 7890                              # starts server bg, client joins, sk
 ```
 src/
   main.cpp                  Singleplayer (server + client in one process)
-  main_server.cpp           Dedicated headless server (TCP, port 7777)
-  main_client.cpp           Network client (connects to server)
+  main_server.cpp           Dedicated headless server
+  main_client.cpp           Network client
 
   shared/                   Linked by BOTH server and client
     types.h                 ChunkPos, CHUNK_SIZE, BlockId
     constants.h             All string IDs (blocks, entities, items, props)
     block_registry.h        BlockDef, BlockRegistry
-    entity.h                EntityDef + Entity class (property-bag pattern)
+    entity.h                EntityDef + Entity class (property-bag)
     inventory.h             Counter-based inventory
     action.h                ActionProposal, ActionQueue
     physics.h               moveAndCollide (shared collision)
     chunk.h                 Chunk: 16x16x16 block storage
-    box_model.h             BodyPart, BoxModel, AnimState (pure data, no GL)
-    character.h             CharacterDef, CharacterManager
+    box_model.h             BodyPart, BoxModel, AnimState (pure data)
     net_protocol.h          Binary message serialization
     net_socket.h            TCP server/client socket wrapper
 
@@ -258,43 +144,41 @@ src/
     server.h/.cpp           GameServer: tick loop, client mgmt, action resolver
     world.h                 World: chunk map, block access, terrain gen
     entity_manager.h        EntityManager: spawn, physics, behavior dispatch
-    behavior.h              Behavior interface types (BehaviorAction, BehaviorWorldView, PythonBehavior)
-    behavior_store.h        Load/save behavior .py files from artifacts/
-    python_bridge.h/.cpp    pybind11 bridge (optional, needs python3-dev)
+    behavior.h              Behavior interface types
+    behavior_store.h        Load/save behavior .py files
+    python_bridge.h/.cpp    pybind11 bridge
     noise.h                 Terrain noise generator
     world_template.h        FlatWorld, VillageWorld templates
 
-  content/                  Data-driven definitions (shared)
+  content/                  C++ fallback definitions (Python overrides these)
     blocks_*.h              Block type definitions
-    entities_*.h            Entity type definitions (pig, chicken, player, item)
-    models.h                Box models (player, pig, chicken)
-    characters.h            Character skins (Blue Knight, Skeleton, etc.)
-    faces.h                 Face overlays
+    entities_*.h            Entity type definitions (player, animals, items)
+    models.h                Box models (C++ fallback when Python not loaded)
     builtin.h/.cpp          registerAllContent()
 
   client/                   Rendering + input (OpenGL, no world mutation)
     window.h/.cpp           GLFW window
     camera.h/.cpp           4 camera modes, smooth tracking
-    renderer.h/.cpp         Terrain + sky + highlight rendering
+    renderer.h/.cpp         Terrain + sky + highlight + crack overlay
     chunk_mesher.h/.cpp     Greedy meshing, ambient occlusion
-    model.h/.cpp            Box model renderer (uses shared/box_model.h)
+    model.h/.cpp            Box model renderer
     particles.h/.cpp        GPU particle system
-    text.h/.cpp             Bitmap font
-    shader.h/.cpp           GLSL compile/link
+    text.h/.cpp             Bitmap font + SDF + drawArc
+    audio.h/.cpp            OpenAL audio engine
+    ui.h/.cpp               ImGui integration (Roboto font)
     controls.h/.cpp         Keybindings, input mapping
     raycast.h               Block raycast (DDA)
     entity_raycast.h        Entity raycast (ray-AABB)
-    text_input.h            Multi-line text input (code editor)
 
   game/                     Game loop + UI (client-side)
     types.h                 GameState, MenuAction
-    game.h/.cpp             Client loop: owns GameServer + renders
-    gameplay.h              GameplayController (camera input, movement, block interaction)
-    gameplay.cpp            update() + handleCameraInput() (camera orbit, cursor state)
-    gameplay_movement.cpp   processMovement() (WASD, click-to-move, RTS box select)
-    gameplay_interaction.cpp processBlockInteraction() (raycast, break/place, RPG right-click)
-    menu.h/.cpp             Menu screens
-    hud.h/.cpp              Hotbar, health, entity tooltip
+    game.h/.cpp             Client loop: owns ServerInterface + renders
+    gameplay.h              GameplayController
+    gameplay.cpp            update() + handleCameraInput()
+    gameplay_movement.cpp   processMovement() (WASD, click-to-move, RTS)
+    gameplay_interaction.cpp processBlockInteraction() (break/place)
+    hud.h/.cpp              DST-style circular gauges, clock, debug overlay
+    imgui_menu.h            Main menu (Play, Handbook, Configurables, Settings)
     code_editor.h/.cpp      In-game Python behavior editor
 ```
 
@@ -302,21 +186,12 @@ src/
 - `shared/` depends on nothing (pure data types, no OpenGL)
 - `server/` depends on `shared/` + `content/` (no OpenGL)
 - `content/` depends on `shared/` only
-- `client/` depends on `shared/` + `content/` (never imports `server/` directly)
-- `game/` depends on `shared/` + `client/` + `server/` (only in singleplayer mode)
-- In singleplayer, `main.cpp` creates GameServer + Game in the same process
-- In multiplayer, server and client communicate through TCP via `shared/net_protocol.h`
+- `client/` depends on `shared/` + `content/` (never imports `server/`)
+- `game/` depends on `shared/` + `client/` + `server/` (singleplayer only)
 
-### Design Docs (read these for context)
-- `19_OBJECT_MODEL.md` -- **Object hierarchy, Python-everything architecture, all game concepts**
-- `21_BEHAVIOR_API.md` -- **Behavior API reference: self, world, actions, examples**
-- `00_OVERVIEW.md` -- Project vision, the three abstractions (Object/Action/World)
-- `09_CORE_LOOP.md` -- 3-phase step loop (Resolve/Render/Gather)
-- `14_ARCHITECTURE_DIAGRAM.md` -- Layer separation rules
-- `15_BLOCK_AND_ENTITY_MODEL.md` -- Block storage (compact grid + sparse state)
-- `13_MILESTONE_1.md` -- Current milestone deliverables
-- `17_RESOURCE_GUIDE.md` -- Open-source textures, sounds, models, rendering references
-- `18_WEB_CLIENT.md` -- **Web browser client: dual-target build (native + WASM/WebGL)**
+### Key Design Docs
+- `docs/PYTHON_EVERYTHING.md` — **Python-everything architecture, hardcoded audit, migration path**
+- `DEBUGGING.md` — **Iterative dev loop, --skip-menu, auto-screenshot pipeline**
 
 ## Commit Guidelines
 
