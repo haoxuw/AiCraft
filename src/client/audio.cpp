@@ -182,7 +182,13 @@ void AudioManager::registerDefaultGroups(const std::string& basePath) {
 	addGroup("item_equip",  "items", "leather");
 	addGroup("item_book",   "items", "bookFlip");
 
-	// Creature ambient sounds disabled — no good CC0 animal recordings found yet.
+	// Creature sounds — real recordings (CC0 + CC-BY 3.0 with attribution)
+	addGroup("creature_pig",     "creatures", "pig_idle");     // real pig oinks (Vinrax, CC-BY)
+	addGroup("creature_chicken", "creatures", "chicken");      // real chicken cluck (IMadeIt, CC-BY)
+	addGroup("creature_dog",     "creatures", "Dog Bark");     // real dog barks (pauliuw, CC0)
+	addGroup("creature_cat",     "creatures", "cat_");         // real cat meows (Kerzoven, CC0)
+	addGroup("creature_sheep",   "creatures", "sheep");        // sheep baa (AntumDeluge, CC0)
+	addGroup("creature_bird",    "creatures", "quail");        // gentle quail chirps (CC0)
 
 	// Water / liquid sounds
 	addGroup("water_splash",  "water", "splash");

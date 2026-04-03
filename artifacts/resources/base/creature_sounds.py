@@ -1,18 +1,17 @@
-# Creature ambient sounds — real recordings + procedural generation
+# Creature ambient sounds — real animal recordings
 #
-# Soft, friendly animal sounds for a cozy voxel game.
-# Real cat meows (Kerzoven CC0), real dog barks (pauliuw CC0),
-# procedurally generated pig oinks, chicken clucks, and villager mumbles.
+# Soft, gentle sounds for a cozy voxel game.
+# Real cat meows, real dog barks, real pig oinks, real chicken clucks.
 
 resource = {
     "id": "base:creature_sounds",
     "name": "Creature Sounds",
     "category": "audio",
-    "description": "Gentle animal and creature sounds. Real cat meows and purrs, real dog barks and whimpers, procedurally generated pig oinks, chicken clucks, and villager hmm mumbles. Each has multiple variants for natural randomization.",
-    "source": "Kerzoven (cat) + pauliuw (dog) + AntumDeluge (sheep) + procedural (pig, chicken, villager)",
-    "license": "CC0 (Creative Commons Zero) + procedural",
-    "source_url": "https://opengameart.org/content/cat-purr-meow",
-    "file_count": "25",
-    "format": "WAV + OGG",
-    "groups": "creature_pig, creature_chicken, creature_dog, creature_dog_sad, creature_cat, creature_cat_soft, creature_villager, creature_sheep",
+    "description": "Gentle animal sounds: real cat meows and purrs, short dog barks, pig idle oinks, chicken clucks, sheep baa, and quail chirps. Played quietly when near animals.",
+    "source": "Kerzoven (cat CC0) + pauliuw (dog CC0) + Vinrax (pig CC-BY) + IMadeIt (chicken CC-BY) + AntumDeluge (sheep CC0)",
+    "license": "CC0 + CC-BY 3.0 (attribution in CREDITS)",
+    "source_url": "https://opengameart.org",
+    "file_count": "17",
+    "format": "WAV + OGG + MP3",
+    "groups": "creature_pig, creature_chicken, creature_dog, creature_cat, creature_sheep, creature_bird",
 }
