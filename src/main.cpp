@@ -1,5 +1,7 @@
 #include "game/game.h"
 #include "server/python_bridge.h"
+#include <cstring>
+#include <cstdio>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -7,6 +9,19 @@
 
 int main(int argc, char** argv) {
 	setvbuf(stdout, nullptr, _IONBF, 0); // unbuffered stdout
+
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+			printf("AgentWorld — voxel game (singleplayer)\n\n"
+			       "Usage: %s [options]\n"
+			       "  --skip-menu       Start game directly (skip menu)\n"
+			       "  --host HOST       Connect to server instead of local\n"
+			       "  --port PORT       Server port (default 7777)\n"
+			       "  --demo            Run demo mode\n"
+			       "  --help, -h        Show this help\n", argv[0]);
+			return 0;
+		}
+	}
 #ifdef __EMSCRIPTEN__
 	// Web: set up canvas for keyboard input and pointer lock
 	EM_ASM({

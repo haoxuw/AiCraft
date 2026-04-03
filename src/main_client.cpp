@@ -38,6 +38,18 @@ static void crashHandler(int sig) {
 int main(int argc, char** argv) {
 	setvbuf(stdout, nullptr, _IONBF, 0); // unbuffered stdout for crash debugging
 	setvbuf(stderr, nullptr, _IONBF, 0);
+
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+			printf("AgentWorld — network client\n\n"
+			       "Usage: %s [options]\n"
+			       "  --host HOST       Server address (default 127.0.0.1)\n"
+			       "  --port PORT       Server port (default 7777)\n"
+			       "  --help, -h        Show this help\n", argv[0]);
+			return 0;
+		}
+	}
+
 	signal(SIGSEGV, crashHandler);
 	signal(SIGABRT, crashHandler);
 

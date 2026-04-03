@@ -150,7 +150,18 @@ int main(int argc, char** argv) {
 	bool interactive = true;
 
 	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
+		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+			printf("AgentWorld — dedicated server\n\n"
+			       "Usage: %s [options]\n"
+			       "  --port PORT       Listen port (default 7777)\n"
+			       "  --world PATH      Load saved world from PATH\n"
+			       "  --seed N          World seed (default 42)\n"
+			       "  --template N      World template: 0=flat, 1=village (default 1)\n"
+			       "  --survival        Survival mode (default)\n"
+			       "  --help, -h        Show this help\n", argv[0]);
+			return 0;
+		}
+		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
 			config.port = atoi(argv[++i]);
 		else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
 			config.seed = atoi(argv[++i]); interactive = false;
