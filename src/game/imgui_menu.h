@@ -129,11 +129,11 @@ public:
 				return clicked;
 			};
 
-			if (navButton("Play", Page::Play)) m_page = Page::Play;
+			if (navButton("Singleplayer", Page::Singleplayer)) m_page = Page::Singleplayer;
+			ImGui::Spacing();
+			if (navButton("Multiplayer", Page::Multiplayer)) m_page = Page::Multiplayer;
 			ImGui::Spacing();
 			if (navButton("Handbook", Page::Handbook)) m_page = Page::Handbook;
-			ImGui::Spacing();
-			if (navButton("Configurables", Page::Configurables)) m_page = Page::Configurables;
 			ImGui::Spacing();
 			if (navButton("Settings", Page::Settings)) m_page = Page::Settings;
 
@@ -165,20 +165,17 @@ public:
 			// (sidebar Quit button may have already set it)
 			MenuAction contentAction;
 			switch (m_page) {
-			case Page::Play:
-				contentAction = renderPlayContent(W - sideW);
+			case Page::Singleplayer:
+				contentAction = renderSingleplayerContent(W - sideW);
+				break;
+			case Page::Multiplayer:
+				contentAction = renderMultiplayerContent(W - sideW);
 				break;
 			case Page::Handbook:
 				renderHandbookContent(registry, W - sideW, contentH);
 				break;
-			case Page::Configurables:
-				renderConfigurablesContent(W - sideW);
-				break;
 			case Page::Settings:
 				renderSettingsContent(W - sideW);
-				break;
-			default:
-				contentAction = renderPlayContent(W - sideW);
 				break;
 			}
 			if (contentAction.type != MenuAction::None)
@@ -194,16 +191,19 @@ public:
 	bool isHandbookOpen() const { return m_page == Page::Handbook; }
 	HandbookUI& handbook() { return m_handbook; }
 	void setPage(int p) {
-		if (p == 0) m_page = Page::Play;
+		if (p == 0) m_page = Page::Singleplayer;
 		else if (p == 1) m_page = Page::Handbook;
-		else if (p == 2) m_page = Page::Configurables;
-		else if (p == 3) m_page = Page::Settings;
+		else if (p == 2) m_page = Page::Settings;
 	}
 	void setGameRunning(bool running) { m_gameRunning = running; }
 
 	// Pre-populate a server from --host/--port CLI args
 	void addServerHint(const std::string& host, int port) {
 		m_serverHints.push_back({host, port});
+		// Pre-fill direct connect field
+		snprintf(m_directHost, sizeof(m_directHost), "%s", host.c_str());
+		m_directPort = port;
+		m_page = Page::Multiplayer; // auto-switch to multiplayer tab
 	}
 	WorldManager& worldManager() { return m_worldMgr; }
 
@@ -212,8 +212,8 @@ public:
 	void setAudio(AudioManager* a) { m_audio = a; }
 
 private:
-	enum class Page { Play, Handbook, Configurables, Settings };
-	Page m_page = Page::Play;
+	enum class Page { Singleplayer, Multiplayer, Handbook, Settings };
+	Page m_page = Page::Singleplayer;
 	HandbookUI m_handbook;
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;
 	int m_selectedTemplate = 0;
@@ -228,6 +228,10 @@ private:
 	AudioManager* m_audio = nullptr;
 	int m_settingsTab = 0; // 0=Controls, 1=Audio
 	BehaviorEditorState m_behaviorEditor;
+
+	// Direct connect fields
+	char m_directHost[128] = "127.0.0.1";
+	int m_directPort = 7777;
 
 	// Server detection
 	struct DetectedServer { std::string host; int port; };
@@ -258,70 +262,28 @@ private:
 #endif
 	}
 
-	MenuAction renderPlayContent(float contentW) {
+	// ── Singleplayer: saved worlds + create new ──
+	MenuAction renderSingleplayerContent(float contentW) {
 		MenuAction action;
 
-		// Resume button — shown when a game is already running
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+		ImGui::SetWindowFontScale(1.4f);
+		ImGui::Text("Singleplayer");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		// Resume button
 		if (m_gameRunning) {
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
 			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.72f, 0.40f, 1));
 			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.55f, 0.28f, 1));
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-			if (ImGui::Button("Resume Game", ImVec2(220, 48))) {
+			if (ImGui::Button("Resume Game", ImVec2(220, 48)))
 				action.type = MenuAction::ResumeGame;
-			}
 			ImGui::PopStyleColor(4);
-			ImGui::Spacing(); ImGui::Spacing();
-			ImGui::Separator();
-			ImGui::Spacing(); ImGui::Spacing();
+			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 		}
-
-		// ── Join Server section ──
-		if (!m_probed) probeServers();
-
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
-		ImGui::SetWindowFontScale(1.2f);
-		ImGui::Text("Join Server");
-		ImGui::SetWindowFontScale(1.0f);
-		ImGui::PopStyleColor();
-		ImGui::Spacing();
-
-		{
-			float cardW = std::min(contentW - 80, 640.0f);
-			if (m_detectedServers.empty()) {
-				ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1),
-					"No servers detected on localhost");
-			}
-			for (auto& srv : m_detectedServers) {
-				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.96f, 0.94f, 1));
-				char srvId[64]; snprintf(srvId, sizeof(srvId), "##srv_%s_%d", srv.host.c_str(), srv.port);
-				ImGui::BeginChild(srvId, ImVec2(cardW, 48), true);
-				{
-					ImGui::SetCursorPos(ImVec2(16, 14));
-					ImGui::TextColored(ImVec4(0.20f, 0.55f, 0.25f, 1),
-						"%s:%d", srv.host.c_str(), srv.port);
-					ImGui::SameLine(cardW - 90);
-					ImGui::SetCursorPosY(8);
-					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-					char btnId[32]; snprintf(btnId, sizeof(btnId), "Join##%s_%d", srv.host.c_str(), srv.port);
-					if (ImGui::Button(btnId, ImVec2(70, 32))) {
-						action.type = MenuAction::JoinServer;
-						action.serverHost = srv.host;
-						action.serverPort = srv.port;
-					}
-					ImGui::PopStyleColor(2);
-				}
-				ImGui::EndChild();
-				ImGui::PopStyleColor();
-				ImGui::Spacing();
-			}
-
-			if (ImGui::SmallButton("Refresh")) {
-				m_probed = false;
-			}
-		}
-		ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
 		// ── Saved Worlds ──
 		float cardW = std::min(contentW - 80, 640.0f);
@@ -637,6 +599,108 @@ private:
 		return action;
 	}
 
+	// ── Multiplayer: server browser + direct connect ──
+	MenuAction renderMultiplayerContent(float contentW) {
+		MenuAction action;
+
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+		ImGui::SetWindowFontScale(1.4f);
+		ImGui::Text("Multiplayer");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
+			"Join a server on your local network or by address.");
+		ImGui::Spacing(); ImGui::Spacing();
+
+		// Resume button (if connected to a server)
+		if (m_gameRunning) {
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.72f, 0.40f, 1));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.55f, 0.28f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+			if (ImGui::Button("Resume Game", ImVec2(220, 48)))
+				action.type = MenuAction::ResumeGame;
+			ImGui::PopStyleColor(4);
+			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+		}
+
+		if (!m_probed) probeServers();
+
+		float cardW = std::min(contentW - 80, 640.0f);
+
+		// ── Detected Servers ──
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Servers");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		if (m_detectedServers.empty()) {
+			ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1),
+				"No servers found. Start a server or enter an address below.");
+		}
+		for (auto& srv : m_detectedServers) {
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.96f, 0.94f, 1));
+			char srvId[64]; snprintf(srvId, sizeof(srvId), "##srv_%s_%d", srv.host.c_str(), srv.port);
+			ImGui::BeginChild(srvId, ImVec2(cardW, 48), true);
+			{
+				ImGui::SetCursorPos(ImVec2(16, 14));
+				ImGui::TextColored(ImVec4(0.20f, 0.55f, 0.25f, 1),
+					"%s:%d", srv.host.c_str(), srv.port);
+				ImGui::SameLine(cardW - 90);
+				ImGui::SetCursorPosY(8);
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+				char btnId[64]; snprintf(btnId, sizeof(btnId), "Join##%s_%d", srv.host.c_str(), srv.port);
+				if (ImGui::Button(btnId, ImVec2(70, 32))) {
+					action.type = MenuAction::JoinServer;
+					action.serverHost = srv.host;
+					action.serverPort = srv.port;
+				}
+				ImGui::PopStyleColor(2);
+			}
+			ImGui::EndChild();
+			ImGui::PopStyleColor();
+			ImGui::Spacing();
+		}
+
+		if (ImGui::SmallButton("Refresh"))
+			m_probed = false;
+
+		ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+		// ── Direct Connect ──
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Direct Connect");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		ImGui::Text("Address");
+		ImGui::SetNextItemWidth(250);
+		ImGui::InputText("##directhost", m_directHost, sizeof(m_directHost));
+		ImGui::SameLine();
+		ImGui::Text(":");
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(80);
+		ImGui::InputInt("##directport", &m_directPort, 0, 0);
+
+		ImGui::Spacing();
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+		if (ImGui::Button("Connect", ImVec2(140, 36))) {
+			action.type = MenuAction::JoinServer;
+			action.serverHost = m_directHost;
+			action.serverPort = m_directPort;
+		}
+		ImGui::PopStyleColor(2);
+
+		return action;
+	}
+
 	void renderHandbookContent(const ArtifactRegistry& registry, float contentW, float contentH) {
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
 		ImGui::SetWindowFontScale(1.4f);
@@ -652,103 +716,6 @@ private:
 		ImGui::BeginChild("HandbookEmbed", ImVec2(contentW - 64, contentH - 100), false);
 		m_handbook.renderAllContent(registry);
 		ImGui::EndChild();
-	}
-
-	void renderConfigurablesContent(float contentW) {
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
-		ImGui::SetWindowFontScale(1.4f);
-		ImGui::Text("Configurables");
-		ImGui::SetWindowFontScale(1.0f);
-		ImGui::PopStyleColor();
-
-		ImGui::Spacing();
-		ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
-			"Gameplay constants applied to new worlds. Modify these to change game rules.");
-		ImGui::Spacing(); ImGui::Spacing();
-
-		auto& wgc = m_worldGenConfig;
-
-		if (ImGui::BeginTabBar("ConfigTabs")) {
-			// ── World Generation ──
-			if (ImGui::BeginTabItem("World Generation")) {
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Terrain");
-				ImGui::SliderFloat("Terrain Scale", &wgc.terrainScale, 0.3f, 3.0f, "%.2f");
-				ImGui::SliderInt("Water Level", &wgc.waterLevel, -10, 10);
-				ImGui::SliderInt("Snow Threshold", &wgc.snowThreshold, 5, 30);
-				ImGui::SliderInt("Dirt Depth", &wgc.dirtDepth, 1, 8);
-
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Trees");
-				ImGui::SliderFloat("Tree Density", &wgc.treeDensity, 0.0f, 0.15f, "%.3f");
-				ImGui::SliderInt("Trunk Height", &wgc.trunkHeightBase, 3, 15);
-				ImGui::SliderInt("Trunk Variation", &wgc.trunkHeightVariation, 0, 8);
-				ImGui::SliderInt("Leaf Radius", &wgc.leafRadius, 1, 6);
-
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Village");
-				ImGui::SliderInt("Village Clearing", &wgc.villageClearingRadius, 10, 50);
-				ImGui::SliderInt("House Height", &wgc.houseHeight, 4, 12);
-				ImGui::SliderInt("House Count", &wgc.houseCount, 0, 8);
-				ImGui::EndTabItem();
-			}
-
-			// ── Creatures ──
-			if (ImGui::BeginTabItem("Creatures")) {
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Spawn Counts");
-				for (auto& mob : wgc.mobs) {
-					std::string label = mob.typeId;
-					auto colon = label.find(':');
-					if (colon != std::string::npos) label = label.substr(colon + 1);
-					if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
-					ImGui::SliderInt(label.c_str(), &mob.count, 0, 20);
-				}
-				ImGui::SliderFloat("Spawn Radius", &wgc.mobSpawnRadius, 5.0f, 60.0f, "%.0f");
-				ImGui::EndTabItem();
-			}
-
-			// ── Gameplay Rules ──
-			if (ImGui::BeginTabItem("Gameplay Rules")) {
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
-					"These constants are currently compiled into the C++ engine.");
-				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
-					"Future: will be loaded from Python at server startup.");
-				ImGui::Spacing();
-
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Block Interaction");
-				ImGui::Text("Break/Place Distance: 8.0 blocks");
-				ImGui::Text("Break Hits (Survival): 3");
-
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Items");
-				ImGui::Text("Pickup Radius: 1.2 blocks");
-				ImGui::Text("Attraction Radius: 3.0 blocks");
-				ImGui::Text("Despawn Time: 300s");
-
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "TNT");
-				ImGui::Text("Fuse: 60 ticks (1s)");
-				ImGui::Text("Explosion Radius: 3 blocks");
-				ImGui::Text("Chain Fuse: 20 ticks");
-
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Entity AI");
-				ImGui::Text("Decision Rate: 4 Hz (0.25s)");
-				ImGui::Text("Block Scan Radius: 30 blocks");
-				ImGui::Text("Turn Speed: 4 deg/frame");
-
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Physics");
-				ImGui::Text("Gravity: 20.0");
-				ImGui::Text("Step Height: 1.0 blocks");
-				ImGui::Text("Tick Rate: 60 TPS");
-				ImGui::EndTabItem();
-			}
-
-			ImGui::EndTabBar();
-		}
 	}
 
 	void renderSettingsContent(float contentW) {
@@ -775,6 +742,37 @@ private:
 				m_settingsTab = 1;
 				ImGui::Spacing();
 				renderAudioTab(contentW);
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Gameplay")) {
+				m_settingsTab = 2;
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
+					"Server gameplay constants. Currently compiled into C++.");
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
+					"Future: loaded from Python at server startup.");
+				ImGui::Spacing();
+
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Block Interaction");
+				ImGui::Text("Break/Place Distance: 8.0 blocks");
+				ImGui::Text("Break Hits (Survival): 3");
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Items");
+				ImGui::Text("Pickup Radius: 1.2 blocks");
+				ImGui::Text("Attraction Radius: 3.0 blocks");
+				ImGui::Text("Despawn Time: 300s");
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "TNT");
+				ImGui::Text("Fuse: 60 ticks (1s)");
+				ImGui::Text("Explosion Radius: 3 blocks");
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Entity AI");
+				ImGui::Text("Decision Rate: 4 Hz");
+				ImGui::Text("Block Scan Radius: 30 blocks");
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Physics");
+				ImGui::Text("Gravity: 20.0");
+				ImGui::Text("Tick Rate: 60 TPS");
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();
