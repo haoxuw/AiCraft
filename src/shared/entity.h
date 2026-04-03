@@ -52,6 +52,7 @@ struct EntityDef {
 	int max_hp = 0;
 	float eye_height = 0.0f;     // eye position above feet (0 = use collision_box_max.y * 0.75)
 	bool has_inventory = false;   // true = allocate Inventory on spawn
+	bool playable = false;        // true = appears in character selection menu
 
 	// Default property values (template for new instances)
 	std::unordered_map<std::string, PropValue> default_props;

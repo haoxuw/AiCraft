@@ -115,6 +115,10 @@ bool Game::init(int argc, char** argv) {
 	}
 	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
 
+	// Character selection preview (uses same models + preview as Handbook)
+	m_imguiMenu.setCharacterPreview(&m_artifacts, &m_modelPreview,
+		&m_renderer.modelRenderer(), &m_models);
+
 	// Register ALL models for Handbook 3D preview
 	auto& hb = m_imguiMenu.handbook();
 	hb.setPreview(&m_modelPreview, &m_renderer.modelRenderer());

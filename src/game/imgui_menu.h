@@ -32,6 +32,8 @@
 #ifndef __EMSCRIPTEN__
 #include "shared/net_socket.h"
 #endif
+#include "shared/box_model.h"
+#include "client/model_preview.h"
 #include <imgui.h>
 #include <vector>
 #include <memory>
@@ -235,6 +237,14 @@ public:
 		m_playerName = name;
 		m_selectedCreature = creature;
 	}
+	void setCharacterPreview(ArtifactRegistry* reg, ModelPreview* preview,
+	                         ModelRenderer* renderer,
+	                         std::unordered_map<std::string, BoxModel>* models) {
+		m_charRegistry = reg;
+		m_modelPreview = preview;
+		m_modelRenderer = renderer;
+		m_charModels = models;
+	}
 	const std::string& playerName() const { return m_playerName ? *m_playerName : m_emptyStr; }
 	const std::string& selectedCreature() const { return m_selectedCreature ? *m_selectedCreature : m_emptyStr; }
 
@@ -261,6 +271,12 @@ private:
 	std::string* m_selectedCreature = nullptr;
 	std::string m_emptyStr;
 	char m_nameEditBuf[64] = {};
+
+	// Character preview
+	ArtifactRegistry* m_charRegistry = nullptr;
+	ModelPreview* m_modelPreview = nullptr;
+	ModelRenderer* m_modelRenderer = nullptr;
+	std::unordered_map<std::string, BoxModel>* m_charModels = nullptr;
 
 	// Direct connect fields
 	char m_directHost[128] = "127.0.0.1";
@@ -296,7 +312,7 @@ private:
 	}
 
 	// ── Singleplayer: saved worlds + create new ──
-	// Shared player identity UI (name + creature picker)
+	// Shared player identity UI (name + character picker from artifacts)
 	void renderPlayerIdentity(float contentW) {
 		if (!m_playerName || !m_selectedCreature) return;
 
@@ -316,43 +332,63 @@ private:
 		if (ImGui::InputText("##playername", m_nameEditBuf, sizeof(m_nameEditBuf)))
 			*m_playerName = m_nameEditBuf;
 
-		// Creature type picker — show available creatures as selectable cards
+		// Character picker — from artifacts/characters/ (Knight, Mage, Skeleton, etc.)
 		ImGui::Spacing();
-		ImGui::Text("Character Type");
+		ImGui::Text("Character");
 		ImGui::Spacing();
 
-		static const char* creatures[] = {
-			"base:player", "base:villager", "base:pig",
-			"base:chicken", "base:dog", "base:cat"
-		};
-		float cardSz = 80.0f;
-		for (int i = 0; i < 6; i++) {
-			if (i > 0) ImGui::SameLine();
-			bool selected = (*m_selectedCreature == creatures[i]);
-			std::string label = creatures[i];
-			auto colon = label.find(':');
-			if (colon != std::string::npos) label = label.substr(colon + 1);
-			if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
+		if (m_charRegistry) {
+			auto chars = m_charRegistry->byCategory("character");
+			float cardW = 110.0f;
+			int col = 0;
+			for (auto* ch : chars) {
+				if (col > 0) ImGui::SameLine();
+				bool selected = (*m_selectedCreature == ch->id);
 
-			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, selected ? 2.0f : 1.0f);
-			ImGui::PushStyleColor(ImGuiCol_Button,
-				selected ? ImVec4(0.96f, 0.65f, 0.15f, 1) : ImVec4(0.96f, 0.96f, 0.97f, 1));
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-				selected ? ImVec4(0.98f, 0.72f, 0.28f, 1) : ImVec4(0.92f, 0.93f, 0.95f, 1));
-			ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-				selected ? ImVec4(0.90f, 0.55f, 0.10f, 1) : ImVec4(0.88f, 0.89f, 0.92f, 1));
-			ImGui::PushStyleColor(ImGuiCol_Text,
-				selected ? ImVec4(1, 1, 1, 1) : ImVec4(0.25f, 0.27f, 0.30f, 1));
-			ImGui::PushStyleColor(ImGuiCol_Border,
-				selected ? ImVec4(0.90f, 0.55f, 0.10f, 1) : ImVec4(0.82f, 0.84f, 0.86f, 1));
+				ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+				ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, selected ? 2.0f : 1.0f);
+				ImGui::PushStyleColor(ImGuiCol_Button,
+					selected ? ImVec4(0.96f, 0.65f, 0.15f, 1) : ImVec4(0.96f, 0.96f, 0.97f, 1));
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+					selected ? ImVec4(0.98f, 0.72f, 0.28f, 1) : ImVec4(0.92f, 0.93f, 0.95f, 1));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+					selected ? ImVec4(0.90f, 0.55f, 0.10f, 1) : ImVec4(0.88f, 0.89f, 0.92f, 1));
+				ImGui::PushStyleColor(ImGuiCol_Text,
+					selected ? ImVec4(1, 1, 1, 1) : ImVec4(0.25f, 0.27f, 0.30f, 1));
+				ImGui::PushStyleColor(ImGuiCol_Border,
+					selected ? ImVec4(0.90f, 0.55f, 0.10f, 1) : ImVec4(0.82f, 0.84f, 0.86f, 1));
 
-			char btnId[64]; snprintf(btnId, sizeof(btnId), "%s##creature%d", label.c_str(), i);
-			if (ImGui::Button(btnId, ImVec2(cardSz, 48)))
-				*m_selectedCreature = creatures[i];
+				char btnId[64]; snprintf(btnId, sizeof(btnId), "%s##ch%d", ch->name.c_str(), col);
+				if (ImGui::Button(btnId, ImVec2(cardW, 48)))
+					*m_selectedCreature = ch->id;
 
-			ImGui::PopStyleColor(5);
-			ImGui::PopStyleVar(2);
+				// Tooltip with description and stats
+				if (ImGui::IsItemHovered() && !ch->description.empty()) {
+					ImGui::BeginTooltip();
+					ImGui::Text("%s", ch->name.c_str());
+					ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,1), "%s", ch->description.c_str());
+					ImGui::EndTooltip();
+				}
+
+				ImGui::PopStyleColor(5);
+				ImGui::PopStyleVar(2);
+				col++;
+			}
+
+			// 3D model preview of selected character
+			if (!chars.empty() && m_modelPreview && m_modelRenderer) {
+				ImGui::Spacing();
+				// Find model for selected character
+				std::string modelKey = *m_selectedCreature;
+				auto colon = modelKey.find(':');
+				if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
+				auto mit = m_charModels ? m_charModels->find(modelKey) : m_charModels->end();
+				if (mit == m_charModels->end()) mit = m_charModels->find("player");
+				if (mit != m_charModels->end()) {
+					m_modelPreview->render(*m_modelRenderer, mit->second,
+						ImGui::GetIO().DeltaTime, 160);
+				}
+			}
 		}
 
 		ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();

@@ -22,6 +22,7 @@ inline void registerPlayerEntity(EntityManager& mgr) {
 	def.max_hp = 20;
 	def.eye_height = 1.9f;    // camera eye position above feet
 	def.has_inventory = true;
+	def.playable = true;
 	def.default_props = {
 		{Prop::HP, 20},
 		{Prop::Hunger, 20.0f},

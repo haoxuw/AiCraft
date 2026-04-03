@@ -110,7 +110,7 @@ private:
 	std::string m_currentWorldPath;  // save directory for current game
 	int m_currentSeed = 42;
 	std::string m_playerName;        // display name (random default, renameable)
-	std::string m_selectedCreature = "base:player"; // creature type to spawn as
+	std::string m_selectedCreature = "base:knight"; // character from artifacts/characters/
 
 	float m_connectTimer = 0;  // timeout waiting for player entity from server
 
