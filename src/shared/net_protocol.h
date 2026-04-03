@@ -93,6 +93,7 @@ public:
 	bool readBool() { uint8_t b; read(&b, 1); return b != 0; }
 	std::string readString() {
 		uint32_t len = readU32();
+		if (m_pos + len > m_size) len = 0; // bounds check
 		std::string s((const char*)(m_data + m_pos), len);
 		m_pos += len;
 		return s;

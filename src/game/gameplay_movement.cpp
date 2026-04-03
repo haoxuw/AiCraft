@@ -242,13 +242,13 @@ void GameplayController::processMovement(float dt, GameState state,
 	}
 
 	// Apply velocity locally for client-side prediction.
+	// Don't modify onGround here — let the server set it via physics.
+	// Otherwise in LocalServer (shared entity), the client clears onGround
+	// before the server reads it, causing the server to reject the jump.
 	player.velocity.x = moveAction.desiredVel.x;
 	player.velocity.z = moveAction.desiredVel.z;
 	if (moveAction.fly) {
 		player.velocity.y = moveAction.desiredVel.y;
-	} else if (moveAction.jump && player.onGround) {
-		player.velocity.y = jumpVelocity;
-		player.onGround = false;
 	}
 
 	server.sendAction(moveAction);

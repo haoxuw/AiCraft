@@ -1391,13 +1391,21 @@ void Game::updatePaused(float dt, float aspect) {
 		m_renderer.updateChunks(srv.chunks(), m_camera, m_renderDistance);
 		glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
 		m_renderer.render(m_camera, aspect, nullptr, 0, 7, {0,0}, false);
-		// Draw entities
+		// Draw entities — same resolveModelKey as renderPlaying
 		auto& mr = m_renderer.modelRenderer();
+		auto resolveKey = [](const Entity& e) -> std::string {
+			std::string skin = e.getProp<std::string>("character_skin", "");
+			if (!skin.empty()) {
+				auto colon = skin.find(':');
+				return (colon != std::string::npos) ? skin.substr(colon + 1) : skin;
+			}
+			std::string key = e.def().model;
+			auto dot = key.rfind('.'); if (dot != std::string::npos) key = key.substr(0, dot);
+			return key;
+		};
 		srv.forEachEntity([&](Entity& e) {
 			if (e.typeId() == EntityType::ItemEntity) return;
-			std::string mk = e.def().model;
-			auto dot = mk.rfind('.'); if (dot != std::string::npos) mk = mk.substr(0, dot);
-			auto it = m_models.find(mk);
+			auto it = m_models.find(resolveKey(e));
 			if (it != m_models.end()) {
 				float spd = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
 				AnimState anim = {e.getProp<float>(Prop::WalkDistance, 0.0f), spd, m_globalTime};
@@ -1406,6 +1414,11 @@ void Game::updatePaused(float dt, float aspect) {
 		});
 		m_particles.update(dt);
 		m_particles.render(vp);
+
+		// Restore GL state before ImGui
+		glDisable(GL_BLEND);
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LESS);
 	}
 
 	// Single ImGui frame for the pause overlay

@@ -269,9 +269,11 @@ public:
 			});
 		}
 
-		// Item pickup for ALL entities with inventory (not just players)
+		// Item pickup — only player-controlled entities attract items.
+		// Animals have inventory (for loot/trading) but don't auto-pickup.
 		m_world->entities.forEach([&](Entity& e) {
 			if (!e.inventory) return;
+			if (e.typeId() != EntityType::Player) return;
 			glm::vec3 center = e.position + glm::vec3(0, 1, 0);
 			auto pickups = m_world->entities.attractItemsToward(center, 3.0f, 1.2f, dt);
 			bool inventoryChanged = false;
