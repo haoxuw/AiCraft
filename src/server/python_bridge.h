@@ -67,20 +67,24 @@ struct WorldPyConfig {
 	float villageOffsetZ         = 12.0f;
 	int   clearingRadius         = 28;
 
-	struct HouseLayout { int cx = 0, cz = 0, w = 8, d = 8; };
+	struct HouseLayout {
+		int cx = 0, cz = 0, w = 8, d = 8, stories = 1;
+		std::string wallBlock;  // "" = use village default
+		std::string roofBlock;  // "" = use village default
+	};
 	std::vector<HouseLayout> houses = {
-		{  0,   0,  9, 9},
-		{ 20,  -6,  7, 8},
-		{-18,   7,  8, 7},
-		{  7,  22,  7, 8},
-		{-14, -19,  8, 7},
+		{  0,   0, 14, 14, 2, "",          ""},
+		{ 26,  -8, 12, 10, 1, "base:wood", "base:wood"},
+		{-22,   9, 10, 12, 1, "base:wood", "base:wood"},
+		{  9,  28, 12, 10, 1, "",          ""},
+		{-20, -26, 12, 12, 2, "",          ""},
 	};
 	std::string wallBlock        = "base:cobblestone";
 	std::string roofBlock        = "base:wood";
 	std::string floorBlock       = "base:cobblestone";
 	std::string pathBlock        = "base:cobblestone";
-	int   houseHeight            = 5;
-	int   doorHeight             = 3;
+	int   storyHeight            = 6;
+	int   doorHeight             = 4;
 	int   windowRow              = 2;
 
 	// Flat world: chest offset from spawn (village world: chest inside main house)

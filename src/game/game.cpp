@@ -171,15 +171,17 @@ bool Game::init(int argc, char** argv) {
 
 	m_lastTime = std::chrono::steady_clock::now();
 
-	// --skip-menu: jump directly into a new village world (survival)
-	if (m_skipMenu && m_connectHost.empty()) {
+	// --skip-menu + --host: auto-join the server directly, no menu
+	if (m_skipMenu && !m_connectHost.empty()) {
+		printf("[Game] --skip-menu: auto-joining %s:%d\n",
+		       m_connectHost.c_str(), m_connectPort);
+		joinServer(m_connectHost, m_connectPort, GameState::SURVIVAL);
+	// --skip-menu alone: start a new local village world
+	} else if (m_skipMenu) {
 		printf("[Game] --skip-menu: starting new world directly\n");
 		enterGame(1, GameState::SURVIVAL);
-	}
-
-	// If --host was provided, pre-populate the server list but show menu
-	// (user clicks "Join" from the menu rather than auto-connecting)
-	if (!m_connectHost.empty()) {
+	// --host only: pre-populate the server list and show menu
+	} else if (!m_connectHost.empty()) {
 		printf("[Game] Server hint: %s:%d (join from menu)\n",
 		       m_connectHost.c_str(), m_connectPort);
 		m_imguiMenu.addServerHint(m_connectHost, m_connectPort);
@@ -557,7 +559,7 @@ void Game::setupAfterConnect(GameState targetState) {
 				for (auto& c : name) if (c == '_') c = ' ';
 				char buf[64];
 				snprintf(buf, sizeof(buf), "+%d %s", count, name.c_str());
-				addFloatingText(pos, buf, {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
+				addFloatingText(pos + glm::vec3(0, 1.5f, 0), buf, {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
 				if (m_serverLog) fprintf(m_serverLog, "[pickup] %s x%d at (%.0f,%.0f,%.0f)\n",
 					item.c_str(), count, pos.x, pos.y, pos.z);
 			};
@@ -580,8 +582,29 @@ void Game::setupAfterConnect(GameState targetState) {
 
 	glm::vec3 spawn = m_server->spawnPos();
 	m_camera.player.feetPos = spawn;
-	m_camera.player.yaw = -90;
-	m_camera.lookYaw = -90;
+
+	// Default: face +Z (yaw=-90); override for village worlds to face the village
+	float spawnYaw = -90.0f;
+	if (auto* ls = dynamic_cast<LocalServer*>(m_server.get())) {
+		if (ls->server()) {
+			World& w = ls->server()->world();
+			if (auto* vt = dynamic_cast<VillageWorldTemplate*>(&w.getTemplate())) {
+				auto vc = vt->villageCenter(w.seed());
+				float dx = (float)vc.x - spawn.x;
+				float dz = (float)vc.y - spawn.z;
+				float len = std::sqrt(dx*dx + dz*dz);
+				if (len > 0.001f) {
+					// Camera yaw convention: fwd = (-cos(yaw_rad), 0, -sin(yaw_rad))
+					// Solve for yaw so that fwd = (dx/len, 0, dz/len):
+					//   -cos(yaw) = dx/len, -sin(yaw) = dz/len
+					//   yaw_rad = atan2(-dz/len, -dx/len)
+					spawnYaw = std::atan2(-dz / len, -dx / len) * (180.0f / 3.14159265f);
+				}
+			}
+		}
+	}
+	m_camera.player.yaw = spawnYaw;
+	m_camera.lookYaw = spawnYaw;
 	m_camera.lookPitch = -5;
 	m_camera.resetSmoothing();
 	m_camera.rtsCenter = spawn;
@@ -709,6 +732,18 @@ void Game::updatePlaying(float dt, float aspect) {
 		}
 	}
 
+	// Block place feedback (immediate client-side sound)
+	auto& placeEvt = m_gameplay.placeEvent();
+	if (placeEvt.happened) {
+		std::string snd = "place_stone";
+		const std::string& bt = placeEvt.blockType;
+		if (bt.find("wood") != std::string::npos || bt.find("log") != std::string::npos)
+			snd = "place_wood";
+		else if (bt.find("dirt") != std::string::npos || bt.find("sand") != std::string::npos)
+			snd = "place_soft";
+		m_audio.play(snd, placeEvt.pos, 0.5f);
+	}
+
 	// Per-hit mining feedback (particles + sound on each survival swing)
 	auto& hitEvt = m_gameplay.hitEvent();
 	if (hitEvt.happened) {
@@ -818,11 +853,137 @@ void Game::renderPlaying(float dt, float aspect) {
 		return key;
 	};
 
+	// Build a model with equipped items attached at hand positions.
+	// Items swing with the arm they're attached to.
+	auto buildEquippedModel = [&](const Entity& e, const BoxModel& baseModel) -> BoxModel {
+		BoxModel model = baseModel;
+		if (!e.inventory) return model;
+		const float PI = 3.14159265f;
+		float s = model.modelScale;
+
+		// Arm attachment points — derived from typical humanoid proportions.
+		// Left hand: negative X, swings with PI phase (opposite to right arm)
+		// Right hand: positive X, swings with 0 phase
+		struct HandSlot {
+			WearSlot slot;
+			glm::vec3 handOffset;   // position of the hand (where item center goes)
+			glm::vec3 pivot;        // arm rotation pivot
+			float phase;            // arm swing phase
+		};
+		float armAmp = 50.0f; // match arm amplitude
+		HandSlot hands[] = {
+			{WearSlot::LeftHand,  {-0.42f, 0.50f, -0.16f}, {-0.37f, 1.40f, 0}, PI},
+			{WearSlot::RightHand, { 0.42f, 0.50f, -0.16f}, { 0.37f, 1.40f, 0}, 0},
+		};
+
+		for (auto& h : hands) {
+			const std::string& itemId = e.inventory->equipped(h.slot);
+			if (itemId.empty()) continue;
+
+			// Look up item model from artifact's model field
+			std::string modelKey;
+			const ArtifactEntry* art = m_artifacts.findById(itemId);
+			if (art) {
+				auto it = art->fields.find("model");
+				if (it != art->fields.end()) modelKey = it->second;
+			}
+			// Fallback: strip "base:" prefix
+			if (modelKey.empty()) {
+				modelKey = itemId;
+				auto colon = modelKey.find(':');
+				if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
+			}
+
+			auto mit = m_models.find(modelKey);
+			if (mit == m_models.end()) continue;
+
+			// Append each part of the item model, offset to hand position
+			for (auto& part : mit->second.parts) {
+				BodyPart bp;
+				bp.offset = h.handOffset + part.offset * 0.9f; // slight scale
+				bp.halfSize = part.halfSize * 0.9f;
+				bp.color = part.color;
+				bp.pivot = h.pivot;
+				bp.swingAxis = {1, 0, 0};
+				bp.swingAmplitude = armAmp;
+				bp.swingPhase = h.phase;
+				bp.swingSpeed = 1.0f;
+				model.parts.push_back(bp);
+			}
+		}
+
+		// Back slot (jetpack, cape, etc.)
+		{
+			const std::string& backItem = e.inventory->equipped(WearSlot::Back);
+			if (!backItem.empty()) {
+				std::string modelKey;
+				const ArtifactEntry* art = m_artifacts.findById(backItem);
+				if (art) {
+					auto it = art->fields.find("model");
+					if (it != art->fields.end()) modelKey = it->second;
+				}
+				if (modelKey.empty()) {
+					modelKey = backItem;
+					auto colon = modelKey.find(':');
+					if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
+				}
+				auto mit = m_models.find(modelKey);
+				if (mit != m_models.end()) {
+					for (auto& part : mit->second.parts) {
+						BodyPart bp;
+						bp.offset = glm::vec3(0, 1.05f, 0.20f) + part.offset * 0.8f;
+						bp.halfSize = part.halfSize * 0.8f;
+						bp.color = part.color;
+						model.parts.push_back(bp);
+					}
+				}
+			}
+		}
+
+		// Head slot (helmet)
+		{
+			const std::string& headItem = e.inventory->equipped(WearSlot::Helmet);
+			if (!headItem.empty()) {
+				std::string modelKey;
+				const ArtifactEntry* art = m_artifacts.findById(headItem);
+				if (art) {
+					auto it = art->fields.find("model");
+					if (it != art->fields.end()) modelKey = it->second;
+				}
+				if (modelKey.empty()) {
+					modelKey = headItem;
+					auto colon = modelKey.find(':');
+					if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
+				}
+				auto mit = m_models.find(modelKey);
+				if (mit != m_models.end()) {
+					for (auto& part : mit->second.parts) {
+						BodyPart bp;
+						bp.offset = glm::vec3(0, 2.02f, 0) + part.offset * 0.7f;
+						bp.halfSize = part.halfSize * 0.7f;
+						bp.color = part.color;
+						// Head bob: same as head part
+						bp.pivot = {0, 1.5f, 0};
+						bp.swingAxis = {1, 0, 0};
+						bp.swingAmplitude = 5.0f;
+						bp.swingPhase = 0;
+						bp.swingSpeed = 2.0f;
+						model.parts.push_back(bp);
+					}
+				}
+			}
+		}
+
+		return model;
+	};
+
 	// Draw local player — skip in first-person (camera at eyes)
 	if (m_camera.mode != CameraMode::FirstPerson) {
 		auto pit = m_models.find(resolveModelKey(*pe));
-		if (pit != m_models.end())
-			mr.draw(pit->second, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
+		if (pit != m_models.end()) {
+			BoxModel equipped = buildEquippedModel(*pe, pit->second);
+			mr.draw(equipped, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
+		}
 	}
 
 	// Mob models — all entities except the locally-possessed one (drawn above)
@@ -836,7 +997,9 @@ void Game::renderPlaying(float dt, float aspect) {
 		std::string modelKey = resolveModelKey(e);
 		auto mit = m_models.find(modelKey);
 		if (mit != m_models.end()) {
-			mr.draw(mit->second, vp, e.position, e.yaw, mobAnim);
+			BoxModel mobModel = (e.inventory && e.def().isLiving())
+				? buildEquippedModel(e, mit->second) : mit->second;
+			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim);
 		} else if (!modelKey.empty() && e.typeId() != EntityType::ItemEntity) {
 			// Warn once per model key
 			static std::unordered_set<std::string> warned;
@@ -892,6 +1055,23 @@ void Game::renderPlaying(float dt, float aspect) {
 		}
 
 		mr.draw(bulb, vp, bulbPos, m_camera.lookYaw, {}); // billboard: face camera
+
+		// Goal bubble: floating text when goal changes
+		if (m_showGoalBubbles && !e.goalText.empty()) {
+			// Track goal changes per entity
+			static std::unordered_map<EntityId, std::string> lastGoals;
+			auto& prev = lastGoals[e.id()];
+			if (prev != e.goalText) {
+				prev = e.goalText;
+				// Spawn a floating text bubble above the entity
+				glm::vec4 goalColor = e.hasError
+					? glm::vec4(1.0f, 0.35f, 0.30f, 1.0f)  // red for errors
+					: glm::vec4(0.85f, 0.92f, 0.60f, 1.0f); // soft green-gold
+				addFloatingText(
+					e.position + glm::vec3(0, entityTop + 0.5f, 0),
+					e.goalText, goalColor, 1.2f);
+			}
+		}
 	});
 
 	// Particles
@@ -1483,6 +1663,7 @@ void Game::updatePaused(float dt, float aspect) {
 		ImGui::SliderInt("Render Distance", &m_renderDistance, 4, 16);
 		if (ImGui::Checkbox("VSync", &m_vsync))
 			glfwSwapInterval(m_vsync ? 1 : 0);
+		ImGui::Checkbox("Show AI Goal Bubbles", &m_showGoalBubbles);
 		ImGui::Spacing();
 		float master = m_audio.masterVolume();
 		if (ImGui::SliderFloat("Master Volume", &master, 0.0f, 1.0f, "%.0f%%"))

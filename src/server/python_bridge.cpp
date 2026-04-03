@@ -440,19 +440,33 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			out.roofBlock       = getStr(v,   "roof_block",      out.roofBlock);
 			out.floorBlock      = getStr(v,   "floor_block",     out.floorBlock);
 			out.pathBlock       = getStr(v,   "path_block",      out.pathBlock);
-			out.houseHeight     = getInt(v,   "house_height",    out.houseHeight);
+			out.storyHeight     = getInt(v,   "story_height",    out.storyHeight);
 			out.doorHeight      = getInt(v,   "door_height",     out.doorHeight);
 			out.windowRow       = getInt(v,   "window_row",      out.windowRow);
 
 			if (v.contains("houses")) {
 				out.houses.clear();
 				for (auto& h : v["houses"].cast<py::list>()) {
-					auto hl = h.cast<py::list>();
 					WorldPyConfig::HouseLayout layout;
-					layout.cx = hl[0].cast<int>();
-					layout.cz = hl[1].cast<int>();
-					layout.w  = hl[2].cast<int>();
-					layout.d  = hl[3].cast<int>();
+					if (py::isinstance<py::dict>(h)) {
+						// Dict format: {"cx":0,"cz":0,"w":14,"d":14,"stories":2,"wall":"base:wood"}
+						py::dict hd = h.cast<py::dict>();
+						layout.cx      = hd["cx"].cast<int>();
+						layout.cz      = hd["cz"].cast<int>();
+						layout.w       = hd["w"].cast<int>();
+						layout.d       = hd["d"].cast<int>();
+						layout.stories = hd.contains("stories") ? hd["stories"].cast<int>() : 1;
+						if (hd.contains("wall")) layout.wallBlock = hd["wall"].cast<std::string>();
+						if (hd.contains("roof")) layout.roofBlock = hd["roof"].cast<std::string>();
+					} else {
+						// List format: [cx, cz, w, d, stories(optional)]
+						auto hl = h.cast<py::list>();
+						layout.cx      = hl[0].cast<int>();
+						layout.cz      = hl[1].cast<int>();
+						layout.w       = hl[2].cast<int>();
+						layout.d       = hl[3].cast<int>();
+						layout.stories = (py::len(hl) >= 5) ? hl[4].cast<int>() : 1;
+					}
 					out.houses.push_back(layout);
 				}
 			}

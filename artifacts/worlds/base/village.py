@@ -75,15 +75,16 @@ world = {
     "village": {
         "offset_x":        40,
         "offset_z":        12,
-        "clearing_radius": 28,    # radius of tree-free clearing around center
+        "clearing_radius": 40,    # enlarged to fit bigger houses
 
-        # [offset_x, offset_z, width, depth]  —  all relative to village center
+        # Dict fields: cx, cz, w, d (required); stories (default 1);
+        #              wall, roof (optional — overrides village default for this house)
         "houses": [
-            [  0,   0,   9, 9],   # main house (chest inside)
-            [ 20,  -6,   7, 8],
-            [-18,   7,   8, 7],
-            [  7,  22,   7, 8],
-            [-14, -19,   8, 7],
+            {"cx":   0, "cz":   0, "w": 14, "d": 14, "stories": 2},
+            {"cx":  26, "cz":  -8, "w": 12, "d": 10, "wall": "base:wood", "roof": "base:wood"},
+            {"cx": -22, "cz":   9, "w": 10, "d": 12, "wall": "base:wood", "roof": "base:wood"},
+            {"cx":   9, "cz":  28, "w": 12, "d": 10},
+            {"cx": -20, "cz": -26, "w": 12, "d": 12, "stories": 2},
         ],
 
         "wall_block":  "base:cobblestone",
@@ -91,9 +92,9 @@ world = {
         "floor_block": "base:cobblestone",
         "path_block":  "base:cobblestone",
 
-        "house_height": 5,   # wall height in blocks
-        "door_height":  3,   # door opening height
-        "window_row":   2,   # Y-offset within wall for windows
+        "story_height": 6,   # wall height per story (was "house_height")
+        "door_height":  4,   # door opening height (player is 3 blocks tall)
+        "window_row":   2,   # Y-offset within story for windows
     },
 
     # ── Mobs ───────────────────────────────────────────────────

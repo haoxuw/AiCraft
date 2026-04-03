@@ -225,6 +225,11 @@ int main(int argc, char** argv) {
 	       config.port, config.seed, config.templateIndex);
 	printf("[Server] Press Ctrl+C to save and stop.\n");
 
+	// Signal readiness for scripted launchers (e.g. make game)
+	char readyPath[64];
+	snprintf(readyPath, sizeof(readyPath), "/tmp/agentworld_ready_%d", config.port);
+	if (FILE* f = fopen(readyPath, "w")) fclose(f);
+
 	std::unordered_map<agentworld::ClientId, ConnectedClient> clients;
 	agentworld::ClientId nextClientId = 1;
 

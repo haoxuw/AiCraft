@@ -1,3 +1,4 @@
+SHELL := /bin/bash
 BUILD_DIR := build
 BUILD_WEB := build-web
 BUILD_TYPE := Debug
@@ -6,64 +7,32 @@ PORT := 7777
 WEB_PORT := 8080
 EMSDK := $(HOME)/emsdk
 
-# If a port number is passed as an extra arg (e.g., make game 7890),
-# treat it as PORT and suppress "no rule" error
-ifneq ($(filter-out game play server client build configure clean stop web web-build web-configure web-clean,$(MAKECMDGOALS)),)
-  PORT := $(filter-out game play server client build configure clean stop web web-build web-configure web-clean,$(MAKECMDGOALS))
-endif
-
-# Suppress "no rule to make target '7890'" error
-%:
-	@:
-
 .PHONY: game play build configure clean server client stop test_e2e web web-build web-configure web-clean
 
 # ── Native ─────────────────────────────────────────────────
 #
 # Quick reference:
-#   make game             Singleplayer (server + client in one process)
-#   make game 7890        LAN debug: server + client on port 7890, skip menu
-#   make play             LAN debug on default port (7777)
+#   make game             New village world on a random port (singleplayer)
+#   make play             Same, but on fixed port 7777 (easy for a second client to join)
 #   make server           Dedicated server (interactive world select)
-#   make server 7890      Dedicated server on port 7890
+#   make server PORT=N    Dedicated server on port N
 #   make client           Network client → localhost:7777
-#   make client 7890      Network client → localhost:7890
+#   make client PORT=N    Network client → localhost:N
 #   make stop             Kill all agentworld processes
 #
 # Multiplayer (separate terminals):
-#   Terminal 1: make server 7777
-#   Terminal 2: make client 7777
-#   Terminal 3: make client 7777   (second player)
+#   Terminal 1: make play
+#   Terminal 2: make client
+#   Terminal 3: make client   (second player)
 #
 
-# Singleplayer or LAN debug
-# - make game      → singleplayer with menu
-# - make game 7890 → server on 7890 + client auto-joins, skips menu
+# Singleplayer: new village world on a random port, server + client, auto-cleanup
 game: build
-ifeq ($(PORT),7777)
-	@-pkill -x "agentworld" 2>/dev/null; sleep 0.5
-	./$(BUILD_DIR)/agentworld
-else
-	@-pkill -x "agentworld-server" 2>/dev/null; sleep 0.3
-	@echo "[make] LAN debug: server on port $(PORT)..."
-	@./$(BUILD_DIR)/agentworld-server --port $(PORT) --template 1 --seed 42 &
-	@sleep 1
-	@echo "[make] Client → 127.0.0.1:$(PORT)..."
-	./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $(PORT)
-	@echo "[make] Stopping server..."
-	@-pkill -x "agentworld-server" 2>/dev/null
-endif
+	@P=$$((7800 + $$RANDOM % 100)); rm -f /tmp/agentworld_ready_$$P; ./$(BUILD_DIR)/agentworld-server --port $$P --template 1 & SERVER=$$! && until [ -f /tmp/agentworld_ready_$$P ]; do sleep 0.05; done && rm -f /tmp/agentworld_ready_$$P && ./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $$P --skip-menu; kill $$SERVER 2>/dev/null
 
-# LAN debug on default port
+# Same as game but on fixed port 7777 — useful when a second client needs to join
 play: build
-	@-pkill -x "agentworld-server" 2>/dev/null; sleep 0.3
-	@echo "[make] Starting server on port $(PORT)..."
-	@./$(BUILD_DIR)/agentworld-server --port $(PORT) --template 1 --seed 42 &
-	@sleep 1
-	@echo "[make] Client → 127.0.0.1:$(PORT)..."
-	./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $(PORT)
-	@echo "[make] Stopping server..."
-	@-pkill -x "agentworld-server" 2>/dev/null
+	@rm -f /tmp/agentworld_ready_$(PORT); ./$(BUILD_DIR)/agentworld-server --port $(PORT) --template 1 & SERVER=$$! && until [ -f /tmp/agentworld_ready_$(PORT) ]; do sleep 0.05; done && rm -f /tmp/agentworld_ready_$(PORT) && ./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $(PORT) --skip-menu; kill $$SERVER 2>/dev/null
 
 # Dedicated server
 server: build
