@@ -243,6 +243,20 @@ void Game::shutdown() {
 	m_window.shutdown();
 }
 
+void Game::addFloatingText(glm::vec3 pos, const std::string& text,
+                           glm::vec4 color, float scale) {
+	FloatingText ft;
+	ft.pos = pos + glm::vec3(0, 0.6f, 0);
+	ft.velY = 3.0f;
+	ft.offsetX = ((rand() % 100) / 100.0f - 0.5f) * 0.4f;
+	ft.text = text;
+	ft.color = color;
+	ft.life = ft.maxLife = 1.6f;
+	ft.baseScale = scale;
+	m_floatingTexts.push_back(ft);
+	if (m_floatingTexts.size() > 40) m_floatingTexts.pop_front();
+}
+
 // ============================================================
 // Main loop
 // ============================================================
@@ -329,6 +343,24 @@ void Game::handleGlobalInput() {
 		printf("[Audio] Effects %s (Ctrl+N)\n", m_audio.effectsMuted() ? "OFF" : "ON");
 	}
 	prevN = nKey;
+
+	// Ctrl+> (Ctrl+Shift+.): skip track and disable it
+	static bool prevDot = false;
+	bool dotKey = glfwGetKey(m_window.handle(), GLFW_KEY_PERIOD) == GLFW_PRESS;
+	bool shift = glfwGetKey(m_window.handle(), GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+	             glfwGetKey(m_window.handle(), GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+	if (dotKey && !prevDot && ctrl && shift && m_audio.musicPlaying()) {
+		m_audio.skipAndDisable();
+	}
+	prevDot = dotKey;
+
+	// Ctrl+< (Ctrl+Shift+,): previous track
+	static bool prevComma = false;
+	bool commaKey = glfwGetKey(m_window.handle(), GLFW_KEY_COMMA) == GLFW_PRESS;
+	if (commaKey && !prevComma && ctrl && shift && m_audio.musicPlaying()) {
+		m_audio.prevTrack();
+	}
+	prevComma = commaKey;
 
 	if (m_controls.pressed(Action::ToggleInventory)) {
 		m_showInventory = !m_showInventory;
@@ -535,6 +567,26 @@ void Game::setupAfterConnect(GameState targetState) {
 		}
 	);
 
+	// Floating text callbacks (item pickup + block break names)
+	if (auto* local = dynamic_cast<LocalServer*>(m_server.get())) {
+		if (local->server()) {
+			auto& cb = local->server()->callbacks();
+			cb.onPickupText = [this](glm::vec3 pos, const std::string& item, int count) {
+				std::string name = item;
+				if (name.size() > 5 && name.substr(0,5) == "base:") name = name.substr(5);
+				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
+				for (auto& c : name) if (c == '_') c = ' ';
+				char buf[64];
+				snprintf(buf, sizeof(buf), "+%d %s", count, name.c_str());
+				addFloatingText(pos, buf, {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
+			};
+			cb.onBreakText = [this](glm::vec3 pos, const std::string& blockName) {
+				addFloatingText(pos + glm::vec3(0, 0.5f, 0), blockName,
+				                {0.85f, 0.85f, 0.85f, 0.9f}, 1.4f);
+			};
+		}
+	}
+
 	m_state = targetState;
 	glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	m_camera.mode = CameraMode::FirstPerson;
@@ -718,6 +770,12 @@ void Game::renderPlaying(float dt, float aspect) {
 	if (m_gameplay.hasMoveTarget()) {
 		glm::ivec3 targetBlock = glm::ivec3(glm::floor(m_gameplay.moveTarget() - glm::vec3(0, 1, 0)));
 		m_renderer.renderMoveTarget(m_camera, aspect, targetBlock);
+	}
+
+	// Block break progress overlay (survival multi-hit)
+	if (m_gameplay.isBreaking()) {
+		m_renderer.renderBreakProgress(m_camera, aspect,
+			m_gameplay.breakTarget(), m_gameplay.breakProgress());
 	}
 
 	// 3D models
@@ -915,6 +973,45 @@ void Game::renderPlaying(float dt, float aspect) {
 		playerHP, pe->def().max_hp, playerHunger
 	};
 	m_hud.render(ctx, m_text, m_renderer.highlightShader());
+
+	// Floating text (Minecraft Dungeons style — damage numbers, pickup names)
+	{
+		glm::mat4 ftVP = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
+		for (auto it = m_floatingTexts.begin(); it != m_floatingTexts.end(); ) {
+			auto& ft = *it;
+			ft.life -= dt;
+			ft.pos.y += ft.velY * dt;
+			ft.velY *= 0.96f; // decelerate
+			if (ft.life <= 0) { it = m_floatingTexts.erase(it); continue; }
+
+			glm::vec4 clip = ftVP * glm::vec4(ft.pos, 1.0f);
+			if (clip.w <= 0.01f) { ++it; continue; }
+			float ndcX = clip.x / clip.w;
+			float ndcY = clip.y / clip.w;
+
+			// Minecraft Dungeons scale: pop in 1.5x, settle to 1.0x, shrink out
+			float t = 1.0f - ft.life / ft.maxLife;
+			float s;
+			if (t < 0.12f)
+				s = ft.baseScale * (1.0f + 0.6f * (1.0f - t / 0.12f)); // pop in
+			else
+				s = ft.baseScale * (1.0f - 0.2f * (t - 0.12f));        // gentle shrink
+
+			// Fade out in last 35%
+			float alpha = ft.life < ft.maxLife * 0.35f
+				? ft.life / (ft.maxLife * 0.35f) : 1.0f;
+			glm::vec4 col = ft.color;
+			col.a *= alpha;
+
+			float charW = 0.018f * s;
+			float tw = ft.text.size() * charW;
+			float tx = ndcX + ft.offsetX - tw * 0.5f;
+
+			// Draw with title mode (outline + glow) for cool pop effect
+			m_text.drawTitle(ft.text, tx, ndcY, s, col, aspect);
+			++it;
+		}
+	}
 
 	// ImGui overlays (equipment, FPS)
 	m_ui.beginFrame();

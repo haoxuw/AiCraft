@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 /**
  * WorldGenConfig — all world generation parameters in one struct.
@@ -49,6 +50,13 @@ struct WorldGenConfig {
 		{"base:villager", 2},
 	};
 	float mobSpawnRadius       = 30.0f;
+
+	// Per-creature behavior overrides (typeId → behaviorId)
+	// "custom:xxx" means a custom Python behavior was generated.
+	std::unordered_map<std::string, std::string> behaviorOverrides;
+
+	// Per-creature starting items (typeId → [(itemId, count), ...])
+	std::unordered_map<std::string, std::vector<std::pair<std::string, int>>> startingItems;
 };
 
 } // namespace agentworld

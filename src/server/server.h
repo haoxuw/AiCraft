@@ -40,6 +40,9 @@ struct ServerCallbacks {
 	std::function<void(glm::ivec3 pos, BlockId bid)> onBlockChange;     // block placed/broken
 	std::function<void(EntityId id)> onEntityRemove;                     // entity despawned
 	std::function<void(EntityId id, const Inventory&)> onInventoryChange; // inventory updated
+	// Floating text triggers (client-only HUD effects)
+	std::function<void(glm::vec3 pos, const std::string& name, int count)> onPickupText;
+	std::function<void(glm::vec3 pos, const std::string& blockName)> onBreakText;
 };
 
 struct ServerConfig {
@@ -113,7 +116,25 @@ public:
 				float r = 8.0f + (float)m * 3.0f;
 				float emx = sx + std::cos(angle) * r;
 				float emz = sz + std::sin(angle) * r;
-				m_world->entities.spawn(typeId, {emx, safeSpawnHeight(emx, emz), emz});
+
+				// Apply behavior override if configured
+				std::unordered_map<std::string, PropValue> extraProps;
+				auto bIt = wgc.behaviorOverrides.find(typeId);
+				if (bIt != wgc.behaviorOverrides.end())
+					extraProps[Prop::BehaviorId] = bIt->second;
+
+				EntityId eid = m_world->entities.spawn(typeId,
+					{emx, safeSpawnHeight(emx, emz), emz}, extraProps);
+
+				// Give starting items if configured
+				auto iIt = wgc.startingItems.find(typeId);
+				if (iIt != wgc.startingItems.end()) {
+					Entity* e = m_world->entities.get(eid);
+					if (e && e->inventory) {
+						for (auto& [itemId, cnt] : iIt->second)
+							e->inventory->add(itemId, cnt);
+					}
+				}
 			}
 		};
 
@@ -194,6 +215,7 @@ public:
 
 	// Set callbacks for visual effects (client provides these)
 	void setCallbacks(ServerCallbacks cb) { m_callbacks = cb; }
+	ServerCallbacks& callbacks() { return m_callbacks; }
 
 	// Main server tick
 	void tick(float dt) {
@@ -254,6 +276,8 @@ public:
 				e.inventory->add(itemType, count);
 				if (m_callbacks.onItemPickup)
 					m_callbacks.onItemPickup(item->position, {0.8f, 0.9f, 1.0f});
+				if (m_callbacks.onPickupText)
+					m_callbacks.onPickupText(item->position, itemType, count);
 				item->removed = true;
 				inventoryChanged = true;
 			}

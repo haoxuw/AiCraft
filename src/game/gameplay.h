@@ -67,6 +67,19 @@ private:
 	float m_breakCD = 0;
 	bool m_uiWantsCursor = false;
 
+	// --- Block breaking progress (survival = 3 hits) ---
+public:
+	bool isBreaking() const { return m_breaking.active; }
+	glm::ivec3 breakTarget() const { return m_breaking.target; }
+	float breakProgress() const { return m_breaking.active ? (float)m_breaking.hits / 3.0f : 0; }
+private:
+	struct BreakState {
+		glm::ivec3 target = {0,0,0};
+		int hits = 0;
+		float timer = 0;      // decays → reset if idle too long
+		bool active = false;
+	} m_breaking;
+
 	// --- Right-click state (RPG/RTS: drag → orbit, quick click → action) ---
 
 	struct RightClick {

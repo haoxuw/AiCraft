@@ -29,6 +29,7 @@
 #include "client/controls.h"
 #include "client/audio.h"
 #include "shared/character.h"
+#include "game/behavior_editor.h"
 #ifndef __EMSCRIPTEN__
 #include "shared/net_socket.h"
 #endif
@@ -36,6 +37,8 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <filesystem>
+#include <fstream>
 
 namespace agentworld {
 
@@ -211,6 +214,7 @@ private:
 	AudioManager* m_audio = nullptr;
 	CharacterManager* m_characters = nullptr;
 	int m_settingsTab = 0; // 0=Controls, 1=Audio
+	BehaviorEditorState m_behaviorEditor;
 
 	// Server detection
 	struct DetectedServer { std::string host; int port; };
@@ -488,6 +492,152 @@ private:
 				ImGui::Unindent(16);
 			}
 
+			// ── Creature Behaviors (collapsed by default) ──
+			ImGui::Spacing();
+			if (ImGui::CollapsingHeader("Creature Behaviors")) {
+				ImGui::Indent(16);
+
+				auto& mobs = m_worldGenConfig.mobs;
+				auto& be = m_behaviorEditor;
+
+				// Ensure selection arrays match mob count + characters
+				if ((int)be.creatureSelected.size() != (int)mobs.size())
+					be.creatureSelected.resize(mobs.size(), false);
+				int charCount = m_characters ? m_characters->count() : 0;
+				if ((int)be.characterSelected.size() != charCount)
+					be.characterSelected.resize(charCount, false);
+
+				// Multi-select creature types
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Select creatures & characters:");
+				ImGui::Spacing();
+				for (int i = 0; i < (int)mobs.size(); i++) {
+					if (i > 0) ImGui::SameLine();
+					std::string label = mobs[i].typeId;
+					auto colon = label.find(':');
+					if (colon != std::string::npos) label = label.substr(colon + 1);
+					if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
+					char cbId[64]; snprintf(cbId, sizeof(cbId), "%s##mob%d", label.c_str(), i);
+					bool sel = be.creatureSelected[i];
+					if (ImGui::Checkbox(cbId, &sel)) be.creatureSelected[i] = sel;
+				}
+				for (int i = 0; i < charCount; i++) {
+					ImGui::SameLine();
+					char cbId[64]; snprintf(cbId, sizeof(cbId), "%s##ch%d",
+						m_characters->get(i).name.c_str(), i);
+					bool sel = be.characterSelected[i];
+					if (ImGui::Checkbox(cbId, &sel)) be.characterSelected[i] = sel;
+				}
+
+				bool anySelected = false;
+				for (auto b : be.creatureSelected) if (b) anySelected = true;
+				for (auto b : be.characterSelected) if (b) anySelected = true;
+
+				if (anySelected) {
+					ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+					// ── Behavior expression editor ──
+					ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Behavior for selected:");
+					ImGui::Spacing();
+
+					ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.96f, 0.96f, 0.97f, 1));
+					ImGui::BeginChild("##behaviorTree", ImVec2(0, 0), true,
+						ImGuiWindowFlags_AlwaysAutoResize);
+					int idCounter = 0;
+					renderExprEditor(be.sharedBehavior, 0, idCounter);
+					ImGui::EndChild();
+					ImGui::PopStyleColor();
+					ImGui::Spacing();
+
+					// Apply + preview
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+					if (ImGui::Button("Apply to Selected", ImVec2(160, 30))) {
+						std::string pyCode = compileBehavior(be.sharedBehavior);
+						be.previewCode = pyCode;
+
+						// Save custom behavior as a Python file
+						std::string behaviorName = "custom_" + std::to_string(
+							std::hash<std::string>{}(pyCode) & 0xFFFFFF);
+						{
+							namespace fs = std::filesystem;
+							fs::create_directories("artifacts/behaviors/player");
+							std::ofstream f("artifacts/behaviors/player/" + behaviorName + ".py");
+							if (f.is_open()) f << pyCode;
+						}
+
+						// Store overrides into WorldGenConfig
+						for (int i = 0; i < (int)mobs.size(); i++) {
+							if (!be.creatureSelected[i]) continue;
+							m_worldGenConfig.behaviorOverrides[mobs[i].typeId] = behaviorName;
+							if (!be.sharedItems.empty())
+								m_worldGenConfig.startingItems[mobs[i].typeId] = be.sharedItems;
+							auto& cfg = be.configs[mobs[i].typeId];
+							cfg.typeId = mobs[i].typeId;
+							cfg.behaviorId = behaviorName;
+							cfg.customBehavior = be.sharedBehavior;
+							cfg.startItems = be.sharedItems;
+						}
+						for (int i = 0; i < charCount; i++) {
+							if (!be.characterSelected[i]) continue;
+							// Characters use the same behavior system
+							auto& cfg = be.configs["char:" + std::to_string(i)];
+							cfg.behaviorId = behaviorName;
+							cfg.customBehavior = be.sharedBehavior;
+							cfg.startItems = be.sharedItems;
+						}
+					}
+					ImGui::PopStyleColor(2);
+
+					ImGui::SameLine();
+					ImGui::Checkbox("Show Python", &be.showPreview);
+
+					if (be.showPreview) {
+						// Live preview — always regenerate
+						std::string live = compileBehavior(be.sharedBehavior);
+						ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1));
+						ImGui::BeginChild("##pypreview", ImVec2(0, 180), true);
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.9f, 0.7f, 1));
+						ImGui::TextUnformatted(live.c_str());
+						ImGui::PopStyleColor();
+						ImGui::EndChild();
+						ImGui::PopStyleColor();
+					}
+
+					ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+					// ── Starting items ──
+					ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Starting items for selected:");
+					ImGui::Spacing();
+					for (int i = 0; i < (int)be.sharedItems.size(); i++) {
+						ImGui::PushID(i + 5000);
+						char buf[64];
+						snprintf(buf, sizeof(buf), "%s", be.sharedItems[i].first.c_str());
+						ImGui::SetNextItemWidth(160);
+						if (ImGui::InputText("##itype", buf, sizeof(buf)))
+							be.sharedItems[i].first = buf;
+						ImGui::SameLine();
+						ImGui::SetNextItemWidth(60);
+						ImGui::InputInt("##icnt", &be.sharedItems[i].second);
+						if (be.sharedItems[i].second < 1) be.sharedItems[i].second = 1;
+						ImGui::SameLine();
+						if (ImGui::SmallButton("x")) {
+							be.sharedItems.erase(be.sharedItems.begin() + i);
+							ImGui::PopID(); break;
+						}
+						ImGui::PopID();
+					}
+					if (ImGui::SmallButton("+ Add Item"))
+						be.sharedItems.push_back({"base:wheat", 5});
+
+					if (!be.configs.empty()) {
+						ImGui::Spacing();
+						ImGui::TextColored(ImVec4(0.4f, 0.7f, 0.4f, 1),
+							"%d creature type(s) configured", (int)be.configs.size());
+					}
+				}
+				ImGui::Unindent(16);
+			}
+
 			ImGui::Spacing();
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.96f, 0.65f, 0.15f, 1));
 			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.72f, 0.28f, 1));
@@ -630,6 +780,8 @@ private:
 		Shortcut shortcuts[] = {
 			{"Ctrl+M",  "Toggle background music"},
 			{"Ctrl+N",  "Toggle effect sounds"},
+			{"Ctrl+>",  "Skip & disable current track"},
+			{"Ctrl+<",  "Previous track"},
 			{"F12",     "Toggle admin mode"},
 			{"Tab / I", "Toggle inventory"},
 			{"V",       "Cycle camera mode"},
@@ -732,11 +884,49 @@ private:
 				ImGui::TextColored(ImVec4(0.96f, 0.65f, 0.15f, 1), "%s", track.c_str());
 			}
 			ImGui::Spacing();
-			if (ImGui::Button("Next Track", ImVec2(120, 32))) {
+			if (ImGui::Button("Prev", ImVec2(60, 32))) {
+				m_audio->prevTrack();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Next", ImVec2(60, 32))) {
 				m_audio->nextTrack();
 			}
+			ImGui::SameLine();
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.30f, 0.30f, 1));
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+			if (ImGui::Button("Skip & Disable", ImVec2(120, 32))) {
+				m_audio->skipAndDisable();
+			}
+			ImGui::PopStyleColor(2);
+			ImGui::TextColored(ImVec4(0.65f, 0.67f, 0.70f, 1),
+				"Ctrl+Shift+> skip & disable  |  Ctrl+Shift+< prev");
 		} else {
 			ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Music is off. Enable above to listen.");
+		}
+
+		ImGui::Spacing(); ImGui::Spacing();
+
+		// --- Track list with enable/disable ---
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1));
+		ImGui::SetWindowFontScale(1.1f);
+		ImGui::Text("Track List");
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopStyleColor();
+		ImGui::Spacing();
+
+		for (int i = 0; i < m_audio->trackCount(); i++) {
+			bool enabled = !m_audio->isTrackDisabled(i);
+			char id[32]; snprintf(id, sizeof(id), "##trk%d", i);
+			if (ImGui::Checkbox(id, &enabled)) {
+				m_audio->setTrackDisabled(i, !enabled);
+			}
+			ImGui::SameLine();
+			std::string name = m_audio->trackName(i);
+			if (m_audio->isTrackDisabled(i)) {
+				ImGui::TextColored(ImVec4(0.65f, 0.67f, 0.70f, 1), "%s", name.c_str());
+			} else {
+				ImGui::Text("%s", name.c_str());
+			}
 		}
 
 		ImGui::Spacing(); ImGui::Spacing();
