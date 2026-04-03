@@ -116,7 +116,9 @@ void AudioManager::loadSoundsFrom(const std::string& basePath) {
 			}
 		}
 		std::sort(m_musicFiles.begin(), m_musicFiles.end());
-		printf("[Audio] Found %zu music tracks\n", m_musicFiles.size());
+		loadDisabledTracks();
+		printf("[Audio] Found %zu music tracks (%zu disabled)\n",
+		       m_musicFiles.size(), m_disabledTracks.size());
 	}
 
 	printf("[Audio] Loaded %d sound files, %zu groups from %s\n",
@@ -403,6 +405,10 @@ void AudioManager::startMusic() {
 
 void AudioManager::stopMusic() {
 	m_musicPlaying = false;
+	stopCurrentSound();
+}
+
+void AudioManager::stopCurrentSound() {
 	if (m_musicSound) {
 		ma_sound_stop((ma_sound*)m_musicSound);
 		ma_sound_uninit((ma_sound*)m_musicSound);
@@ -411,31 +417,37 @@ void AudioManager::stopMusic() {
 	}
 }
 
+int AudioManager::advanceIndex(int direction) {
+	// Find the next enabled track in the given direction (+1 or -1).
+	// Returns -1 if all tracks are disabled.
+	int n = (int)m_musicFiles.size();
+	for (int i = 0; i < n; i++) {
+		int idx = ((m_musicIndex + direction * (i + 1)) % n + n) % n;
+		if (m_disabledTracks.count(idx) == 0)
+			return idx;
+	}
+	return -1; // all disabled
+}
+
 void AudioManager::nextTrack() {
 	if (!m_initialized || m_musicFiles.empty()) return;
+	stopCurrentSound();
 
-	// Stop current track
-	if (m_musicSound) {
-		ma_sound_stop((ma_sound*)m_musicSound);
-		ma_sound_uninit((ma_sound*)m_musicSound);
-		delete (ma_sound*)m_musicSound;
-		m_musicSound = nullptr;
+	int idx = advanceIndex(+1);
+	if (idx < 0) {
+		printf("[Music] All tracks disabled\n");
+		m_musicPlaying = false;
+		return;
 	}
+	m_musicIndex = idx;
 
-	// Advance to next track
-	m_musicIndex = (m_musicIndex + 1) % (int)m_musicFiles.size();
 	const std::string& path = m_musicFiles[m_musicIndex];
-
 	auto* sound = new ma_sound;
-	// Stream from file (don't decode entire MP3/OGG into memory first).
-	// Disable spatialization so music plays at full volume regardless of listener position.
 	ma_uint32 flags = MA_SOUND_FLAG_STREAM | MA_SOUND_FLAG_NO_SPATIALIZATION;
 	ma_result r = ma_sound_init_from_file(m_engine, path.c_str(), flags, nullptr, nullptr, sound);
 	if (r != MA_SUCCESS) {
 		printf("[Audio] Failed to load music: %s (error %d)\n", path.c_str(), r);
 		delete sound;
-		// Try next track instead of giving up entirely
-		m_musicIndex = (m_musicIndex + 1) % (int)m_musicFiles.size();
 		return;
 	}
 
@@ -449,9 +461,49 @@ void AudioManager::nextTrack() {
 	}
 	m_musicSound = sound;
 
-	// Extract filename for display
 	std::string name = std::filesystem::path(path).stem().string();
 	printf("[Music] Now playing: %s (vol=%.2f)\n", name.c_str(), m_musicVolume);
+}
+
+void AudioManager::prevTrack() {
+	if (!m_initialized || m_musicFiles.empty()) return;
+	stopCurrentSound();
+
+	int idx = advanceIndex(-1);
+	if (idx < 0) {
+		printf("[Music] All tracks disabled\n");
+		m_musicPlaying = false;
+		return;
+	}
+	m_musicIndex = idx;
+
+	const std::string& path = m_musicFiles[m_musicIndex];
+	auto* sound = new ma_sound;
+	ma_uint32 flags = MA_SOUND_FLAG_STREAM | MA_SOUND_FLAG_NO_SPATIALIZATION;
+	ma_result r = ma_sound_init_from_file(m_engine, path.c_str(), flags, nullptr, nullptr, sound);
+	if (r != MA_SUCCESS) {
+		printf("[Audio] Failed to load music: %s (error %d)\n", path.c_str(), r);
+		delete sound;
+		return;
+	}
+
+	ma_sound_set_volume(sound, m_musicVolume);
+	ma_sound_start(sound);
+	m_musicSound = sound;
+
+	std::string name = std::filesystem::path(path).stem().string();
+	printf("[Music] Now playing: %s (vol=%.2f)\n", name.c_str(), m_musicVolume);
+}
+
+void AudioManager::skipAndDisable() {
+	if (m_musicIndex >= 0 && m_musicIndex < (int)m_musicFiles.size()) {
+		std::string name = std::filesystem::path(m_musicFiles[m_musicIndex]).stem().string();
+		m_disabledTracks.insert(m_musicIndex);
+		printf("[Music] Disabled: %s (%zu/%zu tracks disabled)\n",
+		       name.c_str(), m_disabledTracks.size(), m_musicFiles.size());
+		saveDisabledTracks();
+	}
+	nextTrack();
 }
 
 void AudioManager::updateMusic() {
@@ -461,6 +513,63 @@ void AudioManager::updateMusic() {
 	if (ma_sound_at_end((ma_sound*)m_musicSound)) {
 		nextTrack();
 	}
+}
+
+bool AudioManager::isTrackDisabled(int index) const {
+	return m_disabledTracks.count(index) > 0;
+}
+
+void AudioManager::setTrackDisabled(int index, bool disabled) {
+	if (disabled)
+		m_disabledTracks.insert(index);
+	else
+		m_disabledTracks.erase(index);
+	saveDisabledTracks();
+}
+
+std::string AudioManager::trackName(int index) const {
+	if (index < 0 || index >= (int)m_musicFiles.size()) return "";
+	std::string name = std::filesystem::path(m_musicFiles[index]).stem().string();
+	if (name.size() > 3 && name[2] == '_') name = name.substr(3);
+	for (auto& c : name) if (c == '_') c = ' ';
+	return name;
+}
+
+void AudioManager::saveDisabledTracks() {
+	std::string path = "config/disabled_tracks.txt";
+	std::filesystem::create_directories("config");
+	FILE* f = fopen(path.c_str(), "w");
+	if (!f) return;
+	for (int idx : m_disabledTracks) {
+		if (idx >= 0 && idx < (int)m_musicFiles.size()) {
+			fprintf(f, "%s\n", std::filesystem::path(m_musicFiles[idx]).filename().string().c_str());
+		}
+	}
+	fclose(f);
+}
+
+void AudioManager::loadDisabledTracks() {
+	std::string path = "config/disabled_tracks.txt";
+	FILE* f = fopen(path.c_str(), "r");
+	if (!f) return;
+	char line[256];
+	while (fgets(line, sizeof(line), f)) {
+		// Strip newline
+		std::string name(line);
+		while (!name.empty() && (name.back() == '\n' || name.back() == '\r'))
+			name.pop_back();
+		if (name.empty()) continue;
+		// Find matching index
+		for (int i = 0; i < (int)m_musicFiles.size(); i++) {
+			if (std::filesystem::path(m_musicFiles[i]).filename().string() == name) {
+				m_disabledTracks.insert(i);
+				break;
+			}
+		}
+	}
+	fclose(f);
+	if (!m_disabledTracks.empty())
+		printf("[Music] %zu tracks disabled from config\n", m_disabledTracks.size());
 }
 
 void AudioManager::setMusicVolume(float vol) {

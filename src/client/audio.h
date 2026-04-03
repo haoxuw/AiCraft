@@ -20,6 +20,7 @@
 #include <vector>
 #include <unordered_map>
 #include <random>
+#include <set>
 #include <cstdio>
 #include <filesystem>
 
@@ -61,12 +62,22 @@ public:
 	// Background music control
 	void startMusic();       // start playing random music tracks
 	void stopMusic();        // stop background music
-	void nextTrack();        // skip to next track
+	void nextTrack();        // skip to next track (Ctrl+>)
+	void prevTrack();        // go back to previous track (Ctrl+<)
+	void skipAndDisable();   // skip current track AND mark it disabled for future
 	void updateMusic();      // call each frame to handle track transitions
 	bool musicPlaying() const { return m_musicPlaying; }
 	void setMusicVolume(float vol);
 	float musicVolume() const { return m_musicVolume; }
 	std::string currentTrackName() const;
+
+	// Disabled tracks — tracks the user skipped and doesn't want to hear again
+	bool isTrackDisabled(int index) const;
+	void setTrackDisabled(int index, bool disabled);
+	int trackCount() const { return (int)m_musicFiles.size(); }
+	std::string trackName(int index) const;
+	void saveDisabledTracks();   // persist to config/disabled_tracks.txt
+	void loadDisabledTracks();   // load from config/disabled_tracks.txt
 
 	// Update the listener position (call each frame from camera).
 	void setListener(glm::vec3 pos, glm::vec3 forward);
@@ -130,6 +141,9 @@ private:
 	bool m_musicPlaying = false;
 	float m_musicVolume = 0.50f;  // background music volume
 	void* m_musicSound = nullptr; // ma_sound* (opaque to avoid header dep)
+	std::set<int> m_disabledTracks; // indices of tracks user doesn't want
+	void stopCurrentSound();        // internal: stop and free current ma_sound
+	int advanceIndex(int direction); // internal: find next enabled track
 
 	// RNG for picking random variants
 	std::mt19937 m_rng{std::random_device{}()};
