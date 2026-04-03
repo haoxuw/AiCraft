@@ -288,6 +288,25 @@ public:
 			}
 		});
 
+		// Chicken egg laying — startled chickens may drop eggs
+		m_eggTimer += dt;
+		if (m_eggTimer >= 5.0f) {
+			m_eggTimer = 0;
+			m_world->entities.forEach([&](Entity& e) {
+				if (e.typeId() != EntityType::Chicken) return;
+				// Check if chicken is fleeing (velocity > run threshold)
+				float speed = std::sqrt(e.velocity.x * e.velocity.x +
+				                        e.velocity.z * e.velocity.z);
+				if (speed > 3.0f && (std::rand() % 100) < 20) {
+					// Lay an egg!
+					glm::vec3 eggPos = e.position + glm::vec3(0, 0.3f, 0);
+					m_world->entities.spawn(EntityType::ItemEntity, eggPos,
+						{{Prop::ItemType, std::string(ItemId::Egg)},
+						 {Prop::Count, 1}, {Prop::Age, 0.0f}});
+				}
+			});
+		}
+
 		// Advance world time
 		m_worldTime += (1.0f / 600.0f) * dt;
 
@@ -365,6 +384,7 @@ private:
 	float m_worldTime = 0.30f;
 	float m_activeBlockTimer = 0;
 	float m_stuckTimer = 0;
+	float m_eggTimer = 0;
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	glm::vec3 m_chestPos = {30, 10, 30};
 

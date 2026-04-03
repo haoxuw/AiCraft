@@ -1,41 +1,54 @@
-"""Follow — loyal companion that follows the nearest player or villager.
+"""Follow — loyal companion that follows and guards its owner.
 
-Follows the nearest player first. If no player is nearby,
-follows the nearest villager. Sits when close to their target.
+Dogs follow the nearest player. If no player, they follow
+villagers. They sit when close, play-bow when happy, and
+growl at cats that get too close to their person.
 """
-
-from agentworld_engine import Idle, Wander, Follow
+from agentworld_engine import Idle, Wander, Follow, Flee
+import random
 
 FOLLOW_DISTANCE = 3.0
-FOLLOW_SPEED = 4.0
-
-goal = "Looking for someone"
-
+GUARD_DISTANCE = 6.0
+_play_timer = 0
 
 def decide(self, world):
-    """Called 4 times per second. Return what to do next."""
+    global _play_timer
+    _play_timer -= world["dt"]
 
-    # Find nearest player
-    players = [e for e in world["nearby"] if e.category == "player"]
-    villagers = [e for e in world["nearby"] if e.type_id == "base:villager"]
+    # Find someone to follow
+    players = [e for e in world["nearby"] if e["category"] == "player"]
+    villagers = [e for e in world["nearby"] if e["type_id"] == "base:villager"]
 
-    target = None
+    owner = None
     if players:
-        target = min(players, key=lambda e: e.distance)
+        owner = min(players, key=lambda e: e["distance"])
     elif villagers:
-        target = min(villagers, key=lambda e: e.distance)
+        owner = min(villagers, key=lambda e: e["distance"])
 
-    if not target:
-        self["goal"] = "Looking for someone"
+    if not owner:
+        self["goal"] = "Sniffing around"
         return Wander(speed=self["walk_speed"] * 0.5)
 
-    # Close enough — sit
-    if target.distance < FOLLOW_DISTANCE:
-        name = target.type_id.split(":")[1]
-        self["goal"] = f"Sitting by {name}"
+    name = owner["type_id"].split(":")[1]
+
+    # Chase away cats near owner (guard behavior)
+    if owner["distance"] < GUARD_DISTANCE:
+        cats = [e for e in world["nearby"]
+                if e["type_id"] == "base:cat" and e["distance"] < 5]
+        if cats:
+            cat = min(cats, key=lambda e: e["distance"])
+            self["goal"] = "Chasing cat away!"
+            return Follow(cat["id"], speed=self["walk_speed"] * 1.5, min_distance=1)
+
+    # Close enough — sit or play
+    if owner["distance"] < FOLLOW_DISTANCE:
+        if _play_timer <= 0 and random.random() < 0.1:
+            _play_timer = 8.0
+            self["goal"] = "*play bow!*"
+            return Idle()
+        self["goal"] = "Sitting by %s" % name
         return Idle()
 
-    # Follow them
-    name = target.type_id.split(":")[1]
-    self["goal"] = f"Following {name} ({target.distance:.0f}m)"
-    return Follow(target.id, speed=FOLLOW_SPEED, min_distance=FOLLOW_DISTANCE)
+    # Follow
+    self["goal"] = "Following %s (%dm)" % (name, int(owner["distance"]))
+    return Follow(owner["id"], speed=4.0, min_distance=FOLLOW_DISTANCE)

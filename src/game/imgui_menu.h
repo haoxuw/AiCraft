@@ -553,7 +553,6 @@ private:
 					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
 					if (ImGui::Button("Apply to Selected", ImVec2(160, 30))) {
 						std::string pyCode = compileBehavior(be.sharedBehavior);
-						be.previewCode = pyCode;
 
 						// Save custom behavior as a Python file
 						std::string behaviorName = "custom_" + std::to_string(

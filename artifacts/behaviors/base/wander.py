@@ -1,57 +1,46 @@
-"""Wander - default animal behavior.
+"""Wander — default animal behavior (pigs and others).
 
-Animals roam randomly, flee from nearby players,
-and try to stay close to others of the same species.
-
-This is the first code players see when they inspect a pig.
-It's designed to be readable and easy to modify!
-
-Try changing:
-  - FLEE_DISTANCE to make animals braver or more cowardly
-  - GROUP_DISTANCE to change how tightly they bunch up
-  - Remove the flee section entirely to make fearless pigs
+Animals roam randomly, flee from players, and try to stay
+close to others of the same species. Sometimes they stop
+to graze or rest.
 """
-
+from agentworld_engine import Idle, Wander, Flee, MoveTo
 import random
-from agentworld.api import Wander, Flee, MoveTo, Idle
 
-# How close a player must be before the animal runs
 FLEE_DISTANCE = 5.0
-
-# How far apart friends can be before regrouping
 GROUP_DISTANCE = 6.0
-
-goal = "Wandering"
-
+_graze_timer = 0
 
 def decide(self, world):
-    """Called 4 times per second. Return what to do next."""
+    global _graze_timer
+    _graze_timer -= world["dt"]
 
-    # Step 1: Check for danger
-    # Look for players within FLEE_DISTANCE blocks
-    players = world.get_entities_in_radius(
-        self.pos, FLEE_DISTANCE, category="player"
-    )
-    if players:
-        closest = min(players, key=lambda e: e.distance)
-        self.goal = "Fleeing!"
-        return Flee(closest.id, speed=self.walk_speed * 1.8)
+    # Flee from nearby players
+    for e in world["nearby"]:
+        if e["category"] == "player" and e["distance"] < FLEE_DISTANCE:
+            self["goal"] = "Fleeing!"
+            return Flee(e["id"], speed=self["walk_speed"] * 1.8)
 
-    # Step 2: Stay with friends
-    # Find others of the same species nearby
-    friends = world.get_entities_in_radius(
-        self.pos, 12.0, type=self.type_id
-    )
-    friends = [f for f in friends if f.id != self.id]
+    # Stay with friends of same species
+    friends = [e for e in world["nearby"]
+               if e["type_id"] == self["type_id"] and e["id"] != self["id"]]
+    if friends:
+        farthest = max(friends, key=lambda e: e["distance"])
+        if farthest["distance"] > GROUP_DISTANCE:
+            self["goal"] = "Joining herd"
+            return MoveTo(farthest["x"], farthest["y"], farthest["z"],
+                          speed=self["walk_speed"])
 
-    if friends and friends[0].distance > GROUP_DISTANCE:
-        self.goal = "Joining friends"
-        return MoveTo(friends[0].pos, speed=self.walk_speed)
+    # Graze (stop and eat)
+    if _graze_timer <= 0 and random.random() < 0.25:
+        _graze_timer = 3.0 + random.random() * 4.0
+        self["goal"] = "Grazing"
+        return Idle()
 
-    # Step 3: Wander or rest
-    if random.random() < 0.3:
-        self.goal = "Resting"
-        return Idle(duration=1.0 + random.random() * 2.0)
+    if _graze_timer > 0:
+        self["goal"] = "Grazing"
+        return Idle()
 
-    self.goal = "Wandering"
-    return Wander(speed=self.walk_speed)
+    # Wander
+    self["goal"] = "Wandering"
+    return Wander(speed=self["walk_speed"])

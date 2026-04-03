@@ -1,39 +1,43 @@
-"""Peck - chicken behavior.
+"""Peck — timid chicken that scatters from threats.
 
-Chickens are skittish and scatter quickly when players approach.
-They alternate between short walks and pecking at the ground.
+Chickens flee from players AND cats. When startled they
+scatter with panicked clucking. Otherwise they peck at
+the ground and waddle around looking for seeds.
 
-Try changing:
-  - SCATTER_DISTANCE to make chickens braver
-  - PECK_CHANCE to change how often they stop to peck
-  - Add an egg-laying timer!
+The server handles egg-laying automatically when chickens
+are startled (20% chance per scare event).
 """
-
+from agentworld_engine import Idle, Wander, Flee
 import random
-from agentworld.api import Wander, Flee, Idle
 
-SCATTER_DISTANCE = 3.5
-PECK_CHANCE = 0.5
-
-goal = "Pecking at ground"
-
+SCATTER_DISTANCE = 4.0
+PECK_CHANCE = 0.45
+_startled = False
 
 def decide(self, world):
-    """Called 4 times per second. Return what to do next."""
+    global _startled
 
-    # Chickens scatter from players easily
-    players = world.get_entities_in_radius(
-        self.pos, SCATTER_DISTANCE, category="player"
-    )
-    if players:
-        closest = min(players, key=lambda e: e.distance)
-        self.goal = "Scattering!"
-        return Flee(closest.id, speed=self.walk_speed * 2.0)
+    # Flee from players and cats
+    threats = [e for e in world["nearby"]
+               if (e["category"] == "player" or e["type_id"] == "base:cat")
+               and e["distance"] < SCATTER_DISTANCE]
 
-    # Peck or walk
+    if threats:
+        closest = min(threats, key=lambda e: e["distance"])
+        if not _startled:
+            _startled = True
+            # Signal server for possible egg drop
+            self["goal"] = "BAWK!! *startled*"
+        else:
+            self["goal"] = "BAWK!! Running!"
+        return Flee(closest["id"], speed=6.0)
+
+    _startled = False
+
+    # Peck at ground or waddle around
     if random.random() < PECK_CHANCE:
-        self.goal = "Looking around"
-        return Idle(duration=0.3 + random.random() * 0.8)
+        self["goal"] = "Pecking at seeds"
+        return Idle()
 
-    self.goal = "Pecking at ground"
-    return Wander(speed=self.walk_speed * 0.7)
+    self["goal"] = "Scratching ground"
+    return Wander(speed=1.8)

@@ -64,6 +64,7 @@ namespace ItemId {
 	// Consumables
 	constexpr const char* Apple       = "base:apple";
 	constexpr const char* Bread       = "base:bread";
+	constexpr const char* Egg         = "base:egg";
 }
 
 // ============================================================
