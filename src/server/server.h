@@ -75,14 +75,15 @@ public:
 		float sx = rawSpawn.x, sz = rawSpawn.z;
 
 		// Safety scan upward to escape any structure or tree placed at spawn
-		BlockSolidFn solidFn = [&](int x, int y, int z) {
-			return m_world->blocks.get(m_world->getBlock(x, y, z)).solid;
+		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+			const auto& def = m_world->blocks.get(m_world->getBlock(x, y, z));
+			return def.solid ? def.collision_height : 0.0f;
 		};
 		int spawnY = (int)std::round(rawSpawn.y);
 		for (int scan = 0; scan < 24; scan++) {
-			bool clear = !solidFn((int)sx, spawnY,     (int)sz) &&
-			             !solidFn((int)sx, spawnY + 1, (int)sz) &&
-			             !solidFn((int)sx, spawnY + 2, (int)sz);
+			bool clear = solidFn((int)sx, spawnY,     (int)sz) <= 0.0f &&
+			             solidFn((int)sx, spawnY + 1, (int)sz) <= 0.0f &&
+			             solidFn((int)sx, spawnY + 2, (int)sz) <= 0.0f;
 			if (clear) break;
 			spawnY++;
 		}
@@ -308,8 +309,9 @@ public:
 
 	// Main server tick
 	void tick(float dt) {
-		BlockSolidFn solidFn = [&](int x, int y, int z) {
-			return m_world->blocks.get(m_world->getBlock(x, y, z)).solid;
+		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+			const auto& def = m_world->blocks.get(m_world->getBlock(x, y, z));
+			return def.solid ? def.collision_height : 0.0f;
 		};
 
 		// AI behavior decisions arrive as ActionProposals from bot client

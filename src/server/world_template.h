@@ -384,8 +384,18 @@ private:
 	};
 
 	// ── House walls, floors, stairs, and roof ─────────────────────
+	//
+	// Staircase design (2-story, storyHeight=6):
+	//   6 half-height stair blocks at dx=1, dz=2..7, dy=0..5.
+	//   Player rises: 0→0.5→1.5→2.5→3.5→4.5→5.5 (each step requires sh=1.0 hop).
+	//   From dy=5 stair (top=5.5) player steps 0.5 onto intermFloor top (6.0).
+	//
+	//   Ceiling opening at dx=1..2, dz=5..7, dy=sh-1 allows the player to
+	//   step up without their head hitting the intermFloor (ceiling of story 0).
+	//   Without the opening, step-up from stair dy=2 onward is blocked because
+	//   tryStepUp at sh=1.0 puts player head at y+3.5 which overlaps ceiling.
 	void generateHouse(const GenCtx& ctx, int seed,
-	                   BlockId wallB, BlockId roofB, BlockId floorB,
+	                   BlockId wallB, BlockId roofB, BlockId floorB, BlockId stairB,
 	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
 		int sh = m_py.storyHeight, dh = m_py.doorHeight, wr = m_py.windowRow;
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
@@ -408,29 +418,48 @@ private:
 						((dz==0||dz==h.d-1)&&(dx==1||dx==h.w-2))||
 						((dx==0||dx==h.w-1)&&(dz==1||dz==h.d-2)));
 
-					// Stair steps — each step is at the SAME dy as the player's
-					// current feet, so physics step-up (height ≤ 1) carries them up.
-					// Story s, step i: at (dx=1, dz=2+i, dy=s*sh+i).
+					// Stair steps — half-height stair block at dx=1.
+					// Story s, step i: (dx=1, dz=2+i, dy=s*sh+i), i=0..sh-1.
+					// Player hops 1.0 per step (from stair top at i+0.5 to next top at i+1.5).
 					bool stairStep = false;
 					if (h.stories >= 2) {
 						for (int s = 0; s < h.stories-1 && !stairStep; s++)
-							for (int i = 0; i < sh-1 && !stairStep; i++)
+							for (int i = 0; i < sh && !stairStep; i++)
 								if (dx==1 && dz==2+i && dy==s*sh+i)
 									stairStep = true;
 					}
 
-					// Intermediate floor = ceiling of story s, walkable floor of s+1
+					// Intermediate floor = ceiling of story s / floor of story s+1.
+					// Excluded where stairStep is true (stair block placed there instead).
 					bool intermFloor = false;
 					if (h.stories >= 2 && !stairStep)
 						for (int s = 1; s < h.stories; s++)
 							if (dy == s*sh-1) { intermFloor = true; break; }
 
+					// Stairwell ceiling opening: removes intermFloor above the upper
+					// stair steps so the player's head doesn't clip the ceiling when
+					// stepping up. Covers steps 3..5 (dz=5..7) where player feet reach
+					// floorY+3.5+ and would collide with the ceiling at dy=sh-1.
+					// Width of 2 blocks (dx=1..2) gives comfortable passage.
+					bool stairwellOpening = false;
+					if (intermFloor && (dx == 1 || dx == 2)) {
+						for (int s = 0; s < h.stories-1; s++) {
+							if (dy == s*sh + sh - 1          // ceiling of story s
+							    && dz >= 5                    // upper stair zone
+							    && dz <= 2 + sh - 1) {        // up to last stair step (dz=7 for sh=6)
+								stairwellOpening = true;
+								break;
+							}
+						}
+					}
+
 					BlockId bid;
-					if (door || window)          bid = BLOCK_AIR;
-					else if (stairStep||intermFloor) bid = floorB;
-					else if (dy == totalH-1)     bid = roofB;
-					else if (wall)               bid = wallB;
-					else                         bid = BLOCK_AIR;
+					if (door || window || stairwellOpening) bid = BLOCK_AIR;
+					else if (stairStep)                      bid = stairB;
+					else if (intermFloor)                    bid = floorB;
+					else if (dy == totalH-1)                 bid = roofB;
+					else if (wall)                           bid = wallB;
+					else                                     bid = BLOCK_AIR;
 
 					ctx.set(hcx+dx, floorY+dy, hcz+dz, bid);
 				}
@@ -543,6 +572,8 @@ private:
 		BlockId planksB = blocks.getId(BlockType::Planks);
 		BlockId bedB    = blocks.getId(BlockType::Bed);
 		BlockId chestB  = blocks.getId(BlockType::Chest);
+		BlockId stairB  = blocks.getId(BlockType::Stair);
+		if (stairB == BLOCK_AIR) stairB = floorB;  // fallback if stair not registered
 
 		for (int hi = 0; hi < (int)m_py.houses.size(); hi++) {
 			const auto& h = m_py.houses[hi];
@@ -552,7 +583,7 @@ private:
 			if (hWallB == BLOCK_AIR) hWallB = wallB;
 			if (hRoofB == BLOCK_AIR) hRoofB = roofB;
 
-			generateHouse(ctx, seed, hWallB, hRoofB, floorB, h, vc);
+			generateHouse(ctx, seed, hWallB, hRoofB, floorB, stairB, h, vc);
 			generatePorch(ctx, seed, pathB, hWallB, h, vc);
 			generateFurniture(ctx, seed, woodB, planksB, bedB, chestB, h, vc, hi == 0);
 		}

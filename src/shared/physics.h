@@ -31,8 +31,10 @@ struct MoveParams {
 	bool smoothStep = false; // true = jump arc instead of instant step-up (for creatures)
 };
 
-// Block query: returns true if block at (x,y,z) is solid.
-using BlockSolidFn = std::function<bool(int, int, int)>;
+// Block query: returns the collision height of the block at (x,y,z).
+// 0.0 = not solid (air/transparent), 1.0 = full block, 0.5 = half-height (stairs/slabs).
+// The block physically occupies [y, y + return_value] in world space.
+using BlockSolidFn = std::function<float(int, int, int)>;
 
 /**
  * Move an object with full collision. Used by players and entities.
@@ -50,9 +52,15 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 		int z1 = (int)std::floor(p.z + params.halfWidth);
 		for (int y = y0; y <= y1; y++)
 			for (int z = z0; z <= z1; z++)
-				for (int x = x0; x <= x1; x++)
-					if (isSolid(x, y, z))
+				for (int x = x0; x <= x1; x++) {
+					float bh = isSolid(x, y, z);
+					if (bh <= 0.0f) continue;
+					// Block at cell y occupies [y, y+bh].
+					// Player body occupies [p.y, p.y+height].
+					// Overlap: player.bottom < block.top AND player.top > block.bottom
+					if (p.y < (float)y + bh && p.y + params.height > (float)y)
 						return true;
+				}
 		return false;
 	};
 
@@ -138,8 +146,9 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 				int bx = (int)std::floor(r.x);
 				int by = (int)std::floor(testY - 0.01f); // just below feet
 				int bz = (int)std::floor(r.z);
-				if (isSolid(bx, by, bz)) {
-					float groundY = (float)(by + 1);
+				float bh = isSolid(bx, by, bz);
+				if (bh > 0.0f) {
+					float groundY = (float)by + bh;  // top surface of block
 					// Snap down if we're above this ground
 					if (r.y > groundY && r.y - groundY <= searchDepth) {
 						// Verify body fits at the snapped position

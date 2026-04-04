@@ -41,6 +41,13 @@ struct BlockDef {
 	BlockBehavior behavior = BlockBehavior::Passive;
 	std::unordered_map<std::string, int> default_state;
 	std::string behavior_class;
+
+	// Physics collision height in block units.
+	// 1.0 = full block (default), 0.5 = half-height (stairs/slabs).
+	// Blocks vs items: everything in BlockRegistry is a placeable block.
+	// Non-placeable pure items (eggs, potions) live only in ItemId namespace
+	// and are never registered here.
+	float collision_height = 1.0f;
 };
 
 struct BlockState {

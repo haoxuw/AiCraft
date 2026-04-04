@@ -48,11 +48,24 @@ namespace BlockType {
 	constexpr const char* Bed         = "base:bed";
 	constexpr const char* Fence       = "base:fence";
 	constexpr const char* Farmland    = "base:farmland";
+	constexpr const char* Stair       = "base:stair";
 }
 
 // ============================================================
+// Design note: Blocks vs Items
+// ============================================================
+// BlockType = PLACEABLE blocks. When broken they drop an item entity
+// with item_type = block string_id, which can be picked up and re-placed.
+// BlockRegistry is the source of truth for what is placeable.
+//
+// ItemId = PURE ITEMS (eggs, potions, tools). They float on the ground as
+// item entities but cannot be placed as world blocks.
+// Pure items are NEVER registered in BlockRegistry.
+// ============================================================
+
+// ============================================================
 // Item IDs (equipment, tools, consumables)
-// Blocks are also items when in inventory. These are non-block items.
+// These are non-block items — they cannot be placed in the world.
 // ============================================================
 namespace ItemId {
 	// Equipment
