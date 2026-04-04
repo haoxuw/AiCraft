@@ -6,6 +6,12 @@ A sturdier pickaxe made with cobblestone.
 model = {
     "id": "stone_pickaxe",
     "height": 1.0,
+    # Held in hand: rotated so tool head points forward
+    "equip": {
+        "rotation": [-90, 0, 0],
+        "offset": [0, -0.08, -0.12],
+        "scale": 0.75,
+    },
     "parts": [
         # Handle — long brown stick
         {"offset": [0, 0.22, 0], "size": [0.06, 0.60, 0.06], "color": [0.50, 0.35, 0.15, 1]},

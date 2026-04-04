@@ -175,24 +175,101 @@ void GameServer::resolveActions(float dt) {
 		case ActionProposal::DropItem: {
 			Entity* actor = m_world->entities.get(p.actorId);
 			if (!actor) break;
-			if (p.blockType.empty()) break;  // no item type specified
-
-			// Server validates: actor must be alive, count must be reasonable
+			if (p.blockType.empty()) break;
 			if (!actor->def().isLiving()) break;
 			int count = std::clamp(p.itemCount, 1, 64);
 
-			// Spawn item entity at actor's feet
-			glm::vec3 dropPos = actor->position + glm::vec3(0, 0.3f, 0);
-			m_world->entities.spawn(EntityType::ItemEntity, dropPos,
-				{{Prop::ItemType, p.blockType},
-				 {Prop::Count, count},
-				 {Prop::Age, 0.0f}});
+			// Deduct from inventory
+			if (actor->inventory && actor->inventory->has(p.blockType)) {
+				actor->inventory->remove(p.blockType, count);
+				actor->inventory->autoPopulateHotbar();
+				if (m_callbacks.onInventoryChange)
+					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
+			}
+
+			// Spawn item entity slightly forward from actor
+			float yaw = glm::radians(actor->yaw);
+			glm::vec3 dropDir(std::cos(yaw), 0.3f, std::sin(yaw));
+			glm::vec3 dropPos = actor->position + glm::vec3(0, 0.5f, 0);
+			EntityId itemId = m_world->entities.spawn(EntityType::ItemEntity, dropPos,
+				{{Prop::ItemType, p.blockType}, {Prop::Count, count}, {Prop::Age, 0.0f}});
+			// Toss forward
+			Entity* ie = m_world->entities.get(itemId);
+			if (ie) ie->velocity = dropDir * 5.0f;
+			break;
+		}
+
+		case ActionProposal::Attack: {
+			Entity* actor = m_world->entities.get(p.actorId);
+			Entity* target = m_world->entities.get(p.targetEntity);
+			if (!actor || !target || target->removed) break;
+			if (!target->def().isLiving()) break;
+
+			float dist = glm::length(target->position - actor->position);
+			if (dist > 6.0f) break; // max attack range
+
+			int dmg = std::max((int)p.damage, 1);
+			int hp = target->hp();
+			target->setHp(std::max(hp - dmg, 0));
+
+			// Knockback
+			glm::vec3 kb = (dist > 0.1f)
+				? glm::normalize(target->position - actor->position) : glm::vec3(0, 0, 1);
+			target->velocity += kb * 4.0f + glm::vec3(0, 3.0f, 0);
+
+			// Hit particles
+			if (m_callbacks.onBlockBreak)
+				m_callbacks.onBlockBreak(target->position, {0.9f, 0.2f, 0.2f}, 2);
+
+			// Death
+			if (target->hp() <= 0) {
+				target->removed = true;
+			}
+			break;
+		}
+
+		case ActionProposal::UseItem: {
+			Entity* actor = m_world->entities.get(p.actorId);
+			if (!actor || !actor->inventory) break;
+
+			int slot = std::clamp(p.slotIndex, 0, Inventory::HOTBAR_SLOTS - 1);
+			const std::string& itemId = actor->inventory->hotbar(slot);
+			if (itemId.empty() || !actor->inventory->has(itemId)) break;
+
+			// For now: consume 1 item and heal a small amount
+			// Future: look up artifact on_use hook to determine effect
+			actor->inventory->remove(itemId, 1);
+			// Simple heal for consumables
+			int hp = actor->hp();
+			if (hp < actor->def().max_hp) {
+				actor->setHp(std::min(hp + 5, actor->def().max_hp));
+			}
+			actor->inventory->autoPopulateHotbar();
+			if (m_callbacks.onInventoryChange)
+				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
+			break;
+		}
+
+		case ActionProposal::EquipItem: {
+			Entity* actor = m_world->entities.get(p.actorId);
+			if (!actor || !actor->inventory) break;
+
+			int slot = std::clamp(p.slotIndex, 0, Inventory::HOTBAR_SLOTS - 1);
+			const std::string& itemId = actor->inventory->hotbar(slot);
+			if (itemId.empty() || !actor->inventory->has(itemId)) break;
+
+			// Parse equip slot from blockType field (sent by client from artifact)
+			WearSlot ws;
+			if (!wearSlotFromString(p.blockType, ws)) break;
+
+			actor->inventory->equip(ws, itemId);
+			actor->inventory->autoPopulateHotbar();
+			if (m_callbacks.onInventoryChange)
+				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 			break;
 		}
 
 		case ActionProposal::GrowCrop:
-			break;
-		case ActionProposal::Attack:
 			break;
 		case ActionProposal::PickupItem: {
 			Entity* actor = m_world->entities.get(p.actorId);

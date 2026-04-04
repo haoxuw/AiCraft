@@ -32,6 +32,13 @@ struct BodyPart {
 	unsigned int texture = 0;
 };
 
+// How an item should be held when equipped in a hand slot.
+struct EquipTransform {
+	glm::vec3 offset = {0, 0, 0};      // extra offset from hand position
+	glm::vec3 rotation = {0, 0, 0};    // Euler angles in degrees (X, Y, Z) applied to item parts
+	float scale = 1.0f;                 // uniform scale
+};
+
 // A model = list of body parts + animation config.
 struct BoxModel {
 	std::vector<BodyPart> parts;
@@ -41,6 +48,9 @@ struct BoxModel {
 	float idleBobSpeed = 1.5f;    // gentle idle breathing speed
 	float idleBobAmount = 0.01f;  // idle bob amplitude
 	float walkBobAmount = 0.03f;  // vertical bounce per step
+
+	// How this item looks when held in a hand (Python: "equip" dict)
+	EquipTransform equip;
 };
 
 // Animation state passed to draw().

@@ -153,6 +153,63 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		}
 	}
 
+	// --- inventories.bin --- (per-character inventories, persisted across sessions)
+	{
+		net::WriteBuffer wb;
+		uint32_t count = 0;
+		// Save inventories for all player entities (keyed by character_skin)
+		world.entities.forEach([&](Entity& e) {
+			if (e.typeId() != EntityType::Player) return;
+			if (!e.inventory) return;
+			std::string skin = e.getProp<std::string>("character_skin", "default");
+			wb.writeString(skin);
+			// Items
+			auto items = e.inventory->items();
+			wb.writeU32((uint32_t)items.size());
+			for (auto& [id, cnt] : items) {
+				wb.writeString(id);
+				wb.writeI32(cnt);
+			}
+			// Hotbar
+			for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
+				wb.writeString(e.inventory->hotbar(i));
+			// Equipment
+			for (int i = 0; i < WEAR_SLOT_COUNT; i++)
+				wb.writeString(e.inventory->equipped((WearSlot)i));
+			count++;
+		});
+		// Also save any previously stored inventories that aren't currently online
+		for (auto& [skin, inv] : server.savedInventories()) {
+			// Skip if this character is currently online (already saved above)
+			bool online = false;
+			world.entities.forEach([&](Entity& e) {
+				if (e.typeId() == EntityType::Player &&
+				    e.getProp<std::string>("character_skin", "default") == skin)
+					online = true;
+			});
+			if (online) continue;
+			wb.writeString(skin);
+			auto items = inv.items();
+			wb.writeU32((uint32_t)items.size());
+			for (auto& [id, cnt] : items) {
+				wb.writeString(id);
+				wb.writeI32(cnt);
+			}
+			for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
+				wb.writeString(inv.hotbar(i));
+			for (int i = 0; i < WEAR_SLOT_COUNT; i++)
+				wb.writeString(inv.equipped((WearSlot)i));
+			count++;
+		}
+
+		std::ofstream inf(savePath + "/inventories.bin", std::ios::binary);
+		if (inf.is_open()) {
+			inf.write(reinterpret_cast<const char*>(&count), 4);
+			inf.write(reinterpret_cast<const char*>(wb.data().data()), wb.data().size());
+			printf("[WorldSave] Saved %d character inventories\n", count);
+		}
+	}
+
 	printf("[WorldSave] Saved to %s (%d chunks)\n", savePath.c_str(), chunkCount);
 	return true;
 }
@@ -330,6 +387,47 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 				}
 				world.setBlockState(pos.x, pos.y, pos.z, state);
 			}
+		}
+	}
+
+	// --- inventories.bin --- (per-character saved inventories)
+	{
+		std::ifstream inf(savePath + "/inventories.bin", std::ios::binary);
+		if (inf.is_open()) {
+			uint32_t count;
+			inf.read(reinterpret_cast<char*>(&count), 4);
+
+			std::vector<uint8_t> data((std::istreambuf_iterator<char>(inf)),
+			                           std::istreambuf_iterator<char>());
+			net::ReadBuffer rb(data.data(), data.size());
+
+			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
+				std::string skin = rb.readString();
+				Inventory inv;
+				// Items
+				uint32_t itemCount = rb.readU32();
+				for (uint32_t j = 0; j < itemCount && rb.hasMore(); j++) {
+					std::string id = rb.readString();
+					int cnt = rb.readI32();
+					if (cnt > 0) inv.add(id, cnt);
+				}
+				// Hotbar
+				for (int h = 0; h < Inventory::HOTBAR_SLOTS && rb.hasMore(); h++) {
+					std::string hid = rb.readString();
+					if (!hid.empty()) inv.setHotbar(h, hid);
+				}
+				// Equipment
+				for (int e = 0; e < WEAR_SLOT_COUNT && rb.hasMore(); e++) {
+					std::string eid = rb.readString();
+					if (!eid.empty()) {
+						// Direct-set equipment (bypass equip/unequip which modifies counter)
+						inv.add(eid, 1);
+						inv.equip((WearSlot)e, eid);
+					}
+				}
+				server.savedInventories()[skin] = std::move(inv);
+			}
+			printf("[WorldSave] Loaded %d saved character inventories\n", count);
 		}
 	}
 

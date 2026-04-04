@@ -10,6 +10,10 @@ item = {
     "speed_bonus": 0.1,
     "description": "Basic footwear.",
 
+    "on_use": None,
+    "on_equip": "equip",
+    "on_interact": None,
+
     "model": "boots",
     "color": [0.45, 0.30, 0.15],
 }

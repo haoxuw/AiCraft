@@ -6,6 +6,11 @@ Deploys automatically during a fall to slow descent. Red fabric.
 model = {
     "id": "parachute",
     "height": 0.4,
+    "equip": {
+        "rotation": [0, 0, 0],
+        "offset": [0, 0.02, 0.02],
+        "scale": 0.9,
+    },
     "parts": [
         # Main pack — folded red fabric
         {"offset": [0, 0.14, 0], "size": [0.16, 0.22, 0.08], "color": [0.85, 0.25, 0.20, 1]},

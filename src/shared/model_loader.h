@@ -248,6 +248,15 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 		m.parts.push_back(part);
 	}
 
+	// Parse equip transform (how item is held in hand)
+	auto* equipDict = dictGet(d, "equip");
+	if (equipDict && equipDict->type == Value::DICT) {
+		auto& ed = equipDict->dict;
+		if (auto* v = dictGet(ed, "offset"))   m.equip.offset = toVec3(v->list);
+		if (auto* v = dictGet(ed, "rotation")) m.equip.rotation = toVec3(v->list);
+		if (auto* v = dictGet(ed, "scale"))    m.equip.scale = (float)v->getNum(1.0);
+	}
+
 	return m;
 }
 

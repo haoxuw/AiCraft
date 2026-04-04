@@ -20,6 +20,8 @@ cycle_view: V
 # Interaction
 break_block: MouseLeft
 place_block: MouseRight
+drop_item: Q
+equip_item: E
 
 # UI
 screenshot: F2

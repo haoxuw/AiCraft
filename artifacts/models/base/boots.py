@@ -3,6 +3,11 @@
 model = {
     "id": "boots",
     "height": 0.4,
+    "equip": {
+        "rotation": [0, 0, 0],
+        "offset": [0, -0.05, 0],
+        "scale": 1.0,
+    },
     "parts": [
         # Left boot
         {"offset": [-0.08, 0.08, 0], "size": [0.08, 0.16, 0.12], "color": [0.42, 0.28, 0.14, 1]},

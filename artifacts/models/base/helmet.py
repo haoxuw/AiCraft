@@ -3,6 +3,11 @@
 model = {
     "id": "helmet",
     "height": 0.5,
+    "equip": {
+        "rotation": [0, 0, 0],
+        "offset": [0, -0.12, 0],
+        "scale": 1.0,
+    },
     "parts": [
         # Dome
         {"offset": [0, 0.22, 0], "size": [0.22, 0.18, 0.22], "color": [0.55, 0.55, 0.58, 1]},

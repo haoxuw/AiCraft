@@ -173,19 +173,27 @@ public:
 		if (pe && !characterSkin.empty())
 			pe->setProp("character_skin", characterSkin);
 		if (pe && pe->inventory) {
-			// Starting items: from config if specified, else defaults
-			auto sit = m_wgc.startingItems.find(EntityType::Player);
-			if (sit != m_wgc.startingItems.end()) {
-				for (auto& [item, count] : sit->second)
-					pe->inventory->add(item, count);
+			// Try loading saved inventory for this character
+			std::string skin = characterSkin.empty() ? "default" : characterSkin;
+			auto savedIt = m_savedInventories.find(skin);
+			if (savedIt != m_savedInventories.end()) {
+				*pe->inventory = savedIt->second;
+				printf("[Server] Restored saved inventory for '%s'\n", skin.c_str());
 			} else {
-				pe->inventory->add(BlockType::Stone, 10);
-				pe->inventory->add(BlockType::Wood, 10);
-				pe->inventory->add("base:sword", 1);
-				pe->inventory->add("base:shield", 1);
-				pe->inventory->add("base:potion", 3);
+				// First time — give starting items
+				auto sit = m_wgc.startingItems.find(EntityType::Player);
+				if (sit != m_wgc.startingItems.end()) {
+					for (auto& [item, count] : sit->second)
+						pe->inventory->add(item, count);
+				} else {
+					pe->inventory->add(BlockType::Stone, 10);
+					pe->inventory->add(BlockType::Wood, 10);
+					pe->inventory->add("base:sword", 1);
+					pe->inventory->add("base:shield", 1);
+					pe->inventory->add("base:potion", 3);
+				}
+				pe->inventory->autoPopulateHotbar();
 			}
-			pe->inventory->autoPopulateHotbar();
 		}
 		m_clients[clientId] = {eid, false, {}};
 		printf("[Server] Client %u joined. Player entity: %u\n", clientId, eid);
@@ -250,9 +258,16 @@ public:
 	void removeClient(ClientId clientId) {
 		auto it = m_clients.find(clientId);
 		if (it != m_clients.end()) {
-			// Remove player entity (if not a bot)
-			if (it->second.playerEntityId != ENTITY_NONE)
+			// Save player inventory before removing
+			if (it->second.playerEntityId != ENTITY_NONE) {
+				Entity* pe = m_world->entities.get(it->second.playerEntityId);
+				if (pe && pe->inventory) {
+					std::string skin = pe->getProp<std::string>("character_skin", "default");
+					m_savedInventories[skin] = *pe->inventory;
+					printf("[Server] Saved inventory for '%s'\n", skin.c_str());
+				}
 				m_world->entities.remove(it->second.playerEntityId);
+			}
 			// Release all controlled entities
 			for (EntityId eid : it->second.controlledEntities)
 				m_entityOwner.erase(eid);
@@ -411,6 +426,10 @@ public:
 	glm::vec3 spawnPos() const { return m_spawnPos; }
 	void setSpawnPos(glm::vec3 p) { m_spawnPos = p; }
 	const WorldGenConfig& worldGenConfig() const { return m_wgc; }
+
+	// Per-character inventory persistence
+	std::unordered_map<std::string, Inventory>& savedInventories() { return m_savedInventories; }
+	const std::unordered_map<std::string, Inventory>& savedInventories() const { return m_savedInventories; }
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
@@ -427,6 +446,7 @@ private:
 	float m_stuckTimer = 0;
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	glm::vec3 m_chestPos = {30, 10, 30};
+	std::unordered_map<std::string, Inventory> m_savedInventories; // character_skin → inventory
 
 	// Stuck detection: last known position per entity (checked every stuckCheckInterval)
 	std::unordered_map<EntityId, glm::vec3> m_lastPositions;

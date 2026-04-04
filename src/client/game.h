@@ -165,10 +165,16 @@ private:
 		glm::vec3 startPos;
 		glm::vec3 color;
 		std::string itemName;
+		std::string modelKey; // for rendering actual 3D model during fly
 		int count;
 		float t = 0;         // 0→1 progress
 		float duration = 0.35f;
 	};
+
+	// First-person held item animation
+	float m_fpSwingTimer = 0;
+	float m_fpSwingDuration = 0.25f;
+	bool  m_fpSwingActive = false;
 	std::vector<PickupAnim> m_pickupAnims;
 
 	// Floating text (damage numbers, pickup notifications, Minecraft Dungeons style)

@@ -18,6 +18,11 @@ public:
 	          glm::vec3 feetPos, float yaw, const AnimState& anim = {},
 	          glm::vec3 sunDir = glm::normalize(glm::vec3(0.5f, 0.85f, 0.3f)));
 
+	// Draw with a pre-computed root transform (no walk animation). For first-person held item.
+	void drawStatic(const BoxModel& model, const glm::mat4& viewProj,
+	                const glm::mat4& rootTransform,
+	                glm::vec3 sunDir = glm::normalize(glm::vec3(0.5f, 0.85f, 0.3f)));
+
 private:
 	Shader* m_shader = nullptr;
 	GLuint m_cubeVAO = 0, m_cubeVBO = 0, m_cubeEBO = 0;

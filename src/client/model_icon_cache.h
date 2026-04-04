@@ -72,7 +72,7 @@ public:
 		m_cache.clear();
 	}
 
-	static constexpr int ICON_SIZE = 64;
+	static constexpr int ICON_SIZE = 96;
 
 private:
 	GLuint renderToTexture(const BoxModel& model) {
@@ -97,8 +97,8 @@ private:
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
 		glViewport(0, 0, ICON_SIZE, ICON_SIZE);
 
-		// Transparent background
-		glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+		// Dark warm background matching inventory cell bg
+		glClearColor(0.08f, 0.07f, 0.05f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		glEnable(GL_DEPTH_TEST);
 

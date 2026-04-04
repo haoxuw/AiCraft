@@ -7,6 +7,11 @@ Steel gray body with dark accents.
 model = {
     "id": "jetpack",
     "height": 0.6,
+    "equip": {
+        "rotation": [0, 0, 0],
+        "offset": [0, 0, 0.02],
+        "scale": 0.9,
+    },
     "parts": [
         # Left fuel tank — cylinder
         {"offset": [-0.08, 0.18, 0], "size": [0.10, 0.30, 0.10], "color": [0.38, 0.38, 0.42, 1]},

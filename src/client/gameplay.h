@@ -77,6 +77,10 @@ public:
 	struct HitEvent { bool happened = false; glm::vec3 pos; glm::vec3 color; };
 	const HitEvent& hitEvent() const { return m_hitEvent; }
 
+	// Attack swing trigger (for first-person hand animation)
+	bool swingTriggered() const { return m_swingTriggered; }
+	void clearSwing() { m_swingTriggered = false; }
+
 	// Place event (for immediate client-side sound on block place)
 	struct PlaceEvent { bool happened = false; glm::vec3 pos; std::string blockType; };
 	const PlaceEvent& placeEvent() const { return m_placeEvent; }
@@ -88,6 +92,7 @@ private:
 		bool active = false;
 	} m_breaking;
 	HitEvent m_hitEvent;
+	bool m_swingTriggered = false;
 	PlaceEvent m_placeEvent;
 
 	// --- Right-click state (RPG/RTS: drag → orbit, quick click → action) ---

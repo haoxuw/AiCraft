@@ -6,6 +6,11 @@ A hearty food item that restores hunger.
 model = {
     "id": "bread",
     "height": 0.3,
+    "equip": {
+        "rotation": [0, 0, 0],
+        "offset": [0, -0.08, -0.04],
+        "scale": 0.7,
+    },
     "parts": [
         # Loaf body — golden bread
         {"offset": [0, 0.06, 0], "size": [0.24, 0.12, 0.14], "color": [0.78, 0.62, 0.30, 1]},

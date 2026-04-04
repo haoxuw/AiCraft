@@ -36,10 +36,12 @@ struct ActionProposal {
 		PlaceBlock,     // place blockType at blockPos from slotIndex
 		IgniteTNT,      // light TNT at blockPos
 		// Entity interaction
-		Attack,         // damage targetEntity
+		Attack,         // damage targetEntity with held item
 		PickupItem,     // pick up targetEntity (item)
-		// Item spawning (from behavior — e.g. chicken lays egg)
-		DropItem,       // spawn item entity at actor's feet
+		// Item actions (Python-defined hooks: on_use, on_equip, on_interact)
+		UseItem,        // right-click: use held item on self (eat, drink)
+		EquipItem,      // E key: equip held item to its designated slot
+		DropItem,       // Q key or behavior: drop item at actor's feet
 		// Farming/active blocks
 		GrowCrop,       // advance growth at blockPos
 		// Behavior hot-swap (GUI editor → server → bot)

@@ -6,6 +6,11 @@ A classic health-restoring food item.
 model = {
     "id": "apple",
     "height": 0.4,
+    "equip": {
+        "rotation": [0, 0, 0],
+        "offset": [0, -0.10, -0.02],
+        "scale": 0.65,
+    },
     "parts": [
         # Body — round red apple
         {"offset": [0, 0.10, 0], "size": [0.18, 0.16, 0.18], "color": [0.82, 0.15, 0.12, 1]},

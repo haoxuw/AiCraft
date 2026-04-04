@@ -26,6 +26,16 @@ enum class WearSlot {
 };
 constexpr int WEAR_SLOT_COUNT = 5;
 
+// Parse equip slot from Python artifact string
+inline bool wearSlotFromString(const std::string& s, WearSlot& out) {
+	if (s == "left_hand")  { out = WearSlot::LeftHand;  return true; }
+	if (s == "right_hand") { out = WearSlot::RightHand; return true; }
+	if (s == "helmet" || s == "head") { out = WearSlot::Helmet; return true; }
+	if (s == "body")       { out = WearSlot::Body;      return true; }
+	if (s == "back")       { out = WearSlot::Back;      return true; }
+	return false; // not equippable
+}
+
 inline const char* equipSlotName(WearSlot slot) {
 	switch (slot) {
 	case WearSlot::LeftHand:  return "Left Hand";

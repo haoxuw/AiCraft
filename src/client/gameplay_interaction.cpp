@@ -97,6 +97,7 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	              camera.mode == CameraMode::ThirdPerson) && player.inventory) {
 		// Left-click: break / ignite TNT
 		if (controls.pressed(Action::BreakBlock) && m_breakCD <= 0) {
+			m_swingTriggered = true; // trigger first-person hand swing
 			auto& bp = m_hit->blockPos;
 			BlockId bid = chunks.getBlock(bp.x, bp.y, bp.z);
 			const BlockDef& bdef = blocks.get(bid);

@@ -3,6 +3,11 @@
 model = {
     "id": "cape",
     "height": 1.2,
+    "equip": {
+        "rotation": [0, 0, 0],
+        "offset": [0, 0, 0],
+        "scale": 0.8,
+    },
     "parts": [
         # Cape body (wide, flat cloth)
         {"offset": [0, 0.45, 0.05], "size": [0.30, 0.70, 0.04], "color": [0.55, 0.12, 0.15, 1]},

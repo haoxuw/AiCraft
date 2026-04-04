@@ -475,6 +475,7 @@ void Game::handleMenuAction(const MenuAction& action) {
 			                    m_camera.mode == CameraMode::ThirdPerson);
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
 				needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+			m_camera.resetMouseTracking();
 		}
 		break;
 	case MenuAction::LoadWorld: {
@@ -920,9 +921,10 @@ void Game::updatePlaying(float dt, float aspect) {
 
 	// Check if player right-clicked an entity → enter inspection
 	if (m_gameplay.inspectedEntity() != ENTITY_NONE) {
-		m_preInspectState = m_state; // remember so we restore correctly
+		m_preInspectState = m_state;
 		m_state = GameState::ENTITY_INSPECT;
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		m_camera.resetMouseTracking(); // prevent jump when returning to gameplay
 	}
 
 	renderPlaying(dt, aspect);
@@ -1659,11 +1661,12 @@ void Game::updateEntityInspect(float dt, float aspect) {
 	// ESC or right-click closes inspection
 	if (m_controls.pressed(Action::MenuBack) || m_controls.pressed(Action::PlaceBlock)) {
 		m_gameplay.clearInspection();
-		m_state = m_preInspectState; // restore survival/creative
+		m_state = m_preInspectState;
 		bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
 		                    m_camera.mode == CameraMode::ThirdPerson);
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
 			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+		m_camera.resetMouseTracking(); // prevent camera jump from stale mouse position
 		return;
 	}
 
@@ -1935,6 +1938,7 @@ void Game::updatePaused(float dt, float aspect) {
 		                    m_camera.mode == CameraMode::ThirdPerson);
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
 			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+		m_camera.resetMouseTracking();
 	}
 	ImGui::Spacing();
 

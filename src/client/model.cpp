@@ -159,4 +159,41 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 	glUniform1i(useTexLoc, 0);
 }
 
+void ModelRenderer::drawStatic(const BoxModel& model, const glm::mat4& viewProj,
+                                const glm::mat4& rootTransform, glm::vec3 sunDir) {
+	m_shader->use();
+	glEnable(GL_DEPTH_TEST);
+
+	float s = model.modelScale;
+
+	m_shader->setVec3("uSunDir", sunDir);
+	m_shader->setInt("uPartTex", 0);
+
+	GLint colorLoc = glGetUniformLocation(m_shader->id(), "uColor");
+	GLint useTexLoc = glGetUniformLocation(m_shader->id(), "uUseTexture");
+	glBindVertexArray(m_cubeVAO);
+
+	for (auto& part : model.parts) {
+		glm::mat4 partMat = rootTransform;
+
+		glm::mat4 worldMat = glm::translate(partMat, (part.offset - part.halfSize) * s);
+		partMat = glm::scale(worldMat, part.halfSize * 2.0f * s);
+
+		m_shader->setMat4("uModel", worldMat);
+		m_shader->setMat4("uMVP", viewProj * partMat);
+
+		if (part.texture != 0) {
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, part.texture);
+			glUniform1i(useTexLoc, 1);
+		} else {
+			glUniform1i(useTexLoc, 0);
+			glUniform4f(colorLoc, part.color.r, part.color.g, part.color.b, part.color.a);
+		}
+
+		glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+	}
+	glUniform1i(useTexLoc, 0);
+}
+
 } // namespace agentica

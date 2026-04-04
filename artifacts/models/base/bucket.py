@@ -3,6 +3,11 @@
 model = {
     "id": "bucket",
     "height": 0.5,
+    "equip": {
+        "rotation": [0, 0, 0],
+        "offset": [0, -0.12, -0.04],
+        "scale": 0.6,
+    },
     "parts": [
         # Body (tapered cylinder approximation)
         {"offset": [0, 0.10, 0], "size": [0.16, 0.20, 0.16], "color": [0.60, 0.60, 0.62, 1]},

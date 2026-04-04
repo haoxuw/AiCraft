@@ -275,6 +275,7 @@ int main(int argc, char** argv) {
 		clients.forwardBehaviorReloads();
 		clients.spawnAIClients(); // spawn agent processes for uncontrolled NPCs
 		clients.broadcastState(dt);
+		clients.announceOnLAN(dt);
 		clients.logStatus(statusTimer, tickCount, logFile);
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));

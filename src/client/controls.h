@@ -25,6 +25,8 @@ namespace Action {
 	constexpr const char* ToggleDebug  = "toggle_debug";
 	constexpr const char* ToggleInventory = "toggle_inventory";
 	constexpr const char* MenuBack     = "menu_back";
+	constexpr const char* DropItem     = "drop_item";
+	constexpr const char* EquipItem    = "equip_item";
 }
 
 struct ActionBinding {

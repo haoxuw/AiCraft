@@ -9,6 +9,10 @@ item = {
     "defense": 1,
     "description": "A cape worn on the back.",
 
+    "on_use": None,
+    "on_equip": "equip",
+    "on_interact": None,
+
     "model": "cape",
     "color": [0.20, 0.35, 0.60],
 }

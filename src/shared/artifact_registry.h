@@ -315,17 +315,21 @@ private:
 		std::string behavior = extract("behavior");
 		if (!behavior.empty()) e.fields["behavior"] = behavior;
 
-		// Extract equip slot
+		// Extract equip slot and item action hooks
 		std::string equipSlot = extract("equip_slot");
 		if (!equipSlot.empty()) e.fields["equip_slot"] = equipSlot;
+		std::string onUse = extract("on_use");
+		if (!onUse.empty() && onUse != "None") e.fields["on_use"] = onUse;
+		std::string onEquip = extract("on_equip");
+		if (!onEquip.empty() && onEquip != "None") e.fields["on_equip"] = onEquip;
+		std::string onInteract = extract("on_interact");
+		if (!onInteract.empty() && onInteract != "None") e.fields["on_interact"] = onInteract;
 
 		// Extract effect
 		std::string effect = extract("effect");
 		if (!effect.empty()) e.fields["effect"] = effect;
 
-		// Extract on_use
-		std::string onUse = extract("on_use");
-		if (!onUse.empty()) e.fields["on_use"] = onUse;
+		// on_use already extracted above with on_equip and on_interact
 
 		// Resource-specific fields
 		for (auto& key : {"source", "license", "source_url", "file_count", "format", "groups", "status"}) {
