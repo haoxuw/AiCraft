@@ -49,6 +49,11 @@ public:
 		m_templates = templates;
 		m_worldMgr.setSavesDir("saves");
 		m_worldMgr.refresh();
+#ifndef __EMSCRIPTEN__
+		// Start listening for LAN broadcasts immediately so we don't miss
+		// announcements that arrive before the user opens the Join tab.
+		m_discoverySocket.open(AGENTICA_DISCOVER_PORT);
+#endif
 	}
 
 	MenuAction render(const ArtifactRegistry& registry, float W, float H) {
@@ -297,9 +302,9 @@ private:
 		for (auto& h : m_serverHints)
 			m_detectedServers.push_back({h.host, h.port});
 
-		// Open/reopen UDP discovery socket to receive LAN broadcasts
-		m_discoverySocket.close();
-		m_discoverySocket.open(AGENTICA_DISCOVER_PORT);
+		// (Re)open UDP discovery socket to receive LAN broadcasts
+		if (!m_discoverySocket.isOpen())
+			m_discoverySocket.open(AGENTICA_DISCOVER_PORT);
 
 		// Quick TCP probe for localhost servers (same machine)
 		for (int port = 7777; port <= 7787; port++) {
@@ -328,8 +333,10 @@ private:
 			if (sscanf(pkt.data.c_str(), "AGENTICA %d %d", &port, &players) != 2) continue;
 			bool found = false;
 			for (auto& s : m_detectedServers) {
-				if (s.host == pkt.senderIp && s.port == port) {
-					s.players = players;  // refresh player count
+				// Match exact IP, or absorb a localhost TCP-probe entry for the same port
+				// (the server broadcasts its LAN IP but we probed it as 127.0.0.1)
+				if (s.port == port && (s.host == pkt.senderIp || s.host == "127.0.0.1")) {
+					s.players = players;
 					s.lan = true;
 					found = true; break;
 				}
