@@ -19,7 +19,7 @@
 #include <vector>
 #include <filesystem>
 
-namespace agentworld {
+namespace agentica {
 
 namespace model_loader {
 
@@ -308,4 +308,4 @@ inline std::unordered_map<std::string, BoxModel> loadAllModels(const std::string
 }
 
 } // namespace model_loader
-} // namespace agentworld
+} // namespace agentica

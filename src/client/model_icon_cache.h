@@ -20,7 +20,7 @@
 #include <unordered_map>
 #include <string>
 
-namespace agentworld {
+namespace agentica {
 
 class ModelIconCache {
 public:
@@ -134,4 +134,4 @@ private:
 	std::unordered_map<std::string, GLuint> m_cache;
 };
 
-} // namespace agentworld
+} // namespace agentica

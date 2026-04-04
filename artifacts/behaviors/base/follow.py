@@ -9,7 +9,7 @@ Parameters (optional via self dict):
   guard_range   — distance to chase threats from owner (default 6)
   patrol_range  — how far to wander when no owner found (default 12)
 """
-from agentworld_engine import Idle, Wander, Follow, Flee, MoveTo
+from agentica_engine import Idle, Wander, Follow, Flee, MoveTo
 import random
 
 _play_timer = 0

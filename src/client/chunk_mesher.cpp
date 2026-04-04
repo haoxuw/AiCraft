@@ -1,6 +1,6 @@
 #include "client/chunk_mesher.h"
 
-namespace agentworld {
+namespace agentica {
 
 void ChunkMesh::upload(const std::vector<ChunkVertex>& vertices) {
 	vertexCount = (int)vertices.size();
@@ -220,4 +220,4 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 	return verts;
 }
 
-} // namespace agentworld
+} // namespace agentica

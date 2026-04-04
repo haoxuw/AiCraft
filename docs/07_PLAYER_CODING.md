@@ -1,4 +1,4 @@
-# AgentWorld - Player Coding System
+# Agentica - Player Coding System
 
 The defining feature: players write Python code inside the game to create new Objects and Actions, test them locally, then upload them to become real in the shared world.
 

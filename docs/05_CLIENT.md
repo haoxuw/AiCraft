@@ -1,4 +1,4 @@
-# AgentWorld - Python Client
+# Agentica - Python Client
 
 The client handles rendering, input, the in-game code editor, and local preview/testing. Written in Python for consistency with the scripting model -- players use the same language to play and create.
 
@@ -8,7 +8,7 @@ The client handles rendering, input, the in-game code editor, and local preview/
 
 ```
 +====================================================================+
-|                        AgentWorld Python Client                        |
+|                        Agentica Python Client                        |
 +====================================================================+
 |                                                                      |
 |  +------------------------+   +---------------------------+         |
@@ -178,11 +178,11 @@ Non-predicted (wait for server):
 
 ## 4. In-Game Code Editor
 
-The centerpiece of AgentWorld -- players write Python inside the game.
+The centerpiece of Agentica -- players write Python inside the game.
 
 ```
 +====================================================================+
-|  AgentWorld Code Editor (in-game overlay)                              |
+|  Agentica Code Editor (in-game overlay)                              |
 +====================================================================+
 |                                                                      |
 |  +----Tab Bar---------------------------------------------+         |
@@ -348,7 +348,7 @@ Asset upload with code:
 ## 6. Client Directory Layout
 
 ```
-agentworld-client/
+agentica-client/
   src/
     main.py                      # Entry point
     client.py                    # Client class, main loop

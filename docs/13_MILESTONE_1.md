@@ -74,7 +74,7 @@ main()
 ## File Structure
 
 ```
-AgentWorld/
+Agentica/
   CMakeLists.txt
   src/
     main.cpp                 -- entry point, game loop

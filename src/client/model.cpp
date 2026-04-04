@@ -1,7 +1,7 @@
 #include "client/model.h"
 #include <cmath>
 
-namespace agentworld {
+namespace agentica {
 
 bool ModelRenderer::init(Shader* shader) {
 	m_shader = shader;
@@ -159,4 +159,4 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 	glUniform1i(useTexLoc, 0);
 }
 
-} // namespace agentworld
+} // namespace agentica

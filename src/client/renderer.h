@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace agentworld {
+namespace agentica {
 
 class Renderer {
 public:
@@ -66,4 +66,4 @@ private:
 	FogOfWar m_fogOfWar;
 };
 
-} // namespace agentworld
+} // namespace agentica

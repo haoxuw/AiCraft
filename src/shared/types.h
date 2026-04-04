@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace agentworld {
+namespace agentica {
 
 constexpr int CHUNK_SIZE = 16;
 constexpr int CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
@@ -62,4 +62,4 @@ inline ChunkPos worldToChunk(int wx, int wy, int wz) {
 	};
 }
 
-} // namespace agentworld
+} // namespace agentica

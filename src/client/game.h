@@ -30,7 +30,7 @@
 #include <deque>
 #include <string>
 
-namespace agentworld {
+namespace agentica {
 
 class Game {
 public:
@@ -147,7 +147,7 @@ private:
 
 	// Process management (singleplayer: spawns server process)
 	AgentManager m_agentMgr;
-	std::string m_execDir;           // directory containing agentworld-* binaries
+	std::string m_execDir;           // directory containing agentica-* binaries
 
 	// Server log file (local server → /tmp/agentica_log_local.log)
 	FILE* m_serverLog = nullptr;
@@ -193,4 +193,4 @@ private:
 	float m_globalTime = 0;
 };
 
-} // namespace agentworld
+} // namespace agentica

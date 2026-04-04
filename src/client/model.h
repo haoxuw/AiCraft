@@ -6,7 +6,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "client/shader.h"
 
-namespace agentworld {
+namespace agentica {
 
 // Renders box-based models with animation.
 class ModelRenderer {
@@ -23,4 +23,4 @@ private:
 	GLuint m_cubeVAO = 0, m_cubeVBO = 0, m_cubeEBO = 0;
 };
 
-} // namespace agentworld
+} // namespace agentica

@@ -1,4 +1,4 @@
-# AgentWorld - Architecture Diagram
+# Agentica - Architecture Diagram
 
 Transcribed from the design diagram. Three cleanly separated layers.
 

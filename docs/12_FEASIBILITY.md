@@ -1,4 +1,4 @@
-# AgentWorld - Feasibility: C++ Server Embedding Hot-Reloadable Python
+# Agentica - Feasibility: C++ Server Embedding Hot-Reloadable Python
 
 **Question**: Can a C++ server embed Python, run player-written Objects and Actions, and hot-reload Python code DURING gameplay without restarting?
 

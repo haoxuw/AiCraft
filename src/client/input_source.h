@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-namespace agentworld {
+namespace agentica {
 
 class InputSource {
 public:
@@ -130,4 +130,4 @@ private:
 	int m_axisCount = 0;
 };
 
-} // namespace agentworld
+} // namespace agentica

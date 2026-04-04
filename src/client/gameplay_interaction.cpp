@@ -3,7 +3,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 
-namespace agentworld {
+namespace agentica {
 
 // ================================================================
 // processBlockInteraction -- raycast, break/place, inspect
@@ -166,4 +166,4 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	}
 }
 
-} // namespace agentworld
+} // namespace agentica

@@ -2,7 +2,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace agentworld {
+namespace agentica {
 
 static const float PI = 3.14159265f;
 
@@ -624,4 +624,4 @@ void Renderer::renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 p
 
 // Old renderPlayerModel removed -- use ModelRenderer::draw() instead
 
-} // namespace agentworld
+} // namespace agentica

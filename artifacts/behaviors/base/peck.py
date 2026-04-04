@@ -9,7 +9,7 @@ Parameters (optional via self dict):
   egg_chance     — probability of egg drop on startle (default 0.20)
   roost_height   — min height above ground to consider a roost (default 1.5)
 """
-from agentworld_engine import Idle, Wander, Flee, MoveTo, DropItem
+from agentica_engine import Idle, Wander, Flee, MoveTo, DropItem
 import random
 
 PECK_CHANCE = 0.45

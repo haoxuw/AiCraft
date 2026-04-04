@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace agentworld {
+namespace agentica {
 
 AudioManager::~AudioManager() {
 	shutdown();
@@ -589,4 +589,4 @@ std::string AudioManager::currentTrackName() const {
 	return name;
 }
 
-} // namespace agentworld
+} // namespace agentica

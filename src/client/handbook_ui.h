@@ -25,7 +25,7 @@
 #include <imgui.h>
 #include <unordered_map>
 
-namespace agentworld {
+namespace agentica {
 
 class HandbookUI {
 public:
@@ -367,4 +367,4 @@ private:
 	float m_forkedMsgTimer = 0;
 };
 
-} // namespace agentworld
+} // namespace agentica

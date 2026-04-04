@@ -27,7 +27,7 @@
 #include <functional>
 #include <cstdio>
 
-namespace agentworld {
+namespace agentica {
 
 using ClientId = uint32_t;
 
@@ -439,4 +439,4 @@ private:
 	std::vector<ActionProposal> m_pendingReloads; // behavior reload requests to forward to bots
 };
 
-} // namespace agentworld
+} // namespace agentica

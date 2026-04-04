@@ -1,4 +1,4 @@
-# AgentWorld Item Visual Definitions (Client-Side)
+# Agentica Item Visual Definitions (Client-Side)
 #
 # These define HOW items look when equipped on characters.
 # The server knows items exist and their game properties.

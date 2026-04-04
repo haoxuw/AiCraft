@@ -11,7 +11,7 @@
 #include <cmath>
 #include <unordered_map>
 
-namespace agentworld {
+namespace agentica {
 
 // ============================================================
 // Base class for world generation templates
@@ -634,4 +634,4 @@ public:
 	VillageWorldTemplate() : ConfigurableWorldTemplate("artifacts/worlds/base/village.py") {}
 };
 
-} // namespace agentworld
+} // namespace agentica

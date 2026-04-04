@@ -15,7 +15,7 @@
 #include "server/world_template.h"
 #include <vector>
 
-namespace agentworld {
+namespace agentica {
 
 class LocalServer : public ServerInterface {
 public:
@@ -152,4 +152,4 @@ private:
 	bool m_connected = false;
 };
 
-} // namespace agentworld
+} // namespace agentica

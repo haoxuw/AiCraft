@@ -23,7 +23,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace agentworld {
+namespace agentica {
 
 class EntityManager;
 
@@ -178,4 +178,4 @@ private:
 	std::string m_source;
 };
 
-} // namespace agentworld
+} // namespace agentica

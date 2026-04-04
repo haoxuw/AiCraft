@@ -1,4 +1,4 @@
-# AgentWorld — Iterative Debugging Guide
+# Agentica — Iterative Debugging Guide
 
 This guide explains how to run, screenshot, and iterate on the game without
 going through the menu each time.
@@ -13,7 +13,7 @@ going through the menu each time.
 ./build/agentworld --skip-menu
 
 # Network client (also skips menu — auto-joins server directly)
-./build/agentworld-client --host 127.0.0.1 --port 7777
+./build/agentica-client --host 127.0.0.1 --port 7777
 
 # Dedicated server + client in one step (from Makefile)
 make game 7890      # server on :7890 + client auto-joins, skips menu
@@ -22,14 +22,14 @@ make play           # same on default port 7777
 
 ## Automated screenshot pipeline
 
-The game writes a screenshot to `/tmp/agentworld_auto_screenshot.ppm`
+The game writes a screenshot to `/tmp/agentica_auto_screenshot.ppm`
 **3 seconds after connecting to a world** (survival or creative).
 
 Convert and read:
 ```bash
 python3 -c "
 from PIL import Image
-img = Image.open('/tmp/agentworld_auto_screenshot.ppm')
+img = Image.open('/tmp/agentica_auto_screenshot.ppm')
 img.save('/tmp/shot.png')
 print(img.size)
 "
@@ -38,16 +38,16 @@ print(img.size)
 The `--demo` flag takes a full tour (FPS → TPS → RPG → RTS) and exits:
 ```bash
 ./build/agentworld --skip-menu --demo
-# writes: /tmp/agentworld_view_1_fps.ppm  (FPS view)
-#         /tmp/agentworld_view_2_3rd.ppm  (TPS view)
-#         /tmp/agentworld_view_25_inventory.ppm
-#         /tmp/agentworld_view_3_god.ppm  (RPG view)
-#         /tmp/agentworld_view_4_rts.ppm  (RTS view)
+# writes: /tmp/agentica_view_1_fps.ppm  (FPS view)
+#         /tmp/agentica_view_2_3rd.ppm  (TPS view)
+#         /tmp/agentica_view_25_inventory.ppm
+#         /tmp/agentica_view_3_god.ppm  (RPG view)
+#         /tmp/agentica_view_4_rts.ppm  (RTS view)
 ```
 
 Press **F2** in-game to take a manual screenshot:
 ```bash
-ls /tmp/agentworld_screenshot_*.ppm
+ls /tmp/agentica_screenshot_*.ppm
 ```
 
 ## Iterative HUD / rendering development loop
@@ -60,7 +60,7 @@ cmake --build build -j$(nproc) && \
 sleep 4
 python3 -c "
 from PIL import Image
-Image.open('/tmp/agentworld_auto_screenshot.ppm').save('/tmp/shot.png')
+Image.open('/tmp/agentica_auto_screenshot.ppm').save('/tmp/shot.png')
 "
 # Claude can then read /tmp/shot.png directly
 ```
@@ -75,7 +75,7 @@ pkill -f "build/agentworld"; cmake --build build -j$(nproc) && \
 
 | Key     | Action                          |
 |---------|---------------------------------|
-| F2      | Screenshot → /tmp/agentworld_screenshot_N.ppm |
+| F2      | Screenshot → /tmp/agentica_screenshot_N.ppm |
 | F3      | Toggle debug overlay (FPS, XYZ, chunk, etc.) |
 | F12     | Toggle admin/survival mode      |
 | V       | Cycle camera mode (FPS→TPS→RPG→RTS) |
@@ -113,7 +113,7 @@ subprocess.Popen(["./build/agentworld", "--skip-menu"], env=env,
 
 # Wait for auto-screenshot
 time.sleep(4.5)
-img = Image.open("/tmp/agentworld_auto_screenshot.ppm")
+img = Image.open("/tmp/agentica_auto_screenshot.ppm")
 img.save("/tmp/shot.png")
 # Now Claude can read /tmp/shot.png
 ```

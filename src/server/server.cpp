@@ -1,7 +1,7 @@
 #include "server/server.h"
 #include <cmath>
 
-namespace agentworld {
+namespace agentica {
 
 void GameServer::resolveActions(float dt) {
 	auto proposals = m_world->actions.drain();
@@ -232,4 +232,4 @@ void GameServer::resolveActions(float dt) {
 	} // for
 } // resolveActions
 
-} // namespace agentworld
+} // namespace agentica

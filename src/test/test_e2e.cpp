@@ -22,7 +22,7 @@
 #include <vector>
 #include <algorithm>
 
-namespace agentworld::test {
+namespace agentica::test {
 
 // ================================================================
 // Test infrastructure
@@ -859,16 +859,16 @@ static std::string t25_spawn_near_village() {
 // Main
 // ================================================================
 
-} // namespace agentworld::test
+} // namespace agentica::test
 
 int main() {
-	using namespace agentworld;
-	using namespace agentworld::test;
+	using namespace agentica;
+	using namespace agentica::test;
 
 	// Initialize Python so world templates and behaviors can load from artifacts/
 	pythonBridge().init("python");
 
-	printf("\n=== AgentWorld E2E Tests ===\n\n");
+	printf("\n=== Agentica E2E Tests ===\n\n");
 	initTemplates();
 
 	printf("--- Player Basics ---\n");

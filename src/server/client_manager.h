@@ -24,7 +24,7 @@
 #include <cmath>
 #include <filesystem>
 
-namespace agentworld {
+namespace agentica {
 
 struct ConnectedClient {
 	int fd;
@@ -52,7 +52,7 @@ public:
 
 	~ClientManager() { stopAllAIClients(); }
 
-	// Set the directory containing agentworld-bot binary.
+	// Set the directory containing agentica-bot binary.
 	// Call before the main loop. If empty, AI client spawning is disabled.
 	void setExecDir(const std::string& dir) { m_execDir = dir; }
 
@@ -271,7 +271,7 @@ public:
 	void spawnAIClients() {
 		if (m_execDir.empty() || m_port <= 0) return;
 
-		std::string botBin = m_execDir + "/agentworld-bot";
+		std::string botBin = m_execDir + "/agentica-bot";
 		if (!std::filesystem::exists(botBin)) return;
 
 		// Reap finished AI client processes
@@ -391,6 +391,11 @@ private:
 			std::string creatureType = rb.hasMore() ? rb.readString() : "";
 			if (!displayName.empty())
 				client.name = displayName + " (" + client.name.substr(0, 8) + ")";
+			// Apply selected character skin so the server broadcasts the right model
+			if (!creatureType.empty()) {
+				Entity* pe = m_server.world().entities.get(client.playerId);
+				if (pe) pe->setProp("character_skin", creatureType);
+			}
 			printf("[Server] %s identified: creature=%s\n",
 				client.label().c_str(),
 				creatureType.empty() ? "default" : creatureType.c_str());
@@ -466,4 +471,4 @@ private:
 	std::vector<AIProcess> m_aiProcesses;
 };
 
-} // namespace agentworld
+} // namespace agentica

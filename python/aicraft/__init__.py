@@ -1,1 +1,1 @@
-"""AgentWorld - A voxel game where the world is code."""
+"""Agentica - A voxel game where the world is code."""

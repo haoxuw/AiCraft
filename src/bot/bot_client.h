@@ -32,7 +32,7 @@
 #include <thread>
 #include <chrono>
 
-namespace agentworld {
+namespace agentica {
 
 class BotClient {
 public:
@@ -365,4 +365,4 @@ private:
 	BehaviorStore m_behaviorStore;
 };
 
-} // namespace agentworld
+} // namespace agentica

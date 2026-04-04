@@ -1,4 +1,4 @@
-# AgentWorld - Objects
+# Agentica - Objects
 
 Everything in the world is an Object. Objects are defined as Python classes with Pydantic models for their attributes.
 

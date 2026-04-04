@@ -3,7 +3,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace agentworld {
+namespace agentica {
 
 // ================================================================
 // processMovement -- WASD / Sprint / Jump / Click-to-move / RTS
@@ -287,4 +287,4 @@ void GameplayController::issueRTSMoveOrder(glm::ivec3 blockPos,
 	}
 }
 
-} // namespace agentworld
+} // namespace agentica

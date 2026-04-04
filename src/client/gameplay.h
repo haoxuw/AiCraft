@@ -15,7 +15,7 @@
 #include <optional>
 #include <unordered_map>
 
-namespace agentworld {
+namespace agentica {
 
 class GameplayController {
 public:
@@ -121,4 +121,4 @@ private:
 	std::unordered_map<EntityId, glm::vec3> m_rtsLastPos;
 };
 
-} // namespace agentworld
+} // namespace agentica

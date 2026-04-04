@@ -23,7 +23,7 @@
 #include <cstdio>
 #include <ctime>
 
-namespace agentworld {
+namespace agentica {
 
 struct WorldMetadata {
 	std::string name;
@@ -338,4 +338,4 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 	return true;
 }
 
-} // namespace agentworld
+} // namespace agentica

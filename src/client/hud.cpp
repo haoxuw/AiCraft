@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <cmath>
 
-namespace agentworld {
+namespace agentica {
 
 // ----------------------------------------------------------------
 // DST-style circular stat ring helper (HP / Hunger)
@@ -397,4 +397,4 @@ void HUD::render(const HUDContext& ctx, TextRenderer& text, Shader& highlightSha
 	renderDebugOverlay(ctx, text);
 }
 
-} // namespace agentworld
+} // namespace agentica

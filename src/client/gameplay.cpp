@@ -1,7 +1,7 @@
 #include "client/gameplay.h"
 #include <cmath>
 
-namespace agentworld {
+namespace agentica {
 
 // ================================================================
 // update -- called each gameplay frame (CLIENT-SIDE ONLY)
@@ -109,4 +109,4 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 	}
 }
 
-} // namespace agentworld
+} // namespace agentica

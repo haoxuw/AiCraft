@@ -30,7 +30,7 @@
 #include <functional>
 #include <memory>
 
-namespace agentworld {
+namespace agentica {
 
 class ServerInterface {
 public:
@@ -97,4 +97,4 @@ public:
 	) = 0;
 };
 
-} // namespace agentworld
+} // namespace agentica

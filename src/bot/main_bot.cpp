@@ -5,8 +5,8 @@
  * runs Python behavior logic, and sends ActionProposals back.
  *
  * Usage:
- *   ./agentworld-bot --host 127.0.0.1 --port 7777 --entity 5
- *   ./agentworld-bot --port 7777 --entity 5 --behavior wander
+ *   ./agentica-bot --host 127.0.0.1 --port 7777 --entity 5
+ *   ./agentica-bot --port 7777 --entity 5 --behavior wander
  */
 
 #include "bot/bot_client.h"
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
 		else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
 			name = argv[++i];
 		else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("agentworld-bot — headless AI client\n\n"
+			printf("agentica-bot — headless AI client\n\n"
 			       "Usage: %s [options]\n"
 			       "  --host HOST       Server address (default: 127.0.0.1)\n"
 			       "  --port PORT       Server port (default: 7777)\n"
@@ -62,12 +62,12 @@ int main(int argc, char** argv) {
 	signal(SIGTERM, signalHandler);
 
 	// Initialize Python interpreter for behavior execution
-	agentworld::pythonBridge().init("python");
+	agentica::pythonBridge().init("python");
 
-	agentworld::BotClient bot;
+	agentica::BotClient bot;
 	bot.setTargetEntity(entityId);
 	if (!bot.connect(host, port, name)) {
-		agentworld::pythonBridge().shutdown();
+		agentica::pythonBridge().shutdown();
 		return 1;
 	}
 
@@ -104,6 +104,6 @@ int main(int argc, char** argv) {
 
 	printf("[Bot:%s] Shutting down\n", name.c_str());
 	bot.disconnect();
-	agentworld::pythonBridge().shutdown();
+	agentica::pythonBridge().shutdown();
 	return 0;
 }

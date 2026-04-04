@@ -4,7 +4,7 @@ Players write Python code extending the base classes, test locally,
 then upload to the server. The registry validates, sandboxes, and
 registers their code so it becomes live in the world.
 
-STATUS: STUB. See AgentWorld/16_ARTIFACT_REGISTRY_TODO.md for full design.
+STATUS: STUB. See Agentica/16_ARTIFACT_REGISTRY_TODO.md for full design.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ class ArtifactRegistry:
         """
         raise NotImplementedError(
             "Artifact upload not yet implemented. "
-            "See AgentWorld/16_ARTIFACT_REGISTRY_TODO.md"
+            "See Agentica/16_ARTIFACT_REGISTRY_TODO.md"
         )
 
     def hot_reload(self, artifact_id: str, new_source: str
@@ -127,5 +127,5 @@ class ArtifactRegistry:
         """
         raise NotImplementedError(
             "Hot-reload not yet implemented. "
-            "See AgentWorld/16_ARTIFACT_REGISTRY_TODO.md"
+            "See Agentica/16_ARTIFACT_REGISTRY_TODO.md"
         )

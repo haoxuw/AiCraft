@@ -11,7 +11,7 @@
 #include <memory>
 #include <cstdint>
 
-namespace agentworld {
+namespace agentica {
 
 using EntityId = uint32_t;
 constexpr EntityId ENTITY_NONE = 0;
@@ -168,4 +168,4 @@ private:
 	std::set<std::string> m_dirty;
 };
 
-} // namespace agentworld
+} // namespace agentica

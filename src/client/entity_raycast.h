@@ -20,7 +20,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace agentworld {
+namespace agentica {
 
 struct EntityHit {
 	EntityId entityId;
@@ -94,4 +94,4 @@ inline std::optional<EntityHit> raycastEntities(
 	return closest;
 }
 
-} // namespace agentworld
+} // namespace agentica

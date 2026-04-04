@@ -5,7 +5,7 @@
  *
  * Layout:
  *   ┌─────────────────────────────────────────────┐
- *   │  AGENTWORLD                          v0.9.0    │  ← top bar
+ *   │  AGENTICA                          v0.9.0    │  ← top bar
  *   ├────────┬────────────────────────────────────┤
  *   │        │                                    │
  *   │  PLAY  │                                    │
@@ -41,7 +41,7 @@
 #include <filesystem>
 #include <fstream>
 
-namespace agentworld {
+namespace agentica {
 
 class ImGuiMenu {
 public:
@@ -76,7 +76,7 @@ public:
 			ImGui::SetCursorPos(ImVec2(24, 10));
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.65f, 0.15f, 1.0f));
 			ImGui::SetWindowFontScale(1.8f);
-			ImGui::Text("AGENTWORLD");
+			ImGui::Text("AGENTICA");
 			ImGui::SetWindowFontScale(1.0f);
 			ImGui::PopStyleColor();
 
@@ -1119,4 +1119,4 @@ private:
 	}
 };
 
-} // namespace agentworld
+} // namespace agentica

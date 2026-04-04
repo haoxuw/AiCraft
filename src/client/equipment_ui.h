@@ -20,7 +20,7 @@
 #include <cmath>
 #include <unordered_map>
 
-namespace agentworld {
+namespace agentica {
 
 class EquipmentUI {
 public:
@@ -509,4 +509,4 @@ private:
 	}
 };
 
-} // namespace agentworld
+} // namespace agentica

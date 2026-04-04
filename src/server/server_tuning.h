@@ -7,7 +7,7 @@
  * in one place. Change values here to tune server behavior.
  */
 
-namespace agentworld::ServerTuning {
+namespace agentica::ServerTuning {
 	// Spawn
 	constexpr float spawnHeightOffset    = 1.5f;  // blocks above surface to spawn entities
 

@@ -1,4 +1,4 @@
-# AgentWorld - Core Loop & Conceptual Separation
+# Agentica - Core Loop & Conceptual Separation
 
 Two orthogonal axes. **Server/Client** is about WHERE code runs. **World/Action/Object** is about WHAT the game simulates. They must not be conflated.
 

@@ -15,7 +15,7 @@
 
 #include <GLFW/glfw3.h>
 
-namespace agentworld {
+namespace agentica {
 
 class UI {
 public:
@@ -39,4 +39,4 @@ public:
 	bool wantsMouse() const;
 };
 
-} // namespace agentworld
+} // namespace agentica

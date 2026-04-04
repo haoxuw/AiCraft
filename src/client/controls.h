@@ -7,7 +7,7 @@
 #include <vector>
 #include <memory>
 
-namespace agentworld {
+namespace agentica {
 
 // Action name constants -- use these instead of raw strings.
 namespace Action {
@@ -86,4 +86,4 @@ private:
 	std::vector<std::unique_ptr<InputSource>> m_sources;
 };
 
-} // namespace agentworld
+} // namespace agentica

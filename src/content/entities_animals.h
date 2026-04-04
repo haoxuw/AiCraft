@@ -3,7 +3,7 @@
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 
-namespace agentworld::builtin {
+namespace agentica::builtin {
 
 inline void registerAnimalEntities(EntityManager& mgr) {
 	{
@@ -133,4 +133,4 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 	}
 }
 
-} // namespace agentworld::builtin
+} // namespace agentica::builtin

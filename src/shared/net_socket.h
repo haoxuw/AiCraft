@@ -18,7 +18,7 @@
 #include <cstring>
 #include <cstdio>
 
-namespace agentworld::net {
+namespace agentica::net {
 
 // Make a socket non-blocking
 inline void setNonBlocking(int fd) {
@@ -227,4 +227,4 @@ private:
 	int m_fd = -1;
 };
 
-} // namespace agentworld::net
+} // namespace agentica::net

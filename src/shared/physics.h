@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace agentworld {
+namespace agentica {
 
 struct MoveResult {
 	glm::vec3 position;
@@ -173,4 +173,4 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	return result;
 }
 
-} // namespace agentworld
+} // namespace agentica

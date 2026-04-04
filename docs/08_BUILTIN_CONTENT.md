@@ -1,4 +1,4 @@
-# AgentWorld - Built-in Content
+# Agentica - Built-in Content
 
 The base set of Objects and Actions that ship with the game. These follow the exact same API as player-created content -- they're just pre-installed.
 

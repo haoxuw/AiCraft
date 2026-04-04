@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
 
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("AgentWorld — voxel game (singleplayer)\n\n"
+			printf("Agentica — voxel game (singleplayer)\n\n"
 			       "Usage: %s [options]\n"
 			       "  --skip-menu       Start game directly (skip menu)\n"
 			       "  --host HOST       Connect to server instead of local\n"
@@ -46,13 +46,13 @@ int main(int argc, char** argv) {
 	});
 #endif
 
-	agentworld::pythonBridge().init("python");
+	agentica::pythonBridge().init("python");
 
-	agentworld::Game game;
+	agentica::Game game;
 	if (!game.init(argc, argv)) return 1;
 	game.run();
 	game.shutdown();
 
-	agentworld::pythonBridge().shutdown();
+	agentica::pythonBridge().shutdown();
 	return 0;
 }

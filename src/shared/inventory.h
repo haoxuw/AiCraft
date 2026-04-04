@@ -3,7 +3,7 @@
 /**
  * Inventory: a Counter of items (item_id -> count).
  *
- * Unlike Minecraft's slot-based grid, AgentWorld uses a simple
+ * Unlike Minecraft's slot-based grid, Agentica uses a simple
  * counter. No stack limits, no slot management. Items are
  * displayed sorted by ID, skipping zero-count entries.
  *
@@ -14,7 +14,7 @@
 #include <map>
 #include <vector>
 
-namespace agentworld {
+namespace agentica {
 
 // Equipment slots — what a character can wear/hold
 enum class WearSlot {
@@ -170,4 +170,4 @@ private:
 	std::string m_equipped[WEAR_SLOT_COUNT];
 };
 
-} // namespace agentworld
+} // namespace agentica

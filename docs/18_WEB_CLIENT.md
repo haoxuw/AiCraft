@@ -1,4 +1,4 @@
-# AgentWorld -- Web Client Design
+# Agentica -- Web Client Design
 
 Dual-target architecture: same C++ source builds natively (Linux/Mac/Win) and as WebAssembly for browsers. Both connect to the same server.
 
@@ -8,7 +8,7 @@ Dual-target architecture: same C++ source builds natively (Linux/Mac/Win) and as
 
 ```
                     ┌─────────────────────────────────────┐
-                    │         AgentWorld Server (C++)         │
+                    │         Agentica Server (C++)         │
                     │                                     │
                     │   World ─ Physics ─ Behaviors       │
                     │   Action Queue ─ Entity Manager     │
@@ -173,13 +173,13 @@ Browsers cannot open raw TCP sockets. Two options:
 
 **Option A: WebSocket proxy (simple)**
 ```
-Browser ──WebSocket──► Proxy (ws→tcp) ──TCP──► AgentWorld Server
+Browser ──WebSocket──► Proxy (ws→tcp) ──TCP──► Agentica Server
 ```
 A lightweight proxy (e.g., `websockify`) converts WebSocket to TCP. Server unchanged.
 
 **Option B: Native WebSocket support in server (better)**
 ```
-Browser ──WebSocket──► AgentWorld Server (listens on both TCP and WS)
+Browser ──WebSocket──► Agentica Server (listens on both TCP and WS)
 ```
 Server accepts both TCP (native clients) and WebSocket (browser clients) on different ports. Same binary protocol over both transports.
 
@@ -302,9 +302,9 @@ Host on any CDN (Cloudflare Pages, Vercel, S3). No server-side rendering needed.
 
 ### Global server
 
-Run the dedicated AgentWorld server on a cloud VM:
+Run the dedicated Agentica server on a cloud VM:
 ```bash
-./agentworld-server --port 7777 --ws-port 8080
+./agentica-server --port 7777 --ws-port 8080
 ```
 
 Browser clients connect via WebSocket to `wss://play.agentworld.io:8080`.

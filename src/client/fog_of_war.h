@@ -16,7 +16,7 @@
 #include "client/gl.h"
 #include <unordered_set>
 
-namespace agentworld {
+namespace agentica {
 
 class FogOfWar {
 public:
@@ -130,4 +130,4 @@ private:
 	GLuint m_vao = 0, m_vbo = 0;
 };
 
-} // namespace agentworld
+} // namespace agentica

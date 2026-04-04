@@ -9,7 +9,7 @@ Parameters (optional via self dict):
   group_range   — max distance before rejoining herd (default 6)
   graze_chance  — probability of stopping to graze per decide (default 0.25)
 """
-from agentworld_engine import Idle, Wander, Flee, MoveTo
+from agentica_engine import Idle, Wander, Flee, MoveTo
 import random
 
 _graze_timer = 0

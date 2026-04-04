@@ -16,7 +16,7 @@
 #include <emscripten.h>
 #endif
 
-namespace agentworld {
+namespace agentica {
 
 // ============================================================
 // Screenshot utility
@@ -37,7 +37,7 @@ static void writeScreenshot(int w, int h, const char* path) {
 // Init / Shutdown
 // ============================================================
 bool Game::init(int argc, char** argv) {
-	printf("=== AgentWorld v0.9.0 ===\n");
+	printf("=== Agentica v0.9.0 ===\n");
 
 	// Determine executable directory (for launching server/bot processes)
 	if (argc > 0) {
@@ -46,7 +46,7 @@ bool Game::init(int argc, char** argv) {
 		m_execDir = (pos != std::string::npos) ? exe.substr(0, pos) : ".";
 	}
 
-	if (!m_window.init(1600, 900, "AgentWorld")) return false;
+	if (!m_window.init(1600, 900, "Agentica")) return false;
 	if (!m_renderer.init("shaders")) return false;
 	if (!m_text.init("shaders")) return false;
 	if (!m_particles.init("shaders")) return false;
@@ -103,15 +103,38 @@ bool Game::init(int argc, char** argv) {
 	m_models = model_loader::loadAllModels("artifacts");
 	printf("[Game] Loaded %zu models from Python\n", m_models.size());
 
-	// Validate: every creature, character, and item artifact should have a model
-	for (auto* cat : {"creature", "character", "item"}) {
-		for (auto* entry : m_artifacts.byCategory(cat)) {
-			std::string key = entry->name;
-			for (auto& c : key) c = (char)std::tolower((unsigned char)c);
-			if (!m_models.count(key))
-				printf("[WARNING] %s '%s' has no model in artifacts/models/ (expected %s.py)\n",
-					cat, entry->name.c_str(), key.c_str());
+	// Validate: every artifact and block type should have a model.
+	// Missing models get the magenta "?" placeholder and a console warning.
+	{
+		int missing = 0;
+		// Check artifacts (creatures, characters, items)
+		for (auto* cat : {"creature", "character", "item"}) {
+			for (auto* entry : m_artifacts.byCategory(cat)) {
+				std::string key = entry->name;
+				for (auto& c : key) c = (char)std::tolower((unsigned char)c);
+				if (!m_models.count(key)) {
+					printf("[MISSING MODEL] %s '%s' → expected artifacts/models/base/%s.py\n",
+						cat, entry->name.c_str(), key.c_str());
+					missing++;
+				}
+			}
 		}
+		// Check block types (blocks appear in inventory when broken)
+		for (auto& entry : m_artifacts.entries()) {
+			if (entry.category == "block") {
+				std::string key = entry.name;
+				for (auto& c : key) c = (char)std::tolower((unsigned char)c);
+				if (!m_models.count(key) && key != "air") {
+					printf("[MISSING MODEL] block '%s' → expected artifacts/models/base/%s.py\n",
+						entry.name.c_str(), key.c_str());
+					missing++;
+				}
+			}
+		}
+		if (missing > 0)
+			printf("[WARNING] %d items/blocks have no 3D model — they will show as '?' in UI\n", missing);
+		else
+			printf("[Game] All items and blocks have 3D models ✓\n");
 	}
 	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
 	m_iconCache.init(&m_renderer.highlightShader(), &m_renderer.modelRenderer());
@@ -351,7 +374,7 @@ void Game::endFrame() {
 
 void Game::saveScreenshot() {
 	char p[256];
-	snprintf(p, 256, "/tmp/agentworld_screenshot_%d.ppm", m_screenshotCounter++);
+	snprintf(p, 256, "/tmp/agentica_screenshot_%d.ppm", m_screenshotCounter++);
 	writeScreenshot(m_window.width(), m_window.height(), p);
 }
 
@@ -375,7 +398,7 @@ void Game::updateAndRender(float dt, float aspect) {
 		if (m_demoMode && m_autoScreenTimer > 0.5f && m_autoScreenTimer < 0.6f) {
 			// Capture Play page (world list + create new)
 			m_imguiMenu.setPage(0);
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_menu_play.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_menu_play.ppm");
 		}
 		if (m_demoMode && m_autoScreenTimer > 1.0f && m_autoScreenTimer < 1.1f) {
 			// Switch to handbook, show pig with 3D preview
@@ -383,7 +406,7 @@ void Game::updateAndRender(float dt, float aspect) {
 			m_imguiMenu.handbook().selectEntry("base:pig");
 		}
 		if (m_demoMode && m_autoScreenTimer > 1.8f && m_autoScreenTimer < 1.9f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_handbook_creature.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_handbook_creature.ppm");
 		}
 		if (m_demoMode && m_autoScreenTimer > 2.2f) {
 			action.type = MenuAction::EnterGame;
@@ -1420,7 +1443,7 @@ void Game::renderPlaying(float dt, float aspect) {
 	// Auto screenshot
 	m_autoScreenTimer += dt;
 	if (!m_autoScreenDone && m_autoScreenTimer > 3.0f) {
-		writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_auto_screenshot.ppm");
+		writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_auto_screenshot.ppm");
 		m_autoScreenDone = true;
 	}
 
@@ -1428,14 +1451,14 @@ void Game::renderPlaying(float dt, float aspect) {
 	if (m_demoMode && m_state != GameState::MENU && m_demoStep >= 1) {
 		m_demoTimer += dt;
 		if (m_demoStep == 1 && m_demoTimer > 2.0f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_1_fps.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_1_fps.ppm");
 			m_camera.cycleMode();
 			m_camera.orbitYaw = m_camera.player.yaw + 30;
 			m_camera.orbitPitch = 25;
 			m_demoStep = 2; m_demoTimer = 0;
 		}
 		if (m_demoStep == 2 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_2_3rd.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_2_3rd.ppm");
 			// Open inventory for screenshot
 			if (pe->inventory) {
 				pe->inventory->equip(WearSlot::LeftHand, "base:sword");
@@ -1446,21 +1469,21 @@ void Game::renderPlaying(float dt, float aspect) {
 			m_demoStep = 25; m_demoTimer = 0;
 		}
 		if (m_demoStep == 25 && m_demoTimer > 1.0f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_25_inventory.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_25_inventory.ppm");
 			m_equipUI.close();
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 			m_camera.cycleMode();
 			m_demoStep = 3; m_demoTimer = 0;
 		}
 		if (m_demoStep == 3 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_3_god.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_3_god.ppm");
 			m_camera.cycleMode();
 			m_camera.rtsCenter = pe->position;
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			m_demoStep = 4; m_demoTimer = 0;
 		}
 		if (m_demoStep == 4 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentworld_view_4_rts.ppm");
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_4_rts.ppm");
 			printf("Demo complete.\n");
 			glfwSetWindowShouldClose(m_window.handle(), true);
 			m_demoStep = 99;
@@ -1794,4 +1817,4 @@ void Game::updatePaused(float dt, float aspect) {
 	m_ui.endFrame();
 }
 
-} // namespace agentworld
+} // namespace agentica

@@ -5,7 +5,7 @@
 #include <glm/glm.hpp>
 #include <optional>
 
-namespace agentworld {
+namespace agentica {
 
 struct RayHit {
 	glm::ivec3 blockPos;
@@ -51,4 +51,4 @@ inline std::optional<RayHit> raycastBlocks(ChunkSource& world, glm::vec3 origin,
 	return std::nullopt;
 }
 
-} // namespace agentworld
+} // namespace agentica

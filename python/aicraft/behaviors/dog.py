@@ -4,7 +4,7 @@ Dogs look for the nearest player first. If no player is nearby,
 they follow the nearest villager. They sit when close to their target.
 """
 
-from agentworld_engine import Idle, Wander, Follow
+from agentica_engine import Idle, Wander, Follow
 
 FOLLOW_DISTANCE = 3.0
 FOLLOW_SPEED = 4.0

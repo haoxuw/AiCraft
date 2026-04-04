@@ -2,9 +2,9 @@
  * Dedicated server — runs headless, accepts TCP client connections.
  *
  * Usage:
- *   ./agentworld-server                              # interactive world selection
- *   ./agentworld-server --world saves/my_village      # load saved world
- *   ./agentworld-server --port 7778 --template 1      # new world on custom port
+ *   ./agentica-server                              # interactive world selection
+ *   ./agentica-server --world saves/my_village      # load saved world
+ *   ./agentica-server --port 7778 --template 1      # new world on custom port
  */
 
 #include "server/server.h"
@@ -34,10 +34,10 @@ static void signalHandler(int) {
 }
 
 // Interactive CLI: let user pick a world or create new
-static void interactiveWorldSelect(agentworld::ServerConfig& config,
+static void interactiveWorldSelect(agentica::ServerConfig& config,
                                     std::string& worldPath,
-                                    const std::vector<std::shared_ptr<agentworld::WorldTemplate>>& templates) {
-	agentworld::WorldManager mgr;
+                                    const std::vector<std::shared_ptr<agentica::WorldTemplate>>& templates) {
+	agentica::WorldManager mgr;
 	mgr.setSavesDir("saves");
 	mgr.refresh();
 
@@ -45,7 +45,7 @@ static void interactiveWorldSelect(agentworld::ServerConfig& config,
 
 	printf("\n");
 	printf("  ┌─────────────────────────────────┐\n");
-	printf("  │       AGENTWORLD SERVER          │\n");
+	printf("  │       AGENTICA SERVER          │\n");
 	printf("  └─────────────────────────────────┘\n\n");
 
 	if (!worlds.empty()) {
@@ -132,18 +132,18 @@ int main(int argc, char** argv) {
 		printf("[Server] Also logging to %s\n", logPath);
 	}
 
-	printf("=== AgentWorld Dedicated Server ===\n");
+	printf("=== Agentica Dedicated Server ===\n");
 
-	agentworld::pythonBridge().init("python");
+	agentica::pythonBridge().init("python");
 
 	// Parse args
-	agentworld::ServerConfig config;
+	agentica::ServerConfig config;
 	std::string worldPath;
 	bool interactive = true;
 
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("AgentWorld — dedicated server\n\n"
+			printf("Agentica — dedicated server\n\n"
 			       "Usage: %s [options]\n"
 			       "  --port PORT       Listen port (default 7777)\n"
 			       "  --world PATH      Load saved world from PATH\n"
@@ -164,19 +164,19 @@ int main(int argc, char** argv) {
 	}
 
 	// World templates
-	std::vector<std::shared_ptr<agentworld::WorldTemplate>> templates = {
-		std::make_shared<agentworld::FlatWorldTemplate>(),
-		std::make_shared<agentworld::VillageWorldTemplate>(),
+	std::vector<std::shared_ptr<agentica::WorldTemplate>> templates = {
+		std::make_shared<agentica::FlatWorldTemplate>(),
+		std::make_shared<agentica::VillageWorldTemplate>(),
 	};
 
 	if (interactive && isatty(fileno(stdin)))
 		interactiveWorldSelect(config, worldPath, templates);
 
 	// Initialize server
-	agentworld::GameServer server;
+	agentica::GameServer server;
 	if (!worldPath.empty() && std::filesystem::exists(worldPath + "/world.json")) {
 		printf("[Server] Loading world from %s\n", worldPath.c_str());
-		if (!agentworld::loadWorld(server, worldPath, templates)) {
+		if (!agentica::loadWorld(server, worldPath, templates)) {
 			printf("[Server] Failed to load world, creating new\n");
 			server.init(config, templates);
 		}
@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
 	}
 
 	// Start TCP listener
-	agentworld::net::TcpServer listener;
+	agentica::net::TcpServer listener;
 	if (!listener.listen(config.port)) {
 		printf("[Server] Failed to start listener on port %d\n", config.port);
 		return 1;
@@ -196,11 +196,11 @@ int main(int argc, char** argv) {
 	printf("[Server] Press Ctrl+C to save and stop.\n");
 
 	// Signal readiness for launchers
-	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/agentworld_ready_%d", config.port);
+	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/agentica_ready_%d", config.port);
 	if (FILE* f = fopen(g_readyPath, "w")) fclose(f);
 
 	// Client manager handles all TCP client operations + AI agent spawning
-	agentworld::ClientManager clients(server);
+	agentica::ClientManager clients(server);
 
 	// Determine executable directory for spawning AI agent processes
 	{
@@ -212,30 +212,30 @@ int main(int argc, char** argv) {
 	clients.setPort(config.port);
 
 	// Network broadcast callbacks
-	agentworld::ServerCallbacks cbs;
-	cbs.onBlockChange = [&](glm::ivec3 pos, agentworld::BlockId bid) {
-		agentworld::net::WriteBuffer wb;
+	agentica::ServerCallbacks cbs;
+	cbs.onBlockChange = [&](glm::ivec3 pos, agentica::BlockId bid) {
+		agentica::net::WriteBuffer wb;
 		wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
 		wb.writeU32(bid);
-		clients.broadcastToAll(agentworld::net::S_BLOCK, wb);
+		clients.broadcastToAll(agentica::net::S_BLOCK, wb);
 	};
-	cbs.onEntityRemove = [&](agentworld::EntityId id) {
-		agentworld::ClientId owner = server.getEntityOwner(id);
+	cbs.onEntityRemove = [&](agentica::EntityId id) {
+		agentica::ClientId owner = server.getEntityOwner(id);
 		if (owner != 0) {
 			server.revokeEntityFromClient(owner, id);
 			auto* c = clients.getClient(owner);
 			if (c) {
-				agentworld::net::WriteBuffer rwb;
+				agentica::net::WriteBuffer rwb;
 				rwb.writeU32(id);
-				agentworld::net::sendMessage(c->fd, agentworld::net::S_REVOKE_ENTITY, rwb);
+				agentica::net::sendMessage(c->fd, agentica::net::S_REVOKE_ENTITY, rwb);
 			}
 		}
-		agentworld::net::WriteBuffer wb;
+		agentica::net::WriteBuffer wb;
 		wb.writeU32(id);
-		clients.broadcastToAll(agentworld::net::S_REMOVE, wb);
+		clients.broadcastToAll(agentica::net::S_REMOVE, wb);
 	};
-	cbs.onInventoryChange = [&](agentworld::EntityId id, const agentworld::Inventory& inv) {
-		agentworld::net::WriteBuffer wb;
+	cbs.onInventoryChange = [&](agentica::EntityId id, const agentica::Inventory& inv) {
+		agentica::net::WriteBuffer wb;
 		wb.writeU32(id);
 		auto items = inv.items();
 		wb.writeU32((uint32_t)items.size());
@@ -243,12 +243,12 @@ int main(int argc, char** argv) {
 			wb.writeString(itemId);
 			wb.writeI32(count);
 		}
-		clients.broadcastToAll(agentworld::net::S_INVENTORY, wb);
+		clients.broadcastToAll(agentica::net::S_INVENTORY, wb);
 	};
 	server.setCallbacks(cbs);
 
 	// Main loop
-	const float TICK_RATE = agentworld::ServerTuning::tickRate;
+	const float TICK_RATE = agentica::ServerTuning::tickRate;
 	auto lastTime = std::chrono::steady_clock::now();
 	float accumulator = 0;
 	int tickCount = 0;
@@ -283,7 +283,7 @@ int main(int argc, char** argv) {
 	// Save world on shutdown
 	if (!worldPath.empty()) {
 		printf("[Server] Saving world to %s...\n", worldPath.c_str());
-		agentworld::WorldMetadata meta;
+		agentica::WorldMetadata meta;
 		meta.name = worldPath.substr(worldPath.rfind('/') + 1);
 		meta.seed = config.seed;
 		meta.templateIndex = config.templateIndex;
@@ -291,7 +291,7 @@ int main(int argc, char** argv) {
 		meta.version = 1;
 		if (config.templateIndex < (int)templates.size())
 			meta.templateName = templates[config.templateIndex]->name();
-		agentworld::saveWorld(server, worldPath, meta);
+		agentica::saveWorld(server, worldPath, meta);
 	}
 
 	clients.disconnectAll();
@@ -302,6 +302,6 @@ int main(int argc, char** argv) {
 	if (g_readyPath[0]) std::remove(g_readyPath);
 
 	printf("[Server] Shut down.\n");
-	agentworld::pythonBridge().shutdown();
+	agentica::pythonBridge().shutdown();
 	return 0;
 }

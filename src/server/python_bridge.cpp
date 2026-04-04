@@ -7,7 +7,7 @@
 // Web build stub: Python bridge is server-only, not available in WASM.
 // All methods return safe defaults.
 // ================================================================
-namespace agentworld {
+namespace agentica {
 bool PythonBridge::init(const std::string&) { return false; }
 void PythonBridge::shutdown() {}
 BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) {
@@ -26,7 +26,7 @@ void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
 BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { return {BehaviorAction::Idle}; }
 bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
-} // namespace agentworld
+} // namespace agentica
 #else
 // ================================================================
 // Native build: full pybind11 implementation
@@ -37,7 +37,7 @@ bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
 
 namespace py = pybind11;
 
-namespace agentworld {
+namespace agentica {
 
 // ================================================================
 // pybind11 module: expose C++ types to Python behaviors
@@ -64,8 +64,8 @@ struct PyAction {
 	int item_count = 1;     // for drop_item
 };
 
-PYBIND11_EMBEDDED_MODULE(agentworld_engine, m) {
-	m.doc() = "AgentWorld engine bridge — exposes world view to Python behaviors";
+PYBIND11_EMBEDDED_MODULE(agentica_engine, m) {
+	m.doc() = "Agentica engine bridge — exposes world view to Python behaviors";
 
 	py::class_<PyEntityInfo>(m, "EntityInfo")
 		.def_readonly("id", &PyEntityInfo::id)
@@ -124,7 +124,7 @@ bool PythonBridge::init(const std::string& pythonPath) {
 	if (m_initialized) return true;
 	try {
 		py::initialize_interpreter();
-		// Add python/ directory to sys.path so behaviors can import agentworld
+		// Add python/ directory to sys.path so behaviors can import agentica
 		py::module_::import("sys").attr("path").cast<py::list>().append(pythonPath);
 		m_initialized = true;
 		printf("[PythonBridge] Initialized. Python path: %s\n", pythonPath.c_str());
@@ -157,7 +157,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 		py::dict ns;
 
 		// Import the engine module so behaviors can use Idle(), Wander(), etc.
-		py::exec("from agentworld_engine import *", ns);
+		py::exec("from agentica_engine import *", ns);
 
 		// Execute the behavior source code (ns is both globals and locals)
 		py::exec(sourceCode, ns);
@@ -498,5 +498,5 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 	}
 }
 
-} // namespace agentworld
+} // namespace agentica
 #endif // __EMSCRIPTEN__

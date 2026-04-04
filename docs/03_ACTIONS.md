@@ -1,4 +1,4 @@
-# AgentWorld - Actions
+# Agentica - Actions
 
 Actions are discrete events that modify the World. Every change in the game -- mining a block, a sheep eating grass, TNT exploding -- is an Action.
 

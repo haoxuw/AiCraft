@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(AgentWorld VERSION 0.1.0 LANGUAGES C CXX)
+project(Agentica VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -169,20 +169,20 @@ if(EMSCRIPTEN)
 	# =================================================================
 	# Web build (WASM + WebGL 2) — client-only, connects to remote server
 	# =================================================================
-	add_executable(agentworld
+	add_executable(agentica
 		src/main.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 	)
-	target_include_directories(agentworld PRIVATE src)
-	target_compile_definitions(agentworld PRIVATE AGENTWORLD_WEB=1)
-	target_link_libraries(agentworld PRIVATE glm::glm imgui_lib)
+	target_include_directories(agentica PRIVATE src)
+	target_compile_definitions(agentica PRIVATE AGENTICA_WEB=1)
+	target_link_libraries(agentica PRIVATE glm::glm imgui_lib)
 
 	# Emscripten compile + link flags
 	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576")
 	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/config@config --preload-file ${CMAKE_SOURCE_DIR}/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/artifacts@artifacts")
-	set_target_properties(agentworld PROPERTIES
+	set_target_properties(agentica PROPERTIES
 		SUFFIX ".html"
 		COMPILE_FLAGS "${EM_FLAGS}"
 		LINK_FLAGS "${EM_FLAGS} ${EM_LINK}"
@@ -194,95 +194,95 @@ else()
 	# =================================================================
 
 	# === Singleplayer (server + client in one process) ===
-	add_executable(agentworld
+	add_executable(agentica
 		src/main.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 	)
-	target_include_directories(agentworld PRIVATE src)
-	target_link_libraries(agentworld PRIVATE
+	target_include_directories(agentica PRIVATE src)
+	target_link_libraries(agentica PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib
 	)
 
 	# === Dedicated server (headless, no OpenGL) ===
-	add_executable(agentworld-server
+	add_executable(agentica-server
 		src/main_server.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 	)
-	target_include_directories(agentworld-server PRIVATE src)
-	target_link_libraries(agentworld-server PRIVATE
+	target_include_directories(agentica-server PRIVATE src)
+	target_link_libraries(agentica-server PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 	)
 
 	# === Network client (connects to remote server) ===
-	add_executable(agentworld-client
+	add_executable(agentica-client
 		src/main_client.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 	)
-	target_include_directories(agentworld-client PRIVATE src)
-	target_link_libraries(agentworld-client PRIVATE
+	target_include_directories(agentica-client PRIVATE src)
+	target_link_libraries(agentica-client PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib
 	)
 
 	# === Headless bot client (AI entity controller, no OpenGL) ===
-	add_executable(agentworld-bot
+	add_executable(agentica-bot
 		src/bot/main_bot.cpp
 		src/server/python_bridge.cpp
 		${CONTENT_SOURCES}
 	)
-	target_include_directories(agentworld-bot PRIVATE src)
-	target_link_libraries(agentworld-bot PRIVATE
+	target_include_directories(agentica-bot PRIVATE src)
+	target_link_libraries(agentica-bot PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 	)
 	# Copy python/ and artifacts/ so behavior loading works
-	add_custom_command(TARGET agentworld-bot POST_BUILD
+	add_custom_command(TARGET agentica-bot POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentworld-bot>/python
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentica-bot>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentworld-bot>/artifacts
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentica-bot>/artifacts
 	)
 
 	# === Headless E2E test runner ===
-	add_executable(agentworld-test
+	add_executable(agentica-test
 		src/test/test_e2e.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 	)
-	target_include_directories(agentworld-test PRIVATE src)
-	target_link_libraries(agentworld-test PRIVATE
+	target_include_directories(agentica-test PRIVATE src)
+	target_link_libraries(agentica-test PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 	)
 	# Copy python/ and artifacts/ so behavior loading finds them (even if Python fails gracefully)
-	add_custom_command(TARGET agentworld-test POST_BUILD
+	add_custom_command(TARGET agentica-test POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentworld-test>/python
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentica-test>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentworld-test>/artifacts
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentica-test>/artifacts
 	)
 
 	# Copy assets to build directory
-	add_custom_command(TARGET agentworld POST_BUILD
+	add_custom_command(TARGET agentica POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:agentworld>/shaders
+		${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:agentica>/shaders
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/config $<TARGET_FILE_DIR:agentworld>/config
+		${CMAKE_SOURCE_DIR}/config $<TARGET_FILE_DIR:agentica>/config
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentworld>/python
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentica>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:agentworld>/fonts
+		${CMAKE_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:agentica>/fonts
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentworld>/artifacts
-		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/resources $<TARGET_FILE_DIR:agentworld>/
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentica>/artifacts
+		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/resources $<TARGET_FILE_DIR:agentica>/
 	)
 endif()

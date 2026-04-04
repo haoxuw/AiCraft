@@ -38,7 +38,7 @@ C++ classes, no separate rendering path, no hardcoded stats.
 
 **The server has ZERO intelligence.** All AI runs on agent client processes.
 
-- Each NPC entity has its own `agentworld-bot` process running Python `decide()`
+- Each NPC entity has its own `agentica-bot` process running Python `decide()`
 - Server spawns/manages agent clients via `ClientManager`
 - Python behavior code NEVER runs on the server
 
@@ -46,16 +46,16 @@ C++ classes, no separate rendering path, no hardcoded stats.
 
 Three process types (same in singleplayer and multiplayer):
 
-- **Server** (`agentworld-server`) — headless, owns world, NO Python/OpenGL
+- **Server** (`agentica-server`) — headless, owns world, NO Python/OpenGL
 - **Player Client** (`agentworld`) — GUI, renders world, NO Python
-- **Agent Client** (`agentworld-bot`) — headless, runs Python AI, NO OpenGL
+- **Agent Client** (`agentica-bot`) — headless, runs Python AI, NO OpenGL
 
 Singleplayer: GUI launches server → server auto-spawns agent clients for NPCs.
 See `docs/00_OVERVIEW.md` for full architecture, protocol, and artifact system.
 
 ## Project Overview
 
-AgentWorld is a voxel game where the world is code. Players write Python to
+Agentica is a voxel game where the world is code. Players write Python to
 define new objects and actions, then upload them into a shared world.
 
 ## Build Commands
@@ -77,15 +77,15 @@ make stop                  # kill all agentworld processes
 ./build/agentworld                              # singleplayer with menu
 ./build/agentworld --skip-menu                  # skip menu, start village world
 
-./build/agentworld-server --port 7777           # dedicated server
-./build/agentworld-client --host 127.0.0.1 --port 7777  # player client
-./build/agentworld-bot --host 127.0.0.1 --port 7777 --entity 5  # agent client
+./build/agentica-server --port 7777           # dedicated server
+./build/agentica-client --host 127.0.0.1 --port 7777  # player client
+./build/agentica-bot --host 127.0.0.1 --port 7777 --entity 5  # agent client
 ```
 
 ## Code Style
 
 - Tabs for indentation in C++ and GLSL
-- `namespace agentworld { }` wraps all code
+- `namespace agentica { }` wraps all code
 - String IDs use `"base:name"` format
 - Header-only for small classes, .h+.cpp split for larger ones
 

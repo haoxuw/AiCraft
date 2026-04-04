@@ -1,4 +1,4 @@
-# AgentWorld - Networking
+# Agentica - Networking
 
 How the C++ server and Python clients communicate. TCP-based with delta compression.
 
@@ -8,7 +8,7 @@ How the C++ server and Python clients communicate. TCP-based with delta compress
 
 ```
 Luanti uses custom reliable UDP (MTP).
-AgentWorld uses TCP + custom binary framing.
+Agentica uses TCP + custom binary framing.
 
 Why TCP instead of UDP:
   - Simpler implementation (reliability built-in)

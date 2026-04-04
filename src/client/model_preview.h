@@ -18,7 +18,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
 
-namespace agentworld {
+namespace agentica {
 
 class ModelPreview {
 public:
@@ -139,4 +139,4 @@ private:
 	float m_animTime = 0;
 };
 
-} // namespace agentworld
+} // namespace agentica

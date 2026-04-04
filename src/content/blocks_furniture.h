@@ -3,7 +3,7 @@
 #include "shared/block_registry.h"
 #include "shared/constants.h"
 
-namespace agentworld::builtin {
+namespace agentica::builtin {
 
 // Furniture blocks: bed, crafting table, etc.
 inline void registerFurnitureBlocks(BlockRegistry& reg) {
@@ -20,4 +20,4 @@ inline void registerFurnitureBlocks(BlockRegistry& reg) {
 		{}, "",SN::DigWood,SN::StepWood});
 }
 
-} // namespace agentworld::builtin
+} // namespace agentica::builtin

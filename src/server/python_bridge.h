@@ -25,7 +25,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace agentworld {
+namespace agentica {
 
 // ============================================================
 // WorldPyConfig — world template parameters loaded from Python.
@@ -171,4 +171,4 @@ private:
 // Global bridge instance (owned by server)
 PythonBridge& pythonBridge();
 
-} // namespace agentworld
+} // namespace agentica

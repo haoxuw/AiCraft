@@ -12,7 +12,7 @@
 #include <functional>
 #include <algorithm>
 
-namespace agentworld {
+namespace agentica {
 
 class TextInput {
 public:
@@ -173,4 +173,4 @@ private:
 	int m_visibleLines = 20;
 };
 
-} // namespace agentworld
+} // namespace agentica

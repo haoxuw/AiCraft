@@ -4,7 +4,7 @@
 #include "shared/constants.h"
 #include "client/types.h"
 
-namespace agentworld::builtin {
+namespace agentica::builtin {
 
 inline void registerPlayerEntity(EntityManager& mgr) {
 	EntityDef def;
@@ -34,4 +34,4 @@ inline void registerPlayerEntity(EntityManager& mgr) {
 	mgr.registerType(def);
 }
 
-} // namespace agentworld::builtin
+} // namespace agentica::builtin

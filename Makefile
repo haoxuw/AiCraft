@@ -19,7 +19,7 @@ EMSDK := $(HOME)/emsdk
 #   make server PORT=N        Dedicated server on port N
 #   make client               Open GUI → "Start game" or "Join a game" from menu
 #   make client HOST=X PORT=N Open GUI with server pre-filled in "Join a game" tab
-#   make stop                 Kill all agentworld processes
+#   make stop                 Kill all agentica processes
 #
 # Multiplayer (separate terminals):
 #   Terminal 1: make server PORT=7777
@@ -30,32 +30,32 @@ EMSDK := $(HOME)/emsdk
 # Singleplayer: auto-launches server + bot processes + GUI client
 # Uses AgentManager internally — no manual bot spawning needed
 game: build
-	./$(BUILD_DIR)/agentworld --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
+	./$(BUILD_DIR)/agentica --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
 
 # Dedicated server (interactive world select, or --world/--seed/--template flags)
 server: build
-	./$(BUILD_DIR)/agentworld-server --port $(PORT)
+	./$(BUILD_DIR)/agentica-server --port $(PORT)
 
 # GUI client: shows menu with "Start game" and "Join a game" tabs
 # Optionally pre-fills server address: make client HOST=192.168.1.5 PORT=7777
 client: build
-	./$(BUILD_DIR)/agentworld$(if $(HOST), --host $(HOST) --port $(PORT),)
+	./$(BUILD_DIR)/agentica$(if $(HOST), --host $(HOST) --port $(PORT),)
 
 # Kill everything
 stop:
-	@-pkill -f "agentworld" 2>/dev/null; sleep 1
-	@echo "All agentworld processes stopped."
+	@-pkill -f "agentica"" 2>/dev/null; sleep 1
+	@echo "All agentica processes stopped."
 
 # Kill only servers (find by listening port)
 killservers:
 	@echo "Looking for agentworld server processes..."
-	@-pgrep -fa "agentworld-server" 2>/dev/null && pkill -f "agentworld-server" && echo "Killed." || echo "No servers running."
-	@-pgrep -fa "agentworld.*--port" 2>/dev/null && pkill -f "agentworld.*--port" && echo "Killed port processes." || true
+	@-pgrep -fa "agentica-server" 2>/dev/null && pkill -f "agentica-server" && echo "Killed." || echo "No servers running."
+	@-pgrep -fa "agentica".*--port" 2>/dev/null && pkill -f "agentica".*--port" && echo "Killed port processes." || true
 
 # Run headless E2E gameplay tests
 test_e2e: build
 	@echo "[test_e2e] Running headless gameplay tests..."
-	cd $(BUILD_DIR) && ./agentworld-test
+	cd $(BUILD_DIR) && ./agentica-test
 	@echo "[test_e2e] Done."
 
 build: configure

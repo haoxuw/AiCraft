@@ -27,7 +27,7 @@
 #include <vector>
 #include <string>
 
-namespace agentworld::net {
+namespace agentica::net {
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -198,4 +198,4 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	return e;
 }
 
-} // namespace agentworld::net
+} // namespace agentica::net

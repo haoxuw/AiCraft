@@ -3,7 +3,7 @@
 #include <cmath>
 #include <set>
 
-namespace agentworld {
+namespace agentica {
 
 // Python keywords for syntax highlighting
 static const std::set<std::string> KEYWORDS = {
@@ -245,4 +245,4 @@ void CodeEditor::render(TextRenderer& text, float aspect, float time) {
 	              {0.5f, 0.5f, 0.5f, 0.8f}, aspect);
 }
 
-} // namespace agentworld
+} // namespace agentica

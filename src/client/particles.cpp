@@ -2,7 +2,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace agentworld {
+namespace agentica {
 
 // Simple deterministic hash for particle randomness
 static float prand(int seed) {
@@ -142,4 +142,4 @@ void ParticleSystem::emitItemPickup(glm::vec3 pos, glm::vec3 color) {
 	}
 }
 
-} // namespace agentworld
+} // namespace agentica

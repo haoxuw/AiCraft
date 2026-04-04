@@ -21,7 +21,7 @@
 #include <vector>
 #include <mutex>
 
-namespace agentworld {
+namespace agentica {
 
 // ================================================================
 // ActionProposal — what an entity wants to happen
@@ -114,4 +114,4 @@ private:
 	std::vector<ActionProposal> m_pending;
 };
 
-} // namespace agentworld
+} // namespace agentica

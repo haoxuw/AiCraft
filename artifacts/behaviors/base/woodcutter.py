@@ -19,7 +19,7 @@ Parameters (optional via self dict):
   work_radius   — how far to search for resources (default 30)
   social_chance  — probability of socializing per rest (default 0.3)
 """
-from agentworld_engine import Idle, Wander, MoveTo, BreakBlock
+from agentica_engine import Idle, Wander, MoveTo, BreakBlock
 
 _state = "searching"
 _timer = 0

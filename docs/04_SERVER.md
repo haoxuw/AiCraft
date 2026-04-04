@@ -1,4 +1,4 @@
-# AgentWorld - C++ Server
+# Agentica - C++ Server
 
 The server is the single source of truth. It owns the World, runs the tick loop, embeds Python for hot-loading Objects and Actions, and synchronizes state to all clients.
 
@@ -8,7 +8,7 @@ The server is the single source of truth. It owns the World, runs the tick loop,
 
 ```
 +====================================================================+
-|                        AgentWorld C++ Server                           |
+|                        Agentica C++ Server                           |
 +====================================================================+
 |                                                                      |
 |  +--------------------+   +--------------------+   +--------------+ |
@@ -517,7 +517,7 @@ These systems run in optimized C++ for performance:
 # server.toml
 
 [server]
-name = "My AgentWorld World"
+name = "My Agentica World"
 port = 30000
 max_players = 32
 tick_rate = 20                    # Hz (ticks per second)
@@ -564,7 +564,7 @@ abm_time_budget = 0.2           # fraction of interval
 ## 9. Directory Layout
 
 ```
-agentworld-server/
+agentica-server/
   src/
     server/
       main.cpp                   # Entry point

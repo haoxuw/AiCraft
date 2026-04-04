@@ -4,7 +4,7 @@
 #include "shared/block_registry.h"
 #include <array>
 
-namespace agentworld {
+namespace agentica {
 
 class Chunk {
 public:
@@ -41,4 +41,4 @@ private:
 	bool m_dirty = true;
 };
 
-} // namespace agentworld
+} // namespace agentica

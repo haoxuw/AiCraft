@@ -29,7 +29,7 @@
 #include <cstdio>
 #include <random>
 
-namespace agentworld {
+namespace agentica {
 
 struct ArtifactEntry {
 	std::string id;           // "base:pig"
@@ -339,4 +339,4 @@ private:
 	std::vector<ArtifactEntry> m_entries;
 };
 
-} // namespace agentworld
+} // namespace agentica
