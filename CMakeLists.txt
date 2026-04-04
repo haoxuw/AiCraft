@@ -144,20 +144,17 @@ set(CLIENT_SOURCES
 	src/client/ui.cpp
 	src/client/audio.h
 	src/client/audio.cpp
-)
-
-set(GAME_SOURCES
-	src/game/types.h
-	src/game/game.h
-	src/game/game.cpp
-	src/game/gameplay.h
-	src/game/gameplay.cpp
-	src/game/gameplay_movement.cpp
-	src/game/gameplay_interaction.cpp
-	src/game/hud.h
-	src/game/hud.cpp
-	src/game/code_editor.h
-	src/game/code_editor.cpp
+	src/client/types.h
+	src/client/game.h
+	src/client/game.cpp
+	src/client/gameplay.h
+	src/client/gameplay.cpp
+	src/client/gameplay_movement.cpp
+	src/client/gameplay_interaction.cpp
+	src/client/hud.h
+	src/client/hud.cpp
+	src/client/code_editor.h
+	src/client/code_editor.cpp
 )
 
 # Server simulation sources
@@ -177,7 +174,6 @@ if(EMSCRIPTEN)
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
-		${GAME_SOURCES}
 	)
 	target_include_directories(agentworld PRIVATE src)
 	target_compile_definitions(agentworld PRIVATE AGENTWORLD_WEB=1)
@@ -203,7 +199,6 @@ else()
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
-		${GAME_SOURCES}
 	)
 	target_include_directories(agentworld PRIVATE src)
 	target_link_libraries(agentworld PRIVATE
@@ -230,7 +225,6 @@ else()
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
-		${GAME_SOURCES}
 	)
 	target_include_directories(agentworld-client PRIVATE src)
 	target_link_libraries(agentworld-client PRIVATE

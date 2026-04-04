@@ -1,4 +1,4 @@
-#include "game/hud.h"
+#include "client/hud.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cstdio>
 #include <cmath>

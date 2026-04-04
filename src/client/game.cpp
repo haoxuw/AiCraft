@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "client/game.h"
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 #include "shared/model_loader.h"

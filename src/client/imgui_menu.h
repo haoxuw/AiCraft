@@ -21,14 +21,14 @@
  *   └────────┴────────────────────────────────────┘
  */
 
-#include "game/types.h"
-#include "game/handbook_ui.h"
-#include "game/world_manager.h"
+#include "client/types.h"
+#include "client/handbook_ui.h"
+#include "client/world_manager.h"
 #include "shared/artifact_registry.h"
 #include "server/world_template.h"
 #include "client/controls.h"
 #include "client/audio.h"
-#include "game/behavior_editor.h"
+#include "client/behavior_editor.h"
 #ifndef __EMSCRIPTEN__
 #include "shared/net_socket.h"
 #endif

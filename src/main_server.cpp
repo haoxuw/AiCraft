@@ -11,7 +11,7 @@
 #include "server/client_manager.h"
 #include "server/world_template.h"
 #include "server/world_save.h"
-#include "game/world_manager.h"
+#include "client/world_manager.h"
 #include "content/builtin.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"

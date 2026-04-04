@@ -383,6 +383,10 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			return d.contains(k) ? d[k].cast<bool>() : def;
 		};
 
+		// metadata
+		out.name        = getStr(w, "name", "");
+		out.description = getStr(w, "description", "");
+
 		// terrain
 		if (w.contains("terrain") && !w["terrain"].is_none()) {
 			py::dict t = w["terrain"].cast<py::dict>();

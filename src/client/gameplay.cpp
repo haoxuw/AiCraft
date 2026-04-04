@@ -1,4 +1,4 @@
-#include "game/gameplay.h"
+#include "client/gameplay.h"
 #include <cmath>
 
 namespace agentworld {

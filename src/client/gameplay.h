@@ -1,6 +1,6 @@
 #pragma once
 
-#include "game/types.h"
+#include "client/types.h"
 #include "shared/server_interface.h"
 #include "shared/entity.h"
 #include "shared/constants.h"

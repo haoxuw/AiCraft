@@ -2,7 +2,7 @@
 
 #include "server/entity_manager.h"
 #include "shared/constants.h"
-#include "game/types.h"
+#include "client/types.h"
 
 namespace agentworld::builtin {
 

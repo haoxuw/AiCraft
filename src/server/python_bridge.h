@@ -33,6 +33,10 @@ namespace agentworld {
 // gracefully when Python is unavailable.
 // ============================================================
 struct WorldPyConfig {
+	// Metadata
+	std::string name;
+	std::string description;
+
 	// Terrain
 	std::string terrainType      = "natural";  // "flat" or "natural"
 	float surfaceY               = 4.0f;       // flat world only

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "game/types.h"
+#include "client/types.h"
 #include "client/text.h"
 #include "client/shader.h"
 #include "client/camera.h"

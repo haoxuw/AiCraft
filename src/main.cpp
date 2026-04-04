@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "client/game.h"
 #include "server/python_bridge.h"
 #include <cstring>
 #include <cstdio>

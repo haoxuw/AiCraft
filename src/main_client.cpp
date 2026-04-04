@@ -5,7 +5,7 @@
  *        Default: 127.0.0.1:7777
  */
 
-#include "game/game.h"
+#include "client/game.h"
 #include "server/python_bridge.h"
 #include <csignal>
 #include <cstdio>

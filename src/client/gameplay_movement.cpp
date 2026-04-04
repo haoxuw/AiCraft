@@ -1,4 +1,4 @@
-#include "game/gameplay.h"
+#include "client/gameplay.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <algorithm>

@@ -539,15 +539,15 @@ static std::string t17_player_not_stuck_with_obstacles() {
 	if (!p) return "no player";
 
 	tickN(*srv, 30);
-	float startX = p->position.x;
+	float startZ = p->position.z;
 
-	// Walk east 600 frames — in flat world there are no obstacles, should move freely
+	// Walk south (+Z) 600 frames — exits spawn portal, flat terrain ahead
 	for (int i = 0; i < 600; i++)
-		moveAndTick(*srv, pid, {8.0f, 0, 0});
+		moveAndTick(*srv, pid, {0, 0, 8.0f});
 
-	float moved = p->position.x - startX;
+	float moved = p->position.z - startZ;
 	if (moved < 5.0f)
-		return "player stuck: only moved " + std::to_string(moved) + " units east in 600 ticks";
+		return "player stuck: only moved " + std::to_string(moved) + " units south in 600 ticks";
 	return "";
 }
 
@@ -580,9 +580,13 @@ static std::string t19_break_and_place_cycle() {
 	Entity* p = srv->getEntity(pid);
 	if (!p) return "no player";
 
-	tickN(*srv, 30);
+	// Walk out of spawn portal and away from village (-Z direction)
+	for (int i = 0; i < 60; i++)
+		moveAndTick(*srv, pid, {0, 0, -8.0f});
+	tickN(*srv, 10);
 	glm::vec3 pos = p->position;
-	glm::ivec3 placePos = {(int)pos.x + 3, (int)pos.y, (int)pos.z};
+	// Place block in open air (flat terrain, away from structures)
+	glm::ivec3 placePos = {(int)pos.x, (int)pos.y, (int)pos.z - 3};
 
 	if (!p->inventory || !p->inventory->has(BlockType::Stone))
 		return "player doesn't have stone";
@@ -771,12 +775,10 @@ static std::string t23_creatures_near_village_center() {
 	auto srv = makeVillageServer();
 	tickN(*srv, 10); // let gravity drop mobs to surface
 
-	// Use the template's virtual villageCenter (no more static method)
-	auto* tmpl = dynamic_cast<VillageWorldTemplate*>(
-		&srv->server()->world().getTemplate());
-	if (!tmpl) return "not a village template";
+	auto& tmpl = srv->server()->world().getTemplate();
+	if (!tmpl.pyConfig().hasVillage) return "template has no village";
 
-	auto vc = tmpl->villageCenter(42); // seed=42, same as makeVillageServer
+	auto vc = tmpl.villageCenter(42); // seed=42, same as makeVillageServer
 	float vcX = (float)vc.x, vcZ = (float)vc.y;
 
 	// Furthest mob radius from Python config (pigs at 22) + buffer
@@ -802,13 +804,12 @@ static std::string t23_creatures_near_village_center() {
 static std::string t24_chest_in_village() {
 	auto srv = makeVillageServer();
 
-	auto* tmpl = dynamic_cast<VillageWorldTemplate*>(
-		&srv->server()->world().getTemplate());
-	if (!tmpl) return "not a village template";
+	auto& tmpl = srv->server()->world().getTemplate();
+	if (!tmpl.pyConfig().hasVillage) return "template has no village";
 
-	auto vc = tmpl->villageCenter(42);
+	auto vc = tmpl.villageCenter(42);
 	glm::vec3 spawnPos = srv->spawnPos();
-	glm::vec3 chestPos = tmpl->chestPosition(42, spawnPos);
+	glm::vec3 chestPos = tmpl.chestPosition(42, spawnPos);
 
 	// Chest should be within ~15 blocks of village center (inside main house)
 	float dx = chestPos.x - (float)vc.x;
@@ -835,11 +836,10 @@ static std::string t24_chest_in_village() {
 static std::string t25_spawn_near_village() {
 	auto srv = makeVillageServer();
 
-	auto* tmpl = dynamic_cast<VillageWorldTemplate*>(
-		&srv->server()->world().getTemplate());
-	if (!tmpl) return "not a village template";
+	auto& tmpl = srv->server()->world().getTemplate();
+	if (!tmpl.pyConfig().hasVillage) return "template has no village";
 
-	auto vc = tmpl->villageCenter(42);
+	auto vc = tmpl.villageCenter(42);
 	glm::vec3 spawn = srv->spawnPos();
 
 	float dx = spawn.x - (float)vc.x;
