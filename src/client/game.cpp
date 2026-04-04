@@ -393,6 +393,10 @@ void Game::updateAndRender(float dt, float aspect) {
 			(float)m_window.width(), (float)m_window.height());
 		m_ui.endFrame();
 		m_autoScreenTimer += dt;
+		if (!m_autoScreenDone && m_autoScreenTimer > 3.0f) {
+			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_auto_screenshot.ppm");
+			m_autoScreenDone = true;
+		}
 
 		// Demo mode: capture Play page → Handbook → enter game
 		if (m_demoMode && m_autoScreenTimer > 0.5f && m_autoScreenTimer < 0.6f) {
@@ -737,6 +741,52 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
+	// First-person attack swing animation
+	if (m_gameplay.swingTriggered()) {
+		m_fpSwingActive = true;
+		m_fpSwingTimer = 0;
+		m_gameplay.clearSwing();
+	}
+	if (m_fpSwingActive) {
+		m_fpSwingTimer += dt;
+		if (m_fpSwingTimer >= m_fpSwingDuration) {
+			m_fpSwingActive = false;
+			m_fpSwingTimer = 0;
+		}
+	}
+
+	// ── Item actions: Q=drop, E=equip, right-click=use ──
+	if (pe->inventory && (m_state == GameState::PLAYING || m_state == GameState::ADMIN)) {
+		int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
+		std::string heldItem = pe->inventory->hotbar(slot);
+
+		// Q = drop selected item
+		if (m_controls.pressed(Action::DropItem) && !heldItem.empty() && pe->inventory->has(heldItem)) {
+			ActionProposal p;
+			p.type = ActionProposal::DropItem;
+			p.actorId = m_server->localPlayerId();
+			p.blockType = heldItem;
+			p.itemCount = 1;
+			m_server->sendAction(p);
+		}
+
+		// E = equip selected item
+		if (m_controls.pressed(Action::EquipItem) && !heldItem.empty()) {
+			const ArtifactEntry* art = m_artifacts.findById(heldItem);
+			if (art) {
+				auto slotIt = art->fields.find("equip_slot");
+				if (slotIt != art->fields.end()) {
+					ActionProposal p;
+					p.type = ActionProposal::EquipItem;
+					p.actorId = m_server->localPlayerId();
+					p.slotIndex = slot;
+					p.blockType = slotIt->second; // equip_slot string for server
+					m_server->sendAction(p);
+				}
+			}
+		}
+	}
+
 	// Camera tracks entity position — same for all modes.
 	// LocalServer: server tick already ran physics this frame.
 	// NetworkServer: tick() interpolated ALL entities toward server
@@ -779,12 +829,16 @@ void Game::updatePlaying(float dt, float aspect) {
 				std::string itemType = e.getProp<std::string>(Prop::ItemType);
 				const BlockDef* bdef = srv.blockRegistry().find(itemType);
 				glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
-				std::string name = itemType;
-				if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
+				// Model key for rendering during fly animation
+				std::string mk = itemType;
+				auto mkColon = mk.find(':');
+				if (mkColon != std::string::npos) mk = mk.substr(mkColon + 1);
+				// Display name
+				std::string name = mk;
 				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
 				for (auto& c : name) if (c == '_') c = ' ';
 				int count = e.getProp<int>(Prop::Count, 1);
-				m_pickupAnims.push_back({e.id(), e.position, color, name, count, 0, 0.35f});
+				m_pickupAnims.push_back({e.id(), e.position, color, name, mk, count, 0, 0.35f});
 			}
 		});
 		// Clean stale pending entries
@@ -1004,11 +1058,32 @@ void Game::renderPlaying(float dt, float aspect) {
 			auto mit = m_models.find(modelKey);
 			if (mit == m_models.end()) continue;
 
-			// Append each part of the item model, offset to hand position
+			// Apply equip transform: rotate + offset + scale item parts
+			auto& et = mit->second.equip;
+			float es = et.scale;
+			// Pre-compute rotation matrix from equip Euler angles (degrees)
+			float rx = glm::radians(et.rotation.x);
+			float ry = glm::radians(et.rotation.y);
+			float rz = glm::radians(et.rotation.z);
+			glm::mat3 rotX = {
+				{1, 0, 0}, {0, std::cos(rx), std::sin(rx)}, {0, -std::sin(rx), std::cos(rx)}
+			};
+			glm::mat3 rotY = {
+				{std::cos(ry), 0, -std::sin(ry)}, {0, 1, 0}, {std::sin(ry), 0, std::cos(ry)}
+			};
+			glm::mat3 rotZ = {
+				{std::cos(rz), std::sin(rz), 0}, {-std::sin(rz), std::cos(rz), 0}, {0, 0, 1}
+			};
+			glm::mat3 equipRot = rotZ * rotY * rotX;
+
 			for (auto& part : mit->second.parts) {
 				BodyPart bp;
-				bp.offset = h.handOffset + part.offset * 0.9f; // slight scale
-				bp.halfSize = part.halfSize * 0.9f;
+				// Rotate part offset around origin, then scale and translate to hand
+				glm::vec3 rotatedOffset = equipRot * (part.offset * es);
+				bp.offset = h.handOffset + et.offset + rotatedOffset;
+				// Rotate halfSize axes (approximate: use rotated extents)
+				glm::vec3 hs = part.halfSize * es;
+				bp.halfSize = glm::abs(equipRot * hs);
 				bp.color = part.color;
 				bp.pivot = h.pivot;
 				bp.swingAxis = {1, 0, 0};
@@ -1128,11 +1203,29 @@ void Game::renderPlaying(float dt, float aspect) {
 			float ox = ((h & 0xFF) / 255.0f - 0.5f) * 0.3f;
 			float oz = (((h >> 8) & 0xFF) / 255.0f - 0.5f) * 0.3f;
 			std::string itemType = e.getProp<std::string>(Prop::ItemType);
-			const BlockDef* idef = srv.blockRegistry().find(itemType);
-			glm::vec3 itemColor = idef ? idef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
+			// Look up the actual 3D model for this item type
+			std::string modelKey = itemType;
+			auto colon = modelKey.find(':');
+			if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
 			BoxModel itemModel;
-			itemModel.parts.push_back({{0, 0.15f, 0}, {0.12f, 0.12f, 0.12f},
-				{itemColor.r, itemColor.g, itemColor.b, 1.0f}});
+			auto mit = m_models.find(modelKey);
+			if (mit != m_models.end()) {
+				// Use the real model, height-normalized so all items are ~0.35 blocks tall
+				itemModel = mit->second;
+				float targetH = 0.35f;
+				float modelH = std::max(itemModel.totalHeight * itemModel.modelScale, 0.1f);
+				float worldScale = targetH / modelH;
+				for (auto& part : itemModel.parts) {
+					part.offset *= worldScale;
+					part.halfSize *= worldScale;
+				}
+			} else {
+				// Fallback: colored cube
+				const BlockDef* idef = srv.blockRegistry().find(itemType);
+				glm::vec3 itemColor = idef ? idef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
+				itemModel.parts.push_back({{0, 0.15f, 0}, {0.12f, 0.12f, 0.12f},
+					{itemColor.r, itemColor.g, itemColor.b, 1.0f}});
+			}
 			mr.draw(itemModel, vp, e.position + glm::vec3(ox, bobY + 0.3f, oz), spinYaw, {});
 		}
 	});
@@ -1144,10 +1237,22 @@ void Game::renderPlaying(float dt, float aspect) {
 		glm::vec3 drawPos = glm::mix(pa.startPos, target, ease);
 		float scale = 1.0f - ease * 0.5f;
 		float spinYaw = m_globalTime * 720.0f;
+		// Use actual 3D model for the flying item
 		BoxModel flyModel;
-		float hs = 0.12f * scale;
-		flyModel.parts.push_back({{0, 0.15f, 0}, {hs, hs, hs},
-			{pa.color.r, pa.color.g, pa.color.b, 1.0f}});
+		auto fmit = m_models.find(pa.modelKey);
+		if (fmit != m_models.end()) {
+			flyModel = fmit->second;
+			float modelH = std::max(flyModel.totalHeight * flyModel.modelScale, 0.1f);
+			float flyScale = (0.35f / modelH) * scale;
+			for (auto& part : flyModel.parts) {
+				part.offset *= flyScale;
+				part.halfSize *= flyScale;
+			}
+		} else {
+			float hs = 0.12f * scale;
+			flyModel.parts.push_back({{0, 0.15f, 0}, {hs, hs, hs},
+				{pa.color.r, pa.color.g, pa.color.b, 1.0f}});
+		}
 		mr.draw(flyModel, vp, drawPos, spinYaw, {});
 	}
 
@@ -1208,6 +1313,58 @@ void Game::renderPlaying(float dt, float aspect) {
 
 	// Particles
 	m_particles.render(vp);
+
+	// ── First-person held item (Minecraft-style, bottom-right) ──
+	if (m_camera.mode == CameraMode::FirstPerson && pe->inventory) {
+		int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
+		std::string heldId = pe->inventory->hotbar(slot);
+		if (!heldId.empty() && pe->inventory->hotbarCount(slot) > 0) {
+			std::string fpKey = heldId;
+			auto fpColon = fpKey.find(':');
+			if (fpColon != std::string::npos) fpKey = fpKey.substr(fpColon + 1);
+			auto fpMit = m_models.find(fpKey);
+			if (fpMit != m_models.end()) {
+				// Clear depth so held item renders on top of world
+				glClear(GL_DEPTH_BUFFER_BIT);
+
+				glm::mat4 fpProj = glm::perspective(glm::radians(70.0f), aspect, 0.01f, 10.0f);
+				glm::mat4 fpView = glm::lookAt(
+					glm::vec3(0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0));
+				glm::mat4 fpVP = fpProj * fpView;
+
+				// Position: bottom-right of view
+				glm::vec3 itemPos(0.55f, -0.50f, -0.85f);
+
+				// Walk bob
+				if (playerSpeed > 0.5f) {
+					float wf = std::min(playerSpeed / 6.0f, 1.0f);
+					float ph = m_playerWalkDist * 6.0f;
+					itemPos.x += std::sin(ph) * 0.03f * wf;
+					itemPos.y += std::abs(std::sin(ph * 2.0f)) * 0.02f * wf;
+				}
+
+				glm::mat4 fpRoot = glm::translate(glm::mat4(1.0f), itemPos);
+
+				// Apply equip rotation from model
+				auto& eqt = fpMit->second.equip;
+				fpRoot = glm::rotate(fpRoot, glm::radians(eqt.rotation.y), glm::vec3(0, 1, 0));
+				fpRoot = glm::rotate(fpRoot, glm::radians(eqt.rotation.x), glm::vec3(1, 0, 0));
+				fpRoot = glm::rotate(fpRoot, glm::radians(eqt.rotation.z), glm::vec3(0, 0, 1));
+
+				// Swing animation on left-click
+				if (m_fpSwingActive) {
+					float t = m_fpSwingTimer / m_fpSwingDuration;
+					float swing = std::sin(t * 3.14159f) * (-50.0f);
+					fpRoot = glm::rotate(fpRoot, glm::radians(swing), glm::vec3(1, 0, 0));
+				}
+
+				float fpScale = eqt.scale * 0.75f;
+				fpRoot = glm::scale(fpRoot, glm::vec3(fpScale));
+
+				mr.drawStatic(fpMit->second, fpVP, fpRoot);
+			}
+		}
+	}
 
 	// HUD — read all player state from entity
 	int playerHP = pe->getProp<int>(Prop::HP, pe->def().max_hp);
