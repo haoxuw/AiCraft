@@ -8,6 +8,7 @@
 #include "shared/server_interface.h"
 #include "server/local_server.h"
 #include "server/behavior_store.h"
+#include "game/process_manager.h"
 #include "game/gameplay.h"
 #include "game/hud.h"
 #include "client/window.h"
@@ -141,6 +142,10 @@ private:
 	GameState m_preInspectState = GameState::PLAYING;
 	GameState m_preMenuState = GameState::PLAYING;
 	bool m_showInventory = false;
+
+	// Process management (singleplayer: spawns server process)
+	AgentManager m_agentMgr;
+	std::string m_execDir;           // directory containing agentworld-* binaries
 
 	// Server log file (local server → /tmp/agentica_log_local.log)
 	FILE* m_serverLog = nullptr;

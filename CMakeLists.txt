@@ -239,6 +239,25 @@ else()
 		imgui_lib
 	)
 
+	# === Headless bot client (AI entity controller, no OpenGL) ===
+	add_executable(agentworld-bot
+		src/bot/main_bot.cpp
+		src/server/python_bridge.cpp
+		${CONTENT_SOURCES}
+	)
+	target_include_directories(agentworld-bot PRIVATE src)
+	target_link_libraries(agentworld-bot PRIVATE
+		glm::glm
+		Python3::Python pybind11::embed
+	)
+	# Copy python/ and artifacts/ so behavior loading works
+	add_custom_command(TARGET agentworld-bot POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentworld-bot>/python
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentworld-bot>/artifacts
+	)
+
 	# === Headless E2E test runner ===
 	add_executable(agentworld-test
 		src/test/test_e2e.cpp

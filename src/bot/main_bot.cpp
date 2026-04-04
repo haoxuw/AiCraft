@@ -1,0 +1,109 @@
+/**
+ * Bot client — headless AI process that controls a single entity.
+ *
+ * Connects to a running GameServer via TCP, receives world state,
+ * runs Python behavior logic, and sends ActionProposals back.
+ *
+ * Usage:
+ *   ./agentworld-bot --host 127.0.0.1 --port 7777 --entity 5
+ *   ./agentworld-bot --port 7777 --entity 5 --behavior wander
+ */
+
+#include "bot/bot_client.h"
+#include "server/python_bridge.h"
+#include <cstdio>
+#include <cstring>
+#include <chrono>
+#include <thread>
+#include <csignal>
+
+static volatile bool g_running = true;
+static void signalHandler(int) { g_running = false; }
+
+int main(int argc, char** argv) {
+	setvbuf(stdout, nullptr, _IONBF, 0);
+
+	std::string host = "127.0.0.1";
+	int port = 7777;
+	uint32_t entityId = 0;
+	std::string behaviorId;
+	std::string name = "bot";
+
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--host") == 0 && i + 1 < argc)
+			host = argv[++i];
+		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
+			port = atoi(argv[++i]);
+		else if (strcmp(argv[i], "--entity") == 0 && i + 1 < argc)
+			entityId = (uint32_t)atoi(argv[++i]);
+		else if (strcmp(argv[i], "--behavior") == 0 && i + 1 < argc)
+			behaviorId = argv[++i];
+		else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
+			name = argv[++i];
+		else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+			printf("agentworld-bot — headless AI client\n\n"
+			       "Usage: %s [options]\n"
+			       "  --host HOST       Server address (default: 127.0.0.1)\n"
+			       "  --port PORT       Server port (default: 7777)\n"
+			       "  --entity ID       Entity ID to control\n"
+			       "  --behavior NAME   Override behavior (default: from entity def)\n"
+			       "  --name NAME       Bot display name (default: bot)\n"
+			       "  --help, -h        Show this help\n", argv[0]);
+			return 0;
+		}
+	}
+
+	if (entityId == 0) {
+		printf("[Bot] Error: --entity ID is required\n");
+		return 1;
+	}
+
+	signal(SIGINT, signalHandler);
+	signal(SIGTERM, signalHandler);
+
+	// Initialize Python interpreter for behavior execution
+	agentworld::pythonBridge().init("python");
+
+	agentworld::BotClient bot;
+	bot.setTargetEntity(entityId);
+	if (!bot.connect(host, port, name)) {
+		agentworld::pythonBridge().shutdown();
+		return 1;
+	}
+
+	// The entity assignment now comes from the server via S_ASSIGN_ENTITY.
+	// As a fallback, also assign locally (in case server doesn't support C_BOT_HELLO yet).
+	if (!bot.hasControlledEntities())
+		bot.assignEntity(entityId, behaviorId);
+
+	printf("[Bot:%s] Running AI for entity %u on %s:%d\n",
+		name.c_str(), entityId, host.c_str(), port);
+
+	// Fixed-timestep main loop (50 Hz, matching server tick rate)
+	const float TICK_RATE = 0.02f;
+	auto lastTime = std::chrono::steady_clock::now();
+	float accumulator = 0;
+
+	while (g_running && bot.isConnected()) {
+		auto now = std::chrono::steady_clock::now();
+		float elapsed = std::chrono::duration<float>(now - lastTime).count();
+		lastTime = now;
+		accumulator += elapsed;
+
+		// Cap to prevent spiral of death
+		if (accumulator > 0.2f) accumulator = 0.2f;
+
+		while (accumulator >= TICK_RATE) {
+			bot.tick(TICK_RATE);
+			accumulator -= TICK_RATE;
+		}
+
+		// Sleep to avoid spinning at 100% CPU
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+
+	printf("[Bot:%s] Shutting down\n", name.c_str());
+	bot.disconnect();
+	agentworld::pythonBridge().shutdown();
+	return 0;
+}

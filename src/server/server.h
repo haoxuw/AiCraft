@@ -22,6 +22,7 @@
 #include <memory>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <functional>
 #include <cstdio>
@@ -185,15 +186,75 @@ public:
 			}
 			pe->inventory->autoPopulateHotbar();
 		}
-		m_clients[clientId] = {eid};
+		m_clients[clientId] = {eid, false, {}};
 		printf("[Server] Client %u joined. Player entity: %u\n", clientId, eid);
 		return eid;
+	}
+
+	// Add a bot client (no player entity — controls existing NPC entities).
+	void addBotClient(ClientId clientId) {
+		m_clients[clientId] = {ENTITY_NONE, true};
+		printf("[Server] Bot client %u joined.\n", clientId);
+	}
+
+	// Assign an entity to a bot client for AI control.
+	bool assignEntityToClient(ClientId clientId, EntityId entityId) {
+		auto it = m_clients.find(clientId);
+		if (it == m_clients.end()) return false;
+		it->second.controlledEntities.insert(entityId);
+		m_entityOwner[entityId] = clientId;
+		printf("[Server] Entity %u assigned to client %u\n", entityId, clientId);
+		return true;
+	}
+
+	// Revoke entity control from a client.
+	void revokeEntityFromClient(ClientId clientId, EntityId entityId) {
+		auto it = m_clients.find(clientId);
+		if (it != m_clients.end())
+			it->second.controlledEntities.erase(entityId);
+		m_entityOwner.erase(entityId);
+	}
+
+	// Get entities controlled by a client.
+	std::vector<EntityId> getControlledEntities(ClientId clientId) const {
+		auto it = m_clients.find(clientId);
+		if (it == m_clients.end()) return {};
+		return std::vector<EntityId>(it->second.controlledEntities.begin(),
+		                             it->second.controlledEntities.end());
+	}
+
+	// Get all NPC entities that have a BehaviorId but no controlling client.
+	std::vector<EntityId> getUncontrolledNPCs() const {
+		std::vector<EntityId> result;
+		m_world->entities.forEach([&](Entity& e) {
+			if (e.removed) return;
+			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
+			if (!bid.empty() && m_entityOwner.find(e.id()) == m_entityOwner.end())
+				result.push_back(e.id());
+		});
+		return result;
+	}
+
+	// Check if an entity is controlled by any client.
+	bool isEntityControlled(EntityId id) const {
+		return m_entityOwner.find(id) != m_entityOwner.end();
+	}
+
+	// Get the client that controls an entity (ENTITY_NONE if uncontrolled).
+	ClientId getEntityOwner(EntityId id) const {
+		auto it = m_entityOwner.find(id);
+		return it != m_entityOwner.end() ? it->second : 0;
 	}
 
 	void removeClient(ClientId clientId) {
 		auto it = m_clients.find(clientId);
 		if (it != m_clients.end()) {
-			m_world->entities.remove(it->second.playerEntityId);
+			// Remove player entity (if not a bot)
+			if (it->second.playerEntityId != ENTITY_NONE)
+				m_world->entities.remove(it->second.playerEntityId);
+			// Release all controlled entities
+			for (EntityId eid : it->second.controlledEntities)
+				m_entityOwner.erase(eid);
 			m_clients.erase(it);
 			printf("[Server] Client %u disconnected.\n", clientId);
 		}
@@ -204,13 +265,41 @@ public:
 		auto it = m_clients.find(clientId);
 		if (it == m_clients.end()) return;
 
-		// Anti-cheat: block/item actions must come from the client's own player.
-		// Move actions are allowed for any entity (RTS commanding).
-		if (action.type != ActionProposal::Move &&
-		    action.actorId != it->second.playerEntityId)
+		// Validate action authority:
+		// - Move actions: allowed for player entity OR any controlled entity
+		// - Block/item actions: allowed for player entity OR controlled entities
+		EntityId actor = action.actorId;
+		bool isOwned = (actor == it->second.playerEntityId) ||
+		               (it->second.controlledEntities.count(actor) > 0);
+
+		if (action.type == ActionProposal::Move) {
+			// Move allowed for owned entities + RTS commanding
+			// (keep backward compat: any entity for GUI clients)
+			if (!isOwned && !it->second.isBot) {
+				// GUI client RTS commanding — still allowed
+			} else if (!isOwned) {
+				return; // Bot can only move its assigned entities
+			}
+		} else {
+			// Non-move actions require ownership
+			if (!isOwned) return;
+		}
+
+		// ReloadBehavior is not a game action — it's a control message.
+		// Store it separately for the network layer to forward to bots.
+		if (action.type == ActionProposal::ReloadBehavior) {
+			m_pendingReloads.push_back(action);
 			return;
+		}
 
 		m_world->actions.propose(action);
+	}
+
+	// Get and clear pending behavior reload requests.
+	std::vector<ActionProposal> drainPendingReloads() {
+		auto result = std::move(m_pendingReloads);
+		m_pendingReloads.clear();
+		return result;
 	}
 
 	// Set callbacks for visual effects (client provides these)
@@ -223,13 +312,8 @@ public:
 			return m_world->blocks.get(m_world->getBlock(x, y, z)).solid;
 		};
 
-		// Phase 3: AI behaviors gather decisions
-		// Pass block query so behaviors can find trees, resources, etc.
-		EntityManager::BlockTypeFn blockQuery = [&](int x, int y, int z) -> std::string {
-			BlockId bid = m_world->getBlock(x, y, z);
-			return m_world->blocks.get(bid).string_id;
-		};
-		m_world->entities.gatherDecisions(dt, m_world->actions, blockQuery);
+		// AI behavior decisions arrive as ActionProposals from bot client
+		// processes — no server-side AI gathering needed.
 
 		// Phase 1: Resolve all proposals (may set entity.removed = true)
 		resolveActions(dt);
@@ -346,9 +430,13 @@ private:
 	std::unordered_map<EntityId, glm::vec3> m_lastPositions;
 
 	struct ClientState {
-		EntityId playerEntityId;
+		EntityId playerEntityId = ENTITY_NONE;
+		bool isBot = false;
+		std::unordered_set<EntityId> controlledEntities;
 	};
 	std::unordered_map<ClientId, ClientState> m_clients;
+	std::unordered_map<EntityId, ClientId> m_entityOwner; // entity → controlling client
+	std::vector<ActionProposal> m_pendingReloads; // behavior reload requests to forward to bots
 };
 
 } // namespace agentworld

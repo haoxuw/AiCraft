@@ -2,8 +2,6 @@
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 #include "shared/model_loader.h"
-#include "server/python_bridge.h"
-#include "server/behavior.h"
 #include "server/world_save.h"
 #include "shared/physics.h"
 #ifndef __EMSCRIPTEN__
@@ -40,6 +38,13 @@ static void writeScreenshot(int w, int h, const char* path) {
 // ============================================================
 bool Game::init(int argc, char** argv) {
 	printf("=== AgentWorld v0.9.0 ===\n");
+
+	// Determine executable directory (for launching server/bot processes)
+	if (argc > 0) {
+		std::string exe = argv[0];
+		auto pos = exe.rfind('/');
+		m_execDir = (pos != std::string::npos) ? exe.substr(0, pos) : ".";
+	}
 
 	if (!m_window.init(1600, 900, "AgentWorld")) return false;
 	if (!m_renderer.init("shaders")) return false;
@@ -193,6 +198,9 @@ bool Game::init(int argc, char** argv) {
 void Game::shutdown() {
 	// Save world on quit
 	saveCurrentWorld();
+
+	// Stop server + bot processes if we spawned them
+	m_agentMgr.stopAll();
 
 	if (m_serverLog) { fclose(m_serverLog); m_serverLog = nullptr; }
 	m_audio.shutdown();
@@ -482,26 +490,33 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 // World creation — always creates a local server
 // ============================================================
 void Game::enterGame(int templateIndex, GameState targetState, const WorldGenConfig& wgc) {
-	// enterGame always creates a local server. To join a remote server,
-	// use joinServer() directly (from the server browser UI).
-	printf("[Game] Starting local server\n");
+	printf("[Game] Starting game (server + bot processes)\n");
 
-	// Open server log file: /tmp/agentica_log_local.log
-	if (m_serverLog) { fclose(m_serverLog); m_serverLog = nullptr; }
-	m_serverLog = fopen("/tmp/agentica_log_local.log", "w");
-	if (m_serverLog) {
-		setvbuf(m_serverLog, nullptr, _IONBF, 0);
-		fprintf(m_serverLog, "=== AgentWorld Local Server ===\n");
-		fprintf(m_serverLog, "seed=%d template=%d\n", m_currentSeed, templateIndex);
-		printf("[Game] Server log: /tmp/agentica_log_local.log\n");
+	// Stop any existing processes
+	m_agentMgr.stopAll();
+
+	// Launch server process
+	AgentManager::Config cfg;
+	cfg.seed = m_currentSeed;
+	cfg.templateIndex = templateIndex;
+	cfg.worldPath = m_currentWorldPath;
+	cfg.execDir = m_execDir;
+
+	int port = m_agentMgr.launchServer(cfg);
+	if (port < 0) {
+		printf("[Game] Failed to launch server, falling back to local server\n");
+		// Fallback to LocalServer (e.g., if binaries not found)
+		auto localServer = std::make_unique<LocalServer>(m_templates);
+		localServer->setCreatureType(m_selectedCreature);
+		localServer->createGame(m_currentSeed, templateIndex, wgc);
+		m_server = std::move(localServer);
+		setupAfterConnect(targetState);
+		return;
 	}
 
-	auto localServer = std::make_unique<LocalServer>(m_templates);
-	localServer->setCreatureType(m_selectedCreature);
-	localServer->createGame(m_currentSeed, templateIndex, wgc);
-	m_server = std::move(localServer);
-	printf("[Game] Playing as %s (%s)\n", m_playerName.c_str(), m_selectedCreature.c_str());
-	setupAfterConnect(targetState);
+	// Connect to localhost as a regular network client.
+	// AI agent processes are spawned by the server automatically.
+	joinServer("127.0.0.1", port, targetState);
 }
 
 void Game::setupAfterConnect(GameState targetState) {
@@ -862,6 +877,9 @@ void Game::renderPlaying(float dt, float aspect) {
 	}
 
 	m_renderer.render(m_camera, aspect, hlPtr, selectedSlot, 7, crosshairOffset, showCrosshair);
+
+	// Fog of war — render fog at unloaded chunk boundaries
+	m_renderer.renderFogOfWar(m_camera, aspect, m_server->chunks(), m_renderDistance);
 
 	// Move target highlight (RPG/RTS click-to-move destination)
 	if (m_gameplay.hasMoveTarget()) {
@@ -1594,30 +1612,14 @@ void Game::updateCodeEditor(float dt, float aspect) {
 		snprintf(filename, sizeof(filename), "entity_%u_behavior", eid);
 		m_behaviorStore.save(filename, newCode);
 
-		// Load and execute via Python bridge
-		std::string error;
-		auto handle = pythonBridge().loadBehavior(newCode, error);
-		if (handle >= 0) {
-			// Replace the entity's behavior with the Python version
-			// Note: behavior replacement only works on local server (singleplayer).
-			// For network play, this would need a C_SET_BEHAVIOR protocol message.
-			auto* ls = dynamic_cast<LocalServer*>(m_server.get());
-			if (ls && ls->server()) {
-				auto* behaviorState = ls->server()->world().entities.getBehaviorState(eid);
-				if (behaviorState) {
-					behaviorState->behavior = std::make_unique<PythonBehavior>(handle, newCode);
-					printf("[CodeEditor] Python behavior applied to entity %u\n", eid);
-				}
-			} else {
-				printf("[CodeEditor] Behavior replacement not supported on remote server yet\n");
-			}
-			m_codeEditor.clearError();
-		} else {
-			printf("[CodeEditor] Python error: %s\n", error.c_str());
-			m_codeEditor.setError(error);
-			m_codeEditor.clearFlags();
-			return; // keep editor open on error
-		}
+		// Send behavior reload request to server → forwarded to bot client
+		// Uses a special action type that the server intercepts
+		ActionProposal reload;
+		reload.type = ActionProposal::ReloadBehavior;
+		reload.actorId = eid;
+		reload.blockType = newCode; // reuse blockType field for source code
+		m_server->sendAction(reload);
+		printf("[CodeEditor] Behavior reload sent for entity %u\n", eid);
 
 		m_codeEditor.clearError();
 		m_codeEditor.close();
@@ -1767,6 +1769,7 @@ void Game::updatePaused(float dt, float aspect) {
 		m_state = GameState::MENU;
 		m_imguiMenu.setGameRunning(false);
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		m_agentMgr.stopAll(); // stop server + bot child processes
 		m_server->disconnect();
 		m_server.reset();
 	}

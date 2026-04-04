@@ -176,6 +176,7 @@ bool Renderer::init(const std::string& dir) {
 	glBindVertexArray(0);
 
 	m_modelRenderer.init(&m_highlightShader);
+	m_fogOfWar.init(dir);
 	return true;
 }
 
@@ -193,6 +194,7 @@ void Renderer::shutdown() {
 	del(m_crackVAO, m_crackVBO);
 	del(m_quadVAO, m_quadVBO);
 	m_modelRenderer.shutdown();
+	m_fogOfWar.shutdown();
 }
 
 void Renderer::markChunkDirty(ChunkPos pos) {
@@ -325,6 +327,11 @@ void Renderer::render(const Camera& cam, float aspect, glm::ivec3* highlight,
 	renderTerrain(cam, aspect);
 	if (highlight) renderHighlight(cam, aspect, *highlight);
 	if (showCrosshair) renderCrosshair(aspect, crosshairOffset);
+}
+
+void Renderer::renderFogOfWar(const Camera& cam, float aspect,
+                              ChunkSource& chunks, int renderDistance) {
+	m_fogOfWar.render(cam, aspect, chunks, renderDistance, m_horizonColor, m_timeOfDay);
 }
 
 void Renderer::renderSky(const Camera& cam, float aspect) {

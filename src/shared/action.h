@@ -42,6 +42,8 @@ struct ActionProposal {
 		DropItem,       // spawn item entity at actor's feet
 		// Farming/active blocks
 		GrowCrop,       // advance growth at blockPos
+		// Behavior hot-swap (GUI editor → server → bot)
+		ReloadBehavior, // reload Python behavior for actorId (source in blockType)
 	};
 
 	Type type = Move;

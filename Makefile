@@ -26,13 +26,21 @@ EMSDK := $(HOME)/emsdk
 #   Terminal 3: make client   (second player)
 #
 
-# Singleplayer: new village world on a random port, server + client, auto-cleanup
+# Singleplayer: auto-launches server + bot processes + GUI client
 game: build
-	@P=$$((7800 + $$RANDOM % 100)); rm -f /tmp/agentworld_ready_$$P; ./$(BUILD_DIR)/agentworld-server --port $$P --template 1 & SERVER=$$! && until [ -f /tmp/agentworld_ready_$$P ]; do sleep 0.05; done && rm -f /tmp/agentworld_ready_$$P && ./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $$P --skip-menu; kill $$SERVER 2>/dev/null
+	./$(BUILD_DIR)/agentworld --skip-menu
 
-# Same as game but on fixed port 7777 — useful when a second client needs to join
+# Same as game but on fixed port — useful when a second client needs to join
+# Launches server + bots on PORT, then opens GUI client
 play: build
-	@rm -f /tmp/agentworld_ready_$(PORT); ./$(BUILD_DIR)/agentworld-server --port $(PORT) --template 1 & SERVER=$$! && until [ -f /tmp/agentworld_ready_$(PORT) ]; do sleep 0.05; done && rm -f /tmp/agentworld_ready_$(PORT) && ./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $(PORT) --skip-menu; kill $$SERVER 2>/dev/null
+	@P=$(PORT); rm -f /tmp/agentworld_ready_$$P; \
+	./$(BUILD_DIR)/agentworld-server --port $$P --template 1 & SERVER=$$!; \
+	until [ -f /tmp/agentworld_ready_$$P ]; do sleep 0.05; done; \
+	rm -f /tmp/agentworld_ready_$$P; \
+	./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $$P --skip-menu & CLIENT=$$!; \
+	sleep 3; \
+	for EID in $$(seq 1 12); do ./$(BUILD_DIR)/agentworld-bot --port $$P --entity $$EID --name bot_$$EID & done; \
+	wait $$CLIENT; kill $$SERVER 2>/dev/null; pkill -P $$$$ agentworld-bot 2>/dev/null
 
 # Dedicated server
 server: build

@@ -3,6 +3,7 @@
 #include "shared/types.h"
 #include "shared/chunk_source.h"
 #include "client/shader.h"
+#include "client/fog_of_war.h"
 #include "client/camera.h"
 #include "client/chunk_mesher.h"
 #include "client/model.h"
@@ -21,6 +22,7 @@ public:
 	void render(const Camera& cam, float aspect, glm::ivec3* highlight = nullptr,
 	            int selectedSlot = 0, int hotbarSize = 7,
 	            glm::vec2 crosshairOffset = {0, 0}, bool showCrosshair = true);
+	void renderFogOfWar(const Camera& cam, float aspect, ChunkSource& chunks, int renderDistance);
 	ModelRenderer& modelRenderer() { return m_modelRenderer; }
 	Shader& highlightShader() { return m_highlightShader; }
 	void markChunkDirty(ChunkPos pos);
@@ -59,6 +61,9 @@ private:
 	float m_fogEnd = 160.0f;
 	float m_timeOfDay = 0.5f; // noon
 	float m_sunStrength = 1.0f;
+
+	// Fog of war
+	FogOfWar m_fogOfWar;
 };
 
 } // namespace agentworld
