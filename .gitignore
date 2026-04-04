@@ -5,6 +5,7 @@ build-web/
 cmake-build-*/
 
 # IDE
+imgui.ini
 .vscode/
 .idea/
 *.swp
