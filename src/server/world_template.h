@@ -28,7 +28,7 @@ public:
 	                      const BlockRegistry& blocks) = 0;
 
 	// Surface height at world XZ (for entity/spawn placement)
-	virtual float surfaceHeight(int seed, float x, float z) = 0;
+	virtual float surfaceHeight(int seed, float x, float z) const = 0;
 
 	// Preferred player spawn position — templates return a safe, visible spot
 	virtual glm::vec3 preferredSpawn(int seed) const = 0;
@@ -46,86 +46,21 @@ public:
 };
 
 // ============================================================
-// Flat World
+// Configurable World Template
 // ============================================================
-class FlatWorldTemplate : public WorldTemplate {
+// Reads any world Python config and conditionally generates:
+//   - Flat or natural (Perlin noise) terrain
+//   - Village structures (if config has a village section)
+//   - Spawn portal (always)
+//   - Trees (natural terrain only, if density > 0)
+//
+// FlatWorldTemplate and VillageWorldTemplate are thin aliases.
+// ============================================================
+class ConfigurableWorldTemplate : public WorldTemplate {
 public:
-	FlatWorldTemplate() {
-		// Try to load Python config; fall back to struct defaults silently
-		loadWorldConfig("artifacts/worlds/base/flat.py", m_py);
-		m_py.hasVillage = false;
-		m_py.terrainType = "flat";
-	}
-
-	std::string name()        const override { return "Flat World"; }
-	std::string description() const override { return "Flat grass plane, ideal for building"; }
-
-	float surfaceHeight(int, float, float) override { return m_py.surfaceY; }
-
-	glm::vec3 preferredSpawn(int /*seed*/) const override {
-		return {m_py.spawnSearchX, m_py.surfaceY + 1.0f, m_py.spawnSearchZ};
-	}
-
-	glm::vec3 chestPosition(int /*seed*/, glm::vec3 spawnPos) const override {
-		// Chest placed at a fixed offset from spawn so it never overlaps the player
-		float sy = m_py.surfaceY + 1.0f;
-		return {spawnPos.x + m_py.chestOffsetX, sy, spawnPos.z + m_py.chestOffsetZ};
-	}
-
-	glm::ivec2 villageCenter(int /*seed*/) const override {
-		return {(int)m_py.spawnSearchX, (int)m_py.spawnSearchZ};
-	}
-
-	const WorldPyConfig& pyConfig() const override { return m_py; }
-
-	void generate(Chunk& chunk, ChunkPos cpos, int /*seed*/,
-	              const BlockRegistry& blocks) override {
-		BlockId stone = blocks.getId(BlockType::Stone);
-		BlockId dirt  = blocks.getId(BlockType::Dirt);
-		BlockId grass = blocks.getId(BlockType::Grass);
-
-		int oy = cpos.y * CHUNK_SIZE;
-		int sy = (int)m_py.surfaceY;
-
-		for (int ly = 0; ly < CHUNK_SIZE; ly++) {
-			int wy = oy + ly;
-			BlockId type = BLOCK_AIR;
-			if      (wy < sy - m_py.dirtDepth) type = stone;
-			else if (wy < sy)                  type = dirt;
-			else if (wy == sy)                 type = grass;
-			else                               continue;
-
-			for (int lz = 0; lz < CHUNK_SIZE; lz++)
-				for (int lx = 0; lx < CHUNK_SIZE; lx++)
-					chunk.set(lx, ly, lz, type);
-		}
-	}
-
-private:
-	WorldPyConfig m_py;
-};
-
-// ============================================================
-// Village World: natural terrain, trees, village with chest
-// ============================================================
-class VillageWorldTemplate : public WorldTemplate {
-public:
-	VillageWorldTemplate() {
-		// Load parameters from Python artifact; fall back to struct defaults
-		WorldPyConfig loaded;
-		if (loadWorldConfig("artifacts/worlds/base/village.py", loaded))
-			m_py = loaded;
-		else {
-			// Ensure mob list has the standard village mobs
-			m_py.mobs = {
-				{"base:villager", 3, 10.0f},
-				{"base:pig",      4, 22.0f},
-				{"base:chicken",  3, 18.0f},
-				{"base:dog",      2, 14.0f},
-				{"base:cat",      2, 12.0f},
-			};
-		}
-		// Expose terrain params to noise layer
+	explicit ConfigurableWorldTemplate(const std::string& pyPath) {
+		loadWorldConfig(pyPath, m_py);
+		// Set up noise params for natural terrain
 		m_tp.continentScale     = m_py.continentScale;
 		m_tp.continentAmplitude = m_py.continentAmplitude;
 		m_tp.hillScale          = m_py.hillScale;
@@ -136,42 +71,48 @@ public:
 		m_tp.microAmplitude     = m_py.microAmplitude;
 	}
 
-	std::string name()        const override { return "Village"; }
-	std::string description() const override { return "Rolling hills, trees, and a village"; }
+	std::string name()        const override { return m_py.name.empty() ? "World" : m_py.name; }
+	std::string description() const override { return m_py.description; }
 
 	const WorldPyConfig& pyConfig() const override { return m_py; }
 
-	float surfaceHeight(int seed, float x, float z) override {
+	float surfaceHeight(int seed, float x, float z) const override {
+		if (m_py.terrainType == "flat") return m_py.surfaceY;
 		return naturalTerrainHeight(seed, x, z, m_tp);
 	}
 
-	// ── Preferred spawn: near a flat area, far enough from village ──
 	glm::vec3 preferredSpawn(int seed) const override {
+		if (m_py.terrainType == "flat") {
+			return {m_py.spawnSearchX, m_py.surfaceY + 1.0f, m_py.spawnSearchZ};
+		}
 		auto anchor = findAnchor(seed);
 		float sy = naturalTerrainHeight(seed, anchor.x, anchor.y, m_tp);
 		return {anchor.x, sy + 1.0f, anchor.y};
 	}
 
-	// ── Village center: anchor + config offset ───────────────────
 	glm::ivec2 villageCenter(int seed) const override {
+		if (m_py.terrainType == "flat") {
+			return {(int)m_py.spawnSearchX + (int)m_py.villageOffsetX,
+			        (int)m_py.spawnSearchZ + (int)m_py.villageOffsetZ};
+		}
 		auto anchor = findAnchor(seed);
 		return {(int)anchor.x + (int)m_py.villageOffsetX,
 		        (int)anchor.y + (int)m_py.villageOffsetZ};
 	}
 
-	// ── Chest: front-right interior of house[0] at floor level ──────
-	glm::vec3 chestPosition(int seed, glm::vec3 /*spawnPos*/) const override {
-		auto vc = villageCenter(seed);
-		if (m_py.houses.empty()) {
-			float vy = naturalTerrainHeight(seed, (float)vc.x, (float)vc.y, m_tp);
-			return {(float)vc.x + 0.5f, vy + 1.0f, (float)vc.y + 0.5f};
+	glm::vec3 chestPosition(int seed, glm::vec3 spawnPos) const override {
+		if (m_py.hasVillage && !m_py.houses.empty()) {
+			auto vc = villageCenter(seed);
+			const auto& h0 = m_py.houses[0];
+			float hx = (float)(vc.x + h0.cx) + (float)(h0.w - 3);
+			float hz = (float)(vc.y + h0.cz) + 1.0f;
+			float hy = surfaceHeight(seed, hx, hz) + 1.0f;
+			return {hx, hy, hz};
 		}
-		const auto& h0 = m_py.houses[0];
-		// Front-right interior corner, 2 in from right wall and 1 from front wall
-		float hx = (float)(vc.x + h0.cx) + (float)(h0.w - 3);
-		float hz = (float)(vc.y + h0.cz) + 1.0f;
-		float hy = naturalTerrainHeight(seed, hx, hz, m_tp) + 1.0f;  // floor level
-		return {hx, hy, hz};
+		// Fallback: offset from spawn (flat world without village)
+		float sy = surfaceHeight(seed, spawnPos.x + m_py.chestOffsetX,
+		                         spawnPos.z + m_py.chestOffsetZ) + 1.0f;
+		return {spawnPos.x + m_py.chestOffsetX, sy, spawnPos.z + m_py.chestOffsetZ};
 	}
 
 	// ── Chunk generation ─────────────────────────────────────────
@@ -200,91 +141,95 @@ public:
 		int oy = cpos.y * CHUNK_SIZE;
 		int oz = cpos.z * CHUNK_SIZE;
 
-		int   wl       = (int)m_py.waterLevel;
-		float snowLine = m_py.snowThreshold;
-		int   dd       = m_py.dirtDepth;
+		bool isFlat = (m_py.terrainType == "flat");
 
 		// ── Terrain ──────────────────────────────────────────────
-		for (int lz = 0; lz < CHUNK_SIZE; lz++) {
-			for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-				int wx = ox + lx;
-				int wz = oz + lz;
-				int surfaceY = (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
-
-				for (int ly = 0; ly < CHUNK_SIZE; ly++) {
-					int wy = oy + ly;
-					if (wy > surfaceY) {
-						if (wy <= wl) chunk.set(lx, ly, lz, bWater);
-						// else air (default)
-					} else if (wy == surfaceY) {
-						if      (surfaceY <= wl)             chunk.set(lx, ly, lz, bSand);
-						else if ((float)surfaceY >= snowLine) chunk.set(lx, ly, lz, bSnow);
-						else                                  chunk.set(lx, ly, lz, bGrass);
-					} else if (wy > surfaceY - dd) {
-						chunk.set(lx, ly, lz, (surfaceY <= wl + 1) ? bSand : bDirt);
-					} else {
-						chunk.set(lx, ly, lz, bStone);
-					}
-				}
+		if (isFlat) {
+			int sy = (int)m_py.surfaceY;
+			int dd = m_py.dirtDepth;
+			for (int ly = 0; ly < CHUNK_SIZE; ly++) {
+				int wy = oy + ly;
+				BlockId type = BLOCK_AIR;
+				if      (wy < sy - dd) type = bStone;
+				else if (wy < sy)      type = bDirt;
+				else if (wy == sy)     type = bGrass;
+				else                   continue;
+				for (int lz = 0; lz < CHUNK_SIZE; lz++)
+					for (int lx = 0; lx < CHUNK_SIZE; lx++)
+						chunk.set(lx, ly, lz, type);
 			}
-		}
-
-		// ── Trees ────────────────────────────────────────────────
-		auto anchor = findAnchor(seed);
-		auto vc = villageCenter(seed);
-		int apx = (int)std::round(anchor.x), apz = (int)std::round(anchor.y);
-
-		for (int lz = 3; lz < CHUNK_SIZE - 3; lz++) {
-			for (int lx = 3; lx < CHUNK_SIZE - 3; lx++) {
-				int wx = ox + lx, wz = oz + lz;
-
-				if (hashFloat(wx * 7 + seed, wz * 13) < (1.0f - m_py.treeDensity)) continue;
-
-				int surfaceY = (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
-				if (surfaceY <= wl || (float)surfaceY >= snowLine) continue;
-
-				// No trees in village clearing
-				{
-					int dx = wx - vc.x, dz = wz - vc.y;
-					if (dx*dx + dz*dz < m_py.clearingRadius * m_py.clearingRadius) continue;
-				}
-				// No trees near spawn portal
-				{
-					int dx = wx - apx, dz = wz - apz;
-					if (dx*dx + dz*dz < 100) continue;  // 10-block radius around portal
-				}
-
-				int trunkBase = surfaceY + 1;
-				int trunkHeight = m_py.trunkHeightMin +
-					(int)(hashFloat(wx + 99, wz + 99) * (m_py.trunkHeightMax - m_py.trunkHeightMin));
-				int trunkTop = trunkBase + trunkHeight - 1;
-
-				for (int ty = trunkBase; ty <= trunkTop; ty++) {
-					int ly = ty - oy;
-					if (ly >= 0 && ly < CHUNK_SIZE) chunk.set(lx, ly, lz, bWood);
-				}
-
-				int leafR = m_py.leafRadius;
-				for (int dy = -1; dy <= leafR; dy++) {
-					int r = (dy == leafR) ? 1 : leafR;
-					for (int dx = -r; dx <= r; dx++) {
-						for (int ddz = -r; ddz <= r; ddz++) {
-							if (dx == 0 && ddz == 0 && dy < leafR - 1) continue;
-							if (dx*dx + ddz*ddz + dy*dy > leafR*leafR + 1) continue;
-							int lxx = lx + dx, lyy = trunkTop + dy - oy, lzz = lz + ddz;
-							if (lxx >= 0 && lxx < CHUNK_SIZE &&
-							    lyy >= 0 && lyy < CHUNK_SIZE &&
-							    lzz >= 0 && lzz < CHUNK_SIZE &&
-							    chunk.get(lxx, lyy, lzz) == BLOCK_AIR)
-								chunk.set(lxx, lyy, lzz, bLeaves);
+		} else {
+			int wl = (int)m_py.waterLevel;
+			float snowLine = m_py.snowThreshold;
+			int dd = m_py.dirtDepth;
+			for (int lz = 0; lz < CHUNK_SIZE; lz++) {
+				for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+					int wx = ox + lx, wz = oz + lz;
+					int sy = (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
+					for (int ly = 0; ly < CHUNK_SIZE; ly++) {
+						int wy = oy + ly;
+						if (wy > sy) {
+							if (wy <= wl) chunk.set(lx, ly, lz, bWater);
+						} else if (wy == sy) {
+							if      (sy <= wl)             chunk.set(lx, ly, lz, bSand);
+							else if ((float)sy >= snowLine) chunk.set(lx, ly, lz, bSnow);
+							else                            chunk.set(lx, ly, lz, bGrass);
+						} else if (wy > sy - dd) {
+							chunk.set(lx, ly, lz, (sy <= wl + 1) ? bSand : bDirt);
+						} else {
+							chunk.set(lx, ly, lz, bStone);
 						}
 					}
 				}
 			}
 		}
 
+		// ── Trees (natural terrain only) ─────────────────────────
+		auto vc = villageCenter(seed);
+		glm::vec2 anchor = findAnchor(seed);
+		int apx = (int)std::round(anchor.x), apz = (int)std::round(anchor.y);
+
+		if (!isFlat && m_py.treeDensity > 0) {
+			int wl = (int)m_py.waterLevel;
+			float snowLine = m_py.snowThreshold;
+			for (int lz = 3; lz < CHUNK_SIZE - 3; lz++) {
+				for (int lx = 3; lx < CHUNK_SIZE - 3; lx++) {
+					int wx = ox + lx, wz = oz + lz;
+					if (hashFloat(wx * 7 + seed, wz * 13) < (1.0f - m_py.treeDensity)) continue;
+					int sy = (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
+					if (sy <= wl || (float)sy >= snowLine) continue;
+					{ int dx = wx-vc.x, dz = wz-vc.y;
+					  if (dx*dx+dz*dz < m_py.clearingRadius*m_py.clearingRadius) continue; }
+					{ int dx = wx-apx, dz = wz-apz;
+					  if (dx*dx+dz*dz < 100) continue; }
+					int trunkBase = sy + 1;
+					int trunkH = m_py.trunkHeightMin +
+						(int)(hashFloat(wx+99, wz+99) * (m_py.trunkHeightMax - m_py.trunkHeightMin));
+					int trunkTop = trunkBase + trunkH - 1;
+					for (int ty = trunkBase; ty <= trunkTop; ty++) {
+						int ly = ty - oy;
+						if (ly >= 0 && ly < CHUNK_SIZE) chunk.set(lx, ly, lz, bWood);
+					}
+					int leafR = m_py.leafRadius;
+					for (int dy = -1; dy <= leafR; dy++) {
+						int r = (dy == leafR) ? 1 : leafR;
+						for (int dx = -r; dx <= r; dx++)
+							for (int ddz = -r; ddz <= r; ddz++) {
+								if (dx==0 && ddz==0 && dy < leafR-1) continue;
+								if (dx*dx+ddz*ddz+dy*dy > leafR*leafR+1) continue;
+								int lxx=lx+dx, lyy=trunkTop+dy-oy, lzz=lz+ddz;
+								if (lxx>=0&&lxx<CHUNK_SIZE&&lyy>=0&&lyy<CHUNK_SIZE&&
+								    lzz>=0&&lzz<CHUNK_SIZE&&chunk.get(lxx,lyy,lzz)==BLOCK_AIR)
+									chunk.set(lxx, lyy, lzz, bLeaves);
+							}
+					}
+				}
+			}
+		}
+
 		// ── Village structures ────────────────────────────────────
-		generateVillage(chunk, cpos, seed, wallB, roofB, floorB, pathB, vc, blocks);
+		if (m_py.hasVillage)
+			generateVillage(chunk, cpos, seed, wallB, roofB, floorB, pathB, vc, blocks);
 
 		// ── Spawn portal ──────────────────────────────────────────
 		generatePortal(chunk, cpos, seed, wallB, bStone, anchor);
@@ -294,23 +239,31 @@ private:
 	WorldPyConfig m_py;
 	TerrainParams m_tp;
 
+	// Ground height at world (x,z) — works for both flat and natural terrain
+	float groundHeight(int seed, float x, float z) const {
+		if (m_py.terrainType == "flat") return m_py.surfaceY;
+		return naturalTerrainHeight(seed, x, z, m_tp);
+	}
+
 	// Per-seed spawn anchor cache (thread-safe for reading after construction)
 	mutable std::unordered_map<int, glm::vec2> m_anchorCache;
 
-	// Find flat-terrain anchor for this seed (spiral search from config origin)
+	// Find spawn anchor for this seed.
+	// Flat: fixed position from config. Natural: spiral search for flat terrain.
 	glm::vec2 findAnchor(int seed) const {
 		auto it = m_anchorCache.find(seed);
 		if (it != m_anchorCache.end()) return it->second;
 
 		float sx = m_py.spawnSearchX, sz = m_py.spawnSearchZ;
-		// Spiral outward until we find terrain in the right height band
-		for (int t = 0; t < 120; t++) {
-			float h = naturalTerrainHeight(seed, sx, sz, m_tp);
-			if (h >= m_py.spawnMinH && h <= m_py.spawnMaxH) break;
-			float angle = (float)t * 2.399963f; // golden-angle spiral
-			float r     = (float)t * 4.0f;
-			sx = m_py.spawnSearchX + std::cos(angle) * r;
-			sz = m_py.spawnSearchZ + std::sin(angle) * r;
+		if (m_py.terrainType != "flat") {
+			for (int t = 0; t < 120; t++) {
+				float h = naturalTerrainHeight(seed, sx, sz, m_tp);
+				if (h >= m_py.spawnMinH && h <= m_py.spawnMaxH) break;
+				float angle = (float)t * 2.399963f;
+				float r     = (float)t * 4.0f;
+				sx = m_py.spawnSearchX + std::cos(angle) * r;
+				sz = m_py.spawnSearchZ + std::sin(angle) * r;
+			}
 		}
 		m_anchorCache[seed] = {sx, sz};
 		return {sx, sz};
@@ -336,8 +289,10 @@ private:
 
 		int px = (int)std::round(anchor.x);
 		int pz = (int)std::round(anchor.y);
-		int groundY = (int)std::round(
-			naturalTerrainHeight(seed, (float)px, (float)pz, m_tp));
+		// Use surfaceHeight (works for both flat and natural terrain)
+		int groundY = (m_py.terrainType == "flat")
+			? (int)m_py.surfaceY
+			: (int)std::round(naturalTerrainHeight(seed, (float)px, (float)pz, m_tp));
 
 		auto set = [&](int wx, int wy, int wz, BlockId bid) {
 			int lx = wx - ox, ly = wy - oy, lz = wz - oz;
@@ -434,8 +389,8 @@ private:
 	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
 		int sh = m_py.storyHeight, dh = m_py.doorHeight, wr = m_py.windowRow;
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-		int floorY = (int)std::round(naturalTerrainHeight(seed, (float)hcx+h.w*0.5f,
-		                                                        (float)hcz+h.d*0.5f, m_tp)) + 1;
+		int floorY = (int)std::round(groundHeight(seed, (float)hcx+h.w*0.5f,
+		                                                  (float)hcz+h.d*0.5f)) + 1;
 		int totalH = sh * h.stories;
 
 		// Foundation row
@@ -504,8 +459,8 @@ private:
 	                   BlockId pathB, BlockId wallB,
 	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-		int floorY = (int)std::round(naturalTerrainHeight(seed, (float)hcx+h.w*0.5f,
-		                                                        (float)hcz+h.d*0.5f, m_tp)) + 1;
+		int floorY = (int)std::round(groundHeight(seed, (float)hcx+h.w*0.5f,
+		                                                  (float)hcz+h.d*0.5f)) + 1;
 		int dh = m_py.doorHeight;
 		int doorMid = h.w / 2;  // x-offset of door centre from hcx
 
@@ -539,8 +494,8 @@ private:
 	                       const WorldPyConfig::HouseLayout& h, glm::ivec2 vc,
 	                       bool isMainHouse) {
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-		int floorY = (int)std::round(naturalTerrainHeight(seed, (float)hcx+h.w*0.5f,
-		                                                        (float)hcz+h.d*0.5f, m_tp)) + 1;
+		int floorY = (int)std::round(groundHeight(seed, (float)hcx+h.w*0.5f,
+		                                                  (float)hcz+h.d*0.5f)) + 1;
 		// Only furnish story 0 interior (never touch walls or stair column dx=1)
 
 		// Bed: back-left corner, two blocks (foot at dz=d-2, head at dz=d-3)
@@ -572,7 +527,7 @@ private:
 	                   BlockId pathB, glm::ivec2 vc) {
 		for (int dz = -22; dz <= 26; dz++) {
 			int wx = vc.x + 2, wz = vc.y + dz;
-			int surfY = (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
+			int surfY = (int)std::round(groundHeight(seed, (float)wx, (float)wz));
 			ctx.set(wx,   surfY, wz, pathB);
 			ctx.set(wx+1, surfY, wz, pathB);
 		}
@@ -605,6 +560,17 @@ private:
 
 		generatePaths(ctx, seed, pathB, vc);
 	}
+};
+
+// ── Thin aliases for backward compatibility ──────────────────
+class FlatWorldTemplate : public ConfigurableWorldTemplate {
+public:
+	FlatWorldTemplate() : ConfigurableWorldTemplate("artifacts/worlds/base/flat.py") {}
+};
+
+class VillageWorldTemplate : public ConfigurableWorldTemplate {
+public:
+	VillageWorldTemplate() : ConfigurableWorldTemplate("artifacts/worlds/base/village.py") {}
 };
 
 } // namespace agentworld

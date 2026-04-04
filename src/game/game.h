@@ -108,6 +108,7 @@ private:
 	// Connection (from --host/--port CLI args)
 	std::string m_connectHost;  // empty = singleplayer
 	int m_connectPort = 7777;
+	int m_serverPort = 0;       // port for local server (0 = auto-pick)
 	std::string m_currentWorldPath;  // save directory for current game
 	int m_currentSeed = 42;
 	std::string m_playerName;        // display name (random default, renameable)

@@ -93,7 +93,10 @@ bool Game::init(int argc, char** argv) {
 		if (strcmp(argv[i], "--demo") == 0) m_demoMode = true;
 		else if (strcmp(argv[i], "--skip-menu") == 0) m_skipMenu = true;
 		else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) m_connectHost = argv[++i];
-		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) m_connectPort = atoi(argv[++i]);
+		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+			m_connectPort = atoi(argv[++i]);
+			m_serverPort = m_connectPort;
+		}
 	}
 
 	// Models — ALL loaded from Python (artifacts/models/base/ and models/player/)
@@ -446,18 +449,9 @@ void Game::handleMenuAction(const MenuAction& action) {
 		break;
 	case MenuAction::LoadWorld: {
 		m_currentWorldPath = action.worldPath;
+		m_currentSeed = 0;  // will be loaded from save
 		printf("[Game] Loading world from %s\n", action.worldPath.c_str());
-		auto localServer = std::make_unique<LocalServer>(m_templates);
-		// Create server without init (loadWorld will init)
-		localServer->createServerOnly();
-		if (loadWorld(*localServer->server(), action.worldPath, m_templates)) {
-			localServer->finishLoad(); // register client after load
-			m_server = std::move(localServer);
-			setupAfterConnect(GameState::PLAYING);
-		} else {
-			printf("[Game] Failed to load world, creating new\n");
-			enterGame(action.templateIndex, GameState::PLAYING);
-		}
+		enterGame(action.templateIndex, GameState::PLAYING);
 		break;
 	}
 	case MenuAction::DeleteWorld:
@@ -501,6 +495,7 @@ void Game::enterGame(int templateIndex, GameState targetState, const WorldGenCon
 	cfg.templateIndex = templateIndex;
 	cfg.worldPath = m_currentWorldPath;
 	cfg.execDir = m_execDir;
+	cfg.port = m_serverPort;
 
 	int port = m_agentMgr.launchServer(cfg);
 	if (port < 0) {
@@ -607,8 +602,9 @@ void Game::setupAfterConnect(GameState targetState) {
 	if (auto* ls = dynamic_cast<LocalServer*>(m_server.get())) {
 		if (ls->server()) {
 			World& w = ls->server()->world();
-			if (auto* vt = dynamic_cast<VillageWorldTemplate*>(&w.getTemplate())) {
-				auto vc = vt->villageCenter(w.seed());
+			auto& tmpl = w.getTemplate();
+			if (tmpl.pyConfig().hasVillage) {
+				auto vc = tmpl.villageCenter(w.seed());
 				float dx = (float)vc.x - spawn.x;
 				float dz = (float)vc.y - spawn.z;
 				float len = std::sqrt(dx*dx + dz*dz);

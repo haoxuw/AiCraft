@@ -146,9 +146,9 @@ public:
 				return clicked;
 			};
 
-			if (navButton("Singleplayer", Page::Singleplayer)) m_page = Page::Singleplayer;
+			if (navButton("Start game", Page::Singleplayer)) m_page = Page::Singleplayer;
 			ImGui::Spacing();
-			if (navButton("Multiplayer", Page::Multiplayer)) m_page = Page::Multiplayer;
+			if (navButton("Join a game", Page::Multiplayer)) m_page = Page::Multiplayer;
 			ImGui::Spacing();
 			if (navButton("Handbook", Page::Handbook)) m_page = Page::Handbook;
 			ImGui::Spacing();
@@ -399,7 +399,7 @@ private:
 
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
 		ImGui::SetWindowFontScale(1.4f);
-		ImGui::Text("Singleplayer");
+		ImGui::Text("Start game");
 		ImGui::SetWindowFontScale(1.0f);
 		ImGui::PopStyleColor();
 		ImGui::Spacing();
@@ -723,7 +723,7 @@ private:
 
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.20f, 0.22f, 1));
 		ImGui::SetWindowFontScale(1.4f);
-		ImGui::Text("Multiplayer");
+		ImGui::Text("Join a game");
 		ImGui::SetWindowFontScale(1.0f);
 		ImGui::PopStyleColor();
 		ImGui::Spacing();

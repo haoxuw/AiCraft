@@ -2,54 +2,44 @@ SHELL := /bin/bash
 BUILD_DIR := build
 BUILD_WEB := build-web
 BUILD_TYPE := Debug
-HOST := 127.0.0.1
+HOST :=
 PORT := 7777
+GAME_PORT :=
 WEB_PORT := 8080
 EMSDK := $(HOME)/emsdk
 
-.PHONY: game play build configure clean server client stop test_e2e web web-build web-configure web-clean
+.PHONY: game build configure clean server client stop test_e2e web web-build web-configure web-clean
 
 # ── Native ─────────────────────────────────────────────────
 #
 # Quick reference:
-#   make game             New village world on a random port (singleplayer)
-#   make play             Same, but on fixed port 7777 (easy for a second client to join)
-#   make server           Dedicated server (interactive world select)
-#   make server PORT=N    Dedicated server on port N
-#   make client           Network client → localhost:7777
-#   make client PORT=N    Network client → localhost:N
-#   make stop             Kill all agentworld processes
+#   make game                 Singleplayer: new village world, random port, skip menu
+#   make game GAME_PORT=7890  Same, but on a fixed port
+#   make server               Dedicated server (interactive world select)
+#   make server PORT=N        Dedicated server on port N
+#   make client               Open GUI → "Start game" or "Join a game" from menu
+#   make client HOST=X PORT=N Open GUI with server pre-filled in "Join a game" tab
+#   make stop                 Kill all agentworld processes
 #
 # Multiplayer (separate terminals):
-#   Terminal 1: make play
-#   Terminal 2: make client
-#   Terminal 3: make client   (second player)
+#   Terminal 1: make server PORT=7777
+#   Terminal 2: make client HOST=127.0.0.1 PORT=7777
+#   Terminal 3: make client HOST=127.0.0.1 PORT=7777   (second player)
 #
 
 # Singleplayer: auto-launches server + bot processes + GUI client
+# Uses AgentManager internally — no manual bot spawning needed
 game: build
-	./$(BUILD_DIR)/agentworld --skip-menu
+	./$(BUILD_DIR)/agentworld --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
 
-# Same as game but on fixed port — useful when a second client needs to join
-# Launches server + bots on PORT, then opens GUI client
-play: build
-	@P=$(PORT); rm -f /tmp/agentworld_ready_$$P; \
-	./$(BUILD_DIR)/agentworld-server --port $$P --template 1 & SERVER=$$!; \
-	until [ -f /tmp/agentworld_ready_$$P ]; do sleep 0.05; done; \
-	rm -f /tmp/agentworld_ready_$$P; \
-	./$(BUILD_DIR)/agentworld-client --host 127.0.0.1 --port $$P --skip-menu & CLIENT=$$!; \
-	sleep 3; \
-	for EID in $$(seq 1 12); do ./$(BUILD_DIR)/agentworld-bot --port $$P --entity $$EID --name bot_$$EID & done; \
-	wait $$CLIENT; kill $$SERVER 2>/dev/null; pkill -P $$$$ agentworld-bot 2>/dev/null
-
-# Dedicated server
+# Dedicated server (interactive world select, or --world/--seed/--template flags)
 server: build
-	@-pkill -x "agentworld-server" 2>/dev/null; sleep 0.5
 	./$(BUILD_DIR)/agentworld-server --port $(PORT)
 
-# Network client
+# GUI client: shows menu with "Start game" and "Join a game" tabs
+# Optionally pre-fills server address: make client HOST=192.168.1.5 PORT=7777
 client: build
-	./$(BUILD_DIR)/agentworld-client --host $(HOST) --port $(PORT)
+	./$(BUILD_DIR)/agentworld$(if $(HOST), --host $(HOST) --port $(PORT),)
 
 # Kill everything
 stop:

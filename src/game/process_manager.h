@@ -29,6 +29,7 @@ public:
 	struct Config {
 		int seed = 42;
 		int templateIndex = 1;
+		int port = 0;            // 0 = auto-pick free port (7800-7899)
 		std::string worldPath;   // load saved world (empty = new world)
 		std::string execDir;     // directory containing agentworld-* binaries
 	};
@@ -37,7 +38,7 @@ public:
 
 	// Launch server process. Returns port on success, -1 on failure.
 	int launchServer(const Config& cfg) {
-		m_port = findFreePort();
+		m_port = (cfg.port > 0) ? cfg.port : findFreePort();
 		if (m_port < 0) return -1;
 
 		std::string serverBin = cfg.execDir + "/agentworld-server";
@@ -57,7 +58,9 @@ public:
 			args.push_back(std::to_string(cfg.templateIndex));
 		}
 
-		m_serverPid = spawnProcess(args);
+		char logPath[64];
+		snprintf(logPath, sizeof(logPath), "/tmp/agentica_log_%d.log", m_port);
+		m_serverPid = spawnProcess(args, logPath);
 		if (m_serverPid <= 0) {
 			printf("[AgentManager] Failed to spawn server\n");
 			return -1;
@@ -108,17 +111,18 @@ public:
 	int port() const { return m_port; }
 
 private:
-	static pid_t spawnProcess(const std::vector<std::string>& args) {
+	static pid_t spawnProcess(const std::vector<std::string>& args, const char* logPath = nullptr) {
 		pid_t pid = fork();
 		if (pid == 0) {
 			std::vector<char*> cargs;
 			for (auto& a : args) cargs.push_back(const_cast<char*>(a.c_str()));
 			cargs.push_back(nullptr);
-			int devnull = open("/dev/null", O_WRONLY);
-			if (devnull >= 0) {
-				dup2(devnull, STDOUT_FILENO);
-				dup2(devnull, STDERR_FILENO);
-				close(devnull);
+			int outFd = logPath ? open(logPath, O_WRONLY | O_CREAT | O_TRUNC, 0644) : -1;
+			if (outFd < 0) outFd = open("/dev/null", O_WRONLY);
+			if (outFd >= 0) {
+				dup2(outFd, STDOUT_FILENO);
+				dup2(outFd, STDERR_FILENO);
+				close(outFd);
 			}
 			execv(cargs[0], cargs.data());
 			_exit(127);
