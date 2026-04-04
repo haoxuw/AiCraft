@@ -1,8 +1,10 @@
-"""Wander — herd animal behavior (pigs and others).
+"""Wander — generic herd animal roaming behavior.
 
-Animals roam in groups, flee from threats, and have idle activities:
-grazing, mud-seeking (near water/dirt), and herd-sticking. When one
-pig panics, nearby pigs panic too (stampede).
+Animals roam in groups, flee from threats, graze, and stay near
+their herd. Generic for any herd animal (pig, sheep, cow, etc.)
+
+Species-specific traits (mud-seeking, wool-growing, etc.) should
+be separate composable behaviors.
 
 Parameters (optional via self dict):
   flee_range    — distance to flee from players (default 5)
@@ -13,10 +15,14 @@ from agentica_engine import Idle, Wander, Flee, MoveTo
 import random
 
 _graze_timer = 0
-_activity = "idle"  # idle, grazing, mud_bath, stampede
+_activity = "idle"  # idle, grazing, stampede
+_rng_seeded = False
 
 def decide(self, world):
-    global _graze_timer, _activity
+    global _graze_timer, _activity, _rng_seeded
+    if not _rng_seeded:
+        random.seed(self["id"] * 31337 + 42)
+        _rng_seeded = True
     dt = world["dt"]
     _graze_timer -= dt
 
@@ -24,7 +30,7 @@ def decide(self, world):
     group_range = self.get("group_range", 6.0)
     graze_chance = self.get("graze_chance", 0.25)
 
-    # ── Flee from players and cats ──
+    # ── Flee from threats ──
     threats = [e for e in world["nearby"]
                if (e["category"] == "player" or e["type_id"] == "base:cat")
                and e["distance"] < flee_range]
@@ -34,14 +40,12 @@ def decide(self, world):
         self["goal"] = "Fleeing!"
         return Flee(closest["id"], speed=self["walk_speed"] * 1.8)
 
-    # ── Herd stampede: flee if a nearby friend is fleeing ──
+    # ── Herd stampede: flee if a friend is panicking ──
     if _activity != "stampede":
         friends = [e for e in world["nearby"]
                    if e["type_id"] == self["type_id"] and e["id"] != self["id"]]
         for f in friends:
-            # If a friend is moving fast (> run speed * 0.7), they're probably fleeing
             if f["distance"] < 8:
-                # Check if any threat is near that friend
                 for t in world["nearby"]:
                     if (t["category"] == "player" or t["type_id"] == "base:cat") \
                        and t["distance"] < flee_range + 3:
@@ -60,22 +64,6 @@ def decide(self, world):
             self["goal"] = "Joining herd"
             return MoveTo(farthest["x"], farthest["y"], farthest["z"],
                           speed=self["walk_speed"])
-
-    # ── Seek water/mud (pigs love mud) ──
-    if _graze_timer <= 0 and random.random() < 0.1:
-        water_blocks = [b for b in world["blocks"]
-                        if b["type"] == "base:water" and b["distance"] < 15]
-        if water_blocks:
-            nearest = min(water_blocks, key=lambda b: b["distance"])
-            if nearest["distance"] > 2:
-                _graze_timer = 6.0
-                self["goal"] = "Heading to water"
-                return MoveTo(nearest["x"] + 0.5, nearest["y"] + 1,
-                              nearest["z"] + 0.5, speed=self["walk_speed"] * 0.8)
-            else:
-                _graze_timer = 4.0 + random.random() * 3.0
-                self["goal"] = "Wallowing in mud"
-                return Idle()
 
     # ── Graze ──
     if _graze_timer <= 0 and random.random() < graze_chance:

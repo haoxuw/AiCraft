@@ -45,8 +45,13 @@ def _pick_mood(curiosity):
     else:
         return MOOD_NAP
 
+_rng_seeded = False
+
 def decide(self, world):
-    global _mood, _mood_timer, _napping, _nap_timer, _hunt_cooldown
+    global _mood, _mood_timer, _napping, _nap_timer, _hunt_cooldown, _rng_seeded
+    if not _rng_seeded:
+        random.seed(self["id"] * 31337 + 42)
+        _rng_seeded = True
     global _perch_target, _chase_origin, _curiosity_target, _bored_timer
     dt = world["dt"]
     _mood_timer -= dt

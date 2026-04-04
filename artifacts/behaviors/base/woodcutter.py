@@ -28,8 +28,13 @@ _home = None
 _trips = 0
 _social_target = None
 
+_rng_seeded = False
+
 def decide(self, world):
-    global _state, _timer, _target_block, _home, _trips, _social_target
+    global _state, _timer, _target_block, _home, _trips, _social_target, _rng_seeded
+    if not _rng_seeded:
+        random.seed(self["id"] * 31337 + 42)
+        _rng_seeded = True
     _timer -= world["dt"]
 
     work_radius = self.get("work_radius", 30)
