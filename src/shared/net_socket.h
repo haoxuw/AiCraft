@@ -227,4 +227,64 @@ private:
 	int m_fd = -1;
 };
 
+// ================================================================
+// UDP Socket — LAN server discovery (broadcast send + non-blocking recv)
+// ================================================================
+class UdpSocket {
+public:
+	struct Packet { std::string senderIp; std::string data; };
+
+	// Open socket.  bindPort=0 → ephemeral (for sending).  enableBroadcast for servers.
+	bool open(int bindPort = 0, bool enableBroadcast = false) {
+		m_fd = socket(AF_INET, SOCK_DGRAM, 0);
+		if (m_fd < 0) return false;
+
+		int opt = 1;
+		setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+		setsockopt(m_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+		if (enableBroadcast)
+			setsockopt(m_fd, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+
+		if (bindPort > 0) {
+			sockaddr_in addr{};
+			addr.sin_family      = AF_INET;
+			addr.sin_addr.s_addr = INADDR_ANY;
+			addr.sin_port        = htons(bindPort);
+			if (bind(m_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
+				::close(m_fd); m_fd = -1; return false;
+			}
+		}
+		setNonBlocking(m_fd);
+		return true;
+	}
+
+	void close() { if (m_fd >= 0) { ::close(m_fd); m_fd = -1; } }
+	bool isOpen() const { return m_fd >= 0; }
+
+	// Broadcast a packet to the entire LAN subnet.
+	bool broadcast(const char* data, int len, int port) {
+		sockaddr_in addr{};
+		addr.sin_family      = AF_INET;
+		addr.sin_port        = htons(port);
+		addr.sin_addr.s_addr = INADDR_BROADCAST;
+		return sendto(m_fd, data, len, 0, (sockaddr*)&addr, sizeof(addr)) > 0;
+	}
+
+	// Non-blocking receive.  Returns true and fills `out` when a packet arrived.
+	bool tryRecv(Packet& out) {
+		char buf[256];
+		sockaddr_in addr{};
+		socklen_t addrLen = sizeof(addr);
+		ssize_t n = recvfrom(m_fd, buf, sizeof(buf) - 1, 0, (sockaddr*)&addr, &addrLen);
+		if (n <= 0) return false;
+		buf[n] = '\0';
+		out.senderIp = inet_ntoa(addr.sin_addr);
+		out.data     = buf;
+		return true;
+	}
+
+private:
+	int m_fd = -1;
+};
+
 } // namespace agentica::net

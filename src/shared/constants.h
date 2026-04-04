@@ -205,4 +205,9 @@ namespace PyClass {
 	constexpr const char* NANDGateBlock  = "base:nand_gate_block";
 }
 
+// ============================================================
+// Networking
+// ============================================================
+constexpr int AGENTICA_DISCOVER_PORT = 7778; // UDP LAN discovery broadcast port
+
 } // namespace agentica

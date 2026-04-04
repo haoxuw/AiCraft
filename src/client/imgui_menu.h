@@ -283,31 +283,60 @@ private:
 	int m_directPort = 7777;
 
 	// Server detection
-	struct DetectedServer { std::string host; int port; };
+	struct DetectedServer { std::string host; int port; int players = -1; bool lan = false; };
 	std::vector<DetectedServer> m_detectedServers;
 	std::vector<DetectedServer> m_serverHints; // from --host CLI
 	bool m_probed = false;
+#ifndef __EMSCRIPTEN__
+	net::UdpSocket m_discoverySocket;
+#endif
 
 	void probeServers() {
 #ifndef __EMSCRIPTEN__
 		m_detectedServers.clear();
-		// Include CLI hints (--host/--port)
 		for (auto& h : m_serverHints)
-			m_detectedServers.push_back(h);
-		// Probe localhost ports 7777-7787 for running servers
+			m_detectedServers.push_back({h.host, h.port});
+
+		// Open/reopen UDP discovery socket to receive LAN broadcasts
+		m_discoverySocket.close();
+		m_discoverySocket.open(AGENTICA_DISCOVER_PORT);
+
+		// Quick TCP probe for localhost servers (same machine)
 		for (int port = 7777; port <= 7787; port++) {
-			// Skip if already in hints
 			bool skip = false;
-			for (auto& h : m_serverHints)
-				if (h.host == "127.0.0.1" && h.port == port) { skip = true; break; }
+			for (auto& s : m_detectedServers)
+				if (s.host == "127.0.0.1" && s.port == port) { skip = true; break; }
 			if (skip) continue;
 			net::TcpClient probe;
-			if (probe.connect("127.0.0.1", port, 0.15f)) {
+			if (probe.connect("127.0.0.1", port, 0.05f)) {
 				probe.disconnect();
 				m_detectedServers.push_back({"127.0.0.1", port});
 			}
 		}
 		m_probed = true;
+#endif
+	}
+
+	// Drain the UDP discovery socket — called each frame while on "Join a game".
+	// Updates m_detectedServers with LAN servers as announcements arrive.
+	void pollDiscovery() {
+#ifndef __EMSCRIPTEN__
+		if (!m_discoverySocket.isOpen()) return;
+		net::UdpSocket::Packet pkt;
+		while (m_discoverySocket.tryRecv(pkt)) {
+			int port = 0, players = 0;
+			if (sscanf(pkt.data.c_str(), "AGENTICA %d %d", &port, &players) != 2) continue;
+			bool found = false;
+			for (auto& s : m_detectedServers) {
+				if (s.host == pkt.senderIp && s.port == port) {
+					s.players = players;  // refresh player count
+					s.lan = true;
+					found = true; break;
+				}
+			}
+			if (!found)
+				m_detectedServers.push_back({pkt.senderIp, port, players, true});
+		}
 #endif
 	}
 
@@ -746,6 +775,7 @@ private:
 		}
 
 		if (!m_probed) probeServers();
+		pollDiscovery();
 
 		float cardW = std::min(contentW - 80, 640.0f);
 
@@ -762,13 +792,25 @@ private:
 				"No servers found. Start a server or enter an address below.");
 		}
 		for (auto& srv : m_detectedServers) {
-			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.96f, 0.94f, 1));
+			ImVec4 cardBg = srv.lan
+				? ImVec4(0.92f, 0.96f, 0.97f, 1)
+				: ImVec4(0.94f, 0.96f, 0.94f, 1);
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
 			char srvId[64]; snprintf(srvId, sizeof(srvId), "##srv_%s_%d", srv.host.c_str(), srv.port);
 			ImGui::BeginChild(srvId, ImVec2(cardW, 48), true);
 			{
 				ImGui::SetCursorPos(ImVec2(16, 14));
 				ImGui::TextColored(ImVec4(0.20f, 0.55f, 0.25f, 1),
 					"%s:%d", srv.host.c_str(), srv.port);
+				if (srv.lan) {
+					ImGui::SameLine();
+					ImGui::TextColored(ImVec4(0.12f, 0.55f, 0.72f, 1), "  LAN");
+				}
+				if (srv.players >= 0) {
+					ImGui::SameLine();
+					ImGui::TextColored(ImVec4(0.45f, 0.47f, 0.50f, 1),
+						"  %d online", srv.players);
+				}
 				ImGui::SameLine(cardW - 90);
 				ImGui::SetCursorPosY(8);
 				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));

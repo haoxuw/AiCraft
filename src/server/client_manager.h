@@ -266,6 +266,26 @@ public:
 		statusTimer = 0;
 	}
 
+	// Broadcast server presence on the LAN so clients can discover it.
+	// Call from the main loop with the frame delta time.
+	void announceOnLAN(float dt) {
+		if (m_port <= 0) return;
+		m_announceTimer += dt;
+		if (m_announceTimer < 2.0f) return;
+		m_announceTimer = 0.0f;
+
+		if (!m_announceUdp.isOpen())
+			if (!m_announceUdp.open(0, true)) return;
+
+		int humans = 0;
+		for (auto& [cid, c] : m_clients)
+			if (!c.isBot) humans++;
+
+		char msg[64];
+		snprintf(msg, sizeof(msg), "AGENTICA %d %d", m_port, humans);
+		m_announceUdp.broadcast(msg, (int)strlen(msg), AGENTICA_DISCOVER_PORT);
+	}
+
 	// Spawn AI client processes for uncontrolled NPC entities.
 	// Called periodically from the server main loop.
 	void spawnAIClients() {
@@ -469,6 +489,10 @@ private:
 	int m_port = 0;
 	struct AIProcess { pid_t pid; EntityId entityId; };
 	std::vector<AIProcess> m_aiProcesses;
+
+	// LAN discovery
+	net::UdpSocket m_announceUdp;
+	float m_announceTimer = 0.0f;
 };
 
 } // namespace agentica
