@@ -52,6 +52,18 @@ inline void registerTerrainBlocks(BlockRegistry& reg) {
 		true,false, 0.3f,TL::Shovel,"",64,0,
 		{{GR::Crumbly,3},{GR::Snowy,1}}, "",SN::DigSnow,SN::StepSnow});
 
+	// Fence (for animal pens and gardens)
+	reg.registerBlock({BT::Fence, "Fence", CT::Crafted,
+		{0.55f,0.40f,0.22f},{0.50f,0.35f,0.18f},{0.55f,0.40f,0.22f},
+		true,false, 2.0f,TL::Axe,"",64,0,
+		{{GR::Choppy,2},{GR::Flammable,2}}, "",SN::DigWood,SN::StepWood});
+
+	// Farmland (tilled soil for crops)
+	reg.registerBlock({BT::Farmland, "Farmland", CT::Terrain,
+		{0.40f,0.28f,0.14f},{0.40f,0.28f,0.14f},{0.40f,0.28f,0.14f},
+		true,false, 0.6f,TL::Shovel,BT::Dirt,64,0,
+		{{GR::Crumbly,3},{GR::Soil,1}}, "",SN::DigDirt,SN::StepDirt});
+
 	// Chest (storage block)
 	reg.registerBlock({BT::Chest, "Chest", CT::Crafted,
 		{0.55f,0.40f,0.20f},{0.50f,0.35f,0.18f},{0.45f,0.30f,0.15f},

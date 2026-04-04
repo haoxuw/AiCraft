@@ -19,6 +19,7 @@
 #include "client/controls.h"
 #include "client/model.h"
 #include "client/model_preview.h"
+#include "client/model_icon_cache.h"
 #include "client/ui.h"
 #include "client/audio.h"
 #include "server/world_template.h"
@@ -187,6 +188,7 @@ private:
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;
 	ModelPreview m_modelPreview;
+	ModelIconCache m_iconCache;
 	float m_playerWalkDist = 0;
 	float m_globalTime = 0;
 };

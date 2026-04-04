@@ -114,6 +114,7 @@ bool Game::init(int argc, char** argv) {
 		}
 	}
 	m_modelPreview.init(&m_renderer.highlightShader(), 256, 256);
+	m_iconCache.init(&m_renderer.highlightShader(), &m_renderer.modelRenderer());
 
 	// Character selection preview (uses same models + preview as Handbook)
 	m_imguiMenu.setCharacterPreview(&m_artifacts, &m_modelPreview,
@@ -1287,54 +1288,61 @@ void Game::renderPlaying(float dt, float aspect) {
 					IM_COL32(65, 52, 36, 140), 4.0f, 0, 1.0f);
 			}
 
-			// Item content: rotating isometric block
+			// Item content: 3D model icon
 			std::string itemId = inv.hotbar(i);
 			int itemCount = inv.hotbarCount(i);
 			if (!itemId.empty() && itemCount > 0) {
-				const BlockDef* bdef = blocks.find(itemId);
-				glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
+				// Look up model key (strip "base:" prefix)
+				std::string modelKey = itemId;
+				auto colon = modelKey.find(':');
+				if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
 
-				// Rotating isometric cube
-				float cx = sx + slotPx * 0.5f;
-				float cy = sy + slotPx * 0.40f;
-				float sz = slotPx * 0.34f;
-				float angle = m_globalTime * 0.8f + i * 0.5f; // slow rotation, offset per slot
+				// Try to get a cached 3D icon; fall back to isometric cube
+				auto mit = m_models.find(modelKey);
+				GLuint icon = (mit != m_models.end())
+					? m_iconCache.getIcon(modelKey, mit->second) : 0;
 
-				// 8 corners of unit cube
-				float ca = std::cos(angle), sa = std::sin(angle);
-				ImVec2 proj[8];
-				float cubeCorners[8][3] = {
-					{-1,-1,-1},{1,-1,-1},{1,-1,1},{-1,-1,1}, // bottom
-					{-1, 1,-1},{1, 1,-1},{1, 1,1},{-1, 1,1}, // top
-				};
-				for (int v = 0; v < 8; v++) {
-					float rx = cubeCorners[v][0]*ca - cubeCorners[v][2]*sa;
-					float rz = cubeCorners[v][0]*sa + cubeCorners[v][2]*ca;
-					float ry = cubeCorners[v][1];
-					proj[v] = {cx + (rx - rz) * sz * 0.5f,
-					           cy - (rx + rz) * sz * 0.25f - ry * sz * 0.5f};
+				float pad = 4.0f;
+				if (icon) {
+					// Draw the 3D model icon texture (flipped UV for OpenGL)
+					dl->AddImage((ImTextureID)(intptr_t)icon,
+						{sx + pad, sy + pad}, {sx + slotPx - pad, sy + slotPx - pad},
+						{0, 1}, {1, 0}); // flip Y
+				} else {
+					// Fallback: colored cube for blocks without a model file
+					const BlockDef* bdef = blocks.find(itemId);
+					glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
+					float cx = sx + slotPx * 0.5f;
+					float cy = sy + slotPx * 0.40f;
+					float sz = slotPx * 0.34f;
+					float angle = m_globalTime * 0.8f + i * 0.5f;
+					float ca = std::cos(angle), sa = std::sin(angle);
+					ImVec2 proj[8];
+					float corners[8][3] = {
+						{-1,-1,-1},{1,-1,-1},{1,-1,1},{-1,-1,1},
+						{-1, 1,-1},{1, 1,-1},{1, 1,1},{-1, 1,1},
+					};
+					for (int v = 0; v < 8; v++) {
+						float rx = corners[v][0]*ca - corners[v][2]*sa;
+						float rz = corners[v][0]*sa + corners[v][2]*ca;
+						float ry = corners[v][1];
+						proj[v] = {cx + (rx - rz) * sz * 0.5f,
+						           cy - (rx + rz) * sz * 0.25f - ry * sz * 0.5f};
+					}
+					auto drawFace = [&](int a, int b, int c2, int d, float shade) {
+						ImVec2 pts[] = {proj[a], proj[b], proj[c2], proj[d]};
+						ImU32 col = IM_COL32(
+							(int)(c.r*shade*255), (int)(c.g*shade*255), (int)(c.b*shade*255), 230);
+						dl->AddConvexPolyFilled(pts, 4, col);
+						dl->AddPolyline(pts, 4, IM_COL32(0,0,0,80), true, 1.0f);
+					};
+					drawFace(7, 6, 5, 4, 1.0f);
+					float nx_r = ca + sa, nx_f = -sa + ca;
+					if (nx_r > 0) drawFace(1, 2, 6, 5, 0.72f);
+					else          drawFace(3, 0, 4, 7, 0.72f);
+					if (nx_f > 0) drawFace(2, 3, 7, 6, 0.85f);
+					else          drawFace(0, 1, 5, 4, 0.85f);
 				}
-
-				// Determine visible side faces
-				auto drawFace = [&](int a, int b, int c2, int d, float shade) {
-					ImVec2 pts[] = {proj[a], proj[b], proj[c2], proj[d]};
-					ImU32 col = IM_COL32(
-						(int)(c.r * shade * 255), (int)(c.g * shade * 255),
-						(int)(c.b * shade * 255), 230);
-					dl->AddConvexPolyFilled(pts, 4, col);
-					dl->AddPolyline(pts, 4, IM_COL32(0,0,0,80), true, 1.0f);
-				};
-
-				// Top face (always visible)
-				drawFace(7, 6, 5, 4, 1.0f);
-
-				// Side faces: check normals
-				float nx_r = ca + sa;    // dot(right_normal, iso_camera)
-				float nx_f = -sa + ca;   // dot(front_normal, iso_camera)
-				if (nx_r > 0) drawFace(1, 2, 6, 5, 0.72f);  // right face
-				else          drawFace(3, 0, 4, 7, 0.72f);    // left face
-				if (nx_f > 0) drawFace(2, 3, 7, 6, 0.85f);   // front face
-				else          drawFace(0, 1, 5, 4, 0.85f);    // back face
 
 				// Stack count (large, Roboto, bottom-right with shadow)
 				if (itemCount > 1) {
@@ -1361,6 +1369,7 @@ void Game::renderPlaying(float dt, float aspect) {
 
 	// Equipment/Inventory UI ([I] to toggle)
 	if (pe->inventory) {
+		m_equipUI.setModels(&m_models, &m_iconCache);
 		m_equipUI.render(*pe->inventory, m_server->blockRegistry(),
 			(float)m_window.width(), (float)m_window.height());
 	}

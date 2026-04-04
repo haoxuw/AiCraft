@@ -46,6 +46,8 @@ namespace BlockType {
 	constexpr const char* Chest       = "base:chest";
 	constexpr const char* Planks      = "base:planks";
 	constexpr const char* Bed         = "base:bed";
+	constexpr const char* Fence       = "base:fence";
+	constexpr const char* Farmland    = "base:farmland";
 }
 
 // ============================================================

@@ -13,9 +13,12 @@
 
 #include "shared/inventory.h"
 #include "shared/block_registry.h"
+#include "shared/box_model.h"
+#include "client/model_icon_cache.h"
 #include <imgui.h>
 #include <string>
 #include <cmath>
+#include <unordered_map>
 
 namespace agentworld {
 
@@ -24,6 +27,10 @@ public:
 	bool isOpen() const { return m_open; }
 	void toggle() { m_open = !m_open; m_dragItem.clear(); }
 	void close() { m_open = false; m_dragItem.clear(); }
+	void setModels(const std::unordered_map<std::string, BoxModel>* models, ModelIconCache* icons) {
+		m_models = models;
+		m_iconCache = icons;
+	}
 
 	void render(Inventory& inventory, const BlockRegistry& blocks, float W, float H) {
 		if (!m_open) return;
@@ -144,11 +151,9 @@ public:
 		// Draw dragged item under cursor
 		if (!m_dragItem.empty()) {
 			ImVec2 mouse = ImGui::GetMousePos();
-			const BlockDef* bdef = blocks.find(m_dragItem);
-			glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
 			ImDrawList* fg = ImGui::GetForegroundDrawList();
 			float sz = 50;
-			drawIsoCube(fg, mouse.x, mouse.y, sz * 0.38f, c, m_time, 0, 0.85f);
+			drawItemIcon(fg, m_dragItem, blocks, mouse.x - sz * 0.5f, mouse.y - sz * 0.5f, sz);
 			// Shadow
 			fg->AddEllipseFilled({mouse.x, mouse.y + sz * 0.32f}, {sz * 0.24f, sz * 0.08f},
 				IM_COL32(0, 0, 0, 60));
@@ -164,6 +169,48 @@ private:
 	float m_time = 0;
 	std::string m_dragItem;     // item being dragged
 	std::string m_contextItem;  // for context menu
+	const std::unordered_map<std::string, BoxModel>* m_models = nullptr;
+	ModelIconCache* m_iconCache = nullptr;
+
+	glm::vec3 getItemColor(const std::string& id, const BlockRegistry& blocks) const {
+		if (m_models) {
+			std::string key = id;
+			auto colon = key.find(':');
+			if (colon != std::string::npos) key = key.substr(colon + 1);
+			auto it = m_models->find(key);
+			if (it != m_models->end() && !it->second.parts.empty()) {
+				auto& c = it->second.parts[0].color;
+				return {c.r, c.g, c.b};
+			}
+		}
+		const BlockDef* bdef = blocks.find(id);
+		if (bdef) return bdef->color_top;
+		return {0.5f, 0.6f, 0.75f};
+	}
+
+	// Draw a 3D model icon for an item, or fall back to isometric cube
+	void drawItemIcon(ImDrawList* dl, const std::string& id, const BlockRegistry& blocks,
+	                   float x, float y, float size) {
+		// Try 3D model icon
+		if (m_models && m_iconCache) {
+			std::string key = id;
+			auto colon = key.find(':');
+			if (colon != std::string::npos) key = key.substr(colon + 1);
+			auto it = m_models->find(key);
+			if (it != m_models->end()) {
+				GLuint tex = m_iconCache->getIcon(key, it->second);
+				if (tex) {
+					dl->AddImage((ImTextureID)(intptr_t)tex,
+						{x, y}, {x + size, y + size}, {0, 1}, {1, 0});
+					return;
+				}
+			}
+		}
+		// Fallback: isometric cube with item color
+		glm::vec3 color = getItemColor(id, blocks);
+		drawIsoCube(dl, x + size * 0.5f, y + size * 0.4f, size * 0.34f,
+		            color, m_time, (int)(std::hash<std::string>{}(id) % 20));
+	}
 
 	// ── Draw section header with gold line ──
 	void drawSectionHeader(ImDrawList* dl, const char* label) {
@@ -237,12 +284,9 @@ private:
 				IM_COL32(200, 165, 55, 160), 4.0f, 0, 2.0f);
 		}
 
-		// Rotating isometric 3D model
-		float cx = pos.x + cellSize * 0.5f;
-		float cy = pos.y + cellSize * 0.40f;
-		float cubeSz = cellSize * 0.34f;
-		static int slotCounter = 0;
-		drawIsoCube(dl, cx, cy, cubeSz, color, m_time, (int)(std::hash<std::string>{}(id) % 20));
+		// 3D model icon (or isometric cube fallback)
+		float iconPad = cellSize * 0.08f;
+		drawItemIcon(dl, id, blocks, pos.x + iconPad, pos.y + iconPad, cellSize - iconPad * 2);
 
 		// Item name (bottom, truncated)
 		std::string name = id;
@@ -392,9 +436,7 @@ private:
 
 		if (hasItem) {
 			// 3D item preview
-			const BlockDef* bdef = blocks.find(itemId);
-			glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
-			drawIsoCube(dl, pos.x + 28, pos.y + slotH * 0.38f, 16.0f, color, m_time, (int)slot);
+			drawItemIcon(dl, itemId, blocks, pos.x + 6, pos.y + 6, slotH - 12);
 
 			// Item name
 			std::string name = itemId;

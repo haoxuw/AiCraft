@@ -547,7 +547,6 @@ private:
 		for (int hi = 0; hi < (int)m_py.houses.size(); hi++) {
 			const auto& h = m_py.houses[hi];
 
-			// Per-house material overrides (Python can set wall/roof per house)
 			BlockId hWallB = (!h.wallBlock.empty()) ? blocks.getId(h.wallBlock) : wallB;
 			BlockId hRoofB = (!h.roofBlock.empty()) ? blocks.getId(h.roofBlock) : roofB;
 			if (hWallB == BLOCK_AIR) hWallB = wallB;
@@ -559,6 +558,68 @@ private:
 		}
 
 		generatePaths(ctx, seed, pathB, vc);
+
+		// ── Farm plot (wheat + farmland near village) ────────────
+		BlockId farmlandB = blocks.getId(BlockType::Farmland);
+		BlockId wheatB    = blocks.getId(BlockType::Wheat);
+		if (farmlandB != BLOCK_AIR) {
+			int fx = vc.x - 12, fz = vc.y + 16;
+			int fy = (int)std::round(groundHeight(seed, (float)fx+3, (float)fz+3)) + 1;
+			for (int dx = 0; dx < 6; dx++) {
+				for (int dz = 0; dz < 6; dz++) {
+					ctx.set(fx+dx, fy-1, fz+dz, farmlandB);
+					if (wheatB != BLOCK_AIR)
+						ctx.set(fx+dx, fy, fz+dz, wheatB);
+				}
+			}
+			// Water channel down the middle
+			BlockId waterB = blocks.getId(BlockType::Water);
+			if (waterB != BLOCK_AIR) {
+				for (int dz = 0; dz < 6; dz++) {
+					ctx.set(fx+3, fy-1, fz+dz, waterB);
+				}
+			}
+		}
+
+		// ── Animal pen (fence enclosure near village) ────────────
+		BlockId fenceB = blocks.getId(BlockType::Fence);
+		if (fenceB != BLOCK_AIR) {
+			int px = vc.x + 16, pzz = vc.y - 18;
+			int py = (int)std::round(groundHeight(seed, (float)px+4, (float)pzz+4)) + 1;
+			// Fence perimeter 10x8
+			for (int dx = 0; dx < 10; dx++) {
+				ctx.set(px+dx, py, pzz,   fenceB);
+				ctx.set(px+dx, py, pzz+7, fenceB);
+			}
+			for (int dz = 1; dz < 7; dz++) {
+				ctx.set(px,   py, pzz+dz, fenceB);
+				ctx.set(px+9, py, pzz+dz, fenceB);
+			}
+			// Gate opening (2 wide)
+			ctx.set(px+4, py, pzz, BLOCK_AIR);
+			ctx.set(px+5, py, pzz, BLOCK_AIR);
+		}
+
+		// ── Village pond (small water feature) ───────────────────
+		{
+			BlockId waterB = blocks.getId(BlockType::Water);
+			BlockId sandB  = blocks.getId(BlockType::Sand);
+			int pdx = vc.x + 3, pdz = vc.y + 3;
+			int pdy = (int)std::round(groundHeight(seed, (float)pdx+2, (float)pdz+2));
+			if (waterB != BLOCK_AIR) {
+				// 5x5 pond, 2 blocks deep, sand rim
+				for (int dx = -1; dx <= 5; dx++)
+					for (int dz = -1; dz <= 5; dz++) {
+						bool rim = (dx == -1 || dx == 5 || dz == -1 || dz == 5);
+						if (rim) {
+							ctx.set(pdx+dx, pdy, pdz+dz, sandB);
+						} else {
+							ctx.set(pdx+dx, pdy,   pdz+dz, waterB);
+							ctx.set(pdx+dx, pdy-1, pdz+dz, sandB);
+						}
+					}
+			}
+		}
 	}
 };
 

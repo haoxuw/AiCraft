@@ -124,6 +124,7 @@ artifacts/                  Python game content (hot-loadable)
 
 ### Key Docs
 - `docs/00_OVERVIEW.md` — **Full architecture, artifact system, protocol**
+- `docs/22_BEHAVIORS.md` — **Entity AI behaviors: wander, peck, prowl, follow, woodcutter**
 - `DEBUGGING.md` — **Iterative dev loop, --skip-menu, auto-screenshot**
 
 ## Commit Guidelines
