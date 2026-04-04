@@ -20,6 +20,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <filesystem>
 
 namespace agentworld {
@@ -141,11 +143,28 @@ private:
 		return false;
 	}
 
+	// Find a free port by attempting a real bind — immune to stale ready-files.
+	// Also cleans up stale ready-files for ports that are no longer in use.
 	static int findFreePort() {
 		for (int p = 7800; p < 7900; p++) {
-			char readyPath[64];
-			snprintf(readyPath, sizeof(readyPath), "/tmp/agentworld_ready_%d", p);
-			if (!std::filesystem::exists(readyPath)) return p;
+			// Try to bind — if it succeeds the port is free
+			int fd = socket(AF_INET, SOCK_STREAM, 0);
+			if (fd < 0) continue;
+			int opt = 1;
+			setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+			sockaddr_in addr{};
+			addr.sin_family      = AF_INET;
+			addr.sin_addr.s_addr = INADDR_ANY;
+			addr.sin_port        = htons(p);
+			bool free = (bind(fd, (sockaddr*)&addr, sizeof(addr)) == 0);
+			close(fd);
+			if (free) {
+				// Remove any stale ready-file left from a previous crash
+				char stale[64];
+				snprintf(stale, sizeof(stale), "/tmp/agentworld_ready_%d", p);
+				std::remove(stale);
+				return p;
+			}
 		}
 		return -1;
 	}

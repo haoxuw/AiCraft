@@ -26,7 +26,12 @@
 #include <string>
 
 static volatile bool g_running = true;
-static void signalHandler(int) { g_running = false; }
+static char g_readyPath[64] = {};
+
+static void signalHandler(int) {
+	g_running = false;
+	// Ready-file cleanup happens at end of main() after this sets g_running = false
+}
 
 // Interactive CLI: let user pick a world or create new
 static void interactiveWorldSelect(agentworld::ServerConfig& config,
@@ -191,9 +196,8 @@ int main(int argc, char** argv) {
 	printf("[Server] Press Ctrl+C to save and stop.\n");
 
 	// Signal readiness for launchers
-	char readyPath[64];
-	snprintf(readyPath, sizeof(readyPath), "/tmp/agentworld_ready_%d", config.port);
-	if (FILE* f = fopen(readyPath, "w")) fclose(f);
+	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/agentworld_ready_%d", config.port);
+	if (FILE* f = fopen(g_readyPath, "w")) fclose(f);
 
 	// Client manager handles all TCP client operations + AI agent spawning
 	agentworld::ClientManager clients(server);
@@ -293,6 +297,9 @@ int main(int argc, char** argv) {
 	clients.disconnectAll();
 	listener.shutdown();
 	if (logFile) fclose(logFile);
+
+	// Remove ready-file so AgentManager's findFreePort() can reuse this port
+	if (g_readyPath[0]) std::remove(g_readyPath);
 
 	printf("[Server] Shut down.\n");
 	agentworld::pythonBridge().shutdown();

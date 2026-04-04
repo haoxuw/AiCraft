@@ -114,7 +114,7 @@ public:
 		if (bind(m_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
 			perror("bind"); close(m_fd); m_fd = -1; return false;
 		}
-		if (::listen(m_fd, 4) < 0) {
+		if (::listen(m_fd, 64) < 0) {
 			perror("listen"); close(m_fd); m_fd = -1; return false;
 		}
 
@@ -179,6 +179,7 @@ public:
 
 		int ret = ::connect(m_fd, (sockaddr*)&addr, sizeof(addr));
 		if (ret < 0 && errno != EINPROGRESS) {
+			printf("[Net] connect() failed: %s\n", strerror(errno));
 			close(m_fd); m_fd = -1; return false;
 		}
 

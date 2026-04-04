@@ -184,9 +184,11 @@ bool Game::init(int argc, char** argv) {
 		printf("[Game] --skip-menu: auto-joining %s:%d\n",
 		       m_connectHost.c_str(), m_connectPort);
 		joinServer(m_connectHost, m_connectPort, GameState::PLAYING);
-	// --skip-menu alone: start a new local village world
+	// --skip-menu alone: always start a fresh world (no save loading for debug)
 	} else if (m_skipMenu) {
 		printf("[Game] --skip-menu: starting new world directly\n");
+		m_currentWorldPath = "";   // force new world, never resume a save
+		m_currentSeed = (int)std::random_device{}();
 		enterGame(1, GameState::PLAYING);
 	// --host only: pre-populate the server list and show menu
 	} else if (!m_connectHost.empty()) {
@@ -464,17 +466,24 @@ void Game::handleMenuAction(const MenuAction& action) {
 void Game::joinServer(const std::string& host, int port, GameState targetState) {
 #ifndef __EMSCRIPTEN__
 	printf("[Game] Joining server at %s:%d\n", host.c_str(), port);
-	auto netServer = std::make_unique<NetworkServer>(host, port);
-	netServer->setDisplayName(m_playerName);
-	netServer->setCreatureType(m_selectedCreature);
-	if (netServer->createGame(42, 0)) {
-		printf("[Game] Connected to %s:%d as %s (%s)\n",
-		       host.c_str(), port, m_playerName.c_str(), m_selectedCreature.c_str());
-		m_server = std::move(netServer);
-		setupAfterConnect(targetState);
-		return;
+	// Retry up to 5 times with 200ms delay — server may be a moment behind its ready-file
+	for (int attempt = 0; attempt < 5; attempt++) {
+		if (attempt > 0) {
+			printf("[Game] Connect attempt %d/5 failed, retrying in 200ms...\n", attempt);
+			usleep(200000);
+		}
+		auto netServer = std::make_unique<NetworkServer>(host, port);
+		netServer->setDisplayName(m_playerName);
+		netServer->setCreatureType(m_selectedCreature);
+		if (netServer->createGame(42, 0)) {
+			printf("[Game] Connected to %s:%d as %s (%s)\n",
+			       host.c_str(), port, m_playerName.c_str(), m_selectedCreature.c_str());
+			m_server = std::move(netServer);
+			setupAfterConnect(targetState);
+			return;
+		}
 	}
-	printf("[Game] Failed to join %s:%d\n", host.c_str(), port);
+	printf("[Game] Failed to join %s:%d after 5 attempts\n", host.c_str(), port);
 #endif
 	// Stay in menu on failure — don't fallback to local (would cause infinite loop)
 	m_state = GameState::MENU;
