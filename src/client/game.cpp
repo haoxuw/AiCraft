@@ -781,6 +781,7 @@ void Game::updatePlaying(float dt, float aspect) {
 			if (art) {
 				auto slotIt = art->fields.find("equip_slot");
 				if (slotIt != art->fields.end()) {
+					printf("[Equip] '%s' → slot '%s'\n", heldItem.c_str(), slotIt->second.c_str());
 					ActionProposal p;
 					p.type = ActionProposal::EquipItem;
 					p.actorId = m_server->localPlayerId();
@@ -859,18 +860,61 @@ void Game::updatePlaying(float dt, float aspect) {
 	for (auto it = m_pickupAnims.begin(); it != m_pickupAnims.end(); ) {
 		it->t += dt / it->duration;
 		if (it->t >= 1.0f) {
-			// Arrived at player — puff + sound + floating text
-			// Position text at eye level + slightly in front so it's visible in FPS
-			glm::vec3 arrivePos = pe->position + glm::vec3(0, pe->def().eye_height, 0)
-			                    + m_camera.front() * 1.5f;
+			// Arrived at player — puff + sound, accumulate for text
 			m_particles.emitItemPickup(pe->position + glm::vec3(0, 0.8f, 0), it->color);
 			m_audio.play("item_pickup", pe->position, 0.5f);
-			char buf[64];
-			snprintf(buf, sizeof(buf), "+%d %s", it->count, it->itemName.c_str());
-			addFloatingText(arrivePos, buf, {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
+
+			// Accumulate pickup count (text created/updated in the tick-up loop below)
+			auto& acc = m_pickupAccum[it->itemName];
+			acc.itemName = it->itemName;
+			acc.total += it->count;
+			acc.timer = 2.0f; // keep alive for 2 seconds after last pickup
 			it = m_pickupAnims.erase(it);
 		} else {
 			++it;
+		}
+	}
+
+	// Pickup text accumulator: gradually tick up displayed counts and manage floating texts
+	{
+		glm::vec3 textBase = pe->position + glm::vec3(0, pe->def().eye_height, 0)
+		                   + m_camera.front() * 1.5f;
+		int slot = 0;
+		for (auto it = m_pickupAccum.begin(); it != m_pickupAccum.end(); ) {
+			auto& acc = it->second;
+			acc.timer -= dt;
+
+			// Gradually tick displayed count toward total
+			if (acc.displayed < acc.total) {
+				int step = std::max(1, (acc.total - acc.displayed) / 3); // fast catch-up
+				acc.displayed = std::min(acc.displayed + step, acc.total);
+			}
+
+			// Create or update the floating text
+			char buf[64];
+			snprintf(buf, sizeof(buf), "+%d %s", acc.displayed, acc.itemName.c_str());
+
+			if (acc.floatingIdx >= 0 && acc.floatingIdx < (int)m_floatingTexts.size()) {
+				// Update existing text
+				auto& ft = m_floatingTexts[acc.floatingIdx];
+				ft.text = buf;
+				if (acc.displayed < acc.total || acc.timer > 1.0f)
+					ft.life = ft.maxLife; // keep alive while still accumulating
+			} else {
+				// Create new floating text at staggered position
+				float yOff = slot * 0.5f;
+				addFloatingText(textBase + glm::vec3(0, yOff, 0), buf,
+				                {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
+				acc.floatingIdx = (int)m_floatingTexts.size() - 1;
+			}
+			slot++;
+
+			// Remove accumulator when timer expires and count is fully displayed
+			if (acc.timer <= 0 && acc.displayed >= acc.total) {
+				it = m_pickupAccum.erase(it);
+			} else {
+				++it;
+			}
 		}
 	}
 

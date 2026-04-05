@@ -21,7 +21,7 @@
 #include "server/behavior.h"
 #include "server/behavior_store.h"
 #include "server/python_bridge.h"
-#include "bot/behavior_executor.h"
+#include "agent/behavior_executor.h"
 #include "server/entity_manager.h"
 #include "content/builtin.h"
 #include <unordered_map>
@@ -146,7 +146,6 @@ public:
 
 				auto nearby = gatherNearby(e, m_entities, 16.0f);
 
-				// Block scanning using local chunk cache
 				BlockTypeFn blockQuery = [&](int x, int y, int z) -> std::string {
 					BlockId bid = getBlock(x, y, z);
 					return m_blocks.get(bid).string_id;
@@ -155,13 +154,23 @@ public:
 
 				BehaviorWorldView view{e, nearby, blocks, dt};
 				state.currentAction = state.behavior->decide(view);
+
+				// Extract one-shot actions (DropItem, BreakBlock) — sent exactly once
+				extractOneShots(e, state.currentAction, state.pendingOneShots);
 			}
 
-			// Convert to ActionProposals and send
-			std::vector<ActionProposal> proposals;
-			behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
+			// Send pending one-shot actions (queued by decide, drained here)
+			for (auto& p : state.pendingOneShots) {
+				net::WriteBuffer wb;
+				net::serializeAction(wb, p);
+				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
+			}
+			state.pendingOneShots.clear();
 
-			for (auto& p : proposals) {
+			// Send continuous Move action every tick (smooth movement at 50Hz)
+			std::vector<ActionProposal> moveProposals;
+			behaviorToActionProposals(e, state, state.currentAction, dt, moveProposals);
+			for (auto& p : moveProposals) {
 				net::WriteBuffer wb;
 				net::serializeAction(wb, p);
 				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);

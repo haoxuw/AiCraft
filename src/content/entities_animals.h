@@ -56,6 +56,32 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		mgr.registerType(def);
 	}
 
+	// Brave Chicken — fearless hen, follows player, fights cats
+	{
+		EntityDef def;
+		def.string_id = EntityType::BraveChicken;
+		def.display_name = "Brave Chicken";
+		def.kind = EntityKind::Creature;
+		def.category = Category::Animal;
+		def.model = Asset::ChickenModel;
+		def.texture = Asset::ChickenTexture;
+		def.color = {1.0f, 0.85f, 0.30f}; // golden yellow
+		def.sound_group = "creature_chicken";
+		def.sound_volume = 0.15f;
+		def.collision_box_min = {-0.2f, 0.0f, -0.2f};
+		def.collision_box_max = { 0.2f, 0.6f,  0.2f};
+		def.gravity_scale = 1.0f;
+		def.walk_speed = 3.0f;
+		def.run_speed = 7.0f;
+		def.max_hp = 8;
+		def.default_props = {
+			{Prop::HP, 8}, {Prop::Age, 0.0f},
+			{Prop::WanderTimer, 0.0f}, {Prop::WalkDistance, 0.0f},
+			{Prop::BehaviorId, std::string("brave_chicken")},
+		};
+		mgr.registerType(def);
+	}
+
 	// Cat — independent, chases chickens
 	{
 		EntityDef def;

@@ -30,6 +30,9 @@ struct BotBehaviorState {
 	BehaviorAction currentAction;
 	float decideTimer = 0;
 	float wanderYaw = 0;
+	// One-shot actions (DropItem, BreakBlock) queued by decide(), sent once, then cleared.
+	// Continuous actions (Move) are derived from currentAction every tick.
+	std::vector<ActionProposal> pendingOneShots;
 };
 
 // Block query function: returns block type string at world position
@@ -130,13 +133,33 @@ inline void behaviorToActionProposals(Entity& e, BotBehaviorState& state,
 		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
 		break;
 
+	case BehaviorAction::BreakBlock:
+		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+		break;
+
+	case BehaviorAction::DropItem:
+		// One-shot actions are handled by extractOneShots(), not here.
+		// Just produce a friction Move so the entity doesn't keep walking.
+		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+		break;
+	} // end switch
+
+	out.push_back(p);
+}
+
+// Extract one-shot actions from a BehaviorAction. Called ONCE per decide(),
+// results queued in BotBehaviorState::pendingOneShots and sent exactly once.
+inline void extractOneShots(const Entity& e, const BehaviorAction& action,
+                            std::vector<ActionProposal>& out) {
+	switch (action.type) {
 	case BehaviorAction::BreakBlock: {
 		ActionProposal bp;
 		bp.type = ActionProposal::BreakBlock;
 		bp.actorId = e.id();
-		bp.blockPos = glm::ivec3((int)action.targetPos.x, (int)action.targetPos.y, (int)action.targetPos.z);
+		bp.blockPos = glm::ivec3((int)action.targetPos.x,
+		                         (int)action.targetPos.y,
+		                         (int)action.targetPos.z);
 		out.push_back(bp);
-		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
 		break;
 	}
 	case BehaviorAction::DropItem: {
@@ -148,9 +171,8 @@ inline void behaviorToActionProposals(Entity& e, BotBehaviorState& state,
 		out.push_back(dp);
 		break;
 	}
-	} // end switch
-
-	out.push_back(p);
+	default: break;
+	}
 }
 
 // Gather nearby entity info from a local entity cache.

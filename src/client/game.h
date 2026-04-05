@@ -194,6 +194,16 @@ private:
 	void addFloatingText(glm::vec3 pos, const std::string& text,
 	                     glm::vec4 color, float scale = 1.8f);
 
+	// Pickup text accumulator: merges rapid pickups of the same item
+	struct PickupAccum {
+		std::string itemName;
+		int total = 0;
+		int displayed = 0;  // how many we've shown so far (for gradual tick-up)
+		float timer = 0;    // time since last pickup of this item
+		int floatingIdx = -1; // index into m_floatingTexts (-1 = not yet created)
+	};
+	std::unordered_map<std::string, PickupAccum> m_pickupAccum;
+
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;
 	ModelPreview m_modelPreview;

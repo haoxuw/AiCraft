@@ -233,9 +233,9 @@ else()
 		imgui_lib
 	)
 
-	# === Headless bot client (AI entity controller, no OpenGL) ===
+	# === Headless agent client (AI entity controller, no OpenGL) ===
 	add_executable(agentica-bot
-		src/bot/main_bot.cpp
+		src/agent/main_bot.cpp
 		src/server/python_bridge.cpp
 		${CONTENT_SOURCES}
 	)

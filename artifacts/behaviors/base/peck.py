@@ -13,8 +13,8 @@ from agentica_engine import Idle, Wander, Flee, MoveTo, DropItem
 import random
 
 PECK_CHANCE = 0.45
-EGG_COOLDOWN = 20.0  # TEST: 20s cooldown
-EGG_CHANCE = 1.0     # TEST: 100% chance
+EGG_COOLDOWN = 10.0
+EGG_CHANCE = 0.20
 
 _activity = "idle"     # idle, pecking, dust_bath
 _activity_timer = 0

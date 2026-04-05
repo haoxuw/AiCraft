@@ -102,7 +102,7 @@ src/
     server.h                GameServer: tick, actions, entity ownership
     client_manager.h        ClientManager: TCP, agent spawning, broadcast
     entity_manager.h        EntityManager: spawn, physics (no AI)
-  bot/                      Agent client (Python, no OpenGL)
+  agent/                      Agent client (Python, no OpenGL)
     bot_client.h            BotClient: TCP, Python decide(), send actions
     behavior_executor.h     BehaviorAction → ActionProposal
   client/                   Rendering + input (OpenGL, no Python)
@@ -125,6 +125,7 @@ artifacts/                  Python game content (hot-loadable)
 ### Key Docs
 - `docs/00_OVERVIEW.md` — **Full architecture, artifact system, protocol**
 - `docs/22_BEHAVIORS.md` — **Entity AI behaviors: wander, peck, prowl, follow, woodcutter**
+- `docs/24_COMMON_PITFALLS.md` — **Known bugs and patterns to avoid (one-shot actions, ImGui frames, camera jumps)**
 - `DEBUGGING.md` — **Iterative dev loop, --skip-menu, auto-screenshot**
 
 ## Commit Guidelines

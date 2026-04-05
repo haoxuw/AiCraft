@@ -102,10 +102,11 @@ world = {
     # With village at ~41 blocks from spawn, all mobs below radius 19
     # stay within 60 blocks of the player at start.
     "mobs": [
-        {"type": "base:villager", "count": 3, "radius": 10},
-        {"type": "base:pig",      "count": 4, "radius": 22},
-        {"type": "base:chicken",  "count": 3, "radius": 18},
-        {"type": "base:dog",      "count": 2, "radius": 14},
-        {"type": "base:cat",      "count": 2, "radius": 12},
+        {"type": "base:villager",       "count": 3, "radius": 10},
+        {"type": "base:pig",            "count": 4, "radius": 22},
+        {"type": "base:chicken",        "count": 3, "radius": 18},
+        {"type": "base:brave_chicken",  "count": 1, "radius": 16},
+        {"type": "base:dog",            "count": 2, "radius": 14},
+        {"type": "base:cat",            "count": 2, "radius": 12},
     ],
 }

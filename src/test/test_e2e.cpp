@@ -856,6 +856,114 @@ static std::string t25_spawn_near_village() {
 }
 
 // ================================================================
+// T26: DropItem produces exactly 1 item (one-shot, no duplication)
+// ================================================================
+// Regression test for the "13 eggs" bug: sending DropItem once must
+// spawn exactly 1 item entity. Sending it N times must spawn N items.
+// This catches any tick-loop that re-sends one-shot actions.
+
+static std::string t26_dropitem_no_duplication() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p || !p->inventory) return "no player or inventory";
+
+	// Walk out of portal first
+	for (int i = 0; i < 60; i++)
+		moveAndTick(*srv, pid, {0, 0, -8.0f});
+	tickN(*srv, 10);
+
+	// Give player some eggs
+	p->inventory->add("base:egg", 10);
+
+	// Count item entities before
+	int itemsBefore = 0;
+	srv->forEachEntity([&](Entity& e) {
+		if (e.typeId() == EntityType::ItemEntity) itemsBefore++;
+	});
+
+	// Send exactly 1 DropItem action
+	{
+		ActionProposal dp;
+		dp.type = ActionProposal::DropItem;
+		dp.actorId = pid;
+		dp.blockType = "base:egg";
+		dp.itemCount = 1;
+		srv->sendAction(dp);
+	}
+
+	// Tick 20 frames (simulates ~0.33s at 60Hz — more than one decide cycle)
+	tickN(*srv, 20);
+
+	// Count item entities after
+	int itemsAfter = 0;
+	srv->forEachEntity([&](Entity& e) {
+		if (e.typeId() == EntityType::ItemEntity) itemsAfter++;
+	});
+
+	int spawned = itemsAfter - itemsBefore;
+	if (spawned != 1)
+		return "expected 1 item entity from 1 DropItem, got " + std::to_string(spawned);
+
+	// Verify inventory decreased by exactly 1
+	int remaining = p->inventory->count("base:egg");
+	if (remaining != 9)
+		return "expected 9 eggs remaining, got " + std::to_string(remaining);
+
+	return "";
+}
+
+// ================================================================
+// T27: Multiple DropItems produce correct count (no dedup on server)
+// ================================================================
+
+static std::string t27_multiple_dropitems_correct_count() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p || !p->inventory) return "no player or inventory";
+
+	for (int i = 0; i < 60; i++)
+		moveAndTick(*srv, pid, {0, 0, -8.0f});
+	tickN(*srv, 10);
+
+	p->inventory->add("base:egg", 20);
+
+	int itemsBefore = 0;
+	srv->forEachEntity([&](Entity& e) {
+		if (e.typeId() == EntityType::ItemEntity) itemsBefore++;
+	});
+
+	// Send exactly 3 DropItem actions (3 separate intentional drops)
+	for (int i = 0; i < 3; i++) {
+		ActionProposal dp;
+		dp.type = ActionProposal::DropItem;
+		dp.actorId = pid;
+		dp.blockType = "base:egg";
+		dp.itemCount = 1;
+		srv->sendAction(dp);
+		tickN(*srv, 5);
+	}
+
+	tickN(*srv, 10);
+
+	int itemsAfter = 0;
+	srv->forEachEntity([&](Entity& e) {
+		if (e.typeId() == EntityType::ItemEntity) itemsAfter++;
+	});
+
+	int spawned = itemsAfter - itemsBefore;
+	if (spawned != 3)
+		return "expected 3 item entities from 3 DropItems, got " + std::to_string(spawned);
+
+	int remaining = p->inventory->count("base:egg");
+	if (remaining != 17)
+		return "expected 17 eggs remaining, got " + std::to_string(remaining);
+
+	return "";
+}
+
+// ================================================================
 // Main
 // ================================================================
 
@@ -915,6 +1023,10 @@ int main() {
 	run("T23: creatures spawn near village center", t23_creatures_near_village_center);
 	run("T24: chest placed inside village main house", t24_chest_in_village);
 	run("T25: player spawn within 65 blocks of village", t25_spawn_near_village);
+
+	printf("\n--- Action Integrity ---\n");
+	run("T26: DropItem produces exactly 1 item",     t26_dropitem_no_duplication);
+	run("T27: 3 DropItems produce exactly 3 items",  t27_multiple_dropitems_correct_count);
 
 	pythonBridge().shutdown();
 

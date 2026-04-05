@@ -9,7 +9,7 @@
  *   ./agentica-bot --port 7777 --entity 5 --behavior wander
  */
 
-#include "bot/bot_client.h"
+#include "agent/bot_client.h"
 #include "server/python_bridge.h"
 #include <cstdio>
 #include <cstring>
