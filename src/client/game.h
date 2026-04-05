@@ -128,12 +128,7 @@ private:
 	// Startup flags
 	bool m_skipMenu = false;   // --skip-menu: skip main menu, start survival world directly
 
-	// Demo
-	bool m_demoMode = false;
-	int m_demoStep = 1;
-	float m_demoTimer = 0;
-	float m_autoScreenTimer = 0;
-	bool m_autoScreenDone = false;
+	// Screenshots (F2 manual, or external trigger via /tmp/agentica_screenshot_request)
 	int m_screenshotCounter = 0;
 
 	// Graphics settings (exposed in pause menu)

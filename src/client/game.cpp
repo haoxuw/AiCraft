@@ -12,6 +12,7 @@
 #include <cstring>
 #include <unordered_set>
 #include <fstream>
+#include <filesystem>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -90,8 +91,7 @@ bool Game::init(int argc, char** argv) {
 
 	// Parse args
 	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--demo") == 0) m_demoMode = true;
-		else if (strcmp(argv[i], "--skip-menu") == 0) m_skipMenu = true;
+		if (strcmp(argv[i], "--skip-menu") == 0) m_skipMenu = true;
 		else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) m_connectHost = argv[++i];
 		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
 			m_connectPort = atoi(argv[++i]);
@@ -392,30 +392,6 @@ void Game::updateAndRender(float dt, float aspect) {
 		auto action = m_imguiMenu.render(m_artifacts,
 			(float)m_window.width(), (float)m_window.height());
 		m_ui.endFrame();
-		m_autoScreenTimer += dt;
-		if (!m_autoScreenDone && m_autoScreenTimer > 3.0f) {
-			saveScreenshot();
-			m_autoScreenDone = true;
-		}
-
-		// Demo mode: capture menu pages → enter game
-		if (m_demoMode && m_autoScreenTimer > 0.5f && m_autoScreenTimer < 0.6f) {
-			m_imguiMenu.setPage(0);
-			saveScreenshot(); // menu
-		}
-		if (m_demoMode && m_autoScreenTimer > 1.0f && m_autoScreenTimer < 1.1f) {
-			m_imguiMenu.setPage(1);
-			m_imguiMenu.handbook().selectEntry("base:pig");
-		}
-		if (m_demoMode && m_autoScreenTimer > 1.8f && m_autoScreenTimer < 1.9f) {
-			saveScreenshot(); // handbook
-		}
-		if (m_demoMode && m_autoScreenTimer > 2.2f) {
-			action.type = MenuAction::EnterGame;
-			action.templateIndex = 1;
-			action.targetState = GameState::ADMIN;
-		}
-
 		handleMenuAction(action);
 		break;
 	}
@@ -666,10 +642,6 @@ void Game::setupAfterConnect(GameState targetState) {
 	m_renderer.meshAllPending(chunks, m_camera, m_renderDistance);
 
 	m_worldTime = 0.30f;
-	m_autoScreenDone = false;
-	m_autoScreenTimer = 0;
-	m_demoStep = 1;
-	m_demoTimer = 0;
 	m_playerWalkDist = 0;
 	m_globalTime = 0;
 }
@@ -1787,48 +1759,17 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 
 	m_ui.endFrame();
 
-	// Auto screenshot (3 seconds after game start)
-	m_autoScreenTimer += dt;
-	if (!m_autoScreenDone && m_autoScreenTimer > 3.0f) {
-		saveScreenshot();
-		m_autoScreenDone = true;
-	}
-
-	// Demo mode: cycle through camera views, taking screenshots
-	if (m_demoMode && m_state != GameState::MENU && m_demoStep >= 1) {
-		m_demoTimer += dt;
-		if (m_demoStep == 1 && m_demoTimer > 2.0f) {
-			saveScreenshot(); // FPS view
-			m_camera.cycleMode();
-			m_camera.orbitYaw = m_camera.player.yaw + 30;
-			m_camera.orbitPitch = 25;
-			m_demoStep = 2; m_demoTimer = 0;
-		}
-		if (m_demoStep == 2 && m_demoTimer > 1.5f) {
-			saveScreenshot(); // TPS view
-			m_equipUI.toggle();
-			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-			m_demoStep = 25; m_demoTimer = 0;
-		}
-		if (m_demoStep == 25 && m_demoTimer > 1.0f) {
-			saveScreenshot(); // Inventory view
-			m_equipUI.close();
-			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-			m_camera.cycleMode();
-			m_demoStep = 3; m_demoTimer = 0;
-		}
-		if (m_demoStep == 3 && m_demoTimer > 1.5f) {
-			saveScreenshot(); // RPG view
-			m_camera.cycleMode();
-			m_camera.rtsCenter = pe->position;
-			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-			m_demoStep = 4; m_demoTimer = 0;
-		}
-		if (m_demoStep == 4 && m_demoTimer > 1.5f) {
-			saveScreenshot(); // RTS view
-			printf("Demo complete.\n");
-			glfwSetWindowShouldClose(m_window.handle(), true);
-			m_demoStep = 99;
+	// Screenshot request: check for trigger file (external diagnostic tool)
+	// Create /tmp/agentica_screenshot_request to trigger a screenshot.
+	{
+		static float screenshotCheckTimer = 0;
+		screenshotCheckTimer += dt;
+		if (screenshotCheckTimer > 0.5f) { // check every 0.5s
+			screenshotCheckTimer = 0;
+			if (std::filesystem::exists("/tmp/agentica_screenshot_request")) {
+				std::filesystem::remove("/tmp/agentica_screenshot_request");
+				saveScreenshot();
+			}
 		}
 	}
 }
