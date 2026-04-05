@@ -4,7 +4,7 @@ item = {
     "id": "base:shield",
     "name": "Shield",
     "category": "shield",
-    "equip_slot": "left_hand",
+    "equip_slot": "offhand",
     "stack_max": 1,
     "cooldown": 0.0,
     "damage_reduction": 0.5,    # blocks 50% of incoming damage

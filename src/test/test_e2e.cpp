@@ -973,27 +973,27 @@ static std::string t30_equip_item() {
 	Entity* p = srv->getEntity(pid);
 	if (!p || !p->inventory) return "no player/inventory";
 
-	if (!p->inventory->has("base:sword")) return "no sword in starting inventory";
+	if (!p->inventory->has("base:shield")) return "no shield in starting inventory";
 
-	// Find sword's hotbar slot
-	int swordSlot = -1;
+	// Find shield's hotbar slot
+	int shieldSlot = -1;
 	for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++) {
-		if (p->inventory->hotbar(i) == "base:sword") { swordSlot = i; break; }
+		if (p->inventory->hotbar(i) == "base:shield") { shieldSlot = i; break; }
 	}
-	if (swordSlot < 0) return "sword not in any hotbar slot";
+	if (shieldSlot < 0) return "shield not in any hotbar slot";
 
-	// Equip sword to right_hand
+	// Equip shield to offhand
 	ActionProposal a;
 	a.type = ActionProposal::EquipItem;
 	a.actorId = pid;
-	a.slotIndex = swordSlot;
-	a.blockType = "right_hand";
+	a.slotIndex = shieldSlot;
+	a.blockType = "offhand";
 	srv->sendAction(a);
 	srv->tick(1.0f / 60.0f);
 
-	if (p->inventory->equipped(WearSlot::RightHand) != "base:sword")
-		return "sword not in right_hand slot (got: '" +
-		       p->inventory->equipped(WearSlot::RightHand) + "')";
+	if (p->inventory->equipped(WearSlot::Offhand) != "base:shield")
+		return "shield not in offhand slot (got: '" +
+		       p->inventory->equipped(WearSlot::Offhand) + "')";
 	return "";
 }
 
@@ -1203,20 +1203,19 @@ static std::string t36_equip_unequip_cycle() {
 	Entity* p = srv->getEntity(pid);
 	if (!p || !p->inventory) return "no player/inventory";
 
-	int swordBefore = p->inventory->count("base:sword");
-	if (swordBefore < 1) return "no sword";
+	if (!p->inventory->has("base:shield")) return "no shield";
 
-	// Equip
-	p->inventory->equip(WearSlot::RightHand, "base:sword");
-	if (p->inventory->equipped(WearSlot::RightHand) != "base:sword")
+	// Equip shield to offhand
+	p->inventory->equip(WearSlot::Offhand, "base:shield");
+	if (p->inventory->equipped(WearSlot::Offhand) != "base:shield")
 		return "equip failed";
-	if (p->inventory->has("base:sword")) return "sword still in counter after equip";
+	if (p->inventory->has("base:shield")) return "shield still in counter after equip";
 
 	// Unequip
-	p->inventory->unequip(WearSlot::RightHand);
-	if (!p->inventory->equipped(WearSlot::RightHand).empty())
+	p->inventory->unequip(WearSlot::Offhand);
+	if (!p->inventory->equipped(WearSlot::Offhand).empty())
 		return "unequip didn't clear slot";
-	if (!p->inventory->has("base:sword")) return "sword not returned to inventory after unequip";
+	if (!p->inventory->has("base:shield")) return "shield not returned to inventory after unequip";
 	return "";
 }
 

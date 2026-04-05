@@ -4,7 +4,7 @@ item = {
     "id": "base:bucket",
     "name": "Bucket",
     "category": "tool",
-    "equip_slot": "right_hand",
+    # No equip_slot — held via hotbar selection
     "stack_max": 1,
     "cooldown": 0.3,
     "range": 4.0,

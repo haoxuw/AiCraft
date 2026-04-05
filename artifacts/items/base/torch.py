@@ -4,7 +4,7 @@ item = {
     "id": "base:torch",
     "name": "Torch",
     "category": "tool",
-    "equip_slot": "left_hand",
+    "equip_slot": "offhand",
     "stack_max": 64,
     "cooldown": 0.2,
 

@@ -1086,9 +1086,10 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			float phase;            // arm swing phase
 		};
 		float armAmp = 50.0f; // match arm amplitude
+		// Only the offhand (left) uses an equipment slot.
+		// Right hand always shows the hotbar-selected item (handled below).
 		HandSlot hands[] = {
-			{WearSlot::LeftHand,  {-0.42f, 0.50f, -0.16f}, {-0.37f, 1.40f, 0}, PI},
-			{WearSlot::RightHand, { 0.42f, 0.50f, -0.16f}, { 0.37f, 1.40f, 0}, 0},
+			{WearSlot::Offhand, {-0.42f, 0.50f, -0.16f}, {-0.37f, 1.40f, 0}, PI},
 		};
 
 		for (auto& h : hands) {
@@ -1159,8 +1160,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		{
 			int sel = e.getProp<int>(Prop::SelectedSlot, 0);
 			std::string hotbarId = e.inventory->hotbar(sel);
-			// Only show if right hand doesn't already have an equipped item
-			if (!hotbarId.empty() && e.inventory->equipped(WearSlot::RightHand).empty()) {
+			if (!hotbarId.empty()) {
 				std::string modelKey;
 				const ArtifactEntry* art = m_artifacts.findById(hotbarId);
 				if (art) {
@@ -1801,8 +1801,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_2_3rd.ppm");
 			// Open inventory for screenshot
 			if (pe->inventory) {
-				pe->inventory->equip(WearSlot::LeftHand, "base:sword");
-				pe->inventory->equip(WearSlot::RightHand, "base:shield");
+				pe->inventory->equip(WearSlot::Offhand, "base:shield");
 			}
 			m_equipUI.toggle();
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);

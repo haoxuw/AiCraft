@@ -16,20 +16,21 @@
 
 namespace agentica {
 
-// Equipment slots — what a character can wear/hold
+// Equipment slots — what a character can wear
+// Right hand always shows the hotbar-selected item (not an equipment slot).
 enum class WearSlot {
-	LeftHand  = 0,  // sword, shield, tool
-	RightHand = 1,  // sword, shield, tool
+	Offhand   = 0,  // shield, torch (left hand)
+	RightHand = 1,  // legacy — kept for save compat, not shown in UI
 	Helmet    = 2,  // head armor
-	Body      = 3,  // shoes + pants (combined slot)
-	Back      = 4,  // cape, backpack, quiver
+	Body      = 3,  // chest + legs (combined slot)
+	Back      = 4,  // cape, jetpack, parachute
 };
 constexpr int WEAR_SLOT_COUNT = 5;
 
 // Parse equip slot from Python artifact string
 inline bool wearSlotFromString(const std::string& s, WearSlot& out) {
-	if (s == "left_hand")  { out = WearSlot::LeftHand;  return true; }
-	if (s == "right_hand") { out = WearSlot::RightHand; return true; }
+	if (s == "offhand" || s == "left_hand") { out = WearSlot::Offhand; return true; }
+	if (s == "right_hand") { out = WearSlot::RightHand; return true; } // legacy compat
 	if (s == "helmet" || s == "head") { out = WearSlot::Helmet; return true; }
 	if (s == "body")       { out = WearSlot::Body;      return true; }
 	if (s == "back")       { out = WearSlot::Back;      return true; }
@@ -38,7 +39,7 @@ inline bool wearSlotFromString(const std::string& s, WearSlot& out) {
 
 inline const char* equipSlotName(WearSlot slot) {
 	switch (slot) {
-	case WearSlot::LeftHand:  return "Left Hand";
+	case WearSlot::Offhand:   return "Offhand";
 	case WearSlot::RightHand: return "Right Hand";
 	case WearSlot::Helmet:    return "Helmet";
 	case WearSlot::Body:      return "Body";

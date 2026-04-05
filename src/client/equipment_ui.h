@@ -87,15 +87,8 @@ public:
 			renderEquipSlot(dl, inventory, blocks, WearSlot::Helmet,    "Helmet",     "\xF0\x9F\xAA\x96");
 			ImGui::Spacing();
 
-			// Hands side by side
-			float handW = (leftW - 20) / 2;
-			ImGui::BeginGroup();
-			renderEquipSlotSized(dl, inventory, blocks, WearSlot::LeftHand,  "L. Hand", handW);
-			ImGui::EndGroup();
-			ImGui::SameLine(0, 8);
-			ImGui::BeginGroup();
-			renderEquipSlotSized(dl, inventory, blocks, WearSlot::RightHand, "R. Hand", handW);
-			ImGui::EndGroup();
+			// Offhand (shield, torch — left hand; right hand = hotbar item)
+			renderEquipSlot(dl, inventory, blocks, WearSlot::Offhand, "Offhand", nullptr);
 			ImGui::Spacing();
 
 			renderEquipSlot(dl, inventory, blocks, WearSlot::Body,      "Body",       nullptr);
@@ -353,7 +346,7 @@ private:
 			ImGui::Separator();
 
 			if (ImGui::MenuItem("Equip Left Hand"))
-				inv.equip(WearSlot::LeftHand, m_contextItem);
+				inv.equip(WearSlot::Offhand, m_contextItem);
 			if (ImGui::MenuItem("Equip Right Hand"))
 				inv.equip(WearSlot::RightHand, m_contextItem);
 			if (ImGui::MenuItem("Equip Helmet"))
