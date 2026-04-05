@@ -380,6 +380,11 @@ private:
 			for (int i = 0; i < Inventory::HOTBAR_SLOTS && rb.hasMore(); i++)
 				hotbar.push_back(rb.readString());
 
+			// Read equipment slots (if present)
+			std::vector<std::string> equipment;
+			for (int i = 0; i < WEAR_SLOT_COUNT && rb.hasMore(); i++)
+				equipment.push_back(rb.readString());
+
 			auto applyInv = [&](Inventory& inv) {
 				inv.clear();
 				for (auto& [iid, amt] : items) inv.add(iid, amt);
@@ -389,6 +394,13 @@ private:
 					if (!hotbar[i].empty()) hasHotbar = true;
 				}
 				if (!hasHotbar) inv.autoPopulateHotbar();
+				// Apply equipment
+				for (int i = 0; i < (int)equipment.size(); i++) {
+					if (!equipment[i].empty()) {
+						inv.add(equipment[i], 1); // need it in counter for equip()
+						inv.equip((WearSlot)i, equipment[i]);
+					}
+				}
 			};
 
 			auto it = m_entities.find(id);

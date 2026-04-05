@@ -312,8 +312,14 @@ void GameServer::resolveActions(float dt) {
 
 			// Parse equip slot from blockType field (sent by client from artifact)
 			WearSlot ws;
-			if (!wearSlotFromString(p.blockType, ws)) break;
+			if (!wearSlotFromString(p.blockType, ws)) {
+				printf("[Server] EquipItem FAILED: unknown slot '%s' for item '%s'\n",
+					p.blockType.c_str(), itemId.c_str());
+				break;
+			}
 
+			printf("[Server] EquipItem: '%s' → slot %d ('%s')\n",
+				itemId.c_str(), (int)ws, p.blockType.c_str());
 			actor->inventory->equip(ws, itemId);
 			actor->inventory->autoPopulateHotbar();
 			if (m_callbacks.onInventoryChange)

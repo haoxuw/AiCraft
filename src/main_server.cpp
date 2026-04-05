@@ -245,6 +245,9 @@ int main(int argc, char** argv) {
 		}
 		for (int i = 0; i < agentica::Inventory::HOTBAR_SLOTS; i++)
 			wb.writeString(inv.hotbar(i));
+		// Equipment slots
+		for (int i = 0; i < agentica::WEAR_SLOT_COUNT; i++)
+			wb.writeString(inv.equipped((agentica::WearSlot)i));
 		clients.broadcastToAll(agentica::net::S_INVENTORY, wb);
 	};
 	server.setCallbacks(cbs);
