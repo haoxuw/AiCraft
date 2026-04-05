@@ -70,10 +70,10 @@ inline void registerTerrainBlocks(BlockRegistry& reg) {
 		true,true, 0.3f,"","",64,0,
 		{}, "","",""});
 
-	// Portal (spawn gateway glow — non-solid, semi-transparent, animated purple)
+	// Portal (spawn gateway — non-solid placeholder, not yet rendered)
 	reg.registerBlock({BT::Portal, "Portal", CT::System,
 		{0.65f,0.0f,1.0f},{0.55f,0.0f,0.90f},{0.65f,0.0f,1.0f},
-		false,true, 0.0f,"","",64,15,
+		false,true, 0.0f,"","",64,0,
 		{{GR::Unbreakable,1}}, "","",""});
 
 	// Chest (storage block)
