@@ -9,8 +9,8 @@ model = {
     "height": 0.5,
     # Held upright in hand
     "equip": {
-        "rotation": [0, 0, 0],
-        "offset": [0, -0.15, -0.04],
+        "rotation": [-10, 0, 0],
+        "offset": [0, 0.0, -0.03],
         "scale": 0.65,
     },
     "parts": [

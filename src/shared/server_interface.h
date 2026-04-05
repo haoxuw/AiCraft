@@ -56,6 +56,9 @@ public:
 	// Send an action proposal to the server
 	virtual void sendAction(const ActionProposal& action) = 0;
 
+	// Notify server that player reassigned a hotbar slot
+	virtual void sendHotbarSlot(int slot, const std::string& itemId) {}
+
 	// --- State access (for rendering) ---
 
 	// Chunk data source (for terrain meshing)

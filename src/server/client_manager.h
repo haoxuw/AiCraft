@@ -38,6 +38,7 @@ struct ConnectedClient {
 	int port = 0;
 	std::string name;
 	bool isBot = false;
+	int chunkSendErrors = 0;
 
 	std::string label() const {
 		if (!name.empty())
@@ -75,7 +76,7 @@ public:
 			net::sendMessage(accepted.fd, net::S_WELCOME, wb);
 		}
 
-		// Send initial inventory
+		// Send initial inventory (items + hotbar)
 		{
 			Entity* pe = m_server.world().entities.get(eid);
 			if (pe && pe->inventory) {
@@ -87,6 +88,8 @@ public:
 					wb.writeString(itemId);
 					wb.writeI32(count);
 				}
+				for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
+					wb.writeString(pe->inventory->hotbar(i));
 				net::sendMessage(accepted.fd, net::S_INVENTORY, wb);
 			}
 		}
@@ -118,7 +121,23 @@ public:
 				auto& msg = client.pendingChunks.front().second;
 				ssize_t n = send(client.fd, msg.data(), msg.size(), MSG_NOSIGNAL);
 				if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
-				if (n <= 0) break;
+				if (n <= 0) {
+					// Unexpected: log once per stuck client to diagnose
+					if (++client.chunkSendErrors <= 3)
+						printf("[Server] sendChunk: n=%zd errno=%d (%s) for %s, pending=%zu\n",
+							n, errno, strerror(errno), client.label().c_str(),
+							client.pendingChunks.size());
+					break;
+				}
+				if (n != (ssize_t)msg.size()) {
+					// Partial send — advance write position to avoid stream corruption
+					if (++client.chunkSendErrors <= 3)
+						printf("[Server] sendChunk: partial send n=%zd/%zu for %s\n",
+							n, msg.size(), client.label().c_str());
+					// Trim the sent bytes from the front of the message
+					msg.erase(msg.begin(), msg.begin() + n);
+					break; // retry next iteration
+				}
 				client.pendingChunks.erase(client.pendingChunks.begin());
 				sent++;
 			}
@@ -209,6 +228,11 @@ public:
 				es.goalText = e.goalText;
 				es.characterSkin = e.getProp<std::string>("character_skin", "");
 				es.hp = e.hp(); es.maxHp = e.def().max_hp;
+				// Sync string props needed for rendering (ItemType, BehaviorId, etc.)
+				for (auto& [key, val] : e.props()) {
+					if (auto* s = std::get_if<std::string>(&val))
+						es.stringProps.push_back({key, *s});
+				}
 
 				net::WriteBuffer wb;
 				net::serializeEntityState(wb, es);
@@ -411,14 +435,69 @@ private:
 			std::string creatureType = rb.hasMore() ? rb.readString() : "";
 			if (!displayName.empty())
 				client.name = displayName + " (" + client.name.substr(0, 8) + ")";
-			// Apply selected character skin so the server broadcasts the right model
+
 			if (!creatureType.empty()) {
+				// Enforce one-character-per-server: reject if skin already occupied
+				bool skinTaken = false;
+				for (auto& [otherId, other] : m_clients) {
+					if (otherId == client.id || other.isBot) continue;
+					Entity* oe = m_server.world().entities.get(other.playerId);
+					if (oe && oe->getProp<std::string>("character_skin", "") == creatureType) {
+						skinTaken = true;
+						break;
+					}
+				}
+				if (skinTaken) {
+					net::WriteBuffer err;
+					err.writeU32(client.playerId);
+					err.writeString("Character '" + creatureType + "' is already in use.");
+					net::sendMessage(client.fd, net::S_ERROR, err);
+					printf("[Server] %s rejected: '%s' already online\n",
+						client.label().c_str(), creatureType.c_str());
+					break;
+				}
+
 				Entity* pe = m_server.world().entities.get(client.playerId);
-				if (pe) pe->setProp("character_skin", creatureType);
+				if (pe) {
+					pe->setProp("character_skin", creatureType);
+
+					// Restore saved inventory for this character skin
+					if (pe->inventory) {
+						auto& saved = m_server.savedInventories();
+						auto sit = saved.find(creatureType);
+						if (sit != saved.end()) {
+							*pe->inventory = sit->second;
+							printf("[Server] Restored inventory for '%s'\n", creatureType.c_str());
+						}
+						// else: keep starting items given by addClient
+
+						// Resend inventory (with hotbar) now that skin is resolved
+						net::WriteBuffer wb;
+						wb.writeU32(client.playerId);
+						auto items = pe->inventory->items();
+						wb.writeU32((uint32_t)items.size());
+						for (auto& [itemId, cnt] : items) {
+							wb.writeString(itemId);
+							wb.writeI32(cnt);
+						}
+						for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
+							wb.writeString(pe->inventory->hotbar(i));
+						net::sendMessage(client.fd, net::S_INVENTORY, wb);
+					}
+				}
 			}
 			printf("[Server] %s identified: creature=%s\n",
 				client.label().c_str(),
 				creatureType.empty() ? "default" : creatureType.c_str());
+			break;
+		}
+
+		case net::C_HOTBAR: {
+			uint32_t slot = rb.readU32();
+			std::string itemId = rb.hasMore() ? rb.readString() : "";
+			Entity* pe = m_server.world().entities.get(client.playerId);
+			if (pe && pe->inventory && (int)slot < Inventory::HOTBAR_SLOTS)
+				pe->inventory->setHotbar((int)slot, itemId);
 			break;
 		}
 		case net::C_BOT_HELLO: {

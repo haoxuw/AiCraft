@@ -9,22 +9,27 @@ Parameters (optional via self dict):
   scatter_range  — flee trigger distance (default 4)
   peck_chance    — probability of pecking vs scratching (default 0.45)
 """
-from agentica_engine import Idle, Wander, Flee, MoveTo
+from agentica_engine import Idle, Wander, Flee, MoveTo, DropItem
 import random
 
 PECK_CHANCE = 0.45
+EGG_COOLDOWN = 20.0  # TEST: 20s cooldown
+EGG_CHANCE = 1.0     # TEST: 100% chance
 
 _activity = "idle"     # idle, pecking, dust_bath
 _activity_timer = 0
+_was_startled = False
+_egg_cooldown = 0
 _rng_seeded = False
 
 def decide(self, world):
-    global _activity, _activity_timer, _rng_seeded
+    global _activity, _activity_timer, _was_startled, _egg_cooldown, _rng_seeded
     if not _rng_seeded:
         random.seed(self["id"] * 31337 + 42)
         _rng_seeded = True
     dt = world["dt"]
     _activity_timer -= dt
+    _egg_cooldown -= dt
 
     scatter_range = self.get("scatter_range", 4.0)
     peck_chance = self.get("peck_chance", PECK_CHANCE)
@@ -36,8 +41,19 @@ def decide(self, world):
 
     if threats:
         closest = min(threats, key=lambda e: e["distance"])
+
+        # Lay egg on first startle (if cooldown ready)
+        if not _was_startled and _egg_cooldown <= 0:
+            _was_startled = True
+            if random.random() < EGG_CHANCE:
+                _egg_cooldown = EGG_COOLDOWN
+                self["goal"] = "BAWK!! *lays egg!*"
+                return DropItem("base:egg", 1)
+
         self["goal"] = "BAWK!! Scattering!"
         return Flee(closest["id"], speed=6.0)
+
+    _was_startled = False
 
     # ── Dust bathing ──
     if _activity == "dust_bath" and _activity_timer > 0:

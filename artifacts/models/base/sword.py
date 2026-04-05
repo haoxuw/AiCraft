@@ -11,9 +11,9 @@ model = {
     "id": "sword",
     "height": 1.4,
     "equip": {
-        "rotation": [-75, 0, 10],   # blade angled forward and slightly out
-        "offset": [0, -0.02, -0.08], # snug to hand
-        "scale": 0.80,
+        "rotation": [-20, 0, -10],  # blade points up-right (Minecraft idle pose)
+        "offset": [0.03, 0.0, -0.05],
+        "scale": 0.85,
     },
     "parts": [
         # ── Blade (3 layers for depth) ──────────────────────────

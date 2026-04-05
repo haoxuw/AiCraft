@@ -8,8 +8,8 @@ model = {
     "height": 1.0,
     # Held in hand: rotated so tool head points forward
     "equip": {
-        "rotation": [-90, 0, 0],
-        "offset": [0, -0.08, -0.12],
+        "rotation": [-25, 0, -15],
+        "offset": [0.02, 0.0, -0.05],
         "scale": 0.75,
     },
     "parts": [

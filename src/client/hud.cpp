@@ -387,9 +387,7 @@ void HUD::shutdown() {}
 
 void HUD::render(const HUDContext& ctx, TextRenderer& text, Shader& highlightShader) {
 	(void)highlightShader;
-	// Hotbar is now rendered via ImGui in game.cpp (Roboto font + 3D block preview)
-	if (ctx.showInventory)
-		renderInventoryPanel(ctx, text);
+	// Inventory panel is now an ImGui window rendered in game.cpp (drag/drop support)
 	renderHealthBars(ctx, text);
 	renderModeLabel(ctx, text);
 	renderTimeOfDay(ctx, text);

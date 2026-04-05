@@ -440,8 +440,6 @@ private:
 		ImGui::PopStyleColor();
 		ImGui::Spacing();
 
-		renderPlayerIdentity(contentW);
-
 		// Resume button
 		if (m_gameRunning) {
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.35f, 1));
@@ -767,7 +765,28 @@ private:
 			"Join a server on your local network or by address.");
 		ImGui::Spacing(); ImGui::Spacing();
 
-		renderPlayerIdentity(contentW);
+		// One-line identity strip
+		if (m_playerName && m_selectedCreature) {
+			std::string charName = *m_selectedCreature;
+			auto colon = charName.find(':');
+			if (colon != std::string::npos) charName = charName.substr(colon + 1);
+			if (!charName.empty()) charName[0] = (char)std::toupper((unsigned char)charName[0]);
+
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.97f, 0.97f, 0.98f, 1));
+			ImGui::BeginChild("##identity_strip", ImVec2(contentW - 64, 40), true);
+			ImGui::SetCursorPos(ImVec2(12, 10));
+			ImGui::TextColored(ImVec4(0.40f, 0.42f, 0.45f, 1), "Playing as:");
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(0.20f, 0.20f, 0.22f, 1), "%s", m_playerName->c_str());
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "·  %s", charName.c_str());
+			ImGui::SameLine();
+			ImGui::SetCursorPosX(contentW - 200);
+			ImGui::TextColored(ImVec4(0.96f, 0.65f, 0.15f, 1), "Settings > Profile to change");
+			ImGui::EndChild();
+			ImGui::PopStyleColor();
+			ImGui::Spacing();
+		}
 
 		// Resume button (if connected to a server)
 		if (m_gameRunning) {
@@ -901,20 +920,26 @@ private:
 
 		// Tab bar
 		if (ImGui::BeginTabBar("SettingsTabs")) {
-			if (ImGui::BeginTabItem("Controls")) {
+			if (ImGui::BeginTabItem("Profile")) {
 				m_settingsTab = 0;
+				ImGui::Spacing();
+				renderPlayerIdentity(contentW);
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Controls")) {
+				m_settingsTab = 1;
 				ImGui::Spacing();
 				renderControlsTab(contentW);
 				ImGui::EndTabItem();
 			}
 			if (ImGui::BeginTabItem("Audio")) {
-				m_settingsTab = 1;
+				m_settingsTab = 2;
 				ImGui::Spacing();
 				renderAudioTab(contentW);
 				ImGui::EndTabItem();
 			}
 			if (ImGui::BeginTabItem("Gameplay")) {
-				m_settingsTab = 2;
+				m_settingsTab = 3;
 				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1),
 					"Server gameplay constants. Currently compiled into C++.");

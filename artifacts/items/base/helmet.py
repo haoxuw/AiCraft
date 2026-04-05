@@ -4,7 +4,7 @@ item = {
     "id": "base:helmet",
     "name": "Helmet",
     "category": "equipment",
-    "equip_slot": "helmet",
+    "equip_slot": "head",
     "stack_max": 1,
     "defense": 2,
     "description": "A helmet that protects your head.",

@@ -231,15 +231,23 @@ void GameServer::resolveActions(float dt) {
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 			}
 
-			// Spawn item entity slightly forward from actor
-			float yaw = glm::radians(actor->yaw);
-			glm::vec3 dropDir(std::cos(yaw), 0.3f, std::sin(yaw));
-			glm::vec3 dropPos = actor->position + glm::vec3(0, 0.5f, 0);
+			// Spawn item entity and toss toward cursor direction
+			glm::vec3 tossDir = p.desiredVel;
+			float tossLen = glm::length(tossDir);
+			if (tossLen < 0.1f) {
+				// Fallback: use actor's yaw direction
+				float yaw = glm::radians(actor->yaw);
+				tossDir = glm::vec3(std::cos(yaw), 0.5f, std::sin(yaw)) * 5.0f;
+			}
+			// Clamp toss speed (anti-cheat: max ~8 blocks/sec)
+			if (tossLen > 10.0f) tossDir = glm::normalize(tossDir) * 10.0f;
+			glm::vec3 fwd = glm::normalize(glm::vec3(tossDir.x, 0, tossDir.z));
+			// Spawn 1.5 blocks ahead (outside pickup range) at eye height
+			glm::vec3 dropPos = actor->position + fwd * 1.5f + glm::vec3(0, 1.2f, 0);
 			EntityId itemId = m_world->entities.spawn(EntityType::ItemEntity, dropPos,
 				{{Prop::ItemType, p.blockType}, {Prop::Count, count}, {Prop::Age, 0.0f}});
-			// Toss forward
 			Entity* ie = m_world->entities.get(itemId);
-			if (ie) ie->velocity = dropDir * 5.0f;
+			if (ie) ie->velocity = tossDir;
 			break;
 		}
 

@@ -762,13 +762,17 @@ void Game::updatePlaying(float dt, float aspect) {
 		std::string heldItem = pe->inventory->hotbar(slot);
 
 		// Q = drop selected item
+		m_dropCooldown -= dt;
 		if (m_controls.pressed(Action::DropItem) && !heldItem.empty() && pe->inventory->has(heldItem)) {
 			ActionProposal p;
 			p.type = ActionProposal::DropItem;
 			p.actorId = m_server->localPlayerId();
 			p.blockType = heldItem;
 			p.itemCount = 1;
+			// Toss toward where the camera is looking
+			p.desiredVel = m_camera.front() * 5.0f + glm::vec3(0, 3.0f, 0);
 			m_server->sendAction(p);
+			m_dropCooldown = 0.8f; // don't auto-pickup for 0.8s after dropping
 		}
 
 		// E = equip selected item
@@ -808,7 +812,8 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_audio.updateMusic();
 
 	// Client-initiated item pickup: scan nearby items, send PickupItem action.
-	// pickup_range comes from EntityDef (character definition, like HP/speed).
+	// Skip scan briefly after dropping an item to prevent instant re-pickup.
+	if (m_dropCooldown <= 0)
 	{
 		float pickupRange = pe->def().pickup_range;
 		auto& srv = *m_server;
@@ -855,9 +860,11 @@ void Game::updatePlaying(float dt, float aspect) {
 		it->t += dt / it->duration;
 		if (it->t >= 1.0f) {
 			// Arrived at player — puff + sound + floating text
-			glm::vec3 arrivePos = pe->position + glm::vec3(0, 0.8f, 0);
-			m_particles.emitItemPickup(arrivePos, it->color);
-			m_audio.play("item_pickup", arrivePos, 0.5f);
+			// Position text at eye level + slightly in front so it's visible in FPS
+			glm::vec3 arrivePos = pe->position + glm::vec3(0, pe->def().eye_height, 0)
+			                    + m_camera.front() * 1.5f;
+			m_particles.emitItemPickup(pe->position + glm::vec3(0, 0.8f, 0), it->color);
+			m_audio.play("item_pickup", pe->position, 0.5f);
 			char buf[64];
 			snprintf(buf, sizeof(buf), "+%d %s", it->count, it->itemName.c_str());
 			addFloatingText(arrivePos, buf, {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
@@ -930,7 +937,7 @@ void Game::updatePlaying(float dt, float aspect) {
 	renderPlaying(dt, aspect);
 }
 
-void Game::renderPlaying(float dt, float aspect) {
+void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	if (!m_server) { printf("[Game] renderPlaying: no server\n"); return; }
 	auto& srv = *m_server;
 	Entity* pe = playerEntity();
@@ -1062,7 +1069,14 @@ void Game::renderPlaying(float dt, float aspect) {
 
 			// Apply equip transform: rotate + offset + scale item parts
 			auto& et = mit->second.equip;
+			// If no explicit equip scale was set (default 1.0) and model is large,
+			// auto-scale to fit in hand (~0.3 blocks)
 			float es = et.scale;
+			bool hasExplicitEquip = (et.rotation != glm::vec3(0) || et.offset != glm::vec3(0) || et.scale != 1.0f);
+			if (!hasExplicitEquip) {
+				float modelH = std::max(mit->second.totalHeight * mit->second.modelScale, 0.1f);
+				es = std::min(0.35f / modelH, 0.5f); // fit to ~0.35 blocks, cap at 0.5
+			}
 			// Pre-compute rotation matrix from equip Euler angles (degrees)
 			float rx = glm::radians(et.rotation.x);
 			float ry = glm::radians(et.rotation.y);
@@ -1093,6 +1107,54 @@ void Game::renderPlaying(float dt, float aspect) {
 				bp.swingPhase = h.phase;
 				bp.swingSpeed = 1.0f;
 				model.parts.push_back(bp);
+			}
+		}
+
+		// Hotbar selected item → right hand (Minecraft-style: hotbar IS right hand)
+		{
+			int sel = e.getProp<int>(Prop::SelectedSlot, 0);
+			std::string hotbarId = e.inventory->hotbar(sel);
+			// Only show if right hand doesn't already have an equipped item
+			if (!hotbarId.empty() && e.inventory->equipped(WearSlot::RightHand).empty()) {
+				std::string modelKey;
+				const ArtifactEntry* art = m_artifacts.findById(hotbarId);
+				if (art) {
+					auto it = art->fields.find("model");
+					if (it != art->fields.end()) modelKey = it->second;
+				}
+				if (modelKey.empty()) {
+					modelKey = hotbarId;
+					auto colon = modelKey.find(':');
+					if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
+				}
+				auto mit = m_models.find(modelKey);
+				if (mit != m_models.end()) {
+					glm::vec3 rHandOff = {0.42f, 0.50f, -0.16f};
+					glm::vec3 rPivot = {0.37f, 1.40f, 0};
+
+					auto& et = mit->second.equip;
+					float es = et.scale;
+					float rx = glm::radians(et.rotation.x);
+					float ry = glm::radians(et.rotation.y);
+					float rz = glm::radians(et.rotation.z);
+					glm::mat3 rotXm = {{1,0,0},{0,std::cos(rx),std::sin(rx)},{0,-std::sin(rx),std::cos(rx)}};
+					glm::mat3 rotYm = {{std::cos(ry),0,-std::sin(ry)},{0,1,0},{std::sin(ry),0,std::cos(ry)}};
+					glm::mat3 rotZm = {{std::cos(rz),std::sin(rz),0},{-std::sin(rz),std::cos(rz),0},{0,0,1}};
+					glm::mat3 equipRot = rotZm * rotYm * rotXm;
+
+					for (auto& part : mit->second.parts) {
+						BodyPart bp;
+						bp.offset = rHandOff + et.offset + equipRot * (part.offset * es);
+						bp.halfSize = glm::abs(equipRot * (part.halfSize * es));
+						bp.color = part.color;
+						bp.pivot = rPivot;
+						bp.swingAxis = {1, 0, 0};
+						bp.swingAmplitude = armAmp;
+						bp.swingPhase = 0;
+						bp.swingSpeed = 1.0f;
+						model.parts.push_back(bp);
+					}
+				}
 			}
 		}
 
@@ -1334,16 +1396,10 @@ void Game::renderPlaying(float dt, float aspect) {
 					glm::vec3(0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0));
 				glm::mat4 fpVP = fpProj * fpView;
 
-				// Position: bottom-right of view
-				glm::vec3 itemPos(0.55f, -0.50f, -0.85f);
+				// Position: bottom-right of view (Minecraft-style)
+				glm::vec3 itemPos(0.55f, -0.38f, -0.70f);
 
-				// Walk bob
-				if (playerSpeed > 0.5f) {
-					float wf = std::min(playerSpeed / 6.0f, 1.0f);
-					float ph = m_playerWalkDist * 6.0f;
-					itemPos.x += std::sin(ph) * 0.03f * wf;
-					itemPos.y += std::abs(std::sin(ph * 2.0f)) * 0.02f * wf;
-				}
+				// No walk bob — keep steady so it doesn't distract
 
 				glm::mat4 fpRoot = glm::translate(glm::mat4(1.0f), itemPos);
 
@@ -1356,11 +1412,18 @@ void Game::renderPlaying(float dt, float aspect) {
 				// Swing animation on left-click
 				if (m_fpSwingActive) {
 					float t = m_fpSwingTimer / m_fpSwingDuration;
-					float swing = std::sin(t * 3.14159f) * (-50.0f);
+					float swing = std::sin(t * 3.14159f) * (-40.0f);
 					fpRoot = glm::rotate(fpRoot, glm::radians(swing), glm::vec3(1, 0, 0));
 				}
 
-				float fpScale = eqt.scale * 0.75f;
+				// Auto-scale items without explicit equip transform
+				float fpEs = eqt.scale;
+				bool fpHasEquip = (eqt.rotation != glm::vec3(0) || eqt.offset != glm::vec3(0) || eqt.scale != 1.0f);
+				if (!fpHasEquip) {
+					float mh = std::max(fpMit->second.totalHeight * fpMit->second.modelScale, 0.1f);
+					fpEs = std::min(0.35f / mh, 0.5f);
+				}
+				float fpScale = fpEs * 0.55f;
 				fpRoot = glm::scale(fpRoot, glm::vec3(fpScale));
 
 				mr.drawStatic(fpMit->second, fpVP, fpRoot);
@@ -1394,10 +1457,19 @@ void Game::renderPlaying(float dt, float aspect) {
 			ft.velY *= 0.96f; // decelerate
 			if (ft.life <= 0) { it = m_floatingTexts.erase(it); continue; }
 
-			glm::vec4 clip = ftVP * glm::vec4(ft.pos, 1.0f);
-			if (clip.w <= 0.01f) { ++it; continue; }
-			float ndcX = clip.x / clip.w;
-			float ndcY = clip.y / clip.w;
+			float ndcX, ndcY;
+			if (m_camera.mode == CameraMode::FirstPerson) {
+				// FPS: fixed screen position (center, slightly above crosshair)
+				// Stack multiple texts vertically using remaining life as offset
+				ndcX = 0;
+				ndcY = 0.15f + ft.life * 0.08f;
+			} else {
+				// TPS/RPG/RTS: project world position to screen
+				glm::vec4 clip = ftVP * glm::vec4(ft.pos, 1.0f);
+				if (clip.w <= 0.01f) { ++it; continue; }
+				ndcX = clip.x / clip.w;
+				ndcY = clip.y / clip.w;
+			}
 
 			// Minecraft Dungeons scale: pop in 1.5x, settle to 1.0x, shrink out
 			float t = 1.0f - ft.life / ft.maxLife;
@@ -1423,8 +1495,10 @@ void Game::renderPlaying(float dt, float aspect) {
 		}
 	}
 
-	// ImGui overlays (equipment, FPS)
+	// ImGui overlays (equipment, FPS) — skip when another ImGui overlay is active
+	if (skipImGui) return;
 	m_ui.beginFrame();
+	m_iconCache.setTime(m_globalTime);
 
 	// ── ImGui Hotbar (Roboto font + rotating 3D block preview) ──
 	{
@@ -1597,6 +1671,166 @@ void Game::renderPlaying(float dt, float aspect) {
 		ImGui::End();
 	}
 
+	// ── Hotbar drag/drop interaction layer ──
+	// Transparent ImGui window over the visual hotbar so ImGui can handle drag/drop.
+	if (pe->inventory) {
+		float ww = (float)m_window.width(), wh = (float)m_window.height();
+		int hslots = Inventory::HOTBAR_SLOTS;
+		float slotPx = 60.0f, gapPx = 4.0f, hpad = 8.0f;
+		float totalW = hslots * (slotPx + gapPx) - gapPx;
+		float startX = (ww - totalW) * 0.5f;
+		float startY = wh - slotPx - 12.0f;
+
+		ImGui::SetNextWindowPos({startX - hpad, startY - hpad});
+		ImGui::SetNextWindowSize({totalW + 2*hpad, slotPx + 2*hpad});
+		ImGui::SetNextWindowBgAlpha(0.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {hpad, hpad});
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   {gapPx, 0.0f});
+		if (ImGui::Begin("##hotbar_dd", nullptr,
+			ImGuiWindowFlags_NoTitleBar  | ImGuiWindowFlags_NoResize |
+			ImGuiWindowFlags_NoMove      | ImGuiWindowFlags_NoScrollbar |
+			ImGuiWindowFlags_NoBackground| ImGuiWindowFlags_NoBringToFrontOnFocus |
+			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav)) {
+
+			struct DragSlot { char itemId[64]; int slot; };
+			Inventory& inv = *pe->inventory;
+
+			for (int i = 0; i < hslots; i++) {
+				if (i > 0) ImGui::SameLine(0.0f, gapPx);
+				char bid[24]; snprintf(bid, sizeof(bid), "##hdd%d", i);
+				ImGui::InvisibleButton(bid, {slotPx, slotPx});
+
+				// Drag source — pick up item from this hotbar slot
+				if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+					DragSlot ds{}; ds.slot = i;
+					snprintf(ds.itemId, sizeof(ds.itemId), "%s", inv.hotbar(i).c_str());
+					ImGui::SetDragDropPayload("INV_SLOT", &ds, sizeof(ds));
+					if (ds.itemId[0]) ImGui::Text("%s", ds.itemId); else ImGui::Text("(empty)");
+					ImGui::EndDragDropSource();
+				}
+
+				// Drop target — receive item into slot i
+				if (ImGui::BeginDragDropTarget()) {
+					if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("INV_SLOT")) {
+						auto* ds = (const DragSlot*)pl->Data;
+						std::string newId = ds->itemId;
+						std::string oldId = inv.hotbar(i);
+						if (ds->slot >= 0) {
+							// Hotbar ↔ hotbar swap
+							inv.setHotbar(ds->slot, oldId);
+							m_server->sendHotbarSlot(ds->slot, oldId);
+						}
+						inv.setHotbar(i, newId);
+						m_server->sendHotbarSlot(i, newId);
+					}
+					ImGui::EndDragDropTarget();
+				}
+			}
+		}
+		ImGui::End();
+		ImGui::PopStyleVar(2);
+	}
+
+	// ── Backpack inventory panel (Tab to toggle) ──
+	if (m_showInventory && pe->inventory) {
+		float ww = (float)m_window.width(), wh = (float)m_window.height();
+		const float panW = 320.0f;
+		ImGui::SetNextWindowPos({ww - panW - 20.0f, 55.0f}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({panW, wh - 160.0f}, ImGuiCond_Always);
+		ImGui::PushStyleColor(ImGuiCol_WindowBg,      ImVec4(0.10f, 0.09f, 0.07f, 0.94f));
+		ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.22f, 0.18f, 0.10f, 1.00f));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {10.0f, 10.0f});
+
+		if (ImGui::Begin("Backpack  [Tab]", &m_showInventory,
+			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+
+			Inventory& inv = *pe->inventory;
+			auto& blocks = m_server->blockRegistry();
+			auto items = inv.items();
+
+			ImGui::TextColored({0.65f, 0.58f, 0.38f, 1}, "Drag items to hotbar slots below");
+			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+			if (items.empty()) {
+				ImGui::TextColored({0.5f, 0.5f, 0.5f, 1}, "Nothing here yet.");
+			}
+
+			const float iconSz = 44.0f, iconGap = 4.0f;
+			int cols = std::max(1, (int)(ImGui::GetContentRegionAvail().x / (iconSz + iconGap)));
+			int col = 0;
+			ImDrawList* wdl = ImGui::GetWindowDrawList();
+
+			for (auto& [itemId, count] : items) {
+				if (col > 0 && col < cols) ImGui::SameLine(0.0f, iconGap);
+				if (col >= cols) col = 0;
+
+				// Icon lookup
+				std::string mk = itemId;
+				auto mc = mk.find(':');
+				if (mc != std::string::npos) mk = mk.substr(mc + 1);
+				auto mit = m_models.find(mk);
+				GLuint icon = (mit != m_models.end()) ? m_iconCache.getIcon(mk, mit->second) : 0;
+
+				// Pretty name for tooltip
+				std::string dn = mk;
+				for (char& c : dn) if (c == '_') c = ' ';
+				if (!dn.empty()) dn[0] = (char)toupper((unsigned char)dn[0]);
+
+				ImGui::PushID(itemId.c_str());
+
+				// Slot button (invisible button + manual draw)
+				ImVec2 slotPos = ImGui::GetCursorScreenPos();
+				ImGui::InvisibleButton("##slot", {iconSz, iconSz});
+
+				// Slot background
+				bool hov = ImGui::IsItemHovered();
+				wdl->AddRectFilled(slotPos, {slotPos.x + iconSz, slotPos.y + iconSz},
+					hov ? IM_COL32(55,50,38,230) : IM_COL32(30,26,18,215), 4.0f);
+				wdl->AddRect(slotPos, {slotPos.x + iconSz, slotPos.y + iconSz},
+					IM_COL32(70,58,38,150), 4.0f, 0, 1.0f);
+
+				// Icon or color swatch
+				if (icon) {
+					wdl->AddImage((ImTextureID)(intptr_t)icon,
+						{slotPos.x+3, slotPos.y+3}, {slotPos.x+iconSz-3, slotPos.y+iconSz-3},
+						{0,1}, {1,0});
+				} else {
+					const BlockDef* bdef = blocks.find(itemId);
+					glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
+					wdl->AddRectFilled(
+						{slotPos.x+4, slotPos.y+4}, {slotPos.x+iconSz-4, slotPos.y+iconSz-4},
+						IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),220), 3.0f);
+				}
+
+				// Stack count (bottom-right)
+				if (count > 1) {
+					char cbuf[8]; snprintf(cbuf, sizeof(cbuf), "%d", count);
+					wdl->AddText({slotPos.x + iconSz - (float)strlen(cbuf)*7.5f - 2.0f,
+					              slotPos.y + iconSz - 16.0f},
+						IM_COL32(255,255,255,230), cbuf);
+				}
+
+				if (hov) ImGui::SetTooltip("%s  x%d", dn.c_str(), count);
+
+				// Drag source — pick up from backpack
+				if (ImGui::BeginDragDropSource()) {
+					struct DragSlot { char itemId[64]; int slot; };
+					DragSlot ds{}; ds.slot = -1;
+					snprintf(ds.itemId, sizeof(ds.itemId), "%s", itemId.c_str());
+					ImGui::SetDragDropPayload("INV_SLOT", &ds, sizeof(ds));
+					ImGui::Text("%s  x%d", dn.c_str(), count);
+					ImGui::EndDragDropSource();
+				}
+
+				col++;
+				ImGui::PopID();
+			}
+		}
+		ImGui::End();
+		ImGui::PopStyleColor(2);
+		ImGui::PopStyleVar();
+	}
+
 	m_ui.endFrame();
 
 	// Auto screenshot
@@ -1658,119 +1892,198 @@ void Game::updateEntityInspect(float dt, float aspect) {
 	Entity* pe = playerEntity();
 	if (!pe) { m_state = GameState::MENU; return; }
 
-	// ESC or right-click closes inspection
-	if (m_controls.pressed(Action::MenuBack) || m_controls.pressed(Action::PlaceBlock)) {
+	// Keep server running
+	m_server->tick(dt);
+	if (!m_server->isConnected()) { m_state = GameState::MENU; return; }
+
+	// Render 3D world in background (skip ImGui overlays — we draw our own)
+	m_globalTime += dt;
+	m_worldTime += m_daySpeed * dt;
+	m_renderer.setTimeOfDay(m_worldTime);
+	renderPlaying(dt, aspect, true);
+
+	// Get inspected entity
+	EntityId eid = m_gameplay.inspectedEntity();
+	Entity* target = m_server->getEntity(eid);
+	if (!target) { m_gameplay.clearInspection(); return; }
+
+	// ── ImGui overlay panel ──────────────────────────────────
+	m_ui.beginFrame();
+
+	float ww = (float)m_window.width(), wh = (float)m_window.height();
+	float panW = std::min(520.0f, ww * 0.85f);
+	float panH = std::min(680.0f, wh * 0.88f);
+	ImGui::SetNextWindowPos({(ww - panW) * 0.5f, (wh - panH) * 0.5f}, ImGuiCond_Always);
+	ImGui::SetNextWindowSize({panW, panH}, ImGuiCond_Always);
+
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.10f, 0.94f));
+	ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.15f, 0.20f, 0.35f, 1.0f));
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {14, 10});
+
+	char title[128];
+	snprintf(title, sizeof(title), "%s  (%s)###EntityInspect",
+		target->def().display_name.c_str(), target->typeId().c_str());
+
+	bool open = true;
+	if (ImGui::Begin(title, &open,
+		ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+
+		// ── Live stats ──
+		int hp = target->getProp<int>(Prop::HP, target->def().max_hp);
+		int maxHp = target->def().max_hp;
+		ImGui::TextColored({0.4f, 1.0f, 0.4f, 1}, "HP: %d / %d", hp, maxHp);
+		ImGui::SameLine(200);
+		ImGui::TextColored({0.7f, 0.7f, 0.7f, 1}, "Pos: %.1f, %.1f, %.1f",
+			target->position.x, target->position.y, target->position.z);
+
+		if (!target->goalText.empty()) {
+			ImGui::TextColored({0.5f, 1.0f, 0.8f, 1}, "Goal: %s", target->goalText.c_str());
+		}
+		if (target->hasError) {
+			ImGui::TextColored({1.0f, 0.3f, 0.3f, 1}, "ERROR: %s", target->errorText.c_str());
+		}
+
+		ImGui::Separator();
+
+		// ── Properties ──
+		if (ImGui::CollapsingHeader("Properties")) {
+			auto& def = target->def();
+			if (ImGui::BeginTable("Props", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+				ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130);
+				ImGui::TableSetupColumn("Value");
+				auto row = [](const char* label, const char* fmt, auto... args) {
+					ImGui::TableNextRow(); ImGui::TableNextColumn();
+					ImGui::TextColored({0.5f, 0.52f, 0.56f, 1}, "%s", label);
+					ImGui::TableNextColumn();
+					char buf[64]; snprintf(buf, sizeof(buf), fmt, args...);
+					ImGui::Text("%s", buf);
+				};
+				row("Walk Speed", "%.1f", def.walk_speed);
+				row("Run Speed", "%.1f", def.run_speed);
+				row("Max HP", "%d", def.max_hp);
+				std::string bid = target->getProp<std::string>(Prop::BehaviorId, "");
+				if (!bid.empty()) { row("Behavior", "%s", bid.c_str()); }
+				ImGui::EndTable();
+			}
+		}
+
+		// ── Behavior Tree Editor ──
+		if (ImGui::CollapsingHeader("Behavior Tree", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.15f, 1));
+			ImGui::BeginChild("##behaviorTree", ImVec2(0, 200), true);
+
+			int idCounter = 0;
+			BehaviorExprEditor::render(m_inspectEditor.sharedBehavior, 0, idCounter);
+
+			ImGui::EndChild();
+			ImGui::PopStyleColor();
+
+			// Python preview (compiled from tree)
+			if (ImGui::TreeNode("Python Preview")) {
+				std::string code = BehaviorCompiler::compile(m_inspectEditor.sharedBehavior);
+				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.06f, 0.08f, 1));
+				ImGui::BeginChild("##pyPreview", ImVec2(0, 150), true);
+				std::istringstream stream(code);
+				std::string line;
+				int lineNum = 1;
+				while (std::getline(stream, line)) {
+					ImGui::TextColored({0.45f, 0.50f, 0.45f, 1}, "%3d ", lineNum++);
+					ImGui::SameLine();
+					// Simple syntax coloring
+					if (line.find("def ") != std::string::npos || line.find("if ") != std::string::npos ||
+					    line.find("else") != std::string::npos || line.find("for ") != std::string::npos)
+						ImGui::TextColored({0.4f, 0.6f, 1.0f, 1}, "%s", line.c_str());
+					else if (line.find("return ") != std::string::npos || line.find("import ") != std::string::npos)
+						ImGui::TextColored({0.7f, 0.4f, 0.9f, 1}, "%s", line.c_str());
+					else if (line.empty() || line[0] == '#')
+						ImGui::TextColored({0.4f, 0.55f, 0.4f, 1}, "%s", line.c_str());
+					else
+						ImGui::TextColored({0.35f, 0.75f, 0.35f, 1}, "%s", line.c_str());
+				}
+				ImGui::EndChild();
+				ImGui::PopStyleColor();
+				ImGui::TreePop();
+			}
+
+			// ── Apply buttons with scope ──
+			ImGui::Spacing();
+			std::string typeName = target->def().display_name;
+
+			char applyOneLabel[64], applyAllLabel[64];
+			snprintf(applyOneLabel, sizeof(applyOneLabel), "Apply to This %s", typeName.c_str());
+			snprintf(applyAllLabel, sizeof(applyAllLabel), "Apply to All %ss", typeName.c_str());
+
+			if (ImGui::Button(applyOneLabel)) {
+				std::string code = BehaviorCompiler::compile(m_inspectEditor.sharedBehavior);
+				char filename[64];
+				snprintf(filename, sizeof(filename), "entity_%u_behavior", eid);
+				m_behaviorStore.save(filename, code);
+				ActionProposal reload;
+				reload.type = ActionProposal::ReloadBehavior;
+				reload.actorId = eid;
+				reload.blockType = code;
+				m_server->sendAction(reload);
+				printf("[Inspect] Applied behavior to entity %u only\n", eid);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(applyAllLabel)) {
+				std::string code = BehaviorCompiler::compile(m_inspectEditor.sharedBehavior);
+				// Hash the code for a unique behavior name
+				uint32_t hash = 0;
+				for (char c : code) hash = hash * 31 + (uint8_t)c;
+				char behaviorName[32];
+				snprintf(behaviorName, sizeof(behaviorName), "custom_%06x", hash & 0xFFFFFF);
+				m_behaviorStore.save(behaviorName, code);
+				// Reload ALL entities of this type
+				m_server->forEachEntity([&](Entity& e) {
+					if (e.typeId() == target->typeId()) {
+						ActionProposal reload;
+						reload.type = ActionProposal::ReloadBehavior;
+						reload.actorId = e.id();
+						reload.blockType = code;
+						m_server->sendAction(reload);
+					}
+				});
+				printf("[Inspect] Applied behavior '%s' to all %s entities\n",
+					behaviorName, target->typeId().c_str());
+			}
+		}
+
+		// ── Current behavior source (read-only reference) ──
+		auto behaviorInfo = m_server->getBehaviorInfo(eid);
+		if (!behaviorInfo.sourceCode.empty()) {
+			if (ImGui::CollapsingHeader("Current Behavior Source")) {
+				ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.06f, 0.08f, 1));
+				ImGui::BeginChild("##curSrc", ImVec2(0, 120), true);
+				std::istringstream stream(behaviorInfo.sourceCode);
+				std::string line;
+				int lineNum = 1;
+				while (std::getline(stream, line)) {
+					ImGui::TextColored({0.45f, 0.50f, 0.45f, 1}, "%3d ", lineNum++);
+					ImGui::SameLine();
+					ImGui::TextColored({0.35f, 0.65f, 0.35f, 1}, "%s", line.c_str());
+				}
+				ImGui::EndChild();
+				ImGui::PopStyleColor();
+			}
+		}
+	}
+	ImGui::End();
+	ImGui::PopStyleColor(2);
+	ImGui::PopStyleVar();
+
+	m_ui.endFrame();
+
+	// ESC or X button closes
+	if (!open || m_controls.pressed(Action::MenuBack)) {
 		m_gameplay.clearInspection();
 		m_state = m_preInspectState;
 		bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
 		                    m_camera.mode == CameraMode::ThirdPerson);
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
 			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
-		m_camera.resetMouseTracking(); // prevent camera jump from stale mouse position
-		return;
+		m_camera.resetMouseTracking();
 	}
-
-	// Keep server running (other clients / AI behaviors shouldn't freeze)
-	m_server->tick(dt);
-	if (!m_server->isConnected()) { m_state = GameState::MENU; return; }
-
-	// Still render the world in background
-	m_globalTime += dt;
-	m_worldTime += m_daySpeed * dt;
-	m_renderer.setTimeOfDay(m_worldTime);
-	renderPlaying(dt, aspect);
-
-	// Draw inspection panel overlay
-	EntityId eid = m_gameplay.inspectedEntity();
-	Entity* target = m_server->getEntity(eid);
-	if (!target) {
-		m_gameplay.clearInspection();
-		return;
-	}
-
-	// Semi-transparent background
-	float panelW = 0.6f;
-	float panelH = 0.5f;
-	float px = -panelW / 2;
-	float py = -panelH / 2;
-	m_text.drawRect(px, py, panelW, panelH, {0.05f, 0.05f, 0.1f, 0.85f});
-
-	// Border
-	m_text.drawRect(px, py + panelH - 0.002f, panelW, 0.002f, {0.4f, 0.6f, 1.0f, 0.8f});
-	m_text.drawRect(px, py, panelW, 0.002f, {0.4f, 0.6f, 1.0f, 0.8f});
-
-	float textX = px + 0.03f;
-	float textY = py + panelH - 0.06f;
-	float lineH = 0.045f;
-
-	// Title
-	char buf[256];
-	snprintf(buf, sizeof(buf), "%s", target->def().display_name.c_str());
-	m_text.drawText(buf, textX, textY, 1.0f, {1.0f, 0.9f, 0.5f, 1.0f}, aspect);
-	textY -= lineH;
-
-	// Type ID
-	snprintf(buf, sizeof(buf), "Type: %s", target->typeId().c_str());
-	m_text.drawText(buf, textX, textY, 0.65f, {0.7f, 0.7f, 0.7f, 1.0f}, aspect);
-	textY -= lineH;
-
-	// HP
-	int hp = target->getProp<int>(Prop::HP, target->def().max_hp);
-	snprintf(buf, sizeof(buf), "HP: %d / %d", hp, target->def().max_hp);
-	m_text.drawText(buf, textX, textY, 0.7f, {0.4f, 1.0f, 0.4f, 1.0f}, aspect);
-	textY -= lineH;
-
-	// Position
-	snprintf(buf, sizeof(buf), "Pos: %.1f, %.1f, %.1f", target->position.x, target->position.y, target->position.z);
-	m_text.drawText(buf, textX, textY, 0.65f, {0.8f, 0.8f, 0.8f, 1.0f}, aspect);
-	textY -= lineH;
-
-	// Goal
-	snprintf(buf, sizeof(buf), "Goal: %s", target->goalText.empty() ? "(none)" : target->goalText.c_str());
-	m_text.drawText(buf, textX, textY, 0.7f, {0.5f, 1.0f, 0.8f, 1.0f}, aspect);
-	textY -= lineH;
-
-	// Behavior error (if any)
-	if (target->hasError) {
-		snprintf(buf, sizeof(buf), "ERROR: %s", target->errorText.c_str());
-		m_text.drawText(buf, textX, textY, 0.6f, {1.0f, 0.3f, 0.3f, 1.0f}, aspect);
-		textY -= lineH;
-	}
-
-	// Behavior source preview (first 3 lines)
-	auto behaviorInfo = m_server->getBehaviorInfo(eid);
-	if (!behaviorInfo.sourceCode.empty()) {
-		textY -= lineH * 0.5f;
-		m_text.drawText("--- Behavior Code ---", textX, textY, 0.6f, {0.6f, 0.6f, 0.8f, 1.0f}, aspect);
-		textY -= lineH;
-
-		std::string src = behaviorInfo.sourceCode;
-		// Show first few lines
-		int lineCount = 0;
-		size_t pos = 0;
-		while (pos < src.size() && lineCount < 4) {
-			size_t nl = src.find('\n', pos);
-			if (nl == std::string::npos) nl = src.size();
-			std::string line = src.substr(pos, std::min(nl - pos, (size_t)60));
-			m_text.drawText(line.c_str(), textX, textY, 0.55f, {0.5f, 0.8f, 0.5f, 0.9f}, aspect);
-			textY -= lineH * 0.85f;
-			pos = nl + 1;
-			lineCount++;
-		}
-		if (pos < src.size()) {
-			m_text.drawText("  ...", textX, textY, 0.55f, {0.5f, 0.5f, 0.5f, 0.7f}, aspect);
-		}
-	}
-
-	// Close hint
-	// [E] key opens code editor
-	if (glfwGetKey(m_window.handle(), GLFW_KEY_E) == GLFW_PRESS && !behaviorInfo.sourceCode.empty()) {
-		m_codeEditor.open(eid, behaviorInfo.sourceCode, target->goalText);
-		m_state = GameState::CODE_EDITOR;
-	}
-
-	m_text.drawText("[ESC] Close    [E] Edit Behavior", px + 0.03f, py + 0.02f,
-	                0.55f, {0.6f, 0.6f, 0.6f, 0.8f}, aspect);
 }
 
 // ============================================================
@@ -1785,10 +2098,10 @@ void Game::updateCodeEditor(float dt, float aspect) {
 
 	m_globalTime += dt;
 
-	// Render world in background
+	// Render 3D world in background (skip ImGui — code editor has its own)
 	m_worldTime += m_daySpeed * dt;
 	m_renderer.setTimeOfDay(m_worldTime);
-	renderPlaying(dt, aspect);
+	renderPlaying(dt, aspect, true);
 
 	// Render code editor on top
 	m_codeEditor.render(m_text, aspect, m_globalTime);

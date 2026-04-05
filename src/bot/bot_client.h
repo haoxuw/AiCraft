@@ -202,6 +202,8 @@ private:
 				ent->goalText = es.goalText;
 				if (def->isLiving())
 					ent->setProp(Prop::HP, es.hp);
+				for (auto& [k, v] : es.stringProps)
+					ent->setProp(k, v);
 				m_entities[es.id] = std::move(ent);
 
 				// Auto-assign if this entity has a BehaviorId and we're supposed to control it
@@ -216,6 +218,8 @@ private:
 				e.goalText = es.goalText;
 				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);
+				for (auto& [k, v] : es.stringProps)
+					e.setProp(k, v);
 			}
 			break;
 		}

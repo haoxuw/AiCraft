@@ -41,27 +41,47 @@ class BehaviorFuncRegistry {
 public:
 	static const std::vector<BehaviorFunc>& conditions() {
 		static const std::vector<BehaviorFunc> c = {
-			{"is_day",        "Is Day",          false, ""},
-			{"is_night",      "Is Night",        false, ""},
-			{"threatened",    "Threatened",      false, ""},
-			{"hp_low",        "HP Low (<30%)",   false, ""},
-			{"see_entity",    "See Entity",      true,  "entity type (e.g. player)"},
-			{"near_block",    "Near Block",      true,  "block type (e.g. wood)"},
-			{"random_chance", "Random %",        true,  "percent (0-100)"},
+			// Time
+			{"is_day",          "Is Day",              false, ""},
+			{"is_night",        "Is Night",            false, ""},
+			{"is_dusk",         "Is Dusk",             false, ""},
+			// Threats & awareness
+			{"threatened",      "Threatened",          false, ""},
+			{"startled",        "Just Startled",       false, ""},
+			{"hp_low",          "HP Low (<30%)",       false, ""},
+			{"see_entity",      "See Entity",          true,  "entity type (e.g. player)"},
+			{"near_block",      "Near Block",          true,  "block type (e.g. wood)"},
+			// Social / spatial
+			{"far_from_flock",  "Far From Flock",      false, ""},
+			{"near_water",      "Near Water",          false, ""},
+			// Randomness
+			{"random_chance",   "Random %",            true,  "percent (0-100)"},
 		};
 		return c;
 	}
 
 	static const std::vector<BehaviorFunc>& actions() {
 		static const std::vector<BehaviorFunc> a = {
-			{"idle",           "Stand Still",   false, ""},
-			{"wander",         "Wander",        false, ""},
-			{"follow_nearest", "Follow",        true,  "entity type (e.g. player)"},
-			{"flee_nearest",   "Flee From",     true,  "entity type (e.g. player)"},
-			{"find_block",     "Go to Block",   true,  "block type (e.g. wood)"},
-			{"break_block",    "Break Block",   true,  "block type (e.g. wood)"},
-			{"attack_nearest", "Attack",        true,  "entity type (e.g. chicken)"},
-		{"drop_item",      "Drop Item",     true,  "item type (e.g. egg)"},
+			// Basic
+			{"idle",           "Stand Still",      false, ""},
+			{"wander",         "Wander",           false, ""},
+			// Entity targeting
+			{"follow_nearest", "Follow",           true,  "entity type (e.g. player)"},
+			{"flee_nearest",   "Flee From",        true,  "entity type (e.g. player)"},
+			{"follow_player",  "Follow Player",    false, ""},
+			{"attack_nearest", "Attack",           true,  "entity type (e.g. chicken)"},
+			// Block targeting
+			{"find_block",     "Go to Block",      true,  "block type (e.g. wood)"},
+			{"break_block",    "Break Block",      true,  "block type (e.g. wood)"},
+			// Items
+			{"drop_item",      "Drop Item",        true,  "item type (e.g. egg)"},
+			// Activities
+			{"graze",          "Graze",            false, ""},
+			{"nap",            "Nap",              false, ""},
+			{"seek_roost",     "Seek Roost",       false, ""},
+			{"seek_water",     "Seek Water",       false, ""},
+			{"socialize",      "Socialize",        false, ""},
+			{"patrol",         "Patrol",           false, ""},
 		};
 		return a;
 	}
@@ -141,6 +161,42 @@ private:
 
 		if (fn.id == "idle")    return p + "return Idle()\n";
 		if (fn.id == "wander")  return p + "return Wander()\n";
+
+		// Activities (Idle with goal text)
+		if (fn.id == "graze")
+			return p + "self[\"goal\"] = \"Grazing\"\n" + p + "return Idle()\n";
+		if (fn.id == "nap")
+			return p + "self[\"goal\"] = \"Napping zzz\"\n" + p + "return Idle()\n";
+		if (fn.id == "patrol")
+			return p + "self[\"goal\"] = \"Patrolling\"\n" + p + "return Wander(speed=self.get(\"walk_speed\", 2) * 0.5)\n";
+		if (fn.id == "socialize") {
+			return p + "for e in world[\"nearby\"]:\n" +
+			       p + "    if e[\"type_id\"] == self[\"type_id\"] and e[\"id\"] != self[\"id\"]:\n" +
+			       p + "        self[\"goal\"] = \"Chatting\"\n" +
+			       p + "        return Follow(e[\"id\"], speed=2.0, min_distance=2.0)\n" +
+			       p + "return Idle()\n";
+		}
+		if (fn.id == "follow_player") {
+			return p + "for e in world[\"nearby\"]:\n" +
+			       p + "    if e[\"category\"] == \"player\":\n" +
+			       p + "        self[\"goal\"] = \"Following player\"\n" +
+			       p + "        return Follow(e[\"id\"], speed=3.0, min_distance=2.5)\n" +
+			       p + "return Wander()\n";
+		}
+		if (fn.id == "seek_roost") {
+			return p + "for b in world[\"blocks\"]:\n" +
+			       p + "    if b[\"type\"] in (\"base:wood\", \"base:fence\", \"base:planks\") and b[\"y\"] > self[\"y\"] + 1.5:\n" +
+			       p + "        self[\"goal\"] = \"Seeking roost\"\n" +
+			       p + "        return MoveTo(b[\"x\"] + 0.5, b[\"y\"] + 1.0, b[\"z\"] + 0.5)\n" +
+			       p + "return Idle()\n";
+		}
+		if (fn.id == "seek_water") {
+			return p + "for b in world[\"blocks\"]:\n" +
+			       p + "    if b[\"type\"] == \"base:water\":\n" +
+			       p + "        self[\"goal\"] = \"Heading to water\"\n" +
+			       p + "        return MoveTo(b[\"x\"] + 0.5, b[\"y\"] + 1, b[\"z\"] + 0.5)\n" +
+			       p + "return Wander()\n";
+		}
 		if (fn.id == "drop_item") {
 			std::string item = expr.param.empty() ? "egg" : expr.param;
 			return p + "return DropItem(\"base:" + item + "\", 1)\n";
@@ -179,12 +235,19 @@ private:
 	static std::string compileCondition(const BehaviorExpr& expr) {
 		auto& fn = BehaviorFuncRegistry::condition(expr.funcIndex);
 
+		// Time conditions
 		if (fn.id == "is_day")
 			return "0.25 <= world.get(\"time\", 0.5) <= 0.75";
 		if (fn.id == "is_night")
 			return "(world.get(\"time\", 0.5) > 0.75 or world.get(\"time\", 0.5) < 0.25)";
+		if (fn.id == "is_dusk")
+			return "(0.65 < world.get(\"time\", 0.5) < 0.80)";
+
+		// Threat / awareness
 		if (fn.id == "threatened")
-			return "any(e[\"category\"] == \"player\" and e[\"distance\"] < 5.0 for e in world[\"nearby\"])";
+			return "any((e[\"category\"] == \"player\" or e[\"type_id\"] == \"base:cat\") and e[\"distance\"] < 5.0 for e in world[\"nearby\"])";
+		if (fn.id == "startled")
+			return "any((e[\"category\"] == \"player\" or e[\"type_id\"] == \"base:cat\") and e[\"distance\"] < 4.0 for e in world[\"nearby\"])";
 		if (fn.id == "hp_low")
 			return "self.get(\"hp\", 10) < self.get(\"max_hp\", 10) * 0.3";
 		if (fn.id == "see_entity") {
@@ -195,6 +258,14 @@ private:
 			std::string type = expr.param.empty() ? "wood" : expr.param;
 			return "any(b[\"type\"] == \"base:" + type + "\" for b in world[\"blocks\"])";
 		}
+
+		// Social / spatial
+		if (fn.id == "far_from_flock")
+			return "all(e[\"distance\"] > 4 for e in world[\"nearby\"] if e[\"type_id\"] == self[\"type_id\"] and e[\"id\"] != self[\"id\"])";
+		if (fn.id == "near_water")
+			return "any(b[\"type\"] == \"base:water\" and b[\"distance\"] < 15 for b in world[\"blocks\"])";
+
+		// Randomness
 		if (fn.id == "random_chance") {
 			std::string pct = expr.param.empty() ? "50" : expr.param;
 			return "_rng.random() * 100 < " + pct;

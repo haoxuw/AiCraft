@@ -3,6 +3,7 @@
 #include "client/types.h"
 #include "client/imgui_menu.h"
 #include "client/code_editor.h"
+#include "client/behavior_editor.h"
 #include "client/equipment_ui.h"
 #include "shared/artifact_registry.h"
 #include "shared/server_interface.h"
@@ -56,7 +57,7 @@ private:
 
 	// Playing state
 	void updatePlaying(float dt, float aspect);
-	void renderPlaying(float dt, float aspect);
+	void renderPlaying(float dt, float aspect, bool skipImGui = false);
 
 	// Entity inspection overlay
 	void updateEntityInspect(float dt, float aspect);
@@ -86,6 +87,7 @@ private:
 
 	GameplayController          m_gameplay;
 	CodeEditor                  m_codeEditor;
+	BehaviorEditorState         m_inspectEditor; // visual behavior tree for entity inspect
 	EquipmentUI                 m_equipUI;
 	BehaviorStore               m_behaviorStore;
 	ImGuiMenu                   m_imguiMenu;
@@ -175,6 +177,7 @@ private:
 	float m_fpSwingTimer = 0;
 	float m_fpSwingDuration = 0.25f;
 	bool  m_fpSwingActive = false;
+	float m_dropCooldown = 0;     // prevents auto-pickup right after dropping
 	std::vector<PickupAnim> m_pickupAnims;
 
 	// Floating text (damage numbers, pickup notifications, Minecraft Dungeons style)

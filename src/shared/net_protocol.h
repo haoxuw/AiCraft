@@ -36,6 +36,7 @@ enum MsgType : uint32_t {
 	C_HELLO      = 0x0003,  // GUI client identifies itself (UUID + name)
 	C_BOT_HELLO  = 0x0004,  // Bot client identifies itself (name + entity ID)
 	C_RELOAD_BEHAVIOR = 0x0005, // Request behavior reload (entityId + sourceCode)
+	C_HOTBAR     = 0x0006,  // Client reassigned a hotbar slot: u32 slot + string itemId
 
 	// Server → Client
 	S_WELCOME    = 0x1001,
@@ -44,7 +45,7 @@ enum MsgType : uint32_t {
 	S_REMOVE     = 0x1004,
 	S_TIME       = 0x1005,
 	S_BLOCK      = 0x1006,  // single block change (x,y,z,blockId)
-	S_INVENTORY  = 0x1007,  // full inventory sync (entityId + item list)
+	S_INVENTORY  = 0x1007,  // full inventory sync (entityId + items + 10 hotbar slots)
 	S_ASSIGN_ENTITY  = 0x1008, // assign entity to bot (entityId + behaviorId)
 	S_REVOKE_ENTITY  = 0x1009, // revoke entity control (entityId)
 	S_RELOAD_BEHAVIOR = 0x100A, // reload behavior (entityId + sourceCode)
@@ -168,6 +169,8 @@ struct EntityState {
 	std::string characterSkin; // visual override (e.g., "base:knight")
 	int hp;
 	int maxHp;
+	// String properties (e.g., ItemType for item entities, BehaviorId for NPCs)
+	std::vector<std::pair<std::string, std::string>> stringProps;
 };
 
 inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
@@ -181,6 +184,11 @@ inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
 	buf.writeString(e.characterSkin);
 	buf.writeI32(e.hp);
 	buf.writeI32(e.maxHp);
+	buf.writeU32((uint32_t)e.stringProps.size());
+	for (auto& [k, v] : e.stringProps) {
+		buf.writeString(k);
+		buf.writeString(v);
+	}
 }
 
 inline EntityState deserializeEntityState(ReadBuffer& buf) {
@@ -195,6 +203,12 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	e.characterSkin = buf.readString();
 	e.hp = buf.readI32();
 	e.maxHp = buf.readI32();
+	uint32_t propCount = buf.readU32();
+	for (uint32_t i = 0; i < propCount && buf.hasMore(); i++) {
+		std::string k = buf.readString();
+		std::string v = buf.readString();
+		e.stringProps.push_back({k, v});
+	}
 	return e;
 }
 

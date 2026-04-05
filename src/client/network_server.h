@@ -201,6 +201,14 @@ public:
 		net::sendMessage(m_tcp.fd(), net::C_ACTION, buf);
 	}
 
+	void sendHotbarSlot(int slot, const std::string& itemId) override {
+		if (!m_connected) return;
+		net::WriteBuffer wb;
+		wb.writeU32((uint32_t)slot);
+		wb.writeString(itemId);
+		net::sendMessage(m_tcp.fd(), net::C_HOTBAR, wb);
+	}
+
 	// --- State access ---
 	ChunkSource& chunks() override { return m_chunks; }
 	EntityId localPlayerId() const override { return m_localPlayerId; }
@@ -275,11 +283,29 @@ private:
 				ent->goalText = es.goalText;
 				if (!es.characterSkin.empty())
 					ent->setProp("character_skin", es.characterSkin);
+				// Apply string properties (ItemType, BehaviorId, etc.)
+				for (auto& [k, v] : es.stringProps)
+					ent->setProp(k, v);
 				if (es.id == m_localPlayerId)
 					printf("[Net] Local player entity created: type=%s pos=(%.1f,%.1f,%.1f)\n",
 						es.typeId.c_str(), es.position.x, es.position.y, es.position.z);
 				if (def->isLiving())
 					ent->setProp(Prop::HP, es.hp);
+				// Apply any inventory that arrived before this entity
+				auto pit = m_pendingInventory.find(es.id);
+				if (pit != m_pendingInventory.end() && ent->inventory) {
+					auto& inv = *ent->inventory;
+					inv.clear();
+					for (auto& [iid, amt] : pit->second.items)
+						inv.add(iid, amt);
+					bool hasHotbar = false;
+					for (int i = 0; i < (int)pit->second.hotbar.size(); i++) {
+						inv.setHotbar(i, pit->second.hotbar[i]);
+						if (!pit->second.hotbar[i].empty()) hasHotbar = true;
+					}
+					if (!hasHotbar) inv.autoPopulateHotbar();
+					m_pendingInventory.erase(pit);
+				}
 				m_entities[es.id] = std::move(ent);
 				// Initialize interpolation target
 				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0};
@@ -297,6 +323,9 @@ private:
 				e.goalText = es.goalText;
 				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);
+				// Sync string properties
+				for (auto& [k, v] : es.stringProps)
+					e.setProp(k, v);
 			}
 			break;
 		}
@@ -339,17 +368,35 @@ private:
 		}
 		case net::S_INVENTORY: {
 			EntityId id = rb.readU32();
+			// Always read the full payload first
+			uint32_t count = rb.readU32();
+			std::vector<std::pair<std::string,int>> items;
+			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
+				std::string itemId = rb.readString();
+				int amount = rb.readI32();
+				items.push_back({itemId, amount});
+			}
+			std::vector<std::string> hotbar;
+			for (int i = 0; i < Inventory::HOTBAR_SLOTS && rb.hasMore(); i++)
+				hotbar.push_back(rb.readString());
+
+			auto applyInv = [&](Inventory& inv) {
+				inv.clear();
+				for (auto& [iid, amt] : items) inv.add(iid, amt);
+				bool hasHotbar = false;
+				for (int i = 0; i < (int)hotbar.size(); i++) {
+					inv.setHotbar(i, hotbar[i]);
+					if (!hotbar[i].empty()) hasHotbar = true;
+				}
+				if (!hasHotbar) inv.autoPopulateHotbar();
+			};
+
 			auto it = m_entities.find(id);
 			if (it != m_entities.end() && it->second->inventory) {
-				auto& inv = *it->second->inventory;
-				inv.clear();
-				uint32_t count = rb.readU32();
-				for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
-					std::string itemId = rb.readString();
-					int amount = rb.readI32();
-					inv.add(itemId, amount);
-				}
-				inv.autoPopulateHotbar();
+				applyInv(*it->second->inventory);
+			} else {
+				// Entity not yet known — buffer for when S_ENTITY arrives
+				m_pendingInventory[id] = {std::move(items), std::move(hotbar)};
 			}
 			break;
 		}
@@ -406,6 +453,13 @@ private:
 		float age; // time since last server update
 	};
 	std::unordered_map<EntityId, InterpTarget> m_interpTargets;
+
+	// Pending inventory: arrived before entity — applied on first S_ENTITY
+	struct PendingInv {
+		std::vector<std::pair<std::string,int>> items;
+		std::vector<std::string> hotbar;
+	};
+	std::unordered_map<EntityId, PendingInv> m_pendingInventory;
 
 	BlockRegistry m_blocks;
 	ActionQueue m_actions;

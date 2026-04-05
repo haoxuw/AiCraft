@@ -45,17 +45,29 @@ public:
 		if (m_fbo) { glDeleteFramebuffers(1, &m_fbo); m_fbo = 0; }
 	}
 
-	// Get the cached icon texture for a model. Renders on first request.
-	// Returns 0 if the model doesn't exist or rendering fails.
+	// Get a slowly rotating icon. Re-renders periodically for animation.
 	GLuint getIcon(const std::string& key, const BoxModel& model) {
+		float now = m_globalTime;
 		auto it = m_cache.find(key);
-		if (it != m_cache.end()) return it->second;
+		auto timeIt = m_renderTime.find(key);
 
-		// Render the model to a new texture
-		GLuint tex = renderToTexture(model);
-		m_cache[key] = tex;
-		return tex;
+		// Re-render every 0.05s for smooth rotation (20 FPS icons)
+		bool needsRender = (it == m_cache.end());
+		if (!needsRender && timeIt != m_renderTime.end() && (now - timeIt->second) > 0.05f)
+			needsRender = true;
+
+		if (needsRender) {
+			if (it != m_cache.end()) glDeleteTextures(1, &it->second);
+			float yaw = now * 30.0f; // 30 degrees per second
+			GLuint tex = renderToTexture(model, yaw);
+			m_cache[key] = tex;
+			m_renderTime[key] = now;
+			return tex;
+		}
+		return it->second;
 	}
+
+	void setTime(float t) { m_globalTime = t; }
 
 	// Invalidate a specific icon (e.g., after model reload)
 	void invalidate(const std::string& key) {
@@ -75,7 +87,7 @@ public:
 	static constexpr int ICON_SIZE = 96;
 
 private:
-	GLuint renderToTexture(const BoxModel& model) {
+	GLuint renderToTexture(const BoxModel& model, float yaw = -30.0f) {
 		if (!m_fbo || !m_shader || !m_renderer) return 0;
 
 		// Create texture for this icon
@@ -118,7 +130,7 @@ private:
 
 		// Draw model with slight rotation for 3/4 view
 		AnimState anim = {0, 0, 0};
-		m_renderer->draw(model, vp, glm::vec3(0, 0, 0), -30.0f, anim);
+		m_renderer->draw(model, vp, glm::vec3(0, 0, 0), yaw, anim);
 
 		// Restore GL state
 		glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
@@ -131,7 +143,9 @@ private:
 	ModelRenderer* m_renderer = nullptr;
 	GLuint m_fbo = 0;
 	GLuint m_depthRbo = 0;
+	float m_globalTime = 0;
 	std::unordered_map<std::string, GLuint> m_cache;
+	std::unordered_map<std::string, float> m_renderTime; // last render time per key
 };
 
 } // namespace agentica

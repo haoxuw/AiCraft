@@ -243,6 +243,8 @@ int main(int argc, char** argv) {
 			wb.writeString(itemId);
 			wb.writeI32(count);
 		}
+		for (int i = 0; i < agentica::Inventory::HOTBAR_SLOTS; i++)
+			wb.writeString(inv.hotbar(i));
 		clients.broadcastToAll(agentica::net::S_INVENTORY, wb);
 	};
 	server.setCallbacks(cbs);
