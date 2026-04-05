@@ -99,20 +99,28 @@ private:
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-		// Save GL state
+		// Save ALL GL state that we modify
 		GLint prevFbo, prevViewport[4];
+		GLfloat prevClearColor[4];
+		GLboolean prevDepthTest, prevBlend;
+		GLint prevDepthFunc;
 		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
 		glGetIntegerv(GL_VIEWPORT, prevViewport);
+		glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClearColor);
+		prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
+		prevBlend = glIsEnabled(GL_BLEND);
+		glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
 
 		// Bind FBO with this texture as color attachment
 		glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
 		glViewport(0, 0, ICON_SIZE, ICON_SIZE);
 
-		// Dark warm background matching inventory cell bg
 		glClearColor(0.08f, 0.07f, 0.05f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LESS);
+		glDisable(GL_BLEND);
 
 		// Camera: look at the model from an isometric-ish angle
 		float modelH = model.totalHeight * model.modelScale;
@@ -128,13 +136,16 @@ private:
 		);
 		glm::mat4 vp = proj * view;
 
-		// Draw model with slight rotation for 3/4 view
 		AnimState anim = {0, 0, 0};
 		m_renderer->draw(model, vp, glm::vec3(0, 0, 0), yaw, anim);
 
-		// Restore GL state
+		// Restore ALL GL state
 		glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
 		glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+		glClearColor(prevClearColor[0], prevClearColor[1], prevClearColor[2], prevClearColor[3]);
+		if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+		if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+		glDepthFunc(prevDepthFunc);
 
 		return tex;
 	}
