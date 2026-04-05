@@ -394,23 +394,21 @@ void Game::updateAndRender(float dt, float aspect) {
 		m_ui.endFrame();
 		m_autoScreenTimer += dt;
 		if (!m_autoScreenDone && m_autoScreenTimer > 3.0f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_auto_screenshot.ppm");
+			saveScreenshot();
 			m_autoScreenDone = true;
 		}
 
-		// Demo mode: capture Play page → Handbook → enter game
+		// Demo mode: capture menu pages → enter game
 		if (m_demoMode && m_autoScreenTimer > 0.5f && m_autoScreenTimer < 0.6f) {
-			// Capture Play page (world list + create new)
 			m_imguiMenu.setPage(0);
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_menu_play.ppm");
+			saveScreenshot(); // menu
 		}
 		if (m_demoMode && m_autoScreenTimer > 1.0f && m_autoScreenTimer < 1.1f) {
-			// Switch to handbook, show pig with 3D preview
 			m_imguiMenu.setPage(1);
 			m_imguiMenu.handbook().selectEntry("base:pig");
 		}
 		if (m_demoMode && m_autoScreenTimer > 1.8f && m_autoScreenTimer < 1.9f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_handbook_creature.ppm");
+			saveScreenshot(); // handbook
 		}
 		if (m_demoMode && m_autoScreenTimer > 2.2f) {
 			action.type = MenuAction::EnterGame;
@@ -728,6 +726,15 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_connectTimer = 0;
 
 	if (m_controls.pressed(Action::MenuBack)) {
+		// ESC closes overlays first, then shows pause menu
+		if (m_equipUI.isOpen()) {
+			m_equipUI.close();
+			bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+			                    m_camera.mode == CameraMode::ThirdPerson);
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+				needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+			return;
+		}
 		m_preMenuState = m_state;
 		m_state = GameState::PAUSED;
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -1780,49 +1787,45 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 
 	m_ui.endFrame();
 
-	// Auto screenshot
+	// Auto screenshot (3 seconds after game start)
 	m_autoScreenTimer += dt;
 	if (!m_autoScreenDone && m_autoScreenTimer > 3.0f) {
-		writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_auto_screenshot.ppm");
+		saveScreenshot();
 		m_autoScreenDone = true;
 	}
 
-	// Demo mode
+	// Demo mode: cycle through camera views, taking screenshots
 	if (m_demoMode && m_state != GameState::MENU && m_demoStep >= 1) {
 		m_demoTimer += dt;
 		if (m_demoStep == 1 && m_demoTimer > 2.0f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_1_fps.ppm");
+			saveScreenshot(); // FPS view
 			m_camera.cycleMode();
 			m_camera.orbitYaw = m_camera.player.yaw + 30;
 			m_camera.orbitPitch = 25;
 			m_demoStep = 2; m_demoTimer = 0;
 		}
 		if (m_demoStep == 2 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_2_3rd.ppm");
-			// Open inventory for screenshot
-			if (pe->inventory) {
-				pe->inventory->equip(WearSlot::Offhand, "base:shield");
-			}
+			saveScreenshot(); // TPS view
 			m_equipUI.toggle();
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			m_demoStep = 25; m_demoTimer = 0;
 		}
 		if (m_demoStep == 25 && m_demoTimer > 1.0f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_25_inventory.ppm");
+			saveScreenshot(); // Inventory view
 			m_equipUI.close();
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 			m_camera.cycleMode();
 			m_demoStep = 3; m_demoTimer = 0;
 		}
 		if (m_demoStep == 3 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_3_god.ppm");
+			saveScreenshot(); // RPG view
 			m_camera.cycleMode();
 			m_camera.rtsCenter = pe->position;
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			m_demoStep = 4; m_demoTimer = 0;
 		}
 		if (m_demoStep == 4 && m_demoTimer > 1.5f) {
-			writeScreenshot(m_window.width(), m_window.height(), "/tmp/agentica_view_4_rts.ppm");
+			saveScreenshot(); // RTS view
 			printf("Demo complete.\n");
 			glfwSetWindowShouldClose(m_window.handle(), true);
 			m_demoStep = 99;
@@ -2204,32 +2207,24 @@ void Game::updatePaused(float dt, float aspect) {
 	}
 	ImGui::Spacing();
 
-	// Options
-	if (ImGui::CollapsingHeader("Options...")) {
-		ImGui::SliderFloat("FOV", &m_camera.fov, 50.0f, 120.0f, "%.0f");
-		ImGui::SliderInt("Render Distance", &m_renderDistance, 4, 16);
-		if (ImGui::Checkbox("VSync", &m_vsync))
-			glfwSwapInterval(m_vsync ? 1 : 0);
-		ImGui::Checkbox("Show AI Goal Bubbles", &m_showGoalBubbles);
-		ImGui::Spacing();
-		float master = m_audio.masterVolume();
-		if (ImGui::SliderFloat("Master Volume", &master, 0.0f, 1.0f, "%.0f%%"))
-			m_audio.setMasterVolume(master);
-		float music = m_audio.musicVolume();
-		if (ImGui::SliderFloat("Music Volume", &music, 0.0f, 1.0f, "%.0f%%"))
-			m_audio.setMusicVolume(music);
+	// Go to Main Menu (keeps game running, can resume)
+	if (styledButton("Go to Main Menu",
+		{0.40f, 0.42f, 0.48f, 1}, {0.50f, 0.52f, 0.58f, 1}, {0.35f, 0.37f, 0.42f, 1},
+		{1, 1, 1, 1})) {
+		m_state = GameState::MENU;
+		m_imguiMenu.setGameRunning(true); // game still running, can resume
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 	}
+	ImGui::Spacing();
 
-	ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-	// Disconnect
-	if (styledButton("Disconnect",
-		{0.72f, 0.20f, 0.20f, 1}, {0.82f, 0.28f, 0.28f, 1}, {0.62f, 0.15f, 0.15f, 1},
+	// Quit Game
+	if (styledButton("Quit Game",
+		{0.65f, 0.20f, 0.20f, 1}, {0.75f, 0.28f, 0.28f, 1}, {0.55f, 0.15f, 0.15f, 1},
 		{1, 1, 1, 1})) {
 		m_state = GameState::MENU;
 		m_imguiMenu.setGameRunning(false);
 		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-		m_agentMgr.stopAll(); // stop server + bot child processes
+		m_agentMgr.stopAll();
 		m_server->disconnect();
 		m_server.reset();
 	}
