@@ -396,6 +396,7 @@ private:
 	//   tryStepUp at sh=1.0 puts player head at y+3.5 which overlaps ceiling.
 	void generateHouse(const GenCtx& ctx, int seed,
 	                   BlockId wallB, BlockId roofB, BlockId floorB, BlockId stairB,
+	                   BlockId glassB, BlockId doorB,
 	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
 		int sh = m_py.storyHeight, dh = m_py.doorHeight, wr = m_py.windowRow;
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
@@ -454,7 +455,10 @@ private:
 					}
 
 					BlockId bid;
-					if (door || window || stairwellOpening) bid = BLOCK_AIR;
+					if (stairwellOpening)      bid = BLOCK_AIR;
+					else if (door && dy < 2) bid = doorB;
+					else if (door)             bid = BLOCK_AIR;
+					else if (window)           bid = glassB;
 					else if (stairStep)                      bid = stairB;
 					else if (intermFloor)                    bid = floorB;
 					else if (dy == totalH-1)                 bid = roofB;
@@ -573,7 +577,11 @@ private:
 		BlockId bedB    = blocks.getId(BlockType::Bed);
 		BlockId chestB  = blocks.getId(BlockType::Chest);
 		BlockId stairB  = blocks.getId(BlockType::Stair);
-		if (stairB == BLOCK_AIR) stairB = floorB;  // fallback if stair not registered
+		BlockId glassB  = blocks.getId(BlockType::Glass);
+		BlockId doorB   = blocks.getId(BlockType::Door);
+		if (stairB == BLOCK_AIR) stairB = floorB;
+		if (glassB == BLOCK_AIR) glassB = BLOCK_AIR;  // windows become open holes
+		if (doorB  == BLOCK_AIR) doorB  = BLOCK_AIR;  // doors become open holes
 
 		for (int hi = 0; hi < (int)m_py.houses.size(); hi++) {
 			const auto& h = m_py.houses[hi];
@@ -583,7 +591,7 @@ private:
 			if (hWallB == BLOCK_AIR) hWallB = wallB;
 			if (hRoofB == BLOCK_AIR) hRoofB = roofB;
 
-			generateHouse(ctx, seed, hWallB, hRoofB, floorB, stairB, h, vc);
+			generateHouse(ctx, seed, hWallB, hRoofB, floorB, stairB, glassB, doorB, h, vc);
 			generatePorch(ctx, seed, pathB, hWallB, h, vc);
 			generateFurniture(ctx, seed, woodB, planksB, bedB, chestB, h, vc, hi == 0);
 		}

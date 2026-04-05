@@ -156,6 +156,50 @@ void GameServer::resolveActions(float dt) {
 			break;
 		}
 
+		case ActionProposal::InteractBlock: {
+			auto& bp = p.blockPos;
+			Entity* actor = m_world->entities.get(p.actorId);
+			if (actor && glm::length(glm::vec3(bp) - actor->position) > 6.0f) break;
+
+			BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
+			const BlockDef& bdef = m_world->blocks.get(bid);
+			bool isDoor     = (bdef.string_id == BlockType::Door);
+			bool isDoorOpen = (bdef.string_id == BlockType::DoorOpen);
+			if (!isDoor && !isDoorOpen) break;
+
+			BlockId closedId = m_world->blocks.getId(BlockType::Door);
+			BlockId openId   = m_world->blocks.getId(BlockType::DoorOpen);
+			BlockId newId    = isDoor ? openId : closedId;
+
+			// Helper: set a block and notify chunk dirty
+			auto setBlock = [&](int x, int y, int z, BlockId id) {
+				ChunkPos cp = worldToChunk(x, y, z);
+				Chunk* c = m_world->getChunk(cp);
+				if (!c) return;
+				c->set(((x%16)+16)%16, ((y%16)+16)%16, ((z%16)+16)%16, id);
+				glm::ivec3 pos{x, y, z};
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, id);
+				if (m_callbacks.onChunkDirty)  m_callbacks.onChunkDirty(cp);
+			};
+
+			// Toggle clicked block
+			setBlock(bp.x, bp.y, bp.z, newId);
+
+			// Scan upward for connected door blocks (2-block tall door)
+			for (int dy = 1; dy <= 3; dy++) {
+				BlockId above = m_world->getBlock(bp.x, bp.y+dy, bp.z);
+				if (above == closedId || above == openId) setBlock(bp.x, bp.y+dy, bp.z, newId);
+				else break;
+			}
+			// Scan downward in case player clicked the upper block
+			for (int dy = 1; dy <= 3; dy++) {
+				BlockId below = m_world->getBlock(bp.x, bp.y-dy, bp.z);
+				if (below == closedId || below == openId) setBlock(bp.x, bp.y-dy, bp.z, newId);
+				else break;
+			}
+			break;
+		}
+
 		case ActionProposal::IgniteTNT: {
 			auto& bp = p.blockPos;
 			BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);

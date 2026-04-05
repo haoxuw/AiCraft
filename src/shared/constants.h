@@ -49,6 +49,9 @@ namespace BlockType {
 	constexpr const char* Fence       = "base:fence";
 	constexpr const char* Farmland    = "base:farmland";
 	constexpr const char* Stair       = "base:stair";
+	constexpr const char* Glass       = "base:glass";
+	constexpr const char* Door        = "base:door";
+	constexpr const char* DoorOpen    = "base:door_open";
 }
 
 // ============================================================

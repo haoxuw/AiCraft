@@ -44,6 +44,8 @@ struct ActionProposal {
 		DropItem,       // Q key or behavior: drop item at actor's feet
 		// Farming/active blocks
 		GrowCrop,       // advance growth at blockPos
+		// Block interaction (right-click on interactive blocks)
+		InteractBlock,  // toggle door open/closed, press button, etc.
 		// Behavior hot-swap (GUI editor → server → bot)
 		ReloadBehavior, // reload Python behavior for actorId (source in blockType)
 	};

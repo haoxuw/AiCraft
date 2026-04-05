@@ -14,6 +14,15 @@ constexpr BlockId BLOCK_AIR = 0;
 
 enum class BlockBehavior { Passive, Active };
 
+// Visual mesh shape for a block. Cube = full 1x1x1 box (default).
+// Non-cube shapes are emitted as explicit box geometry in the mesher.
+enum class MeshType {
+	Cube,      // full unit cube (default)
+	Stair,     // bottom slab (0..0.5 full) + back step (0.5..1, z=0.5..1)
+	Door,      // thin vertical panel on -Z face (closed, 0.1 thick)
+	DoorOpen,  // thin vertical panel on -X face (open, rotated 90°)
+};
+
 struct BlockDef {
 	std::string string_id;
 	std::string display_name;
@@ -44,10 +53,10 @@ struct BlockDef {
 
 	// Physics collision height in block units.
 	// 1.0 = full block (default), 0.5 = half-height (stairs/slabs).
-	// Blocks vs items: everything in BlockRegistry is a placeable block.
-	// Non-placeable pure items (eggs, potions) live only in ItemId namespace
-	// and are never registered here.
 	float collision_height = 1.0f;
+
+	// Visual mesh shape (does not affect physics).
+	MeshType mesh_type = MeshType::Cube;
 };
 
 struct BlockState {

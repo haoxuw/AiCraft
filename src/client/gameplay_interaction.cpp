@@ -146,22 +146,37 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 			}
 		}
 
-		// Right-click: place block (only if no entity is closer)
+		// Right-click: interact with block or place block (no entity closer)
 		bool entityCloser = m_entityHit && m_entityHit->distance < m_hit->distance;
 		if (controls.pressed(Action::PlaceBlock) && !entityCloser && m_breakCD <= 0) {
-			int slot = player.getProp<int>(Prop::SelectedSlot, 0);
-			const std::string& blockType = player.inventory->hotbar(slot);
-			if (!blockType.empty() && player.inventory->has(blockType)) {
+			auto& bp = m_hit->blockPos;
+			BlockId bid = chunks.getBlock(bp.x, bp.y, bp.z);
+			const std::string& blockStr = blocks.get(bid).string_id;
+
+			if (blockStr == BlockType::Door || blockStr == BlockType::DoorOpen) {
+				// Door interaction: toggle open/closed
 				ActionProposal p;
 				p.actorId = player.id();
-				p.type = ActionProposal::PlaceBlock;
-				p.blockPos = m_hit->placePos;
-				p.blockType = blockType;
+				p.type = ActionProposal::InteractBlock;
+				p.blockPos = bp;
 				server.sendAction(p);
-				m_breakCD = 0.25f;
-				m_placeEvent.happened = true;
-				m_placeEvent.pos = glm::vec3(m_hit->placePos) + glm::vec3(0.5f);
-				m_placeEvent.blockType = blockType;
+				m_breakCD = 0.3f;
+			} else {
+				// Place block from inventory
+				int slot = player.getProp<int>(Prop::SelectedSlot, 0);
+				const std::string& blockType = player.inventory->hotbar(slot);
+				if (!blockType.empty() && player.inventory->has(blockType)) {
+					ActionProposal p;
+					p.actorId = player.id();
+					p.type = ActionProposal::PlaceBlock;
+					p.blockPos = m_hit->placePos;
+					p.blockType = blockType;
+					server.sendAction(p);
+					m_breakCD = 0.25f;
+					m_placeEvent.happened = true;
+					m_placeEvent.pos = glm::vec3(m_hit->placePos) + glm::vec3(0.5f);
+					m_placeEvent.blockType = blockType;
+				}
 			}
 		}
 	}

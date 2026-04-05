@@ -122,6 +122,37 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 		return m_padded[idx];
 	};
 
+	// Emit all 6 faces of an axis-aligned box (no neighbor culling).
+	// Used for non-cube mesh types (stairs, doors) where partial geometry
+	// doesn't align with the 1x1x1 cell assumed by the cube face-cull check.
+	auto emitBox = [&](float x0, float y0, float z0,
+	                   float x1, float y1, float z1,
+	                   glm::vec3 cTop, glm::vec3 cSide) {
+		constexpr glm::vec3 norms[6] = {
+			{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}
+		};
+		// 4 verts per face, counterclockwise when viewed from outside
+		float vs[6][4][3] = {
+			{{x1,y0,z0},{x1,y1,z0},{x1,y1,z1},{x1,y0,z1}}, // +X
+			{{x0,y0,z1},{x0,y1,z1},{x0,y1,z0},{x0,y0,z0}}, // -X
+			{{x0,y1,z0},{x0,y1,z1},{x1,y1,z1},{x1,y1,z0}}, // +Y (top)
+			{{x0,y0,z1},{x0,y0,z0},{x1,y0,z0},{x1,y0,z1}}, // -Y (bottom)
+			{{x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x0,y0,z1}}, // +Z
+			{{x0,y0,z0},{x0,y1,z0},{x1,y1,z0},{x1,y0,z0}}, // -Z
+		};
+		for (int f = 0; f < 6; f++) {
+			glm::vec3 col = (f == 2) ? cTop : cSide;
+			float shade = BLOCK_FACE_SHADE[f];
+			auto emit = [&](int i) {
+				auto& v = vs[f][i];
+				verts.push_back({{v[0],v[1],v[2]}, col, norms[f], 1.0f, shade, 1.0f});
+			};
+			// Two triangles: 0,1,2 and 0,2,3
+			emit(0); emit(1); emit(2);
+			emit(0); emit(2); emit(3);
+		}
+	};
+
 	for (int ly = 0; ly < CHUNK_SIZE; ly++)
 	for (int lz = 0; lz < CHUNK_SIZE; lz++)
 	for (int lx = 0; lx < CHUNK_SIZE; lx++) {
@@ -129,9 +160,33 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 		if (block == BLOCK_AIR) continue;
 
 		const BlockDef& bdef = reg.get(block);
-		if (!bdef.solid) continue;
+		// Skip air-like blocks (non-solid cubes like water, leaves)
+		// but DO render non-solid blocks with special mesh types (open doors).
+		if (!bdef.solid && bdef.mesh_type == MeshType::Cube) continue;
 
 		int wx = ox + lx, wy = oy + ly, wz = oz + lz;
+		float fx = (float)wx, fy = (float)wy, fz = (float)wz;
+
+		// ── Non-cube mesh types ──────────────────────────────────
+		if (bdef.mesh_type != MeshType::Cube) {
+			if (bdef.mesh_type == MeshType::Stair) {
+				// Bottom slab: full width/depth, bottom half height
+				emitBox(fx, fy,       fz, fx+1, fy+0.5f, fz+1,
+				        bdef.color_top, bdef.color_side);
+				// Back step: full width, top half height, back half depth
+				emitBox(fx, fy+0.5f, fz+0.5f, fx+1, fy+1, fz+1,
+				        bdef.color_top, bdef.color_side);
+			} else if (bdef.mesh_type == MeshType::Door) {
+				// Closed door: thin panel flush with -Z face of the cell
+				emitBox(fx, fy, fz, fx+1, fy+1, fz+0.1f,
+				        bdef.color_top, bdef.color_side);
+			} else if (bdef.mesh_type == MeshType::DoorOpen) {
+				// Open door: thin panel flush with -X face of the cell
+				emitBox(fx, fy, fz, fx+0.1f, fy+1, fz+1,
+				        bdef.color_top, bdef.color_side);
+			}
+			continue; // skip the cube face loop below
+		}
 
 		for (int face = 0; face < 6; face++) {
 			int nlx = lx + FACE_DIRS[face].x;

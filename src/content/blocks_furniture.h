@@ -19,15 +19,29 @@ inline void registerFurnitureBlocks(BlockRegistry& reg) {
 		true,false, 0.2f,"","",1,0,
 		{}, "",SN::DigWood,SN::StepWood});
 
-	// Stair: half-height block (collision_height=0.5). Physics step-up carries
-	// entities smoothly up each step without requiring a full-block jump.
-	// Color: warm plank-wood to visually distinguish from wall/floor stone.
+	// Stair: half-height physics + stair-shaped visual (2-box mesh).
 	reg.registerBlock({BT::Stair, "Stair", CT::Crafted,
 		{0.68f,0.52f,0.30f},{0.60f,0.44f,0.24f},{0.60f,0.44f,0.24f},
 		true,false, 1.5f,TL::Axe,"",64,0,
 		{{GR::Choppy,2},{GR::Flammable,2}}, "",SN::DigWood,SN::StepWood,
 		BlockBehavior::Passive, {}, "",
-		0.5f});  // collision_height: occupies bottom half of cell only
+		0.5f, MeshType::Stair});
+
+	// Door (closed): solid thin panel on -Z face. Toggles open on interaction.
+	reg.registerBlock({BT::Door, "Door", CT::Crafted,
+		{0.60f,0.44f,0.24f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f},
+		true,false, 1.5f,TL::Axe,"",1,0,
+		{{GR::Choppy,2},{GR::Flammable,2}}, "",SN::DigWood,SN::StepWood,
+		BlockBehavior::Passive, {}, "",
+		1.0f, MeshType::Door});
+
+	// Door (open): non-solid thin panel on -X face. Drops door item when broken.
+	reg.registerBlock({BT::DoorOpen, "Door (Open)", CT::Crafted,
+		{0.60f,0.44f,0.24f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f},
+		false,false, 1.5f,"",BT::Door,1,0,
+		{{GR::Choppy,2},{GR::Flammable,2}}, "",SN::DigWood,SN::StepWood,
+		BlockBehavior::Passive, {}, "",
+		0.0f, MeshType::DoorOpen});
 }
 
 } // namespace agentica::builtin

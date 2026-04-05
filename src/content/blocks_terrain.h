@@ -64,6 +64,12 @@ inline void registerTerrainBlocks(BlockRegistry& reg) {
 		true,false, 0.6f,TL::Shovel,BT::Dirt,64,0,
 		{{GR::Crumbly,3},{GR::Soil,1}}, "",SN::DigDirt,SN::StepDirt});
 
+	// Glass (window block — solid so players can't walk through, light blue)
+	reg.registerBlock({BT::Glass, "Glass", CT::Crafted,
+		{0.62f,0.83f,0.88f},{0.58f,0.78f,0.84f},{0.62f,0.83f,0.88f},
+		true,true, 0.3f,"","",64,0,
+		{}, "","",""});
+
 	// Chest (storage block)
 	reg.registerBlock({BT::Chest, "Chest", CT::Crafted,
 		{0.55f,0.40f,0.20f},{0.50f,0.35f,0.18f},{0.45f,0.30f,0.15f},
