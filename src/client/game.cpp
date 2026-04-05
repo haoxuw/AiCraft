@@ -361,7 +361,7 @@ void Game::handleGlobalInput() {
 	prevComma = commaKey;
 
 	if (m_controls.pressed(Action::ToggleInventory)) {
-		m_showInventory = !m_showInventory;
+		
 		m_equipUI.toggle();
 		if (m_equipUI.isOpen())
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -735,7 +735,7 @@ void Game::updatePlaying(float dt, float aspect) {
 	}
 
 	// Tell gameplay if UI wants the cursor (inventory, ImGui, etc.)
-	m_gameplay.setUIWantsCursor(m_showInventory || m_equipUI.isOpen() || m_ui.wantsMouse());
+	m_gameplay.setUIWantsCursor(m_equipUI.isOpen() || m_ui.wantsMouse());
 
 	// Client-side: gather input → ActionProposals (works for local AND network)
 	float jumpVel = 10.5f; // tuned for gravity=32: reaches ~1.7 blocks
@@ -807,6 +807,7 @@ void Game::updatePlaying(float dt, float aspect) {
 	}
 	m_worldTime = m_server->worldTime();
 	m_renderer.setTimeOfDay(m_worldTime);
+	m_renderer.tick(dt);
 
 	// Update audio listener + background music
 	m_audio.setListener(m_camera.position, m_camera.front());
@@ -1483,7 +1484,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		aspect, m_state, selectedSlot,
 		pe->inventory ? *pe->inventory : emptyInv,
 		m_camera, srv.blockRegistry(), &srv.chunks(),
-		m_worldTime, m_currentFPS, m_showDebug, m_showInventory,
+		m_worldTime, m_currentFPS, m_showDebug, m_equipUI.isOpen(),
 		hit, m_gameplay.currentEntityHit(),
 		m_renderer.sunStrength(),
 		srv.entityCount(), m_particles.count(),
@@ -1775,105 +1776,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		ImGui::PopStyleVar(2);
 	}
 
-	// ── Backpack inventory panel (Tab to toggle) ──
-	if (m_showInventory && pe->inventory) {
-		float ww = (float)m_window.width(), wh = (float)m_window.height();
-		const float panW = 320.0f;
-		ImGui::SetNextWindowPos({ww - panW - 20.0f, 55.0f}, ImGuiCond_Always);
-		ImGui::SetNextWindowSize({panW, wh - 160.0f}, ImGuiCond_Always);
-		ImGui::PushStyleColor(ImGuiCol_WindowBg,      ImVec4(0.10f, 0.09f, 0.07f, 0.94f));
-		ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.22f, 0.18f, 0.10f, 1.00f));
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {10.0f, 10.0f});
-
-		if (ImGui::Begin("Backpack  [Tab]", &m_showInventory,
-			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-
-			Inventory& inv = *pe->inventory;
-			auto& blocks = m_server->blockRegistry();
-			auto items = inv.items();
-
-			ImGui::TextColored({0.65f, 0.58f, 0.38f, 1}, "Drag items to hotbar slots below");
-			ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-			if (items.empty()) {
-				ImGui::TextColored({0.5f, 0.5f, 0.5f, 1}, "Nothing here yet.");
-			}
-
-			const float iconSz = 44.0f, iconGap = 4.0f;
-			int cols = std::max(1, (int)(ImGui::GetContentRegionAvail().x / (iconSz + iconGap)));
-			int col = 0;
-			ImDrawList* wdl = ImGui::GetWindowDrawList();
-
-			for (auto& [itemId, count] : items) {
-				if (col > 0 && col < cols) ImGui::SameLine(0.0f, iconGap);
-				if (col >= cols) col = 0;
-
-				// Icon lookup
-				std::string mk = itemId;
-				auto mc = mk.find(':');
-				if (mc != std::string::npos) mk = mk.substr(mc + 1);
-				auto mit = m_models.find(mk);
-				GLuint icon = (mit != m_models.end()) ? m_iconCache.getIcon(mk, mit->second) : 0;
-
-				// Pretty name for tooltip
-				std::string dn = mk;
-				for (char& c : dn) if (c == '_') c = ' ';
-				if (!dn.empty()) dn[0] = (char)toupper((unsigned char)dn[0]);
-
-				ImGui::PushID(itemId.c_str());
-
-				// Slot button (invisible button + manual draw)
-				ImVec2 slotPos = ImGui::GetCursorScreenPos();
-				ImGui::InvisibleButton("##slot", {iconSz, iconSz});
-
-				// Slot background
-				bool hov = ImGui::IsItemHovered();
-				wdl->AddRectFilled(slotPos, {slotPos.x + iconSz, slotPos.y + iconSz},
-					hov ? IM_COL32(55,50,38,230) : IM_COL32(30,26,18,215), 4.0f);
-				wdl->AddRect(slotPos, {slotPos.x + iconSz, slotPos.y + iconSz},
-					IM_COL32(70,58,38,150), 4.0f, 0, 1.0f);
-
-				// Icon or color swatch
-				if (icon) {
-					wdl->AddImage((ImTextureID)(intptr_t)icon,
-						{slotPos.x+3, slotPos.y+3}, {slotPos.x+iconSz-3, slotPos.y+iconSz-3},
-						{0,1}, {1,0});
-				} else {
-					const BlockDef* bdef = blocks.find(itemId);
-					glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
-					wdl->AddRectFilled(
-						{slotPos.x+4, slotPos.y+4}, {slotPos.x+iconSz-4, slotPos.y+iconSz-4},
-						IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),220), 3.0f);
-				}
-
-				// Stack count (bottom-right)
-				if (count > 1) {
-					char cbuf[8]; snprintf(cbuf, sizeof(cbuf), "%d", count);
-					wdl->AddText({slotPos.x + iconSz - (float)strlen(cbuf)*7.5f - 2.0f,
-					              slotPos.y + iconSz - 16.0f},
-						IM_COL32(255,255,255,230), cbuf);
-				}
-
-				if (hov) ImGui::SetTooltip("%s  x%d", dn.c_str(), count);
-
-				// Drag source — pick up from backpack
-				if (ImGui::BeginDragDropSource()) {
-					struct DragSlot { char itemId[64]; int slot; };
-					DragSlot ds{}; ds.slot = -1;
-					snprintf(ds.itemId, sizeof(ds.itemId), "%s", itemId.c_str());
-					ImGui::SetDragDropPayload("INV_SLOT", &ds, sizeof(ds));
-					ImGui::Text("%s  x%d", dn.c_str(), count);
-					ImGui::EndDragDropSource();
-				}
-
-				col++;
-				ImGui::PopID();
-			}
-		}
-		ImGui::End();
-		ImGui::PopStyleColor(2);
-		ImGui::PopStyleVar();
-	}
+	// (Backpack panel removed — use [I] Equipment UI for all inventory management)
 
 	m_ui.endFrame();
 
@@ -1944,6 +1847,7 @@ void Game::updateEntityInspect(float dt, float aspect) {
 	m_globalTime += dt;
 	m_worldTime += m_daySpeed * dt;
 	m_renderer.setTimeOfDay(m_worldTime);
+	m_renderer.tick(dt);
 	renderPlaying(dt, aspect, true);
 
 	// Get inspected entity
@@ -2145,6 +2049,7 @@ void Game::updateCodeEditor(float dt, float aspect) {
 	// Render 3D world in background (skip ImGui — code editor has its own)
 	m_worldTime += m_daySpeed * dt;
 	m_renderer.setTimeOfDay(m_worldTime);
+	m_renderer.tick(dt);
 	renderPlaying(dt, aspect, true);
 
 	// Render code editor on top
@@ -2209,6 +2114,7 @@ void Game::updatePaused(float dt, float aspect) {
 		m_globalTime += dt;
 		m_worldTime = m_server->worldTime();
 		m_renderer.setTimeOfDay(m_worldTime);
+		m_renderer.tick(dt);
 		m_renderer.updateChunks(srv.chunks(), m_camera, m_renderDistance);
 		glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
 		m_renderer.render(m_camera, aspect, nullptr, 0, 7, {0,0}, false);

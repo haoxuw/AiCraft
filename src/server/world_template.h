@@ -232,7 +232,8 @@ public:
 			generateVillage(chunk, cpos, seed, wallB, roofB, floorB, pathB, vc, blocks);
 
 		// ── Spawn portal ──────────────────────────────────────────
-		generatePortal(chunk, cpos, seed, wallB, bStone, anchor);
+		BlockId portalB = blocks.getId(BlockType::Portal);
+		generatePortal(chunk, cpos, seed, wallB, bStone, portalB, anchor);
 	}
 
 private:
@@ -282,7 +283,7 @@ private:
 	// The 2-block-deep interior ensures the player (halfWidth ≈ 0.4) can
 	// never touch the back wall at spawn.  Physics step-up handles exit.
 	void generatePortal(Chunk& chunk, ChunkPos cpos, int seed,
-	                    BlockId wallB, BlockId stoneB, glm::vec2 anchor) {
+	                    BlockId wallB, BlockId stoneB, BlockId portalB, glm::vec2 anchor) {
 		int ox = cpos.x * CHUNK_SIZE;
 		int oy = cpos.y * CHUNK_SIZE;
 		int oz = cpos.z * CHUNK_SIZE;
@@ -353,6 +354,14 @@ private:
 			for (int dy = 1; dy <= 12; dy++)
 				for (int dx = -2; dx <= 2; dx++)
 					set(px + dx, groundY + dy, pz + dz, BLOCK_AIR);
+		}
+
+		// ── Portal glow plane (dz=-1): magical surface at back of interior ──
+		// Non-solid, semi-transparent purple blocks that animate in the shader.
+		if (portalB != BLOCK_AIR) {
+			for (int dy = 1; dy <= 10; dy++)
+				for (int dx = -2; dx <= 2; dx++)
+					set(px + dx, groundY + dy, pz - 1, portalB);
 		}
 
 		// ── Battlements (dy=13): crenellations atop main pillars ──

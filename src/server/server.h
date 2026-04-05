@@ -169,6 +169,7 @@ public:
 		// The characterSkin determines visual model, not entity type.
 		EntityId eid = m_world->entities.spawn(EntityType::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
+		if (pe) pe->yaw = 90.0f; // face +Z (outward from portal)
 		// Store character skin as entity property (client reads for rendering)
 		if (pe && !characterSkin.empty())
 			pe->setProp("character_skin", characterSkin);

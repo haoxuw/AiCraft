@@ -27,6 +27,7 @@ public:
 	Shader& highlightShader() { return m_highlightShader; }
 	void markChunkDirty(ChunkPos pos);
 	void setTimeOfDay(float t); // 0=midnight, 0.5=noon
+	void tick(float dt) { m_time += dt; }
 	void renderMoveTarget(const Camera& cam, float aspect, glm::ivec3 pos);
 	void renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 pos, float progress);
 	float sunStrength() const { return m_sunStrength; }
@@ -61,6 +62,7 @@ private:
 	float m_fogEnd = 160.0f;
 	float m_timeOfDay = 0.5f; // noon
 	float m_sunStrength = 1.0f;
+	float m_time = 0.0f; // elapsed seconds (for shader animations)
 
 	// Fog of war
 	FogOfWar m_fogOfWar;

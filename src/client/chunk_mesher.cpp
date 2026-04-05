@@ -2,9 +2,10 @@
 
 namespace agentica {
 
-void ChunkMesh::upload(const std::vector<ChunkVertex>& vertices) {
-	vertexCount = (int)vertices.size();
-	if (vertexCount == 0) return;
+static void uploadToVAO(GLuint& vao, GLuint& vbo, int& count,
+                        const std::vector<ChunkVertex>& vertices) {
+	count = (int)vertices.size();
+	if (count == 0) return;
 	if (!vao) {
 		glGenVertexArrays(1, &vao);
 		glGenBuffers(1, &vbo);
@@ -28,17 +29,31 @@ void ChunkMesh::upload(const std::vector<ChunkVertex>& vertices) {
 	glBindVertexArray(0);
 }
 
+void ChunkMesh::upload(const std::vector<ChunkVertex>& opaque,
+                       const std::vector<ChunkVertex>& transparent) {
+	uploadToVAO(vao, vbo, vertexCount, opaque);
+	uploadToVAO(tVao, tVbo, tVertexCount, transparent);
+}
+
 void ChunkMesh::draw() const {
 	if (vertexCount == 0) return;
 	glBindVertexArray(vao);
 	glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 }
 
+void ChunkMesh::drawTransparent() const {
+	if (tVertexCount == 0) return;
+	glBindVertexArray(tVao);
+	glDrawArrays(GL_TRIANGLES, 0, tVertexCount);
+}
+
 void ChunkMesh::destroy() {
 	if (vbo) glDeleteBuffers(1, &vbo);
 	if (vao) glDeleteVertexArrays(1, &vao);
-	vao = vbo = 0;
-	vertexCount = 0;
+	if (tVbo) glDeleteBuffers(1, &tVbo);
+	if (tVao) glDeleteVertexArrays(1, &tVao);
+	vao = vbo = tVao = tVbo = 0;
+	vertexCount = tVertexCount = 0;
 }
 
 float ChunkMesher::computeAO(bool side1, bool side2, bool corner) {
@@ -100,12 +115,15 @@ void ChunkMesher::fillPaddedVolume(ChunkSource& world, ChunkPos cpos) {
 			}
 }
 
-std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
-	std::vector<ChunkVertex> verts;
+std::pair<std::vector<ChunkVertex>, std::vector<ChunkVertex>>
+ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
+	std::vector<ChunkVertex> verts;      // opaque
+	std::vector<ChunkVertex> tVerts;     // transparent
 	verts.reserve(4096);
+	tVerts.reserve(512);
 
 	Chunk* chunk = world.getChunkIfLoaded(cpos);
-	if (!chunk) return verts;
+	if (!chunk) return {verts, tVerts};
 
 	// Fill padded volume with cached block data (eliminates per-block mutex/hash lookups)
 	fillPaddedVolume(world, cpos);
@@ -127,7 +145,7 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 	// doesn't align with the 1x1x1 cell assumed by the cube face-cull check.
 	auto emitBox = [&](float x0, float y0, float z0,
 	                   float x1, float y1, float z1,
-	                   glm::vec3 cTop, glm::vec3 cSide) {
+	                   glm::vec3 cTop, glm::vec3 cSide, float alpha) {
 		constexpr glm::vec3 norms[6] = {
 			{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}
 		};
@@ -140,12 +158,13 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 			{{x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x0,y0,z1}}, // +Z
 			{{x0,y0,z0},{x0,y1,z0},{x1,y1,z0},{x1,y0,z0}}, // -Z
 		};
+		auto& dst = (alpha < 1.0f) ? tVerts : verts;
 		for (int f = 0; f < 6; f++) {
 			glm::vec3 col = (f == 2) ? cTop : cSide;
 			float shade = BLOCK_FACE_SHADE[f];
 			auto emit = [&](int i) {
 				auto& v = vs[f][i];
-				verts.push_back({{v[0],v[1],v[2]}, col, norms[f], 1.0f, shade, 1.0f});
+				dst.push_back({{v[0],v[1],v[2]}, col, norms[f], 1.0f, shade, alpha});
 			};
 			// Two triangles: 0,1,2 and 0,2,3
 			emit(0); emit(1); emit(2);
@@ -169,21 +188,22 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 
 		// ── Non-cube mesh types ──────────────────────────────────
 		if (bdef.mesh_type != MeshType::Cube) {
+			float a = bdef.transparent ? 0.75f : 1.0f;
 			if (bdef.mesh_type == MeshType::Stair) {
 				// Bottom slab: full width/depth, bottom half height
 				emitBox(fx, fy,       fz, fx+1, fy+0.5f, fz+1,
-				        bdef.color_top, bdef.color_side);
+				        bdef.color_top, bdef.color_side, a);
 				// Back step: full width, top half height, back half depth
 				emitBox(fx, fy+0.5f, fz+0.5f, fx+1, fy+1, fz+1,
-				        bdef.color_top, bdef.color_side);
+				        bdef.color_top, bdef.color_side, a);
 			} else if (bdef.mesh_type == MeshType::Door) {
 				// Closed door: thin panel flush with -Z face of the cell
 				emitBox(fx, fy, fz, fx+1, fy+1, fz+0.1f,
-				        bdef.color_top, bdef.color_side);
+				        bdef.color_top, bdef.color_side, a);
 			} else if (bdef.mesh_type == MeshType::DoorOpen) {
 				// Open door: thin panel flush with -X face of the cell
 				emitBox(fx, fy, fz, fx+0.1f, fy+1, fz+1,
-				        bdef.color_top, bdef.color_side);
+				        bdef.color_top, bdef.color_side, a);
 			}
 			continue; // skip the cube face loop below
 		}
@@ -195,7 +215,9 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 
 			BlockId neighbor = cachedBlock(nlx, nly, nlz);
 			const BlockDef& ndef = reg.get(neighbor);
-			if (ndef.solid) continue;
+			// Cull face if neighbor is opaque-solid (transparent neighbors like glass/portal
+			// let the face show through)
+			if (ndef.solid && !ndef.transparent) continue;
 
 			glm::vec3 color;
 			if (face == 2)      color = bdef.color_top;
@@ -263,8 +285,9 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 				break;
 			}
 
-			// All blocks are fully opaque
-			auto emit = [&](int i) { verts.push_back({v[i], color, normal, ao[i], shade, 1.0f}); };
+			float alpha = bdef.transparent ? 0.20f : 1.0f;
+			auto& dst = bdef.transparent ? tVerts : verts;
+			auto emit = [&](int i) { dst.push_back({v[i], color, normal, ao[i], shade, alpha}); };
 			if (ao[0] + ao[2] > ao[1] + ao[3]) {
 				emit(0); emit(1); emit(2); emit(0); emit(2); emit(3);
 			} else {
@@ -272,7 +295,7 @@ std::vector<ChunkVertex> ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpo
 			}
 		}
 	}
-	return verts;
+	return {verts, tVerts};
 }
 
 } // namespace agentica

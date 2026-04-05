@@ -13,6 +13,7 @@ uniform vec3 uFogColor;
 uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uSunStrength; // 0..1, 0=night, 1=day
+uniform float uTime;        // elapsed seconds (for animations)
 
 out vec4 fragColor;
 
@@ -90,5 +91,32 @@ void main() {
 	float fog = smoothstep(uFogStart, uFogEnd, dist);
 	lit = mix(lit, uFogColor, fog);
 
-	fragColor = vec4(lit, vAlpha);
+	float alpha = vAlpha;
+
+	// ── Glass glare: fresnel edge brightening ──
+	if (vAlpha < 0.5) {
+		vec3 viewDir = normalize(uCamPos - vWorldPos);
+		float cosTheta = abs(dot(vNormal, viewDir));
+		float fresnel = pow(1.0 - cosTheta, 2.5);
+		// Bright white glare at grazing angles
+		lit = mix(lit, vec3(0.9, 0.97, 1.0), fresnel * 0.6);
+		alpha = mix(vAlpha, 0.85, fresnel * 0.7);
+	}
+
+	// ── Portal glow: animated purple swirl ──
+	if (vAlpha >= 0.5 && vAlpha < 1.0) {
+		// Swirling pattern: sin waves on world-space coords + time
+		float wave1 = sin(vWorldPos.y * 3.0 + uTime * 2.0) * 0.5 + 0.5;
+		float wave2 = sin(vWorldPos.x * 2.5 - uTime * 1.3 + vWorldPos.y * 1.5) * 0.5 + 0.5;
+		float swirl = mix(wave1, wave2, 0.5);
+		// Deep purple to bright magenta
+		vec3 portalColor = mix(vec3(0.3, 0.0, 0.8), vec3(0.9, 0.1, 1.0), swirl);
+		// Add a sparkle highlight
+		float sparkle = pow(swirl, 6.0) * (0.5 + 0.5 * sin(uTime * 5.0 + vWorldPos.y * 7.0));
+		portalColor += vec3(0.5, 0.2, 1.0) * sparkle;
+		lit = mix(lit, portalColor, 0.85);
+		alpha = 0.75 + sparkle * 0.15;
+	}
+
+	fragColor = vec4(lit, alpha);
 }

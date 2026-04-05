@@ -20,19 +20,24 @@ struct ChunkVertex {
 };
 
 struct ChunkMesh {
-	GLuint vao = 0;
-	GLuint vbo = 0;
+	GLuint vao = 0, vbo = 0;
 	int vertexCount = 0;
+	GLuint tVao = 0, tVbo = 0;
+	int tVertexCount = 0;
 	ChunkPos pos;
 
-	void upload(const std::vector<ChunkVertex>& vertices);
+	void upload(const std::vector<ChunkVertex>& opaque,
+	            const std::vector<ChunkVertex>& transparent);
 	void draw() const;
+	void drawTransparent() const;
 	void destroy();
 };
 
 class ChunkMesher {
 public:
-	std::vector<ChunkVertex> buildMesh(ChunkSource& world, ChunkPos pos);
+	// Returns {opaque vertices, transparent vertices}
+	std::pair<std::vector<ChunkVertex>, std::vector<ChunkVertex>>
+		buildMesh(ChunkSource& world, ChunkPos pos);
 
 private:
 	float computeAO(bool side1, bool side2, bool corner);

@@ -145,7 +145,6 @@ private:
 	bool m_showDebug = false;
 	GameState m_preInspectState = GameState::PLAYING;
 	GameState m_preMenuState = GameState::PLAYING;
-	bool m_showInventory = false;
 
 	// Process management (singleplayer: spawns server process)
 	AgentManager m_agentMgr;

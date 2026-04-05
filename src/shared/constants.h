@@ -53,6 +53,7 @@ namespace BlockType {
 	constexpr const char* Glass       = "base:glass";
 	constexpr const char* Door        = "base:door";
 	constexpr const char* DoorOpen    = "base:door_open";
+	constexpr const char* Portal      = "base:portal";
 }
 
 // ============================================================

@@ -222,10 +222,10 @@ void Renderer::meshAllPending(ChunkSource& world, const Camera& cam, int renderD
 				if (m_meshes.count(cp)) continue;
 				Chunk* chunk = world.getChunk(cp);
 				if (!chunk) continue;
-				auto verts = m_mesher.buildMesh(world, cp);
+				auto [oVerts, tVerts] = m_mesher.buildMesh(world, cp);
 				ChunkMesh mesh;
 				mesh.pos = cp;
-				if (!verts.empty()) mesh.upload(verts);
+				mesh.upload(oVerts, tVerts);
 				m_meshes[cp] = mesh;
 			}
 }
@@ -264,10 +264,10 @@ void Renderer::updateChunks(ChunkSource& world, const Camera& cam, int renderDis
 		Chunk* chunk = world.getChunk(pc.pos);
 		if (!chunk) continue;
 
-		auto verts = m_mesher.buildMesh(world, pc.pos);
+		auto [oVerts, tVerts] = m_mesher.buildMesh(world, pc.pos);
 		ChunkMesh mesh;
 		mesh.pos = pc.pos;
-		if (!verts.empty()) mesh.upload(verts);
+		mesh.upload(oVerts, tVerts);
 		m_meshes[pc.pos] = mesh;
 		newBuilt++;
 
@@ -291,10 +291,9 @@ void Renderer::updateChunks(ChunkSource& world, const Camera& cam, int renderDis
 		auto mit = m_meshes.find(dp);
 		if (mit == m_meshes.end()) continue;
 
-		auto verts = m_mesher.buildMesh(world, dp);
+		auto [oVerts, tVerts] = m_mesher.buildMesh(world, dp);
 		mit->second.destroy();
-		if (!verts.empty()) mit->second.upload(verts);
-		else mit->second.vertexCount = 0;
+		mit->second.upload(oVerts, tVerts);
 		remeshed++;
 	}
 
@@ -364,18 +363,46 @@ void Renderer::renderTerrain(const Camera& cam, float aspect) {
 	m_terrainShader.setFloat("uFogStart", m_fogStart);
 	m_terrainShader.setFloat("uFogEnd", m_fogEnd);
 	m_terrainShader.setFloat("uSunStrength", m_sunStrength);
+	m_terrainShader.setFloat("uTime", m_time);
 
 	// Frustum culling: skip chunks outside the camera view
 	Frustum frustum;
 	frustum.extract(proj * view);
 
-	// All blocks are opaque — no blending needed
+	// ── Pass 1: opaque geometry (depth write on, no blending) ──
 	for (auto& [pos, mesh] : m_meshes) {
 		if (mesh.vertexCount == 0) continue;
 		glm::vec3 mn = glm::vec3(pos.x * CHUNK_SIZE, pos.y * CHUNK_SIZE, pos.z * CHUNK_SIZE);
 		glm::vec3 mx = mn + glm::vec3(CHUNK_SIZE);
 		if (!frustum.testAABB(mn, mx)) continue;
 		mesh.draw();
+	}
+
+	// ── Pass 2: transparent geometry (depth test on, depth write off, blend on) ──
+	// Sort chunks back-to-front from camera for correct alpha compositing
+	struct TChunk { float distSq; ChunkPos pos; };
+	std::vector<TChunk> tChunks;
+	for (auto& [pos, mesh] : m_meshes) {
+		if (mesh.tVertexCount == 0) continue;
+		glm::vec3 mn = glm::vec3(pos.x * CHUNK_SIZE, pos.y * CHUNK_SIZE, pos.z * CHUNK_SIZE);
+		glm::vec3 mx = mn + glm::vec3(CHUNK_SIZE);
+		if (!frustum.testAABB(mn, mx)) continue;
+		glm::vec3 center = (mn + mx) * 0.5f;
+		glm::vec3 d = center - cam.position;
+		tChunks.push_back({glm::dot(d, d), pos});
+	}
+	if (!tChunks.empty()) {
+		std::sort(tChunks.begin(), tChunks.end(),
+			[](const TChunk& a, const TChunk& b) { return a.distSq > b.distSq; });
+		glDepthMask(GL_FALSE);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glDisable(GL_CULL_FACE); // show both faces of thin glass/portal
+		for (auto& tc : tChunks)
+			m_meshes[tc.pos].drawTransparent();
+		glDepthMask(GL_TRUE);
+		glDisable(GL_BLEND);
+		glEnable(GL_CULL_FACE);
 	}
 
 	glDisable(GL_CULL_FACE);
