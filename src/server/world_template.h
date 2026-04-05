@@ -82,12 +82,20 @@ public:
 	}
 
 	glm::vec3 preferredSpawn(int seed) const override {
+		// Player spawns on the portal platform (groundY + kPlatH), inside the arch,
+		// offset -1 on Z so they face +Z toward the descending staircase.
+		float gY, sx, sz;
 		if (m_py.terrainType == "flat") {
-			return {m_py.spawnSearchX, m_py.surfaceY + 1.0f, m_py.spawnSearchZ};
+			gY = m_py.surfaceY;
+			sx = m_py.spawnSearchX;
+			sz = m_py.spawnSearchZ;
+		} else {
+			auto anchor = findAnchor(seed);
+			gY = naturalTerrainHeight(seed, anchor.x, anchor.y, m_tp);
+			sx = anchor.x;
+			sz = anchor.y;
 		}
-		auto anchor = findAnchor(seed);
-		float sy = naturalTerrainHeight(seed, anchor.x, anchor.y, m_tp);
-		return {anchor.x, sy + 1.0f, anchor.y};
+		return {sx, gY + kPlatH, sz - 1.0f};
 	}
 
 	glm::ivec2 villageCenter(int seed) const override {
@@ -232,11 +240,15 @@ public:
 			generateVillage(chunk, cpos, seed, wallB, roofB, floorB, pathB, vc, blocks);
 
 		// ── Spawn portal ──────────────────────────────────────────
-		BlockId stairB  = blocks.getId(BlockType::Stair);
-		BlockId planksB = blocks.getId(BlockType::Planks);
-		BlockId portalB = blocks.getId(BlockType::Portal);
-		generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, portalB, anchor);
+		BlockId stairB   = blocks.getId(BlockType::Stair);
+		BlockId planksB  = blocks.getId(BlockType::Planks);
+		BlockId arcaneB  = blocks.getId(BlockType::ArcaneStone);
+		BlockId portalB  = blocks.getId(BlockType::Portal);
+		generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, arcaneB, portalB, anchor);
 	}
+
+	// Portal platform height (blocks above groundY). Used in preferredSpawn + generatePortal.
+	static constexpr int kPlatH = 5;
 
 private:
 	WorldPyConfig m_py;
@@ -291,7 +303,7 @@ private:
 	//
 	void generatePortal(Chunk& chunk, ChunkPos cpos, int seed,
 	                    BlockId wallB, BlockId stoneB, BlockId stairB,
-	                    BlockId planksB, BlockId portalB, glm::vec2 anchor) {
+	                    BlockId planksB, BlockId arcaneB, BlockId portalB, glm::vec2 anchor) {
 		int ox = cpos.x * CHUNK_SIZE;
 		int oy = cpos.y * CHUNK_SIZE;
 		int oz = cpos.z * CHUNK_SIZE;
@@ -318,9 +330,10 @@ private:
 		if (stoneB  == BLOCK_AIR) stoneB  = wallB;
 		if (planksB == BLOCK_AIR) planksB = stoneB;
 		if (stairB  == BLOCK_AIR) stairB  = wallB;
+		if (arcaneB == BLOCK_AIR) arcaneB = stoneB;
 
 		// Dimensions
-		constexpr int platH   = 5;   // platform height above groundY
+		constexpr int platH   = kPlatH; // platform height above groundY
 		constexpr int openH   = 13;  // arch opening height
 		constexpr int crownH  = 2;   // arch crown thickness above opening
 		constexpr int towerXH = 5;   // extra tower height above crown
@@ -355,34 +368,34 @@ private:
 			}
 		}
 
-		// ── 3. Outer towers (dx=±7..±8, to towerTopY) ───────────
+		// ── 3. Outer towers (dx=±7..±8, to towerTopY) — arcane ──
 		for (int sign : {-1, 1})
 			for (int tw = towerHW; tw <= towerOW; tw++)
 				for (int dz = backDZ; dz <= frontDZ; dz++)
 					for (int wy = platSurfY; wy <= towerTopY; wy++)
-						set(px + sign * tw, wy, pz + dz, pickBlock(wy));
+						set(px + sign * tw, wy, pz + dz, arcaneB);
 
-		// ── 4. Inner pillars (dx=±5..±6, to crownTopY) ──────────
+		// ── 4. Inner pillars (dx=±5..±6, to crownTopY) — arcane ─
 		for (int sign : {-1, 1})
 			for (int pw = 5; pw <= pier2HW; pw++)
 				for (int dz = backDZ; dz <= frontDZ; dz++)
 					for (int wy = platSurfY; wy <= crownTopY; wy++)
-						set(px + sign * pw, wy, pz + dz, wallB);
+						set(px + sign * pw, wy, pz + dz, arcaneB);
 
-		// ── 5. Arch jambs (dx=±4, to archTopY) ──────────────────
+		// ── 5. Arch jambs (dx=±4, to archTopY) — arcane ─────────
 		for (int sign : {-1, 1})
 			for (int dz = backDZ; dz <= frontDZ; dz++)
 				for (int wy = platSurfY; wy < archTopY; wy++)
-					set(px + sign * jambHW, wy, pz + dz, wallB);
+					set(px + sign * jambHW, wy, pz + dz, arcaneB);
 
-		// ── 6. Arch crown span (dx=-6..+6, archTopY..crownTopY) ─
+		// ── 6. Arch crown span (dx=-6..+6, archTopY..crownTopY) — arcane ─
 		for (int dz = backDZ; dz <= frontDZ; dz++) {
 			for (int wy = archTopY; wy < crownTopY; wy++)
 				for (int dx = -pier2HW; dx <= pier2HW; dx++)
-					set(px + dx, wy, pz + dz, stoneB);
+					set(px + dx, wy, pz + dz, arcaneB);
 			// Keystone at crownTopY: narrower span dx=-4..+4
 			for (int dx = -jambHW; dx <= jambHW; dx++)
-				set(px + dx, crownTopY, pz + dz, stoneB);
+				set(px + dx, crownTopY, pz + dz, arcaneB);
 		}
 
 		// ── 7. Back wall (dz=backDZ..backDZ+1, with windows) ────
@@ -396,10 +409,10 @@ private:
 						set(px + dx, wy, pz + dz, wallB);
 				}
 			}
-			// Crown fill above opening on back face
+			// Crown fill above opening on back face — arcane
 			for (int dx = -(pier2HW - 1); dx <= pier2HW - 1; dx++)
 				for (int wy = archTopY; wy <= crownTopY; wy++)
-					set(px + dx, wy, pz + dz, stoneB);
+					set(px + dx, wy, pz + dz, arcaneB);
 		}
 
 		// ── 8. Interior clear (dz=backDZ+2..frontDZ) ─────────────
@@ -408,16 +421,16 @@ private:
 				for (int wy = platSurfY; wy < archTopY; wy++)
 					set(px + dx, wy, pz + dz, BLOCK_AIR);
 
-		// ── 9. Tower battlements ──────────────────────────────────
+		// ── 9. Tower battlements — alternating arcane/stone ─────
 		for (int sign : {-1, 1}) {
 			for (int tw = towerHW; tw <= towerOW; tw++)
 				for (int dz = backDZ; dz <= frontDZ; dz++)
 					if (((dz - backDZ) % 2) == 0)
-						set(px + sign * tw, towerTopY + 1, pz + dz, stoneB);
-			// Corner turret posts (2 high)
+						set(px + sign * tw, towerTopY + 1, pz + dz, arcaneB);
+			// Corner turret posts (2 high) — arcane
 			for (int h = 1; h <= 2; h++) {
-				set(px + sign * towerOW, towerTopY + h, pz + backDZ,  stoneB);
-				set(px + sign * towerOW, towerTopY + h, pz + frontDZ, stoneB);
+				set(px + sign * towerOW, towerTopY + h, pz + backDZ,  arcaneB);
+				set(px + sign * towerOW, towerTopY + h, pz + frontDZ, arcaneB);
 			}
 		}
 

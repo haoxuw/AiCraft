@@ -17,6 +17,7 @@ struct ChunkVertex {
 	float ao;
 	float shade;
 	float alpha;
+	float glow;   // 1.0 = magical surface animation, 0.0 = normal
 };
 
 struct ChunkMesh {

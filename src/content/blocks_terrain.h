@@ -76,6 +76,21 @@ inline void registerTerrainBlocks(BlockRegistry& reg) {
 		false,true, 0.0f,"","",64,0,
 		{{GR::Unbreakable,1}}, "","",""});
 
+	// Arcane Stone (indestructible magical block — animated surface, client-side only)
+	reg.registerBlock({
+		.string_id    = BT::ArcaneStone,
+		.display_name = "Arcane Stone",
+		.category     = CT::System,
+		.color_top    = {0.28f, 0.06f, 0.48f},
+		.color_side   = {0.22f, 0.08f, 0.40f},
+		.color_bottom = {0.16f, 0.05f, 0.32f},
+		.solid        = true,
+		.hardness     = 0.0f,
+		.stack_max    = 64,
+		.groups       = {{GR::Unbreakable, 1}},
+		.surface_glow = true,
+	});
+
 	// Chest (storage block)
 	reg.registerBlock({BT::Chest, "Chest", CT::Crafted,
 		{0.55f,0.40f,0.20f},{0.50f,0.35f,0.18f},{0.45f,0.30f,0.15f},

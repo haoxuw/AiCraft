@@ -57,6 +57,9 @@ struct BlockDef {
 
 	// Visual mesh shape (does not affect physics).
 	MeshType mesh_type = MeshType::Cube;
+
+	// Client-only: animated surface effect (does not affect gameplay).
+	bool surface_glow = false;
 };
 
 struct BlockState {

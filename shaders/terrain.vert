@@ -6,6 +6,7 @@ layout(location = 2) in vec3 aNormal;
 layout(location = 3) in float aAO;
 layout(location = 4) in float aShade;
 layout(location = 5) in float aAlpha;
+layout(location = 6) in float aGlow;
 
 uniform mat4 uView;
 uniform mat4 uProj;
@@ -16,6 +17,7 @@ out vec3 vWorldPos;
 out float vAO;
 out float vShade;
 out float vAlpha;
+out float vGlow;
 
 void main() {
 	vWorldPos = aPos;
@@ -24,6 +26,7 @@ void main() {
 	vAO = aAO;
 	vShade = aShade;
 	vAlpha = aAlpha;
+	vGlow = aGlow;
 
 	gl_Position = uProj * uView * vec4(aPos, 1.0);
 }

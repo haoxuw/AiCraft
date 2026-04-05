@@ -26,6 +26,8 @@ static void uploadToVAO(GLuint& vao, GLuint& vbo, int& count,
 	glEnableVertexAttribArray(4);
 	glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, alpha));
 	glEnableVertexAttribArray(5);
+	glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, glow));
+	glEnableVertexAttribArray(6);
 	glBindVertexArray(0);
 }
 
@@ -164,7 +166,7 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 			float shade = BLOCK_FACE_SHADE[f];
 			auto emit = [&](int i) {
 				auto& v = vs[f][i];
-				dst.push_back({{v[0],v[1],v[2]}, col, norms[f], 1.0f, shade, alpha});
+				dst.push_back({{v[0],v[1],v[2]}, col, norms[f], 1.0f, shade, alpha, 0.0f});
 			};
 			// Two triangles: 0,1,2 and 0,2,3
 			emit(0); emit(1); emit(2);
@@ -190,12 +192,37 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 		if (bdef.mesh_type != MeshType::Cube) {
 			float a = bdef.transparent ? 0.75f : 1.0f;
 			if (bdef.mesh_type == MeshType::Stair) {
-				// Bottom slab: full width/depth, bottom half height
-				emitBox(fx, fy,       fz, fx+1, fy+0.5f, fz+1,
-				        bdef.color_top, bdef.color_side, a);
-				// Back step: full width, top half height, back half depth
-				emitBox(fx, fy+0.5f, fz+0.5f, fx+1, fy+1, fz+1,
-				        bdef.color_top, bdef.color_side, a);
+				// Emit all 10 exterior faces of the stair L-shape,
+				// skipping the two interior faces where the slab and step share a surface.
+				// This eliminates z-fighting gaps while covering the full exterior.
+				glm::vec3 ct = bdef.color_top, cs = bdef.color_side;
+				auto& dst = (a < 1.0f) ? tVerts : verts;
+				float x0=fx, x1=fx+1, y0=fy, y5=fy+0.5f, y1=fy+1;
+				float z0=fz, z5=fz+0.5f, z1=fz+1;
+				// emit one quad (2 tris, CCW from outside per face direction)
+				auto eq = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec3 v3,
+				              glm::vec3 n, glm::vec3 col) {
+					float sh;
+					if      (n.x > 0.5f)  sh = BLOCK_FACE_SHADE[0];
+					else if (n.x < -0.5f) sh = BLOCK_FACE_SHADE[1];
+					else if (n.y > 0.5f)  sh = BLOCK_FACE_SHADE[2];
+					else if (n.y < -0.5f) sh = BLOCK_FACE_SHADE[3];
+					else if (n.z > 0.5f)  sh = BLOCK_FACE_SHADE[4];
+					else                   sh = BLOCK_FACE_SHADE[5];
+					dst.push_back({v0,col,n,1.f,sh,a,0.f}); dst.push_back({v1,col,n,1.f,sh,a,0.f});
+					dst.push_back({v2,col,n,1.f,sh,a,0.f}); dst.push_back({v0,col,n,1.f,sh,a,0.f});
+					dst.push_back({v2,col,n,1.f,sh,a,0.f}); dst.push_back({v3,col,n,1.f,sh,a,0.f});
+				};
+				eq({x0,y0,z1},{x0,y0,z0},{x1,y0,z0},{x1,y0,z1}, {0,-1,0}, cs); // bottom
+				eq({x0,y0,z0},{x0,y5,z0},{x1,y5,z0},{x1,y0,z0}, {0,0,-1}, cs); // front face
+				eq({x0,y5,z0},{x0,y5,z5},{x1,y5,z5},{x1,y5,z0}, {0, 1,0}, ct); // tread (front half)
+				eq({x0,y5,z5},{x0,y1,z5},{x1,y1,z5},{x1,y5,z5}, {0,0,-1}, cs); // riser
+				eq({x0,y1,z5},{x0,y1,z1},{x1,y1,z1},{x1,y1,z5}, {0, 1,0}, ct); // top (back half)
+				eq({x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x0,y0,z1}, {0, 0,1}, cs); // back face
+				eq({x0,y0,z1},{x0,y5,z1},{x0,y5,z0},{x0,y0,z0}, {-1,0,0}, cs); // left lower
+				eq({x0,y5,z1},{x0,y1,z1},{x0,y1,z5},{x0,y5,z5}, {-1,0,0}, cs); // left upper
+				eq({x1,y0,z0},{x1,y5,z0},{x1,y5,z1},{x1,y0,z1}, { 1,0,0}, cs); // right lower
+				eq({x1,y5,z5},{x1,y1,z5},{x1,y1,z1},{x1,y5,z1}, { 1,0,0}, cs); // right upper
 			} else if (bdef.mesh_type == MeshType::Door) {
 				// Closed door: thin panel flush with -Z face of the cell
 				emitBox(fx, fy, fz, fx+1, fy+1, fz+0.1f,
@@ -286,8 +313,9 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 			}
 
 			float alpha = bdef.transparent ? 0.20f : 1.0f;
+			float glow  = bdef.surface_glow ? 1.0f : 0.0f;
 			auto& dst = bdef.transparent ? tVerts : verts;
-			auto emit = [&](int i) { dst.push_back({v[i], color, normal, ao[i], shade, alpha}); };
+			auto emit = [&](int i) { dst.push_back({v[i], color, normal, ao[i], shade, alpha, glow}); };
 			if (ao[0] + ao[2] > ao[1] + ao[3]) {
 				emit(0); emit(1); emit(2); emit(0); emit(2); emit(3);
 			} else {

@@ -6,6 +6,7 @@ in vec3 vWorldPos;
 in float vAO;
 in float vShade;
 in float vAlpha;
+in float vGlow;
 
 uniform vec3 uSunDir;
 uniform vec3 uCamPos;
@@ -85,6 +86,23 @@ void main() {
 
 	// Night: slight blue ambient tint
 	lit += baseColor * (1.0 - uSunStrength) * 0.03 * vec3(0.3, 0.4, 0.8);
+
+	// ── Arcane surface: animated energy for magical blocks (vGlow = 1.0) ──
+	// Replaces the block's surface color — no light is added to the scene.
+	if (vGlow > 0.5) {
+		float t = uTime * 0.5;
+		// Two noise layers create flowing vein patterns
+		float n1 = noise3D(vWorldPos * 2.2 + vec3(t * 0.28, 0.0,    t * 0.18));
+		float n2 = noise3D(vWorldPos * 5.5 - vec3(0.0,      t * 0.4, t * 0.12));
+		float veins = 0.3 + 0.7 * pow(clamp(n1 * 0.6 + n2 * 0.4, 0.0, 1.0), 0.5);
+		// Colour slowly shifts between indigo and teal
+		float phase = 0.5 + 0.5 * sin(t * 0.32 + vWorldPos.x * 0.14 + vWorldPos.z * 0.14);
+		vec3 c1 = vec3(0.30, 0.04, 0.55);   // deep indigo
+		vec3 c2 = vec3(0.04, 0.44, 0.62);   // teal
+		vec3 surfaceColor = mix(c1, c2, phase) * veins;
+		// Keep realistic shading so it doesn't glow flat or look like a light source
+		lit = surfaceColor * diffuse * vShade * vAO;
+	}
 
 	// Distance fog
 	float dist = length(vWorldPos - uCamPos);
