@@ -964,6 +964,301 @@ static std::string t27_multiple_dropitems_correct_count() {
 }
 
 // ================================================================
+// T30: EquipItem moves item from inventory to wear slot
+// ================================================================
+
+static std::string t30_equip_item() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p || !p->inventory) return "no player/inventory";
+
+	if (!p->inventory->has("base:sword")) return "no sword in starting inventory";
+
+	// Find sword's hotbar slot
+	int swordSlot = -1;
+	for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++) {
+		if (p->inventory->hotbar(i) == "base:sword") { swordSlot = i; break; }
+	}
+	if (swordSlot < 0) return "sword not in any hotbar slot";
+
+	// Equip sword to right_hand
+	ActionProposal a;
+	a.type = ActionProposal::EquipItem;
+	a.actorId = pid;
+	a.slotIndex = swordSlot;
+	a.blockType = "right_hand";
+	srv->sendAction(a);
+	srv->tick(1.0f / 60.0f);
+
+	if (p->inventory->equipped(WearSlot::RightHand) != "base:sword")
+		return "sword not in right_hand slot (got: '" +
+		       p->inventory->equipped(WearSlot::RightHand) + "')";
+	return "";
+}
+
+// ================================================================
+// T31: UseItem consumes item and heals
+// ================================================================
+
+static std::string t31_use_item_consume() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p || !p->inventory) return "no player/inventory";
+
+	// Player starts with 3 potions
+	int before = p->inventory->count("base:potion");
+	if (before < 1) return "no potions in starting inventory";
+
+	// Damage player first so healing is observable
+	p->setHp(5);
+	int hpBefore = p->hp();
+
+	// Use potion
+	ActionProposal a;
+	a.type = ActionProposal::UseItem;
+	a.actorId = pid;
+	a.slotIndex = 0;
+	srv->sendAction(a);
+	srv->tick(1.0f / 60.0f);
+
+	// Potion count should decrease
+	int after = p->inventory->count("base:potion");
+	if (after >= before) return "potion count didn't decrease (before=" +
+		std::to_string(before) + " after=" + std::to_string(after) + ")";
+
+	// HP should increase
+	if (p->hp() <= hpBefore) return "HP didn't increase after using potion";
+	return "";
+}
+
+// ================================================================
+// T32: Attack damages target entity
+// ================================================================
+
+static std::string t32_attack_damages_entity() {
+	auto srv = makeVillageServer();
+	tickN(*srv, 30);
+
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	// Find the closest living creature
+	EntityId targetId = ENTITY_NONE;
+	float closestDist = 999;
+	srv->forEachEntity([&](Entity& e) {
+		if (e.def().isCreature() && e.id() != pid) {
+			float d = glm::length(e.position - p->position);
+			if (d < closestDist) { closestDist = d; targetId = e.id(); }
+		}
+	});
+	if (targetId == ENTITY_NONE) return "no creature found";
+
+	// Teleport player next to the target (within attack range)
+	Entity* target = srv->getEntity(targetId);
+	if (!target) return "target disappeared";
+	p->position = target->position + glm::vec3(1, 0, 0);
+	int targetHp = target->hp();
+
+	ActionProposal a;
+	a.type = ActionProposal::Attack;
+	a.actorId = pid;
+	a.targetEntity = targetId;
+	a.damage = 3.0f;
+	srv->sendAction(a);
+	srv->tick(1.0f / 60.0f);
+
+	target = srv->getEntity(targetId);
+	if (!target) {
+		// Target might have died (HP was low)
+		return "";
+	}
+	if (target->hp() >= targetHp) return "target HP didn't decrease (was " +
+		std::to_string(targetHp) + ", now " + std::to_string(target->hp()) + ")";
+	return "";
+}
+
+// ================================================================
+// T33: DropItem deducts from inventory
+// ================================================================
+
+static std::string t33_dropitem_deducts_inventory() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p || !p->inventory) return "no player/inventory";
+
+	int stoneBefore = p->inventory->count(BlockType::Stone);
+	if (stoneBefore < 1) return "no stone to drop";
+
+	ActionProposal a;
+	a.type = ActionProposal::DropItem;
+	a.actorId = pid;
+	a.blockType = BlockType::Stone;
+	a.itemCount = 1;
+	srv->sendAction(a);
+	srv->tick(1.0f / 60.0f);
+
+	int stoneAfter = p->inventory->count(BlockType::Stone);
+	if (stoneAfter >= stoneBefore) return "stone count didn't decrease";
+	int items = countByType(*srv, EntityType::ItemEntity);
+	if (items < 1) return "no item entity spawned after drop";
+	return "";
+}
+
+// ================================================================
+// T34: Door toggle opens and closes
+// ================================================================
+
+static std::string t34_door_toggle() {
+	auto srv = makeVillageServer();
+	tickN(*srv, 10);
+
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	// Find a door block in the village
+	glm::ivec3 doorPos = {0, 0, 0};
+	bool foundDoor = false;
+	BlockId doorId = srv->blockRegistry().getId(BlockType::Door);
+	BlockId doorOpenId = srv->blockRegistry().getId(BlockType::DoorOpen);
+
+	// Scan near spawn for a door
+	glm::vec3 spawn = srv->spawnPos();
+	for (int dx = -30; dx <= 30 && !foundDoor; dx++) {
+		for (int dz = -30; dz <= 30 && !foundDoor; dz++) {
+			for (int dy = -3; dy <= 5 && !foundDoor; dy++) {
+				int bx = (int)spawn.x + dx, by = (int)spawn.y + dy, bz = (int)spawn.z + dz;
+				BlockId bid = srv->chunks().getBlock(bx, by, bz);
+				if (bid == doorId || bid == doorOpenId) {
+					doorPos = {bx, by, bz};
+					foundDoor = true;
+				}
+			}
+		}
+	}
+	if (!foundDoor) return "no door found near spawn (skip)";
+
+	// Teleport player next to door (within interaction range)
+	p->position = glm::vec3(doorPos) + glm::vec3(1, 0, 0);
+
+	BlockId before = srv->chunks().getBlock(doorPos.x, doorPos.y, doorPos.z);
+
+	// Toggle door
+	ActionProposal a;
+	a.type = ActionProposal::InteractBlock;
+	a.actorId = pid;
+	a.blockPos = doorPos;
+	srv->sendAction(a);
+	srv->tick(1.0f / 60.0f);
+
+	BlockId after = srv->chunks().getBlock(doorPos.x, doorPos.y, doorPos.z);
+	if (after == before) return "door didn't toggle (same block ID before=" +
+		std::to_string(before) + " after=" + std::to_string(after) + ")";
+	return "";
+}
+
+// ================================================================
+// T35: Item entity has ItemType property
+// ================================================================
+
+static std::string t35_item_entity_has_type() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	tickN(*srv, 30);
+	glm::vec3 pos = p->position;
+	glm::ivec3 blockPos = {(int)std::floor(pos.x), (int)std::floor(pos.y) - 1,
+	                       (int)std::floor(pos.z)};
+
+	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	if (bid == BLOCK_AIR) return "no block under player";
+
+	breakAndTick(*srv, pid, blockPos);
+
+	// Find the spawned item entity and check its ItemType
+	std::string itemType;
+	srv->forEachEntity([&](Entity& e) {
+		if (e.typeId() == EntityType::ItemEntity) {
+			itemType = e.getProp<std::string>(Prop::ItemType);
+		}
+	});
+	if (itemType.empty()) return "item entity has no ItemType property";
+	if (itemType.find("base:") != 0) return "ItemType doesn't start with 'base:' (got: " + itemType + ")";
+	return "";
+}
+
+// ================================================================
+// T36: Equip then unequip returns item to inventory
+// ================================================================
+
+static std::string t36_equip_unequip_cycle() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p || !p->inventory) return "no player/inventory";
+
+	int swordBefore = p->inventory->count("base:sword");
+	if (swordBefore < 1) return "no sword";
+
+	// Equip
+	p->inventory->equip(WearSlot::RightHand, "base:sword");
+	if (p->inventory->equipped(WearSlot::RightHand) != "base:sword")
+		return "equip failed";
+	if (p->inventory->has("base:sword")) return "sword still in counter after equip";
+
+	// Unequip
+	p->inventory->unequip(WearSlot::RightHand);
+	if (!p->inventory->equipped(WearSlot::RightHand).empty())
+		return "unequip didn't clear slot";
+	if (!p->inventory->has("base:sword")) return "sword not returned to inventory after unequip";
+	return "";
+}
+
+// ================================================================
+// T37: Pickup denied if out of range
+// ================================================================
+
+static std::string t37_pickup_denied_out_of_range() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	tickN(*srv, 30);
+
+	// Break a block 4 blocks away
+	glm::vec3 pos = p->position;
+	glm::ivec3 blockPos = {(int)std::floor(pos.x) + 4, (int)std::floor(pos.y) - 1,
+	                       (int)std::floor(pos.z)};
+	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	if (bid == BLOCK_AIR) return "no block at target";
+
+	breakAndTick(*srv, pid, blockPos);
+
+	// Item should exist
+	int items = countByType(*srv, EntityType::ItemEntity);
+	if (items == 0) return "no item spawned";
+
+	// Try to pick it up (should be denied — too far)
+	bool denied = false;
+	srv->server()->callbacks().onPickupDenied = [&](glm::vec3, const std::string&) {
+		denied = true;
+	};
+	pickupNearbyItems(*srv, pid, 10.0f); // generous client range
+	// Server should deny because actual distance > pickup_range
+
+	int remaining = countByType(*srv, EntityType::ItemEntity);
+	if (remaining == 0) return "item was picked up despite being out of range";
+	return "";
+}
+
+// ================================================================
 // Main
 // ================================================================
 
@@ -1027,6 +1322,16 @@ int main() {
 	printf("\n--- Action Integrity ---\n");
 	run("T26: DropItem produces exactly 1 item",     t26_dropitem_no_duplication);
 	run("T27: 3 DropItems produce exactly 3 items",  t27_multiple_dropitems_correct_count);
+
+	printf("\n--- Item Actions ---\n");
+	run("T30: equip item to wear slot",          t30_equip_item);
+	run("T31: use item consumes and heals",       t31_use_item_consume);
+	run("T32: attack damages creature",           t32_attack_damages_entity);
+	run("T33: drop item deducts from inventory",  t33_dropitem_deducts_inventory);
+	run("T34: door toggle opens/closes",          t34_door_toggle);
+	run("T35: item entity has ItemType property",  t35_item_entity_has_type);
+	run("T36: equip+unequip cycle returns item",  t36_equip_unequip_cycle);
+	run("T37: pickup denied if out of range",     t37_pickup_denied_out_of_range);
 
 	pythonBridge().shutdown();
 
