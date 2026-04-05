@@ -232,8 +232,10 @@ public:
 			generateVillage(chunk, cpos, seed, wallB, roofB, floorB, pathB, vc, blocks);
 
 		// ── Spawn portal ──────────────────────────────────────────
+		BlockId stairB  = blocks.getId(BlockType::Stair);
+		BlockId planksB = blocks.getId(BlockType::Planks);
 		BlockId portalB = blocks.getId(BlockType::Portal);
-		generatePortal(chunk, cpos, seed, wallB, bStone, portalB, anchor);
+		generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, portalB, anchor);
 	}
 
 private:
@@ -270,27 +272,32 @@ private:
 		return {sx, sz};
 	}
 
-	// ── Spawn portal (DST-style gateway) ──────────────────────────
-	// 9-wide × 13-tall cobblestone arch centred on the spawn anchor.
-	// Opening: 5 wide (centre ±2) × 10 tall — player walks out the +Z face.
+	// ── Spawn portal (grand elevated stone temple arch) ──────────
+	// 17-wide × 25-tall stone arch on a 5-block raised platform.
+	// 7-wide descending staircase exits the +Z face to ground level.
+	// Player spawns on the platform (groundY+5) facing +Z (toward stairs).
 	//
-	// Geometry (all offsets relative to portal centre px, pz):
-	//   Z = pz-2 : back wall (with decorative window)
-	//   Z = pz-1 : interior row 1  ← player body clears the back wall here
-	//   Z = pz   : interior row 2  ← player spawns here
-	//   Z = pz+1 : front arch face (open in centre for door)
+	// Z layout (offsets from anchor pz):
+	//   dz=-5..-4 : back wall (2 thick, with windows)
+	//   dz=-3..+1 : interior chamber (player spawns here)
+	//   dz=+2     : front arch face
+	//   dz=+3..+7 : descending staircase (5 steps, 0.5–1.0 drop each)
 	//
-	// The 2-block-deep interior ensures the player (halfWidth ≈ 0.4) can
-	// never touch the back wall at spawn.  Physics step-up handles exit.
+	// X layout (offsets from anchor px):
+	//   dx=±3     : arch passage (7-wide opening)
+	//   dx=±4     : arch jambs
+	//   dx=±5..±6 : inner pillar pair
+	//   dx=±7..±8 : outer tower pair
+	//
 	void generatePortal(Chunk& chunk, ChunkPos cpos, int seed,
-	                    BlockId wallB, BlockId stoneB, BlockId portalB, glm::vec2 anchor) {
+	                    BlockId wallB, BlockId stoneB, BlockId stairB,
+	                    BlockId planksB, BlockId portalB, glm::vec2 anchor) {
 		int ox = cpos.x * CHUNK_SIZE;
 		int oy = cpos.y * CHUNK_SIZE;
 		int oz = cpos.z * CHUNK_SIZE;
 
 		int px = (int)std::round(anchor.x);
 		int pz = (int)std::round(anchor.y);
-		// Use surfaceHeight (works for both flat and natural terrain)
 		int groundY = (m_py.terrainType == "flat")
 			? (int)m_py.surfaceY
 			: (int)std::round(naturalTerrainHeight(seed, (float)px, (float)pz, m_tp));
@@ -303,73 +310,147 @@ private:
 				chunk.set(lx, ly, lz, bid);
 		};
 
-		// Wipe the full portal volume first (removes any terrain)
-		for (int dy = 0; dy <= 14; dy++)
-			for (int dx = -5; dx <= 5; dx++)
-				for (int dz = -3; dz <= 2; dz++)
+		// Stone accent ring every 4 blocks of height above groundY
+		auto pickBlock = [&](int wy) -> BlockId {
+			return (((wy - groundY) % 4) == 0) ? stoneB : wallB;
+		};
+
+		if (stoneB  == BLOCK_AIR) stoneB  = wallB;
+		if (planksB == BLOCK_AIR) planksB = stoneB;
+		if (stairB  == BLOCK_AIR) stairB  = wallB;
+
+		// Dimensions
+		constexpr int platH   = 5;   // platform height above groundY
+		constexpr int openH   = 13;  // arch opening height
+		constexpr int crownH  = 2;   // arch crown thickness above opening
+		constexpr int towerXH = 5;   // extra tower height above crown
+		constexpr int openHW  = 3;   // opening half-width (7-wide passage)
+		constexpr int jambHW  = 4;   // arch jamb column
+		constexpr int pier2HW = 6;   // inner pillar outer edge
+		constexpr int towerHW = 7;   // outer tower inner edge
+		constexpr int towerOW = 8;   // outer tower outer edge
+		constexpr int backDZ  = -5;  // back wall Z
+		constexpr int frontDZ = +2;  // front arch face Z
+		constexpr int numSteps = platH;
+
+		const int platSurfY = groundY + platH;
+		const int archTopY  = platSurfY + openH;
+		const int crownTopY = archTopY  + crownH;
+		const int towerTopY = crownTopY + towerXH;
+
+		// ── 1. Wipe ──────────────────────────────────────────────
+		for (int dy = 0; dy <= towerTopY - groundY + 3; dy++)
+			for (int dx = -(towerOW + 1); dx <= towerOW + 1; dx++)
+				for (int dz = backDZ - 1; dz <= frontDZ + numSteps + 3; dz++)
 					set(px + dx, groundY + dy, pz + dz, BLOCK_AIR);
 
-		// ── Base layer (dy=0): 9-wide foundation, all 4 depths ──
-		for (int dx = -4; dx <= 4; dx++)
-			for (int dz = -2; dz <= 1; dz++)
-				set(px + dx, groundY, pz + dz, wallB);
+		// ── 2. Platform foundation ────────────────────────────────
+		for (int dx = -towerOW; dx <= towerOW; dx++) {
+			for (int dz = backDZ; dz <= frontDZ; dz++) {
+				for (int dy = 0; dy < platH - 1; dy++)
+					set(px + dx, groundY + dy, pz + dz, wallB);
+				// Top surface: plank floor inside opening, stone elsewhere
+				bool inner = (std::abs(dx) <= openHW);
+				set(px + dx, groundY + platH - 1, pz + dz, inner ? planksB : stoneB);
+			}
+		}
 
-		// ── Main side pillars (dx=±4): full height, stone accent rings ──
-		for (int sign : {-1, 1}) {
-			for (int dz = -2; dz <= 1; dz++) {
-				for (int dy = 1; dy <= 12; dy++) {
-					BlockId b = (dy % 4 == 0) ? stoneB : wallB;
-					set(px + sign * 4, groundY + dy, pz + dz, b);
+		// ── 3. Outer towers (dx=±7..±8, to towerTopY) ───────────
+		for (int sign : {-1, 1})
+			for (int tw = towerHW; tw <= towerOW; tw++)
+				for (int dz = backDZ; dz <= frontDZ; dz++)
+					for (int wy = platSurfY; wy <= towerTopY; wy++)
+						set(px + sign * tw, wy, pz + dz, pickBlock(wy));
+
+		// ── 4. Inner pillars (dx=±5..±6, to crownTopY) ──────────
+		for (int sign : {-1, 1})
+			for (int pw = 5; pw <= pier2HW; pw++)
+				for (int dz = backDZ; dz <= frontDZ; dz++)
+					for (int wy = platSurfY; wy <= crownTopY; wy++)
+						set(px + sign * pw, wy, pz + dz, wallB);
+
+		// ── 5. Arch jambs (dx=±4, to archTopY) ──────────────────
+		for (int sign : {-1, 1})
+			for (int dz = backDZ; dz <= frontDZ; dz++)
+				for (int wy = platSurfY; wy < archTopY; wy++)
+					set(px + sign * jambHW, wy, pz + dz, wallB);
+
+		// ── 6. Arch crown span (dx=-6..+6, archTopY..crownTopY) ─
+		for (int dz = backDZ; dz <= frontDZ; dz++) {
+			for (int wy = archTopY; wy < crownTopY; wy++)
+				for (int dx = -pier2HW; dx <= pier2HW; dx++)
+					set(px + dx, wy, pz + dz, stoneB);
+			// Keystone at crownTopY: narrower span dx=-4..+4
+			for (int dx = -jambHW; dx <= jambHW; dx++)
+				set(px + dx, crownTopY, pz + dz, stoneB);
+		}
+
+		// ── 7. Back wall (dz=backDZ..backDZ+1, with windows) ────
+		for (int dz = backDZ; dz <= backDZ + 1; dz++) {
+			for (int dx = -openHW; dx <= openHW; dx++) {
+				for (int wy = platSurfY; wy < archTopY; wy++) {
+					int relY = wy - platSurfY;
+					bool mainWin = (std::abs(dx) <= 2 && relY >= 3 && relY <= 8);
+					bool topWin  = (dx == 0           && relY >= 10 && relY <= 12);
+					if (!mainWin && !topWin)
+						set(px + dx, wy, pz + dz, wallB);
 				}
 			}
+			// Crown fill above opening on back face
+			for (int dx = -(pier2HW - 1); dx <= pier2HW - 1; dx++)
+				for (int wy = archTopY; wy <= crownTopY; wy++)
+					set(px + dx, wy, pz + dz, stoneB);
 		}
 
-		// ── Secondary pillars (dx=±3): all depths, front face open below arch ──
+		// ── 8. Interior clear (dz=backDZ+2..frontDZ) ─────────────
+		for (int dx = -openHW; dx <= openHW; dx++)
+			for (int dz = backDZ + 2; dz <= frontDZ; dz++)
+				for (int wy = platSurfY; wy < archTopY; wy++)
+					set(px + dx, wy, pz + dz, BLOCK_AIR);
+
+		// ── 9. Tower battlements ──────────────────────────────────
 		for (int sign : {-1, 1}) {
-			for (int dz = -2; dz <= 1; dz++) {
-				for (int dy = 1; dy <= 12; dy++) {
-					if (dz == 1 && dy <= 10) continue;  // front opening region
-					set(px + sign * 3, groundY + dy, pz + dz, wallB);
-				}
+			for (int tw = towerHW; tw <= towerOW; tw++)
+				for (int dz = backDZ; dz <= frontDZ; dz++)
+					if (((dz - backDZ) % 2) == 0)
+						set(px + sign * tw, towerTopY + 1, pz + dz, stoneB);
+			// Corner turret posts (2 high)
+			for (int h = 1; h <= 2; h++) {
+				set(px + sign * towerOW, towerTopY + h, pz + backDZ,  stoneB);
+				set(px + sign * towerOW, towerTopY + h, pz + frontDZ, stoneB);
 			}
 		}
 
-		// ── Back wall (dz=-2): solid with decorative window ──
-		for (int dx = -2; dx <= 2; dx++) {
-			for (int dy = 1; dy <= 12; dy++) {
-				bool isWindow = (std::abs(dx) <= 1 && dy >= 3 && dy <= 7);
-				if (!isWindow)
-					set(px + dx, groundY + dy, pz - 2, wallB);
+		// ── 10. Descending staircase (dz=+3..+7) ─────────────────
+		// Step i: stairB at (Y=groundY+platH-1-i, dz=frontDZ+1+i)
+		// Physics surfaces: groundY+4.5, +3.5, +2.5, +1.5, +0.5
+		// Transitions: 0.5 (plat→stair0), then 1.0 each, 0.5 (stair4→ground)
+		for (int i = 0; i < numSteps; i++) {
+			int stepY  = groundY + platH - 1 - i;
+			int stepDZ = frontDZ + 1 + i;
+			for (int dx = -openHW; dx <= openHW; dx++) {
+				set(px + dx, stepY, pz + stepDZ, stairB);
+				for (int fy = groundY; fy < stepY; fy++)
+					set(px + dx, fy, pz + stepDZ, wallB);
 			}
 		}
 
-		// ── Front arch top (dz=+1): stepped arch above opening ──
-		for (int dx = -2; dx <= 2; dx++)
-			set(px + dx, groundY + 11, pz + 1, wallB);
-		for (int dx = -1; dx <= 1; dx++)
-			set(px + dx, groundY + 12, pz + 1, (dx == 0) ? stoneB : wallB);
-
-		// ── Interior (dz=-1 and dz=0): air between secondary pillars ──
-		for (int dz : {-1, 0}) {
-			for (int dy = 1; dy <= 12; dy++)
-				for (int dx = -2; dx <= 2; dx++)
-					set(px + dx, groundY + dy, pz + dz, BLOCK_AIR);
+		// ── 11. Stair side walls (dx=±4, descending parapets) ────
+		for (int sign : {-1, 1}) {
+			for (int i = 0; i < numSteps; i++) {
+				int stepY  = groundY + platH - 1 - i;
+				int stepDZ = frontDZ + 1 + i;
+				for (int wy = groundY; wy <= stepY + 1; wy++)
+					set(px + sign * (openHW + 1), wy, pz + stepDZ, stoneB);
+			}
 		}
 
-		// ── Portal glow plane (dz=-1): magical surface at back of interior ──
-		// Non-solid, semi-transparent purple blocks that animate in the shader.
+		// ── 12. Portal plane (dz=backDZ+1) ───────────────────────
 		if (portalB != BLOCK_AIR) {
-			for (int dy = 1; dy <= 10; dy++)
-				for (int dx = -2; dx <= 2; dx++)
-					set(px + dx, groundY + dy, pz - 1, portalB);
+			for (int dx = -openHW; dx <= openHW; dx++)
+				for (int wy = platSurfY; wy < archTopY; wy++)
+					set(px + dx, wy, pz + backDZ + 1, portalB);
 		}
-
-		// ── Battlements (dy=13): crenellations atop main pillars ──
-		for (int sign : {-1, 1}) {
-			for (int dz = -2; dz <= 1; dz++)
-				set(px + sign * 4, groundY + 13, pz + dz, stoneB);
-		}
-		set(px, groundY + 13, pz + 1, stoneB);  // peak accent over keystone
 	}
 
 	// ── Convenience: common generation context ───────────────────────
