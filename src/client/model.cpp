@@ -139,18 +139,29 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 				doSwing = true;
 			}
 
-			// Attack override: major limbs (amplitude >= 40°) lunge as a unit.
-			// cos(phase): phase=0 parts (right arm, left leg) lunge forward (-),
-			//             phase=PI parts (left arm, right leg) sweep back (+).
-			// Small parts like head (amplitude 5°) are excluded from attack swing.
+			// Attack override: major limbs (amplitude >= 40°) animate during attack.
+			// Handled directly here; sets doSwing=false so the walk block below skips.
+			// cos(swingPhase): phase=0 → right arm/left leg (+1), phase=π → left arm/right leg (-1).
 			if (anim.attackPhase > 0.001f && part.swingAmplitude >= 40.0f) {
-				float phaseSign = std::cos(part.swingPhase); // +1 or -1
-				angle = std::sin(anim.attackPhase * PI)
-				        * glm::radians(-90.0f) * phaseSign;
-				doSwing = true;
+				float phaseSign  = std::cos(part.swingPhase);
+				bool  isRightArm = (phaseSign > 0.5f);
+
+				partMat = glm::translate(partMat, part.pivot * s);
+				if (isRightArm && (std::abs(anim.armPitch) > 0.1f || std::abs(anim.armYaw) > 0.1f)) {
+					// Clip-specific: pitch (forward/back on swingAxis) + yaw (lateral sweep)
+					partMat = glm::rotate(partMat, glm::radians(anim.armPitch), part.swingAxis);
+					partMat = glm::rotate(partMat, glm::radians(anim.armYaw),   glm::vec3(0, 1, 0));
+				} else {
+					// Generic counter-swing for left arm / legs (reduced amplitude)
+					float lunge = std::sin(anim.attackPhase * PI) * glm::radians(-45.0f) * phaseSign;
+					partMat = glm::rotate(partMat, lunge, part.swingAxis);
+				}
+				partMat = glm::translate(partMat, -part.pivot * s);
+				doSwing = false; // already applied — skip walk block below
 			}
 
 			if (doSwing) {
+				// Walk cycle (only reached when not attacking)
 				partMat = glm::translate(partMat, part.pivot * s);
 				partMat = glm::rotate(partMat, angle, part.swingAxis);
 				partMat = glm::translate(partMat, -part.pivot * s);

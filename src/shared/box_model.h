@@ -68,6 +68,11 @@ struct AnimState {
 	float speed = 0.0f;        // current movement speed (0 = idle)
 	float time = 0.0f;         // global time (for idle animation)
 	float attackPhase = 0.0f;  // 0→1 during attack swing (drives arm/limb lunge)
+	// Clip-specific right-arm angles (degrees). Populated from AttackAnimPlayer.
+	// pitch: forward/back rotation (negative = arm swings forward toward target).
+	// yaw  : lateral rotation      (positive = right-to-left sweep, negative = L-to-R).
+	float armPitch = 0.0f;
+	float armYaw   = 0.0f;
 };
 
 } // namespace modcraft

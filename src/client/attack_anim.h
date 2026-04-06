@@ -19,18 +19,26 @@ struct ClipKey {
     glm::vec3 rotEuler;    // rotation delta in degrees, applied as X→Y→Z
 };
 
+// ── ArmKey ────────────────────────────────────────────────────────────────────
+// One keyframe for the 3rd-person right-arm joint.
+// pitch: forward/back rotation in degrees (negative = arm swings forward).
+// yaw  : lateral rotation in degrees (positive = arm swings left / R-to-L sweep).
+struct ArmKey {
+    float t;
+    float pitch;
+    float yaw;
+};
+
 // ── AttackClip ────────────────────────────────────────────────────────────────
 // One named move in a combo sequence. Python artifact fields reference clips
 // by id. New clip types require C++ work; new weapon combos are purely Python.
 struct AttackClip {
     std::string          id;
     float                duration;   // seconds for one full clip
-    std::vector<ClipKey> keys;       // sorted by t, linearly interpolated
+    std::vector<ClipKey> keys;       // sorted by t — FPS viewmodel delta
+    std::vector<ArmKey>  armKeys;    // sorted by t — 3rd-person right-arm rotation
     float                hitStart;   // fraction of duration: hit window opens
     float                hitEnd;     // fraction of duration: hit window closes
-    // 3rd-person arm lunge amplitudes (degrees). Drive AnimState.attackPhase.
-    float                armLungeR = 90.0f;
-    float                armLungeL = 45.0f;
 };
 
 // ── AttackAnimPlayer ──────────────────────────────────────────────────────────
@@ -54,53 +62,103 @@ public:
 
         // ── Default sword combo ───────────────────────────────────────────────
         // swing_right: right-to-left diagonal slash (combo opener / lone hit)
-        reg({ "swing_right", 0.35f, {
+        reg({ "swing_right", 0.35f,
+            // FPS viewmodel keyframes
+            {
                 {0.00f, { 0.00f,  0.00f,  0.00f}, {  0.f,   0.f,   0.f}},
                 {0.10f, { 0.04f,  0.02f,  0.01f}, { 15.f,  20.f,  25.f}},  // wind-up right
                 {0.45f, {-0.05f, -0.02f,  0.00f}, {-55.f, -30.f, -45.f}},  // peak slash
                 {1.00f, {-0.02f, -0.01f,  0.00f}, {-20.f, -10.f, -15.f}},  // follow-through
-            }, 0.15f, 0.65f, 90.f, 30.f });
+            },
+            // 3rd-person right-arm keyframes (pitch = fwd/back, yaw = lateral)
+            {
+                {0.00f,   0.f,   0.f},
+                {0.10f, -15.f,  40.f},  // wind-up: pull arm right
+                {0.45f, -50.f, -55.f},  // peak: arm swept left, pitched forward
+                {1.00f, -20.f, -25.f},  // follow-through
+            },
+            0.15f, 0.65f });
 
         // swing_left: left-to-right return slash (combo 2nd hit)
-        reg({ "swing_left", 0.28f, {
-                {0.00f, {-0.02f, -0.01f,  0.00f}, {-20.f, -10.f, -15.f}},  // continuing from prior
+        reg({ "swing_left", 0.28f,
+            {
+                {0.00f, {-0.02f, -0.01f,  0.00f}, {-20.f, -10.f, -15.f}},
                 {0.15f, {-0.04f,  0.02f,  0.00f}, {-10.f, -25.f, -20.f}},  // wind-up left
                 {0.50f, { 0.05f, -0.02f,  0.00f}, { 50.f,  25.f,  40.f}},  // peak slash right
-                {1.00f, { 0.02f, -0.01f,  0.00f}, { 18.f,   8.f,  12.f}},  // follow-through
-            }, 0.12f, 0.60f, 75.f, 90.f });
+                {1.00f, { 0.02f, -0.01f,  0.00f}, { 18.f,   8.f,  12.f}},
+            },
+            {
+                {0.00f, -20.f, -25.f},
+                {0.15f, -15.f, -45.f},  // wind-up left
+                {0.50f, -45.f,  55.f},  // peak: arm swept right
+                {1.00f, -18.f,  20.f},
+            },
+            0.12f, 0.60f });
 
         // jab: forward thrust finisher (combo 3rd hit)
-        reg({ "jab", 0.22f, {
+        reg({ "jab", 0.22f,
+            {
                 {0.00f, { 0.00f,  0.00f,  0.00f}, { 0.f, 0.f,  0.f}},
                 {0.20f, { 0.00f,  0.00f,  0.05f}, { 5.f, 0.f,  0.f}},  // pull back
                 {0.55f, { 0.00f,  0.00f, -0.15f}, {-8.f, 0.f,  0.f}},  // thrust forward
-                {1.00f, { 0.00f,  0.00f,  0.00f}, { 0.f, 0.f,  0.f}},  // recover
-            }, 0.35f, 0.70f, 80.f, 20.f });
+                {1.00f, { 0.00f,  0.00f,  0.00f}, { 0.f, 0.f,  0.f}},
+            },
+            {
+                {0.00f,   0.f,  0.f},
+                {0.20f,  20.f,  0.f},  // pull arm back
+                {0.55f, -80.f,  0.f},  // thrust forward
+                {1.00f,   0.f,  0.f},
+            },
+            0.35f, 0.70f });
 
         // ── Other weapon archetypes ───────────────────────────────────────────
         // slam: overhead smash (axe, war-hammer)
-        reg({ "slam", 0.55f, {
+        reg({ "slam", 0.55f,
+            {
                 {0.00f, { 0.00f,  0.00f,  0.00f}, {  0.f,  0.f,  0.f}},
                 {0.20f, { 0.00f,  0.05f,  0.02f}, {-70.f,  0.f,  5.f}},  // raise overhead
                 {0.55f, { 0.00f, -0.03f, -0.03f}, { 85.f,  0.f, -5.f}},  // smash down
-                {1.00f, { 0.00f, -0.01f,  0.00f}, { 20.f,  0.f,  0.f}},  // rebound
-            }, 0.40f, 0.75f, 110.f, 50.f });
+                {1.00f, { 0.00f, -0.01f,  0.00f}, { 20.f,  0.f,  0.f}},
+            },
+            {
+                {0.00f,    0.f, 0.f},
+                {0.20f,  100.f, 0.f},  // raise overhead (backward)
+                {0.55f,  -90.f, 0.f},  // smash down (forward)
+                {1.00f,  -25.f, 0.f},
+            },
+            0.40f, 0.75f });
 
         // stab: fast dagger thrust
-        reg({ "stab", 0.18f, {
+        reg({ "stab", 0.18f,
+            {
                 {0.00f, { 0.00f,  0.00f,  0.00f}, { 0.f, 0.f,  0.f}},
-                {0.25f, { 0.00f,  0.00f,  0.04f}, { 3.f, 0.f,  0.f}},  // pull back
-                {0.55f, { 0.00f,  0.00f, -0.18f}, {-5.f, 0.f,  0.f}},  // thrust
-                {1.00f, { 0.00f,  0.00f,  0.00f}, { 0.f, 0.f,  0.f}},  // recover
-            }, 0.30f, 0.65f, 60.f, 10.f });
+                {0.25f, { 0.00f,  0.00f,  0.04f}, { 3.f, 0.f,  0.f}},
+                {0.55f, { 0.00f,  0.00f, -0.18f}, {-5.f, 0.f,  0.f}},
+                {1.00f, { 0.00f,  0.00f,  0.00f}, { 0.f, 0.f,  0.f}},
+            },
+            {
+                {0.00f,   0.f, 0.f},
+                {0.25f,  25.f, 0.f},
+                {0.55f, -85.f, 0.f},
+                {1.00f,   0.f, 0.f},
+            },
+            0.30f, 0.65f });
 
         // swipe: wide arc (claws, unarmed)
-        reg({ "swipe", 0.30f, {
+        reg({ "swipe", 0.30f,
+            {
                 {0.00f, { 0.00f,  0.00f,  0.00f}, {  0.f,   0.f,  0.f}},
                 {0.15f, { 0.03f,  0.01f,  0.01f}, { 10.f,  15.f, 15.f}},
                 {0.50f, {-0.06f, -0.01f,  0.00f}, {-45.f, -20.f,-30.f}},
                 {1.00f, {-0.01f,  0.00f,  0.00f}, {-10.f,  -5.f, -8.f}},
-            }, 0.20f, 0.65f, 70.f, 60.f });
+            },
+            {
+                {0.00f,   0.f,   0.f},
+                {0.15f, -10.f,  50.f},
+                {0.50f, -40.f, -65.f},
+                {1.00f, -10.f, -20.f},
+            },
+            0.20f, 0.65f });
     }
 
     static const AttackClip* findClip(const std::string& id) {
@@ -191,6 +249,36 @@ public:
         if (m_useOverride) return findClip(m_overrideClipId);
         if (m_combo.empty()) return nullptr;
         return findClip(m_combo[m_comboIdx % (int)m_combo.size()]);
+    }
+
+    // Interpolated 3rd-person right-arm angles for the current frame (degrees).
+    // outPitch: forward/back (negative = arm swings forward).
+    // outYaw:   lateral      (positive = right-to-left sweep).
+    void currentArmAngles(float& outPitch, float& outYaw) const {
+        outPitch = 0.f;
+        outYaw   = 0.f;
+        if (!m_active) return;
+        const AttackClip* cur = currentClip();
+        if (!cur || cur->armKeys.empty()) return;
+
+        float t = std::clamp(phase(), 0.f, 1.f);
+        const auto& keys = cur->armKeys;
+
+        if (keys.size() == 1 || t <= keys.front().t) {
+            outPitch = keys.front().pitch; outYaw = keys.front().yaw; return;
+        }
+        if (t >= keys.back().t) {
+            outPitch = keys.back().pitch;  outYaw = keys.back().yaw;  return;
+        }
+        for (int i = 0; i + 1 < (int)keys.size(); ++i) {
+            if (t >= keys[i].t && t <= keys[i + 1].t) {
+                float span = keys[i + 1].t - keys[i].t;
+                float frac = (span > 0.f) ? (t - keys[i].t) / span : 0.f;
+                outPitch = keys[i].pitch + (keys[i+1].pitch - keys[i].pitch) * frac;
+                outYaw   = keys[i].yaw   + (keys[i+1].yaw   - keys[i].yaw)   * frac;
+                return;
+            }
+        }
     }
 
     // Interpolated viewmodel delta for the current frame.

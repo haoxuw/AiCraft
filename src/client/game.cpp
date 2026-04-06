@@ -906,10 +906,13 @@ void Game::updatePlaying(float dt, float aspect) {
 			}
 
 			// Swing trigger: left-click with an attack-capable item, cooldown ready.
-			// attackId != ENTITY_NONE  → clicked on an entity
-			// m_controls.pressed(BreakBlock) → clicked anywhere (air swing)
+			// attackId != ENTITY_NONE   → clicked on an entity (all modes)
+			// m_controls.pressed(...)   → air swing, only in FPS/TPS where left-click
+			//                            is not already used for move/select
+			bool canAirSwing = (m_camera.mode == CameraMode::FirstPerson ||
+			                    m_camera.mode == CameraMode::ThirdPerson);
 			bool leftClick = (attackId != ENTITY_NONE) ||
-			                  m_controls.pressed(Action::BreakBlock);
+			                 (canAirSwing && m_controls.pressed(Action::BreakBlock));
 			if (leftClick && canAttack && m_attackCD <= 0) {
 				if (m_attackAnim.trigger()) {
 					m_attackCD = cooldown;
@@ -1297,7 +1300,10 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	float playerSpeed = glm::length(glm::vec2(pe->velocity.x, pe->velocity.z));
 	float prevWalkDist = m_playerWalkDist;
 	m_playerWalkDist += playerSpeed * dt;
-	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime, m_attackAnim.phase()};
+	float armPitch = 0.f, armYaw = 0.f;
+	m_attackAnim.currentArmAngles(armPitch, armYaw);
+	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime,
+	                        m_attackAnim.phase(), armPitch, armYaw};
 
 	// Footstep sounds — play every ~2.5 blocks of movement
 	if (pe->onGround && playerSpeed > 0.5f) {
@@ -1870,6 +1876,27 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 
 	// (Backpack panel removed — use [I] Equipment UI for all inventory management)
 
+	// Goal text overlay — render entity goal above their lightbulb
+	if (!skipImGui) {
+		auto& srv2 = *m_server;
+		glm::mat4 vp2 = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
+		srv2.forEachEntity([&](Entity& e) {
+			if (e.id() == m_server->localPlayerId()) return;
+			if (!e.def().isLiving() || e.removed || e.goalText.empty()) return;
+			float entityTop = e.def().collision_box_max.y;
+			float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;
+			glm::vec3 textPos = e.position + glm::vec3(0, entityTop + 0.55f + bobY, 0);
+			glm::vec4 clip = vp2 * glm::vec4(textPos, 1.0f);
+			if (clip.w <= 0.0f || clip.z <= 0.0f) return;
+			float nx = clip.x / clip.w, ny = clip.y / clip.w;
+			if (nx < -1.3f || nx > 1.3f || ny < -1.3f || ny > 1.3f) return;
+			glm::vec4 color = e.hasError
+				? glm::vec4(1.0f, 0.4f, 0.4f, 0.92f)
+				: glm::vec4(0.92f, 1.0f, 0.85f, 0.88f);
+			m_text.drawText(e.goalText.c_str(), nx - 0.16f, ny, 0.40f, color, aspect);
+		});
+	}
+
 	// Floating text notifications (damage, pickups, heals)
 	if (!skipImGui) {
 		m_floatText.render(m_camera, aspect, m_camera.mode, m_text,
@@ -1978,7 +2005,7 @@ void Game::updateEntityInspect(float dt, float aspect) {
 		}
 
 		// ── Behavior Tree Editor ──
-		if (ImGui::CollapsingHeader("Behavior Tree", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::CollapsingHeader("Behavior Tree")) {
 			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.15f, 1));
 			ImGui::BeginChild("##behaviorTree", ImVec2(0, 200), true);
 
