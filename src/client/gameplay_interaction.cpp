@@ -95,12 +95,13 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 
 	// ── Entity attack: left-click on living entity in any camera mode ──
 	// Takes priority over block break (FPS/TPS) and click-to-move (RPG).
+	// Does NOT set m_swingTriggered here — the attack dispatch in game.cpp
+	// handles the swing with weapon-appropriate duration (and only when the
+	// item actually allows attacking, preventing "potion swing").
 	if (m_entityHit && controls.pressed(Action::BreakBlock)) {
 		bool entityIsNearer = !m_hit || m_entityHit->distance <= m_hit->distance;
-		if (entityIsNearer) {
+		if (entityIsNearer)
 			m_attackTarget = m_entityHit->entityId;
-			m_swingTriggered = true;
-		}
 	}
 
 	// ── FPS/TPS only: left-click break, right-click place block ──

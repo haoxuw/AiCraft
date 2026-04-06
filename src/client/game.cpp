@@ -1545,7 +1545,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			auto apit = m_entityAttackPhase.find(e.id());
 			if (apit != m_entityAttackPhase.end()) atkPhase = apit->second;
 			mobAnim.attackPhase = atkPhase;
-			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim, {}, tintStr);
+			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim, tintStr);
 		} else if (!modelKey.empty() && e.typeId() != EntityType::ItemEntity) {
 			// Warn once per model key
 			static std::unordered_set<std::string> warned;

@@ -76,7 +76,7 @@ void ModelRenderer::shutdown() {
 
 void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
                           glm::vec3 feetPos, float yaw, const AnimState& anim,
-                          glm::vec3 sunDir, float tintStrength, glm::vec3 tint) {
+                          float tintStrength, glm::vec3 tint, glm::vec3 sunDir) {
 	m_shader->use();
 	glEnable(GL_DEPTH_TEST);
 
@@ -190,6 +190,7 @@ void ModelRenderer::drawStatic(const BoxModel& model, const glm::mat4& viewProj,
 	float s = model.modelScale;
 
 	m_shader->setVec3("uSunDir", sunDir);
+	m_shader->setFloat("uTintStrength", 0.0f); // no tint for static draws (FPS item, icons)
 	m_shader->setInt("uPartTex", 0);
 
 	GLint colorLoc = glGetUniformLocation(m_shader->id(), "uColor");
