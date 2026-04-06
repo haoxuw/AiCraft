@@ -281,13 +281,15 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 			case FloatSource::Pickup:      case FloatSource::BlockBreak:     loot.push_back(&se);  break;
 			}
 		}
-		// Sort each group oldest-first so the longest-running entry is at top
-		auto byTtlDesc = [](ScreenEntry* a, ScreenEntry* b) {
-			return a->entry->ttl > b->entry->ttl;
+		// Sort by stable key (item name string) so row assignments never change
+		// between frames. TTL-based sorting caused flickering because many entries
+		// share identical TTLs and std::sort is not stable.
+		auto byLabel = [](ScreenEntry* a, ScreenEntry* b) {
+			return a->entry->baseLabel < b->entry->baseLabel;
 		};
-		std::sort(taken.begin(), taken.end(), byTtlDesc);
-		std::sort(dealt.begin(), dealt.end(), byTtlDesc);
-		std::sort(loot.begin(),  loot.end(),  byTtlDesc);
+		std::sort(taken.begin(), taken.end(), byLabel);
+		std::sort(dealt.begin(), dealt.end(), byLabel);
+		std::sort(loot.begin(),  loot.end(),  byLabel);
 
 		for (int i = 0; i < (int)taken.size(); i++)
 			taken[i]->pos = { kFpsTakenX, kFpsTakenBaseY + i * kFpsRowH };
