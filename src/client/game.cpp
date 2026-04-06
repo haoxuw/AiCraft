@@ -1474,7 +1474,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 
 		mr.draw(bulb, vp, bulbPos, m_camera.lookYaw, {}); // billboard: face camera
 
-		// Goal bubble: floating text + log when goal changes
+		// Goal bubble: floating popup + log when goal changes
 		if (!e.goalText.empty()) {
 			static std::unordered_map<EntityId, std::string> lastGoals;
 			auto& prev = lastGoals[e.id()];
@@ -1483,6 +1483,15 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				// Log the decision
 				std::string eName = e.def().display_name.empty() ? e.typeId() : e.def().display_name;
 				appendLog(eName + ": " + e.goalText);
+				// Spawn floating popup above the lightbulb
+				FloatTextEvent ft;
+				ft.source      = FloatSource::GoalChange;
+				ft.targetId    = e.id();
+				ft.worldPos    = e.position + glm::vec3(0, entityTop + 0.55f, 0);
+				ft.text        = e.goalText;
+				ft.coalesceKey = std::to_string(e.id()); // one slot per entity
+				ft.value       = 1.0f;
+				m_floatText.add(ft);
 			}
 		}
 

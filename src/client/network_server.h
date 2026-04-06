@@ -167,11 +167,13 @@ public:
 			float dist = glm::length(diff);
 
 			float speed = isLocal ? LOCAL_INTERP_SPEED : INTERP_SPEED;
-			if (dist > 8.0f) {
-				e.position = predicted;
+			if (dist > 1.0f) {
+				// Snap to last known server position (not predicted) to avoid
+				// placing the entity inside a block.
+				e.position = target.position;
 				printf("[Net] SNAP entity %u to server pos (dist=%.1f) local=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f)\n",
 					id, dist, e.position.x, e.position.y, e.position.z,
-					predicted.x, predicted.y, predicted.z);
+					target.position.x, target.position.y, target.position.z);
 			} else if (dist > 0.005f) {
 				float t = std::min(dt * speed, 1.0f);
 				e.position += diff * t;

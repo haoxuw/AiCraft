@@ -31,6 +31,7 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <ctime>
 
 namespace modcraft {
 
@@ -155,6 +156,22 @@ public:
 				BehaviorWorldView view{e, nearby, blocks, dt, m_worldTime};
 				state.currentAction = state.behavior->decide(view);
 
+				// Log only when goal differs from the last LOGGED goal for this entity
+				if (!e.goalText.empty() && e.goalText != m_lastLoggedGoal[eid]) {
+					m_lastLoggedGoal[eid] = e.goalText;
+					time_t now = time(nullptr);
+					struct tm* ti = localtime(&now);
+					char ts[10];
+					strftime(ts, sizeof(ts), "%H:%M:%S", ti);
+					// "base:chicken" -> "Chicken"
+					std::string typeName = e.typeId();
+					auto col = typeName.find(':');
+					if (col != std::string::npos) typeName = typeName.substr(col + 1);
+					if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
+					printf("[%s][Agent:%s] %s #%u: %s\n",
+						ts, m_name.c_str(), typeName.c_str(), eid, e.goalText.c_str());
+				}
+
 				// Extract one-shot actions (DropItem, BreakBlock) — sent exactly once
 				extractOneShots(e, state.currentAction, state.pendingOneShots);
 			}
@@ -175,6 +192,20 @@ public:
 				net::serializeAction(wb, p);
 				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
 			}
+		}
+
+		// Periodic heartbeat: show all controlled entities and their current goal
+		m_statusTimer += dt;
+		if (m_statusTimer >= 10.0f) {
+			m_statusTimer = 0.0f;
+			printf("[Agent:%s] Heartbeat —", m_name.c_str());
+			for (EntityId eid : m_controlled) {
+				auto it = m_entities.find(eid);
+				if (it == m_entities.end() || !it->second) continue;
+				printf(" [%u: %s]", eid,
+					it->second->goalText.empty() ? "waiting" : it->second->goalText.c_str());
+			}
+			printf("\n");
 		}
 	}
 
@@ -364,6 +395,7 @@ private:
 
 	EntityId m_targetEntityId = ENTITY_NONE; // entity this agent wants to control
 	float m_worldTime = 0.3f;
+	float m_statusTimer = 0.0f;  // periodic heartbeat
 
 	// --- Entity state cache (received from server) ---
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
@@ -378,6 +410,7 @@ private:
 	std::unordered_set<EntityId> m_controlled;
 	std::unordered_map<EntityId, AgentBehaviorState> m_behaviorStates;
 	std::unordered_map<EntityId, BlockCache> m_blockCaches;
+	std::unordered_map<EntityId, std::string> m_lastLoggedGoal;
 	BehaviorStore m_behaviorStore;
 };
 

@@ -44,6 +44,10 @@ struct NavViolation {
 
 // Check one door column starting at the bottom door block (bottomY).
 // Returns "" on pass, error string on fail.
+//
+// Measures total passable height from bottomY upward.  Door blocks count as
+// passable (they open), air / non-solid blocks always count.  The opening
+// must be at least ceil(playerH) blocks tall.
 template<typename GetBlock>
 inline std::string checkDoorColumn(
 	GetBlock getBlock, const BlockRegistry& reg,
@@ -52,22 +56,18 @@ inline std::string checkDoorColumn(
 {
 	BlockId doorId = reg.getId(BlockType::Door);
 
-	// Walk up to topmost door block in column.
-	int topDoor = bottomY;
-	while (reg.get(getBlock(x, topDoor+1, z)).string_id == BlockType::Door)
-		topDoor++;
-
-	// Count consecutive non-solid blocks above topmost door block.
-	int air = 0;
-	for (int h = 1; h <= 8; h++) {
-		if (!reg.get(getBlock(x, topDoor+h, z)).solid) air++;
+	int clear = 0;
+	for (int h = 0; h <= 8; h++) {
+		BlockId bid = getBlock(x, bottomY + h, z);
+		bool passable = (bid == doorId) || !reg.get(bid).solid;
+		if (passable) clear++;
 		else break;
 	}
 	int need = (int)std::ceil(playerH);
-	if (air < need)
-		return "door at (" + std::to_string(x) + "," + std::to_string(topDoor)
-		     + "," + std::to_string(z) + "): " + std::to_string(air)
-		     + " air blocks above, need " + std::to_string(need);
+	if (clear < need)
+		return "door at (" + std::to_string(x) + "," + std::to_string(bottomY)
+		     + "," + std::to_string(z) + "): " + std::to_string(clear)
+		     + " passable blocks from floor, need " + std::to_string(need);
 	return "";
 }
 

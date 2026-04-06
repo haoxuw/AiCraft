@@ -377,8 +377,9 @@ public:
 			int status;
 			pid_t result = waitpid(it->pid, &status, WNOHANG);
 			if (result > 0) {
-				// Process exited — entity is now uncontrolled again
-				printf("[AI] AI client for entity %u exited (pid %d)\n", it->entityId, it->pid);
+				drainOnePipe(*it);  // flush any final output
+				if (it->logFd >= 0) { close(it->logFd); it->logFd = -1; }
+				printf("[AI] Agent for entity %u exited (pid %d)\n", it->entityId, it->pid);
 				it = m_aiProcesses.erase(it);
 			} else {
 				++it;
@@ -395,6 +396,10 @@ public:
 			}
 			if (hasProcess) continue;
 
+			// Create a pipe: child writes stdout → server reads logs
+			int pipefd[2] = {-1, -1};
+			pipe(pipefd);
+
 			// Spawn AI client process
 			std::string name = "ai_" + std::to_string(eid);
 			std::vector<std::string> args = {
@@ -407,33 +412,47 @@ public:
 
 			pid_t pid = fork();
 			if (pid == 0) {
-				// Child: redirect output to /dev/null, exec agent
+				// Child: route stdout+stderr through the pipe
+				if (pipefd[1] >= 0) {
+					dup2(pipefd[1], STDOUT_FILENO);
+					dup2(pipefd[1], STDERR_FILENO);
+					close(pipefd[0]);
+					close(pipefd[1]);
+				}
 				std::vector<char*> cargs;
 				for (auto& a : args) cargs.push_back(const_cast<char*>(a.c_str()));
 				cargs.push_back(nullptr);
-				int devnull = open("/dev/null", O_WRONLY);
-				if (devnull >= 0) {
-					dup2(devnull, STDOUT_FILENO);
-					dup2(devnull, STDERR_FILENO);
-					close(devnull);
-				}
 				execv(cargs[0], cargs.data());
 				_exit(127);
 			} else if (pid > 0) {
-				m_aiProcesses.push_back({pid, eid});
-				printf("[AI] Spawned AI client for entity %u (pid %d)\n", eid, pid);
+				// Parent: close write end, make read end non-blocking
+				if (pipefd[1] >= 0) close(pipefd[1]);
+				if (pipefd[0] >= 0)
+					fcntl(pipefd[0], F_SETFL, fcntl(pipefd[0], F_GETFL) | O_NONBLOCK);
+				AIProcess ap;
+				ap.pid = pid; ap.entityId = eid; ap.logFd = pipefd[0];
+				m_aiProcesses.push_back(std::move(ap));
+				printf("[AI] Spawned agent for entity %u (pid %d)\n", eid, pid);
+			} else {
+				if (pipefd[0] >= 0) close(pipefd[0]);
+				if (pipefd[1] >= 0) close(pipefd[1]);
 			}
 		}
+	}
+
+	// Drain stdout from all agent pipes and print to server console.
+	// Non-blocking: returns immediately if no data is available.
+	void drainAgentLogs() {
+		for (auto& ai : m_aiProcesses)
+			drainOnePipe(ai);
 	}
 
 	// Stop all AI client processes.
 	void stopAllAIClients() {
 		for (auto& ai : m_aiProcesses) {
-			if (ai.pid > 0 && kill(ai.pid, 0) == 0) {
+			if (ai.pid > 0 && kill(ai.pid, 0) == 0)
 				kill(ai.pid, SIGTERM);
-			}
 		}
-		// Wait for them to exit
 		usleep(300000);
 		for (auto& ai : m_aiProcesses) {
 			if (ai.pid > 0) {
@@ -443,6 +462,7 @@ public:
 					waitpid(ai.pid, &status, 0);
 				}
 			}
+			if (ai.logFd >= 0) close(ai.logFd);
 		}
 		m_aiProcesses.clear();
 	}
@@ -473,6 +493,31 @@ public:
 	}
 
 private:
+	struct AIProcess {
+		pid_t       pid;
+		EntityId    entityId;
+		int         logFd = -1;   // read end of stdout pipe from child
+		std::string logBuf;       // partial-line accumulator
+	};
+
+	// Read available bytes from one agent pipe, split into lines, print each.
+	void drainOnePipe(AIProcess& ai) {
+		if (ai.logFd < 0) return;
+		char buf[4096];
+		ssize_t n;
+		while ((n = read(ai.logFd, buf, sizeof(buf) - 1)) > 0) {
+			buf[n] = '\0';
+			ai.logBuf += buf;
+		}
+		size_t pos;
+		while ((pos = ai.logBuf.find('\n')) != std::string::npos) {
+			std::string line = ai.logBuf.substr(0, pos);
+			ai.logBuf.erase(0, pos + 1);
+			if (!line.empty())
+				printf("%s\n", line.c_str());
+		}
+	}
+
 	void handleMessage(ClientId cid, ConnectedClient& client, uint32_t type, net::ReadBuffer& rb) {
 		switch (type) {
 		case net::C_ACTION: {
@@ -637,7 +682,6 @@ private:
 	// AI client process management
 	std::string m_execDir;
 	int m_port = 0;
-	struct AIProcess { pid_t pid; EntityId entityId; };
 	std::vector<AIProcess> m_aiProcesses;
 
 	// LAN discovery

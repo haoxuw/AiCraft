@@ -13,6 +13,7 @@ namespace modcraft {
 // ─────────────────────────────────────────────────────────────────────────────
 
 float FloatingTextManager::ttlFor(FloatSource src) const {
+	if (src == FloatSource::GoalChange) return 4.0f;
 	return (src == FloatSource::Pickup || src == FloatSource::BlockBreak)
 	       ? kPickupTtl : kCombatTtl;
 }
@@ -43,6 +44,8 @@ std::string FloatingTextManager::formatDisplay(FloatSource src, float accum,
 	}
 	case FloatSource::BlockBreak:
 		return label + (v > 1 ? " x" + std::to_string(v) : "");
+	case FloatSource::GoalChange:
+		return label;
 	}
 	return label;
 }
@@ -61,6 +64,8 @@ glm::vec4 FloatingTextManager::colorFor(FloatSource src, bool isCrit, bool isDyi
 		return {0.85f, 1.0f, 0.55f, 1.0f};  // lime
 	case FloatSource::BlockBreak:
 		return {0.70f, 0.70f, 0.70f, 1.0f}; // gray
+	case FloatSource::GoalChange:
+		return {0.55f, 0.90f, 1.00f, 1.0f}; // sky blue
 	}
 	return {1, 1, 1, 1};
 }
@@ -222,7 +227,8 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 	// Scale for a given entry: crits pop larger; pickup/break slightly smaller than combat.
 	auto entryScale = [](const Entry& e) -> float {
 		if (e.isCrit) return kFTScaleCrit;
-		if (e.source == FloatSource::Pickup || e.source == FloatSource::BlockBreak)
+		if (e.source == FloatSource::Pickup || e.source == FloatSource::BlockBreak
+		    || e.source == FloatSource::GoalChange)
 			return kFTScalePickup;
 		return kFTScaleWorld;
 	};
@@ -278,7 +284,8 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 			switch (se.entry->source) {
 			case FloatSource::DamageTaken:                                    taken.push_back(&se); break;
 			case FloatSource::DamageDealt: case FloatSource::Heal:           dealt.push_back(&se); break;
-			case FloatSource::Pickup:      case FloatSource::BlockBreak:     loot.push_back(&se);  break;
+			case FloatSource::Pickup: case FloatSource::BlockBreak:
+			case FloatSource::GoalChange:                                     loot.push_back(&se);  break;
 			}
 		}
 		// Sort by stable key (item name string) so row assignments never change
