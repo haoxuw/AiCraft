@@ -21,6 +21,7 @@
 #include "client/model_preview.h"
 #include "client/model_icon_cache.h"
 #include "client/floating_text.h"
+#include "client/attack_anim.h"
 #include "client/ui.h"
 #include "client/audio.h"
 #include "development/debug_capture.h"
@@ -175,12 +176,11 @@ private:
 		float duration = 0.35f;
 	};
 
-	// First-person held item animation
-	float m_fpSwingTimer = 0;
-	float m_fpSwingDuration = 0.25f;
-	bool  m_fpSwingActive = false;
-	float m_dropCooldown = 0;     // prevents auto-pickup right after dropping
-	float m_attackCD = 0;         // per-item attack cooldown
+	// Attack animation — combo sequencer + FPS viewmodel keyframes
+	AttackAnimPlayer m_attackAnim;
+	std::string      m_comboItemId;  // tracks held item to reload combo on change
+	float m_dropCooldown = 0;        // prevents auto-pickup right after dropping
+	float m_attackCD = 0;            // per-item attack cooldown
 	std::vector<PickupAnim> m_pickupAnims;
 
 	// Floating text (damage numbers, pickup notifications, Minecraft Dungeons style)

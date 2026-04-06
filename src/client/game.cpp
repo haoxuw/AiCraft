@@ -7,6 +7,7 @@
 #include "imgui.h"
 #include <cstdio>
 #include <cstring>
+#include <sstream>
 #include <unordered_set>
 #include <fstream>
 #include <filesystem>
@@ -805,8 +806,7 @@ void Game::updatePlaying(float dt, float aspect) {
 			}
 		};
 		cb.triggerSwing = [this]() {
-			m_fpSwingActive = true;
-			m_fpSwingTimer = 0;
+			m_attackAnim.triggerOnce("swing_right");
 		};
 
 		m_debugCapture.tick(dt, pe, m_camera, cb);
@@ -840,35 +840,54 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
-	// First-person attack swing animation (block-break or entity attack)
+	// Register built-in attack clips once
+	AttackAnimPlayer::registerBuiltins();
+
+	// Block-break: short single-clip swing (does not affect combo state)
 	if (m_gameplay.swingTriggered()) {
-		m_fpSwingDuration = 0.25f; // block-break: fast, fixed duration
-		m_fpSwingActive = true;
-		m_fpSwingTimer = 0;
+		m_attackAnim.triggerOnce("swing_right");
 		m_gameplay.clearSwing();
 	}
-	if (m_fpSwingActive) {
-		m_fpSwingTimer += dt;
-		if (m_fpSwingTimer >= m_fpSwingDuration) {
-			m_fpSwingActive = false;
-			m_fpSwingTimer = 0;
-		}
-	}
+	m_attackAnim.update(dt);
 
-	// ── Entity attack: dispatch ActionProposal::Attack when player left-clicks entity ──
+	// ── Entity attack: swing on left-click + optionally send ActionProposal ──
+	// The swing always fires when the item can attack and cooldown is ready —
+	// no target required. The attack proposal is only sent when a valid entity
+	// is in range (server validates and applies damage).
 	m_attackCD -= dt;
 	{
 		EntityId attackId = m_gameplay.attackTarget();
 		m_gameplay.clearAttack();
-		if (attackId != ENTITY_NONE && pe->inventory && m_attackCD <= 0) {
+
+		if (pe->inventory) {
 			int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
 			const std::string& itemId = pe->inventory->hotbar(slot);
 
-			// Defaults: bare fist
-			float damage  = 1.5f;
+			// Reload combo when the held item changes
+			if (itemId != m_comboItemId) {
+				std::vector<std::string> combo = {"swing_right", "swing_left", "jab"};
+				if (!itemId.empty()) {
+					const ArtifactEntry* art = m_artifacts.findById(itemId);
+					if (art) {
+						auto ait = art->fields.find("attack_animations");
+						if (ait != art->fields.end() && !ait->second.empty()) {
+							// Parse space-separated clip names: "swing_right swing_left jab"
+							combo.clear();
+							std::istringstream ss(ait->second);
+							std::string name;
+							while (ss >> name) combo.push_back(name);
+						}
+					}
+				}
+				m_attackAnim.setCombo(combo);
+				m_comboItemId = itemId;
+			}
+
+			// Item attack stats
+			float damage   = 1.5f;
 			float cooldown = 0.4f;
-			float range   = 2.5f;
-			bool canAttack = itemId.empty(); // empty hand = fist, always allows attack
+			float range    = 2.5f;
+			bool  canAttack = itemId.empty(); // bare fist always attacks
 
 			if (!itemId.empty()) {
 				const ArtifactEntry* entry = m_artifacts.findById(itemId);
@@ -883,32 +902,37 @@ void Game::updatePlaying(float dt, float aspect) {
 						auto rit = entry->fields.find("range");
 						if (rit != entry->fields.end()) range = std::stof(rit->second);
 					}
-					// Item without on_interact=attack (e.g. potion): canAttack stays false
 				}
 			}
 
-			if (canAttack) {
+			// Swing trigger: left-click with an attack-capable item, cooldown ready.
+			// attackId != ENTITY_NONE  → clicked on an entity
+			// m_controls.pressed(BreakBlock) → clicked anywhere (air swing)
+			bool leftClick = (attackId != ENTITY_NONE) ||
+			                  m_controls.pressed(Action::BreakBlock);
+			if (leftClick && canAttack && m_attackCD <= 0) {
+				if (m_attackAnim.trigger()) {
+					m_attackCD = cooldown;
+					if (itemId.empty())
+						m_audio.play("hit_punch", pe->position, 0.35f);
+					else
+						m_audio.play("sword_swing", pe->position, 0.55f);
+				}
+			}
+
+			// Send attack proposal only when a valid target is in range
+			if (attackId != ENTITY_NONE && canAttack) {
 				Entity* target = m_server->getEntity(attackId);
 				if (target) {
 					float dist = glm::length(target->position - pe->position);
 					if (dist <= range) {
 						ActionProposal p;
-						p.type       = ActionProposal::Attack;
-						p.actorId    = pe->id();
+						p.type         = ActionProposal::Attack;
+						p.actorId      = pe->id();
 						p.targetEntity = attackId;
-						p.damage     = damage;
+						p.damage       = damage;
 						m_server->sendAction(p);
-						m_attackCD = cooldown;
-						m_renderer.triggerHitmarker(false); // flash crosshair orange on attack
-						// Swing duration: 60% of cooldown, capped at 0.45s (fast stab/slow slash)
-						m_fpSwingDuration = std::min(cooldown * 0.6f, 0.45f);
-						m_fpSwingActive = true;
-						m_fpSwingTimer  = 0;
-						// Swing sound: weapon whoosh or fist
-						if (itemId.empty())
-							m_audio.play("hit_punch", pe->position, 0.35f);
-						else
-							m_audio.play("sword_swing", pe->position, 0.55f);
+						m_renderer.triggerHitmarker(false);
 					}
 				}
 			}
@@ -1273,8 +1297,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	float playerSpeed = glm::length(glm::vec2(pe->velocity.x, pe->velocity.z));
 	float prevWalkDist = m_playerWalkDist;
 	m_playerWalkDist += playerSpeed * dt;
-	float playerAttackPhase = m_fpSwingActive ? (m_fpSwingTimer / m_fpSwingDuration) : 0.0f;
-	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime, playerAttackPhase};
+	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime, m_attackAnim.phase()};
 
 	// Footstep sounds — play every ~2.5 blocks of movement
 	if (pe->onGround && playerSpeed > 0.5f) {
@@ -1564,14 +1587,16 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				fpRoot = glm::rotate(fpRoot, glm::radians(eqt.rotation.x), glm::vec3(1, 0, 0));
 				fpRoot = glm::rotate(fpRoot, glm::radians(eqt.rotation.z), glm::vec3(0, 0, 1));
 
-				// Swing animation on left-click.
-				// Axis: blend of pitch (X) and forward-roll (Z) for a diagonal slash
-				// that sweeps the blade edge through the air rather than pure up/down.
-				if (m_fpSwingActive) {
-					float t = m_fpSwingTimer / m_fpSwingDuration;
-					float swing = std::sin(t * 3.14159f) * (-65.0f);
-					glm::vec3 slashAxis = glm::normalize(glm::vec3(0.8f, 0.0f, 0.5f));
-					fpRoot = glm::rotate(fpRoot, glm::radians(swing), slashAxis);
+				// Attack animation: keyframe-driven position + rotation delta.
+				// Clip selected by combo (Python: attack_animations field) or
+				// single-clip override (block break uses "swing_right" at fast speed).
+				if (m_attackAnim.active()) {
+					glm::vec3 dPos, dRot;
+					m_attackAnim.currentDelta(dPos, dRot);
+					fpRoot = glm::translate(fpRoot, dPos);
+					fpRoot = glm::rotate(fpRoot, glm::radians(dRot.x), glm::vec3(1, 0, 0));
+					fpRoot = glm::rotate(fpRoot, glm::radians(dRot.y), glm::vec3(0, 1, 0));
+					fpRoot = glm::rotate(fpRoot, glm::radians(dRot.z), glm::vec3(0, 0, 1));
 				}
 
 				// Auto-scale items without explicit equip transform
