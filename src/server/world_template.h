@@ -7,9 +7,11 @@
 #include "server/noise.h"
 #include "server/world_gen_config.h"
 #include "server/python_bridge.h"
+#include "server/world_accessibility.h"
 #include <string>
 #include <cmath>
 #include <unordered_map>
+#include <cstdio>
 
 namespace agentica {
 
@@ -486,17 +488,83 @@ private:
 		}
 	};
 
+	// ── Reusable passage subroutines ─────────────────────────────
+	//
+	// These are called by generateHouse (and can be called for towers, dungeons,
+	// etc.) to carve navigable openings through solid structures.
+	// Each subroutine self-validates using world_accessibility.h predicates and
+	// prints a warning to stderr if the resulting geometry is insufficient.
+
+	// Carve a doorway at (doorX..doorX+width-1, floorY..floorY+dh-1, doorZ).
+	// Overwrites whatever is there: doorBlockRows of doorB at the bottom, air above.
+	// Validates that the non-door clearance >= ceil(playerH).
+	void carveEntrance(const GenCtx& ctx, const BlockRegistry& blocks,
+	                   int doorX, int floorY, int doorZ,
+	                   int width, int dh, int doorBlockRows,
+	                   BlockId doorB, float playerH = 2.5f) const
+	{
+		for (int dx = 0; dx < width; dx++) {
+			for (int dy = 0; dy < dh; dy++) {
+				BlockId bid = (dy < doorBlockRows) ? doorB : BLOCK_AIR;
+				ctx.set(doorX+dx, floorY+dy, doorZ, bid);
+			}
+			// Validate
+			auto getBlock = [&](int x, int y, int z){ return ctx.get(x,y,z); };
+			auto err = checkDoorColumn(getBlock, blocks, doorX+dx, floorY, doorZ, playerH);
+			if (!err.empty())
+				fprintf(stderr, "[WorldGen] carveEntrance: %s\n", err.c_str());
+		}
+	}
+
+	// Carve a stairway rising in +Z direction for (stories-1) flights of sh steps.
+	// Each step: stairB at (stairX..stairX+stairW-1, floorY+s*sh+i, baseZ+2+i).
+	// Opens the intermFloor (at floorY+s*sh+sh-1) for columns dx=stairX..stairX+openW-1
+	// where a player of height playerH would clip the ceiling.
+	// Validates clearance above every step.
+	void carveStairway(const GenCtx& ctx, const BlockRegistry& blocks,
+	                   int stairX, int floorY, int baseZ,
+	                   int sh, int stories, int stairW, int openW,
+	                   BlockId stairB, float playerH = 2.5f, float margin = 0.25f) const
+	{
+		auto getBlock = [&](int x, int y, int z){ return ctx.get(x,y,z); };
+
+		for (int s = 0; s < stories-1; s++) {
+			int intermY = floorY + s*sh + sh - 1;  // intermediate floor Y
+
+			// Phase 1: open ceiling where player head clips
+			for (int i = 0; i < sh; i++) {
+				float feetY  = (float)(floorY + s*sh + i) + 0.5f;
+				float headY  = feetY + playerH + margin;
+				if (headY > (float)intermY) {
+					for (int ddx = 0; ddx < openW; ddx++)
+						ctx.set(stairX + ddx, intermY, baseZ+2+i, BLOCK_AIR);
+				}
+			}
+
+			// Phase 2: place stair blocks (after clearing so stairB wins at intermY row)
+			for (int i = 0; i < sh; i++) {
+				for (int ddx = 0; ddx < stairW; ddx++)
+					ctx.set(stairX+ddx, floorY+s*sh+i, baseZ+2+i, stairB);
+			}
+
+			// Phase 3: validate
+			for (int i = 0; i < sh; i++) {
+				for (int ddx = 0; ddx < stairW; ddx++) {
+					auto err = checkStairBlock(getBlock, blocks,
+					                           stairX+ddx, floorY+s*sh+i, baseZ+2+i,
+					                           playerH, margin);
+					if (!err.empty())
+						fprintf(stderr, "[WorldGen] carveStairway: %s\n", err.c_str());
+				}
+			}
+		}
+	}
+
 	// ── House walls, floors, stairs, and roof ─────────────────────
 	//
-	// Staircase design (2-story, storyHeight=6):
-	//   6 half-height stair blocks at dx=1, dz=2..7, dy=0..5.
-	//   Player rises: 0→0.5→1.5→2.5→3.5→4.5→5.5 (each step requires sh=1.0 hop).
-	//   From dy=5 stair (top=5.5) player steps 0.5 onto intermFloor top (6.0).
-	//
-	//   Ceiling opening at dx=1..2, dz=5..7, dy=sh-1 allows the player to
-	//   step up without their head hitting the intermFloor (ceiling of story 0).
-	//   Without the opening, step-up from stair dy=2 onward is blocked because
-	//   tryStepUp at sh=1.0 puts player head at y+3.5 which overlaps ceiling.
+	// Staircase: 2-wide (dx=1..2), sh steps per story.
+	// Opening: 4-wide (dx=1..4) × full stairwell depth — guarantees ≥ 4 clear
+	// blocks above the landing so the 2.5-tall player fits comfortably.
 	void generateHouse(const GenCtx& ctx, int seed,
 	                   BlockId wallB, BlockId roofB, BlockId floorB, BlockId stairB,
 	                   BlockId glassB, BlockId doorB,
@@ -518,18 +586,23 @@ private:
 				for (int dz = 0; dz < h.d; dz++) {
 					bool wall   = (dx==0||dx==h.w-1||dz==0||dz==h.d-1);
 					bool door   = ((dx==h.w/2||dx==h.w/2-1)&&dz==0&&dy<dh);
-					bool window = wall && dy==wr && (
-						((dz==0||dz==h.d-1)&&(dx==1||dx==h.w-2))||
-						((dx==0||dx==h.w-1)&&(dz==1||dz==h.d-2)));
+					// Window: 3 wide × 2 tall on each story, two groups per wall face.
+					bool windowRow = false;
+					for (int s = 0; s < h.stories && !windowRow; s++)
+						if (dy == s*sh + wr || dy == s*sh + wr + 1) windowRow = true;
+					bool window = wall && windowRow && (
+						((dz==0||dz==h.d-1)&&((dx>=1&&dx<=3)||(dx>=h.w-4&&dx<=h.w-2)))||
+						((dx==0||dx==h.w-1)&&((dz>=1&&dz<=3)||(dz>=h.d-4&&dz<=h.d-2))));
 
-					// Stair steps — half-height stair block at dx=1.
-					// Story s, step i: (dx=1, dz=2+i, dy=s*sh+i), i=0..sh-1.
-					// Player hops 1.0 per step (from stair top at i+0.5 to next top at i+1.5).
+					// Stair steps — 2-wide staircase at dx=1..2.
+					// Story s, step i: (dx=1..2, dz=2+i, dy=s*sh+i), i=0..sh-1.
+					// Two parallel stair tiles give the player room to centre away from
+					// the wall at dx=0 and avoid body-width clipping.
 					bool stairStep = false;
 					if (h.stories >= 2) {
 						for (int s = 0; s < h.stories-1 && !stairStep; s++)
 							for (int i = 0; i < sh && !stairStep; i++)
-								if (dx==1 && dz==2+i && dy==s*sh+i)
+								if ((dx==1||dx==2) && dz==2+i && dy==s*sh+i)
 									stairStep = true;
 					}
 
@@ -540,17 +613,15 @@ private:
 						for (int s = 1; s < h.stories; s++)
 							if (dy == s*sh-1) { intermFloor = true; break; }
 
-					// Stairwell ceiling opening: removes intermFloor above the upper
-					// stair steps so the player's head doesn't clip the ceiling when
-					// stepping up. Covers steps 3..5 (dz=5..7) where player feet reach
-					// floorY+3.5+ and would collide with the ceiling at dy=sh-1.
-					// Width of 2 blocks (dx=1..2) gives comfortable passage.
+					// Stairwell opening: 4 tiles wide (dx=1..4) × full stairwell depth
+					// (dz=2..sh+1).  Removing the entire intermFloor band above the
+					// stairwell guarantees ≥ 4 clear blocks on the upper landing.
 					bool stairwellOpening = false;
-					if (intermFloor && (dx == 1 || dx == 2)) {
+					if (intermFloor && (dx >= 1 && dx <= 4)) {
 						for (int s = 0; s < h.stories-1; s++) {
 							if (dy == s*sh + sh - 1          // ceiling of story s
-							    && dz >= 5                    // upper stair zone
-							    && dz <= 2 + sh - 1) {        // up to last stair step (dz=7 for sh=6)
+							    && dz >= 2                    // start at first stair step
+							    && dz <= 2 + sh) {            // one past last step (dz=8 for sh=6)
 								stairwellOpening = true;
 								break;
 							}

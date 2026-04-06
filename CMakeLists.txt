@@ -180,7 +180,9 @@ if(EMSCRIPTEN)
 	target_link_libraries(agentica PRIVATE glm::glm imgui_lib)
 
 	# Emscripten compile + link flags
-	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576")
+	# -sWEBSOCKET_SUBPROTOCOL enables binary WebSocket mode so POSIX socket calls
+	# route through ws:// correctly — required for networking via websockify proxy.
+	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576 -sWEBSOCKET_SUBPROTOCOL=binary")
 	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/config@config --preload-file ${CMAKE_SOURCE_DIR}/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/artifacts@artifacts")
 	set_target_properties(agentica PROPERTIES
 		SUFFIX ".html"

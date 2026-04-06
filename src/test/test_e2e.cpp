@@ -14,6 +14,7 @@
 #include "server/local_server.h"
 #include "server/world_template.h"
 #include "server/python_bridge.h"
+#include "server/world_accessibility.h"
 #include "shared/constants.h"
 #include <cstdio>
 #include <cmath>
@@ -1258,6 +1259,88 @@ static std::string t37_pickup_denied_out_of_range() {
 }
 
 // ================================================================
+// T38: House geometry — doors and stairs have enough clearance
+// ================================================================
+// Uses scanForViolations() from world_accessibility.h which applies
+// the same physics predicates as the runtime collision engine.
+// Any door or stair block within 50 blocks of spawn is checked.
+//
+static std::string t38_house_geometry_valid() {
+	auto srv = makeVillageServer();
+	tickN(*srv, 5);
+
+	glm::vec3 spawn = srv->spawnPos();
+	glm::ivec3 center = {(int)spawn.x, (int)spawn.y, (int)spawn.z};
+	auto violations = scanForViolations(srv->chunks(), srv->blockRegistry(), center);
+
+	if (!violations.empty()) {
+		auto& v = violations[0];
+		return v.description;
+	}
+	return "";
+}
+
+// ================================================================
+// T39: Second floor is reachable from player spawn
+// ================================================================
+// Flood-fills from below the player's spawn feet.  Verifies that at
+// least one cell at Y >= (house ground floor + storyHeight) is in the
+// reachable set — i.e. the player can actually climb to the upper story.
+//
+static std::string t39_second_floor_reachable() {
+	auto srv = makeVillageServer();
+	tickN(*srv, 5);
+
+	auto& tmpl = srv->server()->world().getTemplate();
+	if (!tmpl.pyConfig().hasVillage)       return "no village (skip)";
+	const auto& houses = tmpl.pyConfig().houses;
+	if (houses.empty())                    return "no houses (skip)";
+	const auto& h0 = houses[0];
+	if (h0.stories < 2)                    return "main house has no second floor (skip)";
+
+	auto vc  = tmpl.villageCenter(42);   // seed=42 matches makeVillageServer
+	int  sh  = tmpl.pyConfig().storyHeight;
+
+	// Approximate first-floor Y of the main house.
+	float hcx = (float)(vc.x + h0.cx) + h0.w * 0.5f;
+	float hcz = (float)(vc.y + h0.cz) + h0.d * 0.5f;
+	int floorY = (int)std::round(tmpl.surfaceHeight(42, hcx, hcz)) + 1;
+
+	// Start flood-fill from the block below the player's spawn feet.
+	glm::vec3 spawn = srv->spawnPos();
+	// Walk downward to find a solid block to stand on.
+	int startY = (int)std::floor(spawn.y) - 1;
+	auto& blocks = srv->blockRegistry();
+	for (int dy = 0; dy >= -5; dy--) {
+		if (blocks.get(srv->chunks().getBlock((int)spawn.x, startY+dy, (int)spawn.z)).solid) {
+			startY = startY + dy;
+			break;
+		}
+	}
+	glm::ivec3 startFeet = {(int)spawn.x, startY, (int)spawn.z};
+
+	auto reachable = floodReachable(srv->chunks(), blocks, startFeet);
+	if (reachable.empty())
+		return "flood-fill found no reachable cells from spawn";
+
+	// Check that some cell at Y >= floorY + sh - 1 is reachable.
+	// (floorY+sh-1 is the intermediate floor block = floor of story 1.)
+	int secondFloorBlockY = floorY + sh - 1;
+	bool foundUpper = false;
+	for (auto& pos : reachable) {
+		if (pos.y >= secondFloorBlockY) { foundUpper = true; break; }
+	}
+
+	if (!foundUpper)
+		return "second floor not reachable (need floor-block Y >= "
+		     + std::to_string(secondFloorBlockY) + ", "
+		     + std::to_string((int)reachable.size()) + " cells reachable, max Y="
+		     + std::to_string(std::max_element(reachable.begin(), reachable.end(),
+		           [](auto& a, auto& b){ return a.y < b.y; })->y) + ")";
+	return "";
+}
+
+// ================================================================
 // Main
 // ================================================================
 
@@ -1327,7 +1410,9 @@ int main() {
 	run("T31: use item consumes and heals",       t31_use_item_consume);
 	run("T32: attack damages creature",           t32_attack_damages_entity);
 	run("T33: drop item deducts from inventory",  t33_dropitem_deducts_inventory);
-	run("T34: door toggle opens/closes",          t34_door_toggle);
+	run("T34: door toggle opens/closes",             t34_door_toggle);
+	run("T38: house geometry (door+stair clearance)", t38_house_geometry_valid);
+	run("T39: second floor reachable from spawn",    t39_second_floor_reachable);
 	run("T35: item entity has ItemType property",  t35_item_entity_has_type);
 	run("T36: equip+unequip cycle returns item",  t36_equip_unequip_cycle);
 	run("T37: pickup denied if out of range",     t37_pickup_denied_out_of_range);

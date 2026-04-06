@@ -14,7 +14,8 @@ enum class GameState {
 	CHARACTER,
 	ENTITY_INSPECT,
 	CODE_EDITOR,
-	PAUSED
+	PAUSED,
+	CONNECTING    // web: waiting for WebSocket + S_WELCOME handshake
 };
 
 constexpr int HOTBAR_SIZE = 10; // keys 1-9, 0

@@ -88,7 +88,7 @@ struct WorldPyConfig {
 	std::string floorBlock       = "base:cobblestone";
 	std::string pathBlock        = "base:cobblestone";
 	int   storyHeight            = 6;
-	int   doorHeight             = 4;
+	int   doorHeight             = 5;
 	int   windowRow              = 2;
 
 	// Flat world: chest offset from spawn (village world: chest inside main house)

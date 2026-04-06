@@ -151,8 +151,10 @@ public:
 				return clicked;
 			};
 
+#ifndef __EMSCRIPTEN__
 			if (navButton("Start game", Page::Singleplayer)) m_page = Page::Singleplayer;
 			ImGui::Spacing();
+#endif
 			if (navButton("Join a game", Page::Multiplayer)) m_page = Page::Multiplayer;
 			ImGui::Spacing();
 			if (navButton("Handbook", Page::Handbook)) m_page = Page::Handbook;
@@ -255,7 +257,11 @@ public:
 
 private:
 	enum class Page { Singleplayer, Multiplayer, Handbook, Settings };
+#ifdef __EMSCRIPTEN__
+	Page m_page = Page::Multiplayer; // web: join-only
+#else
 	Page m_page = Page::Singleplayer;
+#endif
 	HandbookUI m_handbook;
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;
 	int m_selectedTemplate = 0;
@@ -285,7 +291,11 @@ private:
 
 	// Direct connect fields
 	char m_directHost[128] = "127.0.0.1";
+#ifdef __EMSCRIPTEN__
+	int m_directPort = 7779; // default websockify port
+#else
 	int m_directPort = 7777;
+#endif
 
 	// Server detection
 	struct DetectedServer { std::string host; int port; int players = -1; bool lan = false; };
@@ -297,7 +307,9 @@ private:
 #endif
 
 	void probeServers() {
-#ifndef __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+		m_probed = true; // no LAN discovery on web — use Direct Connect instead
+#else
 		m_detectedServers.clear();
 		for (auto& h : m_serverHints)
 			m_detectedServers.push_back({h.host, h.port});
@@ -813,10 +825,20 @@ private:
 		ImGui::PopStyleColor();
 		ImGui::Spacing();
 
+#ifdef __EMSCRIPTEN__
+		ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1),
+			"Browser cannot auto-discover LAN servers.");
+		ImGui::TextColored(ImVec4(0.96f, 0.65f, 0.15f, 1),
+			"Use Direct Connect below (requires websockify on the server).");
+		ImGui::Spacing();
+		ImGui::TextColored(ImVec4(0.40f, 0.42f, 0.45f, 1),
+			"Server: websockify 7779 <server-ip>:7777");
+#else
 		if (m_detectedServers.empty()) {
 			ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1),
 				"No servers found. Start a server or enter an address below.");
 		}
+#endif
 		for (auto& srv : m_detectedServers) {
 			ImVec4 cardBg = srv.lan
 				? ImVec4(0.92f, 0.96f, 0.97f, 1)

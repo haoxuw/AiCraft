@@ -187,6 +187,7 @@ private:
 
 	// Floating text (damage numbers, pickup notifications, Minecraft Dungeons style)
 	struct FloatingText {
+		int       id = 0;    // stable unique ID — used by PickupAccum to find this entry
 		glm::vec3 pos;
 		float velY;
 		float offsetX;
@@ -196,18 +197,20 @@ private:
 		float baseScale;
 	};
 	std::deque<FloatingText> m_floatingTexts;
-	void addFloatingText(glm::vec3 pos, const std::string& text,
-	                     glm::vec4 color, float scale = 1.8f);
+	int addFloatingText(glm::vec3 pos, const std::string& text,
+	                    glm::vec4 color, float scale = 1.8f);
 
-	// Pickup text accumulator: merges rapid pickups of the same item
+	// Pickup text accumulator: one entry per item type, updated in place
 	struct PickupAccum {
 		std::string itemName;
 		int total = 0;
-		int displayed = 0;  // how many we've shown so far (for gradual tick-up)
+		int displayed = 0;  // displayed count (ticks up toward total)
 		float timer = 0;    // time since last pickup of this item
-		int floatingIdx = -1; // index into m_floatingTexts (-1 = not yet created)
+		int floatingId = -1; // FloatingText::id of our text (-1 = not yet created)
+		int slot = 0;        // stable vertical slot index (assigned at creation, never changes)
 	};
 	std::unordered_map<std::string, PickupAccum> m_pickupAccum;
+	int m_pickupSlotCounter = 0; // monotonically increasing slot counter
 
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;

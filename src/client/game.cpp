@@ -255,9 +255,11 @@ void Game::shutdown() {
 	m_window.shutdown();
 }
 
-void Game::addFloatingText(glm::vec3 pos, const std::string& text,
-                           glm::vec4 color, float scale) {
+int Game::addFloatingText(glm::vec3 pos, const std::string& text,
+                          glm::vec4 color, float scale) {
+	static int nextId = 1;
 	FloatingText ft;
+	ft.id = nextId++;
 	ft.pos = pos + glm::vec3(0, 0.6f, 0);
 	ft.velY = 3.0f;
 	ft.offsetX = ((rand() % 100) / 100.0f - 0.5f) * 0.4f;
@@ -267,6 +269,7 @@ void Game::addFloatingText(glm::vec3 pos, const std::string& text,
 	ft.baseScale = scale;
 	m_floatingTexts.push_back(ft);
 	if (m_floatingTexts.size() > 40) m_floatingTexts.pop_front();
+	return ft.id;
 }
 
 // ============================================================
@@ -1012,8 +1015,12 @@ void Game::updatePlaying(float dt, float aspect) {
 			m_audio.play("item_pickup", pe->position, 0.5f);
 
 			// Accumulate pickup count (text created/updated in the tick-up loop below)
+			bool isNew = (m_pickupAccum.count(it->itemName) == 0);
 			auto& acc = m_pickupAccum[it->itemName];
-			acc.itemName = it->itemName;
+			if (isNew) {
+				acc.itemName = it->itemName;
+				acc.slot = m_pickupSlotCounter++; // stable vertical slot for this item type
+			}
 			acc.total += it->count;
 			acc.timer = 2.0f; // keep alive for 2 seconds after last pickup
 			it = m_pickupAnims.erase(it);
@@ -1022,47 +1029,55 @@ void Game::updatePlaying(float dt, float aspect) {
 		}
 	}
 
-	// Pickup text accumulator: gradually tick up displayed counts and manage floating texts
+	// Pickup text accumulator: one floating text per item type, updated in place.
+	// Uses FloatingText::id (stable) instead of deque index (invalidated by insertions).
 	{
 		glm::vec3 textBase = pe->position + glm::vec3(0, pe->def().eye_height, 0)
 		                   + m_camera.front() * 1.5f;
-		int slot = 0;
+
 		for (auto it = m_pickupAccum.begin(); it != m_pickupAccum.end(); ) {
 			auto& acc = it->second;
 			acc.timer -= dt;
 
-			// Gradually tick displayed count toward total
+			// Tick up displayed count toward total
 			if (acc.displayed < acc.total) {
-				int step = std::max(1, (acc.total - acc.displayed) / 3); // fast catch-up
+				int step = std::max(1, (acc.total - acc.displayed) / 3);
 				acc.displayed = std::min(acc.displayed + step, acc.total);
 			}
 
-			// Create or update the floating text
 			char buf[64];
 			snprintf(buf, sizeof(buf), "+%d %s", acc.displayed, acc.itemName.c_str());
 
-			if (acc.floatingIdx >= 0 && acc.floatingIdx < (int)m_floatingTexts.size()) {
-				// Update existing text
-				auto& ft = m_floatingTexts[acc.floatingIdx];
-				ft.text = buf;
-				if (acc.displayed < acc.total || acc.timer > 1.0f)
-					ft.life = ft.maxLife; // keep alive while still accumulating
-			} else {
-				// Create new floating text at staggered position
-				float yOff = slot * 0.5f;
-				addFloatingText(textBase + glm::vec3(0, yOff, 0), buf,
-				                {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
-				acc.floatingIdx = (int)m_floatingTexts.size() - 1;
-			}
-			slot++;
+			float yOff = acc.slot * 0.5f; // stable slot → no vertical jumping
 
-			// Remove accumulator when timer expires and count is fully displayed
+			// Find our floating text by stable ID (linear scan — deque is small)
+			FloatingText* pFt = nullptr;
+			for (auto& ft : m_floatingTexts)
+				if (ft.id == acc.floatingId) { pFt = &ft; break; }
+
+			if (pFt) {
+				// Update existing text in place; refresh life so it doesn't expire mid-accumulation
+				pFt->text = buf;
+				pFt->pos  = textBase + glm::vec3(0, yOff + 0.6f, 0); // follow player
+				pFt->velY = 0.6f;   // slow drift upward while accumulating
+				if (acc.displayed < acc.total || acc.timer > 0)
+					pFt->life = pFt->maxLife;
+			} else {
+				// Create fresh text (first pickup of this item, or previous text expired)
+				acc.floatingId = addFloatingText(textBase + glm::vec3(0, yOff, 0), buf,
+				                                 {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
+			}
+
 			if (acc.timer <= 0 && acc.displayed >= acc.total) {
+				// Let text drift and fade naturally
+				if (pFt) pFt->velY = 3.0f; // resume normal float-up speed on expiry
 				it = m_pickupAccum.erase(it);
 			} else {
 				++it;
 			}
 		}
+		// Reset slot counter once all pickups clear so positions don't drift over a long session
+		if (m_pickupAccum.empty()) m_pickupSlotCounter = 0;
 	}
 
 	// Creature ambient sounds: very rare, within 5 blocks only, whisper-quiet.
