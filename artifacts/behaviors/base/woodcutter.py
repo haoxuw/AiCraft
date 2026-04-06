@@ -11,9 +11,13 @@ Day cycle:
 Night cycle:
   - Walk home and sleep until dawn
 
+Evening (time > 0.65):
+  - Head home before it gets dark
+
 Parameters (readable via self dict, set by server at spawn):
-  home_x, home_z  — home position (assigned from village house layout)
-  work_radius     — how far to search for wood (default 35)
+  home_x, home_z  — home position (falls back to spawn position)
+  work_radius     — how far to search for wood (default 60)
+  max_radius      — max distance from home before returning (default 50)
   social_chance   — probability of socializing per rest (default 0.3)
 """
 import random
@@ -43,6 +47,7 @@ def decide(self, world):
     _timer -= dt
     time = world.get("time", 0.5)
     is_night = time > 0.75 or time < 0.25
+    is_evening = 0.65 < time <= 0.75
 
     # Initialize home from entity attributes assigned by server at spawn.
     # Falls back to spawn position if no house was assigned.
@@ -54,12 +59,14 @@ def decide(self, world):
         else:
             _home = (self["x"], self["y"], self["z"])
 
-    work_radius = float(self.get("work_radius", 35))
+    work_radius = float(self.get("work_radius", 60))
+    max_radius = float(self.get("max_radius", 50))
     social_chance = float(self.get("social_chance", 0.3))
+
+    dist_home = _dist2d(self["x"], self["z"], _home[0], _home[2])
 
     # ── Night: walk home and sleep ───────────────────────────────────────
     if is_night:
-        dist_home = _dist2d(self["x"], self["z"], _home[0], _home[2])
         if dist_home > 3:
             self["goal"] = "Heading home..."
             _state = "sleeping"
@@ -68,12 +75,27 @@ def decide(self, world):
         _state = "sleeping"
         return Idle()
 
+    # ── Evening: head home before dark ───────────────────────────────────
+    if is_evening:
+        _state = "returning"
+        if dist_home > 3:
+            self["goal"] = "Heading home (evening)..."
+            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        self["goal"] = "Home for the night"
+        return Idle()
+
     # ── Wake up ──────────────────────────────────────────────────────────
     if _state == "sleeping":
         _state = "searching"
         _timer = 1.0
         self["goal"] = "Good morning!"
         return Idle()
+
+    # ── Too far from home: return ─────────────────────────────────────────
+    if dist_home > max_radius:
+        _state = "returning"
+        self["goal"] = "Too far — heading back (%dm)" % int(dist_home)
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
 
     # ── Opportunistic item pickup (any state except sleeping) ─────────────
     # After a BreakBlock, the dropped item entity spawns at the block position.
@@ -161,7 +183,6 @@ def decide(self, world):
 
     # ── State: returning home ────────────────────────────────────────────
     if _state == "returning":
-        dist_home = _dist2d(self["x"], self["z"], _home[0], _home[2])
         if dist_home < 3 or _timer <= 0:
             _state = "resting"
             _timer = 3.0

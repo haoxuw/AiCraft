@@ -1,6 +1,6 @@
 #pragma once
 
-#include "shared/box_model.h"
+#include "client/box_model.h"
 #include "client/gl.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>

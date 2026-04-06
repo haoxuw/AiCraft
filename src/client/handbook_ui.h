@@ -18,7 +18,7 @@
  */
 
 #include "shared/artifact_registry.h"
-#include "shared/box_model.h"
+#include "client/box_model.h"
 #include "client/model_preview.h"
 #include "client/model.h"
 #include "client/audio.h"

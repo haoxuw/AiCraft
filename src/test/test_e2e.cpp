@@ -22,6 +22,8 @@
 #include <functional>
 #include <vector>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
 
 namespace modcraft::test {
 
@@ -1529,6 +1531,65 @@ static std::string p53_entities_never_inside_blocks_village() {
 }
 
 // ================================================================
+// B1: Woodcutter behavior sets goalText when wood is nearby
+// ================================================================
+static std::string b1_woodcutter_sets_goal_text() {
+    // Get a real villager entity from the village server (valid def + props)
+    auto srv = makeVillageServer();
+    Entity* villager = nullptr;
+    srv->forEachEntity([&](Entity& e) {
+        if (!villager && e.typeId() == "base:villager") villager = &e;
+    });
+    if (!villager) return "no villager spawned in village";
+
+    // Load woodcutter behavior source from artifacts (tests run from project root)
+    std::ifstream f("artifacts/behaviors/base/woodcutter.py");
+    if (!f) return "cannot open woodcutter.py";
+    std::ostringstream ss; ss << f.rdbuf();
+    std::string src = ss.str();
+
+    std::string loadErr;
+    auto handle = pythonBridge().loadBehavior(src, loadErr);
+    if (handle < 0) return "loadBehavior failed: " + loadErr;
+
+    // Wood block 8 blocks east of the villager (within work_radius=60)
+    std::vector<PythonBridge::NearbyBlock> blocks = {
+        {(int)villager->position.x + 8, (int)villager->position.y + 5,
+         (int)villager->position.z, "base:wood", 8.0f}
+    };
+
+    std::string goalOut, errOut;
+    pythonBridge().callDecide(handle, *villager, {}, blocks, 0.25f, 0.5f,
+                              goalOut, errOut);
+    pythonBridge().unloadBehavior(handle);
+
+    if (!errOut.empty()) return "decide() error: " + errOut;
+    if (goalOut.empty()) return "goalText not set after decide()";
+    return "";
+}
+
+// ================================================================
+// B2: All behavior files load without Python errors
+// ================================================================
+static std::string b2_all_behaviors_load_cleanly() {
+    const char* behaviors[] = {
+        "woodcutter", "wander", "peck", "prowl", "follow", "brave_chicken", nullptr
+    };
+    for (int i = 0; behaviors[i]; i++) {
+        std::string path = std::string("artifacts/behaviors/base/") + behaviors[i] + ".py";
+        std::ifstream f(path);
+        if (!f) return std::string("cannot open ") + behaviors[i] + ".py";
+        std::ostringstream ss; ss << f.rdbuf();
+        std::string loadErr;
+        auto handle = pythonBridge().loadBehavior(ss.str(), loadErr);
+        if (handle < 0)
+            return std::string(behaviors[i]) + " load error: " + loadErr;
+        pythonBridge().unloadBehavior(handle);
+    }
+    return "";
+}
+
+// ================================================================
 // Main
 // ================================================================
 
@@ -1610,6 +1671,10 @@ int main() {
 	run("P51: no vertical tunneling at 50 m/s",   p51_no_vertical_tunneling);
 	run("P52: knockback no tunneling in box",      p52_knockback_no_tunneling);
 	run("P53: village entities never inside blocks (120 frames)", p53_entities_never_inside_blocks_village);
+
+	printf("\n--- Behavior ---\n");
+	run("B1: woodcutter sets goalText when wood nearby", b1_woodcutter_sets_goal_text);
+	run("B2: all behavior files load cleanly",           b2_all_behaviors_load_cleanly);
 
 	pythonBridge().shutdown();
 

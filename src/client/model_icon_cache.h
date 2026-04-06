@@ -11,7 +11,7 @@
  * rendered yet, it renders on demand and caches the result.
  */
 
-#include "shared/box_model.h"
+#include "client/box_model.h"
 #include "client/model.h"
 #include "client/shader.h"
 #include "client/gl.h"

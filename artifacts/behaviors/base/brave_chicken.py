@@ -26,10 +26,40 @@ from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo, DropItem
 import random as _rng
 
 _egg_cooldown = 0
+_home = None
+_sleeping = False
 
 def decide(self, world):
-    global _egg_cooldown
+    global _egg_cooldown, _home, _sleeping
     _egg_cooldown -= world["dt"]
+
+    if _home is None:
+        _home = (self["x"], self["y"], self["z"])
+
+    time = world.get("time", 0.5)
+    is_night = time > 0.75 or time < 0.25
+    is_evening = 0.65 < time <= 0.75
+
+    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
+    dist_home = (dx * dx + dz * dz) ** 0.5
+
+    # ── Evening/Night: roost at home ──────────────────────────────────────
+    if is_night:
+        _sleeping = True
+        if dist_home > 3:
+            self["goal"] = "Heading home to roost..."
+            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        self["goal"] = "Roosting zzz"
+        return Idle()
+
+    if _sleeping:
+        _sleeping = False
+        self["goal"] = "BAWK! Good morning!"
+        return Idle()
+
+    if is_evening and dist_home > 3:
+        self["goal"] = "Heading home (evening)..."
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
 
     # Fear only dogs
     for e in world["nearby"]:

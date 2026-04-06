@@ -8,8 +8,8 @@
  * separate geometry, eliminating Z-fighting and reducing draw calls.
  */
 
-#include "shared/box_model.h"
-#include "shared/face.h"
+#include "client/box_model.h"
+#include "client/face.h"
 #include "shared/inventory.h"
 #include <string>
 #include <vector>

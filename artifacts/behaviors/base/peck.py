@@ -8,6 +8,7 @@ in the creature's Python artifact.
 Parameters (optional via self dict):
   scatter_range  — flee trigger distance (default 4)
   peck_chance    — probability of pecking vs scratching (default 0.45)
+  home_radius    — max wander distance from spawn (default 25)
 """
 from modcraft_engine import Idle, Wander, Flee, MoveTo, DropItem
 import random
@@ -21,9 +22,12 @@ _activity_timer = 0
 _was_startled = False
 _egg_cooldown = 0
 _rng_seeded = False
+_home = None
+_sleeping = False
 
 def decide(self, world):
     global _activity, _activity_timer, _was_startled, _egg_cooldown, _rng_seeded
+    global _home, _sleeping
     if not _rng_seeded:
         random.seed(self["id"] * 31337 + 42)
         _rng_seeded = True
@@ -31,8 +35,41 @@ def decide(self, world):
     _activity_timer -= dt
     _egg_cooldown -= dt
 
+    if _home is None:
+        _home = (self["x"], self["y"], self["z"])
+
     scatter_range = self.get("scatter_range", 4.0)
     peck_chance = self.get("peck_chance", PECK_CHANCE)
+    home_radius = float(self.get("home_radius", 25.0))
+
+    time = world.get("time", 0.5)
+    is_night = time > 0.75 or time < 0.25
+    is_evening = 0.65 < time <= 0.75
+
+    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
+    dist_home = (dx * dx + dz * dz) ** 0.5
+
+    # ── Evening/Night: roost at home ──────────────────────────────────────
+    if is_night:
+        _sleeping = True
+        if dist_home > 3:
+            self["goal"] = "Heading home..."
+            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        self["goal"] = "Roosting zzz"
+        return Idle()
+
+    if _sleeping:
+        _sleeping = False
+        self["goal"] = "Good morning! *cluck*"
+        return Idle()
+
+    if is_evening and dist_home > 3:
+        self["goal"] = "Heading home to roost..."
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+
+    if dist_home > home_radius:
+        self["goal"] = "Wandering back home"
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"] * 0.8)
 
     # ── Flee from threats (players and cats) ──
     threats = [e for e in world["nearby"]

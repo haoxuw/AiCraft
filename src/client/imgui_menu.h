@@ -32,7 +32,7 @@
 #ifndef __EMSCRIPTEN__
 #include "shared/net_socket.h"
 #endif
-#include "shared/box_model.h"
+#include "client/box_model.h"
 #include "client/model_preview.h"
 #include <imgui.h>
 #include <vector>

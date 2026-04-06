@@ -1,7 +1,7 @@
 #include "client/game.h"
 #include "server/entity_manager.h"
 #include "shared/constants.h"
-#include "shared/model_loader.h"
+#include "client/model_loader.h"
 #include "shared/physics.h"
 #include "client/network_server.h"
 #include "imgui.h"

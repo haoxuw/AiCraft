@@ -13,7 +13,7 @@
 
 #include "shared/inventory.h"
 #include "shared/block_registry.h"
-#include "shared/box_model.h"
+#include "client/box_model.h"
 #include "client/model_icon_cache.h"
 #include <imgui.h>
 #include <string>

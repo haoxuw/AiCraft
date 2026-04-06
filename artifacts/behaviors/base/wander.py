@@ -10,6 +10,7 @@ Parameters (optional via self dict):
   flee_range    — distance to flee from players (default 5)
   group_range   — max distance before rejoining herd (default 6)
   graze_chance  — probability of stopping to graze per decide (default 0.25)
+  home_radius   — max wander distance from spawn (default 35)
 """
 from modcraft_engine import Idle, Wander, Flee, MoveTo
 import random
@@ -17,18 +18,54 @@ import random
 _graze_timer = 0
 _activity = "idle"  # idle, grazing, stampede
 _rng_seeded = False
+_home = None
+_sleeping = False
 
 def decide(self, world):
-    global _graze_timer, _activity, _rng_seeded
+    global _graze_timer, _activity, _rng_seeded, _home, _sleeping
     if not _rng_seeded:
         random.seed(self["id"] * 31337 + 42)
         _rng_seeded = True
     dt = world["dt"]
     _graze_timer -= dt
 
+    # Remember home (spawn position)
+    if _home is None:
+        _home = (self["x"], self["y"], self["z"])
+
     flee_range = self.get("flee_range", 5.0)
     group_range = self.get("group_range", 6.0)
     graze_chance = self.get("graze_chance", 0.25)
+    home_radius = float(self.get("home_radius", 35.0))
+
+    time = world.get("time", 0.5)
+    is_night = time > 0.75 or time < 0.25
+    is_evening = 0.65 < time <= 0.75
+
+    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
+    dist_home = (dx * dx + dz * dz) ** 0.5
+
+    # ── Evening/Night: head home ──────────────────────────────────────────
+    if is_night:
+        _sleeping = True
+        if dist_home > 3:
+            self["goal"] = "Heading home..."
+            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        self["goal"] = "Sleeping zzz"
+        return Idle()
+
+    if _sleeping:
+        _sleeping = False
+        self["goal"] = "Good morning!"
+        return Idle()
+
+    if is_evening and dist_home > 3:
+        self["goal"] = "Heading home (evening)..."
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+
+    if dist_home > home_radius:
+        self["goal"] = "Wandering back home"
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"] * 0.8)
 
     # ── Flee from threats ──
     threats = [e for e in world["nearby"]

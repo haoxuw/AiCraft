@@ -9,7 +9,7 @@
  * Lookup order: player/ (user overrides) → base/ (built-in) → C++ fallback.
  */
 
-#include "shared/box_model.h"
+#include "client/box_model.h"
 #include <string>
 #include <unordered_map>
 #include <fstream>

@@ -18,9 +18,10 @@ _play_timer = 0
 _patrol_timer = 0
 _home = None
 _rng_seeded = False
+_sleeping = False
 
 def decide(self, world):
-    global _play_timer, _patrol_timer, _home, _rng_seeded
+    global _play_timer, _patrol_timer, _home, _rng_seeded, _sleeping
     if not _rng_seeded:
         random.seed(self["id"] * 31337 + 42)
         _rng_seeded = True
@@ -34,6 +35,31 @@ def decide(self, world):
     # Remember home position
     if _home is None:
         _home = (self["x"], self["y"], self["z"])
+
+    time = world.get("time", 0.5)
+    is_night = time > 0.75 or time < 0.25
+    is_evening = 0.65 < time <= 0.75
+
+    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
+    dist_home = (dx * dx + dz * dz) ** 0.5
+
+    # ── Evening/Night: head home ──────────────────────────────────────────
+    if is_night:
+        _sleeping = True
+        if dist_home > 3:
+            self["goal"] = "Going home..."
+            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        self["goal"] = "Sleeping zzz"
+        return Idle()
+
+    if _sleeping:
+        _sleeping = False
+        self["goal"] = "Good morning! *wag*"
+        return Idle()
+
+    if is_evening and dist_home > 3:
+        self["goal"] = "Heading home (evening)..."
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
 
     # Find someone to follow (prefer player, then villager)
     players = [e for e in world["nearby"] if e["category"] == "player"]

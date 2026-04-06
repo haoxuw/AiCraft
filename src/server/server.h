@@ -89,8 +89,24 @@ public:
 		auto& tmpl = m_world->getTemplate();
 		auto& wgc  = config.worldGenConfig;
 
+		// Scan upward from terrain noise height to find the actual topmost solid block,
+		// so mobs don't spawn inside village buildings placed on top of terrain.
+		auto actualSurfaceY = [&](float x, float z) -> float {
+			float terrainY = m_world->surfaceHeight(x, z);
+			int startY = std::max(0, (int)std::round(terrainY) - 1);
+			int topSolid = startY - 1;
+			int bx = (int)std::round(x), bz = (int)std::round(z);
+			for (int y = startY; y <= startY + 30; y++) {
+				BlockId bid = m_world->getBlock(bx, y, bz);
+				if (m_world->blocks.get(bid).solid)
+					topSolid = y;
+				else if (y > topSolid + 5)
+					break;
+			}
+			return (float)(topSolid + 1);
+		};
 		auto safeSpawnHeight = [&](float x, float z) {
-			return m_world->surfaceHeight(x, z) + ServerTuning::spawnHeightOffset;
+			return actualSurfaceY(x, z) + ServerTuning::spawnHeightOffset;
 		};
 
 		// Village center from template (virtual — works for any template type)

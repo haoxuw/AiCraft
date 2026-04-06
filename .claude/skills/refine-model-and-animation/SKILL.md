@@ -72,7 +72,7 @@ Amplitude: 65° feels natural; 40° is too subtle, 90° is too dramatic.
 ### Step 1 — Take baseline screenshots
 
 ```bash
-./build/agentica --skip-menu --debug-scenario item_views --debug-item base:sword
+./build/modcraft --skip-menu --debug-scenario item_views --debug-item base:sword
 ```
 
 Produces `/tmp/debug_N_fps.ppm`, `_tps.ppm`, `_rpg.ppm`, `_rts.ppm`, `_ground.ppm`.
@@ -88,7 +88,7 @@ for s in ['fps','tps','rpg','rts','ground']:
 
 For animation frames:
 ```bash
-./build/agentica --skip-menu --debug-scenario animation --debug-item base:sword
+./build/modcraft --skip-menu --debug-scenario animation --debug-item base:sword
 ```
 
 ### Step 2 — Analyse
@@ -138,7 +138,7 @@ float fpScale = fpEs * 0.72f;
 
 ```bash
 cmake --build build -j$(nproc) && \
-./build/agentica --skip-menu --debug-scenario item_views --debug-item base:sword
+./build/modcraft --skip-menu --debug-scenario item_views --debug-item base:sword
 ```
 
 Re-read the screenshots. Repeat until satisfied.
@@ -170,7 +170,7 @@ Register in `src/development/debug_capture.h`:
 
 Run with:
 ```bash
-./build/agentica --skip-menu --debug-scenario my_scenario --debug-item base:sword
+./build/modcraft --skip-menu --debug-scenario my_scenario --debug-item base:sword
 ```
 
 ---

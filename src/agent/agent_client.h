@@ -150,7 +150,7 @@ public:
 					BlockId bid = getBlock(x, y, z);
 					return m_blocks.get(bid).string_id;
 				};
-				auto blocks = getKnownBlocks(e, 30, blockQuery, m_blockCaches[eid]);
+				auto blocks = getKnownBlocks(e, 50, blockQuery, m_blockCaches[eid]);
 
 				BehaviorWorldView view{e, nearby, blocks, dt, m_worldTime};
 				state.currentAction = state.behavior->decide(view);

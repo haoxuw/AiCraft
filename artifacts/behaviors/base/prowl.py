@@ -46,22 +46,59 @@ def _pick_mood(curiosity):
         return MOOD_NAP
 
 _rng_seeded = False
+_home = None
+_sleeping = False
 
 def decide(self, world):
     global _mood, _mood_timer, _napping, _nap_timer, _hunt_cooldown, _rng_seeded
+    global _perch_target, _chase_origin, _curiosity_target, _bored_timer
+    global _home, _sleeping
     if not _rng_seeded:
         random.seed(self["id"] * 31337 + 42)
         _rng_seeded = True
-    global _perch_target, _chase_origin, _curiosity_target, _bored_timer
     dt = world["dt"]
     _mood_timer -= dt
     _nap_timer -= dt
     _hunt_cooldown -= dt
     _bored_timer -= dt
 
+    if _home is None:
+        _home = (self["x"], self["y"], self["z"])
+
     chase_range = self.get("chase_range", 10)
     flee_range = self.get("flee_range", 5)
     curiosity = self.get("curiosity", 0.3)
+    home_radius = float(self.get("home_radius", 25.0))
+
+    time = world.get("time", 0.5)
+    is_night = time > 0.75 or time < 0.25
+    is_evening = 0.65 < time <= 0.75
+
+    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
+    dist_home = (dx * dx + dz * dz) ** 0.5
+
+    # ── Evening/Night: return home ────────────────────────────────────────
+    if is_night:
+        _sleeping = True
+        _napping = False
+        if dist_home > 4:
+            self["goal"] = "Prowling home..."
+            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        self["goal"] = "Curled up at home zzz"
+        return Idle()
+
+    if _sleeping:
+        _sleeping = False
+        self["goal"] = "Stretching... meow"
+        return Idle()
+
+    if is_evening and dist_home > 4:
+        self["goal"] = "Heading home (evening)..."
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+
+    if dist_home > home_radius:
+        self["goal"] = "Wandering back home"
+        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"] * 0.7)
 
     # ── Always flee from dogs ──
     dogs = [e for e in world["nearby"]
