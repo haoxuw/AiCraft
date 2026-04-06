@@ -7,98 +7,96 @@ follows them, sits nearby, and occasionally does idle animations
 Species-specific traits (guarding, barking at cats) should be
 separate composable behaviors.
 
-Parameters (optional via self dict):
+Parameters (optional via entity dict):
   follow_dist   — how close to sit by owner (default 3)
   patrol_range  — how far to wander when no owner found (default 12)
+  home_radius   — max wander distance from home (default 30)
 """
-from modcraft_engine import Idle, Wander, Follow, MoveTo
 import random
+from modcraft_engine import Idle, Wander, Follow, MoveTo
+from behavior_base import Behavior
 
-_play_timer = 0
-_patrol_timer = 0
-_home = None
-_rng_seeded = False
-_sleeping = False
 
-def decide(self, world):
-    global _play_timer, _patrol_timer, _home, _rng_seeded, _sleeping
-    if not _rng_seeded:
-        random.seed(self["id"] * 31337 + 42)
-        _rng_seeded = True
-    dt = world["dt"]
-    _play_timer -= dt
-    _patrol_timer -= dt
+class FollowBehavior(Behavior):
 
-    follow_dist = self.get("follow_dist", 3.0)
-    patrol_range = self.get("patrol_range", 12.0)
+    def __init__(self):
+        self._home = None
+        self._sleeping = False
+        self._play_timer = 0.0
+        self._patrol_timer = 0.0
+        self._rng_seeded = False
 
-    # Remember home position
-    if _home is None:
-        _home = (self["x"], self["y"], self["z"])
+    def decide(self, entity, world):
+        if not self._rng_seeded:
+            random.seed(entity["id"] * 31337 + 42)
+            self._rng_seeded = True
 
-    time = world.get("time", 0.5)
-    is_night = time > 0.75 or time < 0.25
-    is_evening = 0.65 < time <= 0.75
+        dt = world["dt"]
+        self._play_timer   -= dt
+        self._patrol_timer -= dt
+        self._home = self.init_home(entity, self._home)
 
-    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
-    dist_home = (dx * dx + dz * dz) ** 0.5
+        follow_dist  = float(entity.get("follow_dist",  3.0))
+        patrol_range = float(entity.get("patrol_range", 12.0))
+        spd          = entity["walk_speed"]
 
-    # ── Evening/Night: head home ──────────────────────────────────────────
-    if is_night:
-        _sleeping = True
-        if dist_home > 3:
-            self["goal"] = "Going home..."
-            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
-        self["goal"] = "Sleeping zzz"
-        return Idle()
+        dist_home = self.dist2d(entity["x"], entity["z"],
+                                self._home[0], self._home[2])
 
-    if _sleeping:
-        _sleeping = False
-        self["goal"] = "Good morning! *wag*"
-        return Idle()
+        # ── Evening/Night: head home ──────────────────────────────────────────
+        if self.is_night(world):
+            self._sleeping = True
+            if dist_home > 3:
+                return (MoveTo(self._home[0], self._home[1], self._home[2],
+                               speed=spd),
+                        "Going home...")
+            return Idle(), "Sleeping zzz"
 
-    if is_evening and dist_home > 3:
-        self["goal"] = "Heading home (evening)..."
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        if self._sleeping:
+            self._sleeping = False
+            return Idle(), "Good morning! *wag*"
 
-    # Find someone to follow (prefer player, then villager)
-    players = [e for e in world["nearby"] if e["category"] == "player"]
-    villagers = [e for e in world["nearby"] if e["type_id"] == "base:villager"]
+        if self.is_evening(world) and dist_home > 3:
+            return (MoveTo(self._home[0], self._home[1], self._home[2],
+                           speed=spd),
+                    "Heading home (evening)...")
 
-    owner = None
-    if players:
-        owner = min(players, key=lambda e: e["distance"])
-    elif villagers:
-        owner = min(villagers, key=lambda e: e["distance"])
+        # Find someone to follow (prefer player, then villager)
+        players   = [e for e in world["nearby"] if e["category"] == "player"]
+        villagers = [e for e in world["nearby"] if e["type_id"] == "base:villager"]
 
-    if not owner:
-        # No one around — patrol
-        if _patrol_timer <= 0:
-            _patrol_timer = 5.0 + random.random() * 5.0
-            px = _home[0] + (random.random() - 0.5) * patrol_range * 2
-            pz = _home[2] + (random.random() - 0.5) * patrol_range * 2
-            self["goal"] = "Patrolling"
-            return MoveTo(px, _home[1], pz, speed=self["walk_speed"] * 0.6)
-        self["goal"] = "Sniffing around"
-        return Wander(speed=self["walk_speed"] * 0.5)
+        owner = None
+        if players:
+            owner = min(players, key=lambda e: e["distance"])
+        elif villagers:
+            owner = min(villagers, key=lambda e: e["distance"])
 
-    name = owner["type_id"].split(":")[1]
+        if not owner:
+            # No one around — patrol near home
+            if self._patrol_timer <= 0:
+                self._patrol_timer = 5.0 + random.random() * 5.0
+                px = self._home[0] + (random.random() - 0.5) * patrol_range * 2
+                pz = self._home[2] + (random.random() - 0.5) * patrol_range * 2
+                return (MoveTo(px, self._home[1], pz, speed=spd * 0.6),
+                        "Patrolling")
+            return Wander(speed=spd * 0.5), "Sniffing around"
 
-    # Close enough — sit, play, or idle
-    if owner["distance"] < follow_dist:
-        if _play_timer <= 0 and random.random() < 0.08:
-            _play_timer = 10.0
-            r = random.random()
-            if r < 0.4:
-                self["goal"] = "*play bow!*"
-            elif r < 0.7:
-                self["goal"] = "Tail wagging"
-            else:
-                self["goal"] = "Panting happily"
-            return Idle()
-        self["goal"] = "Sitting by %s" % name
-        return Idle()
+        name = owner["type_id"].split(":")[1]
 
-    # Follow owner
-    self["goal"] = "Following %s (%dm)" % (name, int(owner["distance"]))
-    return Follow(owner["id"], speed=4.0, min_distance=follow_dist)
+        # Close enough — sit, play, or idle
+        if owner["distance"] < follow_dist:
+            if self._play_timer <= 0 and random.random() < 0.08:
+                self._play_timer = 10.0
+                r = random.random()
+                if r < 0.4:
+                    goal = "*play bow!*"
+                elif r < 0.7:
+                    goal = "Tail wagging"
+                else:
+                    goal = "Panting happily"
+                return Idle(), goal
+            return Idle(), "Sitting by %s" % name
+
+        # Follow owner
+        return (Follow(owner["id"], speed=4.0, min_distance=follow_dist),
+                "Following %s (%dm)" % (name, int(owner["distance"])))

@@ -1,123 +1,115 @@
-"""Peck — timid ground-feeding bird behavior.
+"""Peck — timid ground-feeding bird that flocks, dust-bathes, and roosts.
 
-Generic pecking/scratching behavior for birds. Flees from threats,
-pecks at seeds, dust-bathes, and flocks with same-type creatures.
-Does NOT lay eggs or roost — those are separate traits defined
-in the creature's Python artifact.
+Priority order:
+  1. Evening/night — roost at home
+  2. Too far from home — return
+  3. Flee from threats (lay egg on first startle)
+  4. Dust-bathe occasionally
+  5. Flock with same-type birds
+  6. Peck or scratch ground
 
-Parameters (optional via self dict):
-  scatter_range  — flee trigger distance (default 4)
-  peck_chance    — probability of pecking vs scratching (default 0.45)
-  home_radius    — max wander distance from spawn (default 25)
+Entity props (optional):
+  scatter_range — flee trigger distance (default 4)
+  peck_chance   — probability of pecking vs scratching (default 0.45)
+  home_radius   — max wander distance from spawn (default 25)
 """
-from modcraft_engine import Idle, Wander, Flee, MoveTo, DropItem
 import random
+from modcraft_engine import Idle, Wander, Flee, MoveTo, DropItem
+from behavior_base import Behavior
 
-PECK_CHANCE = 0.45
 EGG_COOLDOWN = 10.0
-EGG_CHANCE = 0.20
+EGG_CHANCE   = 0.20
 
-_activity = "idle"     # idle, pecking, dust_bath
-_activity_timer = 0
-_was_startled = False
-_egg_cooldown = 0
-_rng_seeded = False
-_home = None
-_sleeping = False
 
-def decide(self, world):
-    global _activity, _activity_timer, _was_startled, _egg_cooldown, _rng_seeded
-    global _home, _sleeping
-    if not _rng_seeded:
-        random.seed(self["id"] * 31337 + 42)
-        _rng_seeded = True
-    dt = world["dt"]
-    _activity_timer -= dt
-    _egg_cooldown -= dt
+class PeckBehavior(Behavior):
 
-    if _home is None:
-        _home = (self["x"], self["y"], self["z"])
+    def __init__(self):
+        self._home = None
+        self._sleeping = False
+        self._activity = "idle"
+        self._activity_timer = 0.0
+        self._was_startled = False
+        self._egg_cooldown = 0.0
+        self._rng_seeded = False
 
-    scatter_range = self.get("scatter_range", 4.0)
-    peck_chance = self.get("peck_chance", PECK_CHANCE)
-    home_radius = float(self.get("home_radius", 25.0))
+    def decide(self, entity, world):
+        if not self._rng_seeded:
+            random.seed(entity["id"] * 31337 + 42)
+            self._rng_seeded = True
 
-    time = world.get("time", 0.5)
-    is_night = time > 0.75 or time < 0.25
-    is_evening = 0.65 < time <= 0.75
+        dt = world["dt"]
+        self._activity_timer -= dt
+        self._egg_cooldown   -= dt
+        self._home = self.init_home(entity, self._home)
 
-    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
-    dist_home = (dx * dx + dz * dz) ** 0.5
+        scatter_range = float(entity.get("scatter_range", 4.0))
+        peck_chance   = float(entity.get("peck_chance",   0.45))
+        home_radius   = float(entity.get("home_radius",  25.0))
+        spd           = entity["walk_speed"]
 
-    # ── Evening/Night: roost at home ──────────────────────────────────────
-    if is_night:
-        _sleeping = True
-        if dist_home > 3:
-            self["goal"] = "Heading home..."
-            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
-        self["goal"] = "Roosting zzz"
-        return Idle()
+        dist_home = self.dist2d(entity["x"], entity["z"],
+                                self._home[0], self._home[2])
 
-    if _sleeping:
-        _sleeping = False
-        self["goal"] = "Good morning! *cluck*"
-        return Idle()
+        # ── Evening/Night: roost at home ────────────────────────────────────
+        if self.is_night(world):
+            self._sleeping = True
+            if dist_home > 3:
+                return (MoveTo(self._home[0], self._home[1], self._home[2],
+                               speed=spd),
+                        "Heading home to roost...")
+            return Idle(), "Roosting zzz"
 
-    if is_evening and dist_home > 3:
-        self["goal"] = "Heading home to roost..."
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        if self._sleeping:
+            self._sleeping = False
+            return Idle(), "Good morning! *cluck*"
 
-    if dist_home > home_radius:
-        self["goal"] = "Wandering back home"
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"] * 0.8)
+        if self.is_evening(world) and dist_home > 3:
+            return (MoveTo(self._home[0], self._home[1], self._home[2],
+                           speed=spd),
+                    "Heading home to roost...")
 
-    # ── Flee from threats (players and cats) ──
-    threats = [e for e in world["nearby"]
-               if (e["category"] == "player" or e["type_id"] == "base:cat")
-               and e["distance"] < scatter_range]
+        if dist_home > home_radius:
+            return (MoveTo(self._home[0], self._home[1], self._home[2],
+                           speed=spd * 0.8),
+                    "Wandering back home")
 
-    if threats:
-        closest = min(threats, key=lambda e: e["distance"])
+        # ── Flee from threats ───────────────────────────────────────────────
+        threats = [e for e in world["nearby"]
+                   if (e["category"] == "player" or e["type_id"] == "base:cat")
+                   and e["distance"] < scatter_range]
+        if threats:
+            closest = min(threats, key=lambda e: e["distance"])
+            if not self._was_startled and self._egg_cooldown <= 0:
+                self._was_startled = True
+                if random.random() < EGG_CHANCE:
+                    self._egg_cooldown = EGG_COOLDOWN
+                    return DropItem("base:egg", 1), "BAWK!! *lays egg!*"
+            return Flee(closest["id"], speed=6.0), "BAWK!! Scattering!"
 
-        # Lay egg on first startle (if cooldown ready)
-        if not _was_startled and _egg_cooldown <= 0:
-            _was_startled = True
-            if random.random() < EGG_CHANCE:
-                _egg_cooldown = EGG_COOLDOWN
-                self["goal"] = "BAWK!! *lays egg!*"
-                return DropItem("base:egg", 1)
+        self._was_startled = False
 
-        self["goal"] = "BAWK!! Scattering!"
-        return Flee(closest["id"], speed=6.0)
+        # ── Dust-bathe ──────────────────────────────────────────────────────
+        if self._activity == "dust_bath" and self._activity_timer > 0:
+            return Idle(), "Dust bathing"
 
-    _was_startled = False
+        if random.random() < 0.05 and self._activity_timer <= 0:
+            self._activity = "dust_bath"
+            self._activity_timer = 3.0 + random.random() * 3.0
+            return Idle(), "Dust bathing"
 
-    # ── Dust bathing ──
-    if _activity == "dust_bath" and _activity_timer > 0:
-        self["goal"] = "Dust bathing"
-        return Idle()
+        # ── Flock ───────────────────────────────────────────────────────────
+        friends = [e for e in world["nearby"]
+                   if e["type_id"] == entity["type_id"] and e["id"] != entity["id"]]
+        if friends:
+            farthest = max(friends, key=lambda e: e["distance"])
+            if farthest["distance"] > 4:
+                return (MoveTo(farthest["x"], farthest["y"], farthest["z"],
+                               speed=spd),
+                        "Rejoining flock")
 
-    if random.random() < 0.05 and _activity_timer <= 0:
-        _activity = "dust_bath"
-        _activity_timer = 3.0 + random.random() * 3.0
-        self["goal"] = "Dust bathing"
-        return Idle()
+        # ── Peck or scratch ─────────────────────────────────────────────────
+        self._activity = "idle"
+        if random.random() < peck_chance:
+            return Idle(), "Pecking at seeds"
 
-    # ── Flock together ──
-    friends = [e for e in world["nearby"]
-               if e["type_id"] == self["type_id"] and e["id"] != self["id"]]
-    if friends:
-        farthest = max(friends, key=lambda e: e["distance"])
-        if farthest["distance"] > 4:
-            self["goal"] = "Rejoining flock"
-            return MoveTo(farthest["x"], farthest["y"], farthest["z"],
-                          speed=self["walk_speed"])
-
-    # ── Peck or scratch ──
-    _activity = "idle"
-    if random.random() < peck_chance:
-        self["goal"] = "Pecking at seeds"
-        return Idle()
-
-    self["goal"] = "Scratching ground"
-    return Wander(speed=1.8)
+        return Wander(speed=1.8), "Scratching ground"

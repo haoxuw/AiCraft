@@ -1,4 +1,4 @@
-"""Woodcutter — villager that chops wood and returns home at night.
+"""Woodcutter — villager that chops wood and returns home each evening.
 
 Day cycle:
   1. Search for nearby wood blocks (trees)
@@ -8,217 +8,189 @@ Day cycle:
   5. Return home to deposit
   6. Rest briefly, maybe socialize, then repeat
 
-Night cycle:
-  - Walk home and sleep until dawn
+Evening (time > 0.65): head home before dark.
+Night (time > 0.75):   sleep at home until dawn.
 
-Evening (time > 0.65):
-  - Head home before it gets dark
-
-Parameters (readable via self dict, set by server at spawn):
+Entity props (set by server at spawn):
   home_x, home_z  — home position (falls back to spawn position)
   work_radius     — how far to search for wood (default 60)
   max_radius      — max distance from home before returning (default 50)
   social_chance   — probability of socializing per rest (default 0.3)
 """
 import random
-
 from modcraft_engine import Idle, Wander, MoveTo, BreakBlock, PickupItem
-
-_state = "searching"
-_timer = 0.0
-_target_block = None
-_home = None
-_trips = 0
-_social_target = None
-_stuck_pos = None
-_stuck_timer = 0.0
+from behavior_base import Behavior
 
 
-def _dist2d(ax, az, bx, bz):
-    dx, dz = ax - bx, az - bz
-    return (dx * dx + dz * dz) ** 0.5
+class WoodcutterBehavior(Behavior):
 
+    def __init__(self):
+        self._state = "searching"
+        self._timer = 0.0
+        self._target_block = None
+        self._home = None
+        self._trips = 0
+        self._social_target = None
+        self._stuck_pos = None
+        self._stuck_timer = 0.0
 
-def decide(self, world):
-    global _state, _timer, _target_block, _home, _trips, _social_target
-    global _stuck_pos, _stuck_timer
+    def decide(self, entity, world):
+        self._timer -= world["dt"]
+        self._home = self.init_home(entity, self._home)
 
-    dt = world["dt"]
-    _timer -= dt
-    time = world.get("time", 0.5)
-    is_night = time > 0.75 or time < 0.25
-    is_evening = 0.65 < time <= 0.75
+        work_radius = float(entity.get("work_radius", 60))
+        max_radius  = float(entity.get("max_radius", 50))
+        social_chance = float(entity.get("social_chance", 0.3))
+        spd = entity["walk_speed"]
 
-    # Initialize home from entity attributes assigned by server at spawn.
-    # Falls back to spawn position if no house was assigned.
-    if _home is None:
-        hx = self.get("home_x")
-        hz = self.get("home_z")
-        if hx is not None and hz is not None:
-            _home = (float(hx), self["y"], float(hz))
-        else:
-            _home = (self["x"], self["y"], self["z"])
+        dist_home = self.dist2d(entity["x"], entity["z"],
+                                self._home[0], self._home[2])
 
-    work_radius = float(self.get("work_radius", 60))
-    max_radius = float(self.get("max_radius", 50))
-    social_chance = float(self.get("social_chance", 0.3))
+        # ── Night: go home and sleep ────────────────────────────────────────
+        if self.is_night(world):
+            self._state = "sleeping"
+            if dist_home > 3:
+                return (MoveTo(self._home[0], self._home[1], self._home[2],
+                               speed=spd),
+                        "Heading home...")
+            return Idle(), "Sleeping zzz"
 
-    dist_home = _dist2d(self["x"], self["z"], _home[0], _home[2])
+        # ── Evening: head home before dark ──────────────────────────────────
+        if self.is_evening(world):
+            self._state = "returning"
+            if dist_home > 3:
+                return (MoveTo(self._home[0], self._home[1], self._home[2],
+                               speed=spd),
+                        "Heading home (evening)...")
+            return Idle(), "Home for the night"
 
-    # ── Night: walk home and sleep ───────────────────────────────────────
-    if is_night:
-        if dist_home > 3:
-            self["goal"] = "Heading home..."
-            _state = "sleeping"
-            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
-        self["goal"] = "Sleeping zzz"
-        _state = "sleeping"
-        return Idle()
+        # ── Wake up ─────────────────────────────────────────────────────────
+        if self._state == "sleeping":
+            self._state = "searching"
+            self._timer = 1.0
+            return Idle(), "Good morning!"
 
-    # ── Evening: head home before dark ───────────────────────────────────
-    if is_evening:
-        _state = "returning"
-        if dist_home > 3:
-            self["goal"] = "Heading home (evening)..."
-            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
-        self["goal"] = "Home for the night"
-        return Idle()
+        # ── Too far from home ────────────────────────────────────────────────
+        if dist_home > max_radius:
+            self._state = "returning"
+            return (MoveTo(self._home[0], self._home[1], self._home[2],
+                           speed=spd),
+                    "Too far — heading back (%dm)" % int(dist_home))
 
-    # ── Wake up ──────────────────────────────────────────────────────────
-    if _state == "sleeping":
-        _state = "searching"
-        _timer = 1.0
-        self["goal"] = "Good morning!"
-        return Idle()
+        # ── Opportunistic item pickup ────────────────────────────────────────
+        items = [e for e in world["nearby"]
+                 if e["category"] == "item" and e["distance"] < 2.5]
+        if items:
+            closest = min(items, key=lambda e: e["distance"])
+            return PickupItem(closest["id"]), "Picking up item"
 
-    # ── Too far from home: return ─────────────────────────────────────────
-    if dist_home > max_radius:
-        _state = "returning"
-        self["goal"] = "Too far — heading back (%dm)" % int(dist_home)
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        # ── Greet nearby players ────────────────────────────────────────────
+        if self._state in ("searching", "resting") and self._timer <= 0:
+            players = [e for e in world["nearby"]
+                       if e["category"] == "player" and e["distance"] < 6]
+            if players and random.random() < 0.05:
+                self._timer = 2.0
+                return Idle(), "*waves* Hello!"
 
-    # ── Opportunistic item pickup (any state except sleeping) ─────────────
-    # After a BreakBlock, the dropped item entity spawns at the block position.
-    # Grab it before moving on.
-    nearby_items = [e for e in world["nearby"]
-                    if e["category"] == "item" and e["distance"] < 2.5]
-    if nearby_items:
-        closest = min(nearby_items, key=lambda e: e["distance"])
-        self["goal"] = "Picking up item"
-        return PickupItem(closest["id"])
+        # ── State: searching ────────────────────────────────────────────────
+        if self._state == "searching":
+            blocks = [b for b in world["blocks"]
+                      if b["type"] == "base:wood" and b["distance"] < work_radius]
+            if blocks:
+                self._target_block = min(blocks, key=lambda b: b["distance"])
+                self._state = "walking"
+                self._timer = 20.0
+                self._stuck_pos = (entity["x"], entity["z"])
+                self._stuck_timer = 5.0
+                return (MoveTo(self._target_block["x"] + 0.5,
+                               self._target_block["y"],
+                               self._target_block["z"] + 0.5, speed=spd),
+                        "Found wood! Going to chop.")
+            if self._timer <= 0:
+                self._timer = 2.0
+            return Wander(speed=spd * 0.7), "Searching for trees..."
 
-    # ── Greet nearby players ─────────────────────────────────────────────
-    if _state in ("searching", "resting") and _timer <= 0:
-        players = [e for e in world["nearby"]
-                   if e["category"] == "player" and e["distance"] < 6]
-        if players and random.random() < 0.05:
-            _timer = 2.0
-            self["goal"] = "*waves* Hello!"
-            return Idle()
+        # ── State: walking to tree ──────────────────────────────────────────
+        if self._state == "walking":
+            if self._target_block is None:
+                self._state = "searching"
+                return Idle(), "Lost target — re-searching"
+            dist = self.dist2d(entity["x"], entity["z"],
+                               self._target_block["x"], self._target_block["z"])
+            # Stuck detection
+            self._stuck_timer -= world["dt"]
+            if self._stuck_timer <= 0:
+                self._stuck_timer = 5.0
+                if self._stuck_pos is not None:
+                    moved = self.dist2d(entity["x"], entity["z"],
+                                       self._stuck_pos[0], self._stuck_pos[1])
+                    if moved < 1.0:
+                        self._state = "searching"
+                        self._target_block = None
+                        return Idle(), "Stuck — searching elsewhere"
+                self._stuck_pos = (entity["x"], entity["z"])
 
-    # ── State: searching for a tree ──────────────────────────────────────
-    if _state == "searching":
-        blocks = [b for b in world["blocks"]
-                  if b["type"] == "base:wood" and b["distance"] < work_radius]
-        if blocks:
-            _target_block = min(blocks, key=lambda b: b["distance"])
-            _state = "walking"
-            _timer = 20.0
-            _stuck_pos = (self["x"], self["z"])
-            _stuck_timer = 5.0
-            self["goal"] = "Found wood! Going to chop."
-            return MoveTo(_target_block["x"] + 0.5, _target_block["y"],
-                          _target_block["z"] + 0.5, speed=self["walk_speed"])
-        self["goal"] = "Searching for trees..."
-        if _timer <= 0:
-            _timer = 2.0
-        return Wander(speed=self["walk_speed"] * 0.7)
+            if dist < 2.5:
+                self._state = "chopping"
+                self._timer = 1.5
+                return Idle(), "Chopping!"
+            if self._timer <= 0:
+                self._state = "searching"
+                self._target_block = None
+                return Idle(), "Can't reach — trying another"
+            return (MoveTo(self._target_block["x"] + 0.5,
+                           self._target_block["y"],
+                           self._target_block["z"] + 0.5, speed=spd),
+                    "Walking to tree (%dm)" % int(dist))
 
-    # ── State: walking to target block ───────────────────────────────────
-    if _state == "walking":
-        if _target_block is None:
-            _state = "searching"
-            return Idle()
-        dist = _dist2d(self["x"], self["z"],
-                       _target_block["x"], _target_block["z"])
+        # ── State: chopping ─────────────────────────────────────────────────
+        if self._state == "chopping":
+            if self._timer <= 0:
+                self._trips += 1
+                self._state = "returning"
+                self._timer = 20.0
+                if self._target_block:
+                    return (BreakBlock(self._target_block["x"],
+                                       self._target_block["y"],
+                                       self._target_block["z"]),
+                            "Chopping!")
+            return Idle(), "Chopping!"
 
-        # Stuck detection: if barely moved in 5 seconds, give up and re-search
-        _stuck_timer -= dt
-        if _stuck_timer <= 0:
-            _stuck_timer = 5.0
-            if _stuck_pos is not None:
-                moved = _dist2d(self["x"], self["z"], _stuck_pos[0], _stuck_pos[1])
-                if moved < 1.0:
-                    _state = "searching"
-                    _target_block = None
-                    self["goal"] = "Stuck — searching elsewhere"
-                    return Idle()
-            _stuck_pos = (self["x"], self["z"])
+        # ── State: returning home ───────────────────────────────────────────
+        if self._state == "returning":
+            if dist_home < 3 or self._timer <= 0:
+                self._state = "resting"
+                self._timer = 3.0
+                return Idle(), "Home! Depositing..."
+            return (MoveTo(self._home[0], self._home[1], self._home[2], speed=spd),
+                    "Bringing resources home (%dm)" % int(dist_home))
 
-        if dist < 2.5:
-            _state = "chopping"
-            _timer = 1.5
-            self["goal"] = "Chopping!"
-            return Idle()
-        if _timer <= 0:
-            _state = "searching"
-            _target_block = None
-            self["goal"] = "Can't reach — trying another"
-            return Idle()
-        self["goal"] = "Walking to tree (%dm)" % int(dist)
-        return MoveTo(_target_block["x"] + 0.5, _target_block["y"],
-                      _target_block["z"] + 0.5, speed=self["walk_speed"])
+        # ── State: resting ──────────────────────────────────────────────────
+        if self._state == "resting":
+            if self._timer <= 0:
+                villagers = [e for e in world["nearby"]
+                             if e["type_id"] == "base:villager"
+                             and e["id"] != entity["id"] and e["distance"] < 10]
+                if villagers and random.random() < social_chance:
+                    self._social_target = min(villagers, key=lambda e: e["distance"])
+                    self._state = "socializing"
+                    self._timer = 4.0
+                    return (MoveTo(self._social_target["x"],
+                                   self._social_target["y"],
+                                   self._social_target["z"], speed=spd * 0.6),
+                            "Chatting with neighbor...")
+                self._state = "searching"
+                self._timer = 1.0
+            return Idle(), "Taking a break"
 
-    # ── State: chopping ──────────────────────────────────────────────────
-    if _state == "chopping":
-        self["goal"] = "Chopping!"
-        if _timer <= 0:
-            _trips += 1
-            _state = "returning"
-            _timer = 20.0
-            if _target_block:
-                return BreakBlock(_target_block["x"], _target_block["y"],
-                                  _target_block["z"])
-        return Idle()
+        # ── State: socializing ──────────────────────────────────────────────
+        if self._state == "socializing":
+            if self._timer <= 0:
+                self._state = "searching"
+                self._social_target = None
+                return Idle(), "Back to work!"
+            return Idle(), "Chatting :)"
 
-    # ── State: returning home ────────────────────────────────────────────
-    if _state == "returning":
-        if dist_home < 3 or _timer <= 0:
-            _state = "resting"
-            _timer = 3.0
-            self["goal"] = "Home! Depositing..."
-            return Idle()
-        self["goal"] = "Bringing resources home (%dm)" % int(dist_home)
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
-
-    # ── State: resting (maybe socialize) ────────────────────────────────
-    if _state == "resting":
-        self["goal"] = "Taking a break"
-        if _timer <= 0:
-            villagers = [e for e in world["nearby"]
-                         if e["type_id"] == "base:villager"
-                         and e["id"] != self["id"] and e["distance"] < 10]
-            if villagers and random.random() < social_chance:
-                _social_target = min(villagers, key=lambda e: e["distance"])
-                _state = "socializing"
-                _timer = 4.0
-                self["goal"] = "Chatting with neighbor..."
-                return MoveTo(_social_target["x"], _social_target["y"],
-                              _social_target["z"], speed=self["walk_speed"] * 0.6)
-            _state = "searching"
-            _timer = 1.0
-        return Idle()
-
-    # ── State: socializing ───────────────────────────────────────────────
-    if _state == "socializing":
-        if _timer <= 0:
-            _state = "searching"
-            _social_target = None
-            self["goal"] = "Back to work!"
-            return Idle()
-        self["goal"] = "Chatting :)"
-        return Idle()
-
-    # Fallback
-    _state = "searching"
-    return Idle()
+        # Fallback
+        self._state = "searching"
+        return Idle(), "Idle"

@@ -1,117 +1,96 @@
-"""Wander — generic herd animal roaming behavior.
+"""Wander — herd animal that grazes, flees threats, and goes home at night.
 
-Animals roam in groups, flee from threats, graze, and stay near
-their herd. Generic for any herd animal (pig, sheep, cow, etc.)
+Priority order:
+  1. Evening/night — head home and sleep
+  2. Too far from home — wander back
+  3. Flee from players / cats
+  4. Join herd if drifted too far
+  5. Graze occasionally
+  6. Wander
 
-Species-specific traits (mud-seeking, wool-growing, etc.) should
-be separate composable behaviors.
-
-Parameters (optional via self dict):
-  flee_range    — distance to flee from players (default 5)
-  group_range   — max distance before rejoining herd (default 6)
-  graze_chance  — probability of stopping to graze per decide (default 0.25)
-  home_radius   — max wander distance from spawn (default 35)
+Entity props (optional):
+  flee_range   — distance to flee from players/cats (default 5)
+  group_range  — max distance before rejoining herd (default 6)
+  graze_chance — probability of stopping to graze per decide (default 0.25)
+  home_radius  — max wander distance from spawn before returning (default 35)
 """
-from modcraft_engine import Idle, Wander, Flee, MoveTo
 import random
+from modcraft_engine import Idle, Wander, Flee, MoveTo
+from behavior_base import Behavior
 
-_graze_timer = 0
-_activity = "idle"  # idle, grazing, stampede
-_rng_seeded = False
-_home = None
-_sleeping = False
 
-def decide(self, world):
-    global _graze_timer, _activity, _rng_seeded, _home, _sleeping
-    if not _rng_seeded:
-        random.seed(self["id"] * 31337 + 42)
-        _rng_seeded = True
-    dt = world["dt"]
-    _graze_timer -= dt
+class WanderBehavior(Behavior):
 
-    # Remember home (spawn position)
-    if _home is None:
-        _home = (self["x"], self["y"], self["z"])
+    def __init__(self):
+        self._home = None
+        self._graze_timer = 0.0
+        self._sleeping = False
+        self._rng_seeded = False
 
-    flee_range = self.get("flee_range", 5.0)
-    group_range = self.get("group_range", 6.0)
-    graze_chance = self.get("graze_chance", 0.25)
-    home_radius = float(self.get("home_radius", 35.0))
+    def decide(self, entity, world):
+        if not self._rng_seeded:
+            random.seed(entity["id"] * 31337 + 42)
+            self._rng_seeded = True
 
-    time = world.get("time", 0.5)
-    is_night = time > 0.75 or time < 0.25
-    is_evening = 0.65 < time <= 0.75
+        self._graze_timer -= world["dt"]
+        self._home = self.init_home(entity, self._home)
 
-    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
-    dist_home = (dx * dx + dz * dz) ** 0.5
+        flee_range   = float(entity.get("flee_range", 5.0))
+        group_range  = float(entity.get("group_range", 6.0))
+        graze_chance = float(entity.get("graze_chance", 0.25))
+        home_radius  = float(entity.get("home_radius", 35.0))
+        spd          = entity["walk_speed"]
 
-    # ── Evening/Night: head home ──────────────────────────────────────────
-    if is_night:
-        _sleeping = True
-        if dist_home > 3:
-            self["goal"] = "Heading home..."
-            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
-        self["goal"] = "Sleeping zzz"
-        return Idle()
+        dist_home = self.dist2d(entity["x"], entity["z"],
+                                self._home[0], self._home[2])
 
-    if _sleeping:
-        _sleeping = False
-        self["goal"] = "Good morning!"
-        return Idle()
+        # ── Evening/Night: go home ──────────────────────────────────────────
+        if self.is_night(world):
+            self._sleeping = True
+            if dist_home > 3:
+                return (MoveTo(self._home[0], self._home[1], self._home[2],
+                               speed=spd),
+                        "Heading home...")
+            return Idle(), "Sleeping zzz"
 
-    if is_evening and dist_home > 3:
-        self["goal"] = "Heading home (evening)..."
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
+        if self._sleeping:
+            self._sleeping = False
+            return Idle(), "Good morning!"
 
-    if dist_home > home_radius:
-        self["goal"] = "Wandering back home"
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"] * 0.8)
+        if self.is_evening(world) and dist_home > 3:
+            return (MoveTo(self._home[0], self._home[1], self._home[2],
+                           speed=spd),
+                    "Heading home (evening)...")
 
-    # ── Flee from threats ──
-    threats = [e for e in world["nearby"]
-               if (e["category"] == "player" or e["type_id"] == "base:cat")
-               and e["distance"] < flee_range]
-    if threats:
-        closest = min(threats, key=lambda e: e["distance"])
-        _activity = "stampede"
-        self["goal"] = "Fleeing!"
-        return Flee(closest["id"], speed=self["walk_speed"] * 1.8)
+        if dist_home > home_radius:
+            return (MoveTo(self._home[0], self._home[1], self._home[2],
+                           speed=spd * 0.8),
+                    "Wandering back home")
 
-    # ── Herd stampede: flee if a friend is panicking ──
-    if _activity != "stampede":
+        # ── Flee from threats ───────────────────────────────────────────────
+        threats = [e for e in world["nearby"]
+                   if (e["category"] == "player" or e["type_id"] == "base:cat")
+                   and e["distance"] < flee_range]
+        if threats:
+            closest = min(threats, key=lambda e: e["distance"])
+            return Flee(closest["id"], speed=spd * 1.8), "Fleeing!"
+
+        # ── Stay with herd ──────────────────────────────────────────────────
         friends = [e for e in world["nearby"]
-                   if e["type_id"] == self["type_id"] and e["id"] != self["id"]]
-        for f in friends:
-            if f["distance"] < 8:
-                for t in world["nearby"]:
-                    if (t["category"] == "player" or t["type_id"] == "base:cat") \
-                       and t["distance"] < flee_range + 3:
-                        _activity = "stampede"
-                        self["goal"] = "Stampede!"
-                        return Flee(t["id"], speed=self["walk_speed"] * 1.6)
+                   if e["type_id"] == entity["type_id"] and e["id"] != entity["id"]]
+        if friends:
+            farthest = max(friends, key=lambda e: e["distance"])
+            if farthest["distance"] > group_range:
+                return (MoveTo(farthest["x"], farthest["y"], farthest["z"],
+                               speed=spd),
+                        "Joining herd")
 
-    _activity = "idle"
+        # ── Graze ───────────────────────────────────────────────────────────
+        if self._graze_timer <= 0 and random.random() < graze_chance:
+            self._graze_timer = 3.0 + random.random() * 4.0
+            return Idle(), "Grazing"
 
-    # ── Stay with herd ──
-    friends = [e for e in world["nearby"]
-               if e["type_id"] == self["type_id"] and e["id"] != self["id"]]
-    if friends:
-        farthest = max(friends, key=lambda e: e["distance"])
-        if farthest["distance"] > group_range:
-            self["goal"] = "Joining herd"
-            return MoveTo(farthest["x"], farthest["y"], farthest["z"],
-                          speed=self["walk_speed"])
+        if self._graze_timer > 0:
+            return Idle(), "Grazing"
 
-    # ── Graze ──
-    if _graze_timer <= 0 and random.random() < graze_chance:
-        _graze_timer = 3.0 + random.random() * 4.0
-        self["goal"] = "Grazing"
-        return Idle()
-
-    if _graze_timer > 0:
-        self["goal"] = "Grazing"
-        return Idle()
-
-    # ── Wander ──
-    self["goal"] = "Wandering"
-    return Wander(speed=self["walk_speed"])
+        return Wander(speed=spd), "Wandering"

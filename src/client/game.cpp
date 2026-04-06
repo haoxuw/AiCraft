@@ -1882,7 +1882,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		glm::mat4 vp2 = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
 		srv2.forEachEntity([&](Entity& e) {
 			if (e.id() == m_server->localPlayerId()) return;
-			if (!e.def().isLiving() || e.removed || e.goalText.empty()) return;
+			if (!e.def().isLiving() || e.removed) return;
 			float entityTop = e.def().collision_box_max.y;
 			float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;
 			glm::vec3 textPos = e.position + glm::vec3(0, entityTop + 0.55f + bobY, 0);
@@ -1890,10 +1890,22 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			if (clip.w <= 0.0f || clip.z <= 0.0f) return;
 			float nx = clip.x / clip.w, ny = clip.y / clip.w;
 			if (nx < -1.3f || nx > 1.3f || ny < -1.3f || ny > 1.3f) return;
-			glm::vec4 color = e.hasError
-				? glm::vec4(1.0f, 0.4f, 0.4f, 0.92f)
-				: glm::vec4(0.92f, 1.0f, 0.85f, 0.88f);
-			m_text.drawText(e.goalText.c_str(), nx - 0.16f, ny, 0.40f, color, aspect);
+			const char* label = nullptr;
+			std::string fallback;
+			glm::vec4 color;
+			if (e.hasError) {
+				label = e.goalText.empty() ? "ERROR" : e.goalText.c_str();
+				color = glm::vec4(1.0f, 0.4f, 0.4f, 0.92f);
+			} else if (!e.goalText.empty()) {
+				label = e.goalText.c_str();
+				color = glm::vec4(0.92f, 1.0f, 0.85f, 0.88f);
+			} else {
+				fallback = e.getProp<std::string>(Prop::BehaviorId, "");
+				if (fallback.empty()) fallback = e.typeId();
+				label = fallback.c_str();
+				color = glm::vec4(0.5f, 0.5f, 0.5f, 0.55f);
+			}
+			m_text.drawText(label, nx - 0.16f, ny, 0.40f, color, aspect);
 		});
 	}
 
@@ -1975,6 +1987,12 @@ void Game::updateEntityInspect(float dt, float aspect) {
 
 		if (!target->goalText.empty()) {
 			ImGui::TextColored({0.5f, 1.0f, 0.8f, 1}, "Goal: %s", target->goalText.c_str());
+		} else {
+			std::string bid = target->getProp<std::string>(Prop::BehaviorId, "");
+			if (!bid.empty())
+				ImGui::TextColored({0.45f, 0.45f, 0.45f, 1}, "Goal: (waiting for agent — %s)", bid.c_str());
+			else
+				ImGui::TextColored({0.45f, 0.45f, 0.45f, 1}, "Goal: (no agent)");
 		}
 		if (target->hasError) {
 			ImGui::TextColored({1.0f, 0.3f, 0.3f, 1}, "ERROR: %s", target->errorText.c_str());

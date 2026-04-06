@@ -8,227 +8,203 @@ Cats are unpredictable. Each decision cycle they randomly pick a mood:
 
 They always flee from dogs regardless of mood.
 
-Parameters (set via self dict, all optional):
+Parameters (set via entity dict, all optional):
   chase_range   — max distance to chase prey (default 10)
   flee_range    — distance to flee from dogs (default 5)
   curiosity     — 0.0-1.0, how often the cat follows players (default 0.3)
+  home_radius   — max wander distance from home (default 25)
 """
-from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo
 import random
+from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo
+from behavior_base import Behavior
 
-# Mood states
-MOOD_IDLE = "idle"
-MOOD_HUNT = "hunt"
-MOOD_NAP = "nap"
+MOOD_IDLE    = "idle"
+MOOD_HUNT    = "hunt"
+MOOD_NAP     = "nap"
 MOOD_CURIOUS = "curious"
 MOOD_EXPLORE = "explore"
 
-_mood = MOOD_IDLE
-_mood_timer = 0        # how long to stay in current mood
-_napping = False
-_nap_timer = 0
-_hunt_cooldown = 0
-_perch_target = None
-_chase_origin = None
-_curiosity_target = None
-_bored_timer = 0       # lose interest timer for curiosity
 
-def _pick_mood(curiosity):
-    """Randomly choose next mood based on personality."""
-    r = random.random()
-    if r < 0.30:
-        return MOOD_HUNT
-    elif r < 0.30 + curiosity * 0.35:
-        return MOOD_CURIOUS
-    elif r < 0.75:
-        return MOOD_EXPLORE
-    else:
-        return MOOD_NAP
+class ProwlBehavior(Behavior):
 
-_rng_seeded = False
-_home = None
-_sleeping = False
+    def __init__(self):
+        self._home = None
+        self._sleeping = False
+        self._mood = MOOD_IDLE
+        self._mood_timer = 0.0
+        self._napping = False
+        self._nap_timer = 0.0
+        self._hunt_cooldown = 0.0
+        self._perch_target = None
+        self._chase_origin = None
+        self._curiosity_target = None
+        self._bored_timer = 0.0
+        self._rng_seeded = False
 
-def decide(self, world):
-    global _mood, _mood_timer, _napping, _nap_timer, _hunt_cooldown, _rng_seeded
-    global _perch_target, _chase_origin, _curiosity_target, _bored_timer
-    global _home, _sleeping
-    if not _rng_seeded:
-        random.seed(self["id"] * 31337 + 42)
-        _rng_seeded = True
-    dt = world["dt"]
-    _mood_timer -= dt
-    _nap_timer -= dt
-    _hunt_cooldown -= dt
-    _bored_timer -= dt
-
-    if _home is None:
-        _home = (self["x"], self["y"], self["z"])
-
-    chase_range = self.get("chase_range", 10)
-    flee_range = self.get("flee_range", 5)
-    curiosity = self.get("curiosity", 0.3)
-    home_radius = float(self.get("home_radius", 25.0))
-
-    time = world.get("time", 0.5)
-    is_night = time > 0.75 or time < 0.25
-    is_evening = 0.65 < time <= 0.75
-
-    dx, dz = self["x"] - _home[0], self["z"] - _home[2]
-    dist_home = (dx * dx + dz * dz) ** 0.5
-
-    # ── Evening/Night: return home ────────────────────────────────────────
-    if is_night:
-        _sleeping = True
-        _napping = False
-        if dist_home > 4:
-            self["goal"] = "Prowling home..."
-            return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
-        self["goal"] = "Curled up at home zzz"
-        return Idle()
-
-    if _sleeping:
-        _sleeping = False
-        self["goal"] = "Stretching... meow"
-        return Idle()
-
-    if is_evening and dist_home > 4:
-        self["goal"] = "Heading home (evening)..."
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"])
-
-    if dist_home > home_radius:
-        self["goal"] = "Wandering back home"
-        return MoveTo(_home[0], _home[1], _home[2], speed=self["walk_speed"] * 0.7)
-
-    # ── Always flee from dogs ──
-    dogs = [e for e in world["nearby"]
-            if e["type_id"] == "base:dog" and e["distance"] < flee_range]
-    if dogs:
-        _chase_origin = None
-        _napping = False
-        _mood = MOOD_IDLE
-        _mood_timer = 0
-        self["goal"] = "Avoiding dog!"
-        return Flee(dogs[0]["id"], speed=self["walk_speed"] * 1.8)
-
-    # ── Napping (persists across mood changes) ──
-    if _napping:
-        if _nap_timer <= 0:
-            _napping = False
-            _perch_target = None
-            _mood_timer = 0  # pick new mood
+    def _pick_mood(self, curiosity):
+        r = random.random()
+        if r < 0.30:
+            return MOOD_HUNT
+        elif r < 0.30 + curiosity * 0.35:
+            return MOOD_CURIOUS
+        elif r < 0.75:
+            return MOOD_EXPLORE
         else:
-            self["goal"] = "Napping zzz"
-            return Idle()
+            return MOOD_NAP
 
-    # ── Walking to perch ──
-    if _perch_target:
-        dx = self["x"] - _perch_target["x"]
-        dz = self["z"] - _perch_target["z"]
-        dist = (dx * dx + dz * dz) ** 0.5
-        if dist < 2.0 or self["y"] > _perch_target["y"]:
-            _napping = True
-            _nap_timer = 6.0 + random.random() * 8.0
-            _perch_target = None
-            self["goal"] = "Napping on perch zzz"
-            return Idle()
-        self["goal"] = "Climbing to perch..."
-        return MoveTo(_perch_target["x"] + 0.5, _perch_target["y"] + 1.0,
-                      _perch_target["z"] + 0.5, speed=self["walk_speed"])
+    def decide(self, entity, world):
+        if not self._rng_seeded:
+            random.seed(entity["id"] * 31337 + 42)
+            self._rng_seeded = True
 
-    # ── Pick new mood when timer expires ──
-    if _mood_timer <= 0:
-        _mood = _pick_mood(curiosity)
-        _mood_timer = 6.0 + random.random() * 10.0
-        _chase_origin = None
-        _curiosity_target = None
-        _bored_timer = 4.0 + random.random() * 6.0
+        dt = world["dt"]
+        self._mood_timer    -= dt
+        self._nap_timer     -= dt
+        self._hunt_cooldown -= dt
+        self._bored_timer   -= dt
+        self._home = self.init_home(entity, self._home)
 
-    # ── MOOD: Hunt ──
-    if _mood == MOOD_HUNT and _hunt_cooldown <= 0:
-        chickens = [e for e in world["nearby"]
-                    if e["type_id"] == "base:chicken" and e["distance"] < chase_range]
-        if chickens:
-            target = min(chickens, key=lambda e: e["distance"])
+        chase_range  = float(entity.get("chase_range", 10.0))
+        flee_range   = float(entity.get("flee_range",   5.0))
+        curiosity    = float(entity.get("curiosity",    0.3))
+        home_radius  = float(entity.get("home_radius", 25.0))
+        spd          = entity["walk_speed"]
 
-            if _chase_origin is None:
-                _chase_origin = (self["x"], self["z"])
+        dist_home = self.dist2d(entity["x"], entity["z"],
+                                self._home[0], self._home[2])
 
-            # Give up if chased too far
-            dx = self["x"] - _chase_origin[0]
-            dz = self["z"] - _chase_origin[1]
-            if (dx * dx + dz * dz) ** 0.5 > chase_range:
-                _hunt_cooldown = 5.0
-                _chase_origin = None
-                _mood_timer = 0  # pick new mood
-                self["goal"] = "Lost interest..."
-                return Idle()
+        # ── Evening/Night: return home ────────────────────────────────────────
+        if self.is_night(world):
+            self._sleeping = True
+            self._napping  = False
+            if dist_home > 4:
+                return (MoveTo(self._home[0], self._home[1], self._home[2],
+                               speed=spd),
+                        "Prowling home...")
+            return Idle(), "Curled up at home zzz"
 
-            if target["distance"] < 2:
-                _hunt_cooldown = 8.0
-                _chase_origin = None
-                _mood_timer = 0
-                self["goal"] = "Got one! Resting..."
-                return Idle()
+        if self._sleeping:
+            self._sleeping = False
+            return Idle(), "Stretching... meow"
 
-            self["goal"] = "Stalking chicken..."
-            return Follow(target["id"], speed=self["walk_speed"] * 1.3, min_distance=1)
-        else:
-            _chase_origin = None
+        if self.is_evening(world) and dist_home > 4:
+            return (MoveTo(self._home[0], self._home[1], self._home[2],
+                           speed=spd),
+                    "Heading home (evening)...")
 
-    # ── MOOD: Curious (follow player) ──
-    if _mood == MOOD_CURIOUS:
-        if _curiosity_target is None:
-            players = [e for e in world["nearby"] if e["category"] == "player"]
-            if players:
-                _curiosity_target = min(players, key=lambda e: e["distance"])["id"]
+        if dist_home > home_radius:
+            return (MoveTo(self._home[0], self._home[1], self._home[2],
+                           speed=spd * 0.7),
+                    "Wandering back home")
 
-        if _curiosity_target is not None:
-            target = None
-            for e in world["nearby"]:
-                if e["id"] == _curiosity_target:
-                    target = e
-                    break
+        # ── Always flee from dogs ─────────────────────────────────────────────
+        dogs = [e for e in world["nearby"]
+                if e["type_id"] == "base:dog" and e["distance"] < flee_range]
+        if dogs:
+            self._chase_origin = None
+            self._napping = False
+            self._mood = MOOD_IDLE
+            self._mood_timer = 0.0
+            return Flee(dogs[0]["id"], speed=spd * 1.8), "Avoiding dog!"
 
-            if target and target["distance"] < 20:
-                if _bored_timer <= 0:
-                    # Got bored, wander away
-                    _mood_timer = 0
-                    _curiosity_target = None
-                    self["goal"] = "Bored now"
-                    return Wander(speed=self["walk_speed"] * 0.6)
-
-                if target["distance"] < 3:
-                    # Close enough, sit and stare
-                    self["goal"] = "Watching player..."
-                    return Idle()
-
-                self["goal"] = "Following player..."
-                return Follow(target["id"], speed=self["walk_speed"] * 0.8,
-                              min_distance=2.5)
+        # ── Napping ───────────────────────────────────────────────────────────
+        if self._napping:
+            if self._nap_timer <= 0:
+                self._napping = False
+                self._perch_target = None
+                self._mood_timer = 0.0
             else:
-                _curiosity_target = None
+                return Idle(), "Napping zzz"
 
-    # ── MOOD: Nap ──
-    if _mood == MOOD_NAP:
-        perch_types = {"base:wood", "base:leaves", "base:cobblestone",
-                       "base:stone", "base:planks"}
-        high_blocks = [b for b in world["blocks"]
-                       if b["type"] in perch_types
-                       and b["y"] > self["y"] + 1.5
-                       and b["distance"] < 12]
-        if high_blocks:
-            best = max(high_blocks, key=lambda b: b["y"])
-            _perch_target = best
-            self["goal"] = "Climbing to perch..."
-            return MoveTo(best["x"] + 0.5, best["y"] + 1.0, best["z"] + 0.5,
-                          speed=self["walk_speed"])
+        # ── Walking to perch ──────────────────────────────────────────────────
+        if self._perch_target:
+            dx = entity["x"] - self._perch_target["x"]
+            dz = entity["z"] - self._perch_target["z"]
+            dist = (dx * dx + dz * dz) ** 0.5
+            if dist < 2.0 or entity["y"] > self._perch_target["y"]:
+                self._napping = True
+                self._nap_timer = 6.0 + random.random() * 8.0
+                self._perch_target = None
+                return Idle(), "Napping on perch zzz"
+            return (MoveTo(self._perch_target["x"] + 0.5,
+                           self._perch_target["y"] + 1.0,
+                           self._perch_target["z"] + 0.5, speed=spd),
+                    "Climbing to perch...")
 
-        _napping = True
-        _nap_timer = 5.0 + random.random() * 7.0
-        self["goal"] = "Curling up for a nap..."
-        return Idle()
+        # ── Pick new mood when timer expires ──────────────────────────────────
+        if self._mood_timer <= 0:
+            self._mood = self._pick_mood(curiosity)
+            self._mood_timer = 6.0 + random.random() * 10.0
+            self._chase_origin = None
+            self._curiosity_target = None
+            self._bored_timer = 4.0 + random.random() * 6.0
 
-    # ── MOOD: Explore / default ──
-    self["goal"] = "Prowling"
-    return Wander(speed=self["walk_speed"] * 0.5)
+        # ── MOOD: Hunt ────────────────────────────────────────────────────────
+        if self._mood == MOOD_HUNT and self._hunt_cooldown <= 0:
+            chickens = [e for e in world["nearby"]
+                        if e["type_id"] == "base:chicken"
+                        and e["distance"] < chase_range]
+            if chickens:
+                target = min(chickens, key=lambda e: e["distance"])
+                if self._chase_origin is None:
+                    self._chase_origin = (entity["x"], entity["z"])
+                dx = entity["x"] - self._chase_origin[0]
+                dz = entity["z"] - self._chase_origin[1]
+                if (dx * dx + dz * dz) ** 0.5 > chase_range:
+                    self._hunt_cooldown = 5.0
+                    self._chase_origin = None
+                    self._mood_timer = 0.0
+                    return Idle(), "Lost interest..."
+                if target["distance"] < 2:
+                    self._hunt_cooldown = 8.0
+                    self._chase_origin = None
+                    self._mood_timer = 0.0
+                    return Idle(), "Got one! Resting..."
+                return (Follow(target["id"], speed=spd * 1.3, min_distance=1),
+                        "Stalking chicken...")
+            else:
+                self._chase_origin = None
+
+        # ── MOOD: Curious ─────────────────────────────────────────────────────
+        if self._mood == MOOD_CURIOUS:
+            if self._curiosity_target is None:
+                players = [e for e in world["nearby"] if e["category"] == "player"]
+                if players:
+                    self._curiosity_target = min(players,
+                                                 key=lambda e: e["distance"])["id"]
+
+            if self._curiosity_target is not None:
+                target = next((e for e in world["nearby"]
+                               if e["id"] == self._curiosity_target), None)
+                if target and target["distance"] < 20:
+                    if self._bored_timer <= 0:
+                        self._mood_timer = 0.0
+                        self._curiosity_target = None
+                        return Wander(speed=spd * 0.6), "Bored now"
+                    if target["distance"] < 3:
+                        return Idle(), "Watching player..."
+                    return (Follow(target["id"], speed=spd * 0.8, min_distance=2.5),
+                            "Following player...")
+                else:
+                    self._curiosity_target = None
+
+        # ── MOOD: Nap ─────────────────────────────────────────────────────────
+        if self._mood == MOOD_NAP:
+            perch_types = {"base:wood", "base:leaves", "base:cobblestone",
+                           "base:stone", "base:planks"}
+            high_blocks = [b for b in world["blocks"]
+                           if b["type"] in perch_types
+                           and b["y"] > entity["y"] + 1.5
+                           and b["distance"] < 12]
+            if high_blocks:
+                best = max(high_blocks, key=lambda b: b["y"])
+                self._perch_target = best
+                return (MoveTo(best["x"] + 0.5, best["y"] + 1.0,
+                               best["z"] + 0.5, speed=spd),
+                        "Climbing to perch...")
+            self._napping = True
+            self._nap_timer = 5.0 + random.random() * 7.0
+            return Idle(), "Curling up for a nap..."
+
+        # ── MOOD: Explore / default ───────────────────────────────────────────
+        return Wander(speed=spd * 0.5), "Prowling"

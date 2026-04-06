@@ -146,6 +146,19 @@ void PythonBridge::shutdown() {
 	printf("[PythonBridge] Shutdown.\n");
 }
 
+// Goal string synthesized from action type when the behavior doesn't provide one.
+static const char* goalForAction(const std::string& actionType) {
+	if (actionType == "idle")        return "Idle";
+	if (actionType == "wander")      return "Wandering";
+	if (actionType == "move_to")     return "Moving...";
+	if (actionType == "follow")      return "Following";
+	if (actionType == "flee")        return "Fleeing!";
+	if (actionType == "break_block") return "Breaking block";
+	if (actionType == "drop_item")   return "Dropping item";
+	if (actionType == "pickup_item") return "Picking up";
+	return "Active";
+}
+
 BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::string& errorOut) {
 	if (!m_initialized) {
 		errorOut = "Python bridge not initialized";
@@ -153,29 +166,38 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 	}
 
 	try {
-		// Create an isolated namespace per behavior so module-level variables
-		// (constants, global state) and function __globals__ share the same dict.
-		// Without this, exec(code, globals, locals) puts top-level assignments
-		// in locals while `global` declarations inside decide() look in globals.
+		// Isolated namespace per behavior (one per entity instance).
 		py::dict ns;
 
-		// Import the engine module so behaviors can use Idle(), Wander(), etc.
+		// Import engine actions + Behavior base class into the namespace.
 		py::exec("from modcraft_engine import *", ns);
+		py::exec("from behavior_base import Behavior", ns);
 
-		// Execute the behavior source code (ns is both globals and locals)
+		// Execute the behavior source code.
 		py::exec(sourceCode, ns);
 
-		// Check that decide() function exists
-		if (!ns.contains("decide")) {
-			errorOut = "Behavior must define a decide(self, world) function";
+		// Find the Behavior subclass and instantiate it.
+		// Uses Python introspection so behaviors don't need registration boilerplate.
+		py::exec(R"(
+import inspect as _i
+_behavior_instance = None
+for _n, _c in list(globals().items()):
+    if _i.isclass(_c) and _c is not Behavior and issubclass(_c, Behavior):
+        _behavior_instance = _c()
+        break
+del _i, _n, _c
+)", ns);
+
+		if (!ns.contains("_behavior_instance") || ns["_behavior_instance"].is_none()) {
+			errorOut = "No Behavior subclass found — define a class that inherits from Behavior";
 			return -1;
 		}
 
 		int handle = m_nextHandle++;
 		auto& beh = m_behaviors[handle];
 		beh.source = sourceCode;
-		// Store the compiled module namespace (heap-allocate py::object)
-		beh.moduleObj = new py::dict(ns);
+		beh.moduleObj  = new py::dict(ns);
+		beh.instanceObj = new py::object(ns["_behavior_instance"]);
 
 		printf("[PythonBridge] Loaded behavior (handle=%d)\n", handle);
 		return handle;
@@ -201,7 +223,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 	}
 
 	try {
-		py::dict& ns = *static_cast<py::dict*>(it->second.moduleObj);
+		py::object& instance = *static_cast<py::object*>(it->second.instanceObj);
 
 		// Build the world view for Python — entities as dicts (consistent with blocks)
 		py::list pyNearby;
@@ -240,8 +262,6 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		pySelf["hp"] = self.hp();
 		pySelf["walk_speed"] = self.def().walk_speed;
 		pySelf["on_ground"] = self.onGround;
-		pySelf["goal"] = self.goalText;
-
 		// Build nearby blocks list for Python
 		py::list pyBlocks;
 		for (auto& nb : nearbyBlocks) {
@@ -261,20 +281,29 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		pyWorld["dt"] = dt;
 		pyWorld["time"] = timeOfDay;
 
-		// Call decide(self, world)
-		py::object decideFn = ns["decide"];
-		py::object result = decideFn(pySelf, pyWorld);
+		// Call instance.decide(entity, world) — returns (action, goal_str)
+		py::object result = instance.attr("decide")(pySelf, pyWorld);
 
-		// Read goal from self dict (behavior may have modified it)
-		if (pySelf.contains("goal"))
-			goalOut = pySelf["goal"].cast<std::string>();
-
-		// Convert Python action to C++ BehaviorAction
-		if (result.is_none()) {
+		// Validate tuple return: (action, goal_str)
+		if (!py::isinstance<py::tuple>(result) || result.cast<py::tuple>().size() != 2) {
+			goalOut = "ERROR: decide() must return (action, goal_str) — got " +
+			          std::string(py::str(result));
+			errorOut = goalOut;
 			return {BehaviorAction::Idle};
 		}
+		py::tuple tup = result.cast<py::tuple>();
+		py::object pyActionObj = tup[0];
+		goalOut = tup[1].cast<std::string>();
 
-		PyAction pyAction = result.cast<PyAction>();
+		// Enforce non-empty goal (engine synthesizes if behavior forgot)
+		PyAction pyAction;
+		if (pyActionObj.is_none()) {
+			pyAction.type = "idle";
+		} else {
+			pyAction = pyActionObj.cast<PyAction>();
+		}
+		if (goalOut.empty())
+			goalOut = goalForAction(pyAction.type);
 
 		BehaviorAction action;
 		if (pyAction.type == "idle") action.type = BehaviorAction::Idle;
@@ -326,6 +355,8 @@ void PythonBridge::unloadBehavior(BehaviorHandle handle) {
 	if (it != m_behaviors.end()) {
 		if (it->second.moduleObj)
 			delete static_cast<py::dict*>(it->second.moduleObj);
+		if (it->second.instanceObj)
+			delete static_cast<py::object*>(it->second.instanceObj);
 		m_behaviors.erase(it);
 	}
 }
@@ -351,14 +382,14 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities, blocks, view.dt, view.timeOfDay, goal, error);
 
 	if (!error.empty()) {
-		view.self.goalText = "ERROR: " + error.substr(0, 60);
+		view.self.goalText = "ERROR: " + error.substr(0, 80);
 		view.self.hasError = true;
 		view.self.errorText = error;
 		return {BehaviorAction::Idle};
 	}
 
-	if (!goal.empty())
-		view.self.goalText = goal;
+	// Goal is always set by bridge (synthesized if behavior returned empty).
+	view.self.goalText = goal;
 	view.self.hasError = false;
 	view.self.errorText.clear();
 
