@@ -19,7 +19,7 @@ EMSDK := $(HOME)/emsdk
 #   make server PORT=N        Dedicated server on port N
 #   make client               Open GUI → "Start game" or "Join a game" from menu
 #   make client HOST=X PORT=N Open GUI with server pre-filled in "Join a game" tab
-#   make stop                 Kill all agentica processes
+#   make stop                 Kill all modcraft processes
 #
 # Multiplayer (separate terminals):
 #   Terminal 1: make server PORT=7777
@@ -39,12 +39,12 @@ server: build
 # GUI client: shows menu with "Start game" and "Join a game" tabs
 # Optionally pre-fills server address: make client HOST=192.168.1.5 PORT=7777
 client: build
-	./$(BUILD_DIR)/agentica$(if $(HOST), --host $(HOST) --port $(PORT),)
+	./$(BUILD_DIR)/modcraft$(if $(HOST), --host $(HOST) --port $(PORT),)
 
 # Kill everything
 stop:
 	@-pkill -f "modcraft"" 2>/dev/null; sleep 1
-	@echo "All agentica processes stopped."
+	@echo "All modcraft processes stopped."
 
 # Kill only servers (find by listening port)
 killservers:

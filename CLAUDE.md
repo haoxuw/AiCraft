@@ -14,16 +14,15 @@ These rules are NON-NEGOTIABLE. Every code change must respect them.
 the engine (physics, networking, rendering).** See `docs/00_OVERVIEW.md`.
 
 - Creature definitions, behaviors, items, blocks, effects, models → Python artifacts
-- **NEVER hardcode gameplay constants in C++.** If you add a magic number
-  (distance, speed, timer, radius), it MUST be configurable from Python.
+- **NEVER hardcode gameplay constants in C++.** Every magic number (distance,
+  speed, timer, radius) MUST be configurable from Python.
 
 ### Rule 2: The Player Is Not Special
 
-The player character (`base:player`) is just another creature. No special
-C++ classes, no separate rendering path, no hardcoded stats.
+The player (`base:player`) is just another creature — same EntityDef, rendering,
+physics as pig/chicken/dog. The only difference is input source (WASD vs Python)
+and camera tracking.
 
-- Same EntityDef, rendering, physics, behavior dispatch as pig/chicken/dog
-- The ONLY difference: input source (WASD vs Python) and camera tracking
 - **NEVER add code that checks `EntityType::Player` for gameplay logic.**
 
 ### Rule 3: Server-Authoritative World Ownership
@@ -32,7 +31,7 @@ C++ classes, no separate rendering path, no hardcoded stats.
 
 - Entities submit `ActionProposal` (intent). Server validates and executes.
 - Client NEVER writes to `entity.position`, `entity.velocity`, `chunk.set()`
-- Singleplayer uses the same TCP code paths as multiplayer (no `LocalServer` shortcut).
+- Singleplayer uses the same TCP code paths as multiplayer — no in-process shortcut.
 
 ### Rule 4: All Intelligence Runs on Agent Clients
 
@@ -46,80 +45,71 @@ C++ classes, no separate rendering path, no hardcoded stats.
 
 **The server never decides what to show on any client's screen.**
 
-The server's only responsibilities: validate actions, update world state, broadcast
-state changes via TCP (`onBlockChange`, `onEntityRemove`, `onInventoryChange`).
+Server responsibilities: validate actions, update world state, broadcast via TCP
+(`onBlockChange`, `onEntityRemove`, `onInventoryChange`). Nothing else.
 
-**NEVER add to `ServerCallbacks` for:** visual effects, floating text, HUD
-notifications, per-player display decisions. These are client concerns — each
-client observes the TCP state stream and decides its own display:
+**NEVER add to `ServerCallbacks` for** visual effects, floating text, HUD notifications,
+or per-player display decisions. Each client observes the TCP state stream and decides
+its own display:
 - Block break text → client detects `S_BLOCK` bid→AIR, looks up block name
-- Pickup text → client fires on animation arrival
 - Damage text → client compares HP snapshots from successive `S_ENTITY` messages
 - Sounds, particles → client-side, triggered by client-observable events
 
-## Architecture Summary
+## Architecture
 
-Three process types (same in singleplayer and multiplayer — always TCP):
+Three process types — **always TCP**, same architecture for singleplayer and multiplayer:
 
-- **Server** (`modcraft-server`) — headless, owns world, NO Python/OpenGL
-- **Player Client** (`modcraft`) — GUI, renders world, NO Python
-- **Agent Client** (`modcraft-agent`) — headless, runs Python AI, NO OpenGL
+| Process | Binary | What it does |
+|---------|--------|-------------|
+| Server | `modcraft-server` | Headless, owns world, NO Python/OpenGL |
+| Player Client | `modcraft` | GUI, renders world, NO Python |
+| Agent Client | `modcraft-agent` | Headless, runs Python AI, NO OpenGL |
 
-Singleplayer: `modcraft` spawns `modcraft-server` as a child process, then
-connects via TCP on localhost — **identical code path to multiplayer**.
-There is no `LocalServer` in-process shortcut. `TestServer` (in `server/test_server.h`)
-exists only for headless unit tests and is never used in the game.
+Singleplayer: `modcraft` spawns `modcraft-server` as a child process then connects
+via localhost TCP. There is no `LocalServer` in-process shortcut. `TestServer`
+(`server/test_server.h`) exists only for headless unit tests.
 
-See `docs/00_OVERVIEW.md` for full architecture, protocol, and artifact system.
-
-## Project Overview
-
-ModCraft is a voxel game where the world is code. Players write Python to
-define new objects and actions, then upload them into a shared world.
-
-## Build Commands
+## Build & Run
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j$(nproc)
 
-make game                  # singleplayer (server + agents auto-launched)
-make server                # dedicated server
-make client                # player client → localhost:7777
+make game                  # singleplayer: skip menu, auto-launch server + agents
+make server PORT=7777      # dedicated server
+make client HOST=X PORT=N  # GUI client (pre-fills join tab)
 make stop                  # kill all modcraft processes
 make test_e2e              # headless gameplay tests (no OpenGL/network)
+make web                   # WASM build + serve on :8080 (needs emsdk at ~/emsdk)
 ```
 
-## Running
-
+Direct invocation:
 ```bash
-./build/modcraft                                # singleplayer with menu
-./build/modcraft --skip-menu                    # skip menu, start village world
-
-./build/modcraft-server --port 7777             # dedicated server
-./build/modcraft-client --host 127.0.0.1 --port 7777   # network player client
-./build/modcraft-agent --host 127.0.0.1 --port 7777 --entity 5  # agent client
+./build/modcraft --skip-menu                              # singleplayer
+./build/modcraft-server --port 7777                       # dedicated server
+./build/modcraft-client --host 127.0.0.1 --port 7777      # network client
+./build/modcraft-agent --host 127.0.0.1 --port 7777 --entity 5
 ```
 
 ## Iterative Development
 
-**Fast dev loop (edit → build → screenshot):**
+**Fast rebuild + screenshot loop:**
 ```bash
 cmake --build build -j$(nproc) && \
-  pkill -f "build/agentica"; sleep 0.5 && \
+  pkill -f "build/modcraft"; sleep 0.5 && \
   DISPLAY=:1 ./build/modcraft --skip-menu &
-# Wait ~4s, then read /tmp/modcraft_auto_screenshot.ppm
+# Game auto-writes /tmp/modcraft_auto_screenshot.ppm after ~3s
 ```
 
 **Screenshot triggers:**
-- Game auto-writes `/tmp/modcraft_auto_screenshot.ppm` ~3s after entering a world
-- `touch /tmp/modcraft_screenshot_request` triggers an immediate screenshot → `/tmp/modcraft_screenshot_N.ppm`
+- `/tmp/modcraft_auto_screenshot.ppm` — written ~3s after entering a world
+- `touch /tmp/modcraft_screenshot_request` — immediate screenshot → `/tmp/modcraft_screenshot_N.ppm`
 - **F2** in-game: manual screenshot
 
-**Visual QA (item views / animations — no interactive window needed):**
+**Visual QA without an interactive window:**
 ```bash
 ./build/modcraft --skip-menu --debug-scenario item_views --debug-item base:sword
-# writes /tmp/debug_N_<suffix>.ppm for each camera angle
+# writes /tmp/debug_N_<suffix>.ppm per camera angle (FPS/TPS/RPG/RTS/ground)
 ```
 
 **In-game shortcuts:**
@@ -127,70 +117,67 @@ cmake --build build -j$(nproc) && \
 | Key | Action |
 |-----|--------|
 | F2  | Screenshot |
-| F3  | Debug overlay (FPS, XYZ, chunk, entities) |
+| F3  | Debug overlay (FPS, XYZ, chunk, entity count) |
 | F12 | Toggle admin/survival mode |
 | V   | Cycle camera: FPS → TPS → RPG → RTS |
-| Tab | Inventory panel |
+| Tab | Inventory |
 | Esc | Pause / back to menu |
-
-## Web Build
-
-```bash
-make web          # build WASM + serve on :8080
-make web-build    # build only
-make web-clean    # clean web build dir
-# Requires emsdk at ~/emsdk
-```
 
 ## Source Structure
 
 ```
 src/
-  main.cpp                  Player client (GUI, spawns server via AgentManager)
-  main_server.cpp           Dedicated server (spawns agents via ClientManager)
-  main_client.cpp           Network player client
+  main.cpp            Player client entry: spawns modcraft-server, connects via TCP
+  main_server.cpp     Dedicated server entry: spawns agent clients via ClientManager
+  main_client.cpp     Network-only player client entry
 
-  shared/                   Linked by ALL (no OpenGL, no Python)
-  server/                   Authoritative simulation (no OpenGL)
-    server.h                GameServer: tick, actions, entity ownership
-    client_manager.h        ClientManager: TCP, agent spawning, broadcast
-    entity_manager.h        EntityManager: spawn, physics (no AI)
-    test_server.h           TestServer: GameServer wrapper for headless tests only
-  agent/                    Agent client (Python, no OpenGL)
-    agent_client.h          AgentClient: TCP, Python decide(), send actions
-    behavior_executor.h     BehaviorAction → ActionProposal
-  client/                   Rendering + input (OpenGL, no Python)
-  game/                     Player client game loop + UI
-    process_manager.h       AgentManager: spawn server for singleplayer
-  content/                  C++ fallback definitions
+  shared/             Pure data types — linked by ALL, no OpenGL, no Python
+  server/             Authoritative simulation — no OpenGL
+    server.h            GameServer: tick, action validation, entity ownership
+    client_manager.h    TCP connections, agent process spawning, state broadcast
+    entity_manager.h    Spawn, physics — no AI
+    test_server.h       GameServer wrapper for headless tests only
+  agent/              Agent client — Python + pybind11, no OpenGL
+    agent_client.h      TCP, receives world state, runs Python decide(), sends actions
+    behavior_executor.h BehaviorAction → ActionProposal translation
+  client/             Rendering + input — OpenGL, no Python, no server/
+    game.cpp            Main game loop, state machine, UI orchestration
+    gameplay.cpp        Player input → ActionProposals
+    process_manager.h   AgentManager: spawns modcraft-server for singleplayer
+  server/python_bridge.cpp  pybind11 module `modcraft_engine` exposed to Python
+  content/            C++ fallback entity/block definitions
 
-artifacts/                  Python game content (hot-loadable)
-  creatures/ behaviors/ items/ blocks/ models/ effects/
-  characters/ worlds/ actions/ resources/
+artifacts/            Python game content (hot-loadable, no rebuild needed)
+  behaviors/          NPC AI: decide() functions
+  creatures/          EntityDef: stats, model, behavior assignment
+  items/ blocks/      Item and block definitions
+  worlds/             World templates (flat, village)
 ```
 
 ### Dependency Rules
-- `shared/` depends on nothing (pure data types)
-- `server/` depends on `shared/` + `content/` (no OpenGL, no Python)
-- `agent/` depends on `shared/` + `server/behavior.h` + Python
-- `client/` depends on `shared/` + `content/` (no Python, no server/)
-- `game/` depends on `shared/` + `client/`
+- `shared/` → nothing
+- `server/` → `shared/` + `content/` (no OpenGL, no Python)
+- `agent/` → `shared/` + `server/behavior.h` + Python
+- `client/` → `shared/` + `content/` (no Python, no `server/`)
 
 ## Code Style
 
 - Tabs for indentation in C++ and GLSL
-- `namespace modcraft { }` wraps all code
-- String IDs use `"base:name"` format
-- Header-only for small classes, .h+.cpp split for larger ones
+- `namespace modcraft { }` wraps all C++ code; `namespace modcraft::net { }` for protocol types
+- String IDs: `"base:name"` format (namespace:identifier)
+- Header-only for small classes; `.h` + `.cpp` split for larger ones
+- When adding a new `BehaviorAction` type: decide if one-shot or continuous.
+  One-shot (creates entities, modifies blocks, deals damage) → add to `extractOneShots()`
+  in `agent/behavior_executor.h`. See `docs/24_COMMON_PITFALLS.md` #1.
 
 ## Key Docs
-- `docs/00_OVERVIEW.md` — **Full architecture, artifact system, protocol**
-- `docs/22_BEHAVIORS.md` — **Entity AI behaviors: wander, peck, prowl, follow, woodcutter**
-- `docs/24_COMMON_PITFALLS.md` — **Known bugs and patterns to avoid (one-shot actions, ImGui frames, camera jumps)**
-- `DEBUGGING.md` — **Iterative dev loop, --skip-menu, auto-screenshot**
+
+- `docs/00_OVERVIEW.md` — Full architecture, artifact system, TCP protocol
+- `docs/22_BEHAVIORS.md` — Entity AI: wander, peck, prowl, follow, woodcutter
+- `docs/24_COMMON_PITFALLS.md` — Known bugs to avoid (one-shot actions, ImGui frames, camera jumps)
+- `DEBUGGING.md` — Dev iteration loop, screenshot pipeline
 
 ## Commit Guidelines
 
-- Present tense, capital first letter
-- First line: compact summary under 70 characters
-- Prefix with area: `server:`, `client:`, `shared:`, `agent:`, `content:`, etc.
+- Present tense, capital first letter, under 70 chars
+- Area prefix: `server:`, `client:`, `shared:`, `agent:`, `content:`, `artifacts:`, etc.
