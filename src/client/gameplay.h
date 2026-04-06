@@ -81,6 +81,10 @@ public:
 	bool swingTriggered() const { return m_swingTriggered; }
 	void clearSwing() { m_swingTriggered = false; }
 
+	// Attack target: entity the player left-clicked on this frame
+	EntityId attackTarget() const { return m_attackTarget; }
+	void clearAttack() { m_attackTarget = ENTITY_NONE; }
+
 	// Place event (for immediate client-side sound on block place)
 	struct PlaceEvent { bool happened = false; glm::vec3 pos; std::string blockType; };
 	const PlaceEvent& placeEvent() const { return m_placeEvent; }
@@ -93,6 +97,7 @@ private:
 	} m_breaking;
 	HitEvent m_hitEvent;
 	bool m_swingTriggered = false;
+	EntityId m_attackTarget = ENTITY_NONE;
 	PlaceEvent m_placeEvent;
 
 	// Cached cursor mode — only call glfwSetInputMode when it actually changes.

@@ -149,7 +149,8 @@ void GameplayController::processMovement(float dt, GameState state,
 		if (hasWASD) m_clickToMove.active = false;
 
 		// Left-click move: raycast from camera through mouse cursor
-		if (controls.pressed(Action::BreakBlock)) {
+		// Skip if processBlockInteraction already claimed the click as an entity attack
+		if (controls.pressed(Action::BreakBlock) && m_attackTarget == ENTITY_NONE) {
 			double mx, my;
 			glfwGetCursorPos(window.handle(), &mx, &my);
 			int ww, wh;

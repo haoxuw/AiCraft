@@ -183,6 +183,7 @@ private:
 	float m_fpSwingDuration = 0.25f;
 	bool  m_fpSwingActive = false;
 	float m_dropCooldown = 0;     // prevents auto-pickup right after dropping
+	float m_attackCD = 0;         // per-item attack cooldown
 	std::vector<PickupAnim> m_pickupAnims;
 
 	// Floating text (damage numbers, pickup notifications, Minecraft Dungeons style)
@@ -190,6 +191,7 @@ private:
 		int       id = 0;    // stable unique ID — used by PickupAccum to find this entry
 		glm::vec3 pos;
 		float velY;
+		float velX = 0;      // horizontal drift (Dungeons-style diverge)
 		float offsetX;
 		std::string text;
 		glm::vec4 color;
@@ -197,8 +199,16 @@ private:
 		float baseScale;
 	};
 	std::deque<FloatingText> m_floatingTexts;
+	// entityId != ENTITY_NONE → per-entity Y-stack so numbers don't collide (DST-style)
 	int addFloatingText(glm::vec3 pos, const std::string& text,
-	                    glm::vec4 color, float scale = 1.8f);
+	                    glm::vec4 color, float scale = 1.8f,
+	                    EntityId entityId = ENTITY_NONE);
+
+	// Per-entity Y offset for stacking damage numbers. Grows on each hit, decays over time.
+	std::unordered_map<EntityId, float> m_floatingTopOffset;
+
+	// HP snapshot for damage/death detection (client-side, works over network)
+	std::unordered_map<EntityId, int> m_prevEntityHP;
 
 	// Pickup text accumulator: one entry per item type, updated in place
 	struct PickupAccum {
@@ -211,6 +221,11 @@ private:
 	};
 	std::unordered_map<std::string, PickupAccum> m_pickupAccum;
 	int m_pickupSlotCounter = 0; // monotonically increasing slot counter
+
+	// Game log — timestamped event stream (damage, deaths, AI decisions, pickups)
+	std::deque<std::string> m_gameLog;
+	bool m_showGameLog = false;
+	void appendLog(const std::string& msg); // prepends game-time timestamp
 
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;

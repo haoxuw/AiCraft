@@ -72,6 +72,7 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	m_breakCD -= dt;
 	m_hitEvent.happened = false;
 	m_placeEvent.happened = false;
+	m_attackTarget = ENTITY_NONE;
 
 	// Break progress decay: cancel if no hit for 2 seconds
 	if (m_breaking.active) {
@@ -92,8 +93,19 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 		}
 	}
 
+	// ── Entity attack: left-click on living entity in any camera mode ──
+	// Takes priority over block break (FPS/TPS) and click-to-move (RPG).
+	if (m_entityHit && controls.pressed(Action::BreakBlock)) {
+		bool entityIsNearer = !m_hit || m_entityHit->distance <= m_hit->distance;
+		if (entityIsNearer) {
+			m_attackTarget = m_entityHit->entityId;
+			m_swingTriggered = true;
+		}
+	}
+
 	// ── FPS/TPS only: left-click break, right-click place block ──
-	if (m_hit && (camera.mode == CameraMode::FirstPerson ||
+	bool entityAttack = (m_attackTarget != ENTITY_NONE);
+	if (m_hit && !entityAttack && (camera.mode == CameraMode::FirstPerson ||
 	              camera.mode == CameraMode::ThirdPerson) && player.inventory) {
 		// Left-click: break / ignite TNT
 		if (controls.pressed(Action::BreakBlock) && m_breakCD <= 0) {

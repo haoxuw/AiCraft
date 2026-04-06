@@ -32,8 +32,10 @@ void GameplayController::update(float dt, GameState state, ServerInterface& serv
 	if (glfwGetKey(window.handle(), GLFW_KEY_0) == GLFW_PRESS)
 		player.setProp(Prop::SelectedSlot, 9);
 
-	processMovement(dt, state, controls, camera, player, server, window, jumpVelocity);
+	// Block/entity interaction runs first so m_entityHit and m_attackTarget
+	// are set before processMovement can check them (RPG: attack > click-to-move).
 	processBlockInteraction(dt, state, server, player, camera, controls, window);
+	processMovement(dt, state, controls, camera, player, server, window, jumpVelocity);
 
 	// Particles (client-side animation only)
 	particles.update(dt);

@@ -256,20 +256,40 @@ void Game::shutdown() {
 }
 
 int Game::addFloatingText(glm::vec3 pos, const std::string& text,
-                          glm::vec4 color, float scale) {
+                          glm::vec4 color, float scale, EntityId entityId) {
 	static int nextId = 1;
+
+	// Per-entity Y stacking (DST-style): each new number for the same entity
+	// starts above the previous one. The offset decays toward 0 between hits.
+	float yExtra = 0;
+	if (entityId != ENTITY_NONE) {
+		yExtra = m_floatingTopOffset[entityId];
+		m_floatingTopOffset[entityId] += 0.38f;
+	}
+
 	FloatingText ft;
 	ft.id = nextId++;
-	ft.pos = pos + glm::vec3(0, 0.6f, 0);
-	ft.velY = 3.0f;
-	ft.offsetX = ((rand() % 100) / 100.0f - 0.5f) * 0.4f;
+	ft.pos = pos + glm::vec3(0, 0.6f + yExtra, 0);
+	ft.velY  = 2.5f;
+	ft.velX  = ((rand() % 200) / 100.0f - 1.0f) * 0.45f; // ±0.45 blocks/s diverge
+	ft.offsetX = ((rand() % 100) / 100.0f - 0.5f) * 0.25f; // smaller random jitter now
 	ft.text = text;
 	ft.color = color;
 	ft.life = ft.maxLife = 1.6f;
 	ft.baseScale = scale;
 	m_floatingTexts.push_back(ft);
-	if (m_floatingTexts.size() > 40) m_floatingTexts.pop_front();
+	if (m_floatingTexts.size() > 50) m_floatingTexts.pop_front();
 	return ft.id;
+}
+
+void Game::appendLog(const std::string& msg) {
+	// Game-time timestamp: map worldTime [0..1] to HH:MM
+	int hours = (int)(m_worldTime * 24.0f) % 24;
+	int mins  = (int)(m_worldTime * 24.0f * 60.0f) % 60;
+	char entry[280];
+	snprintf(entry, sizeof(entry), "[%02d:%02d] %s", hours, mins, msg.c_str());
+	m_gameLog.push_back(entry);
+	if (m_gameLog.size() > 200) m_gameLog.pop_front();
 }
 
 // ============================================================
@@ -891,7 +911,7 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
-	// First-person attack swing animation
+	// First-person attack swing animation (block-break or entity attack)
 	if (m_gameplay.swingTriggered()) {
 		m_fpSwingActive = true;
 		m_fpSwingTimer = 0;
@@ -902,6 +922,58 @@ void Game::updatePlaying(float dt, float aspect) {
 		if (m_fpSwingTimer >= m_fpSwingDuration) {
 			m_fpSwingActive = false;
 			m_fpSwingTimer = 0;
+		}
+	}
+
+	// ── Entity attack: dispatch ActionProposal::Attack when player left-clicks entity ──
+	m_attackCD -= dt;
+	{
+		EntityId attackId = m_gameplay.attackTarget();
+		m_gameplay.clearAttack();
+		if (attackId != ENTITY_NONE && pe->inventory && m_attackCD <= 0) {
+			int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
+			const std::string& itemId = pe->inventory->hotbar(slot);
+
+			// Defaults: bare fist
+			float damage  = 1.5f;
+			float cooldown = 0.4f;
+			float range   = 2.5f;
+			bool canAttack = itemId.empty(); // empty hand = fist, always allows attack
+
+			if (!itemId.empty()) {
+				const ArtifactEntry* entry = m_artifacts.findById(itemId);
+				if (entry) {
+					auto it = entry->fields.find("on_interact");
+					if (it != entry->fields.end() && it->second == "attack") {
+						canAttack = true;
+						auto dit = entry->fields.find("damage");
+						if (dit != entry->fields.end()) damage = std::stof(dit->second);
+						auto cit = entry->fields.find("cooldown");
+						if (cit != entry->fields.end()) cooldown = std::stof(cit->second);
+						auto rit = entry->fields.find("range");
+						if (rit != entry->fields.end()) range = std::stof(rit->second);
+					}
+					// Item without on_interact=attack (e.g. potion): canAttack stays false
+				}
+			}
+
+			if (canAttack) {
+				Entity* target = m_server->getEntity(attackId);
+				if (target) {
+					float dist = glm::length(target->position - pe->position);
+					if (dist <= range) {
+						ActionProposal p;
+						p.type       = ActionProposal::Attack;
+						p.actorId    = pe->id();
+						p.targetEntity = attackId;
+						p.damage     = damage;
+						m_server->sendAction(p);
+						m_attackCD = cooldown;
+						m_fpSwingActive = true;
+						m_fpSwingTimer  = 0;
+					}
+				}
+			}
 		}
 	}
 
@@ -1069,6 +1141,8 @@ void Game::updatePlaying(float dt, float aspect) {
 			}
 
 			if (acc.timer <= 0 && acc.displayed >= acc.total) {
+				// Log completed pickup (once, when accumulator expires)
+				appendLog("Picked up " + std::to_string(acc.total) + "x " + acc.itemName);
 				// Let text drift and fade naturally
 				if (pFt) pFt->velY = 3.0f; // resume normal float-up speed on expiry
 				it = m_pickupAccum.erase(it);
@@ -1078,6 +1152,13 @@ void Game::updatePlaying(float dt, float aspect) {
 		}
 		// Reset slot counter once all pickups clear so positions don't drift over a long session
 		if (m_pickupAccum.empty()) m_pickupSlotCounter = 0;
+	}
+
+	// Decay per-entity floating-text Y offsets (DST-style: grows on hits, recovers between them)
+	for (auto it = m_floatingTopOffset.begin(); it != m_floatingTopOffset.end(); ) {
+		it->second -= dt * 1.8f;
+		if (it->second <= 0.01f) it = m_floatingTopOffset.erase(it);
+		else ++it;
 	}
 
 	// Creature ambient sounds: very rare, within 5 blocks only, whisper-quiet.
@@ -1562,23 +1643,54 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 
 		mr.draw(bulb, vp, bulbPos, m_camera.lookYaw, {}); // billboard: face camera
 
-		// Goal bubble: floating text when goal changes
-		if (m_showGoalBubbles && !e.goalText.empty()) {
-			// Track goal changes per entity
+		// Goal bubble: floating text + log when goal changes
+		if (!e.goalText.empty()) {
 			static std::unordered_map<EntityId, std::string> lastGoals;
 			auto& prev = lastGoals[e.id()];
 			if (prev != e.goalText) {
 				prev = e.goalText;
-				// Spawn a floating text bubble above the entity
-				glm::vec4 goalColor = e.hasError
-					? glm::vec4(1.0f, 0.35f, 0.30f, 1.0f)  // red for errors
-					: glm::vec4(0.85f, 0.92f, 0.60f, 1.0f); // soft green-gold
-				addFloatingText(
-					e.position + glm::vec3(0, entityTop + 0.5f, 0),
-					e.goalText, goalColor, 1.2f);
+				// Log the decision
+				std::string eName = e.def().display_name.empty() ? e.typeId() : e.def().display_name;
+				appendLog(eName + ": " + e.goalText);
+				// Visual bubble (only when showGoalBubbles is on)
+				if (m_showGoalBubbles) {
+					glm::vec4 goalColor = e.hasError
+						? glm::vec4(1.0f, 0.35f, 0.30f, 1.0f)
+						: glm::vec4(0.85f, 0.92f, 0.60f, 1.0f);
+					addFloatingText(e.position + glm::vec3(0, entityTop + 0.5f, 0),
+					                e.goalText, goalColor, 1.2f, e.id());
+				}
 			}
 		}
+
+		// HP tracking: detect damage/death for floating numbers + log
+		{
+			int curHP = e.getProp<int>(Prop::HP, e.def().max_hp);
+			auto hpIt = m_prevEntityHP.find(e.id());
+			if (hpIt != m_prevEntityHP.end() && curHP < hpIt->second) {
+				int dmg = hpIt->second - curHP;
+				bool dying = (curHP <= 0);
+				char buf[16];
+				snprintf(buf, sizeof(buf), "-%d", dmg);
+				glm::vec4 col = dying
+					? glm::vec4(1.0f, 0.22f, 0.12f, 1.0f)   // bright red: kill shot
+					: glm::vec4(1.0f, 0.55f, 0.15f, 1.0f);  // orange: damage
+				addFloatingText(e.position + glm::vec3(0, entityTop * 0.7f, 0),
+				                buf, col, dying ? 2.8f : 2.2f, e.id());
+				std::string eName = e.def().display_name.empty() ? e.typeId() : e.def().display_name;
+				appendLog(dying ? eName + " died" : eName + " took " + std::to_string(dmg) + " damage");
+			}
+			m_prevEntityHP[e.id()] = curHP;
+		}
 	});
+
+	// Remove HP entries for entities no longer in the world
+	{
+		std::unordered_set<EntityId> seen;
+		m_server->forEachEntity([&](Entity& e) { if (e.def().isLiving()) seen.insert(e.id()); });
+		for (auto it = m_prevEntityHP.begin(); it != m_prevEntityHP.end(); )
+			it = seen.count(it->first) ? std::next(it) : m_prevEntityHP.erase(it);
+	}
 
 	// Particles
 	m_particles.render(vp);
@@ -1663,7 +1775,9 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			auto& ft = *it;
 			ft.life -= dt;
 			ft.pos.y += ft.velY * dt;
-			ft.velY *= 0.96f; // decelerate
+			ft.pos.x += ft.velX * dt;
+			ft.velY *= 0.96f; // decelerate upward
+			ft.velX *= 0.93f; // decelerate sideways (texts spread then slow)
 			if (ft.life <= 0) { it = m_floatingTexts.erase(it); continue; }
 
 			float ndcX, ndcY;
@@ -2343,6 +2457,17 @@ void Game::updatePaused(float dt, float aspect) {
 	}
 	ImGui::Spacing();
 
+	// Game Log toggle
+	{
+		const char* logLabel = m_showGameLog ? "Hide Game Log" : "Game Log";
+		if (styledButton(logLabel,
+			{0.18f, 0.42f, 0.55f, 1}, {0.24f, 0.52f, 0.66f, 1}, {0.14f, 0.36f, 0.48f, 1},
+			{1, 1, 1, 1})) {
+			m_showGameLog = !m_showGameLog;
+		}
+		ImGui::Spacing();
+	}
+
 	// Quit Game
 	if (styledButton("Quit Game",
 		{0.65f, 0.20f, 0.20f, 1}, {0.75f, 0.28f, 0.28f, 1}, {0.55f, 0.15f, 0.15f, 1},
@@ -2358,7 +2483,53 @@ void Game::updatePaused(float dt, float aspect) {
 	ImGui::End();
 	ImGui::PopStyleColor();
 	ImGui::PopStyleVar(2);
+
+	// ── Game Log panel ──────────────────────────────────────────────────────
+	if (m_showGameLog && !m_gameLog.empty()) {
+		float lw = 580, lh = 420;
+		float lx = (m_window.width()  - lw) * 0.5f + 200; // offset right of pause menu
+		float ly = (m_window.height() - lh) * 0.5f;
+		ImGui::SetNextWindowPos({lx, ly}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({lw, lh}, ImGuiCond_Always);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
+		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.95f));
+		ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0,0,0,0));
+		ImGui::Begin("##gamelog", nullptr,
+			ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+
+		ImGui::SetWindowFontScale(0.95f);
+		ImGui::TextColored({0.55f, 0.75f, 0.95f, 1.0f}, "Game Log");
+		ImGui::SameLine(lw - 70);
+		ImGui::TextColored({0.4f, 0.4f, 0.45f, 1.0f}, "%d entries", (int)m_gameLog.size());
+		ImGui::Separator();
+		ImGui::Spacing();
+
+		ImGui::BeginChild("##logscroll", {lw - 24, lh - 62}, false,
+		                  ImGuiWindowFlags_HorizontalScrollbar);
+		// Newest at bottom — iterate forward
+		for (const auto& line : m_gameLog) {
+			// Colour-code: deaths red, damage orange, AI decisions green, pickups gold
+			glm::vec4 c = {0.75f, 0.78f, 0.82f, 0.9f}; // default: light grey
+			if (line.find("died")   != std::string::npos) c = {1.0f, 0.35f, 0.25f, 1.0f};
+			else if (line.find("damage") != std::string::npos) c = {1.0f, 0.62f, 0.20f, 1.0f};
+			else if (line.find("Picked") != std::string::npos) c = {1.0f, 0.90f, 0.30f, 1.0f};
+			else if (line.find(": ")  != std::string::npos) c = {0.65f, 0.88f, 0.55f, 1.0f}; // AI
+			ImGui::TextColored({c.r, c.g, c.b, c.a}, "%s", line.c_str());
+		}
+		// Auto-scroll to bottom
+		if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10)
+			ImGui::SetScrollHereY(1.0f);
+		ImGui::EndChild();
+
+		ImGui::End();
+		ImGui::PopStyleColor(2);
+		ImGui::PopStyleVar(2);
+	}
+
 	m_ui.endFrame();
+	if (m_state != GameState::PAUSED) m_showGameLog = false; // close log when leaving pause
 }
 
 } // namespace agentica
