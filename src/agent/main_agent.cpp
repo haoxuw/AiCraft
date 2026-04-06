@@ -1,15 +1,15 @@
 /**
- * Bot client — headless AI process that controls a single entity.
+ * Agent client — headless AI process that controls a single entity.
  *
  * Connects to a running GameServer via TCP, receives world state,
  * runs Python behavior logic, and sends ActionProposals back.
  *
  * Usage:
- *   ./agentica-bot --host 127.0.0.1 --port 7777 --entity 5
- *   ./agentica-bot --port 7777 --entity 5 --behavior wander
+ *   ./agentica-agent --host 127.0.0.1 --port 7777 --entity 5
+ *   ./agentica-agent --port 7777 --entity 5 --behavior wander
  */
 
-#include "agent/bot_client.h"
+#include "agent/agent_client.h"
 #include "server/python_bridge.h"
 #include <cstdio>
 #include <cstring>
@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
 	int port = 7777;
 	uint32_t entityId = 0;
 	std::string behaviorId;
-	std::string name = "bot";
+	std::string name = "agent";
 
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--host") == 0 && i + 1 < argc)
@@ -41,20 +41,20 @@ int main(int argc, char** argv) {
 		else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
 			name = argv[++i];
 		else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("agentica-bot — headless AI client\n\n"
+			printf("agentica-agent — headless AI client\n\n"
 			       "Usage: %s [options]\n"
 			       "  --host HOST       Server address (default: 127.0.0.1)\n"
 			       "  --port PORT       Server port (default: 7777)\n"
 			       "  --entity ID       Entity ID to control\n"
 			       "  --behavior NAME   Override behavior (default: from entity def)\n"
-			       "  --name NAME       Bot display name (default: bot)\n"
+			       "  --name NAME       Agent display name (default: agent)\n"
 			       "  --help, -h        Show this help\n", argv[0]);
 			return 0;
 		}
 	}
 
 	if (entityId == 0) {
-		printf("[Bot] Error: --entity ID is required\n");
+		printf("[Agent] Error: --entity ID is required\n");
 		return 1;
 	}
 
@@ -64,19 +64,19 @@ int main(int argc, char** argv) {
 	// Initialize Python interpreter for behavior execution
 	agentica::pythonBridge().init("python");
 
-	agentica::BotClient bot;
-	bot.setTargetEntity(entityId);
-	if (!bot.connect(host, port, name)) {
+	agentica::AgentClient agent;
+	agent.setTargetEntity(entityId);
+	if (!agent.connect(host, port, name)) {
 		agentica::pythonBridge().shutdown();
 		return 1;
 	}
 
 	// The entity assignment now comes from the server via S_ASSIGN_ENTITY.
-	// As a fallback, also assign locally (in case server doesn't support C_BOT_HELLO yet).
-	if (!bot.hasControlledEntities())
-		bot.assignEntity(entityId, behaviorId);
+	// As a fallback, also assign locally (in case server doesn't support C_AGENT_HELLO yet).
+	if (!agent.hasControlledEntities())
+		agent.assignEntity(entityId, behaviorId);
 
-	printf("[Bot:%s] Running AI for entity %u on %s:%d\n",
+	printf("[Agent:%s] Running AI for entity %u on %s:%d\n",
 		name.c_str(), entityId, host.c_str(), port);
 
 	// Fixed-timestep main loop (50 Hz, matching server tick rate)
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
 	auto lastTime = std::chrono::steady_clock::now();
 	float accumulator = 0;
 
-	while (g_running && bot.isConnected()) {
+	while (g_running && agent.isConnected()) {
 		auto now = std::chrono::steady_clock::now();
 		float elapsed = std::chrono::duration<float>(now - lastTime).count();
 		lastTime = now;
@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
 		if (accumulator > 0.2f) accumulator = 0.2f;
 
 		while (accumulator >= TICK_RATE) {
-			bot.tick(TICK_RATE);
+			agent.tick(TICK_RATE);
 			accumulator -= TICK_RATE;
 		}
 
@@ -102,8 +102,8 @@ int main(int argc, char** argv) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
 
-	printf("[Bot:%s] Shutting down\n", name.c_str());
-	bot.disconnect();
+	printf("[Agent:%s] Shutting down\n", name.c_str());
+	agent.disconnect();
 	agentica::pythonBridge().shutdown();
 	return 0;
 }

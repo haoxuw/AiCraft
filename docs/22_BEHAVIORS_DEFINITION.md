@@ -153,7 +153,7 @@ for entity in controlled_entities:
 
 ## Implementation Notes
 
-### C++ Side (bot_client.h)
+### C++ Side (agent_client.h)
 - `BehaviorRules` entity property: comma-separated rule names
 - Falls back to `BehaviorId` (single behavior) for backward compatibility
 - Each rule is a separate `PythonBehavior` handle

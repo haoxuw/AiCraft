@@ -1,13 +1,13 @@
 #pragma once
 
 /**
- * BotClient — headless AI client that controls one or more entities.
+ * AgentClient — headless AI client that controls one or more entities.
  *
  * Connects to a GameServer via TCP (same protocol as GUI client).
  * Receives entity/chunk state updates, runs Python behavior decide()
  * at 4Hz, and sends ActionProposals back to the server.
  *
- * From the server's perspective, a bot client is indistinguishable
+ * From the server's perspective, an agent client is indistinguishable
  * from a human player — it just sends C_ACTION messages.
  */
 
@@ -34,24 +34,24 @@
 
 namespace agentica {
 
-class BotClient {
+class AgentClient {
 public:
-	BotClient() {
+	AgentClient() {
 		// Register entity type definitions (same as server/client)
 		registerAllBuiltins(m_blocks, m_entityDefs);
 	}
 
-	// Set the entity ID this bot wants to control (call before connect).
+	// Set the entity ID this agent wants to control (call before connect).
 	void setTargetEntity(EntityId id) { m_targetEntityId = id; }
 
 	// Connect to server. Returns true on success.
-	bool connect(const std::string& host, int port, const std::string& name = "bot") {
+	bool connect(const std::string& host, int port, const std::string& name = "agent") {
 		m_host = host;
 		m_port = port;
 		m_name = name;
 
 		if (!m_tcp.connect(host.c_str(), port)) {
-			printf("[Bot:%s] Cannot connect to %s:%d\n", name.c_str(), host.c_str(), port);
+			printf("[Agent:%s] Cannot connect to %s:%d\n", name.c_str(), host.c_str(), port);
 			return false;
 		}
 		m_connected = true;
@@ -66,22 +66,22 @@ public:
 				if (hdr.type == net::S_WELCOME) {
 					net::ReadBuffer rb(payload.data(), payload.size());
 					uint32_t tempId = rb.readU32();
-					rb.readVec3(); // spawn pos (unused by bot)
-					printf("[Bot:%s] Connected (temp entity %u).\n",
+					rb.readVec3(); // spawn pos (unused by agent)
+					printf("[Agent:%s] Connected (temp entity %u).\n",
 						m_name.c_str(), tempId);
 
-					// Identify as bot client with target entity
+					// Identify as agent client with target entity
 					net::WriteBuffer hello;
 					hello.writeString(m_name);
 					hello.writeU32(m_targetEntityId);
-					net::sendMessage(m_tcp.fd(), net::C_BOT_HELLO, hello);
+					net::sendMessage(m_tcp.fd(), net::C_AGENT_HELLO, hello);
 					return true;
 				}
 			}
 
 			auto elapsed = std::chrono::steady_clock::now() - start;
 			if (std::chrono::duration<float>(elapsed).count() > 3.0f) {
-				printf("[Bot:%s] Timeout waiting for welcome\n", m_name.c_str());
+				printf("[Agent:%s] Timeout waiting for welcome\n", m_name.c_str());
 				disconnect();
 				return false;
 			}
@@ -97,11 +97,11 @@ public:
 	bool isConnected() const { return m_connected; }
 	bool hasControlledEntities() const { return !m_controlled.empty(); }
 
-	// Assign an entity for this bot to control.
+	// Assign an entity for this agent to control.
 	void assignEntity(EntityId id, const std::string& behaviorId) {
 		if (m_controlled.count(id)) return;
 		m_controlled.insert(id);
-		printf("[Bot:%s] Now controlling entity %u (behavior: %s)\n",
+		printf("[Agent:%s] Now controlling entity %u (behavior: %s)\n",
 			m_name.c_str(), id, behaviorId.c_str());
 	}
 
@@ -110,7 +110,7 @@ public:
 		m_controlled.erase(id);
 		m_behaviorStates.erase(id);
 		m_blockCaches.erase(id);
-		printf("[Bot:%s] Revoked entity %u\n", m_name.c_str(), id);
+		printf("[Agent:%s] Revoked entity %u\n", m_name.c_str(), id);
 	}
 
 	// Main tick: receive state, run behaviors, send actions.
@@ -119,7 +119,7 @@ public:
 
 		// 1. Receive all pending messages from server
 		if (!receiveMessages()) {
-			printf("[Bot:%s] Disconnected from server\n", m_name.c_str());
+			printf("[Agent:%s] Disconnected from server\n", m_name.c_str());
 			m_connected = false;
 			return;
 		}
@@ -152,7 +152,7 @@ public:
 				};
 				auto blocks = getKnownBlocks(e, 30, blockQuery, m_blockCaches[eid]);
 
-				BehaviorWorldView view{e, nearby, blocks, dt};
+				BehaviorWorldView view{e, nearby, blocks, dt, m_worldTime};
 				state.currentAction = state.behavior->decide(view);
 
 				// Extract one-shot actions (DropItem, BreakBlock) — sent exactly once
@@ -216,7 +216,7 @@ private:
 				m_entities[es.id] = std::move(ent);
 
 				// Auto-assign if this entity has a BehaviorId and we're supposed to control it
-				// (For now, bot controls entities assigned via command line or S_ASSIGN_ENTITY)
+				// (For now, agent controls entities assigned via command line or S_ASSIGN_ENTITY)
 			} else {
 				// Update existing entity
 				auto& e = *it->second;
@@ -270,21 +270,21 @@ private:
 		case net::S_ASSIGN_ENTITY: {
 			EntityId eid = rb.readU32();
 			std::string behaviorId = rb.readString();
-			printf("[Bot:%s] Server assigned entity %u (behavior: %s)\n",
+			printf("[Agent:%s] Server assigned entity %u (behavior: %s)\n",
 				m_name.c_str(), eid, behaviorId.c_str());
 			assignEntity(eid, behaviorId);
 			break;
 		}
 		case net::S_REVOKE_ENTITY: {
 			EntityId eid = rb.readU32();
-			printf("[Bot:%s] Server revoked entity %u\n", m_name.c_str(), eid);
+			printf("[Agent:%s] Server revoked entity %u\n", m_name.c_str(), eid);
 			revokeEntity(eid);
 			break;
 		}
 		case net::S_RELOAD_BEHAVIOR: {
 			EntityId eid = rb.readU32();
 			std::string newSource = rb.readString();
-			printf("[Bot:%s] Reloading behavior for entity %u\n", m_name.c_str(), eid);
+			printf("[Agent:%s] Reloading behavior for entity %u\n", m_name.c_str(), eid);
 			reloadBehavior(eid, newSource);
 			break;
 		}
@@ -313,7 +313,7 @@ private:
 
 		std::string source = m_behaviorStore.load(behaviorId);
 		if (source.empty()) {
-			printf("[Bot:%s] No .py file for behavior '%s'\n",
+			printf("[Agent:%s] No .py file for behavior '%s'\n",
 				m_name.c_str(), behaviorId.c_str());
 			return std::make_unique<IdleFallbackBehavior>();
 		}
@@ -325,12 +325,12 @@ private:
 		std::string error;
 		auto handle = bridge.loadBehavior(source, error);
 		if (handle < 0) {
-			printf("[Bot:%s] Failed to load behavior '%s': %s\n",
+			printf("[Agent:%s] Failed to load behavior '%s': %s\n",
 				m_name.c_str(), behaviorId.c_str(), error.c_str());
 			return std::make_unique<IdleFallbackBehavior>();
 		}
 
-		printf("[Bot:%s] Loaded behavior '%s'\n", m_name.c_str(), behaviorId.c_str());
+		printf("[Agent:%s] Loaded behavior '%s'\n", m_name.c_str(), behaviorId.c_str());
 		return std::make_unique<PythonBehavior>(handle, source);
 	}
 
@@ -344,9 +344,9 @@ private:
 		if (handle >= 0) {
 			m_behaviorStates[eid].behavior = std::make_unique<PythonBehavior>(handle, newSource);
 			m_behaviorStates[eid].decideTimer = 0; // decide immediately
-			printf("[Bot:%s] Behavior reloaded for entity %u\n", m_name.c_str(), eid);
+			printf("[Agent:%s] Behavior reloaded for entity %u\n", m_name.c_str(), eid);
 		} else {
-			printf("[Bot:%s] Behavior reload failed for entity %u: %s\n",
+			printf("[Agent:%s] Behavior reload failed for entity %u: %s\n",
 				m_name.c_str(), eid, error.c_str());
 		}
 	}
@@ -359,7 +359,7 @@ private:
 	net::TcpClient m_tcp;
 	net::RecvBuffer m_recv;
 
-	EntityId m_targetEntityId = ENTITY_NONE; // entity this bot wants to control
+	EntityId m_targetEntityId = ENTITY_NONE; // entity this agent wants to control
 	float m_worldTime = 0.3f;
 
 	// --- Entity state cache (received from server) ---
@@ -373,7 +373,7 @@ private:
 
 	// --- Controlled entities ---
 	std::unordered_set<EntityId> m_controlled;
-	std::unordered_map<EntityId, BotBehaviorState> m_behaviorStates;
+	std::unordered_map<EntityId, AgentBehaviorState> m_behaviorStates;
 	std::unordered_map<EntityId, BlockCache> m_blockCaches;
 	BehaviorStore m_behaviorStore;
 };

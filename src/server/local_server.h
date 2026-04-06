@@ -91,7 +91,7 @@ public:
 	BehaviorInfo getBehaviorInfo(EntityId id) override {
 		BehaviorInfo info;
 		if (!m_server) return info;
-		// Behavior state is now managed by bot client processes.
+		// Behavior state is now managed by agent client processes.
 		// We can still read goal/error from the entity (set via ActionProposal).
 		auto* entity = m_server->world().entities.get(id);
 		if (entity) {

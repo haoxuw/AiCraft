@@ -22,9 +22,10 @@ world = {
     },
 
     # ── Spawn ─────────────────────────────────────────────────
+    # Portal anchors at world origin so spawn block is at (0, *, 0).
     "spawn": {
-        "x": 30.0,
-        "z": 30.0,
+        "x": 0.0,
+        "z": 0.0,
     },
 
     # ── Starter chest ─────────────────────────────────────────

@@ -4,11 +4,11 @@
  * BehaviorExecutor — converts BehaviorAction to ActionProposal.
  *
  * Extracted from EntityManager::behaviorToMoveProposal().
- * Used by the bot client to translate Python AI decisions into
+ * Used by the agent client to translate Python AI decisions into
  * server-compatible ActionProposals sent over TCP.
  *
  * Also contains gatherNearby() and block scanning (getKnownBlocks)
- * that operate on the bot's local state caches instead of the server's World.
+ * that operate on the agent's local state caches instead of the server's World.
  */
 
 #include "server/behavior.h"
@@ -25,7 +25,7 @@
 namespace agentica {
 
 // Per-entity state for behavior execution (wander direction, timers)
-struct BotBehaviorState {
+struct AgentBehaviorState {
 	std::unique_ptr<Behavior> behavior;
 	BehaviorAction currentAction;
 	float decideTimer = 0;
@@ -46,7 +46,7 @@ struct BlockCache {
 };
 
 // Convert a BehaviorAction to ActionProposal(s) and push to the output list.
-inline void behaviorToActionProposals(Entity& e, BotBehaviorState& state,
+inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
                                        const BehaviorAction& action, float dt,
                                        std::vector<ActionProposal>& out) {
 	const float TURN_SPEED = 4.0f;
@@ -142,13 +142,17 @@ inline void behaviorToActionProposals(Entity& e, BotBehaviorState& state,
 		// Just produce a friction Move so the entity doesn't keep walking.
 		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
 		break;
+
+	case BehaviorAction::PickupItem:
+		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+		break;
 	} // end switch
 
 	out.push_back(p);
 }
 
 // Extract one-shot actions from a BehaviorAction. Called ONCE per decide(),
-// results queued in BotBehaviorState::pendingOneShots and sent exactly once.
+// results queued in AgentBehaviorState::pendingOneShots and sent exactly once.
 inline void extractOneShots(const Entity& e, const BehaviorAction& action,
                             std::vector<ActionProposal>& out) {
 	switch (action.type) {
@@ -169,6 +173,14 @@ inline void extractOneShots(const Entity& e, const BehaviorAction& action,
 		dp.blockType = action.itemType;
 		dp.itemCount = action.itemCount;
 		out.push_back(dp);
+		break;
+	}
+	case BehaviorAction::PickupItem: {
+		ActionProposal pp;
+		pp.type = ActionProposal::PickupItem;
+		pp.actorId = e.id();
+		pp.targetEntity = action.targetEntity;
+		out.push_back(pp);
 		break;
 	}
 	default: break;

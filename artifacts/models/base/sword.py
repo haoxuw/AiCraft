@@ -11,9 +11,9 @@ model = {
     "id": "sword",
     "height": 1.4,
     "equip": {
-        "rotation": [-20, 30, -10],  # blade angled out (visible face-on from both front and back)
-        "offset": [0.03, 0.0, -0.05],
-        "scale": 0.50,              # normalized to ~0.70 blocks when held (35% of 2.0-block player)
+        "rotation": [5, 25, -35],   # blade diagonal: tip up-right, pommel down-left, face toward viewer
+        "offset": [0.02, 0.06, -0.04],
+        "scale": 0.65,
     },
     "parts": [
         # ── Blade ──────────────────────────────────────────────────────────────

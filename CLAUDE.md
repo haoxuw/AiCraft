@@ -38,7 +38,7 @@ C++ classes, no separate rendering path, no hardcoded stats.
 
 **The server has ZERO intelligence.** All AI runs on agent client processes.
 
-- Each NPC entity has its own `agentica-bot` process running Python `decide()`
+- Each NPC entity has its own `agentica-agent` process running Python `decide()`
 - Server spawns/manages agent clients via `ClientManager`
 - Python behavior code NEVER runs on the server
 
@@ -48,7 +48,7 @@ Three process types (same in singleplayer and multiplayer):
 
 - **Server** (`agentica-server`) — headless, owns world, NO Python/OpenGL
 - **Player Client** (`agentworld`) — GUI, renders world, NO Python
-- **Agent Client** (`agentica-bot`) — headless, runs Python AI, NO OpenGL
+- **Agent Client** (`agentica-agent`) — headless, runs Python AI, NO OpenGL
 
 Singleplayer: GUI launches server → server auto-spawns agent clients for NPCs.
 See `docs/00_OVERVIEW.md` for full architecture, protocol, and artifact system.
@@ -79,7 +79,7 @@ make stop                  # kill all agentworld processes
 
 ./build/agentica-server --port 7777           # dedicated server
 ./build/agentica-client --host 127.0.0.1 --port 7777  # player client
-./build/agentica-bot --host 127.0.0.1 --port 7777 --entity 5  # agent client
+./build/agentica-agent --host 127.0.0.1 --port 7777 --entity 5  # agent client
 ```
 
 ## Code Style
@@ -103,7 +103,7 @@ src/
     client_manager.h        ClientManager: TCP, agent spawning, broadcast
     entity_manager.h        EntityManager: spawn, physics (no AI)
   agent/                      Agent client (Python, no OpenGL)
-    bot_client.h            BotClient: TCP, Python decide(), send actions
+    agent_client.h          AgentClient: TCP, Python decide(), send actions
     behavior_executor.h     BehaviorAction → ActionProposal
   client/                   Rendering + input (OpenGL, no Python)
   game/                     Player client game loop + UI

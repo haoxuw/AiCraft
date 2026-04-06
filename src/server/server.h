@@ -201,10 +201,10 @@ public:
 		return eid;
 	}
 
-	// Add a bot client (no player entity — controls existing NPC entities).
-	void addBotClient(ClientId clientId) {
+	// Add an agent client (no player entity — controls existing NPC entities).
+	void addAgentClient(ClientId clientId) {
 		m_clients[clientId] = {ENTITY_NONE, true};
-		printf("[Server] Bot client %u joined.\n", clientId);
+		printf("[Server] Agent client %u joined.\n", clientId);
 	}
 
 	// Assign an entity to a bot client for AI control.
@@ -292,10 +292,10 @@ public:
 		if (action.type == ActionProposal::Move) {
 			// Move allowed for owned entities + RTS commanding
 			// (keep backward compat: any entity for GUI clients)
-			if (!isOwned && !it->second.isBot) {
+			if (!isOwned && !it->second.isAgent) {
 				// GUI client RTS commanding — still allowed
 			} else if (!isOwned) {
-				return; // Bot can only move its assigned entities
+				return; // Agent can only move its assigned entities
 			}
 		} else {
 			// Non-move actions require ownership
@@ -454,7 +454,7 @@ private:
 
 	struct ClientState {
 		EntityId playerEntityId = ENTITY_NONE;
-		bool isBot = false;
+		bool isAgent = false;
 		std::unordered_set<EntityId> controlledEntities;
 	};
 	std::unordered_map<ClientId, ClientState> m_clients;

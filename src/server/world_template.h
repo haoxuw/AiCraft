@@ -84,8 +84,9 @@ public:
 	}
 
 	glm::vec3 preferredSpawn(int seed) const override {
-		// Player spawns on the portal platform (groundY + kPlatH), inside the arch,
-		// offset -1 on Z so they face +Z toward the descending staircase.
+		// Player spawns on the portal platform (groundY + kPlatH) at the exact center
+		// of the arch interior — world XZ origin when spawnSearch is (0,0).
+		// The spawn block is at the same X,Z on the platform floor.
 		float gY, sx, sz;
 		if (m_py.terrainType == "flat") {
 			gY = m_py.surfaceY;
@@ -97,7 +98,11 @@ public:
 			sx = anchor.x;
 			sz = anchor.y;
 		}
-		return {sx, gY + kPlatH, sz - 1.0f};
+		// +0.5 in X and Z to center the player within the block's [bx, bx+1) footprint.
+		// -1.0 in Z: spawn block is at dz=-1 (center of the 9-block floor: backDZ=-5..frontDZ=+3).
+		return {(float)(int)std::round(sx) + 0.5f,
+		        gY + kPlatH,
+		        (float)(int)std::round(sz) - 0.5f};
 	}
 
 	glm::ivec2 villageCenter(int seed) const override {
@@ -246,7 +251,8 @@ public:
 		BlockId planksB  = blocks.getId(BlockType::Planks);
 		BlockId arcaneB  = blocks.getId(BlockType::ArcaneStone);
 		BlockId portalB  = blocks.getId(BlockType::Portal);
-		generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, arcaneB, portalB, anchor);
+		BlockId spawnPtB = blocks.getId(BlockType::SpawnPoint);
+		generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, arcaneB, portalB, spawnPtB, anchor);
 	}
 
 	// Portal platform height (blocks above groundY). Used in preferredSpawn + generatePortal.
@@ -293,9 +299,9 @@ private:
 	//
 	// Z layout (offsets from anchor pz):
 	//   dz=-5..-4 : back wall (2 thick, with windows)
-	//   dz=-3..+1 : interior chamber (player spawns here)
-	//   dz=+2     : front arch face
-	//   dz=+3..+7 : descending staircase (5 steps, 0.5–1.0 drop each)
+	//   dz=-3..+3 : interior chamber (9-block floor, center at dz=-1 = spawn block)
+	//   dz=+3     : front arch opening
+	//   dz=+4..+8 : descending staircase (5 steps, 0.5–1.0 drop each)
 	//
 	// X layout (offsets from anchor px):
 	//   dx=±3     : arch passage (7-wide opening)
@@ -305,7 +311,8 @@ private:
 	//
 	void generatePortal(Chunk& chunk, ChunkPos cpos, int seed,
 	                    BlockId wallB, BlockId stoneB, BlockId stairB,
-	                    BlockId planksB, BlockId arcaneB, BlockId portalB, glm::vec2 anchor) {
+	                    BlockId planksB, BlockId arcaneB, BlockId portalB,
+	                    BlockId spawnPtB, glm::vec2 anchor) {
 		int ox = cpos.x * CHUNK_SIZE;
 		int oy = cpos.y * CHUNK_SIZE;
 		int oz = cpos.z * CHUNK_SIZE;
@@ -345,7 +352,7 @@ private:
 		constexpr int towerHW = 7;   // outer tower inner edge
 		constexpr int towerOW = 8;   // outer tower outer edge
 		constexpr int backDZ  = -5;  // back wall Z
-		constexpr int frontDZ = +2;  // front arch face Z
+		constexpr int frontDZ = +3;  // front arch face Z (9-deep floor: backDZ..frontDZ = ODD → center at dz=0)
 		constexpr int numSteps = platH;
 
 		const int platSurfY = groundY + platH;
@@ -369,6 +376,12 @@ private:
 				set(px + dx, groundY + platH - 1, pz + dz, inner ? planksB : stoneB);
 			}
 		}
+
+		// ── 2b. Spawn point block — at floor center (dx=0, dz=-1) ────────────────
+		// Floor depth backDZ..frontDZ = -5..+3 = 9 blocks (ODD) → center at dz=-1.
+		// Player spawns centered above it at (px+0.5, groundY+platH, pz-0.5).
+		if (spawnPtB != BLOCK_AIR)
+			set(px, groundY + platH - 1, pz - 1, spawnPtB);
 
 		// ── 3. Outer towers (dx=±7..±8, to towerTopY) — arcane ──
 		for (int sign : {-1, 1})

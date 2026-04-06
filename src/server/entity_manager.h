@@ -3,9 +3,9 @@
 /**
  * EntityManager — entity lifecycle, type registry, and physics.
  *
- * Behavior/AI code has been moved to the bot client process (src/bot/).
+ * Behavior/AI code has been moved to the agent client process (src/agent/).
  * This class is now Python-free: no behavior loading, no decision gathering.
- * Entity AI arrives as ActionProposals from bot client processes over TCP.
+ * Entity AI arrives as ActionProposals from agent client processes over TCP.
  */
 
 #include "shared/entity.h"

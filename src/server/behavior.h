@@ -42,6 +42,7 @@ struct BehaviorAction {
 		Attack,     // damage targetEntity (future)
 		BreakBlock, // break block at targetPos (x,y,z)
 		DropItem,   // drop an item at entity's feet (itemType, itemCount)
+		PickupItem, // pick up item entity targetEntity
 	};
 
 	Type type = Idle;

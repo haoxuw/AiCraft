@@ -61,9 +61,10 @@ world = {
     # C++ scans outward from this origin to find flat terrain where
     # height is in [min_height, max_height].  The found point becomes
     # the spawn anchor; the village is placed at spawn + village.offset.
+    # Searching from (0,0) so the spawn block lands near world origin.
     "spawn": {
-        "search_x":   30.0,
-        "search_z":   30.0,
+        "search_x":    0.0,
+        "search_z":    0.0,
         "min_height":  2.0,
         "max_height": 12.0,
     },
@@ -102,7 +103,7 @@ world = {
     # With village at ~41 blocks from spawn, all mobs below radius 19
     # stay within 60 blocks of the player at start.
     "mobs": [
-        {"type": "base:villager",       "count": 3, "radius": 10},
+        {"type": "base:villager",       "count": 5, "radius": 10},
         {"type": "base:pig",            "count": 4, "radius": 22},
         {"type": "base:chicken",        "count": 3, "radius": 18},
         {"type": "base:brave_chicken",  "count": 1, "radius": 16},

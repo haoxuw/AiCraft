@@ -17,7 +17,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) 
 BehaviorAction PythonBridge::callDecide(BehaviorHandle, Entity&,
                                          const std::vector<NearbyEntity>&,
                                          const std::vector<NearbyBlock>&,
-                                         float, std::string&, std::string& err) {
+                                         float, float, std::string&, std::string& err) {
 	err = "Python not available in web build";
 	return {BehaviorAction::Idle};
 }
@@ -111,6 +111,9 @@ PYBIND11_EMBEDDED_MODULE(agentica_engine, m) {
 	m.def("DropItem", [](const std::string& itemType, int count) {
 		PyAction a; a.type = "drop_item"; a.item_type = itemType; a.item_count = count; return a;
 	}, py::arg("item_type"), py::arg("count") = 1);
+	m.def("PickupItem", [](EntityId entityId) {
+		PyAction a; a.type = "pickup_item"; a.target_id = entityId; return a;
+	}, py::arg("entity_id"));
 }
 
 // ================================================================
@@ -188,6 +191,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
                                          const std::vector<NearbyEntity>& nearby,
                                          const std::vector<NearbyBlock>& nearbyBlocks,
                                          float dt,
+                                         float timeOfDay,
                                          std::string& goalOut,
                                          std::string& errorOut) {
 	auto it = m_behaviors.find(handle);
@@ -214,8 +218,19 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			pyNearby.append(info);
 		}
 
-		// Build self info
+		// Build self info — start with all entity props (custom fields set by server),
+		// then override with authoritative C++ values so hardcoded fields are always correct.
 		py::dict pySelf;
+		for (auto& [key, val] : self.props()) {
+			if (auto* s = std::get_if<std::string>(&val))
+				pySelf[key.c_str()] = *s;
+			else if (auto* iv = std::get_if<int>(&val))
+				pySelf[key.c_str()] = *iv;
+			else if (auto* fv = std::get_if<float>(&val))
+				pySelf[key.c_str()] = *fv;
+			else if (auto* bv = std::get_if<bool>(&val))
+				pySelf[key.c_str()] = *bv;
+		}
 		pySelf["id"] = self.id();
 		pySelf["type_id"] = self.typeId();
 		pySelf["x"] = self.position.x;
@@ -244,6 +259,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		pyWorld["nearby"] = pyNearby;
 		pyWorld["blocks"] = pyBlocks;
 		pyWorld["dt"] = dt;
+		pyWorld["time"] = timeOfDay;
 
 		// Call decide(self, world)
 		py::object decideFn = ns["decide"];
@@ -273,6 +289,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			action.itemType = pyAction.item_type;
 			action.itemCount = pyAction.item_count;
 		}
+		else if (pyAction.type == "pickup_item") action.type = BehaviorAction::PickupItem;
 		else action.type = BehaviorAction::Idle;
 
 		action.targetPos = {pyAction.x, pyAction.y, pyAction.z};
@@ -331,7 +348,7 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 		blocks.push_back({nb.pos.x, nb.pos.y, nb.pos.z, nb.typeId, nb.distance});
 
 	std::string goal, error;
-	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities, blocks, view.dt, goal, error);
+	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities, blocks, view.dt, view.timeOfDay, goal, error);
 
 	if (!error.empty()) {
 		view.self.goalText = "ERROR: " + error.substr(0, 60);

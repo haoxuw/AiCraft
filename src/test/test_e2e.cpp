@@ -1341,6 +1341,218 @@ static std::string t39_second_floor_reachable() {
 }
 
 // ================================================================
+// Physics helpers — place/remove blocks directly for setup
+// ================================================================
+
+static void placeBlockDirect(LocalServer& srv, int x, int y, int z, const std::string& typeId) {
+    auto* gs = srv.server();
+    if (!gs) return;
+    auto& world = gs->world();
+    BlockId bid = world.blocks.getId(typeId);
+    if (bid == BLOCK_AIR) return;
+    ChunkPos cp = World::worldToChunk(x, y, z);
+    Chunk* c = world.getChunk(cp);
+    if (!c) return;
+    int lx = ((x % 16) + 16) % 16;
+    int ly = ((y % 16) + 16) % 16;
+    int lz = ((z % 16) + 16) % 16;
+    c->set(lx, ly, lz, bid);
+}
+
+static bool isInsideBlock(LocalServer& srv, glm::vec3 pos, float halfW, float height) {
+    auto* gs = srv.server();
+    if (!gs) return false;
+    auto& world = gs->world();
+    auto& blocks = world.blocks;
+    int x0 = (int)std::floor(pos.x - halfW), x1 = (int)std::floor(pos.x + halfW);
+    int y0 = (int)std::floor(pos.y),         y1 = (int)std::floor(pos.y + height);
+    int z0 = (int)std::floor(pos.z - halfW), z1 = (int)std::floor(pos.z + halfW);
+    for (int y = y0; y <= y1; y++)
+        for (int z = z0; z <= z1; z++)
+            for (int x = x0; x <= x1; x++) {
+                const auto& def = blocks.get(world.getBlock(x, y, z));
+                if (!def.solid) continue;
+                float bh = def.collision_height;
+                if (pos.y < (float)y + bh && pos.y + height > (float)y)
+                    return true;
+            }
+    return false;
+}
+
+// ================================================================
+// P50: No tunneling through wall at very high horizontal speed
+// ================================================================
+static std::string p50_no_horizontal_tunneling() {
+    auto srv = makeFlatServer();
+    EntityId pid = srv->localPlayerId();
+    Entity* p = srv->getEntity(pid);
+    if (!p) return "no player";
+
+    tickN(*srv, 30);  // settle on ground
+    float groundY = p->position.y;
+    float hw = (p->def().collision_box_max.x - p->def().collision_box_min.x) * 0.5f;
+    float ht = p->def().collision_box_max.y - p->def().collision_box_min.y;
+
+    // Place a solid 3-block-tall wall 3 blocks east of player
+    int wallX = (int)std::floor(p->position.x) + 3;
+    int wallY = (int)std::round(groundY);
+    int wallZ = (int)std::floor(p->position.z);
+    for (int dy = 0; dy <= 3; dy++)
+        placeBlockDirect(*srv, wallX, wallY + dy, wallZ, BlockType::Stone);
+
+    float wallFace = (float)wallX;  // west face of wall (player can't cross this)
+
+    // Drive entity at extremely high speed toward wall — 50 m/s eastward
+    p->velocity.x = 50.0f;
+    p->velocity.z = 0.0f;
+
+    bool everInsideWall = false;
+    for (int i = 0; i < 30; i++) {
+        srv->tick(1.0f / 60.0f);
+        if (isInsideBlock(*srv, p->position, hw, ht)) {
+            everInsideWall = true;
+            break;
+        }
+        // Entity right edge must not exceed wall face
+        if (p->position.x + hw > wallFace + 0.1f)
+            return "player passed through wall: x=" + std::to_string(p->position.x) +
+                   " rightEdge=" + std::to_string(p->position.x + hw) +
+                   " wallFace=" + std::to_string(wallFace);
+    }
+    if (everInsideWall)
+        return "player clipped inside solid block during high-speed wall collision";
+    return "";
+}
+
+// ================================================================
+// P51: No tunneling through floor when falling at maxFallSpeed
+// ================================================================
+static std::string p51_no_vertical_tunneling() {
+    auto srv = makeFlatServer();
+    EntityId pid = srv->localPlayerId();
+    Entity* p = srv->getEntity(pid);
+    if (!p) return "no player";
+
+    tickN(*srv, 30);
+    float groundY = p->position.y;
+    float hw = (p->def().collision_box_max.x - p->def().collision_box_min.x) * 0.5f;
+    float ht = p->def().collision_box_max.y - p->def().collision_box_min.y;
+
+    // Teleport player high up (10 blocks) so they fall
+    p->position.y = groundY + 10.0f;
+    // Set to maxFallSpeed downward — worst case
+    p->velocity.y = -50.0f;
+    p->onGround = false;
+
+    bool everInsideBlock = false;
+    float minY = p->position.y;
+    for (int i = 0; i < 60; i++) {
+        srv->tick(1.0f / 60.0f);
+        if (p->position.y < minY) minY = p->position.y;
+        if (isInsideBlock(*srv, p->position, hw, ht)) {
+            everInsideBlock = true;
+            break;
+        }
+    }
+    if (everInsideBlock)
+        return "player clipped into block while falling at maxFallSpeed (got to y=" +
+               std::to_string(minY) + ")";
+    // Should have landed at ground level
+    if (p->position.y < groundY - 0.5f)
+        return "player fell through floor: y=" + std::to_string(p->position.y) +
+               " expected ~" + std::to_string(groundY);
+    return "";
+}
+
+// ================================================================
+// P52: Entity knocked back at high velocity doesn't clip through wall
+// ================================================================
+static std::string p52_knockback_no_tunneling() {
+    auto srv = makeFlatServer();
+    EntityId pid = srv->localPlayerId();
+    Entity* p = srv->getEntity(pid);
+    if (!p) return "no player";
+
+    tickN(*srv, 30);
+    float groundY = p->position.y;
+    float hw = (p->def().collision_box_max.x - p->def().collision_box_min.x) * 0.5f;
+    float ht = p->def().collision_box_max.y - p->def().collision_box_min.y;
+
+    // Build walls on all 4 sides: 3-block-wide box around player
+    int px = (int)std::floor(p->position.x);
+    int py = (int)std::round(groundY);
+    int pz = (int)std::floor(p->position.z);
+    for (int d = -3; d <= 3; d++) {
+        for (int dy = 0; dy <= 3; dy++) {
+            placeBlockDirect(*srv, px - 4, py + dy, pz + d, BlockType::Stone);
+            placeBlockDirect(*srv, px + 4, py + dy, pz + d, BlockType::Stone);
+            placeBlockDirect(*srv, px + d, py + dy, pz - 4, BlockType::Stone);
+            placeBlockDirect(*srv, px + d, py + dy, pz + 4, BlockType::Stone);
+        }
+    }
+
+    bool everInsideBlock = false;
+    // Simulate attack knockback from each direction
+    const glm::vec3 dirs[] = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1},{1,0,1},{-1,0,-1}};
+    for (auto& dir : dirs) {
+        // Reset player position to center
+        p->position = {(float)px + 0.5f, groundY, (float)pz + 0.5f};
+        p->velocity = dir * 20.0f + glm::vec3(0, 5.0f, 0);  // hard knockback
+        p->onGround = false;
+        for (int i = 0; i < 20; i++) {
+            srv->tick(1.0f / 60.0f);
+            if (isInsideBlock(*srv, p->position, hw, ht)) {
+                everInsideBlock = true;
+                break;
+            }
+        }
+        if (everInsideBlock) break;
+    }
+    if (everInsideBlock)
+        return "player clipped into block after knockback at 20 m/s";
+    return "";
+}
+
+// ================================================================
+// P53: Entities never end up inside solid blocks after N village ticks
+// ================================================================
+static std::string p53_entities_never_inside_blocks_village() {
+    auto srv = makeVillageServer();
+
+    // Check at spawn (before any ticks) — catches spawn-inside-building bugs
+    std::string spawnBad;
+    srv->forEachEntity([&](Entity& e) {
+        if (!e.def().isLiving() || e.removed) return;
+        float hw = (e.def().collision_box_max.x - e.def().collision_box_min.x) * 0.5f;
+        float ht = e.def().collision_box_max.y - e.def().collision_box_min.y;
+        if (spawnBad.empty() && isInsideBlock(*srv, e.position, hw, ht))
+            spawnBad = e.typeId() + " id=" + std::to_string(e.id()) +
+                       " SPAWNED inside block at (" + std::to_string(e.position.x) + "," +
+                       std::to_string(e.position.y) + "," + std::to_string(e.position.z) + ")";
+    });
+    if (!spawnBad.empty()) return spawnBad;
+
+    tickN(*srv, 60);  // let world settle
+
+    std::string bad;
+    for (int frame = 0; frame < 120 && bad.empty(); frame++) {
+        srv->tick(1.0f / 60.0f);
+        srv->forEachEntity([&](Entity& e) {
+            if (bad.empty() && !e.def().isLiving()) return;  // skip item entities
+            if (bad.empty() && e.removed) return;
+            float hw = (e.def().collision_box_max.x - e.def().collision_box_min.x) * 0.5f;
+            float ht = e.def().collision_box_max.y - e.def().collision_box_min.y;
+            if (isInsideBlock(*srv, e.position, hw, ht))
+                bad = e.typeId() + " id=" + std::to_string(e.id()) +
+                      " inside block at (" + std::to_string(e.position.x) + "," +
+                      std::to_string(e.position.y) + "," + std::to_string(e.position.z) + ")";
+        });
+    }
+    if (!bad.empty()) return bad;
+    return "";
+}
+
+// ================================================================
 // Main
 // ================================================================
 
@@ -1416,6 +1628,12 @@ int main() {
 	run("T35: item entity has ItemType property",  t35_item_entity_has_type);
 	run("T36: equip+unequip cycle returns item",  t36_equip_unequip_cycle);
 	run("T37: pickup denied if out of range",     t37_pickup_denied_out_of_range);
+
+	printf("\n--- Physics Anti-Tunneling ---\n");
+	run("P50: no horizontal tunneling at 50 m/s", p50_no_horizontal_tunneling);
+	run("P51: no vertical tunneling at 50 m/s",   p51_no_vertical_tunneling);
+	run("P52: knockback no tunneling in box",      p52_knockback_no_tunneling);
+	run("P53: village entities never inside blocks (120 frames)", p53_entities_never_inside_blocks_village);
 
 	pythonBridge().shutdown();
 

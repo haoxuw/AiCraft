@@ -8,6 +8,7 @@
 #include "shared/action.h"
 #include "shared/chunk_source.h"
 #include "content/builtin.h"
+#include <glm/vec3.hpp>
 #include <unordered_map>
 #include <memory>
 #include <mutex>
@@ -34,6 +35,11 @@ public:
 	BlockRegistry blocks;
 	EntityManager entities;
 	ActionQueue actions;        // proposals queued by input/behaviors, drained in Phase 1
+
+	// Canonical spawn position — feet position one block above the SpawnPoint floor block.
+	// Set once at server init from WorldTemplate::preferredSpawn().
+	// New players always spawn here, facing +Z toward the stairs.
+	glm::vec3 spawnPoint{0.f, 0.f, 0.f};
 
 	World(int seed = 42, std::shared_ptr<WorldTemplate> tmpl = nullptr, int templateIndex = 1)
 		: m_seed(seed), m_templateIndex(templateIndex),

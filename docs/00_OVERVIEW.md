@@ -43,7 +43,7 @@ GUI. **OpenGL, NO Python.**
 - Connects to server via TCP (localhost in singleplayer, remote in MP)
 - In singleplayer: `AgentManager` launches the server process first
 
-### Agent Client (`agentica-bot`)
+### Agent Client (`agentica-agent`)
 
 Headless. **Python + pybind11, NO OpenGL.**
 
@@ -59,7 +59,7 @@ Headless. **Python + pybind11, NO OpenGL.**
 2. AgentManager (GUI) fork+execs agentica-server on localhost
 3. GUI connects to server as a regular player client
 4. Server's ClientManager detects NPC entities with BehaviorId
-5. Server fork+execs one agentica-bot per NPC entity
+5. Server fork+execs one agentica-agent per NPC entity
 6. Each agent connects back to server, receives S_ASSIGN_ENTITY
 7. Agents run Python AI, entities start moving
 ```
@@ -73,7 +73,7 @@ Every living entity is controlled by exactly one client:
 | Client Type | Controls | Identified By |
 |-------------|----------|---------------|
 | Player client | Its player entity | `C_HELLO` on connect |
-| Agent client | One NPC entity | `C_BOT_HELLO` + entity ID |
+| Agent client | One NPC entity | `C_AGENT_HELLO` + entity ID |
 
 Server validates: only the owning client can act on its entity.
 If an agent crashes, server restarts it — entities recover in seconds.
@@ -161,7 +161,7 @@ Binary TCP, 8-byte header `[type:u32][length:u32]`.
 |-----|------|---------|
 | C→S | `C_ACTION` | ActionProposal (move, break, place, attack) |
 | C→S | `C_HELLO` | Player client ID |
-| C→S | `C_BOT_HELLO` | Agent client ID + target entity |
+| C→S | `C_AGENT_HELLO` | Agent client ID + target entity |
 | C→S | `C_RELOAD_BEHAVIOR` | Hot-swap behavior source code |
 | S→C | `S_WELCOME` | Assigned entity + spawn pos |
 | S→C | `S_ENTITY` | Entity state (perception-scoped) |
@@ -187,7 +187,7 @@ Binary TCP, 8-byte header `[type:u32][length:u32]`.
 src/
   shared/           Linked by ALL (no OpenGL, no Python)
   server/           Authoritative simulation (server.h, client_manager.h, entity_manager.h)
-  bot/              Agent client (bot_client.h, behavior_executor.h, python_bridge)
+  agent/            Agent client (agent_client.h, behavior_executor.h, python_bridge)
   client/           Rendering + input (renderer, camera, fog_of_war, audio)
   game/             Player client game loop (gameplay, hud, menu, code_editor)
   content/          C++ fallback definitions
@@ -198,7 +198,7 @@ artifacts/          Python game content (hot-loadable)
 |--------|-------|---------|
 | `agentworld` | shared + client + game + OpenGL | Player client (GUI) |
 | `agentica-server` | shared + server + content + Python | Server + agent spawner |
-| `agentica-bot` | shared + bot + content + Python | Agent client (headless) |
+| `agentica-agent` | shared + agent + content + Python | Agent client (headless) |
 
 ## Build & Run
 

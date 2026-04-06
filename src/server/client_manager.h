@@ -37,7 +37,7 @@ struct ConnectedClient {
 	std::string ip;
 	int port = 0;
 	std::string name;
-	bool isBot = false;
+	bool isAgent = false;
 	int chunkSendErrors = 0;
 	float pendingAge = 0; // seconds in pending pool before hello received
 
@@ -54,7 +54,7 @@ public:
 
 	~ClientManager() { stopAllAIClients(); }
 
-	// Set the directory containing agentica-bot binary.
+	// Set the directory containing agentica-agent binary.
 	// Call before the main loop. If empty, AI client spawning is disabled.
 	void setExecDir(const std::string& dir) { m_execDir = dir; }
 
@@ -95,7 +95,7 @@ public:
 			}
 		}
 
-		// Hold in pending pool until C_HELLO/C_BOT_HELLO identifies this client.
+		// Hold in pending pool until C_HELLO/C_AGENT_HELLO identifies this client.
 		// Pending clients are invisible to the broadcast + chunk pipeline, so
 		// there is no timing dependency between C_HELLO arrival and broadcastState().
 		ConnectedClient cc;
@@ -149,10 +149,10 @@ public:
 	}
 
 	// Receive and dispatch all pending messages from clients.
-	// Pending (unidentified) clients are only promoted to active on C_HELLO/C_BOT_HELLO.
+	// Pending (unidentified) clients are only promoted to active on C_HELLO/C_AGENT_HELLO.
 	// This eliminates all timing races between C_HELLO arrival and broadcastState().
 	void receiveMessages(float dt) {
-		// --- Pending pool: only accept C_HELLO / C_BOT_HELLO ---
+		// --- Pending pool: only accept C_HELLO / C_AGENT_HELLO ---
 		struct Hello { ClientId cid; uint32_t type; std::vector<uint8_t> payload; };
 		std::vector<Hello> hellos;
 
@@ -171,7 +171,7 @@ public:
 			net::MsgHeader hdr;
 			std::vector<uint8_t> payload;
 			while (client.recvBuf.tryExtract(hdr, payload)) {
-				if (hdr.type == net::C_HELLO || hdr.type == net::C_BOT_HELLO) {
+				if (hdr.type == net::C_HELLO || hdr.type == net::C_AGENT_HELLO) {
 					hellos.push_back({cid, hdr.type, std::move(payload)});
 					break; // one hello per client per tick
 				}
@@ -226,12 +226,12 @@ public:
 		m_disconnected.clear();
 	}
 
-	// Forward pending behavior reloads to controlling bot clients.
+	// Forward pending behavior reloads to controlling agent clients.
 	void forwardBehaviorReloads() {
 		for (auto& reload : m_server.drainPendingReloads()) {
 			ClientId owner = m_server.getEntityOwner(reload.actorId);
 			if (owner == 0) {
-				printf("[Server] No bot controls entity %u, reload dropped\n", reload.actorId);
+				printf("[Server] No agent controls entity %u, reload dropped\n", reload.actorId);
 				continue;
 			}
 			auto it = m_clients.find(owner);
@@ -357,7 +357,7 @@ public:
 
 		int humans = 0;
 		for (auto& [cid, c] : m_clients)
-			if (!c.isBot) humans++;
+			if (!c.isAgent) humans++;
 
 		char msg[64];
 		snprintf(msg, sizeof(msg), "AGENTICA %d %d", m_port, humans);
@@ -369,8 +369,8 @@ public:
 	void spawnAIClients() {
 		if (m_execDir.empty() || m_port <= 0) return;
 
-		std::string botBin = m_execDir + "/agentica-bot";
-		if (!std::filesystem::exists(botBin)) return;
+		std::string agentBin = m_execDir + "/agentica-agent";
+		if (!std::filesystem::exists(agentBin)) return;
 
 		// Reap finished AI client processes
 		for (auto it = m_aiProcesses.begin(); it != m_aiProcesses.end(); ) {
@@ -398,7 +398,7 @@ public:
 			// Spawn AI client process
 			std::string name = "ai_" + std::to_string(eid);
 			std::vector<std::string> args = {
-				botBin,
+				agentBin,
 				"--host", "127.0.0.1",
 				"--port", std::to_string(m_port),
 				"--entity", std::to_string(eid),
@@ -407,7 +407,7 @@ public:
 
 			pid_t pid = fork();
 			if (pid == 0) {
-				// Child: redirect output to /dev/null, exec bot
+				// Child: redirect output to /dev/null, exec agent
 				std::vector<char*> cargs;
 				for (auto& a : args) cargs.push_back(const_cast<char*>(a.c_str()));
 				cargs.push_back(nullptr);
@@ -497,7 +497,7 @@ private:
 				// Enforce one-character-per-server: reject if skin already occupied
 				bool skinTaken = false;
 				for (auto& [otherId, other] : m_clients) {
-					if (otherId == client.id || other.isBot) continue;
+					if (otherId == client.id || other.isAgent) continue;
 					Entity* oe = m_server.world().entities.get(other.playerId);
 					if (oe && oe->getProp<std::string>("character_skin", "") == creatureType) {
 						skinTaken = true;
@@ -569,16 +569,16 @@ private:
 				pe->inventory->setHotbar((int)slot, itemId);
 			break;
 		}
-		case net::C_BOT_HELLO: {
+		case net::C_AGENT_HELLO: {
 			client.name = rb.readString();
 			uint32_t targetEntity = rb.readU32();
-			client.isBot = true;
-			printf("[Server] %s identified as bot, wants entity %u\n",
+			client.isAgent = true;
+			printf("[Server] %s identified as agent, wants entity %u\n",
 				client.label().c_str(), targetEntity);
 
 			Entity* te = m_server.world().entities.get(targetEntity);
 			if (!te || te->removed) {
-				printf("[Server] Entity %u not found for bot %s (keeping player entity)\n",
+				printf("[Server] Entity %u not found for agent %s (keeping player entity)\n",
 					targetEntity, client.label().c_str());
 				break;
 			}
@@ -586,7 +586,7 @@ private:
 			if (client.playerId != ENTITY_NONE) {
 				m_server.world().entities.remove(client.playerId);
 				m_server.removeClient(cid);
-				m_server.addBotClient(cid);
+				m_server.addAgentClient(cid);
 				client.playerId = ENTITY_NONE;
 			}
 

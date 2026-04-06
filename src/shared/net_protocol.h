@@ -34,7 +34,7 @@ enum MsgType : uint32_t {
 	C_ACTION     = 0x0001,
 	C_SLOT       = 0x0002,
 	C_HELLO      = 0x0003,  // GUI client identifies itself (UUID + name)
-	C_BOT_HELLO  = 0x0004,  // Bot client identifies itself (name + entity ID)
+	C_AGENT_HELLO  = 0x0004,  // Agent client identifies itself (name + entity ID)
 	C_RELOAD_BEHAVIOR = 0x0005, // Request behavior reload (entityId + sourceCode)
 	C_HOTBAR     = 0x0006,  // Client reassigned a hotbar slot: u32 slot + string itemId
 
@@ -46,7 +46,7 @@ enum MsgType : uint32_t {
 	S_TIME       = 0x1005,
 	S_BLOCK      = 0x1006,  // single block change (x,y,z,blockId)
 	S_INVENTORY  = 0x1007,  // full inventory sync (entityId + items + 10 hotbar slots)
-	S_ASSIGN_ENTITY  = 0x1008, // assign entity to bot (entityId + behaviorId)
+	S_ASSIGN_ENTITY  = 0x1008, // assign entity to agent (entityId + behaviorId)
 	S_REVOKE_ENTITY  = 0x1009, // revoke entity control (entityId)
 	S_RELOAD_BEHAVIOR = 0x100A, // reload behavior (entityId + sourceCode)
 	S_ERROR      = 0x100B,  // error feedback (entityId + errorText)

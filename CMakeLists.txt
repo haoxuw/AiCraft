@@ -238,22 +238,22 @@ else()
 	)
 
 	# === Headless agent client (AI entity controller, no OpenGL) ===
-	add_executable(agentica-bot
-		src/agent/main_bot.cpp
+	add_executable(agentica-agent
+		src/agent/main_agent.cpp
 		src/server/python_bridge.cpp
 		${CONTENT_SOURCES}
 	)
-	target_include_directories(agentica-bot PRIVATE src)
-	target_link_libraries(agentica-bot PRIVATE
+	target_include_directories(agentica-agent PRIVATE src)
+	target_link_libraries(agentica-agent PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 	)
 	# Copy python/ and artifacts/ so behavior loading works
-	add_custom_command(TARGET agentica-bot POST_BUILD
+	add_custom_command(TARGET agentica-agent POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentica-bot>/python
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentica-agent>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentica-bot>/artifacts
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentica-agent>/artifacts
 	)
 
 	# === Headless E2E test runner ===

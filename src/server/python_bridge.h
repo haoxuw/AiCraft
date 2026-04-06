@@ -145,6 +145,7 @@ public:
 	                           const std::vector<NearbyEntity>& nearby,
 	                           const std::vector<NearbyBlock>& nearbyBlocks,
 	                           float dt,
+	                           float timeOfDay,
 	                           std::string& goalOut,
 	                           std::string& errorOut);
 
