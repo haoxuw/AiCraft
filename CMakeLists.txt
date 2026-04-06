@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Agentica VERSION 0.1.0 LANGUAGES C CXX)
+project(ModCraft VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -171,22 +171,21 @@ if(EMSCRIPTEN)
 	# =================================================================
 	# Web build (WASM + WebGL 2) — client-only, connects to remote server
 	# =================================================================
-	add_executable(agentica
+	add_executable(modcraft
 		src/main.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 	)
-	target_include_directories(agentica PRIVATE src)
-	target_compile_definitions(agentica PRIVATE AGENTICA_WEB=1)
-	target_link_libraries(agentica PRIVATE glm::glm imgui_lib)
+	target_include_directories(modcraft PRIVATE src)
+	target_link_libraries(modcraft PRIVATE glm::glm imgui_lib)
 
 	# Emscripten compile + link flags
 	# -sWEBSOCKET_SUBPROTOCOL enables binary WebSocket mode so POSIX socket calls
 	# route through ws:// correctly — required for networking via websockify proxy.
 	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576 -sWEBSOCKET_SUBPROTOCOL=binary")
 	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/config@config --preload-file ${CMAKE_SOURCE_DIR}/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/artifacts@artifacts")
-	set_target_properties(agentica PROPERTIES
+	set_target_properties(modcraft PROPERTIES
 		SUFFIX ".html"
 		COMPILE_FLAGS "${EM_FLAGS}"
 		LINK_FLAGS "${EM_FLAGS} ${EM_LINK}"
@@ -198,95 +197,95 @@ else()
 	# =================================================================
 
 	# === Singleplayer (server + client in one process) ===
-	add_executable(agentica
+	add_executable(modcraft
 		src/main.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 	)
-	target_include_directories(agentica PRIVATE src)
-	target_link_libraries(agentica PRIVATE
+	target_include_directories(modcraft PRIVATE src)
+	target_link_libraries(modcraft PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib
 	)
 
 	# === Dedicated server (headless, no OpenGL) ===
-	add_executable(agentica-server
+	add_executable(modcraft-server
 		src/main_server.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 	)
-	target_include_directories(agentica-server PRIVATE src)
-	target_link_libraries(agentica-server PRIVATE
+	target_include_directories(modcraft-server PRIVATE src)
+	target_link_libraries(modcraft-server PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 	)
 
 	# === Network client (connects to remote server) ===
-	add_executable(agentica-client
+	add_executable(modcraft-client
 		src/main_client.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 		${CLIENT_SOURCES}
 	)
-	target_include_directories(agentica-client PRIVATE src)
-	target_link_libraries(agentica-client PRIVATE
+	target_include_directories(modcraft-client PRIVATE src)
+	target_link_libraries(modcraft-client PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib
 	)
 
 	# === Headless agent client (AI entity controller, no OpenGL) ===
-	add_executable(agentica-agent
+	add_executable(modcraft-agent
 		src/agent/main_agent.cpp
 		src/server/python_bridge.cpp
 		${CONTENT_SOURCES}
 	)
-	target_include_directories(agentica-agent PRIVATE src)
-	target_link_libraries(agentica-agent PRIVATE
+	target_include_directories(modcraft-agent PRIVATE src)
+	target_link_libraries(modcraft-agent PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 	)
 	# Copy python/ and artifacts/ so behavior loading works
-	add_custom_command(TARGET agentica-agent POST_BUILD
+	add_custom_command(TARGET modcraft-agent POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentica-agent>/python
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:modcraft-agent>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentica-agent>/artifacts
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:modcraft-agent>/artifacts
 	)
 
 	# === Headless E2E test runner ===
-	add_executable(agentica-test
+	add_executable(modcraft-test
 		src/test/test_e2e.cpp
 		${CONTENT_SOURCES}
 		${SERVER_SIM_SOURCES}
 	)
-	target_include_directories(agentica-test PRIVATE src)
-	target_link_libraries(agentica-test PRIVATE
+	target_include_directories(modcraft-test PRIVATE src)
+	target_link_libraries(modcraft-test PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 	)
 	# Copy python/ and artifacts/ so behavior loading finds them (even if Python fails gracefully)
-	add_custom_command(TARGET agentica-test POST_BUILD
+	add_custom_command(TARGET modcraft-test POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentica-test>/python
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:modcraft-test>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentica-test>/artifacts
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:modcraft-test>/artifacts
 	)
 
 	# Copy assets to build directory
-	add_custom_command(TARGET agentica POST_BUILD
+	add_custom_command(TARGET modcraft POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:agentica>/shaders
+		${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:modcraft>/shaders
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/config $<TARGET_FILE_DIR:agentica>/config
+		${CMAKE_SOURCE_DIR}/config $<TARGET_FILE_DIR:modcraft>/config
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:agentica>/python
+		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:modcraft>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:agentica>/fonts
+		${CMAKE_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:modcraft>/fonts
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:agentica>/artifacts
-		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/resources $<TARGET_FILE_DIR:agentica>/
+		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:modcraft>/artifacts
+		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/resources $<TARGET_FILE_DIR:modcraft>/
 	)
 endif()

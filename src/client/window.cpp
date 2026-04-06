@@ -1,7 +1,7 @@
 #include "client/window.h"
 #include <cstdio>
 
-namespace agentica {
+namespace modcraft {
 
 bool Window::init(int width, int height, const std::string& title) {
 	if (!glfwInit()) {
@@ -96,4 +96,4 @@ void Window::framebufferCallback(GLFWwindow* w, int width, int height) {
 	glViewport(0, 0, width, height);
 }
 
-} // namespace agentica
+} // namespace modcraft

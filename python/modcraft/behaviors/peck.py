@@ -10,7 +10,7 @@ Try changing:
 """
 
 import random
-from agentworld.api import Wander, Flee, Idle
+from modcraft.api import Wander, Flee, Idle
 
 SCATTER_DISTANCE = 3.5
 PECK_CHANCE = 0.5

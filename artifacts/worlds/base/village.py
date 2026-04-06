@@ -94,7 +94,7 @@ world = {
         "path_block":  "base:cobblestone",
 
         "story_height": 6,   # wall height per story (was "house_height")
-        "door_height":  5,   # door opening height (player is 2.5 blocks; 2 door + 3 air)
+        "door_height":  3,   # door opening height (2 door blocks + 1 air clearance; glass fills above)
         "window_row":   2,   # Y-offset within story for windows
     },
 

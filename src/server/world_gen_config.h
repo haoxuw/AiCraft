@@ -14,7 +14,7 @@
  * per-creature behavior / starting-item overrides.
  */
 
-namespace agentica {
+namespace modcraft {
 
 struct MobSpawn {
 	std::string typeId;
@@ -45,4 +45,4 @@ struct WorldGenConfig {
 	float pickupRange = 1.5f;  // how close player must be to pick up items (blocks)
 };
 
-} // namespace agentica
+} // namespace modcraft

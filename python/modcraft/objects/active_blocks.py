@@ -8,12 +8,12 @@ E.g., wheat and carrots are both CropObject with different ObjectMeta.
      NAND, AND, OR gates are all LogicGateObject with different compute().
 """
 
-from agentworld.api.base import (
+from modcraft.api.base import (
     ActiveObject, CropObject, SignalObject, LogicGateObject,
     ObjectMeta,
 )
-from agentworld.api.properties import Property
-from agentworld.api.types import BlockPos
+from modcraft.api.properties import Property
+from modcraft.api.types import BlockPos
 
 
 # === TNT ===
@@ -30,7 +30,7 @@ class TNTBlock(ActiveObject):
             return []
         self.fuse_ticks -= 1
         if self.fuse_ticks <= 0:
-            from agentworld.actions.world import TNTExplode
+            from modcraft.actions.world import TNTExplode
             return [TNTExplode(center=self.pos.to_block_pos(), radius=3)]
         return []
 

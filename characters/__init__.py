@@ -1,4 +1,4 @@
-# AiCraft Character Definitions
+# ModCraft Character Definitions
 #
 # Each character is defined as a Python dataclass.
 # These files serve as:

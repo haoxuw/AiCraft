@@ -8,7 +8,7 @@
 #include <vector>
 #include <array>
 
-namespace agentica {
+namespace modcraft {
 
 struct ChunkVertex {
 	glm::vec3 position;
@@ -50,4 +50,4 @@ private:
 	std::array<BlockId, PADDED_SIZE * PADDED_SIZE * PADDED_SIZE> m_padded;
 };
 
-} // namespace agentica
+} // namespace modcraft

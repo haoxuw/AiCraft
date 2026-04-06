@@ -2,9 +2,9 @@
  * Dedicated server — runs headless, accepts TCP client connections.
  *
  * Usage:
- *   ./agentica-server                              # interactive world selection
- *   ./agentica-server --world saves/my_village      # load saved world
- *   ./agentica-server --port 7778 --template 1      # new world on custom port
+ *   ./modcraft-server                              # interactive world selection
+ *   ./modcraft-server --world saves/my_village      # load saved world
+ *   ./modcraft-server --port 7778 --template 1      # new world on custom port
  */
 
 #include "server/server.h"
@@ -34,10 +34,10 @@ static void signalHandler(int) {
 }
 
 // Interactive CLI: let user pick a world or create new
-static void interactiveWorldSelect(agentica::ServerConfig& config,
+static void interactiveWorldSelect(modcraft::ServerConfig& config,
                                     std::string& worldPath,
-                                    const std::vector<std::shared_ptr<agentica::WorldTemplate>>& templates) {
-	agentica::WorldManager mgr;
+                                    const std::vector<std::shared_ptr<modcraft::WorldTemplate>>& templates) {
+	modcraft::WorldManager mgr;
 	mgr.setSavesDir("saves");
 	mgr.refresh();
 
@@ -45,7 +45,7 @@ static void interactiveWorldSelect(agentica::ServerConfig& config,
 
 	printf("\n");
 	printf("  ┌─────────────────────────────────┐\n");
-	printf("  │       AGENTICA SERVER          │\n");
+	printf("  │       MODCRAFT SERVER          │\n");
 	printf("  └─────────────────────────────────┘\n\n");
 
 	if (!worlds.empty()) {
@@ -125,25 +125,25 @@ int main(int argc, char** argv) {
 			logPort = atoi(argv[i + 1]);
 	}
 	char logPath[256];
-	snprintf(logPath, sizeof(logPath), "/tmp/agentica_log_%d.log", logPort);
+	snprintf(logPath, sizeof(logPath), "/tmp/modcraft_log_%d.log", logPort);
 	FILE* logFile = fopen(logPath, "w");
 	if (logFile) {
 		setvbuf(logFile, nullptr, _IONBF, 0);
 		printf("[Server] Also logging to %s\n", logPath);
 	}
 
-	printf("=== Agentica Dedicated Server ===\n");
+	printf("=== ModCraft Dedicated Server ===\n");
 
-	agentica::pythonBridge().init("python");
+	modcraft::pythonBridge().init("python");
 
 	// Parse args
-	agentica::ServerConfig config;
+	modcraft::ServerConfig config;
 	std::string worldPath;
 	bool interactive = true;
 
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("Agentica — dedicated server\n\n"
+			printf("ModCraft — dedicated server\n\n"
 			       "Usage: %s [options]\n"
 			       "  --port PORT       Listen port (default 7777)\n"
 			       "  --world PATH      Load saved world from PATH\n"
@@ -164,19 +164,19 @@ int main(int argc, char** argv) {
 	}
 
 	// World templates
-	std::vector<std::shared_ptr<agentica::WorldTemplate>> templates = {
-		std::make_shared<agentica::FlatWorldTemplate>(),
-		std::make_shared<agentica::VillageWorldTemplate>(),
+	std::vector<std::shared_ptr<modcraft::WorldTemplate>> templates = {
+		std::make_shared<modcraft::FlatWorldTemplate>(),
+		std::make_shared<modcraft::VillageWorldTemplate>(),
 	};
 
 	if (interactive && isatty(fileno(stdin)))
 		interactiveWorldSelect(config, worldPath, templates);
 
 	// Initialize server
-	agentica::GameServer server;
+	modcraft::GameServer server;
 	if (!worldPath.empty() && std::filesystem::exists(worldPath + "/world.json")) {
 		printf("[Server] Loading world from %s\n", worldPath.c_str());
-		if (!agentica::loadWorld(server, worldPath, templates)) {
+		if (!modcraft::loadWorld(server, worldPath, templates)) {
 			printf("[Server] Failed to load world, creating new\n");
 			server.init(config, templates);
 		}
@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
 	}
 
 	// Start TCP listener
-	agentica::net::TcpServer listener;
+	modcraft::net::TcpServer listener;
 	if (!listener.listen(config.port)) {
 		printf("[Server] Failed to start listener on port %d\n", config.port);
 		return 1;
@@ -196,11 +196,11 @@ int main(int argc, char** argv) {
 	printf("[Server] Press Ctrl+C to save and stop.\n");
 
 	// Signal readiness for launchers
-	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/agentica_ready_%d", config.port);
+	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/modcraft_ready_%d", config.port);
 	if (FILE* f = fopen(g_readyPath, "w")) fclose(f);
 
 	// Client manager handles all TCP client operations + AI agent spawning
-	agentica::ClientManager clients(server);
+	modcraft::ClientManager clients(server);
 
 	// Determine executable directory for spawning AI agent processes
 	{
@@ -212,31 +212,31 @@ int main(int argc, char** argv) {
 	clients.setPort(config.port);
 
 	// Network broadcast callbacks
-	agentica::ServerCallbacks cbs;
-	cbs.onBlockChange = [&](glm::ivec3 pos, agentica::BlockId bid, uint8_t p2) {
-		agentica::net::WriteBuffer wb;
+	modcraft::ServerCallbacks cbs;
+	cbs.onBlockChange = [&](glm::ivec3 pos, modcraft::BlockId bid, uint8_t p2) {
+		modcraft::net::WriteBuffer wb;
 		wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
 		wb.writeU32(bid);
 		wb.writeU8(p2);
-		clients.broadcastToAll(agentica::net::S_BLOCK, wb);
+		clients.broadcastToAll(modcraft::net::S_BLOCK, wb);
 	};
-	cbs.onEntityRemove = [&](agentica::EntityId id) {
-		agentica::ClientId owner = server.getEntityOwner(id);
+	cbs.onEntityRemove = [&](modcraft::EntityId id) {
+		modcraft::ClientId owner = server.getEntityOwner(id);
 		if (owner != 0) {
 			server.revokeEntityFromClient(owner, id);
 			auto* c = clients.getClient(owner);
 			if (c) {
-				agentica::net::WriteBuffer rwb;
+				modcraft::net::WriteBuffer rwb;
 				rwb.writeU32(id);
-				agentica::net::sendMessage(c->fd, agentica::net::S_REVOKE_ENTITY, rwb);
+				modcraft::net::sendMessage(c->fd, modcraft::net::S_REVOKE_ENTITY, rwb);
 			}
 		}
-		agentica::net::WriteBuffer wb;
+		modcraft::net::WriteBuffer wb;
 		wb.writeU32(id);
-		clients.broadcastToAll(agentica::net::S_REMOVE, wb);
+		clients.broadcastToAll(modcraft::net::S_REMOVE, wb);
 	};
-	cbs.onInventoryChange = [&](agentica::EntityId id, const agentica::Inventory& inv) {
-		agentica::net::WriteBuffer wb;
+	cbs.onInventoryChange = [&](modcraft::EntityId id, const modcraft::Inventory& inv) {
+		modcraft::net::WriteBuffer wb;
 		wb.writeU32(id);
 		auto items = inv.items();
 		wb.writeU32((uint32_t)items.size());
@@ -244,17 +244,17 @@ int main(int argc, char** argv) {
 			wb.writeString(itemId);
 			wb.writeI32(count);
 		}
-		for (int i = 0; i < agentica::Inventory::HOTBAR_SLOTS; i++)
+		for (int i = 0; i < modcraft::Inventory::HOTBAR_SLOTS; i++)
 			wb.writeString(inv.hotbar(i));
 		// Equipment slots
-		for (int i = 0; i < agentica::WEAR_SLOT_COUNT; i++)
-			wb.writeString(inv.equipped((agentica::WearSlot)i));
-		clients.broadcastToAll(agentica::net::S_INVENTORY, wb);
+		for (int i = 0; i < modcraft::WEAR_SLOT_COUNT; i++)
+			wb.writeString(inv.equipped((modcraft::WearSlot)i));
+		clients.broadcastToAll(modcraft::net::S_INVENTORY, wb);
 	};
 	server.setCallbacks(cbs);
 
 	// Main loop
-	const float TICK_RATE = agentica::ServerTuning::tickRate;
+	const float TICK_RATE = modcraft::ServerTuning::tickRate;
 	auto lastTime = std::chrono::steady_clock::now();
 	float accumulator = 0;
 	int tickCount = 0;
@@ -290,7 +290,7 @@ int main(int argc, char** argv) {
 	// Save world on shutdown
 	if (!worldPath.empty()) {
 		printf("[Server] Saving world to %s...\n", worldPath.c_str());
-		agentica::WorldMetadata meta;
+		modcraft::WorldMetadata meta;
 		meta.name = worldPath.substr(worldPath.rfind('/') + 1);
 		meta.seed = config.seed;
 		meta.templateIndex = config.templateIndex;
@@ -298,7 +298,7 @@ int main(int argc, char** argv) {
 		meta.version = 1;
 		if (config.templateIndex < (int)templates.size())
 			meta.templateName = templates[config.templateIndex]->name();
-		agentica::saveWorld(server, worldPath, meta);
+		modcraft::saveWorld(server, worldPath, meta);
 	}
 
 	clients.disconnectAll();
@@ -309,6 +309,6 @@ int main(int argc, char** argv) {
 	if (g_readyPath[0]) std::remove(g_readyPath);
 
 	printf("[Server] Shut down.\n");
-	agentica::pythonBridge().shutdown();
+	modcraft::pythonBridge().shutdown();
 	return 0;
 }

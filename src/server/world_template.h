@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <cstdio>
 
-namespace agentica {
+namespace modcraft {
 
 // ============================================================
 // Base class for world generation templates
@@ -610,57 +610,53 @@ private:
 						((dz==0||dz==h.d-1)&&((dx>=1&&dx<=3)||(dx>=h.w-4&&dx<=h.w-2)))||
 						((dx==0||dx==h.w-1)&&((dz>=1&&dz<=3)||(dz>=h.d-4&&dz<=h.d-2))));
 
-					// Stair steps — 2-wide staircase at dx=1..2.
-					// Story s, step i: (dx=1..2, dz=2+i, dy=s*sh+i), i=0..sh-1.
-					// Two parallel stair tiles give the player room to centre away from
-					// the wall at dx=0 and avoid body-width clipping.
-					bool stairStep = false;
-					if (h.stories >= 2) {
-						for (int s = 0; s < h.stories-1 && !stairStep; s++)
-							for (int i = 0; i < sh && !stairStep; i++)
-								if ((dx==1||dx==2) && dz==2+i && dy==s*sh+i)
-									stairStep = true;
-					}
-
 					// Intermediate floor = ceiling of story s / floor of story s+1.
-					// Excluded where stairStep is true (stair block placed there instead).
 					bool intermFloor = false;
-					if (h.stories >= 2 && !stairStep)
+					if (h.stories >= 2)
 						for (int s = 1; s < h.stories; s++)
 							if (dy == s*sh-1) { intermFloor = true; break; }
 
-					// Stairwell opening: 4 tiles wide (dx=1..4) × full stairwell depth
-					// (dz=2..sh+1).  Removing the entire intermFloor band above the
-					// stairwell guarantees ≥ 4 clear blocks on the upper landing.
-					bool stairwellOpening = false;
-					if (intermFloor && (dx >= 1 && dx <= 4)) {
-						for (int s = 0; s < h.stories-1; s++) {
-							if (dy == s*sh + sh - 1          // ceiling of story s
-							    && dz >= 2                    // start at first stair step
-							    && dz <= 2 + sh) {            // one past last step (dz=8 for sh=6)
-								stairwellOpening = true;
-								break;
-							}
-						}
-					}
-
 					BlockId bid;
 					uint8_t p2 = 0;
-					if (stairwellOpening)      bid = BLOCK_AIR;
-					else if (door && dy < 2) bid = doorB;
-					else if (door)             bid = BLOCK_AIR;
-					else if (window)           bid = glassB;
-					else if (stairStep) {
-						// param2=0: HIGH wall on +Z (landing), LOW tread on -Z (approach).
-						// Steps placed at increasing dz → staircase ascends in +Z.
-						bid = stairB; p2 = 0;
+					if (door) {
+						bid = doorB;
+						// Mirror hinge: right door column (dx==h.w/2) opens right (+X),
+						// left column (dx==h.w/2-1) opens left (-X).
+						p2 = (dx == h.w/2) ? 0x4 : 0;
 					}
+					else if (window)           bid = glassB;
 					else if (intermFloor)                    bid = floorB;
 					else if (dy == totalH-1)                 bid = roofB;
 					else if (wall)                           bid = wallB;
 					else                                     bid = BLOCK_AIR;
 
 					ctx.set(hcx+dx, floorY+dy, hcz+dz, bid, p2);
+				}
+			}
+		}
+
+		// Post-pass 1: clear the intermediate floor tiles directly above the stair
+		// footprint (2-wide, exact step positions). Floors are fully placed first;
+		// only the exact 2×(sh-1) opening above the stairs is punched through.
+		// Does not touch the roof or higher-story floors.
+		if (h.stories >= 2) {
+			for (int s = 0; s < h.stories - 1; s++) {
+				int ceilDy = (s + 1) * sh - 1; // intermediate floor level (ceiling of story s)
+				for (int i = 0; i < sh - 1; i++) { // last step (i=sh-1) is at this level, placed below
+					for (int dx = 1; dx <= 2; dx++)
+						ctx.set(hcx + dx, floorY + ceilDy, hcz + (2 + i), BLOCK_AIR);
+				}
+			}
+		}
+
+		// Post-pass 2: place stair blocks last so they are never overwritten by
+		// walls, floors, or other blocks from earlier passes.
+		// Stair step i of story s: (dx=1..2, dz=2+i, dy=s*sh+i), i=0..sh-1.
+		if (h.stories >= 2) {
+			for (int s = 0; s < h.stories - 1; s++) {
+				for (int i = 0; i < sh; i++) {
+					for (int dx = 1; dx <= 2; dx++)
+						ctx.set(hcx + dx, floorY + s*sh + i, hcz + (2 + i), stairB, 0);
 				}
 			}
 		}
@@ -868,4 +864,4 @@ public:
 	VillageWorldTemplate() : ConfigurableWorldTemplate("artifacts/worlds/base/village.py") {}
 };
 
-} // namespace agentica
+} // namespace modcraft

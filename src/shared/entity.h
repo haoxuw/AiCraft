@@ -11,7 +11,7 @@
 #include <memory>
 #include <cstdint>
 
-namespace agentica {
+namespace modcraft {
 
 using EntityId = uint32_t;
 constexpr EntityId ENTITY_NONE = 0;
@@ -168,4 +168,4 @@ private:
 	std::set<std::string> m_dirty;
 };
 
-} // namespace agentica
+} // namespace modcraft

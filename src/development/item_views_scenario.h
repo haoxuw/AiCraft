@@ -11,7 +11,7 @@
 
 #include "development/scenario.h"
 
-namespace agentica {
+namespace modcraft {
 namespace development {
 
 class ItemViewsScenario : public IScenario {
@@ -117,4 +117,4 @@ private:
 };
 
 } // namespace development
-} // namespace agentica
+} // namespace modcraft

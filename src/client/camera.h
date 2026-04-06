@@ -3,7 +3,7 @@
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
 
-namespace agentica {
+namespace modcraft {
 
 enum class CameraMode {
 	FirstPerson,  // FPS: camera at player eyes
@@ -104,4 +104,4 @@ private:
 	double m_lastX = 0, m_lastY = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

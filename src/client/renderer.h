@@ -9,8 +9,18 @@
 #include "client/model.h"
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
-namespace agentica {
+namespace modcraft {
+
+struct DoorAnim {
+	glm::ivec3 basePos;   // world position of the door block (bottom of column)
+	int        height;    // number of door blocks in column
+	float      timer;     // elapsed time
+	bool       opening;   // true = closed→open, false = open→closed
+	bool       hingeRight;// true = right hinge (param2 bit 2)
+	glm::vec3  color;     // block color_side
+};
 
 class Renderer {
 public:
@@ -32,6 +42,8 @@ public:
 	void triggerHitmarker(bool isKill = false) { m_hitmarkerTimer = 0.18f; m_hitmarkerKill = isKill; }
 	void renderMoveTarget(const Camera& cam, float aspect, glm::ivec3 pos);
 	void renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 pos, float progress);
+	void renderDoorAnims(const Camera& cam, float aspect,
+	                     const std::vector<DoorAnim>& anims);
 	float sunStrength() const { return m_sunStrength; }
 
 private:
@@ -53,6 +65,7 @@ private:
 	GLuint m_crackVAO = 0, m_crackVBO = 0;
 	GLuint m_quadVAO = 0, m_quadVBO = 0;
 	GLuint m_shadowVAO = 0, m_shadowVBO = 0;
+	GLuint m_doorAnimVAO = 0, m_doorAnimVBO = 0;
 	ModelRenderer m_modelRenderer;
 
 	ChunkMesher m_mesher;
@@ -76,4 +89,4 @@ private:
 	FogOfWar m_fogOfWar;
 };
 
-} // namespace agentica
+} // namespace modcraft

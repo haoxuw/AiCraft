@@ -4,12 +4,12 @@
  * All string constants used as identifiers throughout the engine.
  * Single source of truth -- never use raw string literals for IDs.
  *
- * These match the Python definitions in python/agentica/objects/ and python/agentica/actions/.
+ * These match the Python definitions in python/modcraft/objects/ and python/modcraft/actions/.
  * When the pybind11 bridge is connected, these constants will be validated against
  * the Python registry at startup.
  */
 
-namespace agentica {
+namespace modcraft {
 
 // ============================================================
 // Entity Type IDs
@@ -228,6 +228,6 @@ namespace PyClass {
 // ============================================================
 // Networking
 // ============================================================
-constexpr int AGENTICA_DISCOVER_PORT = 7778; // UDP LAN discovery broadcast port
+constexpr int MODCRAFT_DISCOVER_PORT = 7778; // UDP LAN discovery broadcast port
 
-} // namespace agentica
+} // namespace modcraft

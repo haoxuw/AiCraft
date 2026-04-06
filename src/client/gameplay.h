@@ -15,7 +15,7 @@
 #include <optional>
 #include <unordered_map>
 
-namespace agentica {
+namespace modcraft {
 
 class GameplayController {
 public:
@@ -144,4 +144,4 @@ private:
 	std::unordered_map<EntityId, glm::vec3> m_rtsLastPos;
 };
 
-} // namespace agentica
+} // namespace modcraft

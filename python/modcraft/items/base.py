@@ -3,7 +3,7 @@ Base classes for item visual definitions (CLIENT-SIDE only).
 
 These define how items LOOK when equipped -- geometry, colors, and
 particle effects. They do NOT define game mechanics (that's server-side
-in agentworld.api and agentworld.actions).
+in modcraft.api and modcraft.actions).
 
 Architecture separation:
   - Server knows: "player has jetpack" → enables mid-air thrust

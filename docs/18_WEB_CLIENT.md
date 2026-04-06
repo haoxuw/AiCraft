@@ -1,4 +1,4 @@
-# Agentica -- Web Client Design
+# ModCraft -- Web Client Design
 
 Dual-target architecture: same C++ source builds natively (Linux/Mac/Win) and as WebAssembly for browsers. Both connect to the same server.
 
@@ -8,7 +8,7 @@ Dual-target architecture: same C++ source builds natively (Linux/Mac/Win) and as
 
 ```
                     ┌─────────────────────────────────────┐
-                    │         Agentica Server (C++)         │
+                    │         ModCraft Server (C++)         │
                     │                                     │
                     │   World ─ Physics ─ Behaviors       │
                     │   Action Queue ─ Entity Manager     │
@@ -54,7 +54,7 @@ emcmake cmake -B build-web \
   -DCMAKE_BUILD_TYPE=Release \
   -DAGENTWORLD_TARGET=web
 cmake --build build-web -j$(nproc)
-# Outputs: agentworld.html, agentworld.js, agentworld.wasm, agentworld.data
+# Outputs: modcraft.html, modcraft.js, modcraft.wasm, modcraft.data
 ```
 
 ### CMake target detection
@@ -173,13 +173,13 @@ Browsers cannot open raw TCP sockets. Two options:
 
 **Option A: WebSocket proxy (simple)**
 ```
-Browser ──WebSocket──► Proxy (ws→tcp) ──TCP──► Agentica Server
+Browser ──WebSocket──► Proxy (ws→tcp) ──TCP──► ModCraft Server
 ```
 A lightweight proxy (e.g., `websockify`) converts WebSocket to TCP. Server unchanged.
 
 **Option B: Native WebSocket support in server (better)**
 ```
-Browser ──WebSocket──► Agentica Server (listens on both TCP and WS)
+Browser ──WebSocket──► ModCraft Server (listens on both TCP and WS)
 ```
 Server accepts both TCP (native clients) and WebSocket (browser clients) on different ports. Same binary protocol over both transports.
 
@@ -293,22 +293,22 @@ The web client is a static site:
 ```
 dist/
   index.html          ← entry point
-  agentworld.js          ← Emscripten glue
-  agentworld.wasm        ← compiled game (~3-5MB)
-  agentworld.data        ← bundled shaders + config (~100KB)
+  modcraft.js          ← Emscripten glue
+  modcraft.wasm        ← compiled game (~3-5MB)
+  modcraft.data        ← bundled shaders + config (~100KB)
 ```
 
 Host on any CDN (Cloudflare Pages, Vercel, S3). No server-side rendering needed.
 
 ### Global server
 
-Run the dedicated Agentica server on a cloud VM:
+Run the dedicated ModCraft server on a cloud VM:
 ```bash
-./agentica-server --port 7777 --ws-port 8080
+./modcraft-server --port 7777 --ws-port 8080
 ```
 
-Browser clients connect via WebSocket to `wss://play.agentworld.io:8080`.
-Native clients connect via TCP to `play.agentworld.io:7777`.
+Browser clients connect via WebSocket to `wss://play.modcraft.io:8080`.
+Native clients connect via TCP to `play.modcraft.io:7777`.
 Both use the same binary protocol.
 
 ---

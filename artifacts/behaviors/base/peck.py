@@ -9,7 +9,7 @@ Parameters (optional via self dict):
   scatter_range  — flee trigger distance (default 4)
   peck_chance    — probability of pecking vs scratching (default 0.45)
 """
-from agentica_engine import Idle, Wander, Flee, MoveTo, DropItem
+from modcraft_engine import Idle, Wander, Flee, MoveTo, DropItem
 import random
 
 PECK_CHANCE = 0.45

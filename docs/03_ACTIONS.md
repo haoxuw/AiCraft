@@ -1,4 +1,4 @@
-# Agentica - Actions
+# ModCraft - Actions
 
 Actions are discrete events that modify the World. Every change in the game -- mining a block, a sheep eating grass, TNT exploding -- is an Action.
 
@@ -36,7 +36,7 @@ Actions are Python functions decorated with metadata:
 
 ```python
 # artifacts/actions/mine.py
-from agentworld.api import (
+from modcraft.api import (
     Action, ActionMeta, WorldView, PlayerObject, BlockPos,
     Precondition, Effect
 )

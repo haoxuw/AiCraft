@@ -23,7 +23,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace agentica {
+namespace modcraft {
 
 class EntityManager;
 
@@ -179,4 +179,4 @@ private:
 	std::string m_source;
 };
 
-} // namespace agentica
+} // namespace modcraft

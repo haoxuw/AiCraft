@@ -25,7 +25,7 @@
 #include <string>
 #include <cstdio>
 
-namespace agentica {
+namespace modcraft {
 namespace development {
 
 class DebugCapture {
@@ -88,4 +88,4 @@ private:
 };
 
 } // namespace development
-} // namespace agentica
+} // namespace modcraft

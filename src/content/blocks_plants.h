@@ -3,7 +3,7 @@
 #include "shared/block_registry.h"
 #include "shared/constants.h"
 
-namespace agentica::builtin {
+namespace modcraft::builtin {
 
 // Plant blocks: wood logs, leaves.
 inline void registerPlantBlocks(BlockRegistry& reg) {
@@ -29,4 +29,4 @@ inline void registerPlantBlocks(BlockRegistry& reg) {
 		{{GR::Snappy,3},{GR::Flammable,2}}, "",SN::DigLeaves,""});
 }
 
-} // namespace agentica::builtin
+} // namespace modcraft::builtin

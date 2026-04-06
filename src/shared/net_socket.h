@@ -18,7 +18,7 @@
 #include <cstring>
 #include <cstdio>
 
-namespace agentica::net {
+namespace modcraft::net {
 
 // Make a socket non-blocking
 inline void setNonBlocking(int fd) {
@@ -289,4 +289,4 @@ private:
 	int m_fd = -1;
 };
 
-} // namespace agentica::net
+} // namespace modcraft::net

@@ -8,7 +8,7 @@ To learn from prior art. Luanti is a mature voxel engine with 14+ years of devel
 
 ## What We Are NOT Copying
 
-| Luanti/Minetest Approach | AiCraft Approach |
+| Luanti/Minetest Approach | ModCraft Approach |
 |--------------------------|------------------|
 | Lua scripting (custom Lua VM embedded) | Python scripting (CPython embedded via pybind11) |
 | Hard-coded C++ game functions (`register_node`, `register_abm`, etc.) | Thin C++ server with NO game logic -- all game logic in Python |

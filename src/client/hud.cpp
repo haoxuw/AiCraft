@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <cmath>
 
-namespace agentica {
+namespace modcraft {
 
 // ----------------------------------------------------------------
 // DST-style circular stat ring helper (HP / Hunger)
@@ -395,4 +395,4 @@ void HUD::render(const HUDContext& ctx, TextRenderer& text, Shader& highlightSha
 	renderDebugOverlay(ctx, text);
 }
 
-} // namespace agentica
+} // namespace modcraft

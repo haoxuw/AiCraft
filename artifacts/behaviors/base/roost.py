@@ -7,7 +7,7 @@ with peck or wander for a complete bird behavior.
 Parameters (optional via self dict):
   roost_height  — min height above ground for a perch (default 1.5)
 """
-from agentica_engine import Idle, MoveTo
+from modcraft_engine import Idle, MoveTo
 import random
 
 _roost_target = None

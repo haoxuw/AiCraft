@@ -3,7 +3,7 @@
 /**
  * Inventory: a Counter of items (item_id -> count).
  *
- * Unlike Minecraft's slot-based grid, Agentica uses a simple
+ * Unlike Minecraft's slot-based grid, ModCraft uses a simple
  * counter. No stack limits, no slot management. Items are
  * displayed sorted by ID, skipping zero-count entries.
  *
@@ -14,7 +14,7 @@
 #include <map>
 #include <vector>
 
-namespace agentica {
+namespace modcraft {
 
 // Equipment slots — what a character can wear
 // Right hand always shows the hotbar-selected item (not an equipment slot).
@@ -181,4 +181,4 @@ private:
 	std::string m_equipped[WEAR_SLOT_COUNT];
 };
 
-} // namespace agentica
+} // namespace modcraft

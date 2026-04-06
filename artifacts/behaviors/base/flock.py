@@ -5,7 +5,7 @@ Works for birds (tight flocking) and herds (loose grouping).
 
 Parameters: flock_range (default 4)
 """
-from agentica_engine import MoveTo
+from modcraft_engine import MoveTo
 
 def decide(self, world):
     flock_range = self.get("flock_range", 4.0)

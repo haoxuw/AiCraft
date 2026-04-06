@@ -1,4 +1,4 @@
-# Agentica - Player Coding System
+# ModCraft - Player Coding System
 
 The defining feature: players write Python code inside the game to create new Objects and Actions, test them locally, then upload them to become real in the shared world.
 
@@ -112,10 +112,10 @@ Players CANNOT create:
 ### What the API Exposes
 
 ```python
-# agentworld.api -- the ONLY module players interact with
+# modcraft.api -- the ONLY module players interact with
 
 # Base classes (extend these)
-from agentworld.api import (
+from modcraft.api import (
     PassiveObject, ActiveObject, LivingObject,
     PlayerObject, MobObject, NPCObject,
     FluidObject, EffectObject, ItemEntity,
@@ -123,10 +123,10 @@ from agentworld.api import (
 )
 
 # Metadata
-from agentworld.api import ObjectMeta, ActionMeta
+from modcraft.api import ObjectMeta, ActionMeta
 
 # Types
-from agentworld.api import (
+from modcraft.api import (
     Vec3, BlockPos, EntityId,
     Attribute, Inventory, ItemStack,
     SoundSet, LootTable, LootEntry,
@@ -134,7 +134,7 @@ from agentworld.api import (
 )
 
 # WorldView (passed to step/execute, NOT instantiable)
-from agentworld.api import WorldView
+from modcraft.api import WorldView
 
 # Utilities (safe subset)
 import math

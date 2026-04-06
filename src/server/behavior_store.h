@@ -16,7 +16,7 @@
 #include <filesystem>
 #include <cstdio>
 
-namespace agentica {
+namespace modcraft {
 
 class BehaviorStore {
 public:
@@ -92,4 +92,4 @@ private:
 	std::string m_basePath;
 };
 
-} // namespace agentica
+} // namespace modcraft

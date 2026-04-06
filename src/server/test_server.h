@@ -12,7 +12,7 @@
 #include <vector>
 #include <functional>
 
-namespace agentica {
+namespace modcraft {
 
 class TestServer {
 public:
@@ -69,4 +69,4 @@ private:
 	EntityId m_playerId = ENTITY_NONE;
 };
 
-} // namespace agentica
+} // namespace modcraft

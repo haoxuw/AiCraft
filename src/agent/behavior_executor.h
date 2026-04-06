@@ -22,7 +22,7 @@
 #include <algorithm>
 #include <glm/trigonometric.hpp>
 
-namespace agentica {
+namespace modcraft {
 
 // Per-entity state for behavior execution (wander direction, timers)
 struct AgentBehaviorState {
@@ -266,4 +266,4 @@ inline std::vector<NearbyBlock> getKnownBlocks(
 	return result;
 }
 
-} // namespace agentica
+} // namespace modcraft

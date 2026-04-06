@@ -12,7 +12,7 @@
 #include <functional>
 #include <algorithm>
 
-namespace agentica {
+namespace modcraft {
 
 class TextInput {
 public:
@@ -173,4 +173,4 @@ private:
 	int m_visibleLines = 20;
 };
 
-} // namespace agentica
+} // namespace modcraft

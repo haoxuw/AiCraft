@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace agentica {
+namespace modcraft {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // NavViolation — one geometry problem found during validation.
@@ -211,4 +211,4 @@ inline std::unordered_set<glm::ivec3, IVec3Hash, IVec3Eq> floodReachable(
 	return visited;
 }
 
-} // namespace agentica
+} // namespace modcraft

@@ -11,7 +11,7 @@
 #include "shared/inventory.h"
 #include "client/gl.h"
 
-namespace agentica {
+namespace modcraft {
 
 struct HUDContext {
 	float aspect;
@@ -50,4 +50,4 @@ private:
 	void renderEntityTooltip(const HUDContext& ctx, TextRenderer& text);
 };
 
-} // namespace agentica
+} // namespace modcraft

@@ -1,7 +1,7 @@
 #include "client/model.h"
 #include <cmath>
 
-namespace agentica {
+namespace modcraft {
 
 bool ModelRenderer::init(Shader* shader) {
 	m_shader = shader;
@@ -220,4 +220,4 @@ void ModelRenderer::drawStatic(const BoxModel& model, const glm::mat4& viewProj,
 	glUniform1i(useTexLoc, 0);
 }
 
-} // namespace agentica
+} // namespace modcraft

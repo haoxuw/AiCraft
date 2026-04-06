@@ -164,7 +164,7 @@ to follow the player, 70% wanders. Unpredictable mood.
 The visual tree compiles to Python code like:
 
 ```python
-from agentica_engine import Idle, Wander, Follow, Flee, DropItem
+from modcraft_engine import Idle, Wander, Follow, Flee, DropItem
 import random as _rng
 
 def decide(self, world):

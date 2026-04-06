@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace agentica {
+namespace modcraft {
 
 class TextRenderer;
 
@@ -188,4 +188,4 @@ private:
 	void        resolveOverlap(std::vector<glm::vec2>& positions) const;
 };
 
-} // namespace agentica
+} // namespace modcraft

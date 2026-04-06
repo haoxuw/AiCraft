@@ -13,7 +13,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
-namespace agentica {
+namespace modcraft {
 
 // A body part = a colored 3D box with optional animation.
 struct BodyPart {
@@ -70,4 +70,4 @@ struct AnimState {
 	float attackPhase = 0.0f;  // 0→1 during attack swing (drives arm/limb lunge)
 };
 
-} // namespace agentica
+} // namespace modcraft

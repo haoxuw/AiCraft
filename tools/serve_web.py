@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local web server for AgentWorld WASM build with required CORS headers."""
+"""Local web server for ModCraft WASM build with required CORS headers."""
 
 import sys
 import os
@@ -16,12 +16,11 @@ if __name__ == '__main__':
     directory = sys.argv[2] if len(sys.argv) > 2 else '.'
     os.chdir(directory)
     server = HTTPServer(('', port), CORSHandler)
-    # Pick the newest HTML file (prefer agentica.html, fall back to legacy names)
-    candidates = ['agentica.html', 'agentworld.html', 'aicraft.html']
+    candidates = ['modcraft.html']
     html = next((f for f in candidates if os.path.exists(f)), candidates[0])
     ws_port = 7779
     print(f"""
-  Agentica Web Client: http://localhost:{port}/{html}
+  ModCraft Web Client: http://localhost:{port}/{html}
 
   To join a LAN game, you need a WebSocket proxy (websockify) running
   on the server machine so the browser can reach the TCP game server:

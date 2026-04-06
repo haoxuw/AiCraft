@@ -13,7 +13,7 @@
 #include <string>
 #include <functional>
 
-namespace agentica {
+namespace modcraft {
 namespace development {
 
 // Callbacks injected by the game into the scenario.
@@ -67,4 +67,4 @@ protected:
 };
 
 } // namespace development
-} // namespace agentica
+} // namespace modcraft

@@ -4,7 +4,7 @@ Random chance to start grazing, then idle for a few seconds.
 
 Parameters: graze_chance (default 0.25)
 """
-from agentica_engine import Idle
+from modcraft_engine import Idle
 import random
 
 _rng_seeded = False

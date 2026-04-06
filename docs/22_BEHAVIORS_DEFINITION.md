@@ -163,7 +163,7 @@ for entity in controlled_entities:
 - Each rule is 10-30 lines
 - Returns `None` to pass, or an action object to act
 - Parameters read from `self.get("key", default)` — creature artifact can override
-- `from agentica_engine import Idle, Wander, Flee, MoveTo, Follow, DropItem`
+- `from modcraft_engine import Idle, Wander, Flee, MoveTo, Follow, DropItem`
 
 ### Network Protocol
 - No changes needed — bot client sends the same `C_ACTION` messages

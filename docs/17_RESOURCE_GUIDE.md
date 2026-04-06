@@ -1,4 +1,4 @@
-# Resource Guide: Making Agentica Look Better Than Minecraft Dungeons
+# Resource Guide: Making ModCraft Look Better Than Minecraft Dungeons
 
 This document catalogs open-source resources (textures, models, sounds, shaders) with permissive licenses (CC0, MIT, CC-BY) that we can use or mimic.
 
@@ -133,7 +133,7 @@ This document catalogs open-source resources (textures, models, sounds, shaders)
 | **itch.io CC0 Music** | https://itch.io/game-assets/assets-cc0/tag-music | CC0 | Fantasy, battle, RPG loops |
 | **Pixabay Music** | https://pixabay.com/music/ | Pixabay License | Dungeon, medieval, ambient, fantasy orchestral |
 
-### Sound Mapping for Agentica
+### Sound Mapping for ModCraft
 
 | Category | Primary Source | Backup |
 |----------|---------------|--------|
@@ -165,7 +165,7 @@ This document catalogs open-source resources (textures, models, sounds, shaders)
 
 | Repo | URL | License | Key Techniques |
 |------|-----|---------|----------------|
-| **Gengine** | https://github.com/JuanDiegoMontoya/Gengine | Check | HDR, CoD:AW bloom, 4-channel flood-fill voxel lighting, FXAA, 10M GPU particles. **Most similar to Agentica.** |
+| **Gengine** | https://github.com/JuanDiegoMontoya/Gengine | Check | HDR, CoD:AW bloom, 4-channel flood-fill voxel lighting, FXAA, 10M GPU particles. **Most similar to ModCraft.** |
 | **OpenGL-VXGI-Engine** | https://github.com/Hanlin-Zhou/OpenGL-VXGI-Engine | Check | Deferred pipeline, voxel cone tracing GI, PCSS, SSAO. Clean readable code. |
 | **St0wy's Deferred PBR** | https://github.com/St0wy/opengl-scene | Check | Deferred PBR, CSM, SSAO, ACES tonemapping, bloom. Uses glad+glm like us. [Blog](https://blog.stowy.ch/posts/how-i-implemented-a-deferred-pbr-renderer-in-opengl/) |
 | **VCTRenderer** | https://github.com/jose-villegas/VCTRenderer | Check | Voxel cone tracing GI, conservative voxelization, soft shadows, emissive materials. We skip voxelization since we ARE a voxel engine. |

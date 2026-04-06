@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 
-namespace agentica {
+namespace modcraft {
 
 // ============================================================
 // Key name -> GLFW code mapping
@@ -40,6 +40,7 @@ static const KeyMapping KEY_TABLE[] = {
 	{"Tab", GLFW_KEY_TAB, false},
 	{"Backspace", GLFW_KEY_BACKSPACE, false},
 	{"Delete", GLFW_KEY_DELETE, false},
+	{"PrintScreen", GLFW_KEY_PRINT_SCREEN, false},
 	{"Insert", GLFW_KEY_INSERT, false},
 	{"Home", GLFW_KEY_HOME, false},
 	{"End", GLFW_KEY_END, false},
@@ -200,4 +201,4 @@ bool ControlManager::pressed(const char* action) const {
 	return it != m_state.end() && it->second.current && !it->second.previous;
 }
 
-} // namespace agentica
+} // namespace modcraft

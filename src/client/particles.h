@@ -5,7 +5,7 @@
 #include <vector>
 #include "client/shader.h"
 
-namespace agentica {
+namespace modcraft {
 
 struct Particle {
 	glm::vec3 pos;
@@ -37,4 +37,4 @@ private:
 	GLuint m_vao = 0, m_vbo = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

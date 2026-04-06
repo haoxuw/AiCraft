@@ -3,7 +3,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 
-namespace agentica {
+namespace modcraft {
 
 // ================================================================
 // processBlockInteraction -- raycast, break/place, inspect
@@ -198,4 +198,4 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	}
 }
 
-} // namespace agentica
+} // namespace modcraft

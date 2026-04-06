@@ -4,7 +4,7 @@
 #include "shared/constants.h"
 #include "client/types.h"
 
-namespace agentica::builtin {
+namespace modcraft::builtin {
 
 inline void registerPlayerEntity(EntityManager& mgr) {
 	EntityDef def;
@@ -34,4 +34,4 @@ inline void registerPlayerEntity(EntityManager& mgr) {
 	mgr.registerType(def);
 }
 
-} // namespace agentica::builtin
+} // namespace modcraft::builtin

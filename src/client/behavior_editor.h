@@ -20,7 +20,7 @@
 #include <unordered_map>
 #include <algorithm>
 
-namespace agentica {
+namespace modcraft {
 
 // ================================================================
 // BehaviorFunc — definition of one built-in function
@@ -134,7 +134,7 @@ class BehaviorCompiler {
 public:
 	static std::string compile(const BehaviorExpr& root) {
 		std::string code;
-		code += "from agentica_engine import Idle, Wander, MoveTo, Follow, Flee, BreakBlock, DropItem\n";
+		code += "from modcraft_engine import Idle, Wander, MoveTo, Follow, Flee, BreakBlock, DropItem\n";
 		code += "import random as _rng\n\n";
 		code += "def decide(self, world):\n";
 		code += compileNode(root, 1);
@@ -451,4 +451,4 @@ inline bool renderExprEditor(BehaviorExpr& expr, int depth, int& idCounter) {
 	return BehaviorExprEditor::render(expr, depth, idCounter);
 }
 
-} // namespace agentica
+} // namespace modcraft

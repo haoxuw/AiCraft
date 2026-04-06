@@ -4,7 +4,7 @@ Sits nearby when close, does idle animations, follows when far.
 
 Parameters: follow_dist (default 3)
 """
-from agentica_engine import Idle, Follow
+from modcraft_engine import Idle, Follow
 import random
 
 _rng_seeded = False

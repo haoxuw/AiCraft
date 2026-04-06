@@ -4,7 +4,7 @@ Universal survival rule. Should be first in most prey creatures' rule lists.
 
 Parameters: flee_range (default 5)
 """
-from agentica_engine import Flee
+from modcraft_engine import Flee
 
 def decide(self, world):
     flee_range = self.get("flee_range", 5.0)

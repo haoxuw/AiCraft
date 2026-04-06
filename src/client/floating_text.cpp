@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace agentica {
+namespace modcraft {
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Small helpers
@@ -336,4 +336,4 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 	}
 }
 
-} // namespace agentica
+} // namespace modcraft

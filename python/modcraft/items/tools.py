@@ -4,7 +4,7 @@ Client-side visual only. Attached to right_hand slot.
 All tools scaled up for visibility.
 """
 
-from agentworld.items.base import ItemVisual, ItemPiece
+from modcraft.items.base import ItemVisual, ItemPiece
 
 WOOD_HANDLE = (0.50, 0.35, 0.15, 1)
 STONE_HEAD  = (0.50, 0.50, 0.52, 1)

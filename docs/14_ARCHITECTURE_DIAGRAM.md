@@ -1,4 +1,4 @@
-# Agentica - Architecture Diagram
+# ModCraft - Architecture Diagram
 
 Transcribed from the design diagram. Three cleanly separated layers.
 

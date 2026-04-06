@@ -19,7 +19,7 @@
 #include <vector>
 #include <filesystem>
 
-namespace agentica {
+namespace modcraft {
 
 namespace model_loader {
 
@@ -323,4 +323,4 @@ inline std::unordered_map<std::string, BoxModel> loadAllModels(const std::string
 }
 
 } // namespace model_loader
-} // namespace agentica
+} // namespace modcraft

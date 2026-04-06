@@ -41,7 +41,7 @@
 #include <filesystem>
 #include <fstream>
 
-namespace agentica {
+namespace modcraft {
 
 class ImGuiMenu {
 public:
@@ -52,7 +52,7 @@ public:
 #ifndef __EMSCRIPTEN__
 		// Start listening for LAN broadcasts immediately so we don't miss
 		// announcements that arrive before the user opens the Join tab.
-		m_discoverySocket.open(AGENTICA_DISCOVER_PORT);
+		m_discoverySocket.open(MODCRAFT_DISCOVER_PORT);
 #endif
 	}
 
@@ -81,7 +81,7 @@ public:
 			ImGui::SetCursorPos(ImVec2(24, 10));
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.65f, 0.15f, 1.0f));
 			ImGui::SetWindowFontScale(1.8f);
-			ImGui::Text("AGENTICA");
+			ImGui::Text("MODCRAFT");
 			ImGui::SetWindowFontScale(1.0f);
 			ImGui::PopStyleColor();
 
@@ -316,7 +316,7 @@ private:
 
 		// (Re)open UDP discovery socket to receive LAN broadcasts
 		if (!m_discoverySocket.isOpen())
-			m_discoverySocket.open(AGENTICA_DISCOVER_PORT);
+			m_discoverySocket.open(MODCRAFT_DISCOVER_PORT);
 
 		// Quick TCP probe for localhost servers (same machine)
 		for (int port = 7777; port <= 7787; port++) {
@@ -342,7 +342,7 @@ private:
 		net::UdpSocket::Packet pkt;
 		while (m_discoverySocket.tryRecv(pkt)) {
 			int port = 0, players = 0;
-			if (sscanf(pkt.data.c_str(), "AGENTICA %d %d", &port, &players) != 2) continue;
+			if (sscanf(pkt.data.c_str(), "MODCRAFT %d %d", &port, &players) != 2) continue;
 			bool found = false;
 			for (auto& s : m_detectedServers) {
 				// Match exact IP, or absorb a localhost TCP-probe entry for the same port
@@ -1215,4 +1215,4 @@ private:
 	}
 };
 
-} // namespace agentica
+} // namespace modcraft

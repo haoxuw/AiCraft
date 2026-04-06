@@ -14,7 +14,7 @@
 #include <emscripten.h>
 #endif
 
-namespace agentica {
+namespace modcraft {
 
 // ============================================================
 // Screenshot utility
@@ -35,7 +35,7 @@ static void writeScreenshot(int w, int h, const char* path) {
 // Init / Shutdown
 // ============================================================
 bool Game::init(int argc, char** argv) {
-	printf("=== Agentica v0.9.0 ===\n");
+	printf("=== ModCraft v0.9.0 ===\n");
 
 	// Determine executable directory (for launching server/bot processes)
 	if (argc > 0) {
@@ -44,7 +44,7 @@ bool Game::init(int argc, char** argv) {
 		m_execDir = (pos != std::string::npos) ? exe.substr(0, pos) : ".";
 	}
 
-	if (!m_window.init(1600, 900, "Agentica")) return false;
+	if (!m_window.init(1600, 900, "ModCraft")) return false;
 	if (!m_renderer.init("shaders")) return false;
 	if (!m_text.init("shaders")) return false;
 	if (!m_particles.init("shaders")) return false;
@@ -244,8 +244,7 @@ void Game::shutdown() {
 	// Stop server + bot processes if we spawned them
 	m_agentMgr.stopAll();
 
-	if (m_serverLog) { fclose(m_serverLog); m_serverLog = nullptr; }
-	m_audio.shutdown();
+m_audio.shutdown();
 	m_ui.shutdown();
 	m_hud.shutdown();
 	m_particles.shutdown();
@@ -383,9 +382,41 @@ void Game::endFrame() {
 }
 
 void Game::saveScreenshot() {
-	char p[256];
-	snprintf(p, 256, "/tmp/agentica_screenshot_%d.ppm", m_screenshotCounter++);
-	writeScreenshot(m_window.width(), m_window.height(), p);
+	// Use std::filesystem for cross-platform temp directory
+	namespace fs = std::filesystem;
+	fs::path tmp;
+	try { tmp = fs::temp_directory_path(); } catch (...) { tmp = "/tmp"; }
+	char name[64];
+	snprintf(name, sizeof(name), "agentica_screenshot_%d.ppm", m_screenshotCounter++);
+	std::string path = (tmp / name).string();
+
+	writeScreenshot(m_window.width(), m_window.height(), path.c_str());
+	printf("Screenshot saved: %s\n", path.c_str());
+
+	// Best-effort clipboard copy (platform-specific)
+#if defined(_WIN32)
+	// Windows: no easy PPM clipboard; skip
+#elif defined(__APPLE__)
+	{
+		// macOS: convert PPM to TIFF via sips and set clipboard with osascript
+		char cmd[512];
+		std::string tiff = (tmp / "agentica_ss_tmp.tiff").string();
+		snprintf(cmd, sizeof(cmd), "sips -s format tiff '%s' --out '%s' 2>/dev/null && "
+		         "osascript -e 'set the clipboard to (read file \"%s\" as TIFF picture)' 2>/dev/null",
+		         path.c_str(), tiff.c_str(), tiff.c_str());
+		system(cmd);
+	}
+#elif defined(__EMSCRIPTEN__)
+	// Web: skip clipboard; file is in browser virtual FS
+#else
+	// Linux: try xclip
+	{
+		char cmd[512];
+		snprintf(cmd, sizeof(cmd), "xclip -selection clipboard -t image/x-portable-pixmap -i '%s' 2>/dev/null",
+		         path.c_str());
+		system(cmd);
+	}
+#endif
 }
 
 // ============================================================
@@ -584,7 +615,7 @@ void Game::enterGame(int templateIndex, GameState targetState, const WorldGenCon
 
 	int port = m_agentMgr.launchServer(cfg);
 	if (port < 0) {
-		fprintf(stderr, "[Game] Failed to launch agentica-server — binary missing or no port available\n");
+		fprintf(stderr, "[Game] Failed to launch modcraft-server — binary missing or no port available\n");
 		// TODO: surface error in UI rather than silently returning to menu
 		return;
 	}
@@ -657,7 +688,7 @@ void Game::setupAfterConnect(GameState targetState) {
 }
 
 void Game::saveCurrentWorld() {
-	// The server process (agentica-server) saves world data on shutdown.
+	// The server process (modcraft-server) saves world data on shutdown.
 	// stopAll() sends SIGTERM which triggers main_server.cpp's save handler.
 	// Nothing to do here on the client side.
 	if (!m_currentWorldPath.empty())
@@ -1089,10 +1120,58 @@ void Game::updatePlaying(float dt, float aspect) {
 		}
 	}
 
-	// Door toggle sound
+	// Door toggle sound + swing animation
 	if (m_gameplay.doorToggled()) {
 		m_audio.play("door_open", m_gameplay.doorTogglePos(), 0.6f);
+
+		// Start door swing animation
+		glm::vec3 fp = m_gameplay.doorTogglePos();
+		glm::ivec3 bp{(int)std::floor(fp.x), (int)std::floor(fp.y), (int)std::floor(fp.z)};
+		auto& chunks = m_server->chunks();
+		auto& blocks = m_server->blockRegistry();
+		BlockId bid = chunks.getBlock(bp.x, bp.y, bp.z);
+		const BlockDef& bdef = blocks.get(bid);
+		bool wasOpen = (bdef.string_id == BlockType::DoorOpen);
+
+		// Read param2 hinge bit from the chunk
+		ChunkPos cp = worldToChunk(bp.x, bp.y, bp.z);
+		Chunk* ch = chunks.getChunk(cp);
+		uint8_t p2 = ch ? ch->getParam2(((bp.x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE,
+		                                 ((bp.y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE,
+		                                 ((bp.z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE) : 0;
+		bool hingeRight = (p2 >> 2) & 1;
+		glm::vec3 col = bdef.color_side;
+
+		// Find bottom of door column
+		glm::ivec3 base = bp;
+		while (true) {
+			BlockId below = chunks.getBlock(base.x, base.y - 1, base.z);
+			const std::string& bs = blocks.get(below).string_id;
+			if (bs == BlockType::Door || bs == BlockType::DoorOpen) base.y--;
+			else break;
+		}
+		// Count height of door column
+		int h = 0;
+		for (int dy = 0; dy < 8; dy++) {
+			BlockId above = chunks.getBlock(base.x, base.y + dy, base.z);
+			const std::string& as2 = blocks.get(above).string_id;
+			if (as2 == BlockType::Door || as2 == BlockType::DoorOpen) h++;
+			else break;
+		}
+		if (h < 1) h = 1;
+
+		m_doorAnims.push_back({base, h, 0.0f, !wasOpen, hingeRight, col});
 		m_gameplay.clearDoorToggle();
+	}
+
+	// Advance door animations and remove finished ones
+	{
+		for (auto& a : m_doorAnims)
+			a.timer += dt;
+		m_doorAnims.erase(
+			std::remove_if(m_doorAnims.begin(), m_doorAnims.end(),
+				[](const DoorAnim& a) { return a.timer >= 0.25f; }),
+			m_doorAnims.end());
 	}
 
 	// Block place feedback (immediate client-side sound)
@@ -1182,6 +1261,9 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			m_gameplay.breakTarget(), m_gameplay.breakProgress());
 	}
 
+	// Door swing animation overlay
+	m_renderer.renderDoorAnims(m_camera, aspect, m_doorAnims);
+
 	// 3D models
 	glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
 	auto& mr = m_renderer.modelRenderer();
@@ -1221,212 +1303,11 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		return key;
 	};
 
-	// Build a model with equipped items attached at hand positions.
-	// Items swing with the arm they're attached to.
-	auto buildEquippedModel = [&](const Entity& e, const BoxModel& baseModel) -> BoxModel {
-		BoxModel model = baseModel;
-		if (!e.inventory) return model;
-		const float PI = 3.14159265f;
-		float s = model.modelScale;
-
-		// Hand attachment points come from the character model (hand_r/l, pivot_r/l).
-		// This lets each creature skin define correct proportions in Python.
-		struct HandSlot {
-			WearSlot slot;
-			glm::vec3 handOffset;   // position of the hand (where item center goes)
-			glm::vec3 pivot;        // arm rotation pivot
-			float phase;            // arm swing phase
-		};
-		float armAmp = 50.0f; // match arm amplitude
-		// Only the offhand (left) uses an equipment slot.
-		// Right hand always shows the hotbar-selected item (handled below).
-		HandSlot hands[] = {
-			{WearSlot::Offhand, model.handL, model.pivotL, PI},
-		};
-
-		for (auto& h : hands) {
-			const std::string& itemId = e.inventory->equipped(h.slot);
-			if (itemId.empty()) continue;
-
-			// Look up item model from artifact's model field
-			std::string modelKey;
-			const ArtifactEntry* art = m_artifacts.findById(itemId);
-			if (art) {
-				auto it = art->fields.find("model");
-				if (it != art->fields.end()) modelKey = it->second;
-			}
-			// Fallback: strip "base:" prefix
-			if (modelKey.empty()) {
-				modelKey = itemId;
-				auto colon = modelKey.find(':');
-				if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
-			}
-
-			auto mit = m_models.find(modelKey);
-			if (mit == m_models.end()) continue;
-
-			// Apply equip transform: rotate + offset + scale item parts
-			auto& et = mit->second.equip;
-			// If no explicit equip scale was set (default 1.0) and model is large,
-			// auto-scale to fit in hand (~0.3 blocks)
-			float es = et.scale;
-			bool hasExplicitEquip = (et.rotation != glm::vec3(0) || et.offset != glm::vec3(0) || et.scale != 1.0f);
-			if (!hasExplicitEquip) {
-				float modelH = std::max(mit->second.totalHeight * mit->second.modelScale, 0.1f);
-				es = std::min(0.35f / modelH, 0.5f); // fit to ~0.35 blocks, cap at 0.5
-			}
-			// Pre-compute rotation matrix from equip Euler angles (degrees)
-			float rx = glm::radians(et.rotation.x);
-			float ry = glm::radians(et.rotation.y);
-			float rz = glm::radians(et.rotation.z);
-			glm::mat3 rotX = {
-				{1, 0, 0}, {0, std::cos(rx), std::sin(rx)}, {0, -std::sin(rx), std::cos(rx)}
-			};
-			glm::mat3 rotY = {
-				{std::cos(ry), 0, -std::sin(ry)}, {0, 1, 0}, {std::sin(ry), 0, std::cos(ry)}
-			};
-			glm::mat3 rotZ = {
-				{std::cos(rz), std::sin(rz), 0}, {-std::sin(rz), std::cos(rz), 0}, {0, 0, 1}
-			};
-			glm::mat3 equipRot = rotZ * rotY * rotX;
-
-			for (auto& part : mit->second.parts) {
-				BodyPart bp;
-				// Rotate part offset around origin, then scale and translate to hand
-				glm::vec3 rotatedOffset = equipRot * (part.offset * es);
-				bp.offset = h.handOffset + et.offset + rotatedOffset;
-				// Rotate halfSize axes (approximate: use rotated extents)
-				glm::vec3 hs = part.halfSize * es;
-				bp.halfSize = glm::abs(equipRot * hs);
-				bp.color = part.color;
-				bp.pivot = h.pivot;
-				bp.swingAxis = {1, 0, 0};
-				bp.swingAmplitude = armAmp;
-				bp.swingPhase = h.phase;
-				bp.swingSpeed = 1.0f;
-				model.parts.push_back(bp);
-			}
-		}
-
-		// Hotbar selected item → right hand (Minecraft-style: hotbar IS right hand)
-		{
-			int sel = e.getProp<int>(Prop::SelectedSlot, 0);
-			std::string hotbarId = e.inventory->hotbar(sel);
-			if (!hotbarId.empty()) {
-				std::string modelKey;
-				const ArtifactEntry* art = m_artifacts.findById(hotbarId);
-				if (art) {
-					auto it = art->fields.find("model");
-					if (it != art->fields.end()) modelKey = it->second;
-				}
-				if (modelKey.empty()) {
-					modelKey = hotbarId;
-					auto colon = modelKey.find(':');
-					if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
-				}
-				auto mit = m_models.find(modelKey);
-				if (mit != m_models.end()) {
-					glm::vec3 rHandOff = model.handR;
-					glm::vec3 rPivot = model.pivotR;
-
-					auto& et = mit->second.equip;
-					float es = et.scale;
-					float rx = glm::radians(et.rotation.x);
-					float ry = glm::radians(et.rotation.y);
-					float rz = glm::radians(et.rotation.z);
-					glm::mat3 rotXm = {{1,0,0},{0,std::cos(rx),std::sin(rx)},{0,-std::sin(rx),std::cos(rx)}};
-					glm::mat3 rotYm = {{std::cos(ry),0,-std::sin(ry)},{0,1,0},{std::sin(ry),0,std::cos(ry)}};
-					glm::mat3 rotZm = {{std::cos(rz),std::sin(rz),0},{-std::sin(rz),std::cos(rz),0},{0,0,1}};
-					glm::mat3 equipRot = rotZm * rotYm * rotXm;
-
-					for (auto& part : mit->second.parts) {
-						BodyPart bp;
-						bp.offset = rHandOff + et.offset + equipRot * (part.offset * es);
-						bp.halfSize = glm::abs(equipRot * (part.halfSize * es));
-						bp.color = part.color;
-						bp.pivot = rPivot;
-						bp.swingAxis = {1, 0, 0};
-						bp.swingAmplitude = armAmp;
-						bp.swingPhase = 0;
-						bp.swingSpeed = 1.0f;
-						model.parts.push_back(bp);
-					}
-				}
-			}
-		}
-
-		// Back slot (jetpack, cape, etc.)
-		{
-			const std::string& backItem = e.inventory->equipped(WearSlot::Back);
-			if (!backItem.empty()) {
-				std::string modelKey;
-				const ArtifactEntry* art = m_artifacts.findById(backItem);
-				if (art) {
-					auto it = art->fields.find("model");
-					if (it != art->fields.end()) modelKey = it->second;
-				}
-				if (modelKey.empty()) {
-					modelKey = backItem;
-					auto colon = modelKey.find(':');
-					if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
-				}
-				auto mit = m_models.find(modelKey);
-				if (mit != m_models.end()) {
-					for (auto& part : mit->second.parts) {
-						BodyPart bp;
-						bp.offset = glm::vec3(0, 1.05f, 0.20f) + part.offset * 0.8f;
-						bp.halfSize = part.halfSize * 0.8f;
-						bp.color = part.color;
-						model.parts.push_back(bp);
-					}
-				}
-			}
-		}
-
-		// Head slot (helmet)
-		{
-			const std::string& headItem = e.inventory->equipped(WearSlot::Helmet);
-			if (!headItem.empty()) {
-				std::string modelKey;
-				const ArtifactEntry* art = m_artifacts.findById(headItem);
-				if (art) {
-					auto it = art->fields.find("model");
-					if (it != art->fields.end()) modelKey = it->second;
-				}
-				if (modelKey.empty()) {
-					modelKey = headItem;
-					auto colon = modelKey.find(':');
-					if (colon != std::string::npos) modelKey = modelKey.substr(colon + 1);
-				}
-				auto mit = m_models.find(modelKey);
-				if (mit != m_models.end()) {
-					for (auto& part : mit->second.parts) {
-						BodyPart bp;
-						bp.offset = glm::vec3(0, 2.02f, 0) + part.offset * 0.7f;
-						bp.halfSize = part.halfSize * 0.7f;
-						bp.color = part.color;
-						// Head bob: same as head part
-						bp.pivot = {0, 1.5f, 0};
-						bp.swingAxis = {1, 0, 0};
-						bp.swingAmplitude = 5.0f;
-						bp.swingPhase = 0;
-						bp.swingSpeed = 2.0f;
-						model.parts.push_back(bp);
-					}
-				}
-			}
-		}
-
-		return model;
-	};
-
 	// Draw local player — skip in first-person (camera at eyes)
 	if (m_camera.mode != CameraMode::FirstPerson) {
 		auto pit = m_models.find(resolveModelKey(*pe));
-		if (pit != m_models.end()) {
-			BoxModel equipped = buildEquippedModel(*pe, pit->second);
-			mr.draw(equipped, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
-		}
+		if (pit != m_models.end())
+			mr.draw(pit->second, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
 	}
 
 	// Mob models — all entities except the locally-possessed one (drawn above)
@@ -1440,8 +1321,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		std::string modelKey = resolveModelKey(e);
 		auto mit = m_models.find(modelKey);
 		if (mit != m_models.end()) {
-			BoxModel mobModel = (e.inventory && e.def().isLiving())
-				? buildEquippedModel(e, mit->second) : mit->second;
+			const BoxModel& mobModel = mit->second;
 
 			// Damage flash: entity flashes red for a short time after being hit
 			float flashT = 0.0f;
@@ -1974,14 +1854,14 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	m_ui.endFrame();
 
 	// Screenshot request: check for trigger file (external diagnostic tool)
-	// Create /tmp/agentica_screenshot_request to trigger a screenshot.
+	// Create /tmp/modcraft_screenshot_request to trigger a screenshot.
 	{
 		static float screenshotCheckTimer = 0;
 		screenshotCheckTimer += dt;
 		if (screenshotCheckTimer > 0.5f) { // check every 0.5s
 			screenshotCheckTimer = 0;
-			if (std::filesystem::exists("/tmp/agentica_screenshot_request")) {
-				std::filesystem::remove("/tmp/agentica_screenshot_request");
+			if (std::filesystem::exists("/tmp/modcraft_screenshot_request")) {
+				std::filesystem::remove("/tmp/modcraft_screenshot_request");
 				saveScreenshot();
 			}
 		}
@@ -2447,4 +2327,4 @@ void Game::updatePaused(float dt, float aspect) {
 	if (m_state != GameState::PAUSED) m_showGameLog = false; // close log when leaving pause
 }
 
-} // namespace agentica
+} // namespace modcraft

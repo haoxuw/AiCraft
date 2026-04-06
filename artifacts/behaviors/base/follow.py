@@ -11,7 +11,7 @@ Parameters (optional via self dict):
   follow_dist   — how close to sit by owner (default 3)
   patrol_range  — how far to wander when no owner found (default 12)
 """
-from agentica_engine import Idle, Wander, Follow, MoveTo
+from modcraft_engine import Idle, Wander, Follow, MoveTo
 import random
 
 _play_timer = 0

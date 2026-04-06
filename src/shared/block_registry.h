@@ -7,7 +7,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace agentica {
+namespace modcraft {
 
 using BlockId = uint16_t;
 constexpr BlockId BLOCK_AIR = 0;
@@ -116,4 +116,4 @@ constexpr float BLOCK_FACE_SHADE[6] = {
 	0.80f, 0.80f, 1.00f, 0.50f, 0.90f, 0.90f
 };
 
-} // namespace agentica
+} // namespace modcraft

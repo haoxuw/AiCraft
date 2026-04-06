@@ -6,7 +6,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "client/shader.h"
 
-namespace agentica {
+namespace modcraft {
 
 // Renders box-based models with animation.
 class ModelRenderer {
@@ -29,4 +29,4 @@ private:
 	GLuint m_cubeVAO = 0, m_cubeVBO = 0, m_cubeEBO = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

@@ -3,7 +3,7 @@
 #include "shared/block_registry.h"
 #include "shared/constants.h"
 
-namespace agentica::builtin {
+namespace modcraft::builtin {
 
 // Natural terrain blocks: stone, dirt, grass, sand, snow, ice, water.
 inline void registerTerrainBlocks(BlockRegistry& reg) {
@@ -113,4 +113,4 @@ inline void registerTerrainBlocks(BlockRegistry& reg) {
 		{}, "",SN::DigWood,SN::StepWood});
 }
 
-} // namespace agentica::builtin
+} // namespace modcraft::builtin

@@ -27,7 +27,7 @@
 #include <vector>
 #include <string>
 
-namespace agentica::net {
+namespace modcraft::net {
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -212,4 +212,4 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	return e;
 }
 
-} // namespace agentica::net
+} // namespace modcraft::net

@@ -4,7 +4,7 @@
 #include "shared/block_registry.h"
 #include <array>
 
-namespace agentica {
+namespace modcraft {
 
 class Chunk {
 public:
@@ -57,4 +57,4 @@ private:
 	bool m_dirty = true;
 };
 
-} // namespace agentica
+} // namespace modcraft

@@ -3,7 +3,7 @@
 Pigs occasionally seek out water blocks to wallow in.
 Compose with wander for a complete pig behavior.
 """
-from agentica_engine import Idle, MoveTo
+from modcraft_engine import Idle, MoveTo
 import random
 
 _mud_timer = 0

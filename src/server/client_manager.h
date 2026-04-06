@@ -24,7 +24,7 @@
 #include <cmath>
 #include <filesystem>
 
-namespace agentica {
+namespace modcraft {
 
 struct ConnectedClient {
 	int fd;
@@ -54,7 +54,7 @@ public:
 
 	~ClientManager() { stopAllAIClients(); }
 
-	// Set the directory containing agentica-agent binary.
+	// Set the directory containing modcraft-agent binary.
 	// Call before the main loop. If empty, AI client spawning is disabled.
 	void setExecDir(const std::string& dir) { m_execDir = dir; }
 
@@ -360,8 +360,8 @@ public:
 			if (!c.isAgent) humans++;
 
 		char msg[64];
-		snprintf(msg, sizeof(msg), "AGENTICA %d %d", m_port, humans);
-		m_announceUdp.broadcast(msg, (int)strlen(msg), AGENTICA_DISCOVER_PORT);
+		snprintf(msg, sizeof(msg), "MODCRAFT %d %d", m_port, humans);
+		m_announceUdp.broadcast(msg, (int)strlen(msg), MODCRAFT_DISCOVER_PORT);
 	}
 
 	// Spawn AI client processes for uncontrolled NPC entities.
@@ -369,7 +369,7 @@ public:
 	void spawnAIClients() {
 		if (m_execDir.empty() || m_port <= 0) return;
 
-		std::string agentBin = m_execDir + "/agentica-agent";
+		std::string agentBin = m_execDir + "/modcraft-agent";
 		if (!std::filesystem::exists(agentBin)) return;
 
 		// Reap finished AI client processes
@@ -645,4 +645,4 @@ private:
 	float m_announceTimer = 0.0f;
 };
 
-} // namespace agentica
+} // namespace modcraft

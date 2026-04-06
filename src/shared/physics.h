@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace agentica {
+namespace modcraft {
 
 struct MoveResult {
 	glm::vec3 position;
@@ -182,4 +182,4 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	return result;
 }
 
-} // namespace agentica
+} // namespace modcraft

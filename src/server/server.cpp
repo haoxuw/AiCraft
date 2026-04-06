@@ -1,7 +1,7 @@
 #include "server/server.h"
 #include <cmath>
 
-namespace agentica {
+namespace modcraft {
 
 void GameServer::resolveActions(float dt) {
 	auto proposals = m_world->actions.drain();
@@ -112,10 +112,40 @@ void GameServer::resolveActions(float dt) {
 			Chunk* c = m_world->getChunk(cp);
 			if (!c) break;
 
+			// Door-specific: validate placement and auto-detect hinge
+			uint8_t placeP2 = 0;
+			if (placedDef->mesh_type == MeshType::Door) {
+				auto isSolidCube = [&](int nx, int ny, int nz) {
+					const BlockDef& nd = m_world->blocks.get(m_world->getBlock(nx, ny, nz));
+					return nd.solid && nd.mesh_type == MeshType::Cube;
+				};
+				auto isDoorBlock = [&](int nx, int ny, int nz) {
+					const std::string& s = m_world->blocks.get(m_world->getBlock(nx, ny, nz)).string_id;
+					return s == BlockType::Door || s == BlockType::DoorOpen;
+				};
+				bool wXm = isSolidCube(pp.x-1, pp.y, pp.z);
+				bool wXp = isSolidCube(pp.x+1, pp.y, pp.z);
+				bool wZm = isSolidCube(pp.x, pp.y, pp.z-1);
+				bool wZp = isSolidCube(pp.x, pp.y, pp.z+1);
+				// Require at least one solid-cube wall to hinge against
+				if (!wXm && !wXp && !wZm && !wZp) break;
+				// Mirror hinge when placed next to an existing door (double-door)
+				if      (isDoorBlock(pp.x-1, pp.y, pp.z)) placeP2 = 0x4; // door on left → right hinge
+				else if (isDoorBlock(pp.x+1, pp.y, pp.z)) placeP2 = 0;   // door on right → left hinge
+				else if (isDoorBlock(pp.x, pp.y, pp.z-1)) placeP2 = 0x4;
+				else if (isDoorBlock(pp.x, pp.y, pp.z+1)) placeP2 = 0;
+				// Single door: hinge on the side that has a solid wall
+				else if (!wXm && wXp)  placeP2 = 0x4; // only right wall → right hinge
+				else if (wXm && !wXp)  placeP2 = 0;   // only left wall → left hinge
+				else if (!wZm && wZp)  placeP2 = 0x4;
+				else if (wZm && !wZp)  placeP2 = 0;
+				// both/neither: keep default left hinge
+			}
+
 			BlockId placedBid = m_world->blocks.getId(p.blockType);
 			c->set(((pp.x % 16) + 16) % 16, ((pp.y % 16) + 16) % 16,
-			       ((pp.z % 16) + 16) % 16, placedBid);
-			if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pp, placedBid, 0);
+			       ((pp.z % 16) + 16) % 16, placedBid, placeP2);
+			if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pp, placedBid, placeP2);
 
 			if (placedDef->behavior == BlockBehavior::Active)
 				m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
@@ -143,27 +173,28 @@ void GameServer::resolveActions(float dt) {
 			BlockId openId   = m_world->blocks.getId(BlockType::DoorOpen);
 			BlockId newId    = isDoor ? openId : closedId;
 
-			// Helper: set a block and notify chunk dirty
+			// Helper: toggle block ID while preserving existing param2 (hinge, rotation, etc.)
 			auto setBlock = [&](int x, int y, int z, BlockId id) {
 				ChunkPos cp = worldToChunk(x, y, z);
 				Chunk* c = m_world->getChunk(cp);
 				if (!c) return;
-				c->set(((x%16)+16)%16, ((y%16)+16)%16, ((z%16)+16)%16, id);
+				int lx = ((x%16)+16)%16, ly = ((y%16)+16)%16, lz = ((z%16)+16)%16;
+				uint8_t p2 = c->getParam2(lx, ly, lz);
+				c->set(lx, ly, lz, id, p2);
 				glm::ivec3 pos{x, y, z};
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, id, 0);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, id, p2);
 			};
 
 			// Toggle clicked block
 			setBlock(bp.x, bp.y, bp.z, newId);
 
-			// Scan upward for connected door blocks (2-block tall door)
-			for (int dy = 1; dy <= 3; dy++) {
+			// Scan upward/downward for connected door blocks (multi-block tall door)
+			for (int dy = 1; dy <= 8; dy++) {
 				BlockId above = m_world->getBlock(bp.x, bp.y+dy, bp.z);
 				if (above == closedId || above == openId) setBlock(bp.x, bp.y+dy, bp.z, newId);
 				else break;
 			}
-			// Scan downward in case player clicked the upper block
-			for (int dy = 1; dy <= 3; dy++) {
+			for (int dy = 1; dy <= 8; dy++) {
 				BlockId below = m_world->getBlock(bp.x, bp.y-dy, bp.z);
 				if (below == closedId || below == openId) setBlock(bp.x, bp.y-dy, bp.z, newId);
 				else break;
@@ -344,4 +375,4 @@ void GameServer::resolveActions(float dt) {
 	} // for
 } // resolveActions
 
-} // namespace agentica
+} // namespace modcraft

@@ -25,7 +25,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace agentica {
+namespace modcraft {
 
 // ============================================================
 // WorldPyConfig — world template parameters loaded from Python.
@@ -172,4 +172,4 @@ private:
 // Global bridge instance (owned by server)
 PythonBridge& pythonBridge();
 
-} // namespace agentica
+} // namespace modcraft

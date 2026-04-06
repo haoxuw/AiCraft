@@ -1,4 +1,4 @@
-# Agentica - Networking
+# ModCraft - Networking
 
 How the C++ server and Python clients communicate. TCP-based with delta compression.
 
@@ -8,7 +8,7 @@ How the C++ server and Python clients communicate. TCP-based with delta compress
 
 ```
 Luanti uses custom reliable UDP (MTP).
-Agentica uses TCP + custom binary framing.
+ModCraft uses TCP + custom binary framing.
 
 Why TCP instead of UDP:
   - Simpler implementation (reliability built-in)

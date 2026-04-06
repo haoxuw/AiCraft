@@ -1,4 +1,4 @@
-# Agentica — Architecture Overview
+# ModCraft — Architecture Overview
 
 A voxel game where the world is code. Players write Python to define new
 objects and actions, then upload them into a shared world.
@@ -24,7 +24,7 @@ Python (the game)                    C++ (the engine)
 
 Three separate process types. Same architecture in singleplayer and multiplayer.
 
-### Server (`agentica-server`)
+### Server (`modcraft-server`)
 
 Headless. **NO Python, NO OpenGL.** Owns all world state.
 
@@ -34,7 +34,7 @@ Headless. **NO Python, NO OpenGL.** Owns all world state.
 - **Auto-spawns agent client processes** for NPC entities (via `ClientManager`)
 - Perception-scoped: each client only receives state within 64 blocks
 
-### Player Client (`agentworld`)
+### Player Client (`modcraft`)
 
 GUI. **OpenGL, NO Python.**
 
@@ -43,7 +43,7 @@ GUI. **OpenGL, NO Python.**
 - Connects to server via TCP (localhost in singleplayer, remote in MP)
 - In singleplayer: `AgentManager` launches the server process first
 
-### Agent Client (`agentica-agent`)
+### Agent Client (`modcraft-agent`)
 
 Headless. **Python + pybind11, NO OpenGL.**
 
@@ -56,10 +56,10 @@ Headless. **Python + pybind11, NO OpenGL.**
 
 ```
 1. Player clicks "Play"
-2. AgentManager (GUI) fork+execs agentica-server on localhost
+2. AgentManager (GUI) fork+execs modcraft-server on localhost
 3. GUI connects to server as a regular player client
 4. Server's ClientManager detects NPC entities with BehaviorId
-5. Server fork+execs one agentica-agent per NPC entity
+5. Server fork+execs one modcraft-agent per NPC entity
 6. Each agent connects back to server, receives S_ASSIGN_ENTITY
 7. Agents run Python AI, entities start moving
 ```
@@ -136,7 +136,7 @@ creature = {
 
 **Behavior** (`artifacts/behaviors/base/wander.py`):
 ```python
-from agentica_engine import Idle, Wander, Flee
+from modcraft_engine import Idle, Wander, Flee
 def decide(self, world):
     for e in world["nearby"]:
         if e["category"] == "player" and e["distance"] < 5:
@@ -196,9 +196,9 @@ artifacts/          Python game content (hot-loadable)
 
 | Binary | Links | Purpose |
 |--------|-------|---------|
-| `agentworld` | shared + client + game + OpenGL | Player client (GUI) |
-| `agentica-server` | shared + server + content + Python | Server + agent spawner |
-| `agentica-agent` | shared + agent + content + Python | Agent client (headless) |
+| `modcraft` | shared + client + game + OpenGL | Player client (GUI) |
+| `modcraft-server` | shared + server + content + Python | Server + agent spawner |
+| `modcraft-agent` | shared + agent + content + Python | Agent client (headless) |
 
 ## Build & Run
 

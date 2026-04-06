@@ -13,7 +13,7 @@
 #include <filesystem>
 #include <algorithm>
 
-namespace agentica {
+namespace modcraft {
 
 struct WorldInfo {
 	std::string name;
@@ -120,4 +120,4 @@ private:
 	std::vector<WorldInfo> m_worlds;
 };
 
-} // namespace agentica
+} // namespace modcraft

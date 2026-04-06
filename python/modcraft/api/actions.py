@@ -10,10 +10,10 @@ from typing import Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 from enum import Enum
 
-from agentworld.api.types import Vec3, BlockPos, EntityId
+from modcraft.api.types import Vec3, BlockPos, EntityId
 
 if TYPE_CHECKING:
-    from agentworld.api.world_view import WorldView
+    from modcraft.api.world_view import WorldView
 
 
 class ActionResult(Enum):

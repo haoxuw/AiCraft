@@ -23,7 +23,7 @@
 #include <vector>
 #include <algorithm>
 
-namespace agentica::test {
+namespace modcraft::test {
 
 // ================================================================
 // Test infrastructure
@@ -1532,16 +1532,16 @@ static std::string p53_entities_never_inside_blocks_village() {
 // Main
 // ================================================================
 
-} // namespace agentica::test
+} // namespace modcraft::test
 
 int main() {
-	using namespace agentica;
-	using namespace agentica::test;
+	using namespace modcraft;
+	using namespace modcraft::test;
 
 	// Initialize Python so world templates and behaviors can load from artifacts/
 	pythonBridge().init("python");
 
-	printf("\n=== Agentica E2E Tests ===\n\n");
+	printf("\n=== ModCraft E2E Tests ===\n\n");
 	initTemplates();
 
 	printf("--- Player Basics ---\n");

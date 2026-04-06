@@ -16,7 +16,7 @@
 #include "client/gl.h"
 #include <unordered_set>
 
-namespace agentica {
+namespace modcraft {
 
 class FogOfWar {
 public:
@@ -130,4 +130,4 @@ private:
 	GLuint m_vao = 0, m_vbo = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

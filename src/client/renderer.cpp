@@ -2,7 +2,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace agentica {
+namespace modcraft {
 
 static const float PI = 3.14159265f;
 
@@ -165,6 +165,29 @@ bool Renderer::init(const std::string& dir) {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
 	glEnableVertexAttribArray(0);
 
+	// Door animation dynamic VAO
+	glGenVertexArrays(1, &m_doorAnimVAO);
+	glGenBuffers(1, &m_doorAnimVBO);
+	glBindVertexArray(m_doorAnimVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, m_doorAnimVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(ChunkVertex) * 512, nullptr, GL_DYNAMIC_DRAW);
+	// Attributes mirror terrain shader layout:
+	glEnableVertexAttribArray(0); // position
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, position));
+	glEnableVertexAttribArray(1); // color
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, color));
+	glEnableVertexAttribArray(2); // normal
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, normal));
+	glEnableVertexAttribArray(3); // ao
+	glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, ao));
+	glEnableVertexAttribArray(4); // shade
+	glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, shade));
+	glEnableVertexAttribArray(5); // alpha
+	glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, alpha));
+	glEnableVertexAttribArray(6); // glow
+	glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, glow));
+	glBindVertexArray(0);
+
 	// UI quad (2D, reusable for hotbar slots)
 	float uq[] = { 0,0, 1,0, 1,1, 0,0, 1,1, 0,1 };
 	glGenVertexArrays(1, &m_quadVAO);
@@ -216,6 +239,7 @@ void Renderer::shutdown() {
 	del(m_crackVAO, m_crackVBO);
 	del(m_quadVAO, m_quadVBO);
 	del(m_shadowVAO, m_shadowVBO);
+	del(m_doorAnimVAO, m_doorAnimVBO);
 	m_modelRenderer.shutdown();
 	m_fogOfWar.shutdown();
 }
@@ -722,4 +746,97 @@ void Renderer::renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 p
 
 // Old renderPlayerModel removed -- use ModelRenderer::draw() instead
 
-} // namespace agentica
+void Renderer::renderDoorAnims(const Camera& cam, float aspect,
+                               const std::vector<DoorAnim>& anims) {
+	if (anims.empty()) return;
+
+	static const float kDuration = 0.25f;
+
+	// Build vertices for all animating doors
+	std::vector<ChunkVertex> verts;
+	verts.reserve(anims.size() * 12);
+
+	for (auto& a : anims) {
+		float t = std::min(a.timer / kDuration, 1.0f);
+		// Ease in-out: smoothstep
+		t = t * t * (3.0f - 2.0f * t);
+
+		// Angle: opening goes 0→PI/2, closing goes PI/2→0
+		float theta = a.opening ? (t * (float)M_PI * 0.5f)
+		                        : ((1.0f - t) * (float)M_PI * 0.5f);
+
+		float fx = (float)a.basePos.x;
+		float fy = (float)a.basePos.y;
+		float fz = (float)a.basePos.z;
+		float h  = (float)a.height;
+
+		// Hinge pivot and free-edge endpoints
+		float pivX, pivZ, farX0, farZ0;
+		if (!a.hingeRight) {
+			// Left hinge: pivot at (fx, fz)
+			pivX = fx;     pivZ = fz;
+			// Free edge at (fx+1, fz) rotates CCW → (fx+cos θ, fz+sin θ)
+			farX0 = fx + std::cos(theta);
+			farZ0 = fz + std::sin(theta);
+		} else {
+			// Right hinge: pivot at (fx+1, fz)
+			pivX = fx + 1.f; pivZ = fz;
+			// Free edge at (fx, fz) rotates CW → (fx+1-cos θ, fz+sin θ)
+			farX0 = fx + 1.f - std::cos(theta);
+			farZ0 = fz + std::sin(theta);
+		}
+
+		// Panel normal (perpendicular to the panel surface, rotates with door)
+		float nx = -(farZ0 - pivZ);  // rotate 90° in XZ
+		float nz =  (farX0 - pivX);
+		float nlen = std::sqrt(nx*nx + nz*nz);
+		if (nlen > 0.001f) { nx /= nlen; nz /= nlen; }
+		glm::vec3 norm{nx, 0.f, nz};
+
+		float shade = 0.85f; // side shade
+		glm::vec3 col = a.color;
+
+		// 4 corners: pivot-bottom, pivot-top, far-top, far-bottom
+		ChunkVertex v0{.position={pivX,  fy,   pivZ},  .color=col, .normal=norm, .ao=1.f, .shade=shade, .alpha=1.f, .glow=0.f};
+		ChunkVertex v1{.position={pivX,  fy+h, pivZ},  .color=col, .normal=norm, .ao=1.f, .shade=shade, .alpha=1.f, .glow=0.f};
+		ChunkVertex v2{.position={farX0, fy+h, farZ0}, .color=col, .normal=norm, .ao=1.f, .shade=shade, .alpha=1.f, .glow=0.f};
+		ChunkVertex v3{.position={farX0, fy,   farZ0}, .color=col, .normal=norm, .ao=1.f, .shade=shade, .alpha=1.f, .glow=0.f};
+
+		// Front face (CCW)
+		verts.insert(verts.end(), {v0, v1, v2, v0, v2, v3});
+		// Back face (reversed winding, flipped normal)
+		ChunkVertex bv0=v0, bv1=v1, bv2=v2, bv3=v3;
+		glm::vec3 bn = -norm;
+		bv0.normal=bv1.normal=bv2.normal=bv3.normal=bn;
+		verts.insert(verts.end(), {bv0, bv3, bv2, bv0, bv2, bv1});
+	}
+
+	if (verts.empty()) return;
+
+	// Upload and draw using terrain shader
+	glm::mat4 view = cam.viewMatrix();
+	glm::mat4 proj = cam.projectionMatrix(aspect);
+
+	m_terrainShader.use();
+	m_terrainShader.setMat4("uView", view);
+	m_terrainShader.setMat4("uProj", proj);
+	m_terrainShader.setVec3("uSunDir", m_sunDir);
+	m_terrainShader.setVec3("uCamPos", cam.position);
+	m_terrainShader.setVec3("uFogColor", m_horizonColor);
+	m_terrainShader.setFloat("uFogStart", m_fogStart);
+	m_terrainShader.setFloat("uFogEnd", m_fogEnd);
+	m_terrainShader.setFloat("uSunStrength", m_sunStrength);
+	m_terrainShader.setFloat("uTime", m_time);
+
+	glBindVertexArray(m_doorAnimVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, m_doorAnimVBO);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(verts.size() * sizeof(ChunkVertex)), verts.data(), GL_DYNAMIC_DRAW);
+
+	glEnable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
+	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)verts.size());
+	glEnable(GL_CULL_FACE);
+	glBindVertexArray(0);
+}
+
+} // namespace modcraft

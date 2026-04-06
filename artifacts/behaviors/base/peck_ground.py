@@ -2,7 +2,7 @@
 
 Random chance to stop and peck. Simple idle animation trigger.
 """
-from agentica_engine import Idle
+from modcraft_engine import Idle
 import random
 
 _rng_seeded = False

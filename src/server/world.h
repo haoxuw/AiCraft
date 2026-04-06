@@ -15,7 +15,7 @@
 #include <array>
 #include <functional>
 
-namespace agentica {
+namespace modcraft {
 
 // Per-instance state for active blocks (TNT fuse, wheat stage, wire power, etc.)
 struct BlockStateKey {
@@ -284,4 +284,4 @@ private:
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunks;
 };
 
-} // namespace agentica
+} // namespace modcraft

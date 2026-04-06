@@ -32,7 +32,7 @@
 #include <deque>
 #include <string>
 
-namespace agentica {
+namespace modcraft {
 
 class Game {
 public:
@@ -136,7 +136,7 @@ private:
 	// Startup flags
 	bool m_skipMenu = false;   // --skip-menu: skip main menu, start survival world directly
 
-	// Screenshots (F2 manual, or external trigger via /tmp/agentica_screenshot_request)
+	// Screenshots (F2 manual, or external trigger via /tmp/modcraft_screenshot_request)
 	int m_screenshotCounter = 0;
 
 	// Debug capture (--debug-scenario flag)
@@ -154,10 +154,7 @@ private:
 
 	// Process management (singleplayer: spawns server process)
 	AgentManager m_agentMgr;
-	std::string m_execDir;           // directory containing agentica-* binaries
-
-	// Server log file (local server → /tmp/agentica_log_local.log)
-	FILE* m_serverLog = nullptr;
+	std::string m_execDir;           // directory containing modcraft-* binaries
 
 	// Audio
 	AudioManager m_audio;
@@ -207,6 +204,9 @@ private:
 	// Floating text notifications (damage, pickups, heals)
 	FloatingTextManager m_floatText;
 
+	// Door swing animations (client-side, 0.25s rotation overlay)
+	std::vector<DoorAnim> m_doorAnims;
+
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;
 	ModelPreview m_modelPreview;
@@ -215,4 +215,4 @@ private:
 	float m_globalTime = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

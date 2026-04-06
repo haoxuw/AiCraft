@@ -5,8 +5,8 @@
  * runs Python behavior logic, and sends ActionProposals back.
  *
  * Usage:
- *   ./agentica-agent --host 127.0.0.1 --port 7777 --entity 5
- *   ./agentica-agent --port 7777 --entity 5 --behavior wander
+ *   ./modcraft-agent --host 127.0.0.1 --port 7777 --entity 5
+ *   ./modcraft-agent --port 7777 --entity 5 --behavior wander
  */
 
 #include "agent/agent_client.h"
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
 		else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
 			name = argv[++i];
 		else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("agentica-agent — headless AI client\n\n"
+			printf("modcraft-agent — headless AI client\n\n"
 			       "Usage: %s [options]\n"
 			       "  --host HOST       Server address (default: 127.0.0.1)\n"
 			       "  --port PORT       Server port (default: 7777)\n"
@@ -62,12 +62,12 @@ int main(int argc, char** argv) {
 	signal(SIGTERM, signalHandler);
 
 	// Initialize Python interpreter for behavior execution
-	agentica::pythonBridge().init("python");
+	modcraft::pythonBridge().init("python");
 
-	agentica::AgentClient agent;
+	modcraft::AgentClient agent;
 	agent.setTargetEntity(entityId);
 	if (!agent.connect(host, port, name)) {
-		agentica::pythonBridge().shutdown();
+		modcraft::pythonBridge().shutdown();
 		return 1;
 	}
 
@@ -104,6 +104,6 @@ int main(int argc, char** argv) {
 
 	printf("[Agent:%s] Shutting down\n", name.c_str());
 	agent.disconnect();
-	agentica::pythonBridge().shutdown();
+	modcraft::pythonBridge().shutdown();
 	return 0;
 }

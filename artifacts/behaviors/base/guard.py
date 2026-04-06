@@ -6,7 +6,7 @@ unfamiliar entities. Compose with follow for a complete guard dog.
 Parameters (optional via self dict):
   guard_range   — distance to detect threats near owner (default 6)
 """
-from agentica_engine import Idle, Follow
+from modcraft_engine import Idle, Follow
 import random
 
 _bark_timer = 0

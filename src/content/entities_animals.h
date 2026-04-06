@@ -3,7 +3,7 @@
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 
-namespace agentica::builtin {
+namespace modcraft::builtin {
 
 inline void registerAnimalEntities(EntityManager& mgr) {
 	{
@@ -159,4 +159,4 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 	}
 }
 
-} // namespace agentica::builtin
+} // namespace modcraft::builtin

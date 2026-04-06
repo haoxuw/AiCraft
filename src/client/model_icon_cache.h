@@ -20,7 +20,7 @@
 #include <unordered_map>
 #include <string>
 
-namespace agentica {
+namespace modcraft {
 
 class ModelIconCache {
 public:
@@ -148,4 +148,4 @@ private:
 	std::unordered_map<std::string, float> m_renderTime; // last render time per key
 };
 
-} // namespace agentica
+} // namespace modcraft

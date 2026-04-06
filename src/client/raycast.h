@@ -5,7 +5,7 @@
 #include <glm/glm.hpp>
 #include <optional>
 
-namespace agentica {
+namespace modcraft {
 
 struct RayHit {
 	glm::ivec3 blockPos;
@@ -34,7 +34,9 @@ inline std::optional<RayHit> raycastBlocks(ChunkSource& world, glm::vec3 origin,
 
 	for (int i = 0; i < (int)(maxDist * 3); i++) {
 		BlockId block = world.getBlock(pos.x, pos.y, pos.z);
-		if (world.blockRegistry().get(block).solid) {
+		const auto& bdef = world.blockRegistry().get(block);
+		// Hit solid blocks and open doors (DoorOpen is non-solid but still interactable)
+		if (bdef.solid || bdef.mesh_type == MeshType::DoorOpen) {
 			glm::ivec3 normal = prevPos - pos;
 			return RayHit{pos, prevPos, glm::vec3(normal), dist, block};
 		}
@@ -51,4 +53,4 @@ inline std::optional<RayHit> raycastBlocks(ChunkSource& world, glm::vec3 origin,
 	return std::nullopt;
 }
 
-} // namespace agentica
+} // namespace modcraft

@@ -21,7 +21,7 @@
 #include <vector>
 #include <mutex>
 
-namespace agentica {
+namespace modcraft {
 
 // ================================================================
 // ActionProposal — what an entity wants to happen
@@ -118,4 +118,4 @@ private:
 	std::vector<ActionProposal> m_pending;
 };
 
-} // namespace agentica
+} // namespace modcraft

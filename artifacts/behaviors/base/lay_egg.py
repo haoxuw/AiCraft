@@ -9,7 +9,7 @@ Parameters (optional via self dict):
   egg_cooldown  — seconds between possible eggs (default 60)
   scatter_range — threat detection distance (default 4)
 """
-from agentica_engine import DropItem
+from modcraft_engine import DropItem
 import random
 
 EGG_COOLDOWN = 60.0

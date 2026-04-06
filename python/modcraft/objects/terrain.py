@@ -4,7 +4,7 @@ Each block type is an ObjectMeta instance. The CLASS is shared
 (PassiveObject or ReactiveObject). Only the DATA differs.
 """
 
-from agentworld.api.base import ObjectMeta
+from modcraft.api.base import ObjectMeta
 
 # --- Stone family (PassiveObject, pickaxe) ---
 

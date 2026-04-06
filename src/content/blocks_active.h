@@ -3,7 +3,7 @@
 #include "shared/block_registry.h"
 #include "shared/constants.h"
 
-namespace agentica::builtin {
+namespace modcraft::builtin {
 
 // Active blocks: TNT, crops, signals/logic gates.
 // These have per-instance state and Python behavior classes.
@@ -48,4 +48,4 @@ inline void registerActiveBlocks(BlockRegistry& reg) {
 		PY::NANDGateBlock});
 }
 
-} // namespace agentica::builtin
+} // namespace modcraft::builtin

@@ -1,5 +1,5 @@
 """
-Base classes for AiCraft character definitions.
+Base classes for ModCraft character definitions.
 
 A character is a collection of body parts (colored boxes) with
 animation parameters. Each part can swing around a pivot point

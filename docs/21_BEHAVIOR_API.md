@@ -2,7 +2,7 @@
 
 ## Overview
 
-Every creature in Agentica has a behavior defined as a Python file. The behavior's `decide()` function is called 4 times per second and returns an action (what the creature should do next).
+Every creature in ModCraft has a behavior defined as a Python file. The behavior's `decide()` function is called 4 times per second and returns an action (what the creature should do next).
 
 **Behaviors run on the CLIENT, not the server.** The client reads its local world cache (nearby entities, nearby blocks), runs `decide()`, and sends the resulting action as an ActionProposal to the server. The server only validates ("can you move there?", "can you break that?") and executes.
 
@@ -109,7 +109,7 @@ Float, seconds since last decide() call (~0.25 seconds).
 
 Import actions from the engine:
 ```python
-from agentica_engine import Idle, Wander, MoveTo, Follow, Flee
+from modcraft_engine import Idle, Wander, MoveTo, Follow, Flee
 ```
 
 ### `Idle()`
@@ -225,7 +225,7 @@ if wood:
 
 ### Pig (wander + flee from players)
 ```python
-from agentica_engine import Idle, Wander, Flee
+from modcraft_engine import Idle, Wander, Flee
 
 def decide(self, world):
     players = [e for e in world["nearby"] if e.category == "player"]
@@ -241,7 +241,7 @@ def decide(self, world):
 
 ### Dog (follow nearest player or villager)
 ```python
-from agentica_engine import Idle, Wander, Follow
+from modcraft_engine import Idle, Wander, Follow
 
 def decide(self, world):
     players = [e for e in world["nearby"] if e.category == "player"]
@@ -267,7 +267,7 @@ def decide(self, world):
 
 ### Villager (find trees, walk to them, chop)
 ```python
-from agentica_engine import Idle, Wander, MoveTo
+from modcraft_engine import Idle, Wander, MoveTo
 
 _state = "searching"
 _timer = 0

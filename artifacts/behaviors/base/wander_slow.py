@@ -3,7 +3,7 @@
 Place this last in any rule list as the default fallback.
 Always returns an action (never None).
 """
-from agentica_engine import Wander
+from modcraft_engine import Wander
 
 def decide(self, world):
     self["goal"] = "Wandering"

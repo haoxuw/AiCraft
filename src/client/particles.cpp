@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <glm/glm.hpp>
 
-namespace agentica {
+namespace modcraft {
 
 // Simple deterministic hash for particle randomness
 static float prand(int seed) {
@@ -184,4 +184,4 @@ void ParticleSystem::emitDeathPuff(glm::vec3 pos, glm::vec3 bodyColor, float ent
 	}
 }
 
-} // namespace agentica
+} // namespace modcraft

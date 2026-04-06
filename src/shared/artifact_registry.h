@@ -29,7 +29,7 @@
 #include <cstdio>
 #include <random>
 
-namespace agentica {
+namespace modcraft {
 
 struct ArtifactEntry {
 	std::string id;           // "base:pig"
@@ -343,4 +343,4 @@ private:
 	std::vector<ArtifactEntry> m_entries;
 };
 
-} // namespace agentica
+} // namespace modcraft

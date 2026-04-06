@@ -22,7 +22,7 @@ Tree structure:
 
 Generated from visual behavior tree, then hand-tuned for personality.
 """
-from agentica_engine import Idle, Wander, Follow, Flee, MoveTo, DropItem
+from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo, DropItem
 import random as _rng
 
 _egg_cooldown = 0

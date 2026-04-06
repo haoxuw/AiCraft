@@ -13,7 +13,7 @@ Parameters (set via self dict, all optional):
   flee_range    — distance to flee from dogs (default 5)
   curiosity     — 0.0-1.0, how often the cat follows players (default 0.3)
 """
-from agentica_engine import Idle, Wander, Follow, Flee, MoveTo
+from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo
 import random
 
 # Mood states

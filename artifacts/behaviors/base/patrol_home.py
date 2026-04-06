@@ -4,7 +4,7 @@ Terminal rule for companion creatures. Always returns an action.
 
 Parameters: patrol_range (default 12)
 """
-from agentica_engine import Wander, MoveTo
+from modcraft_engine import Wander, MoveTo
 import random
 
 _rng_seeded = False

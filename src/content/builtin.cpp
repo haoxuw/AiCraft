@@ -7,7 +7,7 @@
 #include "content/entities_animals.h"
 #include "content/entities_items.h"
 
-namespace agentica {
+namespace modcraft {
 
 void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	// Blocks (order matters: Air must be ID 0)
@@ -22,4 +22,4 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	builtin::registerItemEntities(entities);
 }
 
-} // namespace agentica
+} // namespace modcraft

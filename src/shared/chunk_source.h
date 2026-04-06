@@ -14,7 +14,7 @@
 #include "shared/block_registry.h"
 #include <array>
 
-namespace agentica {
+namespace modcraft {
 
 class ChunkSource {
 public:
@@ -44,4 +44,4 @@ public:
 	virtual void unloadDistantChunks(ChunkPos center, int keepRadius) { (void)center; (void)keepRadius; }
 };
 
-} // namespace agentica
+} // namespace modcraft

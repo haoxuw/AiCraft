@@ -52,7 +52,7 @@ world = {
         "path_block":  "base:cobblestone",
 
         "story_height": 6,
-        "door_height":  5,
+        "door_height":  3,
         "window_row":   2,
     },
 

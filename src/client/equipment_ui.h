@@ -20,7 +20,7 @@
 #include <cmath>
 #include <unordered_map>
 
-namespace agentica {
+namespace modcraft {
 
 class EquipmentUI {
 public:
@@ -502,4 +502,4 @@ private:
 	}
 };
 
-} // namespace agentica
+} // namespace modcraft

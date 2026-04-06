@@ -1,8 +1,8 @@
 """Player input actions -- mine, place, attack."""
 
-from agentworld.api.actions import Action, ActionMeta
-from agentworld.api.world_view import WorldView
-from agentworld.api.types import BlockPos, EntityId, Vec3
+from modcraft.api.actions import Action, ActionMeta
+from modcraft.api.world_view import WorldView
+from modcraft.api.types import BlockPos, EntityId, Vec3
 
 
 class Mine(Action):

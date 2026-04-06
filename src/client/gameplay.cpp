@@ -1,7 +1,7 @@
 #include "client/gameplay.h"
 #include <cmath>
 
-namespace agentica {
+namespace modcraft {
 
 // ================================================================
 // update -- called each gameplay frame (CLIENT-SIDE ONLY)
@@ -117,4 +117,4 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 	}
 }
 
-} // namespace agentica
+} // namespace modcraft

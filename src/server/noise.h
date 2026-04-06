@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace agentica {
+namespace modcraft {
 
 // ============================================================
 // Hash-based value noise (seed-independent, reproducible)
@@ -120,4 +120,4 @@ inline float terrainHeight(int seed, float x, float z) {
 	return naturalTerrainHeight(seed, x, z);
 }
 
-} // namespace agentica
+} // namespace modcraft

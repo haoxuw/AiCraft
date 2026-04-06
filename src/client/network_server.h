@@ -25,7 +25,7 @@
 #include <thread>
 #include <chrono>
 
-namespace agentica {
+namespace modcraft {
 
 class NetworkServer : public ServerInterface {
 public:
@@ -531,4 +531,4 @@ private:
 	std::function<void(glm::vec3, const std::string&)> m_onBlockPlace;
 };
 
-} // namespace agentica
+} // namespace modcraft

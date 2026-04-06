@@ -3,20 +3,13 @@
 /**
  * ServerInterface — abstract access to the game server.
  *
- * Game class uses this interface instead of GameServer directly.
- * Two implementations:
- *   - LocalServer: in-process GameServer (singleplayer / self-hosted)
- *   - NetworkServer: TCP client connecting to a remote server
- *
- * This lets the same Game class (with full menu, HUD, code editor)
- * work in both singleplayer and multiplayer. The user experience is
- * identical — only the backend changes.
+ * The only implementation is NetworkServer (TCP client). Singleplayer
+ * spawns modcraft-server as a child process and connects via localhost TCP —
+ * identical code path to multiplayer.
  *
  * Flow:
  *   1. Client starts with menu (no server yet)
- *   2. User clicks "Play" → Game calls createGame()
- *      - Singleplayer: starts local GameServer in-process
- *      - Multiplayer: connects to remote server via TCP
+ *   2. User clicks "Play" → Game spawns server process + connects via TCP
  *   3. Game loop: sendAction() + tick() + read state for rendering
  *   4. User quits → Game calls disconnect()
  */
@@ -30,7 +23,7 @@
 #include <functional>
 #include <memory>
 
-namespace agentica {
+namespace modcraft {
 
 class ServerInterface {
 public:
@@ -100,4 +93,4 @@ public:
 	) = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

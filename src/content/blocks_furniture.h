@@ -3,7 +3,7 @@
 #include "shared/block_registry.h"
 #include "shared/constants.h"
 
-namespace agentica::builtin {
+namespace modcraft::builtin {
 
 // Furniture blocks: bed, stairs, etc.
 inline void registerFurnitureBlocks(BlockRegistry& reg) {
@@ -45,4 +45,4 @@ inline void registerFurnitureBlocks(BlockRegistry& reg) {
 		0.0f, MeshType::DoorOpen});
 }
 
-} // namespace agentica::builtin
+} // namespace modcraft::builtin

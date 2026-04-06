@@ -21,7 +21,7 @@
 #include <algorithm>
 #include <glm/trigonometric.hpp>
 
-namespace agentica {
+namespace modcraft {
 
 class EntityManager {
 public:
@@ -161,4 +161,4 @@ private:
 	EntityId m_nextId = 1;
 };
 
-} // namespace agentica
+} // namespace modcraft

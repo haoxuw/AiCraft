@@ -18,7 +18,7 @@ Parameters (readable via self dict, set by server at spawn):
 """
 import random
 
-from agentica_engine import Idle, Wander, MoveTo, BreakBlock, PickupItem
+from modcraft_engine import Idle, Wander, MoveTo, BreakBlock, PickupItem
 
 _state = "searching"
 _timer = 0.0

@@ -1,6 +1,6 @@
 #include "client/chunk_mesher.h"
 
-namespace agentica {
+namespace modcraft {
 
 static void uploadToVAO(GLuint& vao, GLuint& vbo, int& count,
                         const std::vector<ChunkVertex>& vertices) {
@@ -268,9 +268,13 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 				emitBox(fx, fy, fz, fx+1, fy+1, fz+0.1f,
 				        bdef.color_top, bdef.color_side, a);
 			} else if (bdef.mesh_type == MeshType::DoorOpen) {
-				// Open door: thin panel flush with -X face of the cell
-				emitBox(fx, fy, fz, fx+0.1f, fy+1, fz+1,
-				        bdef.color_top, bdef.color_side, a);
+				// Open door: thin panel on -X or +X face depending on hinge (param2 bit 2)
+				uint8_t p2 = chunk->getParam2(lx, ly, lz);
+				bool hingeRight = (p2 >> 2) & 1;
+				if (hingeRight)
+					emitBox(fx+0.9f, fy, fz, fx+1, fy+1, fz+1, bdef.color_top, bdef.color_side, a);
+				else
+					emitBox(fx, fy, fz, fx+0.1f, fy+1, fz+1, bdef.color_top, bdef.color_side, a);
 			}
 			continue; // skip the cube face loop below
 		}
@@ -284,7 +288,10 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 			const BlockDef& ndef = reg.get(neighbor);
 			// Cull face if neighbor is opaque-solid (transparent neighbors like glass/portal
 			// let the face show through)
-			if (ndef.solid && !ndef.transparent && ndef.mesh_type == MeshType::Cube) continue;
+			// Y-axis faces: keep original cull (any solid neighbor blocks them)
+			// X/Z-axis faces: only cull against full-cube solid neighbors (so floor sides show next to stairs)
+			bool isYFace = (face == 2 || face == 3);
+			if (ndef.solid && !ndef.transparent && (isYFace || ndef.mesh_type == MeshType::Cube)) continue;
 
 			glm::vec3 color;
 			if (face == 2)      color = bdef.color_top;
@@ -366,4 +373,4 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 	return {verts, tVerts};
 }
 
-} // namespace agentica
+} // namespace modcraft

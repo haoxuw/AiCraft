@@ -25,7 +25,7 @@
 #include <imgui.h>
 #include <unordered_map>
 
-namespace agentica {
+namespace modcraft {
 
 class HandbookUI {
 public:
@@ -367,4 +367,4 @@ private:
 	float m_forkedMsgTimer = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

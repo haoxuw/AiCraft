@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-namespace agentica {
+namespace modcraft {
 
 class InputSource {
 public:
@@ -130,4 +130,4 @@ private:
 	int m_axisCount = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

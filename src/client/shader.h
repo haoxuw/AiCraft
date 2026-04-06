@@ -4,7 +4,7 @@
 #include <glm/glm.hpp>
 #include <string>
 
-namespace agentica {
+namespace modcraft {
 
 class Shader {
 public:
@@ -27,4 +27,4 @@ private:
 	GLuint m_program = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

@@ -74,7 +74,7 @@ main()
 ## File Structure
 
 ```
-Agentica/
+ModCraft/
   CMakeLists.txt
   src/
     main.cpp                 -- entry point, game loop

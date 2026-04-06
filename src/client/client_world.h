@@ -22,7 +22,7 @@
 #include <memory>
 #include <string>
 
-namespace agentica {
+namespace modcraft {
 
 // Lightweight entity data for client rendering (no behavior, no physics)
 struct ClientEntity {
@@ -177,4 +177,4 @@ private:
 	std::unordered_map<EntityId, Inventory> m_inventories;
 };
 
-} // namespace agentica
+} // namespace modcraft

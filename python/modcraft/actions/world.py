@@ -5,9 +5,9 @@ not by player input.
 """
 
 import random
-from agentworld.api.actions import Action, ActionMeta
-from agentworld.api.world_view import WorldView
-from agentworld.api.types import BlockPos
+from modcraft.api.actions import Action, ActionMeta
+from modcraft.api.world_view import WorldView
+from modcraft.api.types import BlockPos
 
 
 class GrassSpread(Action):

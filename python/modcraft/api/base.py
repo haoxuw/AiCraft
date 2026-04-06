@@ -33,19 +33,19 @@ User-created content:
       - Entirely new class: class Teleporter(ActiveObject): def decide(...)
 
     User artifacts are uploaded to the server, validated, and registered
-    at runtime via the ArtifactRegistry (see agentworld.api.registry).
+    at runtime via the ArtifactRegistry (see modcraft.api.registry).
 """
 
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 
-from agentworld.api.types import Vec3, BlockPos, EntityId
-from agentworld.api.properties import Property
+from modcraft.api.types import Vec3, BlockPos, EntityId
+from modcraft.api.properties import Property
 
 if TYPE_CHECKING:
-    from agentworld.api.actions import Action
-    from agentworld.api.world_view import WorldView
+    from modcraft.api.actions import Action
+    from modcraft.api.world_view import WorldView
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ When a nearby same-type creature is near a threat, join the stampede.
 
 Parameters: flee_range (default 5)
 """
-from agentica_engine import Flee
+from modcraft_engine import Flee
 
 def decide(self, world):
     flee_range = self.get("flee_range", 5.0)

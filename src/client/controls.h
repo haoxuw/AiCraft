@@ -7,7 +7,7 @@
 #include <vector>
 #include <memory>
 
-namespace agentica {
+namespace modcraft {
 
 // Action name constants -- use these instead of raw strings.
 namespace Action {
@@ -88,4 +88,4 @@ private:
 	std::vector<std::unique_ptr<InputSource>> m_sources;
 };
 
-} // namespace agentica
+} // namespace modcraft

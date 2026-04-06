@@ -6,7 +6,7 @@ stand and chop for 2 seconds, then rest before searching again.
 State machine: searching → walking → chopping → resting → searching
 """
 
-from agentica_engine import Idle, Wander, MoveTo, BreakBlock
+from modcraft_engine import Idle, Wander, MoveTo, BreakBlock
 
 SEARCH_RADIUS = 16.0
 

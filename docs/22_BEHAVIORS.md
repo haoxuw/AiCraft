@@ -101,7 +101,7 @@ Override per-entity through creature definitions or the behavior editor.
 
 ## Behavior API Reference
 
-Available actions (from `agentica_engine`):
+Available actions (from `modcraft_engine`):
 ```python
 Idle()                              # stop and apply friction
 Wander(speed=2.0)                   # random walk direction

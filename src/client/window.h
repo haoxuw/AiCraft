@@ -4,7 +4,7 @@
 #include <GLFW/glfw3.h>
 #include <string>
 
-namespace agentica {
+namespace modcraft {
 
 class Window {
 public:
@@ -28,4 +28,4 @@ private:
 	int m_height = 0;
 };
 
-} // namespace agentica
+} // namespace modcraft

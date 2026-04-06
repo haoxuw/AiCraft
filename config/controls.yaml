@@ -1,4 +1,4 @@
-# AiCraft Key Bindings
+# ModCraft Key Bindings
 # Format: action_name: KeyName
 # Supported keys: A-Z, 0-9, F1-F12, Space, Escape, Tab, Enter,
 #   LeftShift, RightShift, LeftControl, RightControl, LeftAlt, RightAlt,
@@ -24,7 +24,7 @@ drop_item: Q
 equip_item: E
 
 # UI
-screenshot: F2
+screenshot: PrintScreen
 toggle_debug: F3
 toggle_inventory: I
 menu_back: Escape

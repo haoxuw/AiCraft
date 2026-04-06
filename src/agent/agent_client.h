@@ -32,7 +32,7 @@
 #include <thread>
 #include <chrono>
 
-namespace agentica {
+namespace modcraft {
 
 class AgentClient {
 public:
@@ -381,4 +381,4 @@ private:
 	BehaviorStore m_behaviorStore;
 };
 
-} // namespace agentica
+} // namespace modcraft

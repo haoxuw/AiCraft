@@ -23,7 +23,7 @@
 #include <cstdio>
 #include <ctime>
 
-namespace agentica {
+namespace modcraft {
 
 struct WorldMetadata {
 	std::string name;
@@ -450,4 +450,4 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 	return true;
 }
 
-} // namespace agentica
+} // namespace modcraft

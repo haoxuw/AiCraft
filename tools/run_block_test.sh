@@ -3,10 +3,10 @@
 set -e
 
 PORT=9876
-BINARY="./build/aicraft-server"
+BINARY="./build/modcraft-server"
 
 # Kill any stale servers
-pkill -9 -f "aicraft-server" 2>/dev/null || true
+pkill -9 -f "modcraft-server" 2>/dev/null || true
 sleep 1
 
 # Start server

@@ -2,7 +2,7 @@
 
 Random chance to start a dust bath, then idle for a few seconds.
 """
-from agentica_engine import Idle
+from modcraft_engine import Idle
 import random
 
 _rng_seeded = False

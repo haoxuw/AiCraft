@@ -30,11 +30,11 @@ EMSDK := $(HOME)/emsdk
 # Singleplayer: auto-launches server + bot processes + GUI client
 # Uses AgentManager internally — no manual bot spawning needed
 game: build
-	./$(BUILD_DIR)/agentica --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
+	./$(BUILD_DIR)/modcraft --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
 
 # Dedicated server (interactive world select, or --world/--seed/--template flags)
 server: build
-	./$(BUILD_DIR)/agentica-server --port $(PORT)
+	./$(BUILD_DIR)/modcraft-server --port $(PORT)
 
 # GUI client: shows menu with "Start game" and "Join a game" tabs
 # Optionally pre-fills server address: make client HOST=192.168.1.5 PORT=7777
@@ -43,19 +43,19 @@ client: build
 
 # Kill everything
 stop:
-	@-pkill -f "agentica"" 2>/dev/null; sleep 1
+	@-pkill -f "modcraft"" 2>/dev/null; sleep 1
 	@echo "All agentica processes stopped."
 
 # Kill only servers (find by listening port)
 killservers:
-	@echo "Looking for agentworld server processes..."
-	@-pgrep -fa "agentica-server" 2>/dev/null && pkill -f "agentica-server" && echo "Killed." || echo "No servers running."
-	@-pgrep -fa "agentica".*--port" 2>/dev/null && pkill -f "agentica".*--port" && echo "Killed port processes." || true
+	@echo "Looking for modcraft server processes..."
+	@-pgrep -fa "modcraft-server" 2>/dev/null && pkill -f "modcraft-server" && echo "Killed." || echo "No servers running."
+	@-pgrep -fa "modcraft".*--port" 2>/dev/null && pkill -f "modcraft".*--port" && echo "Killed port processes." || true
 
 # Run headless E2E gameplay tests
 test_e2e: build
 	@echo "[test_e2e] Running headless gameplay tests..."
-	cd $(BUILD_DIR) && ./agentica-test
+	cd $(BUILD_DIR) && ./modcraft-test
 	@echo "[test_e2e] Done."
 
 build: configure

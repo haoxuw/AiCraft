@@ -3,7 +3,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace agentica {
+namespace modcraft {
 
 // ================================================================
 // processMovement -- WASD / Sprint / Jump / Click-to-move / RTS
@@ -288,4 +288,4 @@ void GameplayController::issueRTSMoveOrder(glm::ivec3 blockPos,
 	}
 }
 
-} // namespace agentica
+} // namespace modcraft

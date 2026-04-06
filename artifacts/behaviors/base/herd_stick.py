@@ -4,7 +4,7 @@ Same as flock but with a wider default range for larger animals.
 
 Parameters: group_range (default 6)
 """
-from agentica_engine import MoveTo
+from modcraft_engine import MoveTo
 
 def decide(self, world):
     group_range = self.get("group_range", 6.0)

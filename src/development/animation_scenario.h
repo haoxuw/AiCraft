@@ -8,7 +8,7 @@
 
 #include "development/scenario.h"
 
-namespace agentica {
+namespace modcraft {
 namespace development {
 
 class AnimationScenario : public IScenario {
@@ -68,4 +68,4 @@ private:
 };
 
 } // namespace development
-} // namespace agentica
+} // namespace modcraft
