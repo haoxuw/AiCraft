@@ -16,6 +16,12 @@ model = {
     "walk_speed": 2.0,
     "idle_bob": 0.012,
     "walk_bob": 0.05,
+    # Hand attachment: grip goes here; pivot = shoulder joint (matches arm pivot)
+    # Derived from right-hand part center [0.37, 0.77, 0] + reach forward
+    "hand_r":  [ 0.50,  0.72, -0.14],
+    "hand_l":  [-0.50,  0.72, -0.14],
+    "pivot_r": [ 0.37,  1.40,  0.00],
+    "pivot_l": [-0.37,  1.40,  0.00],
     "parts": [
         # Head (texture provides face + hair -- must be parts[0])
         {"offset": [0, 1.75, 0], "size": [0.50, 0.50, 0.50], "color": [0.85, 0.70, 0.55, 1],

@@ -1,0 +1,70 @@
+#pragma once
+
+// IScenario — interface for debug screenshot scenarios.
+//
+// Each scenario defines a sequence of steps: move camera, select items,
+// wait for rendering to settle, then fire a screenshot.
+//
+// Scenarios are zero-cost when inactive (the DebugCapture guard ensures
+// tick() is never called in production builds unless the flag is set).
+
+#include "client/camera.h"
+#include "shared/entity.h"
+#include <string>
+#include <functional>
+
+namespace agentica {
+namespace development {
+
+// Callbacks injected by the game into the scenario.
+// This keeps scenarios decoupled from Game internals.
+struct ScenarioCallbacks {
+	// Save a screenshot to /tmp/debug_N_<suffix>.ppm
+	std::function<void(const std::string& suffix)> save;
+	// Cycle the camera mode (FPS → TPS → RPG → RTS → FPS)
+	std::function<void()>                          cycleCamera;
+	// Set the camera to a specific mode
+	std::function<void(CameraMode)>                setCamera;
+	// Select a hotbar slot on the player
+	std::function<void(int slot)>                  selectSlot;
+	// Drop the currently held item
+	std::function<void()>                          dropItem;
+	// Trigger the FPS swing animation (for animation scenario)
+	std::function<void()>                          triggerSwing;
+};
+
+// Abstract base for all debug scenarios.
+class IScenario {
+public:
+	virtual ~IScenario() = default;
+
+	// Called once per frame while the scenario is running.
+	// Returns true when the scenario is complete.
+	virtual bool tick(float dt, Entity* player, Camera& camera,
+	                  const ScenarioCallbacks& cb) = 0;
+
+	// Human-readable name for log output.
+	virtual const char* name() const = 0;
+
+protected:
+	// Helpers available to all derived scenarios.
+
+	// Find the hotbar slot holding itemId. Returns -1 if not found.
+	static int findHotbarSlot(Entity* player, const std::string& itemId) {
+		if (!player || !player->inventory) return -1;
+		for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++) {
+			if (player->inventory->hotbar(i) == itemId) return i;
+		}
+		return -1;
+	}
+
+	// Force camera into a specific mode without cycling past it.
+	static void setCameraMode(CameraMode target, Camera& camera,
+	                          const ScenarioCallbacks& cb) {
+		int guard = 4;
+		while (camera.mode != target && guard-- > 0) cb.cycleCamera();
+	}
+};
+
+} // namespace development
+} // namespace agentica

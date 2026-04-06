@@ -241,7 +241,11 @@ void GameServer::resolveActions(float dt) {
 			}
 			// Clamp toss speed (anti-cheat: max ~8 blocks/sec)
 			if (tossLen > 10.0f) tossDir = glm::normalize(tossDir) * 10.0f;
-			glm::vec3 fwd = glm::normalize(glm::vec3(tossDir.x, 0, tossDir.z));
+			glm::vec3 xzDir = glm::vec3(tossDir.x, 0, tossDir.z);
+			float xzLen = glm::length(xzDir);
+			glm::vec3 fwd = xzLen > 0.01f ? xzDir / xzLen
+			                              : glm::vec3(std::cos(glm::radians(actor->yaw)), 0,
+			                                          std::sin(glm::radians(actor->yaw)));
 			// Spawn 1.5 blocks ahead (outside pickup range) at eye height
 			glm::vec3 dropPos = actor->position + fwd * 1.5f + glm::vec3(0, 1.2f, 0);
 			EntityId itemId = m_world->entities.spawn(EntityType::ItemEntity, dropPos,

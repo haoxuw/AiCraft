@@ -51,6 +51,15 @@ struct BoxModel {
 
 	// How this item looks when held in a hand (Python: "equip" dict)
 	EquipTransform equip;
+
+	// Hand attachment points — where the grip of a held item is placed.
+	// Defined in the CHARACTER model's Python file ("hand_r", "hand_l", etc.)
+	// so each creature can have correctly-proportioned hand positions.
+	// Defaults calibrated for the base player model (arms at y=1.05, height=2.0).
+	glm::vec3 handR  = { 0.42f,  0.70f, -0.16f }; // right hand grip position
+	glm::vec3 handL  = {-0.42f,  0.70f, -0.16f }; // left hand grip position
+	glm::vec3 pivotR = { 0.37f,  1.40f,  0.00f }; // right shoulder pivot (for arm swing)
+	glm::vec3 pivotL = {-0.37f,  1.40f,  0.00f }; // left shoulder pivot
 };
 
 // Animation state passed to draw().

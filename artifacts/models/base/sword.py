@@ -11,80 +11,56 @@ model = {
     "id": "sword",
     "height": 1.4,
     "equip": {
-        "rotation": [-20, 0, -10],  # blade points up-right (Minecraft idle pose)
+        "rotation": [-20, 30, -10],  # blade angled out (visible face-on from both front and back)
         "offset": [0.03, 0.0, -0.05],
-        "scale": 0.85,
+        "scale": 0.50,              # normalized to ~0.70 blocks when held (35% of 2.0-block player)
     },
     "parts": [
-        # ── Blade (3 layers for depth) ──────────────────────────
-        # Core blade — dark steel
-        {"offset": [0, 0.65, 0], "size": [0.12, 1.00, 0.04],
-         "color": [0.45, 0.48, 0.55, 1]},
-        # Blade edge — bright steel with frost tint
-        {"offset": [0, 0.65, -0.015], "size": [0.14, 0.96, 0.015],
-         "color": [0.72, 0.78, 0.88, 1]},
-        # Blade back edge
-        {"offset": [0, 0.65, 0.015], "size": [0.14, 0.96, 0.015],
-         "color": [0.68, 0.72, 0.82, 1]},
-        # Blade tip — narrower, brighter
-        {"offset": [0, 1.18, 0], "size": [0.06, 0.10, 0.03],
-         "color": [0.80, 0.85, 0.95, 1]},
+        # ── Blade ──────────────────────────────────────────────────────────────
+        # Core blade — depth 0.10 so it stays readable at ground scale (0.25×)
+        {"offset": [0, 0.65, 0], "size": [0.14, 1.00, 0.10],
+         "color": [0.48, 0.52, 0.60, 1]},
+        # Frost edge highlight (front face, slightly proud)
+        {"offset": [0, 0.65, -0.052], "size": [0.10, 0.96, 0.012],
+         "color": [0.75, 0.82, 0.95, 1]},
+        # Blade tip
+        {"offset": [0, 1.18, 0], "size": [0.07, 0.10, 0.07],
+         "color": [0.82, 0.88, 0.98, 1]},
 
-        # ── Rune channel (frost glow running up the blade) ──────
-        {"offset": [0, 0.50, -0.025], "size": [0.03, 0.50, 0.008],
-         "color": [0.30, 0.65, 0.95, 1]},
-        {"offset": [0, 0.80, -0.025], "size": [0.03, 0.20, 0.008],
-         "color": [0.45, 0.75, 1.00, 1]},
-        # Rune marks (4 dots along the blade)
-        {"offset": [0, 0.40, -0.028], "size": [0.04, 0.03, 0.005],
-         "color": [0.20, 0.55, 0.90, 1]},
-        {"offset": [0, 0.55, -0.028], "size": [0.04, 0.03, 0.005],
-         "color": [0.20, 0.55, 0.90, 1]},
-        {"offset": [0, 0.70, -0.028], "size": [0.04, 0.03, 0.005],
-         "color": [0.20, 0.55, 0.90, 1]},
-        {"offset": [0, 0.85, -0.028], "size": [0.04, 0.03, 0.005],
-         "color": [0.20, 0.55, 0.90, 1]},
+        # ── Rune channel (frost glow, embedded in front face) ────────────────
+        {"offset": [0, 0.60, -0.056], "size": [0.035, 0.65, 0.008],
+         "color": [0.25, 0.60, 0.95, 1]},
 
-        # ── Crossguard (skull-wing shape) ───────────────────────
-        # Main crossbar — wide, dark metal
-        {"offset": [0, 0.17, 0], "size": [0.36, 0.05, 0.06],
-         "color": [0.35, 0.35, 0.40, 1]},
-        # Crossguard wings (swept down)
-        {"offset": [-0.17, 0.14, 0], "size": [0.08, 0.08, 0.05],
-         "color": [0.32, 0.32, 0.38, 1]},
-        {"offset": [0.17, 0.14, 0], "size": [0.08, 0.08, 0.05],
-         "color": [0.32, 0.32, 0.38, 1]},
-        # Wing tips (pointed down)
-        {"offset": [-0.20, 0.10, 0], "size": [0.04, 0.06, 0.04],
-         "color": [0.28, 0.28, 0.35, 1]},
-        {"offset": [0.20, 0.10, 0], "size": [0.04, 0.06, 0.04],
-         "color": [0.28, 0.28, 0.35, 1]},
+        # ── Crossguard ───────────────────────────────────────────────────────
+        # Main bar — thick enough to see at any angle
+        {"offset": [0, 0.17, 0], "size": [0.44, 0.07, 0.12],
+         "color": [0.35, 0.36, 0.42, 1]},
+        # Swept wing tips (angled down)
+        {"offset": [-0.24, 0.12, 0], "size": [0.06, 0.10, 0.10],
+         "color": [0.28, 0.29, 0.36, 1]},
+        {"offset": [ 0.24, 0.12, 0], "size": [0.06, 0.10, 0.10],
+         "color": [0.28, 0.29, 0.36, 1]},
+        # Skull face (center detail)
+        {"offset": [0, 0.18, -0.065], "size": [0.10, 0.10, 0.022],
+         "color": [0.76, 0.72, 0.65, 1]},
+        # Eye sockets
+        {"offset": [-0.025, 0.20, -0.076], "size": [0.028, 0.028, 0.006],
+         "color": [0.15, 0.25, 0.48, 1]},
+        {"offset": [ 0.025, 0.20, -0.076], "size": [0.028, 0.028, 0.006],
+         "color": [0.15, 0.25, 0.48, 1]},
 
-        # ── Skull (center of crossguard) ────────────────────────
-        # Skull face
-        {"offset": [0, 0.17, -0.035], "size": [0.09, 0.08, 0.02],
-         "color": [0.75, 0.72, 0.65, 1]},
-        # Eye sockets (dark)
-        {"offset": [-0.02, 0.18, -0.045], "size": [0.025, 0.02, 0.005],
-         "color": [0.15, 0.25, 0.45, 1]},
-        {"offset": [0.02, 0.18, -0.045], "size": [0.025, 0.02, 0.005],
-         "color": [0.15, 0.25, 0.45, 1]},
-
-        # ── Grip (dark leather wrap) ────────────────────────────
-        {"offset": [0, 0.06, 0], "size": [0.06, 0.18, 0.06],
+        # ── Grip ────────────────────────────────────────────────────────────
+        {"offset": [0, 0.06, 0], "size": [0.08, 0.20, 0.08],
          "color": [0.22, 0.15, 0.08, 1]},
-        # Leather wrap bands
-        {"offset": [0, 0.10, -0.025], "size": [0.05, 0.02, 0.015],
-         "color": [0.30, 0.20, 0.10, 1]},
-        {"offset": [0, 0.04, -0.025], "size": [0.05, 0.02, 0.015],
-         "color": [0.30, 0.20, 0.10, 1]},
+        # Wrap band
+        {"offset": [0, 0.07, -0.040], "size": [0.065, 0.025, 0.018],
+         "color": [0.32, 0.22, 0.12, 1]},
 
-        # ── Pommel (heavy counterweight) ────────────────────────
-        # Main pommel sphere
-        {"offset": [0, -0.04, 0], "size": [0.09, 0.07, 0.09],
-         "color": [0.35, 0.35, 0.42, 1]},
-        # Pommel gem (frost crystal)
-        {"offset": [0, -0.04, -0.045], "size": [0.04, 0.04, 0.01],
-         "color": [0.30, 0.65, 0.95, 1]},
+        # ── Pommel ──────────────────────────────────────────────────────────
+        {"offset": [0, -0.04, 0], "size": [0.12, 0.10, 0.12],
+         "color": [0.36, 0.36, 0.44, 1]},
+        # Frost crystal
+        {"offset": [0, -0.04, -0.062], "size": [0.05, 0.05, 0.012],
+         "color": [0.28, 0.62, 0.95, 1]},
     ]
 }

@@ -16,6 +16,13 @@ model = {
     "walk_speed": 2.0,
     "idle_bob": 0.012,
     "walk_bob": 0.06,
+    # Hand attachment: grip goes here; pivot = shoulder joint
+    # Derived from arm part: offset [0.37, 1.05, 0], size [0.20, 0.70, 0.20]
+    # Bottom of arm = 1.05 - 0.35 = 0.70 (hand position)
+    "hand_r":  [ 0.47,  0.70, -0.12],
+    "hand_l":  [-0.47,  0.70, -0.12],
+    "pivot_r": [ 0.37,  1.40,  0.00],
+    "pivot_l": [-0.37,  1.40,  0.00],
     "parts": [
         # Head -- nods once per step (2x walk freq)
         {"offset": [0, 1.75, 0], "size": [0.50, 0.50, 0.50], "color": [0.85, 0.70, 0.55, 1],

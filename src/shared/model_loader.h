@@ -257,6 +257,12 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 		if (auto* v = dictGet(ed, "scale"))    m.equip.scale = (float)v->getNum(1.0);
 	}
 
+	// Parse hand attachment points (character models define where their hands are)
+	if (auto* v = dictGet(d, "hand_r"))  m.handR  = toVec3(v->list);
+	if (auto* v = dictGet(d, "hand_l"))  m.handL  = toVec3(v->list);
+	if (auto* v = dictGet(d, "pivot_r")) m.pivotR = toVec3(v->list);
+	if (auto* v = dictGet(d, "pivot_l")) m.pivotL = toVec3(v->list);
+
 	return m;
 }
 
