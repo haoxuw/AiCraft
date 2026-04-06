@@ -91,11 +91,11 @@ public:
 	// Action queue (for client input → server)
 	virtual ActionQueue& actionQueue() = 0;
 
-	// Set visual effect callbacks
+	// Set client-side effect callbacks — invoked by NetworkServer when it receives
+	// the corresponding server messages over TCP.
 	virtual void setEffectCallbacks(
 		std::function<void(ChunkPos)> onChunkDirty,
-		std::function<void(glm::vec3, glm::vec3, int)> onBlockBreak,
-		std::function<void(glm::vec3, glm::vec3)> onItemPickup,
+		std::function<void(glm::vec3, const std::string&)> onBlockBreakText = nullptr,
 		std::function<void(glm::vec3, const std::string&)> onBlockPlace = nullptr
 	) = 0;
 };

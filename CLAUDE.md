@@ -32,7 +32,27 @@ C++ classes, no separate rendering path, no hardcoded stats.
 
 - Entities submit `ActionProposal` (intent). Server validates and executes.
 - Client NEVER writes to `entity.position`, `entity.velocity`, `chunk.set()`
-- Singleplayer uses the same TCP code paths as multiplayer.
+- Singleplayer uses the same TCP code paths as multiplayer (no `LocalServer` shortcut).
+
+### Rule 5: Server Has No Display Logic
+
+**The server never decides what to show on any client's screen.**
+
+The server's only responsibilities are:
+1. Validate actions (approve or reject)
+2. Update world state (blocks, entities, inventories)
+3. Broadcast state changes to all clients via TCP (`onBlockChange`, `onEntityRemove`, `onInventoryChange`)
+
+**NEVER add to `ServerCallbacks` or fire callbacks from `server.cpp` for:**
+- Visual effects (particles, sounds, animations)
+- Floating text or HUD notifications
+- Per-player display decisions
+
+These are client concerns. Each client observes the world state it receives over TCP and decides its own display:
+- Block break text → client detects `S_BLOCK` bid→AIR transition, looks up block name
+- Pickup text → client fires on animation arrival (already knows item name/count)
+- Damage text → client compares HP snapshots from successive `S_ENTITY` messages
+- Sounds, particles → client-side, triggered by client-observable events
 
 ### Rule 4: All Intelligence Runs on Agent Clients
 
@@ -44,13 +64,17 @@ C++ classes, no separate rendering path, no hardcoded stats.
 
 ## Architecture Summary
 
-Three process types (same in singleplayer and multiplayer):
+Three process types (same in singleplayer and multiplayer — always TCP):
 
 - **Server** (`agentica-server`) — headless, owns world, NO Python/OpenGL
 - **Player Client** (`agentworld`) — GUI, renders world, NO Python
 - **Agent Client** (`agentica-agent`) — headless, runs Python AI, NO OpenGL
 
-Singleplayer: GUI launches server → server auto-spawns agent clients for NPCs.
+Singleplayer: `agentworld` spawns `agentica-server` as a child process, then
+connects via TCP on localhost — **identical code path to multiplayer**.
+There is no `LocalServer` in-process shortcut. `TestServer` (in `server/test_server.h`)
+exists only for headless unit tests and is never used in the game.
+
 See `docs/00_OVERVIEW.md` for full architecture, protocol, and artifact system.
 
 ## Project Overview
@@ -102,6 +126,7 @@ src/
     server.h                GameServer: tick, actions, entity ownership
     client_manager.h        ClientManager: TCP, agent spawning, broadcast
     entity_manager.h        EntityManager: spawn, physics (no AI)
+    test_server.h           TestServer: GameServer wrapper for headless tests only
   agent/                      Agent client (Python, no OpenGL)
     agent_client.h          AgentClient: TCP, Python decide(), send actions
     behavior_executor.h     BehaviorAction → ActionProposal

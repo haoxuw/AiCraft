@@ -192,14 +192,53 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 		if (bdef.mesh_type != MeshType::Cube) {
 			float a = bdef.transparent ? 0.75f : 1.0f;
 			if (bdef.mesh_type == MeshType::Stair) {
-				// Emit all 10 exterior faces of the stair L-shape,
-				// skipping the two interior faces where the slab and step share a surface.
-				// This eliminates z-fighting gaps while covering the full exterior.
+				// Emit all 10 exterior faces of the stair L-shape.
+				// param2 bits 0-1 (FourDir) rotate the stair in 90° increments around Y:
+				//   0 = rises toward +Z (tread faces -Z)
+				//   1 = rises toward +X (tread faces -X)
+				//   2 = rises toward -Z (tread faces +Z)
+				//   3 = rises toward -X (tread faces +X)
+				// Vertices are defined in local (u, v) ∈ [0,1]² block-space and transformed
+				// to world (x, z) by wx(u,v)/wz(u,v).  The positive Jacobian of each
+				// rotation (= +1) guarantees CCW winding is preserved for all orientations.
 				glm::vec3 ct = bdef.color_top, cs = bdef.color_side;
 				auto& dst = (a < 1.0f) ? tVerts : verts;
-				float x0=fx, x1=fx+1, y0=fy, y5=fy+0.5f, y1=fy+1;
-				float z0=fz, z5=fz+0.5f, z1=fz+1;
-				// emit one quad (2 tris, CCW from outside per face direction)
+				float y0=fy, y5=fy+0.5f, y1=fy+1;
+				uint8_t p2 = chunk->getParam2(lx, ly, lz) & 0x3;
+
+				// Map local block-space (u, v) to world (x, z).
+				// u = local x-offset ∈ [0,1], v = local z-offset ∈ [0,1].
+				// v=0 is the "near/tread" end; v=1 is the "far/back" end.
+				auto wx = [&](float u, float v) -> float {
+					switch (p2) {
+					default:
+					case 0: return fx + u;
+					case 1: return fx + 1.f - v;
+					case 2: return fx + 1.f - u;
+					case 3: return fx + v;
+					}
+				};
+				auto wz = [&](float u, float v) -> float {
+					switch (p2) {
+					default:
+					case 0: return fz + v;
+					case 1: return fz + u;
+					case 2: return fz + 1.f - v;
+					case 3: return fz + 1.f - u;
+					}
+				};
+				// Rotate a horizontal normal (nx, _, nz) by the same CCW increment.
+				// Standard 2D CCW 90°: (nx, nz) → (-nz, nx).
+				auto rn = [&](float nx, float nz) -> glm::vec3 {
+					switch (p2) {
+					default:
+					case 0: return { nx,  0.f,  nz};
+					case 1: return {-nz,  0.f,  nx};
+					case 2: return {-nx,  0.f, -nz};
+					case 3: return { nz,  0.f, -nx};
+					}
+				};
+				// Emit one quad (2 tris, CCW from outside per face direction).
 				auto eq = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec3 v3,
 				              glm::vec3 n, glm::vec3 col) {
 					float sh;
@@ -213,16 +252,17 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 					dst.push_back({v2,col,n,1.f,sh,a,0.f}); dst.push_back({v0,col,n,1.f,sh,a,0.f});
 					dst.push_back({v2,col,n,1.f,sh,a,0.f}); dst.push_back({v3,col,n,1.f,sh,a,0.f});
 				};
-				eq({x0,y0,z1},{x0,y0,z0},{x1,y0,z0},{x1,y0,z1}, {0,-1,0}, cs); // bottom
-				eq({x0,y0,z0},{x0,y5,z0},{x1,y5,z0},{x1,y0,z0}, {0,0,-1}, cs); // front face
-				eq({x0,y5,z0},{x0,y5,z5},{x1,y5,z5},{x1,y5,z0}, {0, 1,0}, ct); // tread (front half)
-				eq({x0,y5,z5},{x0,y1,z5},{x1,y1,z5},{x1,y5,z5}, {0,0,-1}, cs); // riser
-				eq({x0,y1,z5},{x0,y1,z1},{x1,y1,z1},{x1,y1,z5}, {0, 1,0}, ct); // top (back half)
-				eq({x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x0,y0,z1}, {0, 0,1}, cs); // back face
-				eq({x0,y0,z1},{x0,y5,z1},{x0,y5,z0},{x0,y0,z0}, {-1,0,0}, cs); // left lower
-				eq({x0,y5,z1},{x0,y1,z1},{x0,y1,z5},{x0,y5,z5}, {-1,0,0}, cs); // left upper
-				eq({x1,y0,z0},{x1,y5,z0},{x1,y5,z1},{x1,y0,z1}, { 1,0,0}, cs); // right lower
-				eq({x1,y5,z5},{x1,y1,z5},{x1,y1,z1},{x1,y5,z1}, { 1,0,0}, cs); // right upper
+				// 10 faces in local (u,v) coords.  v=0 = near/tread, v=1 = far/back.
+				eq({wx(0,1),y0,wz(0,1)},{wx(0,0),y0,wz(0,0)},{wx(1,0),y0,wz(1,0)},{wx(1,1),y0,wz(1,1)}, {0,-1,0},        cs); // bottom
+				eq({wx(0,0),y0,wz(0,0)},{wx(0,0),y5,wz(0,0)},{wx(1,0),y5,wz(1,0)},{wx(1,0),y0,wz(1,0)}, rn(0,-1),         cs); // near face (half-height)
+				eq({wx(0,0),y5,wz(0,0)},{wx(0,.5f),y5,wz(0,.5f)},{wx(1,.5f),y5,wz(1,.5f)},{wx(1,0),y5,wz(1,0)}, {0,1,0}, ct); // tread
+				eq({wx(0,.5f),y5,wz(0,.5f)},{wx(0,.5f),y1,wz(0,.5f)},{wx(1,.5f),y1,wz(1,.5f)},{wx(1,.5f),y5,wz(1,.5f)}, rn(0,-1), cs); // riser
+				eq({wx(0,.5f),y1,wz(0,.5f)},{wx(0,1),y1,wz(0,1)},{wx(1,1),y1,wz(1,1)},{wx(1,.5f),y1,wz(1,.5f)}, {0,1,0}, ct); // top (back half)
+				eq({wx(1,1),y0,wz(1,1)},{wx(1,1),y1,wz(1,1)},{wx(0,1),y1,wz(0,1)},{wx(0,1),y0,wz(0,1)}, rn(0,1),           cs); // back face (full-height)
+				eq({wx(0,1),y0,wz(0,1)},{wx(0,1),y5,wz(0,1)},{wx(0,0),y5,wz(0,0)},{wx(0,0),y0,wz(0,0)}, rn(-1,0),          cs); // left lower
+				eq({wx(0,1),y5,wz(0,1)},{wx(0,1),y1,wz(0,1)},{wx(0,.5f),y1,wz(0,.5f)},{wx(0,.5f),y5,wz(0,.5f)}, rn(-1,0),  cs); // left upper
+				eq({wx(1,0),y0,wz(1,0)},{wx(1,0),y5,wz(1,0)},{wx(1,1),y5,wz(1,1)},{wx(1,1),y0,wz(1,1)}, rn(1,0),           cs); // right lower
+				eq({wx(1,.5f),y5,wz(1,.5f)},{wx(1,.5f),y1,wz(1,.5f)},{wx(1,1),y1,wz(1,1)},{wx(1,1),y5,wz(1,1)}, rn(1,0),   cs); // right upper
 			} else if (bdef.mesh_type == MeshType::Door) {
 				// Closed door: thin panel flush with -Z face of the cell
 				emitBox(fx, fy, fz, fx+1, fy+1, fz+0.1f,

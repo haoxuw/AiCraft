@@ -238,8 +238,10 @@ private:
 			auto chunk = std::make_unique<Chunk>();
 			for (int ly = 0; ly < CHUNK_SIZE; ly++)
 				for (int lz = 0; lz < CHUNK_SIZE; lz++)
-					for (int lx = 0; lx < CHUNK_SIZE; lx++)
-						chunk->set(lx, ly, lz, (BlockId)rb.readU32());
+					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+						uint32_t v = rb.readU32();
+						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
+					}
 			m_chunks[cp] = std::move(chunk);
 			break;
 		}
@@ -256,6 +258,7 @@ private:
 		case net::S_BLOCK: {
 			int bx = rb.readI32(), by = rb.readI32(), bz = rb.readI32();
 			BlockId bid = (BlockId)rb.readU32();
+			uint8_t p2 = rb.hasMore() ? rb.readU8() : 0;
 			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
 			auto it = m_chunks.find(cp);
@@ -263,7 +266,7 @@ private:
 				int lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 				int ly = ((by % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 				int lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-				it->second->set(lx, ly, lz, bid);
+				it->second->set(lx, ly, lz, bid, p2);
 			}
 			break;
 		}

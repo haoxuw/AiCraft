@@ -18,10 +18,18 @@ enum class BlockBehavior { Passive, Active };
 // Non-cube shapes are emitted as explicit box geometry in the mesher.
 enum class MeshType {
 	Cube,      // full unit cube (default)
-	Stair,     // bottom slab (0..0.5 full) + back step (0.5..1, z=0.5..1)
+	Stair,     // L-shaped step: low half at near end, full height at far end.
+	           // Rotation controlled by param2 (Param2Type::FourDir):
+	           //   0=rises +Z (low at -Z)  1=rises +X (low at -X)
+	           //   2=rises -Z (low at +Z)  3=rises -X (low at +X)
 	Door,      // thin vertical panel on -Z face (closed, 0.1 thick)
 	DoorOpen,  // thin vertical panel on -X face (open, rotated 90°)
 };
+
+// How param2 is interpreted for a block definition.
+// None   = param2 unused (always 0).
+// FourDir = lower 2 bits encode horizontal facing (0=+Z, 1=+X, 2=-Z, 3=-X).
+enum class Param2Type { None, FourDir };
 
 struct BlockDef {
 	std::string string_id;
@@ -57,6 +65,9 @@ struct BlockDef {
 
 	// Visual mesh shape (does not affect physics).
 	MeshType mesh_type = MeshType::Cube;
+
+	// How param2 is interpreted for placed instances of this block.
+	Param2Type param2type = Param2Type::None;
 
 	// Client-only: animated surface effect (does not affect gameplay).
 	bool surface_glow = false;

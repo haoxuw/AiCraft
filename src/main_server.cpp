@@ -213,10 +213,11 @@ int main(int argc, char** argv) {
 
 	// Network broadcast callbacks
 	agentica::ServerCallbacks cbs;
-	cbs.onBlockChange = [&](glm::ivec3 pos, agentica::BlockId bid) {
+	cbs.onBlockChange = [&](glm::ivec3 pos, agentica::BlockId bid, uint8_t p2) {
 		agentica::net::WriteBuffer wb;
 		wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
 		wb.writeU32(bid);
+		wb.writeU8(p2);
 		clients.broadcastToAll(agentica::net::S_BLOCK, wb);
 	};
 	cbs.onEntityRemove = [&](agentica::EntityId id) {

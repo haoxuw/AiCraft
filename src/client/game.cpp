@@ -2,7 +2,6 @@
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 #include "shared/model_loader.h"
-#include "server/world_save.h"
 #include "shared/physics.h"
 #include "client/network_server.h"
 #include "imgui.h"
@@ -585,13 +584,8 @@ void Game::enterGame(int templateIndex, GameState targetState, const WorldGenCon
 
 	int port = m_agentMgr.launchServer(cfg);
 	if (port < 0) {
-		printf("[Game] Failed to launch server, falling back to local server\n");
-		// Fallback to LocalServer (e.g., if binaries not found)
-		auto localServer = std::make_unique<LocalServer>(m_templates);
-		localServer->setCreatureType(m_selectedCreature);
-		localServer->createGame(m_currentSeed, templateIndex, wgc);
-		m_server = std::move(localServer);
-		setupAfterConnect(targetState);
+		fprintf(stderr, "[Game] Failed to launch agentica-server — binary missing or no port available\n");
+		// TODO: surface error in UI rather than silently returning to menu
 		return;
 	}
 
@@ -606,73 +600,32 @@ void Game::setupAfterConnect(GameState targetState) {
 
 	// Set callbacks for visual + audio effects
 	m_server->setEffectCallbacks(
+		// onChunkDirty: mark chunk for remesh when block data changes
 		[this](ChunkPos cp) { m_renderer.markChunkDirty(cp); },
-		[this](glm::vec3 pos, glm::vec3 color, int count) {
-			m_particles.emitBlockBreak(pos, color, count);
-			// Play block break sound based on block color heuristic
-			// (the callback only gives us color, not block type)
-			// Brown/green = dirt/grass, gray = stone, tan = sand, white = snow, brown = wood
-			float r = color.r, g = color.g, b = color.b;
-			if (r > 0.7f && g > 0.7f && b > 0.7f) {
-				m_audio.play("dig_snow", pos, 0.6f);
-			} else if (r > 0.6f && g > 0.5f && b < 0.4f) {
-				m_audio.play("dig_sand", pos, 0.6f);
-			} else if (r < 0.5f && g < 0.5f && b < 0.5f) {
-				m_audio.play("dig_stone", pos, 0.7f);
-			} else if (r > 0.3f && g < 0.35f && b < 0.25f) {
-				m_audio.play("dig_wood", pos, 0.6f);
-			} else if (g > r && g > b) {
-				m_audio.play("dig_leaves", pos, 0.5f);
-			} else {
-				m_audio.play("dig_dirt", pos, 0.6f);
-			}
+		// onBlockBreakText: block break confirmed by server — show HUD text
+		[this](glm::vec3 pos, const std::string& blockName) {
+			std::string name = blockName;
+			if (name.size() > 5 && name.substr(0,5) == "base:") name = name.substr(5);
+			if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
+			for (auto& c : name) if (c == '_') c = ' ';
+			FloatTextEvent ft;
+			ft.source      = FloatSource::BlockBreak;
+			ft.worldPos    = pos + glm::vec3(0.5f, 1.5f, 0.5f);
+			ft.coalesceKey = blockName;
+			ft.text        = name;
+			ft.value       = 1.0f;
+			m_floatText.add(ft);
 		},
-		[this](glm::vec3 pos, glm::vec3 color) {
-			m_particles.emitItemPickup(pos, color);
-			m_audio.play("item_pickup", pos, 0.4f);
-		},
+		// onBlockPlace: play placement sound (sound_place field from BlockDef)
 		[this](glm::vec3 pos, const std::string& soundPlace) {
 			std::string sound = soundPlace.empty() ? "place_stone" : soundPlace;
-			// Map sound_place names to our group names
-			if (sound.find("wood") != std::string::npos)
-				sound = "place_wood";
-			else if (sound.find("dirt") != std::string::npos || sound.find("sand") != std::string::npos)
-				sound = "place_soft";
-			else
-				sound = "place_stone";
+			if (sound.find("wood") != std::string::npos)       sound = "place_wood";
+			else if (sound.find("dirt") != std::string::npos ||
+			         sound.find("sand") != std::string::npos)  sound = "place_soft";
+			else                                                sound = "place_stone";
 			m_audio.play(sound, pos, 0.5f);
 		}
 	);
-
-	// Floating text callbacks (item pickup + block break names)
-	if (auto* local = dynamic_cast<LocalServer*>(m_server.get())) {
-		if (local->server()) {
-			auto& cb = local->server()->callbacks();
-			cb.onPickupText = [this](glm::vec3 pos, const std::string& item, int count) {
-				std::string name = item;
-				if (name.size() > 5 && name.substr(0,5) == "base:") name = name.substr(5);
-				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
-				for (auto& c : name) if (c == '_') c = ' ';
-				if (m_serverLog) fprintf(m_serverLog, "[pickup] %s x%d at (%.0f,%.0f,%.0f)\n",
-					item.c_str(), count, pos.x, pos.y, pos.z);
-
-				// Floating pickup notification
-				FloatTextEvent ft;
-				ft.type        = FloatTextType::Pickup;
-				ft.worldPos    = pos;
-				ft.coalesceKey = item;  // same item type → coalesce
-				ft.color       = {0.85f, 1.0f, 0.55f, 1.0f};
-				ft.text        = "+" + std::to_string(count) + " " + name;
-				m_floatText.add(ft);
-			};
-			cb.onBreakText = [this](glm::vec3 pos, const std::string& blockName) {
-				if (m_serverLog) fprintf(m_serverLog, "[break] %s at (%.0f,%.0f,%.0f)\n",
-					blockName.c_str(), pos.x, pos.y, pos.z);
-			};
-			cb.onPickupDenied = [this](glm::vec3, const std::string&) {
-			};
-		}
-	}
 
 	m_state = targetState;
 	glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -685,27 +638,8 @@ void Game::setupAfterConnect(GameState targetState) {
 	glm::vec3 spawn = m_server->spawnPos();
 	m_camera.player.feetPos = spawn;
 
-	// Default: face +Z (yaw=-90); override for village worlds to face the village
+	// Spawn facing +Z by default. TODO: server could send preferred spawn yaw in S_WELCOME.
 	float spawnYaw = -90.0f;
-	if (auto* ls = dynamic_cast<LocalServer*>(m_server.get())) {
-		if (ls->server()) {
-			World& w = ls->server()->world();
-			auto& tmpl = w.getTemplate();
-			if (tmpl.pyConfig().hasVillage) {
-				auto vc = tmpl.villageCenter(w.seed());
-				float dx = (float)vc.x - spawn.x;
-				float dz = (float)vc.y - spawn.z;
-				float len = std::sqrt(dx*dx + dz*dz);
-				if (len > 0.001f) {
-					// Camera yaw convention: fwd = (-cos(yaw_rad), 0, -sin(yaw_rad))
-					// Solve for yaw so that fwd = (dx/len, 0, dz/len):
-					//   -cos(yaw) = dx/len, -sin(yaw) = dz/len
-					//   yaw_rad = atan2(-dz/len, -dx/len)
-					spawnYaw = std::atan2(-dz / len, -dx / len) * (180.0f / 3.14159265f);
-				}
-			}
-		}
-	}
 	m_camera.player.yaw = spawnYaw;
 	m_camera.lookYaw = spawnYaw;
 	m_camera.lookPitch = -5;
@@ -723,23 +657,11 @@ void Game::setupAfterConnect(GameState targetState) {
 }
 
 void Game::saveCurrentWorld() {
-	if (m_currentWorldPath.empty() || !m_server) return;
-	auto* ls = dynamic_cast<LocalServer*>(m_server.get());
-	if (!ls || !ls->server()) return;
-
-	WorldMetadata meta;
-	meta.name = m_currentWorldPath.substr(m_currentWorldPath.rfind('/') + 1);
-	meta.seed = ls->server()->world().seed();
-	meta.templateIndex = ls->server()->world().templateIndex();
-	meta.gameMode = "playing";
-	meta.version = 1;
-
-	// Get template name from index
-	if (meta.templateIndex < (int)m_templates.size())
-		meta.templateName = m_templates[meta.templateIndex]->name();
-
-	saveWorld(*ls->server(), m_currentWorldPath, meta);
-	m_imguiMenu.worldManager().refresh();
+	// The server process (agentica-server) saves world data on shutdown.
+	// stopAll() sends SIGTERM which triggers main_server.cpp's save handler.
+	// Nothing to do here on the client side.
+	if (!m_currentWorldPath.empty())
+		m_imguiMenu.worldManager().refresh();
 }
 
 // ============================================================
@@ -1094,9 +1016,17 @@ void Game::updatePlaying(float dt, float aspect) {
 	for (auto it = m_pickupAnims.begin(); it != m_pickupAnims.end(); ) {
 		it->t += dt / it->duration;
 		if (it->t >= 1.0f) {
-			// Arrived at player — puff + sound, accumulate for text
+			// Arrived at player — puff + sound + HUD text
 			m_particles.emitItemPickup(pe->position + glm::vec3(0, 0.8f, 0), it->color);
 			m_audio.play("item_pickup", pe->position, 0.5f);
+
+			FloatTextEvent ft;
+			ft.source      = FloatSource::Pickup;
+			ft.worldPos    = pe->position + glm::vec3(0, 2.0f, 0);
+			ft.coalesceKey = it->modelKey;   // raw type key for deduplication
+			ft.text        = it->itemName;   // display name, already formatted
+			ft.value       = (float)it->count;
+			m_floatText.add(ft);
 
 			it = m_pickupAnims.erase(it);
 		} else {
@@ -1634,18 +1564,12 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				{
 					bool isPlayer = (e.id() == m_server->localPlayerId());
 					FloatTextEvent ft;
-					if (isPlayer) {
-						ft.type  = FloatTextType::DamageTaken;
-						ft.color = {1.0f, 0.30f, 0.20f, 1.0f};
-						ft.text  = "-" + std::to_string(dmg) + " HP";
-					} else {
-						ft.type     = FloatTextType::DamageDealt;
-						ft.targetId = e.id();
-						ft.worldPos = e.position + glm::vec3(0.0f, entityTop * 0.5f, 0.0f);
-						ft.color = dying ? glm::vec4(1.0f, 0.20f, 0.10f, 1.0f)
-						                 : glm::vec4(1.0f, 0.85f, 0.10f, 1.0f);
-						ft.text  = "-" + std::to_string(dmg);
-					}
+					ft.source   = isPlayer ? FloatSource::DamageTaken : FloatSource::DamageDealt;
+					ft.targetId = e.id();
+					ft.worldPos = e.position + glm::vec3(0.0f, entityTop * 0.5f, 0.0f);
+					ft.value    = (float)dmg;
+					ft.isSplash = true;
+					ft.isDying  = dying;
 					m_floatText.add(ft);
 				}
 
@@ -1681,8 +1605,11 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	{
 		std::unordered_set<EntityId> seen;
 		m_server->forEachEntity([&](Entity& e) { if (e.def().isLiving()) seen.insert(e.id()); });
-		for (auto it = m_prevEntityHP.begin(); it != m_prevEntityHP.end(); )
-			it = seen.count(it->first) ? std::next(it) : m_prevEntityHP.erase(it);
+		for (auto it = m_prevEntityHP.begin(); it != m_prevEntityHP.end(); ) {
+			if (seen.count(it->first)) { ++it; continue; }
+			m_floatText.onEntityRemoved(it->first);
+			it = m_prevEntityHP.erase(it);
+		}
 		for (auto it = m_damageFlash.begin(); it != m_damageFlash.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_damageFlash.erase(it);
 		for (auto it = m_entityAttackPhase.begin(); it != m_entityAttackPhase.end(); )

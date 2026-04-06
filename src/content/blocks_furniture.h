@@ -20,12 +20,13 @@ inline void registerFurnitureBlocks(BlockRegistry& reg) {
 		{}, "",SN::DigWood,SN::StepWood});
 
 	// Stair: half-height physics + stair-shaped visual (2-box mesh).
+	// param2 (FourDir) controls which direction the step rises toward.
 	reg.registerBlock({BT::Stair, "Stair", CT::Crafted,
 		{0.68f,0.52f,0.30f},{0.60f,0.44f,0.24f},{0.60f,0.44f,0.24f},
 		true,false, 1.5f,TL::Axe,"",64,0,
 		{{GR::Choppy,2},{GR::Flammable,2}}, "",SN::DigWood,SN::StepWood,
 		BlockBehavior::Passive, {}, "",
-		0.5f, MeshType::Stair});
+		0.5f, MeshType::Stair, Param2Type::FourDir});
 
 	// Door (closed): solid thin panel on -Z face. Toggles open on interaction.
 	reg.registerBlock({BT::Door, "Door", CT::Crafted,

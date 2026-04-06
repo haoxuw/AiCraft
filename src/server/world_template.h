@@ -323,12 +323,12 @@ private:
 			? (int)m_py.surfaceY
 			: (int)std::round(naturalTerrainHeight(seed, (float)px, (float)pz, m_tp));
 
-		auto set = [&](int wx, int wy, int wz, BlockId bid) {
+		auto set = [&](int wx, int wy, int wz, BlockId bid, uint8_t p2 = 0) {
 			int lx = wx - ox, ly = wy - oy, lz = wz - oz;
 			if (lx >= 0 && lx < CHUNK_SIZE &&
 			    ly >= 0 && ly < CHUNK_SIZE &&
 			    lz >= 0 && lz < CHUNK_SIZE)
-				chunk.set(lx, ly, lz, bid);
+				chunk.set(lx, ly, lz, bid, p2);
 		};
 
 		// Stone accent ring every 4 blocks of height above groundY
@@ -449,15 +449,16 @@ private:
 			}
 		}
 
-		// ── 10. Descending staircase (dz=+3..+7) ─────────────────
-		// Step i: stairB at (Y=groundY+platH-1-i, dz=frontDZ+1+i)
-		// Physics surfaces: groundY+4.5, +3.5, +2.5, +1.5, +0.5
-		// Transitions: 0.5 (plat→stair0), then 1.0 each, 0.5 (stair4→ground)
+		// ── 10. Descending staircase (dz=+4..+8) ────────────────────
+		// Step i at (Y=groundY+platH-1-i, dz=frontDZ+1+i).
+		// param2=2: stair rises in -Z → HIGH backing wall on -Z (uphill/platform side),
+		// LOW tread on +Z (downhill side).  Player walks +Z to descend; the backing wall
+		// is behind them and the tread extends forward, giving a clear downward view.
 		for (int i = 0; i < numSteps; i++) {
 			int stepY  = groundY + platH - 1 - i;
 			int stepDZ = frontDZ + 1 + i;
 			for (int dx = -openHW; dx <= openHW; dx++) {
-				set(px + dx, stepY, pz + stepDZ, stairB);
+				set(px + dx, stepY, pz + stepDZ, stairB, /*param2=*/2);
 				for (int fy = groundY; fy < stepY; fy++)
 					set(px + dx, fy, pz + stepDZ, wallB);
 			}
@@ -488,10 +489,10 @@ private:
 		Chunk& chunk;
 		int ox, oy, oz;
 
-		void set(int wx, int wy, int wz, BlockId bid) const {
+		void set(int wx, int wy, int wz, BlockId bid, uint8_t p2 = 0) const {
 			int lx = wx-ox, ly = wy-oy, lz = wz-oz;
 			if (lx>=0&&lx<CHUNK_SIZE&&ly>=0&&ly<CHUNK_SIZE&&lz>=0&&lz<CHUNK_SIZE)
-				chunk.set(lx,ly,lz,bid);
+				chunk.set(lx,ly,lz,bid,p2);
 		}
 		BlockId get(int wx, int wy, int wz) const {
 			int lx = wx-ox, ly = wy-oy, lz = wz-oz;
@@ -555,9 +556,11 @@ private:
 			}
 
 			// Phase 2: place stair blocks (after clearing so stairB wins at intermY row)
+			// param2=0: stair rises in +Z → HIGH backing wall on +Z (landing side), LOW tread
+			// on -Z (approach side).  Player walks +Z to ascend; tread is at their feet.
 			for (int i = 0; i < sh; i++) {
 				for (int ddx = 0; ddx < stairW; ddx++)
-					ctx.set(stairX+ddx, floorY+s*sh+i, baseZ+2+i, stairB);
+					ctx.set(stairX+ddx, floorY+s*sh+i, baseZ+2+i, stairB, /*param2=*/0);
 			}
 
 			// Phase 3: validate
@@ -642,17 +645,22 @@ private:
 					}
 
 					BlockId bid;
+					uint8_t p2 = 0;
 					if (stairwellOpening)      bid = BLOCK_AIR;
 					else if (door && dy < 2) bid = doorB;
 					else if (door)             bid = BLOCK_AIR;
 					else if (window)           bid = glassB;
-					else if (stairStep)                      bid = stairB;
+					else if (stairStep) {
+						// param2=0: HIGH wall on +Z (landing), LOW tread on -Z (approach).
+						// Steps placed at increasing dz → staircase ascends in +Z.
+						bid = stairB; p2 = 0;
+					}
 					else if (intermFloor)                    bid = floorB;
 					else if (dy == totalH-1)                 bid = roofB;
 					else if (wall)                           bid = wallB;
 					else                                     bid = BLOCK_AIR;
 
-					ctx.set(hcx+dx, floorY+dy, hcz+dz, bid);
+					ctx.set(hcx+dx, floorY+dy, hcz+dz, bid, p2);
 				}
 			}
 		}

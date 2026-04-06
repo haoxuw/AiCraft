@@ -2,7 +2,7 @@
  * test_e2e.cpp — Headless end-to-end gameplay tests.
  *
  * Runs entirely in-process (no OpenGL, no network, no GLFW).
- * Uses LocalServer + GameServer directly to simulate gameplay
+ * Uses TestServer (wraps GameServer) directly to simulate gameplay
  * and assert correctness.
  *
  * Each test creates a fresh world to avoid cross-test pollution.
@@ -11,7 +11,7 @@
  * Runs from build/ directory so python/ and artifacts/ are accessible.
  */
 
-#include "server/local_server.h"
+#include "server/test_server.h"
 #include "server/world_template.h"
 #include "server/python_bridge.h"
 #include "server/world_accessibility.h"
@@ -68,9 +68,9 @@ static void run(const char* name, std::function<std::string()> fn) {
 // Test helpers
 // ================================================================
 
-// Create a flat-world LocalServer and connect one client.
-static std::unique_ptr<LocalServer> makeFlatServer() {
-	auto srv = std::make_unique<LocalServer>(g_templates);
+// Create a flat-world TestServer and connect one client.
+static std::unique_ptr<TestServer> makeFlatServer() {
+	auto srv = std::make_unique<TestServer>(g_templates);
 	WorldGenConfig wgc;
 	// Flat world: templateIndex=0, no mob spawning
 	wgc.mobs.clear();
@@ -79,20 +79,20 @@ static std::unique_ptr<LocalServer> makeFlatServer() {
 }
 
 // Create a village world server with default mob config.
-static std::unique_ptr<LocalServer> makeVillageServer() {
-	auto srv = std::make_unique<LocalServer>(g_templates);
+static std::unique_ptr<TestServer> makeVillageServer() {
+	auto srv = std::make_unique<TestServer>(g_templates);
 	srv->createGame(42, 1, WorldGenConfig{});
 	return srv;
 }
 
 // Tick the server N frames at 60 Hz.
-static void tickN(LocalServer& srv, int frames) {
+static void tickN(TestServer& srv, int frames) {
 	constexpr float dt = 1.0f / 60.0f;
 	for (int i = 0; i < frames; i++) srv.tick(dt);
 }
 
 // Send a Move action and tick one frame.
-static void moveAndTick(LocalServer& srv, EntityId actor, glm::vec3 vel, bool jump = false) {
+static void moveAndTick(TestServer& srv, EntityId actor, glm::vec3 vel, bool jump = false) {
 	ActionProposal p;
 	p.type = ActionProposal::Move;
 	p.actorId = actor;
@@ -104,7 +104,7 @@ static void moveAndTick(LocalServer& srv, EntityId actor, glm::vec3 vel, bool ju
 }
 
 // Send PickupItem actions for all nearby item entities, then tick.
-static int pickupNearbyItems(LocalServer& srv, EntityId actor, float range = 1.5f) {
+static int pickupNearbyItems(TestServer& srv, EntityId actor, float range = 1.5f) {
 	Entity* p = srv.getEntity(actor);
 	if (!p) return 0;
 	int sent = 0;
@@ -126,7 +126,7 @@ static int pickupNearbyItems(LocalServer& srv, EntityId actor, float range = 1.5
 }
 
 // Send a BreakBlock action and tick one frame.
-static void breakAndTick(LocalServer& srv, EntityId actor, glm::ivec3 pos) {
+static void breakAndTick(TestServer& srv, EntityId actor, glm::ivec3 pos) {
 	ActionProposal p;
 	p.type = ActionProposal::BreakBlock;
 	p.actorId = actor;
@@ -136,7 +136,7 @@ static void breakAndTick(LocalServer& srv, EntityId actor, glm::ivec3 pos) {
 }
 
 // Send a PlaceBlock action and tick one frame.
-static void placeAndTick(LocalServer& srv, EntityId actor,
+static void placeAndTick(TestServer& srv, EntityId actor,
                          glm::ivec3 pos, const std::string& type) {
 	ActionProposal p;
 	p.type = ActionProposal::PlaceBlock;
@@ -148,14 +148,14 @@ static void placeAndTick(LocalServer& srv, EntityId actor,
 }
 
 // Count entities of a given type.
-static int countByType(LocalServer& srv, const std::string& typeId) {
+static int countByType(TestServer& srv, const std::string& typeId) {
 	int n = 0;
 	srv.forEachEntity([&](Entity& e) { if (e.typeId() == typeId) n++; });
 	return n;
 }
 
 // Count entities that are living (Creature or Character kind).
-static int countLiving(LocalServer& srv) {
+static int countLiving(TestServer& srv) {
 	int n = 0;
 	srv.forEachEntity([&](Entity& e) { if (e.def().isLiving()) n++; });
 	return n;
@@ -492,7 +492,7 @@ static std::string t15_items_only_picked_up_by_player() {
 	// Manually spawn an item entity near a creature (far from player)
 	// We need server access for this
 	auto* ls = srv.get();
-	// Can't easily get server directly from LocalServer interface
+	// Can't easily get server directly from TestServer interface
 	// Instead: find a creature and check its inventory before/after ticks
 	// If creatures were incorrectly picking up items, their inventory would have items.
 	// By default, creatures' inventories should stay empty (animals don't pick up).
@@ -624,7 +624,7 @@ static std::string t20_spawn_area_clear() {
 }
 
 // ================================================================
-// T21: onBreakText fires when a block is broken
+// T21: block is removed from world when broken
 // ================================================================
 
 static std::string t21_break_fires_onbreaktext() {
@@ -638,22 +638,18 @@ static std::string t21_break_fires_onbreaktext() {
 	glm::ivec3 blockPos = {(int)std::floor(pos.x), (int)std::floor(pos.y) - 1,
 	                       (int)std::floor(pos.z)};
 
-	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	BlockId bid = srv->server()->world().getBlock(blockPos.x, blockPos.y, blockPos.z);
 	if (bid == BLOCK_AIR) return "no surface block at spawn";
-
-	bool textFired = false;
-	srv->server()->callbacks().onBreakText = [&](glm::vec3, const std::string&) {
-		textFired = true;
-	};
 
 	breakAndTick(*srv, pid, blockPos);
 
-	if (!textFired) return "onBreakText was not called after breaking block";
+	BlockId after = srv->server()->world().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	if (after != BLOCK_AIR) return "block was not removed after BreakBlock action";
 	return "";
 }
 
 // ================================================================
-// T22: onPickupText fires when an item is picked up
+// T22: inventory gains item when picked up
 // ================================================================
 
 static std::string t22_pickup_fires_onpickuptext() {
@@ -664,30 +660,25 @@ static std::string t22_pickup_fires_onpickuptext() {
 
 	tickN(*srv, 30);
 	glm::vec3 pos = p->position;
-	// Break directly underfoot — item spawns < 1 block away and is
-	// immediately picked up in the same tick.
 	glm::ivec3 blockPos = {(int)std::floor(pos.x), (int)std::floor(pos.y) - 1,
 	                       (int)std::floor(pos.z)};
 
-	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	BlockId bid = srv->server()->world().getBlock(blockPos.x, blockPos.y, blockPos.z);
 	if (bid == BLOCK_AIR) return "no surface block at spawn";
 
-	bool pickupFired = false;
-	srv->server()->callbacks().onPickupText = [&](glm::vec3, const std::string&, int) {
-		pickupFired = true;
-	};
+	int itemsBefore = p->inventory ? p->inventory->distinctCount() : 0;
 
 	breakAndTick(*srv, pid, blockPos);
-	// Client-initiated: send pickup action for nearby items
 	pickupNearbyItems(*srv, pid, 3.0f);
-	if (!pickupFired) tickN(*srv, 5);
+	tickN(*srv, 5);
 
-	if (!pickupFired) return "onPickupText was not called after item pickup";
+	int itemsAfter = p->inventory ? p->inventory->distinctCount() : 0;
+	if (itemsAfter <= itemsBefore) return "inventory did not gain item after pickup";
 	return "";
 }
 
 // ================================================================
-// T22b: break underfoot — item spawns and callbacks fire quickly
+// T22b: break underfoot — item spawns and is picked up quickly
 // ================================================================
 
 static std::string t22b_break_underfoot_fires_callbacks() {
@@ -701,27 +692,21 @@ static std::string t22b_break_underfoot_fires_callbacks() {
 	glm::ivec3 blockPos = {(int)std::floor(pos.x), (int)std::floor(pos.y) - 1,
 	                       (int)std::floor(pos.z)};
 
-	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	BlockId bid = srv->server()->world().getBlock(blockPos.x, blockPos.y, blockPos.z);
 	if (bid == BLOCK_AIR) return "no surface block at spawn";
 
-	bool pickupTextFired = false;
-	bool itemPickupFired = false;
-	srv->server()->callbacks().onPickupText = [&](glm::vec3, const std::string&, int) {
-		pickupTextFired = true;
-	};
-	srv->server()->callbacks().onItemPickup = [&](glm::vec3, glm::vec3) {
-		itemPickupFired = true;
-	};
+	int itemsBefore = p->inventory ? p->inventory->distinctCount() : 0;
 
 	breakAndTick(*srv, pid, blockPos);
-	// Client-initiated pickup
 	pickupNearbyItems(*srv, pid, 3.0f);
 	tickN(*srv, 5);
 
-	std::string failures;
-	if (!pickupTextFired) failures += "onPickupText not called; ";
-	if (!itemPickupFired) failures += "onItemPickup not called; ";
-	if (!failures.empty()) return failures;
+	// Block should be gone
+	BlockId after = srv->server()->world().getBlock(blockPos.x, blockPos.y, blockPos.z);
+	if (after != BLOCK_AIR) return "block not removed after break";
+	// Inventory should have gained the drop
+	int itemsAfter = p->inventory ? p->inventory->distinctCount() : 0;
+	if (itemsAfter <= itemsBefore) return "inventory did not gain item after break+pickup";
 	return "";
 }
 
@@ -755,16 +740,11 @@ static std::string t22c_item_reaches_player() {
 		moveAndTick(*srv, pid, {4.0f, 0, 0}); // walk east toward item
 
 	// Now try pickup — should be in range
-	bool pickupTextFired = false;
-	srv->server()->callbacks().onPickupText = [&](glm::vec3, const std::string&, int) {
-		pickupTextFired = true;
-	};
 	pickupNearbyItems(*srv, pid, 2.0f);
 	tickN(*srv, 5);
 
 	int remaining = countByType(*srv, EntityType::ItemEntity);
 	if (remaining > 0) return "item not picked up after walking to it";
-	if (!pickupTextFired) return "item collected but onPickupText not called";
 	return "";
 }
 
@@ -1245,13 +1225,9 @@ static std::string t37_pickup_denied_out_of_range() {
 	int items = countByType(*srv, EntityType::ItemEntity);
 	if (items == 0) return "no item spawned";
 
-	// Try to pick it up (should be denied — too far)
-	bool denied = false;
-	srv->server()->callbacks().onPickupDenied = [&](glm::vec3, const std::string&) {
-		denied = true;
-	};
+	// Try to pick it up (should be denied by server — too far)
 	pickupNearbyItems(*srv, pid, 10.0f); // generous client range
-	// Server should deny because actual distance > pickup_range
+	// Server denies because actual distance > pickup_range
 
 	int remaining = countByType(*srv, EntityType::ItemEntity);
 	if (remaining == 0) return "item was picked up despite being out of range";
@@ -1344,7 +1320,7 @@ static std::string t39_second_floor_reachable() {
 // Physics helpers — place/remove blocks directly for setup
 // ================================================================
 
-static void placeBlockDirect(LocalServer& srv, int x, int y, int z, const std::string& typeId) {
+static void placeBlockDirect(TestServer& srv, int x, int y, int z, const std::string& typeId) {
     auto* gs = srv.server();
     if (!gs) return;
     auto& world = gs->world();
@@ -1359,7 +1335,7 @@ static void placeBlockDirect(LocalServer& srv, int x, int y, int z, const std::s
     c->set(lx, ly, lz, bid);
 }
 
-static bool isInsideBlock(LocalServer& srv, glm::vec3 pos, float halfW, float height) {
+static bool isInsideBlock(TestServer& srv, glm::vec3 pos, float halfW, float height) {
     auto* gs = srv.server();
     if (!gs) return false;
     auto& world = gs->world();

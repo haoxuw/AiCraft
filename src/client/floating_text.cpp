@@ -4,198 +4,330 @@
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
+#include <cstdlib>
 
 namespace agentica {
 
-// ─────────────────────────────────────────────────────────────
-//  Helpers
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Small helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
-bool FloatingTextSystem::worldToNDC(const Camera& cam, float aspect,
+float FloatingTextManager::ttlFor(FloatSource src) const {
+	return (src == FloatSource::Pickup || src == FloatSource::BlockBreak)
+	       ? kPickupTtl : kCombatTtl;
+}
+
+bool FloatingTextManager::worldToNDC(const Camera& cam, float aspect,
                                      glm::vec3 wp, glm::vec2& out) const {
 	glm::mat4 vp = cam.projectionMatrix(aspect) * cam.viewMatrix();
 	glm::vec4 clip = vp * glm::vec4(wp, 1.0f);
 	if (clip.w <= 0.001f) return false;
 	glm::vec3 ndc = glm::vec3(clip) / clip.w;
-	if (ndc.z > 1.0f) return false;  // behind near plane
-	out = glm::vec2(ndc.x, ndc.y);
+	if (ndc.z > 1.0f) return false;
+	out = {ndc.x, ndc.y};
 	return true;
 }
 
-int FloatingTextSystem::nextHudSlot() const {
-	// Find lowest slot index not currently occupied
-	bool used[kMaxHudSlots] = {};
-	for (auto& e : m_entries) {
-		if (e.hudSlot >= 0 && e.hudSlot < kMaxHudSlots)
-			used[e.hudSlot] = true;
+std::string FloatingTextManager::formatDisplay(FloatSource src, float accum,
+                                               const std::string& label) const {
+	int v = (int)accum;
+	switch (src) {
+	case FloatSource::DamageDealt:
+	case FloatSource::DamageTaken:
+		return "-" + std::to_string(v);
+	case FloatSource::Heal:
+		return "+" + std::to_string(v) + " HP";
+	case FloatSource::Pickup:
+		return "+" + std::to_string(v) + (label.empty() ? "" : " " + label);
+	case FloatSource::BlockBreak:
+		return label + (v > 1 ? " x" + std::to_string(v) : "");
 	}
-	for (int i = 0; i < kMaxHudSlots; i++)
-		if (!used[i]) return i;
-	return kMaxHudSlots - 1;  // overflow: reuse top slot
+	return label;
 }
 
-// ─────────────────────────────────────────────────────────────
+glm::vec4 FloatingTextManager::colorFor(FloatSource src, bool isCrit, bool isDying) const {
+	switch (src) {
+	case FloatSource::DamageDealt:
+		if (isDying)  return {1.0f, 0.20f, 0.10f, 1.0f}; // red   — kill
+		if (isCrit)   return {1.0f, 0.55f, 0.10f, 1.0f}; // orange — crit
+		return                {1.0f, 0.85f, 0.10f, 1.0f}; // yellow — normal
+	case FloatSource::DamageTaken:
+		return {1.0f, 0.25f, 0.15f, 1.0f};  // vivid red
+	case FloatSource::Heal:
+		return {0.25f, 1.0f, 0.40f, 1.0f};  // green
+	case FloatSource::Pickup:
+		return {0.85f, 1.0f, 0.55f, 1.0f};  // lime
+	case FloatSource::BlockBreak:
+		return {0.70f, 0.70f, 0.70f, 1.0f}; // gray
+	}
+	return {1, 1, 1, 1};
+}
+
+// Single-pass NDC push-apart. Modifies the temporary position vector, not entries.
+void FloatingTextManager::resolveOverlap(std::vector<glm::vec2>& positions) const {
+	for (int i = 0; i < (int)positions.size(); i++) {
+		for (int j = i + 1; j < (int)positions.size(); j++) {
+			glm::vec2 delta = positions[j] - positions[i];
+			float dist = glm::length(delta);
+			if (dist > 0.001f && dist < kOverlapDist) {
+				glm::vec2 push = (delta / dist) * (kOverlapDist - dist) * 0.5f;
+				positions[i] -= push;
+				positions[j] += push;
+			}
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  add()
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
-void FloatingTextSystem::add(FloatTextEvent ev) {
-	// Coalesce: merge with existing entry of same key + type
-	if (!ev.coalesceKey.empty()) {
-		for (auto& e : m_entries) {
-			if (e.type == ev.type && e.coalesceKey == ev.coalesceKey &&
-			    e.entityId == ev.targetId) {
-				// Replace text, refresh timer
-				e.text = ev.text;
-				e.ttl  = std::min(e.maxTtl, e.ttl + kHudTtl * 0.5f);
-				return;
-			}
-		}
+void FloatingTextManager::add(const FloatTextEvent& ev) {
+	// ── Splash: brief per-hit flash (independent of Counter) ──────────────
+	if (ev.isSplash && (ev.source == FloatSource::DamageDealt ||
+	                    ev.source == FloatSource::DamageTaken  ||
+	                    ev.source == FloatSource::Heal)) {
+		Splash s;
+		s.source      = ev.source;
+		s.entityId    = ev.targetId;
+		s.anchorWorld = ev.worldPos;
+		s.screenDrift = {0, 0};
+		s.text        = formatDisplay(ev.source, ev.value, "");
+		s.color       = colorFor(ev.source, ev.isCrit, ev.isDying);
+		s.isCrit      = ev.isCrit;
+		s.ttl         = kSplashTtl;
+		s.scale       = 0.f;
+		// Small random horizontal jitter so rapid hits fan out instead of stacking
+		s.horizJitter = ((float)(std::rand() % 200) / 100.f - 1.0f) * 0.03f;
+		m_splashes.push_back(std::move(s));
 	}
 
-	bool isHud = (ev.targetId == ENTITY_NONE ||
-	              ev.type == FloatTextType::DamageTaken ||
-	              ev.type == FloatTextType::Pickup ||
-	              ev.type == FloatTextType::BlockBreak);
+	// ── Counter map: accumulate into persistent slot ───────────────────────
+	EntryKey key{ ev.targetId, ev.source, ev.coalesceKey };
 
-	Entry entry;
-	entry.type         = ev.type;
-	entry.entityId     = ev.targetId;
-	entry.anchorWorld  = ev.worldPos;
-	entry.screenDrift  = {0.0f, 0.0f};
-	entry.text         = ev.text;
-	entry.coalesceKey  = ev.coalesceKey;
-	entry.color        = ev.color;
-	entry.scale        = 0.0f;  // pop-in starts at 0
-	entry.hudSlot      = -1;
-
-	if (isHud) {
-		entry.maxTtl = kHudTtl;
-		entry.ttl    = kHudTtl;
-		entry.hudSlot = nextHudSlot();
-	} else {
-		// Entity-anchored: limit to kMaxEntitySlots per entity
-		int count = 0;
-		for (auto& e : m_entries)
-			if (e.entityId == ev.targetId && e.hudSlot < 0) count++;
-		if (count >= kMaxEntitySlots) {
-			// Drop oldest entity entry for this entity
-			for (auto it = m_entries.begin(); it != m_entries.end(); ++it) {
-				if (it->entityId == ev.targetId && it->hudSlot < 0) {
-					m_entries.erase(it);
-					break;
-				}
-			}
-		}
-		entry.maxTtl = kEntityTtl;
-		entry.ttl    = kEntityTtl;
+	auto it = m_entries.find(key);
+	if (it != m_entries.end()) {
+		Entry& e = it->second;
+		e.accum += ev.value;
+		e.text   = formatDisplay(e.source, e.accum, e.baseLabel);
+		e.ttl    = e.maxTtl;   // refresh lifetime
+		e.animAge = 0.f;       // re-trigger bounce animation on accumulation
+		// Upgrade severity: crit or dying flags persist if any hit triggered them
+		if (ev.isCrit)  e.isCrit = true;
+		if (ev.isCrit || ev.isDying)
+			e.color = colorFor(e.source, e.isCrit, ev.isDying);
+		return;
 	}
 
-	m_entries.push_back(std::move(entry));
+	// New slot
+	Entry e;
+	e.source      = ev.source;
+	e.entityId    = ev.targetId;
+	e.anchorWorld = ev.worldPos;
+	e.screenDrift = {0, 0};
+	e.baseLabel   = ev.text;
+	e.accum       = ev.value;
+	e.text        = formatDisplay(ev.source, ev.value, ev.text);
+	e.color       = colorFor(ev.source, ev.isCrit, ev.isDying);
+	e.isCrit      = ev.isCrit;
+	e.freeFloat   = false;
+	e.maxTtl      = ttlFor(ev.source);
+	e.ttl         = e.maxTtl;
+	e.scale       = 0.f;
+
+	m_entries.emplace(key, std::move(e));
 }
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  onEntityRemoved()
+// ─────────────────────────────────────────────────────────────────────────────
+
+void FloatingTextManager::onEntityRemoved(EntityId id) {
+	for (auto& [k, e] : m_entries) {
+		if (e.entityId == id && !e.freeFloat) {
+			e.freeFloat = true; // keep drifting from last known position
+		}
+	}
+	for (auto& s : m_splashes)
+		if (s.entityId == id)
+			s.entityId = ENTITY_NONE; // detach splash too
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  update()
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
-void FloatingTextSystem::update(float dt, CameraMode /*mode*/) {
-	for (auto& e : m_entries) {
-		e.ttl -= dt;
-
-		// Pop-in: scale from 0→1 quickly
-		float elapsed = e.maxTtl - e.ttl;
-		if (elapsed < kPopInTime) {
-			e.scale = elapsed / kPopInTime;
-		} else {
-			e.scale = 1.0f;
-		}
-
-		// Entity-anchored entries drift upward in screen space
-		if (e.hudSlot < 0) {
-			e.screenDrift.y += dt * 0.30f;  // NDC units per second
-		}
+void FloatingTextManager::update(float dt, CameraMode mode) {
+	// Mode switch: combat entries fast-expire
+	if (mode != m_prevMode) {
+		for (auto& [k, e] : m_entries)
+			if (e.ttl > kModeSwitchTtl)
+				e.ttl = kModeSwitchTtl;
+		m_prevMode = mode;
 	}
 
-	// Remove expired entries
-	m_entries.erase(
-		std::remove_if(m_entries.begin(), m_entries.end(),
-			[](const Entry& e) { return e.ttl <= 0.0f; }),
-		m_entries.end()
-	);
+	// Bounce animation helper: 0 → peak → 1.0, re-triggered by animAge reset
+	auto bounceScale = [this](float age) -> float {
+		if (age < kPopPeakTime)
+			return (age / kPopPeakTime) * kPopPeak;
+		if (age < kPopSettleTime) {
+			float t = (age - kPopPeakTime) / (kPopSettleTime - kPopPeakTime);
+			return kPopPeak - (kPopPeak - 1.0f) * t;
+		}
+		return 1.0f;
+	};
+
+	// Counter entries
+	for (auto& [k, e] : m_entries) {
+		e.ttl     -= dt;
+		e.animAge += dt;
+		e.scale    = bounceScale(e.animAge);
+		e.screenDrift.y += dt * 0.26f;  // drift upward in NDC
+	}
+	// Erase expired Counter entries
+	for (auto it = m_entries.begin(); it != m_entries.end(); )
+		it = (it->second.ttl <= 0.f) ? m_entries.erase(it) : std::next(it);
+
+	// Splash entries (bounce from elapsed time — no separate animAge needed)
+	for (auto& s : m_splashes) {
+		s.ttl -= dt;
+		float age = kSplashTtl - s.ttl;
+		s.scale = bounceScale(age);
+		s.screenDrift.y += dt * 0.50f;  // splashes drift up faster than Counter
+	}
+	m_splashes.erase(
+		std::remove_if(m_splashes.begin(), m_splashes.end(),
+			[](const Splash& s) { return s.ttl <= 0.f; }),
+		m_splashes.end());
 }
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 //  render()
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
-void FloatingTextSystem::render(const Camera& cam, float aspect, CameraMode mode,
+void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mode,
                                  TextRenderer& text,
                                  const std::vector<EntityId>& selectedEntities) {
-	// ── HUD lane (left column, fixed positions) ──
-	// Slot 0 is lowest, slots stack upward.
-	// Position: x = -0.92, y = -0.70 + slot * 0.12
-	for (auto& e : m_entries) {
-		if (e.hudSlot < 0) continue;
 
-		float fadeIn  = std::min((e.maxTtl - e.ttl) / kPopInTime, 1.0f);
-		float fadeOut = std::min(e.ttl / 0.4f, 1.0f);
-		float alpha   = e.color.a * fadeIn * fadeOut;
-		if (alpha < 0.01f) continue;
+	auto fadeAlpha = [](float ttl, float maxTtl, float fadeOutSec, float a) -> float {
+		float fadeIn  = std::min((maxTtl - ttl) / kPopInTime, 1.0f);
+		float fadeOut = std::min(ttl / fadeOutSec, 1.0f);
+		return a * fadeIn * fadeOut;
+	};
 
-		float x = -0.96f;
-		float y = -0.70f + e.hudSlot * 0.12f;
-		float sc = 0.55f * e.scale;
+	// Scale for a given entry: crits pop larger; pickup/break slightly smaller than combat.
+	auto entryScale = [](const Entry& e) -> float {
+		if (e.isCrit) return kFTScaleCrit;
+		if (e.source == FloatSource::Pickup || e.source == FloatSource::BlockBreak)
+			return kFTScalePickup;
+		return kFTScaleWorld;
+	};
 
-		glm::vec4 col = e.color;
-		col.a = alpha;
-		text.drawText(e.text, x, y, sc, col, aspect);
-	}
+	// ── Collect all entries and their screen positions ────────────────────────
+	struct ScreenEntry {
+		const Entry* entry;
+		glm::vec2    pos;
+		float        scale;
+		float        alpha;
+	};
+	std::vector<ScreenEntry> anchored;
 
-	// ── Entity-anchored entries ──
-	for (auto& e : m_entries) {
-		if (e.hudSlot >= 0) continue;
-		if (e.entityId == ENTITY_NONE) continue;
-
-		// RTS mode: only show for selected entities
-		if (mode == CameraMode::RTS &&
-		    std::find(selectedEntities.begin(), selectedEntities.end(), e.entityId) == selectedEntities.end())
-			continue;
-
-		// FPS mode: show DamageDealt near crosshair instead of world-projected
-		if (mode == CameraMode::FirstPerson) {
-			float fadeIn  = std::min((e.maxTtl - e.ttl) / kPopInTime, 1.0f);
-			float fadeOut = std::min(e.ttl / 0.4f, 1.0f);
-			float alpha   = e.color.a * fadeIn * fadeOut;
-			if (alpha < 0.01f) continue;
-
-			// Cluster near top of crosshair, drift upward
-			float x = -0.06f + e.screenDrift.x;
-			float y =  0.08f + e.screenDrift.y;
-			float sc = 0.60f * e.scale;
-
-			glm::vec4 col = e.color;
-			col.a = alpha;
-			text.drawText(e.text, x, y, sc, col, aspect);
-			continue;
+	for (auto& [k, e] : m_entries) {
+		// RTS: only selected entities (skip pickup/break which have no entityId)
+		if (mode == CameraMode::RTS && e.entityId != ENTITY_NONE) {
+			bool isSelected = std::find(selectedEntities.begin(),
+			                            selectedEntities.end(),
+			                            e.entityId) != selectedEntities.end();
+			if (!isSelected) continue;
 		}
 
-		// TPS / RPG / RTS: project world anchor + drift
-		glm::vec2 ndc;
-		glm::vec3 wp = e.anchorWorld + glm::vec3(0.0f, 0.2f, 0.0f);
-		if (!worldToNDC(cam, aspect, wp, ndc)) continue;
-
-		float fadeIn  = std::min((e.maxTtl - e.ttl) / kPopInTime, 1.0f);
-		float fadeOut = std::min(e.ttl / 0.5f, 1.0f);
-		float alpha   = e.color.a * fadeIn * fadeOut;
+		float alpha = fadeAlpha(e.ttl, e.maxTtl, 0.45f, e.color.a);
 		if (alpha < 0.01f) continue;
 
-		// Apply accumulated upward screen drift
-		float x = ndc.x - 0.04f;
-		float y = ndc.y + e.screenDrift.y;
-		float sc = 0.65f * e.scale;
+		ScreenEntry se;
+		se.entry = &e;
+		se.alpha = alpha;
+		se.scale = entryScale(e) * e.scale;
 
-		glm::vec4 col = e.color;
-		col.a = alpha;
-		text.drawText(e.text, x, y, sc, col, aspect);
+		if (mode == CameraMode::FirstPerson) {
+			se.pos = {};  // placeholder — re-assigned below in FPS layout pass
+			anchored.push_back(se);
+		} else {
+			// TPS / RPG / RTS: project world anchor to screen
+			glm::vec3 wp = e.anchorWorld + glm::vec3(0, 0.15f, 0);
+			glm::vec2 ndc;
+			if (!worldToNDC(cam, aspect, wp, ndc)) continue;
+			se.pos = ndc + glm::vec2(0, e.screenDrift.y);
+			anchored.push_back(se);
+		}
+	}
+
+	if (mode == CameraMode::FirstPerson) {
+		// ── FPS: Counter panel layout ─────────────────────────────────────────
+		// Three fixed screen regions, each a stacked list (no drift — text
+		// updates in-place like a counter dictionary, fades when TTL expires).
+		//   Damage taken   → bottom-centre    (stacks upward)
+		//   Damage dealt / Heal → crosshair   (stacks upward)
+		//   Pickup / Break → upper-right panel (stacks downward)
+		std::vector<ScreenEntry*> taken, dealt, loot;
+		for (auto& se : anchored) {
+			switch (se.entry->source) {
+			case FloatSource::DamageTaken:                                    taken.push_back(&se); break;
+			case FloatSource::DamageDealt: case FloatSource::Heal:           dealt.push_back(&se); break;
+			case FloatSource::Pickup:      case FloatSource::BlockBreak:     loot.push_back(&se);  break;
+			}
+		}
+		// Sort each group oldest-first so the longest-running entry is at top
+		auto byTtlDesc = [](ScreenEntry* a, ScreenEntry* b) {
+			return a->entry->ttl > b->entry->ttl;
+		};
+		std::sort(taken.begin(), taken.end(), byTtlDesc);
+		std::sort(dealt.begin(), dealt.end(), byTtlDesc);
+		std::sort(loot.begin(),  loot.end(),  byTtlDesc);
+
+		constexpr float kRowH = 0.11f;
+		for (int i = 0; i < (int)taken.size(); i++)
+			taken[i]->pos = { 0.00f, -0.70f + i * kRowH };  // bottom-centre, upward
+		for (int i = 0; i < (int)dealt.size(); i++)
+			dealt[i]->pos = { 0.00f,  0.05f + i * kRowH };  // near crosshair, upward
+		for (int i = 0; i < (int)loot.size(); i++)
+			loot[i]->pos  = { 0.55f,  0.70f - i * kRowH };  // upper-right, downward
+	} else {
+		// TPS / RPG / RTS: push-apart to separate world-anchored entries
+		std::vector<glm::vec2> positions;
+		positions.reserve(anchored.size());
+		for (auto& se : anchored) positions.push_back(se.pos);
+		resolveOverlap(positions);
+		for (int i = 0; i < (int)anchored.size(); i++)
+			anchored[i].pos = positions[i];
+	}
+
+	// Draw Counter entries
+	for (auto& se : anchored) {
+		glm::vec4 col = se.entry->color; col.a = se.alpha;
+		text.drawText(se.entry->text, se.pos.x, se.pos.y, se.scale, col, aspect);
+	}
+
+	// ── Splash entries (per-hit flashes) ─────────────────────────────────────
+	for (auto& s : m_splashes) {
+		float alpha = fadeAlpha(s.ttl, kSplashTtl, 0.20f, s.color.a);
+		if (alpha < 0.01f) continue;
+
+		float sc = (s.isCrit ? kFTScaleCrit : kFTScaleWorld) * 0.75f * s.scale;
+		glm::vec4 col = s.color; col.a = alpha * 0.80f;
+
+		if (mode == CameraMode::FirstPerson) {
+			if (s.source == FloatSource::DamageTaken) {
+				text.drawText(s.text,  0.00f + s.horizJitter, -0.70f - s.screenDrift.y, sc, col, aspect);
+			} else {
+				text.drawText(s.text,  0.00f + s.horizJitter,  0.05f + s.screenDrift.y, sc, col, aspect);
+			}
+		} else {
+			glm::vec3 wp = s.anchorWorld + glm::vec3(0, 0.15f, 0);
+			glm::vec2 ndc;
+			if (!worldToNDC(cam, aspect, wp, ndc)) continue;
+			text.drawText(s.text, ndc.x + s.horizJitter, ndc.y + s.screenDrift.y, sc, col, aspect);
+		}
 	}
 }
 

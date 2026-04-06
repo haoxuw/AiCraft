@@ -60,8 +60,6 @@ void GameServer::resolveActions(float dt) {
 				if (dist > 8.0f) break;
 			}
 
-			if (m_callbacks.onBlockBreak) m_callbacks.onBlockBreak(glm::vec3(bp), bdef.color_top, 1);
-			if (m_callbacks.onBreakText) m_callbacks.onBreakText(glm::vec3(bp), bdef.display_name);
 			m_world->removeBlockState(bp.x, bp.y, bp.z);
 
 			if (actor && actor->inventory) {
@@ -77,18 +75,7 @@ void GameServer::resolveActions(float dt) {
 
 			c->set(((bp.x % 16) + 16) % 16, ((bp.y % 16) + 16) % 16,
 			       ((bp.z % 16) + 16) % 16, BLOCK_AIR);
-			if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(bp, BLOCK_AIR);
-			if (m_callbacks.onChunkDirty) {
-				m_callbacks.onChunkDirty(cp);
-				for (int a = 0; a < 3; a++) {
-					int coords[] = {bp.x, bp.y, bp.z};
-					int l = ((coords[a] % 16) + 16) % 16;
-					if (l == 0 || l == 15) {
-						glm::ivec3 o(0); o[a] = (l == 0) ? -1 : 1;
-						m_callbacks.onChunkDirty({cp.x + o.x, cp.y + o.y, cp.z + o.z});
-					}
-				}
-			}
+			if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(bp, BLOCK_AIR, 0);
 			// Sync inventory if actor broke a block and gained items
 			if (actor && actor->inventory && m_callbacks.onInventoryChange)
 				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
@@ -128,25 +115,10 @@ void GameServer::resolveActions(float dt) {
 			BlockId placedBid = m_world->blocks.getId(p.blockType);
 			c->set(((pp.x % 16) + 16) % 16, ((pp.y % 16) + 16) % 16,
 			       ((pp.z % 16) + 16) % 16, placedBid);
-			if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pp, placedBid);
-
-			if (m_callbacks.onChunkDirty) {
-				m_callbacks.onChunkDirty(cp);
-				for (int a = 0; a < 3; a++) {
-					int coords[] = {pp.x, pp.y, pp.z};
-					int l = ((coords[a] % 16) + 16) % 16;
-					if (l == 0 || l == 15) {
-						glm::ivec3 o(0); o[a] = (l == 0) ? -1 : 1;
-						m_callbacks.onChunkDirty({cp.x + o.x, cp.y + o.y, cp.z + o.z});
-					}
-				}
-			}
+			if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pp, placedBid, 0);
 
 			if (placedDef->behavior == BlockBehavior::Active)
 				m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
-
-			if (m_callbacks.onBlockPlace)
-				m_callbacks.onBlockPlace(glm::vec3(pp), placedDef->sound_place);
 
 			if (actor && actor->inventory)
 				actor->inventory->remove(p.blockType, 1);
@@ -178,8 +150,7 @@ void GameServer::resolveActions(float dt) {
 				if (!c) return;
 				c->set(((x%16)+16)%16, ((y%16)+16)%16, ((z%16)+16)%16, id);
 				glm::ivec3 pos{x, y, z};
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, id);
-				if (m_callbacks.onChunkDirty)  m_callbacks.onChunkDirty(cp);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, id, 0);
 			};
 
 			// Toggle clicked block
@@ -273,10 +244,6 @@ void GameServer::resolveActions(float dt) {
 				? glm::normalize(target->position - actor->position) : glm::vec3(0, 0, 1);
 			target->velocity += kb * 4.0f + glm::vec3(0, 3.0f, 0);
 
-			// Hit particles
-			if (m_callbacks.onBlockBreak)
-				m_callbacks.onBlockBreak(target->position, {0.9f, 0.2f, 0.2f}, 2);
-
 			// Death: drop loot and remove
 			if (target->hp() <= 0) {
 				target->removed = true;
@@ -360,22 +327,12 @@ void GameServer::resolveActions(float dt) {
 			// Server validates max pickup distance (anti-cheat ceiling)
 			float dist = glm::length(item->position - actor->position);
 			float range = std::min(m_wgc.pickupRange, 5.0f); // server cap: 5 blocks
-			if (dist > range) {
-				// Denied — too far
-				std::string itemType = item->getProp<std::string>(Prop::ItemType);
-				if (m_callbacks.onPickupDenied)
-					m_callbacks.onPickupDenied(item->position, itemType);
-				break;
-			}
+			if (dist > range) break; // Denied — too far (client shows nothing; item stays)
 
 			// Approved — collect item
 			std::string itemType = item->getProp<std::string>(Prop::ItemType);
 			int count = item->getProp<int>(Prop::Count, 1);
 			actor->inventory->add(itemType, count);
-			if (m_callbacks.onItemPickup)
-				m_callbacks.onItemPickup(actor->position, item->def().color);
-			if (m_callbacks.onPickupText)
-				m_callbacks.onPickupText(actor->position, itemType, count);
 			item->removed = true;
 
 			actor->inventory->autoPopulateHotbar();

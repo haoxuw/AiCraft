@@ -84,9 +84,12 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		         savePath.c_str(), pos.x, pos.y, pos.z);
 		std::ofstream cf(filename, std::ios::binary);
 		if (cf.is_open()) {
+			// Format: 4096×uint16_t blocks + 4096×uint8_t param2 = 12288 bytes
 			auto& blocks = chunk.rawBlocks();
 			cf.write(reinterpret_cast<const char*>(blocks.data()),
 			         CHUNK_VOLUME * sizeof(BlockId));
+			auto& p2 = chunk.rawParam2();
+			cf.write(reinterpret_cast<const char*>(p2.data()), CHUNK_VOLUME);
 			chunkCount++;
 		}
 	});
@@ -306,14 +309,25 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 			std::ifstream cf(entry.path(), std::ios::binary);
 			if (!cf.is_open()) continue;
 
+			// Detect format: 8192 bytes = blocks only (legacy), 12288 = blocks + param2
+			cf.seekg(0, std::ios::end);
+			auto fileSize = cf.tellg();
+			cf.seekg(0, std::ios::beg);
+
 			std::array<BlockId, CHUNK_VOLUME> blocks;
 			cf.read(reinterpret_cast<char*>(blocks.data()), CHUNK_VOLUME * sizeof(BlockId));
+
+			std::array<uint8_t, CHUNK_VOLUME> param2;
+			param2.fill(0);
+			if (fileSize >= (std::streampos)(CHUNK_VOLUME * sizeof(BlockId) + CHUNK_VOLUME))
+				cf.read(reinterpret_cast<char*>(param2.data()), CHUNK_VOLUME);
 
 			// Load the chunk (this generates it first, then we overwrite with saved data)
 			ChunkPos pos = {cx, cy, cz};
 			Chunk* chunk = world.getChunk(pos);
 			if (chunk) {
 				chunk->setRawBlocks(blocks);
+				chunk->setRawParam2Array(param2);
 				chunkCount++;
 			}
 		}

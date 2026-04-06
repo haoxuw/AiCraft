@@ -612,8 +612,9 @@ private:
 
 		net::WriteBuffer cb;
 		cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
+		// Pack param2 into upper byte of each u32: bits 23-16 = param2, bits 15-0 = blockId.
 		for (int i = 0; i < 16*16*16; i++)
-			cb.writeU32(chunk->getRaw(i));
+			cb.writeU32(((uint32_t)chunk->getRawParam2(i) << 16) | chunk->getRaw(i));
 
 		std::vector<uint8_t> msg;
 		net::MsgHeader hdr;

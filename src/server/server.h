@@ -31,21 +31,12 @@ namespace agentica {
 
 using ClientId = uint32_t;
 
-// Server-side effect callbacks (client provides these for visual feedback)
+// Server-side callbacks — used by dedicated server (main_server.cpp) to broadcast
+// world state changes to all connected clients over TCP.
 struct ServerCallbacks {
-	std::function<void(ChunkPos cp)> onChunkDirty;
-	std::function<void(glm::vec3 pos, glm::vec3 color, int count)> onBlockBreak;
-	std::function<void(glm::vec3 pos, glm::vec3 color)> onItemPickup;
-	std::function<void(glm::vec3 pos, const std::string& soundPlace)> onBlockPlace;
-	// Network broadcast callbacks (set by main_server.cpp for dedicated server)
-	std::function<void(glm::ivec3 pos, BlockId bid)> onBlockChange;     // block placed/broken
+	std::function<void(glm::ivec3 pos, BlockId bid, uint8_t p2)> onBlockChange; // block placed/broken
 	std::function<void(EntityId id)> onEntityRemove;                     // entity despawned
 	std::function<void(EntityId id, const Inventory&)> onInventoryChange; // inventory updated
-	// Floating text triggers (client-only HUD effects)
-	std::function<void(glm::vec3 pos, const std::string& name, int count)> onPickupText;
-	std::function<void(glm::vec3 pos, const std::string& blockName)> onBreakText;
-	// Pickup denied — client renders "X" text
-	std::function<void(glm::vec3 pos, const std::string& name)> onPickupDenied;
 };
 
 struct ServerConfig {
@@ -353,10 +344,8 @@ public:
 		m_activeBlockTimer += dt;
 		if (m_activeBlockTimer >= 0.05f) {
 			m_world->tickActiveBlocks(m_activeBlockTimer, [&](int bx, int by, int bz, BlockId bid) {
-				if (m_callbacks.onChunkDirty)
-					m_callbacks.onChunkDirty(World::worldToChunk(bx, by, bz));
-				if (m_callbacks.onBlockBreak)
-					m_callbacks.onBlockBreak(glm::vec3(bx, by, bz), {0.9f, 0.7f, 0.2f}, 4);
+				glm::ivec3 pos{bx, by, bz};
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, bid, 0);
 			});
 			m_activeBlockTimer = 0;
 		}

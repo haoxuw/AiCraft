@@ -238,13 +238,11 @@ public:
 
 	void setEffectCallbacks(
 		std::function<void(ChunkPos)> onChunkDirty,
-		std::function<void(glm::vec3, glm::vec3, int)> onBlockBreak,
-		std::function<void(glm::vec3, glm::vec3)> onItemPickup,
+		std::function<void(glm::vec3, const std::string&)> onBlockBreakText = nullptr,
 		std::function<void(glm::vec3, const std::string&)> onBlockPlace = nullptr) override {
-		m_onChunkDirty = onChunkDirty;
-		m_onBlockBreak = onBlockBreak;
-		m_onItemPickup = onItemPickup;
-		m_onBlockPlace = onBlockPlace;
+		m_onChunkDirty      = onChunkDirty;
+		m_onBlockBreakText  = onBlockBreakText;
+		m_onBlockPlace      = onBlockPlace;
 	}
 
 	const std::string& clientUUID() const { return m_clientUUID; }
@@ -367,8 +365,10 @@ private:
 			auto chunk = std::make_unique<Chunk>();
 			for (int ly = 0; ly < CHUNK_SIZE; ly++)
 				for (int lz = 0; lz < CHUNK_SIZE; lz++)
-					for (int lx = 0; lx < CHUNK_SIZE; lx++)
-						chunk->set(lx, ly, lz, (BlockId)rb.readU32());
+					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+						uint32_t v = rb.readU32();
+						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
+					}
 			m_chunkData[cp] = std::move(chunk);
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
@@ -386,6 +386,7 @@ private:
 		case net::S_BLOCK: {
 			int bx = rb.readI32(), by = rb.readI32(), bz = rb.readI32();
 			BlockId bid = (BlockId)rb.readU32();
+			uint8_t p2 = rb.hasMore() ? rb.readU8() : 0;
 			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
 			auto it = m_chunkData.find(cp);
@@ -393,7 +394,16 @@ private:
 				int lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 				int ly = ((by % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 				int lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-				it->second->set(lx, ly, lz, bid);
+				// Detect block break: non-air → air transition
+				if (bid == BLOCK_AIR && m_onBlockBreakText) {
+					BlockId oldBid = it->second->get(lx, ly, lz);
+					if (oldBid != BLOCK_AIR) {
+						const BlockDef& bdef = m_blocks.get(oldBid);
+						if (bdef.string_id != "base:air" && !bdef.string_id.empty())
+							m_onBlockBreakText(glm::vec3(bx, by, bz), bdef.display_name.empty() ? bdef.string_id : bdef.display_name);
+					}
+				}
+				it->second->set(lx, ly, lz, bid, p2);
 			}
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
@@ -517,8 +527,7 @@ private:
 	float m_uptime = 0;
 
 	std::function<void(ChunkPos)> m_onChunkDirty;
-	std::function<void(glm::vec3, glm::vec3, int)> m_onBlockBreak;
-	std::function<void(glm::vec3, glm::vec3)> m_onItemPickup;
+	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockPlace;
 };
 

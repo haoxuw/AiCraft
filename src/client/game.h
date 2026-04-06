@@ -7,7 +7,6 @@
 #include "client/equipment_ui.h"
 #include "shared/artifact_registry.h"
 #include "shared/server_interface.h"
-#include "server/local_server.h"
 #include "server/behavior_store.h"
 #include "client/process_manager.h"
 #include "client/gameplay.h"
@@ -206,7 +205,7 @@ private:
 	void appendLog(const std::string& msg); // prepends game-time timestamp
 
 	// Floating text notifications (damage, pickups, heals)
-	FloatingTextSystem m_floatText;
+	FloatingTextManager m_floatText;
 
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;
