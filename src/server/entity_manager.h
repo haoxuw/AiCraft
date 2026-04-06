@@ -121,7 +121,7 @@ public:
 			bool isLiving = def.isLiving();
 			mp.stepHeight = isLiving ? ServerTuning::entityStepHeight : 0.0f;
 			mp.canFly = e.getProp<bool>("fly_mode", false);
-			mp.smoothStep = isLiving;
+			mp.smoothStep = false; // instant teleport step-up (Minecraft-style); jump impulse was glitchy
 
 			auto result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
 			e.position = result.position;

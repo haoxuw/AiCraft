@@ -901,6 +901,25 @@ void Game::updatePlaying(float dt, float aspect) {
 			p.desiredVel = m_camera.front() * 5.0f + glm::vec3(0, 3.0f, 0);
 			m_server->sendAction(p);
 			m_dropCooldown = 0.8f; // don't auto-pickup for 0.8s after dropping
+
+			// Floating text: "-1 ItemName" — same counter key as pickup so they net out
+			const ArtifactEntry* dropArt = m_artifacts.findById(heldItem);
+			std::string dropName = (dropArt && !dropArt->name.empty()) ? dropArt->name : [&]{
+				std::string n = heldItem;
+				auto c = n.find(':'); if (c != std::string::npos) n = n.substr(c + 1);
+				if (!n.empty()) n[0] = (char)toupper((unsigned char)n[0]);
+				for (auto& ch : n) if (ch == '_') ch = ' ';
+				return n;
+			}();
+			std::string dropKey = heldItem;
+			{ auto c = dropKey.find(':'); if (c != std::string::npos) dropKey = dropKey.substr(c + 1); }
+			FloatTextEvent ft;
+			ft.source      = FloatSource::Pickup;
+			ft.worldPos    = pe->position + glm::vec3(0, 2.0f, 0);
+			ft.coalesceKey = dropKey;
+			ft.text        = dropName;
+			ft.value       = -1.0f;
+			m_floatText.add(ft);
 		}
 
 		// E = equip selected item
@@ -943,6 +962,17 @@ void Game::updatePlaying(float dt, float aspect) {
 					p.damage = (eit != art->fields.end()) ? std::stof(eit->second) : 4.0f;
 					m_server->sendAction(p);
 					m_audio.play("item_consume", pe->position, 0.7f);
+
+					// Floating text: "-1 PotionName" — nets against pickup counter
+					std::string consumeKey = heldItem;
+					{ auto c = consumeKey.find(':'); if (c != std::string::npos) consumeKey = consumeKey.substr(c + 1); }
+					FloatTextEvent ft;
+					ft.source      = FloatSource::Pickup;
+					ft.worldPos    = pe->position + glm::vec3(0, 2.0f, 0);
+					ft.coalesceKey = consumeKey;
+					ft.text        = art->name.empty() ? consumeKey : art->name;
+					ft.value       = -1.0f;
+					m_floatText.add(ft);
 				}
 			}
 		}

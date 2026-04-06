@@ -284,7 +284,7 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 			const BlockDef& ndef = reg.get(neighbor);
 			// Cull face if neighbor is opaque-solid (transparent neighbors like glass/portal
 			// let the face show through)
-			if (ndef.solid && !ndef.transparent) continue;
+			if (ndef.solid && !ndef.transparent && ndef.mesh_type == MeshType::Cube) continue;
 
 			glm::vec3 color;
 			if (face == 2)      color = bdef.color_top;

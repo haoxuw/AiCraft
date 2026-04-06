@@ -128,16 +128,57 @@ private:
 	std::vector<Splash>  m_splashes;
 	CameraMode           m_prevMode = CameraMode::FirstPerson;
 
-	// Timing / limits
-	static constexpr float kCombatTtl     =  3.0f;
-	static constexpr float kPickupTtl     = 10.0f;  // counter persists; resets on each new pickup
-	static constexpr float kSplashTtl     =  0.55f;
-	static constexpr float kPopInTime     =  0.12f;  // alpha fade-in duration
-	static constexpr float kPopPeakTime   =  0.10f;  // time to reach scale peak
-	static constexpr float kPopSettleTime =  0.28f;  // time to settle back to 1.0
-	static constexpr float kPopPeak       =  1.45f;  // overshoot factor
-	static constexpr float kModeSwitchTtl =  0.15f;
-	static constexpr float kOverlapDist   = 0.09f;  // NDC min separation
+	// ── Timing ───────────────────────────────────────────────────────────────
+	// How long each counter entry lives. Resets to maxTtl on every accumulation,
+	// so a pickup counter stays up as long as you keep collecting.
+	static constexpr float kCombatTtl      =  3.0f;   // damage / heal counter lifetime (s)
+	static constexpr float kPickupTtl      = 10.0f;   // pickup / block-break counter lifetime (s)
+	static constexpr float kSplashTtl      =  0.55f;  // per-hit flash lifetime (s)
+	// Alpha fade-in: text is fully opaque once this much time has elapsed.
+	static constexpr float kPopInTime      =  0.12f;  // (s)
+	// Camera mode switch: surviving combat counters fast-expire so stale text
+	// from the old view doesn't bleed into the new one.
+	static constexpr float kModeSwitchTtl  =  0.15f;  // (s)
+
+	// ── Bounce animation ─────────────────────────────────────────────────────
+	// Entry scale goes 0 → kPopPeak in kPopPeakTime, then settles to 1.0 by
+	// kPopSettleTime. Re-triggered every time the counter accumulates a new hit.
+	static constexpr float kPopPeakTime    =  0.10f;  // time to reach peak (s)
+	static constexpr float kPopSettleTime  =  0.28f;  // time to settle back to 1.0 (s)
+	static constexpr float kPopPeak        =  1.45f;  // peak overshoot scale factor
+
+	// ── FPS panel layout (NDC coords, origin = screen centre) ────────────────
+	// Three non-overlapping panels; each is a stacked list, one row per counter.
+	static constexpr float kFpsRowH        =  0.11f;  // vertical spacing between rows
+	// Damage taken — bottom-centre, stacks upward
+	static constexpr float kFpsTakenX     =  0.00f;
+	static constexpr float kFpsTakenBaseY = -0.70f;
+	// Damage dealt / Heal — near crosshair, stacks upward
+	static constexpr float kFpsDealtX     =  0.00f;
+	static constexpr float kFpsDealtBaseY =  0.05f;
+	// Pickup / Block break — upper-right panel, stacks downward
+	static constexpr float kFpsLootX      =  0.55f;
+	static constexpr float kFpsLootBaseY  =  0.70f;
+	// FPS splash anchor offsets (match the panel base positions above)
+	static constexpr float kFpsSplashDmgY = -0.70f;  // DamageTaken splash base Y
+	static constexpr float kFpsSplashHitY =  0.05f;  // DamageDealt/Heal splash base Y
+
+	// ── World-anchored (TPS/RPG/RTS) ─────────────────────────────────────────
+	// NDC minimum separation before push-apart kicks in.
+	static constexpr float kOverlapDist    =  0.09f;
+	// World-space Y offset added to entity/block position before projection,
+	// so text appears above the target rather than inside it.
+	static constexpr float kAnchorLiftY   =  0.15f;
+	// NDC drift rate — how fast counters float upward per second.
+	static constexpr float kDriftRate     =  0.26f;   // counter (NDC/s)
+	static constexpr float kSplashDriftRate = 0.50f;  // splash (NDC/s, faster)
+	// Splash scale relative to the base entry scale.
+	static constexpr float kSplashScaleMul =  0.75f;
+	static constexpr float kSplashAlphaMul =  0.80f;
+	// Splash fade-out window (last N seconds of kSplashTtl spent fading out).
+	static constexpr float kSplashFadeOut  =  0.20f;
+	// Counter fade-out window.
+	static constexpr float kCounterFadeOut =  0.45f;
 	bool        worldToNDC(const Camera& cam, float aspect,
 	                       glm::vec3 wp, glm::vec2& out) const;
 	std::string formatDisplay(FloatSource src, float accum,

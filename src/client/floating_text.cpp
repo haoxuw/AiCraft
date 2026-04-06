@@ -37,8 +37,10 @@ std::string FloatingTextManager::formatDisplay(FloatSource src, float accum,
 		return "-" + std::to_string(v);
 	case FloatSource::Heal:
 		return "+" + std::to_string(v) + " HP";
-	case FloatSource::Pickup:
-		return "+" + std::to_string(v) + (label.empty() ? "" : " " + label);
+	case FloatSource::Pickup: {
+		std::string prefix = (v >= 0) ? "+" : "";  // negative already carries "-"
+		return prefix + std::to_string(v) + (label.empty() ? "" : " " + label);
+	}
 	case FloatSource::BlockBreak:
 		return label + (v > 1 ? " x" + std::to_string(v) : "");
 	}
@@ -110,8 +112,10 @@ void FloatingTextManager::add(const FloatTextEvent& ev) {
 		Entry& e = it->second;
 		e.accum += ev.value;
 		e.text   = formatDisplay(e.source, e.accum, e.baseLabel);
-		e.ttl    = e.maxTtl;   // refresh lifetime
 		e.animAge = 0.f;       // re-trigger bounce animation on accumulation
+		// If the counter nets to zero (e.g. pick up then drop same item), fade it
+		// out quickly instead of showing "+0 Wood" for the full TTL.
+		e.ttl = ((int)e.accum == 0) ? std::min(e.ttl, kCounterFadeOut) : e.maxTtl;
 		// Upgrade severity: crit or dying flags persist if any hit triggered them
 		if (ev.isCrit)  e.isCrit = true;
 		if (ev.isCrit || ev.isDying)
@@ -182,7 +186,7 @@ void FloatingTextManager::update(float dt, CameraMode mode) {
 		e.ttl     -= dt;
 		e.animAge += dt;
 		e.scale    = bounceScale(e.animAge);
-		e.screenDrift.y += dt * 0.26f;  // drift upward in NDC
+		e.screenDrift.y += dt * kDriftRate;
 	}
 	// Erase expired Counter entries
 	for (auto it = m_entries.begin(); it != m_entries.end(); )
@@ -193,7 +197,7 @@ void FloatingTextManager::update(float dt, CameraMode mode) {
 		s.ttl -= dt;
 		float age = kSplashTtl - s.ttl;
 		s.scale = bounceScale(age);
-		s.screenDrift.y += dt * 0.50f;  // splashes drift up faster than Counter
+		s.screenDrift.y += dt * kSplashDriftRate;
 	}
 	m_splashes.erase(
 		std::remove_if(m_splashes.begin(), m_splashes.end(),
@@ -241,7 +245,7 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 			if (!isSelected) continue;
 		}
 
-		float alpha = fadeAlpha(e.ttl, e.maxTtl, 0.45f, e.color.a);
+		float alpha = fadeAlpha(e.ttl, e.maxTtl, kCounterFadeOut, e.color.a);
 		if (alpha < 0.01f) continue;
 
 		ScreenEntry se;
@@ -254,7 +258,7 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 			anchored.push_back(se);
 		} else {
 			// TPS / RPG / RTS: project world anchor to screen
-			glm::vec3 wp = e.anchorWorld + glm::vec3(0, 0.15f, 0);
+			glm::vec3 wp = e.anchorWorld + glm::vec3(0, kAnchorLiftY, 0);
 			glm::vec2 ndc;
 			if (!worldToNDC(cam, aspect, wp, ndc)) continue;
 			se.pos = ndc + glm::vec2(0, e.screenDrift.y);
@@ -285,13 +289,12 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 		std::sort(dealt.begin(), dealt.end(), byTtlDesc);
 		std::sort(loot.begin(),  loot.end(),  byTtlDesc);
 
-		constexpr float kRowH = 0.11f;
 		for (int i = 0; i < (int)taken.size(); i++)
-			taken[i]->pos = { 0.00f, -0.70f + i * kRowH };  // bottom-centre, upward
+			taken[i]->pos = { kFpsTakenX, kFpsTakenBaseY + i * kFpsRowH };
 		for (int i = 0; i < (int)dealt.size(); i++)
-			dealt[i]->pos = { 0.00f,  0.05f + i * kRowH };  // near crosshair, upward
+			dealt[i]->pos = { kFpsDealtX, kFpsDealtBaseY + i * kFpsRowH };
 		for (int i = 0; i < (int)loot.size(); i++)
-			loot[i]->pos  = { 0.55f,  0.70f - i * kRowH };  // upper-right, downward
+			loot[i]->pos  = { kFpsLootX,  kFpsLootBaseY  - i * kFpsRowH };
 	} else {
 		// TPS / RPG / RTS: push-apart to separate world-anchored entries
 		std::vector<glm::vec2> positions;
@@ -310,20 +313,20 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 
 	// ── Splash entries (per-hit flashes) ─────────────────────────────────────
 	for (auto& s : m_splashes) {
-		float alpha = fadeAlpha(s.ttl, kSplashTtl, 0.20f, s.color.a);
+		float alpha = fadeAlpha(s.ttl, kSplashTtl, kSplashFadeOut, s.color.a);
 		if (alpha < 0.01f) continue;
 
-		float sc = (s.isCrit ? kFTScaleCrit : kFTScaleWorld) * 0.75f * s.scale;
-		glm::vec4 col = s.color; col.a = alpha * 0.80f;
+		float sc = (s.isCrit ? kFTScaleCrit : kFTScaleWorld) * kSplashScaleMul * s.scale;
+		glm::vec4 col = s.color; col.a = alpha * kSplashAlphaMul;
 
 		if (mode == CameraMode::FirstPerson) {
 			if (s.source == FloatSource::DamageTaken) {
-				text.drawText(s.text,  0.00f + s.horizJitter, -0.70f - s.screenDrift.y, sc, col, aspect);
+				text.drawText(s.text, s.horizJitter, kFpsSplashDmgY - s.screenDrift.y, sc, col, aspect);
 			} else {
-				text.drawText(s.text,  0.00f + s.horizJitter,  0.05f + s.screenDrift.y, sc, col, aspect);
+				text.drawText(s.text, s.horizJitter, kFpsSplashHitY + s.screenDrift.y, sc, col, aspect);
 			}
 		} else {
-			glm::vec3 wp = s.anchorWorld + glm::vec3(0, 0.15f, 0);
+			glm::vec3 wp = s.anchorWorld + glm::vec3(0, kAnchorLiftY, 0);
 			glm::vec2 ndc;
 			if (!worldToNDC(cam, aspect, wp, ndc)) continue;
 			text.drawText(s.text, ndc.x + s.horizJitter, ndc.y + s.screenDrift.y, sc, col, aspect);
