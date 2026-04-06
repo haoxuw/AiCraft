@@ -23,11 +23,13 @@ public:
 	            int selectedSlot = 0, int hotbarSize = 7,
 	            glm::vec2 crosshairOffset = {0, 0}, bool showCrosshair = true);
 	void renderFogOfWar(const Camera& cam, float aspect, ChunkSource& chunks, int renderDistance);
+	void renderEntityShadow(const Camera& cam, float aspect, glm::vec3 pos, float radius);
 	ModelRenderer& modelRenderer() { return m_modelRenderer; }
 	Shader& highlightShader() { return m_highlightShader; }
 	void markChunkDirty(ChunkPos pos);
 	void setTimeOfDay(float t); // 0=midnight, 0.5=noon
-	void tick(float dt) { m_time += dt; }
+	void tick(float dt) { m_time += dt; m_hitmarkerTimer = std::max(0.0f, m_hitmarkerTimer - dt); }
+	void triggerHitmarker(bool isKill = false) { m_hitmarkerTimer = 0.18f; m_hitmarkerKill = isKill; }
 	void renderMoveTarget(const Camera& cam, float aspect, glm::ivec3 pos);
 	void renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 pos, float progress);
 	float sunStrength() const { return m_sunStrength; }
@@ -43,12 +45,14 @@ private:
 	Shader m_skyShader;
 	Shader m_crosshairShader;
 	Shader m_highlightShader;
+	Shader m_shadowShader;
 
 	GLuint m_skyVAO = 0, m_skyVBO = 0;
 	GLuint m_crosshairVAO = 0, m_crosshairVBO = 0;
 	GLuint m_highlightVAO = 0, m_highlightVBO = 0;
 	GLuint m_crackVAO = 0, m_crackVBO = 0;
 	GLuint m_quadVAO = 0, m_quadVBO = 0;
+	GLuint m_shadowVAO = 0, m_shadowVBO = 0;
 	ModelRenderer m_modelRenderer;
 
 	ChunkMesher m_mesher;
@@ -63,6 +67,10 @@ private:
 	float m_timeOfDay = 0.5f; // noon
 	float m_sunStrength = 1.0f;
 	float m_time = 0.0f; // elapsed seconds (for shader animations)
+
+	// Hitmarker crosshair flash
+	float m_hitmarkerTimer = 0.0f; // counts down from 0.18s
+	bool  m_hitmarkerKill  = false; // true = red kill shot, false = orange hit
 
 	// Fog of war
 	FogOfWar m_fogOfWar;

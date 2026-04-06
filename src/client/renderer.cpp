@@ -99,6 +99,8 @@ bool Renderer::init(const std::string& dir) {
 		return false;
 	if (!m_highlightShader.loadFromFile(dir + "/highlight.vert", dir + "/highlight.frag"))
 		return false;
+	if (!m_shadowShader.loadFromFile(dir + "/shadow.vert", dir + "/shadow.frag"))
+		return false;
 
 	// Fullscreen quad for sky
 	float quad[] = { -1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1 };
@@ -173,6 +175,26 @@ bool Renderer::init(const std::string& dir) {
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
 	glEnableVertexAttribArray(0);
 
+	// Shadow disc: 16-sided polygon as TRIANGLE_FAN (center + 17 rim verts)
+	{
+		std::vector<float> sv;
+		sv.reserve(3 * 18);
+		sv.push_back(0); sv.push_back(0); sv.push_back(0); // center
+		for (int i = 0; i <= 16; i++) {
+			float a = i * 2.0f * PI / 16.0f;
+			sv.push_back(std::cos(a));
+			sv.push_back(0.0f);
+			sv.push_back(std::sin(a));
+		}
+		glGenVertexArrays(1, &m_shadowVAO);
+		glGenBuffers(1, &m_shadowVBO);
+		glBindVertexArray(m_shadowVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, m_shadowVBO);
+		glBufferData(GL_ARRAY_BUFFER, sv.size() * sizeof(float), sv.data(), GL_STATIC_DRAW);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+		glEnableVertexAttribArray(0);
+	}
+
 	glBindVertexArray(0);
 
 	m_modelRenderer.init(&m_highlightShader);
@@ -193,6 +215,7 @@ void Renderer::shutdown() {
 	del(m_highlightVAO, m_highlightVBO);
 	del(m_crackVAO, m_crackVBO);
 	del(m_quadVAO, m_quadVBO);
+	del(m_shadowVAO, m_shadowVBO);
 	m_modelRenderer.shutdown();
 	m_fogOfWar.shutdown();
 }
@@ -333,6 +356,38 @@ void Renderer::renderFogOfWar(const Camera& cam, float aspect,
 	m_fogOfWar.render(cam, aspect, chunks, renderDistance, m_horizonColor, m_timeOfDay);
 }
 
+void Renderer::renderEntityShadow(const Camera& cam, float aspect,
+                                  glm::vec3 pos, float radius) {
+	if (!m_shadowVAO) return;
+
+	// Render a dark oval on the ground just under the entity's feet.
+	// Pos is entity feet position; we offset +0.02 to avoid z-fighting.
+	glm::mat4 model = glm::translate(glm::mat4(1.0f),
+		glm::vec3(pos.x, pos.y + 0.02f, pos.z));
+	// Scale disc by radius; flatten slightly on Z for an oval feel
+	model = glm::scale(model, glm::vec3(radius, 1.0f, radius * 0.85f));
+
+	glm::mat4 mvp = cam.projectionMatrix(aspect) * cam.viewMatrix() * model;
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_POLYGON_OFFSET_FILL);
+	glPolygonOffset(-1.0f, -1.0f);
+
+	m_shadowShader.use();
+	m_shadowShader.setMat4("uMVP", mvp);
+	m_shadowShader.setFloat("uAlpha", 0.32f);
+
+	glBindVertexArray(m_shadowVAO);
+	glDrawArrays(GL_TRIANGLE_FAN, 0, 18);
+	glBindVertexArray(0);
+
+	glDisable(GL_POLYGON_OFFSET_FILL);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+}
+
 void Renderer::renderSky(const Camera& cam, float aspect) {
 	glDisable(GL_DEPTH_TEST);
 	m_skyShader.use();
@@ -341,6 +396,7 @@ void Renderer::renderSky(const Camera& cam, float aspect) {
 	m_skyShader.setVec3("uHorizonColor", m_horizonColor);
 	m_skyShader.setVec3("uSunDir", m_sunDir);
 	m_skyShader.setFloat("uSunStrength", m_sunStrength);
+	m_skyShader.setFloat("uTime", m_time);
 	glBindVertexArray(m_skyVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 	glEnable(GL_DEPTH_TEST);
@@ -551,18 +607,33 @@ void Renderer::renderCrosshair(float aspect, glm::vec2 center) {
 
 	glBindVertexArray(m_crosshairVAO);
 
+	// Hitmarker: flash crosshair color when attack connects
+	glm::vec3 flashColor = {1, 1, 1};
+	float flashBlend = 0.0f;
+	if (m_hitmarkerTimer > 0.0f) {
+		flashBlend = m_hitmarkerTimer / 0.18f; // 1→0 over 0.18s
+		flashColor = m_hitmarkerKill ? glm::vec3(1.0f, 0.15f, 0.05f) // red: kill shot
+		                             : glm::vec3(1.0f, 0.80f, 0.25f); // orange: damage
+	}
+	glm::vec4 lineColor = {
+		glm::mix(1.0f, flashColor.r, flashBlend),
+		glm::mix(1.0f, flashColor.g, flashBlend),
+		glm::mix(1.0f, flashColor.b, flashBlend),
+		0.9f + flashBlend * 0.1f
+	};
+
 	// Draw the 4 line arms (8 verts = 4 lines)
-	// White with black outline effect: draw black slightly thicker first, then white
+	// White with black outline effect: draw black slightly thicker first, then white/flash
 	m_crosshairShader.setVec4("uColor", {0, 0, 0, 0.6f});
 	glLineWidth(3.0f);
 	glDrawArrays(GL_LINES, 0, 8);
 
-	m_crosshairShader.setVec4("uColor", {1, 1, 1, 0.9f});
+	m_crosshairShader.setVec4("uColor", lineColor);
 	glLineWidth(1.5f);
 	glDrawArrays(GL_LINES, 0, 8);
 
 	// Draw center dot (6 verts = 2 triangles, starting at vertex 8)
-	m_crosshairShader.setVec4("uColor", {1, 1, 1, 0.85f});
+	m_crosshairShader.setVec4("uColor", {lineColor.r, lineColor.g, lineColor.b, 0.85f});
 	glDrawArrays(GL_TRIANGLES, 8, 6);
 
 	glDisable(GL_BLEND);

@@ -21,6 +21,7 @@
 #include "client/model.h"
 #include "client/model_preview.h"
 #include "client/model_icon_cache.h"
+#include "client/floating_text.h"
 #include "client/ui.h"
 #include "client/audio.h"
 #include "development/debug_capture.h"
@@ -187,25 +188,6 @@ private:
 	std::vector<PickupAnim> m_pickupAnims;
 
 	// Floating text (damage numbers, pickup notifications, Minecraft Dungeons style)
-	struct FloatingText {
-		int       id = 0;    // stable unique ID — used by PickupAccum to find this entry
-		glm::vec3 pos;
-		float velY;
-		float velX = 0;      // horizontal drift (Dungeons-style diverge)
-		float offsetX;
-		std::string text;
-		glm::vec4 color;
-		float life, maxLife;
-		float baseScale;
-	};
-	std::deque<FloatingText> m_floatingTexts;
-	// entityId != ENTITY_NONE → per-entity Y-stack so numbers don't collide (DST-style)
-	int addFloatingText(glm::vec3 pos, const std::string& text,
-	                    glm::vec4 color, float scale = 1.8f,
-	                    EntityId entityId = ENTITY_NONE);
-
-	// Per-entity Y offset for stacking damage numbers. Grows on each hit, decays over time.
-	std::unordered_map<EntityId, float> m_floatingTopOffset;
 
 	// HP snapshot for damage/death detection (client-side, works over network)
 	std::unordered_map<EntityId, int> m_prevEntityHP;
@@ -217,22 +199,14 @@ private:
 	// the local player via m_fpSwingTimer; mob swings require server attack events.
 	std::unordered_map<EntityId, float> m_entityAttackPhase;
 
-	// Pickup text accumulator: one entry per item type, updated in place
-	struct PickupAccum {
-		std::string itemName;
-		int total = 0;
-		int displayed = 0;  // displayed count (ticks up toward total)
-		float timer = 0;    // time since last pickup of this item
-		int floatingId = -1; // FloatingText::id of our text (-1 = not yet created)
-		int slot = 0;        // stable vertical slot index (assigned at creation, never changes)
-	};
-	std::unordered_map<std::string, PickupAccum> m_pickupAccum;
-	int m_pickupSlotCounter = 0; // monotonically increasing slot counter
 
 	// Game log — timestamped event stream (damage, deaths, AI decisions, pickups)
 	std::deque<std::string> m_gameLog;
 	bool m_showGameLog = false;
 	void appendLog(const std::string& msg); // prepends game-time timestamp
+
+	// Floating text notifications (damage, pickups, heals)
+	FloatingTextSystem m_floatText;
 
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;

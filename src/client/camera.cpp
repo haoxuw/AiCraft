@@ -83,6 +83,7 @@ void Camera::processInput(GLFWwindow* window, float dt) {
 // Smooth vertical camera tracking.
 // Going UP (step-up): gentle rise like climbing stairs.
 // Going DOWN (falling/stepping down): faster tracking for responsiveness.
+// Max-lag cap prevents portal stairs (1.0-block drops) from causing long camera trail.
 float Camera::smoothVertical(float targetY, float dt) {
 	if (!m_smoothInit) {
 		m_smoothY = targetY;
@@ -92,14 +93,21 @@ float Camera::smoothVertical(float targetY, float dt) {
 
 	float diff = targetY - m_smoothY;
 
+	// Clamp maximum lag: camera can trail by at most half a stair step.
+	// This ensures large drops (portal staircase, 1.0-block step) are partially
+	// snapped then smoothed over the remaining 0.5 blocks — no long trailing camera.
+	const float kMaxLag = 0.55f;
+	if (diff > kMaxLag)  { m_smoothY = targetY - kMaxLag; diff =  kMaxLag; }
+	if (diff < -kMaxLag) { m_smoothY = targetY + kMaxLag; diff = -kMaxLag; }
+
 	// Asymmetric smoothing: gentle climb up, responsive fall down
 	float rate;
 	if (diff > 0.01f) {
-		// Rising (step-up): smooth climb over ~0.2s
-		rate = 8.0f;
+		// Rising (step-up): smooth climb; faster for taller steps
+		rate = 9.0f + diff * 5.0f;
 	} else if (diff < -0.01f) {
 		// Falling/stepping down: fast tracking
-		rate = 18.0f;
+		rate = 24.0f;
 	} else {
 		// Close enough: snap to avoid floating-point drift
 		m_smoothY = targetY;

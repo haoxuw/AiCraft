@@ -91,6 +91,21 @@ inline void registerTerrainBlocks(BlockRegistry& reg) {
 		.surface_glow = true,
 	});
 
+	// Spawn Point (indestructible gold marker — placed at portal center)
+	reg.registerBlock({
+		.string_id    = BT::SpawnPoint,
+		.display_name = "Spawn Point",
+		.category     = CT::System,
+		.color_top    = {0.95f, 0.78f, 0.05f},
+		.color_side   = {0.85f, 0.65f, 0.02f},
+		.color_bottom = {0.70f, 0.50f, 0.01f},
+		.solid        = true,
+		.hardness     = 0.0f,
+		.stack_max    = 1,
+		.groups       = {{GR::Unbreakable, 1}},
+		.surface_glow = true,
+	});
+
 	// Chest (storage block)
 	reg.registerBlock({BT::Chest, "Chest", CT::Crafted,
 		{0.55f,0.40f,0.20f},{0.50f,0.35f,0.18f},{0.45f,0.30f,0.15f},

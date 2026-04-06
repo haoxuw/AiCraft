@@ -18,21 +18,18 @@ uniform float uTime;        // elapsed seconds (for animations)
 
 out vec4 fragColor;
 
-// Hash function for procedural noise
 float hash(vec3 p) {
 	p = fract(p * vec3(443.8975, 397.2973, 491.1871));
 	p += dot(p, p.yzx + 19.19);
 	return fract((p.x + p.y) * p.z);
 }
 
-// Value noise
 float noise3D(vec3 p) {
 	vec3 i = floor(p);
 	vec3 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f); // smoothstep
-
+	f = f * f * (3.0 - 2.0 * f);
 	return mix(
-		mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+		mix(mix(hash(i),              hash(i + vec3(1,0,0)), f.x),
 		    mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
 		mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
 		    mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
@@ -41,70 +38,77 @@ float noise3D(vec3 p) {
 }
 
 void main() {
-	// Per-block position (integer part = block ID for consistent pattern)
 	vec3 blockPos = floor(vWorldPos + 0.001);
-	vec3 localPos = fract(vWorldPos + 0.001); // 0-1 within block
+	vec3 localPos = fract(vWorldPos + 0.001);
 
-	// Per-block color variation (subtle, consistent per block)
+	// ── Per-block variation: stronger for Dungeons-style distinct blocks ──
 	float blockHash = hash(blockPos);
-	float colorVariation = (blockHash - 0.5) * 0.08;
+	float colorVariation = (blockHash - 0.5) * 0.14; // was 0.08
 
-	// Procedural texture: noise-based pattern
-	float texNoise = noise3D(vWorldPos * 4.0) * 0.06
-	               + noise3D(vWorldPos * 8.0) * 0.03;
-
-	// Edge darkening (block grid lines - subtle)
-	vec3 edgeDist = min(localPos, 1.0 - localPos); // distance to nearest edge
-	// Only darken edges perpendicular to the face normal
-	float edgeFactor = 1.0;
+	// ── Material grain texture ──
+	// Top/bottom faces: horizontal swirling grain
+	// Side faces: vertical streaks + horizontal fissures
+	float grain;
 	if (abs(vNormal.y) > 0.5) {
-		// Top/bottom face: edges on X and Z
+		grain = noise3D(vWorldPos * 3.5)  * 0.06
+		      + noise3D(vWorldPos * 9.0)  * 0.03
+		      + noise3D(vWorldPos * 22.0) * 0.015;
+	} else {
+		// Vertical grain for side faces (wood/stone columns)
+		grain = noise3D(vWorldPos * vec3(3.0, 10.0, 3.0)) * 0.06
+		      + noise3D(vWorldPos * vec3(7.0, 22.0, 7.0)) * 0.025;
+	}
+
+	// Edge darkening (block grid lines)
+	vec3 edgeDist = min(localPos, 1.0 - localPos);
+	float edgeFactor;
+	if (abs(vNormal.y) > 0.5) {
 		edgeFactor = smoothstep(0.0, 0.06, min(edgeDist.x, edgeDist.z));
 	} else if (abs(vNormal.x) > 0.5) {
-		// Side face X: edges on Y and Z
 		edgeFactor = smoothstep(0.0, 0.06, min(edgeDist.y, edgeDist.z));
 	} else {
-		// Side face Z: edges on X and Y
 		edgeFactor = smoothstep(0.0, 0.06, min(edgeDist.x, edgeDist.y));
 	}
-	edgeFactor = mix(0.85, 1.0, edgeFactor);
+	edgeFactor = mix(0.82, 1.0, edgeFactor); // slightly stronger edge contrast
 
-	// Apply color variation + texture noise + edges
-	vec3 baseColor = vColor + colorVariation + texNoise;
+	vec3 baseColor = vColor + colorVariation + grain;
+	baseColor = clamp(baseColor, 0.0, 1.0);
 	baseColor *= edgeFactor;
 
-	// Directional sun light -- modulated by time of day
+	// ── Saturation boost: Minecraft Dungeons vibrant palette ──
+	float lum = dot(baseColor, vec3(0.299, 0.587, 0.114));
+	baseColor = mix(vec3(lum), baseColor, 1.45); // +45% saturation push
+	baseColor = clamp(baseColor, 0.0, 1.0);
+
+	// ── Directional lighting ──
 	float sunDot = max(dot(vNormal, uSunDir), 0.0);
 	float ambient = 0.15 + 0.30 * uSunStrength;
 	float diffuse = ambient + (1.0 - ambient) * sunDot * uSunStrength;
 
-	// Combine: base color * lighting * face shade * AO
 	vec3 lit = baseColor * diffuse * vShade * vAO;
 
-	// Warm sun tint (stronger at dawn/dusk)
-	lit += baseColor * sunDot * 0.08 * uSunStrength * vec3(1.0, 0.85, 0.6);
+	// Warm sun tint — peaks at dawn/dusk
+	float dawnDusk = uSunStrength * (1.0 - uSunStrength) * 4.0;
+	lit += baseColor * sunDot * uSunStrength * (0.10 * vec3(1.0, 0.85, 0.60)
+	     + dawnDusk * 0.14 * vec3(1.0, 0.50, 0.18));
 
 	// Night: slight blue ambient tint
 	lit += baseColor * (1.0 - uSunStrength) * 0.03 * vec3(0.3, 0.4, 0.8);
 
 	// ── Arcane surface: animated energy for magical blocks (vGlow = 1.0) ──
-	// Replaces the block's surface color — no light is added to the scene.
 	if (vGlow > 0.5) {
 		float t = uTime * 0.5;
-		// Two noise layers create flowing vein patterns
 		float n1 = noise3D(vWorldPos * 2.2 + vec3(t * 0.28, 0.0,    t * 0.18));
 		float n2 = noise3D(vWorldPos * 5.5 - vec3(0.0,      t * 0.4, t * 0.12));
 		float veins = 0.3 + 0.7 * pow(clamp(n1 * 0.6 + n2 * 0.4, 0.0, 1.0), 0.5);
-		// Colour slowly shifts between indigo and teal
 		float phase = 0.5 + 0.5 * sin(t * 0.32 + vWorldPos.x * 0.14 + vWorldPos.z * 0.14);
-		vec3 c1 = vec3(0.30, 0.04, 0.55);   // deep indigo
-		vec3 c2 = vec3(0.04, 0.44, 0.62);   // teal
+		vec3 c1 = vec3(0.30, 0.04, 0.55);
+		vec3 c2 = vec3(0.04, 0.44, 0.62);
 		vec3 surfaceColor = mix(c1, c2, phase) * veins;
-		// Keep realistic shading so it doesn't glow flat or look like a light source
 		lit = surfaceColor * diffuse * vShade * vAO;
 	}
 
-	// Distance fog
+	// ── Distance fog ──
 	float dist = length(vWorldPos - uCamPos);
 	float fog = smoothstep(uFogStart, uFogEnd, dist);
 	lit = mix(lit, uFogColor, fog);
@@ -116,7 +120,6 @@ void main() {
 		vec3 viewDir = normalize(uCamPos - vWorldPos);
 		float cosTheta = abs(dot(vNormal, viewDir));
 		float fresnel = pow(1.0 - cosTheta, 2.5);
-		// Bright white glare at grazing angles
 		lit = mix(lit, vec3(0.9, 0.97, 1.0), fresnel * 0.6);
 		alpha = mix(vAlpha, 0.85, fresnel * 0.7);
 	}

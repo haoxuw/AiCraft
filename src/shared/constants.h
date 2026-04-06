@@ -55,6 +55,7 @@ namespace BlockType {
 	constexpr const char* DoorOpen    = "base:door_open";
 	constexpr const char* Portal      = "base:portal";
 	constexpr const char* ArcaneStone = "base:arcane_stone";
+	constexpr const char* SpawnPoint  = "base:spawn_point";
 }
 
 // ============================================================

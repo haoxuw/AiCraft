@@ -55,6 +55,15 @@ Zero raw string literals remain in game logic code.
 
 ---
 
+## v0.9.0 -- Visual Polish (Current)
+
+![v0.9.0 FPS](v0.9.0_fps_view.png)
+![v0.9.0 TPS](v0.9.0_tps_view.png)
+![v0.9.0 RPG](v0.9.0_rpg_view.png)
+![v0.9.0 RTS](v0.9.0_rts_view.png)
+
+Major rendering overhaul. Block textures now have Minecraft Dungeons-style vibrant saturation (+45%), face-normal-aware procedural grain (top faces: swirling XZ noise; sides: vertical streaks), and stronger edge-darkening grid lines. Per-block color variation increased. Procedural cloud layer in sky shader (3-octave 2D noise, time-scrolled). Dawn/dusk warm tint peaks at sunrise/sunset. Distance fog. Smooth stair camera (asymmetric lerp, lag cap prevents portal-staircase camera trail). Hitmarker crosshair (orange on hit, red on kill). FPS hand bob (walk-speed-scaled sine wave). Unified FloatingTextSystem: damage numbers above enemies, pickup notifications in HUD lane, mode-aware (FPS near crosshair, TPS/RPG world-projected, RTS selected-only), entry coalescing, pop-in animation.
+
 ## Version History
 
 | Version | Focus | Key Addition |
@@ -67,3 +76,4 @@ Zero raw string literals remain in game logic code.
 | 0.5.1 | Camera | 4 views (FPS/3rd/God/RTS) |
 | 0.6.0 | Entities | 3D models, pig/chicken AI |
 | 0.7.0 | Code quality | Constants refactor, zero hardcoded strings |
+| 0.9.0 | Visual polish | Vibrant textures, clouds, floating text, hitmarker, hand bob |

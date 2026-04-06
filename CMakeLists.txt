@@ -155,6 +155,8 @@ set(CLIENT_SOURCES
 	src/client/hud.cpp
 	src/client/code_editor.h
 	src/client/code_editor.cpp
+	src/client/floating_text.h
+	src/client/floating_text.cpp
 )
 
 # Server simulation sources

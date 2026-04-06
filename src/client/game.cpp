@@ -255,32 +255,6 @@ void Game::shutdown() {
 	m_window.shutdown();
 }
 
-int Game::addFloatingText(glm::vec3 pos, const std::string& text,
-                          glm::vec4 color, float scale, EntityId entityId) {
-	static int nextId = 1;
-
-	// Per-entity Y stacking (DST-style): each new number for the same entity
-	// starts above the previous one. The offset decays toward 0 between hits.
-	float yExtra = 0;
-	if (entityId != ENTITY_NONE) {
-		yExtra = m_floatingTopOffset[entityId];
-		m_floatingTopOffset[entityId] += 0.38f;
-	}
-
-	FloatingText ft;
-	ft.id = nextId++;
-	ft.pos = pos + glm::vec3(0, 0.6f + yExtra, 0);
-	ft.velY  = 2.5f;
-	ft.velX  = ((rand() % 200) / 100.0f - 1.0f) * 0.45f; // ±0.45 blocks/s diverge
-	ft.offsetX = ((rand() % 100) / 100.0f - 0.5f) * 0.25f; // smaller random jitter now
-	ft.text = text;
-	ft.color = color;
-	ft.life = ft.maxLife = 1.6f;
-	ft.baseScale = scale;
-	m_floatingTexts.push_back(ft);
-	if (m_floatingTexts.size() > 50) m_floatingTexts.pop_front();
-	return ft.id;
-}
 
 void Game::appendLog(const std::string& msg) {
 	// Game-time timestamp: map worldTime [0..1] to HH:MM
@@ -679,24 +653,23 @@ void Game::setupAfterConnect(GameState targetState) {
 				if (name.size() > 5 && name.substr(0,5) == "base:") name = name.substr(5);
 				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
 				for (auto& c : name) if (c == '_') c = ' ';
-				char buf[64];
-				snprintf(buf, sizeof(buf), "+%d %s", count, name.c_str());
-				addFloatingText(pos + glm::vec3(0, 1.5f, 0), buf, {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
 				if (m_serverLog) fprintf(m_serverLog, "[pickup] %s x%d at (%.0f,%.0f,%.0f)\n",
 					item.c_str(), count, pos.x, pos.y, pos.z);
+
+				// Floating pickup notification
+				FloatTextEvent ft;
+				ft.type        = FloatTextType::Pickup;
+				ft.worldPos    = pos;
+				ft.coalesceKey = item;  // same item type → coalesce
+				ft.color       = {0.85f, 1.0f, 0.55f, 1.0f};
+				ft.text        = "+" + std::to_string(count) + " " + name;
+				m_floatText.add(ft);
 			};
 			cb.onBreakText = [this](glm::vec3 pos, const std::string& blockName) {
-				addFloatingText(pos + glm::vec3(0, 0.5f, 0), blockName,
-				                {0.85f, 0.85f, 0.85f, 0.9f}, 1.4f);
 				if (m_serverLog) fprintf(m_serverLog, "[break] %s at (%.0f,%.0f,%.0f)\n",
 					blockName.c_str(), pos.x, pos.y, pos.z);
 			};
-			cb.onPickupDenied = [this](glm::vec3 pos, const std::string& item) {
-				std::string name = item;
-				if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
-				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
-				addFloatingText(pos + glm::vec3(0, 0.5f, 0), name + " X",
-				                {0.90f, 0.25f, 0.20f, 1.0f}, 1.6f);
+			cb.onPickupDenied = [this](glm::vec3, const std::string&) {
 			};
 		}
 	}
@@ -827,6 +800,9 @@ void Game::updatePlaying(float dt, float aspect) {
 		return;
 	}
 	m_connectTimer = 0;
+
+	// Floating text update
+	m_floatText.update(dt, m_camera.mode);
 
 	// Debug capture tick — runs scenario and auto-exits when done
 	if (m_debugCapture.active()) {
@@ -970,6 +946,7 @@ void Game::updatePlaying(float dt, float aspect) {
 						p.damage     = damage;
 						m_server->sendAction(p);
 						m_attackCD = cooldown;
+						m_renderer.triggerHitmarker(false); // flash crosshair orange on attack
 						// Swing duration: 60% of cooldown, capped at 0.45s (fast stab/slow slash)
 						m_fpSwingDuration = std::min(cooldown * 0.6f, 0.45f);
 						m_fpSwingActive = true;
@@ -1121,80 +1098,12 @@ void Game::updatePlaying(float dt, float aspect) {
 			m_particles.emitItemPickup(pe->position + glm::vec3(0, 0.8f, 0), it->color);
 			m_audio.play("item_pickup", pe->position, 0.5f);
 
-			// Accumulate pickup count (text created/updated in the tick-up loop below)
-			bool isNew = (m_pickupAccum.count(it->itemName) == 0);
-			auto& acc = m_pickupAccum[it->itemName];
-			if (isNew) {
-				acc.itemName = it->itemName;
-				acc.slot = m_pickupSlotCounter++; // stable vertical slot for this item type
-			}
-			acc.total += it->count;
-			acc.timer = 2.0f; // keep alive for 2 seconds after last pickup
 			it = m_pickupAnims.erase(it);
 		} else {
 			++it;
 		}
 	}
 
-	// Pickup text accumulator: one floating text per item type, updated in place.
-	// Uses FloatingText::id (stable) instead of deque index (invalidated by insertions).
-	{
-		glm::vec3 textBase = pe->position + glm::vec3(0, pe->def().eye_height, 0)
-		                   + m_camera.front() * 1.5f;
-
-		for (auto it = m_pickupAccum.begin(); it != m_pickupAccum.end(); ) {
-			auto& acc = it->second;
-			acc.timer -= dt;
-
-			// Tick up displayed count toward total
-			if (acc.displayed < acc.total) {
-				int step = std::max(1, (acc.total - acc.displayed) / 3);
-				acc.displayed = std::min(acc.displayed + step, acc.total);
-			}
-
-			char buf[64];
-			snprintf(buf, sizeof(buf), "+%d %s", acc.displayed, acc.itemName.c_str());
-
-			float yOff = acc.slot * 0.5f; // stable slot → no vertical jumping
-
-			// Find our floating text by stable ID (linear scan — deque is small)
-			FloatingText* pFt = nullptr;
-			for (auto& ft : m_floatingTexts)
-				if (ft.id == acc.floatingId) { pFt = &ft; break; }
-
-			if (pFt) {
-				// Update existing text in place; refresh life so it doesn't expire mid-accumulation
-				pFt->text = buf;
-				pFt->pos  = textBase + glm::vec3(0, yOff + 0.6f, 0); // follow player
-				pFt->velY = 0.6f;   // slow drift upward while accumulating
-				if (acc.displayed < acc.total || acc.timer > 0)
-					pFt->life = pFt->maxLife;
-			} else {
-				// Create fresh text (first pickup of this item, or previous text expired)
-				acc.floatingId = addFloatingText(textBase + glm::vec3(0, yOff, 0), buf,
-				                                 {1.0f, 0.92f, 0.30f, 1.0f}, 2.2f);
-			}
-
-			if (acc.timer <= 0 && acc.displayed >= acc.total) {
-				// Log completed pickup (once, when accumulator expires)
-				appendLog("Picked up " + std::to_string(acc.total) + "x " + acc.itemName);
-				// Let text drift and fade naturally
-				if (pFt) pFt->velY = 3.0f; // resume normal float-up speed on expiry
-				it = m_pickupAccum.erase(it);
-			} else {
-				++it;
-			}
-		}
-		// Reset slot counter once all pickups clear so positions don't drift over a long session
-		if (m_pickupAccum.empty()) m_pickupSlotCounter = 0;
-	}
-
-	// Decay per-entity floating-text Y offsets (DST-style: grows on hits, recovers between them)
-	for (auto it = m_floatingTopOffset.begin(); it != m_floatingTopOffset.end(); ) {
-		it->second -= dt * 1.8f;
-		if (it->second <= 0.01f) it = m_floatingTopOffset.erase(it);
-		else ++it;
-	}
 
 	// Creature ambient sounds: very rare, within 5 blocks only, whisper-quiet.
 	m_creatureSoundTimer -= dt;
@@ -1573,6 +1482,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		if (mit != m_models.end()) {
 			BoxModel mobModel = (e.inventory && e.def().isLiving())
 				? buildEquippedModel(e, mit->second) : mit->second;
+
 			// Damage flash: entity flashes red for a short time after being hit
 			float flashT = 0.0f;
 			auto flit = m_damageFlash.find(e.id());
@@ -1704,43 +1614,49 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				// Log the decision
 				std::string eName = e.def().display_name.empty() ? e.typeId() : e.def().display_name;
 				appendLog(eName + ": " + e.goalText);
-				// Visual bubble (only when showGoalBubbles is on)
-				if (m_showGoalBubbles) {
-					glm::vec4 goalColor = e.hasError
-						? glm::vec4(1.0f, 0.35f, 0.30f, 1.0f)
-						: glm::vec4(0.85f, 0.92f, 0.60f, 1.0f);
-					addFloatingText(e.position + glm::vec3(0, entityTop + 0.5f, 0),
-					                e.goalText, goalColor, 1.2f, e.id());
-				}
 			}
 		}
 
-		// HP tracking: detect damage/death for floating numbers, flash, puff
+		// HP tracking: detect damage/death for flash, log, sound, puff
 		{
 			int curHP = e.getProp<int>(Prop::HP, e.def().max_hp);
 			auto hpIt = m_prevEntityHP.find(e.id());
 			if (hpIt != m_prevEntityHP.end() && curHP < hpIt->second) {
 				int dmg = hpIt->second - curHP;
 				bool dying = (curHP <= 0);
-				char buf[16];
-				snprintf(buf, sizeof(buf), "-%d", dmg);
-				glm::vec4 col = dying
-					? glm::vec4(1.0f, 0.22f, 0.12f, 1.0f)   // bright red: kill shot
-					: glm::vec4(1.0f, 0.55f, 0.15f, 1.0f);  // orange: damage
-				addFloatingText(e.position + glm::vec3(0, entityTop * 0.7f, 0),
-				                buf, col, dying ? 2.8f : 2.2f, e.id());
 				std::string eName = e.def().display_name.empty() ? e.typeId() : e.def().display_name;
 				appendLog(dying ? eName + " died" : eName + " took " + std::to_string(dmg) + " damage");
 
 				// Red flash: set/reset timer on any damage
 				m_damageFlash[e.id()] = 0.25f;
 
+				// Floating damage number
+				{
+					bool isPlayer = (e.id() == m_server->localPlayerId());
+					FloatTextEvent ft;
+					if (isPlayer) {
+						ft.type  = FloatTextType::DamageTaken;
+						ft.color = {1.0f, 0.30f, 0.20f, 1.0f};
+						ft.text  = "-" + std::to_string(dmg) + " HP";
+					} else {
+						ft.type     = FloatTextType::DamageDealt;
+						ft.targetId = e.id();
+						ft.worldPos = e.position + glm::vec3(0.0f, entityTop * 0.5f, 0.0f);
+						ft.color = dying ? glm::vec4(1.0f, 0.20f, 0.10f, 1.0f)
+						                 : glm::vec4(1.0f, 0.85f, 0.10f, 1.0f);
+						ft.text  = "-" + std::to_string(dmg);
+					}
+					m_floatText.add(ft);
+				}
+
+				// Hitmarker crosshair feedback
+				m_renderer.triggerHitmarker(dying);
+
 				// Impact sound: punch for fist/generic, sword slice for larger hits
 				if (dying) {
-					// Death: louder thud
 					m_audio.play("hit_punch", e.position, 1.0f);
 					// Death puff: particle burst at entity center using its body color
-					glm::vec3 bodyColor = {0.7f, 0.55f, 0.35f}; // generic warm animal tone
+					glm::vec3 bodyColor = {0.7f, 0.55f, 0.35f};
 					auto fmit = m_models.find(resolveModelKey(e));
 					if (fmit != m_models.end() && !fmit->second.parts.empty())
 						bodyColor = glm::vec3(fmit->second.parts[0].color);
@@ -1795,9 +1711,13 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				glm::mat4 fpVP = fpProj * fpView;
 
 				// Position: bottom-right of view (Minecraft-style)
-				glm::vec3 itemPos(0.55f, -0.38f, -0.70f);
-
-				// No walk bob — keep steady so it doesn't distract
+				// Walk bob: gentle up-down + side sway when moving on ground
+				float bobAmt = pe->onGround
+					? glm::length(glm::vec2(pe->velocity.x, pe->velocity.z)) : 0.0f;
+				float bobScale = std::min(bobAmt / 4.0f, 1.0f);
+				float bobY = std::sin(m_playerWalkDist * 6.0f) * 0.018f * bobScale;
+				float bobX = std::sin(m_playerWalkDist * 3.0f) * 0.010f * bobScale;
+				glm::vec3 itemPos(0.55f + bobX, -0.38f + bobY, -0.70f);
 
 				glm::mat4 fpRoot = glm::translate(glm::mat4(1.0f), itemPos);
 
@@ -1849,55 +1769,6 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	};
 	m_hud.render(ctx, m_text, m_renderer.highlightShader());
 
-	// Floating text (Minecraft Dungeons style — damage numbers, pickup names)
-	{
-		glm::mat4 ftVP = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
-		for (auto it = m_floatingTexts.begin(); it != m_floatingTexts.end(); ) {
-			auto& ft = *it;
-			ft.life -= dt;
-			ft.pos.y += ft.velY * dt;
-			ft.pos.x += ft.velX * dt;
-			ft.velY *= 0.96f; // decelerate upward
-			ft.velX *= 0.93f; // decelerate sideways (texts spread then slow)
-			if (ft.life <= 0) { it = m_floatingTexts.erase(it); continue; }
-
-			float ndcX, ndcY;
-			if (m_camera.mode == CameraMode::FirstPerson) {
-				// FPS: fixed screen position (center, slightly above crosshair)
-				// Stack multiple texts vertically using remaining life as offset
-				ndcX = 0;
-				ndcY = 0.15f + ft.life * 0.08f;
-			} else {
-				// TPS/RPG/RTS: project world position to screen
-				glm::vec4 clip = ftVP * glm::vec4(ft.pos, 1.0f);
-				if (clip.w <= 0.01f) { ++it; continue; }
-				ndcX = clip.x / clip.w;
-				ndcY = clip.y / clip.w;
-			}
-
-			// Minecraft Dungeons scale: pop in 1.5x, settle to 1.0x, shrink out
-			float t = 1.0f - ft.life / ft.maxLife;
-			float s;
-			if (t < 0.12f)
-				s = ft.baseScale * (1.0f + 0.6f * (1.0f - t / 0.12f)); // pop in
-			else
-				s = ft.baseScale * (1.0f - 0.2f * (t - 0.12f));        // gentle shrink
-
-			// Fade out in last 35%
-			float alpha = ft.life < ft.maxLife * 0.35f
-				? ft.life / (ft.maxLife * 0.35f) : 1.0f;
-			glm::vec4 col = ft.color;
-			col.a *= alpha;
-
-			float charW = 0.018f * s;
-			float tw = ft.text.size() * charW;
-			float tx = ndcX + ft.offsetX - tw * 0.5f;
-
-			// Draw with title mode (outline + glow) for cool pop effect
-			m_text.drawTitle(ft.text, tx, ndcY, s, col, aspect);
-			++it;
-		}
-	}
 
 	// ImGui overlays (equipment, FPS) — skip when another ImGui overlay is active
 	if (skipImGui) return;
@@ -2136,6 +2007,12 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	}
 
 	// (Backpack panel removed — use [I] Equipment UI for all inventory management)
+
+	// Floating text notifications (damage, pickups, heals)
+	if (!skipImGui) {
+		m_floatText.render(m_camera, aspect, m_camera.mode, m_text,
+		                   m_gameplay.selectedEntities());
+	}
 
 	m_ui.endFrame();
 
