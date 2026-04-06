@@ -16,8 +16,8 @@ going through the menu each time.
 ./build/modcraft-client --host 127.0.0.1 --port 7777
 
 # Dedicated server + client in one step (from Makefile)
-make game 7890      # server on :7890 + client auto-joins, skips menu
-make play           # same on default port 7777
+make game                    # server on random port + client auto-joins, skips menu
+make game GAME_PORT=7890     # same, on a fixed port
 ```
 
 ## Automated screenshot pipeline
@@ -33,16 +33,6 @@ img = Image.open('/tmp/modcraft_auto_screenshot.ppm')
 img.save('/tmp/shot.png')
 print(img.size)
 "
-```
-
-The `--demo` flag takes a full tour (FPS → TPS → RPG → RTS) and exits:
-```bash
-./build/modcraft --skip-menu --demo
-# writes: /tmp/modcraft_view_1_fps.ppm  (FPS view)
-#         /tmp/modcraft_view_2_3rd.ppm  (TPS view)
-#         /tmp/modcraft_view_25_inventory.ppm
-#         /tmp/modcraft_view_3_god.ppm  (RPG view)
-#         /tmp/modcraft_view_4_rts.ppm  (RTS view)
 ```
 
 Press **F2** in-game to take a manual screenshot:

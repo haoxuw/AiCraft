@@ -169,6 +169,9 @@ artifacts/            Python game content (hot-loadable, no rebuild needed)
 - When adding a new `BehaviorAction` type: decide if one-shot or continuous.
   One-shot (creates entities, modifies blocks, deals damage) → add to `extractOneShots()`
   in `agent/behavior_executor.h`. See `docs/24_COMMON_PITFALLS.md` #1.
+- **Header-only changes don't trigger rebuild**: after editing a header-only content file
+  (e.g. `content/entities_animals.h`), `touch` its including `.cpp` to force recompilation:
+  `touch src/content/builtin.cpp`
 
 ## Key Docs
 
