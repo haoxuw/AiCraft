@@ -93,8 +93,14 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 	if (m_uiWantsCursor)
 		wantCapture = false;
 
-	glfwSetInputMode(window.handle(), GLFW_CURSOR,
-		wantCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+	int newCursorMode = wantCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
+	if (newCursorMode != m_cursorMode) {
+		glfwSetInputMode(window.handle(), GLFW_CURSOR, newCursorMode);
+		m_cursorMode = newCursorMode;
+		// Reset mouse delta tracking on any mode change to prevent a camera jump
+		// (cursor position is discontinuous across DISABLED↔NORMAL transitions)
+		camera.resetMouseTracking();
+	}
 
 	if (wantCapture) {
 		camera.processInput(window.handle(), dt);

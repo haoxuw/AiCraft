@@ -95,6 +95,11 @@ private:
 	bool m_swingTriggered = false;
 	PlaceEvent m_placeEvent;
 
+	// Cached cursor mode — only call glfwSetInputMode when it actually changes.
+	// Calling it every frame on Emscripten re-triggers requestPointerLock() which
+	// resets the internal cursor position and causes the camera to snap every frame.
+	int m_cursorMode = -1; // -1 = unset (force first call)
+
 	// --- Right-click state (RPG/RTS: drag → orbit, quick click → action) ---
 
 	struct RightClick {
