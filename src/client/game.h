@@ -23,6 +23,7 @@
 #include "client/model_icon_cache.h"
 #include "client/ui.h"
 #include "client/audio.h"
+#include "development/debug_capture.h"
 #include "server/world_template.h"
 #include <chrono>
 #include <memory>
@@ -117,7 +118,14 @@ private:
 	std::string m_playerName;        // display name (random default, renameable)
 	std::string m_selectedCreature; // selected from artifacts/characters/, auto-set to first
 
-	float m_connectTimer = 0;  // timeout waiting for player entity from server
+	float m_connectTimer = 0;  // timeout waiting for player entity / WebSocket welcome
+	GameState m_connectTargetState = GameState::PLAYING; // state to enter after connect
+
+	// Reconnect on mid-game disconnect
+	std::string m_reconnectHost;  // last connected host (empty = local server, no reconnect)
+	int m_reconnectPort = 0;
+	int m_reconnectAttempt = 0;
+	static constexpr int kMaxReconnectAttempts = 3;
 
 	// Timing
 	std::chrono::steady_clock::time_point m_lastTime;
@@ -130,6 +138,9 @@ private:
 
 	// Screenshots (F2 manual, or external trigger via /tmp/agentica_screenshot_request)
 	int m_screenshotCounter = 0;
+
+	// Debug capture (--debug-scenario flag)
+	development::DebugCapture m_debugCapture;
 
 	// Graphics settings (exposed in pause menu)
 	int m_renderDistance = 8;

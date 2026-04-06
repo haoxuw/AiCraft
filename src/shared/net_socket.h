@@ -163,6 +163,8 @@ private:
 
 class TcpClient {
 public:
+	~TcpClient() { disconnect(); } // RAII: always close fd on destruction
+
 	// Connect with a short timeout (default 1 second).
 	// Uses non-blocking connect + select() to avoid hanging for 30+ seconds
 	// when no server is running.

@@ -93,7 +93,7 @@ public:
 		if (!m_connected) return false;
 		if (!m_recv.readFrom(m_tcp.fd())) {
 			printf("[Net] Connection lost while waiting for welcome\n");
-			m_connected = false;
+			disconnect(); // close fd properly
 			return false;
 		}
 		return recvWelcomeFromBuffer();
@@ -112,7 +112,7 @@ public:
 		// Read incoming messages
 		if (!m_recv.readFrom(m_tcp.fd())) {
 			printf("[Net] Connection lost\n");
-			m_connected = false;
+			disconnect(); // close fd properly, not just flag
 			return;
 		}
 

@@ -4,9 +4,7 @@
 #include "shared/model_loader.h"
 #include "server/world_save.h"
 #include "shared/physics.h"
-#ifndef __EMSCRIPTEN__
 #include "client/network_server.h"
-#endif
 #include "imgui.h"
 #include <cstdio>
 #include <cstring>
@@ -90,12 +88,28 @@ bool Game::init(int argc, char** argv) {
 	m_artifacts.loadAll("artifacts");
 
 	// Parse args
-	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--skip-menu") == 0) m_skipMenu = true;
-		else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) m_connectHost = argv[++i];
-		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-			m_connectPort = atoi(argv[++i]);
-			m_serverPort = m_connectPort;
+	{
+		development::DebugCapture::Config dbgCfg;
+		for (int i = 1; i < argc; i++) {
+			if (strcmp(argv[i], "--skip-menu") == 0) m_skipMenu = true;
+			else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) m_connectHost = argv[++i];
+			else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+				m_connectPort = atoi(argv[++i]);
+				m_serverPort = m_connectPort;
+			}
+			else if (strcmp(argv[i], "--debug-scenario") == 0 && i + 1 < argc) {
+				dbgCfg.scenario = argv[++i];
+				dbgCfg.active = true;
+				m_skipMenu = true;  // scenario implies --skip-menu
+			}
+			else if (strcmp(argv[i], "--debug-item") == 0 && i + 1 < argc) {
+				dbgCfg.targetItem = argv[++i];
+			}
+		}
+		if (dbgCfg.active) {
+			m_debugCapture.configure(dbgCfg);
+			printf("[Debug] Scenario '%s' for item '%s'\n",
+			       dbgCfg.scenario.c_str(), dbgCfg.targetItem.c_str());
 		}
 	}
 
@@ -415,6 +429,52 @@ void Game::updateAndRender(float dt, float aspect) {
 	case GameState::PAUSED:
 		updatePaused(dt, aspect);
 		break;
+	case GameState::CONNECTING: {
+		// Web: poll WebSocket each frame until S_WELCOME arrives
+		m_connectTimer += dt;
+		const float kConnectTimeout = 10.0f;
+
+		glClearColor(0.12f, 0.13f, 0.15f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+		glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		m_ui.beginFrame();
+		ImGui::SetNextWindowPos(ImVec2((float)m_window.width() * 0.5f,
+		                               (float)m_window.height() * 0.5f),
+		                        ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+		ImGui::SetNextWindowSize(ImVec2(340, 90), ImGuiCond_Always);
+		ImGui::Begin("##connecting", nullptr,
+		    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+		    ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar);
+		int dots = (int)(m_connectTimer * 2) % 4;
+		char buf[64];
+		snprintf(buf, sizeof(buf), "Connecting%s", std::string(dots, '.').c_str());
+		ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(buf).x) * 0.5f);
+		ImGui::Text("%s", buf);
+		ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 80) * 0.5f);
+		if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+			m_server.reset();
+			m_state = GameState::MENU;
+		}
+		ImGui::End();
+		m_ui.endFrame();
+
+		if (m_connectTimer >= kConnectTimeout) {
+			printf("[Game] Connection timed out\n");
+			m_server.reset();
+			m_state = GameState::MENU;
+			break;
+		}
+
+		if (auto* net = dynamic_cast<NetworkServer*>(m_server.get())) {
+			if (net->pollWelcome()) {
+				setupAfterConnect(m_connectTargetState);
+			} else if (!net->isConnected()) {
+				m_server.reset();
+				m_state = GameState::MENU;
+			}
+		}
+		break;
+	}
 	}
 }
 
@@ -467,9 +527,26 @@ void Game::handleMenuAction(const MenuAction& action) {
 }
 
 void Game::joinServer(const std::string& host, int port, GameState targetState) {
-#ifndef __EMSCRIPTEN__
 	printf("[Game] Joining server at %s:%d\n", host.c_str(), port);
-	// Retry up to 5 times with 200ms delay — server may be a moment behind its ready-file
+	m_reconnectHost = host;  // remember for auto-reconnect on mid-game disconnect
+	m_reconnectPort = port;
+
+#ifdef __EMSCRIPTEN__
+	// Web: WebSocket connect is async — initiate and wait across frames
+	auto netServer = std::make_unique<NetworkServer>(host, port);
+	netServer->setDisplayName(m_playerName);
+	netServer->setCreatureType(m_selectedCreature);
+	if (netServer->beginConnect()) {
+		m_server = std::move(netServer);
+		m_connectTargetState = targetState;
+		m_state = GameState::CONNECTING;
+		m_connectTimer = 0;
+	} else {
+		printf("[Game] Failed to begin connect to %s:%d\n", host.c_str(), port);
+		m_state = GameState::MENU;
+	}
+#else
+	// Native: retry up to 5 times with 200ms delay (server may just be starting)
 	for (int attempt = 0; attempt < 5; attempt++) {
 		if (attempt > 0) {
 			printf("[Game] Connect attempt %d/5 failed, retrying in 200ms...\n", attempt);
@@ -487,9 +564,9 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 		}
 	}
 	printf("[Game] Failed to join %s:%d after 5 attempts\n", host.c_str(), port);
-#endif
-	// Stay in menu on failure — don't fallback to local (would cause infinite loop)
+	// Stay in menu on failure
 	m_state = GameState::MENU;
+#endif
 }
 
 // ============================================================
@@ -527,6 +604,9 @@ void Game::enterGame(int templateIndex, GameState targetState, const WorldGenCon
 }
 
 void Game::setupAfterConnect(GameState targetState) {
+	m_connectTimer = 0;        // always start entity-wait timer fresh
+	m_reconnectAttempt = 0;    // successful connect resets the retry counter
+
 	// Set callbacks for visual + audio effects
 	m_server->setEffectCallbacks(
 		[this](ChunkPos cp) { m_renderer.markChunkDirty(cp); },
@@ -670,10 +750,38 @@ void Game::saveCurrentWorld() {
 // Playing state
 // ============================================================
 void Game::updatePlaying(float dt, float aspect) {
-	if (!m_server || !m_server->isConnected()) { m_state = GameState::MENU; return; }
+	// Helper: handle a lost connection — attempt reconnect or fall back to menu.
+	// Only reconnects for NetworkServer (remote host stored in m_reconnectHost).
+	auto handleDisconnect = [&]() {
+		m_server.reset(); // always close socket cleanly via RAII destructor
+		bool isNetworkGame = !m_reconnectHost.empty();
+		if (isNetworkGame && m_reconnectAttempt < kMaxReconnectAttempts) {
+			m_reconnectAttempt++;
+			printf("[Game] Connection lost — reconnecting (%d/%d) to %s:%d...\n",
+			       m_reconnectAttempt, kMaxReconnectAttempts,
+			       m_reconnectHost.c_str(), m_reconnectPort);
+			joinServer(m_reconnectHost, m_reconnectPort, GameState::PLAYING);
+		} else {
+			if (isNetworkGame)
+				printf("[Game] Reconnect attempts exhausted, returning to menu\n");
+			m_reconnectAttempt = 0;
+			m_state = GameState::MENU;
+		}
+	};
+
+	if (!m_server || !m_server->isConnected()) {
+		handleDisconnect();
+		return;
+	}
 
 	// Tick server (polls for entity updates from network)
 	m_server->tick(dt);
+
+	// Connection may have dropped during tick — handle immediately
+	if (!m_server->isConnected()) {
+		handleDisconnect();
+		return;
+	}
 
 	Entity* pe = playerEntity();
 	if (!pe) {
@@ -682,7 +790,7 @@ void Game::updatePlaying(float dt, float aspect) {
 		m_connectTimer += dt;
 		if (m_connectTimer > 10.0f) {
 			printf("[Game] Timeout waiting for player entity\n");
-			m_state = GameState::MENU;
+			handleDisconnect(); // resets m_server, may reconnect
 			return;
 		}
 		// Show loading message
@@ -696,6 +804,65 @@ void Game::updatePlaying(float dt, float aspect) {
 		return;
 	}
 	m_connectTimer = 0;
+
+	// Debug capture tick — runs scenario and auto-exits when done
+	if (m_debugCapture.active()) {
+		development::ScenarioCallbacks cb;
+
+		// save: receives a full /tmp/debug_N_<suffix>.ppm path from DebugCapture
+		cb.save = [this](const std::string& path) {
+			writeScreenshot(m_window.width(), m_window.height(), path.c_str());
+		};
+		cb.cycleCamera = [this]() {
+			m_camera.cycleMode();
+			m_camera.resetMouseTracking();
+			bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+			                    m_camera.mode == CameraMode::ThirdPerson);
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+				needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+		};
+		cb.setCamera = [this](CameraMode mode) {
+			while (m_camera.mode != mode) {
+				m_camera.cycleMode();
+				m_camera.resetMouseTracking();
+			}
+			bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+			                    m_camera.mode == CameraMode::ThirdPerson);
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+				needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+		};
+		cb.selectSlot = [pe](int slot) {
+			pe->setProp(Prop::SelectedSlot, slot);
+		};
+		cb.dropItem = [this, pe]() {
+			int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
+			std::string itemId = pe->inventory ? pe->inventory->hotbar(slot) : "";
+			if (!itemId.empty() && pe->inventory->has(itemId)) {
+				ActionProposal drop;
+				drop.type = ActionProposal::DropItem;
+				drop.actorId = m_server->localPlayerId();
+				drop.blockType = itemId;
+				drop.itemCount = 1;
+				// Debug: gentle forward drop so item lands ~1.5 blocks ahead (in RPG camera view)
+				drop.desiredVel = m_debugCapture.active()
+					? glm::vec3(std::cos(glm::radians(pe->yaw)) * 1.0f, 1.5f,
+					            std::sin(glm::radians(pe->yaw)) * 1.0f)
+					: m_camera.front() * 3.0f + glm::vec3(0, 2.0f, 0);
+				m_server->sendAction(drop);
+				m_dropCooldown = 0.8f;
+			}
+		};
+		cb.triggerSwing = [this]() {
+			m_fpSwingActive = true;
+			m_fpSwingTimer = 0;
+		};
+
+		m_debugCapture.tick(dt, pe, m_camera, cb);
+		if (m_debugCapture.done()) {
+			printf("[Debug] Scenario complete — exiting.\n");
+			glfwSetWindowShouldClose(m_window.handle(), true);
+		}
+	}
 
 	if (m_controls.pressed(Action::MenuBack)) {
 		// ESC closes overlays first, then shows pause menu
@@ -1055,9 +1222,8 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		const float PI = 3.14159265f;
 		float s = model.modelScale;
 
-		// Arm attachment points — derived from typical humanoid proportions.
-		// Left hand: negative X, swings with PI phase (opposite to right arm)
-		// Right hand: positive X, swings with 0 phase
+		// Hand attachment points come from the character model (hand_r/l, pivot_r/l).
+		// This lets each creature skin define correct proportions in Python.
 		struct HandSlot {
 			WearSlot slot;
 			glm::vec3 handOffset;   // position of the hand (where item center goes)
@@ -1068,7 +1234,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		// Only the offhand (left) uses an equipment slot.
 		// Right hand always shows the hotbar-selected item (handled below).
 		HandSlot hands[] = {
-			{WearSlot::Offhand, {-0.42f, 0.50f, -0.16f}, {-0.37f, 1.40f, 0}, PI},
+			{WearSlot::Offhand, model.handL, model.pivotL, PI},
 		};
 
 		for (auto& h : hands) {
@@ -1153,8 +1319,8 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				}
 				auto mit = m_models.find(modelKey);
 				if (mit != m_models.end()) {
-					glm::vec3 rHandOff = {0.42f, 0.50f, -0.16f};
-					glm::vec3 rPivot = {0.37f, 1.40f, 0};
+					glm::vec3 rHandOff = model.handR;
+					glm::vec3 rPivot = model.pivotR;
 
 					auto& et = mit->second.equip;
 					float es = et.scale;
@@ -1433,11 +1599,14 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				fpRoot = glm::rotate(fpRoot, glm::radians(eqt.rotation.x), glm::vec3(1, 0, 0));
 				fpRoot = glm::rotate(fpRoot, glm::radians(eqt.rotation.z), glm::vec3(0, 0, 1));
 
-				// Swing animation on left-click
+				// Swing animation on left-click.
+				// Axis: blend of pitch (X) and forward-roll (Z) for a diagonal slash
+				// that sweeps the blade edge through the air rather than pure up/down.
 				if (m_fpSwingActive) {
 					float t = m_fpSwingTimer / m_fpSwingDuration;
-					float swing = std::sin(t * 3.14159f) * (-40.0f);
-					fpRoot = glm::rotate(fpRoot, glm::radians(swing), glm::vec3(1, 0, 0));
+					float swing = std::sin(t * 3.14159f) * (-65.0f);
+					glm::vec3 slashAxis = glm::normalize(glm::vec3(0.8f, 0.0f, 0.5f));
+					fpRoot = glm::rotate(fpRoot, glm::radians(swing), slashAxis);
 				}
 
 				// Auto-scale items without explicit equip transform
@@ -1447,7 +1616,8 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 					float mh = std::max(fpMit->second.totalHeight * fpMit->second.modelScale, 0.1f);
 					fpEs = std::min(0.35f / mh, 0.5f);
 				}
-				float fpScale = fpEs * 0.55f;
+				// 0.72 keeps items occupying ~40-45% of FOV height at z=-0.70 with 70° FOV
+				float fpScale = fpEs * 0.72f;
 				fpRoot = glm::scale(fpRoot, glm::vec3(fpScale));
 
 				mr.drawStatic(fpMit->second, fpVP, fpRoot);

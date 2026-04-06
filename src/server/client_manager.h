@@ -120,22 +120,28 @@ public:
 				ssize_t n = send(client.fd, msg.data(), msg.size(), MSG_NOSIGNAL);
 				if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
 				if (n <= 0) {
-					// Unexpected: log once per stuck client to diagnose
-					if (++client.chunkSendErrors <= 3)
+					client.chunkSendErrors++;
+					if (client.chunkSendErrors <= 3)
 						printf("[Server] sendChunk: n=%zd errno=%d (%s) for %s, pending=%zu\n",
 							n, errno, strerror(errno), client.label().c_str(),
 							client.pendingChunks.size());
+					if (client.chunkSendErrors >= 5) {
+						// Persistent send failure — treat as disconnect to avoid zombie client
+						printf("[Server] %s: too many send errors, disconnecting\n",
+						       client.label().c_str());
+						m_disconnected.push_back(cid);
+					}
 					break;
 				}
 				if (n != (ssize_t)msg.size()) {
-					// Partial send — advance write position to avoid stream corruption
+					// Partial send — trim and retry next tick
 					if (++client.chunkSendErrors <= 3)
 						printf("[Server] sendChunk: partial send n=%zd/%zu for %s\n",
 							n, msg.size(), client.label().c_str());
-					// Trim the sent bytes from the front of the message
 					msg.erase(msg.begin(), msg.begin() + n);
-					break; // retry next iteration
+					break;
 				}
+				client.chunkSendErrors = 0; // reset on success
 				client.pendingChunks.erase(client.pendingChunks.begin());
 				sent++;
 			}
