@@ -76,7 +76,7 @@ void ModelRenderer::shutdown() {
 
 void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
                           glm::vec3 feetPos, float yaw, const AnimState& anim,
-                          glm::vec3 sunDir) {
+                          glm::vec3 sunDir, float tintStrength, glm::vec3 tint) {
 	m_shader->use();
 	glEnable(GL_DEPTH_TEST);
 
@@ -115,6 +115,8 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 	}
 
 	m_shader->setVec3("uSunDir", sunDir);
+	m_shader->setVec3("uTint", tint);
+	m_shader->setFloat("uTintStrength", tintStrength);
 	m_shader->setInt("uPartTex", 0);
 
 	GLint colorLoc = glGetUniformLocation(m_shader->id(), "uColor");

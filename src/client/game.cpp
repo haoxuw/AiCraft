@@ -1531,7 +1531,12 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		if (mit != m_models.end()) {
 			BoxModel mobModel = (e.inventory && e.def().isLiving())
 				? buildEquippedModel(e, mit->second) : mit->second;
-			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim);
+			// Damage flash: entity flashes red for a short time after being hit
+			float flashT = 0.0f;
+			auto flit = m_damageFlash.find(e.id());
+			if (flit != m_damageFlash.end()) flashT = flit->second;
+			float tintStr = std::max(0.0f, flashT / 0.25f); // 0.25s full duration
+			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim, {}, tintStr);
 		} else if (!modelKey.empty() && e.typeId() != EntityType::ItemEntity) {
 			// Warn once per model key
 			static std::unordered_set<std::string> warned;
@@ -1663,7 +1668,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			}
 		}
 
-		// HP tracking: detect damage/death for floating numbers + log
+		// HP tracking: detect damage/death for floating numbers, flash, puff
 		{
 			int curHP = e.getProp<int>(Prop::HP, e.def().max_hp);
 			auto hpIt = m_prevEntityHP.find(e.id());
@@ -1679,17 +1684,40 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				                buf, col, dying ? 2.8f : 2.2f, e.id());
 				std::string eName = e.def().display_name.empty() ? e.typeId() : e.def().display_name;
 				appendLog(dying ? eName + " died" : eName + " took " + std::to_string(dmg) + " damage");
+
+				// Red flash: set/reset timer on any damage
+				m_damageFlash[e.id()] = 0.25f;
+
+				if (dying) {
+					// Death puff: particle burst at entity center using its body color
+					glm::vec3 bodyColor = {0.7f, 0.55f, 0.35f}; // generic warm animal tone
+					// Use first model part's color if available
+					auto fmit = m_models.find(resolveModelKey(e));
+					if (fmit != m_models.end() && !fmit->second.parts.empty())
+						bodyColor = glm::vec3(fmit->second.parts[0].color);
+					m_particles.emitDeathPuff(e.position, bodyColor, entityTop);
+				}
 			}
 			m_prevEntityHP[e.id()] = curHP;
 		}
+		// Decay damage flash timer
+		{
+			auto flit = m_damageFlash.find(e.id());
+			if (flit != m_damageFlash.end()) {
+				flit->second -= dt;
+				if (flit->second <= 0) m_damageFlash.erase(flit);
+			}
+		}
 	});
 
-	// Remove HP entries for entities no longer in the world
+	// Remove HP / flash entries for entities no longer in the world
 	{
 		std::unordered_set<EntityId> seen;
 		m_server->forEachEntity([&](Entity& e) { if (e.def().isLiving()) seen.insert(e.id()); });
 		for (auto it = m_prevEntityHP.begin(); it != m_prevEntityHP.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_prevEntityHP.erase(it);
+		for (auto it = m_damageFlash.begin(); it != m_damageFlash.end(); )
+			it = seen.count(it->first) ? std::next(it) : m_damageFlash.erase(it);
 	}
 
 	// Particles

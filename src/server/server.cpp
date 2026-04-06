@@ -277,9 +277,27 @@ void GameServer::resolveActions(float dt) {
 			if (m_callbacks.onBlockBreak)
 				m_callbacks.onBlockBreak(target->position, {0.9f, 0.2f, 0.2f}, 2);
 
-			// Death
+			// Death: drop loot and remove
 			if (target->hp() <= 0) {
 				target->removed = true;
+
+				// Drop 1–2 meat for animals (not players, not villagers)
+				if (target->def().category == Category::Animal) {
+					int count = 1 + (rand() % 2); // 1 or 2 pieces
+					// Scatter loot slightly above death position
+					glm::vec3 lootPos = target->position + glm::vec3(0, 0.3f, 0);
+					glm::vec3 fwd = (dist > 0.1f)
+						? glm::normalize(target->position - actor->position) : glm::vec3(0,0,1);
+					EntityId lootId = m_world->entities.spawn(EntityType::ItemEntity, lootPos,
+						{{Prop::ItemType, std::string("base:meat")},
+						 {Prop::Count, count},
+						 {Prop::Age, 0.0f}});
+					Entity* le = m_world->entities.get(lootId);
+					if (le) {
+						// Toss loot slightly away from attacker with upward arc
+						le->velocity = fwd * 2.5f + glm::vec3(0, 4.5f, 0);
+					}
+				}
 			}
 			break;
 		}

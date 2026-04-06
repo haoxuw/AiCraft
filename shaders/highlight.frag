@@ -3,7 +3,9 @@
 uniform vec4 uColor;
 uniform vec3 uSunDir;
 uniform sampler2D uPartTex;
-uniform int uUseTexture; // 0 = flat color, 1 = textured
+uniform int uUseTexture;   // 0 = flat color, 1 = textured
+uniform vec3 uTint;        // damage/status tint color
+uniform float uTintStrength; // 0 = no tint, 1 = full tint
 
 in vec3 vNormal;
 in vec2 vUV;
@@ -31,5 +33,6 @@ void main() {
 
 	float lighting = min(ambient + diffuse, 1.0);
 
-	fragColor = vec4(baseColor.rgb * lighting, baseColor.a);
+	vec3 tinted = mix(baseColor.rgb, uTint, uTintStrength);
+	fragColor = vec4(tinted * lighting, baseColor.a);
 }

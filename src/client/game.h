@@ -210,6 +210,9 @@ private:
 	// HP snapshot for damage/death detection (client-side, works over network)
 	std::unordered_map<EntityId, int> m_prevEntityHP;
 
+	// Damage flash timer: entity flashes red for this many seconds after taking a hit
+	std::unordered_map<EntityId, float> m_damageFlash;
+
 	// Pickup text accumulator: one entry per item type, updated in place
 	struct PickupAccum {
 		std::string itemName;

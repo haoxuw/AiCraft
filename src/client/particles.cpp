@@ -1,6 +1,7 @@
 #include "client/particles.h"
 #include <cmath>
 #include <algorithm>
+#include <glm/glm.hpp>
 
 namespace agentica {
 
@@ -138,6 +139,47 @@ void ParticleSystem::emitItemPickup(glm::vec3 pos, glm::vec3 color) {
 		p.life = 0.3f + prand(seed + i * 5) * 0.3f;
 		p.maxLife = p.life;
 		p.size = 0.03f;
+		m_particles.push_back(p);
+	}
+}
+
+void ParticleSystem::emitDeathPuff(glm::vec3 pos, glm::vec3 bodyColor, float entityHeight) {
+	// Center of entity mass
+	glm::vec3 center = pos + glm::vec3(0, entityHeight * 0.5f, 0);
+	int seed = (int)(pos.x * 113 + pos.y * 53 + pos.z * 79 + 999);
+
+	// Spread size proportional to entity height
+	float spread = entityHeight * 0.6f;
+
+	for (int i = 0; i < 28; i++) {
+		Particle p;
+		// Spawn within entity volume
+		p.pos = center + glm::vec3(
+			(prand(seed + i * 3)     - 0.5f) * spread,
+			(prand(seed + i * 3 + 1) - 0.5f) * spread,
+			(prand(seed + i * 3 + 2) - 0.5f) * spread);
+
+		// Burst outward and upward
+		float angle = prand(seed + i * 7) * 6.28318f;
+		float speed = 2.5f + prand(seed + i * 7 + 1) * 4.0f;
+		p.vel = glm::vec3(
+			std::cos(angle) * speed,
+			prand(seed + i * 7 + 2) * 5.0f + 1.0f,
+			std::sin(angle) * speed);
+
+		// Mix body color with red blood
+		float redBias = prand(seed + i * 11);
+		glm::vec3 col = mix(bodyColor, glm::vec3(0.75f, 0.08f, 0.05f), redBias * 0.6f);
+		float cv = (prand(seed + i * 13) - 0.5f) * 0.12f;
+		p.color = glm::vec4(
+			std::clamp(col.r + cv, 0.0f, 1.0f),
+			std::clamp(col.g + cv, 0.0f, 1.0f),
+			std::clamp(col.b + cv, 0.0f, 1.0f),
+			1.0f);
+
+		p.life    = 0.4f + prand(seed + i * 17) * 0.7f;
+		p.maxLife = p.life;
+		p.size    = 0.05f + prand(seed + i * 19) * 0.08f;
 		m_particles.push_back(p);
 	}
 }
