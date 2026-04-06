@@ -161,20 +161,26 @@ public:
 			bool isLocal = (id == m_localPlayerId);
 
 			// ALL entities use server velocity for prediction — client has
-			// no physics so client velocity would phase through blocks
-			glm::vec3 predicted = target.position + target.velocity * target.age;
+			// no physics so client velocity would phase through blocks.
+			// Cap age to 0.5s to prevent unbounded extrapolation when the
+			// server stops sending updates (e.g. entity leaves perception range).
+			float cappedAge = std::min(target.age, 0.5f);
+			glm::vec3 predicted = target.position + target.velocity * cappedAge;
 			glm::vec3 diff = predicted - e.position;
-			float dist = glm::length(diff);
+
+			// Snap threshold uses distance from last known server position (not
+			// predicted), so stale dead-reckoning never triggers a snap loop.
+			float distFromServer = glm::length(target.position - e.position);
 
 			float speed = isLocal ? LOCAL_INTERP_SPEED : INTERP_SPEED;
-			if (dist > 1.0f) {
-				// Snap to last known server position (not predicted) to avoid
-				// placing the entity inside a block.
-				e.position = target.position;
-				printf("[Net] SNAP entity %u to server pos (dist=%.1f) local=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f)\n",
-					id, dist, e.position.x, e.position.y, e.position.z,
+			if (distFromServer > 3.0f) {
+				printf("[Net] SNAP entity %u (dist=%.1f) local=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f)\n",
+					id, distFromServer,
+					e.position.x, e.position.y, e.position.z,
 					target.position.x, target.position.y, target.position.z);
-			} else if (dist > 0.005f) {
+				e.position = target.position;
+				target.age = 0.0f;
+			} else if (glm::length(diff) > 0.005f) {
 				float t = std::min(dt * speed, 1.0f);
 				e.position += diff * t;
 			}
