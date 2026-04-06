@@ -974,6 +974,11 @@ void Game::updatePlaying(float dt, float aspect) {
 						m_fpSwingDuration = std::min(cooldown * 0.6f, 0.45f);
 						m_fpSwingActive = true;
 						m_fpSwingTimer  = 0;
+						// Swing sound: weapon whoosh or fist
+						if (itemId.empty())
+							m_audio.play("hit_punch", pe->position, 0.35f);
+						else
+							m_audio.play("sword_swing", pe->position, 0.55f);
 					}
 				}
 			}
@@ -1010,8 +1015,35 @@ void Game::updatePlaying(float dt, float aspect) {
 					p.type = ActionProposal::EquipItem;
 					p.actorId = m_server->localPlayerId();
 					p.slotIndex = slot;
-					p.blockType = slotIt->second; // equip_slot string for server
+					p.blockType = slotIt->second;
 					m_server->sendAction(p);
+					// Metal items (sword, shield, helmet) use chain clink; others use cloth
+					bool isMetal = heldItem.find("sword") != std::string::npos
+					            || heldItem.find("shield") != std::string::npos
+					            || heldItem.find("helmet") != std::string::npos
+					            || heldItem.find("boots") != std::string::npos;
+					m_audio.play(isMetal ? "item_equip_metal" : "item_equip", 0.55f);
+				}
+			}
+		}
+
+		// Right-click: use/eat/drink item (on_use = consume)
+		// Only fires when not aiming at a block (block place takes priority).
+		if (m_controls.pressed(Action::PlaceBlock) && !heldItem.empty()
+		    && pe->inventory->has(heldItem) && !m_gameplay.currentHit()) {
+			const ArtifactEntry* art = m_artifacts.findById(heldItem);
+			if (art) {
+				auto usIt = art->fields.find("on_use");
+				if (usIt != art->fields.end() && usIt->second == "consume") {
+					ActionProposal p;
+					p.type = ActionProposal::UseItem;
+					p.actorId = m_server->localPlayerId();
+					p.slotIndex = slot;
+					// Pass effect_amount in damage field so server uses correct heal value
+					auto eit = art->fields.find("effect_amount");
+					p.damage = (eit != art->fields.end()) ? std::stof(eit->second) : 4.0f;
+					m_server->sendAction(p);
+					m_audio.play("item_consume", pe->position, 0.7f);
 				}
 			}
 		}
@@ -1186,6 +1218,12 @@ void Game::updatePlaying(float dt, float aspect) {
 			float vol = 0.04f * (1.0f - c.dist / 5.0f);
 			m_audio.play(c.group, c.pos, vol);
 		}
+	}
+
+	// Door toggle sound
+	if (m_gameplay.doorToggled()) {
+		m_audio.play("door_open", m_gameplay.doorTogglePos(), 0.6f);
+		m_gameplay.clearDoorToggle();
 	}
 
 	// Block place feedback (immediate client-side sound)
@@ -1697,14 +1735,18 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				// Red flash: set/reset timer on any damage
 				m_damageFlash[e.id()] = 0.25f;
 
+				// Impact sound: punch for fist/generic, sword slice for larger hits
 				if (dying) {
+					// Death: louder thud
+					m_audio.play("hit_punch", e.position, 1.0f);
 					// Death puff: particle burst at entity center using its body color
 					glm::vec3 bodyColor = {0.7f, 0.55f, 0.35f}; // generic warm animal tone
-					// Use first model part's color if available
 					auto fmit = m_models.find(resolveModelKey(e));
 					if (fmit != m_models.end() && !fmit->second.parts.empty())
 						bodyColor = glm::vec3(fmit->second.parts[0].color);
 					m_particles.emitDeathPuff(e.position, bodyColor, entityTop);
+				} else {
+					m_audio.play(dmg >= 4 ? "hit_sword" : "hit_punch", e.position, 0.6f);
 				}
 			}
 			m_prevEntityHP[e.id()] = curHP;

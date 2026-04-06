@@ -310,14 +310,12 @@ void GameServer::resolveActions(float dt) {
 			const std::string& itemId = actor->inventory->hotbar(slot);
 			if (itemId.empty() || !actor->inventory->has(itemId)) break;
 
-			// For now: consume 1 item and heal a small amount
-			// Future: look up artifact on_use hook to determine effect
+			// Consume 1 item and apply heal (amount from client's artifact lookup)
 			actor->inventory->remove(itemId, 1);
-			// Simple heal for consumables
+			int healAmt = (p.damage > 0) ? (int)p.damage : 4; // p.damage carries effect_amount
 			int hp = actor->hp();
-			if (hp < actor->def().max_hp) {
-				actor->setHp(std::min(hp + 5, actor->def().max_hp));
-			}
+			if (hp < actor->def().max_hp)
+				actor->setHp(std::min(hp + healAmt, actor->def().max_hp));
 			actor->inventory->autoPopulateHotbar();
 			if (m_callbacks.onInventoryChange)
 				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);

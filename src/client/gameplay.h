@@ -88,6 +88,12 @@ public:
 	// Place event (for immediate client-side sound on block place)
 	struct PlaceEvent { bool happened = false; glm::vec3 pos; std::string blockType; };
 	const PlaceEvent& placeEvent() const { return m_placeEvent; }
+
+	// Door toggle event (for door_open / door_close sound)
+	bool doorToggled() const { return m_doorToggled; }
+	glm::vec3 doorTogglePos() const { return m_doorTogglePos; }
+	void clearDoorToggle() { m_doorToggled = false; }
+
 private:
 	struct BreakState {
 		glm::ivec3 target = {0,0,0};
@@ -99,6 +105,8 @@ private:
 	bool m_swingTriggered = false;
 	EntityId m_attackTarget = ENTITY_NONE;
 	PlaceEvent m_placeEvent;
+	bool m_doorToggled = false;
+	glm::vec3 m_doorTogglePos = {};
 
 	// Cached cursor mode — only call glfwSetInputMode when it actually changes.
 	// Calling it every frame on Emscripten re-triggers requestPointerLock() which

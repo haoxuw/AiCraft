@@ -180,9 +180,11 @@ void AudioManager::registerDefaultGroups(const std::string& basePath) {
 	addGroup("hit_shield", "combat", "impactPlate_light");
 
 	// Item sounds
-	addGroup("item_pickup", "items", "handleCoins");
-	addGroup("item_equip",  "items", "leather");
-	addGroup("item_book",   "items", "bookFlip");
+	addGroup("item_pickup",  "items",  "handleCoins");
+	addGroup("item_equip",   "rpg",    "Cloth_");       // cloth equip (rpg/Cloth_01-07.wav)
+	addGroup("item_equip_metal", "rpg", "chain_");      // metal equip (rpg/chain_01-03.ogg)
+	addGroup("item_consume", "rpg",    "Drink_");       // eat/drink (rpg/Drink_01-06.wav)
+	addGroup("item_book",    "items",  "bookFlip");
 
 	// Creature sounds — real recordings (CC0 + CC-BY 3.0 with attribution)
 	addGroup("creature_pig",     "creatures", "pig_idle");     // real pig oinks (Vinrax, CC-BY)

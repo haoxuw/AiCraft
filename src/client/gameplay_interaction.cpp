@@ -73,6 +73,7 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	m_hitEvent.happened = false;
 	m_placeEvent.happened = false;
 	m_attackTarget = ENTITY_NONE;
+	m_doorToggled = false;
 
 	// Break progress decay: cancel if no hit for 2 seconds
 	if (m_breaking.active) {
@@ -174,6 +175,8 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 				p.blockPos = bp;
 				server.sendAction(p);
 				m_breakCD = 0.3f;
+				m_doorToggled = true;
+				m_doorTogglePos = glm::vec3(bp) + glm::vec3(0.5f);
 			} else {
 				// Place block from inventory
 				int slot = player.getProp<int>(Prop::SelectedSlot, 0);
