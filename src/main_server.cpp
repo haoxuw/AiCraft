@@ -268,7 +268,7 @@ int main(int argc, char** argv) {
 
 		clients.acceptConnections(listener);
 		clients.sendPendingChunks();
-		clients.receiveMessages();
+		clients.receiveMessages(dt);
 		clients.pruneDisconnected();
 
 		while (accumulator >= TICK_RATE) {

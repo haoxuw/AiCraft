@@ -61,26 +61,7 @@ public:
 		while (true) {
 			m_recv.readFrom(m_tcp.fd()); // non-blocking, may return EAGAIN
 
-			net::MsgHeader hdr;
-			std::vector<uint8_t> payload;
-			if (m_recv.tryExtract(hdr, payload)) {
-				if (hdr.type == net::S_WELCOME) {
-					net::ReadBuffer rb(payload.data(), payload.size());
-					m_localPlayerId = rb.readU32();
-					m_spawnPos = rb.readVec3();
-					printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f)\n",
-						m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
-
-					// Identify ourselves to the server
-					net::WriteBuffer hello;
-					hello.writeString(m_clientUUID);
-					hello.writeString(m_displayName);
-					hello.writeString(m_creatureType);
-					net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
-
-					return true;
-				}
-			}
+			if (recvWelcomeFromBuffer()) return true;
 
 			auto elapsed = std::chrono::steady_clock::now() - start;
 			if (std::chrono::duration<float>(elapsed).count() > 3.0f) {
@@ -93,6 +74,29 @@ public:
 		}
 		disconnect();
 		return false;
+	}
+
+	// ── Async connect for web (WebSocket needs event-loop frames to complete) ──
+	// Step 1: initiate connection (non-blocking, returns immediately)
+	bool beginConnect() {
+		printf("[Net] Connecting to %s:%d ...\n", m_host.c_str(), m_port);
+		if (!m_tcp.connect(m_host.c_str(), m_port)) {
+			printf("[Net] beginConnect failed for %s:%d\n", m_host.c_str(), m_port);
+			return false;
+		}
+		m_connected = true;
+		return true;
+	}
+
+	// Step 2: call every frame — returns true when S_WELCOME has been received
+	bool pollWelcome() {
+		if (!m_connected) return false;
+		if (!m_recv.readFrom(m_tcp.fd())) {
+			printf("[Net] Connection lost while waiting for welcome\n");
+			m_connected = false;
+			return false;
+		}
+		return recvWelcomeFromBuffer();
 	}
 
 	void disconnect() override {
@@ -256,6 +260,34 @@ public:
 	}
 
 private:
+	// Parse S_WELCOME from receive buffer and send C_HELLO. Returns true on success.
+	bool recvWelcomeFromBuffer() {
+		net::MsgHeader hdr;
+		std::vector<uint8_t> payload;
+		if (m_recv.tryExtract(hdr, payload)) {
+			if (hdr.type == net::S_WELCOME) {
+				net::ReadBuffer rb(payload.data(), payload.size());
+				m_localPlayerId = rb.readU32();
+				m_spawnPos = rb.readVec3();
+				printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f)\n",
+					m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+
+				// Always send a non-empty display name — generate one from the
+				// UUID if the user hasn't set one yet (can be changed in the UI).
+				std::string name = m_displayName.empty()
+					? ("Player-" + m_clientUUID.substr(0, 4))
+					: m_displayName;
+				net::WriteBuffer hello;
+				hello.writeString(m_clientUUID);
+				hello.writeString(name);
+				hello.writeString(m_creatureType);
+				net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
+				return true;
+			}
+		}
+		return false;
+	}
+
 	void handleMessage(uint32_t type, const std::vector<uint8_t>& payload) {
 		net::ReadBuffer rb(payload.data(), payload.size());
 

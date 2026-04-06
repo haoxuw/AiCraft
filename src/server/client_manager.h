@@ -39,6 +39,7 @@ struct ConnectedClient {
 	std::string name;
 	bool isBot = false;
 	int chunkSendErrors = 0;
+	float pendingAge = 0; // seconds in pending pool before hello received
 
 	std::string label() const {
 		if (!name.empty())
@@ -94,7 +95,9 @@ public:
 			}
 		}
 
-		// Queue initial chunks around spawn
+		// Hold in pending pool until C_HELLO/C_BOT_HELLO identifies this client.
+		// Pending clients are invisible to the broadcast + chunk pipeline, so
+		// there is no timing dependency between C_HELLO arrival and broadcastState().
 		ConnectedClient cc;
 		cc.fd = accepted.fd; cc.id = cid; cc.playerId = eid;
 		cc.ip = accepted.ip; cc.port = accepted.port;
@@ -103,14 +106,9 @@ public:
 		auto cp = worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
 		cc.lastChunkPos = cp;
 
-		for (int dy = 0; dy <= 1; dy++)
-		for (int dz = -4; dz <= 4; dz++)
-		for (int dx = -4; dx <= 4; dx++)
-			queueChunk(cc, {cp.x + dx, cp.y + dy, cp.z + dz});
-
-		m_clients[cid] = std::move(cc);
-		printf("[Server] %s joined (entity %u). Sending %zu chunks...\n",
-		       m_clients[cid].label().c_str(), eid, m_clients[cid].pendingChunks.size());
+		m_pendingClients[cid] = std::move(cc);
+		printf("[Server] %s connected (entity %u). Waiting for hello...\n",
+		       m_pendingClients[cid].label().c_str(), eid);
 	}
 
 	// Send queued chunks to clients (non-blocking, batched).
@@ -145,13 +143,52 @@ public:
 	}
 
 	// Receive and dispatch all pending messages from clients.
-	void receiveMessages() {
+	// Pending (unidentified) clients are only promoted to active on C_HELLO/C_BOT_HELLO.
+	// This eliminates all timing races between C_HELLO arrival and broadcastState().
+	void receiveMessages(float dt) {
+		// --- Pending pool: only accept C_HELLO / C_BOT_HELLO ---
+		struct Hello { ClientId cid; uint32_t type; std::vector<uint8_t> payload; };
+		std::vector<Hello> hellos;
+
+		for (auto& [cid, client] : m_pendingClients) {
+			client.pendingAge += dt;
+			if (client.pendingAge > 10.0f) {
+				printf("[Server] %s: timed out waiting for hello, dropping\n",
+				       client.label().c_str());
+				m_disconnected.push_back(cid);
+				continue;
+			}
+			if (!client.recvBuf.readFrom(client.fd)) {
+				m_disconnected.push_back(cid);
+				continue;
+			}
+			net::MsgHeader hdr;
+			std::vector<uint8_t> payload;
+			while (client.recvBuf.tryExtract(hdr, payload)) {
+				if (hdr.type == net::C_HELLO || hdr.type == net::C_BOT_HELLO) {
+					hellos.push_back({cid, hdr.type, std::move(payload)});
+					break; // one hello per client per tick
+				}
+				// drop unrecognised pre-hello messages
+			}
+		}
+
+		// Move identified clients from pending → active, then dispatch their hello
+		for (auto& h : hellos) {
+			auto it = m_pendingClients.find(h.cid);
+			if (it == m_pendingClients.end()) continue;
+			m_clients[h.cid] = std::move(it->second);
+			m_pendingClients.erase(it);
+			net::ReadBuffer rb(h.payload.data(), h.payload.size());
+			handleMessage(h.cid, m_clients[h.cid], h.type, rb);
+		}
+
+		// --- Active pool: handle all messages ---
 		for (auto& [cid, client] : m_clients) {
 			if (!client.recvBuf.readFrom(client.fd)) {
 				m_disconnected.push_back(cid);
 				continue;
 			}
-
 			net::MsgHeader hdr;
 			std::vector<uint8_t> payload;
 			while (client.recvBuf.tryExtract(hdr, payload)) {
@@ -164,10 +201,21 @@ public:
 	// Remove clients that disconnected since last call.
 	void pruneDisconnected() {
 		for (auto cid : m_disconnected) {
-			printf("[Server] %s disconnected.\n", m_clients[cid].label().c_str());
-			close(m_clients[cid].fd);
-			m_server.removeClient(cid);
-			m_clients.erase(cid);
+			auto pit = m_pendingClients.find(cid);
+			if (pit != m_pendingClients.end()) {
+				printf("[Server] %s disconnected (no hello).\n", pit->second.label().c_str());
+				close(pit->second.fd);
+				m_server.removeClient(cid);
+				m_pendingClients.erase(pit);
+				continue;
+			}
+			auto it = m_clients.find(cid);
+			if (it != m_clients.end()) {
+				printf("[Server] %s disconnected.\n", it->second.label().c_str());
+				close(it->second.fd);
+				m_server.removeClient(cid);
+				m_clients.erase(it);
+			}
 		}
 		m_disconnected.clear();
 	}
@@ -399,6 +447,9 @@ public:
 		for (auto& [cid, client] : m_clients)
 			close(client.fd);
 		m_clients.clear();
+		for (auto& [cid, client] : m_pendingClients)
+			close(client.fd);
+		m_pendingClients.clear();
 	}
 
 	size_t clientCount() const { return m_clients.size(); }
@@ -489,6 +540,18 @@ private:
 			printf("[Server] %s identified: creature=%s\n",
 				client.label().c_str(),
 				creatureType.empty() ? "default" : creatureType.c_str());
+
+			// Queue initial world chunks now that the human player is confirmed.
+			// (Delayed from acceptConnections to avoid wasting bandwidth on bots
+			// and clients that disconnect before identifying.)
+			for (int dy = 0; dy <= 1; dy++)
+			for (int dz = -4; dz <= 4; dz++)
+			for (int dx = -4; dx <= 4; dx++)
+				queueChunk(client, {client.lastChunkPos.x + dx,
+				                    client.lastChunkPos.y + dy,
+				                    client.lastChunkPos.z + dz});
+			printf("[Server] %s: queued %zu initial chunks\n",
+				client.label().c_str(), client.pendingChunks.size());
 			break;
 		}
 
@@ -558,7 +621,8 @@ private:
 	}
 
 	GameServer& m_server;
-	std::unordered_map<ClientId, ConnectedClient> m_clients;
+	std::unordered_map<ClientId, ConnectedClient> m_clients;         // identified
+	std::unordered_map<ClientId, ConnectedClient> m_pendingClients;  // awaiting hello
 	std::vector<ClientId> m_disconnected;
 	ClientId m_nextClientId = 1;
 	float m_broadcastTimer = 0;
