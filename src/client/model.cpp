@@ -123,17 +123,38 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 	GLint useTexLoc = glGetUniformLocation(m_shader->id(), "uUseTexture");
 	glBindVertexArray(m_cubeVAO);
 
+	const float PI = 3.14159265f;
 	for (auto& part : model.parts) {
 		glm::mat4 partMat = root;
 
-		// Limb swing animation
-		if (part.swingAmplitude > 0.001f && smoothSpeed > 0.02f) {
-			float angle = std::sin(walkPhase * part.swingSpeed + part.swingPhase)
-			              * glm::radians(part.swingAmplitude)
-			              * smoothSpeed;
-			partMat = glm::translate(partMat, part.pivot * s);
-			partMat = glm::rotate(partMat, angle, part.swingAxis);
-			partMat = glm::translate(partMat, -part.pivot * s);
+		// Limb swing: walk cycle + attack override
+		if (part.swingAmplitude > 0.001f) {
+			float angle = 0.0f;
+			bool doSwing = false;
+
+			// Walk cycle (speed-gated)
+			if (smoothSpeed > 0.02f) {
+				angle = std::sin(walkPhase * part.swingSpeed + part.swingPhase)
+				        * glm::radians(part.swingAmplitude) * smoothSpeed;
+				doSwing = true;
+			}
+
+			// Attack override: major limbs (amplitude >= 40°) lunge as a unit.
+			// cos(phase): phase=0 parts (right arm, left leg) lunge forward (-),
+			//             phase=PI parts (left arm, right leg) sweep back (+).
+			// Small parts like head (amplitude 5°) are excluded from attack swing.
+			if (anim.attackPhase > 0.001f && part.swingAmplitude >= 40.0f) {
+				float phaseSign = std::cos(part.swingPhase); // +1 or -1
+				angle = std::sin(anim.attackPhase * PI)
+				        * glm::radians(-90.0f) * phaseSign;
+				doSwing = true;
+			}
+
+			if (doSwing) {
+				partMat = glm::translate(partMat, part.pivot * s);
+				partMat = glm::rotate(partMat, angle, part.swingAxis);
+				partMat = glm::translate(partMat, -part.pivot * s);
+			}
 		}
 
 		// Position and scale

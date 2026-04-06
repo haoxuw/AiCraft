@@ -67,6 +67,7 @@ struct AnimState {
 	float walkDistance = 0.0f;  // total distance traveled (drives walk cycle)
 	float speed = 0.0f;        // current movement speed (0 = idle)
 	float time = 0.0f;         // global time (for idle animation)
+	float attackPhase = 0.0f;  // 0→1 during attack swing (drives arm/limb lunge)
 };
 
 } // namespace agentica

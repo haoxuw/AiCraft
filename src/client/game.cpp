@@ -913,6 +913,7 @@ void Game::updatePlaying(float dt, float aspect) {
 
 	// First-person attack swing animation (block-break or entity attack)
 	if (m_gameplay.swingTriggered()) {
+		m_fpSwingDuration = 0.25f; // block-break: fast, fixed duration
 		m_fpSwingActive = true;
 		m_fpSwingTimer = 0;
 		m_gameplay.clearSwing();
@@ -969,6 +970,8 @@ void Game::updatePlaying(float dt, float aspect) {
 						p.damage     = damage;
 						m_server->sendAction(p);
 						m_attackCD = cooldown;
+						// Swing duration: 60% of cooldown, capped at 0.45s (fast stab/slow slash)
+						m_fpSwingDuration = std::min(cooldown * 0.6f, 0.45f);
 						m_fpSwingActive = true;
 						m_fpSwingTimer  = 0;
 					}
@@ -1281,7 +1284,8 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	float playerSpeed = glm::length(glm::vec2(pe->velocity.x, pe->velocity.z));
 	float prevWalkDist = m_playerWalkDist;
 	m_playerWalkDist += playerSpeed * dt;
-	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime};
+	float playerAttackPhase = m_fpSwingActive ? (m_fpSwingTimer / m_fpSwingDuration) : 0.0f;
+	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime, playerAttackPhase};
 
 	// Footstep sounds — play every ~2.5 blocks of movement
 	if (pe->onGround && playerSpeed > 0.5f) {
@@ -1536,6 +1540,11 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			auto flit = m_damageFlash.find(e.id());
 			if (flit != m_damageFlash.end()) flashT = flit->second;
 			float tintStr = std::max(0.0f, flashT / 0.25f); // 0.25s full duration
+			// Attack phase: inject into AnimState for arm/limb lunge animation
+			float atkPhase = 0.0f;
+			auto apit = m_entityAttackPhase.find(e.id());
+			if (apit != m_entityAttackPhase.end()) atkPhase = apit->second;
+			mobAnim.attackPhase = atkPhase;
 			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim, {}, tintStr);
 		} else if (!modelKey.empty() && e.typeId() != EntityType::ItemEntity) {
 			// Warn once per model key
@@ -1718,6 +1727,8 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			it = seen.count(it->first) ? std::next(it) : m_prevEntityHP.erase(it);
 		for (auto it = m_damageFlash.begin(); it != m_damageFlash.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_damageFlash.erase(it);
+		for (auto it = m_entityAttackPhase.begin(); it != m_entityAttackPhase.end(); )
+			it = seen.count(it->first) ? std::next(it) : m_entityAttackPhase.erase(it);
 	}
 
 	// Particles

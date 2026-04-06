@@ -213,6 +213,10 @@ private:
 	// Damage flash timer: entity flashes red for this many seconds after taking a hit
 	std::unordered_map<EntityId, float> m_damageFlash;
 
+	// Per-entity attack phase (0→1 during swing). Currently only populated for
+	// the local player via m_fpSwingTimer; mob swings require server attack events.
+	std::unordered_map<EntityId, float> m_entityAttackPhase;
+
 	// Pickup text accumulator: one entry per item type, updated in place
 	struct PickupAccum {
 		std::string itemName;
