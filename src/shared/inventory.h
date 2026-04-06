@@ -20,7 +20,7 @@ namespace modcraft {
 // Right hand always shows the hotbar-selected item (not an equipment slot).
 enum class WearSlot {
 	Offhand   = 0,  // shield, torch (left hand)
-	RightHand = 1,  // legacy — kept for save compat, not shown in UI
+	RightHand = 1,  // right-hand item slot (hotbar item visually attached)
 	Helmet    = 2,  // head armor
 	Body      = 3,  // chest + legs (combined slot)
 	Back      = 4,  // cape, jetpack, parachute
@@ -30,7 +30,7 @@ constexpr int WEAR_SLOT_COUNT = 5;
 // Parse equip slot from Python artifact string
 inline bool wearSlotFromString(const std::string& s, WearSlot& out) {
 	if (s == "offhand" || s == "left_hand") { out = WearSlot::Offhand; return true; }
-	if (s == "right_hand") { out = WearSlot::RightHand; return true; } // legacy compat
+	if (s == "right_hand") { out = WearSlot::RightHand; return true; }
 	if (s == "helmet" || s == "head") { out = WearSlot::Helmet; return true; }
 	if (s == "body")       { out = WearSlot::Body;      return true; }
 	if (s == "back")       { out = WearSlot::Back;      return true; }

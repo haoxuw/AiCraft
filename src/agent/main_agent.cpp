@@ -6,7 +6,6 @@
  *
  * Usage:
  *   ./modcraft-agent --host 127.0.0.1 --port 7777 --entity 5
- *   ./modcraft-agent --port 7777 --entity 5 --behavior wander
  */
 
 #include "agent/agent_client.h"
@@ -26,7 +25,6 @@ int main(int argc, char** argv) {
 	std::string host = "127.0.0.1";
 	int port = 7777;
 	uint32_t entityId = 0;
-	std::string behaviorId;
 	std::string name = "agent";
 
 	for (int i = 1; i < argc; i++) {
@@ -36,8 +34,6 @@ int main(int argc, char** argv) {
 			port = atoi(argv[++i]);
 		else if (strcmp(argv[i], "--entity") == 0 && i + 1 < argc)
 			entityId = (uint32_t)atoi(argv[++i]);
-		else if (strcmp(argv[i], "--behavior") == 0 && i + 1 < argc)
-			behaviorId = argv[++i];
 		else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
 			name = argv[++i];
 		else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -46,7 +42,6 @@ int main(int argc, char** argv) {
 			       "  --host HOST       Server address (default: 127.0.0.1)\n"
 			       "  --port PORT       Server port (default: 7777)\n"
 			       "  --entity ID       Entity ID to control\n"
-			       "  --behavior NAME   Override behavior (default: from entity def)\n"
 			       "  --name NAME       Agent display name (default: agent)\n"
 			       "  --help, -h        Show this help\n", argv[0]);
 			return 0;
@@ -70,11 +65,6 @@ int main(int argc, char** argv) {
 		modcraft::pythonBridge().shutdown();
 		return 1;
 	}
-
-	// The entity assignment now comes from the server via S_ASSIGN_ENTITY.
-	// As a fallback, also assign locally (in case server doesn't support C_AGENT_HELLO yet).
-	if (!agent.hasControlledEntities())
-		agent.assignEntity(entityId, behaviorId);
 
 	printf("[Agent:%s] Running AI for entity %u on %s:%d\n",
 		name.c_str(), entityId, host.c_str(), port);

@@ -75,8 +75,8 @@ bool Game::init(int argc, char** argv) {
 
 	// World templates
 	m_templates = {
-		std::make_shared<FlatWorldTemplate>(),
-		std::make_shared<VillageWorldTemplate>(),
+		std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/flat.py"),
+		std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/village.py"),
 	};
 	m_imguiMenu.init(m_templates);
 	m_imguiMenu.setControls(&m_controls);
@@ -387,7 +387,7 @@ void Game::saveScreenshot() {
 	fs::path tmp;
 	try { tmp = fs::temp_directory_path(); } catch (...) { tmp = "/tmp"; }
 	char name[64];
-	snprintf(name, sizeof(name), "agentica_screenshot_%d.ppm", m_screenshotCounter++);
+	snprintf(name, sizeof(name), "modcraft_screenshot_%d.ppm", m_screenshotCounter++);
 	std::string path = (tmp / name).string();
 
 	writeScreenshot(m_window.width(), m_window.height(), path.c_str());
@@ -400,7 +400,7 @@ void Game::saveScreenshot() {
 	{
 		// macOS: convert PPM to TIFF via sips and set clipboard with osascript
 		char cmd[512];
-		std::string tiff = (tmp / "agentica_ss_tmp.tiff").string();
+		std::string tiff = (tmp / "modcraft_ss_tmp.tiff").string();
 		snprintf(cmd, sizeof(cmd), "sips -s format tiff '%s' --out '%s' 2>/dev/null && "
 		         "osascript -e 'set the clipboard to (read file \"%s\" as TIFF picture)' 2>/dev/null",
 		         path.c_str(), tiff.c_str(), tiff.c_str());

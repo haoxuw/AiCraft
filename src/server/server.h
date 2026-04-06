@@ -281,12 +281,9 @@ public:
 		               (it->second.controlledEntities.count(actor) > 0);
 
 		if (action.type == ActionProposal::Move) {
-			// Move allowed for owned entities + RTS commanding
-			// (keep backward compat: any entity for GUI clients)
-			if (!isOwned && !it->second.isAgent) {
-				// GUI client RTS commanding — still allowed
-			} else if (!isOwned) {
-				return; // Agent can only move its assigned entities
+			// Move: GUI clients may RTS-command any entity; agents only move assigned entities
+			if (!isOwned && it->second.isAgent) {
+				return;
 			}
 		} else {
 			// Non-move actions require ownership

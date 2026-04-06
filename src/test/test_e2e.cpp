@@ -42,8 +42,8 @@ static std::vector<std::shared_ptr<WorldTemplate>> g_templates;
 
 static void initTemplates() {
 	g_templates = {
-		std::make_shared<FlatWorldTemplate>(),
-		std::make_shared<VillageWorldTemplate>(),
+		std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/flat.py"),
+		std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/village.py"),
 	};
 }
 

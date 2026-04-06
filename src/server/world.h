@@ -43,7 +43,7 @@ public:
 
 	World(int seed = 42, std::shared_ptr<WorldTemplate> tmpl = nullptr, int templateIndex = 1)
 		: m_seed(seed), m_templateIndex(templateIndex),
-		  m_template(tmpl ? tmpl : std::make_shared<VillageWorldTemplate>()) {
+		  m_template(tmpl ? tmpl : std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/village.py")) {
 		registerAllBuiltins(blocks, entities);
 	}
 

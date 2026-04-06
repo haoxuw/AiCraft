@@ -165,8 +165,8 @@ int main(int argc, char** argv) {
 
 	// World templates
 	std::vector<std::shared_ptr<modcraft::WorldTemplate>> templates = {
-		std::make_shared<modcraft::FlatWorldTemplate>(),
-		std::make_shared<modcraft::VillageWorldTemplate>(),
+		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/flat.py"),
+		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/village.py"),
 	};
 
 	if (interactive && isatty(fileno(stdin)))

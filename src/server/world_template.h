@@ -853,15 +853,4 @@ private:
 	}
 };
 
-// ── Thin aliases for backward compatibility ──────────────────
-class FlatWorldTemplate : public ConfigurableWorldTemplate {
-public:
-	FlatWorldTemplate() : ConfigurableWorldTemplate("artifacts/worlds/base/flat.py") {}
-};
-
-class VillageWorldTemplate : public ConfigurableWorldTemplate {
-public:
-	VillageWorldTemplate() : ConfigurableWorldTemplate("artifacts/worlds/base/village.py") {}
-};
-
 } // namespace modcraft
