@@ -64,6 +64,12 @@ public:
 		return generateChunk(pos);
 	}
 
+	// True if a chunk has been generated/loaded (no generation side-effect).
+	bool hasChunk(ChunkPos pos) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		return m_chunks.count(pos) > 0;
+	}
+
 	// Non-generating lookup for meshing (avoids generating chunks outside render range)
 	Chunk* getChunkIfLoaded(ChunkPos pos) override {
 		std::lock_guard<std::mutex> lock(m_mutex);

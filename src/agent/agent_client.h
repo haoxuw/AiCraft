@@ -17,6 +17,7 @@
 #include "shared/block_registry.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
+#include <zstd.h>
 #include "shared/constants.h"
 #include "server/behavior.h"
 #include "server/behavior_store.h"
@@ -276,6 +277,38 @@ private:
 						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
 					}
 			m_chunks[cp] = std::move(chunk);
+			break;
+		}
+		case net::S_CHUNK_Z: {
+			size_t compSize = rb.remaining();
+			const uint8_t* compData = rb.remainingData();
+			size_t decompBound = ZSTD_getFrameContentSize(compData, compSize);
+			if (decompBound == ZSTD_CONTENTSIZE_ERROR || decompBound == ZSTD_CONTENTSIZE_UNKNOWN) {
+				fprintf(stderr, "[Agent] S_CHUNK_Z: bad zstd frame\n");
+				break;
+			}
+			std::vector<uint8_t> decomp(decompBound);
+			size_t actual = ZSTD_decompress(decomp.data(), decompBound, compData, compSize);
+			if (ZSTD_isError(actual)) {
+				fprintf(stderr, "[Agent] S_CHUNK_Z: decompression error: %s\n",
+				        ZSTD_getErrorName(actual));
+				break;
+			}
+			net::ReadBuffer zrb(decomp.data(), actual);
+			ChunkPos cp = {zrb.readI32(), zrb.readI32(), zrb.readI32()};
+			auto chunk = std::make_unique<Chunk>();
+			for (int ly = 0; ly < CHUNK_SIZE; ly++)
+				for (int lz = 0; lz < CHUNK_SIZE; lz++)
+					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+						uint32_t v = zrb.readU32();
+						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
+					}
+			m_chunks[cp] = std::move(chunk);
+			break;
+		}
+		case net::S_CHUNK_EVICT: {
+			ChunkPos cp = {rb.readI32(), rb.readI32(), rb.readI32()};
+			m_chunks.erase(cp);
 			break;
 		}
 		case net::S_REMOVE: {

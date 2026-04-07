@@ -67,6 +67,20 @@ endif()
 # miniaudio: single-header audio library, placed directly in src/client/miniaudio.h
 # No FetchContent needed — CC0 licensed, downloaded from github.com/mackron/miniaudio
 
+# zstd: fast lossless compression — used for S_CHUNK_Z payload compression (native only)
+# WASM clients request uncompressed chunks (protocol version 1) so no WASM zstd needed.
+if(NOT EMSCRIPTEN)
+	FetchContent_Declare(zstd
+		GIT_REPOSITORY https://github.com/facebook/zstd.git
+		GIT_TAG v1.5.6
+		SOURCE_SUBDIR build/cmake
+	)
+	set(ZSTD_BUILD_PROGRAMS   OFF CACHE BOOL "" FORCE)
+	set(ZSTD_BUILD_TESTS      OFF CACHE BOOL "" FORCE)
+	set(ZSTD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+	FetchContent_MakeAvailable(zstd)
+endif()
+
 # pybind11 (Python embedding — required for behavior system, native only)
 if(NOT EMSCRIPTEN)
 	set(Python3_ROOT_DIR "/usr")
@@ -207,7 +221,7 @@ else()
 	target_link_libraries(modcraft PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
-		imgui_lib
+		imgui_lib libzstd_static
 	)
 
 	# === Dedicated server (headless, no OpenGL) ===
@@ -220,6 +234,7 @@ else()
 	target_link_libraries(modcraft-server PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
+		libzstd_static
 	)
 
 	# === Network client (connects to remote server) ===
@@ -233,7 +248,7 @@ else()
 	target_link_libraries(modcraft-client PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
-		imgui_lib
+		imgui_lib libzstd_static
 	)
 
 	# === Headless agent client (AI entity controller, no OpenGL) ===
@@ -246,6 +261,7 @@ else()
 	target_link_libraries(modcraft-agent PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
+		libzstd_static
 	)
 	# Copy python/ and artifacts/ so behavior loading works
 	add_custom_command(TARGET modcraft-agent POST_BUILD

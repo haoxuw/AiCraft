@@ -11,6 +11,7 @@
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
 #include "shared/constants.h"
+#include <zstd.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -40,6 +41,15 @@ struct ConnectedClient {
 	bool isAgent = false;
 	int chunkSendErrors = 0;
 	float pendingAge = 0; // seconds in pending pool before hello received
+
+	// Protocol negotiation (set from C_HELLO version field)
+	uint32_t protocolVersion = 1;
+	bool supportsZstd = false; // true when protocolVersion >= 2
+
+	// Chunk streaming radii
+	static constexpr int STREAM_R = 6;  // stream chunks within this radius
+	static constexpr int EVICT_R  = 9;  // evict sentChunks beyond this radius (3-chunk hysteresis)
+	static constexpr int EVICT_DY = 3;  // vertical eviction radius
 
 	std::string label() const {
 		if (!name.empty())
@@ -254,8 +264,6 @@ public:
 		const float PERCEPTION_R2 = 64.0f * 64.0f;
 
 		for (auto& [cid, client] : m_clients) {
-			if (!client.pendingChunks.empty()) continue;
-
 			// Gather viewpoints for perception scoping
 			std::vector<glm::vec3> viewPoints;
 			Entity* pe = m_server.world().entities.get(client.playerId);
@@ -265,54 +273,72 @@ public:
 				if (ce) viewPoints.push_back(ce->position);
 			}
 
-			// Send visible entities
-			m_server.world().entities.forEach([&](Entity& e) {
-				bool visible = false;
-				for (auto& vp : viewPoints) {
-					if (glm::dot(e.position - vp, e.position - vp) <= PERCEPTION_R2) {
-						visible = true; break;
+			// Entity + time broadcast — always fires regardless of pending chunks
+			if (client.pendingChunks.empty()) {
+				m_server.world().entities.forEach([&](Entity& e) {
+					bool visible = false;
+					for (auto& vp : viewPoints) {
+						if (glm::dot(e.position - vp, e.position - vp) <= PERCEPTION_R2) {
+							visible = true; break;
+						}
 					}
-				}
-				if (!visible) return;
+					if (!visible) return;
 
-				net::EntityState es;
-				es.id = e.id(); es.typeId = e.typeId();
-				es.position = e.position; es.velocity = e.velocity;
-				es.yaw = e.yaw; es.onGround = e.onGround;
-				es.goalText = e.goalText;
-				es.characterSkin = e.getProp<std::string>("character_skin", "");
-				es.hp = e.hp(); es.maxHp = e.def().max_hp;
-				// Sync string props needed for rendering (ItemType, BehaviorId, etc.)
-				for (auto& [key, val] : e.props()) {
-					if (auto* s = std::get_if<std::string>(&val))
-						es.stringProps.push_back({key, *s});
-				}
+					net::EntityState es;
+					es.id = e.id(); es.typeId = e.typeId();
+					es.position = e.position; es.velocity = e.velocity;
+					es.yaw = e.yaw; es.onGround = e.onGround;
+					es.goalText = e.goalText;
+					es.characterSkin = e.getProp<std::string>("character_skin", "");
+					es.hp = e.hp(); es.maxHp = e.def().max_hp;
+					for (auto& [key, val] : e.props()) {
+						if (auto* s = std::get_if<std::string>(&val))
+							es.stringProps.push_back({key, *s});
+					}
 
-				net::WriteBuffer wb;
-				net::serializeEntityState(wb, es);
-				net::sendMessage(client.fd, net::S_ENTITY, wb);
-			});
+					net::WriteBuffer wb;
+					net::serializeEntityState(wb, es);
+					net::sendMessage(client.fd, net::S_ENTITY, wb);
+				});
 
-			// Stream chunks around player
-			if (pe && client.pendingChunks.size() < 20) {
-				auto cp = worldToChunk((int)pe->position.x, (int)pe->position.y, (int)pe->position.z);
-				const int R = 6;
-				int queued = 0;
-				for (int dy = -1; dy <= 2 && queued < 4; dy++)
-				for (int dz = -R; dz <= R && queued < 4; dz++)
-				for (int dx = -R; dx <= R && queued < 4; dx++) {
-					ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
-					if (client.sentChunks.count(pos)) continue;
-					queueChunk(client, pos);
-					if (client.pendingChunks.size() > 0 &&
-					    client.pendingChunks.back().first == pos) queued++;
-				}
+				net::WriteBuffer tb;
+				tb.writeF32(m_server.worldTime());
+				net::sendMessage(client.fd, net::S_TIME, tb);
 			}
 
-			// Send world time
-			net::WriteBuffer tb;
-			tb.writeF32(m_server.worldTime());
-			net::sendMessage(client.fd, net::S_TIME, tb);
+			// Chunk streaming — throttled independently of entity broadcast
+			if (pe && client.pendingChunks.size() < 20) {
+				auto cp = worldToChunk((int)pe->position.x, (int)pe->position.y, (int)pe->position.z);
+
+				// Evict far chunks when the player moves to a new chunk column
+				if (cp != client.lastChunkPos) {
+					client.lastChunkPos = cp;
+					evictFarChunks(client, cp);
+				}
+
+				// Build candidate list sorted nearest-first for better perceived load time
+				struct Candidate { ChunkPos pos; int dist; };
+				std::vector<Candidate> candidates;
+				const int R = ConnectedClient::STREAM_R;
+				for (int dy = -1; dy <= 2; dy++)
+				for (int dz = -R; dz <= R; dz++)
+				for (int dx = -R; dx <= R; dx++) {
+					ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
+					if (client.sentChunks.count(pos)) continue;
+					if (!m_server.world().hasChunk(pos)) continue; // don't force generation
+					int dist = std::abs(dx) + std::abs(dz) + std::abs(dy) * 4;
+					candidates.push_back({pos, dist});
+				}
+				std::sort(candidates.begin(), candidates.end(),
+				          [](const Candidate& a, const Candidate& b) { return a.dist < b.dist; });
+
+				int queued = 0;
+				for (auto& c : candidates) {
+					if (queued >= 4 || client.pendingChunks.size() >= 20) break;
+					queueChunk(client, c.pos);
+					queued++;
+				}
+			}
 		}
 	}
 
@@ -532,8 +558,14 @@ private:
 			break;
 		}
 		case net::C_HELLO: {
+			// Wire format: [u32 version][str uuid][str displayName][str creatureType]
+			client.protocolVersion = rb.readU32();
+			client.supportsZstd    = (client.protocolVersion >= 2);
 			client.name = rb.readString();
-			std::string displayName = rb.hasMore() ? rb.readString() : "";
+			printf("[Server] %s: protocol v%u%s\n",
+			       client.label().c_str(), client.protocolVersion,
+			       client.supportsZstd ? " (zstd chunks)" : "");
+			std::string displayName  = rb.hasMore() ? rb.readString() : "";
 			std::string creatureType = rb.hasMore() ? rb.readString() : "";
 			if (!displayName.empty())
 				client.name = displayName + " (" + client.name.substr(0, 8) + ")";
@@ -606,6 +638,18 @@ private:
 			break;
 		}
 
+		case net::C_RESYNC_CHUNK: {
+			ChunkPos pos = {rb.readI32(), rb.readI32(), rb.readI32()};
+			// Remove from sentChunks so the chunk gets re-queued on next broadcastState
+			client.sentChunks.erase(pos);
+			// Cancel any in-flight stale version of this chunk
+			client.pendingChunks.erase(
+				std::remove_if(client.pendingChunks.begin(), client.pendingChunks.end(),
+					[&](const auto& p) { return p.first == pos; }),
+				client.pendingChunks.end());
+			break;
+		}
+
 		case net::C_HOTBAR: {
 			uint32_t slot = rb.readU32();
 			std::string itemId = rb.hasMore() ? rb.readString() : "";
@@ -650,24 +694,91 @@ private:
 		}
 	}
 
+	// Remove sentChunks that are now too far from `center` and tell the client to evict them.
+	void evictFarChunks(ConnectedClient& cc, ChunkPos center) {
+		std::vector<ChunkPos> toEvict;
+		for (const auto& pos : cc.sentChunks) {
+			if (std::abs(pos.x - center.x) > ConnectedClient::EVICT_R ||
+			    std::abs(pos.z - center.z) > ConnectedClient::EVICT_R ||
+			    std::abs(pos.y - center.y) > ConnectedClient::EVICT_DY) {
+				toEvict.push_back(pos);
+			}
+		}
+		if (toEvict.empty()) return;
+
+		for (const auto& pos : toEvict) {
+			cc.sentChunks.erase(pos);
+			net::WriteBuffer wb;
+			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
+			net::sendMessage(cc.fd, net::S_CHUNK_EVICT, wb);
+		}
+		// Cancel any queued (but not yet sent) messages for evicted chunks
+		cc.pendingChunks.erase(
+			std::remove_if(cc.pendingChunks.begin(), cc.pendingChunks.end(),
+				[&](const auto& p) {
+					return std::find(toEvict.begin(), toEvict.end(), p.first) != toEvict.end();
+				}),
+			cc.pendingChunks.end());
+	}
+
+	// Force all clients to discard and re-fetch a chunk (e.g. after a bulk terrain change).
+	void invalidateChunkForAll(ChunkPos pos) {
+		for (auto& [cid, client] : m_clients) {
+			if (!client.sentChunks.count(pos)) continue;
+			client.sentChunks.erase(pos);
+			client.pendingChunks.erase(
+				std::remove_if(client.pendingChunks.begin(), client.pendingChunks.end(),
+					[&](const auto& p) { return p.first == pos; }),
+				client.pendingChunks.end());
+			net::WriteBuffer wb;
+			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
+			net::sendMessage(client.fd, net::S_CHUNK_EVICT, wb);
+		}
+	}
+
 	void queueChunk(ConnectedClient& cc, ChunkPos pos) {
 		if (cc.sentChunks.count(pos)) return;
 		Chunk* chunk = m_server.world().getChunk(pos);
 		if (!chunk) return;
 
+		// Build uncompressed payload: [i32 cx][i32 cy][i32 cz][u32×4096]
 		net::WriteBuffer cb;
 		cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
-		// Pack param2 into upper byte of each u32: bits 23-16 = param2, bits 15-0 = blockId.
-		for (int i = 0; i < 16*16*16; i++)
+		for (int i = 0; i < CHUNK_VOLUME; i++)
 			cb.writeU32(((uint32_t)chunk->getRawParam2(i) << 16) | chunk->getRaw(i));
 
+		// Choose message type and payload
+		net::MsgType msgType = net::S_CHUNK;
+		std::vector<uint8_t> payload;
+
+		if (cc.supportsZstd) {
+			size_t srcSize  = cb.size();
+			size_t dstBound = ZSTD_compressBound(srcSize);
+			payload.resize(dstBound);
+			size_t compSize = ZSTD_compress(
+				payload.data(), dstBound,
+				cb.data().data(), srcSize,
+				1 /* level 1 = fastest */);
+			payload.resize(compSize);
+			msgType = net::S_CHUNK_Z;
+
+			// Log compression ratio once per server run
+			static bool s_logged = false;
+			if (!s_logged) {
+				s_logged = true;
+				printf("[Server] zstd chunk: %zu → %zu bytes (%.0f%% saved)\n",
+				       srcSize, compSize, 100.0 * (1.0 - (double)compSize / srcSize));
+			}
+		} else {
+			payload.assign(cb.data().begin(), cb.data().end());
+		}
+
+		// Prepend 8-byte header and store as a pre-serialised message
 		std::vector<uint8_t> msg;
-		net::MsgHeader hdr;
-		hdr.type = net::S_CHUNK;
-		hdr.length = (uint32_t)cb.size();
-		msg.resize(8 + cb.size());
+		msg.resize(8 + payload.size());
+		net::MsgHeader hdr{ (uint32_t)msgType, (uint32_t)payload.size() };
 		memcpy(msg.data(), &hdr, 8);
-		memcpy(msg.data() + 8, cb.data().data(), cb.size());
+		memcpy(msg.data() + 8, payload.data(), payload.size());
 		cc.pendingChunks.push_back({pos, std::move(msg)});
 		cc.sentChunks.insert(pos);
 	}
