@@ -290,7 +290,7 @@ public:
 					net::EntityState es;
 					es.id = e.id(); es.typeId = e.typeId();
 					es.position = e.position; es.velocity = e.velocity;
-					es.yaw = e.yaw; es.onGround = e.onGround;
+					es.yaw = e.yaw; es.pitch = e.pitch; es.onGround = e.onGround;
 					es.goalText = e.goalText;
 					es.characterSkin = e.getProp<std::string>("character_skin", "");
 					es.hp = e.hp(); es.maxHp = e.def().max_hp;
@@ -315,33 +315,51 @@ public:
 			if (pe) {
 				auto cp = worldToChunk((int)pe->position.x, (int)pe->position.y, (int)pe->position.z);
 
+				// Dynamic vertical range: when flying, terrain is many chunk-heights below.
+				// Cover from ground level (chunk Y=0) up to 3 chunks above player.
+				// Player at Y=80 → cp.y=5 → dyMin=-7 reaches chunk Y=-2 (below ground).
+				// Capped at -14 to avoid scanning absurd depths.
+				int dyMin = -std::min(cp.y + 2, 14);
+				int dyMax = 3;
+
+				// Surface chunk Y for this player's XZ column (used for eviction)
+				int groundY  = (int)m_server.world().surfaceHeight((float)pe->position.x, (float)pe->position.z);
+				int groundChunkY = groundY / CHUNK_SIZE;
+
 				// Evict far chunks when the player moves to a new chunk column
 				if (cp != client.lastChunkPos) {
 					client.lastChunkPos = cp;
-					evictFarChunks(client, cp);
+					evictFarChunks(client, cp, groundChunkY);
 				}
 
-				// Player forward direction for view-biased priority (yaw: 0=+Z, 90°=+X)
-				float yaw = glm::radians(pe->yaw);
-				float fwdX = std::cos(yaw), fwdZ = std::sin(yaw);
+				// 3-D look direction for view-biased chunk priority.
+				// When pitching down (looking at a valley from a cliff), fwdY < 0
+				// so chunks below the player get a lower (better) biasedDist.
+				float yaw_rad   = glm::radians(pe->yaw);
+				float pitch_rad = glm::radians(std::clamp(pe->pitch, -89.0f, 89.0f));
+				float cosPitch  = std::cos(pitch_rad);
+				float fwdX = std::cos(yaw_rad) * cosPitch;
+				float fwdY = -std::sin(pitch_rad);   // negative pitch = looking down
+				float fwdZ = std::sin(yaw_rad) * cosPitch;
 
-				struct Candidate { ChunkPos pos; int dist; bool far; };
+				struct Candidate { ChunkPos pos; int dist; };
 
 				// ── Tier 1: near radius (R=STREAM_R) — must have no void at fog boundary ──
 				// No hasChunk() guard — force generation of new areas eagerly.
+				// dy range is dynamic so ground is always included regardless of altitude.
 				if (client.pendingChunks.size() < 40) {
 					std::vector<Candidate> near;
 					const int R = ConnectedClient::STREAM_R;
-					for (int dy = -1; dy <= 2; dy++)
+					for (int dy = dyMin; dy <= dyMax; dy++)
 					for (int dz = -R; dz <= R; dz++)
 					for (int dx = -R; dx <= R; dx++) {
 						ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
 						if (client.sentChunks.count(pos)) continue;
-						int baseDist = std::abs(dx) + std::abs(dz) + std::abs(dy) * 4;
-						float dot    = fwdX * dx + fwdZ * dz;
-						// Ahead bias: chunks in the look direction load before those behind
+						int baseDist = std::abs(dx) + std::abs(dz) + std::abs(dy) * 2;
+						// 3-D look bias: chunks in the camera's actual look direction load first
+						float dot = fwdX * dx + fwdY * dy + fwdZ * dz;
 						int biasedDist = baseDist - (int)(dot * 1.5f);
-						near.push_back({pos, biasedDist, false});
+						near.push_back({pos, biasedDist});
 					}
 					std::sort(near.begin(), near.end(),
 					          [](const Candidate& a, const Candidate& b) { return a.dist < b.dist; });
@@ -355,24 +373,25 @@ public:
 
 				// ── Tier 2: far radius (R=STREAM_FAR_R) — opportunistic, 1 chunk/tick ──
 				// Only runs when near tier is fully satisfied (pendingChunks empty).
-				// Loads distant terrain so mountains/cliffs appear before reaching them.
+				// Loads distant terrain (mountains, scouting from high ground).
+				// Also uses dynamic vertical range so looking down from altitude works.
 				if (client.pendingChunks.empty()) {
 					const int NEAR = ConnectedClient::STREAM_R;
 					const int FAR  = ConnectedClient::STREAM_FAR_R;
-					// Pick the single nearest unsent chunk in the far ring
 					Candidate best{};
 					bool found = false;
-					for (int dy = 0; dy <= 1; dy++)     // only above-ground far chunks
+					for (int dy = dyMin; dy <= dyMax; dy++)
 					for (int dz = -FAR; dz <= FAR; dz++)
 					for (int dx = -FAR; dx <= FAR; dx++) {
-						if (std::abs(dx) <= NEAR && std::abs(dz) <= NEAR) continue; // skip near ring
+						if (std::abs(dx) <= NEAR && std::abs(dz) <= NEAR &&
+						    dy >= dyMin && dy <= dyMax) continue; // already covered by near tier
 						ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
 						if (client.sentChunks.count(pos)) continue;
-						int baseDist  = std::abs(dx) + std::abs(dz);
-						float dot     = fwdX * dx + fwdZ * dz;
-						int biasedDist = baseDist - (int)(dot * 2.0f); // stronger bias for far
+						int baseDist   = std::abs(dx) + std::abs(dz) + std::abs(dy) * 2;
+						float dot      = fwdX * dx + fwdY * dy + fwdZ * dz;
+						int biasedDist = baseDist - (int)(dot * 2.0f);
 						if (!found || biasedDist < best.dist) {
-							best  = {pos, biasedDist, true};
+							best  = {pos, biasedDist};
 							found = true;
 						}
 					}
@@ -739,14 +758,17 @@ private:
 	}
 
 	// Remove sentChunks that are now too far from `center` and tell the client to evict them.
-	void evictFarChunks(ConnectedClient& cc, ChunkPos center) {
+	// `groundChunkY` is the chunk Y of the terrain surface at the player's XZ; used so
+	// chunks between the player and the ground are never evicted while flying.
+	void evictFarChunks(ConnectedClient& cc, ChunkPos center, int groundChunkY) {
+		// Keep everything from groundChunkY-1 up to player+3 vertically
+		int dyDown = center.y - std::max(groundChunkY - 1, center.y - ConnectedClient::EVICT_DY);
 		std::vector<ChunkPos> toEvict;
 		for (const auto& pos : cc.sentChunks) {
-			if (std::abs(pos.x - center.x) > ConnectedClient::EVICT_R ||
-			    std::abs(pos.z - center.z) > ConnectedClient::EVICT_R ||
-			    std::abs(pos.y - center.y) > ConnectedClient::EVICT_DY) {
-				toEvict.push_back(pos);
-			}
+			bool horizFar = std::abs(pos.x - center.x) > ConnectedClient::EVICT_R ||
+			                std::abs(pos.z - center.z) > ConnectedClient::EVICT_R;
+			bool vertFar  = pos.y < center.y - dyDown || pos.y > center.y + 3;
+			if (horizFar || vertFar) toEvict.push_back(pos);
 		}
 		if (toEvict.empty()) return;
 

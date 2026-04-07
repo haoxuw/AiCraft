@@ -253,6 +253,8 @@ void GameplayController::processMovement(float dt, GameState state,
 		// Client trusts onGround from server's moveAndCollide result.
 	}
 
+	moveAction.lookPitch = camera.lookPitch;
+	moveAction.lookYaw   = camera.player.yaw;
 	server.sendAction(moveAction);
 }
 

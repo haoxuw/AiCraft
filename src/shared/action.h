@@ -71,6 +71,11 @@ struct ActionProposal {
 	EntityId targetEntity = ENTITY_NONE;
 	float damage = 0;
 
+	// Camera look direction — sent on Move actions so the server can
+	// use the 3D look direction for view-biased chunk streaming.
+	float lookPitch = 0.0f;  // degrees; positive = up, negative = down
+	float lookYaw   = 0.0f;  // degrees; matches entity yaw convention
+
 	// Agent goal text — set by agent on Move actions so the server can
 	// broadcast the current decision to all clients.
 	std::string goalText;

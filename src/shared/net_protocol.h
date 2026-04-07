@@ -170,6 +170,8 @@ inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	buf.writeI32(a.slotIndex);
 	buf.writeU32(a.targetEntity);
 	buf.writeF32(a.damage);
+	buf.writeF32(a.lookPitch);
+	buf.writeF32(a.lookYaw);
 	buf.writeString(a.goalText);
 }
 
@@ -186,7 +188,9 @@ inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	a.slotIndex = buf.readI32();
 	a.targetEntity = buf.readU32();
 	a.damage = buf.readF32();
-	if (buf.hasMore()) a.goalText = buf.readString();
+	if (buf.hasMore()) a.lookPitch = buf.readF32();
+	if (buf.hasMore()) a.lookYaw   = buf.readF32();
+	if (buf.hasMore()) a.goalText  = buf.readString();
 	return a;
 }
 
@@ -200,6 +204,7 @@ struct EntityState {
 	glm::vec3 position;
 	glm::vec3 velocity;
 	float yaw;
+	float pitch = 0.0f;  // camera look pitch — used for view-biased chunk streaming
 	bool onGround;
 	std::string goalText;
 	std::string characterSkin; // visual override (e.g., "base:knight")
@@ -215,6 +220,7 @@ inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
 	buf.writeVec3(e.position);
 	buf.writeVec3(e.velocity);
 	buf.writeF32(e.yaw);
+	buf.writeF32(e.pitch);
 	buf.writeBool(e.onGround);
 	buf.writeString(e.goalText);
 	buf.writeString(e.characterSkin);
@@ -234,6 +240,7 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	e.position = buf.readVec3();
 	e.velocity = buf.readVec3();
 	e.yaw = buf.readF32();
+	e.pitch = buf.readF32();
 	e.onGround = buf.readBool();
 	e.goalText = buf.readString();
 	e.characterSkin = buf.readString();

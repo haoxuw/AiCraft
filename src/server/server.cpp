@@ -34,6 +34,7 @@ void GameServer::resolveActions(float dt) {
 			if (std::abs(p.desiredVel.x) > 0.01f || std::abs(p.desiredVel.z) > 0.01f) {
 				e->yaw = glm::degrees(std::atan2(p.desiredVel.z, p.desiredVel.x));
 			}
+			e->pitch = p.lookPitch;
 
 			if (p.fly) {
 				e->velocity.y = p.desiredVel.y;
