@@ -29,60 +29,46 @@ namespace modcraft {
 
 struct ActionProposal {
 	enum Type {
-		// Movement
-		Move,           // set desired velocity (desiredVel, jump, fly)
-		// Block interaction
-		BreakBlock,     // break block at blockPos
-		PlaceBlock,     // place blockType at blockPos from slotIndex
-		IgniteTNT,      // light TNT at blockPos
-		// Entity interaction
-		Attack,         // damage targetEntity with held item
-		PickupItem,     // pick up targetEntity (item)
-		StoreItem,      // transfer items from actor inventory into chest entity (targetEntity)
-		// Item actions (Python-defined hooks: on_use, on_equip, on_interact)
-		UseItem,        // right-click: use held item on self (eat, drink)
-		EquipItem,      // E key: equip held item to its designated slot
-		DropItem,       // Q key or behavior: drop item at actor's feet
-		// Farming/active blocks
-		GrowCrop,       // advance growth at blockPos
-		// Block interaction (right-click on interactive blocks)
-		InteractBlock,  // toggle door open/closed, press button, etc.
-		// Behavior hot-swap (GUI editor → server → bot)
-		ReloadBehavior, // reload Python behavior for actorId (source in blockType)
+		Move,           // velocity-based move (any owned entity)
+		Relocate,       // move item between inventories (no creation)
+		ConvertObject,  // transform items (value must not increase; toItem="" = destroy)
+		InteractBlock,  // toggle block state (door/button/TNT)
+		ReloadBehavior, // infrastructure: hot-swap behavior source
 	};
 
 	Type type = Move;
 	EntityId actorId = ENTITY_NONE;
 
-	// Movement
-	glm::vec3 desiredVel = {0, 0, 0};
+	// Move: velocity set by client (behavior_executor computes from target pos)
+	glm::vec3 desiredVel = {0, 0, 0};  // also: toss direction for Relocate+toGround
 	bool jump = false;
 	bool fly = false;
-	float jumpVelocity = 17.0f;  // upward velocity when jumping
-
-	// Block interaction
-	glm::ivec3 blockPos = {0, 0, 0};
-	std::string blockType;       // for PlaceBlock
-	int slotIndex = 0;           // inventory slot
-
-	// Item drop / store
-	int itemCount = 1;           // for DropItem: how many to drop
-
-	// Chest / block inventory target (for StoreItem)
-	glm::vec3 chestPos = {0, 0, 0};
-
-	// Entity interaction
-	EntityId targetEntity = ENTITY_NONE;
-	float damage = 0;
-
-	// Camera look direction — sent on Move actions so the server can
-	// use the 3D look direction for view-biased chunk streaming.
-	float lookPitch = 0.0f;  // degrees; positive = up, negative = down
-	float lookYaw   = 0.0f;  // degrees; matches entity yaw convention
-
-	// Agent goal text — set by agent on Move actions so the server can
-	// broadcast the current decision to all clients.
+	float jumpVelocity = 17.0f;
+	float lookPitch = 0.0f;
+	float lookYaw = 0.0f;
 	std::string goalText;
+
+	// Relocate: move item between any two inventory references
+	EntityId fromEntity = ENTITY_NONE;  // source entity (item entity, chest, etc.)
+	EntityId toEntity = ENTITY_NONE;    // dest entity (ENTITY_NONE = actor's own inventory)
+	bool toGround = false;              // true = spawn dropped item entity at feet
+	std::string itemId;                 // item type to relocate
+	int itemCount = 1;
+	std::string equipSlot;              // non-empty = equip to this equipment slot
+
+	// ConvertObject: transform items; toItem="" means destroy (value decreases → always ok)
+	std::string fromItem;               // source item type or "hp"
+	int fromCount = 1;
+	std::string toItem;                 // dest item type or "hp" (empty = destroy)
+	int toCount = 1;
+	glm::ivec3 blockPos = {0, 0, 0};   // shared: block position for ConvertObject AND InteractBlock
+	bool convertFromBlock = false;      // source is world block at blockPos
+	bool convertToBlock = false;        // dest is world block at blockPos
+	bool convertDirect = true;          // false = spawn result as dropped item on ground
+	EntityId convertFromEntity = ENTITY_NONE; // act on another entity's inventory (e.g. attack: target's HP)
+
+	// ReloadBehavior: hot-swap Python behavior source code
+	std::string behaviorSource;
 };
 
 // ================================================================

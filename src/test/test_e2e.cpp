@@ -116,9 +116,9 @@ static int pickupNearbyItems(TestServer& srv, EntityId actor, float range = 1.5f
 		float dist = glm::length(e.position - p->position);
 		if (dist < range) {
 			ActionProposal a;
-			a.type = ActionProposal::PickupItem;
+			a.type = ActionProposal::Relocate;
 			a.actorId = actor;
-			a.targetEntity = e.id();
+			a.fromEntity = e.id();
 			srv.sendAction(a);
 			sent++;
 		}
@@ -127,24 +127,35 @@ static int pickupNearbyItems(TestServer& srv, EntityId actor, float range = 1.5f
 	return sent;
 }
 
-// Send a BreakBlock action and tick one frame.
+// Send a ConvertObject (break block) action and tick one frame.
 static void breakAndTick(TestServer& srv, EntityId actor, glm::ivec3 pos) {
+	BlockId bid = srv.chunks().getBlock(pos.x, pos.y, pos.z);
+	const BlockDef& bdef = srv.blockRegistry().get(bid);
 	ActionProposal p;
-	p.type = ActionProposal::BreakBlock;
+	p.type = ActionProposal::ConvertObject;
 	p.actorId = actor;
 	p.blockPos = pos;
+	p.fromItem = bdef.string_id;
+	p.toItem = bdef.drop.empty() ? bdef.string_id : bdef.drop;
+	p.fromCount = 1;
+	p.toCount = 1;
+	p.convertFromBlock = true;
+	p.convertDirect = false;  // spawn as item entity
 	srv.sendAction(p);
 	srv.tick(1.0f / 60.0f);
 }
 
-// Send a PlaceBlock action and tick one frame.
+// Send a ConvertObject (place block) action and tick one frame.
 static void placeAndTick(TestServer& srv, EntityId actor,
                          glm::ivec3 pos, const std::string& type) {
 	ActionProposal p;
-	p.type = ActionProposal::PlaceBlock;
+	p.type = ActionProposal::ConvertObject;
 	p.actorId = actor;
 	p.blockPos = pos;
-	p.blockType = type;
+	p.fromItem = type;
+	p.toItem = type;
+	p.convertToBlock = true;
+	p.convertDirect = true;
 	srv.sendAction(p);
 	srv.tick(1.0f / 60.0f);
 }
@@ -865,12 +876,13 @@ static std::string t26_dropitem_no_duplication() {
 		if (e.typeId() == EntityType::ItemEntity) itemsBefore++;
 	});
 
-	// Send exactly 1 DropItem action
+	// Send exactly 1 Relocate(toGround) action
 	{
 		ActionProposal dp;
-		dp.type = ActionProposal::DropItem;
+		dp.type = ActionProposal::Relocate;
 		dp.actorId = pid;
-		dp.blockType = "base:egg";
+		dp.toGround = true;
+		dp.itemId = "base:egg";
 		dp.itemCount = 1;
 		srv->sendAction(dp);
 	}
@@ -917,12 +929,13 @@ static std::string t27_multiple_dropitems_correct_count() {
 		if (e.typeId() == EntityType::ItemEntity) itemsBefore++;
 	});
 
-	// Send exactly 3 DropItem actions (3 separate intentional drops)
+	// Send exactly 3 Relocate(toGround) actions (3 separate intentional drops)
 	for (int i = 0; i < 3; i++) {
 		ActionProposal dp;
-		dp.type = ActionProposal::DropItem;
+		dp.type = ActionProposal::Relocate;
 		dp.actorId = pid;
-		dp.blockType = "base:egg";
+		dp.toGround = true;
+		dp.itemId = "base:egg";
 		dp.itemCount = 1;
 		srv->sendAction(dp);
 		tickN(*srv, 5);
@@ -967,10 +980,10 @@ static std::string t30_equip_item() {
 
 	// Equip shield to offhand
 	ActionProposal a;
-	a.type = ActionProposal::EquipItem;
+	a.type = ActionProposal::Relocate;
 	a.actorId = pid;
-	a.slotIndex = shieldSlot;
-	a.blockType = "offhand";
+	a.itemId = "base:shield";
+	a.equipSlot = "offhand";
 	srv->sendAction(a);
 	srv->tick(1.0f / 60.0f);
 
@@ -998,11 +1011,14 @@ static std::string t31_use_item_consume() {
 	p->setHp(5);
 	int hpBefore = p->hp();
 
-	// Use potion
+	// Use potion: consume 1 potion from inventory, gain HP
 	ActionProposal a;
-	a.type = ActionProposal::UseItem;
+	a.type = ActionProposal::ConvertObject;
 	a.actorId = pid;
-	a.slotIndex = 0;
+	a.fromItem = "base:potion";
+	a.fromCount = 1;
+	a.toItem = "hp";
+	a.toCount = 4;
 	srv->sendAction(a);
 	srv->tick(1.0f / 60.0f);
 
@@ -1046,10 +1062,12 @@ static std::string t32_attack_damages_entity() {
 	int targetHp = target->hp();
 
 	ActionProposal a;
-	a.type = ActionProposal::Attack;
+	a.type = ActionProposal::ConvertObject;
 	a.actorId = pid;
-	a.targetEntity = targetId;
-	a.damage = 3.0f;
+	a.convertFromEntity = targetId;
+	a.fromItem = "hp";
+	a.fromCount = 3;
+	a.toItem = "";  // destroy HP
 	srv->sendAction(a);
 	srv->tick(1.0f / 60.0f);
 
@@ -1077,9 +1095,10 @@ static std::string t33_dropitem_deducts_inventory() {
 	if (stoneBefore < 1) return "no stone to drop";
 
 	ActionProposal a;
-	a.type = ActionProposal::DropItem;
+	a.type = ActionProposal::Relocate;
 	a.actorId = pid;
-	a.blockType = BlockType::Stone;
+	a.toGround = true;
+	a.itemId = BlockType::Stone;
 	a.itemCount = 1;
 	srv->sendAction(a);
 	srv->tick(1.0f / 60.0f);
@@ -1631,9 +1650,9 @@ static std::string b3_woodcutter_collects_and_deposits() {
     pythonBridge().unloadBehavior(handle);
 
     if (!errOut.empty()) return "decide() error: " + errOut;
-    // Should be heading to deposit (MoveTo or StoreItem)
-    if (action.type != BehaviorAction::MoveTo && action.type != BehaviorAction::StoreItem)
-        return "expected MoveTo/StoreItem when inventory full, got action type " +
+    // Should be heading to deposit (Move or Relocate)
+    if (action.type != BehaviorAction::Move && action.type != BehaviorAction::Relocate)
+        return "expected Move/Relocate when inventory full, got action type " +
                std::to_string((int)action.type) + " goal='" + goalOut + "'";
     return "";
 }
@@ -1672,11 +1691,11 @@ static std::string b4_store_item_server_validation() {
     // Teleport villager next to the chest entity
     villager->position = chestEnt->position + glm::vec3(1.5f, 0, 0);
 
-    // Send StoreItem action using entity ID (bypasses ownership — testing server handler)
+    // Send Relocate(toEntity) action using entity ID (bypasses ownership — testing server handler)
     ActionProposal sp;
-    sp.type = ActionProposal::StoreItem;
+    sp.type = ActionProposal::Relocate;
     sp.actorId = villager->id();
-    sp.targetEntity = chestEntityId;
+    sp.toEntity = chestEntityId;
     srv->sendActionDirect(sp);
     srv->tick(1.0f / 60.0f);
 

@@ -663,9 +663,7 @@ void Game::setupAfterConnect(GameState targetState) {
 	glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	m_camera.mode = CameraMode::FirstPerson;
 
-	// Start background music
-	if (!m_audio.musicPlaying())
-		m_audio.startMusic();
+	// Background music is off by default; player can enable via Ctrl+M or Settings.
 
 	glm::vec3 spawn = m_server->spawnPos();
 	m_camera.player.feetPos = spawn;
@@ -792,10 +790,11 @@ void Game::updatePlaying(float dt, float aspect) {
 			std::string itemId = pe->inventory ? pe->inventory->hotbar(slot) : "";
 			if (!itemId.empty() && pe->inventory->has(itemId)) {
 				ActionProposal drop;
-				drop.type = ActionProposal::DropItem;
+				drop.type = ActionProposal::Relocate;
 				drop.actorId = m_server->localPlayerId();
-				drop.blockType = itemId;
+				drop.itemId = itemId;
 				drop.itemCount = 1;
+				drop.toGround = true;
 				// Debug: gentle forward drop so item lands ~1.5 blocks ahead (in RPG camera view)
 				drop.desiredVel = m_debugCapture.active()
 					? glm::vec3(std::cos(glm::radians(pe->yaw)) * 1.0f, 1.5f,
@@ -934,10 +933,12 @@ void Game::updatePlaying(float dt, float aspect) {
 					float dist = glm::length(target->position - pe->position);
 					if (dist <= range) {
 						ActionProposal p;
-						p.type         = ActionProposal::Attack;
-						p.actorId      = pe->id();
-						p.targetEntity = attackId;
-						p.damage       = damage;
+						p.type              = ActionProposal::ConvertObject;
+						p.actorId           = pe->id();
+						p.convertFromEntity = attackId;
+						p.fromItem          = "hp";
+						p.fromCount         = (int)damage;
+						p.toItem            = "";  // destroy HP
 						m_server->sendAction(p);
 						m_renderer.triggerHitmarker(false);
 					}
@@ -955,9 +956,10 @@ void Game::updatePlaying(float dt, float aspect) {
 		m_dropCooldown -= dt;
 		if (m_controls.pressed(Action::DropItem) && !heldItem.empty() && pe->inventory->has(heldItem)) {
 			ActionProposal p;
-			p.type = ActionProposal::DropItem;
+			p.type = ActionProposal::Relocate;
 			p.actorId = m_server->localPlayerId();
-			p.blockType = heldItem;
+			p.toGround = true;
+			p.itemId = heldItem;
 			p.itemCount = 1;
 			// Toss toward where the camera is looking
 			p.desiredVel = m_camera.front() * 5.0f + glm::vec3(0, 3.0f, 0);
@@ -992,10 +994,10 @@ void Game::updatePlaying(float dt, float aspect) {
 				if (slotIt != art->fields.end()) {
 					printf("[Equip] '%s' → slot '%s'\n", heldItem.c_str(), slotIt->second.c_str());
 					ActionProposal p;
-					p.type = ActionProposal::EquipItem;
+					p.type = ActionProposal::Relocate;
 					p.actorId = m_server->localPlayerId();
-					p.slotIndex = slot;
-					p.blockType = slotIt->second;
+					p.itemId = heldItem;
+					p.equipSlot = slotIt->second;
 					m_server->sendAction(p);
 					// Metal items (sword, shield, helmet) use chain clink; others use cloth
 					bool isMetal = heldItem.find("sword") != std::string::npos
@@ -1009,19 +1011,27 @@ void Game::updatePlaying(float dt, float aspect) {
 
 		// Right-click: use/eat/drink item (on_use = consume)
 		// Only fires when not aiming at a block (block place takes priority).
+		m_useCooldown -= dt;
 		if (m_controls.pressed(Action::PlaceBlock) && !heldItem.empty()
-		    && pe->inventory->has(heldItem) && !m_gameplay.currentHit()) {
+		    && pe->inventory->has(heldItem) && !m_gameplay.currentHit()
+		    && m_useCooldown <= 0) {
 			const ArtifactEntry* art = m_artifacts.findById(heldItem);
 			if (art) {
 				auto usIt = art->fields.find("on_use");
 				if (usIt != art->fields.end() && usIt->second == "consume") {
+					// Read per-item cooldown so rapid clicks can't slip through
+					// before S_INVENTORY returns from the server
+					auto cit = art->fields.find("cooldown");
+					m_useCooldown = (cit != art->fields.end()) ? std::stof(cit->second) : 0.5f;
+
 					ActionProposal p;
-					p.type = ActionProposal::UseItem;
+					p.type = ActionProposal::ConvertObject;
 					p.actorId = m_server->localPlayerId();
-					p.slotIndex = slot;
-					// Pass effect_amount in damage field so server uses correct heal value
+					p.fromItem = heldItem;
+					p.fromCount = 1;
+					p.toItem = "hp";
 					auto eit = art->fields.find("effect_amount");
-					p.damage = (eit != art->fields.end()) ? std::stof(eit->second) : 4.0f;
+					p.toCount = (int)((eit != art->fields.end()) ? std::stof(eit->second) : 4.0f);
 					m_server->sendAction(p);
 					m_audio.play("item_consume", pe->position, 0.7f);
 
@@ -1074,9 +1084,9 @@ void Game::updatePlaying(float dt, float aspect) {
 			float dist = glm::length(e.position - pe->position);
 			if (dist < pickupRange) {
 				ActionProposal p;
-				p.type = ActionProposal::PickupItem;
+				p.type = ActionProposal::Relocate;
 				p.actorId = playerId;
-				p.targetEntity = e.id();
+				p.fromEntity = e.id();
 				srv.sendAction(p);
 				m_pendingPickups.insert(e.id());
 
@@ -2184,7 +2194,7 @@ void Game::updateEntityInspect(float dt, float aspect) {
 				ActionProposal reload;
 				reload.type = ActionProposal::ReloadBehavior;
 				reload.actorId = eid;
-				reload.blockType = code;
+				reload.behaviorSource = code;
 				m_server->sendAction(reload);
 				printf("[Inspect] Applied behavior to entity %u only\n", eid);
 			}
@@ -2203,7 +2213,7 @@ void Game::updateEntityInspect(float dt, float aspect) {
 						ActionProposal reload;
 						reload.type = ActionProposal::ReloadBehavior;
 						reload.actorId = e.id();
-						reload.blockType = code;
+						reload.behaviorSource = code;
 						m_server->sendAction(reload);
 					}
 				});
@@ -2291,7 +2301,7 @@ void Game::updateCodeEditor(float dt, float aspect) {
 		ActionProposal reload;
 		reload.type = ActionProposal::ReloadBehavior;
 		reload.actorId = eid;
-		reload.blockType = newCode; // reuse blockType field for source code
+		reload.behaviorSource = newCode; // reuse blockType field for source code
 		m_server->sendAction(reload);
 		printf("[CodeEditor] Behavior reload sent for entity %u\n", eid);
 

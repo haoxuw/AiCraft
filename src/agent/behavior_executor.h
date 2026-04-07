@@ -30,9 +30,7 @@ struct AgentBehaviorState {
 	BehaviorAction currentAction;
 	float decideTimer = 0;
 	float wanderYaw = 0;
-	// One-shot actions (DropItem, BreakBlock) queued by decide(), sent once, then cleared.
-	// Continuous actions (Move) are derived from currentAction every tick.
-	std::vector<ActionProposal> pendingOneShots;
+	bool justDecided = false;  // true for the one tick immediately after decide() fires
 };
 
 // Block query function: returns block type string at world position
@@ -57,31 +55,21 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 		e.yaw += diff * std::min(dt * TURN_SPEED, 1.0f);
 	};
 
-	ActionProposal p;
-	p.type = ActionProposal::Move;
-	p.actorId = e.id();
-	p.desiredVel = {0, 0, 0};
-
 	switch (action.type) {
-	case BehaviorAction::Idle:
+	case BehaviorAction::Idle: {
+		// Friction stop
+		ActionProposal p;
+		p.type = ActionProposal::Move;
+		p.actorId = e.id();
 		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
-		break;
-
-	case BehaviorAction::Wander: {
-		if (action.param > 0.5f) {
-			unsigned int seed = (unsigned int)(e.id() * 2654435761u +
-				(unsigned int)(e.getProp<float>(Prop::Age, 0.0f) * 100));
-			seed ^= seed >> 16;
-			float r = (float)(seed & 0xFFFF) / 65535.0f;
-			state.wanderYaw = e.yaw + (r - 0.5f) * 120.0f;
-		}
-		smoothYaw(state.wanderYaw);
-		float rad = glm::radians(e.yaw);
-		p.desiredVel = {std::cos(rad) * action.speed, 0, std::sin(rad) * action.speed};
+		out.push_back(p);
 		break;
 	}
 
-	case BehaviorAction::MoveTo: {
+	case BehaviorAction::Move: {
+		ActionProposal p;
+		p.type = ActionProposal::Move;
+		p.actorId = e.id();
 		glm::vec3 dir = action.targetPos - e.position;
 		dir.y = 0;
 		float dist = glm::length(dir);
@@ -90,114 +78,72 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 			smoothYaw(glm::degrees(std::atan2(dir.z, dir.x)));
 			float rad = glm::radians(e.yaw);
 			p.desiredVel = {std::cos(rad) * action.speed, 0, std::sin(rad) * action.speed};
+		} else {
+			p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
 		}
+		out.push_back(p);
 		break;
 	}
 
-	case BehaviorAction::Follow: {
-		glm::vec3 dir = action.targetPos - e.position;
-		dir.y = 0;
-		float dist = glm::length(dir);
-		float minDist = std::max(action.param, 1.5f);
-		if (dist > minDist) {
-			dir /= dist;
-			smoothYaw(glm::degrees(std::atan2(dir.z, dir.x)));
-			float rad = glm::radians(e.yaw);
-			p.desiredVel = {std::cos(rad) * action.speed, 0, std::sin(rad) * action.speed};
-		}
+	case BehaviorAction::Relocate: {
+		// One-shot action — also produce a friction stop
+		ActionProposal stop;
+		stop.type = ActionProposal::Move;
+		stop.actorId = e.id();
+		stop.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+		out.push_back(stop);
+
+		ActionProposal p;
+		p.type = ActionProposal::Relocate;
+		p.actorId = e.id();
+		p.fromEntity = action.fromEntity;
+		p.toEntity = action.toEntity;
+		p.toGround = action.toGround;
+		p.itemId = action.itemId;
+		p.itemCount = action.itemCount;
+		p.equipSlot = action.equipSlot;
+		out.push_back(p);
 		break;
 	}
 
-	case BehaviorAction::Flee: {
-		glm::vec3 dir = e.position - action.targetPos;
-		dir.y = 0;
-		float dist = glm::length(dir);
-		if (dist > 0.1f) {
-			dir /= dist;
-			smoothYaw(glm::degrees(std::atan2(dir.z, dir.x)));
-		}
-		float rad = glm::radians(e.yaw);
-		p.desiredVel = {std::cos(rad) * action.speed, 0, std::sin(rad) * action.speed};
+	case BehaviorAction::ConvertObject: {
+		ActionProposal stop;
+		stop.type = ActionProposal::Move;
+		stop.actorId = e.id();
+		stop.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+		out.push_back(stop);
+
+		ActionProposal p;
+		p.type = ActionProposal::ConvertObject;
+		p.actorId = e.id();
+		p.fromItem = action.fromItem;
+		p.fromCount = action.fromCount;
+		p.toItem = action.toItem;
+		p.toCount = action.toCount;
+		p.blockPos = action.blockPos;
+		p.convertFromBlock = action.convertFromBlock;
+		p.convertToBlock = action.convertToBlock;
+		p.convertDirect = action.convertDirect;
+		p.convertFromEntity = action.convertFromEntity;
+		out.push_back(p);
 		break;
 	}
 
-	case BehaviorAction::LookAt: {
-		glm::vec3 dir = action.targetPos - e.position;
-		if (glm::length(glm::vec2(dir.x, dir.z)) > 0.01f)
-			smoothYaw(glm::degrees(std::atan2(dir.z, dir.x)));
-		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+	case BehaviorAction::InteractBlock: {
+		ActionProposal stop;
+		stop.type = ActionProposal::Move;
+		stop.actorId = e.id();
+		stop.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+		out.push_back(stop);
+
+		ActionProposal p;
+		p.type = ActionProposal::InteractBlock;
+		p.actorId = e.id();
+		p.blockPos = action.blockPos;
+		out.push_back(p);
 		break;
 	}
-
-	case BehaviorAction::Attack:
-		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
-		break;
-
-	case BehaviorAction::BreakBlock:
-		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
-		break;
-
-	case BehaviorAction::DropItem:
-		// One-shot actions are handled by extractOneShots(), not here.
-		// Just produce a friction Move so the entity doesn't keep walking.
-		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
-		break;
-
-	case BehaviorAction::PickupItem:
-		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
-		break;
-
-	case BehaviorAction::StoreItem:
-		// One-shot — handled by extractOneShots(). Just apply friction here.
-		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
-		break;
 	} // end switch
-
-	out.push_back(p);
-}
-
-// Extract one-shot actions from a BehaviorAction. Called ONCE per decide(),
-// results queued in AgentBehaviorState::pendingOneShots and sent exactly once.
-inline void extractOneShots(const Entity& e, const BehaviorAction& action,
-                            std::vector<ActionProposal>& out) {
-	switch (action.type) {
-	case BehaviorAction::BreakBlock: {
-		ActionProposal bp;
-		bp.type = ActionProposal::BreakBlock;
-		bp.actorId = e.id();
-		bp.blockPos = glm::ivec3((int)action.targetPos.x,
-		                         (int)action.targetPos.y,
-		                         (int)action.targetPos.z);
-		out.push_back(bp);
-		break;
-	}
-	case BehaviorAction::DropItem: {
-		ActionProposal dp;
-		dp.type = ActionProposal::DropItem;
-		dp.actorId = e.id();
-		dp.blockType = action.itemType;
-		dp.itemCount = action.itemCount;
-		out.push_back(dp);
-		break;
-	}
-	case BehaviorAction::PickupItem: {
-		ActionProposal pp;
-		pp.type = ActionProposal::PickupItem;
-		pp.actorId = e.id();
-		pp.targetEntity = action.targetEntity;
-		out.push_back(pp);
-		break;
-	}
-	case BehaviorAction::StoreItem: {
-		ActionProposal sp;
-		sp.type = ActionProposal::StoreItem;
-		sp.actorId = e.id();
-		sp.targetEntity = action.targetEntity;
-		out.push_back(sp);
-		break;
-	}
-	default: break;
-	}
 }
 
 // Gather nearby entity info from a local entity cache.

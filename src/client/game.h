@@ -181,6 +181,7 @@ private:
 	AttackAnimPlayer m_attackAnim;
 	std::string      m_comboItemId;  // tracks held item to reload combo on change
 	float m_dropCooldown = 0;        // prevents auto-pickup right after dropping
+	float m_useCooldown  = 0;        // per-item consume cooldown (read from artifact "cooldown")
 	float m_attackCD = 0;            // per-item attack cooldown
 	std::vector<PickupAnim> m_pickupAnims;
 

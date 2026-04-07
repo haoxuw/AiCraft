@@ -11,7 +11,7 @@ item = {
     "on_equip": None,          # not equippable
     "on_interact": None,       # no entity interaction
     "effect": "heal",
-    "effect_amount": 10,
+    "effect_amount": 5,   # material value of potion = 5; hp value = 1 each → heals 5
 
     "model": "potion",
     "color": [0.8, 0.2, 0.3],

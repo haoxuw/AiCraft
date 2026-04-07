@@ -14,7 +14,7 @@ Entity props (optional):
   home_radius   — max wander distance from spawn (default 25)
 """
 import random
-from modcraft_engine import Idle, Wander, Flee, MoveTo, DropItem
+from modcraft_engine import Idle, Wander, Flee, MoveTo, ConvertObject
 from behavior_base import Behavior
 
 EGG_COOLDOWN = 10.0
@@ -82,9 +82,13 @@ class PeckBehavior(Behavior):
             closest = min(threats, key=lambda e: e["distance"])
             if not self._was_startled and self._egg_cooldown <= 0:
                 self._was_startled = True
-                if random.random() < EGG_CHANCE:
+                if random.random() < EGG_CHANCE and entity["hp"] > 2:
                     self._egg_cooldown = EGG_COOLDOWN
-                    return DropItem("base:egg", 1), "BAWK!! *lays egg!*"
+                    # Convert 2 HP (value 2) → 1 egg (value 1): value decreases, always valid
+                    return (ConvertObject(from_item="hp", from_count=2,
+                                         to_item="base:egg", to_count=1,
+                                         convert_direct=False),
+                            "BAWK!! *lays egg!*")
             return Flee(closest["id"], speed=6.0), "BAWK!! Scattering!"
 
         self._was_startled = False

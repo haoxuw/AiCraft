@@ -8,7 +8,7 @@ GAME_PORT :=
 WEB_PORT := 8080
 EMSDK := $(HOME)/emsdk
 
-.PHONY: game build configure clean server client stop test_e2e web web-build web-configure web-clean
+.PHONY: game build configure clean server client stop test_e2e web web-build web-configure web-clean proxy
 
 # ── Native ─────────────────────────────────────────────────
 #
@@ -20,6 +20,7 @@ EMSDK := $(HOME)/emsdk
 #   make client               Open GUI → "Start game" or "Join a game" from menu
 #   make client HOST=X PORT=N Open GUI with server pre-filled in "Join a game" tab
 #   make stop                 Kill all modcraft processes
+#   make proxy                HTTP→TCP action proxy with Swagger UI on :8088
 #
 # Multiplayer (separate terminals):
 #   Terminal 1: make server PORT=7777
@@ -68,6 +69,14 @@ configure:
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# Action proxy: HTTP → TCP bridge with Swagger UI
+# Usage: make proxy  (connects automatically if server is already running)
+# Then open: http://localhost:8088/docs
+PROXY_PORT := 8088
+proxy:
+	python3 tools/action_proxy.py --server-host 127.0.0.1 --server-port $(PORT) \
+	    --proxy-port $(PROXY_PORT) --auto-connect
 
 # ── Web (WASM + WebGL) ────────────────────────────────────
 

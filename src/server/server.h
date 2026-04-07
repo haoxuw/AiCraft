@@ -32,6 +32,20 @@ namespace modcraft {
 
 using ClientId = uint32_t;
 
+// Rejection codes logged when server rejects an action proposal.
+// Stored as uint32_t in log output for fast filtering without string allocation.
+enum class ActionRejectCode : uint32_t {
+	ValueConservationViolated = 1,
+	ItemNotInInventory        = 2,
+	SourceEntityGone          = 3,
+	SourceBlockGone           = 4,
+	SourceBlockTypeMismatch   = 5,
+	PlacementTargetOccupied   = 6,
+	UnknownBlockType          = 7,
+	ChunkNotLoaded            = 8,
+	PickupOutOfRange          = 9,
+};
+
 // Server-side callbacks — used by dedicated server (main_server.cpp) to broadcast
 // world state changes to all connected clients over TCP.
 struct ServerCallbacks {
@@ -374,7 +388,7 @@ public:
 		               (it->second.controlledEntities.count(actor) > 0);
 
 		if (action.type == ActionProposal::Move) {
-			// Move: GUI clients may RTS-command any entity; agents only move assigned entities
+			// MoveTo: GUI clients may RTS-command any entity; agents only move assigned entities
 			if (!isOwned && it->second.isAgent) {
 				return;
 			}

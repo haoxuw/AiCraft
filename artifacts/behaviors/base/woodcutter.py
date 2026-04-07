@@ -32,7 +32,8 @@ Entity props (set by server at spawn):
   chest_x, chest_y, chest_z — chest to deposit in (falls back to home)
   work_radius               — max tree search distance (default 80)
   max_radius                — distance before returning home (default 100)
-  collect_goal              — logs to collect before depositing (default 3)
+  collect_goal              — logs to collect before depositing (default 5)
+  item_search_radius        — how far to look for dropped items (default 25)
 """
 import random
 from modcraft_engine import Idle, Wander, MoveTo, BreakBlock, PickupItem, StoreItem
@@ -96,9 +97,10 @@ class WoodcutterBehavior(Behavior):
             if ceid is not None:
                 self._chest_entity_id = int(ceid)
 
-        work_radius  = float(entity.get("work_radius",  80))
-        max_radius   = float(entity.get("max_radius",  100))
-        collect_goal = int(entity.get("collect_goal",    3))
+        work_radius        = float(entity.get("work_radius",        80))
+        max_radius         = float(entity.get("max_radius",        100))
+        collect_goal       = int(entity.get("collect_goal",          5))
+        item_search_radius = float(entity.get("item_search_radius",  25))
         spd          = entity["walk_speed"]
 
         dist_home  = self.dist2d(entity["x"], entity["z"],
@@ -201,17 +203,18 @@ class WoodcutterBehavior(Behavior):
                         "Heading back (%dm from home)" % int(dist_home))
 
         # ── Opportunistic item pickup ─────────────────────────────────────────
+        # Search within item_search_radius (default 25) to catch logs that fell
+        # from treetops.  Walk within 5 blocks so the server accepts the pickup
+        # (server-wide pickupRange defaults to 16; 5 blocks is a safe margin).
         items = [e for e in world["nearby"]
-                 if e["category"] == "item" and e["distance"] < 6]
+                 if e["category"] == "item" and e["distance"] < item_search_radius]
         if items:
             closest = min(items, key=lambda e: e["distance"])
-            if closest["distance"] < 1.4:
-                # Within server pickup range — grab it
+            if closest["distance"] < 5.0:
                 return PickupItem(closest["id"]), "Picking up item"
             else:
-                # Walk toward the item to get in range
                 return (MoveTo(closest["x"], closest["y"], closest["z"], speed=spd),
-                        "Moving to item")
+                        "Moving to item (%dm)" % int(closest["distance"]))
 
         # ── Greet nearby players (very brief, never interrupts a locked goal) ─
         if self._state == "searching" and self._timer <= 0:

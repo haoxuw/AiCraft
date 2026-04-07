@@ -251,7 +251,7 @@ public:
 			if (it == m_clients.end()) continue;
 			net::WriteBuffer wb;
 			wb.writeU32(reload.actorId);
-			wb.writeString(reload.blockType);
+			wb.writeString(reload.behaviorSource);
 			net::sendMessage(it->second.fd, net::S_RELOAD_BEHAVIOR, wb);
 			printf("[Server] Forwarded behavior reload for entity %u to %s\n",
 				reload.actorId, it->second.label().c_str());

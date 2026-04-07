@@ -974,8 +974,8 @@ private:
 				ImGui::Text("Break Hits (Survival): 3");
 				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Items");
-				ImGui::SliderFloat("Max Pickup Range", &m_worldGenConfig.pickupRange, 0.5f, 5.0f, "%.1f blocks");
-				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "  (Server anti-cheat cap. Character pickup range from Python def.)");
+				ImGui::SliderFloat("Max Pickup Range", &m_worldGenConfig.pickupRange, 0.5f, 30.0f, "%.1f blocks");
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "  (Server-wide cap. Villagers need ~16 to pick up logs from tall trees.)");
 				ImGui::Text("Despawn Time: 300s");
 				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "TNT");

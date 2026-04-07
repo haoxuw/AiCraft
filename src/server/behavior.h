@@ -33,27 +33,37 @@ class EntityManager;
 
 struct BehaviorAction {
 	enum Type {
-		Idle,       // stand still
-		Wander,     // random walk in current area
-		MoveTo,     // walk toward targetPos
-		LookAt,     // rotate to face targetPos
-		Follow,     // move toward targetEntity
-		Flee,       // move away from targetEntity/targetPos
-		Attack,     // damage targetEntity (future)
-		BreakBlock, // break block at targetPos (x,y,z)
-		DropItem,   // drop an item at entity's feet (itemType, itemCount)
-		PickupItem, // pick up item entity targetEntity
-		StoreItem,  // deposit all inventory items into chest entity (targetEntity)
+		Idle,           // stand still
+		Move,           // walk toward targetPos (any owned entity)
+		Relocate,       // move item between inventories
+		ConvertObject,  // transform items (toItem="" = destroy; value must not increase)
+		InteractBlock,  // toggle block state (door/button/TNT)
 	};
 
 	Type type = Idle;
-	glm::vec3 targetPos = {0, 0, 0};
-	// chestPos removed — StoreItem uses targetEntity (chest entity ID) instead.
-	EntityId targetEntity = ENTITY_NONE;
-	float speed = 2.0f;    // movement speed (multiplied by agility)
-	float param = 0.0f;    // action-specific: damage, radius, duration
-	std::string itemType;  // for DropItem: item to drop (e.g. "base:egg")
-	int itemCount = 1;     // for DropItem: how many to drop
+	glm::vec3 targetPos = {0, 0, 0};  // for Move: destination
+	float speed = 2.0f;
+
+	// Relocate
+	EntityId fromEntity = ENTITY_NONE;
+	EntityId toEntity = ENTITY_NONE;
+	bool toGround = false;
+	std::string itemId;
+	int itemCount = 1;
+	std::string equipSlot;
+
+	// ConvertObject
+	std::string fromItem;
+	int fromCount = 1;
+	std::string toItem;               // empty = destroy (value decreases, always ok)
+	int toCount = 1;
+	glm::ivec3 blockPos = {0, 0, 0};
+	bool convertFromBlock = false;
+	bool convertToBlock = false;
+	bool convertDirect = true;
+	EntityId convertFromEntity = ENTITY_NONE; // target entity (e.g. attack: target's HP)
+
+	// InteractBlock (reuses blockPos)
 };
 
 // ================================================================
@@ -142,7 +152,7 @@ struct BehaviorState {
 	std::unique_ptr<Behavior> behavior;
 	BehaviorAction currentAction;
 	float decideTimer = 0.0f;
-	float wanderYaw = 0.0f;     // used by action executor for smooth turning
+	float wanderYaw = 0.0f;  // kept for smooth turning in MoveTo
 };
 
 // ================================================================

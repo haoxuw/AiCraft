@@ -161,36 +161,70 @@ private:
 inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	buf.writeU32((uint32_t)a.type);
 	buf.writeU32(a.actorId);
+	// Move
 	buf.writeVec3(a.desiredVel);
 	buf.writeBool(a.jump);
 	buf.writeBool(a.fly);
 	buf.writeF32(a.jumpVelocity);
-	buf.writeIVec3(a.blockPos);
-	buf.writeString(a.blockType);
-	buf.writeI32(a.slotIndex);
-	buf.writeU32(a.targetEntity);
-	buf.writeF32(a.damage);
 	buf.writeF32(a.lookPitch);
 	buf.writeF32(a.lookYaw);
 	buf.writeString(a.goalText);
+	// Relocate
+	buf.writeU32(a.fromEntity);
+	buf.writeU32(a.toEntity);
+	buf.writeBool(a.toGround);
+	buf.writeString(a.itemId);
+	buf.writeI32(a.itemCount);
+	buf.writeString(a.equipSlot);
+	// ConvertObject
+	buf.writeString(a.fromItem);
+	buf.writeI32(a.fromCount);
+	buf.writeString(a.toItem);
+	buf.writeI32(a.toCount);
+	buf.writeIVec3(a.blockPos);
+	buf.writeBool(a.convertFromBlock);
+	buf.writeBool(a.convertToBlock);
+	buf.writeBool(a.convertDirect);
+	buf.writeU32(a.convertFromEntity);
+	// ReloadBehavior
+	buf.writeString(a.behaviorSource);
 }
 
 inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	ActionProposal a;
 	a.type = (ActionProposal::Type)buf.readU32();
 	a.actorId = buf.readU32();
+	// Move
 	a.desiredVel = buf.readVec3();
 	a.jump = buf.readBool();
 	a.fly = buf.readBool();
 	a.jumpVelocity = buf.readF32();
-	a.blockPos = buf.readIVec3();
-	a.blockType = buf.readString();
-	a.slotIndex = buf.readI32();
-	a.targetEntity = buf.readU32();
-	a.damage = buf.readF32();
-	if (buf.hasMore()) a.lookPitch = buf.readF32();
-	if (buf.hasMore()) a.lookYaw   = buf.readF32();
-	if (buf.hasMore()) a.goalText  = buf.readString();
+	a.lookPitch = buf.readF32();
+	a.lookYaw   = buf.readF32();
+	a.goalText  = buf.readString();
+	// Relocate
+	if (!buf.hasMore()) return a;
+	a.fromEntity = buf.readU32();
+	a.toEntity   = buf.readU32();
+	a.toGround   = buf.readBool();
+	a.itemId     = buf.readString();
+	a.itemCount  = buf.readI32();
+	a.equipSlot  = buf.readString();
+	// ConvertObject
+	if (!buf.hasMore()) return a;
+	a.fromItem          = buf.readString();
+	a.fromCount         = buf.readI32();
+	a.toItem            = buf.readString();
+	a.toCount           = buf.readI32();
+	a.blockPos          = buf.readIVec3();
+	a.convertFromBlock  = buf.readBool();
+	a.convertToBlock    = buf.readBool();
+	a.convertDirect     = buf.readBool();
+	if (!buf.hasMore()) return a;
+	a.convertFromEntity = buf.readU32();
+	// ReloadBehavior
+	if (!buf.hasMore()) return a;
+	a.behaviorSource = buf.readString();
 	return a;
 }
 

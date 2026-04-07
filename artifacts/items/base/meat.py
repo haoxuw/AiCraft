@@ -11,7 +11,7 @@ item = {
     "on_equip": None,
     "on_interact": None,
     "effect": "heal",
-    "effect_amount": 4,
+    "effect_amount": 3,   # material value of meat = 3; hp value = 1 each → heals 3
 
     "color": [0.72, 0.22, 0.14],
 }

@@ -42,7 +42,7 @@ struct WorldGenConfig {
 	std::unordered_map<std::string, std::vector<std::pair<std::string, int>>> startingItems;
 
 	// Gameplay tuning
-	float pickupRange = 1.5f;  // how close player must be to pick up items (blocks)
+	float pickupRange = 16.0f; // server-wide max distance any entity can pick up items (blocks)
 };
 
 } // namespace modcraft

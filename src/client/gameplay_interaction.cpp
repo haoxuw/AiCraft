@@ -121,7 +121,7 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 				ActionProposal p;
 				p.actorId = player.id();
 				p.blockPos = bp;
-				p.type = ActionProposal::IgniteTNT;
+				p.type = ActionProposal::InteractBlock;
 				m_breakCD = 0.3f;
 				server.sendAction(p);
 			} else if (state == GameState::ADMIN) {
@@ -129,7 +129,13 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 				ActionProposal p;
 				p.actorId = player.id();
 				p.blockPos = bp;
-				p.type = ActionProposal::BreakBlock;
+				p.type = ActionProposal::ConvertObject;
+				p.fromItem = bdef.string_id;
+				p.toItem = bdef.drop.empty() ? bdef.string_id : bdef.drop;
+				p.fromCount = 1;
+				p.toCount = 1;
+				p.convertFromBlock = true;
+				p.convertDirect = false;
 				m_breakCD = 0.15f;
 				server.sendAction(p);
 			} else {
@@ -153,7 +159,13 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 					ActionProposal p;
 					p.actorId = player.id();
 					p.blockPos = bp;
-					p.type = ActionProposal::BreakBlock;
+					p.type = ActionProposal::ConvertObject;
+					p.fromItem = bdef.string_id;
+					p.toItem = bdef.drop.empty() ? bdef.string_id : bdef.drop;
+					p.fromCount = 1;
+					p.toCount = 1;
+					p.convertFromBlock = true;
+					p.convertDirect = false;
 					server.sendAction(p);
 					m_breaking.active = false;
 					m_breaking.hits = 0;
@@ -190,9 +202,15 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 				if (!blockType.empty() && player.inventory->has(blockType)) {
 					ActionProposal p;
 					p.actorId = player.id();
-					p.type = ActionProposal::PlaceBlock;
+					p.type = ActionProposal::ConvertObject;
 					p.blockPos = m_hit->placePos;
-					p.blockType = blockType;
+					p.fromItem = blockType;
+					p.toItem = blockType;
+					p.fromCount = 1;
+					p.toCount = 1;
+					p.convertFromBlock = false;
+					p.convertToBlock = true;
+					p.convertDirect = true;
 					server.sendAction(p);
 					m_breakCD = 0.25f;
 					m_placeEvent.happened = true;

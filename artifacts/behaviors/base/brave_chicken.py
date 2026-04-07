@@ -21,7 +21,7 @@ Tree structure:
   ELSE                           → Wander
 """
 import random
-from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo, DropItem
+from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo, ConvertObject
 from behavior_base import Behavior
 
 
@@ -80,9 +80,13 @@ class BraveChickenBehavior(Behavior):
         for e in world["nearby"]:
             if e["category"] == "player":
                 if e["distance"] < 3 and self._egg_cooldown <= 0 \
-                        and random.random() < 0.15:
+                        and random.random() < 0.15 and entity["hp"] > 2:
                     self._egg_cooldown = 8.0
-                    return DropItem("base:egg", 1), "*happy cluck* Laid an egg!"
+                    # Convert 2 HP (value 2) → 1 egg (value 1): value decreases, always valid
+                    return (ConvertObject(from_item="hp", from_count=2,
+                                         to_item="base:egg", to_count=1,
+                                         convert_direct=False),
+                            "*happy cluck* Laid an egg!")
                 if e["distance"] > 3:
                     return Follow(e["id"], speed=3.0, min_distance=2.0), "Following player"
                 return Idle(), "Sitting by player"

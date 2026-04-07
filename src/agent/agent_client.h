@@ -160,6 +160,7 @@ public:
 
 				BehaviorWorldView view{e, nearby, blocks, dt, m_worldTime};
 				state.currentAction = state.behavior->decide(view);
+				state.justDecided = true;
 
 				// Log only when goal differs from the last LOGGED goal for this entity
 				if (!e.goalText.empty() && e.goalText != m_lastLoggedGoal[eid]) {
@@ -176,29 +177,23 @@ public:
 					printf("[%s][Agent:%s] %s #%u: %s\n",
 						ts, m_name.c_str(), typeName.c_str(), eid, e.goalText.c_str());
 				}
-
-				// Extract one-shot actions (DropItem, BreakBlock) — sent exactly once
-				extractOneShots(e, state.currentAction, state.pendingOneShots);
 			}
 
-			// Send pending one-shot actions (queued by decide, drained here)
-			for (auto& p : state.pendingOneShots) {
-				net::WriteBuffer wb;
-				net::serializeAction(wb, p);
-				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
+			// One-shot actions (Relocate, ConvertObject, InteractBlock): send only on new decision.
+			// Move/Idle: send every tick for smooth 50Hz movement.
+			bool isOneShot = (state.currentAction.type != BehaviorAction::Move &&
+			                  state.currentAction.type != BehaviorAction::Idle);
+			if (!isOneShot || state.justDecided) {
+				std::vector<ActionProposal> proposals;
+				behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
+				for (auto& p : proposals) {
+					p.goalText = e.goalText;
+					net::WriteBuffer wb;
+					net::serializeAction(wb, p);
+					net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
+				}
 			}
-			state.pendingOneShots.clear();
-
-			// Send continuous Move action every tick (smooth movement at 50Hz)
-			// Attach current goal text so the server can broadcast it to clients.
-			std::vector<ActionProposal> moveProposals;
-			behaviorToActionProposals(e, state, state.currentAction, dt, moveProposals);
-			for (auto& p : moveProposals) {
-				p.goalText = e.goalText;
-				net::WriteBuffer wb;
-				net::serializeAction(wb, p);
-				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
-			}
+			state.justDecided = false;
 		}
 
 		// Periodic heartbeat: show all controlled entities and their current goal
