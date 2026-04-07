@@ -277,43 +277,50 @@ public:
 			}
 
 			// Entity + time broadcast — always fires regardless of pending chunks
-			if (client.pendingChunks.empty()) {
-				m_server.world().entities.forEach([&](Entity& e) {
-					bool visible = false;
-					for (auto& vp : viewPoints) {
-						if (glm::dot(e.position - vp, e.position - vp) <= PERCEPTION_R2) {
-							visible = true; break;
-						}
+			m_server.world().entities.forEach([&](Entity& e) {
+				bool visible = false;
+				for (auto& vp : viewPoints) {
+					if (glm::dot(e.position - vp, e.position - vp) <= PERCEPTION_R2) {
+						visible = true; break;
 					}
-					if (!visible) return;
+				}
+				if (!visible) return;
 
-					net::EntityState es;
-					es.id = e.id(); es.typeId = e.typeId();
-					es.position = e.position; es.velocity = e.velocity;
-					es.yaw = e.yaw; es.pitch = e.pitch; es.onGround = e.onGround;
-					es.goalText = e.goalText;
-					es.characterSkin = e.getProp<std::string>("character_skin", "");
-					es.hp = e.hp(); es.maxHp = e.def().max_hp;
-					for (auto& [key, val] : e.props()) {
-						if (auto* s = std::get_if<std::string>(&val))
-							es.stringProps.push_back({key, *s});
-					}
+				net::EntityState es;
+				es.id = e.id(); es.typeId = e.typeId();
+				es.position = e.position; es.velocity = e.velocity;
+				es.yaw = e.yaw; es.pitch = e.pitch; es.onGround = e.onGround;
+				es.goalText = e.goalText;
+				es.characterSkin = e.getProp<std::string>("character_skin", "");
+				es.hp = e.hp(); es.maxHp = e.def().max_hp;
+				for (auto& [key, val] : e.props()) {
+					if (auto* s = std::get_if<std::string>(&val))
+						es.stringProps.push_back({key, *s});
+				}
 
-					net::WriteBuffer wb;
-					net::serializeEntityState(wb, es);
-					net::sendMessage(client.fd, net::S_ENTITY, wb);
-				});
+				net::WriteBuffer wb;
+				net::serializeEntityState(wb, es);
+				net::sendMessage(client.fd, net::S_ENTITY, wb);
+			});
 
-				net::WriteBuffer tb;
-				tb.writeF32(m_server.worldTime());
-				net::sendMessage(client.fd, net::S_TIME, tb);
-			}
+			net::WriteBuffer tb;
+			tb.writeF32(m_server.worldTime());
+			net::sendMessage(client.fd, net::S_TIME, tb);
 
 			// Chunk streaming — two-tier: near (priority) then far (opportunistic).
 			// Near tier covers the full view frustum so the player never sees void.
 			// Far tier loads distant terrain (mountains, vistas) when near is caught up.
-			if (pe) {
-				auto cp = worldToChunk((int)pe->position.x, (int)pe->position.y, (int)pe->position.z);
+			// For agent clients, use the controlled entity's position as viewpoint.
+			Entity* streamAnchor = pe;
+			if (!streamAnchor && client.isAgent && !viewPoints.empty()) {
+				// Agent client: find first controlled entity to use as chunk stream anchor
+				for (auto eid : m_server.getControlledEntities(cid)) {
+					streamAnchor = m_server.world().entities.get(eid);
+					if (streamAnchor) break;
+				}
+			}
+			if (streamAnchor) {
+				auto cp = worldToChunk((int)streamAnchor->position.x, (int)streamAnchor->position.y, (int)streamAnchor->position.z);
 
 				// Dynamic vertical range: when flying, terrain is many chunk-heights below.
 				// Cover from ground level (chunk Y=0) up to 3 chunks above player.
@@ -323,7 +330,7 @@ public:
 				int dyMax = 3;
 
 				// Surface chunk Y for this player's XZ column (used for eviction)
-				int groundY  = (int)m_server.world().surfaceHeight((float)pe->position.x, (float)pe->position.z);
+				int groundY  = (int)m_server.world().surfaceHeight((float)streamAnchor->position.x, (float)streamAnchor->position.z);
 				int groundChunkY = groundY / CHUNK_SIZE;
 
 				// Evict far chunks when the player moves to a new chunk column
@@ -335,8 +342,8 @@ public:
 				// 3-D look direction for view-biased chunk priority.
 				// When pitching down (looking at a valley from a cliff), fwdY < 0
 				// so chunks below the player get a lower (better) biasedDist.
-				float yaw_rad   = glm::radians(pe->yaw);
-				float pitch_rad = glm::radians(std::clamp(pe->pitch, -89.0f, 89.0f));
+				float yaw_rad   = glm::radians(streamAnchor->yaw);
+				float pitch_rad = glm::radians(std::clamp(streamAnchor->pitch, -89.0f, 89.0f));
 				float cosPitch  = std::cos(pitch_rad);
 				float fwdX = std::cos(yaw_rad) * cosPitch;
 				float fwdY = -std::sin(pitch_rad);   // negative pitch = looking down
@@ -684,19 +691,34 @@ private:
 				creatureType.empty() ? "default" : creatureType.c_str());
 
 			// Queue initial world chunks now that the human player is confirmed.
-			// (Delayed from acceptConnections to avoid wasting bandwidth on bots
-			// and clients that disconnect before identifying.)
-			// Use STREAM_R so the initial load covers the full view distance.
+			// Sorted nearest-first so the player sees terrain under their feet
+			// immediately, not far corners of the load radius first.
 			{
+				Entity* pe2 = m_server.world().entities.get(client.playerId);
+				float yaw2 = pe2 ? pe2->yaw : 0.0f;
+				float yrad2 = glm::radians(yaw2);
+				float fx2 = std::cos(yrad2), fz2 = std::sin(yrad2);
+
 				const int R = ConnectedClient::STREAM_R;
+				struct IC { ChunkPos pos; int dist; };
+				std::vector<IC> init;
+				init.reserve((2*R+1) * (2*R+1) * 4);
 				for (int dy = -1; dy <= 2; dy++)
 				for (int dz = -R; dz <= R; dz++)
-				for (int dx = -R; dx <= R; dx++)
-					queueChunk(client, {client.lastChunkPos.x + dx,
-					                    client.lastChunkPos.y + dy,
-					                    client.lastChunkPos.z + dz});
+				for (int dx = -R; dx <= R; dx++) {
+					int base = std::abs(dx) + std::abs(dz) + std::abs(dy) * 2;
+					float dot = fx2 * dx + fz2 * dz;
+					int biased = base - (int)(dot * 1.5f);
+					init.push_back({{client.lastChunkPos.x + dx,
+					                 client.lastChunkPos.y + dy,
+					                 client.lastChunkPos.z + dz}, biased});
+				}
+				std::sort(init.begin(), init.end(),
+				          [](const IC& a, const IC& b){ return a.dist < b.dist; });
+				for (auto& ic : init)
+					queueChunk(client, ic.pos);
 			}
-			printf("[Server] %s: queued %zu initial chunks\n",
+			printf("[Server] %s: queued %zu initial chunks (sorted nearest-first)\n",
 				client.label().c_str(), client.pendingChunks.size());
 			break;
 		}
