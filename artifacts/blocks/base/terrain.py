@@ -68,6 +68,14 @@ blocks = [
         "color_side": [0.40, 0.28, 0.12],
     },
     {
+        "id": "base:trunk",
+        "name": "Trunk",
+        "solid": True,
+        "hardness": 2.0,
+        "color_top": [0.40, 0.30, 0.18],    # end-grain darker
+        "color_side": [0.55, 0.40, 0.22],   # same as wood side
+    },
+    {
         "id": "base:leaves",
         "name": "Leaves",
         "solid": True,

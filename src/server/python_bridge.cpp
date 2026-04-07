@@ -202,6 +202,13 @@ bool PythonBridge::init(const std::string& pythonPath) {
 		// Force line-buffered stdout so Python print() flushes immediately
 		// (needed when agent stdout is piped through to server log)
 		sys.attr("stdout").attr("reconfigure")(py::arg("line_buffering") = true);
+
+		// Cache LocalWorld and SelfEntity pydantic classes so we don't re-import
+		// local_world on every callDecide() tick.
+		auto localWorldMod = py::module_::import("local_world");
+		m_localWorldClass = new py::object(localWorldMod.attr("LocalWorld"));
+		m_selfEntityClass = new py::object(localWorldMod.attr("SelfEntity"));
+
 		m_initialized = true;
 		printf("[PythonBridge] Initialized. Python path: %s\n", pythonPath.c_str());
 		return true;
@@ -214,6 +221,9 @@ bool PythonBridge::init(const std::string& pythonPath) {
 void PythonBridge::shutdown() {
 	if (!m_initialized) return;
 	m_behaviors.clear();
+	// Destroy cached pydantic class refs before finalizing interpreter
+	delete static_cast<py::object*>(m_localWorldClass);  m_localWorldClass = nullptr;
+	delete static_cast<py::object*>(m_selfEntityClass);  m_selfEntityClass = nullptr;
 	py::finalize_interpreter();
 	m_initialized = false;
 	printf("[PythonBridge] Shutdown.\n");
@@ -356,15 +366,23 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			pyBlocks.append(block);
 		}
 
-		// Build world view
+		// Build raw dicts (intermediate form — consumed by LocalWorld._from_raw /
+		// SelfEntity._from_raw which produce the pydantic objects behaviors receive).
 		py::dict pyWorld;
 		pyWorld["nearby"] = pyNearby;
 		pyWorld["blocks"] = pyBlocks;
 		pyWorld["dt"] = dt;
 		pyWorld["time"] = timeOfDay;
 
+		// Wrap in LocalWorld / SelfEntity pydantic objects.
+		// _from_raw() uses model_construct() to skip validators (trusted C++ data).
+		py::object& LocalWorldCls = *static_cast<py::object*>(m_localWorldClass);
+		py::object& SelfEntityCls = *static_cast<py::object*>(m_selfEntityClass);
+		py::object pyLocalWorld = LocalWorldCls.attr("_from_raw")(pyWorld);
+		py::object pySelfEntity = SelfEntityCls.attr("_from_raw")(pySelf);
+
 		// Call instance.decide(entity, world) — returns (action, goal_str)
-		py::object result = instance.attr("decide")(pySelf, pyWorld);
+		py::object result = instance.attr("decide")(pySelfEntity, pyLocalWorld);
 
 		// Validate tuple return: (action, goal_str)
 		if (!py::isinstance<py::tuple>(result) || result.cast<py::tuple>().size() != 2) {

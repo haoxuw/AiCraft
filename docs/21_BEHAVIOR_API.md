@@ -2,212 +2,233 @@
 
 ## Overview
 
-Every creature in ModCraft has a behavior defined as a Python file. The behavior's `decide()` function is called 4 times per second and returns an action (what the creature should do next).
+Every creature in ModCraft has a behavior defined as a Python file. The behavior's
+`decide()` method is called 4 times per second and returns `(action, goal_str)`.
 
-**Behaviors run on the CLIENT, not the server.** The client reads its local world cache (nearby entities, nearby blocks), runs `decide()`, and sends the resulting action as an ActionProposal to the server. The server only validates ("can you move there?", "can you break that?") and executes.
+**Behaviors run on the agent CLIENT, not the server.**
+Each NPC has its own `modcraft-agent` process. The agent reads its `LocalWorld`
+cache (nearby entities, nearby blocks from loaded chunks), runs `decide()`, and
+sends the resulting `ActionProposal` over TCP. The server validates and executes.
 
 This means:
 - Pathfinding and block scanning are client-side (no server CPU cost)
 - Adding NPCs = adding AI clients, not loading the server
 - A single server can host hundreds of players and NPCs
 
-Behaviors are stored in `artifacts/behaviors/` and can be viewed and edited from the in-game code editor (right-click an entity → inspect → press E).
+Behaviors are stored in `artifacts/behaviors/` and hot-reloadable without rebuilding.
+
+---
+
+## World Architecture
+
+```
+Server  GlobalWorld (C++, authoritative)
+  │  TCP: S_BLOCK, S_ENTITY, S_CHUNK
+  ▼
+Agent   LocalWorld (Python, cached subset — may be stale, that's fine)
+  │
+  ▼
+Behavior.decide(entity: SelfEntity, world: LocalWorld) → (action, goal_str)
+```
+
+`LocalWorld` is a pydantic object rebuilt each tick from the agent's C++ caches.
+Stale data is tolerated — the server rejects invalid actions and behaviors recover.
 
 ---
 
 ## Function Signature
 
 ```python
-def decide(self, world):
-    """Called 4 times per second by the server.
+from modcraft_engine import Idle, Wander, MoveTo, Follow, Flee
+from behavior_base import Behavior
 
-    Args:
-        self: dict — the creature's own state (read/write)
-        world: dict — what the creature can see (read-only)
-
-    Returns:
-        An action object (Idle, Wander, MoveTo, Follow, Flee, Attack)
-    """
-    self["goal"] = "Doing something"  # shown above creature's head
-    return Idle()
+class MyBehavior(Behavior):
+    def decide(self, entity, world):
+        # entity : SelfEntity  — this creature's full state
+        # world  : LocalWorld  — what this creature can currently perceive
+        # Returns: (action, goal_str)
+        return Idle(), "Standing guard"
 ```
 
 ---
 
-## `self` — The Creature
+## `entity` — SelfEntity
 
-A dict with the creature's current state. You can read all fields and write `goal`.
+Typed pydantic object. All fields are read-only.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `self["id"]` | int | Entity ID (unique per creature) |
-| `self["type_id"]` | str | Type ID (e.g., `"base:pig"`, `"base:dog"`) |
-| `self["x"]` | float | World X position |
-| `self["y"]` | float | World Y position |
-| `self["z"]` | float | World Z position |
-| `self["yaw"]` | float | Facing direction (degrees) |
-| `self["hp"]` | int | Current health |
-| `self["walk_speed"]` | float | Base movement speed |
-| `self["on_ground"]` | bool | Whether standing on solid ground |
-| `self["goal"]` | str | **Writable.** Text shown above the creature's head. |
+| `entity.id` | int | Entity ID (unique per creature) |
+| `entity.type_id` | str | e.g. `"base:pig"`, `"base:dog"` |
+| `entity.x / y / z` | float | World position |
+| `entity.yaw` | float | Facing direction (degrees) |
+| `entity.hp` | int | Current health points |
+| `entity.walk_speed` | float | Base movement speed |
+| `entity.on_ground` | bool | Whether standing on solid ground |
+| `entity.inventory` | InventoryView | Read-only inventory snapshot |
+
+**Custom server-assigned props** (home_x, work_radius, collect_goal, …):
+```python
+entity.get("work_radius", 80.0)   # float, with default
+entity.get("home_x")              # None if not set
+```
+
+**Inventory:**
+```python
+entity.inventory.count("base:trunk")   # → int
+bool(entity.inventory)                  # → True if non-empty
+```
 
 ---
 
-## `world` — What the Creature Can See
+## `world` — LocalWorld
 
-A dict with nearby entities and blocks. Read-only.
+Pydantic object representing what this agent can currently perceive.
+Cached subset of GlobalWorld. May be stale — server validates all actions.
 
-### `world["nearby"]` — Nearby Entities
+### Spatial queries
 
-A list of `EntityInfo` objects for all entities within 16 blocks.
+```python
+# Nearest block or entity of a type — O(1) index lookup
+world.get("base:trunk")               # → BlockView | None
+world.get("base:trunk", max_dist=40)  # → within 40 units
+
+# Nearest entity — includes dropped items, NPCs, players
+world.get("base:spider")              # → EntityView | None
+world.get("base:dog", max_dist=6)
+
+# All of a type, nearest-first
+world.all("base:trunk")               # → [BlockView, …]
+world.all("base:trunk", max_dist=80)
+
+# Nearest entity by category
+world.nearest("player")               # → EntityView | None
+world.nearest("player", max_dist=20)
+world.nearest("chest")
+world.nearest("hostile", max_dist=12)
+```
+
+### Time and delta
+
+```python
+world.time   # float, 0.0–1.0 day fraction (0.0 = midnight, 0.5 = noon)
+world.dt     # float, seconds since last decide() (~0.25 s)
+```
+
+### Raw lists (for complex queries)
+
+```python
+world.blocks    # list[BlockView]  — pre-sorted nearest-first
+world.entities  # list[EntityView] — within 64-unit radius
+```
+
+### BlockView fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `block.x / y / z` | int | Block position |
+| `block.type_id` | str | e.g. `"base:trunk"`, `"base:wood"` |
+| `block.distance` | float | Distance from this creature |
+
+### EntityView fields
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `entity.id` | int | Entity ID |
-| `entity.type_id` | str | Type ID (e.g., `"base:player"`, `"base:pig"`) |
-| `entity.category` | str | `"player"`, `"animal"`, `"item"` |
-| `entity.x` | float | World X position |
-| `entity.y` | float | World Y position |
-| `entity.z` | float | World Z position |
+| `entity.type_id` | str | e.g. `"base:chicken"`, `"base:villager"` |
+| `entity.category` | str | `"player"`, `"animal"`, `"npc"`, `"hostile"`, `"item"`, `"chest"` |
+| `entity.x / y / z` | float | World position |
 | `entity.distance` | float | Distance from this creature |
 | `entity.hp` | int | Current health |
 
-**Example: find nearest player**
+---
+
+## Behavior base class helpers
+
 ```python
-players = [e for e in world["nearby"] if e.category == "player"]
-if players:
-    closest = min(players, key=lambda e: e.distance)
+# Time of day
+self.is_night(world)      # 0–25% of day
+self.is_morning(world)    # 25–50%
+self.is_afternoon(world)  # 50–75%
+self.is_evening(world)    # 75–100%
+
+# Distance
+self.dist2d(ax, az, bx, bz)              # XZ horizontal distance
+
+# Proximity check (works with BlockView, EntityView, tuple, or dict)
+self.is_near(entity, pos, threshold=2.5)
+
+# Home management
+self._home = self.init_home(entity, self._home)   # reads home_x/home_z props
+self._chest = self.get_chest(entity, self._home)  # reads chest_x/y/z props
+
+# Stuck detection (call each tick while navigating)
+if self.check_stuck(entity, world.dt):
+    self.reset_stuck()
+    return Wander(speed=spd), "Stuck — wandering"
 ```
-
-### `world["blocks"]` — Nearby Blocks
-
-A list of dicts for non-air blocks within 10 blocks. Sorted by distance.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `block["x"]` | int | Block X position |
-| `block["y"]` | int | Block Y position |
-| `block["z"]` | int | Block Z position |
-| `block["type"]` | str | Block type ID (e.g., `"base:wood"`, `"base:stone"`) |
-| `block["distance"]` | float | Distance from this creature |
-
-**Example: find nearest tree**
-```python
-wood = [b for b in world["blocks"] if b["type"] == "base:wood"]
-if wood:
-    nearest = min(wood, key=lambda b: b["distance"])
-    tree_x, tree_y, tree_z = nearest["x"], nearest["y"], nearest["z"]
-```
-
-### `world["dt"]` — Time Delta
-
-Float, seconds since last decide() call (~0.25 seconds).
 
 ---
 
 ## Actions — What to Return
 
-Import actions from the engine:
+Always return a 2-tuple: `(action, goal_str)`. The goal string is shown above
+the entity's head and in the inspect panel.
+
+Import from the engine:
 ```python
-from modcraft_engine import Idle, Wander, MoveTo, Follow, Flee
+from modcraft_engine import Idle, Wander, MoveTo, Follow, Flee, ConvertObject, StoreItem
 ```
 
-### `Idle()`
-
-Stand still, do nothing.
-
-```python
-return Idle()
-```
-
-### `Wander(speed=2.0)`
-
-Walk in a random direction. The creature picks a new direction periodically.
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `speed` | float | 2.0 | Walking speed |
-
-```python
-return Wander(speed=self["walk_speed"])
-```
-
-### `MoveTo(x, y, z, speed=2.0)`
-
-Walk toward a specific position. Stops when within 0.5 blocks.
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `x` | float | — | Target X |
-| `y` | float | — | Target Y |
-| `z` | float | — | Target Z |
-| `speed` | float | 2.0 | Walking speed |
-
-```python
-return MoveTo(tree_x + 0.5, tree_y, tree_z + 0.5, speed=3.0)
-```
-
-### `Follow(target, speed=2.0, min_distance=1.5)`
-
-Walk toward an entity, maintaining minimum distance. Idles when close enough.
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `target` | int | — | Entity ID to follow |
-| `speed` | float | 2.0 | Walking speed |
-| `min_distance` | float | 1.5 | Stop when this close |
-
-```python
-return Follow(player.id, speed=4.0, min_distance=3.0)
-```
-
-### `Flee(target, speed=4.0)`
-
-Run away from an entity.
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `target` | int | — | Entity ID to flee from |
-| `speed` | float | 4.0 | Run speed |
-
-```python
-return Flee(threat.id, speed=self["walk_speed"] * 2.0)
-```
-
-### `BreakBlock(x, y, z)`
-
-Break a block at the given world position. The server validates that the block exists and is within reach (~8 blocks). The block is removed and drops as an item.
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `x` | int | Block X position |
-| `y` | int | Block Y position |
-| `z` | int | Block Z position |
-
-```python
-# Villager chops a tree
-wood = [b for b in world["blocks"] if b["type"] == "base:wood"]
-if wood:
-    nearest = min(wood, key=lambda b: b["distance"])
-    return BreakBlock(nearest["x"], nearest["y"], nearest["z"])
-```
+| Action | Description |
+|--------|-------------|
+| `Idle()` | Stand still |
+| `Wander(speed=2.0)` | Random walk |
+| `MoveTo(x, y, z, speed=2.0)` | Walk to position |
+| `Follow(entity_id, speed=2.0, min_distance=1.5)` | Track an entity |
+| `Flee(entity_id, speed=4.0)` | Run away from entity |
+| `ConvertObject(from_item, to_item, block_pos, …)` | Block-based crafting/harvesting |
+| `StoreItem(chest_entity_id)` | Deposit inventory into chest |
 
 ---
 
-## Block Type IDs
+## Full Example
 
-| ID | Description |
-|----|-------------|
-| `base:dirt` | Dirt (can grow grass) |
-| `base:grass` | Grass block |
-| `base:stone` | Stone |
-| `base:cobblestone` | Cobblestone |
-| `base:sand` | Sand (falls) |
-| `base:snow` | Snow |
-| `base:water` | Water (non-solid) |
-| `base:wood` | Wood (tree trunk) |
-| `base:leaves` | Leaves |
-| `base:glass` | Glass (transparent) |
+```python
+"""Guard dog — follows nearest player, chases away cats."""
+import random
+from modcraft_engine import Idle, Wander, Follow, Flee
+from behavior_base import Behavior
+
+class GuardDogBehavior(Behavior):
+    def __init__(self):
+        self._home = None
+
+    def decide(self, entity, world):
+        self._home = self.init_home(entity, self._home)
+        spd = entity.walk_speed
+
+        # Go home at night
+        if self.is_night(world) or self.is_evening(world):
+            if not self.is_near(entity, self._home, threshold=3):
+                return MoveTo(*self._home, speed=spd), "Going home"
+            return Idle(), "Sleeping zzz"
+
+        # Chase cats away
+        cat = world.get("base:cat", max_dist=8)
+        if cat:
+            return Follow(cat.id, speed=spd * 1.5, min_distance=1), "Chasing cat!"
+
+        # Follow nearest player
+        player = world.nearest("player")
+        if player:
+            if player.distance > 3:
+                return Follow(player.id, speed=4.0, min_distance=3), \
+                       "Following player (%dm)" % int(player.distance)
+            return Idle(), "Sitting by player"
+
+        return Wander(speed=spd * 0.5), "Sniffing around"
+```
 
 ---
 
@@ -216,103 +237,26 @@ if wood:
 | Category | Description |
 |----------|-------------|
 | `"player"` | Human-controlled character |
-| `"animal"` | AI creature (pig, chicken, dog, villager) |
+| `"animal"` | Passive AI creature (pig, chicken, cat, dog) |
+| `"npc"` | AI worker (villager) |
+| `"hostile"` | Aggressive mob |
 | `"item"` | Dropped item on the ground |
+| `"chest"` | Storage container |
 
 ---
 
-## Full Examples
+## Block Type IDs (common)
 
-### Pig (wander + flee from players)
-```python
-from modcraft_engine import Idle, Wander, Flee
-
-def decide(self, world):
-    players = [e for e in world["nearby"] if e.category == "player"]
-    if players:
-        closest = min(players, key=lambda e: e.distance)
-        if closest.distance < 5.0:
-            self["goal"] = "Fleeing!"
-            return Flee(closest.id, speed=self["walk_speed"] * 1.8)
-
-    self["goal"] = "Wandering"
-    return Wander(speed=self["walk_speed"])
-```
-
-### Dog (follow nearest player or villager)
-```python
-from modcraft_engine import Idle, Wander, Follow
-
-def decide(self, world):
-    players = [e for e in world["nearby"] if e.category == "player"]
-    villagers = [e for e in world["nearby"] if e.type_id == "base:villager"]
-
-    target = None
-    if players:
-        target = min(players, key=lambda e: e.distance)
-    elif villagers:
-        target = min(villagers, key=lambda e: e.distance)
-
-    if not target:
-        self["goal"] = "Looking for someone"
-        return Wander(speed=self["walk_speed"] * 0.5)
-
-    if target.distance < 3.0:
-        self["goal"] = "Sitting"
-        return Idle()
-
-    self["goal"] = "Following"
-    return Follow(target.id, speed=4.0, min_distance=3.0)
-```
-
-### Villager (find trees, walk to them, chop)
-```python
-from modcraft_engine import Idle, Wander, MoveTo
-
-_state = "searching"
-_timer = 0
-_tree = None
-
-def decide(self, world):
-    global _state, _timer, _tree
-    _timer -= world["dt"]
-
-    if _state == "searching":
-        wood = [b for b in world["blocks"] if b["type"] == "base:wood"]
-        if wood:
-            _tree = min(wood, key=lambda b: b["distance"])
-            _state = "walking"
-            _timer = 8.0
-            self["goal"] = "Found a tree!"
-        else:
-            self["goal"] = "Searching for trees"
-        return Wander(speed=self["walk_speed"] * 0.7)
-
-    if _state == "walking":
-        dx = self["x"] - _tree["x"]
-        dz = self["z"] - _tree["z"]
-        dist = (dx*dx + dz*dz) ** 0.5
-        if dist < 2.5:
-            _state = "chopping"
-            _timer = 2.0
-        elif _timer <= 0:
-            _state = "searching"
-        self["goal"] = "Walking to tree"
-        return MoveTo(_tree["x"]+0.5, _tree["y"], _tree["z"]+0.5,
-                       speed=self["walk_speed"])
-
-    if _state == "chopping":
-        self["goal"] = "Chopping!"
-        if _timer <= 0:
-            _state = "resting"
-            _timer = 3.0
-        return Idle()
-
-    if _state == "resting":
-        self["goal"] = "Taking a break"
-        if _timer <= 0:
-            _state = "searching"
-        return Idle()
-
-    return Idle()
-```
+| ID | Description |
+|----|-------------|
+| `base:grass` | Grass block |
+| `base:dirt` | Dirt |
+| `base:stone` | Stone |
+| `base:cobblestone` | Cobblestone |
+| `base:trunk` | Tree trunk (choppable) |
+| `base:wood` | Wood planks / processed wood |
+| `base:leaves` | Tree leaves |
+| `base:sand` | Sand |
+| `base:water` | Water |
+| `base:planks` | Wooden planks |
+| `base:fence` | Fence post |

@@ -169,18 +169,19 @@ public:
 		return chests;
 	}
 
-	// Bed head positions (above the placed bed block): one per house.
-	// Each house has one bed; head block is at (hcx+2, floorY, hcz+h.d-3).
-	// Returned Y is one block above the bed so villagers spawn standing on it.
+	// Villager spawn positions: one per house, placed outside the front door.
+	// The door is at dz=0 on the front wall, centered at dx=h.w/2.
+	// Spawning 3 blocks in front prevents villagers from landing on the roof.
 	std::vector<glm::vec3> bedPositions(int seed) const override {
 		if (!m_py.hasVillage || m_py.houses.empty()) return {};
 		auto vc = villageCenter(seed);
 		std::vector<glm::vec3> beds;
 		for (const auto& h : m_py.houses) {
-			if (h.type == "barn") continue;  // barns have no beds
-			float bx = (float)(vc.x + h.cx + 2) + 0.5f;
-			float bz = (float)(vc.y + h.cz + h.d - 3) + 0.5f;
-			float by = groundHeight(seed, bx, bz) + 2.0f;  // floor+1 bed + 1 above
+			if (h.type == "barn") continue;
+			// Front door center, 3 blocks outside the front wall
+			float bx = (float)(vc.x + h.cx + h.w / 2) + 0.5f;
+			float bz = (float)(vc.y + h.cz) - 3.0f;
+			float by = groundHeight(seed, bx, bz) + 1.5f;
 			beds.push_back({bx, by, bz});
 		}
 		return beds;
@@ -196,6 +197,7 @@ public:
 		BlockId bWater  = blocks.getId(BlockType::Water);
 		BlockId bSnow   = blocks.getId(BlockType::Snow);
 		BlockId bWood   = blocks.getId(BlockType::Wood);
+		BlockId bLog    = blocks.getId(BlockType::Log);
 		BlockId bLeaves = blocks.getId(BlockType::Leaves);
 
 		BlockId wallB  = blocks.getId(m_py.wallBlock);
@@ -279,7 +281,7 @@ public:
 					int trunkTop = trunkBase + trunkH - 1;
 					for (int ty = trunkBase; ty <= trunkTop; ty++) {
 						int ly = ty - oy;
-						if (ly >= 0 && ly < CHUNK_SIZE) chunk.set(lx, ly, lz, bWood);
+						if (ly >= 0 && ly < CHUNK_SIZE) chunk.set(lx, ly, lz, bLog);
 					}
 					int leafR = m_py.leafRadius;
 					for (int dy = -1; dy <= leafR; dy++) {

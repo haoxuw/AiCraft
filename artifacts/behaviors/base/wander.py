@@ -25,25 +25,24 @@ class WanderBehavior(Behavior):
         self._home = None
         self._graze_timer = 0.0
         self._sleeping = False
-        self._resting = False   # True during evening/night; cleared at dawn
+        self._resting = False
         self._rng_seeded = False
 
     def decide(self, entity, world):
         if not self._rng_seeded:
-            random.seed(entity["id"] * 31337 + 42)
+            random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True
 
-        self._graze_timer -= world["dt"]
+        self._graze_timer -= world.dt
         self._home = self.init_home(entity, self._home)
 
-        flee_range   = float(entity.get("flee_range", 5.0))
-        group_range  = float(entity.get("group_range", 6.0))
+        flee_range   = float(entity.get("flee_range",   5.0))
+        group_range  = float(entity.get("group_range",  6.0))
         graze_chance = float(entity.get("graze_chance", 0.25))
-        home_radius  = float(entity.get("home_radius", 35.0))
-        spd          = entity["walk_speed"]
+        home_radius  = float(entity.get("home_radius",  35.0))
+        spd          = entity.walk_speed
 
-        dist_home = self.dist2d(entity["x"], entity["z"],
-                                self._home[0], self._home[2])
+        dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
 
         # ── Evening/Night: go home ──────────────────────────────────────────
         if self.is_night(world) or self.is_evening(world):
@@ -51,9 +50,7 @@ class WanderBehavior(Behavior):
             if self.is_night(world):
                 self._sleeping = True
             if dist_home > 3:
-                return (MoveTo(self._home[0], self._home[1], self._home[2],
-                               speed=spd),
-                        "Heading home...")
+                return MoveTo(*self._home, speed=spd), "Heading home..."
             if self._sleeping:
                 return Idle(), "Sleeping zzz"
             return Idle(), "Settling in for the night"
@@ -64,27 +61,24 @@ class WanderBehavior(Behavior):
             return Idle(), "Good morning!"
 
         if dist_home > home_radius:
-            return (MoveTo(self._home[0], self._home[1], self._home[2],
-                           speed=spd * 0.8),
-                    "Wandering back home")
+            return MoveTo(*self._home, speed=spd * 0.8), "Wandering back home"
 
         # ── Flee from threats ───────────────────────────────────────────────
-        threats = [e for e in world["nearby"]
-                   if (e["category"] == "player" or e["type_id"] == "base:cat")
-                   and e["distance"] < flee_range]
+        threat_p = world.nearest("player", max_dist=flee_range)
+        threat_c = world.get("base:cat",   max_dist=flee_range)
+        threats  = [t for t in [threat_p, threat_c] if t]
         if threats:
-            closest = min(threats, key=lambda e: e["distance"])
-            return Flee(closest["id"], speed=spd * 1.8), "Fleeing!"
+            closest = min(threats, key=lambda t: t.distance)
+            return Flee(closest.id, speed=spd * 1.8), "Fleeing!"
 
         # ── Stay with herd ──────────────────────────────────────────────────
-        friends = [e for e in world["nearby"]
-                   if e["type_id"] == entity["type_id"] and e["id"] != entity["id"]]
+        # world.all(entity.type_id) excludes self (C++ gatherNearby skips self)
+        friends = world.all(entity.type_id)
         if friends:
-            farthest = max(friends, key=lambda e: e["distance"])
-            if farthest["distance"] > group_range:
-                return (MoveTo(farthest["x"], farthest["y"], farthest["z"],
-                               speed=spd),
-                        "Joining herd")
+            farthest = max(friends, key=lambda e: e.distance)
+            if farthest.distance > group_range:
+                return MoveTo(farthest.x, farthest.y, farthest.z, speed=spd), \
+                       "Joining herd"
 
         # ── Graze ───────────────────────────────────────────────────────────
         if self._graze_timer <= 0 and random.random() < graze_chance:

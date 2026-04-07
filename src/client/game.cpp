@@ -1525,7 +1525,7 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
 				appendLog(typeName + " #" + std::to_string(e.id()) + ": " + e.goalText);
 				// Trigger world-label pop burst
-				m_entityGoalPopTimer[e.id()] = 0.45f;
+				m_entityGoalPopTimer[e.id()] = 3.0f;  // text visible for 3s then fades
 			}
 		}
 
@@ -1970,21 +1970,25 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			float nx = clip.x / clip.w, ny = clip.y / clip.w;
 			if (nx < -1.5f || nx > 1.5f || ny < -1.5f || ny > 1.5f) return;
 
-			// Pop factor: 1 right after goal change, eases to 0 over 0.45s
+			// visT: 1.0 when goal just changed, fades to 0 over 3s — text disappears when stable.
+			// burstT: 1.0 in first 0.45s only — drives the scale/color pop animation.
+			// Errors always show at full opacity regardless of timer.
 			const auto pit = m_entityGoalPopTimer.find(e.id());
-			const float popT = (pit != m_entityGoalPopTimer.end())
-			                 ? pit->second / 0.45f : 0.0f;
+			const bool hasTimer = (pit != m_entityGoalPopTimer.end());
+			if (!e.hasError && !hasTimer) return;  // no recent change — hide text
+
+			const float visT   = hasTimer ? pit->second / 3.0f : 0.0f;
+			const float burstT = hasTimer ? std::min(pit->second / 0.45f, 1.0f) : 0.0f;
 
 			const char* label;
 			glm::vec4   color;
 			if (e.hasError) {
 				label = e.goalText.empty() ? "ERROR" : e.goalText.c_str();
-				color = {1.0f, 0.35f + 0.15f * popT, 0.35f + 0.15f * popT, 0.95f};
+				color = {1.0f, 0.35f + 0.15f * burstT, 0.35f + 0.15f * burstT, 0.95f};
 			} else if (!e.goalText.empty()) {
 				label = e.goalText.c_str();
-				// Settles to soft green-white; bursts to bright white on change
-				color = {0.88f + 0.12f * popT, 1.0f, 0.80f + 0.20f * popT,
-				         0.80f + 0.18f * popT};
+				// Burst to bright white on change, fade out smoothly over 3s
+				color = {0.88f + 0.12f * burstT, 1.0f, 0.80f + 0.20f * burstT, visT};
 			} else {
 				// Agent not yet connected — dim behavior ID
 				const auto& bid = e.getProp<std::string>(Prop::BehaviorId, "");
@@ -1992,8 +1996,8 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 				color = {0.5f, 0.5f, 0.5f, 0.35f};
 			}
 
-			// Scale 0.80 at rest, bursts to 1.10 on change; centered on lightbulb
-			const float scale = 0.80f + 0.30f * popT;
+			// Scale bursts to 1.10 on change, settles to 0.80 after burst
+			const float scale = 0.80f + 0.30f * burstT;
 			float textW = (float)std::strlen(label) * scale * 0.018f;
 			m_text.drawText(label, nx - textW * 0.5f, ny, scale, color, aspect);
 		});
@@ -2112,29 +2116,75 @@ void Game::updateEntityInspect(float dt, float aspect) {
 			}
 		}
 
-		// ── Inventory ────────────────────────────────────────────────
+		// ── Inventory — hotbar-style rows with 3D icon ──────────────
 		if (target->inventory) {
 			auto items = target->inventory->items();
 			char invHeader[64];
-			snprintf(invHeader, sizeof(invHeader), "Inventory (%d item types)###Inv",
-			         (int)items.size());
+			int totalItems = 0;
+			for (auto& [id, cnt] : items) totalItems += cnt;
+			snprintf(invHeader, sizeof(invHeader), "Inventory  [%d items]###Inv", totalItems);
 			if (ImGui::CollapsingHeader(invHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
 				if (items.empty()) {
 					ImGui::TextDisabled("  (empty)");
 				} else {
-					if (ImGui::BeginTable("InvTable", 2,
-					    ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
-						ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch);
-						ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 60);
-						ImGui::TableHeadersRow();
-						for (auto& [itemId, count] : items) {
-							ImGui::TableNextRow();
-							ImGui::TableNextColumn();
-							ImGui::Text("%s", itemId.c_str());
-							ImGui::TableNextColumn();
-							ImGui::Text("%d", count);
+					const float slotSz  = 44.0f;   // icon size
+					const float rowH    = slotSz + 6.0f;
+					const float padX    = 8.0f;
+					auto& blkReg = m_server->blockRegistry();
+					ImDrawList* dl = ImGui::GetWindowDrawList();
+
+					for (auto& [itemId, count] : items) {
+						ImVec2 cursor = ImGui::GetCursorScreenPos();
+						cursor.x += padX;
+
+						// Slot background — dark with slight blue tint (hotbar palette)
+						ImVec2 slotMin = cursor;
+						ImVec2 slotMax = {cursor.x + slotSz, cursor.y + slotSz};
+						dl->AddRectFilled(slotMin, slotMax,
+							IM_COL32(28, 32, 50, 220), 5.0f);
+						dl->AddRect(slotMin, slotMax,
+							IM_COL32(80, 100, 160, 180), 5.0f, 0, 1.5f);
+
+						// 3D model icon
+						std::string modelKey = itemId;
+						auto col = modelKey.find(':');
+						if (col != std::string::npos) modelKey = modelKey.substr(col + 1);
+						auto mit = m_models.find(modelKey);
+						GLuint icon = (mit != m_models.end())
+							? m_iconCache.getIcon(modelKey, mit->second) : 0;
+						if (icon) {
+							dl->AddImage((ImTextureID)(intptr_t)icon,
+								{slotMin.x + 3, slotMin.y + 3},
+								{slotMax.x - 3, slotMax.y - 3},
+								{0, 1}, {1, 0});
+						} else {
+							// Fallback: coloured letter block
+							const BlockDef* bdef = blkReg.find(itemId);
+							ImVec4 col4 = bdef
+								? ImVec4(bdef->color_top.x, bdef->color_top.y, bdef->color_top.z, 1)
+								: ImVec4(0.6f, 0.6f, 0.6f, 1);
+							dl->AddRectFilled({slotMin.x+4, slotMin.y+4},
+								{slotMax.x-4, slotMax.y-4},
+								ImGui::ColorConvertFloat4ToU32(col4), 3.0f);
 						}
-						ImGui::EndTable();
+
+						// Count badge (bottom-right corner of slot)
+						char cntBuf[8]; snprintf(cntBuf, sizeof(cntBuf), "%d", count);
+						ImVec2 badgePos = {slotMax.x - ImGui::CalcTextSize(cntBuf).x - 3,
+						                   slotMax.y - ImGui::GetTextLineHeight() - 2};
+						dl->AddText(badgePos, IM_COL32(255, 220, 60, 255), cntBuf);
+
+						// Item display name (friendly, to the right of icon)
+						ImGui::SetCursorScreenPos({slotMax.x + 10.0f,
+							cursor.y + (slotSz - ImGui::GetTextLineHeightWithSpacing()) * 0.5f});
+						const BlockDef* bdef = blkReg.find(itemId);
+						std::string dispName = bdef && !bdef->display_name.empty()
+							? bdef->display_name : itemId;
+						ImGui::TextColored({0.88f, 0.92f, 1.0f, 1.0f}, "%s", dispName.c_str());
+
+						// Advance cursor past row
+						ImGui::SetCursorScreenPos({cursor.x - padX, cursor.y + rowH});
+						ImGui::Dummy({0, 2});  // small gap between rows
 					}
 				}
 			}

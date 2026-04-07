@@ -1574,10 +1574,10 @@ static std::string b1_woodcutter_sets_goal_text() {
     auto handle = pythonBridge().loadBehavior(src, loadErr);
     if (handle < 0) return "loadBehavior failed: " + loadErr;
 
-    // Wood block 8 blocks east of the villager (within work_radius=60)
+    // Trunk block 8 blocks east of the villager (within work_radius=60)
     std::vector<PythonBridge::NearbyBlock> blocks = {
         {(int)villager->position.x + 8, (int)villager->position.y + 5,
-         (int)villager->position.z, "base:wood", 8.0f}
+         (int)villager->position.z, "base:trunk", 8.0f}
     };
 
     std::string goalOut, errOut;
@@ -1634,13 +1634,13 @@ static std::string b3_woodcutter_collects_and_deposits() {
     // Set collect_goal to 2 for fast test
     villager->setProp("collect_goal", 2);
 
-    // Give the villager 2 logs (simulating successful chops)
-    villager->inventory->add("base:wood", 2);
+    // Give the villager 2 trunks (simulating successful chops)
+    villager->inventory->add("base:trunk", 2);
 
-    // Place wood block nearby and chest at home
+    // Place trunk block nearby and chest at home
     std::vector<PythonBridge::NearbyBlock> blocks = {
         {(int)villager->position.x + 5, (int)villager->position.y,
-         (int)villager->position.z, "base:wood", 5.0f}
+         (int)villager->position.z, "base:trunk", 5.0f}
     };
 
     std::string goalOut, errOut;
@@ -1685,8 +1685,8 @@ static std::string b4_store_item_server_validation() {
     if (!chestEnt) return "chest entity " + std::to_string(chestEntityId) + " not found";
     if (!chestEnt->inventory) return "chest entity has no inventory";
 
-    // Give the villager some logs
-    villager->inventory->add("base:wood", 3);
+    // Give the villager some trunks
+    villager->inventory->add("base:trunk", 3);
 
     // Teleport villager next to the chest entity
     villager->position = chestEnt->position + glm::vec3(1.5f, 0, 0);
@@ -1700,15 +1700,15 @@ static std::string b4_store_item_server_validation() {
     srv->tick(1.0f / 60.0f);
 
     // Verify actor inventory is now empty
-    int logsInInventory = villager->inventory->count("base:wood");
+    int logsInInventory = villager->inventory->count("base:trunk");
     if (logsInInventory > 0)
         return "villager inventory not cleared after StoreItem (still has " +
-               std::to_string(logsInInventory) + " base:wood)";
+               std::to_string(logsInInventory) + " base:trunk)";
 
     // Verify chest entity received the items
-    int logsInChest = chestEnt->inventory->count("base:wood");
+    int logsInChest = chestEnt->inventory->count("base:trunk");
     if (logsInChest != 3)
-        return "chest entity has " + std::to_string(logsInChest) + " logs, expected 3";
+        return "chest entity has " + std::to_string(logsInChest) + " trunks, expected 3";
 
     return "";
 }

@@ -38,6 +38,7 @@ namespace BlockType {
 	constexpr const char* Sand        = "base:sand";
 	constexpr const char* Water       = "base:water";
 	constexpr const char* Wood        = "base:wood";
+	constexpr const char* Log         = "base:trunk";
 	constexpr const char* Leaves      = "base:leaves";
 	constexpr const char* Snow        = "base:snow";
 	constexpr const char* TNT         = "base:tnt";

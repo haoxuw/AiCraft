@@ -141,10 +141,16 @@ public:
 				state.behavior = loadBehavior(behaviorId);
 			}
 
-			// Decide at 4 Hz
+			// ── Passive timer: decide every decide_interval seconds (default 1 s) ─
+			// ── Active trigger: forceDecide set by HP drop or time-of-day event ─
+			float decideInterval = e.getProp<float>("decide_interval", 1.0f);
 			state.decideTimer -= dt;
-			if (state.decideTimer <= 0) {
-				state.decideTimer = 0.25f;
+			bool shouldDecide = (state.decideTimer <= 0) || state.forceDecide;
+
+			if (shouldDecide) {
+				const char* trigger = state.forceDecide ? "event" : "timer";
+				state.decideTimer = decideInterval;
+				state.forceDecide = false;
 
 				auto nearby = gatherNearby(e, m_entities, 64.0f);
 
@@ -153,29 +159,45 @@ public:
 					return m_blocks.get(bid).string_id;
 				};
 				// Use entity's work_radius prop as block scan radius (capped at 100).
-				// Defaults to 80 which covers most tree distances from a village.
 				int blockScanRadius = std::min(100,
 					(int)e.getProp<float>("work_radius", 80.0f));
-				auto blocks = getKnownBlocks(e, blockScanRadius, blockQuery, m_blockCaches[eid]);
+				auto blocks = getKnownBlocks(e, blockScanRadius, blockQuery, m_blockCaches[eid], dt);
 
 				BehaviorWorldView view{e, nearby, blocks, dt, m_worldTime};
+
+				// ── Time the decide() call ────────────────────────────────────────
+				auto t0 = std::chrono::high_resolution_clock::now();
 				state.currentAction = state.behavior->decide(view);
+				auto t1 = std::chrono::high_resolution_clock::now();
+				float decideMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+
+				state.lastDecideMs   = decideMs;
+				state.totalDecideMs += decideMs;
+				state.decideCount++;
 				state.justDecided = true;
 
-				// Log only when goal differs from the last LOGGED goal for this entity
+				// Warn on slow decisions (> 20 ms is unusual for simple Python behaviors)
+				if (decideMs > 20.0f) {
+					float avgMs = state.totalDecideMs / (float)state.decideCount;
+					printf("[PERF][Agent:%s] Entity #%u decide() %.1f ms  avg %.1f ms  "
+					       "trigger=%s  n=%d\n",
+					       m_name.c_str(), eid, decideMs, avgMs, trigger, state.decideCount);
+				}
+
+				// Log only when goal text changes
 				if (!e.goalText.empty() && e.goalText != m_lastLoggedGoal[eid]) {
 					m_lastLoggedGoal[eid] = e.goalText;
 					time_t now = time(nullptr);
 					struct tm* ti = localtime(&now);
 					char ts[10];
 					strftime(ts, sizeof(ts), "%H:%M:%S", ti);
-					// "base:chicken" -> "Chicken"
 					std::string typeName = e.typeId();
 					auto col = typeName.find(':');
 					if (col != std::string::npos) typeName = typeName.substr(col + 1);
 					if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
-					printf("[%s][Agent:%s] %s #%u: %s\n",
-						ts, m_name.c_str(), typeName.c_str(), eid, e.goalText.c_str());
+					printf("[%s][Agent:%s] %s #%u: %s  (decide=%.1f ms, trigger=%s)\n",
+					       ts, m_name.c_str(), typeName.c_str(), eid,
+					       e.goalText.c_str(), decideMs, trigger);
 				}
 			}
 
@@ -196,7 +218,7 @@ public:
 			state.justDecided = false;
 		}
 
-		// Periodic heartbeat: show all controlled entities and their current goal
+		// Periodic heartbeat: show all controlled entities, goal, and perf stats
 		m_statusTimer += dt;
 		if (m_statusTimer >= 10.0f) {
 			m_statusTimer = 0.0f;
@@ -204,8 +226,16 @@ public:
 			for (EntityId eid : m_controlled) {
 				auto it = m_entities.find(eid);
 				if (it == m_entities.end() || !it->second) continue;
-				printf(" [%u: %s]", eid,
-					it->second->goalText.empty() ? "waiting" : it->second->goalText.c_str());
+				auto& st = m_behaviorStates[eid];
+				const char* goal = it->second->goalText.empty()
+				                   ? "waiting" : it->second->goalText.c_str();
+				if (st.decideCount > 0) {
+					float avgMs = st.totalDecideMs / (float)st.decideCount;
+					printf(" [#%u: %s | decide avg=%.1f ms last=%.1f ms n=%d]",
+					       eid, goal, avgMs, st.lastDecideMs, st.decideCount);
+				} else {
+					printf(" [#%u: %s]", eid, goal);
+				}
 			}
 			printf("\n");
 		}
@@ -247,9 +277,6 @@ private:
 				for (auto& [k, v] : es.stringProps)
 					ent->setProp(k, v);
 				m_entities[es.id] = std::move(ent);
-
-				// Auto-assign if this entity has a BehaviorId and we're supposed to control it
-				// (For now, agent controls entities assigned via command line or S_ASSIGN_ENTITY)
 			} else {
 				// Update existing entity
 				auto& e = *it->second;
@@ -262,6 +289,16 @@ private:
 					e.setProp(Prop::HP, es.hp);
 				for (auto& [k, v] : es.stringProps)
 					e.setProp(k, v);
+			}
+			// Active trigger: if a controlled entity just lost HP → decide immediately
+			if (m_controlled.count(es.id)) {
+				auto& state = m_behaviorStates[es.id];
+				if (state.lastKnownHp >= 0 && es.hp < state.lastKnownHp) {
+					state.forceDecide = true;
+					printf("[Agent:%s] Entity #%u attacked (hp %d→%d) — forcing re-decide\n",
+					       m_name.c_str(), es.id, state.lastKnownHp, es.hp);
+				}
+				state.lastKnownHp = es.hp;
 			}
 			break;
 		}
@@ -341,7 +378,20 @@ private:
 			break;
 		}
 		case net::S_TIME: {
-			m_worldTime = rb.readF32();
+			float newTime = rb.readF32();
+			// Active trigger: time-of-day threshold crossing → all entities re-decide
+			if (m_prevWorldTime >= 0.0f && isTimeOfDayEvent(m_prevWorldTime, newTime)) {
+				const char* phase = (newTime < 0.10f)  ? "midnight"
+				                  : (newTime < 0.50f)  ? "dawn"
+				                  : (newTime < 0.75f)  ? "noon"
+				                                       : "dusk";
+				printf("[Agent:%s] Time-of-day event: %s (%.2f→%.2f) — all entities re-decide\n",
+				       m_name.c_str(), phase, m_prevWorldTime, newTime);
+				for (EntityId eid : m_controlled)
+					m_behaviorStates[eid].forceDecide = true;
+			}
+			m_prevWorldTime = m_worldTime;
+			m_worldTime = newTime;
 			break;
 		}
 		case net::S_BLOCK: {
@@ -448,6 +498,19 @@ private:
 		}
 	}
 
+	// ── Time-of-day thresholds that trigger active re-decide for all entities ──
+	// Behaviors care about dawn (0.25) and dusk (0.75); midnight (0.0 wrap) is
+	// also caught. Returns true if prevTime→newTime crosses any threshold.
+	static bool isTimeOfDayEvent(float prevTime, float newTime) {
+		// Forward crossing of dawn / noon / dusk thresholds
+		static const float kThresholds[] = {0.25f, 0.50f, 0.75f};
+		for (float t : kThresholds)
+			if (prevTime < t && newTime >= t) return true;
+		// Midnight wrap-around: time jumps from ~1.0 back to ~0.0
+		if (prevTime > 0.90f && newTime < 0.10f) return true;
+		return false;
+	}
+
 	// --- Connection state ---
 	std::string m_host;
 	int m_port = 0;
@@ -456,9 +519,10 @@ private:
 	net::TcpClient m_tcp;
 	net::RecvBuffer m_recv;
 
-	EntityId m_targetEntityId = ENTITY_NONE; // entity this agent wants to control
-	float m_worldTime = 0.3f;
-	float m_statusTimer = 0.0f;  // periodic heartbeat
+	EntityId m_targetEntityId = ENTITY_NONE;
+	float m_worldTime     = 0.3f;
+	float m_prevWorldTime = -1.0f;  // used to detect time-of-day threshold crossings
+	float m_statusTimer   = 0.0f;   // periodic heartbeat
 
 	// --- Entity state cache (received from server) ---
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;

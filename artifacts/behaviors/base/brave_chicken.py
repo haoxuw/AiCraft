@@ -7,9 +7,6 @@ Unlike normal chickens that scatter from everything, this chicken:
   - Seeks roost at dusk like normal chickens
   - Only flees from dogs (the one thing it fears)
 
-This behavior was designed using the visual behavior tree editor.
-It demonstrates nested IF/THEN/ELSE with multiple conditions and actions.
-
 Tree structure:
   IF [See Entity: dog]           → FLEE from dog
   ELIF [See Entity: cat]         → CHASE the cat!
@@ -30,39 +27,36 @@ class BraveChickenBehavior(Behavior):
     def __init__(self):
         self._home = None
         self._sleeping = False
-        self._resting = False   # True during evening/night; cleared at dawn
+        self._resting = False
         self._egg_cooldown = 0.0
 
     def decide(self, entity, world):
-        self._egg_cooldown -= world["dt"]
+        self._egg_cooldown -= world.dt
         self._home = self.init_home(entity, self._home)
 
-        spd       = entity.get("walk_speed", 2.5)
-        dist_home = self.dist2d(entity["x"], entity["z"],
-                                self._home[0], self._home[2])
+        spd       = entity.walk_speed
+        dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
 
         # Fear dogs — highest priority, even at night (survival)
-        for e in world["nearby"]:
-            if e["type_id"] == "base:dog" and e["distance"] < 6:
-                return Flee(e["id"], speed=6.0), "EEK! Dog!"
+        dog = world.get("base:dog", max_dist=6)
+        if dog:
+            return Flee(dog.id, speed=6.0), "EEK! Dog!"
 
-        # ── Evening/Night: roost (overrides cat-chasing) ──────────────────────
+        # ── Evening/Night: roost ──────────────────────────────────────────────
         if self.is_night(world) or self.is_evening(world):
             self._resting = True
             if self.is_night(world):
                 self._sleeping = True
             if dist_home > 3:
-                return (MoveTo(self._home[0], self._home[1], self._home[2],
-                               speed=spd),
-                        "Heading home to roost...")
+                return MoveTo(*self._home, speed=spd), "Heading home to roost..."
             if self._sleeping:
                 return Idle(), "Roosting zzz"
-            # At home during evening — seek a perch if available
-            for b in world["blocks"]:
-                if b["type"] in ("base:wood", "base:fence", "base:planks") \
-                        and b["y"] > entity["y"] + 1.5 and b["distance"] < 8:
-                    return (MoveTo(b["x"] + 0.5, b["y"] + 1.0, b["z"] + 0.5,
-                                   speed=spd), "Seeking roost")
+            # Seek elevated perch if at home during evening
+            for perch_type in ("base:wood", "base:fence", "base:planks"):
+                b = world.get(perch_type)
+                if b and b.y > entity.y + 1.5 and b.distance < 8:
+                    return MoveTo(b.x + 0.5, b.y + 1.0, b.z + 0.5, speed=spd), \
+                           "Seeking roost"
             return Idle(), "Settling down"
 
         if self._resting:
@@ -71,32 +65,28 @@ class BraveChickenBehavior(Behavior):
             return Idle(), "BAWK! Good morning!"
 
         # Chase cats! (brave chicken is aggressive toward felines — daytime only)
-        for e in world["nearby"]:
-            if e["type_id"] == "base:cat" and e["distance"] < 8:
-                return (Follow(e["id"], speed=spd * 1.5, min_distance=1.0),
-                        "BAWK! Chasing cat!")
+        cat = world.get("base:cat", max_dist=8)
+        if cat:
+            return Follow(cat.id, speed=spd * 1.5, min_distance=1.0), "BAWK! Chasing cat!"
 
         # Follow player and occasionally lay eggs when near them
-        for e in world["nearby"]:
-            if e["category"] == "player":
-                if e["distance"] < 3 and self._egg_cooldown <= 0 \
-                        and random.random() < 0.15 and entity["hp"] > 2:
-                    self._egg_cooldown = 8.0
-                    # Convert 2 HP (value 2) → 1 egg (value 1): value decreases, always valid
-                    return (ConvertObject(from_item="hp", from_count=2,
-                                         to_item="base:egg", to_count=1,
-                                         convert_direct=False),
-                            "*happy cluck* Laid an egg!")
-                if e["distance"] > 3:
-                    return Follow(e["id"], speed=3.0, min_distance=2.0), "Following player"
-                return Idle(), "Sitting by player"
+        player = world.nearest("player")
+        if player:
+            if player.distance < 3 and self._egg_cooldown <= 0 \
+                    and random.random() < 0.15 and entity.hp > 2:
+                self._egg_cooldown = 8.0
+                return (ConvertObject(from_item="hp", from_count=2,
+                                     to_item="base:egg", to_count=1,
+                                     direct=False),
+                        "*happy cluck* Laid an egg!")
+            if player.distance > 3:
+                return Follow(player.id, speed=3.0, min_distance=2.0), "Following player"
+            return Idle(), "Sitting by player"
 
-        # Rejoin flock if far
-        flock = [e for e in world["nearby"]
-                 if e["type_id"] == entity["type_id"] and e["id"] != entity["id"]]
-        if flock and all(e["distance"] > 4 for e in flock):
-            nearest = min(flock, key=lambda e: e["distance"])
-            return Follow(nearest["id"]), "Rejoining flock"
+        # Rejoin flock if same-type animals are nearby and we're far from them
+        friends = world.all(entity.type_id)
+        if friends and all(e.distance > 4 for e in friends):
+            nearest = min(friends, key=lambda e: e.distance)
+            return Follow(nearest.id), "Rejoining flock"
 
-        # Wander proudly
         return Wander(speed=spd), "Strutting around"

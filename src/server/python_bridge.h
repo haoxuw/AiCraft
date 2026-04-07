@@ -168,6 +168,12 @@ private:
 	};
 
 	std::unordered_map<int, LoadedBehavior> m_behaviors;
+
+	// Cached pydantic class references for LocalWorld and SelfEntity.
+	// Loaded once on init(), destroyed on shutdown(). Avoids re-importing
+	// local_world every tick.
+	void* m_localWorldClass  = nullptr;   // py::object* → LocalWorld
+	void* m_selfEntityClass  = nullptr;   // py::object* → SelfEntity
 };
 
 // Global bridge instance (owned by server)
