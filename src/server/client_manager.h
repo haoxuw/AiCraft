@@ -46,10 +46,13 @@ struct ConnectedClient {
 	uint32_t protocolVersion = 1;
 	bool supportsZstd = false; // true when protocolVersion >= 2
 
-	// Chunk streaming radii
-	static constexpr int STREAM_R = 6;  // stream chunks within this radius
-	static constexpr int EVICT_R  = 9;  // evict sentChunks beyond this radius (3-chunk hysteresis)
-	static constexpr int EVICT_DY = 3;  // vertical eviction radius
+	// Chunk streaming radii.
+	// STREAM_R must exceed fogEnd/CHUNK_SIZE so the player never sees void at the fog boundary.
+	// fogEnd = 160 blocks → 10 chunks; use 11 for a 1-chunk safety margin.
+	static constexpr int STREAM_R     = 11;  // priority streaming radius (must exceed fog end)
+	static constexpr int STREAM_FAR_R = 20;  // opportunistic far streaming (distant mountains)
+	static constexpr int EVICT_R      = 22;  // evict sentChunks beyond this (STREAM_FAR_R + 2)
+	static constexpr int EVICT_DY     =  4;  // vertical eviction radius
 
 	std::string label() const {
 		if (!name.empty())
@@ -306,8 +309,10 @@ public:
 				net::sendMessage(client.fd, net::S_TIME, tb);
 			}
 
-			// Chunk streaming — throttled independently of entity broadcast
-			if (pe && client.pendingChunks.size() < 20) {
+			// Chunk streaming — two-tier: near (priority) then far (opportunistic).
+			// Near tier covers the full view frustum so the player never sees void.
+			// Far tier loads distant terrain (mountains, vistas) when near is caught up.
+			if (pe) {
 				auto cp = worldToChunk((int)pe->position.x, (int)pe->position.y, (int)pe->position.z);
 
 				// Evict far chunks when the player moves to a new chunk column
@@ -316,27 +321,62 @@ public:
 					evictFarChunks(client, cp);
 				}
 
-				// Build candidate list sorted nearest-first for better perceived load time
-				struct Candidate { ChunkPos pos; int dist; };
-				std::vector<Candidate> candidates;
-				const int R = ConnectedClient::STREAM_R;
-				for (int dy = -1; dy <= 2; dy++)
-				for (int dz = -R; dz <= R; dz++)
-				for (int dx = -R; dx <= R; dx++) {
-					ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
-					if (client.sentChunks.count(pos)) continue;
-					if (!m_server.world().hasChunk(pos)) continue; // don't force generation
-					int dist = std::abs(dx) + std::abs(dz) + std::abs(dy) * 4;
-					candidates.push_back({pos, dist});
-				}
-				std::sort(candidates.begin(), candidates.end(),
-				          [](const Candidate& a, const Candidate& b) { return a.dist < b.dist; });
+				// Player forward direction for view-biased priority (yaw: 0=+Z, 90°=+X)
+				float yaw = glm::radians(pe->yaw);
+				float fwdX = std::cos(yaw), fwdZ = std::sin(yaw);
 
-				int queued = 0;
-				for (auto& c : candidates) {
-					if (queued >= 4 || client.pendingChunks.size() >= 20) break;
-					queueChunk(client, c.pos);
-					queued++;
+				struct Candidate { ChunkPos pos; int dist; bool far; };
+
+				// ── Tier 1: near radius (R=STREAM_R) — must have no void at fog boundary ──
+				// No hasChunk() guard — force generation of new areas eagerly.
+				if (client.pendingChunks.size() < 40) {
+					std::vector<Candidate> near;
+					const int R = ConnectedClient::STREAM_R;
+					for (int dy = -1; dy <= 2; dy++)
+					for (int dz = -R; dz <= R; dz++)
+					for (int dx = -R; dx <= R; dx++) {
+						ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
+						if (client.sentChunks.count(pos)) continue;
+						int baseDist = std::abs(dx) + std::abs(dz) + std::abs(dy) * 4;
+						float dot    = fwdX * dx + fwdZ * dz;
+						// Ahead bias: chunks in the look direction load before those behind
+						int biasedDist = baseDist - (int)(dot * 1.5f);
+						near.push_back({pos, biasedDist, false});
+					}
+					std::sort(near.begin(), near.end(),
+					          [](const Candidate& a, const Candidate& b) { return a.dist < b.dist; });
+					int queued = 0;
+					for (auto& c : near) {
+						if (queued >= 6 || client.pendingChunks.size() >= 40) break;
+						queueChunk(client, c.pos);
+						queued++;
+					}
+				}
+
+				// ── Tier 2: far radius (R=STREAM_FAR_R) — opportunistic, 1 chunk/tick ──
+				// Only runs when near tier is fully satisfied (pendingChunks empty).
+				// Loads distant terrain so mountains/cliffs appear before reaching them.
+				if (client.pendingChunks.empty()) {
+					const int NEAR = ConnectedClient::STREAM_R;
+					const int FAR  = ConnectedClient::STREAM_FAR_R;
+					// Pick the single nearest unsent chunk in the far ring
+					Candidate best{};
+					bool found = false;
+					for (int dy = 0; dy <= 1; dy++)     // only above-ground far chunks
+					for (int dz = -FAR; dz <= FAR; dz++)
+					for (int dx = -FAR; dx <= FAR; dx++) {
+						if (std::abs(dx) <= NEAR && std::abs(dz) <= NEAR) continue; // skip near ring
+						ChunkPos pos = {cp.x + dx, cp.y + dy, cp.z + dz};
+						if (client.sentChunks.count(pos)) continue;
+						int baseDist  = std::abs(dx) + std::abs(dz);
+						float dot     = fwdX * dx + fwdZ * dz;
+						int biasedDist = baseDist - (int)(dot * 2.0f); // stronger bias for far
+						if (!found || biasedDist < best.dist) {
+							best  = {pos, biasedDist, true};
+							found = true;
+						}
+					}
+					if (found) queueChunk(client, best.pos);
 				}
 			}
 		}
@@ -627,12 +667,16 @@ private:
 			// Queue initial world chunks now that the human player is confirmed.
 			// (Delayed from acceptConnections to avoid wasting bandwidth on bots
 			// and clients that disconnect before identifying.)
-			for (int dy = 0; dy <= 1; dy++)
-			for (int dz = -4; dz <= 4; dz++)
-			for (int dx = -4; dx <= 4; dx++)
-				queueChunk(client, {client.lastChunkPos.x + dx,
-				                    client.lastChunkPos.y + dy,
-				                    client.lastChunkPos.z + dz});
+			// Use STREAM_R so the initial load covers the full view distance.
+			{
+				const int R = ConnectedClient::STREAM_R;
+				for (int dy = -1; dy <= 2; dy++)
+				for (int dz = -R; dz <= R; dz++)
+				for (int dx = -R; dx <= R; dx++)
+					queueChunk(client, {client.lastChunkPos.x + dx,
+					                    client.lastChunkPos.y + dy,
+					                    client.lastChunkPos.z + dz});
+			}
 			printf("[Server] %s: queued %zu initial chunks\n",
 				client.label().c_str(), client.pendingChunks.size());
 			break;
