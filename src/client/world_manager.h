@@ -98,7 +98,7 @@ public:
 			f << "  \"templateIndex\": " << templateIndex << ",\n";
 			f << "  \"templateName\": \"" << templateName << "\",\n";
 			f << "  \"gameMode\": \"survival\",\n";
-			f << "  \"worldTime\": 0.30,\n";
+			f << "  \"worldTime\": 0.25,\n";
 			f << "  \"spawnPos\": [30, 5, 30],\n";
 			f << "  \"lastPlayed\": \"" << timeBuf << "\",\n";
 			f << "  \"version\": 1\n";

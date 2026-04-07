@@ -3,13 +3,19 @@
 A voxel game where the world is code. Players write Python to define new
 objects and actions, then upload them into a shared world.
 
-## Core Principle
+## Core Principles
 
 **Python is the game. C++ is the engine.**
 
 All game content — creatures, behaviors, items, blocks, effects, models,
 worlds — is defined in Python artifacts. C++ provides physics, rendering,
 networking, and collision. Nothing gameplay-specific lives in C++.
+
+**Material value is conserved.** Every object — blocks, items, entity HP,
+dropped items — carries an intrinsic `value`. No action can increase the
+world's total value. Python behaviors compose any gameplay they want using
+4 primitive action types; the server only enforces the value invariant.
+See `docs/28_MATERIAL_VALUE.md` and `docs/03_ACTIONS.md`.
 
 ```
 Python (the game)                    C++ (the engine)

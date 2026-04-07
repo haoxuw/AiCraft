@@ -6,6 +6,23 @@
 namespace modcraft::builtin {
 
 inline void registerItemEntities(EntityManager& mgr) {
+	// Chest pseudo-entity — static entity at each chest block, carries inventory.
+	// Spawned by server::init() so Python behaviors can find chests via world["nearby"].
+	{
+		EntityDef def;
+		def.string_id = EntityType::ChestEntity;
+		def.display_name = "Chest";
+		def.kind = EntityKind::Living;  // Living → gets inventory allocated
+		def.category = Category::Chest;
+		def.color = {0.6f, 0.4f, 0.2f};
+		def.collision_box_min = {0, 0, 0};
+		def.collision_box_max = {0, 0, 0};  // no collision
+		def.gravity_scale = 0.0f;  // static, doesn't fall
+		def.walk_speed = 0.0f;
+		def.max_hp = 0;  // indestructible
+		mgr.registerType(def);
+	}
+
 	EntityDef def;
 	def.string_id = EntityType::ItemEntity;
 	def.display_name = "Item";

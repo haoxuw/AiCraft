@@ -547,7 +547,7 @@ private:
 
 	EntityId m_localPlayerId = ENTITY_NONE;
 	glm::vec3 m_spawnPos = {0, 0, 0};
-	float m_worldTime = 0.3f;
+	float m_worldTime = 0.25f;
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;

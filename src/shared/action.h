@@ -38,7 +38,7 @@ struct ActionProposal {
 		// Entity interaction
 		Attack,         // damage targetEntity with held item
 		PickupItem,     // pick up targetEntity (item)
-		StoreItem,      // transfer items from actor inventory into block inventory at chestPos
+		StoreItem,      // transfer items from actor inventory into chest entity (targetEntity)
 		// Item actions (Python-defined hooks: on_use, on_equip, on_interact)
 		UseItem,        // right-click: use held item on self (eat, drink)
 		EquipItem,      // E key: equip held item to its designated slot

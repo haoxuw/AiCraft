@@ -94,6 +94,11 @@ public:
 	glm::vec3 doorTogglePos() const { return m_doorTogglePos; }
 	void clearDoorToggle() { m_doorToggled = false; }
 
+	// Chest open event (right-click on chest block)
+	bool chestOpened() const { return m_chestOpened; }
+	glm::ivec3 chestOpenedPos() const { return m_chestOpenedPos; }
+	void clearChestOpened() { m_chestOpened = false; }
+
 private:
 	struct BreakState {
 		glm::ivec3 target = {0,0,0};
@@ -107,6 +112,8 @@ private:
 	PlaceEvent m_placeEvent;
 	bool m_doorToggled = false;
 	glm::vec3 m_doorTogglePos = {};
+	bool m_chestOpened = false;
+	glm::ivec3 m_chestOpenedPos = {};
 
 	// Cached cursor mode — only call glfwSetInputMode when it actually changes.
 	// Calling it every frame on Emscripten re-triggers requestPointerLock() which

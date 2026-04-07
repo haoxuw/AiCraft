@@ -107,8 +107,8 @@ private:
 
 	// State
 	GameState m_state = GameState::MENU;
-	float m_worldTime = 0.30f;
-	float m_daySpeed = 1.0f / 600.0f;
+	float m_worldTime = 0.25f;        // start at dawn (morning begins)
+	float m_daySpeed = 1.0f / 1200.0f; // 20-min cycle: 5min night/morning/afternoon/evening
 
 	// Connection (from --host/--port CLI args)
 	std::string m_connectHost;  // empty = singleplayer
@@ -212,6 +212,10 @@ private:
 
 	// Door swing animations (client-side, 0.25s rotation overlay)
 	std::vector<DoorAnim> m_doorAnims;
+
+	// Chest inventory UI
+	bool m_showChestUI = false;
+	EntityId m_openChestEntityId = ENTITY_NONE;
 
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;

@@ -146,13 +146,17 @@ public:
 			if (state.decideTimer <= 0) {
 				state.decideTimer = 0.25f;
 
-				auto nearby = gatherNearby(e, m_entities, 16.0f);
+				auto nearby = gatherNearby(e, m_entities, 64.0f);
 
 				BlockTypeFn blockQuery = [&](int x, int y, int z) -> std::string {
 					BlockId bid = getBlock(x, y, z);
 					return m_blocks.get(bid).string_id;
 				};
-				auto blocks = getKnownBlocks(e, 50, blockQuery, m_blockCaches[eid]);
+				// Use entity's work_radius prop as block scan radius (capped at 100).
+				// Defaults to 80 which covers most tree distances from a village.
+				int blockScanRadius = std::min(100,
+					(int)e.getProp<float>("work_radius", 80.0f));
+				auto blocks = getKnownBlocks(e, blockScanRadius, blockQuery, m_blockCaches[eid]);
 
 				BehaviorWorldView view{e, nearby, blocks, dt, m_worldTime};
 				state.currentAction = state.behavior->decide(view);
@@ -317,6 +321,30 @@ private:
 			revokeEntity(id);
 			break;
 		}
+		case net::S_INVENTORY: {
+			// Server broadcasts full inventory for an entity after any change.
+			// Agent updates local entity so decide() sees current item counts.
+			EntityId eid = rb.readU32();
+			uint32_t n = rb.readU32();
+			std::vector<std::pair<std::string, int>> items;
+			items.reserve(n);
+			for (uint32_t i = 0; i < n; i++) {
+				std::string itemId = rb.readString();
+				int count = rb.readI32();
+				items.push_back({itemId, count});
+			}
+			// Skip hotbar strings (10 slots) + equipment strings (WEAR_SLOT_COUNT=5)
+			for (int i = 0; i < Inventory::HOTBAR_SLOTS + WEAR_SLOT_COUNT; i++)
+				if (rb.hasMore()) rb.readString();
+
+			auto it = m_entities.find(eid);
+			if (it != m_entities.end() && it->second->inventory) {
+				it->second->inventory->clear();
+				for (auto& [itemId, count] : items)
+					if (count > 0) it->second->inventory->add(itemId, count);
+			}
+			break;
+		}
 		case net::S_TIME: {
 			m_worldTime = rb.readF32();
 			break;
@@ -357,6 +385,11 @@ private:
 			reloadBehavior(eid, newSource);
 			break;
 		}
+		default:
+			// Unknown/unhandled server message — log so we notice missing handlers.
+			fprintf(stderr, "[Agent:%s] WARNING: unhandled server message type 0x%04X (%zu bytes) — check agent_client.h\n",
+				m_name.c_str(), type, rb.remaining());
+			break;
 		}
 	}
 

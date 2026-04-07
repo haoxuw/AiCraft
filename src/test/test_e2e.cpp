@@ -1501,6 +1501,8 @@ static std::string p53_entities_never_inside_blocks_village() {
     std::string spawnBad;
     srv->forEachEntity([&](Entity& e) {
         if (!e.def().isLiving() || e.removed) return;
+        // Chest entities intentionally occupy chest block space — skip them.
+        if (e.def().category == Category::Chest) return;
         float hw = (e.def().collision_box_max.x - e.def().collision_box_min.x) * 0.5f;
         float ht = e.def().collision_box_max.y - e.def().collision_box_min.y;
         if (spawnBad.empty() && isInsideBlock(*srv, e.position, hw, ht))
@@ -1518,6 +1520,7 @@ static std::string p53_entities_never_inside_blocks_village() {
         srv->forEachEntity([&](Entity& e) {
             if (bad.empty() && !e.def().isLiving()) return;  // skip item entities
             if (bad.empty() && e.removed) return;
+            if (bad.empty() && e.def().category == Category::Chest) return;  // chest entities occupy block space
             float hw = (e.def().collision_box_max.x - e.def().collision_box_min.x) * 0.5f;
             float ht = e.def().collision_box_max.y - e.def().collision_box_min.y;
             if (isInsideBlock(*srv, e.position, hw, ht))
@@ -1586,6 +1589,108 @@ static std::string b2_all_behaviors_load_cleanly() {
             return std::string(behaviors[i]) + " load error: " + loadErr;
         pythonBridge().unloadBehavior(handle);
     }
+    return "";
+}
+
+// ================================================================
+// B3: Woodcutter collects logs and transitions to depositing
+// ================================================================
+static std::string b3_woodcutter_collects_and_deposits() {
+    auto srv = makeVillageServer();
+    Entity* villager = nullptr;
+    srv->forEachEntity([&](Entity& e) {
+        if (!villager && e.typeId() == "base:villager") villager = &e;
+    });
+    if (!villager) return "no villager spawned";
+    if (!villager->inventory) return "villager has no inventory";
+
+    // Load woodcutter behavior
+    std::ifstream f("artifacts/behaviors/base/woodcutter.py");
+    if (!f) return "cannot open woodcutter.py";
+    std::ostringstream ss; ss << f.rdbuf();
+    std::string loadErr;
+    auto handle = pythonBridge().loadBehavior(ss.str(), loadErr);
+    if (handle < 0) return "loadBehavior failed: " + loadErr;
+
+    // Set collect_goal to 2 for fast test
+    villager->setProp("collect_goal", 2);
+
+    // Give the villager 2 logs (simulating successful chops)
+    villager->inventory->add("base:wood", 2);
+
+    // Place wood block nearby and chest at home
+    std::vector<PythonBridge::NearbyBlock> blocks = {
+        {(int)villager->position.x + 5, (int)villager->position.y,
+         (int)villager->position.z, "base:wood", 5.0f}
+    };
+
+    std::string goalOut, errOut;
+    // Call decide() — should trigger depositing since log_count >= collect_goal
+    BehaviorAction action = pythonBridge().callDecide(
+        handle, *villager, {}, blocks, 0.25f, 0.3f, goalOut, errOut);
+    pythonBridge().unloadBehavior(handle);
+
+    if (!errOut.empty()) return "decide() error: " + errOut;
+    // Should be heading to deposit (MoveTo or StoreItem)
+    if (action.type != BehaviorAction::MoveTo && action.type != BehaviorAction::StoreItem)
+        return "expected MoveTo/StoreItem when inventory full, got action type " +
+               std::to_string((int)action.type) + " goal='" + goalOut + "'";
+    return "";
+}
+
+// ================================================================
+// B4: Server StoreItem action transfers inventory to chest block
+// ================================================================
+static std::string b4_store_item_server_validation() {
+    auto srv = makeVillageServer();
+
+    Entity* villager = nullptr;
+    EntityId chestEntityId = ENTITY_NONE;
+
+    // Find a villager that has chest_entity_id prop set
+    srv->forEachEntity([&](Entity& e) {
+        if (!villager && e.typeId() == "base:villager") {
+            float ceid = e.getProp<float>("chest_entity_id", -1.0f);
+            if (ceid >= 0) {
+                villager = &e;
+                chestEntityId = (EntityId)ceid;
+            }
+        }
+    });
+    if (!villager) return "no villager with chest_entity_id prop found";
+    if (!villager->inventory) return "villager has no inventory";
+    if (chestEntityId == ENTITY_NONE) return "chest_entity_id prop is ENTITY_NONE";
+
+    // Find the chest entity and verify it exists
+    Entity* chestEnt = srv->server()->world().entities.get(chestEntityId);
+    if (!chestEnt) return "chest entity " + std::to_string(chestEntityId) + " not found";
+    if (!chestEnt->inventory) return "chest entity has no inventory";
+
+    // Give the villager some logs
+    villager->inventory->add("base:wood", 3);
+
+    // Teleport villager next to the chest entity
+    villager->position = chestEnt->position + glm::vec3(1.5f, 0, 0);
+
+    // Send StoreItem action using entity ID (bypasses ownership — testing server handler)
+    ActionProposal sp;
+    sp.type = ActionProposal::StoreItem;
+    sp.actorId = villager->id();
+    sp.targetEntity = chestEntityId;
+    srv->sendActionDirect(sp);
+    srv->tick(1.0f / 60.0f);
+
+    // Verify actor inventory is now empty
+    int logsInInventory = villager->inventory->count("base:wood");
+    if (logsInInventory > 0)
+        return "villager inventory not cleared after StoreItem (still has " +
+               std::to_string(logsInInventory) + " base:wood)";
+
+    // Verify chest entity received the items
+    int logsInChest = chestEnt->inventory->count("base:wood");
+    if (logsInChest != 3)
+        return "chest entity has " + std::to_string(logsInChest) + " logs, expected 3";
+
     return "";
 }
 
@@ -1673,8 +1778,10 @@ int main() {
 	run("P53: village entities never inside blocks (120 frames)", p53_entities_never_inside_blocks_village);
 
 	printf("\n--- Behavior ---\n");
-	run("B1: woodcutter sets goalText when wood nearby", b1_woodcutter_sets_goal_text);
-	run("B2: all behavior files load cleanly",           b2_all_behaviors_load_cleanly);
+	run("B1: woodcutter sets goalText when wood nearby",     b1_woodcutter_sets_goal_text);
+	run("B2: all behavior files load cleanly",               b2_all_behaviors_load_cleanly);
+	run("B3: woodcutter transitions to depositing when full", b3_woodcutter_collects_and_deposits);
+	run("B4: StoreItem transfers inventory to chest block",   b4_store_item_server_validation);
 
 	pythonBridge().shutdown();
 

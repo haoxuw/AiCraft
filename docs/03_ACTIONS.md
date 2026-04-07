@@ -1,476 +1,209 @@
-# ModCraft - Actions
+# ModCraft — Actions
 
-Actions are discrete events that modify the World. Every change in the game -- mining a block, a sheep eating grass, TNT exploding -- is an Action.
+Actions are the **only way** to mutate world state. Objects propose actions;
+the server validates and executes them. This gives us validation, atomicity,
+networking, and moddability.
 
----
-
-## 1. Why Actions?
-
-```
-WITHOUT Actions:                    WITH Actions:
-  pig.step():                         pig.step():
-    block.grass = 0                     world.emit_action("eat_grass",
-    pig.hunger += 0.3                       eater=self, block=pos)
-    world.set_block(...)
-                                      Server validates, executes, logs,
-  Direct mutation.                    broadcasts. Auditable, replayable,
-  No validation.                      moddable.
-  No logging.
-  No undo.
-```
-
-Actions are the **only way** to mutate the World. Objects can read state freely, but writes go through Actions. This gives us:
-
-- **Validation**: server checks preconditions before execution
-- **Atomicity**: an Action either fully succeeds or fully fails
-- **Logging**: every world change is recorded (replay, debugging)
-- **Networking**: Actions are the unit of synchronization
-- **Moddability**: players can define new Actions and override existing ones
-- **Chaining**: Actions can trigger other Actions (TNT -> explosion -> fire -> burn)
+See `docs/28_MATERIAL_VALUE.md` for the value conservation principle that
+underpins action validation.
 
 ---
 
-## 2. Action Definition
+## 1. Four Primitive Action Types
 
-Actions are Python functions decorated with metadata:
+The server validates exactly four kinds of actions. All gameplay, no matter
+how complex, compiles down to these primitives. Python behaviors compose
+them — the server only enforces invariants.
+
+```
+MoveTo      — move entity to position (no tunneling through blocks)
+TakeItem    — move item between inventories (no creation from nothing)
+ConvertItem — transform items in inventory (no value increase)
+DestroyItem — remove items permanently (value decreases — always allowed)
+```
+
+High-level semantic actions (Wander, Follow, Flee, Chop, Cook, Attack) are
+*Python-level strategies* that emit one or more of these primitives. The server
+has no knowledge of "chopping" or "cooking" — it only sees ConvertItem proposals
+and checks that value doesn't increase.
+
+---
+
+## 2. Action Lifecycle
+
+```
+Python behavior: decide() → PyAction
+       |
+       ↓
+Agent client: BehaviorAction → ActionProposal (one of 4 types)
+       |
+       ↓  (TCP C_ACTION)
+Server validates:
+  MoveTo      → path clear?
+  TakeItem    → source has item?
+  ConvertItem → to_value * count ≤ from_value * count?
+  DestroyItem → source has item?
+       |
+       ↓ (pass)
+Apply mutation to world state
+       |
+       ↓
+Broadcast delta to all clients (S_ENTITY, S_BLOCK, S_INVENTORY)
+```
+
+---
+
+## 3. Inventory References
+
+`TakeItem`, `ConvertItem`, and `DestroyItem` all operate on **inventory
+references**. An inventory ref identifies where items live:
+
+| Ref Type | Format | What It Points To |
+|----------|--------|------------------|
+| Entity inventory | `EntityId` | Items held by an entity (player, villager, chest) |
+| Block position | `{x, y, z}` | A placed block treated as a 1-slot inventory |
+| HP pool | `{entity: id, slot: "hp"}` | Entity hit points (value = hp * hp_value) |
+| Ground | implicit | Dropped item entities at actor's feet |
+
+This unified model means "break a block", "pick up an item", "deal damage", and
+"store items in a chest" are all variants of the same three action types.
+
+---
+
+## 4. Python API
+
+Python behaviors import from `modcraft_engine`:
 
 ```python
-# artifacts/actions/mine.py
-from modcraft.api import (
-    Action, ActionMeta, WorldView, PlayerObject, BlockPos,
-    Precondition, Effect
-)
-
-@Action
-class Mine:
-    """Player mines (breaks) a block."""
-
-    meta = ActionMeta(
-        id="base:mine",
-        display_name="Mine",
-        category="player",
-        trigger="player_input",        # how it's initiated
-        cooldown=0.0,                  # seconds between uses
-        range=5.0,                     # max distance
-        animation="mine",             # player animation to play
-        sound="dig_{tool_group}",      # parameterized sound
-        particles="block_break",       # particle effect
-    )
-
-    # --- Inputs (what the action needs) ---
-    actor: EntityId                    # who is mining
-    target_pos: BlockPos               # what block to mine
-    tool_slot: int = 0                 # which hotbar slot (for tool)
-
-    # --- Preconditions (checked before execution) ---
-    def validate(self, world: WorldView) -> bool:
-        actor = world.get_entity(self.actor)
-        if not isinstance(actor, PlayerObject):
-            return False
-        block = world.get_block(self.target_pos)
-        if block is None:
-            return False
-        if actor.pos.distance(self.target_pos.to_vec3()) > self.meta.range:
-            return False
-        return True
-
-    # --- Execution (modifies the world) ---
-    def execute(self, world: WorldView):
-        actor = world.get_entity(self.actor)
-        block = world.get_block(self.target_pos)
-        tool = actor.hotbar.get(self.tool_slot)
-
-        # Calculate dig time based on tool vs block
-        dig_time = self.calc_dig_time(block, tool)
-
-        # This is an instant action in the spec, but the client
-        # handles the digging progress bar. The server receives
-        # the Mine action only when digging completes.
-
-        # Drop items
-        drop = block.meta.drop or block.meta.id
-        world.spawn_entity(
-            self.target_pos.to_vec3() + Vec3(0, 0.5, 0),
-            "base:item_entity",
-            item_type=drop,
-            count=1,
-        )
-
-        # Notify the block
-        block.on_dig(world, self.target_pos, actor)
-
-        # Remove the block
-        world.set_block(self.target_pos, None)
-
-        # Wear the tool
-        if tool:
-            tool.wear += self.calc_wear(block, tool)
-            if tool.wear >= tool.meta.max_wear:
-                actor.hotbar.remove(self.tool_slot)
-                world.play_sound("tool_break", actor.pos)
-
-        # Notify neighbors
-        for offset in NEIGHBOR_OFFSETS:
-            neighbor_pos = self.target_pos.offset(*offset)
-            neighbor = world.get_block(neighbor_pos)
-            if neighbor:
-                neighbor.on_neighbor_changed(world, neighbor_pos, self.target_pos)
-
-    def calc_dig_time(self, block, tool):
-        base_time = block.meta.hardness
-        if tool and tool.meta.tool_group == block.meta.tool_group:
-            return base_time / tool.meta.tool_speed
-        return base_time
+from modcraft_engine import MoveTo, TakeItem, ConvertItem, DestroyItem
 ```
 
----
-
-## 3. Action Categories
-
-```
-Action
-  |
-  |-- Player Input Actions (triggered by keyboard/mouse)
-  |     Mine, Place, Attack, UseItem, Interact, Jump, Sprint,
-  |     OpenInventory, Chat, DropItem, SwapHands
-  |
-  |-- Entity Actions (triggered by ActiveObject.step())
-  |     EatGrass, WanderTo, FleeFrom, AttackTarget,
-  |     LayEgg, Grow, Despawn
-  |
-  |-- World Actions (triggered by the world systems)
-  |     LiquidFlow, FireSpread, GrassGrow, LeafDecay,
-  |     LavaCool, LightUpdate, WeatherChange
-  |
-  |-- Item Actions (triggered by item use/activation)
-  |     TNTExplode, PotionDrink, FoodEat, BowShoot,
-  |     FlintIgnite, BucketFill, MapReveal
-  |
-  |-- Chained Actions (triggered by other actions)
-  |     Knockback (from Attack), Ignite (from FireSpread),
-  |     DropLoot (from entity death), XPGain (from mining)
-```
-
----
-
-## 4. Action Lifecycle
-
-```
-+------------------------------------------------------------------+
-|                     Action Processing Pipeline                    |
-+------------------------------------------------------------------+
-
-  Source (player input, entity step, ABM, chain)
-       |
-       v
-  1. Construct Action instance with inputs
-       |
-       v
-  2. Queue in World.action_queue
-       |
-       v
-  3. [Per-tick processing]
-       |
-       v
-  4. Validate preconditions
-       |-- FAIL -> discard, notify source
-       |
-       v (PASS)
-  5. Execute action
-       |-- Reads world state
-       |-- Computes effects
-       |-- Applies mutations via WorldView
-       |-- May emit chained actions
-       |
-       v
-  6. Collect mutations
-       |-- Block changes: [(pos, old_block, new_block), ...]
-       |-- Entity changes: [(entity_id, field, old_val, new_val), ...]
-       |-- Spawns: [(entity_type, pos, attrs), ...]
-       |-- Removals: [entity_id, ...]
-       |-- Sounds: [(sound, pos, gain), ...]
-       |-- Particles: [(spec, pos), ...]
-       |
-       v
-  7. Apply to authoritative world state (server-side)
-       |
-       v
-  8. Create ActionResult
-       |
-       v
-  9. Broadcast to clients
-       |-- Affected clients receive delta updates
-       |-- Sounds/particles sent to nearby clients
-       |
-       v
-  10. Log to action history (for replay/debugging)
-```
-
----
-
-## 5. More Action Examples
-
-### 5.1 TNT Explosion
-
+### MoveTo
 ```python
-# artifacts/actions/tnt_explode.py
-
-@Action
-class TNTExplode:
-    """TNT detonates, destroying blocks in a sphere and damaging entities."""
-
-    meta = ActionMeta(
-        id="base:tnt_explode",
-        display_name="TNT Explosion",
-        category="item",
-        trigger="timer",                  # triggered by TNT's fuse timer
-        sound="tnt_explode",
-        particles="explosion_large",
-    )
-
-    center: BlockPos
-    radius: int = 3
-    source_entity: Optional[EntityId] = None  # who placed the TNT
-
-    def validate(self, world: WorldView) -> bool:
-        block = world.get_block(self.center)
-        return block is not None and "tnt" in block.meta.groups
-
-    def execute(self, world: WorldView):
-        r = self.radius
-
-        # Destroy blocks in sphere
-        for x in range(-r, r + 1):
-            for y in range(-r, r + 1):
-                for z in range(-r, r + 1):
-                    if x*x + y*y + z*z > r*r:
-                        continue
-                    pos = self.center.offset(x, y, z)
-                    block = world.get_block(pos)
-                    if block is None:
-                        continue
-                    if "unbreakable" in block.meta.groups:
-                        continue
-                    # Some blocks drop, some don't (blast resistance)
-                    blast_resist = block.meta.groups.get("blast_resistance", 0)
-                    if random() > blast_resist * 0.25:
-                        # Drop item
-                        if random() < 0.3:  # 30% drop rate from explosions
-                            world.spawn_entity(pos.to_vec3(),
-                                "base:item_entity",
-                                item_type=block.meta.drop or block.meta.id)
-                    # Replace with air (or fire if flammable)
-                    if "flammable" in block.meta.groups and random() < 0.3:
-                        world.set_block(pos, world.registry.create("base:fire"))
-                    else:
-                        world.set_block(pos, None)
-
-        # Damage entities in radius
-        for entity in world.get_entities_in_radius(self.center.to_vec3(), r * 1.5):
-            dist = entity.pos.distance(self.center.to_vec3())
-            damage = max(0, (1.0 - dist / (r * 1.5)) * 20)
-            if damage > 0:
-                world.emit_action("base:damage",
-                    target=entity.entity_id,
-                    amount=damage,
-                    source=self.source_entity,
-                    damage_type="explosion")
-                # Knockback
-                direction = (entity.pos - self.center.to_vec3()).normalized()
-                world.emit_action("base:knockback",
-                    target=entity.entity_id,
-                    force=direction * damage * 0.5)
-
-        # Chain: nearby TNT gets ignited
-        for x in range(-r-1, r + 2):
-            for y in range(-r-1, r + 2):
-                for z in range(-r-1, r + 2):
-                    pos = self.center.offset(x, y, z)
-                    block = world.get_block(pos)
-                    if block and "tnt" in block.meta.groups:
-                        world.emit_action("base:tnt_ignite",
-                            target_pos=pos, fuse=random() * 1.5)
+# Move entity toward a position at a given speed
+MoveTo(x, y, z, speed=2.0)
 ```
 
-### 5.2 Sheep Eats Grass
-
+### TakeItem
 ```python
-# artifacts/actions/eat_grass.py
+# Take item from another entity (chest, dropped item, creature)
+TakeItem(from_entity_id, item_id, count=1)
 
-@Action
-class EatGrass:
-    """An animal eats grass from a dirt block."""
+# Take item from a world block position (block → inventory)
+TakeItem(from_pos=(x, y, z), item_id="base:wood_block", count=1)
 
-    meta = ActionMeta(
-        id="base:eat_grass",
-        display_name="Eat Grass",
-        category="entity",
-        trigger="entity_step",
-        sound="eat_grass",
-        animation="eat",
-        duration=2.0,                    # takes 2 seconds
-    )
-
-    eater: EntityId
-    block_pos: BlockPos
-
-    def validate(self, world: WorldView) -> bool:
-        eater = world.get_entity(self.eater)
-        if eater is None or not isinstance(eater, LivingObject):
-            return False
-        block = world.get_block(self.block_pos)
-        if block is None:
-            return False
-        return hasattr(block, 'grass_level') and block.grass_level > 0.2
-
-    def execute(self, world: WorldView):
-        eater = world.get_entity(self.eater)
-        block = world.get_block(self.block_pos)
-
-        # Reduce grass
-        eaten = min(block.grass_level, 0.5)
-        block.grass_level -= eaten
-
-        # Feed the animal
-        if hasattr(eater, 'hunger'):
-            eater.hunger = min(1.0, eater.hunger + eaten * 0.6)
-
-        # If grass fully eaten, change texture
-        if block.grass_level <= 0.05:
-            block.grass_level = 0.0
-            # Grass will regrow via a GrassGrow ABM over time
+# Put item into another entity's inventory (store in chest)
+TakeItem(from_entity_id=self_id, to_entity_id=chest_id, item_id="base:log", count=all)
 ```
 
-### 5.3 Cast Magic Spell (Player-Created Example)
-
+### ConvertItem
 ```python
-# artifacts/actions/fireball.py
-# Created by player "wizardMike" in-game
+# Convert items in actor's inventory (server checks: to_value ≤ from_value)
+ConvertItem(from_item="base:wood_block", from_count=1,
+            to_item="base:log", to_count=1)
 
-@Action
-class CastFireball:
-    """Launch a fireball projectile that explodes on impact."""
+# Spend HP to produce an item (chicken laying an egg)
+ConvertItem(from_item="hp", from_count=4,
+            to_item="base:egg", to_count=1)
 
-    meta = ActionMeta(
-        id="wizardMike:cast_fireball",
-        display_name="Cast Fireball",
-        category="player",
-        trigger="player_input",
-        cooldown=3.0,                    # 3 second cooldown
-        range=50.0,
-        cost={"stamina": 25.0},          # costs 25 stamina
-        animation="cast",
-        sound="fireball_cast",
-    )
+# Place a block (item → world position)
+ConvertItem(from_item="base:log", from_count=1,
+            to_block_pos=(x, y, z), to_block="base:wood_block")
+```
 
-    caster: EntityId
-    direction: Vec3
+### DestroyItem
+```python
+# Attack: deal damage to entity (destroy HP value)
+DestroyItem(target_entity=enemy_id, item="hp", count=5)
 
-    def validate(self, world: WorldView) -> bool:
-        caster = world.get_entity(self.caster)
-        if not isinstance(caster, PlayerObject):
-            return False
-        if caster.stamina < 25.0:
-            return False
-        return True
-
-    def execute(self, world: WorldView):
-        caster = world.get_entity(self.caster)
-        caster.stamina -= 25.0
-
-        # Spawn a fireball projectile entity
-        spawn_pos = caster.pos + Vec3(0, caster.meta.eye_height, 0)
-        world.spawn_entity(
-            spawn_pos,
-            "wizardMike:fireball_projectile",
-            velocity=self.direction.normalized() * 20.0,
-            damage=8.0,
-            owner=self.caster,
-            lifetime=3.0,
-        )
+# Consume an item (eat, drink, burn)
+DestroyItem(target_entity=self_id, item="base:potion", count=1)
 ```
 
 ---
 
-## 6. Action Meta
+## 5. Behavior Examples
 
+### Wander (Python implements target selection)
 ```python
-class ActionMeta(BaseModel):
-    # --- Identity ---
-    id: str                              # "namespace:name"
-    display_name: str
-    description: str = ""
-    category: str                        # player, entity, world, item, chain
-    author: str = "system"
-    version: int = 1
+# behavior_base.py provides wander_target() helper
+from behavior_base import Behavior
+from modcraft_engine import MoveTo
 
-    # --- Trigger ---
-    trigger: str                         # player_input, entity_step, timer,
-                                         # abm, chain, on_place, on_dig, on_use
+class WanderBehavior(Behavior):
+    def decide(self, entity, world):
+        target = self.wander_target(entity, radius=8)
+        return MoveTo(*target, speed=entity["walk_speed"]), "Wandering"
+```
 
-    # --- Constraints ---
-    cooldown: float = 0.0                # seconds between uses (per actor)
-    range: float = 0.0                   # max distance from actor to target
-    cost: Dict[str, float] = {}          # attribute costs {"stamina": 10}
-    requires_tool: Optional[str] = None  # tool group required
-    requires_groups: Dict[str, int] = {} # target must have these groups
-    duration: float = 0.0                # how long the action takes (0=instant)
+### Follow / Flee (Python does the math)
+```python
+def decide(self, entity, world):
+    for e in world["nearby"]:
+        if e["category"] == "player" and e["distance"] < 8:
+            # Flee: move in opposite direction
+            dx = entity["x"] - e["x"]
+            dz = entity["z"] - e["z"]
+            dist = (dx*dx + dz*dz) ** 0.5 or 1
+            tx = entity["x"] + dx/dist * 12
+            tz = entity["z"] + dz/dist * 12
+            return MoveTo(tx, entity["y"], tz, speed=4.0), "Fleeing!"
+    return MoveTo(*self.wander_target(entity, 8)), "Wandering"
+```
 
-    # --- Feedback ---
-    animation: Optional[str]             # animation name on the actor
-    sound: Optional[str]                 # sound to play (supports {var} templates)
-    particles: Optional[str]             # particle effect name
+### Woodcutter (ConvertItem for chopping)
+```python
+def decide(self, entity, world):
+    blocks = [b for b in world["blocks"] if b["type"] == "base:wood"]
+    if blocks:
+        b = min(blocks, key=lambda x: x["distance"])
+        if b["distance"] < 2.5:
+            return (ConvertItem("base:wood_block", 1, "base:log", 1,
+                                block_pos=(b["x"], b["y"], b["z"])),
+                    "Chopping!")
+        return MoveTo(b["x"], b["y"], b["z"]), "Walking to tree"
+    return MoveTo(*self.wander_target(entity, 20)), "Searching..."
+```
+
+### Attack
+```python
+def decide(self, entity, world):
+    enemies = [e for e in world["nearby"]
+               if e["category"] == "hostile" and e["distance"] < 3]
+    if enemies:
+        target = min(enemies, key=lambda e: e["distance"])
+        damage = entity.get("damage", 3)
+        return (DestroyItem(target_entity=target["id"], item="hp", count=damage),
+                "Attacking!")
+    return MoveTo(*self.wander_target(entity, 10)), "Patrolling"
 ```
 
 ---
 
-## 7. Action Queue & Ordering
+## 6. Infrastructure Actions (Not Gameplay)
+
+One additional action exists outside the 4 primitives — it is infrastructure,
+not gameplay, and is not subject to value conservation:
 
 ```
-Each server tick processes actions in priority order:
-
-  Priority 0 (highest): World system actions (physics, lighting)
-  Priority 1:           Chained actions (from previous tick's actions)
-  Priority 2:           Player input actions (mine, place, attack)
-  Priority 3:           Entity actions (mob behavior)
-  Priority 4 (lowest):  Deferred actions (ABM results, timed events)
-
-Within the same priority: FIFO order.
-
-Conflict resolution:
-  - Two players mine the same block? First one wins, second fails validation.
-  - Entity and player both target same entity? Both execute (damage stacks).
-  - Action modifies a block that another action already changed this tick?
-    Second action sees the POST-first-action state.
-
-Max actions per tick: configurable (default 1000).
-  If exceeded, remaining actions roll over to next tick.
+ReloadBehavior — hot-swap Python behavior source code for an entity
 ```
+
+This is sent by the GUI code editor and is handled server-side by forwarding
+the new source to the entity's agent client process.
 
 ---
 
-## 8. Action History & Replay
+## 7. Value Conservation Summary
+
+See `docs/28_MATERIAL_VALUE.md` for full details.
 
 ```
-Every executed action is logged:
-
-ActionLog entry:
-  {
-    tick: 14523,
-    timestamp: "2026-03-30T10:15:23.456Z",
-    action_id: "base:mine",
-    inputs: {actor: 42, target_pos: [10, 5, -3], tool_slot: 0},
-    mutations: [
-      {type: "block_remove", pos: [10, 5, -3], old: "base:stone"},
-      {type: "entity_spawn", entity_type: "base:item_entity", pos: [10, 5.5, -3]},
-      {type: "attr_change", entity: 42, field: "tool_wear", old: 5, new: 6},
-    ],
-    result: "success"
-  }
-
-Uses:
-  - Debug: "Why did my block disappear?" -> check action log
-  - Replay: play back a recording of a build session
-  - Undo: admin can revert specific actions (future feature)
-  - Analytics: track what players do most
+MoveTo:       value unchanged  (position change only)
+TakeItem:     value conserved  (item relocated, not created)
+ConvertItem:  value ≤ before   (transformation; server rejects if value would increase)
+DestroyItem:  value decreases  (always allowed)
 ```
+
+New value enters the world only via: HP regeneration, chunk generation,
+and (future) plant growth. These are world-system events, not player actions.

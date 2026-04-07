@@ -72,14 +72,23 @@ class Behavior:
 
     @staticmethod
     def is_night(world: dict) -> bool:
-        """True between dusk (75%) and dawn (25%) of the day cycle."""
-        t = world.get("time", 0.5)
-        return t > 0.75 or t < 0.25
+        """True during night: midnight to dawn (0%–25%)."""
+        return world.get("time", 0.5) < 0.25
+
+    @staticmethod
+    def is_morning(world: dict) -> bool:
+        """True during morning: dawn to noon (25%–50%)."""
+        return 0.25 <= world.get("time", 0.5) < 0.50
+
+    @staticmethod
+    def is_afternoon(world: dict) -> bool:
+        """True during afternoon: noon to dusk (50%–75%)."""
+        return 0.50 <= world.get("time", 0.5) < 0.75
 
     @staticmethod
     def is_evening(world: dict) -> bool:
-        """True from 65% to 75% of the day cycle (dusk window)."""
-        return 0.65 < world.get("time", 0.5) <= 0.75
+        """True during evening: dusk to midnight (75%–100%)."""
+        return world.get("time", 0.5) >= 0.75
 
     def init_home(self, entity: dict, home):
         """Return the home tuple, initialising it from entity props if None.

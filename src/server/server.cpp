@@ -351,33 +351,53 @@ void GameServer::resolveActions(float dt) {
 			if (!actor || !actor->inventory) break;
 			if (!actor->def().isLiving()) break;
 
-			// Validate proximity to chest (must be within 4 blocks)
-			float dist = glm::length(p.chestPos - actor->position);
-			if (dist > 4.0f) break;
+			// Look up the chest entity by targetEntity ID.
+			Entity* chestEnt = m_world->entities.get(p.targetEntity);
+			if (!chestEnt || chestEnt->def().category != Category::Chest) {
+				printf("[Server] StoreItem DENIED (entity %u): invalid chest entity %u\n",
+					actor->id(), p.targetEntity);
+				break;
+			}
 
-			// Validate there is actually a chest block at the target position
-			glm::ivec3 cp = {(int)std::round(p.chestPos.x),
-			                 (int)std::round(p.chestPos.y),
-			                 (int)std::round(p.chestPos.z)};
+			// Get the block position from the chest entity's position.
+			glm::ivec3 cp = {(int)std::floor(chestEnt->position.x),
+			                 (int)std::floor(chestEnt->position.y),
+			                 (int)std::floor(chestEnt->position.z)};
+
+			// Validate there is actually a chest block there.
 			BlockId bid = m_world->getBlock(cp.x, cp.y, cp.z);
 			const BlockDef& bdef = m_world->blocks.get(bid);
-			if (bdef.string_id != BlockType::Chest) break;
+			if (bdef.string_id != BlockType::Chest) {
+				printf("[Server] StoreItem DENIED (entity %u): no chest block at (%d,%d,%d), found '%s'\n",
+					actor->id(), cp.x, cp.y, cp.z, bdef.string_id.c_str());
+				break;
+			}
 
-			// Pack position key for block inventory map
-			uint64_t posKey = ((uint64_t)(uint32_t)cp.x)
-			                | ((uint64_t)(uint32_t)cp.y << 21)
-			                | ((uint64_t)(uint32_t)cp.z << 42);
+			if (!chestEnt->inventory) break;
 
-			Inventory& chestInv = m_blockInventories[posKey];
-
-			// Transfer all items from actor to chest
-			for (auto& [itemId, count] : actor->inventory->items())
-				chestInv.add(itemId, count);
+			// Transfer all items from actor to chest entity inventory.
+			int totalTransferred = 0;
+			for (auto& [itemId, count] : actor->inventory->items()) {
+				chestEnt->inventory->add(itemId, count);
+				totalTransferred += count;
+			}
 			actor->inventory->clear();
 			actor->inventory->autoPopulateHotbar();
 
-			if (m_callbacks.onInventoryChange)
+			// Keep block inventory map in sync for world save.
+			uint64_t posKey = ((uint64_t)(uint32_t)cp.x)
+			                | ((uint64_t)(uint32_t)cp.y << 21)
+			                | ((uint64_t)(uint32_t)cp.z << 42);
+			m_blockInventories[posKey] = *chestEnt->inventory;
+
+			printf("[Server] StoreItem OK: entity %u '%s' deposited %d items into chest entity %u at (%d,%d,%d)\n",
+				actor->id(), actor->typeId().c_str(), totalTransferred,
+				chestEnt->id(), cp.x, cp.y, cp.z);
+
+			if (m_callbacks.onInventoryChange) {
 				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
+				m_callbacks.onInventoryChange(chestEnt->id(), *chestEnt->inventory);
+			}
 			break;
 		}
 		case ActionProposal::GrowCrop:

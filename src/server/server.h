@@ -60,7 +60,7 @@ public:
 
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
 		m_wgc = config.worldGenConfig;
-		m_worldTime = 0.30f;
+		m_worldTime = 0.25f; // start at dawn
 
 		// Ask the template where the player should spawn
 		glm::vec3 rawSpawn = tmpl->preferredSpawn(config.seed);
@@ -152,6 +152,7 @@ public:
 		auto houseChests = tmpl.houseChestPositions(m_world->seed());
 		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
 		m_houseChests.clear();
+		m_chestEntityIds.clear();
 		for (auto& cPos : houseChests) {
 			int cx = (int)std::round(cPos.x), cy = (int)std::round(cPos.y), cz = (int)std::round(cPos.z);
 			if (chestId != BLOCK_AIR) {
@@ -159,7 +160,14 @@ public:
 				Chunk* c = m_world->getChunk(cp);
 				if (c) c->set(((cx%16)+16)%16, ((cy%16)+16)%16, ((cz%16)+16)%16, chestId);
 			}
-			m_houseChests.push_back(glm::vec3((float)cx + 0.5f, (float)cy, (float)cz + 0.5f));
+			glm::vec3 blockCenter = {(float)cx + 0.5f, (float)cy + 0.5f, (float)cz + 0.5f};
+			m_houseChests.push_back(blockCenter);
+
+			// Spawn chest pseudo-entity so Python behaviors can find it via world["nearby"].
+			EntityId ceid = m_world->entities.spawn(EntityType::ChestEntity, blockCenter);
+			m_chestEntityIds.push_back(ceid);
+			printf("[Server] Chest entity %u spawned at (%.1f,%.1f,%.1f)\n",
+			       ceid, blockCenter.x, blockCenter.y, blockCenter.z);
 		}
 		m_chestPos = m_houseChests.empty() ? m_spawnPos : m_houseChests[0];
 
@@ -180,6 +188,9 @@ public:
 					extraProps["chest_x"] = m_houseChests[i].x;
 					extraProps["chest_y"] = m_houseChests[i].y;
 					extraProps["chest_z"] = m_houseChests[i].z;
+					// Also pass the chest entity ID so woodcutter can use StoreItem(id)
+					if (i < m_chestEntityIds.size())
+						extraProps["chest_entity_id"] = (float)m_chestEntityIds[i];
 				}
 				m_world->entities.spawn(villagerType,
 					{bp.x, safeSpawnHeight(bp.x, bp.z), bp.z}, extraProps);
@@ -342,6 +353,15 @@ public:
 	}
 
 	// Receive an action from a client
+	// Submit action directly without ownership check (test-only / agent-internal use).
+	void receiveActionDirect(const ActionProposal& action) {
+		if (action.type == ActionProposal::ReloadBehavior) {
+			m_pendingReloads.push_back(action);
+			return;
+		}
+		m_world->proposals.propose(action);
+	}
+
 	void receiveAction(ClientId clientId, ActionProposal action) {
 		auto it = m_clients.find(clientId);
 		if (it == m_clients.end()) return;
@@ -430,7 +450,7 @@ public:
 		// NPC pickup is handled by Python behavior → PickupItem action.
 
 		// Advance world time
-		m_worldTime += (1.0f / 600.0f) * dt;
+		m_worldTime += (1.0f / 1200.0f) * dt; // 20-min cycle: 5min each night/morning/afternoon/evening
 
 		// Stuck detection: periodically check if walking entities haven't moved
 		m_stuckTimer += dt;
@@ -495,6 +515,9 @@ public:
 	// Per-character inventory persistence
 	std::unordered_map<std::string, Inventory>& savedInventories() { return m_savedInventories; }
 	const std::unordered_map<std::string, Inventory>& savedInventories() const { return m_savedInventories; }
+
+	// Block inventories (chests)
+	const std::unordered_map<uint64_t, Inventory>& blockInventories() const { return m_blockInventories; }
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
@@ -512,6 +535,7 @@ private:
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	glm::vec3 m_chestPos = {30, 10, 30};
 	std::vector<glm::vec3> m_houseChests;                           // one per non-barn house
+	std::vector<EntityId>  m_chestEntityIds;                        // chest pseudo-entity per house
 	std::unordered_map<uint64_t, Inventory> m_blockInventories;     // packed(x,y,z) → inventory
 	std::unordered_map<std::string, Inventory> m_savedInventories;  // character_skin → inventory
 

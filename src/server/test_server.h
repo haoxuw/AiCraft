@@ -38,6 +38,11 @@ public:
 		if (m_server) m_server->receiveAction(m_clientId, action);
 	}
 
+	// Submit an action bypassing ownership checks (for testing server-side handlers directly).
+	void sendActionDirect(const ActionProposal& action) {
+		if (m_server) m_server->receiveActionDirect(action);
+	}
+
 	void tick(float dt) { if (m_server) m_server->tick(dt); }
 
 	EntityId localPlayerId() const { return m_playerId; }

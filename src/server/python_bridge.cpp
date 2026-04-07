@@ -114,9 +114,9 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	m.def("PickupItem", [](EntityId entityId) {
 		PyAction a; a.type = "pickup_item"; a.target_id = entityId; return a;
 	}, py::arg("entity_id"));
-	m.def("StoreItem", [](float x, float y, float z) {
-		PyAction a; a.type = "store_item"; a.x = x; a.y = y; a.z = z; return a;
-	}, py::arg("chest_x"), py::arg("chest_y"), py::arg("chest_z"));
+	m.def("StoreItem", [](EntityId entityId) {
+		PyAction a; a.type = "store_item"; a.target_id = entityId; return a;
+	}, py::arg("chest_entity_id"));
 }
 
 // ================================================================
@@ -130,8 +130,12 @@ bool PythonBridge::init(const std::string& pythonPath) {
 	if (m_initialized) return true;
 	try {
 		py::initialize_interpreter();
+		auto sys = py::module_::import("sys");
 		// Add python/ directory to sys.path so behaviors can import modcraft
-		py::module_::import("sys").attr("path").cast<py::list>().append(pythonPath);
+		sys.attr("path").cast<py::list>().append(pythonPath);
+		// Force line-buffered stdout so Python print() flushes immediately
+		// (needed when agent stdout is piped through to server log)
+		sys.attr("stdout").attr("reconfigure")(py::arg("line_buffering") = true);
 		m_initialized = true;
 		printf("[PythonBridge] Initialized. Python path: %s\n", pythonPath.c_str());
 		return true;
@@ -334,7 +338,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		else if (pyAction.type == "pickup_item") action.type = BehaviorAction::PickupItem;
 		else if (pyAction.type == "store_item") {
 			action.type = BehaviorAction::StoreItem;
-			action.chestPos = {pyAction.x, pyAction.y, pyAction.z};
+			action.targetEntity = pyAction.target_id;
 		}
 		else action.type = BehaviorAction::Idle;
 

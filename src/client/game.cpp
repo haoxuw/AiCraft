@@ -683,7 +683,7 @@ void Game::setupAfterConnect(GameState targetState) {
 	chunks.ensureChunksAround(worldToChunk(sx, sh, sz), 8);
 	m_renderer.meshAllPending(chunks, m_camera, m_renderDistance);
 
-	m_worldTime = 0.30f;
+	m_worldTime = 0.25f; // dawn — server will sync via S_TIME
 	m_playerWalkDist = 0;
 	m_globalTime = 0;
 }
@@ -818,6 +818,10 @@ void Game::updatePlaying(float dt, float aspect) {
 
 	if (m_controls.pressed(Action::MenuBack)) {
 		// ESC closes overlays first, then shows pause menu
+		if (m_showChestUI) {
+			m_showChestUI = false;
+			return;
+		}
 		if (m_equipUI.isOpen()) {
 			m_equipUI.close();
 			bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
@@ -832,8 +836,8 @@ void Game::updatePlaying(float dt, float aspect) {
 		return;
 	}
 
-	// Tell gameplay if UI wants the cursor (inventory, ImGui, etc.)
-	m_gameplay.setUIWantsCursor(m_equipUI.isOpen() || m_ui.wantsMouse());
+	// Tell gameplay if UI wants the cursor (inventory, ImGui, chest, etc.)
+	m_gameplay.setUIWantsCursor(m_equipUI.isOpen() || m_showChestUI || m_ui.wantsMouse());
 
 	// Client-side: gather input → ActionProposals (works for local AND network)
 	float jumpVel = 10.5f; // tuned for gravity=32: reaches ~1.7 blocks
@@ -1199,6 +1203,30 @@ void Game::updatePlaying(float dt, float aspect) {
 			std::remove_if(m_doorAnims.begin(), m_doorAnims.end(),
 				[](const DoorAnim& a) { return a.timer >= 0.25f; }),
 			m_doorAnims.end());
+	}
+
+	// Chest open: find the chest entity at the clicked block, toggle inventory UI
+	if (m_gameplay.chestOpened()) {
+		glm::ivec3 bp = m_gameplay.chestOpenedPos();
+		EntityId foundId = ENTITY_NONE;
+		m_server->forEachEntity([&](Entity& e) {
+			if (e.def().category == Category::Chest) {
+				int ex = (int)std::floor(e.position.x);
+				int ey = (int)std::floor(e.position.y);
+				int ez = (int)std::floor(e.position.z);
+				if (ex == bp.x && ey == bp.y && ez == bp.z)
+					foundId = e.id();
+			}
+		});
+		if (foundId != ENTITY_NONE) {
+			if (m_showChestUI && m_openChestEntityId == foundId) {
+				m_showChestUI = false;  // toggle off same chest
+			} else {
+				m_openChestEntityId = foundId;
+				m_showChestUI = true;
+			}
+		}
+		m_gameplay.clearChestOpened();
 	}
 
 	// Block place feedback (immediate client-side sound)
@@ -1785,6 +1813,32 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		m_equipUI.setModels(&m_models, &m_iconCache);
 		m_equipUI.render(*pe->inventory, m_server->blockRegistry(),
 			(float)m_window.width(), (float)m_window.height());
+	}
+
+	// Chest inventory UI (right-click on chest block to open)
+	if (m_showChestUI && m_openChestEntityId != ENTITY_NONE) {
+		Entity* chestEnt = m_server->getEntity(m_openChestEntityId);
+		bool hasInventory = chestEnt && chestEnt->inventory;
+		float sw = (float)m_window.width(), sh = (float)m_window.height();
+		ImGui::SetNextWindowPos(ImVec2(sw * 0.5f - 180, sh * 0.5f - 120), ImGuiCond_Always);
+		ImGui::SetNextWindowSize(ImVec2(360, 240), ImGuiCond_Always);
+		ImGui::SetNextWindowBgAlpha(0.92f);
+		bool open = true;
+		if (ImGui::Begin("Chest", &open,
+			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+			ImGuiWindowFlags_NoSavedSettings)) {
+			if (!hasInventory || chestEnt->inventory->items().empty()) {
+				ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "(empty)");
+			} else {
+				for (auto& [itemId, count] : chestEnt->inventory->items()) {
+					const ArtifactEntry* entry = m_artifacts.findById(itemId);
+					std::string name = entry ? entry->name : itemId;
+					ImGui::Text("  %s  x%d", name.c_str(), count);
+				}
+			}
+		}
+		ImGui::End();
+		if (!open) m_showChestUI = false;
 	}
 
 	// FPS counter

@@ -192,7 +192,7 @@ inline void extractOneShots(const Entity& e, const BehaviorAction& action,
 		ActionProposal sp;
 		sp.type = ActionProposal::StoreItem;
 		sp.actorId = e.id();
-		sp.chestPos = action.chestPos;
+		sp.targetEntity = action.targetEntity;
 		out.push_back(sp);
 		break;
 	}

@@ -23,6 +23,7 @@ namespace EntityType {
 	constexpr const char* Cat         = "base:cat";
 	constexpr const char* BraveChicken = "base:brave_chicken";
 	constexpr const char* ItemEntity  = "base:item_entity";
+	constexpr const char* ChestEntity = "base:chest_entity";
 }
 
 // ============================================================
@@ -105,6 +106,7 @@ namespace Category {
 	constexpr const char* Player      = "player";
 	constexpr const char* Animal      = "animal";
 	constexpr const char* Item        = "item";
+	constexpr const char* Chest       = "chest";
 }
 
 // ============================================================
