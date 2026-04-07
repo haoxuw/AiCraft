@@ -53,6 +53,11 @@ public:
 	// Center of the first barn in world XZ (for animal spawn placement).
 	// Returns {-1, -1} if this template has no barn.
 	virtual glm::ivec2 barnCenter(int seed) const { return {-1, -1}; }
+
+	// Chest positions (world XYZ) for all non-barn houses, in house order.
+	// Villager[i] is assigned chest[i] so they know where to deposit items.
+	// Returns empty if this template has no village.
+	virtual std::vector<glm::vec3> houseChestPositions(int seed) const { return {}; }
 };
 
 // ============================================================
@@ -146,6 +151,22 @@ public:
 				return {vc.x + h.cx + h.w / 2, vc.y + h.cz + h.d / 2};
 		}
 		return {-1, -1};
+	}
+
+	// Chest position for each non-barn house, in house order — matches bedPositions() order.
+	// Uses same formula as generateFurniture(): front-right interior corner.
+	std::vector<glm::vec3> houseChestPositions(int seed) const override {
+		if (!m_py.hasVillage || m_py.houses.empty()) return {};
+		auto vc = villageCenter(seed);
+		std::vector<glm::vec3> chests;
+		for (const auto& h : m_py.houses) {
+			if (h.type == "barn") continue;
+			float hx = (float)(vc.x + h.cx + h.w - 3);
+			float hz = (float)(vc.y + h.cz + 1);
+			float hy = surfaceHeight(seed, hx, hz) + 1.0f;
+			chests.push_back({hx, hy, hz});
+		}
+		return chests;
 	}
 
 	// Bed head positions (above the placed bed block): one per house.
@@ -745,9 +766,9 @@ private:
 	}
 
 	// ── Interior furniture ────────────────────────────────────────
-	// Beds (2-block foot+head), table (2 wood), chairs, and optionally
-	// a decorative chest.  House[0] skips the chest — server.h places
-	// the starter chest there from chestPosition().
+	// Beds (2-block foot+head), table (2 wood), chairs, chest.
+	// All houses get a chest via houseChestPositions() placed by server.h::init().
+	// House[0] is skipped here since server.h places it (avoids double-set for main house).
 	void generateFurniture(const GenCtx& ctx, int seed,
 	                       BlockId woodB, BlockId planksB, BlockId bedB, BlockId chestB,
 	                       const WorldPyConfig::HouseLayout& h, glm::ivec2 vc,

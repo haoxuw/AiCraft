@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * Action queue — the bridge between intent and world mutation.
+ * ActionProposalQueue — the bridge between intent and world mutation.
  *
  * DESIGN PRINCIPLE: Objects NEVER directly modify world state.
  * They submit ActionProposals to the queue. The server validates
@@ -38,6 +38,7 @@ struct ActionProposal {
 		// Entity interaction
 		Attack,         // damage targetEntity with held item
 		PickupItem,     // pick up targetEntity (item)
+		StoreItem,      // transfer items from actor inventory into block inventory at chestPos
 		// Item actions (Python-defined hooks: on_use, on_equip, on_interact)
 		UseItem,        // right-click: use held item on self (eat, drink)
 		EquipItem,      // E key: equip held item to its designated slot
@@ -64,8 +65,11 @@ struct ActionProposal {
 	std::string blockType;       // for PlaceBlock
 	int slotIndex = 0;           // inventory slot
 
-	// Item drop
-	int itemCount = 1;           // for DropItem
+	// Item drop / store
+	int itemCount = 1;           // for DropItem: how many to drop
+
+	// Chest / block inventory target (for StoreItem)
+	glm::vec3 chestPos = {0, 0, 0};
 
 	// Entity interaction
 	EntityId targetEntity = ENTITY_NONE;
@@ -96,10 +100,12 @@ struct ActionEffect {
 };
 
 // ================================================================
-// ActionQueue — thread-safe proposal buffer
+// ActionProposalQueue — thread-safe buffer of pending ActionProposals.
+// Entities submit proposals here; the server drains and resolves them
+// once per tick. Renamed from ActionQueue for clarity.
 // ================================================================
 
-class ActionQueue {
+class ActionProposalQueue {
 public:
 	void propose(ActionProposal action) {
 		m_pending.push_back(std::move(action));

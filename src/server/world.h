@@ -34,7 +34,7 @@ class World : public ChunkSource {
 public:
 	BlockRegistry blocks;
 	EntityManager entities;
-	ActionQueue actions;        // proposals queued by input/behaviors, drained in Phase 1
+	ActionProposalQueue proposals; // proposals queued by input/behaviors, drained in Phase 1
 
 	// Canonical spawn position — feet position one block above the SpawnPoint floor block.
 	// Set once at server init from WorldTemplate::preferredSpawn().

@@ -2048,6 +2048,34 @@ void Game::updateEntityInspect(float dt, float aspect) {
 			}
 		}
 
+		// ── Inventory ────────────────────────────────────────────────
+		if (target->inventory) {
+			auto items = target->inventory->items();
+			char invHeader[64];
+			snprintf(invHeader, sizeof(invHeader), "Inventory (%d item types)###Inv",
+			         (int)items.size());
+			if (ImGui::CollapsingHeader(invHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
+				if (items.empty()) {
+					ImGui::TextDisabled("  (empty)");
+				} else {
+					if (ImGui::BeginTable("InvTable", 2,
+					    ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+						ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch);
+						ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 60);
+						ImGui::TableHeadersRow();
+						for (auto& [itemId, count] : items) {
+							ImGui::TableNextRow();
+							ImGui::TableNextColumn();
+							ImGui::Text("%s", itemId.c_str());
+							ImGui::TableNextColumn();
+							ImGui::Text("%d", count);
+						}
+						ImGui::EndTable();
+					}
+				}
+			}
+		}
+
 		// ── Behavior Tree Editor ──
 		if (ImGui::CollapsingHeader("Behavior Tree")) {
 			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.15f, 1));

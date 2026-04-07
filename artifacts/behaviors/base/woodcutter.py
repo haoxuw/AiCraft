@@ -1,24 +1,25 @@
-"""Woodcutter — villager that chops wood and returns home each evening.
+"""Woodcutter — villager that chops wood all day and deposits at home chest.
 
-Day cycle:
-  1. Search for nearby wood blocks (trees)
-  2. Walk to the closest one
+Day cycle (no breaks — works non-stop):
+  1. Search for nearby wood blocks
+  2. Walk to closest one
   3. Chop it (BreakBlock)
   4. Pick up the dropped wood item
-  5. Return home to deposit
-  6. Rest briefly, maybe socialize, then repeat
+  5. When inventory reaches collect_goal, return home and StoreItem in chest
+  6. Immediately start next trip
 
-Evening (time > 0.65): head home before dark.
-Night (time > 0.75):   sleep at home until dawn.
+Evening: head home before dark.
+Night:   sleep at home until dawn.
 
 Entity props (set by server at spawn):
-  home_x, home_z  — home position (falls back to spawn position)
-  work_radius     — how far to search for wood (default 60)
-  max_radius      — max distance from home before returning (default 50)
-  social_chance   — probability of socializing per rest (default 0.3)
+  home_x, home_z       — home position (falls back to spawn position)
+  chest_x, chest_y, chest_z — chest to deposit in (defaults to home position)
+  work_radius          — how far to search for wood (default 60)
+  max_radius           — max distance from home before returning (default 50)
+  collect_goal         — how many logs to collect before depositing (default 5)
 """
 import random
-from modcraft_engine import Idle, Wander, MoveTo, BreakBlock, PickupItem
+from modcraft_engine import Idle, Wander, MoveTo, BreakBlock, PickupItem, StoreItem
 from behavior_base import Behavior
 
 
@@ -29,8 +30,8 @@ class WoodcutterBehavior(Behavior):
         self._timer = 0.0
         self._target_block = None
         self._home = None
-        self._trips = 0
-        self._social_target = None
+        self._chest = None
+        self._resting = False
         self._stuck_pos = None
         self._stuck_timer = 0.0
 
@@ -38,16 +39,29 @@ class WoodcutterBehavior(Behavior):
         self._timer -= world["dt"]
         self._home = self.init_home(entity, self._home)
 
-        work_radius = float(entity.get("work_radius", 60))
-        max_radius  = float(entity.get("max_radius", 50))
-        social_chance = float(entity.get("social_chance", 0.3))
+        # Chest: use chest_x/y/z if set, otherwise fall back to home position
+        if self._chest is None:
+            cx = float(entity.get("chest_x", self._home[0]))
+            cy = float(entity.get("chest_y", self._home[1]))
+            cz = float(entity.get("chest_z", self._home[2]))
+            self._chest = (cx, cy, cz)
+
+        work_radius  = float(entity.get("work_radius", 60))
+        max_radius   = float(entity.get("max_radius",  50))
+        collect_goal = int(entity.get("collect_goal",   5))
         spd = entity["walk_speed"]
 
         dist_home = self.dist2d(entity["x"], entity["z"],
                                 self._home[0], self._home[2])
+        dist_chest = self.dist2d(entity["x"], entity["z"],
+                                 self._chest[0], self._chest[2])
+
+        inventory = entity.get("inventory", {})
+        log_count = inventory.get("base:log", 0) + inventory.get("base:wood", 0)
 
         # ── Night: go home and sleep ────────────────────────────────────────
         if self.is_night(world):
+            self._resting = True
             self._state = "sleeping"
             if dist_home > 3:
                 return (MoveTo(self._home[0], self._home[1], self._home[2],
@@ -57,6 +71,7 @@ class WoodcutterBehavior(Behavior):
 
         # ── Evening: head home before dark ──────────────────────────────────
         if self.is_evening(world):
+            self._resting = True
             self._state = "returning"
             if dist_home > 3:
                 return (MoveTo(self._home[0], self._home[1], self._home[2],
@@ -65,9 +80,10 @@ class WoodcutterBehavior(Behavior):
             return Idle(), "Home for the night"
 
         # ── Wake up ─────────────────────────────────────────────────────────
-        if self._state == "sleeping":
+        if self._resting:
+            self._resting = False
             self._state = "searching"
-            self._timer = 1.0
+            self._timer = 0.5
             return Idle(), "Good morning!"
 
         # ── Too far from home ────────────────────────────────────────────────
@@ -77,6 +93,20 @@ class WoodcutterBehavior(Behavior):
                            speed=spd),
                     "Too far — heading back (%dm)" % int(dist_home))
 
+        # ── Deposit: inventory full → go store at chest ─────────────────────
+        if log_count >= collect_goal and self._state not in ("depositing",):
+            self._state = "depositing"
+
+        if self._state == "depositing":
+            if dist_chest < 3:
+                # At chest — deposit and go back to work immediately
+                self._state = "searching"
+                self._timer = 0.5
+                return (StoreItem(self._chest[0], self._chest[1], self._chest[2]),
+                        "Depositing %d logs" % log_count)
+            return (MoveTo(self._chest[0], self._chest[1], self._chest[2], speed=spd),
+                    "Taking logs home (%d/%d)" % (log_count, collect_goal))
+
         # ── Opportunistic item pickup ────────────────────────────────────────
         items = [e for e in world["nearby"]
                  if e["category"] == "item" and e["distance"] < 2.5]
@@ -84,12 +114,12 @@ class WoodcutterBehavior(Behavior):
             closest = min(items, key=lambda e: e["distance"])
             return PickupItem(closest["id"]), "Picking up item"
 
-        # ── Greet nearby players ────────────────────────────────────────────
-        if self._state in ("searching", "resting") and self._timer <= 0:
+        # ── Greet nearby players (brief, then right back to work) ────────────
+        if self._state in ("searching",) and self._timer <= 0:
             players = [e for e in world["nearby"]
                        if e["category"] == "player" and e["distance"] < 6]
             if players and random.random() < 0.05:
-                self._timer = 2.0
+                self._timer = 1.5
                 return Idle(), "*waves* Hello!"
 
         # ── State: searching ────────────────────────────────────────────────
@@ -117,7 +147,6 @@ class WoodcutterBehavior(Behavior):
                 return Idle(), "Lost target — re-searching"
             dist = self.dist2d(entity["x"], entity["z"],
                                self._target_block["x"], self._target_block["z"])
-            # Stuck detection
             self._stuck_timer -= world["dt"]
             if self._stuck_timer <= 0:
                 self._stuck_timer = 5.0
@@ -146,50 +175,14 @@ class WoodcutterBehavior(Behavior):
         # ── State: chopping ─────────────────────────────────────────────────
         if self._state == "chopping":
             if self._timer <= 0:
-                self._trips += 1
-                self._state = "returning"
-                self._timer = 20.0
+                self._state = "searching"   # immediately look for next tree
+                self._timer = 0.5
                 if self._target_block:
                     return (BreakBlock(self._target_block["x"],
                                        self._target_block["y"],
                                        self._target_block["z"]),
                             "Chopping!")
             return Idle(), "Chopping!"
-
-        # ── State: returning home ───────────────────────────────────────────
-        if self._state == "returning":
-            if dist_home < 3 or self._timer <= 0:
-                self._state = "resting"
-                self._timer = 3.0
-                return Idle(), "Home! Depositing..."
-            return (MoveTo(self._home[0], self._home[1], self._home[2], speed=spd),
-                    "Bringing resources home")
-
-        # ── State: resting ──────────────────────────────────────────────────
-        if self._state == "resting":
-            if self._timer <= 0:
-                villagers = [e for e in world["nearby"]
-                             if e["type_id"] == "base:villager"
-                             and e["id"] != entity["id"] and e["distance"] < 10]
-                if villagers and random.random() < social_chance:
-                    self._social_target = min(villagers, key=lambda e: e["distance"])
-                    self._state = "socializing"
-                    self._timer = 4.0
-                    return (MoveTo(self._social_target["x"],
-                                   self._social_target["y"],
-                                   self._social_target["z"], speed=spd * 0.6),
-                            "Chatting with neighbor...")
-                self._state = "searching"
-                self._timer = 1.0
-            return Idle(), "Taking a break"
-
-        # ── State: socializing ──────────────────────────────────────────────
-        if self._state == "socializing":
-            if self._timer <= 0:
-                self._state = "searching"
-                self._social_target = None
-                return Idle(), "Back to work!"
-            return Idle(), "Chatting :)"
 
         # Fallback
         self._state = "searching"

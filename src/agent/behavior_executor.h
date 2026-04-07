@@ -146,6 +146,11 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 	case BehaviorAction::PickupItem:
 		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
 		break;
+
+	case BehaviorAction::StoreItem:
+		// One-shot — handled by extractOneShots(). Just apply friction here.
+		p.desiredVel = {e.velocity.x * 0.85f, 0, e.velocity.z * 0.85f};
+		break;
 	} // end switch
 
 	out.push_back(p);
@@ -181,6 +186,14 @@ inline void extractOneShots(const Entity& e, const BehaviorAction& action,
 		pp.actorId = e.id();
 		pp.targetEntity = action.targetEntity;
 		out.push_back(pp);
+		break;
+	}
+	case BehaviorAction::StoreItem: {
+		ActionProposal sp;
+		sp.type = ActionProposal::StoreItem;
+		sp.actorId = e.id();
+		sp.chestPos = action.chestPos;
+		out.push_back(sp);
 		break;
 	}
 	default: break;

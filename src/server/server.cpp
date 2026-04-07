@@ -4,7 +4,7 @@
 namespace modcraft {
 
 void GameServer::resolveActions(float dt) {
-	auto proposals = m_world->actions.drain();
+	auto proposals = m_world->proposals.drain();
 
 	for (auto& p : proposals) {
 		switch (p.type) {
@@ -346,6 +346,40 @@ void GameServer::resolveActions(float dt) {
 			break;
 		}
 
+		case ActionProposal::StoreItem: {
+			Entity* actor = m_world->entities.get(p.actorId);
+			if (!actor || !actor->inventory) break;
+			if (!actor->def().isLiving()) break;
+
+			// Validate proximity to chest (must be within 4 blocks)
+			float dist = glm::length(p.chestPos - actor->position);
+			if (dist > 4.0f) break;
+
+			// Validate there is actually a chest block at the target position
+			glm::ivec3 cp = {(int)std::round(p.chestPos.x),
+			                 (int)std::round(p.chestPos.y),
+			                 (int)std::round(p.chestPos.z)};
+			BlockId bid = m_world->getBlock(cp.x, cp.y, cp.z);
+			const BlockDef& bdef = m_world->blocks.get(bid);
+			if (bdef.string_id != BlockType::Chest) break;
+
+			// Pack position key for block inventory map
+			uint64_t posKey = ((uint64_t)(uint32_t)cp.x)
+			                | ((uint64_t)(uint32_t)cp.y << 21)
+			                | ((uint64_t)(uint32_t)cp.z << 42);
+
+			Inventory& chestInv = m_blockInventories[posKey];
+
+			// Transfer all items from actor to chest
+			for (auto& [itemId, count] : actor->inventory->items())
+				chestInv.add(itemId, count);
+			actor->inventory->clear();
+			actor->inventory->autoPopulateHotbar();
+
+			if (m_callbacks.onInventoryChange)
+				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
+			break;
+		}
 		case ActionProposal::GrowCrop:
 			break;
 		case ActionProposal::PickupItem: {

@@ -43,10 +43,12 @@ struct BehaviorAction {
 		BreakBlock, // break block at targetPos (x,y,z)
 		DropItem,   // drop an item at entity's feet (itemType, itemCount)
 		PickupItem, // pick up item entity targetEntity
+		StoreItem,  // deposit all inventory items into block inventory at chestPos
 	};
 
 	Type type = Idle;
 	glm::vec3 targetPos = {0, 0, 0};
+	glm::vec3 chestPos  = {0, 0, 0};  // for StoreItem: chest world position
 	EntityId targetEntity = ENTITY_NONE;
 	float speed = 2.0f;    // movement speed (multiplied by agility)
 	float param = 0.0f;    // action-specific: damage, radius, duration

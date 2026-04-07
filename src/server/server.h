@@ -148,18 +148,39 @@ public:
 			}
 		};
 
-		// Spawn bed-assigned villagers: one per bed, home_x/home_z set to bed position.
+		// Place chests in all non-barn houses. Returns positions in house order.
+		auto houseChests = tmpl.houseChestPositions(m_world->seed());
+		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
+		m_houseChests.clear();
+		for (auto& cPos : houseChests) {
+			int cx = (int)std::round(cPos.x), cy = (int)std::round(cPos.y), cz = (int)std::round(cPos.z);
+			if (chestId != BLOCK_AIR) {
+				ChunkPos cp = worldToChunk(cx, cy, cz);
+				Chunk* c = m_world->getChunk(cp);
+				if (c) c->set(((cx%16)+16)%16, ((cy%16)+16)%16, ((cz%16)+16)%16, chestId);
+			}
+			m_houseChests.push_back(glm::vec3((float)cx + 0.5f, (float)cy, (float)cz + 0.5f));
+		}
+		m_chestPos = m_houseChests.empty() ? m_spawnPos : m_houseChests[0];
+
+		// Spawn bed-assigned villagers: one per bed, home_x/home_z + chest_x/y/z set at spawn.
 		// This replaces the generic villager entry in mobList.
 		auto beds = tmpl.bedPositions(m_world->seed());
 		if (!beds.empty()) {
 			const std::string villagerType = "base:villager";
-			for (const auto& bp : beds) {
+			for (size_t i = 0; i < beds.size(); i++) {
+				const auto& bp = beds[i];
 				std::unordered_map<std::string, PropValue> extraProps;
 				auto bIt = wgc.behaviorOverrides.find(villagerType);
 				if (bIt != wgc.behaviorOverrides.end())
 					extraProps[Prop::BehaviorId] = bIt->second;
 				extraProps["home_x"] = bp.x;
 				extraProps["home_z"] = bp.z;
+				if (i < m_houseChests.size()) {
+					extraProps["chest_x"] = m_houseChests[i].x;
+					extraProps["chest_y"] = m_houseChests[i].y;
+					extraProps["chest_z"] = m_houseChests[i].z;
+				}
 				m_world->entities.spawn(villagerType,
 					{bp.x, safeSpawnHeight(bp.x, bp.z), bp.z}, extraProps);
 			}
@@ -202,22 +223,8 @@ public:
 			spawnMob(mobList[i].typeId, mobList[i].count, r, (float)i);
 		}
 
-		// Place starter chest — template decides where (village: inside main house)
-		glm::vec3 cPos = tmpl.chestPosition(m_world->seed(), m_spawnPos);
-		int chestX = (int)std::round(cPos.x), chestZ = (int)std::round(cPos.z);
-		int chestY = (int)std::round(cPos.y);
-
-		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
-		if (chestId != BLOCK_AIR) {
-			ChunkPos cp = worldToChunk(chestX, chestY, chestZ);
-			Chunk* c = m_world->getChunk(cp);
-			if (c) c->set(((chestX%16)+16)%16, ((chestY%16)+16)%16, ((chestZ%16)+16)%16, chestId);
-		}
-		m_chestPos = glm::vec3((float)chestX + 0.5f, (float)chestY, (float)chestZ + 0.5f);
-
-		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f (chest at %.0f,%.0f,%.0f)\n",
-		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z,
-		       m_chestPos.x, m_chestPos.y, m_chestPos.z);
+		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f  Chests: %zu houses\n",
+		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z, m_houseChests.size());
 	}
 
 	// Add a client. Returns the player's EntityId.
@@ -368,7 +375,7 @@ public:
 			return;
 		}
 
-		m_world->actions.propose(action);
+		m_world->proposals.propose(action);
 	}
 
 	// Get and clear pending behavior reload requests.
@@ -504,7 +511,9 @@ private:
 	float m_stuckTimer = 0;
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	glm::vec3 m_chestPos = {30, 10, 30};
-	std::unordered_map<std::string, Inventory> m_savedInventories; // character_skin → inventory
+	std::vector<glm::vec3> m_houseChests;                           // one per non-barn house
+	std::unordered_map<uint64_t, Inventory> m_blockInventories;     // packed(x,y,z) → inventory
+	std::unordered_map<std::string, Inventory> m_savedInventories;  // character_skin → inventory
 
 	// Stuck detection: last known position per entity (checked every stuckCheckInterval)
 	std::unordered_map<EntityId, glm::vec3> m_lastPositions;

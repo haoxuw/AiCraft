@@ -81,8 +81,8 @@ public:
 	// Block registry (for HUD, raycast)
 	virtual const BlockRegistry& blockRegistry() const = 0;
 
-	// Action queue (for client input → server)
-	virtual ActionQueue& actionQueue() = 0;
+	// Proposal queue (for client input → server)
+	virtual ActionProposalQueue& proposalQueue() = 0;
 
 	// Set client-side effect callbacks — invoked by NetworkServer when it receives
 	// the corresponding server messages over TCP.

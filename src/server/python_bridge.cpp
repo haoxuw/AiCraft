@@ -114,6 +114,9 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	m.def("PickupItem", [](EntityId entityId) {
 		PyAction a; a.type = "pickup_item"; a.target_id = entityId; return a;
 	}, py::arg("entity_id"));
+	m.def("StoreItem", [](float x, float y, float z) {
+		PyAction a; a.type = "store_item"; a.x = x; a.y = y; a.z = z; return a;
+	}, py::arg("chest_x"), py::arg("chest_y"), py::arg("chest_z"));
 }
 
 // ================================================================
@@ -156,6 +159,7 @@ static const char* goalForAction(const std::string& actionType) {
 	if (actionType == "break_block") return "Breaking block";
 	if (actionType == "drop_item")   return "Dropping item";
 	if (actionType == "pickup_item") return "Picking up";
+	if (actionType == "store_item")  return "Depositing items";
 	return "Active";
 }
 
@@ -262,6 +266,15 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		pySelf["hp"] = self.hp();
 		pySelf["walk_speed"] = self.def().walk_speed;
 		pySelf["on_ground"] = self.onGround;
+		// Inventory: expose as {"item_id": count, ...} dict
+		if (self.inventory) {
+			py::dict pyInv;
+			for (auto& [itemId, count] : self.inventory->items())
+				pyInv[itemId.c_str()] = count;
+			pySelf["inventory"] = pyInv;
+		} else {
+			pySelf["inventory"] = py::dict();
+		}
 		// Build nearby blocks list for Python
 		py::list pyBlocks;
 		for (auto& nb : nearbyBlocks) {
@@ -319,6 +332,10 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			action.itemCount = pyAction.item_count;
 		}
 		else if (pyAction.type == "pickup_item") action.type = BehaviorAction::PickupItem;
+		else if (pyAction.type == "store_item") {
+			action.type = BehaviorAction::StoreItem;
+			action.chestPos = {pyAction.x, pyAction.y, pyAction.z};
+		}
 		else action.type = BehaviorAction::Idle;
 
 		action.targetPos = {pyAction.x, pyAction.y, pyAction.z};

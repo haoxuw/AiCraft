@@ -180,6 +180,17 @@ artifacts/            Python game content (hot-loadable, no rebuild needed)
 - `docs/24_COMMON_PITFALLS.md` — Known bugs to avoid (one-shot actions, ImGui frames, camera jumps)
 - `DEBUGGING.md` — Dev iteration loop, screenshot pipeline
 
+## Game Identity
+
+**This game is called ModCraft.** The name reflects its core design goal:
+players can mod ANYTHING and EVERYTHING. Every creature, behavior, item,
+block, world, and effect is defined in Python artifacts — fully replaceable,
+extendable, and shareable without touching C++. The C++ engine is a pure
+platform; all game identity lives in `artifacts/`.
+
+Every feature decision must ask: *"Can a modder override this from Python?"*
+If not, it needs to move to an artifact.
+
 ## Commit Guidelines
 
 - Present tense, capital first letter, under 70 chars

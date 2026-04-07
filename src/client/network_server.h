@@ -245,7 +245,7 @@ public:
 	glm::vec3 spawnPos() const override { return m_spawnPos; }
 	float pickupRange() const override { return 1.5f; } // TODO: sync from server
 	const BlockRegistry& blockRegistry() const override { return m_blocks; }
-	ActionQueue& actionQueue() override { return m_actions; }
+	ActionProposalQueue& proposalQueue() override { return m_proposals; }
 
 	void setEffectCallbacks(
 		std::function<void(ChunkPos)> onChunkDirty,
@@ -570,7 +570,7 @@ private:
 	std::unordered_map<EntityId, PendingInv> m_pendingInventory;
 
 	BlockRegistry m_blocks;
-	ActionQueue m_actions;
+	ActionProposalQueue m_proposals;
 	EntityDef m_defaultDef;
 	EntityManager m_entityDefs;  // holds type defs for entity creation
 
