@@ -102,7 +102,10 @@ public:
 // ================================================================
 
 struct BehaviorExpr {
-	enum NodeType { Action, Condition, IfThenElse, Sequence };
+	// Priority: ordered list of (condition → action) rules evaluated top-to-bottom.
+	// First matching condition wins; lower rules only fire if all higher ones fail.
+	// A bare Action at the end acts as the default fallback.
+	enum NodeType { Action, Condition, IfThenElse, Sequence, Priority };
 
 	NodeType nodeType = Action;
 	int funcIndex = 0;       // index into actions() or conditions()
@@ -112,6 +115,13 @@ struct BehaviorExpr {
 	// Ensure IfThenElse has exactly 3 children: [condition, then, else]
 	void ensureIfChildren() {
 		while (children.size() < 3) children.push_back({});
+	}
+
+	// Ensure a Priority rule child has [condition, action] slots with correct types
+	void ensurePriorityRuleChildren() {
+		while (children.size() < 2) children.push_back({});
+		children[0].nodeType = Condition;
+		children[1].nodeType = Action;
 	}
 };
 
@@ -150,6 +160,7 @@ private:
 		case BehaviorExpr::Condition:  return pad(indent) + "pass  # bare condition\n";
 		case BehaviorExpr::IfThenElse: return compileIf(expr, indent);
 		case BehaviorExpr::Sequence:   return compileSequence(expr, indent);
+		case BehaviorExpr::Priority:   return compilePriority(expr, indent);
 		}
 		return pad(indent) + "return Idle()\n";
 	}
@@ -299,6 +310,29 @@ private:
 			result += pad(indent) + "return Idle()\n";
 		return result;
 	}
+
+	// Priority: each rule is evaluated top-to-bottom; first match wins.
+	// Rule format: IfThenElse child with children[0]=condition, children[1]=action.
+	// A bare Action child at the end is the default fallback (no condition).
+	static std::string compilePriority(const BehaviorExpr& expr, int indent) {
+		std::string result;
+		bool hasDefault = false;
+		for (const auto& rule : expr.children) {
+			if (rule.nodeType == BehaviorExpr::IfThenElse && rule.children.size() >= 2) {
+				auto& condExpr = rule.children[0];
+				std::string cond = (condExpr.nodeType == BehaviorExpr::Condition)
+					? compileCondition(condExpr) : "True";
+				result += pad(indent) + "if " + cond + ":\n";
+				result += compileNode(rule.children[1], indent + 1);
+			} else if (rule.nodeType == BehaviorExpr::Action) {
+				hasDefault = true;
+				result += compileNode(rule, indent);  // bare return = default
+			}
+		}
+		if (!hasDefault)
+			result += pad(indent) + "return Idle()\n";
+		return result;
+	}
 };
 
 // ================================================================
@@ -319,10 +353,10 @@ public:
 		ImGui::PushID(myId);
 
 		// Node type selector
-		static const char* typeLabels[] = {"Action", "Condition", "IF / THEN / ELSE", "Sequence"};
+		static const char* typeLabels[] = {"Action", "Condition", "IF / THEN / ELSE", "Sequence", "Priority List"};
 		int nodeType = (int)expr.nodeType;
 		ImGui::SetNextItemWidth(160);
-		if (ImGui::Combo("##ntype", &nodeType, typeLabels, 4)) {
+		if (ImGui::Combo("##ntype", &nodeType, typeLabels, 5)) {
 			expr.nodeType = (BehaviorExpr::NodeType)nodeType;
 			if (expr.nodeType == BehaviorExpr::IfThenElse) expr.ensureIfChildren();
 			changed = true;
@@ -333,6 +367,7 @@ public:
 		case BehaviorExpr::Condition: changed |= renderFuncPicker(expr, true);  break;
 		case BehaviorExpr::IfThenElse: changed |= renderIfThenElse(expr, depth, idCounter); break;
 		case BehaviorExpr::Sequence:   changed |= renderSequence(expr, depth, idCounter); break;
+		case BehaviorExpr::Priority:   changed |= renderPriority(expr, depth, idCounter); break;
 		}
 
 		ImGui::PopID();
@@ -416,6 +451,89 @@ private:
 		}
 		if (ImGui::SmallButton("+ Add Step")) {
 			expr.children.push_back({});
+			changed = true;
+		}
+		return changed;
+	}
+
+	// Priority list: compact inline rows, ordered high→low.
+	// Each conditional rule: [Pn] [^] [v] [x]  IF [cond] DO [action]
+	// Default (bare action) at the end: [default] [^] [x]  DO [action]
+	static bool renderPriority(BehaviorExpr& expr, int depth, int& idCounter) {
+		bool changed = false;
+		ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.60f, 1),
+			"Rules run top-to-bottom; first matching condition wins.");
+
+		int conditionalCount = 0;
+		for (int i = 0; i < (int)expr.children.size(); i++) {
+			ImGui::PushID(i + 5000);
+			auto& rule = expr.children[i];
+			bool isDefault = (rule.nodeType == BehaviorExpr::Action);
+
+			// Normalize rule structure
+			if (!isDefault) {
+				rule.nodeType = BehaviorExpr::IfThenElse;
+				rule.ensurePriorityRuleChildren();
+			}
+
+			// Row header
+			if (isDefault)
+				ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.60f, 1), "[default]");
+			else {
+				char badge[8]; snprintf(badge, sizeof(badge), "[P%d]", ++conditionalCount);
+				ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.25f, 1), "%s", badge);
+			}
+			ImGui::SameLine();
+
+			// Reorder / delete
+			bool brk = false;
+			if (i > 0 && ImGui::SmallButton("^")) {
+				std::swap(expr.children[i], expr.children[i-1]);
+				changed = true; brk = true;
+			}
+			if (i > 0) ImGui::SameLine();
+			if (i < (int)expr.children.size() - 1 && ImGui::SmallButton("v")) {
+				std::swap(expr.children[i], expr.children[i+1]);
+				changed = true; brk = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::SmallButton("x")) {
+				expr.children.erase(expr.children.begin() + i);
+				changed = true; brk = true;
+			}
+			if (brk) { ImGui::PopID(); break; }
+
+			// Inline condition + action
+			ImGui::Indent(28);
+			if (!isDefault) {
+				ImGui::TextColored(ImVec4(0.55f, 0.78f, 1.0f, 1), "IF  "); ImGui::SameLine();
+				changed |= renderFuncPicker(rule.children[0], true);
+				ImGui::TextColored(ImVec4(0.45f, 0.88f, 0.45f, 1), "DO  "); ImGui::SameLine();
+				changed |= renderFuncPicker(rule.children[1], false);
+			} else {
+				ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.60f, 1), "DO  "); ImGui::SameLine();
+				changed |= renderFuncPicker(rule, false);
+			}
+			ImGui::Unindent(28);
+			ImGui::PopID();
+		}
+
+		ImGui::Spacing();
+		if (ImGui::SmallButton("+ Rule")) {
+			BehaviorExpr rule;
+			rule.nodeType = BehaviorExpr::IfThenElse;
+			rule.ensurePriorityRuleChildren();
+			// Insert before default if present
+			int insertAt = (int)expr.children.size();
+			if (insertAt > 0 && expr.children.back().nodeType == BehaviorExpr::Action)
+				insertAt--;
+			expr.children.insert(expr.children.begin() + insertAt, rule);
+			changed = true;
+		}
+		ImGui::SameLine();
+		if (ImGui::SmallButton("+ Default")) {
+			BehaviorExpr d; d.nodeType = BehaviorExpr::Action;
+			expr.children.push_back(d);
 			changed = true;
 		}
 		return changed;

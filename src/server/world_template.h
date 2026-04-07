@@ -45,6 +45,14 @@ public:
 
 	// Mob spawn list with per-mob radius (populated from Python config or defaults)
 	virtual const WorldPyConfig& pyConfig() const = 0;
+
+	// Bed positions (world XYZ, above the bed block) — one per house that has a bed.
+	// Returns empty if this template has no village / no beds.
+	virtual std::vector<glm::vec3> bedPositions(int seed) const { return {}; }
+
+	// Center of the first barn in world XZ (for animal spawn placement).
+	// Returns {-1, -1} if this template has no barn.
+	virtual glm::ivec2 barnCenter(int seed) const { return {-1, -1}; }
 };
 
 // ============================================================
@@ -128,6 +136,33 @@ public:
 		float sy = surfaceHeight(seed, spawnPos.x + m_py.chestOffsetX,
 		                         spawnPos.z + m_py.chestOffsetZ) + 1.0f;
 		return {spawnPos.x + m_py.chestOffsetX, sy, spawnPos.z + m_py.chestOffsetZ};
+	}
+
+	glm::ivec2 barnCenter(int seed) const override {
+		if (!m_py.hasVillage) return {-1, -1};
+		auto vc = villageCenter(seed);
+		for (const auto& h : m_py.houses) {
+			if (h.type == "barn")
+				return {vc.x + h.cx + h.w / 2, vc.y + h.cz + h.d / 2};
+		}
+		return {-1, -1};
+	}
+
+	// Bed head positions (above the placed bed block): one per house.
+	// Each house has one bed; head block is at (hcx+2, floorY, hcz+h.d-3).
+	// Returned Y is one block above the bed so villagers spawn standing on it.
+	std::vector<glm::vec3> bedPositions(int seed) const override {
+		if (!m_py.hasVillage || m_py.houses.empty()) return {};
+		auto vc = villageCenter(seed);
+		std::vector<glm::vec3> beds;
+		for (const auto& h : m_py.houses) {
+			if (h.type == "barn") continue;  // barns have no beds
+			float bx = (float)(vc.x + h.cx + 2) + 0.5f;
+			float bz = (float)(vc.y + h.cz + h.d - 3) + 0.5f;
+			float by = groundHeight(seed, bx, bz) + 2.0f;  // floor+1 bed + 1 above
+			beds.push_back({bx, by, bz});
+		}
+		return beds;
 	}
 
 	// ── Chunk generation ─────────────────────────────────────────
@@ -757,6 +792,68 @@ private:
 		}
 	}
 
+	// ── Barn (open-sided, pillars + massive peaked roof) ─────────
+	// No walls, no door. Corner pillars + one mid-pillar per long side.
+	// Large peaked gable roof — classic agricultural building.
+	void generateBarn(const GenCtx& ctx, int seed,
+	                  BlockId woodB, BlockId planksB, BlockId roofB,
+	                  const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
+		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+		int floorY = (int)std::round(groundHeight(seed, (float)hcx+h.w*0.5f,
+		                                                  (float)hcz+h.d*0.5f)) + 1;
+		int barnH = 9;  // pillar/wall height before roof starts
+		BlockId col = (woodB != BLOCK_AIR) ? woodB : planksB;
+
+		// 1. Floor (planks)
+		for (int dx = 0; dx < h.w; dx++)
+			for (int dz = 0; dz < h.d; dz++)
+				ctx.set(hcx+dx, floorY-1, hcz+dz, planksB != BLOCK_AIR ? planksB : col);
+
+		// 2. Corner pillars (full height)
+		for (int dy = 0; dy < barnH; dy++) {
+			ctx.set(hcx,       floorY+dy, hcz,       col);
+			ctx.set(hcx+h.w-1, floorY+dy, hcz,       col);
+			ctx.set(hcx,       floorY+dy, hcz+h.d-1, col);
+			ctx.set(hcx+h.w-1, floorY+dy, hcz+h.d-1, col);
+		}
+
+		// 3. Intermediate pillars every 4 blocks along each side
+		for (int dy = 0; dy < barnH; dy++) {
+			for (int dx = 4; dx < h.w - 1; dx += 4) {
+				ctx.set(hcx+dx, floorY+dy, hcz,       col);
+				ctx.set(hcx+dx, floorY+dy, hcz+h.d-1, col);
+			}
+			for (int dz = 4; dz < h.d - 1; dz += 4) {
+				ctx.set(hcx,       floorY+dy, hcz+dz, col);
+				ctx.set(hcx+h.w-1, floorY+dy, hcz+dz, col);
+			}
+		}
+
+		// 4. Top beam: horizontal planks connecting pillar tops on front/back
+		for (int dx = 0; dx < h.w; dx++) {
+			ctx.set(hcx+dx, floorY+barnH-1, hcz,       col);
+			ctx.set(hcx+dx, floorY+barnH-1, hcz+h.d-1, col);
+		}
+		// Side beams (along depth)
+		for (int dz = 0; dz < h.d; dz++) {
+			ctx.set(hcx,       floorY+barnH-1, hcz+dz, col);
+			ctx.set(hcx+h.w-1, floorY+barnH-1, hcz+dz, col);
+		}
+
+		// 5. Peaked gable roof — ridge runs along the width (Z-axis)
+		int roofLayers = (h.w + 2) / 2;
+		for (int ry = 0; ry < roofLayers; ry++) {
+			for (int dz = -1; dz <= h.d; dz++) {
+				for (int dx = ry; dx < h.w - ry; dx++) {
+					bool gableEnd = (dz == 0 || dz == h.d - 1);
+					bool roofEdge = (dx == ry || dx == h.w - ry - 1 || ry == roofLayers - 1);
+					if (gableEnd || roofEdge)
+						ctx.set(hcx+dx, floorY+barnH+ry, hcz+dz, roofB);
+				}
+			}
+		}
+	}
+
 	// ── Village orchestrator ──────────────────────────────────────
 	void generateVillage(Chunk& chunk, ChunkPos cpos, int seed,
 	                     BlockId wallB, BlockId roofB, BlockId floorB, BlockId pathB,
@@ -776,6 +873,13 @@ private:
 
 		for (int hi = 0; hi < (int)m_py.houses.size(); hi++) {
 			const auto& h = m_py.houses[hi];
+
+			if (h.type == "barn") {
+				BlockId hRoofB = (!h.roofBlock.empty()) ? blocks.getId(h.roofBlock) : roofB;
+				if (hRoofB == BLOCK_AIR) hRoofB = roofB;
+				generateBarn(ctx, seed, woodB, planksB, hRoofB, h, vc);
+				continue;
+			}
 
 			BlockId hWallB = (!h.wallBlock.empty()) ? blocks.getId(h.wallBlock) : wallB;
 			BlockId hRoofB = (!h.roofBlock.empty()) ? blocks.getId(h.roofBlock) : roofB;

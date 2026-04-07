@@ -25,7 +25,6 @@ enum class FloatSource {
 	Heal,          // HP restored   (entity-anchored)
 	Pickup,        // item collected (HUD lane, Counter by item type)
 	BlockBreak,    // block mined   (HUD lane)
-	GoalChange,    // NPC decision changed (world-anchored above entity head)
 };
 
 // ── Submit one of these per game event ──────────────────────────────────────

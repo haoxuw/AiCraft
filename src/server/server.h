@@ -19,6 +19,7 @@
 #include "shared/constants.h"
 #include "server/world_template.h"
 #include "shared/block_registry.h"
+#include <algorithm>
 #include <memory>
 #include <vector>
 #include <unordered_map>
@@ -147,7 +148,56 @@ public:
 			}
 		};
 
+		// Spawn bed-assigned villagers: one per bed, home_x/home_z set to bed position.
+		// This replaces the generic villager entry in mobList.
+		auto beds = tmpl.bedPositions(m_world->seed());
+		if (!beds.empty()) {
+			const std::string villagerType = "base:villager";
+			for (const auto& bp : beds) {
+				std::unordered_map<std::string, PropValue> extraProps;
+				auto bIt = wgc.behaviorOverrides.find(villagerType);
+				if (bIt != wgc.behaviorOverrides.end())
+					extraProps[Prop::BehaviorId] = bIt->second;
+				extraProps["home_x"] = bp.x;
+				extraProps["home_z"] = bp.z;
+				m_world->entities.spawn(villagerType,
+					{bp.x, safeSpawnHeight(bp.x, bp.z), bp.z}, extraProps);
+			}
+			// Remove villagers from general mob list to avoid double-spawning
+			mobList.erase(std::remove_if(mobList.begin(), mobList.end(),
+				[&](const MobSpawn& ms) { return ms.typeId == villagerType; }),
+				mobList.end());
+		}
+
+		// Spawn cats and dogs inside the barn (home_x/home_z set to barn center).
+		// If no barn in this template, they fall through to the regular mob spawn.
+		auto barnCtr = tmpl.barnCenter(m_world->seed());
+		if (barnCtr.x >= 0) {
+			const std::vector<std::string> barnAnimals = {"base:cat", "base:dog"};
+			for (const auto& animalType : barnAnimals) {
+				// Find this mob in the list
+				for (auto& ms : mobList) {
+					if (ms.typeId != animalType) continue;
+					for (int m = 0; m < ms.count; m++) {
+						// Spread randomly inside the barn interior (±5 blocks from center)
+						float emx = (float)barnCtr.x + ((m % 3) - 1) * 4.0f;
+						float emz = (float)barnCtr.y + ((m / 3) - 1) * 4.0f;
+						std::unordered_map<std::string, PropValue> extraProps;
+						auto bIt = wgc.behaviorOverrides.find(animalType);
+						if (bIt != wgc.behaviorOverrides.end())
+							extraProps[Prop::BehaviorId] = bIt->second;
+						extraProps["home_x"] = (float)barnCtr.x;
+						extraProps["home_z"] = (float)barnCtr.y;
+						m_world->entities.spawn(animalType,
+							{emx, safeSpawnHeight(emx, emz), emz}, extraProps);
+					}
+					ms.count = 0;  // mark as spawned so spawnMob loop skips it
+				}
+			}
+		}
+
 		for (int i = 0; i < (int)mobList.size(); i++) {
+			if (mobList[i].count <= 0) continue;  // already spawned (barn animals)
 			float r = (mobList[i].radius > 0) ? mobList[i].radius : wgc.mobSpawnRadius;
 			spawnMob(mobList[i].typeId, mobList[i].count, r, (float)i);
 		}
@@ -300,6 +350,11 @@ public:
 			// Move: GUI clients may RTS-command any entity; agents only move assigned entities
 			if (!isOwned && it->second.isAgent) {
 				return;
+			}
+			// Agent goal text: update the server-side entity so it is broadcast to clients
+			if (!action.goalText.empty()) {
+				Entity* e = m_world->entities.get(actor);
+				if (e) e->goalText = action.goalText;
 			}
 		} else {
 			// Non-move actions require ownership

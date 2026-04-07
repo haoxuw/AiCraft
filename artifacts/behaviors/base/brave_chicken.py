@@ -30,6 +30,7 @@ class BraveChickenBehavior(Behavior):
     def __init__(self):
         self._home = None
         self._sleeping = False
+        self._resting = False   # True during evening/night; cleared at dawn
         self._egg_cooldown = 0.0
 
     def decide(self, entity, world):
@@ -40,43 +41,40 @@ class BraveChickenBehavior(Behavior):
         dist_home = self.dist2d(entity["x"], entity["z"],
                                 self._home[0], self._home[2])
 
-        # ── Evening/Night: roost at home ──────────────────────────────────────
-        if self.is_night(world):
-            self._sleeping = True
-            if dist_home > 3:
-                return (MoveTo(self._home[0], self._home[1], self._home[2],
-                               speed=spd),
-                        "Heading home to roost...")
-            return Idle(), "Roosting zzz"
-
-        if self._sleeping:
-            self._sleeping = False
-            return Idle(), "BAWK! Good morning!"
-
-        if self.is_evening(world) and dist_home > 3:
-            return (MoveTo(self._home[0], self._home[1], self._home[2],
-                           speed=spd),
-                    "Heading home (evening)...")
-
-        # Fear only dogs
+        # Fear dogs — highest priority, even at night (survival)
         for e in world["nearby"]:
             if e["type_id"] == "base:dog" and e["distance"] < 6:
                 return Flee(e["id"], speed=6.0), "EEK! Dog!"
 
-        # Chase cats! (brave chicken is aggressive toward felines)
+        # ── Evening/Night: roost (overrides cat-chasing) ──────────────────────
+        if self.is_night(world) or self.is_evening(world):
+            self._resting = True
+            if self.is_night(world):
+                self._sleeping = True
+            if dist_home > 3:
+                return (MoveTo(self._home[0], self._home[1], self._home[2],
+                               speed=spd),
+                        "Heading home to roost...")
+            if self._sleeping:
+                return Idle(), "Roosting zzz"
+            # At home during evening — seek a perch if available
+            for b in world["blocks"]:
+                if b["type"] in ("base:wood", "base:fence", "base:planks") \
+                        and b["y"] > entity["y"] + 1.5 and b["distance"] < 8:
+                    return (MoveTo(b["x"] + 0.5, b["y"] + 1.0, b["z"] + 0.5,
+                                   speed=spd), "Seeking roost")
+            return Idle(), "Settling down"
+
+        if self._resting:
+            self._resting = False
+            self._sleeping = False
+            return Idle(), "BAWK! Good morning!"
+
+        # Chase cats! (brave chicken is aggressive toward felines — daytime only)
         for e in world["nearby"]:
             if e["type_id"] == "base:cat" and e["distance"] < 8:
                 return (Follow(e["id"], speed=spd * 1.5, min_distance=1.0),
                         "BAWK! Chasing cat!")
-
-        # Seek roost at dusk
-        if self.is_evening(world):
-            for b in world["blocks"]:
-                if b["type"] in ("base:wood", "base:fence", "base:planks") \
-                        and b["y"] > entity["y"] + 1.5:
-                    return (MoveTo(b["x"] + 0.5, b["y"] + 1.0, b["z"] + 0.5),
-                            "Seeking roost")
-            return Idle(), "Settling down"
 
         # Follow player and occasionally lay eggs when near them
         for e in world["nearby"]:

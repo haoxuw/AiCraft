@@ -26,6 +26,7 @@ class PeckBehavior(Behavior):
     def __init__(self):
         self._home = None
         self._sleeping = False
+        self._resting = False   # True during evening/night; cleared at dawn
         self._activity = "idle"
         self._activity_timer = 0.0
         self._was_startled = False
@@ -51,22 +52,22 @@ class PeckBehavior(Behavior):
                                 self._home[0], self._home[2])
 
         # ── Evening/Night: roost at home ────────────────────────────────────
-        if self.is_night(world):
-            self._sleeping = True
+        if self.is_night(world) or self.is_evening(world):
+            self._resting = True
+            if self.is_night(world):
+                self._sleeping = True
             if dist_home > 3:
                 return (MoveTo(self._home[0], self._home[1], self._home[2],
                                speed=spd),
                         "Heading home to roost...")
-            return Idle(), "Roosting zzz"
+            if self._sleeping:
+                return Idle(), "Roosting zzz"
+            return Idle(), "Settling in to roost"
 
-        if self._sleeping:
+        if self._resting:
+            self._resting = False
             self._sleeping = False
             return Idle(), "Good morning! *cluck*"
-
-        if self.is_evening(world) and dist_home > 3:
-            return (MoveTo(self._home[0], self._home[1], self._home[2],
-                           speed=spd),
-                    "Heading home to roost...")
 
         if dist_home > home_radius:
             return (MoveTo(self._home[0], self._home[1], self._home[2],

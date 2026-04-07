@@ -25,6 +25,7 @@ class WanderBehavior(Behavior):
         self._home = None
         self._graze_timer = 0.0
         self._sleeping = False
+        self._resting = False   # True during evening/night; cleared at dawn
         self._rng_seeded = False
 
     def decide(self, entity, world):
@@ -45,22 +46,22 @@ class WanderBehavior(Behavior):
                                 self._home[0], self._home[2])
 
         # ── Evening/Night: go home ──────────────────────────────────────────
-        if self.is_night(world):
-            self._sleeping = True
+        if self.is_night(world) or self.is_evening(world):
+            self._resting = True
+            if self.is_night(world):
+                self._sleeping = True
             if dist_home > 3:
                 return (MoveTo(self._home[0], self._home[1], self._home[2],
                                speed=spd),
                         "Heading home...")
-            return Idle(), "Sleeping zzz"
+            if self._sleeping:
+                return Idle(), "Sleeping zzz"
+            return Idle(), "Settling in for the night"
 
-        if self._sleeping:
+        if self._resting:
+            self._resting = False
             self._sleeping = False
             return Idle(), "Good morning!"
-
-        if self.is_evening(world) and dist_home > 3:
-            return (MoveTo(self._home[0], self._home[1], self._home[2],
-                           speed=spd),
-                    "Heading home (evening)...")
 
         if dist_home > home_radius:
             return (MoveTo(self._home[0], self._home[1], self._home[2],

@@ -1,16 +1,10 @@
-"""Dog — loyal guard companion.
-
-Rule composition (priority order):
-  1. guard — chase cats away from owner, bark at strangers
-  2. follow_owner — follow nearest player or villager
-  3. patrol_home — wander near spawn point when alone
-"""
+"""Dog — loyal guard companion that follows players and chases cats."""
 
 creature = {
     "id": "base:dog",
     "name": "Dog",
     "category": "animal",
-    "behaviors": ["guard", "follow_owner", "patrol_home"],
+    "behavior": "follow",
 
     "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 0.7, 0.3]},
     "gravity": 1.0,

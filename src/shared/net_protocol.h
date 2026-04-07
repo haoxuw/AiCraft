@@ -136,6 +136,7 @@ inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	buf.writeI32(a.slotIndex);
 	buf.writeU32(a.targetEntity);
 	buf.writeF32(a.damage);
+	buf.writeString(a.goalText);
 }
 
 inline ActionProposal deserializeAction(ReadBuffer& buf) {
@@ -151,6 +152,7 @@ inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	a.slotIndex = buf.readI32();
 	a.targetEntity = buf.readU32();
 	a.damage = buf.readF32();
+	if (buf.hasMore()) a.goalText = buf.readString();
 	return a;
 }
 

@@ -508,6 +508,7 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 						layout.w       = hd["w"].cast<int>();
 						layout.d       = hd["d"].cast<int>();
 						layout.stories = hd.contains("stories") ? hd["stories"].cast<int>() : 1;
+						if (hd.contains("type")) layout.type      = hd["type"].cast<std::string>();
 						if (hd.contains("wall")) layout.wallBlock = hd["wall"].cast<std::string>();
 						if (hd.contains("roof")) layout.roofBlock = hd["roof"].cast<std::string>();
 					} else {

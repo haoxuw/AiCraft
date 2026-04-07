@@ -146,7 +146,8 @@ private:
 	// Graphics settings (exposed in pause menu)
 	int m_renderDistance = 8;
 	bool m_vsync = true;
-	bool m_showGoalBubbles = true;
+	bool m_showGoalBubbles = true;  // lightbulb icons above AI entities
+	bool m_showGoalText    = true;  // goal text label above lightbulbs
 
 	// Display
 	bool m_showDebug = false;
@@ -187,6 +188,11 @@ private:
 
 	// HP snapshot for damage/death detection (client-side, works over network)
 	std::unordered_map<EntityId, int> m_prevEntityHP;
+
+	// Last-seen goal per entity — used to detect changes and drive the pop animation
+	std::unordered_map<EntityId, std::string> m_entityGoals;
+	// Pop timer per entity: counts down from 1→0 after a goal change (drives scale burst)
+	std::unordered_map<EntityId, float> m_entityGoalPopTimer;
 
 	// Damage flash timer: entity flashes red for this many seconds after taking a hit
 	std::unordered_map<EntityId, float> m_damageFlash;

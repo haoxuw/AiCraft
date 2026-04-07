@@ -185,9 +185,11 @@ public:
 			state.pendingOneShots.clear();
 
 			// Send continuous Move action every tick (smooth movement at 50Hz)
+			// Attach current goal text so the server can broadcast it to clients.
 			std::vector<ActionProposal> moveProposals;
 			behaviorToActionProposals(e, state, state.currentAction, dt, moveProposals);
 			for (auto& p : moveProposals) {
+				p.goalText = e.goalText;
 				net::WriteBuffer wb;
 				net::serializeAction(wb, p);
 				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);

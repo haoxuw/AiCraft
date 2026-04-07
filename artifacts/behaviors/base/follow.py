@@ -1,15 +1,12 @@
-"""Follow — loyal companion that follows a player or NPC.
+"""Follow — loyal guard companion that follows a player or NPC.
 
-Generic following behavior. Finds the nearest player (or villager),
-follows them, sits nearby, and occasionally does idle animations
-(play bow, tail wag, panting).
-
-Species-specific traits (guarding, barking at cats) should be
-separate composable behaviors.
+Follows the nearest player or villager, guards them by chasing cats
+and barking at strangers, and patrols near home when alone.
 
 Parameters (optional via entity dict):
   follow_dist   — how close to sit by owner (default 3)
   patrol_range  — how far to wander when no owner found (default 12)
+  guard_range   — radius to detect threats near owner (default 6)
   home_radius   — max wander distance from home (default 30)
 """
 import random
@@ -22,8 +19,10 @@ class FollowBehavior(Behavior):
     def __init__(self):
         self._home = None
         self._sleeping = False
+        self._resting = False   # True during evening/night; cleared at dawn
         self._play_timer = 0.0
         self._patrol_timer = 0.0
+        self._bark_timer = 0.0
         self._rng_seeded = False
 
     def decide(self, entity, world):
@@ -34,34 +33,36 @@ class FollowBehavior(Behavior):
         dt = world["dt"]
         self._play_timer   -= dt
         self._patrol_timer -= dt
+        self._bark_timer   -= dt
         self._home = self.init_home(entity, self._home)
 
         follow_dist  = float(entity.get("follow_dist",  3.0))
         patrol_range = float(entity.get("patrol_range", 12.0))
+        guard_range  = float(entity.get("guard_range",  6.0))
         spd          = entity["walk_speed"]
 
         dist_home = self.dist2d(entity["x"], entity["z"],
                                 self._home[0], self._home[2])
 
-        # ── Evening/Night: head home ──────────────────────────────────────────
-        if self.is_night(world):
-            self._sleeping = True
+        # ── Evening/Night: head home (highest priority) ───────────────────────
+        if self.is_night(world) or self.is_evening(world):
+            self._resting = True
+            if self.is_night(world):
+                self._sleeping = True
             if dist_home > 3:
                 return (MoveTo(self._home[0], self._home[1], self._home[2],
                                speed=spd),
                         "Going home...")
-            return Idle(), "Sleeping zzz"
+            if self._sleeping:
+                return Idle(), "Sleeping zzz"
+            return Idle(), "Settling in for the night"
 
-        if self._sleeping:
+        if self._resting:
+            self._resting = False
             self._sleeping = False
             return Idle(), "Good morning! *wag*"
 
-        if self.is_evening(world) and dist_home > 3:
-            return (MoveTo(self._home[0], self._home[1], self._home[2],
-                           speed=spd),
-                    "Heading home (evening)...")
-
-        # Find someone to follow (prefer player, then villager)
+        # Find owner (prefer player, then villager)
         players   = [e for e in world["nearby"] if e["category"] == "player"]
         villagers = [e for e in world["nearby"] if e["type_id"] == "base:villager"]
 
@@ -70,6 +71,24 @@ class FollowBehavior(Behavior):
             owner = min(players, key=lambda e: e["distance"])
         elif villagers:
             owner = min(villagers, key=lambda e: e["distance"])
+
+        # ── Guard: chase cats near owner, bark at strangers ───────────────────
+        if owner and owner["distance"] < guard_range:
+            cats = [e for e in world["nearby"]
+                    if e["type_id"] == "base:cat" and e["distance"] < guard_range]
+            if cats:
+                cat = min(cats, key=lambda e: e["distance"])
+                return (Follow(cat["id"], speed=spd * 1.5, min_distance=1),
+                        "Chasing cat away!")
+
+            if self._bark_timer <= 0:
+                strangers = [e for e in world["nearby"]
+                             if e["type_id"] not in ("base:player", "base:dog", "base:villager")
+                             and e["category"] != "item"
+                             and e["distance"] < 4]
+                if strangers and random.random() < 0.2:
+                    self._bark_timer = 8.0
+                    return Idle(), "*WOOF!* Alert!"
 
         if not owner:
             # No one around — patrol near home

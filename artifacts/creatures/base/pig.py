@@ -1,19 +1,10 @@
-"""Pig — herd animal that grazes, wallows in mud, and stampedes.
-
-Rule composition (priority order):
-  1. flee_threats — run from players and cats
-  2. herd_stampede — join stampede if friend is panicking
-  3. mud_seek — seek water/mud to wallow in
-  4. herd_stick — stay near herd members
-  5. graze — stop and eat grass
-  6. wander_slow — default fallback
-"""
+"""Pig — herd animal that grazes and goes home at night."""
 
 creature = {
     "id": "base:pig",
     "name": "Pig",
     "category": "animal",
-    "behaviors": ["flee_threats", "herd_stampede", "mud_seek", "herd_stick", "graze", "wander_slow"],
+    "behavior": "wander",
 
     "collision": {"min": [-0.4, 0, -0.4], "max": [0.4, 0.9, 0.4]},
     "gravity": 1.0,

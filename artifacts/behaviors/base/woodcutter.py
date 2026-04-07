@@ -163,7 +163,7 @@ class WoodcutterBehavior(Behavior):
                 self._timer = 3.0
                 return Idle(), "Home! Depositing..."
             return (MoveTo(self._home[0], self._home[1], self._home[2], speed=spd),
-                    "Bringing resources home (%dm)" % int(dist_home))
+                    "Bringing resources home")
 
         # ── State: resting ──────────────────────────────────────────────────
         if self._state == "resting":

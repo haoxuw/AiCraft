@@ -70,6 +70,10 @@ struct ActionProposal {
 	// Entity interaction
 	EntityId targetEntity = ENTITY_NONE;
 	float damage = 0;
+
+	// Agent goal text — set by agent on Move actions so the server can
+	// broadcast the current decision to all clients.
+	std::string goalText;
 };
 
 // ================================================================

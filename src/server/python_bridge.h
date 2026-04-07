@@ -73,6 +73,7 @@ struct WorldPyConfig {
 
 	struct HouseLayout {
 		int cx = 0, cz = 0, w = 8, d = 8, stories = 1;
+		std::string type;       // "" = house, "barn" = open barn (no walls, pillars only)
 		std::string wallBlock;  // "" = use village default
 		std::string roofBlock;  // "" = use village default
 	};

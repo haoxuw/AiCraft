@@ -1465,33 +1465,29 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 		float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;
 		glm::vec3 bulbPos = e.position + glm::vec3(0, entityTop + 0.3f + bobY, 0);
 
-		// Red tint if behavior has error
-		BoxModel bulb = lightbulb;
-		if (e.hasError) {
-			for (auto& p : bulb.parts)
-				p.color = {1.0f, 0.2f, 0.2f, 0.9f};
+		if (m_showGoalBubbles) {
+			// Red tint if behavior has error
+			BoxModel bulb = lightbulb;
+			if (e.hasError) {
+				for (auto& p : bulb.parts)
+					p.color = {1.0f, 0.2f, 0.2f, 0.9f};
+			}
+			mr.draw(bulb, vp, bulbPos, m_camera.lookYaw, {}); // billboard: face camera
 		}
 
-		mr.draw(bulb, vp, bulbPos, m_camera.lookYaw, {}); // billboard: face camera
-
-		// Goal bubble: floating popup + log when goal changes
-		if (!e.goalText.empty()) {
-			static std::unordered_map<EntityId, std::string> lastGoals;
-			auto& prev = lastGoals[e.id()];
-			if (prev != e.goalText) {
+		// Goal change detection — log to in-game overlay and trigger pop animation
+		{
+			auto& prev = m_entityGoals[e.id()];
+			if (!e.goalText.empty() && e.goalText != prev) {
 				prev = e.goalText;
-				// Log the decision
-				std::string eName = e.def().display_name.empty() ? e.typeId() : e.def().display_name;
-				appendLog(eName + ": " + e.goalText);
-				// Spawn floating popup above the lightbulb
-				FloatTextEvent ft;
-				ft.source      = FloatSource::GoalChange;
-				ft.targetId    = e.id();
-				ft.worldPos    = e.position + glm::vec3(0, entityTop + 0.55f, 0);
-				ft.text        = e.goalText;
-				ft.coalesceKey = std::to_string(e.id()); // one slot per entity
-				ft.value       = 1.0f;
-				m_floatText.add(ft);
+				// In-game log
+				std::string typeName = e.typeId();
+				auto col = typeName.find(':');
+				if (col != std::string::npos) typeName = typeName.substr(col + 1);
+				if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
+				appendLog(typeName + " #" + std::to_string(e.id()) + ": " + e.goalText);
+				// Trigger world-label pop burst
+				m_entityGoalPopTimer[e.id()] = 0.45f;
 			}
 		}
 
@@ -1539,12 +1535,17 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			}
 			m_prevEntityHP[e.id()] = curHP;
 		}
-		// Decay damage flash timer
+		// Decay timers
 		{
 			auto flit = m_damageFlash.find(e.id());
 			if (flit != m_damageFlash.end()) {
 				flit->second -= dt;
 				if (flit->second <= 0) m_damageFlash.erase(flit);
+			}
+			auto plit = m_entityGoalPopTimer.find(e.id());
+			if (plit != m_entityGoalPopTimer.end()) {
+				plit->second -= dt;
+				if (plit->second <= 0) m_entityGoalPopTimer.erase(plit);
 			}
 		}
 	});
@@ -1562,6 +1563,10 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 			it = seen.count(it->first) ? std::next(it) : m_damageFlash.erase(it);
 		for (auto it = m_entityAttackPhase.begin(); it != m_entityAttackPhase.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_entityAttackPhase.erase(it);
+		for (auto it = m_entityGoalPopTimer.begin(); it != m_entityGoalPopTimer.end(); )
+			it = seen.count(it->first) ? std::next(it) : m_entityGoalPopTimer.erase(it);
+		for (auto it = m_entityGoals.begin(); it != m_entityGoals.end(); )
+			it = seen.count(it->first) ? std::next(it) : m_entityGoals.erase(it);
 	}
 
 	// Particles
@@ -1885,36 +1890,48 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 
 	// (Backpack panel removed — use [I] Equipment UI for all inventory management)
 
-	// Goal text overlay — render entity goal above their lightbulb
-	if (!skipImGui) {
-		auto& srv2 = *m_server;
+	// Goal text overlay — world-anchored label above each entity's lightbulb,
+	// always visible in every camera mode. Pops on goal change.
+	if (!skipImGui && m_showGoalText) {
 		glm::mat4 vp2 = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
-		srv2.forEachEntity([&](Entity& e) {
+		m_server->forEachEntity([&](Entity& e) {
 			if (e.id() == m_server->localPlayerId()) return;
 			if (!e.def().isLiving() || e.removed) return;
+
 			float entityTop = e.def().collision_box_max.y;
 			float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;
-			glm::vec3 textPos = e.position + glm::vec3(0, entityTop + 0.55f + bobY, 0);
+			glm::vec3 textPos = e.position + glm::vec3(0, entityTop + 0.6f + bobY, 0);
 			glm::vec4 clip = vp2 * glm::vec4(textPos, 1.0f);
 			if (clip.w <= 0.0f || clip.z <= 0.0f) return;
 			float nx = clip.x / clip.w, ny = clip.y / clip.w;
-			if (nx < -1.3f || nx > 1.3f || ny < -1.3f || ny > 1.3f) return;
-			const char* label = nullptr;
-			std::string fallback;
-			glm::vec4 color;
+			if (nx < -1.5f || nx > 1.5f || ny < -1.5f || ny > 1.5f) return;
+
+			// Pop factor: 1 right after goal change, eases to 0 over 0.45s
+			const auto pit = m_entityGoalPopTimer.find(e.id());
+			const float popT = (pit != m_entityGoalPopTimer.end())
+			                 ? pit->second / 0.45f : 0.0f;
+
+			const char* label;
+			glm::vec4   color;
 			if (e.hasError) {
 				label = e.goalText.empty() ? "ERROR" : e.goalText.c_str();
-				color = glm::vec4(1.0f, 0.4f, 0.4f, 0.92f);
+				color = {1.0f, 0.35f + 0.15f * popT, 0.35f + 0.15f * popT, 0.95f};
 			} else if (!e.goalText.empty()) {
 				label = e.goalText.c_str();
-				color = glm::vec4(0.92f, 1.0f, 0.85f, 0.88f);
+				// Settles to soft green-white; bursts to bright white on change
+				color = {0.88f + 0.12f * popT, 1.0f, 0.80f + 0.20f * popT,
+				         0.80f + 0.18f * popT};
 			} else {
-				fallback = e.getProp<std::string>(Prop::BehaviorId, "");
-				if (fallback.empty()) fallback = e.typeId();
-				label = fallback.c_str();
-				color = glm::vec4(0.5f, 0.5f, 0.5f, 0.55f);
+				// Agent not yet connected — dim behavior ID
+				const auto& bid = e.getProp<std::string>(Prop::BehaviorId, "");
+				label = bid.empty() ? e.typeId().c_str() : bid.c_str();
+				color = {0.5f, 0.5f, 0.5f, 0.35f};
 			}
-			m_text.drawText(label, nx - 0.16f, ny, 0.40f, color, aspect);
+
+			// Scale 0.80 at rest, bursts to 1.10 on change; centered on lightbulb
+			const float scale = 0.80f + 0.30f * popT;
+			float textW = (float)std::strlen(label) * scale * 0.018f;
+			m_text.drawText(label, nx - textW * 0.5f, ny, scale, color, aspect);
 		});
 	}
 
@@ -1999,7 +2016,7 @@ void Game::updateEntityInspect(float dt, float aspect) {
 		} else {
 			std::string bid = target->getProp<std::string>(Prop::BehaviorId, "");
 			if (!bid.empty())
-				ImGui::TextColored({0.45f, 0.45f, 0.45f, 1}, "Goal: (waiting for agent — %s)", bid.c_str());
+				ImGui::TextColored({0.45f, 0.45f, 0.45f, 1}, "Goal: (waiting for agent: %s)", bid.c_str());
 			else
 				ImGui::TextColored({0.45f, 0.45f, 0.45f, 1}, "Goal: (no agent)");
 		}
@@ -2272,7 +2289,7 @@ void Game::updatePaused(float dt, float aspect) {
 	bg->AddRectFilled({0, 0}, {(float)m_window.width(), (float)m_window.height()},
 		IM_COL32(0, 0, 0, 140));
 
-	float pw = 360, ph = 380;
+	float pw = 360, ph = 440;
 	float px = (m_window.width() - pw) * 0.5f;
 	float py = (m_window.height() - ph) * 0.5f;
 
@@ -2341,6 +2358,19 @@ void Game::updatePaused(float dt, float aspect) {
 		}
 		ImGui::Spacing();
 	}
+
+	// Display settings
+	ImGui::Separator(); ImGui::Spacing();
+	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.35f, 0.40f, 1.0f));
+	ImGui::SetCursorPosX(22);
+	ImGui::TextUnformatted("Display");
+	ImGui::PopStyleColor();
+	ImGui::Spacing();
+	ImGui::SetCursorPosX(28);
+	ImGui::Checkbox("Show lightbulbs", &m_showGoalBubbles);
+	ImGui::SetCursorPosX(28);
+	ImGui::Checkbox("Show goal text",  &m_showGoalText);
+	ImGui::Spacing();
 
 	// Quit Game
 	if (styledButton("Quit Game",

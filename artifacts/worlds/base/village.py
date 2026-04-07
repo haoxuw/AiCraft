@@ -76,9 +76,10 @@ world = {
     "village": {
         "offset_x":        40,
         "offset_z":        12,
-        "clearing_radius": 40,    # enlarged to fit bigger houses
+        "clearing_radius": 60,    # enlarged to accommodate barn
 
         # Dict fields: cx, cz, w, d (required); stories (default 1);
+        #              type (optional: "barn" = open pillared barn);
         #              wall, roof (optional — overrides village default for this house)
         "houses": [
             {"cx":   0, "cz":   0, "w": 14, "d": 14, "stories": 2},
@@ -86,6 +87,8 @@ world = {
             {"cx": -22, "cz":   9, "w": 10, "d": 12, "wall": "base:wood", "roof": "base:wood"},
             {"cx":   9, "cz":  28, "w": 12, "d": 10},
             {"cx": -20, "cz": -26, "w": 12, "d": 12, "stories": 2},
+            # Large open barn for cats and dogs — no walls, just pillars and a huge roof
+            {"cx": 20, "cz": 40, "w": 26, "d": 18, "type": "barn", "roof": "base:wood"},
         ],
 
         "wall_block":  "base:cobblestone",

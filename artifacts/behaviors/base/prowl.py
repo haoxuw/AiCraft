@@ -30,6 +30,7 @@ class ProwlBehavior(Behavior):
     def __init__(self):
         self._home = None
         self._sleeping = False
+        self._resting = False   # True during evening/night; cleared at dawn
         self._mood = MOOD_IDLE
         self._mood_timer = 0.0
         self._napping = False
@@ -40,6 +41,7 @@ class ProwlBehavior(Behavior):
         self._curiosity_target = None
         self._bored_timer = 0.0
         self._rng_seeded = False
+        self._returning_home = False  # hysteresis: set at home_radius, cleared at 50%
 
     def _pick_mood(self, curiosity):
         r = random.random()
@@ -73,29 +75,42 @@ class ProwlBehavior(Behavior):
         dist_home = self.dist2d(entity["x"], entity["z"],
                                 self._home[0], self._home[2])
 
-        # ── Evening/Night: return home ────────────────────────────────────────
-        if self.is_night(world):
-            self._sleeping = True
-            self._napping  = False
+        # ── Evening/Night: return home (highest priority — no mood overrides this) ─
+        # Evening and night are merged so "already near home" doesn't fall through
+        # to mood logic and cause rapid goal oscillation.
+        if self.is_night(world) or self.is_evening(world):
+            self._napping = False
+            self._mood_timer = 99.0  # suppress mood changes until morning
+            self._resting = True
+            if self.is_night(world):
+                self._sleeping = True
             if dist_home > 4:
                 return (MoveTo(self._home[0], self._home[1], self._home[2],
                                speed=spd),
-                        "Prowling home...")
-            return Idle(), "Curled up at home zzz"
+                        "Heading home...")
+            if self._sleeping:
+                return Idle(), "Curled up at home zzz"
+            return Idle(), "Settling in for the night"
 
-        if self._sleeping:
+        if self._resting:
+            self._resting = False
             self._sleeping = False
+            self._mood_timer = 0.0  # pick a fresh mood at dawn
             return Idle(), "Stretching... meow"
 
-        if self.is_evening(world) and dist_home > 4:
-            return (MoveTo(self._home[0], self._home[1], self._home[2],
-                           speed=spd),
-                    "Heading home (evening)...")
-
+        # Hysteresis: start returning at home_radius, only stop at home_radius * 0.5
+        # This prevents oscillating at the boundary every tick.
         if dist_home > home_radius:
-            return (MoveTo(self._home[0], self._home[1], self._home[2],
-                           speed=spd * 0.7),
-                    "Wandering back home")
+            self._returning_home = True
+        if self._returning_home:
+            if dist_home < home_radius * 0.5:
+                self._returning_home = False
+                self._mood_timer = 0.0   # pick a fresh mood now that we're home
+                self._napping = False
+            else:
+                return (MoveTo(self._home[0], self._home[1], self._home[2],
+                               speed=spd * 0.7),
+                        "Wandering back home")
 
         # ── Always flee from dogs ─────────────────────────────────────────────
         dogs = [e for e in world["nearby"]
