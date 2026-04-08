@@ -52,6 +52,10 @@ public:
 	// Notify server that player reassigned a hotbar slot
 	virtual void sendHotbarSlot(int slot, const std::string& itemId) {}
 
+	// When true, local player position is server-driven (RTS move orders).
+	// Interpolation loop uses smooth tracking instead of snap-only.
+	bool localPlayerServerDriven = false;
+
 	// Ownership — claim an entity (admin or unclaimed only)
 	virtual void sendClaimEntity(EntityId eid) {}
 

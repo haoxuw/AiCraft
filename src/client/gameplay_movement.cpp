@@ -90,6 +90,9 @@ void GameplayController::processMovement(float dt, GameState state,
 			}
 		}
 
+		// RTS: server drives all entities including local player
+		server.localPlayerServerDriven = true;
+
 		// Process active RTS move orders — send Move actions for each entity
 		{
 			std::vector<EntityId> arrived;
@@ -117,6 +120,7 @@ void GameplayController::processMovement(float dt, GameState state,
 	}
 
 	// ── FPS / TPS / RPG: WASD movement ──
+	server.localPlayerServerDriven = false;
 	float speed = camera.moveSpeed;
 	bool sprinting = controls.held(Action::Sprint);
 	if (sprinting) speed *= 2.5f;

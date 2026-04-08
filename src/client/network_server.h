@@ -197,7 +197,7 @@ public:
 			auto& e = *it->second;
 			bool isLocal = (id == m_localPlayerId);
 
-			if (isLocal) {
+			if (isLocal && !localPlayerServerDriven) {
 				// WASD mode: client runs moveAndCollide — position is self-managed.
 				// Only snap on large disagreement (teleport, missing chunks).
 				float dist = glm::length(target.position - e.position);
