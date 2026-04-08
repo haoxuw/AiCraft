@@ -267,6 +267,7 @@ struct EntityState {
 	std::string characterSkin; // visual override (e.g., "base:knight")
 	int hp;
 	int maxHp;
+	int owner = 0;  // EntityId of owning player (0 = unowned)
 	// String properties (e.g., ItemType for item entities, BehaviorId for NPCs)
 	std::vector<std::pair<std::string, std::string>> stringProps;
 };
@@ -283,6 +284,7 @@ inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
 	buf.writeString(e.characterSkin);
 	buf.writeI32(e.hp);
 	buf.writeI32(e.maxHp);
+	buf.writeI32(e.owner);
 	buf.writeU32((uint32_t)e.stringProps.size());
 	for (auto& [k, v] : e.stringProps) {
 		buf.writeString(k);
@@ -303,6 +305,7 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	e.characterSkin = buf.readString();
 	e.hp = buf.readI32();
 	e.maxHp = buf.readI32();
+	if (buf.hasMore()) e.owner = buf.readI32();
 	uint32_t propCount = buf.readU32();
 	for (uint32_t i = 0; i < propCount && buf.hasMore(); i++) {
 		std::string k = buf.readString();

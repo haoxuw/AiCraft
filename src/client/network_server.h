@@ -363,6 +363,8 @@ private:
 						es.typeId.c_str(), es.position.x, es.position.y, es.position.z);
 				if (def->isLiving())
 					ent->setProp(Prop::HP, es.hp);
+				if (es.owner != 0)
+					ent->setProp(Prop::Owner, es.owner);
 				// Apply any inventory that arrived before this entity
 				auto pit = m_pendingInventory.find(es.id);
 				if (pit != m_pendingInventory.end() && ent->inventory) {
@@ -397,6 +399,8 @@ private:
 				e.goalText = es.goalText;
 				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);
+				if (es.owner != 0)
+					e.setProp(Prop::Owner, es.owner);
 				// Sync string properties
 				for (auto& [k, v] : es.stringProps)
 					e.setProp(k, v);
