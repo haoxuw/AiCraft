@@ -143,12 +143,7 @@ private:
 		glm::vec2 start = {0, 0};
 		glm::vec2 end = {0, 0};
 		std::vector<EntityId> selected;
-		// Per-entity move targets (grid formation), continuously tracked
-		std::unordered_map<EntityId, glm::vec3> moveTargets;
 	} m_rtsSelect;
-
-	// RTS stuck detection: last known position per entity for wall collision check
-	std::unordered_map<EntityId, glm::vec3> m_rtsLastPos;
 };
 
 } // namespace modcraft

@@ -128,6 +128,7 @@ void GameplayController::processMovement(float dt, GameState state,
 				                 !blocks.get(chunks.getBlock(bp.x, bp.y + 2, bp.z)).solid;
 				if (groundSolid && bodyClear) {
 					server.sendSetGoal(player.id(), target);
+					m_clickToMove.target = target;
 					m_clickToMove.active = true;
 				}
 			}
@@ -231,12 +232,15 @@ void GameplayController::processMovement(float dt, GameState state,
 // ================================================================
 void GameplayController::issueRTSMoveOrder(glm::ivec3 blockPos,
                                            ServerInterface& server,
-                                           Camera& camera)
+                                           Camera& /*camera*/)
 {
 	glm::vec3 center = glm::vec3(blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
 	auto& bl = server.blockRegistry();
 	if (!bl.get(server.chunks().getBlock(blockPos.x, blockPos.y, blockPos.z)).solid)
 		return;
+
+	m_clickToMove.target = center;
+	m_clickToMove.active = true;
 
 	// Compute grid formation positions, then send C_SET_GOAL for each entity.
 	int n = (int)m_rtsSelect.selected.size();
