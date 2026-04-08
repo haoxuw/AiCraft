@@ -197,8 +197,8 @@ public:
 			auto& e = *it->second;
 			bool isLocal = (id == m_localPlayerId);
 
-			if (isLocal) {
-				// Client runs moveAndCollide() — position is self-managed.
+			if (isLocal && !m_localAutoNav) {
+				// WASD mode: client runs moveAndCollide — position is self-managed.
 				// Only snap on large disagreement (teleport, missing chunks).
 				float dist = glm::length(target.position - e.position);
 				if (dist > SNAP_LOCAL) {
@@ -206,10 +206,8 @@ public:
 						dist, e.position.x, e.position.y, e.position.z,
 						target.position.x, target.position.y, target.position.z);
 					e.position = target.position;
-					// Reset physics state to match server after a big correction
 					e.velocity = target.velocity;
 				}
-				// Normal ticks: don't overwrite velocity/onGround — client physics owns these.
 			} else {
 				// Remote entities: dead-reckoning + smooth interpolation
 				float cappedAge = std::min(target.age, 0.5f);
@@ -275,6 +273,9 @@ public:
 		wb.writeU32(eid);
 		net::sendMessage(m_tcp.fd(), net::C_CANCEL_GOAL, wb);
 	}
+
+	void setLocalPlayerAutoNav(bool nav) override { m_localAutoNav = nav; }
+	bool localPlayerAutoNav() const override { return m_localAutoNav; }
 
 	void sendClaimEntity(EntityId eid) override {
 		if (!m_connected) return;
@@ -590,6 +591,7 @@ private:
 	net::RecvBuffer m_recv;
 
 	EntityId m_localPlayerId = ENTITY_NONE;
+	bool m_localAutoNav = false;
 	glm::vec3 m_spawnPos = {0, 0, 0};
 	float m_worldTime = 0.25f;
 

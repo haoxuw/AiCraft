@@ -59,6 +59,11 @@ public:
 	// Ownership — claim an entity (admin or unclaimed only)
 	virtual void sendClaimEntity(EntityId eid) {}
 
+	// Auto-navigation mode: when true, local player position is driven by
+	// server S_ENTITY (agent navigating). When false, client moveAndCollide owns position.
+	virtual void setLocalPlayerAutoNav(bool) {}
+	virtual bool localPlayerAutoNav() const { return false; }
+
 	// --- State access (for rendering) ---
 
 	// Chunk data source (for terrain meshing)

@@ -76,7 +76,7 @@ void GameplayController::processMovement(float dt, GameState state,
 		}
 
 		// Agents handle continuous navigation — no per-frame velocity loop needed.
-
+		server.setLocalPlayerAutoNav(true); // server drives position via S_ENTITY
 		return; // RTS: no WASD player movement
 	}
 
@@ -169,6 +169,14 @@ void GameplayController::processMovement(float dt, GameState state,
 	}
 
 	if (glm::length(move) > 0.01f) move = glm::normalize(move);
+
+	// If agent is navigating (click-to-move) and no WASD input,
+	// skip local physics — server + agent drive position via S_ENTITY.
+	if (m_clickToMove.active && !hasWASD) {
+		server.setLocalPlayerAutoNav(true);
+		return;
+	}
+	server.setLocalPlayerAutoNav(false);
 
 	// Build ActionProposal — server validates and executes
 	ActionProposal moveAction;
