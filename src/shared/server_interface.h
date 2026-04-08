@@ -52,6 +52,10 @@ public:
 	// Notify server that player reassigned a hotbar slot
 	virtual void sendHotbarSlot(int slot, const std::string& itemId) {}
 
+	// Navigation goals — for RTS/RPG click-to-move (forwarded to entity's agent)
+	virtual void sendSetGoal(EntityId eid, glm::vec3 pos) {}
+	virtual void sendCancelGoal(EntityId eid) {}
+
 	// --- State access (for rendering) ---
 
 	// Chunk data source (for terrain meshing)
