@@ -184,9 +184,11 @@ void GameServer::resolveActions(float dt) {
 				if (!actor->inventory) break;
 
 				if (src->typeId() == EntityType::ItemEntity) {
-					// Item entity pickup: validate range
+					// Item entity pickup: validate range using the actor's pickup_range
 					float dist = glm::length(src->position - actor->position);
-					if (dist > m_wgc.pickupRange) { nudgeR(ActionRejectCode::PickupOutOfRange); break; }
+					float maxRange = actor->def().pickup_range;
+					if (maxRange <= 0) maxRange = 1.5f;
+					if (dist > maxRange) { nudgeR(ActionRejectCode::PickupOutOfRange); break; }
 
 					std::string itemType = src->getProp<std::string>(Prop::ItemType);
 					int count = src->getProp<int>(Prop::Count, 1);
