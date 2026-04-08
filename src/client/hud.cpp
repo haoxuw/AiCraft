@@ -241,6 +241,7 @@ void HUD::renderTimeOfDay(const HUDContext& ctx, TextRenderer& text) {
 void HUD::renderModeLabel(const HUDContext& ctx, TextRenderer& text) {
 	const char* modeNames[] = {"FPS", "TPS", "RPG", "RTS"};
 	const char* adminTag = (ctx.state == GameState::ADMIN) ? " [ADMIN]" : "";
+	// Note: fly status shown via F3 debug overlay, not here (too long for HUD)
 	char hud[64];
 	snprintf(hud, sizeof(hud), "[%s]%s  [V]cam  [Tab]inv  [F3]dbg",
 	         modeNames[(int)ctx.camera.mode], adminTag);

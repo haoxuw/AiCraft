@@ -165,6 +165,7 @@ private:
 
 	// Display
 	bool m_showDebug = false;
+	bool m_adminFly = false;  // F11 fly (separate from F12 admin)
 	GameState m_preInspectState = GameState::PLAYING;
 	GameState m_preMenuState = GameState::PLAYING;
 

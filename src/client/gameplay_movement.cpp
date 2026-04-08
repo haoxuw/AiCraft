@@ -230,8 +230,8 @@ void GameplayController::processMovement(float dt, GameState state,
 	moveAction.sprint = sprinting;
 	moveAction.jumpVelocity = jumpVelocity;
 
-	bool wantsFly = (state == GameState::ADMIN) &&
-	                (camera.mode == CameraMode::FirstPerson || camera.mode == CameraMode::ThirdPerson);
+	// Fly: only when entity has fly_mode property set (toggled by F11 in admin)
+	bool wantsFly = player.getProp<bool>("fly_mode", false);
 	moveAction.fly = wantsFly;
 
 	if (wantsFly) {

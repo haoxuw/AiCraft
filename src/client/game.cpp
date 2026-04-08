@@ -313,19 +313,33 @@ void Game::handleGlobalInput() {
 	if (m_controls.pressed(Action::ToggleDebug))
 		m_showDebug = !m_showDebug;
 
-	// F12: toggle admin mode (fly, unlimited blocks, debug)
+	// F12: toggle admin mode (unlimited blocks, claim any entity)
 	static bool prevF12 = false;
 	bool f12 = glfwGetKey(m_window.handle(), GLFW_KEY_F12) == GLFW_PRESS;
 	if (f12 && !prevF12 && (m_state == GameState::ADMIN || m_state == GameState::PLAYING)) {
 		if (m_state == GameState::ADMIN) {
 			m_state = GameState::PLAYING;
+			m_adminFly = false;
+			Entity* pe = playerEntity();
+			if (pe) pe->setProp("fly_mode", false);
 			printf("[Game] Admin mode OFF\n");
 		} else {
 			m_state = GameState::ADMIN;
-			printf("[Game] Admin mode ON (fly, unlimited blocks)\n");
+			printf("[Game] Admin mode ON (F11=fly)\n");
 		}
 	}
 	prevF12 = f12;
+
+	// F11: toggle fly (admin mode only)
+	static bool prevF11 = false;
+	bool f11 = glfwGetKey(m_window.handle(), GLFW_KEY_F11) == GLFW_PRESS;
+	if (f11 && !prevF11 && m_state == GameState::ADMIN) {
+		m_adminFly = !m_adminFly;
+		Entity* pe = playerEntity();
+		if (pe) pe->setProp("fly_mode", m_adminFly);
+		printf("[Game] Fly mode %s\n", m_adminFly ? "ON" : "OFF");
+	}
+	prevF11 = f11;
 
 	// Ctrl+M: toggle background music
 	static bool prevM = false;
