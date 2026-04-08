@@ -812,6 +812,7 @@ private:
 				break;
 			}
 
+			client.playerId = targetEntity; // so C_SET_GOAL can find this agent by entity ID
 			m_server.assignEntityToClient(cid, targetEntity);
 			std::string behaviorId = te->getProp<std::string>(Prop::BehaviorId, "");
 
@@ -827,16 +828,25 @@ private:
 			uint32_t eid = rb.readU32();
 			float gx = rb.readF32(), gy = rb.readF32(), gz = rb.readF32();
 			// Ownership check: client must own the entity or be admin
-			if (!m_server.canClientControl(cid, eid)) break;
+			if (!m_server.canClientControl(cid, eid)) {
+				printf("[Server] C_SET_GOAL for entity %u denied (ownership)\n", eid);
+				break;
+			}
 			// Forward to the agent controlling this entity
+			bool found = false;
 			for (auto& [aid, ac] : m_clients) {
 				if (ac.isAgent && ac.playerId == eid) {
 					net::WriteBuffer wb;
 					wb.writeF32(gx); wb.writeF32(gy); wb.writeF32(gz);
 					net::sendMessage(ac.fd, net::S_SET_GOAL, wb);
+					printf("[Server] C_SET_GOAL(%.1f,%.1f,%.1f) forwarded to agent for entity %u\n",
+						gx, gy, gz, eid);
+					found = true;
 					break;
 				}
 			}
+			if (!found)
+				printf("[Server] C_SET_GOAL for entity %u: no agent found\n", eid);
 			break;
 		}
 		case net::C_CANCEL_GOAL: {

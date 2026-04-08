@@ -68,6 +68,7 @@ struct ActionProposal {
 	// Move: velocity set by client (behavior_executor computes from target pos)
 	glm::vec3 desiredVel  = {0, 0, 0};  // also: toss direction for Relocate with Ground dest
 	bool      jump        = false;
+	bool      sprint      = false;
 	bool      fly         = false;
 	float     jumpVelocity= 17.0f;
 	float     lookPitch   = 0.0f;

@@ -187,6 +187,7 @@ inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	// Move
 	buf.writeVec3(a.desiredVel);
 	buf.writeBool(a.jump);
+	buf.writeBool(a.sprint);
 	buf.writeBool(a.fly);
 	buf.writeF32(a.jumpVelocity);
 	buf.writeF32(a.lookPitch);
@@ -220,6 +221,7 @@ inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	// Move
 	a.desiredVel  = buf.readVec3();
 	a.jump        = buf.readBool();
+	a.sprint      = buf.readBool();
 	a.fly         = buf.readBool();
 	a.jumpVelocity= buf.readF32();
 	a.lookPitch   = buf.readF32();

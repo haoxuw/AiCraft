@@ -32,12 +32,14 @@ void GameServer::resolveActions(float dt) {
 				}
 			}
 
-			// Clamp to entity's max speed (anti-cheat)
+			// Clamp to entity's max speed (anti-cheat).
+			// Sprint allows 2.5x, admin/fly is uncapped. Tolerance: 3.5x walk.
 			float maxSpeed = e->def().walk_speed;
 			if (maxSpeed > 0) {
+				float speedCap = maxSpeed * (p.sprint ? 3.5f : 1.5f);
 				float len = glm::length(glm::vec2(p.desiredVel.x, p.desiredVel.z));
-				if (len > maxSpeed * 3.0f) {
-					float scale = (maxSpeed * 3.0f) / len;
+				if (len > speedCap) {
+					float scale = speedCap / len;
 					p.desiredVel.x *= scale;
 					p.desiredVel.z *= scale;
 				}

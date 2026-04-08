@@ -82,7 +82,8 @@ void GameplayController::processMovement(float dt, GameState state,
 
 	// ── FPS / TPS / RPG: WASD movement ──
 	float speed = camera.moveSpeed;
-	if (controls.held(Action::Sprint)) speed *= 2.5f;
+	bool sprinting = controls.held(Action::Sprint);
+	if (sprinting) speed *= 2.5f;
 
 	glm::vec3 move = {0, 0, 0};
 	bool hasWASD = controls.held(Action::MoveForward) ||
@@ -183,6 +184,7 @@ void GameplayController::processMovement(float dt, GameState state,
 	moveAction.type = ActionProposal::Move;
 	moveAction.actorId = player.id();
 	moveAction.desiredVel = {move.x * speed, 0, move.z * speed};
+	moveAction.sprint = sprinting;
 	moveAction.jumpVelocity = jumpVelocity;
 
 	bool wantsFly = (state == GameState::ADMIN) &&
