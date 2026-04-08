@@ -20,12 +20,12 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle, Entity&,
                                          float, float, std::string&, std::string& err,
                                          BlockQueryFn) {
 	err = "Python not available in web build";
-	{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
+	{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 }
 std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
 void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
-BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { { BehaviorAction a; a.type = BehaviorAction::Move; return a; } }
+BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { { BehaviorAction a; a.type = BehaviorAction::Idle; return a; } }
 bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
 } // namespace modcraft
 #else
@@ -307,7 +307,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 	auto it = m_behaviors.find(handle);
 	if (it == m_behaviors.end()) {
 		errorOut = "Invalid behavior handle";
-		{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
+		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 	}
 
 	try {
@@ -401,7 +401,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			goalOut = "ERROR: decide() must return (action, goal_str) — got " +
 			          std::string(py::str(result));
 			errorOut = goalOut;
-			{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
+			{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 		}
 		py::tuple tup = result.cast<py::tuple>();
 		py::object pyActionObj = tup[0];
@@ -441,16 +441,18 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		} else if (pyAction.type == "interact") {
 			action.type    = BehaviorAction::Interact;
 			action.blockPos= {(int)pyAction.x, (int)pyAction.y, (int)pyAction.z};
+		} else if (pyAction.type == "idle") {
+			action.type = BehaviorAction::Idle;
 		} else {
-			// Unknown type — stand still
-			action.type = BehaviorAction::Move;
+			// Unknown type — idle (no action)
+			action.type = BehaviorAction::Idle;
 		}
 
 		return action;
 
 	} catch (const py::error_already_set& e) {
 		errorOut = e.what();
-		{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
+		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 	}
 }
 
@@ -478,7 +480,7 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 	auto& bridge = pythonBridge();
 	if (!bridge.isInitialized()) {
 		view.self.goalText = "Python not initialized";
-		{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
+		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 	}
 
 	// Inject goal state for this call so Python's local_world sees it.
@@ -496,7 +498,7 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 		view.self.goalText = "ERROR: " + error.substr(0, 80);
 		view.self.hasError = true;
 		view.self.errorText = error;
-		{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
+		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 	}
 
 	// Goal is always set by bridge (synthesized if behavior returned empty).

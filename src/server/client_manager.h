@@ -76,44 +76,19 @@ public:
 	void setPort(int port) { m_port = port; }
 
 	// Accept new TCP connections and register as clients.
+	// Entity creation is deferred to C_HELLO — agents don't need a temp entity.
 	void acceptConnections(net::TcpServer& listener) {
 		auto accepted = listener.acceptClient();
 		if (accepted.fd < 0) return;
 
 		ClientId cid = m_nextClientId++;
-		EntityId eid = m_server.addClient(cid);
-
-		// Send S_WELCOME
-		{
-			net::WriteBuffer wb;
-			wb.writeU32(eid);
-			wb.writeVec3(m_server.spawnPos());
-			net::sendMessage(accepted.fd, net::S_WELCOME, wb);
-		}
-
-		// Send initial inventory (items + hotbar)
-		{
-			Entity* pe = m_server.world().entities.get(eid);
-			if (pe && pe->inventory) {
-				net::WriteBuffer wb;
-				wb.writeU32(eid);
-				auto items = pe->inventory->items();
-				wb.writeU32((uint32_t)items.size());
-				for (auto& [itemId, count] : items) {
-					wb.writeString(itemId);
-					wb.writeI32(count);
-				}
-				for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
-					wb.writeString(pe->inventory->hotbar(i));
-				net::sendMessage(accepted.fd, net::S_INVENTORY, wb);
-			}
-		}
 
 		// Hold in pending pool until C_HELLO/C_AGENT_HELLO identifies this client.
+		// No entity is created yet — prevents ghost entities from agent connections.
 		// Pending clients are invisible to the broadcast + chunk pipeline, so
 		// there is no timing dependency between C_HELLO arrival and broadcastState().
 		ConnectedClient cc;
-		cc.fd = accepted.fd; cc.id = cid; cc.playerId = eid;
+		cc.fd = accepted.fd; cc.id = cid; cc.playerId = ENTITY_NONE;
 		cc.ip = accepted.ip; cc.port = accepted.port;
 
 		auto sp = m_server.spawnPos();
@@ -121,8 +96,8 @@ public:
 		cc.lastChunkPos = cp;
 
 		m_pendingClients[cid] = std::move(cc);
-		printf("[Server] %s connected (entity %u). Waiting for hello...\n",
-		       m_pendingClients[cid].label().c_str(), eid);
+		printf("[Server] %s connected. Waiting for hello...\n",
+		       m_pendingClients[cid].label().c_str());
 	}
 
 	// Send queued chunks to clients (non-blocking, batched).
@@ -692,6 +667,28 @@ private:
 			std::string creatureType = rb.hasMore() ? rb.readString() : "";
 			if (!displayName.empty())
 				client.name = displayName + " (" + client.name.substr(0, 8) + ")";
+
+			// Create player entity (deferred from acceptConnections to prevent
+			// ghost entities from agent connections).
+			{
+				EntityId eid = m_server.addClient(cid, creatureType);
+				client.playerId = eid;
+				net::WriteBuffer swb;
+				swb.writeU32(eid);
+				swb.writeVec3(m_server.spawnPos());
+				net::sendMessage(client.fd, net::S_WELCOME, swb);
+				Entity* pe = m_server.world().entities.get(eid);
+				if (pe && pe->inventory) {
+					net::WriteBuffer iwb;
+					iwb.writeU32(eid);
+					auto items = pe->inventory->items();
+					iwb.writeU32((uint32_t)items.size());
+					for (auto& [itemId, cnt] : items) { iwb.writeString(itemId); iwb.writeI32(cnt); }
+					for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
+						iwb.writeString(pe->inventory->hotbar(i));
+					net::sendMessage(client.fd, net::S_INVENTORY, iwb);
+				}
+			}
 
 			if (!creatureType.empty()) {
 				// Enforce one-character-per-server: reject if skin already occupied

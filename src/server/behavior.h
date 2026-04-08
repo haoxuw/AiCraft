@@ -35,13 +35,14 @@ class EntityManager;
 
 struct BehaviorAction {
 	enum Type {
+		Idle,      // do nothing — agent sends no action this tick
 		Move,      // walk toward targetPos
 		Relocate,  // move item between containers
 		Convert,   // transform item (toItem="" = destroy; value must not increase)
 		Interact,  // toggle block state (door/button/TNT)
 	};
 
-	Type      type      = Move;
+	Type      type      = Idle;
 	glm::vec3 targetPos = {0, 0, 0};  // for Move: destination
 	float     speed     = 2.0f;
 

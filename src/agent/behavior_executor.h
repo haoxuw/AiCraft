@@ -62,12 +62,16 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 	};
 
 	switch (action.type) {
+	case BehaviorAction::Idle:
+		// Do nothing — no ActionProposal emitted. This prevents the agent
+		// from fighting GUI WASD control with zero-velocity stop actions.
+		break;
 	case BehaviorAction::Move: {
 		ActionProposal p;
 		p.type = ActionProposal::Move;
 		p.actorId = e.id();
-		p.clientPos    = e.position;
-		p.hasClientPos = true;
+		// Agent clients do NOT send clientPos — their cached position (from S_ENTITY)
+		// is stale. The server position is authoritative for agent-controlled entities.
 		glm::vec3 dir = action.targetPos - e.position;
 		dir.y = 0;
 		float dist = glm::length(dir);
@@ -84,13 +88,11 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 	}
 
 	case BehaviorAction::Relocate: {
-		// One-shot action — also produce a stop with client position
+		// One-shot action — also produce a stop
 		ActionProposal stop;
-		stop.type          = ActionProposal::Move;
-		stop.actorId       = e.id();
-		stop.desiredVel    = {0, 0, 0};
-		stop.clientPos     = e.position;
-		stop.hasClientPos  = true;
+		stop.type       = ActionProposal::Move;
+		stop.actorId    = e.id();
+		stop.desiredVel = {0, 0, 0};
 		out.push_back(stop);
 
 		ActionProposal p;
