@@ -1947,6 +1947,228 @@ class NavTestBehavior(Behavior):
 }
 
 // ================================================================
+// ================================================================
+// M1–M4: Camera Mode Movement Tests (client prediction + server)
+// ================================================================
+
+// Helper: simulate one frame of client-side prediction + server acceptance.
+// Mirrors gameplay_movement.cpp: runs moveAndCollide locally, sends clientPos
+// to server, server accepts and skips its own physics.
+static glm::vec3 clientMoveFrame(TestServer& srv, EntityId actor,
+                                  glm::vec3 desiredVel, bool jump = false) {
+	Entity* e = srv.getEntity(actor);
+	if (!e) return {0,0,0};
+	const auto& def = e->def();
+
+	auto& chunks = srv.chunks();
+	auto& blocks = srv.blockRegistry();
+	BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+		const auto& bd = blocks.get(chunks.getBlock(x, y, z));
+		return bd.solid ? bd.collision_height : 0.0f;
+	};
+
+	MoveParams mp;
+	mp.halfWidth  = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
+	mp.height     = def.collision_box_max.y - def.collision_box_min.y;
+	mp.gravity    = 32.0f * def.gravity_scale;
+	mp.stepHeight = def.isLiving() ? 1.0f : 0.0f;
+	mp.smoothStep = false;
+
+	glm::vec3 localVel = {desiredVel.x, e->velocity.y, desiredVel.z};
+	if (jump && e->onGround)
+		localVel.y = 10.0f;
+
+	constexpr float dt = 1.0f / 60.0f;
+	auto result = moveAndCollide(solidFn, e->position, localVel, dt, mp, e->onGround);
+
+	// Send to server (same as GUI client)
+	ActionProposal p;
+	p.type = ActionProposal::Move;
+	p.actorId = actor;
+	p.desiredVel = {desiredVel.x, result.velocity.y, desiredVel.z};
+	p.clientPos = result.position;
+	p.hasClientPos = true;
+	p.jump = jump;
+	p.jumpVelocity = 10.0f;
+	srv.sendActionDirect(p);
+	srv.tick(dt);
+
+	// Apply client-side state
+	e->position = result.position;
+	e->velocity = result.velocity;
+	e->onGround = result.onGround;
+
+	return result.position;
+}
+
+// M1: FPS — Walk + Jump While Moving
+// Tests the ground-snap bug fix: jump must work during horizontal movement.
+static std::string m01_fps_walk_jump() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	tickN(*srv, 30); // settle
+	float startY = p->position.y;
+	glm::vec3 startPos = p->position;
+
+	// Walk forward for 30 frames
+	for (int i = 0; i < 30; i++)
+		clientMoveFrame(*srv, pid, {0, 0, 4.0f});
+
+	// Jump while walking: 1 frame with jump=true, then 30 frames of arc
+	float peakY = p->position.y;
+	clientMoveFrame(*srv, pid, {0, 0, 4.0f}, true); // jump!
+	for (int i = 0; i < 30; i++) {
+		clientMoveFrame(*srv, pid, {0, 0, 4.0f});
+		if (p->position.y > peakY) peakY = p->position.y;
+	}
+
+	// Walk 30 more frames to land
+	for (int i = 0; i < 30; i++)
+		clientMoveFrame(*srv, pid, {0, 0, 4.0f});
+
+	float totalZ = std::abs(p->position.z - startPos.z);
+	float jumpHeight = peakY - startY;
+
+	if (totalZ < 3.0f)
+		return "barely moved forward: " + std::to_string(totalZ) + " blocks";
+	if (jumpHeight < 0.5f)
+		return "jump too low while moving: peak=" + std::to_string(jumpHeight) + " blocks";
+
+	// Verify server agrees (entity position should match within tolerance)
+	Entity* serverE = srv->server()->world().entities.get(pid);
+	float drift = glm::length(serverE->position - p->position);
+	if (drift > 1.0f)
+		return "server/client drift: " + std::to_string(drift) + " blocks";
+
+	return "";
+}
+
+// M2: TPS — Diagonal Walk + Sprint
+// Tests orbit-relative velocity: walk at 45° then sprint.
+static std::string m02_tps_diagonal_sprint() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	tickN(*srv, 30);
+	glm::vec3 start = p->position;
+
+	// Walk diagonally (simulates TPS orbit at 45°)
+	float walkSpeed = 4.0f;
+	glm::vec3 walkVel = {walkSpeed * 0.707f, 0, walkSpeed * 0.707f};
+	for (int i = 0; i < 60; i++)
+		clientMoveFrame(*srv, pid, walkVel);
+
+	float walkDist = glm::length(glm::vec2(p->position.x - start.x, p->position.z - start.z));
+	glm::vec3 walkEnd = p->position;
+
+	if (std::abs(p->position.x - start.x) < 1.0f)
+		return "didn't move in X: " + std::to_string(p->position.x - start.x);
+	if (std::abs(p->position.z - start.z) < 1.0f)
+		return "didn't move in Z: " + std::to_string(p->position.z - start.z);
+
+	// Sprint (2.5x speed)
+	glm::vec3 sprintVel = walkVel * 2.5f;
+	for (int i = 0; i < 30; i++)
+		clientMoveFrame(*srv, pid, sprintVel);
+
+	float sprintDist = glm::length(glm::vec2(p->position.x - walkEnd.x, p->position.z - walkEnd.z));
+
+	// Sprint 30 frames should cover more than walk 30 frames
+	float walk30 = walkDist * (30.0f / 60.0f);
+	if (sprintDist < walk30 * 1.5f)
+		return "sprint not faster: sprint=" + std::to_string(sprintDist) +
+		       " walk30=" + std::to_string(walk30);
+
+	return "";
+}
+
+// M3: RPG — Click-to-Move (simulated agent navigation toward goal)
+// Tests goal-based movement: set a target, simulate agent walking toward it.
+static std::string m03_rpg_click_to_move() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	tickN(*srv, 30);
+	glm::vec3 start = p->position;
+	glm::vec3 goal = start + glm::vec3(8.0f, 0, 0); // 8 blocks east
+
+	// Simulate agent navigation: compute direction to goal, send Move actions.
+	// Agent-driven (server physics), so it's slower than client prediction.
+	float speed = 6.0f;
+	for (int i = 0; i < 600; i++) {
+		glm::vec3 toGoal = goal - p->position;
+		toGoal.y = 0;
+		float dist = glm::length(toGoal);
+		if (dist < 1.0f) break;
+		glm::vec3 dir = toGoal / dist;
+		glm::vec3 vel = dir * speed;
+		moveAndTick(*srv, pid, vel); // server-driven (no clientPos)
+	}
+
+	float reached = glm::length(glm::vec2(p->position.x - goal.x, p->position.z - goal.z));
+	if (reached > 3.0f)
+		return "didn't reach goal: " + std::to_string(reached) + " blocks away";
+
+	return "";
+}
+
+// M4: RTS — Multi-Entity Movement (player + NPC toward different goals)
+// Tests controlling multiple entities simultaneously.
+static std::string m04_rts_multi_entity() {
+	auto srv = makeVillageServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* player = srv->getEntity(pid);
+	if (!player) return "no player";
+
+	tickN(*srv, 60); // let village settle
+
+	// Find first living non-player entity
+	EntityId npcId = ENTITY_NONE;
+	srv->forEachEntity([&](Entity& e) {
+		if (npcId != ENTITY_NONE) return;
+		if (e.id() == pid) return;
+		if (!e.def().isLiving()) return;
+		if (e.removed) return;
+		npcId = e.id();
+	});
+	if (npcId == ENTITY_NONE) return "no NPC found in village";
+
+	Entity* npc = srv->getEntity(npcId);
+	glm::vec3 playerStart = player->position;
+	glm::vec3 npcStart = npc->position;
+
+	// Move player east, NPC west (simultaneously)
+	// Use sendActionDirect for NPC (bypasses ownership — test simulates admin/agent)
+	float speed = 4.0f;
+	constexpr float dt = 1.0f / 60.0f;
+	for (int i = 0; i < 90; i++) {
+		moveAndTick(*srv, pid, {speed, 0, 0});
+		ActionProposal np;
+		np.type = ActionProposal::Move;
+		np.actorId = npcId;
+		np.desiredVel = {-speed, 0, 0};
+		srv->sendActionDirect(np);
+		srv->tick(dt);
+	}
+
+	float playerMoved = player->position.x - playerStart.x;
+	float npcMoved = npcStart.x - npc->position.x;
+
+	if (playerMoved < 2.0f)
+		return "player didn't move east: " + std::to_string(playerMoved);
+	if (npcMoved < 2.0f)
+		return "NPC didn't move west: " + std::to_string(npcMoved);
+
+	return "";
+}
+
 // Main
 // ================================================================
 
@@ -2042,6 +2264,12 @@ int main() {
 	run("W2: house floor at or above all footprint terrain", w2_floor_at_or_above_all_terrain);
 	run("W3: house interior has no buried terrain blocks",   w3_house_interior_no_buried_terrain);
 	run("W4: villager bed positions inside house footprint", w4_villagers_spawn_inside_house);
+
+	printf("\n--- Camera Mode Movement ---\n");
+	run("M1: FPS walk + jump while moving",     m01_fps_walk_jump);
+	run("M2: TPS diagonal walk + sprint",       m02_tps_diagonal_sprint);
+	run("M3: RPG click-to-move (agent sim)",     m03_rpg_click_to_move);
+	run("M4: RTS multi-entity movement",         m04_rts_multi_entity);
 
 	pythonBridge().shutdown();
 
