@@ -206,8 +206,10 @@ public:
 						dist, e.position.x, e.position.y, e.position.z,
 						target.position.x, target.position.y, target.position.z);
 					e.position = target.position;
+					// Reset physics state to match server after a big correction
+					e.velocity = target.velocity;
 				}
-				// Don't overwrite velocity/onGround — client physics owns these.
+				// Normal ticks: don't overwrite velocity/onGround — client physics owns these.
 			} else {
 				// Remote entities: dead-reckoning + smooth interpolation
 				float cappedAge = std::min(target.age, 0.5f);
@@ -399,10 +401,9 @@ private:
 			} else {
 				auto& e = *it->second;
 
-				// ALL entities use the same code path — server is authoritative.
-				// Set interpolation target from server data. The tick() loop
-				// smoothly interpolates every entity toward its target.
-				// No special case for local player vs animals vs other players.
+				// Update interp target from server. For the local player, this is
+				// only used for SNAP detection (client physics owns position).
+				// For remote entities, tick() interpolates toward this target.
 				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f};
 
 				// Sync non-positional state immediately.
