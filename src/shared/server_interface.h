@@ -56,6 +56,10 @@ public:
 	// Interpolation loop uses smooth tracking instead of snap-only.
 	bool localPlayerServerDriven = false;
 
+	// Navigation goals — RPG/RTS click-to-move, forwarded to entity's agent
+	virtual void sendSetGoal(EntityId eid, glm::vec3 pos) {}
+	virtual void sendCancelGoal(EntityId eid) {}
+
 	// Ownership — claim an entity (admin or unclaimed only)
 	virtual void sendClaimEntity(EntityId eid) {}
 

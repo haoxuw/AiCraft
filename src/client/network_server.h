@@ -259,6 +259,21 @@ public:
 		net::sendMessage(m_tcp.fd(), net::C_HOTBAR, wb);
 	}
 
+	void sendSetGoal(EntityId eid, glm::vec3 pos) override {
+		if (!m_connected) return;
+		net::WriteBuffer wb;
+		wb.writeU32(eid);
+		wb.writeF32(pos.x); wb.writeF32(pos.y); wb.writeF32(pos.z);
+		net::sendMessage(m_tcp.fd(), net::C_SET_GOAL, wb);
+	}
+
+	void sendCancelGoal(EntityId eid) override {
+		if (!m_connected) return;
+		net::WriteBuffer wb;
+		wb.writeU32(eid);
+		net::sendMessage(m_tcp.fd(), net::C_CANCEL_GOAL, wb);
+	}
+
 	void sendClaimEntity(EntityId eid) override {
 		if (!m_connected) return;
 		net::WriteBuffer wb;

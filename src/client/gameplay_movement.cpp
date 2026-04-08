@@ -60,7 +60,9 @@ void GameplayController::processMovement(float dt, GameState state,
 						glm::vec3 pos = center + glm::vec3(
 							(i % cols) * spacing - offX, 0,
 							(i / cols) * spacing - offZ);
-						m_moveOrders[m_rtsSelect.selected[i]] = {pos, true};
+						EntityId eid = m_rtsSelect.selected[i];
+						m_moveOrders[eid] = {pos, true};
+						server.sendSetGoal(eid, pos);
 					}
 					m_moveTargetPos = center;
 					m_hasMoveTarget = true;
@@ -133,9 +135,10 @@ void GameplayController::processMovement(float dt, GameState state,
 
 	// WASD/jump cancels any active move order for the local player
 	bool wantsJump = controls.held(Action::Jump);
-	if (hasWASD || wantsJump) {
+	if ((hasWASD || wantsJump) && m_moveOrders.count(player.id())) {
 		m_moveOrders.erase(player.id());
 		m_hasMoveTarget = false;
+		server.sendCancelGoal(player.id());
 	}
 
 	if (camera.mode == CameraMode::RPG) {
@@ -174,6 +177,8 @@ void GameplayController::processMovement(float dt, GameState state,
 					m_moveOrders[player.id()] = {target, true};
 					m_moveTargetPos = target;
 					m_hasMoveTarget = true;
+					// Also tell the player's agent so it can pathfind
+					server.sendSetGoal(player.id(), target);
 				}
 			}
 		}

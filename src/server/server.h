@@ -259,7 +259,8 @@ public:
 		EntityId eid = m_world->entities.spawn(EntityType::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
 		if (pe) pe->yaw = -90.0f; // face -Z (toward stairs from portal)
-		// TODO: player_nav behavior for click-to-move (pathfinding not yet implemented)
+		// Player gets a nav agent for RPG/RTS click-to-move pathfinding
+		if (pe) pe->setProp(Prop::BehaviorId, std::string("player_nav"));
 		// Self-owned: player controls their own character
 		if (pe) pe->setProp(Prop::Owner, (int)eid);
 		// Store character skin as entity property (client reads for rendering)
@@ -325,14 +326,23 @@ public:
 		                             it->second.controlledEntities.end());
 	}
 
-	// Get NPC entities that have a BehaviorId but no controlling client.
+	// Get entities that have a BehaviorId but no agent client.
+	// Includes player entities (GUI-owned) — they need a nav agent too.
 	std::vector<EntityId> getUncontrolledNPCs() const {
 		std::vector<EntityId> result;
 		m_world->entities.forEach([&](Entity& e) {
 			if (e.removed) return;
 			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
-			if (!bid.empty() && m_entityOwner.find(e.id()) == m_entityOwner.end())
+			if (bid.empty()) return;
+			auto ownerIt = m_entityOwner.find(e.id());
+			if (ownerIt == m_entityOwner.end()) {
 				result.push_back(e.id());
+			} else {
+				// Owned by a client — only spawn agent if owner is NOT an agent
+				auto cit = m_clients.find(ownerIt->second);
+				if (cit != m_clients.end() && !cit->second.isAgent)
+					result.push_back(e.id());
+			}
 		});
 		return result;
 	}
