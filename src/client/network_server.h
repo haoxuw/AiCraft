@@ -405,8 +405,11 @@ private:
 				// No special case for local player vs animals vs other players.
 				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f};
 
-				// Sync non-positional state immediately
-				e.onGround = es.onGround;
+				// Sync non-positional state immediately.
+				// Skip onGround for local player — client physics owns it.
+				// Server's onGround is stale (20Hz) and would re-trigger jumps.
+				if (es.id != m_localPlayerId)
+					e.onGround = es.onGround;
 				e.goalText = es.goalText;
 				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);
