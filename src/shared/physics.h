@@ -132,8 +132,10 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	// snap it down to the surface immediately instead of slowly falling.
 	// This prevents the "walking in air" gliding effect and makes movement
 	// follow terrain like in RTS games (Warcraft-style).
-	// Only applies when entity WAS on ground, didn't step up, and isn't flying.
-	if (wasOnGround && !didStep && !params.canFly) {
+	// Only applies when entity WAS on ground, didn't step up, isn't flying,
+	// and isn't jumping (positive Y velocity = intentional upward movement).
+	bool jumping = result.velocity.y > 0.5f;
+	if (wasOnGround && !didStep && !params.canFly && !jumping) {
 		// Check if we've moved horizontally but are now floating
 		bool movedHorizontally = (r.x != pos.x || r.z != pos.z);
 		if (movedHorizontally) {

@@ -215,6 +215,7 @@ void GameplayController::processMovement(float dt, GameState state,
 			localVel.y = jumpVelocity;
 
 		auto result = moveAndCollide(solidFn, player.position, localVel, dt, mp, player.onGround);
+
 		player.position = result.position;
 		player.velocity = result.velocity;
 		player.onGround = result.onGround;
