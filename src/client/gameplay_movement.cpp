@@ -129,10 +129,17 @@ void GameplayController::processMovement(float dt, GameState state,
 				bool bodyClear = !blocks.get(chunks.getBlock(bp.x, bp.y + 1, bp.z)).solid &&
 				                 !blocks.get(chunks.getBlock(bp.x, bp.y + 2, bp.z)).solid;
 				if (groundSolid && bodyClear) {
+					printf("[ClickMove] RPG click → goal=(%.1f,%.1f,%.1f) entity=%u\n",
+						target.x, target.y, target.z, player.id());
 					server.sendSetGoal(player.id(), target);
 					m_clickToMove.target = target;
 					m_clickToMove.active = true;
+				} else {
+					printf("[ClickMove] RPG click → raycast hit (%d,%d,%d) but not walkable (solid=%d clear=%d)\n",
+						bp.x, bp.y, bp.z, groundSolid, bodyClear);
 				}
+			} else {
+				printf("[ClickMove] RPG click → raycast missed\n");
 			}
 		}
 	} else if (state == GameState::ADMIN &&
@@ -169,6 +176,8 @@ void GameplayController::processMovement(float dt, GameState state,
 	// skip local physics — server + agent drive position via S_ENTITY.
 	bool wantsJump = controls.held(Action::Jump);
 	if (m_clickToMove.active && !hasWASD && !wantsJump) {
+		if (!server.localPlayerAutoNav())
+			printf("[ClickMove] Entering auto-nav mode (agent drives position)\n");
 		server.setLocalPlayerAutoNav(true);
 		return;
 	}
