@@ -454,7 +454,7 @@ public:
 			}
 		}
 
-		// Find NPC entities that need AI clients
+		// Find entities that need AI clients (NPCs + player for navigation)
 		auto uncontrolled = m_server.getUncontrolledNPCs();
 		for (EntityId eid : uncontrolled) {
 			// Skip if we already have a process for this entity

@@ -98,13 +98,7 @@ void GameplayController::processMovement(float dt, GameState state,
 		if (controls.held(Action::MoveBackward)) move -= camFwd;
 		if (controls.held(Action::MoveLeft))     move -= camRight;
 		if (controls.held(Action::MoveRight))    move += camRight;
-		// WASD cancels any active nav goal
-		if (hasWASD) {
-			if (m_clickToMove.active) {
-				server.sendCancelGoal(player.id());
-				m_clickToMove.active = false;
-			}
-		}
+		// (WASD cancel is handled below, after the if/else camera mode block)
 
 		// Left-click move: raycast → C_SET_GOAL (agent handles pathfinding)
 		if (controls.pressed(Action::BreakBlock) && m_attackTarget == ENTITY_NONE) {
@@ -170,11 +164,17 @@ void GameplayController::processMovement(float dt, GameState state,
 
 	if (glm::length(move) > 0.01f) move = glm::normalize(move);
 
-	// If agent is navigating (click-to-move) and no WASD input,
+	// If agent is navigating (click-to-move) and no direct input,
 	// skip local physics — server + agent drive position via S_ENTITY.
-	if (m_clickToMove.active && !hasWASD) {
+	bool wantsJump = controls.held(Action::Jump);
+	if (m_clickToMove.active && !hasWASD && !wantsJump) {
 		server.setLocalPlayerAutoNav(true);
 		return;
+	}
+	// Any direct input cancels navigation, resumes client physics
+	if (m_clickToMove.active) {
+		server.sendCancelGoal(player.id());
+		m_clickToMove.active = false;
 	}
 	server.setLocalPlayerAutoNav(false);
 
