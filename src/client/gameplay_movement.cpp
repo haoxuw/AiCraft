@@ -46,7 +46,25 @@ void GameplayController::processMovement(float dt, GameState state,
 			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
 
 			if (isClick && !m_rtsSelect.selected.empty() && m_hit) {
-				// TODO: click-to-move for RTS (pathfinding not yet implemented)
+				// Click with units selected → set move orders (grid formation)
+				glm::vec3 center = glm::vec3(m_hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
+				auto& bl = server.blockRegistry();
+				if (bl.get(server.chunks().getBlock(m_hit->blockPos.x, m_hit->blockPos.y, m_hit->blockPos.z)).solid) {
+					int n = (int)m_rtsSelect.selected.size();
+					int cols = std::max(1, (int)std::ceil(std::sqrt((float)n)));
+					float spacing = 2.0f;
+					float offX = (cols - 1) * spacing * 0.5f;
+					int rows = (n + cols - 1) / cols;
+					float offZ = (rows - 1) * spacing * 0.5f;
+					for (int i = 0; i < n; i++) {
+						glm::vec3 pos = center + glm::vec3(
+							(i % cols) * spacing - offX, 0,
+							(i / cols) * spacing - offZ);
+						m_moveOrders[m_rtsSelect.selected[i]] = {pos, true};
+					}
+					m_moveTargetPos = center;
+					m_hasMoveTarget = true;
+				}
 			} else if (!isClick) {
 				// Drag → box select
 				m_rtsSelect.selected.clear();
@@ -72,6 +90,29 @@ void GameplayController::processMovement(float dt, GameState state,
 			}
 		}
 
+		// Process active RTS move orders — send Move actions for each entity
+		{
+			std::vector<EntityId> arrived;
+			for (auto& [eid, order] : m_moveOrders) {
+				if (!order.active) { arrived.push_back(eid); continue; }
+				Entity* e = server.getEntity(eid);
+				if (!e) { arrived.push_back(eid); continue; }
+				glm::vec3 toTarget = order.target - e->position;
+				toTarget.y = 0;
+				float dist = glm::length(toTarget);
+				if (dist < 1.0f) { arrived.push_back(eid); continue; }
+				glm::vec3 dir = toTarget / dist;
+				float spd = e->def().walk_speed;
+				if (spd <= 0) spd = 4.0f;
+				ActionProposal p;
+				p.type = ActionProposal::Move;
+				p.actorId = eid;
+				p.desiredVel = {dir.x * spd, 0, dir.z * spd};
+				server.sendAction(p);
+			}
+			for (auto eid : arrived) m_moveOrders.erase(eid);
+			if (m_moveOrders.empty()) m_hasMoveTarget = false;
+		}
 		return; // RTS: no WASD player movement
 	}
 
@@ -86,6 +127,13 @@ void GameplayController::processMovement(float dt, GameState state,
 	               controls.held(Action::MoveLeft) ||
 	               controls.held(Action::MoveRight);
 
+	// WASD/jump cancels any active move order for the local player
+	bool wantsJump = controls.held(Action::Jump);
+	if (hasWASD || wantsJump) {
+		m_moveOrders.erase(player.id());
+		m_hasMoveTarget = false;
+	}
+
 	if (camera.mode == CameraMode::RPG) {
 		// RPG: WASD relative to camera orbit direction
 		glm::vec3 camFwd = camera.godCameraForward();
@@ -94,7 +142,51 @@ void GameplayController::processMovement(float dt, GameState state,
 		if (controls.held(Action::MoveBackward)) move -= camFwd;
 		if (controls.held(Action::MoveLeft))     move -= camRight;
 		if (controls.held(Action::MoveRight))    move += camRight;
-		// TODO: RPG click-to-move (pathfinding not yet implemented)
+
+		// Left-click move: raycast → set move order (virtual joystick toward target)
+		if (controls.pressed(Action::BreakBlock) && m_attackTarget == ENTITY_NONE) {
+			double mx, my;
+			glfwGetCursorPos(window.handle(), &mx, &my);
+			int ww, wh;
+			glfwGetWindowSize(window.handle(), &ww, &wh);
+			float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
+			float ndcY = 1.0f - (float)(my / wh) * 2.0f;
+			float aspect = (float)ww / (float)wh;
+			glm::mat4 invVP = glm::inverse(camera.projectionMatrix(aspect) * camera.viewMatrix());
+			glm::vec4 nearPt = invVP * glm::vec4(ndcX, ndcY, -1, 1);
+			glm::vec4 farPt  = invVP * glm::vec4(ndcX, ndcY,  1, 1);
+			nearPt /= nearPt.w; farPt /= farPt.w;
+			glm::vec3 rayDir = glm::normalize(glm::vec3(farPt - nearPt));
+			auto& chunks = server.chunks();
+			auto hit = raycastBlocks(chunks, glm::vec3(nearPt), rayDir, 80.0f);
+			if (hit) {
+				auto& bp = hit->blockPos;
+				glm::vec3 target = glm::vec3(bp) + glm::vec3(0.5f, 1.0f, 0.5f);
+				auto& blocks = server.blockRegistry();
+				bool groundSolid = blocks.get(chunks.getBlock(bp.x, bp.y, bp.z)).solid;
+				bool bodyClear = !blocks.get(chunks.getBlock(bp.x, bp.y + 1, bp.z)).solid &&
+				                 !blocks.get(chunks.getBlock(bp.x, bp.y + 2, bp.z)).solid;
+				if (groundSolid && bodyClear) {
+					m_moveOrders[player.id()] = {target, true};
+					m_moveTargetPos = target;
+					m_hasMoveTarget = true;
+				}
+			}
+		}
+
+		// Process move order: walk toward target (virtual joystick)
+		auto pit = m_moveOrders.find(player.id());
+		if (pit != m_moveOrders.end() && pit->second.active && !hasWASD) {
+			glm::vec3 toTarget = pit->second.target - player.position;
+			toTarget.y = 0;
+			float dist = glm::length(toTarget);
+			if (dist < 1.0f) {
+				m_moveOrders.erase(pit);
+				m_hasMoveTarget = false;
+			} else {
+				move = glm::normalize(toTarget);
+			}
+		}
 	} else if (state == GameState::ADMIN &&
 	           (camera.mode == CameraMode::FirstPerson || camera.mode == CameraMode::ThirdPerson)) {
 		// Admin fly mode: 3D movement along camera look direction (FPS/TPS only)
@@ -190,16 +282,6 @@ void GameplayController::processMovement(float dt, GameState state,
 	moveAction.lookPitch = camera.lookPitch;
 	moveAction.lookYaw   = camera.player.yaw;
 	server.sendAction(moveAction);
-}
-
-// ================================================================
-// issueRTSMoveOrder -- TODO: pathfinding not yet implemented
-// ================================================================
-void GameplayController::issueRTSMoveOrder(glm::ivec3 /*blockPos*/,
-                                           ServerInterface& /*server*/,
-                                           Camera& /*camera*/)
-{
-	// TODO: implement click-to-move with pathfinding
 }
 
 } // namespace modcraft

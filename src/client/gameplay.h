@@ -33,6 +33,10 @@ public:
 	EntityId inspectedEntity() const { return m_inspectedEntity; }
 	void clearInspection() { m_inspectedEntity = ENTITY_NONE; }
 
+	// Move orders (RPG click-to-move + RTS unit movement)
+	bool hasMoveTarget() const { return m_hasMoveTarget; }
+	glm::vec3 moveTarget() const { return m_moveTargetPos; }
+
 	bool isBoxDragging() const { return m_rtsSelect.dragging; }
 	glm::vec2 boxStart() const { return m_rtsSelect.start; }
 	glm::vec2 boxEnd() const { return m_rtsSelect.end; }
@@ -51,7 +55,6 @@ private:
 	void processBlockInteraction(float dt, GameState state, ServerInterface& server,
 	                             Entity& player, Camera& camera, ControlManager& controls,
 	                             Window& window);
-	void issueRTSMoveOrder(glm::ivec3 blockPos, ServerInterface& server, Camera& camera);
 
 	// --- Raycast results (set per frame by processBlockInteraction) ---
 
@@ -134,6 +137,18 @@ private:
 		glm::vec2 end = {0, 0};
 		std::vector<EntityId> selected;
 	} m_rtsSelect;
+
+	// --- Move orders (RPG click-to-move + RTS unit commands) ---
+
+	struct MoveOrder {
+		glm::vec3 target = {0, 0, 0};
+		bool active = false;
+	};
+	std::unordered_map<EntityId, MoveOrder> m_moveOrders;
+
+	// Render target highlight
+	glm::vec3 m_moveTargetPos = {0, 0, 0};
+	bool m_hasMoveTarget = false;
 };
 
 } // namespace modcraft
