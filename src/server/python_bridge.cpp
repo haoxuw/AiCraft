@@ -142,6 +142,9 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	// Core action constructors — these are the only write primitives the server accepts.
 	// High-level helpers (BreakBlock, StoreItem, PickupItem, DropItem) are Python wrappers
 	// in python/actions.py that map to Relocate/Convert.
+	m.def("Idle", []() {
+		PyAction a; a.type = "idle"; return a;
+	});
 	m.def("Move", [](float x, float y, float z, float speed) {
 		PyAction a; a.type = "move"; a.x = x; a.y = y; a.z = z; a.speed = speed; return a;
 	}, py::arg("x"), py::arg("y"), py::arg("z"), py::arg("speed") = 2.0f);
