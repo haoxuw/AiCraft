@@ -240,6 +240,13 @@ public:
 		net::sendMessage(m_tcp.fd(), net::C_CANCEL_GOAL, wb);
 	}
 
+	void sendClaimEntity(EntityId eid) override {
+		if (!m_connected) return;
+		net::WriteBuffer wb;
+		wb.writeU32(eid);
+		net::sendMessage(m_tcp.fd(), net::C_CLAIM_ENTITY, wb);
+	}
+
 	// --- State access ---
 	ChunkSource& chunks() override { return m_chunks; }
 	EntityId localPlayerId() const override { return m_localPlayerId; }

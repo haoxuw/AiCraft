@@ -262,6 +262,8 @@ public:
 		// Player gets a navigation agent (player_nav behavior) for RTS/RPG click-to-move.
 		// The agent is idle during WASD; activates on C_SET_GOAL.
 		if (pe) pe->setProp(Prop::BehaviorId, std::string("player_nav"));
+		// Self-owned: player controls their own character
+		if (pe) pe->setProp(Prop::Owner, (int)eid);
 		// Store character skin as entity property (client reads for rendering)
 		if (pe && !characterSkin.empty())
 			pe->setProp("character_skin", characterSkin);
@@ -351,6 +353,26 @@ public:
 		return m_entityOwner.find(id) != m_entityOwner.end();
 	}
 
+	// Check if a client is allowed to control an entity.
+	// Rules: (1) agent clients can always control their assigned entities,
+	//        (2) GUI clients can control entities they own (Prop::Owner matches their player),
+	//        (3) admin clients (player has fly_mode) can control any entity.
+	bool canClientControl(ClientId clientId, EntityId targetId) const {
+		auto cit = m_clients.find(clientId);
+		if (cit == m_clients.end()) return false;
+		// Agent clients: always allowed (they're assigned by the server)
+		if (cit->second.isAgent) return true;
+		// GUI client: check admin (fly_mode on their player entity)
+		Entity* playerEnt = m_world->entities.get(cit->second.playerEntityId);
+		if (playerEnt && playerEnt->getProp<bool>("fly_mode", false))
+			return true; // admin — control anything
+		// Normal: target must be owned by this client's player
+		Entity* target = m_world->entities.get(targetId);
+		if (!target) return false;
+		int ownerId = target->getProp<int>(Prop::Owner, 0);
+		return ownerId == (int)cit->second.playerEntityId;
+	}
+
 	// Get the client that controls an entity (ENTITY_NONE if uncontrolled).
 	ClientId getEntityOwner(EntityId id) const {
 		auto it = m_entityOwner.find(id);
@@ -392,26 +414,19 @@ public:
 		auto it = m_clients.find(clientId);
 		if (it == m_clients.end()) return;
 
-		// Validate action authority:
-		// - Move actions: allowed for player entity OR any controlled entity
-		// - Block/item actions: allowed for player entity OR controlled entities
-		EntityId actor = action.actorId;
-		bool isOwned = (actor == it->second.playerEntityId) ||
-		               (it->second.controlledEntities.count(actor) > 0);
+		// Ownership check: client must own the entity or be admin.
+		// Agent clients are always allowed (server-assigned). GUI clients
+		// must own the target entity (Prop::Owner == their player) or be
+		// in admin mode (fly_mode). This prevents griefing in multiplayer
+		// while allowing full RTS control of owned entities.
+		if (!canClientControl(clientId, action.actorId)) return;
 
 		if (action.type == ActionProposal::Move) {
-			// MoveTo: GUI clients may RTS-command any entity; agents only move assigned entities
-			if (!isOwned && it->second.isAgent) {
-				return;
-			}
-			// Agent goal text: update the server-side entity so it is broadcast to clients
+			// Agent goal text: update server-side entity for broadcast
 			if (!action.goalText.empty()) {
-				Entity* e = m_world->entities.get(actor);
+				Entity* e = m_world->entities.get(action.actorId);
 				if (e) e->goalText = action.goalText;
 			}
-		} else {
-			// Non-move actions require ownership
-			if (!isOwned) return;
 		}
 
 		// behaviorSource non-empty = hot-reload control message, not a game action.

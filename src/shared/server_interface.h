@@ -56,6 +56,9 @@ public:
 	virtual void sendSetGoal(EntityId eid, glm::vec3 pos) {}
 	virtual void sendCancelGoal(EntityId eid) {}
 
+	// Ownership — claim an entity (admin or unclaimed only)
+	virtual void sendClaimEntity(EntityId eid) {}
+
 	// --- State access (for rendering) ---
 
 	// Chunk data source (for terrain meshing)

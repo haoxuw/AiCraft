@@ -119,8 +119,9 @@ namespace Prop {
 	constexpr const char* Hunger       = "hunger";
 	constexpr const char* Age          = "age";
 
-	// Player
+	// Player / Ownership
 	constexpr const char* SelectedSlot = "selected_slot";
+	constexpr const char* Owner        = "owner";  // EntityId of owning player (0 = unowned/world)
 
 	// Behavior
 	constexpr const char* Goal         = "goal";

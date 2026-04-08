@@ -68,6 +68,7 @@ enum MsgType : uint32_t {
 	C_RESYNC_CHUNK    = 0x0007,  // request chunk re-send: [i32 cx][i32 cy][i32 cz]  (v2)
 	C_SET_GOAL        = 0x0008,  // [u32 entityId][f32 x][f32 y][f32 z]
 	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
+	C_CLAIM_ENTITY    = 0x000A,  // [u32 entityId] — claim ownership (admin or unclaimed only)
 
 	// Server → Client
 	S_WELCOME         = 0x1001,

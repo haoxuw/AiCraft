@@ -56,8 +56,15 @@ void GameplayController::processMovement(float dt, GameState state,
 
 				float aspect = (float)ww / (float)wh;
 				glm::mat4 vp = camera.projectionMatrix(aspect) * camera.viewMatrix();
+				EntityId myId = server.localPlayerId();
+				bool isAdmin = (state == GameState::ADMIN);
 				server.forEachEntity([&](Entity& e) {
-					if (!e.def().isLiving()) return; // only living entities
+					if (!e.def().isLiving()) return;
+					// Only select entities the player owns (or all if admin)
+					if (!isAdmin) {
+						int owner = e.getProp<int>(Prop::Owner, 0);
+						if (owner != (int)myId) return;
+					}
 					glm::vec4 clip = vp * glm::vec4(e.position + glm::vec3(0, 0.5f, 0), 1.0f);
 					if (clip.w <= 0) return;
 					float sx = clip.x / clip.w;

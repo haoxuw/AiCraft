@@ -835,6 +835,8 @@ private:
 		case net::C_SET_GOAL: {
 			uint32_t eid = rb.readU32();
 			float gx = rb.readF32(), gy = rb.readF32(), gz = rb.readF32();
+			// Ownership check: client must own the entity or be admin
+			if (!m_server.canClientControl(cid, eid)) break;
 			// Forward to the agent controlling this entity
 			for (auto& [aid, ac] : m_clients) {
 				if (ac.isAgent && ac.playerId == eid) {
@@ -854,6 +856,20 @@ private:
 					net::sendMessage(ac.fd, net::S_CANCEL_GOAL, wb);
 					break;
 				}
+			}
+			break;
+		}
+		case net::C_CLAIM_ENTITY: {
+			uint32_t eid = rb.readU32();
+			Entity* target = m_server.world().entities.get(eid);
+			Entity* player = m_server.world().entities.get(client.playerId);
+			if (!target || !player) break;
+			int currentOwner = target->getProp<int>(Prop::Owner, 0);
+			bool isAdmin = player->getProp<bool>("fly_mode", false);
+			// Can claim if: unclaimed (owner=0) or admin
+			if (currentOwner == 0 || isAdmin) {
+				target->setProp(Prop::Owner, (int)client.playerId);
+				printf("[Server] Entity %u claimed by player %u\n", eid, client.playerId);
 			}
 			break;
 		}
