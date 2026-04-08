@@ -25,8 +25,7 @@
  * C_RELOAD_BEHAVIOR 0x0005 Hot-reload behavior [u32 entityId][str source]
  * C_HOTBAR        0x0006  Hotbar slot assign [u32 slot][str itemId]
  * C_RESYNC_CHUNK  0x0007  Request chunk re-send [i32 cx][i32 cy][i32 cz]  (v2)
- * C_SET_GOAL      0x0008  Set navigation goal [u32 entityId][f32 x][f32 y][f32 z]
- * C_CANCEL_GOAL   0x0009  Cancel active goal  [u32 entityId]
+ * (0x0008, 0x0009 reserved)
  *
  * S_WELCOME       0x1001  [u32 entityId][vec3 spawn]
  * S_ENTITY        0x1002  EntityState (see serializeEntityState)
@@ -66,8 +65,7 @@ enum MsgType : uint32_t {
 	C_RELOAD_BEHAVIOR = 0x0005,  // [u32 entityId][str sourceCode]
 	C_HOTBAR          = 0x0006,  // [u32 slot][str itemId]
 	C_RESYNC_CHUNK    = 0x0007,  // request chunk re-send: [i32 cx][i32 cy][i32 cz]  (v2)
-	C_SET_GOAL        = 0x0008,  // [u32 entityId][f32 x][f32 y][f32 z]
-	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
+	// 0x0008, 0x0009 reserved (removed click-to-move)
 	C_CLAIM_ENTITY    = 0x000A,  // [u32 entityId] — claim ownership (admin or unclaimed only)
 
 	// Server → Client
@@ -86,8 +84,7 @@ enum MsgType : uint32_t {
 	S_CHUNK_Z         = 0x100F,  // zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
 	S_CHUNK_INFO      = 0x1010,  // full block census for a chunk: sent to agent clients only
 	S_CHUNK_INFO_DELTA= 0x1011,  // updated block census after a block change in a chunk
-	S_SET_GOAL        = 0x1012,  // [f32 x][f32 y][f32 z]  — forwarded to agent controlling entity
-	S_CANCEL_GOAL     = 0x1013,  // (no payload) — clear active goal
+	// 0x1012, 0x1013 reserved (removed click-to-move)
 };
 
 // Message header (8 bytes)

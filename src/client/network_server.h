@@ -197,7 +197,7 @@ public:
 			auto& e = *it->second;
 			bool isLocal = (id == m_localPlayerId);
 
-			if (isLocal && !m_localAutoNav) {
+			if (isLocal) {
 				// WASD mode: client runs moveAndCollide — position is self-managed.
 				// Only snap on large disagreement (teleport, missing chunks).
 				float dist = glm::length(target.position - e.position);
@@ -258,24 +258,6 @@ public:
 		wb.writeString(itemId);
 		net::sendMessage(m_tcp.fd(), net::C_HOTBAR, wb);
 	}
-
-	void sendSetGoal(EntityId eid, glm::vec3 pos) override {
-		if (!m_connected) return;
-		net::WriteBuffer wb;
-		wb.writeU32(eid);
-		wb.writeF32(pos.x); wb.writeF32(pos.y); wb.writeF32(pos.z);
-		net::sendMessage(m_tcp.fd(), net::C_SET_GOAL, wb);
-	}
-
-	void sendCancelGoal(EntityId eid) override {
-		if (!m_connected) return;
-		net::WriteBuffer wb;
-		wb.writeU32(eid);
-		net::sendMessage(m_tcp.fd(), net::C_CANCEL_GOAL, wb);
-	}
-
-	void setLocalPlayerAutoNav(bool nav) override { m_localAutoNav = nav; }
-	bool localPlayerAutoNav() const override { return m_localAutoNav; }
 
 	void sendClaimEntity(EntityId eid) override {
 		if (!m_connected) return;
@@ -591,7 +573,6 @@ private:
 	net::RecvBuffer m_recv;
 
 	EntityId m_localPlayerId = ENTITY_NONE;
-	bool m_localAutoNav = false;
 	glm::vec3 m_spawnPos = {0, 0, 0};
 	float m_worldTime = 0.25f;
 

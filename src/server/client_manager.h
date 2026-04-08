@@ -834,44 +834,6 @@ private:
 				targetEntity, behaviorId.c_str(), client.label().c_str());
 			break;
 		}
-		case net::C_SET_GOAL: {
-			uint32_t eid = rb.readU32();
-			float gx = rb.readF32(), gy = rb.readF32(), gz = rb.readF32();
-			printf("[Server] C_SET_GOAL received: entity=%u goal=(%.1f,%.1f,%.1f) from client %u\n",
-				eid, gx, gy, gz, cid);
-			// Ownership check: client must own the entity or be admin
-			if (!m_server.canClientControl(cid, eid)) {
-				printf("[Server] C_SET_GOAL for entity %u denied (ownership)\n", eid);
-				break;
-			}
-			// Forward to the agent controlling this entity
-			bool found = false;
-			for (auto& [aid, ac] : m_clients) {
-				if (ac.isAgent && ac.playerId == eid) {
-					net::WriteBuffer wb;
-					wb.writeF32(gx); wb.writeF32(gy); wb.writeF32(gz);
-					net::sendMessage(ac.fd, net::S_SET_GOAL, wb);
-					printf("[Server] C_SET_GOAL(%.1f,%.1f,%.1f) forwarded to agent for entity %u\n",
-						gx, gy, gz, eid);
-					found = true;
-					break;
-				}
-			}
-			if (!found)
-				printf("[Server] C_SET_GOAL for entity %u: no agent found\n", eid);
-			break;
-		}
-		case net::C_CANCEL_GOAL: {
-			uint32_t eid = rb.readU32();
-			for (auto& [aid, ac] : m_clients) {
-				if (ac.isAgent && ac.playerId == eid) {
-					net::WriteBuffer wb;
-					net::sendMessage(ac.fd, net::S_CANCEL_GOAL, wb);
-					break;
-				}
-			}
-			break;
-		}
 		case net::C_CLAIM_ENTITY: {
 			uint32_t eid = rb.readU32();
 			Entity* target = m_server.world().entities.get(eid);

@@ -37,11 +37,7 @@ void Game::renderWorld(float dt, float aspect) {
 	// Fog of war — render fog at unloaded chunk boundaries
 	m_renderer.renderFogOfWar(m_camera, aspect, srv.chunks(), m_renderDistance);
 
-	// Move target highlight (RPG/RTS click-to-move destination)
-	if (m_gameplay.hasMoveTarget()) {
-		glm::ivec3 targetBlock = glm::ivec3(glm::floor(m_gameplay.moveTarget() - glm::vec3(0, 1, 0)));
-		m_renderer.renderMoveTarget(m_camera, aspect, targetBlock);
-	}
+	// TODO: Move target highlight (when click-to-move is reimplemented)
 
 	// Block break progress overlay (survival multi-hit)
 	if (m_gameplay.isBreaking()) {

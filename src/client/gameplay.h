@@ -33,9 +33,6 @@ public:
 	EntityId inspectedEntity() const { return m_inspectedEntity; }
 	void clearInspection() { m_inspectedEntity = ENTITY_NONE; }
 
-	bool hasMoveTarget() const { return m_clickToMove.active; }
-	glm::vec3 moveTarget() const { return m_clickToMove.target; }
-
 	bool isBoxDragging() const { return m_rtsSelect.dragging; }
 	glm::vec2 boxStart() const { return m_rtsSelect.start; }
 	glm::vec2 boxEnd() const { return m_rtsSelect.end; }
@@ -128,13 +125,6 @@ private:
 		bool action = false;      // set on release if no drag
 		double startX = 0, startY = 0;
 	} m_rightClick;
-
-	// --- Click-to-move (RPG player + RTS visual indicator) ---
-
-	struct ClickToMove {
-		bool active = false;
-		glm::vec3 target = {0, 0, 0};
-	} m_clickToMove;
 
 	// --- RTS box selection + unit movement ---
 

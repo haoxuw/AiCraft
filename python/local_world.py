@@ -193,7 +193,6 @@ class LocalWorld(BaseModel):
     dt:       float                    # seconds since last decide()
     blocks:   list[BlockView]  = Field(default_factory=list)
     entities: list[EntityView] = Field(default_factory=list)
-    goal:     Optional[dict]   = None  # {"x","y","z"} from C_SET_GOAL, or None
 
     # Spatial indices — built in model_post_init, not exposed as pydantic fields
     _by_type:     dict[str, list[Nearby]]     = PrivateAttr(default_factory=dict)
@@ -288,7 +287,6 @@ class LocalWorld(BaseModel):
             dt=raw["dt"],
             blocks=blocks,
             entities=entities,
-            goal=raw.get("goal"),
         )
         obj.model_post_init(None)
         return obj

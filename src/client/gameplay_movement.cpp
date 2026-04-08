@@ -46,12 +46,9 @@ void GameplayController::processMovement(float dt, GameState state,
 			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
 
 			if (isClick && !m_rtsSelect.selected.empty() && m_hit) {
-				// Click with units selected → send C_SET_GOAL to each agent
-				issueRTSMoveOrder(m_hit->blockPos, server, camera);
+				// TODO: click-to-move for RTS (pathfinding not yet implemented)
 			} else if (!isClick) {
-				// Drag → box select (cancel goals for previously selected)
-				for (auto eid : m_rtsSelect.selected)
-					server.sendCancelGoal(eid);
+				// Drag → box select
 				m_rtsSelect.selected.clear();
 
 				float aspect = (float)ww / (float)wh;
@@ -75,8 +72,6 @@ void GameplayController::processMovement(float dt, GameState state,
 			}
 		}
 
-		// Agents handle continuous navigation — no per-frame velocity loop needed.
-		server.setLocalPlayerAutoNav(true); // server drives position via S_ENTITY
 		return; // RTS: no WASD player movement
 	}
 
@@ -99,49 +94,7 @@ void GameplayController::processMovement(float dt, GameState state,
 		if (controls.held(Action::MoveBackward)) move -= camFwd;
 		if (controls.held(Action::MoveLeft))     move -= camRight;
 		if (controls.held(Action::MoveRight))    move += camRight;
-		// (WASD cancel is handled below, after the if/else camera mode block)
-
-		// Left-click move: raycast → C_SET_GOAL (agent handles pathfinding)
-		if (controls.pressed(Action::BreakBlock) && m_attackTarget == ENTITY_NONE) {
-			double mx, my;
-			glfwGetCursorPos(window.handle(), &mx, &my);
-			int ww, wh;
-			glfwGetWindowSize(window.handle(), &ww, &wh);
-			float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
-			float ndcY = 1.0f - (float)(my / wh) * 2.0f;
-
-			float aspect = (float)ww / (float)wh;
-			glm::mat4 invVP = glm::inverse(
-				camera.projectionMatrix(aspect) * camera.viewMatrix());
-			glm::vec4 nearPt = invVP * glm::vec4(ndcX, ndcY, -1, 1);
-			glm::vec4 farPt  = invVP * glm::vec4(ndcX, ndcY,  1, 1);
-			nearPt /= nearPt.w;
-			farPt  /= farPt.w;
-			glm::vec3 rayDir = glm::normalize(glm::vec3(farPt - nearPt));
-
-			auto& chunks = server.chunks();
-			auto hit = raycastBlocks(chunks, glm::vec3(nearPt), rayDir, 80.0f);
-			if (hit) {
-				auto& bp = hit->blockPos;
-				glm::vec3 target = glm::vec3(bp) + glm::vec3(0.5f, 1.0f, 0.5f);
-				auto& blocks = server.blockRegistry();
-				bool groundSolid = blocks.get(chunks.getBlock(bp.x, bp.y, bp.z)).solid;
-				bool bodyClear = !blocks.get(chunks.getBlock(bp.x, bp.y + 1, bp.z)).solid &&
-				                 !blocks.get(chunks.getBlock(bp.x, bp.y + 2, bp.z)).solid;
-				if (groundSolid && bodyClear) {
-					printf("[ClickMove] RPG click → goal=(%.1f,%.1f,%.1f) entity=%u\n",
-						target.x, target.y, target.z, player.id());
-					server.sendSetGoal(player.id(), target);
-					m_clickToMove.target = target;
-					m_clickToMove.active = true;
-				} else {
-					printf("[ClickMove] RPG click → raycast hit (%d,%d,%d) but not walkable (solid=%d clear=%d)\n",
-						bp.x, bp.y, bp.z, groundSolid, bodyClear);
-				}
-			} else {
-				printf("[ClickMove] RPG click → raycast missed\n");
-			}
-		}
+		// TODO: RPG click-to-move (pathfinding not yet implemented)
 	} else if (state == GameState::ADMIN &&
 	           (camera.mode == CameraMode::FirstPerson || camera.mode == CameraMode::ThirdPerson)) {
 		// Admin fly mode: 3D movement along camera look direction (FPS/TPS only)
@@ -172,21 +125,6 @@ void GameplayController::processMovement(float dt, GameState state,
 
 	if (glm::length(move) > 0.01f) move = glm::normalize(move);
 
-	// If agent is navigating (click-to-move) and no direct input,
-	// skip local physics — server + agent drive position via S_ENTITY.
-	bool wantsJump = controls.held(Action::Jump);
-	if (m_clickToMove.active && !hasWASD && !wantsJump) {
-		if (!server.localPlayerAutoNav())
-			printf("[ClickMove] Entering auto-nav mode (agent drives position)\n");
-		server.setLocalPlayerAutoNav(true);
-		return;
-	}
-	// Any direct input cancels navigation, resumes client physics
-	if (m_clickToMove.active) {
-		server.sendCancelGoal(player.id());
-		m_clickToMove.active = false;
-	}
-	server.setLocalPlayerAutoNav(false);
 
 	// Build ActionProposal — server validates and executes
 	ActionProposal moveAction;
@@ -255,34 +193,13 @@ void GameplayController::processMovement(float dt, GameState state,
 }
 
 // ================================================================
-// issueRTSMoveOrder -- compute grid formation and assign targets
+// issueRTSMoveOrder -- TODO: pathfinding not yet implemented
 // ================================================================
-void GameplayController::issueRTSMoveOrder(glm::ivec3 blockPos,
-                                           ServerInterface& server,
+void GameplayController::issueRTSMoveOrder(glm::ivec3 /*blockPos*/,
+                                           ServerInterface& /*server*/,
                                            Camera& /*camera*/)
 {
-	glm::vec3 center = glm::vec3(blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
-	auto& bl = server.blockRegistry();
-	if (!bl.get(server.chunks().getBlock(blockPos.x, blockPos.y, blockPos.z)).solid)
-		return;
-
-	m_clickToMove.target = center;
-	m_clickToMove.active = true;
-
-	// Compute grid formation positions, then send C_SET_GOAL for each entity.
-	int n = (int)m_rtsSelect.selected.size();
-	int cols = std::max(1, (int)std::ceil(std::sqrt((float)n)));
-	float spacing = 2.0f;
-	float offX = (cols - 1) * spacing * 0.5f;
-	int rows = (n + cols - 1) / cols;
-	float offZ = (rows - 1) * spacing * 0.5f;
-
-	for (int i = 0; i < n; i++) {
-		glm::vec3 pos = center + glm::vec3(
-			(i % cols) * spacing - offX, 0,
-			(i / cols) * spacing - offZ);
-		server.sendSetGoal(m_rtsSelect.selected[i], pos);
-	}
+	// TODO: implement click-to-move with pathfinding
 }
 
 } // namespace modcraft

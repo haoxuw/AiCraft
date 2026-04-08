@@ -86,8 +86,6 @@ struct PyAction {
 // Per-call state — set before callDecide(), cleared after.
 // Safe for single-threaded agent processes (one callDecide at a time).
 static std::function<std::string(int,int,int)> s_blockQueryFn;
-static bool s_hasGoal = false;
-static float s_goalX = 0, s_goalY = 0, s_goalZ = 0;
 
 PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	m.doc() = "ModCraft engine bridge — exposes world view to Python behaviors";
@@ -381,13 +379,6 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		pyWorld["blocks"] = pyBlocks;
 		pyWorld["dt"] = dt;
 		pyWorld["time"] = timeOfDay;
-		if (s_hasGoal) {
-			py::dict g;
-			g["x"] = s_goalX; g["y"] = s_goalY; g["z"] = s_goalZ;
-			pyWorld["goal"] = g;
-		} else {
-			pyWorld["goal"] = py::none();
-		}
 
 		// Wrap in LocalWorld / SelfEntity pydantic objects.
 		// _from_raw() uses model_construct() to skip validators (trusted C++ data).
@@ -486,16 +477,11 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 	}
 
-	// Inject goal state for this call so Python's local_world sees it.
-	s_hasGoal = view.hasGoal;
-	if (view.hasGoal) { s_goalX = view.goalPos.x; s_goalY = view.goalPos.y; s_goalZ = view.goalPos.z; }
-
 	std::string goal, error;
 	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities,
 	                                view.chunkBlocks,
 	                                view.dt, view.timeOfDay, goal, error,
 	                                view.blockQueryFn);
-	s_hasGoal = false;
 
 	if (!error.empty()) {
 		view.self.goalText = "ERROR: " + error.substr(0, 80);

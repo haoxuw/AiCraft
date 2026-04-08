@@ -52,17 +52,8 @@ public:
 	// Notify server that player reassigned a hotbar slot
 	virtual void sendHotbarSlot(int slot, const std::string& itemId) {}
 
-	// Navigation goals — for RTS/RPG click-to-move (forwarded to entity's agent)
-	virtual void sendSetGoal(EntityId eid, glm::vec3 pos) {}
-	virtual void sendCancelGoal(EntityId eid) {}
-
 	// Ownership — claim an entity (admin or unclaimed only)
 	virtual void sendClaimEntity(EntityId eid) {}
-
-	// Auto-navigation mode: when true, local player position is driven by
-	// server S_ENTITY (agent navigating). When false, client moveAndCollide owns position.
-	virtual void setLocalPlayerAutoNav(bool) {}
-	virtual bool localPlayerAutoNav() const { return false; }
 
 	// --- State access (for rendering) ---
 

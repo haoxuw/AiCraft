@@ -104,11 +104,6 @@ struct BehaviorWorldView {
 	// behaviors is provided via ChunkInfo (see docs/29_CHUNK_INFO.md).
 	std::function<std::string(int,int,int)> blockQueryFn;
 
-	// Navigation goal set by C_SET_GOAL (RTS/RPG click-to-move).
-	// hasGoal is false when no goal is active (agent should idle or run normal AI).
-	bool hasGoal = false;
-	glm::vec3 goalPos = {0, 0, 0};
-
 	// Find closest entity matching a category
 	const NearbyEntity* closestByCategory(const std::string& cat) const {
 		const NearbyEntity* best = nullptr;
