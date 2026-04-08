@@ -155,6 +155,7 @@ public:
 	std::string errorText;     // last Python error traceback (empty = ok)
 	bool hasError = false;     // true if behavior code has a runtime error
 	bool onGround = false;     // physics: is entity standing on solid ground
+	bool skipPhysics = false;  // set when clientPos accepted — client already ran physics
 
 	// --- Alive/active ---
 	bool removed = false;           // marked for removal

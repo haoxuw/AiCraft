@@ -113,20 +113,26 @@ public:
 				e.setProp(Prop::WalkDistance, dist + hSpeed * dt);
 			}
 
-			// Unified physics: same collision for ALL entities
-			MoveParams mp;
-			mp.halfWidth = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
-			mp.height = def.collision_box_max.y - def.collision_box_min.y;
-			mp.gravity = ServerTuning::gravity * def.gravity_scale;
-			bool isLiving = def.isLiving();
-			mp.stepHeight = isLiving ? ServerTuning::entityStepHeight : 0.0f;
-			mp.canFly = e.getProp<bool>("fly_mode", false);
-			mp.smoothStep = false; // instant teleport step-up (Minecraft-style); jump impulse was glitchy
+			// Skip physics for entities whose position was set by clientPos this tick.
+			// The client already ran moveAndCollide — running it again would double
+			// gravity, causing jumps to fail and movement to feel sluggish.
+			if (e.skipPhysics) {
+				e.skipPhysics = false;
+			} else {
+				MoveParams mp;
+				mp.halfWidth = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
+				mp.height = def.collision_box_max.y - def.collision_box_min.y;
+				mp.gravity = ServerTuning::gravity * def.gravity_scale;
+				bool isLiving = def.isLiving();
+				mp.stepHeight = isLiving ? ServerTuning::entityStepHeight : 0.0f;
+				mp.canFly = e.getProp<bool>("fly_mode", false);
+				mp.smoothStep = false;
 
-			auto result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
-			e.position = result.position;
-			e.velocity = result.velocity;
-			e.onGround = result.onGround;
+				auto result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
+				e.position = result.position;
+				e.velocity = result.velocity;
+				e.onGround = result.onGround;
+			}
 
 			// Item entity: freeze on ground (no bouncing), despawn after timeout
 			if (e.typeId() == EntityType::ItemEntity) {

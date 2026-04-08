@@ -24,8 +24,12 @@ void GameServer::resolveActions(float dt) {
 			constexpr float CLIENT_POS_TOLERANCE = 8.0f;
 			if (p.hasClientPos) {
 				float dist = glm::length(p.clientPos - e->position);
-				if (dist < CLIENT_POS_TOLERANCE)
+				if (dist < CLIENT_POS_TOLERANCE) {
 					e->position = p.clientPos;
+					// Client already ran moveAndCollide — skip server physics this tick
+					// to prevent double gravity/collision application.
+					e->skipPhysics = true;
+				}
 			}
 
 			// Clamp to entity's max speed (anti-cheat)
