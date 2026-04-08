@@ -258,7 +258,7 @@ public:
 		// The characterSkin determines visual model, not entity type.
 		EntityId eid = m_world->entities.spawn(EntityType::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
-		if (pe) pe->yaw = 90.0f; // face +Z (outward from portal)
+		if (pe) pe->yaw = -90.0f; // face -Z (toward stairs from portal)
 		// Player gets a navigation agent (player_nav behavior) for RTS/RPG click-to-move.
 		// The agent is idle during WASD; activates on C_SET_GOAL.
 		if (pe) pe->setProp(Prop::BehaviorId, std::string("player_nav"));
