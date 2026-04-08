@@ -150,57 +150,58 @@ public:
 			m_diagTimer = 0;
 		}
 
-		// Interpolate ALL entities toward server targets.
-		// Server is fully authoritative for positions. Client smoothly tracks.
-		// NO special cases for local player — this prevents phasing through
-		// walls (client has no collision, so using client velocity for
-		// extrapolation causes rubber-banding against solid blocks).
+		// Position update:
+		//   Local player — runs moveAndCollide() in gameplay_movement.cpp.
+		//                  Only hard-snap when server disagrees significantly.
+		//   Remote entities — dead-reckoning + smooth interpolation.
 		const float INTERP_SPEED = 18.0f;
-		const float LOCAL_INTERP_SPEED = 25.0f; // faster for local player responsiveness
+		const float SNAP_LOCAL  = 8.0f;   // lenient — client & server run same physics
+		const float SNAP_REMOTE = 12.0f;
 		for (auto& [id, target] : m_interpTargets) {
 			auto it = m_entities.find(id);
 			if (it == m_entities.end()) continue;
 			auto& e = *it->second;
 			bool isLocal = (id == m_localPlayerId);
 
-			// ALL entities use server velocity for prediction — client has
-			// no physics so client velocity would phase through blocks.
-			// Cap age to 0.5s to prevent unbounded extrapolation when the
-			// server stops sending updates (e.g. entity leaves perception range).
-			float cappedAge = std::min(target.age, 0.5f);
-			glm::vec3 predicted = target.position + target.velocity * cappedAge;
-			glm::vec3 diff = predicted - e.position;
-
-			// Snap threshold uses distance from last known server position (not
-			// predicted), so stale dead-reckoning never triggers a snap loop.
-			float distFromServer = glm::length(target.position - e.position);
-
-			float speed = isLocal ? LOCAL_INTERP_SPEED : INTERP_SPEED;
-			if (distFromServer > 3.0f) {
-				printf("[Net] SNAP entity %u (dist=%.1f) local=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f)\n",
-					id, distFromServer,
-					e.position.x, e.position.y, e.position.z,
-					target.position.x, target.position.y, target.position.z);
-				e.position = target.position;
-				target.age = 0.0f;
-			} else if (glm::length(diff) > 0.005f) {
-				float t = std::min(dt * speed, 1.0f);
-				e.position += diff * t;
+			if (isLocal) {
+				// Client runs moveAndCollide() — position is self-managed.
+				// Only snap on large disagreement (teleport, missing chunks).
+				float dist = glm::length(target.position - e.position);
+				if (dist > SNAP_LOCAL) {
+					printf("[Net] SNAP local (dist=%.1f) local=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f)\n",
+						dist, e.position.x, e.position.y, e.position.z,
+						target.position.x, target.position.y, target.position.z);
+					e.position = target.position;
+				}
+				// Don't overwrite velocity/onGround — client physics owns these.
+			} else {
+				// Remote entities: dead-reckoning + smooth interpolation
+				float cappedAge = std::min(target.age, 0.5f);
+				glm::vec3 predicted = target.position + target.velocity * cappedAge;
+				glm::vec3 diff = predicted - e.position;
+				float dist = glm::length(target.position - e.position);
+				if (dist > SNAP_REMOTE) {
+					printf("[Net] SNAP entity %u (dist=%.1f)\n", id, dist);
+					e.position = target.position;
+					target.age = 0.0f;
+				} else if (glm::length(diff) > 0.005f) {
+					e.position += diff * std::min(dt * INTERP_SPEED, 1.0f);
+				}
 			}
 
-			// Smooth yaw — same for all entities (server-authoritative)
-			{
+			// Yaw: smooth for all entities
+			if (!isLocal) {
 				float yawDiff = target.yaw - e.yaw;
 				while (yawDiff > 180.0f) yawDiff -= 360.0f;
 				while (yawDiff < -180.0f) yawDiff += 360.0f;
-				e.yaw += yawDiff * std::min(dt * speed, 1.0f);
+				e.yaw += yawDiff * std::min(dt * INTERP_SPEED, 1.0f);
+				// Remote: velocity from server for animation + prediction
+				e.velocity = target.velocity;
 			}
-			// Velocity: update for ALL entities (server-authoritative)
-			e.velocity = target.velocity;
 
 			target.age += dt;
 
-			// Walk distance for animation — same for all entities
+			// Walk distance for animation
 			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
 			if (hSpeed > 0.01f) {
 				float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);

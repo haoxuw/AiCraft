@@ -10,26 +10,25 @@ Ideas to try:
   - Patrol between two positions
   - Build a simple structure automatically
 """
-from modcraft_engine import Idle
+from modcraft_engine import Move
 from behavior_base import Behavior
 
 
 class IdleBehavior(Behavior):
 
-    def decide(self, entity, world):
-        return Idle(), "Idle"
+    def decide(self, entity, local_world):
+        return Move(entity.x, entity.y, entity.z), "Idle"
 
 
 # -- Example: uncomment to auto-follow nearest pig --
 #
-# from modcraft_engine import Idle, Follow
+# from modcraft_engine import Move
 #
 # class IdleBehavior(Behavior):
-#     def decide(self, entity, world):
-#         pigs = [e for e in world["nearby"]
-#                 if e["type_id"] == "base:pig" and e["distance"] < 20]
-#         if pigs:
-#             closest = min(pigs, key=lambda e: e["distance"])
-#             return (Follow(closest["id"], speed=entity["walk_speed"], min_distance=2.0),
-#                     "Following pig (%.1fm away)" % closest["distance"])
-#         return Idle(), "Looking for pigs..."
+#     def decide(self, entity, local_world):
+#         pig = local_world.get("base:pig", max_dist=20)
+#         if pig:
+#             if pig.distance > 2:
+#                 return Move(pig.x, pig.y, pig.z, speed=entity.walk_speed), \
+#                        "Following pig (%.1fm)" % pig.distance
+#         return Move(entity.x, entity.y, entity.z), "Looking for pigs..."

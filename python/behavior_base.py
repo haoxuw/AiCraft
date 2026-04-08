@@ -4,12 +4,18 @@ Every behavior inherits from Behavior and overrides decide().
 
 Contract
 --------
-    decide(entity: SelfEntity, world: LocalWorld) → (action, goal_str)
+    decide(entity: SelfEntity, local_world: LocalWorld) → (action, goal_str)
 
-    action    — result of Idle(), Wander(), MoveTo(x,y,z), Follow(id),
-                Flee(id), ConvertObject(…), StoreItem(id), etc.
+    action    — one of the four server-accepted primitives, constructed via the
+                modcraft_engine helpers: Move(entity.x, entity.y, entity.z), Move(x,y,z,speed),
+                Convert(…), StoreItem(id), PickupItem(id), DropItem(…),
+                BreakBlock(x,y,z), Interact(x,y,z).
     goal_str  — non-empty human-readable string (shown above entity's head
                 and in the right-click inspect panel). Never return "".
+
+High-level strategies (Follow, Flee, Wander) are NOT action types.
+They are Python helpers on this Behavior base class that compute a target
+position and return Move.  See wander_target() and flee_pos() below.
 
 World model
 -----------
@@ -21,31 +27,33 @@ World model
 
 Example
 -------
-    from modcraft_engine import Idle, Wander, MoveTo
+    from modcraft_engine import Move
     from behavior_base import Behavior
 
     class GuardBehavior(Behavior):
         def __init__(self):
             self._home = None
 
-        def decide(self, entity, world):
+        def decide(self, entity, local_world):
             self._home = self.init_home(entity, self._home)
-            threat = world.nearest("hostile", max_dist=8)
+            threat = local_world.nearest("hostile", max_dist=8)
             if threat:
-                return Flee(threat.id, speed=entity.walk_speed * 1.5), "Retreating!"
-            return Idle(), "Standing guard"
+                return Move(*self.flee_pos(entity, threat), speed=entity.walk_speed * 1.5), "Retreating!"
+            return Move(entity.x, entity.y, entity.z), "Standing guard"
 """
 
+import math
+import random as _random
 from local_world import LocalWorld, SelfEntity, BlockView, EntityView
 
 
 class Behavior:
     """Abstract base for all entity behaviors.
 
-    Subclasses must implement decide(entity, world) → (action, goal_str).
+    Subclasses must implement decide(entity, local_world) → (action, goal_str).
     """
 
-    def decide(self, entity: SelfEntity, world: LocalWorld) -> tuple:
+    def decide(self, entity: SelfEntity, local_world: LocalWorld) -> tuple:
         """Called at ~4 Hz. Must return (action, goal: str).
 
         Parameters
@@ -56,40 +64,40 @@ class Behavior:
             entity.on_ground, entity.inventory.count("base:trunk"),
             entity.get("work_radius", 80.0)   ← server-assigned custom props
 
-        world : LocalWorld
+        local_world : LocalWorld
             Spatial snapshot of what this agent can currently perceive.
-            world.get("base:trunk")           ← nearest block/entity of type
-            world.get("base:trunk", max_dist=40)
-            world.all("base:trunk")           ← all, nearest-first
-            world.nearest("player")           ← nearest entity by category
-            world.time                        ← 0.0–1.0 day fraction
-            world.dt                          ← frame delta seconds
+            local_world.get("base:trunk")           ← nearest block/entity of type
+            local_world.get("base:trunk", max_dist=40)
+            local_world.all("base:trunk")           ← all, nearest-first
+            local_world.nearest("player")           ← nearest entity by category
+            local_world.time                        ← 0.0–1.0 day fraction
+            local_world.dt                          ← frame delta seconds
         """
         raise NotImplementedError(
-            f"{type(self).__name__} must implement decide(entity, world) → (action, goal)"
+            f"{type(self).__name__} must implement decide(entity, local_world) → (action, goal)"
         )
 
     # ── Time-of-day helpers ───────────────────────────────────────────────────
 
     @staticmethod
-    def is_night(world: LocalWorld) -> bool:
+    def is_night(local_world: LocalWorld) -> bool:
         """True during night: midnight to dawn (0%–25%)."""
-        return world.time < 0.25
+        return local_world.time < 0.25
 
     @staticmethod
-    def is_morning(world: LocalWorld) -> bool:
+    def is_morning(local_world: LocalWorld) -> bool:
         """True during morning: dawn to noon (25%–50%)."""
-        return 0.25 <= world.time < 0.50
+        return 0.25 <= local_world.time < 0.50
 
     @staticmethod
-    def is_afternoon(world: LocalWorld) -> bool:
+    def is_afternoon(local_world: LocalWorld) -> bool:
         """True during afternoon: noon to dusk (50%–75%)."""
-        return 0.50 <= world.time < 0.75
+        return 0.50 <= local_world.time < 0.75
 
     @staticmethod
-    def is_evening(world: LocalWorld) -> bool:
+    def is_evening(local_world: LocalWorld) -> bool:
         """True during evening: dusk to midnight (75%–100%)."""
-        return world.time >= 0.75
+        return local_world.time >= 0.75
 
     # ── Distance helpers ──────────────────────────────────────────────────────
 
@@ -170,3 +178,35 @@ class Behavior:
         """Reset stuck tracking (call after a deliberate goal change)."""
         self._stuck_ref     = None
         self._stuck_elapsed = 0.0
+
+    # ── Movement helpers (return (x, y, z) — wrap with Move) ───────────────
+
+    @staticmethod
+    def wander_target(entity: SelfEntity, radius: float = 8.0) -> tuple:
+        """Pick a random walk target within radius of entity's current position.
+
+        Usage:
+            tx, ty, tz = self.wander_target(entity, radius=10)
+            return Move(tx, ty, tz, speed=spd), "Wandering"
+        """
+        angle = _random.uniform(0, 2 * math.pi)
+        dist  = _random.uniform(radius * 0.3, radius)
+        return (entity.x + math.cos(angle) * dist,
+                entity.y,
+                entity.z + math.sin(angle) * dist)
+
+    @staticmethod
+    def flee_pos(entity: SelfEntity, threat, distance: float = 12.0) -> tuple:
+        """Compute a position to flee to, moving directly away from threat.
+
+        threat may be a BlockView, EntityView, or any object with .x and .z.
+
+        Usage:
+            return Move(*self.flee_pos(entity, threat), speed=spd * 1.8), "Fleeing!"
+        """
+        dx = entity.x - threat.x
+        dz = entity.z - threat.z
+        d  = (dx * dx + dz * dz) ** 0.5 or 1.0
+        return (entity.x + dx / d * distance,
+                entity.y,
+                entity.z + dz / d * distance)

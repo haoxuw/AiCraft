@@ -8,6 +8,7 @@
  */
 
 #include "server/server.h"
+#include "server/chunk_info.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
 #include "shared/constants.h"
@@ -584,6 +585,62 @@ public:
 		return it != m_clients.end() ? &it->second : nullptr;
 	}
 
+	// Called when a block changes: broadcast S_BLOCK to all clients and update ChunkInfo.
+	void onBlockChanged(glm::ivec3 pos, BlockId oldBid, BlockId newBid, uint8_t p2) {
+		// Broadcast S_BLOCK to all clients (player GUI needs this for rendering)
+		{
+			net::WriteBuffer wb;
+			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
+			wb.writeU32(newBid); wb.writeU8(p2);
+			broadcastToAll(net::S_BLOCK, wb);
+		}
+
+		// Update ChunkInfo owned by World
+		auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+		ChunkPos cp = {div(pos.x, CHUNK_SIZE), div(pos.y, CHUNK_SIZE), div(pos.z, CHUNK_SIZE)};
+
+		ChunkInfo* ci = m_server.world().getChunkInfo(cp);
+		if (!ci) return;
+
+		const std::string& oldTypeId = m_server.world().blocks.get(oldBid).string_id;
+		const std::string& newTypeId = m_server.world().blocks.get(newBid).string_id;
+		ci->applyBlockChange(pos, oldTypeId, newTypeId);
+
+		// Send S_CHUNK_INFO_DELTA (changed entries only) to agent clients subscribed to this chunk
+		bool anyAgent = false;
+		for (auto& [cid, client] : m_clients)
+			if (client.isAgent && client.sentChunks.count(cp)) { anyAgent = true; break; }
+		if (!anyAgent) return;
+
+		// Build delta: send updated entries for old and new type ids
+		for (auto& [cid, client] : m_clients) {
+			if (!client.isAgent || !client.sentChunks.count(cp)) continue;
+			// Send a minimal S_CHUNK_INFO_DELTA: cp + entries for changed types
+			net::WriteBuffer db;
+			db.writeI32(cp.x); db.writeI32(cp.y); db.writeI32(cp.z);
+			// Collect unique type ids that changed
+			std::vector<std::string> changedTypes;
+			if (!oldTypeId.empty()) changedTypes.push_back(oldTypeId);
+			if (!newTypeId.empty() && newTypeId != oldTypeId) changedTypes.push_back(newTypeId);
+			db.writeU32((uint32_t)changedTypes.size());
+			for (const auto& tid : changedTypes) {
+				db.writeString(tid);
+				auto eIt = ci->entries.find(tid);
+				if (eIt != ci->entries.end()) {
+					db.writeI32(eIt->second.count);
+					db.writeU32((uint32_t)eIt->second.samples.size());
+					for (auto& s : eIt->second.samples) {
+						db.writeI32(s.x); db.writeI32(s.y); db.writeI32(s.z);
+					}
+				} else {
+					db.writeI32(0);
+					db.writeU32(0);
+				}
+			}
+			net::sendMessage(client.fd, net::S_CHUNK_INFO_DELTA, db);
+		}
+	}
+
 private:
 	struct AIProcess {
 		pid_t       pid;
@@ -775,6 +832,31 @@ private:
 				targetEntity, behaviorId.c_str(), client.label().c_str());
 			break;
 		}
+		case net::C_SET_GOAL: {
+			uint32_t eid = rb.readU32();
+			float gx = rb.readF32(), gy = rb.readF32(), gz = rb.readF32();
+			// Forward to the agent controlling this entity
+			for (auto& [aid, ac] : m_clients) {
+				if (ac.isAgent && ac.playerId == eid) {
+					net::WriteBuffer wb;
+					wb.writeF32(gx); wb.writeF32(gy); wb.writeF32(gz);
+					net::sendMessage(ac.fd, net::S_SET_GOAL, wb);
+					break;
+				}
+			}
+			break;
+		}
+		case net::C_CANCEL_GOAL: {
+			uint32_t eid = rb.readU32();
+			for (auto& [aid, ac] : m_clients) {
+				if (ac.isAgent && ac.playerId == eid) {
+					net::WriteBuffer wb;
+					net::sendMessage(ac.fd, net::S_CANCEL_GOAL, wb);
+					break;
+				}
+			}
+			break;
+		}
 		default: break;
 		}
 	}
@@ -796,6 +878,7 @@ private:
 
 		for (const auto& pos : toEvict) {
 			cc.sentChunks.erase(pos);
+			// ChunkInfo is now owned by World — no eviction needed here
 			net::WriteBuffer wb;
 			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
 			net::sendMessage(cc.fd, net::S_CHUNK_EVICT, wb);
@@ -869,6 +952,28 @@ private:
 		memcpy(msg.data() + 8, payload.data(), payload.size());
 		cc.pendingChunks.push_back({pos, std::move(msg)});
 		cc.sentChunks.insert(pos);
+
+		// Agent clients receive S_CHUNK_INFO so behaviors can query block types.
+		// ChunkInfo was built during generateChunk() — just send it here.
+		if (cc.isAgent) {
+			ChunkInfo* ci = m_server.world().getChunkInfo(pos);
+			if (ci) {
+				net::WriteBuffer cib;
+				cib.writeI32(pos.x); cib.writeI32(pos.y); cib.writeI32(pos.z);
+				// Count non-empty entries
+				uint32_t entryCount = (uint32_t)ci->entries.size();
+				cib.writeU32(entryCount);
+				for (auto& [typeId, entry] : ci->entries) {
+					cib.writeString(typeId);
+					cib.writeI32(entry.count);
+					cib.writeU32((uint32_t)entry.samples.size());
+					for (auto& s : entry.samples) {
+						cib.writeI32(s.x); cib.writeI32(s.y); cib.writeI32(s.z);
+					}
+				}
+				net::sendMessage(cc.fd, net::S_CHUNK_INFO, cib);
+			}
+		}
 	}
 
 	GameServer& m_server;

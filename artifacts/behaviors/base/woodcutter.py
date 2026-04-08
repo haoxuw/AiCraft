@@ -1,139 +1,246 @@
-"""Woodcutter — chops nearby tree trunks and deposits logs at home chest.
+"""Woodcutter — villager that chops trees during the day, deposits at its chest,
+and sleeps at its assigned bed at night.
 
-Decision logic (simple, linear priority):
-  1. Night / evening → go home and sleep.
-  2. Inventory full  → walk to chest and deposit all logs.
-  3. Too far from home → return home.
-  4. Found a trunk within work_radius → walk to it and chop.
-  5. Otherwise → wander and keep searching.
+Server assigns these props at spawn (see server.h):
+  home_x, home_z       — XZ position of this villager's bed (their "home")
+  chest_x, chest_y, chest_z — world-space position of their assigned chest block
+  chest_entity_id      — entity ID of the chest (for StoreItem)
+  work_radius          — max radius to search for trees (default 80)
+  collect_goal         — logs to collect before depositing (default 5)
 
-Entity props (set by server at spawn):
-  home_x, home_z           — home XZ (falls back to spawn position)
-  chest_x, chest_y, chest_z — deposit chest position (falls back to home)
-  work_radius               — max trunk search distance (default 80)
-  max_radius                — max distance from home before returning (default 100)
-  collect_goal              — logs to collect before depositing (default 5)
+State machine:
+  SLEEP   ─► WORK     when morning / afternoon begins
+  WORK    ─► DEPOSIT  when inventory reaches collect_goal logs
+  DEPOSIT ─► WORK     when inventory is empty after depositing
+  any     ─► SLEEP    when evening / night begins
 """
-from modcraft_engine import Idle, Wander, MoveTo, ConvertObject, StoreItem
+import json
+import os
+import time
+
+from modcraft_engine import Move, Convert, Interact, Block
+from actions import StoreItem
 from behavior_base import Behavior
+
+STORE_RANGE  = 1.8   # must be <= server-side StoreItem range check (2.0 blocks)
+CHOP_RANGE   = 2.5   # how close to stand before issuing Convert
+CHOP_PERIOD  = 0.5   # seconds between successive chop actions
+
+_DIAG_INTERVAL = 30.0          # minimum seconds between dumps per entity
+_diag_last: dict[int, float] = {}  # entity_id → last dump timestamp
+
+
+def dump_for_diagnoses(entity, local_world):
+    """Dump LocalWorld + entity state to /tmp/modcraft_diag_<id>.json.
+
+    Rate-limited to once per DIAG_INTERVAL seconds per entity to avoid
+    flooding /tmp at 4 Hz when no trees are found.
+    """
+    now = time.monotonic()
+    eid = entity.id
+    if now - _diag_last.get(eid, 0.0) < _DIAG_INTERVAL:
+        return
+    _diag_last[eid] = now
+
+    data = {
+        "entity_id":  eid,
+        "type_id":    entity.type_id,
+        "position":   {"x": entity.x, "y": entity.y, "z": entity.z},
+        "hp":         entity.hp,
+        "walk_speed": entity.walk_speed,
+        "on_ground":  entity.on_ground,
+        "inventory":  dict(entity.inventory.items),
+        "props":      {k: v for k, v in entity.props.items()
+                       if k not in ("x", "y", "z", "hp", "walk_speed", "on_ground")},
+        "local_world": {
+            "time": local_world.time,
+            "dt":   local_world.dt,
+            "blocks": [
+                {"type_id": b.type_id, "x": b.x, "y": b.y, "z": b.z, "distance": round(b.distance, 2)}
+                for b in local_world.blocks
+            ],
+            "entities": [
+                {"id": e.id, "type_id": e.type_id, "category": e.category,
+                 "x": e.x, "y": e.y, "z": e.z, "hp": e.hp, "distance": round(e.distance, 2)}
+                for e in local_world.entities
+            ],
+        },
+    }
+
+    path = f"/tmp/modcraft_diag_{eid}.json"
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+        print(f"[woodcutter] diag dump → {path}  (entity #{eid}, {len(local_world.blocks)} blocks, {len(local_world.entities)} entities)")
+    except OSError as exc:
+        print(f"[woodcutter] diag dump failed: {exc}")
 
 
 class WoodcutterBehavior(Behavior):
 
+    SLEEP   = "sleep"
+    WORK    = "work"
+    DEPOSIT = "deposit"
+
     def __init__(self):
-        self._home             = None
-        self._chest            = None
-        self._chest_entity_id  = None  # cached chest entity ID for StoreItem
-        self._chop_cooldown    = 0.0   # seconds until next ConvertObject allowed
-        self._depositing       = False  # latched True when full, cleared when empty
-        self._search_log_timer = 0.0
+        self._state         = self.SLEEP
+        self._home          = None   # cached (x, y, z) of bed / home position
+        self._chest         = None   # cached (x, y, z) of chest block
+        self._chest_eid     = None   # cached chest entity ID (int)
+        self._chop_cooldown = 0.0    # seconds until next Convert is allowed
 
-    # ── Main decision loop ────────────────────────────────────────────────────
+    # ── Top-level decide ──────────────────────────────────────────────────────
 
-    def decide(self, entity, world):
-        dt           = world.dt
-        self._chop_cooldown    -= dt
-        self._search_log_timer -= dt
+    def decide(self, entity, local_world):
+        self._chop_cooldown -= local_world.dt
+        self._ensure_props(entity, local_world)
+        self._update_state(entity, local_world)
 
-        self._home  = self.init_home(entity, self._home)
-        self._chest = self.get_chest(entity, self._home)
-        spd          = entity.walk_speed
+        if self._state == self.SLEEP:
+            return self._sleep(entity, local_world)
+        if self._state == self.DEPOSIT:
+            return self._deposit(entity, local_world)
+        return self._work(entity, local_world)
+
+    # ── State transitions ─────────────────────────────────────────────────────
+
+    def _update_state(self, entity, local_world):
+        logs         = entity.inventory.count("base:trunk")
         collect_goal = int(entity.get("collect_goal", 5))
-        work_radius  = float(entity.get("work_radius", 80))
-        max_radius   = float(entity.get("max_radius", 100))
+        is_day       = self.is_morning(local_world) or self.is_afternoon(local_world)
+        is_night_now = self.is_night(local_world) or self.is_evening(local_world)
 
+        if is_night_now:
+            self._state = self.SLEEP
+        elif self._state == self.SLEEP and is_day:
+            self._state = self.WORK   # may advance immediately to DEPOSIT below
+
+        # Checked independently so SLEEP→WORK→DEPOSIT can fire in one tick
+        if self._state == self.WORK and logs >= collect_goal:
+            self._state = self.DEPOSIT
+        elif self._state == self.DEPOSIT and logs == 0:
+            self._state = self.WORK
+
+    # ── Compatibility property for tests and external inspection ──────────────
+
+    @property
+    def _depositing(self):
+        return self._state == self.DEPOSIT
+
+    @_depositing.setter
+    def _depositing(self, value):
+        self._state = self.DEPOSIT if value else self.WORK
+
+    # ── State: Sleep ──────────────────────────────────────────────────────────
+
+    def _sleep(self, entity, local_world):
+        """Walk to bed; once there, stand still and rest."""
+        spd = entity.walk_speed
+        if not self.is_near(entity, self._home, threshold=2.0):
+            return self._move_or_unstick(entity, local_world, self._home, spd, "Going home...")
+        return Move(entity.x, entity.y, entity.z), "Sleeping zzz"
+
+    # ── State: Work ───────────────────────────────────────────────────────────
+
+    def _work(self, entity, local_world):
+        """Find and chop the nearest trunk or leaves block."""
+        spd         = entity.walk_speed
+        work_radius = float(entity.get("work_radius", 80.0))
+        logs        = entity.inventory.count("base:trunk")
+        collect_goal= int(entity.get("collect_goal", 5))
+
+        target = (local_world.get("base:leaves",  max_dist=work_radius) or
+                  local_world.get("base:trunk", max_dist=work_radius))
+
+        if target is None:
+            dump_for_diagnoses(entity, local_world)
+            return self._search(entity, local_world, spd)
+
+        label = target.type_id.split(":")[1]
+
+        if self.is_near(entity, target, threshold=CHOP_RANGE):
+            return self._chop(entity, target, logs, collect_goal, label)
+
+        return self._move_or_unstick(
+            entity, local_world,
+            (target.x + 0.5, target.y, target.z + 0.5),
+            spd,
+            "Walking to %s (%.0fm)" % (label, target.distance),
+        )
+
+    def _chop(self, entity, target, logs, collect_goal, label):
+        """Issue a Convert to chop the block, respecting cooldown."""
+        if self._chop_cooldown <= 0:
+            self._chop_cooldown = CHOP_PERIOD
+            return (
+                Convert(
+                    from_item=target.type_id,
+                    to_item=target.type_id,
+                    convert_from=Block(target.x, target.y, target.z),
+                ),
+                "Chopping %s! (%d/%d)" % (label, logs, collect_goal),
+            )
+        return Move(entity.x, entity.y, entity.z), "Chopping... (%d/%d)" % (logs, collect_goal)
+
+    def _search(self, entity, local_world, spd):
+        """No trees in range — wander outward to find some."""
+        if self.check_stuck(entity, local_world.dt):
+            self.reset_stuck()
+        return (
+            Move(*self.wander_target(entity, radius=20), speed=spd * 0.7),
+            "Searching for trees...",
+        )
+
+    # ── State: Deposit ────────────────────────────────────────────────────────
+
+    def _deposit(self, entity, local_world):
+        """Walk to the chest, open any door in the way, and store logs."""
+        spd  = entity.walk_speed
         logs = entity.inventory.count("base:trunk")
 
-        # ── 1. Night / evening: go home ───────────────────────────────────────
-        if self.is_night(world) or self.is_evening(world):
-            self._depositing = False
-            if self.is_near(entity, self._home, threshold=3):
-                return Idle(), "Sleeping zzz"
-            return MoveTo(*self._home, speed=spd), "Heading home"
+        # Refresh chest entity ID from local_world if prop was missing at spawn
+        if self._chest_eid is None:
+            chest_ent = local_world.nearest("chest")
+            if chest_ent:
+                self._chest_eid = chest_ent.id
 
-        # ── 2. Latch deposit intent: full → True, empty → False ───────────────
-        if logs >= collect_goal:
-            self._depositing = True
-        elif logs == 0:
-            self._depositing = False
+        if self._chest_eid is None:
+            # No chest found at all — go home and wait for one
+            return Move(*self._home, speed=spd), "Looking for chest..."
 
-        if self._depositing:
-            return self._deposit(entity, world, spd, logs, collect_goal)
+        dist_to_chest = self.dist2d(entity.x, entity.z, self._chest[0], self._chest[2])
 
-        # ── 3. Too far from home: return ──────────────────────────────────────
-        dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
-        if dist_home > max_radius:
-            return MoveTo(*self._home, speed=spd), \
-                   "Too far — heading back (%.0fm)" % dist_home
+        if dist_to_chest <= STORE_RANGE:
+            return StoreItem(self._chest_eid), "Depositing %d logs" % logs
 
-        # ── 4. Find nearest choppable block ──────────────────────────────────
-        # Try trunk first (preferred); fall back to leaves if no trunk visible.
-        # Parametrized on chop_type so ConvertObject and goal text are generic.
-        to_chop = None
-        chop_type = None
-        for object_type in ("base:trunk", "base:leaves"):
-            candidate = world.get(object_type, max_dist=work_radius)
-            if candidate:
-                to_chop = candidate
-                chop_type = object_type
-                break
+        # Open any closed door blocking the path before walking through
+        door = local_world.get("base:door", max_dist=3.0)
+        if door and door.distance < 2.0:
+            return Interact(int(door.x), int(door.y), int(door.z)), "Opening door"
 
-        if to_chop:
-            bx, by, bz = to_chop.x, to_chop.y, to_chop.z
-            label = chop_type.split(":")[1]   # "trunk" or "leaves"
-            if self.is_near(entity, to_chop, threshold=2.5):
-                if self._chop_cooldown <= 0:
-                    self._chop_cooldown = 0.4   # 1 chop per 0.4 s; server roundtrip
-                    return (ConvertObject(from_item=chop_type, to_item=chop_type,
-                                         block_pos=(bx, by, bz),
-                                         convert_from_block=True, direct=True),
-                            "Chopping %s! (%d/%d)" % (label, logs, collect_goal))
-                return Idle(), "Chopping..."
-            # Not close yet — walk toward block
-            if self.check_stuck(entity, dt):
-                self.reset_stuck()
-                return Wander(speed=spd), "Stuck — wandering"
-            return MoveTo(bx + 0.5, by, bz + 0.5, speed=spd), \
-                   "Walking to %s (%.0fm)" % (label, to_chop.distance)
+        return self._move_or_unstick(
+            entity, local_world, self._chest, spd,
+            "Carrying %d logs to chest (%.0fm)" % (logs, dist_to_chest),
+        )
 
-        # ── 5. No trunks visible — wander and keep searching ──────────────────
-        self._log_searching(entity, world, work_radius)
-        return Wander(speed=spd * 0.7), "Searching for trees..."
+    # ── Movement helper with stuck recovery ───────────────────────────────────
 
-    # ── Deposit sub-routine ───────────────────────────────────────────────────
+    def _move_or_unstick(self, entity, local_world, target, speed, goal_text):
+        """Move toward target; wander briefly if stuck."""
+        if self.check_stuck(entity, local_world.dt):
+            self.reset_stuck()
+            return Move(*self.wander_target(entity, radius=5), speed=speed), "Stuck — finding way"
+        return Move(*target, speed=speed), goal_text
 
-    def _deposit(self, entity, world, spd, logs, collect_goal):
-        chest_ent = world.nearest("chest")
-        if chest_ent:
-            self._chest_entity_id = chest_ent.id
+    # ── Prop initialisation (called each tick until populated) ────────────────
 
-        if self._chest_entity_id and self.is_near(entity, self._chest, threshold=20):
-            print("[Woodcutter #%d] Depositing %d logs into chest entity %d" % (
-                entity.id, logs, self._chest_entity_id))
-            return StoreItem(self._chest_entity_id), \
-                   "Depositing %d logs" % logs
-
-        return MoveTo(*self._chest, speed=spd), \
-               "Carrying logs home (%d/%d)" % (logs, collect_goal)
-
-    # ── Diagnostic logging ────────────────────────────────────────────────────
-
-    def _log_searching(self, entity, world, work_radius):
-        if self._search_log_timer > 0:
-            return
-        self._search_log_timer = 10.0
-
-        trunks = world.all("base:trunk")
-        leaves = world.all("base:leaves")
-        total  = len(world.blocks)
-
-        print("[Woodcutter #%d] Searching: %d blocks visible | trunks=%d nearest=%.0fm"
-              " | leaves=%d (pos=%.0f,%.0f,%.0f work_radius=%.0f)" % (
-            entity.id, total,
-            len(trunks), trunks[0].distance if trunks else 999,
-            len(leaves),
-            entity.x, entity.y, entity.z, work_radius))
-
-        if leaves and not trunks:
-            print("[Woodcutter #%d] WARNING: leaves visible but no trunks — "
-                  "forest depleted or chunks still loading. Wandering further." % entity.id)
+    def _ensure_props(self, entity, local_world):
+        """Read server-assigned props into cached fields (cheap after first call)."""
+        if self._home is None:
+            self._home = self.init_home(entity, self._home)
+        if self._chest is None:
+            self._chest = self.get_chest(entity, self._home)
+        if self._chest_eid is None:
+            raw = entity.get("chest_entity_id")
+            if raw is not None:
+                self._chest_eid = int(raw)

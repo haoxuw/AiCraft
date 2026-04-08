@@ -15,7 +15,7 @@ Parameters (set via entity dict, all optional):
   home_radius   — max wander distance from home (default 25)
 """
 import random
-from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo
+from modcraft_engine import Move
 from behavior_base import Behavior
 
 MOOD_IDLE    = "idle"
@@ -54,12 +54,12 @@ class ProwlBehavior(Behavior):
         else:
             return MOOD_NAP
 
-    def decide(self, entity, world):
+    def decide(self, entity, local_world):
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True
 
-        dt = world.dt
+        dt = local_world.dt
         self._mood_timer    -= dt
         self._nap_timer     -= dt
         self._hunt_cooldown -= dt
@@ -75,23 +75,23 @@ class ProwlBehavior(Behavior):
         dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
 
         # ── Evening/Night: return home ────────────────────────────────────────
-        if self.is_night(world) or self.is_evening(world):
+        if self.is_night(local_world) or self.is_evening(local_world):
             self._napping = False
             self._mood_timer = 99.0
             self._resting = True
-            if self.is_night(world):
+            if self.is_night(local_world):
                 self._sleeping = True
             if dist_home > 4:
-                return MoveTo(*self._home, speed=spd), "Heading home..."
+                return Move(*self._home, speed=spd), "Heading home..."
             if self._sleeping:
-                return Idle(), "Curled up at home zzz"
-            return Idle(), "Settling in for the night"
+                return Move(entity.x, entity.y, entity.z),"Curled up at home zzz"
+            return Move(entity.x, entity.y, entity.z),"Settling in for the night"
 
         if self._resting:
             self._resting = False
             self._sleeping = False
             self._mood_timer = 0.0
-            return Idle(), "Stretching... meow"
+            return Move(entity.x, entity.y, entity.z),"Stretching... meow"
 
         # Hysteresis: start returning at home_radius, stop at home_radius * 0.5
         if dist_home > home_radius:
@@ -102,16 +102,16 @@ class ProwlBehavior(Behavior):
                 self._mood_timer = 0.0
                 self._napping = False
             else:
-                return MoveTo(*self._home, speed=spd * 0.7), "Wandering back home"
+                return Move(*self._home, speed=spd * 0.7), "Wandering back home"
 
         # ── Always flee from dogs ─────────────────────────────────────────────
-        dog = world.get("base:dog", max_dist=flee_range)
+        dog = local_world.get("base:dog", max_dist=flee_range)
         if dog:
             self._chase_origin = None
             self._napping = False
             self._mood = MOOD_IDLE
             self._mood_timer = 0.0
-            return Flee(dog.id, speed=spd * 1.8), "Avoiding dog!"
+            return Move(*self.flee_pos(entity, dog), speed=spd * 1.8), "Avoiding dog!"
 
         # ── Napping ───────────────────────────────────────────────────────────
         if self._napping:
@@ -120,7 +120,7 @@ class ProwlBehavior(Behavior):
                 self._perch_target = None
                 self._mood_timer = 0.0
             else:
-                return Idle(), "Napping zzz"
+                return Move(entity.x, entity.y, entity.z),"Napping zzz"
 
         # ── Walking to perch ──────────────────────────────────────────────────
         if self._perch_target:
@@ -132,8 +132,8 @@ class ProwlBehavior(Behavior):
                 self._napping = True
                 self._nap_timer = 6.0 + random.random() * 8.0
                 self._perch_target = None
-                return Idle(), "Napping on perch zzz"
-            return MoveTo(p.x + 0.5, p.y + 1.0, p.z + 0.5, speed=spd), \
+                return Move(entity.x, entity.y, entity.z),"Napping on perch zzz"
+            return Move(p.x + 0.5, p.y + 1.0, p.z + 0.5, speed=spd), \
                    "Climbing to perch..."
 
         # ── Pick new mood when timer expires ──────────────────────────────────
@@ -146,7 +146,7 @@ class ProwlBehavior(Behavior):
 
         # ── MOOD: Hunt ────────────────────────────────────────────────────────
         if self._mood == MOOD_HUNT and self._hunt_cooldown <= 0:
-            chicken = world.get("base:chicken", max_dist=chase_range)
+            chicken = local_world.get("base:chicken", max_dist=chase_range)
             if chicken:
                 if self._chase_origin is None:
                     self._chase_origin = (entity.x, entity.z)
@@ -156,13 +156,13 @@ class ProwlBehavior(Behavior):
                     self._hunt_cooldown = 5.0
                     self._chase_origin = None
                     self._mood_timer = 0.0
-                    return Idle(), "Lost interest..."
+                    return Move(entity.x, entity.y, entity.z),"Lost interest..."
                 if chicken.distance < 2:
                     self._hunt_cooldown = 8.0
                     self._chase_origin = None
                     self._mood_timer = 0.0
-                    return Idle(), "Got one! Resting..."
-                return Follow(chicken.id, speed=spd * 1.3, min_distance=1), \
+                    return Move(entity.x, entity.y, entity.z),"Got one! Resting..."
+                return Move(chicken.x, chicken.y, chicken.z, speed=spd * 1.3), \
                        "Stalking chicken..."
             else:
                 self._chase_origin = None
@@ -170,23 +170,23 @@ class ProwlBehavior(Behavior):
         # ── MOOD: Curious ─────────────────────────────────────────────────────
         if self._mood == MOOD_CURIOUS:
             if self._curiosity_target is None:
-                player = world.nearest("player")
+                player = local_world.nearest("player")
                 if player:
                     self._curiosity_target = player.id
 
             if self._curiosity_target is not None:
                 # Re-query to get current position
                 target = next(
-                    (e for e in world.entities if e.id == self._curiosity_target), None
+                    (e for e in local_world.entities if e.id == self._curiosity_target), None
                 )
                 if target and target.distance < 20:
                     if self._bored_timer <= 0:
                         self._mood_timer = 0.0
                         self._curiosity_target = None
-                        return Wander(speed=spd * 0.6), "Bored now"
-                    if target.distance < 3:
-                        return Idle(), "Watching player..."
-                    return Follow(target.id, speed=spd * 0.8, min_distance=2.5), \
+                        return Move(*self.wander_target(entity, radius=10), speed=spd * 0.6), "Bored now"
+                    if target.distance < 2.5:
+                        return Move(entity.x, entity.y, entity.z),"Watching player..."
+                    return Move(target.x, target.y, target.z, speed=spd * 0.8), \
                            "Following player..."
                 else:
                     self._curiosity_target = None
@@ -197,17 +197,17 @@ class ProwlBehavior(Behavior):
                            "base:stone", "base:planks")
             best = None
             for pt in perch_types:
-                b = world.get(pt)
+                b = local_world.get(pt)
                 if b and b.y > entity.y + 1.5 and b.distance < 12:
                     if best is None or b.y > best.y:
                         best = b
             if best:
                 self._perch_target = best
-                return MoveTo(best.x + 0.5, best.y + 1.0, best.z + 0.5, speed=spd), \
+                return Move(best.x + 0.5, best.y + 1.0, best.z + 0.5, speed=spd), \
                        "Climbing to perch..."
             self._napping = True
             self._nap_timer = 5.0 + random.random() * 7.0
-            return Idle(), "Curling up for a nap..."
+            return Move(entity.x, entity.y, entity.z),"Curling up for a nap..."
 
         # ── MOOD: Explore / default ───────────────────────────────────────────
-        return Wander(speed=spd * 0.5), "Prowling"
+        return Move(*self.wander_target(entity, radius=10), speed=spd * 0.5), "Prowling"

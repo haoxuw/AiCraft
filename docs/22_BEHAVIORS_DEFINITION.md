@@ -1,5 +1,12 @@
 # Behavior System: Composable Rule-Based AI
 
+> **DESIGN SKETCH — NOT IMPLEMENTED.**
+> This document describes a planned composable rule-list system where each
+> creature has multiple behavior files (one per rule). The current implementation
+> uses a single behavior file per creature. The Python API here (dict-style `self`,
+> `Follow`/`Flee` imports) is also outdated — see `docs/21_BEHAVIOR_API.md` for
+> the actual API.
+
 ## Overview
 
 Every creature's AI is an **ordered list of rules**. Each rule is a tiny Python function:

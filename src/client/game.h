@@ -61,6 +61,20 @@ private:
 	void updatePlaying(float dt, float aspect);
 	void renderPlaying(float dt, float aspect, bool skipImGui = false);
 
+	// updatePlaying helpers (game_playing.cpp)
+	bool handleConnectionReconnect(float dt);   // returns true if connection lost/handled
+	void handleGameplayInput(float dt);         // WASD, attack, item use/drop/equip
+	void updateItemPickupAnimations(float dt);  // proximity scan + pickup fly animations
+	void updateAudioAndDoors(float dt);         // creature sounds, door audio/animation
+	void updateChestUI();                       // chest open/close interaction
+
+	// renderPlaying helpers (game_render.cpp)
+	void renderWorld(float dt, float aspect);                    // chunk mesh, terrain, crosshair
+	void renderEntities(float dt, float aspect);                 // entity models, animations, damage flashes
+	void renderPickupAnimations();                               // flying item animations
+	void renderEntityEffects(float dt, float aspect);            // goal bubbles, HP bars, lightbulbs
+	void renderHUD(float dt, float aspect, bool skipImGui);      // hotbar, equipment, chest overlay, FPS
+
 	// Entity inspection overlay
 	void updateEntityInspect(float dt, float aspect);
 

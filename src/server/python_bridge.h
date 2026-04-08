@@ -131,24 +131,24 @@ public:
 	BehaviorHandle loadBehavior(const std::string& sourceCode, std::string& errorOut);
 
 	// Call decide() on a loaded behavior.
-	// Provides a WorldView context with nearby entities and block info.
+	// Provides a WorldView context with nearby entities.
 	// Returns the BehaviorAction the Python code chose.
 	// On error: returns Idle, errorOut contains the traceback.
-	// Block info passed to Python behaviors
-	struct NearbyBlock {
-		int x, y, z;
-		std::string typeId;
-		float distance;
-	};
+
+	// Block query function type — maps (x,y,z) → block type string (e.g. "base:stone").
+	// Injected per-call so Python pathfinding can query the agent's local chunk cache.
+	// Block awareness for behaviors comes from ChunkInfo (see docs/29_CHUNK_INFO.md).
+	using BlockQueryFn = std::function<std::string(int, int, int)>;
 
 	BehaviorAction callDecide(BehaviorHandle handle,
 	                           Entity& self,
 	                           const std::vector<NearbyEntity>& nearby,
-	                           const std::vector<NearbyBlock>& nearbyBlocks,
+	                           const std::vector<BlockSample>& blocks,
 	                           float dt,
 	                           float timeOfDay,
 	                           std::string& goalOut,
-	                           std::string& errorOut);
+	                           std::string& errorOut,
+	                           BlockQueryFn blockQueryFn = nullptr);
 
 	// Get the source code of a loaded behavior
 	std::string getSource(BehaviorHandle handle) const;

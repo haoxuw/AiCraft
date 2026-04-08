@@ -3,6 +3,37 @@
 A voxel game where the world is code. Players write Python to define new
 objects and actions, then upload them into a shared world.
 
+## Game Design
+
+Server holds the source of truth of the world. Many clients (human plaer or AI agents) connect to server.
+
+### MOD everything
+
+Anything and everything can be MODed, from 3D models, to stats, item effects, even AI behaviors
+
+### Conservation of Objects
+
+Playing game is fun. Playing, by definition needs a challenge.
+
+While clients can use MOD to create any OP items or behavior, we have 1 constrain:
+
+The player can't create items out of nothing -- Conservation of Mass/Energy
+
+Everything the player creates, has to consume material value of a higher sum.
+
+Meanwhile the world can slowly generate/recover energy, by 2 kinds of regeneration: 1. ecosystems regnerating (trees/plants growing); 2. Creatures/NPCs regenerating HP (naturally healing).
+
+> sometimes to make an OP item, you'll need to terraform and dig deep into the dangerous depth of the unknown
+
+At core, the game is designed to
+
+> casual fun sandbox builder
+> gather resources, refine
+> balance the damanges you delt to the ecosystem and its recovery
+> in epic mode, threats are attack your village from sky
+> but you need to take the risk gathering resources from the depth
+> build your kindom with your AI Agents
+
 ## Core Principles
 
 **Python is the game. C++ is the engine.**
@@ -13,9 +44,38 @@ networking, and collision. Nothing gameplay-specific lives in C++.
 
 **Material value is conserved.** Every object — blocks, items, entity HP,
 dropped items — carries an intrinsic `value`. No action can increase the
-world's total value. Python behaviors compose any gameplay they want using
-4 primitive action types; the server only enforces the value invariant.
+world's total value. The server enforces the value invariant.
 See `docs/28_MATERIAL_VALUE.md` and `docs/03_ACTIONS.md`.
+
+## Action Types ← Most Important Design Invariant
+
+**The server validates exactly four `ActionProposal` types. This is the
+highest-priority architectural rule and overrides any other design decision.**
+
+| # | Type | Semantics |
+|---|------|-----------|
+| 0 | `TYPE_MOVE` | Set entity velocity / direction. Server checks path is clear (no tunnelling). |
+| 1 | `TYPE_RELOCATE` | Move an Object between containers (inventory ↔ ground ↔ entity). Value is conserved — nothing created from nothing. |
+| 2 | `TYPE_CONVERT` | Transform an Object from one type to another. Value must not increase. `to_item=""` = destroy (value decreases, always allowed). Used for: breaking blocks, chopping trees, attacking (destroy HP), laying eggs (HP → item), consuming potions (item → HP effect). |
+| 3 | `TYPE_INTERACT` | Toggle interactive block state: open/close door, press button, light TNT. |
+
+Everything every entity can ever do compiles to one of these four. The server
+has no concept of "follow", "flee", "wander", "attack", "craft", etc. — those
+are Python-level strategies that emit these primitives.
+
+**There is also one infrastructure type** (not a gameplay action):
+
+| 4 | `TYPE_RELOAD_BEHAVIOR` | Hot-swap Python source for an NPC agent. Forwarded to agent process; no world mutation. |
+
+### What this means in practice
+
+- `Follow(target)` is **not** an action type. Python computes `MoveTo(target.x, target.y, target.z)`.
+- `Flee(threat)` is **not** an action type. Python computes a flee direction and returns `MoveTo`.
+- `Wander()` is **not** an action type. Python picks a random point and returns `MoveTo`.
+- The C++ bridge (`python_bridge.cpp`) translates Python action objects → the 4 primitives.
+  It must never contain AI logic (no position lookups, no direction computation).
+- `StoreItem`, `PickupItem`, `DropItem`, `BreakBlock` are all Python convenience
+  wrappers that emit `TYPE_RELOCATE` or `TYPE_CONVERT` internally.
 
 ```
 Python (the game)                    C++ (the engine)
@@ -137,25 +197,6 @@ creature = {
     "id": "base:pig", "name": "Pig", "behavior": "wander",
     "model": "pig", "walk_speed": 2.0, "max_hp": 10,
     "collision": {"min": [-0.4, 0, -0.4], "max": [0.4, 0.9, 0.4]},
-}
-```
-
-**Behavior** (`artifacts/behaviors/base/wander.py`):
-```python
-from modcraft_engine import Idle, Wander, Flee
-def decide(self, world):
-    for e in world["nearby"]:
-        if e["category"] == "player" and e["distance"] < 5:
-            return Flee(e["id"], speed=self["walk_speed"] * 1.8)
-    return Wander(speed=self["walk_speed"])
-```
-
-**Item** (`artifacts/items/base/sword.py`):
-```python
-item = {
-    "id": "base:sword", "name": "Sword", "category": "weapon",
-    "damage": 5, "range": 3.0, "on_use": "attack",
-    "model": "sword", "color": [0.7, 0.7, 0.75],
 }
 ```
 

@@ -1,4 +1,5 @@
 #include "client/gameplay.h"
+#include "shared/physics.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <algorithm>
@@ -7,8 +8,8 @@ namespace modcraft {
 
 // ================================================================
 // processMovement -- WASD / Sprint / Jump / Click-to-move / RTS
-// Reads input, builds ActionProposal::Move, sends to server.
-// Client NEVER sets entity position or velocity directly.
+// Reads input, builds ActionProposal::Move, runs client-side physics
+// (same moveAndCollide as server), then sends clientPos to server.
 // ================================================================
 void GameplayController::processMovement(float dt, GameState state,
                                          ControlManager& controls,
@@ -242,17 +243,44 @@ void GameplayController::processMovement(float dt, GameState state,
 		moveAction.jump = controls.held(Action::Jump);
 	}
 
-	// Apply velocity locally for client-side prediction.
-	player.velocity.x = moveAction.desiredVel.x;
-	player.velocity.z = moveAction.desiredVel.z;
-	if (moveAction.fly) {
-		player.velocity.y = moveAction.desiredVel.y;
-	} else if (moveAction.jump && player.onGround) {
-		player.velocity.y = jumpVelocity;
-		// Don't clear onGround here — server sets it via physics.
-		// Client trusts onGround from server's moveAndCollide result.
+	// Client-side physics: run the same moveAndCollide() as the server so
+	// movement feels local — walls block, gravity pulls, step-up works.
+	// Server accepts clientPos and normally agrees; it only snaps on large errors.
+	{
+		auto& chunks = server.chunks();
+		auto& blocks = server.blockRegistry();
+		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+			const auto& bd = blocks.get(chunks.getBlock(x, y, z));
+			return bd.solid ? bd.collision_height : 0.0f;
+		};
+
+		const auto& def = player.def();
+		MoveParams mp;
+		mp.halfWidth  = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
+		mp.height     = def.collision_box_max.y - def.collision_box_min.y;
+		mp.gravity    = 32.0f * def.gravity_scale;
+		mp.stepHeight = def.isLiving() ? 1.0f : 0.0f;
+		mp.canFly     = moveAction.fly;
+		mp.smoothStep = false;
+
+		glm::vec3 localVel = {moveAction.desiredVel.x, player.velocity.y, moveAction.desiredVel.z};
+		if (moveAction.fly)
+			localVel.y = moveAction.desiredVel.y;
+		else if (moveAction.jump && player.onGround)
+			localVel.y = jumpVelocity;
+
+		auto result = moveAndCollide(solidFn, player.position, localVel, dt, mp, player.onGround);
+		player.position = result.position;
+		player.velocity = result.velocity;
+		player.onGround = result.onGround;
+
+		// Face movement direction (same logic as server.cpp)
+		if (std::abs(localVel.x) > 0.01f || std::abs(localVel.z) > 0.01f)
+			player.yaw = glm::degrees(std::atan2(localVel.z, localVel.x));
 	}
 
+	moveAction.clientPos    = player.position;
+	moveAction.hasClientPos = true;
 	moveAction.lookPitch = camera.lookPitch;
 	moveAction.lookYaw   = camera.player.yaw;
 	server.sendAction(moveAction);

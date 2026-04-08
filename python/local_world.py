@@ -222,6 +222,18 @@ class LocalWorld(BaseModel):
         self._by_type     = by_type
         self._by_category = by_cat
 
+    # ── Block query (arbitrary world position) ────────────────────────────────
+
+    def get_block(self, x: int, y: int, z: int) -> str:
+        """Return the block type string at world position (x, y, z).
+
+        Queries the agent's local chunk cache via the C++ bridge.
+        Valid only inside decide(). Returns 'base:air' for unloaded positions.
+        Primarily used by pathfinding helpers (see python/pathfind.py).
+        """
+        from modcraft_engine import get_block as _gb
+        return _gb(int(x), int(y), int(z))
+
     # ── Spatial queries ───────────────────────────────────────────────────────
 
     def get(self, type_id: str, max_dist: float = None) -> Optional[Nearby]:

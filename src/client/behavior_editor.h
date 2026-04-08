@@ -461,7 +461,7 @@ private:
 	// Default (bare action) at the end: [default] [^] [x]  DO [action]
 	static bool renderPriority(BehaviorExpr& expr, int depth, int& idCounter) {
 		bool changed = false;
-		ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.60f, 1),
+		ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.78f, 1),
 			"Rules run top-to-bottom; first matching condition wins.");
 
 		int conditionalCount = 0;
@@ -478,7 +478,7 @@ private:
 
 			// Row header
 			if (isDefault)
-				ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.60f, 1), "[default]");
+				ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.78f, 1), "[default]");
 			else {
 				char badge[8]; snprintf(badge, sizeof(badge), "[P%d]", ++conditionalCount);
 				ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.25f, 1), "%s", badge);
@@ -511,7 +511,7 @@ private:
 				ImGui::TextColored(ImVec4(0.45f, 0.88f, 0.45f, 1), "DO  "); ImGui::SameLine();
 				changed |= renderFuncPicker(rule.children[1], false);
 			} else {
-				ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.60f, 1), "DO  "); ImGui::SameLine();
+				ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.78f, 1), "DO  "); ImGui::SameLine();
 				changed |= renderFuncPicker(rule, false);
 			}
 			ImGui::Unindent(28);

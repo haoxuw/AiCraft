@@ -119,23 +119,22 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 
 			if (bdef.string_id == BlockType::TNT) {
 				ActionProposal p;
-				p.actorId = player.id();
+				p.actorId  = player.id();
+				p.type     = ActionProposal::Interact;
 				p.blockPos = bp;
-				p.type = ActionProposal::InteractBlock;
 				m_breakCD = 0.3f;
 				server.sendAction(p);
 			} else if (state == GameState::ADMIN) {
-				// Admin: instant break
+				// Admin: instant break — drop result on ground
 				ActionProposal p;
-				p.actorId = player.id();
-				p.blockPos = bp;
-				p.type = ActionProposal::ConvertObject;
-				p.fromItem = bdef.string_id;
-				p.toItem = bdef.drop.empty() ? bdef.string_id : bdef.drop;
-				p.fromCount = 1;
-				p.toCount = 1;
-				p.convertFromBlock = true;
-				p.convertDirect = false;
+				p.actorId     = player.id();
+				p.type        = ActionProposal::Convert;
+				p.fromItem    = bdef.string_id;
+				p.toItem      = bdef.drop.empty() ? bdef.string_id : bdef.drop;
+				p.fromCount   = 1;
+				p.toCount     = 1;
+				p.convertFrom = Container::block(bp);
+				p.convertInto = Container::ground();
 				m_breakCD = 0.15f;
 				server.sendAction(p);
 			} else {
@@ -157,15 +156,14 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 
 				if (m_breaking.hits >= 3) {
 					ActionProposal p;
-					p.actorId = player.id();
-					p.blockPos = bp;
-					p.type = ActionProposal::ConvertObject;
-					p.fromItem = bdef.string_id;
-					p.toItem = bdef.drop.empty() ? bdef.string_id : bdef.drop;
-					p.fromCount = 1;
-					p.toCount = 1;
-					p.convertFromBlock = true;
-					p.convertDirect = false;
+					p.actorId     = player.id();
+					p.type        = ActionProposal::Convert;
+					p.fromItem    = bdef.string_id;
+					p.toItem      = bdef.drop.empty() ? bdef.string_id : bdef.drop;
+					p.fromCount   = 1;
+					p.toCount     = 1;
+					p.convertFrom = Container::block(bp);
+					p.convertInto = Container::ground();
 					server.sendAction(p);
 					m_breaking.active = false;
 					m_breaking.hits = 0;
@@ -183,8 +181,8 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 			if (blockStr == BlockType::Door || blockStr == BlockType::DoorOpen) {
 				// Door interaction: toggle open/closed
 				ActionProposal p;
-				p.actorId = player.id();
-				p.type = ActionProposal::InteractBlock;
+				p.actorId  = player.id();
+				p.type     = ActionProposal::Interact;
 				p.blockPos = bp;
 				server.sendAction(p);
 				m_breakCD = 0.3f;
@@ -201,16 +199,14 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 				const std::string& blockType = player.inventory->hotbar(slot);
 				if (!blockType.empty() && player.inventory->has(blockType)) {
 					ActionProposal p;
-					p.actorId = player.id();
-					p.type = ActionProposal::ConvertObject;
-					p.blockPos = m_hit->placePos;
-					p.fromItem = blockType;
-					p.toItem = blockType;
-					p.fromCount = 1;
-					p.toCount = 1;
-					p.convertFromBlock = false;
-					p.convertToBlock = true;
-					p.convertDirect = true;
+					p.actorId     = player.id();
+					p.type        = ActionProposal::Convert;
+					p.fromItem    = blockType;
+					p.toItem      = blockType;
+					p.fromCount   = 1;
+					p.toCount     = 1;
+					// convertFrom defaults to Self (take from inventory)
+					p.convertInto = Container::block(m_hit->placePos);
 					server.sendAction(p);
 					m_breakCD = 0.25f;
 					m_placeEvent.happened = true;

@@ -15,7 +15,7 @@ Entity props (optional):
   home_radius  — max wander distance from spawn before returning (default 35)
 """
 import random
-from modcraft_engine import Idle, Wander, Flee, MoveTo
+from modcraft_engine import Move
 from behavior_base import Behavior
 
 
@@ -28,12 +28,12 @@ class WanderBehavior(Behavior):
         self._resting = False
         self._rng_seeded = False
 
-    def decide(self, entity, world):
+    def decide(self, entity, local_world):
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True
 
-        self._graze_timer -= world.dt
+        self._graze_timer -= local_world.dt
         self._home = self.init_home(entity, self._home)
 
         flee_range   = float(entity.get("flee_range",   5.0))
@@ -45,47 +45,47 @@ class WanderBehavior(Behavior):
         dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
 
         # ── Evening/Night: go home ──────────────────────────────────────────
-        if self.is_night(world) or self.is_evening(world):
+        if self.is_night(local_world) or self.is_evening(local_world):
             self._resting = True
-            if self.is_night(world):
+            if self.is_night(local_world):
                 self._sleeping = True
             if dist_home > 3:
-                return MoveTo(*self._home, speed=spd), "Heading home..."
+                return Move(*self._home, speed=spd), "Heading home..."
             if self._sleeping:
-                return Idle(), "Sleeping zzz"
-            return Idle(), "Settling in for the night"
+                return Move(entity.x, entity.y, entity.z),"Sleeping zzz"
+            return Move(entity.x, entity.y, entity.z),"Settling in for the night"
 
         if self._resting:
             self._resting = False
             self._sleeping = False
-            return Idle(), "Good morning!"
+            return Move(entity.x, entity.y, entity.z),"Good morning!"
 
         if dist_home > home_radius:
-            return MoveTo(*self._home, speed=spd * 0.8), "Wandering back home"
+            return Move(*self._home, speed=spd * 0.8), "Wandering back home"
 
         # ── Flee from threats ───────────────────────────────────────────────
-        threat_p = world.nearest("player", max_dist=flee_range)
-        threat_c = world.get("base:cat",   max_dist=flee_range)
+        threat_p = local_world.nearest("player", max_dist=flee_range)
+        threat_c = local_world.get("base:cat",   max_dist=flee_range)
         threats  = [t for t in [threat_p, threat_c] if t]
         if threats:
             closest = min(threats, key=lambda t: t.distance)
-            return Flee(closest.id, speed=spd * 1.8), "Fleeing!"
+            return Move(*self.flee_pos(entity, closest), speed=spd * 1.8), "Fleeing!"
 
         # ── Stay with herd ──────────────────────────────────────────────────
-        # world.all(entity.type_id) excludes self (C++ gatherNearby skips self)
-        friends = world.all(entity.type_id)
+        # local_world.all(entity.type_id) excludes self (C++ gatherNearby skips self)
+        friends = local_world.all(entity.type_id)
         if friends:
             farthest = max(friends, key=lambda e: e.distance)
             if farthest.distance > group_range:
-                return MoveTo(farthest.x, farthest.y, farthest.z, speed=spd), \
+                return Move(farthest.x, farthest.y, farthest.z, speed=spd), \
                        "Joining herd"
 
         # ── Graze ───────────────────────────────────────────────────────────
         if self._graze_timer <= 0 and random.random() < graze_chance:
             self._graze_timer = 3.0 + random.random() * 4.0
-            return Idle(), "Grazing"
+            return Move(entity.x, entity.y, entity.z),"Grazing"
 
         if self._graze_timer > 0:
-            return Idle(), "Grazing"
+            return Move(entity.x, entity.y, entity.z),"Grazing"
 
-        return Wander(speed=spd), "Wandering"
+        return Move(*self.wander_target(entity, radius=12), speed=spd), "Wandering"

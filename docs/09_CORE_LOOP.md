@@ -1,5 +1,9 @@
 # ModCraft - Core Loop & Conceptual Separation
 
+> **DESIGN SKETCH — uses non-existent class names** (`WanderTo`, `FleeFrom`,
+> `Place`, etc.) that do not match the actual Python API. See
+> `docs/21_BEHAVIOR_API.md` for the real action types.
+
 Two orthogonal axes. **Server/Client** is about WHERE code runs. **World/Action/Object** is about WHAT the game simulates. They must not be conflated.
 
 ---

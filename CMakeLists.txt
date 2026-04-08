@@ -161,6 +161,9 @@ set(CLIENT_SOURCES
 	src/client/types.h
 	src/client/game.h
 	src/client/game.cpp
+	src/client/game_playing.cpp
+	src/client/game_render.cpp
+	src/client/game_ui.cpp
 	src/client/gameplay.h
 	src/client/gameplay.cpp
 	src/client/gameplay_movement.cpp

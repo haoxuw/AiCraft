@@ -13,6 +13,7 @@
  * and the action executor (in entity_manager.h).
  */
 
+#include "shared/action.h"
 #include "shared/entity.h"
 #include "shared/constants.h"
 #include <glm/glm.hpp>
@@ -20,6 +21,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <functional>
 #include <cmath>
 #include <algorithm>
 
@@ -33,37 +35,34 @@ class EntityManager;
 
 struct BehaviorAction {
 	enum Type {
-		Idle,           // stand still
-		Move,           // walk toward targetPos (any owned entity)
-		Relocate,       // move item between inventories
-		ConvertObject,  // transform items (toItem="" = destroy; value must not increase)
-		InteractBlock,  // toggle block state (door/button/TNT)
+		Move,      // walk toward targetPos
+		Relocate,  // move item between containers
+		Convert,   // transform item (toItem="" = destroy; value must not increase)
+		Interact,  // toggle block state (door/button/TNT)
 	};
 
-	Type type = Idle;
+	Type      type      = Move;
 	glm::vec3 targetPos = {0, 0, 0};  // for Move: destination
-	float speed = 2.0f;
+	float     speed     = 2.0f;
 
 	// Relocate
-	EntityId fromEntity = ENTITY_NONE;
-	EntityId toEntity = ENTITY_NONE;
-	bool toGround = false;
+	Container   relocateFrom;
+	Container   relocateTo;
 	std::string itemId;
-	int itemCount = 1;
+	int         itemCount  = 1;
 	std::string equipSlot;
 
-	// ConvertObject
+	// Convert
 	std::string fromItem;
-	int fromCount = 1;
-	std::string toItem;               // empty = destroy (value decreases, always ok)
-	int toCount = 1;
-	glm::ivec3 blockPos = {0, 0, 0};
-	bool convertFromBlock = false;
-	bool convertToBlock = false;
-	bool convertDirect = true;
-	EntityId convertFromEntity = ENTITY_NONE; // target entity (e.g. attack: target's HP)
+	int         fromCount  = 1;
+	std::string toItem;                // empty = destroy (value decreases, always ok)
+	int         toCount    = 1;
+	Container   convertFrom;           // where source is taken from (default = Self)
+	Container   convertInto;           // where result is placed (default = Self)
 
-	// InteractBlock (reuses blockPos)
+	// Interact (reuses no extra fields — block pos is in convertFrom for Convert,
+	// or specified explicitly via blockPos below)
+	glm::ivec3  blockPos   = {0, 0, 0};
 };
 
 // ================================================================
@@ -80,31 +79,29 @@ struct NearbyEntity {
 };
 
 // ================================================================
-// BehaviorWorldView -- what a behavior can see
+// BlockSample — a block position from ChunkInfo, passed to behaviors
 // ================================================================
 
-// Block info visible to behaviors
-struct NearbyBlock {
-	glm::ivec3 pos;
+struct BlockSample {
 	std::string typeId;
-	float distance;
+	int x, y, z;
+	float distance;  // from the querying entity
 };
+
+// ================================================================
+// BehaviorWorldView -- what a behavior can see
+// ================================================================
 
 struct BehaviorWorldView {
 	Entity& self;
 	std::vector<NearbyEntity> nearbyEntities;
-	std::vector<NearbyBlock> nearbyBlocks;
+	std::vector<BlockSample> chunkBlocks;
 	float dt;
 	float timeOfDay = 0.0f;
-
-	// Find closest block matching a type
-	const NearbyBlock* closestBlock(const std::string& type) const {
-		const NearbyBlock* best = nullptr;
-		for (auto& nb : nearbyBlocks)
-			if (nb.typeId == type && (!best || nb.distance < best->distance))
-				best = &nb;
-		return best;
-	}
+	// Block query function — maps (x,y,z) → block type string.
+	// Used by Python pathfinding (get_block()). Block awareness for
+	// behaviors is provided via ChunkInfo (see docs/29_CHUNK_INFO.md).
+	std::function<std::string(int,int,int)> blockQueryFn;
 
 	// Find closest entity matching a category
 	const NearbyEntity* closestByCategory(const std::string& cat) const {
@@ -165,7 +162,10 @@ public:
 
 	BehaviorAction decide(BehaviorWorldView& view) override {
 		view.self.goalText = "No behavior loaded";
-		return {BehaviorAction::Idle};
+		BehaviorAction a;
+		a.type      = BehaviorAction::Move;
+		a.targetPos = view.self.position;  // move to current pos = stand still
+		return a;
 	}
 };
 

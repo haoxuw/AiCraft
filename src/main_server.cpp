@@ -213,12 +213,8 @@ int main(int argc, char** argv) {
 
 	// Network broadcast callbacks
 	modcraft::ServerCallbacks cbs;
-	cbs.onBlockChange = [&](glm::ivec3 pos, modcraft::BlockId bid, uint8_t p2) {
-		modcraft::net::WriteBuffer wb;
-		wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
-		wb.writeU32(bid);
-		wb.writeU8(p2);
-		clients.broadcastToAll(modcraft::net::S_BLOCK, wb);
+	cbs.onBlockChange = [&](glm::ivec3 pos, modcraft::BlockId oldBid, modcraft::BlockId newBid, uint8_t p2) {
+		clients.onBlockChanged(pos, oldBid, newBid, p2);
 	};
 	cbs.onEntityRemove = [&](modcraft::EntityId id) {
 		modcraft::ClientId owner = server.getEntityOwner(id);

@@ -17,6 +17,7 @@
 #include "shared/block_registry.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
+#include "server/chunk_info.h"
 #include <zstd.h>
 #include "shared/constants.h"
 #include "server/behavior.h"
@@ -111,133 +112,135 @@ public:
 	void revokeEntity(EntityId id) {
 		m_controlled.erase(id);
 		m_behaviorStates.erase(id);
-		m_blockCaches.erase(id);
 		printf("[Agent:%s] Revoked entity %u\n", m_name.c_str(), id);
 	}
 
 	// Main tick: receive state, run behaviors, send actions.
 	void tick(float dt) {
 		if (!m_connected) return;
-
-		// 1. Receive all pending messages from server
 		if (!receiveMessages()) {
-			printf("[Agent:%s] Disconnected from server\n", m_name.c_str());
 			m_connected = false;
 			return;
 		}
 
-		// 2. Run behavior decisions for controlled entities
 		for (EntityId eid : m_controlled) {
-			auto it = m_entities.find(eid);
-			if (it == m_entities.end() || !it->second) continue;
-			Entity& e = *it->second;
-			if (e.removed) continue;
+			auto entIt = m_entities.find(eid);
+			if (entIt == m_entities.end() || entIt->second->removed) continue;
+			Entity& e = *entIt->second;
 
 			auto& state = m_behaviorStates[eid];
 
-			// Load behavior on first use
+			// Lazy-load behavior
 			if (!state.behavior) {
-				std::string behaviorId = e.getProp<std::string>(Prop::BehaviorId, "");
-				state.behavior = loadBehavior(behaviorId);
+				std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
+				state.behavior = loadBehavior(bid);
+				state.decideTimer = 0;
 			}
 
-			// ── Passive timer: decide every decide_interval seconds (default 1 s) ─
-			// ── Active trigger: forceDecide set by HP drop or time-of-day event ─
-			float decideInterval = e.getProp<float>("decide_interval", 1.0f);
+			// Decide timer: fire at ~4 Hz or when forceDecide set
 			state.decideTimer -= dt;
-			bool shouldDecide = (state.decideTimer <= 0) || state.forceDecide;
-
-			if (shouldDecide) {
-				const char* trigger = state.forceDecide ? "event" : "timer";
-				state.decideTimer = decideInterval;
-				state.forceDecide = false;
-
-				auto nearby = gatherNearby(e, m_entities, 64.0f);
-
-				BlockTypeFn blockQuery = [&](int x, int y, int z) -> std::string {
-					BlockId bid = getBlock(x, y, z);
-					return m_blocks.get(bid).string_id;
-				};
-				// Use entity's work_radius prop as block scan radius (capped at 100).
-				int blockScanRadius = std::min(100,
-					(int)e.getProp<float>("work_radius", 80.0f));
-				auto blocks = getKnownBlocks(e, blockScanRadius, blockQuery, m_blockCaches[eid], dt);
-
-				BehaviorWorldView view{e, nearby, blocks, dt, m_worldTime};
-
-				// ── Time the decide() call ────────────────────────────────────────
-				auto t0 = std::chrono::high_resolution_clock::now();
-				state.currentAction = state.behavior->decide(view);
-				auto t1 = std::chrono::high_resolution_clock::now();
-				float decideMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
-
-				state.lastDecideMs   = decideMs;
-				state.totalDecideMs += decideMs;
-				state.decideCount++;
-				state.justDecided = true;
-
-				// Warn on slow decisions (> 20 ms is unusual for simple Python behaviors)
-				if (decideMs > 20.0f) {
-					float avgMs = state.totalDecideMs / (float)state.decideCount;
-					printf("[PERF][Agent:%s] Entity #%u decide() %.1f ms  avg %.1f ms  "
-					       "trigger=%s  n=%d\n",
-					       m_name.c_str(), eid, decideMs, avgMs, trigger, state.decideCount);
+			if (state.decideTimer > 0 && !state.forceDecide) {
+				// Not time to decide — but still send Move to keep physics smooth
+				if (state.currentAction.type == BehaviorAction::Move) {
+					std::vector<ActionProposal> proposals;
+					behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
+					for (auto& p : proposals) {
+						net::WriteBuffer wb;
+						net::serializeAction(wb, p);
+						net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
+					}
 				}
-
-				// Log only when goal text changes
-				if (!e.goalText.empty() && e.goalText != m_lastLoggedGoal[eid]) {
-					m_lastLoggedGoal[eid] = e.goalText;
-					time_t now = time(nullptr);
-					struct tm* ti = localtime(&now);
-					char ts[10];
-					strftime(ts, sizeof(ts), "%H:%M:%S", ti);
-					std::string typeName = e.typeId();
-					auto col = typeName.find(':');
-					if (col != std::string::npos) typeName = typeName.substr(col + 1);
-					if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
-					printf("[%s][Agent:%s] %s #%u: %s  (decide=%.1f ms, trigger=%s)\n",
-					       ts, m_name.c_str(), typeName.c_str(), eid,
-					       e.goalText.c_str(), decideMs, trigger);
-				}
+				continue;
 			}
 
-			// One-shot actions (Relocate, ConvertObject, InteractBlock): send only on new decision.
-			// Move/Idle: send every tick for smooth 50Hz movement.
-			bool isOneShot = (state.currentAction.type != BehaviorAction::Move &&
-			                  state.currentAction.type != BehaviorAction::Idle);
-			if (!isOneShot || state.justDecided) {
-				std::vector<ActionProposal> proposals;
-				behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
-				for (auto& p : proposals) {
-					p.goalText = e.goalText;
-					net::WriteBuffer wb;
-					net::serializeAction(wb, p);
-					net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
+			// Fire decide()
+			state.decideTimer = 0.25f;  // 4 Hz
+			state.forceDecide = false;
+
+			// Build NearbyEntities from m_entities cache
+			auto nearby = gatherNearby(e, m_entities, 64.0f);
+
+			// Build block samples from nearby ChunkInfo entries
+			std::vector<BlockSample> chunkBlocks;
+			{
+				struct ChunkDist { ChunkPos pos; float dist; };
+				std::vector<ChunkDist> nearbyCi;
+				for (auto& [cp, ci] : m_chunkInfoCache) {
+					glm::vec3 chunkCenter = {
+						cp.x * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
+						cp.y * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
+						cp.z * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
+					};
+					float d = glm::length(e.position - chunkCenter);
+					if (d < 96.0f)  // ~6 chunks radius
+						nearbyCi.push_back({cp, d});
 				}
+				std::sort(nearbyCi.begin(), nearbyCi.end(),
+				          [](const ChunkDist& a, const ChunkDist& b) { return a.dist < b.dist; });
+
+				// Per-type cap: keep at most K=8 nearest samples across all chunks
+				std::unordered_map<std::string, int> typeSampleCount;
+				for (auto& cd : nearbyCi) {
+					auto ciIt = m_chunkInfoCache.find(cd.pos);
+					if (ciIt == m_chunkInfoCache.end()) continue;
+					for (auto& [typeId, entry] : ciIt->second.entries) {
+						int& used = typeSampleCount[typeId];
+						if (used >= 8) continue;
+						for (auto& s : entry.samples) {
+							if (used >= 8) break;
+							glm::vec3 sp = {(float)s.x + 0.5f, (float)s.y + 0.5f, (float)s.z + 0.5f};
+							float dist = glm::length(e.position - sp);
+							chunkBlocks.push_back({typeId, s.x, s.y, s.z, dist});
+							used++;
+						}
+					}
+				}
+				// Sort overall nearest-first
+				std::sort(chunkBlocks.begin(), chunkBlocks.end(),
+				          [](const BlockSample& a, const BlockSample& b) { return a.distance < b.distance; });
+			}
+
+			// blockQueryFn for Python pathfinding get_block()
+			auto blockQueryFn = [this](int x, int y, int z) -> std::string {
+				BlockId bid = getBlock(x, y, z);
+				return m_blocks.get(bid).string_id;
+			};
+
+			// Build world view and run decide()
+			BehaviorWorldView view{e, nearby, chunkBlocks, dt, m_worldTime, blockQueryFn};
+
+			auto t0 = std::chrono::steady_clock::now();
+			state.currentAction = state.behavior->decide(view);
+			float ms = std::chrono::duration<float, std::milli>(
+			               std::chrono::steady_clock::now() - t0).count();
+			state.lastDecideMs   = ms;
+			state.totalDecideMs += ms;
+			state.decideCount++;
+			state.justDecided = true;
+
+			// Log goal changes
+			auto& lastGoal = m_lastLoggedGoal[eid];
+			if (e.goalText != lastGoal) {
+				lastGoal = e.goalText;
+			}
+
+			// Send proposals
+			std::vector<ActionProposal> proposals;
+			behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
+			for (auto& p : proposals) {
+				net::WriteBuffer wb;
+				net::serializeAction(wb, p);
+				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
 			}
 			state.justDecided = false;
 		}
 
-		// Periodic heartbeat: show all controlled entities, goal, and perf stats
+		// Periodic heartbeat
 		m_statusTimer += dt;
 		if (m_statusTimer >= 10.0f) {
 			m_statusTimer = 0.0f;
-			printf("[Agent:%s] Heartbeat —", m_name.c_str());
-			for (EntityId eid : m_controlled) {
-				auto it = m_entities.find(eid);
-				if (it == m_entities.end() || !it->second) continue;
-				auto& st = m_behaviorStates[eid];
-				const char* goal = it->second->goalText.empty()
-				                   ? "waiting" : it->second->goalText.c_str();
-				if (st.decideCount > 0) {
-					float avgMs = st.totalDecideMs / (float)st.decideCount;
-					printf(" [#%u: %s | decide avg=%.1f ms last=%.1f ms n=%d]",
-					       eid, goal, avgMs, st.lastDecideMs, st.decideCount);
-				} else {
-					printf(" [#%u: %s]", eid, goal);
-				}
-			}
-			printf("\n");
+			printf("[Agent:%s] Heartbeat — %zu entities, %zu chunks cached\n",
+			       m_name.c_str(), m_controlled.size(), m_chunkInfoCache.size());
 		}
 	}
 
@@ -345,6 +348,27 @@ private:
 		case net::S_CHUNK_EVICT: {
 			ChunkPos cp = {rb.readI32(), rb.readI32(), rb.readI32()};
 			m_chunks.erase(cp);
+			m_chunkInfoCache.erase(cp);
+			break;
+		}
+		case net::S_CHUNK_INFO:
+		case net::S_CHUNK_INFO_DELTA: {
+			ChunkPos cp;
+			auto wireEntries = net::readChunkInfoPayload(rb, cp);
+			AgentChunkInfo& ci = m_chunkInfoCache[cp];
+			ci.pos = cp;
+			if (type == net::S_CHUNK_INFO) {
+				// Full replace
+				ci.entries.clear();
+			}
+			// For both S_CHUNK_INFO and S_CHUNK_INFO_DELTA: replace entries from payload
+			// (delta sends the full rebuilt chunk info, so same handling applies)
+			for (auto& we : wireEntries) {
+				if (we.count <= 0)
+					ci.entries.erase(we.typeId);
+				else
+					ci.entries[we.typeId] = {we.count, we.samples};
+			}
 			break;
 		}
 		case net::S_REMOVE: {
@@ -533,10 +557,17 @@ private:
 	EntityManager m_entityDefs;  // type registry only
 	EntityDef m_defaultDef;
 
+	// --- ChunkInfo cache (received from server via S_CHUNK_INFO / S_CHUNK_INFO_DELTA) ---
+	struct AgentChunkInfo {
+		ChunkPos pos;
+		struct Entry { int count; std::vector<glm::ivec3> samples; };
+		std::unordered_map<std::string, Entry> entries;
+	};
+	std::unordered_map<ChunkPos, AgentChunkInfo, ChunkPosHash> m_chunkInfoCache;
+
 	// --- Controlled entities ---
 	std::unordered_set<EntityId> m_controlled;
 	std::unordered_map<EntityId, AgentBehaviorState> m_behaviorStates;
-	std::unordered_map<EntityId, BlockCache> m_blockCaches;
 	std::unordered_map<EntityId, std::string> m_lastLoggedGoal;
 	BehaviorStore m_behaviorStore;
 };

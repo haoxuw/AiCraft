@@ -49,7 +49,7 @@ enum class ActionRejectCode : uint32_t {
 // Server-side callbacks — used by dedicated server (main_server.cpp) to broadcast
 // world state changes to all connected clients over TCP.
 struct ServerCallbacks {
-	std::function<void(glm::ivec3 pos, BlockId bid, uint8_t p2)> onBlockChange; // block placed/broken
+	std::function<void(glm::ivec3 pos, BlockId oldBid, BlockId newBid, uint8_t p2)> onBlockChange; // block placed/broken
 	std::function<void(EntityId id)> onEntityRemove;                     // entity despawned
 	std::function<void(EntityId id, const Inventory&)> onInventoryChange; // inventory updated
 };
@@ -369,7 +369,7 @@ public:
 	// Receive an action from a client
 	// Submit action directly without ownership check (test-only / agent-internal use).
 	void receiveActionDirect(const ActionProposal& action) {
-		if (action.type == ActionProposal::ReloadBehavior) {
+		if (!action.behaviorSource.empty()) {
 			m_pendingReloads.push_back(action);
 			return;
 		}
@@ -402,9 +402,9 @@ public:
 			if (!isOwned) return;
 		}
 
-		// ReloadBehavior is not a game action — it's a control message.
-		// Store it separately for the network layer to forward to bots.
-		if (action.type == ActionProposal::ReloadBehavior) {
+		// behaviorSource non-empty = hot-reload control message, not a game action.
+		// Store separately for the network layer to forward to agent clients.
+		if (!action.behaviorSource.empty()) {
 			m_pendingReloads.push_back(action);
 			return;
 		}
@@ -454,7 +454,7 @@ public:
 		if (m_activeBlockTimer >= 0.05f) {
 			m_world->tickActiveBlocks(m_activeBlockTimer, [&](int bx, int by, int bz, BlockId bid) {
 				glm::ivec3 pos{bx, by, bz};
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, bid, 0);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, BLOCK_AIR, bid, 0);
 			});
 			m_activeBlockTimer = 0;
 		}

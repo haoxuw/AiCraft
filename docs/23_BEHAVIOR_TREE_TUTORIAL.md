@@ -1,5 +1,11 @@
 # Behavior Tree Tutorial
 
+> **DESIGN SKETCH — NOT IMPLEMENTED.**
+> This document describes a planned visual behavior tree editor. The editor
+> does not currently exist. The compiled Python examples here also use a stale
+> dict-style API and import `Follow`/`Flee` from `modcraft_engine` — neither
+> is correct. See `docs/21_BEHAVIOR_API.md` for the actual behavior API.
+
 The behavior tree editor lets you define entity AI visually using
 IF/THEN/ELSE trees. No coding required — pick conditions and actions
 from dropdown menus. The system compiles your tree to Python automatically.

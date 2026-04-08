@@ -18,7 +18,7 @@ Tree structure:
   ELSE                           → Wander
 """
 import random
-from modcraft_engine import Idle, Wander, Follow, Flee, MoveTo, ConvertObject
+from modcraft_engine import Move, Convert, Ground
 from behavior_base import Behavior
 
 
@@ -30,63 +30,63 @@ class BraveChickenBehavior(Behavior):
         self._resting = False
         self._egg_cooldown = 0.0
 
-    def decide(self, entity, world):
-        self._egg_cooldown -= world.dt
+    def decide(self, entity, local_world):
+        self._egg_cooldown -= local_world.dt
         self._home = self.init_home(entity, self._home)
 
         spd       = entity.walk_speed
         dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
 
         # Fear dogs — highest priority, even at night (survival)
-        dog = world.get("base:dog", max_dist=6)
+        dog = local_world.get("base:dog", max_dist=6)
         if dog:
-            return Flee(dog.id, speed=6.0), "EEK! Dog!"
+            return Move(*self.flee_pos(entity, dog), speed=6.0), "EEK! Dog!"
 
         # ── Evening/Night: roost ──────────────────────────────────────────────
-        if self.is_night(world) or self.is_evening(world):
+        if self.is_night(local_world) or self.is_evening(local_world):
             self._resting = True
-            if self.is_night(world):
+            if self.is_night(local_world):
                 self._sleeping = True
             if dist_home > 3:
-                return MoveTo(*self._home, speed=spd), "Heading home to roost..."
+                return Move(*self._home, speed=spd), "Heading home to roost..."
             if self._sleeping:
-                return Idle(), "Roosting zzz"
+                return Move(entity.x, entity.y, entity.z),"Roosting zzz"
             # Seek elevated perch if at home during evening
             for perch_type in ("base:wood", "base:fence", "base:planks"):
-                b = world.get(perch_type)
+                b = local_world.get(perch_type)
                 if b and b.y > entity.y + 1.5 and b.distance < 8:
-                    return MoveTo(b.x + 0.5, b.y + 1.0, b.z + 0.5, speed=spd), \
+                    return Move(b.x + 0.5, b.y + 1.0, b.z + 0.5, speed=spd), \
                            "Seeking roost"
-            return Idle(), "Settling down"
+            return Move(entity.x, entity.y, entity.z),"Settling down"
 
         if self._resting:
             self._resting = False
             self._sleeping = False
-            return Idle(), "BAWK! Good morning!"
+            return Move(entity.x, entity.y, entity.z),"BAWK! Good morning!"
 
         # Chase cats! (brave chicken is aggressive toward felines — daytime only)
-        cat = world.get("base:cat", max_dist=8)
+        cat = local_world.get("base:cat", max_dist=8)
         if cat:
-            return Follow(cat.id, speed=spd * 1.5, min_distance=1.0), "BAWK! Chasing cat!"
+            return Move(cat.x, cat.y, cat.z, speed=spd * 1.5), "BAWK! Chasing cat!"
 
         # Follow player and occasionally lay eggs when near them
-        player = world.nearest("player")
+        player = local_world.nearest("player")
         if player:
             if player.distance < 3 and self._egg_cooldown <= 0 \
                     and random.random() < 0.15 and entity.hp > 2:
                 self._egg_cooldown = 8.0
-                return (ConvertObject(from_item="hp", from_count=2,
+                return (Convert(from_item="hp", from_count=2,
                                      to_item="base:egg", to_count=1,
-                                     direct=False),
+                                     convert_into=Ground()),
                         "*happy cluck* Laid an egg!")
             if player.distance > 3:
-                return Follow(player.id, speed=3.0, min_distance=2.0), "Following player"
-            return Idle(), "Sitting by player"
+                return Move(player.x, player.y, player.z, speed=3.0), "Following player"
+            return Move(entity.x, entity.y, entity.z),"Sitting by player"
 
         # Rejoin flock if same-type animals are nearby and we're far from them
-        friends = world.all(entity.type_id)
+        friends = local_world.all(entity.type_id)
         if friends and all(e.distance > 4 for e in friends):
             nearest = min(friends, key=lambda e: e.distance)
-            return Follow(nearest.id), "Rejoining flock"
+            return Move(nearest.x, nearest.y, nearest.z, speed=spd), "Rejoining flock"
 
-        return Wander(speed=spd), "Strutting around"
+        return Move(*self.wander_target(entity, radius=10), speed=spd), "Strutting around"

@@ -24,50 +24,81 @@
 namespace modcraft {
 
 // ================================================================
+// Container — identifies any storage that holds items.
+//
+// Used by Relocate (from/to) and Convert (source/destination).
+// Everything that can hold items — entity inventory, world block,
+// the ground, or the actor itself — is a Container.
+// ================================================================
+
+struct Container {
+	enum class Kind : uint8_t {
+		Self   = 0,  // actor's own inventory (default)
+		Ground = 1,  // world ground — spawn or collect dropped items
+		Entity = 2,  // another entity's inventory (by entityId)
+		Block  = 3,  // world block at pos (mine source or placement target)
+	};
+
+	Kind       kind     = Kind::Self;
+	EntityId   entityId = ENTITY_NONE;
+	glm::ivec3 pos      = {0, 0, 0};
+
+	static Container self()                             { return {}; }
+	static Container ground()                           { Container c; c.kind = Kind::Ground; return c; }
+	static Container entity(EntityId id)                { Container c; c.kind = Kind::Entity; c.entityId = id; return c; }
+	static Container block(glm::ivec3 p)                { Container c; c.kind = Kind::Block;  c.pos = p; return c; }
+	static Container block(int x, int y, int z)         { return block({x, y, z}); }
+};
+
+// ================================================================
 // ActionProposal — what an entity wants to happen
 // ================================================================
 
 struct ActionProposal {
 	enum Type {
-		Move,           // velocity-based move (any owned entity)
-		Relocate,       // move item between inventories (no creation)
-		ConvertObject,  // transform items (value must not increase; toItem="" = destroy)
-		InteractBlock,  // toggle block state (door/button/TNT)
-		ReloadBehavior, // infrastructure: hot-swap behavior source
+		Move,      // velocity-based move (any owned entity)
+		Relocate,  // move item between containers (value conserved, no creation)
+		Convert,   // transform item from one type to another (value must not increase)
+		Interact,  // toggle interactive block state (door, button, TNT)
 	};
 
-	Type type = Move;
+	Type     type    = Move;
 	EntityId actorId = ENTITY_NONE;
 
 	// Move: velocity set by client (behavior_executor computes from target pos)
-	glm::vec3 desiredVel = {0, 0, 0};  // also: toss direction for Relocate+toGround
-	bool jump = false;
-	bool fly = false;
-	float jumpVelocity = 17.0f;
-	float lookPitch = 0.0f;
-	float lookYaw = 0.0f;
+	glm::vec3 desiredVel  = {0, 0, 0};  // also: toss direction for Relocate with Ground dest
+	bool      jump        = false;
+	bool      fly         = false;
+	float     jumpVelocity= 17.0f;
+	float     lookPitch   = 0.0f;
+	float     lookYaw     = 0.0f;
 	std::string goalText;
+	// Client-reported position. Server accepts this as authoritative if within
+	// CLIENT_POS_TOLERANCE, eliminating client/server position drift and overshoot.
+	// Always set by player client and agent clients. Only honoured for Move actions.
+	glm::vec3 clientPos    = {0, 0, 0};
+	bool      hasClientPos = false;
 
-	// Relocate: move item between any two inventory references
-	EntityId fromEntity = ENTITY_NONE;  // source entity (item entity, chest, etc.)
-	EntityId toEntity = ENTITY_NONE;    // dest entity (ENTITY_NONE = actor's own inventory)
-	bool toGround = false;              // true = spawn dropped item entity at feet
-	std::string itemId;                 // item type to relocate
-	int itemCount = 1;
-	std::string equipSlot;              // non-empty = equip to this equipment slot
+	// Relocate: move item from one container to another (no creation)
+	Container   relocateFrom;            // source container (default = Self)
+	Container   relocateTo;              // destination container (default = Self)
+	std::string itemId;                  // item type to relocate
+	int         itemCount  = 1;
+	std::string equipSlot;               // non-empty = equip to this slot
 
-	// ConvertObject: transform items; toItem="" means destroy (value decreases → always ok)
-	std::string fromItem;               // source item type or "hp"
-	int fromCount = 1;
-	std::string toItem;                 // dest item type or "hp" (empty = destroy)
-	int toCount = 1;
-	glm::ivec3 blockPos = {0, 0, 0};   // shared: block position for ConvertObject AND InteractBlock
-	bool convertFromBlock = false;      // source is world block at blockPos
-	bool convertToBlock = false;        // dest is world block at blockPos
-	bool convertDirect = true;          // false = spawn result as dropped item on ground
-	EntityId convertFromEntity = ENTITY_NONE; // act on another entity's inventory (e.g. attack: target's HP)
+	// Convert: transform fromItem → toItem (value must not increase; toItem="" = destroy)
+	std::string fromItem;                // source item type or "hp"
+	int         fromCount  = 1;
+	std::string toItem;                  // result item type or "hp" (empty = destroy)
+	int         toCount    = 1;
+	Container   convertFrom;             // where source is taken from (default = Self)
+	Container   convertInto;             // where result is placed (default = Self)
 
-	// ReloadBehavior: hot-swap Python behavior source code
+	// Interact: toggle block state (door/button/TNT)
+	glm::ivec3  blockPos   = {0, 0, 0};
+
+	// Hot-reload: non-empty behaviorSource triggers a Python behavior swap.
+	// This is a control message, not a game action — handled before the switch.
 	std::string behaviorSource;
 };
 

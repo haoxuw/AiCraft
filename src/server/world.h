@@ -3,6 +3,7 @@
 #include "shared/types.h"
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
+#include "server/chunk_info.h"
 #include "server/entity_manager.h"
 #include "server/world_template.h"
 #include "shared/action.h"
@@ -75,6 +76,12 @@ public:
 		std::lock_guard<std::mutex> lock(m_mutex);
 		auto it = m_chunks.find(pos);
 		return (it != m_chunks.end()) ? it->second.get() : nullptr;
+	}
+
+	// Get ChunkInfo for a chunk (built during generateChunk, always present if chunk exists).
+	ChunkInfo* getChunkInfo(ChunkPos pos) {
+		auto it = m_chunkInfos.find(pos);
+		return it != m_chunkInfos.end() ? &it->second : nullptr;
 	}
 
 	// Batch lookup: fetch center chunk + all 26 neighbors in a single lock.
@@ -280,6 +287,8 @@ private:
 		m_template->generate(*chunk, pos, m_seed, blocks);
 		auto* ptr = chunk.get();
 		m_chunks[pos] = std::move(chunk);
+		// Build ChunkInfo via stride scan — runs once per chunk, O(CHUNK_VOLUME).
+		m_chunkInfos[pos] = ChunkInfo::buildStride(pos, *ptr, blocks);
 		return ptr;
 	}
 
@@ -288,6 +297,7 @@ private:
 	std::shared_ptr<WorldTemplate> m_template;
 	std::mutex m_mutex;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunks;
+	std::unordered_map<ChunkPos, ChunkInfo, ChunkPosHash> m_chunkInfos;
 };
 
 } // namespace modcraft

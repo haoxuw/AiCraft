@@ -16,15 +16,16 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) 
 }
 BehaviorAction PythonBridge::callDecide(BehaviorHandle, Entity&,
                                          const std::vector<NearbyEntity>&,
-                                         const std::vector<NearbyBlock>&,
-                                         float, float, std::string&, std::string& err) {
+                                         const std::vector<BlockSample>&,
+                                         float, float, std::string&, std::string& err,
+                                         BlockQueryFn) {
 	err = "Python not available in web build";
-	return {BehaviorAction::Idle};
+	{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
 }
 std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
 void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
-BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { return {BehaviorAction::Idle}; }
+BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { { BehaviorAction a; a.type = BehaviorAction::Move; return a; } }
 bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
 } // namespace modcraft
 #else
@@ -53,30 +54,38 @@ struct PyEntityInfo {
 	int hp;
 };
 
+// Python-visible container reference (mirrors C++ Container struct)
+struct PyContainer {
+	int      kind      = 0;              // 0=Self, 1=Ground, 2=Entity, 3=Block
+	EntityId entity_id = ENTITY_NONE;
+	float    x = 0, y = 0, z = 0;       // block position (kind=Block)
+};
+
 // Python-visible action types (what a behavior can return)
 struct PyAction {
-	std::string type;    // "idle", "move_to", "relocate", "convert_object", "interact_block"
-	float x = 0, y = 0, z = 0;  // target position (Move, InteractBlock)
+	std::string type;    // "move", "relocate", "convert", "interact"
+	float x = 0, y = 0, z = 0;  // target position (Move, Interact)
 	float speed = 2.0f;
 
 	// Relocate
-	EntityId from_entity = ENTITY_NONE;
-	EntityId to_entity = ENTITY_NONE;
-	bool to_ground = false;
+	PyContainer relocate_from;
+	PyContainer relocate_to;
 	std::string item_id;
-	int item_count = 1;
+	int         item_count = 1;
 	std::string equip_slot;
 
-	// ConvertObject
+	// Convert
 	std::string from_item;
-	int from_count = 1;
+	int         from_count = 1;
 	std::string to_item;
-	int to_count = 1;
-	bool convert_from_block = false;
-	bool convert_to_block = false;
-	bool convert_direct = true;
-	EntityId convert_from_entity = ENTITY_NONE;  // act on another entity (e.g. attack: target HP)
+	int         to_count   = 1;
+	PyContainer convert_from;   // source container (default = Self)
+	PyContainer convert_into;   // dest container (default = Self)
 };
+
+// Per-call block query — set before callDecide(), cleared after.
+// Safe for single-threaded agent processes (one callDecide at a time).
+static std::function<std::string(int,int,int)> s_blockQueryFn;
 
 PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	m.doc() = "ModCraft engine bridge — exposes world view to Python behaviors";
@@ -91,6 +100,22 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 		.def_readonly("distance", &PyEntityInfo::distance)
 		.def_readonly("hp", &PyEntityInfo::hp);
 
+	py::class_<PyContainer>(m, "Container")
+		.def(py::init<>())
+		.def_readwrite("kind",      &PyContainer::kind)
+		.def_readwrite("entity_id", &PyContainer::entity_id)
+		.def_readwrite("x", &PyContainer::x)
+		.def_readwrite("y", &PyContainer::y)
+		.def_readwrite("z", &PyContainer::z);
+
+	// Container factory functions — used as convert_from / convert_into / relocate_from / relocate_to
+	m.def("Self",   []()                          { PyContainer c; c.kind = 0; return c; });
+	m.def("Ground", []()                          { PyContainer c; c.kind = 1; return c; });
+	m.def("Entity", [](EntityId id)               { PyContainer c; c.kind = 2; c.entity_id = id; return c; },
+	      py::arg("entity_id"));
+	m.def("Block",  [](float x, float y, float z) { PyContainer c; c.kind = 3; c.x = x; c.y = y; c.z = z; return c; },
+	      py::arg("x"), py::arg("y"), py::arg("z"));
+
 	py::class_<PyAction>(m, "Action")
 		.def(py::init<>())
 		.def_readwrite("type", &PyAction::type)
@@ -99,90 +124,57 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 		.def_readwrite("z", &PyAction::z)
 		.def_readwrite("speed", &PyAction::speed)
 		// Relocate
-		.def_readwrite("from_entity", &PyAction::from_entity)
-		.def_readwrite("to_entity", &PyAction::to_entity)
-		.def_readwrite("to_ground", &PyAction::to_ground)
-		.def_readwrite("item_id", &PyAction::item_id)
-		.def_readwrite("item_count", &PyAction::item_count)
-		.def_readwrite("equip_slot", &PyAction::equip_slot)
-		// ConvertObject
-		.def_readwrite("from_item", &PyAction::from_item)
-		.def_readwrite("from_count", &PyAction::from_count)
-		.def_readwrite("to_item", &PyAction::to_item)
-		.def_readwrite("to_count", &PyAction::to_count)
-		.def_readwrite("convert_from_block", &PyAction::convert_from_block)
-		.def_readwrite("convert_to_block", &PyAction::convert_to_block)
-		.def_readwrite("convert_direct", &PyAction::convert_direct)
-		.def_readwrite("convert_from_entity", &PyAction::convert_from_entity);
+		.def_readwrite("relocate_from", &PyAction::relocate_from)
+		.def_readwrite("relocate_to",   &PyAction::relocate_to)
+		.def_readwrite("item_id",       &PyAction::item_id)
+		.def_readwrite("item_count",    &PyAction::item_count)
+		.def_readwrite("equip_slot",    &PyAction::equip_slot)
+		// Convert
+		.def_readwrite("from_item",    &PyAction::from_item)
+		.def_readwrite("from_count",   &PyAction::from_count)
+		.def_readwrite("to_item",      &PyAction::to_item)
+		.def_readwrite("to_count",     &PyAction::to_count)
+		.def_readwrite("convert_from", &PyAction::convert_from)
+		.def_readwrite("convert_into", &PyAction::convert_into);
 
-	// Convenience action constructors
-	m.def("Idle", []() {
-		PyAction a; a.type = "idle"; return a;
-	});
-	// Wander: kept as convenience — Python computes target, returns MoveTo
-	m.def("Wander", [](float speed) {
-		PyAction a; a.type = "wander"; a.speed = speed; return a;
-	}, py::arg("speed") = 2.0f);
-	m.def("MoveTo", [](float x, float y, float z, float speed) {
-		PyAction a; a.type = "move_to"; a.x = x; a.y = y; a.z = z; a.speed = speed; return a;
+	// Core action constructors — these are the only write primitives the server accepts.
+	// High-level helpers (BreakBlock, StoreItem, PickupItem, DropItem) are Python wrappers
+	// in python/actions.py that map to Relocate/Convert.
+	m.def("Move", [](float x, float y, float z, float speed) {
+		PyAction a; a.type = "move"; a.x = x; a.y = y; a.z = z; a.speed = speed; return a;
 	}, py::arg("x"), py::arg("y"), py::arg("z"), py::arg("speed") = 2.0f);
-	// Legacy Follow/Flee: map to MoveTo in callDecide
-	m.def("Follow", [](EntityId target, float speed, float min_dist) {
-		PyAction a; a.type = "follow"; a.from_entity = target; a.speed = speed; a.from_count = (int)min_dist; return a;
-	}, py::arg("target"), py::arg("speed") = 2.0f, py::arg("min_distance") = 1.5f);
-	m.def("Flee", [](EntityId target, float speed) {
-		PyAction a; a.type = "flee"; a.from_entity = target; a.speed = speed; return a;
-	}, py::arg("target"), py::arg("speed") = 4.0f);
-	m.def("Relocate", [](EntityId from_entity, EntityId to_entity, bool to_ground,
+	m.def("Relocate", [](PyContainer relocate_from, PyContainer relocate_to,
 	                     const std::string& item_id, int count, const std::string& equip_slot) {
 		PyAction a; a.type = "relocate";
-		a.from_entity = from_entity; a.to_entity = to_entity; a.to_ground = to_ground;
+		a.relocate_from = relocate_from; a.relocate_to = relocate_to;
 		a.item_id = item_id; a.item_count = count; a.equip_slot = equip_slot;
 		return a;
-	}, py::arg("from_entity") = ENTITY_NONE, py::arg("to_entity") = ENTITY_NONE,
-	   py::arg("to_ground") = false, py::arg("item_id") = "",
-	   py::arg("count") = 1, py::arg("equip_slot") = "");
-	m.def("ConvertObject", [](const std::string& from_item, int from_count,
-	                          const std::string& to_item, int to_count,
-	                          py::object block_pos, bool convert_from_block,
-	                          bool convert_to_block, bool direct,
-	                          EntityId convert_from_entity) {
-		PyAction a; a.type = "convert_object";
+	}, py::arg("relocate_from") = PyContainer{}, py::arg("relocate_to") = PyContainer{},
+	   py::arg("item_id") = "", py::arg("count") = 1, py::arg("equip_slot") = "");
+	m.def("Convert", [](const std::string& from_item, int from_count,
+	                    const std::string& to_item, int to_count,
+	                    PyContainer convert_from, PyContainer convert_into) {
+		PyAction a; a.type = "convert";
 		a.from_item = from_item; a.from_count = from_count;
-		a.to_item = to_item; a.to_count = to_count;
-		a.convert_from_block = convert_from_block;
-		a.convert_to_block = convert_to_block;
-		a.convert_direct = direct;
-		a.convert_from_entity = convert_from_entity;
-		if (!block_pos.is_none()) {
-			auto tup = block_pos.cast<py::tuple>();
-			a.x = tup[0].cast<float>();
-			a.y = tup[1].cast<float>();
-			a.z = tup[2].cast<float>();
-		}
+		a.to_item   = to_item;   a.to_count   = to_count;
+		a.convert_from = convert_from;
+		a.convert_into = convert_into;
 		return a;
-	}, py::arg("from_item"), py::arg("from_count") = 1,
+	}, py::arg("from_item") = "", py::arg("from_count") = 1,
 	   py::arg("to_item") = "", py::arg("to_count") = 1,
-	   py::arg("block_pos") = py::none(), py::arg("convert_from_block") = false,
-	   py::arg("convert_to_block") = false, py::arg("direct") = true,
-	   py::arg("convert_from_entity") = ENTITY_NONE);
-	m.def("InteractBlock", [](int x, int y, int z) {
-		PyAction a; a.type = "interact_block"; a.x = (float)x; a.y = (float)y; a.z = (float)z; return a;
+	   py::arg("convert_from") = PyContainer{}, py::arg("convert_into") = PyContainer{});
+	m.def("Interact", [](int x, int y, int z) {
+		PyAction a; a.type = "interact"; a.x = (float)x; a.y = (float)y; a.z = (float)z; return a;
 	}, py::arg("x"), py::arg("y"), py::arg("z"));
-	// Convenience aliases
-	m.def("BreakBlock", [](int x, int y, int z) {
-		PyAction a; a.type = "convert_object"; a.convert_from_block = true;
-		a.x = (float)x; a.y = (float)y; a.z = (float)z; return a;
-	}, py::arg("x"), py::arg("y"), py::arg("z"));
-	m.def("DropItem", [](const std::string& itemType, int count) {
-		PyAction a; a.type = "relocate"; a.to_ground = true; a.item_id = itemType; a.item_count = count; return a;
-	}, py::arg("item_type"), py::arg("count") = 1);
-	m.def("PickupItem", [](EntityId entityId) {
-		PyAction a; a.type = "relocate"; a.from_entity = entityId; return a;
-	}, py::arg("entity_id"));
-	m.def("StoreItem", [](EntityId entityId) {
-		PyAction a; a.type = "relocate"; a.to_entity = entityId; return a;
-	}, py::arg("chest_entity_id"));
+
+	// get_block(x, y, z) → str — query block type from the agent's local chunk cache.
+	// Valid only inside decide(); returns "base:air" if called outside callDecide().
+	// Use this for pathfinding or any logic that needs to probe arbitrary world positions.
+	m.def("get_block", [](int x, int y, int z) -> std::string {
+		if (s_blockQueryFn) return s_blockQueryFn(x, y, z);
+		return "base:air";
+	}, py::arg("x"), py::arg("y"), py::arg("z"),
+	   "Query block type string at world position (x,y,z). Call only inside decide().");
 }
 
 // ================================================================
@@ -229,16 +221,22 @@ void PythonBridge::shutdown() {
 	printf("[PythonBridge] Shutdown.\n");
 }
 
+// Helper: translate PyContainer → C++ Container
+static Container pyContainerToC(const PyContainer& pc) {
+	switch (pc.kind) {
+	case 1:  return Container::ground();
+	case 2:  return Container::entity(pc.entity_id);
+	case 3:  return Container::block((int)pc.x, (int)pc.y, (int)pc.z);
+	default: return Container::self();
+	}
+}
+
 // Goal string synthesized from action type when the behavior doesn't provide one.
 static const char* goalForAction(const std::string& actionType) {
-	if (actionType == "idle")               return "Idle";
-	if (actionType == "wander")             return "Wandering";
-	if (actionType == "move_to")            return "Moving...";
-	if (actionType == "follow")             return "Following";
-	if (actionType == "flee")               return "Fleeing!";
-	if (actionType == "relocate")           return "Relocating item";
-	if (actionType == "convert_object")     return "Converting";
-	if (actionType == "interact_block")     return "Interacting";
+	if (actionType == "move")     return "Moving...";
+	if (actionType == "relocate") return "Relocating item";
+	if (actionType == "convert")  return "Converting";
+	if (actionType == "interact") return "Interacting";
 	return "Active";
 }
 
@@ -252,8 +250,9 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 		// Isolated namespace per behavior (one per entity instance).
 		py::dict ns;
 
-		// Import engine actions + Behavior base class into the namespace.
+		// Import engine actions + convenience wrappers + Behavior base class.
 		py::exec("from modcraft_engine import *", ns);
+		py::exec("from actions import *", ns);
 		py::exec("from behavior_base import Behavior", ns);
 
 		// Execute the behavior source code.
@@ -294,15 +293,19 @@ del _i, _n, _c
 BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
                                          Entity& self,
                                          const std::vector<NearbyEntity>& nearby,
-                                         const std::vector<NearbyBlock>& nearbyBlocks,
+                                         const std::vector<BlockSample>& blocks,
                                          float dt,
                                          float timeOfDay,
                                          std::string& goalOut,
-                                         std::string& errorOut) {
+                                         std::string& errorOut,
+                                         BlockQueryFn blockQueryFn) {
+	// Inject block query for this call so Python's get_block() works.
+	s_blockQueryFn = blockQueryFn ? std::move(blockQueryFn) : [](int,int,int){ return std::string("base:air"); };
+	struct Cleanup { ~Cleanup() { s_blockQueryFn = nullptr; } } _cleanup;
 	auto it = m_behaviors.find(handle);
 	if (it == m_behaviors.end()) {
 		errorOut = "Invalid behavior handle";
-		return {BehaviorAction::Idle};
+		{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
 	}
 
 	try {
@@ -354,16 +357,16 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		} else {
 			pySelf["inventory"] = py::dict();
 		}
-		// Build nearby blocks list for Python
+		// Build block list from ChunkInfo samples (see docs/29_CHUNK_INFO.md).
 		py::list pyBlocks;
-		for (auto& nb : nearbyBlocks) {
-			py::dict block;
-			block["x"] = nb.x;
-			block["y"] = nb.y;
-			block["z"] = nb.z;
-			block["type"] = nb.typeId;
-			block["distance"] = nb.distance;
-			pyBlocks.append(block);
+		for (auto& b : blocks) {
+			py::dict bd;
+			bd["type"]     = b.typeId;
+			bd["x"]        = b.x;
+			bd["y"]        = b.y;
+			bd["z"]        = b.z;
+			bd["distance"] = b.distance;
+			pyBlocks.append(bd);
 		}
 
 		// Build raw dicts (intermediate form — consumed by LocalWorld._from_raw /
@@ -389,7 +392,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			goalOut = "ERROR: decide() must return (action, goal_str) — got " +
 			          std::string(py::str(result));
 			errorOut = goalOut;
-			return {BehaviorAction::Idle};
+			{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
 		}
 		py::tuple tup = result.cast<py::tuple>();
 		py::object pyActionObj = tup[0];
@@ -409,76 +412,36 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		action.targetPos = {pyAction.x, pyAction.y, pyAction.z};
 		action.speed = pyAction.speed;
 
-		if (pyAction.type == "idle") {
-			action.type = BehaviorAction::Idle;
-		} else if (pyAction.type == "wander") {
-			// Wander: handled by executor as random movement (map to Idle, executor randomizes)
-			action.type = BehaviorAction::Idle;
-		} else if (pyAction.type == "move_to") {
+		if (pyAction.type == "move") {
 			action.type = BehaviorAction::Move;
-		} else if (pyAction.type == "follow") {
-			// Follow: resolve target entity position, then Move
-			action.type = BehaviorAction::Move;
-			if (pyAction.from_entity != ENTITY_NONE) {
-				for (auto& ne : nearby) {
-					if (ne.id == pyAction.from_entity) {
-						float minDist = (pyAction.from_count > 0) ? (float)pyAction.from_count : 1.5f;
-						float dist = glm::length(ne.position - self.position);
-						if (dist > minDist) {
-							action.targetPos = ne.position;
-						} else {
-							action.type = BehaviorAction::Idle;
-						}
-						break;
-					}
-				}
-			}
-		} else if (pyAction.type == "flee") {
-			// Flee: move away from target entity
-			action.type = BehaviorAction::Move;
-			if (pyAction.from_entity != ENTITY_NONE) {
-				for (auto& ne : nearby) {
-					if (ne.id == pyAction.from_entity) {
-						glm::vec3 away = self.position - ne.position;
-						away.y = 0;
-						float len = glm::length(away);
-						if (len > 0.1f) away /= len;
-						action.targetPos = self.position + away * 12.0f;
-						break;
-					}
-				}
-			}
 		} else if (pyAction.type == "relocate") {
-			action.type = BehaviorAction::Relocate;
-			action.fromEntity = pyAction.from_entity;
-			action.toEntity = pyAction.to_entity;
-			action.toGround = pyAction.to_ground;
-			action.itemId = pyAction.item_id;
-			action.itemCount = pyAction.item_count;
-			action.equipSlot = pyAction.equip_slot;
-		} else if (pyAction.type == "convert_object") {
-			action.type = BehaviorAction::ConvertObject;
-			action.fromItem = pyAction.from_item;
-			action.fromCount = pyAction.from_count;
-			action.toItem = pyAction.to_item;
-			action.toCount = pyAction.to_count;
-			action.blockPos = {(int)pyAction.x, (int)pyAction.y, (int)pyAction.z};
-			action.convertFromBlock = pyAction.convert_from_block;
-			action.convertToBlock = pyAction.convert_to_block;
-			action.convertDirect = pyAction.convert_direct;
-			action.convertFromEntity = pyAction.convert_from_entity;
-		} else if (pyAction.type == "interact_block") {
-			action.type = BehaviorAction::InteractBlock;
-			action.blockPos = {(int)pyAction.x, (int)pyAction.y, (int)pyAction.z};
+			action.type        = BehaviorAction::Relocate;
+			action.relocateFrom= pyContainerToC(pyAction.relocate_from);
+			action.relocateTo  = pyContainerToC(pyAction.relocate_to);
+			action.itemId      = pyAction.item_id;
+			action.itemCount   = pyAction.item_count;
+			action.equipSlot   = pyAction.equip_slot;
+		} else if (pyAction.type == "convert") {
+			action.type        = BehaviorAction::Convert;
+			action.fromItem    = pyAction.from_item;
+			action.fromCount   = pyAction.from_count;
+			action.toItem      = pyAction.to_item;
+			action.toCount     = pyAction.to_count;
+			action.convertFrom = pyContainerToC(pyAction.convert_from);
+			action.convertInto = pyContainerToC(pyAction.convert_into);
+		} else if (pyAction.type == "interact") {
+			action.type    = BehaviorAction::Interact;
+			action.blockPos= {(int)pyAction.x, (int)pyAction.y, (int)pyAction.z};
 		} else {
-			action.type = BehaviorAction::Idle;
+			// Unknown type — stand still
+			action.type = BehaviorAction::Move;
 		}
 
 		return action;
 
 	} catch (const py::error_already_set& e) {
 		errorOut = e.what();
-		return {BehaviorAction::Idle};
+		{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
 	}
 }
 
@@ -506,23 +469,20 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 	auto& bridge = pythonBridge();
 	if (!bridge.isInitialized()) {
 		view.self.goalText = "Python not initialized";
-		return {BehaviorAction::Idle};
+		{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
 	}
 
-	// Convert behavior-level NearbyBlock to PythonBridge::NearbyBlock
-	std::vector<PythonBridge::NearbyBlock> blocks;
-	blocks.reserve(view.nearbyBlocks.size());
-	for (auto& nb : view.nearbyBlocks)
-		blocks.push_back({nb.pos.x, nb.pos.y, nb.pos.z, nb.typeId, nb.distance});
-
 	std::string goal, error;
-	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities, blocks, view.dt, view.timeOfDay, goal, error);
+	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities,
+	                                view.chunkBlocks,
+	                                view.dt, view.timeOfDay, goal, error,
+	                                view.blockQueryFn);
 
 	if (!error.empty()) {
 		view.self.goalText = "ERROR: " + error.substr(0, 80);
 		view.self.hasError = true;
 		view.self.errorText = error;
-		return {BehaviorAction::Idle};
+		{ BehaviorAction a; a.type = BehaviorAction::Move; return a; }
 	}
 
 	// Goal is always set by bridge (synthesized if behavior returned empty).

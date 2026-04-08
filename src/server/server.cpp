@@ -18,7 +18,17 @@ void GameServer::resolveActions(float dt) {
 			Entity* e = m_world->entities.get(p.actorId);
 			if (!e) break;
 
-			// Server validates: clamp to entity's max speed
+			// Accept client-reported position if within tolerance.
+			// Client tracks its own position; server only corrects on large errors.
+			// Server still runs collision after this, so wall-phasing is impossible.
+			constexpr float CLIENT_POS_TOLERANCE = 8.0f;
+			if (p.hasClientPos) {
+				float dist = glm::length(p.clientPos - e->position);
+				if (dist < CLIENT_POS_TOLERANCE)
+					e->position = p.clientPos;
+			}
+
+			// Clamp to entity's max speed (anti-cheat)
 			float maxSpeed = e->def().walk_speed;
 			if (maxSpeed > 0) {
 				float len = glm::length(glm::vec2(p.desiredVel.x, p.desiredVel.z));
@@ -29,21 +39,21 @@ void GameServer::resolveActions(float dt) {
 				}
 			}
 
-			// Server sets fly_mode (client only requests it)
 			e->setProp("fly_mode", p.fly);
 
 			e->velocity.x = p.desiredVel.x;
 			e->velocity.z = p.desiredVel.z;
 
-			// All entities face their movement direction (unified for RPG, RTS, AI)
-			if (std::abs(p.desiredVel.x) > 0.01f || std::abs(p.desiredVel.z) > 0.01f) {
+			if (std::abs(p.desiredVel.x) > 0.01f || std::abs(p.desiredVel.z) > 0.01f)
 				e->yaw = glm::degrees(std::atan2(p.desiredVel.z, p.desiredVel.x));
-			}
 			e->pitch = p.lookPitch;
 
 			if (p.fly) {
 				e->velocity.y = p.desiredVel.y;
-			} else if (p.jump && e->onGround) {
+			} else if (!p.hasClientPos && p.jump && e->onGround) {
+				// Only apply jump if client didn't run its own physics.
+				// When hasClientPos, the client already handled jump via moveAndCollide —
+				// re-applying would double-jump from the already-elevated clientPos.
 				e->velocity.y = p.jumpVelocity;
 				e->onGround = false;
 			}
@@ -65,7 +75,7 @@ void GameServer::resolveActions(float dt) {
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 			};
 
-			if (p.toGround) {
+			if (p.relocateTo.kind == Container::Kind::Ground) {
 				// Drop item from actor inventory as a spawned item entity
 				if (!actor->inventory) break;
 				std::string dropType = p.itemId;
@@ -118,12 +128,20 @@ void GameServer::resolveActions(float dt) {
 				break;
 			}
 
-			if (p.toEntity != ENTITY_NONE) {
-				// Store: transfer all items from actor to chest entity
+			if (p.relocateTo.kind == Container::Kind::Entity) {
+				// Store: transfer all items from actor to chest entity.
+				// Entity must be within 2 blocks (prevents storing through walls).
 				if (!actor->inventory) break;
-				Entity* chestEnt = m_world->entities.get(p.toEntity);
+				Entity* chestEnt = m_world->entities.get(p.relocateTo.entityId);
 				if (!chestEnt || chestEnt->def().category != Category::Chest) break;
 				if (!chestEnt->inventory) break;
+
+				float storeDist = glm::length(chestEnt->position - actor->position);
+				if (storeDist > 2.0f) {
+					printf("[Server] StoreItem DENIED (entity %u): %.1f blocks from chest (max 2)\n",
+						actor->id(), storeDist);
+					break;
+				}
 
 				glm::ivec3 cp = {(int)std::floor(chestEnt->position.x),
 				                 (int)std::floor(chestEnt->position.y),
@@ -155,9 +173,9 @@ void GameServer::resolveActions(float dt) {
 				break;
 			}
 
-			if (p.fromEntity != ENTITY_NONE) {
+			if (p.relocateFrom.kind == Container::Kind::Entity) {
 				// Pickup from entity (item entity or chest)
-				Entity* src = m_world->entities.get(p.fromEntity);
+				Entity* src = m_world->entities.get(p.relocateFrom.entityId);
 				if (!src || src->removed) { nudgeR(ActionRejectCode::SourceEntityGone); break; }
 				if (!actor->inventory) break;
 
@@ -199,14 +217,14 @@ void GameServer::resolveActions(float dt) {
 			break;
 		}
 
-		case ActionProposal::ConvertObject: {
+		case ActionProposal::Convert: {
 			Entity* actor = m_world->entities.get(p.actorId);
 			if (!actor) break;
 
 			// Nudge: re-send current inventory so client corrects any optimistic state.
 			// Deduplicated per tick — at most one resend per entity regardless of spam.
 			auto nudge = [&](ActionRejectCode code) {
-				printf("[Server] ConvertObject rejected entity=%u from=%s to=%s code=%u\n",
+				printf("[Server] Convert rejected entity=%u from=%s to=%s code=%u\n",
 				       p.actorId, p.fromItem.c_str(), p.toItem.c_str(), (uint32_t)code);
 				if (nudgedThisTick.count(p.actorId)) return;
 				nudgedThisTick.insert(p.actorId);
@@ -215,8 +233,8 @@ void GameServer::resolveActions(float dt) {
 			};
 
 			// Act on another entity's HP or inventory (e.g. attack: destroy target's HP)
-			if (p.convertFromEntity != ENTITY_NONE) {
-				Entity* target = m_world->entities.get(p.convertFromEntity);
+			if (p.convertFrom.kind == Container::Kind::Entity) {
+				Entity* target = m_world->entities.get(p.convertFrom.entityId);
 				if (!target || target->removed) break;
 
 				if (p.fromItem == "hp") {
@@ -265,18 +283,21 @@ void GameServer::resolveActions(float dt) {
 				break;
 			}
 
+			const bool fromBlock = (p.convertFrom.kind == Container::Kind::Block);
+			const bool intoBlock = (p.convertInto.kind == Container::Kind::Block);
+
 			// Pre-validate placement target BEFORE consuming source (prevents item loss on race)
-			if (p.convertToBlock) {
-				auto& pp = p.blockPos;
+			if (intoBlock) {
+				auto& pp = p.convertInto.pos;
 				if (m_world->getBlock(pp.x, pp.y, pp.z) != BLOCK_AIR)  { nudge(ActionRejectCode::PlacementTargetOccupied); break; }
 				if (!m_world->blocks.find(p.toItem))                    { nudge(ActionRejectCode::UnknownBlockType);        break; }
 				if (!m_world->getChunk(worldToChunk(pp.x, pp.y, pp.z))){ nudge(ActionRejectCode::ChunkNotLoaded);          break; }
 			}
 
 			// Consume source
-			if (p.convertFromBlock) {
+			if (fromBlock) {
 				// Source is a world block
-				auto& bp = p.blockPos;
+				auto& bp = p.convertFrom.pos;
 				BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
 				if (bid == BLOCK_AIR) { nudge(ActionRejectCode::SourceBlockGone); break; }
 				const BlockDef& bdef = m_world->blocks.get(bid);
@@ -289,22 +310,22 @@ void GameServer::resolveActions(float dt) {
 				if (!c) break;
 				c->set(((bp.x % 16) + 16) % 16, ((bp.y % 16) + 16) % 16,
 				       ((bp.z % 16) + 16) % 16, BLOCK_AIR);
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(bp, BLOCK_AIR, 0);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(bp, bid, BLOCK_AIR, 0);
 			} else if (p.fromItem == "hp") {
 				// Consume HP
 				int hp = actor->hp();
 				actor->setHp(std::max(hp - p.fromCount, 0));
 			} else {
-				// Consume from inventory
+				// Consume from actor's inventory (Self)
 				if (!actor->inventory) break;
 				if (!actor->inventory->has(p.fromItem)) { nudge(ActionRejectCode::ItemNotInInventory); break; }
 				actor->inventory->remove(p.fromItem, p.fromCount);
 			}
 
 			// Produce output
-			if (p.convertToBlock) {
-				// Place block at blockPos (pre-validated above — target is guaranteed clear)
-				auto& pp = p.blockPos;
+			if (intoBlock) {
+				// Place block (pre-validated above — target is guaranteed clear)
+				auto& pp = p.convertInto.pos;
 				const BlockDef* placedDef = m_world->blocks.find(p.toItem);
 				ChunkPos cp = worldToChunk(pp.x, pp.y, pp.z);
 				Chunk* c = m_world->getChunk(cp);
@@ -353,7 +374,7 @@ void GameServer::resolveActions(float dt) {
 				BlockId placedBid = m_world->blocks.getId(p.toItem);
 				c->set(((pp.x % 16) + 16) % 16, ((pp.y % 16) + 16) % 16,
 				       ((pp.z % 16) + 16) % 16, placedBid, placeP2);
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pp, placedBid, placeP2);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pp, BLOCK_AIR, placedBid, placeP2);
 
 				if (placedDef->behavior == BlockBehavior::Active)
 					m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
@@ -363,19 +384,19 @@ void GameServer::resolveActions(float dt) {
 				if (hp < actor->def().max_hp)
 					actor->setHp(std::min(hp + p.toCount, actor->def().max_hp));
 			} else if (!p.toItem.empty()) {
-				if (p.convertDirect) {
-					// Add directly to inventory
+				if (p.convertInto.kind == Container::Kind::Ground) {
+					// Spawn as item entity near actor or at the source block position
+					glm::vec3 spawnPos = fromBlock
+						? (glm::vec3(p.convertFrom.pos) + glm::vec3(0.5f, 0.5f, 0.5f))
+						: (actor->position + glm::vec3(0, 0.3f, 0));
+					m_world->entities.spawn(EntityType::ItemEntity, spawnPos,
+						{{Prop::ItemType, p.toItem}, {Prop::Count, p.toCount}, {Prop::Age, 0.0f}});
+				} else {
+					// Default: add directly to actor's inventory (Self)
 					if (actor->inventory) {
 						actor->inventory->add(p.toItem, p.toCount);
 						actor->inventory->autoPopulateHotbar();
 					}
-				} else {
-					// Spawn as item entity near actor or at blockPos
-					glm::vec3 spawnPos = p.convertFromBlock
-						? (glm::vec3(p.blockPos) + glm::vec3(0.5f, 0.5f, 0.5f))
-						: (actor->position + glm::vec3(0, 0.3f, 0));
-					m_world->entities.spawn(EntityType::ItemEntity, spawnPos,
-						{{Prop::ItemType, p.toItem}, {Prop::Count, p.toCount}, {Prop::Age, 0.0f}});
 				}
 			}
 
@@ -385,7 +406,7 @@ void GameServer::resolveActions(float dt) {
 			break;
 		}
 
-		case ActionProposal::InteractBlock: {
+		case ActionProposal::Interact: {
 			auto& bp = p.blockPos;
 
 			BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
@@ -419,9 +440,10 @@ void GameServer::resolveActions(float dt) {
 				if (!c) return;
 				int lx = ((x%16)+16)%16, ly = ((y%16)+16)%16, lz = ((z%16)+16)%16;
 				uint8_t p2 = c->getParam2(lx, ly, lz);
+				BlockId oldId = c->get(lx, ly, lz);  // read BEFORE set
 				c->set(lx, ly, lz, id, p2);
 				glm::ivec3 pos{x, y, z};
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, id, p2);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, oldId, id, p2);
 			};
 
 			setBlock(bp.x, bp.y, bp.z, newId);
@@ -439,9 +461,8 @@ void GameServer::resolveActions(float dt) {
 			break;
 		}
 
-		case ActionProposal::ReloadBehavior:
-			// Already handled before proposals queue, but kept for completeness.
-			break;
+		// default: unknown type — ignore
+		default: break;
 
 		} // switch
 	} // for

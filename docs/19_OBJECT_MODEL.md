@@ -101,16 +101,24 @@ A Python function that decides what a creature does each tick. Reads the world (
 
 ```python
 # artifacts/behaviors/base/wander.py
+from modcraft_engine import MoveTo
+from behavior_base import Behavior
 
-def decide(self, world):
-    """Called 4 times per second."""
-    players = [e for e in world["nearby"] if e.category == "player"]
-    if players and players[0].distance < 5:
-        self["goal"] = "Fleeing!"
-        return Flee(players[0].id, speed=self["walk_speed"] * 1.8)
+class WanderBehavior(Behavior):
+    def decide(self, entity, world):
+        """Called 4 times per second. Returns (action, goal_str)."""
+        player = world.nearest("player", max_dist=5)
+        if player:
+            # Flee: compute direction away from player, return MoveTo
+            dx = entity.x - player.x
+            dz = entity.z - player.z
+            d = (dx*dx + dz*dz) ** 0.5 or 1
+            return MoveTo(entity.x + dx/d * 12, entity.y,
+                          entity.z + dz/d * 12,
+                          speed=entity.walk_speed * 1.8), "Fleeing!"
 
-    self["goal"] = "Wandering"
-    return Wander(speed=self["walk_speed"])
+        tx, ty, tz = self.wander_target(entity, radius=8)
+        return MoveTo(tx, ty, tz, speed=entity.walk_speed), "Wandering"
 ```
 
 Behaviors are pure Python files stored in the artifact store. Any creature references a behavior by name. Players can edit any behavior from the in-game code editor.
@@ -248,17 +256,22 @@ item = {
 
 ## Behavior Available Actions
 
-What a behavior's `decide()` can return:
+What a behavior's `decide()` can return (import from `modcraft_engine`):
 
 | Action | Parameters | Description |
 |--------|-----------|-------------|
-| `Idle()` | duration | Stand still |
-| `Wander(speed)` | speed | Random walk |
+| `Idle()` | — | Stand still |
 | `MoveTo(x, y, z, speed)` | position, speed | Walk to position |
-| `Follow(entity_id, speed, min_distance)` | target, speed, distance | Follow an entity |
-| `Flee(entity_id, speed)` | target, speed | Run away from entity |
-| `Attack(entity_id)` | target | Melee attack |
-| `UseItem(item_id)` | item | Use an item from inventory |
+| `Convert(from_item, to_item, block_pos, …)` | items, position | Chop/mine/attack |
+| `StoreItem(chest_entity_id)` | chest id | Deposit inventory into chest (≤2 blocks) |
+| `PickupItem(entity_id)` | item entity id | Pick up a dropped item |
+| `DropItem(item_type, count)` | item, count | Drop item at feet |
+| `BreakBlock(x, y, z)` | position | Mine a block |
+| `Interact(x, y, z)` | position | Open door, press button |
+
+Wandering, following, and fleeing are **not** engine primitives — they are
+Python logic in the behavior that computes a target position and returns `MoveTo`.
+The `Behavior` base class provides a `wander_target(entity, radius)` helper.
 
 ---
 

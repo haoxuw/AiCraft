@@ -25,6 +25,8 @@
  * C_RELOAD_BEHAVIOR 0x0005 Hot-reload behavior [u32 entityId][str source]
  * C_HOTBAR        0x0006  Hotbar slot assign [u32 slot][str itemId]
  * C_RESYNC_CHUNK  0x0007  Request chunk re-send [i32 cx][i32 cy][i32 cz]  (v2)
+ * C_SET_GOAL      0x0008  Set navigation goal [u32 entityId][f32 x][f32 y][f32 z]
+ * C_CANCEL_GOAL   0x0009  Cancel active goal  [u32 entityId]
  *
  * S_WELCOME       0x1001  [u32 entityId][vec3 spawn]
  * S_ENTITY        0x1002  EntityState (see serializeEntityState)
@@ -64,6 +66,8 @@ enum MsgType : uint32_t {
 	C_RELOAD_BEHAVIOR = 0x0005,  // [u32 entityId][str sourceCode]
 	C_HOTBAR          = 0x0006,  // [u32 slot][str itemId]
 	C_RESYNC_CHUNK    = 0x0007,  // request chunk re-send: [i32 cx][i32 cy][i32 cz]  (v2)
+	C_SET_GOAL        = 0x0008,  // [u32 entityId][f32 x][f32 y][f32 z]
+	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
 
 	// Server → Client
 	S_WELCOME         = 0x1001,
@@ -79,6 +83,10 @@ enum MsgType : uint32_t {
 	S_ERROR           = 0x100B,
 	S_CHUNK_EVICT     = 0x100E,  // discard chunk from client cache: [i32 cx][i32 cy][i32 cz]  (v2)
 	S_CHUNK_Z         = 0x100F,  // zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
+	S_CHUNK_INFO      = 0x1010,  // full block census for a chunk: sent to agent clients only
+	S_CHUNK_INFO_DELTA= 0x1011,  // updated block census after a block change in a chunk
+	S_SET_GOAL        = 0x1012,  // [f32 x][f32 y][f32 z]  — forwarded to agent controlling entity
+	S_CANCEL_GOAL     = 0x1013,  // (no payload) — clear active goal
 };
 
 // Message header (8 bytes)
@@ -158,6 +166,20 @@ private:
 // Serialize/deserialize ActionProposal
 // ================================================================
 
+inline void writeContainer(WriteBuffer& buf, const Container& c) {
+	buf.writeU8((uint8_t)c.kind);
+	buf.writeU32(c.entityId);
+	buf.writeIVec3(c.pos);
+}
+
+inline Container readContainer(ReadBuffer& buf) {
+	Container c;
+	c.kind     = (Container::Kind)buf.readU8();
+	c.entityId = buf.readU32();
+	c.pos      = buf.readIVec3();
+	return c;
+}
+
 inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	buf.writeU32((uint32_t)a.type);
 	buf.writeU32(a.actorId);
@@ -169,60 +191,61 @@ inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	buf.writeF32(a.lookPitch);
 	buf.writeF32(a.lookYaw);
 	buf.writeString(a.goalText);
+	buf.writeVec3(a.clientPos);
+	buf.writeBool(a.hasClientPos);
 	// Relocate
-	buf.writeU32(a.fromEntity);
-	buf.writeU32(a.toEntity);
-	buf.writeBool(a.toGround);
+	writeContainer(buf, a.relocateFrom);
+	writeContainer(buf, a.relocateTo);
 	buf.writeString(a.itemId);
 	buf.writeI32(a.itemCount);
 	buf.writeString(a.equipSlot);
-	// ConvertObject
+	// Convert
 	buf.writeString(a.fromItem);
 	buf.writeI32(a.fromCount);
 	buf.writeString(a.toItem);
 	buf.writeI32(a.toCount);
+	writeContainer(buf, a.convertFrom);
+	writeContainer(buf, a.convertInto);
+	// Interact
 	buf.writeIVec3(a.blockPos);
-	buf.writeBool(a.convertFromBlock);
-	buf.writeBool(a.convertToBlock);
-	buf.writeBool(a.convertDirect);
-	buf.writeU32(a.convertFromEntity);
-	// ReloadBehavior
+	// Hot-reload side-channel
 	buf.writeString(a.behaviorSource);
 }
 
 inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	ActionProposal a;
-	a.type = (ActionProposal::Type)buf.readU32();
+	a.type    = (ActionProposal::Type)buf.readU32();
 	a.actorId = buf.readU32();
 	// Move
-	a.desiredVel = buf.readVec3();
-	a.jump = buf.readBool();
-	a.fly = buf.readBool();
-	a.jumpVelocity = buf.readF32();
-	a.lookPitch = buf.readF32();
-	a.lookYaw   = buf.readF32();
-	a.goalText  = buf.readString();
+	a.desiredVel  = buf.readVec3();
+	a.jump        = buf.readBool();
+	a.fly         = buf.readBool();
+	a.jumpVelocity= buf.readF32();
+	a.lookPitch   = buf.readF32();
+	a.lookYaw     = buf.readF32();
+	a.goalText    = buf.readString();
+	if (!buf.hasMore()) return a;
+	a.clientPos    = buf.readVec3();
+	a.hasClientPos = buf.readBool();
 	// Relocate
 	if (!buf.hasMore()) return a;
-	a.fromEntity = buf.readU32();
-	a.toEntity   = buf.readU32();
-	a.toGround   = buf.readBool();
-	a.itemId     = buf.readString();
-	a.itemCount  = buf.readI32();
-	a.equipSlot  = buf.readString();
-	// ConvertObject
+	a.relocateFrom = readContainer(buf);
+	a.relocateTo   = readContainer(buf);
+	a.itemId       = buf.readString();
+	a.itemCount    = buf.readI32();
+	a.equipSlot    = buf.readString();
+	// Convert
 	if (!buf.hasMore()) return a;
-	a.fromItem          = buf.readString();
-	a.fromCount         = buf.readI32();
-	a.toItem            = buf.readString();
-	a.toCount           = buf.readI32();
-	a.blockPos          = buf.readIVec3();
-	a.convertFromBlock  = buf.readBool();
-	a.convertToBlock    = buf.readBool();
-	a.convertDirect     = buf.readBool();
+	a.fromItem    = buf.readString();
+	a.fromCount   = buf.readI32();
+	a.toItem      = buf.readString();
+	a.toCount     = buf.readI32();
+	a.convertFrom = readContainer(buf);
+	a.convertInto = readContainer(buf);
+	// Interact
 	if (!buf.hasMore()) return a;
-	a.convertFromEntity = buf.readU32();
-	// ReloadBehavior
+	a.blockPos = buf.readIVec3();
+	// Hot-reload side-channel
 	if (!buf.hasMore()) return a;
 	a.behaviorSource = buf.readString();
 	return a;
@@ -287,6 +310,61 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 		e.stringProps.push_back({k, v});
 	}
 	return e;
+}
+
+// ================================================================
+// ChunkInfo wire protocol helpers
+//
+// S_CHUNK_INFO / S_CHUNK_INFO_DELTA share the same payload format:
+//   i32 cx, i32 cy, i32 cz
+//   u32 entry_count
+//   for each entry:
+//       str  type_id
+//       u32  count
+//       u8   sample_count  (≤ ChunkInfo::K = 8)
+//       for each sample:
+//           i32 x, i32 y, i32 z
+// ================================================================
+
+struct ChunkInfoWireEntry {
+	std::string typeId;
+	int count = 0;
+	std::vector<glm::ivec3> samples;
+};
+
+inline void writeChunkInfoPayload(WriteBuffer& buf, ChunkPos pos,
+                                   const std::vector<ChunkInfoWireEntry>& entries) {
+	buf.writeI32(pos.x);
+	buf.writeI32(pos.y);
+	buf.writeI32(pos.z);
+	buf.writeU32((uint32_t)entries.size());
+	for (auto& e : entries) {
+		buf.writeString(e.typeId);
+		buf.writeU32((uint32_t)e.count);
+		buf.writeU8((uint8_t)e.samples.size());
+		for (auto& s : e.samples)
+			buf.writeIVec3(s);
+	}
+}
+
+inline std::vector<ChunkInfoWireEntry> readChunkInfoPayload(ReadBuffer& buf, ChunkPos& posOut) {
+	posOut.x = buf.readI32();
+	posOut.y = buf.readI32();
+	posOut.z = buf.readI32();
+	uint32_t entryCount = buf.readU32();
+	std::vector<ChunkInfoWireEntry> entries;
+	entries.reserve(entryCount);
+	for (uint32_t i = 0; i < entryCount && buf.hasMore(); i++) {
+		ChunkInfoWireEntry e;
+		e.typeId = buf.readString();
+		e.count  = (int)buf.readU32();
+		uint8_t sampleCount = buf.readU8();
+		e.samples.reserve(sampleCount);
+		for (uint8_t s = 0; s < sampleCount && buf.hasMore(); s++)
+			e.samples.push_back(buf.readIVec3());
+		entries.push_back(std::move(e));
+	}
+	return entries;
 }
 
 } // namespace modcraft::net

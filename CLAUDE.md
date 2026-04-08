@@ -8,6 +8,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 These rules are NON-NEGOTIABLE. Every code change must respect them.
 
+### Rule 0: The Server Accepts Exactly Four Action Types ← HIGHEST PRIORITY
+
+**This is the most important architectural invariant. It overrides any other
+design consideration.**
+
+The server validates exactly four `ActionProposal` types — nothing more, nothing
+less. Every action any entity can ever take must compile down to one of these:
+
+```
+TYPE_MOVE     (0) — set entity velocity/direction (no tunnelling)
+TYPE_RELOCATE (1) — move an Object between containers (inventory ↔ ground ↔ entity);
+                    value is conserved, nothing created from nothing
+TYPE_CONVERT  (2) — transform an Object from one type to another (value must not
+                    increase); consuming → convert to nothing; casting effect →
+                    convert item to hp/effect; empty to_item = destroy
+TYPE_INTERACT (3) — toggle interactive block state (door, button, TNT fuse)
+```
+
+**Consequences:**
+- `Follow`, `Flee`, `Wander` are **NOT action types** — they are Python helpers
+  that compute a target position and return `MoveTo` (TYPE_MOVE).
+- All AI decision logic (follow, flee, wander, pathfind) lives in Python behaviors,
+  never in the C++ bridge or server.
+- The C++ bridge (`python_bridge.cpp`) must never resolve or interpret high-level
+  action names — it only translates the 4 primitives into `ActionProposal`.
+
+See `docs/00_OVERVIEW.md` § Action Types and `docs/03_ACTIONS.md`.
+
 ### Rule 1: Python Is the Game, C++ Is the Engine
 
 **All game content and gameplay rules are defined in Python. C++ only provides
@@ -16,6 +44,11 @@ the engine (physics, networking, rendering).** See `docs/00_OVERVIEW.md`.
 - Creature definitions, behaviors, items, blocks, effects, models → Python artifacts
 - **NEVER hardcode gameplay constants in C++.** Every magic number (distance,
   speed, timer, radius) MUST be configurable from Python.
+- **Pathfinding and navigation are game logic** — they live in Python
+  (`python/pathfind.py`), not in C++. A modder must be able to replace
+  the pathfinding algorithm without touching C++. The C++ engine provides
+  block queries (`get_block`), physics (`moveAndCollide`), and the network
+  transport — Python decides *how* entities navigate.
 
 ### Rule 2: The Player Is Not Special
 
@@ -30,7 +63,12 @@ and camera tracking.
 **The server is the sole owner and modifier of world state.**
 
 - Entities submit `ActionProposal` (intent). Server validates and executes.
-- Client NEVER writes to `entity.position`, `entity.velocity`, `chunk.set()`
+- Client NEVER writes to `chunk.set()`.
+- **Client-side prediction**: the GUI client runs `moveAndCollide()` locally
+  for the player entity (same physics as server) and reports `clientPos` in
+  Move actions. The server accepts `clientPos` if within tolerance (8 blocks),
+  otherwise snaps back. This makes WASD movement feel instant while the
+  server remains authoritative.
 - Singleplayer uses the same TCP code paths as multiplayer — no in-process shortcut.
 
 ### Rule 4: All Intelligence Runs on Agent Clients
@@ -40,6 +78,10 @@ and camera tracking.
 - Each NPC entity has its own `modcraft-agent` process running Python `decide()`
 - Server spawns/manages agent clients via `ClientManager`
 - Python behavior code NEVER runs on the server
+- **Player entities also get agent clients** for pathfinding/navigation
+  (RTS click-to-move, RPG click-to-move). The agent runs a `player_nav`
+  behavior that is idle during WASD and activates on `C_SET_GOAL`.
+  The GUI client sends goals; the agent navigates using Python pathfinding.
 
 ### Rule 5: Server Has No Display Logic
 

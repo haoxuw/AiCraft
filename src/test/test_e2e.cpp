@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 
 namespace modcraft::test {
 
@@ -118,7 +119,7 @@ static int pickupNearbyItems(TestServer& srv, EntityId actor, float range = 1.5f
 			ActionProposal a;
 			a.type = ActionProposal::Relocate;
 			a.actorId = actor;
-			a.fromEntity = e.id();
+			a.relocateFrom = Container::entity(e.id());
 			srv.sendAction(a);
 			sent++;
 		}
@@ -127,35 +128,33 @@ static int pickupNearbyItems(TestServer& srv, EntityId actor, float range = 1.5f
 	return sent;
 }
 
-// Send a ConvertObject (break block) action and tick one frame.
+// Send a Convert (break block) action and tick one frame.
 static void breakAndTick(TestServer& srv, EntityId actor, glm::ivec3 pos) {
 	BlockId bid = srv.chunks().getBlock(pos.x, pos.y, pos.z);
 	const BlockDef& bdef = srv.blockRegistry().get(bid);
 	ActionProposal p;
-	p.type = ActionProposal::ConvertObject;
-	p.actorId = actor;
-	p.blockPos = pos;
-	p.fromItem = bdef.string_id;
-	p.toItem = bdef.drop.empty() ? bdef.string_id : bdef.drop;
-	p.fromCount = 1;
-	p.toCount = 1;
-	p.convertFromBlock = true;
-	p.convertDirect = false;  // spawn as item entity
+	p.type        = ActionProposal::Convert;
+	p.actorId     = actor;
+	p.fromItem    = bdef.string_id;
+	p.toItem      = bdef.drop.empty() ? bdef.string_id : bdef.drop;
+	p.fromCount   = 1;
+	p.toCount     = 1;
+	p.convertFrom = Container::block(pos);
+	p.convertInto = Container::ground();   // spawn as item entity
 	srv.sendAction(p);
 	srv.tick(1.0f / 60.0f);
 }
 
-// Send a ConvertObject (place block) action and tick one frame.
+// Send a Convert (place block) action and tick one frame.
 static void placeAndTick(TestServer& srv, EntityId actor,
                          glm::ivec3 pos, const std::string& type) {
 	ActionProposal p;
-	p.type = ActionProposal::ConvertObject;
-	p.actorId = actor;
-	p.blockPos = pos;
-	p.fromItem = type;
-	p.toItem = type;
-	p.convertToBlock = true;
-	p.convertDirect = true;
+	p.type        = ActionProposal::Convert;
+	p.actorId     = actor;
+	p.fromItem    = type;
+	p.toItem      = type;
+	// convertFrom defaults to Self (take from inventory)
+	p.convertInto = Container::block(pos);
 	srv.sendAction(p);
 	srv.tick(1.0f / 60.0f);
 }
@@ -881,7 +880,7 @@ static std::string t26_dropitem_no_duplication() {
 		ActionProposal dp;
 		dp.type = ActionProposal::Relocate;
 		dp.actorId = pid;
-		dp.toGround = true;
+		dp.relocateTo = Container::ground();
 		dp.itemId = "base:egg";
 		dp.itemCount = 1;
 		srv->sendAction(dp);
@@ -934,7 +933,7 @@ static std::string t27_multiple_dropitems_correct_count() {
 		ActionProposal dp;
 		dp.type = ActionProposal::Relocate;
 		dp.actorId = pid;
-		dp.toGround = true;
+		dp.relocateTo = Container::ground();
 		dp.itemId = "base:egg";
 		dp.itemCount = 1;
 		srv->sendAction(dp);
@@ -1013,12 +1012,12 @@ static std::string t31_use_item_consume() {
 
 	// Use potion: consume 1 potion from inventory, gain HP
 	ActionProposal a;
-	a.type = ActionProposal::ConvertObject;
-	a.actorId = pid;
-	a.fromItem = "base:potion";
+	a.type      = ActionProposal::Convert;
+	a.actorId   = pid;
+	a.fromItem  = "base:potion";
 	a.fromCount = 1;
-	a.toItem = "hp";
-	a.toCount = 4;
+	a.toItem    = "hp";
+	a.toCount   = 4;
 	srv->sendAction(a);
 	srv->tick(1.0f / 60.0f);
 
@@ -1062,12 +1061,12 @@ static std::string t32_attack_damages_entity() {
 	int targetHp = target->hp();
 
 	ActionProposal a;
-	a.type = ActionProposal::ConvertObject;
-	a.actorId = pid;
-	a.convertFromEntity = targetId;
-	a.fromItem = "hp";
-	a.fromCount = 3;
-	a.toItem = "";  // destroy HP
+	a.type        = ActionProposal::Convert;
+	a.actorId     = pid;
+	a.convertFrom = Container::entity(targetId);
+	a.fromItem    = "hp";
+	a.fromCount   = 3;
+	a.toItem      = "";  // destroy HP
 	srv->sendAction(a);
 	srv->tick(1.0f / 60.0f);
 
@@ -1097,7 +1096,7 @@ static std::string t33_dropitem_deducts_inventory() {
 	ActionProposal a;
 	a.type = ActionProposal::Relocate;
 	a.actorId = pid;
-	a.toGround = true;
+	a.relocateTo = Container::ground();
 	a.itemId = BlockType::Stone;
 	a.itemCount = 1;
 	srv->sendAction(a);
@@ -1151,8 +1150,8 @@ static std::string t34_door_toggle() {
 
 	// Toggle door
 	ActionProposal a;
-	a.type = ActionProposal::InteractBlock;
-	a.actorId = pid;
+	a.type     = ActionProposal::Interact;
+	a.actorId  = pid;
 	a.blockPos = doorPos;
 	srv->sendAction(a);
 	srv->tick(1.0f / 60.0f);
@@ -1574,14 +1573,8 @@ static std::string b1_woodcutter_sets_goal_text() {
     auto handle = pythonBridge().loadBehavior(src, loadErr);
     if (handle < 0) return "loadBehavior failed: " + loadErr;
 
-    // Trunk block 8 blocks east of the villager (within work_radius=60)
-    std::vector<PythonBridge::NearbyBlock> blocks = {
-        {(int)villager->position.x + 8, (int)villager->position.y + 5,
-         (int)villager->position.z, "base:trunk", 8.0f}
-    };
-
     std::string goalOut, errOut;
-    pythonBridge().callDecide(handle, *villager, {}, blocks, 0.25f, 0.5f,
+    pythonBridge().callDecide(handle, *villager, {}, {}, 0.25f, 0.5f,
                               goalOut, errOut);
     pythonBridge().unloadBehavior(handle);
 
@@ -1595,7 +1588,7 @@ static std::string b1_woodcutter_sets_goal_text() {
 // ================================================================
 static std::string b2_all_behaviors_load_cleanly() {
     const char* behaviors[] = {
-        "woodcutter", "wander", "peck", "prowl", "follow", "brave_chicken", nullptr
+        "woodcutter", "wander", "peck", "prowl", "brave_chicken", nullptr
     };
     for (int i = 0; behaviors[i]; i++) {
         std::string path = std::string("artifacts/behaviors/base/") + behaviors[i] + ".py";
@@ -1637,16 +1630,10 @@ static std::string b3_woodcutter_collects_and_deposits() {
     // Give the villager 2 trunks (simulating successful chops)
     villager->inventory->add("base:trunk", 2);
 
-    // Place trunk block nearby and chest at home
-    std::vector<PythonBridge::NearbyBlock> blocks = {
-        {(int)villager->position.x + 5, (int)villager->position.y,
-         (int)villager->position.z, "base:trunk", 5.0f}
-    };
-
     std::string goalOut, errOut;
     // Call decide() — should trigger depositing since log_count >= collect_goal
     BehaviorAction action = pythonBridge().callDecide(
-        handle, *villager, {}, blocks, 0.25f, 0.3f, goalOut, errOut);
+        handle, *villager, {}, {}, 0.25f, 0.3f, goalOut, errOut);
     pythonBridge().unloadBehavior(handle);
 
     if (!errOut.empty()) return "decide() error: " + errOut;
@@ -1695,7 +1682,7 @@ static std::string b4_store_item_server_validation() {
     ActionProposal sp;
     sp.type = ActionProposal::Relocate;
     sp.actorId = villager->id();
-    sp.toEntity = chestEntityId;
+    sp.relocateTo = Container::entity(chestEntityId);
     srv->sendActionDirect(sp);
     srv->tick(1.0f / 60.0f);
 
@@ -1710,6 +1697,252 @@ static std::string b4_store_item_server_validation() {
     if (logsInChest != 3)
         return "chest entity has " + std::to_string(logsInChest) + " trunks, expected 3";
 
+    return "";
+}
+
+// ================================================================
+// W1: House foundation is solid stone under every footprint column
+// ================================================================
+static std::string w1_foundation_is_stone() {
+    auto srv = makeVillageServer();
+    auto& world = srv->server()->world();
+    auto* ctmpl = dynamic_cast<ConfigurableWorldTemplate*>(&world.getTemplate());
+    if (!ctmpl) return "not ConfigurableWorldTemplate";
+    int seed    = 42;
+
+    BlockId stoneId = world.blocks.getId(BlockType::Stone);
+    if (stoneId == BLOCK_AIR) return "BlockType::Stone not registered";
+
+    auto vc = ctmpl->villageCenter(seed);
+    const auto& houses = ctmpl->pyConfig().houses;
+    if (houses.empty()) return "no houses in village config";
+
+    int checked = 0;
+    for (const auto& h : houses) {
+        int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+        int floorY = ctmpl->structureFloorY(seed, hcx, hcz, h.w, h.d);
+
+        // For houses: stone is at floorY-1 (below the wall loop).
+        // For barns: planks sit at floorY-1 (the barn floor), so stone is at floorY-2.
+        int checkY = (h.type == "barn") ? floorY - 2 : floorY - 1;
+
+        // Check several interior columns (skip corners which may be wall/pillar material)
+        for (int dx = 1; dx < h.w - 1; dx += 3) {
+            for (int dz = 1; dz < h.d - 1; dz += 3) {
+                int x = hcx + dx, z = hcz + dz;
+                BlockId bid = world.getBlock(x, checkY, z);
+                if (bid != stoneId) {
+                    const std::string& actual = world.blocks.get(bid).string_id;
+                    return "house " + (h.type.empty() ? "house" : h.type) +
+                           " at (" + std::to_string(x) + "," +
+                           std::to_string(checkY) + "," + std::to_string(z) +
+                           "): expected stone, got '" + actual + "'";
+                }
+                checked++;
+            }
+        }
+    }
+    if (checked == 0) return "no foundation columns checked";
+    return "";
+}
+
+// ================================================================
+// W2: House floor is at or above every terrain point in its footprint
+// ================================================================
+static std::string w2_floor_at_or_above_all_terrain() {
+    auto srv = makeVillageServer();
+    auto& world = srv->server()->world();
+    auto* ctmpl = dynamic_cast<ConfigurableWorldTemplate*>(&world.getTemplate());
+    if (!ctmpl) return "not ConfigurableWorldTemplate";
+    int seed    = 42;
+
+    auto vc = ctmpl->villageCenter(seed);
+    for (const auto& h : ctmpl->pyConfig().houses) {
+        int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+        int floorY = ctmpl->structureFloorY(seed, hcx, hcz, h.w, h.d);
+
+        for (int dx = 0; dx < h.w; dx++) {
+            for (int dz = 0; dz < h.d; dz++) {
+                float localGY = ctmpl->surfaceHeight(seed, (float)(hcx+dx), (float)(hcz+dz));
+                if ((int)std::round(localGY) >= floorY) {
+                    return "house at (" + std::to_string(hcx) + "," + std::to_string(hcz) +
+                           "): terrain at (" + std::to_string(dx) + "," + std::to_string(dz) +
+                           ") has groundY=" + std::to_string((int)localGY) +
+                           " >= floorY=" + std::to_string(floorY) +
+                           " (hill would protrude through floor)";
+                }
+            }
+        }
+    }
+    return "";
+}
+
+// ================================================================
+// W3: House interior has no buried terrain (non-air) above foundation
+// ================================================================
+static std::string w3_house_interior_no_buried_terrain() {
+    auto srv = makeVillageServer();
+    auto& world = srv->server()->world();
+    auto* ctmpl = dynamic_cast<ConfigurableWorldTemplate*>(&world.getTemplate());
+    if (!ctmpl) return "not ConfigurableWorldTemplate";
+    int seed    = 42;
+
+    // Block types that are legitimately inside a house (not buried terrain)
+    auto& reg = world.blocks;
+    std::unordered_set<std::string> allowed = {
+        "base:air", "base:cobblestone", "base:wood", "base:planks",
+        "base:stone", "base:door", "base:door_open", "base:glass",
+        "base:bed", "base:chest", "base:stair",
+        // Roof and wall materials used by some houses
+        "base:leaves", "base:log",
+    };
+
+    auto vc = ctmpl->villageCenter(seed);
+    for (const auto& h : ctmpl->pyConfig().houses) {
+        if (h.type == "barn") continue;  // barn has no walls so terrain is expected outside
+        int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+        int floorY = ctmpl->structureFloorY(seed, hcx, hcz, h.w, h.d);
+
+        // Check the interior (exclude outer wall columns dx=0,w-1 and dz=0,d-1)
+        for (int dx = 1; dx < h.w - 1; dx++) {
+            for (int dz = 1; dz < h.d - 1; dz++) {
+                // Scan from floor level to 3 blocks above floor (ground story interior)
+                for (int dy = 0; dy < 4; dy++) {
+                    int bx = hcx + dx, by = floorY + dy, bz = hcz + dz;
+                    BlockId bid = world.getBlock(bx, by, bz);
+                    const std::string& sid = reg.get(bid).string_id;
+                    if (bid != BLOCK_AIR && allowed.find(sid) == allowed.end()) {
+                        return "house interior at (" + std::to_string(bx) + "," +
+                               std::to_string(by) + "," + std::to_string(bz) +
+                               ") has unexpected block '" + sid + "' (buried terrain?)";
+                    }
+                }
+            }
+        }
+    }
+    return "";
+}
+
+// ================================================================
+// W4: Villagers spawn inside house footprint (not outside)
+// ================================================================
+static std::string w4_villagers_spawn_inside_house() {
+    auto* ctmpl = dynamic_cast<ConfigurableWorldTemplate*>(g_templates[1].get());
+    if (!ctmpl) return "village template is not ConfigurableWorldTemplate";
+    int seed = 42;
+
+    auto vc    = ctmpl->villageCenter(seed);
+    auto beds  = ctmpl->bedPositions(seed);
+    if (beds.empty()) return "bedPositions() returned empty";
+
+    const auto& houses = ctmpl->pyConfig().houses;
+    int i = 0;
+    for (const auto& h : houses) {
+        if (h.type == "barn") continue;
+        if (i >= (int)beds.size()) break;
+        glm::vec3 pos = beds[i++];
+        int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+
+        // Bed is at (hcx+2, floorY, hcz+d-2). Spawn is at (hcx+2.5, floorY+1, hcz+d-1.5).
+        // Just verify XZ is within the house footprint [hcx, hcx+w) × [hcz, hcz+d).
+        if (pos.x < (float)hcx || pos.x >= (float)(hcx + h.w) ||
+            pos.z < (float)hcz || pos.z >= (float)(hcz + h.d)) {
+            return "house bed spawn (" + std::to_string(pos.x) + "," +
+                   std::to_string(pos.z) + ") is outside footprint [" +
+                   std::to_string(hcx) + ".." + std::to_string(hcx+h.w) + ") x [" +
+                   std::to_string(hcz) + ".." + std::to_string(hcz+h.d) + ")";
+        }
+    }
+    return "";
+}
+
+// ================================================================
+// B5: pathfind.py module loads cleanly
+// ================================================================
+static std::string b5_pathfind_module_loads() {
+    // Load pathfind.py as a standalone module (not as a behavior)
+    std::ifstream f("python/pathfind.py");
+    if (!f) return "cannot open python/pathfind.py";
+    std::ostringstream ss; ss << f.rdbuf();
+    std::string src = ss.str();
+
+    // Wrap it in a minimal behavior that imports and uses Navigator
+    std::string behaviorSrc = src + R"(
+from modcraft_engine import Move
+from behavior_base import Behavior
+
+class PathfindTestBehavior(Behavior):
+    def __init__(self):
+        self._nav = Navigator()
+    def decide(self, entity, world):
+        return Move(entity.x, entity.y, entity.z), "pathfind loaded"
+)";
+
+    std::string loadErr;
+    auto handle = pythonBridge().loadBehavior(behaviorSrc, loadErr);
+    if (handle < 0) return "loadBehavior failed: " + loadErr;
+    pythonBridge().unloadBehavior(handle);
+    return "";
+}
+
+// ================================================================
+// B6: Navigator returns MoveTo toward goal, get_block accessible
+// ================================================================
+static std::string b6_navigator_returns_move_to_goal() {
+    auto srv = makeVillageServer();
+    Entity* villager = nullptr;
+    srv->forEachEntity([&](Entity& e) {
+        if (!villager && e.typeId() == "base:villager") villager = &e;
+    });
+    if (!villager) return "no villager spawned";
+
+    // Load pathfind.py + a Navigator behavior
+    std::ifstream f("python/pathfind.py");
+    if (!f) return "cannot open python/pathfind.py";
+    std::ostringstream ss; ss << f.rdbuf();
+
+    std::string behaviorSrc = ss.str() + R"(
+from modcraft_engine import Move, get_block
+from behavior_base import Behavior
+
+class NavTestBehavior(Behavior):
+    def __init__(self):
+        self._nav = Navigator()
+    def decide(self, entity, world):
+        # Verify get_block is callable and returns a string
+        b = get_block(int(entity.x), int(entity.y) - 1, int(entity.z))
+        if not isinstance(b, str):
+            return Move(entity.x, entity.y, entity.z), "ERROR: get_block returned non-string"
+        # Navigate 10 blocks away on X axis
+        goal = (entity.x + 10, entity.y, entity.z)
+        action = self._nav.navigate(entity, world, goal, speed=entity.walk_speed)
+        if action is None:
+            return Move(entity.x, entity.y, entity.z), "already arrived"
+        return action, self._nav.status
+)";
+
+    std::string loadErr;
+    auto handle = pythonBridge().loadBehavior(behaviorSrc, loadErr);
+    if (handle < 0) return "loadBehavior failed: " + loadErr;
+
+    // Block query: flat ground under villager, air above
+    auto blockQueryFn = [&](int x, int y, int z) -> std::string {
+        BlockId bid = srv->server()->world().getBlock(x, y, z);
+        return srv->server()->world().blocks.get(bid).string_id;
+    };
+
+    std::string goalOut, errOut;
+    BehaviorAction action = pythonBridge().callDecide(
+        handle, *villager, {}, {}, 0.25f, 0.5f, goalOut, errOut, blockQueryFn);
+    pythonBridge().unloadBehavior(handle);
+
+    if (!errOut.empty()) return "decide() error: " + errOut;
+    if (goalOut.find("ERROR") != std::string::npos)
+        return "get_block test failed: " + goalOut;
+    // Should return Move (navigating toward goal) or Idle (if arrived — unlikely for +10 blocks)
+    if (action.type != BehaviorAction::Move)
+        return "expected Move toward goal, got action type " +
+               std::to_string((int)action.type) + " goal='" + goalOut + "'";
     return "";
 }
 
@@ -1801,6 +2034,14 @@ int main() {
 	run("B2: all behavior files load cleanly",               b2_all_behaviors_load_cleanly);
 	run("B3: woodcutter transitions to depositing when full", b3_woodcutter_collects_and_deposits);
 	run("B4: StoreItem transfers inventory to chest block",   b4_store_item_server_validation);
+	run("B5: pathfind.py module loads cleanly",              b5_pathfind_module_loads);
+	run("B6: Navigator returns MoveTo toward goal",          b6_navigator_returns_move_to_goal);
+
+	printf("\n--- World Generation ---\n");
+	run("W1: foundation columns are stone (not dirt/grass)", w1_foundation_is_stone);
+	run("W2: house floor at or above all footprint terrain", w2_floor_at_or_above_all_terrain);
+	run("W3: house interior has no buried terrain blocks",   w3_house_interior_no_buried_terrain);
+	run("W4: villager bed positions inside house footprint", w4_villagers_spawn_inside_house);
 
 	pythonBridge().shutdown();
 

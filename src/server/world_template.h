@@ -153,35 +153,59 @@ public:
 		return {-1, -1};
 	}
 
+	// Scan every (x,z) in the structure footprint and return {minGroundY, maxGroundY}.
+	// Used to place the floor at maxGroundY+1 so the building always sits on the
+	// highest terrain point within its footprint, never buried in a hillside.
+	std::pair<int,int> footprintHeightRange(int seed,
+	                                         int hcx, int hcz, int w, int d) const {
+		int minY = INT_MAX, maxY = INT_MIN;
+		for (int dx = 0; dx < w; dx++)
+			for (int dz = 0; dz < d; dz++) {
+				int y = (int)std::round(groundHeight(seed, (float)(hcx+dx), (float)(hcz+dz)));
+				if (y < minY) minY = y;
+				if (y > maxY) maxY = y;
+			}
+		if (minY == INT_MAX) minY = maxY = 4;
+		return {minY, maxY};
+	}
+
+	// Compute the correct floor Y for a structure footprint.
+	// floorY = maxGroundY + 1 so the structure always sits above the hillside peak.
+	int structureFloorY(int seed, int hcx, int hcz, int w, int d) const {
+		return footprintHeightRange(seed, hcx, hcz, w, d).second + 1;
+	}
+
 	// Chest position for each non-barn house, in house order — matches bedPositions() order.
-	// Uses same formula as generateFurniture(): front-right interior corner.
+	// Uses the footprint-max floor height so chests land on the actual floor.
 	std::vector<glm::vec3> houseChestPositions(int seed) const override {
 		if (!m_py.hasVillage || m_py.houses.empty()) return {};
 		auto vc = villageCenter(seed);
 		std::vector<glm::vec3> chests;
 		for (const auto& h : m_py.houses) {
 			if (h.type == "barn") continue;
-			float hx = (float)(vc.x + h.cx + h.w - 3);
-			float hz = (float)(vc.y + h.cz + 1);
-			float hy = surfaceHeight(seed, hx, hz) + 1.0f;
-			chests.push_back({hx, hy, hz});
+			int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+			int floorY = structureFloorY(seed, hcx, hcz, h.w, h.d);
+			float hx = (float)(hcx + h.w - 3);
+			float hz = (float)(hcz + 1);
+			chests.push_back({hx, (float)floorY, hz});
 		}
 		return chests;
 	}
 
-	// Villager spawn positions: one per house, placed outside the front door.
-	// The door is at dz=0 on the front wall, centered at dx=h.w/2.
-	// Spawning 3 blocks in front prevents villagers from landing on the roof.
+	// Villager spawn positions: one per non-barn house, at the interior bed location.
+	// Matches generateFurniture(): bed is at (hcx+2, floorY, hcz+d-2).
 	std::vector<glm::vec3> bedPositions(int seed) const override {
 		if (!m_py.hasVillage || m_py.houses.empty()) return {};
 		auto vc = villageCenter(seed);
 		std::vector<glm::vec3> beds;
 		for (const auto& h : m_py.houses) {
 			if (h.type == "barn") continue;
-			// Front door center, 3 blocks outside the front wall
-			float bx = (float)(vc.x + h.cx + h.w / 2) + 0.5f;
-			float bz = (float)(vc.y + h.cz) - 3.0f;
-			float by = groundHeight(seed, bx, bz) + 1.5f;
+			int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+			int floorY = structureFloorY(seed, hcx, hcz, h.w, h.d);
+			// Interior bed position (same as generateFurniture bed block + 1 for standing)
+			float bx = (float)(hcx + 2) + 0.5f;
+			float bz = (float)(hcz + h.d - 2) + 0.5f;
+			float by = (float)floorY + 1.0f;  // standing height above floor
 			beds.push_back({bx, by, bz});
 		}
 		return beds;
@@ -639,20 +663,37 @@ private:
 	// Staircase: 2-wide (dx=1..2), sh steps per story.
 	// Opening: 4-wide (dx=1..4) × full stairwell depth — guarantees ≥ 4 clear
 	// blocks above the landing so the 2.5-tall player fits comfortably.
+	// Place a solid stone foundation under a structure footprint.
+	// Fills from floorY-1 down to minGroundY with stone, replacing any existing
+	// terrain (dirt, sand, grass) so the foundation is always stone.
+	// Also clears any terrain inside the footprint between minGroundY+1 and floorY-1
+	// so there are no buried terrain columns inside the building.
+	void placeFoundation(const GenCtx& ctx, int seed, BlockId stoneB,
+	                     int hcx, int hcz, int w, int d,
+	                     int floorY, int minGroundY) const {
+		for (int dx = 0; dx < w; dx++) {
+			for (int dz = 0; dz < d; dz++) {
+				// Clear any terrain sticking up inside the building footprint.
+				// Each column may be lower or higher than minGroundY locally.
+				int localGY = (int)std::round(groundHeight(seed, (float)(hcx+dx), (float)(hcz+dz)));
+				for (int y = localGY + 1; y < floorY; y++)
+					ctx.set(hcx+dx, y, hcz+dz, BLOCK_AIR);
+				// Fill stone from just below the floor down to the lowest corner.
+				// Replaces dirt/sand/grass with solid stone so the foundation is clean.
+				for (int y = floorY - 1; y >= minGroundY; y--)
+					ctx.set(hcx+dx, y, hcz+dz, stoneB);
+			}
+		}
+	}
+
 	void generateHouse(const GenCtx& ctx, int seed,
 	                   BlockId wallB, BlockId roofB, BlockId floorB, BlockId stairB,
-	                   BlockId glassB, BlockId doorB,
-	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
+	                   BlockId glassB, BlockId doorB, BlockId stoneB,
+	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc,
+	                   int floorY) {
 		int sh = m_py.storyHeight, dh = m_py.doorHeight, wr = m_py.windowRow;
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-		int floorY = (int)std::round(groundHeight(seed, (float)hcx+h.w*0.5f,
-		                                                  (float)hcz+h.d*0.5f)) + 1;
 		int totalH = sh * h.stories;
-
-		// Foundation row
-		for (int dx = 0; dx < h.w; dx++)
-			for (int dz = 0; dz < h.d; dz++)
-				ctx.set(hcx+dx, floorY-1, hcz+dz, floorB);
 
 		// Walls, interior, stairs, intermediate floors
 		for (int dy = 0; dy < totalH; dy++) {
@@ -739,10 +780,9 @@ private:
 	// if the porch is elevated above surrounding ground.
 	void generatePorch(const GenCtx& ctx, int seed,
 	                   BlockId pathB, BlockId wallB,
-	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
+	                   const WorldPyConfig::HouseLayout& h, glm::ivec2 vc,
+	                   int floorY) {
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-		int floorY = (int)std::round(groundHeight(seed, (float)hcx+h.w*0.5f,
-		                                                  (float)hcz+h.d*0.5f)) + 1;
 		int dh = m_py.doorHeight;
 		int doorMid = h.w / 2;  // x-offset of door centre from hcx
 
@@ -774,10 +814,8 @@ private:
 	void generateFurniture(const GenCtx& ctx, int seed,
 	                       BlockId woodB, BlockId planksB, BlockId bedB, BlockId chestB,
 	                       const WorldPyConfig::HouseLayout& h, glm::ivec2 vc,
-	                       bool isMainHouse) {
+	                       bool isMainHouse, int floorY) {
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-		int floorY = (int)std::round(groundHeight(seed, (float)hcx+h.w*0.5f,
-		                                                  (float)hcz+h.d*0.5f)) + 1;
 		// Only furnish story 0 interior (never touch walls or stair column dx=1)
 
 		// Bed: back-left corner, two blocks (foot at dz=d-2, head at dz=d-3)
@@ -819,15 +857,14 @@ private:
 	// No walls, no door. Corner pillars + one mid-pillar per long side.
 	// Large peaked gable roof — classic agricultural building.
 	void generateBarn(const GenCtx& ctx, int seed,
-	                  BlockId woodB, BlockId planksB, BlockId roofB,
-	                  const WorldPyConfig::HouseLayout& h, glm::ivec2 vc) {
+	                  BlockId woodB, BlockId planksB, BlockId roofB, BlockId stoneB,
+	                  const WorldPyConfig::HouseLayout& h, glm::ivec2 vc,
+	                  int floorY) {
 		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-		int floorY = (int)std::round(groundHeight(seed, (float)hcx+h.w*0.5f,
-		                                                  (float)hcz+h.d*0.5f)) + 1;
 		int barnH = 9;  // pillar/wall height before roof starts
 		BlockId col = (woodB != BLOCK_AIR) ? woodB : planksB;
 
-		// 1. Floor (planks)
+		// 1. Plank floor on top of stone foundation (foundation placed by caller)
 		for (int dx = 0; dx < h.w; dx++)
 			for (int dz = 0; dz < h.d; dz++)
 				ctx.set(hcx+dx, floorY-1, hcz+dz, planksB != BLOCK_AIR ? planksB : col);
@@ -894,13 +931,23 @@ private:
 		if (glassB == BLOCK_AIR) glassB = BLOCK_AIR;  // windows become open holes
 		if (doorB  == BLOCK_AIR) doorB  = BLOCK_AIR;  // doors become open holes
 
+		BlockId stoneB = blocks.getId(BlockType::Stone);
+		if (stoneB == BLOCK_AIR) stoneB = blocks.getId(BlockType::Cobblestone);
+
 		for (int hi = 0; hi < (int)m_py.houses.size(); hi++) {
 			const auto& h = m_py.houses[hi];
+			int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+
+			// Compute floor height from footprint max so building sits on the hill,
+			// never buried. Foundation fills from floorY-1 down to minGroundY with stone.
+			auto [minGY, maxGY] = footprintHeightRange(seed, hcx, hcz, h.w, h.d);
+			int floorY = maxGY + 1;
+			placeFoundation(ctx, seed, stoneB, hcx, hcz, h.w, h.d, floorY, minGY);
 
 			if (h.type == "barn") {
 				BlockId hRoofB = (!h.roofBlock.empty()) ? blocks.getId(h.roofBlock) : roofB;
 				if (hRoofB == BLOCK_AIR) hRoofB = roofB;
-				generateBarn(ctx, seed, woodB, planksB, hRoofB, h, vc);
+				generateBarn(ctx, seed, woodB, planksB, hRoofB, stoneB, h, vc, floorY);
 				continue;
 			}
 
@@ -909,9 +956,9 @@ private:
 			if (hWallB == BLOCK_AIR) hWallB = wallB;
 			if (hRoofB == BLOCK_AIR) hRoofB = roofB;
 
-			generateHouse(ctx, seed, hWallB, hRoofB, floorB, stairB, glassB, doorB, h, vc);
-			generatePorch(ctx, seed, pathB, hWallB, h, vc);
-			generateFurniture(ctx, seed, woodB, planksB, bedB, chestB, h, vc, hi == 0);
+			generateHouse(ctx, seed, hWallB, hRoofB, floorB, stairB, glassB, doorB, stoneB, h, vc, floorY);
+			generatePorch(ctx, seed, pathB, hWallB, h, vc, floorY);
+			generateFurniture(ctx, seed, woodB, planksB, bedB, chestB, h, vc, hi == 0, floorY);
 		}
 
 		generatePaths(ctx, seed, pathB, vc);
@@ -942,7 +989,9 @@ private:
 		BlockId fenceB = blocks.getId(BlockType::Fence);
 		if (fenceB != BLOCK_AIR) {
 			int px = vc.x + 16, pzz = vc.y - 18;
-			int py = (int)std::round(groundHeight(seed, (float)px+4, (float)pzz+4)) + 1;
+			auto [penMinGY, penMaxGY] = footprintHeightRange(seed, px, pzz, 10, 8);
+			int py = penMaxGY + 1;
+			placeFoundation(ctx, seed, stoneB, px, pzz, 10, 8, py, penMinGY);
 			// Fence perimeter 10x8
 			for (int dx = 0; dx < 10; dx++) {
 				ctx.set(px+dx, py, pzz,   fenceB);

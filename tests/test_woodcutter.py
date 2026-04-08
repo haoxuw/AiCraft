@@ -27,24 +27,47 @@ class _Action:
     def __repr__(self):
         return "%s(%s)" % (self._name, self._kwargs)
 
-def Idle():           return _Action("Idle")
-def Wander(**kw):     return _Action("Wander", **kw)
-def MoveTo(x, y, z, speed=3.0):
-    return _Action("MoveTo", x=x, y=y, z=z, speed=speed)
-def BreakBlock(x, y, z):
-    return _Action("BreakBlock", x=x, y=y, z=z)
-def ConvertObject(from_item, to_item, block_pos=None,
-                  convert_from_block=False, direct=False):
-    return _Action("ConvertObject", from_item=from_item, to_item=to_item,
-                   block_pos=block_pos, convert_from_block=convert_from_block,
-                   direct=direct)
-def StoreItem(entity_id):
-    return _Action("StoreItem", entity_id=entity_id)
+def Move(x, y, z, speed=3.0):
+    return _Action("Move", x=x, y=y, z=z, speed=speed)
+
+class _Container:
+    def __init__(self, kind, entity_id=0, x=0, y=0, z=0):
+        self.kind = kind; self.entity_id = entity_id
+        self.x = x; self.y = y; self.z = z
+    def __repr__(self):
+        return "Container(kind=%d,eid=%d)" % (self.kind, self.entity_id)
+
+def Self():   return _Container(0)
+def Ground(): return _Container(1)
+def Entity(entity_id): return _Container(2, entity_id=entity_id)
+def Block(x, y, z):   return _Container(3, x=x, y=y, z=z)
+
+def Relocate(relocate_from=None, relocate_to=None, item_id="", count=1, equip_slot=""):
+    rf = relocate_from or Self()
+    rt = relocate_to   or Self()
+    return _Action("Relocate", relocate_from=rf, relocate_to=rt,
+                   item_id=item_id, count=count)
+def Convert(from_item="", to_item="", from_count=1, to_count=1,
+            convert_from=None, convert_into=None):
+    return _Action("Convert", from_item=from_item, to_item=to_item,
+                   convert_from=convert_from or Self(),
+                   convert_into=convert_into or Self())
+def Interact(x, y, z):
+    return _Action("Interact", x=x, y=y, z=z)
 
 _engine_mock = types.ModuleType("modcraft_engine")
-for _sym in (Idle, Wander, MoveTo, BreakBlock, ConvertObject, StoreItem):
+for _sym in (Move, Relocate, Convert, Interact, Self, Ground, Entity, Block):
     setattr(_engine_mock, _sym.__name__, _sym)
 sys.modules["modcraft_engine"] = _engine_mock
+
+# actions.py (python/actions.py) wraps Relocate/Convert.  Import it after
+# modcraft_engine is mocked so it picks up the mock Relocate above.
+import importlib, importlib.util as _ilu
+_actions_path = os.path.join(REPO_ROOT, "python", "actions.py")
+_spec = _ilu.spec_from_file_location("actions", _actions_path)
+_actions_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_actions_mod)
+sys.modules["actions"] = _actions_mod
 
 from local_world import LocalWorld, SelfEntity   # noqa: E402
 from woodcutter import WoodcutterBehavior        # noqa: E402
@@ -89,14 +112,14 @@ def action_name(action):
 # ── Test 1: block filtering ───────────────────────────────────────────────────
 
 def test_chunk_has_trunk_blocks():
-    """world.get('base:trunk') finds the nearest trunk among mixed block types."""
+    """local_world.get('base:trunk') finds the nearest trunk among mixed block types."""
     blocks = [
         make_block("base:grass", 1, 63, 0, 1.0),
         make_block("base:trunk", 5, 64, 0, 5.0),
         make_block("base:trunk", 10, 64, 0, 10.0),
     ]
-    world = make_world(blocks=blocks)
-    trunk = world.get("base:trunk")
+    local_world = make_world(blocks=blocks)
+    trunk = local_world.get("base:trunk")
     assert trunk is not None
     assert trunk.distance == 5.0, "expected nearest trunk at dist=5, got %.1f" % trunk.distance
     print("PASS test_chunk_has_trunk_blocks")
@@ -111,12 +134,12 @@ def test_searching_finds_nearest_trunk():
         make_block("base:trunk", 50, 64, 0, 50.0),
     ]
     entity = make_entity(x=0, z=0)
-    world = make_world(blocks=blocks)
+    local_world = make_world(blocks=blocks)
 
     wc = WoodcutterBehavior()
-    action, goal = wc.decide(entity, world)
+    action, goal = wc.decide(entity, local_world)
 
-    assert action_name(action) == "MoveTo", \
+    assert action_name(action) == "Move", \
         "expected MoveTo, got %s (goal=%r)" % (action_name(action), goal)
     assert abs(action._kwargs["x"] - 8.5) < 0.1, \
         "expected target x≈8.5, got %.2f" % action._kwargs["x"]
@@ -128,33 +151,35 @@ def test_walking_to_block():
     """While walking to trunk, woodcutter keeps issuing MoveTo."""
     target = make_block("base:trunk", 10, 64, 0, 10.0)
     entity = make_entity(x=0, z=0)
-    world = make_world(blocks=[target])
+    local_world = make_world(blocks=[target])
 
     wc = WoodcutterBehavior()
     for i in range(2):
-        action, goal = wc.decide(entity, world)
-        assert action_name(action) == "MoveTo", \
+        action, goal = wc.decide(entity, local_world)
+        assert action_name(action) == "Move", \
             "call %d: expected MoveTo, got %s (goal=%r)" % (i+1, action_name(action), goal)
     print("PASS test_walking_to_block")
 
 # ── Test 4: chop when close ───────────────────────────────────────────────────
 
 def test_chopping_converts_trunk():
-    """Within 2.5 blocks, issues ConvertObject(base:trunk→base:trunk, direct=True)."""
+    """Within 2.5 blocks, issues Convert(base:trunk→base:trunk, direct=True)."""
     trunk = make_block("base:trunk", 1, 64, 0, 1.0)
     entity = make_entity(x=0.0, z=0.0)
-    world = make_world(blocks=[trunk])
+    local_world = make_world(blocks=[trunk])
 
     wc = WoodcutterBehavior()
-    action, _ = wc.decide(entity, world)
+    action, _ = wc.decide(entity, local_world)
 
-    assert action_name(action) == "ConvertObject", \
-        "expected ConvertObject at dist=1, got %s" % action_name(action)
+    assert action_name(action) == "Convert", \
+        "expected Convert at dist=1, got %s" % action_name(action)
     assert action._kwargs["from_item"] == "base:trunk"
     assert action._kwargs["to_item"] == "base:trunk"
-    assert action._kwargs["convert_from_block"] is True
-    assert action._kwargs["direct"] is True
-    assert action._kwargs["block_pos"] == (1, 64, 0)
+    cf = action._kwargs["convert_from"]
+    assert cf.kind == 3, "expected convert_from kind=Block(3), got %d" % cf.kind
+    assert int(cf.x) == 1 and int(cf.y) == 64 and int(cf.z) == 0
+    # convert_into defaults to Self (kind=0, direct to inventory)
+    assert action._kwargs["convert_into"].kind == 0
     print("PASS test_chopping_converts_trunk")
 
 # ── Test 5: inventory count ───────────────────────────────────────────────────
@@ -177,13 +202,13 @@ def test_returns_when_full():
         home_x=0.0, home_z=0.0,
         inventory={"base:trunk": collect_goal},
     )
-    world = make_world()
+    local_world = make_world()
 
     wc = WoodcutterBehavior()
-    action, goal = wc.decide(entity, world)
+    action, goal = wc.decide(entity, local_world)
 
     assert wc._depositing is True, "expected _depositing=True"
-    assert action_name(action) == "MoveTo", \
+    assert action_name(action) == "Move", \
         "expected MoveTo toward chest, got %s (goal=%r)" % (action_name(action), goal)
     print("PASS test_returns_when_full")
 
@@ -200,18 +225,20 @@ def test_deposits_at_chest():
         home_x=0.0, home_z=0.0,
         inventory={"base:trunk": 3},
     )
-    world = make_world(nearby=[chest_ent])
+    local_world = make_world(nearby=[chest_ent])
 
     wc = WoodcutterBehavior()
     wc._home  = (0.0, 64.0, 0.0)
     wc._chest = (2.0, 64.0, 0.0)
     wc._depositing = True
 
-    action, goal = wc.decide(entity, world)
+    action, goal = wc.decide(entity, local_world)
 
-    assert action_name(action) == "StoreItem", \
-        "expected StoreItem near chest, got %s (goal=%r)" % (action_name(action), goal)
-    assert action._kwargs["entity_id"] == 99
+    assert action_name(action) == "Relocate", \
+        "expected StoreItem (Relocate) near chest, got %s (goal=%r)" % (action_name(action), goal)
+    rt = action._kwargs["relocate_to"]
+    assert rt.kind == 2 and rt.entity_id == 99, \
+        "expected relocate_to=Entity(99), got %s" % rt
     print("PASS test_deposits_at_chest")
 
 # ── Test 8: full cycle ────────────────────────────────────────────────────────
@@ -234,7 +261,7 @@ def test_full_cycle():
                     chest_x=chest_pos[0], chest_y=chest_pos[1], chest_z=chest_pos[2],
                     home_x=0.0, home_z=0.0, inventory={}),
         make_world(blocks=[trunk]))
-    assert action_name(action) == "MoveTo", "Phase 1: expected MoveTo"
+    assert action_name(action) == "Move", "Phase 1: expected MoveTo"
 
     # Phase 2: chop 5 trunks (entity standing right next to block)
     close_trunk = make_block("base:trunk", 1, 64, 0, 1.0)
@@ -245,8 +272,8 @@ def test_full_cycle():
                         chest_x=chest_pos[0], chest_y=chest_pos[1], chest_z=chest_pos[2],
                         home_x=0.0, home_z=0.0, inventory=dict(inventory)),
             make_world(blocks=[close_trunk]))
-        assert action_name(action) == "ConvertObject", \
-            "chop %d: expected ConvertObject, got %s" % (chop_n, action_name(action))
+        assert action_name(action) == "Convert", \
+            "chop %d: expected Convert, got %s" % (chop_n, action_name(action))
         inventory["base:trunk"] = chop_n
 
     assert inventory.get("base:trunk", 0) == collect_goal
@@ -258,7 +285,7 @@ def test_full_cycle():
                     home_x=0.0, home_z=0.0, inventory=dict(inventory)),
         make_world(blocks=[]))
     assert wc._depositing is True, "Phase 3: expected _depositing=True"
-    assert action_name(action) == "MoveTo", "Phase 3: expected MoveTo to chest"
+    assert action_name(action) == "Move", "Phase 3: expected MoveTo to chest"
 
     # Phase 4: at chest → StoreItem
     wc._chest = chest_pos
@@ -269,28 +296,30 @@ def test_full_cycle():
                     chest_x=chest_pos[0], chest_y=chest_pos[1], chest_z=chest_pos[2],
                     home_x=0.0, home_z=0.0, inventory=dict(inventory)),
         make_world(nearby=[chest_ent]))
-    assert action_name(action) == "StoreItem", \
-        "Phase 4: expected StoreItem, got %s" % action_name(action)
-    assert action._kwargs["entity_id"] == 77
+    assert action_name(action) == "Relocate", \
+        "Phase 4: expected StoreItem (Relocate), got %s" % action_name(action)
+    rt = action._kwargs["relocate_to"]
+    assert rt.kind == 2 and rt.entity_id == 77, \
+        "expected relocate_to=Entity(77), got %s" % rt
     print("PASS test_full_cycle")
 
 # ── Test 9: no double-chop of same block ──────────────────────────────────────
 
 def test_no_double_chop_same_block():
-    """Chop cooldown prevents firing ConvertObject twice in the same 0.4s window."""
+    """Chop cooldown prevents firing Convert twice in the same 0.4s window."""
     trunk = make_block("base:trunk", 1, 64, 0, 1.0)
     entity = make_entity(x=0.0, z=0.0)
-    world = make_world(blocks=[trunk])
+    local_world = make_world(blocks=[trunk])
 
     wc = WoodcutterBehavior()
     wc._chop_cooldown = 0.0
-    a1, _ = wc.decide(entity, world)
-    assert action_name(a1) == "ConvertObject"
+    a1, _ = wc.decide(entity, local_world)
+    assert action_name(a1) == "Convert"
 
-    # Still in cooldown — must NOT fire ConvertObject again
-    a2, _ = wc.decide(entity, world)
-    assert action_name(a2) != "ConvertObject", \
-        "Should not issue back-to-back ConvertObject (SourceBlockGone)"
+    # Still in cooldown — must NOT fire Convert again
+    a2, _ = wc.decide(entity, local_world)
+    assert action_name(a2) != "Convert", \
+        "Should not issue back-to-back Convert (SourceBlockGone)"
     print("PASS test_no_double_chop_same_block")
 
 # ── Test 10: only leaves, no trunks ──────────────────────────────────────────
@@ -298,13 +327,13 @@ def test_no_double_chop_same_block():
 def test_only_leaves_falls_back_to_chopping_leaves():
     """No trunks visible → fall back to chopping nearest leaves."""
     blocks = [make_block("base:leaves", d, 65, 0, float(d)) for d in [5, 8, 12]]
-    world = make_world(blocks=blocks)
+    local_world = make_world(blocks=blocks)
 
     wc = WoodcutterBehavior()
-    action, goal = wc.decide(make_entity(), world)
+    action, goal = wc.decide(make_entity(), local_world)
 
     # Should walk toward the nearest leaves block (dist=5, x=5)
-    assert action_name(action) == "MoveTo", \
+    assert action_name(action) == "Move", \
         "expected MoveTo toward leaves, got %s (goal=%r)" % (action_name(action), goal)
     assert abs(action._kwargs["x"] - 5.5) < 0.1, \
         "expected target x≈5.5 (nearest leaf), got %.2f" % action._kwargs["x"]
@@ -315,30 +344,30 @@ def test_only_leaves_falls_back_to_chopping_leaves():
 def test_no_choppable_blocks_wanders():
     """No trunks or leaves → wander and search."""
     blocks = [make_block("base:stone", 3, 64, 0, 3.0)]
-    world = make_world(blocks=blocks)
+    local_world = make_world(blocks=blocks)
 
     wc = WoodcutterBehavior()
-    action, _ = wc.decide(make_entity(), world)
+    action, _ = wc.decide(make_entity(), local_world)
 
-    assert action_name(action) in ("Wander", "Idle"), \
-        "expected Wander/Idle with no choppable blocks, got %s" % action_name(action)
+    assert action_name(action) == "Move", \
+        "expected MoveTo (wandering) with no choppable blocks, got %s" % action_name(action)
     print("PASS test_no_choppable_blocks_wanders")
 
 # ── Test 11: ignores base:wood (buildings) ────────────────────────────────────
 
 def test_ignores_base_wood_buildings():
-    """world.get('base:trunk') must skip base:wood building blocks."""
+    """local_world.get('base:trunk') must skip base:wood building blocks."""
     blocks = [
         make_block("base:wood",  3, 64, 0,  3.0),
         make_block("base:wood",  5, 64, 2,  5.4),
         make_block("base:trunk", 20, 64, 0, 20.0),
     ]
-    world = make_world(blocks=blocks)
+    local_world = make_world(blocks=blocks)
 
     wc = WoodcutterBehavior()
-    action, _ = wc.decide(make_entity(), world)
+    action, _ = wc.decide(make_entity(), local_world)
 
-    assert action_name(action) == "MoveTo", "expected MoveTo toward trunk"
+    assert action_name(action) == "Move", "expected MoveTo toward trunk"
     assert abs(action._kwargs["x"] - 20.5) < 0.1, \
         "expected target x≈20.5, got %.2f" % action._kwargs["x"]
     print("PASS test_ignores_base_wood_buildings")
@@ -346,18 +375,18 @@ def test_ignores_base_wood_buildings():
 # ── Test 12: max_dist respected ──────────────────────────────────────────────
 
 def test_nearest_block_respects_max_dist():
-    """world.get('base:trunk', max_dist=15) must not return blocks further than 15."""
+    """local_world.get('base:trunk', max_dist=15) must not return blocks further than 15."""
     blocks = [
         make_block("base:trunk", 10, 64, 0, 10.0),
         make_block("base:trunk", 20, 64, 0, 20.0),
         make_block("base:trunk", 30, 64, 0, 30.0),
     ]
-    world = make_world(blocks=blocks)
+    local_world = make_world(blocks=blocks)
 
-    b = world.get("base:trunk", max_dist=15.0)
+    b = local_world.get("base:trunk", max_dist=15.0)
     assert b is not None and b.distance == 10.0
 
-    b2 = world.get("base:trunk", max_dist=5.0)
+    b2 = local_world.get("base:trunk", max_dist=5.0)
     assert b2 is None, "no trunk within 5 blocks"
     print("PASS test_nearest_block_respects_max_dist")
 

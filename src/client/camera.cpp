@@ -96,7 +96,7 @@ float Camera::smoothVertical(float targetY, float dt) {
 	// Clamp maximum lag: camera can trail by at most half a stair step.
 	// This ensures large drops (portal staircase, 1.0-block step) are partially
 	// snapped then smoothed over the remaining 0.5 blocks — no long trailing camera.
-	const float kMaxLag = 0.55f;
+	const float kMaxLag = 1.1f;
 	if (diff > kMaxLag)  { m_smoothY = targetY - kMaxLag; diff =  kMaxLag; }
 	if (diff < -kMaxLag) { m_smoothY = targetY + kMaxLag; diff = -kMaxLag; }
 

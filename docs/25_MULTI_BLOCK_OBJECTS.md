@@ -55,7 +55,7 @@ Doors are the original multi-block precedent. They use:
 - Two separate `BlockId` values: `base:door` (closed) and `base:door_open`
 - Param2 bit 2 = hinge flag (which column: left or right)
 - Placement creates both halves (`PlaceBlock` sets blocks at `y` and `y+1`)
-- `InteractBlock` scans up/down for the other half and toggles both together
+- `Interact` scans up/down for the other half and toggles both together
 - Breaking one half removes both via the same vertical scan
 
 The door implementation is ad-hoc — it does not use `MultiBlockHelper`. Future
@@ -111,7 +111,7 @@ Breaking either half: read `CompanionDir` from param2 → compute partner positi
 ### Overview
 
 `base:chest` is a single-block storage object (no companion block needed). On
-right-click (`InteractBlock` action), the server sends the chest's inventory to
+right-click (`Interact` action), the server sends the chest's inventory to
 the requesting client. The client shows a UI panel alongside the player inventory
 where items can be moved in either direction.
 

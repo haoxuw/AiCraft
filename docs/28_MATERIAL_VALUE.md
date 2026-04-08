@@ -5,8 +5,8 @@
 **No action can increase the total material value in the world.**
 
 Every object in the world — blocks placed in the terrain, items in inventories,
-entity hit points, dropped items on the ground — carries an intrinsic `value`
-field. The server enforces that every action either conserves or decreases total
+entity hit points, dropped items on the ground — carries an intrinsic material
+value. The server enforces that every action either conserves or decreases total
 value. It never increases it.
 
 This makes every resource meaningful. Wood logs can't be created from nothing.
@@ -18,39 +18,26 @@ HP can't be conjured without a source. Every conversion has a cost.
 
 | Object | Value Source | Example |
 |--------|-------------|---------|
-| Block in world | `value` field in block artifact | `base:wood` block: 10 |
-| Item in inventory | `value` field in item artifact | `base:log`: 10 |
-| Entity HP | `hp_value` field in creature artifact | 1 HP = 0.5 |
-| Dropped item entity | Same as item | — |
+| Block in world | `src/shared/material_values.h` | `base:wood`: 4.0 |
+| Item in inventory | `src/shared/material_values.h` | `base:sword`: 15.0 |
+| Entity HP | fixed at 1.0 (same scale as dirt) | 1 HP = 1.0 |
+| Dropped item entity | Same as item type | — |
 
-Values are defined in Python artifacts and loaded by the server at startup.
-They are immutable at runtime — only artifact files can change them.
+Material values are the **single source of truth** in `src/shared/material_values.h`.
+Any type not listed defaults to 1.0. Artifact files do not carry a `value` field —
+they describe appearance, behavior, and stats. Values are a separate concern.
 
-### Artifact Format
+### Value Table (excerpt from `src/shared/material_values.h`)
 
-```python
-# artifacts/items/base/log.py
-item = {
-    "id": "base:log",
-    "name": "Log",
-    "value": 10,       # material value units
-    ...
-}
-
-# artifacts/blocks/base/wood.py
-block = {
-    "id": "base:wood",
-    "value": 10,       # same value as log — breaking/placing is even
-    ...
-}
-
-# artifacts/creatures/base/chicken.py
-creature = {
-    "id": "base:chicken",
-    "max_hp": 6,
-    "hp_value": 0.5,   # each HP point is worth 0.5 value units
-    ...
-}
+```cpp
+{"base:dirt",    1.0f},   // reference unit
+{"base:trunk",   4.0f},   // tree trunk block
+{"base:wood",    4.0f},   // placed wood block
+{"base:chest",   6.0f},
+{"base:sword",  15.0f},
+{"base:apple",   2.0f},
+{"hp",           1.0f},   // 1 HP = 1.0 (enables item↔HP conversions)
+// anything not listed → 1.0 (default)
 ```
 
 ---
@@ -77,53 +64,46 @@ allowed to increase value.
 
 All world mutations go through exactly 4 server-validated action types:
 
-### 1. MoveTo
+### 1. Move
 ```
-MoveTo(entityId, targetPos, speed)
+Move(x, y, z, speed)
 ```
 Validation: path doesn't pass through solid blocks (no tunneling).
 Value effect: none. Moving doesn't create or destroy value.
 
-### 2. TakeItem
+### 2. Relocate
 ```
-TakeItem(actorId, fromRef, toRef, itemId, count)
+Relocate(relocate_from=Container, relocate_to=Container, item_id, count)
 ```
-Moves items between any two inventory references without creating new ones.
-An `InventoryRef` can be:
-- Entity ID (entity's item inventory — includes chest entities, dropped items)
-- Block position (block at xyz treated as a single-slot inventory)
-- `"ground"` (spawn/despawn dropped-item entity)
+Moves items between any two containers without creating new ones.
+A `Container` is one of: `Self()`, `Ground()`, `Entity(id)`, `Block(x,y,z)`.
 
-Validation: source ref has ≥ `count` of `itemId`. Neither creates nor destroys;
-total value is conserved exactly.
+Validation: source container has ≥ `count` of `item_id`. Neither creates nor
+destroys; total value is conserved exactly.
 
-### 3. ConvertItem
+### 3. Convert
 ```
-ConvertItem(actorId, fromItemId, fromCount, toItemId, toCount)
+Convert(from_item, from_count, to_item, to_count,
+        convert_from=Container, convert_into=Container)
 ```
-Transforms items in the actor's inventory. Any conversion is allowed as long as:
+Transforms items. Any conversion is allowed as long as:
 ```
-value(toItemId) * toCount  ≤  value(fromItemId) * fromCount
+value(to_item) * to_count  ≤  value(from_item) * from_count
 ```
 Use cases:
-- Break block: `ConvertItem("base:wood_block", 1, "base:log", 1)` — same value
-- Cook meat: `ConvertItem("base:raw_meat", 1, "base:cooked_meat", 1)` — must define cooked_meat.value ≤ raw_meat.value
-- Lay egg: `ConvertItem("hp", 4, "base:egg", 1)` — spend 4 HP to produce 1 egg
-- Place block: `ConvertItem("base:log", 1, "base:wood_block", 1)` — same value
+- Break block: `Convert(convert_from=Block(x,y,z), convert_into=Ground())` — block → dropped item
+- Lay egg: `Convert("hp", 2, "base:egg", 1)` — spend 2 HP (value 2.0) → 1 egg (value 1.0) ✓
+- Eat apple: `Convert("base:apple", 1, "hp", 2)` — 1 apple (value 2.0) → 2 HP ✓
 
-Python behavior decides *when* to send ConvertItem (e.g., only near a furnace
-for cooking). The server only checks value conservation. No other preconditions.
+Python behavior decides *when* to send Convert. The server only checks value
+conservation. No other preconditions.
 
-### 4. DestroyItem
+### 4. Interact
 ```
-DestroyItem(actorId, targetRef, itemId, count)
+Interact(block_x, block_y, block_z)
 ```
-Removes items from an inventory reference permanently. Always allowed — value
-decreases, which satisfies the invariant.
-Use cases:
-- Attack: `DestroyItem(attacker, entityId, "hp", 5)` — deal 5 HP damage
-- Consume item: `DestroyItem(actor, self, "base:potion", 1)` — drink potion
-- Burn: `DestroyItem(actor, blockPos, "base:wood_block", 1)` — block catches fire
+Toggles interactive block state (door open/close, TNT fuse, button press).
+Value effect: none.
 
 ---
 
@@ -131,30 +111,35 @@ Use cases:
 
 ### Woodcutter chops a tree
 ```python
-# Python decides: actor is adjacent to wood block, has axe equipped
-ConvertItem("base:wood_block", 1, "base:log", 1)   # value: 10 → 10 ✓
-```
-
-### Cook raw meat (requires Python to check furnace proximity)
-```python
-# Python only sends this if actor is within 2 blocks of a furnace
-ConvertItem("base:raw_meat", 1, "base:cooked_meat", 1)  # value: 3 → 3 ✓
+from modcraft_engine import Convert, Block, Ground
+# value: 4.0 (trunk) → 4.0 (dropped trunk item) ✓
+Convert(convert_from=Block(tx, ty, tz), convert_into=Ground())
 ```
 
 ### Chicken lays an egg (spending HP)
 ```python
-# hp_value=0.5, egg.value=2.0; need 4 HP to lay 1 egg
-ConvertItem("hp", 4, "base:egg", 1)   # value: 2.0 → 2.0 ✓
+from modcraft_engine import Convert
+# value: 2.0 (2 HP × 1.0) → 1.0 (1 egg × 1.0) ✓ (decrease allowed)
+Convert("hp", 2, "base:egg", 1)
 ```
 
-### Attack (destroying HP)
+### Eat apple (healing HP)
 ```python
-DestroyItem(attacker_id, target_entity, "hp", 5)   # value: 2.5 → 0 ✓ (decrease)
+from modcraft_engine import Convert
+# value: 2.0 (1 apple × 2.0) → 2.0 (2 HP × 1.0) ✓
+Convert("base:apple", 1, "hp", 2)
+```
+
+### Attack (destroying HP — value decreases)
+```python
+from modcraft_engine import Convert, Entity
+# value: 5.0 (5 HP) → 0 (destroy) ✓ (decrease allowed)
+Convert("hp", 5, "", 0, convert_from=Entity(target_id))
 ```
 
 ### Invalid (server rejects)
 ```python
-ConvertItem("base:dirt", 1, "base:diamond", 1)  # value: 1 → 100 ✗ REJECTED
+Convert("base:dirt", 1, "base:sword", 1)  # value: 1.0 → 15.0 ✗ REJECTED
 ```
 
 ---
@@ -163,10 +148,10 @@ ConvertItem("base:dirt", 1, "base:diamond", 1)  # value: 1 → 100 ✗ REJECTED
 
 | Action | Server Check |
 |--------|-------------|
-| MoveTo | No solid block on path within range |
-| TakeItem | Source has the item; actor within reach range |
-| ConvertItem | `to_value * to_count ≤ from_value * from_count` |
-| DestroyItem | Source has the item |
+| Move | No solid block on path within range |
+| Relocate | Source container has the item; actor within reach range |
+| Convert | `value(to_item) * to_count ≤ value(from_item) * from_count` |
+| Interact | Block at position is interactive |
 
 The server does **not** check:
 - Whether a furnace is nearby for cooking

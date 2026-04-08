@@ -14,7 +14,7 @@ Entity props (optional):
   home_radius   — max wander distance from spawn (default 25)
 """
 import random
-from modcraft_engine import Idle, Wander, Flee, MoveTo, ConvertObject
+from modcraft_engine import Move, Convert, Ground
 from behavior_base import Behavior
 
 EGG_COOLDOWN = 10.0
@@ -33,12 +33,12 @@ class PeckBehavior(Behavior):
         self._egg_cooldown = 0.0
         self._rng_seeded = False
 
-    def decide(self, entity, world):
+    def decide(self, entity, local_world):
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True
 
-        dt = world.dt
+        dt = local_world.dt
         self._activity_timer -= dt
         self._egg_cooldown   -= dt
         self._home = self.init_home(entity, self._home)
@@ -51,27 +51,27 @@ class PeckBehavior(Behavior):
         dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
 
         # ── Evening/Night: roost at home ─────────────────────────────────────
-        if self.is_night(world) or self.is_evening(world):
+        if self.is_night(local_world) or self.is_evening(local_world):
             self._resting = True
-            if self.is_night(world):
+            if self.is_night(local_world):
                 self._sleeping = True
             if dist_home > 3:
-                return MoveTo(*self._home, speed=spd), "Heading home to roost..."
+                return Move(*self._home, speed=spd), "Heading home to roost..."
             if self._sleeping:
-                return Idle(), "Roosting zzz"
-            return Idle(), "Settling in to roost"
+                return Move(entity.x, entity.y, entity.z),"Roosting zzz"
+            return Move(entity.x, entity.y, entity.z),"Settling in to roost"
 
         if self._resting:
             self._resting = False
             self._sleeping = False
-            return Idle(), "Good morning! *cluck*"
+            return Move(entity.x, entity.y, entity.z),"Good morning! *cluck*"
 
         if dist_home > home_radius:
-            return MoveTo(*self._home, speed=spd * 0.8), "Wandering back home"
+            return Move(*self._home, speed=spd * 0.8), "Wandering back home"
 
         # ── Flee from threats ────────────────────────────────────────────────
-        threat_p = world.nearest("player", max_dist=scatter_range)
-        threat_c = world.get("base:cat",   max_dist=scatter_range)
+        threat_p = local_world.nearest("player", max_dist=scatter_range)
+        threat_c = local_world.get("base:cat",   max_dist=scatter_range)
         threats  = [t for t in [threat_p, threat_c] if t]
         if threats:
             closest = min(threats, key=lambda t: t.distance)
@@ -79,40 +79,40 @@ class PeckBehavior(Behavior):
                 self._was_startled = True
                 if random.random() < EGG_CHANCE and entity.hp > 2:
                     self._egg_cooldown = EGG_COOLDOWN
-                    return (ConvertObject(from_item="hp", from_count=2,
+                    return (Convert(from_item="hp", from_count=2,
                                          to_item="base:egg", to_count=1,
-                                         direct=False),
+                                         convert_into=Ground()),
                             "BAWK!! *lays egg!*")
-            return Flee(closest.id, speed=6.0), "BAWK!! Scattering!"
+            return Move(*self.flee_pos(entity, closest), speed=6.0), "BAWK!! Scattering!"
 
         self._was_startled = False
 
         # ── Peck grass (if standing on grass block) ──────────────────────────
         if self._activity == "peck_grass" and self._activity_timer > 0:
-            return Idle(), "Pecking grass"
+            return Move(entity.x, entity.y, entity.z),"Pecking grass"
 
-        on_grass = world.get("base:grass") is not None and any(
+        on_grass = local_world.get("base:grass") is not None and any(
             abs(b.x - entity.x) < 1.5 and
             abs(b.z - entity.z) < 1.5 and
             abs(b.y - (entity.y - 1)) < 1.5
-            for b in world.all("base:grass")
+            for b in local_world.all("base:grass")
         )
         if on_grass and random.random() < 0.10 and self._activity_timer <= 0:
             self._activity = "peck_grass"
             self._activity_timer = 2.0 + random.random() * 3.0
-            return Idle(), "Pecking grass"
+            return Move(entity.x, entity.y, entity.z),"Pecking grass"
 
         # ── Flock (only if same-type animals are actually nearby) ─────────────
-        friends = world.all(entity.type_id)
+        friends = local_world.all(entity.type_id)
         if friends:
             farthest = max(friends, key=lambda e: e.distance)
             if farthest.distance > 4:
-                return MoveTo(farthest.x, farthest.y, farthest.z, speed=spd), \
+                return Move(farthest.x, farthest.y, farthest.z, speed=spd), \
                        "Rejoining flock"
 
         # ── Peck or scratch ──────────────────────────────────────────────────
         self._activity = "idle"
         if random.random() < peck_chance:
-            return Idle(), "Pecking at seeds"
+            return Move(entity.x, entity.y, entity.z),"Pecking at seeds"
 
-        return Wander(speed=1.8), "Scratching ground"
+        return Move(*self.wander_target(entity, radius=8), speed=1.8), "Scratching ground"

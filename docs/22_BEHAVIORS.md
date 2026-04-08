@@ -2,8 +2,11 @@
 
 All entity AI is defined in Python artifacts at `artifacts/behaviors/base/`.
 Each behavior is a `decide(self, world)` function called at 4Hz by the entity's
-agent client process. Behaviors return actions: `Idle`, `Wander`, `Follow`,
-`Flee`, `MoveTo`, `BreakBlock`, `DropItem`.
+agent client process. Behaviors return `(action, goal_str)` where action is one
+of the engine primitives (`Idle`, `MoveTo`, `Convert`, `StoreItem`, etc.)
+or a `MoveTo` computed by a `Behavior` base class helper.
+
+See `docs/21_BEHAVIOR_API.md` for the full API reference.
 
 ## Behavior Index
 
@@ -99,27 +102,3 @@ Fork any behavior and edit:
 All parameters are optional and read via `self.get("key", default)`.
 Override per-entity through creature definitions or the behavior editor.
 
-## Behavior API Reference
-
-Available actions (from `modcraft_engine`):
-```python
-Idle()                              # stop and apply friction
-Wander(speed=2.0)                   # random walk direction
-MoveTo(x, y, z, speed=2.0)         # walk to position
-Follow(entity_id, speed=2.0, min_distance=1.5)  # follow entity
-Flee(entity_id, speed=4.0)         # run away from entity
-BreakBlock(x, y, z)                # mine a block
-DropItem(item_type, count=1)       # spawn item entity at feet
-```
-
-World data available in `decide(self, world)`:
-```python
-world["dt"]         # seconds since last decide (0.25 at 4Hz)
-world["nearby"]     # list of nearby entities: {id, type_id, category, x,y,z, distance, hp}
-world["blocks"]     # list of nearby notable blocks: {x,y,z, type, distance}
-world["time"]       # world time (0=midnight, 0.5=noon)
-self["x"], self["y"], self["z"]   # entity position
-self["walk_speed"]                 # from creature definition
-self["type_id"]                    # e.g. "base:pig"
-self.get("key", default)          # read optional parameter
-```
