@@ -447,7 +447,17 @@ public:
 			if (result > 0) {
 				drainOnePipe(*it);  // flush any final output
 				if (it->logFd >= 0) { close(it->logFd); it->logFd = -1; }
-				printf("[AI] Agent for entity %u exited (pid %d)\n", it->entityId, it->pid);
+				if (WIFEXITED(status)) {
+					int code = WEXITSTATUS(status);
+					if (code == 0)
+						printf("[AI] Agent for entity %u exited normally (pid %d)\n", it->entityId, it->pid);
+					else
+						printf("[AI] Agent for entity %u CRASHED with exit code %d (pid %d)\n", it->entityId, it->pid, code);
+				} else if (WIFSIGNALED(status)) {
+					printf("[AI] Agent for entity %u KILLED by signal %d (pid %d)\n", it->entityId, it->pid, WTERMSIG(status));
+				} else {
+					printf("[AI] Agent for entity %u exited (pid %d, raw status=%d)\n", it->entityId, it->pid, status);
+				}
 				it = m_aiProcesses.erase(it);
 			} else {
 				++it;
@@ -827,6 +837,8 @@ private:
 		case net::C_SET_GOAL: {
 			uint32_t eid = rb.readU32();
 			float gx = rb.readF32(), gy = rb.readF32(), gz = rb.readF32();
+			printf("[Server] C_SET_GOAL received: entity=%u goal=(%.1f,%.1f,%.1f) from client %u\n",
+				eid, gx, gy, gz, cid);
 			// Ownership check: client must own the entity or be admin
 			if (!m_server.canClientControl(cid, eid)) {
 				printf("[Server] C_SET_GOAL for entity %u denied (ownership)\n", eid);
