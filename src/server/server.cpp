@@ -48,12 +48,12 @@ void GameServer::resolveActions(float dt) {
 				e->yaw = glm::degrees(std::atan2(p.desiredVel.z, p.desiredVel.x));
 			e->pitch = p.lookPitch;
 
-			if (p.fly) {
+			if (p.hasClientPos) {
+				// Client ran moveAndCollide — trust its Y velocity (gravity, jump, etc.)
 				e->velocity.y = p.desiredVel.y;
-			} else if (!p.hasClientPos && p.jump && e->onGround) {
-				// Only apply jump if client didn't run its own physics.
-				// When hasClientPos, the client already handled jump via moveAndCollide —
-				// re-applying would double-jump from the already-elevated clientPos.
+			} else if (p.fly) {
+				e->velocity.y = p.desiredVel.y;
+			} else if (p.jump && e->onGround) {
 				e->velocity.y = p.jumpVelocity;
 				e->onGround = false;
 			}

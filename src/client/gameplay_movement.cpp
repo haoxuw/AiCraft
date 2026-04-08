@@ -46,20 +46,13 @@ void GameplayController::processMovement(float dt, GameState state,
 			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
 
 			if (isClick && !m_rtsSelect.selected.empty() && m_hit) {
-				// Click with units selected → move to target (Red Alert style)
+				// Click with units selected → send C_SET_GOAL to each agent
 				issueRTSMoveOrder(m_hit->blockPos, server, camera);
 			} else if (!isClick) {
-				// Drag → box select (stop currently moving entities first)
-				for (auto& [eid, _] : m_rtsSelect.moveTargets) {
-					ActionProposal p;
-					p.type = ActionProposal::Move;
-					p.actorId = eid;
-					p.desiredVel = {0, 0, 0};
-					server.sendAction(p);
-				}
-				m_rtsSelect.moveTargets.clear();
+				// Drag → box select (cancel goals for previously selected)
+				for (auto eid : m_rtsSelect.selected)
+					server.sendCancelGoal(eid);
 				m_rtsSelect.selected.clear();
-				m_clickToMove.active = false;
 
 				float aspect = (float)ww / (float)wh;
 				glm::mat4 vp = camera.projectionMatrix(aspect) * camera.viewMatrix();
@@ -75,56 +68,7 @@ void GameplayController::processMovement(float dt, GameState state,
 			}
 		}
 
-		// ── Continuous movement: send Move each frame until entities arrive ──
-		if (!m_rtsSelect.moveTargets.empty()) {
-			std::vector<EntityId> arrived;
-			for (auto& [eid, target] : m_rtsSelect.moveTargets) {
-				Entity* e = server.getEntity(eid);
-				if (!e) { arrived.push_back(eid); continue; }
-
-				glm::vec3 toTarget = target - e->position;
-				toTarget.y = 0;
-				float dist = glm::length(toTarget);
-
-				ActionProposal p;
-				p.type = ActionProposal::Move;
-				p.actorId = eid;
-
-				if (dist <= 0.5f) {
-					arrived.push_back(eid);
-					p.desiredVel = {0, 0, 0};
-				} else {
-					// Check if entity is stuck (has velocity but not moving)
-					float hSpeed = std::sqrt(e->velocity.x*e->velocity.x + e->velocity.z*e->velocity.z);
-					auto prevIt = m_rtsLastPos.find(eid);
-					if (prevIt != m_rtsLastPos.end() && hSpeed > 0.5f) {
-						float moved = glm::length(glm::vec2(
-							e->position.x - prevIt->second.x,
-							e->position.z - prevIt->second.z));
-						if (moved < 0.05f * dt) {
-							// Stuck against a wall — stop pushing
-							arrived.push_back(eid);
-							p.desiredVel = {0, 0, 0};
-							server.sendAction(p);
-							continue;
-						}
-					}
-					m_rtsLastPos[eid] = e->position;
-
-					glm::vec3 dir = glm::normalize(toTarget);
-					float spd = e->def().walk_speed;
-					if (spd <= 0) spd = camera.moveSpeed;
-					p.desiredVel = {dir.x * spd, 0, dir.z * spd};
-				}
-				server.sendAction(p);
-			}
-			for (auto eid : arrived) {
-				m_rtsSelect.moveTargets.erase(eid);
-				m_rtsLastPos.erase(eid);
-			}
-			if (m_rtsSelect.moveTargets.empty())
-				m_clickToMove.active = false;
-		}
+		// Agents handle continuous navigation — no per-frame velocity loop needed.
 
 		return; // RTS: no WASD player movement
 	}
@@ -147,10 +91,15 @@ void GameplayController::processMovement(float dt, GameState state,
 		if (controls.held(Action::MoveBackward)) move -= camFwd;
 		if (controls.held(Action::MoveLeft))     move -= camRight;
 		if (controls.held(Action::MoveRight))    move += camRight;
-		if (hasWASD) m_clickToMove.active = false;
+		// WASD cancels any active nav goal
+		if (hasWASD) {
+			if (m_clickToMove.active) {
+				server.sendCancelGoal(player.id());
+				m_clickToMove.active = false;
+			}
+		}
 
-		// Left-click move: raycast from camera through mouse cursor
-		// Skip if processBlockInteraction already claimed the click as an entity attack
+		// Left-click move: raycast → C_SET_GOAL (agent handles pathfinding)
 		if (controls.pressed(Action::BreakBlock) && m_attackTarget == ENTITY_NONE) {
 			double mx, my;
 			glfwGetCursorPos(window.handle(), &mx, &my);
@@ -178,21 +127,9 @@ void GameplayController::processMovement(float dt, GameState state,
 				bool bodyClear = !blocks.get(chunks.getBlock(bp.x, bp.y + 1, bp.z)).solid &&
 				                 !blocks.get(chunks.getBlock(bp.x, bp.y + 2, bp.z)).solid;
 				if (groundSolid && bodyClear) {
-					m_clickToMove.target = target;
+					server.sendSetGoal(player.id(), target);
 					m_clickToMove.active = true;
 				}
-			}
-		}
-
-		// Continuous tracking toward click-to-move target
-		if (m_clickToMove.active && !hasWASD) {
-			glm::vec3 toTarget = m_clickToMove.target - player.position;
-			toTarget.y = 0;
-			float dist = glm::length(toTarget);
-			if (dist > 0.5f) {
-				move = glm::normalize(toTarget);
-			} else {
-				m_clickToMove.active = false;
 			}
 		}
 	} else if (state == GameState::ADMIN &&
@@ -281,6 +218,9 @@ void GameplayController::processMovement(float dt, GameState state,
 
 	moveAction.clientPos    = player.position;
 	moveAction.hasClientPos = true;
+	// Send post-physics Y velocity so server stays in sync during jumps/falls.
+	// desiredVel.y is normally 0 (non-fly); we override it after local physics.
+	moveAction.desiredVel.y = player.velocity.y;
 	moveAction.lookPitch = camera.lookPitch;
 	moveAction.lookYaw   = camera.player.yaw;
 	server.sendAction(moveAction);
@@ -298,23 +238,19 @@ void GameplayController::issueRTSMoveOrder(glm::ivec3 blockPos,
 	if (!bl.get(server.chunks().getBlock(blockPos.x, blockPos.y, blockPos.z)).solid)
 		return;
 
-	m_clickToMove.target = center;
-	m_clickToMove.active = true;
-	m_rtsSelect.moveTargets.clear();
-	m_rtsLastPos.clear();
-
+	// Compute grid formation positions, then send C_SET_GOAL for each entity.
 	int n = (int)m_rtsSelect.selected.size();
 	int cols = std::max(1, (int)std::ceil(std::sqrt((float)n)));
-	int rows = (n + cols - 1) / cols;
 	float spacing = 2.0f;
 	float offX = (cols - 1) * spacing * 0.5f;
+	int rows = (n + cols - 1) / cols;
 	float offZ = (rows - 1) * spacing * 0.5f;
 
 	for (int i = 0; i < n; i++) {
 		glm::vec3 pos = center + glm::vec3(
 			(i % cols) * spacing - offX, 0,
 			(i / cols) * spacing - offZ);
-		m_rtsSelect.moveTargets[m_rtsSelect.selected[i]] = pos;
+		server.sendSetGoal(m_rtsSelect.selected[i], pos);
 	}
 }
 
