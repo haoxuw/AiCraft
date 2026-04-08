@@ -59,6 +59,24 @@ public:
 
 		m_connected = true;
 
+		// Send C_HELLO immediately — server defers entity creation until it
+		// receives this, then responds with S_WELCOME.
+		{
+			std::string name = m_displayName.empty()
+				? ("Player-" + m_clientUUID.substr(0, 4))
+				: m_displayName;
+			net::WriteBuffer hello;
+#ifdef __EMSCRIPTEN__
+			hello.writeU32(1);
+#else
+			hello.writeU32(net::PROTOCOL_VERSION);
+#endif
+			hello.writeString(m_clientUUID);
+			hello.writeString(name);
+			hello.writeString(m_creatureType);
+			net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
+		}
+
 		// Wait for S_WELCOME (polling for up to 3 seconds)
 		auto start = std::chrono::steady_clock::now();
 		while (true) {
@@ -88,6 +106,22 @@ public:
 			return false;
 		}
 		m_connected = true;
+		// Send C_HELLO immediately (same as sync path)
+		{
+			std::string name = m_displayName.empty()
+				? ("Player-" + m_clientUUID.substr(0, 4))
+				: m_displayName;
+			net::WriteBuffer hello;
+#ifdef __EMSCRIPTEN__
+			hello.writeU32(1);
+#else
+			hello.writeU32(net::PROTOCOL_VERSION);
+#endif
+			hello.writeString(m_clientUUID);
+			hello.writeString(name);
+			hello.writeString(m_creatureType);
+			net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
+		}
 		return true;
 	}
 
@@ -292,7 +326,7 @@ public:
 	}
 
 private:
-	// Parse S_WELCOME from receive buffer and send C_HELLO. Returns true on success.
+	// Parse S_WELCOME from receive buffer. C_HELLO was already sent on connect.
 	bool recvWelcomeFromBuffer() {
 		net::MsgHeader hdr;
 		std::vector<uint8_t> payload;
@@ -303,23 +337,6 @@ private:
 				m_spawnPos = rb.readVec3();
 				printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f)\n",
 					m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
-
-				// Always send a non-empty display name — generate one from the
-				// UUID if the user hasn't set one yet (can be changed in the UI).
-				std::string name = m_displayName.empty()
-					? ("Player-" + m_clientUUID.substr(0, 4))
-					: m_displayName;
-				net::WriteBuffer hello;
-				// Wire format: [u32 version][str uuid][str displayName][str creatureType]
-#ifdef __EMSCRIPTEN__
-				hello.writeU32(1); // WASM build: no zstd — request uncompressed S_CHUNK
-#else
-				hello.writeU32(net::PROTOCOL_VERSION);
-#endif
-				hello.writeString(m_clientUUID);
-				hello.writeString(name);
-				hello.writeString(m_creatureType);
-				net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
 				return true;
 			}
 		}

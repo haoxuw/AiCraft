@@ -801,21 +801,15 @@ private:
 			client.name = rb.readString();
 			uint32_t targetEntity = rb.readU32();
 			client.isAgent = true;
+			m_server.addAgentClient(cid);
 			printf("[Server] %s identified as agent, wants entity %u\n",
 				client.label().c_str(), targetEntity);
 
 			Entity* te = m_server.world().entities.get(targetEntity);
 			if (!te || te->removed) {
-				printf("[Server] Entity %u not found for agent %s (keeping player entity)\n",
+				printf("[Server] Entity %u not found for agent %s\n",
 					targetEntity, client.label().c_str());
 				break;
-			}
-
-			if (client.playerId != ENTITY_NONE) {
-				m_server.world().entities.remove(client.playerId);
-				m_server.removeClient(cid);
-				m_server.addAgentClient(cid);
-				client.playerId = ENTITY_NONE;
 			}
 
 			m_server.assignEntityToClient(cid, targetEntity);

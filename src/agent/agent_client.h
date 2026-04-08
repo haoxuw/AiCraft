@@ -59,32 +59,38 @@ public:
 		}
 		m_connected = true;
 
-		// Wait for S_WELCOME
+		// Identify immediately — server defers all setup until it knows
+		// whether this is a GUI client (C_HELLO) or agent (C_AGENT_HELLO).
+		{
+			net::WriteBuffer hello;
+			hello.writeString(m_name);
+			hello.writeU32(m_targetEntityId);
+			net::sendMessage(m_tcp.fd(), net::C_AGENT_HELLO, hello);
+		}
+
+		// Wait for S_ASSIGN_ENTITY (server assigns us the target entity)
 		auto start = std::chrono::steady_clock::now();
 		while (true) {
 			m_recv.readFrom(m_tcp.fd());
 			net::MsgHeader hdr;
 			std::vector<uint8_t> payload;
-			if (m_recv.tryExtract(hdr, payload)) {
-				if (hdr.type == net::S_WELCOME) {
+			while (m_recv.tryExtract(hdr, payload)) {
+				if (hdr.type == net::S_ASSIGN_ENTITY) {
 					net::ReadBuffer rb(payload.data(), payload.size());
-					uint32_t tempId = rb.readU32();
-					rb.readVec3(); // spawn pos (unused by agent)
-					printf("[Agent:%s] Connected (temp entity %u).\n",
-						m_name.c_str(), tempId);
-
-					// Identify as agent client with target entity
-					net::WriteBuffer hello;
-					hello.writeString(m_name);
-					hello.writeU32(m_targetEntityId);
-					net::sendMessage(m_tcp.fd(), net::C_AGENT_HELLO, hello);
+					EntityId eid = rb.readU32();
+					std::string behaviorId = rb.readString();
+					assignEntity(eid, behaviorId);
+					printf("[Agent:%s] Connected, assigned entity %u (behavior: %s)\n",
+						m_name.c_str(), eid, behaviorId.c_str());
 					return true;
 				}
+				// Handle other messages that arrive before assignment (S_ENTITY, etc.)
+				handleMessage(hdr.type, payload);
 			}
 
 			auto elapsed = std::chrono::steady_clock::now() - start;
-			if (std::chrono::duration<float>(elapsed).count() > 3.0f) {
-				printf("[Agent:%s] Timeout waiting for welcome\n", m_name.c_str());
+			if (std::chrono::duration<float>(elapsed).count() > 5.0f) {
+				printf("[Agent:%s] Timeout waiting for entity assignment\n", m_name.c_str());
 				disconnect();
 				return false;
 			}
