@@ -445,9 +445,13 @@ private:
 					e.setProp(Prop::HP, es.hp);
 				if (es.owner != 0)
 					e.setProp(Prop::Owner, es.owner);
-				// Sync string properties
-				for (auto& [k, v] : es.props)
+				// Sync entity properties from server.
+				// SelectedSlot is client-owned UI state — never overwrite from server.
+				bool isLocal = (es.id == m_localPlayerId);
+				for (auto& [k, v] : es.props) {
+					if (isLocal && k == Prop::SelectedSlot) continue;
 					e.setProp(k, v);
+				}
 			}
 			break;
 		}
