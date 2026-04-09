@@ -272,9 +272,16 @@ public:
 			es.owner = e.getProp<int>(Prop::Owner, 0);
 				es.moveTarget = e.moveTarget;
 				es.moveSpeed = e.moveSpeed;
+				// Serialize ALL prop types as string key-value pairs
 				for (auto& [key, val] : e.props()) {
-					if (auto* s = std::get_if<std::string>(&val))
-						es.stringProps.push_back({key, *s});
+					std::string sv;
+					if (auto* s = std::get_if<std::string>(&val)) sv = *s;
+					else if (auto* f = std::get_if<float>(&val)) sv = std::to_string(*f);
+					else if (auto* i = std::get_if<int>(&val)) sv = std::to_string(*i);
+					else if (auto* b = std::get_if<bool>(&val)) sv = *b ? "true" : "false";
+					else if (auto* v = std::get_if<glm::vec3>(&val))
+						sv = std::to_string(v->x) + "," + std::to_string(v->y) + "," + std::to_string(v->z);
+					if (!sv.empty()) es.props.push_back({key, sv});
 				}
 
 				net::WriteBuffer wb;

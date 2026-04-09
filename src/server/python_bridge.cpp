@@ -353,6 +353,14 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		pySelf["hp"] = self.hp();
 		pySelf["walk_speed"] = self.def().walk_speed;
 		pySelf["on_ground"] = self.onGround;
+		// Expose ALL entity props so Python behaviors can read custom values
+		// (home_x, chest_x, work_radius, etc.) via entity.get("prop_name")
+		for (auto& [key, val] : self.props()) {
+			if (auto* s = std::get_if<std::string>(&val)) pySelf[key.c_str()] = *s;
+			else if (auto* f = std::get_if<float>(&val)) pySelf[key.c_str()] = *f;
+			else if (auto* i = std::get_if<int>(&val)) pySelf[key.c_str()] = *i;
+			else if (auto* b = std::get_if<bool>(&val)) pySelf[key.c_str()] = *b;
+		}
 		// Inventory: expose as {"item_id": count, ...} dict
 		if (self.inventory) {
 			py::dict pyInv;

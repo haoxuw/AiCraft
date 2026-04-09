@@ -130,15 +130,16 @@ class Behavior:
     def init_home(self, entity: SelfEntity, home: tuple) -> tuple:
         """Return home (x, y, z), initialising from server props if not set yet.
 
-        Uses home_x / home_z server-assigned props when present, otherwise
-        records the entity's current spawn position as home.
+        Uses home_x / home_y / home_z server-assigned props when present,
+        otherwise records the entity's current spawn position as home.
         """
         if home is not None:
             return home
         hx = entity.get("home_x")
+        hy = entity.get("home_y")
         hz = entity.get("home_z")
         if hx is not None and hz is not None:
-            return (float(hx), entity.y, float(hz))
+            return (float(hx), float(hy) if hy is not None else entity.y, float(hz))
         return (entity.x, entity.y, entity.z)
 
     @staticmethod

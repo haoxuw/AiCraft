@@ -195,7 +195,9 @@ public:
 				auto bIt = wgc.behaviorOverrides.find(villagerType);
 				if (bIt != wgc.behaviorOverrides.end())
 					extraProps[Prop::BehaviorId] = bIt->second;
+				float homeY = safeSpawnHeight(bp.x, bp.z);
 				extraProps["home_x"] = bp.x;
+				extraProps["home_y"] = homeY;
 				extraProps["home_z"] = bp.z;
 				if (i < m_houseChests.size()) {
 					extraProps["chest_x"] = m_houseChests[i].x;

@@ -390,7 +390,7 @@ private:
 				if (!es.characterSkin.empty())
 					ent->setProp("character_skin", es.characterSkin);
 				// Apply string properties (ItemType, BehaviorId, etc.)
-				for (auto& [k, v] : es.stringProps)
+				for (auto& [k, v] : es.props)
 					ent->setProp(k, v);
 				if (es.id == m_localPlayerId)
 					printf("[Net] Local player entity created: type=%s pos=(%.1f,%.1f,%.1f)\n",
@@ -436,7 +436,7 @@ private:
 				if (es.owner != 0)
 					e.setProp(Prop::Owner, es.owner);
 				// Sync string properties
-				for (auto& [k, v] : es.stringProps)
+				for (auto& [k, v] : es.props)
 					e.setProp(k, v);
 			}
 			break;

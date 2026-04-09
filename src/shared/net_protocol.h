@@ -272,8 +272,9 @@ struct EntityState {
 	int owner = 0;  // EntityId of owning player (0 = unowned)
 	glm::vec3 moveTarget = {0, 0, 0};  // where entity is heading (client prediction)
 	float moveSpeed = 0.0f;            // speed toward moveTarget
-	// String properties (e.g., ItemType for item entities, BehaviorId for NPCs)
-	std::vector<std::pair<std::string, std::string>> stringProps;
+	// All properties — serialized as string key-value pairs.
+	// Float/int/bool/vec3 props are converted to strings for transport.
+	std::vector<std::pair<std::string, std::string>> props;
 };
 
 inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
@@ -291,8 +292,8 @@ inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
 	buf.writeI32(e.owner);
 	buf.writeVec3(e.moveTarget);
 	buf.writeF32(e.moveSpeed);
-	buf.writeU32((uint32_t)e.stringProps.size());
-	for (auto& [k, v] : e.stringProps) {
+	buf.writeU32((uint32_t)e.props.size());
+	for (auto& [k, v] : e.props) {
 		buf.writeString(k);
 		buf.writeString(v);
 	}
@@ -318,7 +319,7 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	for (uint32_t i = 0; i < propCount && buf.hasMore(); i++) {
 		std::string k = buf.readString();
 		std::string v = buf.readString();
-		e.stringProps.push_back({k, v});
+		e.props.push_back({k, v});
 	}
 	return e;
 }

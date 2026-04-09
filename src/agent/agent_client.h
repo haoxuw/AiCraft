@@ -204,6 +204,23 @@ public:
 				// Sort overall nearest-first
 				std::sort(chunkBlocks.begin(), chunkBlocks.end(),
 				          [](const BlockSample& a, const BlockSample& b) { return a.distance < b.distance; });
+
+				// Debug: log block gather results on decide
+				if (state.decideCount <= 3) {
+					printf("[Agent:%s] entity %u gather: %zu nearby chunks (of %zu total), %zu blocks, %zu types\n",
+						m_name.c_str(), eid, nearbyCi.size(), m_chunkInfoCache.size(),
+						chunkBlocks.size(), typeSampleCount.size());
+					// Show distances to nearest + farthest cached chunk
+					float minD = 99999, maxD = 0;
+					for (auto& [cp2, ci2] : m_chunkInfoCache) {
+						glm::vec3 cc = {cp2.x*CHUNK_SIZE+8.0f, cp2.y*CHUNK_SIZE+8.0f, cp2.z*CHUNK_SIZE+8.0f};
+						float dd = glm::length(e.position - cc);
+						if (dd < minD) minD = dd;
+						if (dd > maxD) maxD = dd;
+					}
+					printf("[Agent:%s]   chunk dist range: %.0f - %.0f (threshold: 96)\n",
+						m_name.c_str(), minD, maxD);
+				}
 			}
 
 			// blockQueryFn for Python pathfinding get_block()
@@ -245,8 +262,14 @@ public:
 		m_statusTimer += dt;
 		if (m_statusTimer >= 10.0f) {
 			m_statusTimer = 0.0f;
-			printf("[Agent:%s] Heartbeat — %zu entities, %zu chunks cached\n",
-			       m_name.c_str(), m_controlled.size(), m_chunkInfoCache.size());
+			// Debug: show chunkInfo stats
+			int totalEntries = 0, totalSamples = 0;
+			for (auto& [cp, ci] : m_chunkInfoCache) {
+				totalEntries += (int)ci.entries.size();
+				for (auto& [t, e2] : ci.entries) totalSamples += (int)e2.samples.size();
+			}
+			printf("[Agent:%s] Heartbeat — %zu entities, %zu chunkInfo (%d types, %d samples)\n",
+			       m_name.c_str(), m_controlled.size(), m_chunkInfoCache.size(), totalEntries, totalSamples);
 		}
 	}
 
@@ -283,7 +306,7 @@ private:
 				ent->goalText = es.goalText;
 				if (def->isLiving())
 					ent->setProp(Prop::HP, es.hp);
-				for (auto& [k, v] : es.stringProps)
+				for (auto& [k, v] : es.props)
 					ent->setProp(k, v);
 				m_entities[es.id] = std::move(ent);
 			} else {
@@ -296,7 +319,7 @@ private:
 				e.goalText = es.goalText;
 				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);
-				for (auto& [k, v] : es.stringProps)
+				for (auto& [k, v] : es.props)
 					e.setProp(k, v);
 			}
 			// Active trigger: if a controlled entity just lost HP → decide immediately
@@ -361,14 +384,14 @@ private:
 		case net::S_CHUNK_INFO_DELTA: {
 			ChunkPos cp;
 			auto wireEntries = net::readChunkInfoPayload(rb, cp);
+			if (m_chunkInfoCache.size() < 5) // log first few
+				printf("[Agent:%s] S_CHUNK_INFO (%d,%d,%d): %zu wire entries\n",
+					m_name.c_str(), cp.x, cp.y, cp.z, wireEntries.size());
 			AgentChunkInfo& ci = m_chunkInfoCache[cp];
 			ci.pos = cp;
 			if (type == net::S_CHUNK_INFO) {
-				// Full replace
 				ci.entries.clear();
 			}
-			// For both S_CHUNK_INFO and S_CHUNK_INFO_DELTA: replace entries from payload
-			// (delta sends the full rebuilt chunk info, so same handling applies)
 			for (auto& we : wireEntries) {
 				if (we.count <= 0)
 					ci.entries.erase(we.typeId);
