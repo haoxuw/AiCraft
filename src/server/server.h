@@ -487,6 +487,21 @@ public:
 		// Server validates and executes in resolveActions().
 		// NPC pickup is handled by Python behavior → PickupItem action.
 
+		// HP regeneration: all Living entities regen +1 HP per second until full
+		m_regenTimer += dt;
+		if (m_regenTimer >= 1.0f) {
+			m_regenTimer = 0;
+			m_world->entities.forEach([&](Entity& e) {
+				if (!e.def().isLiving()) return;
+				if (e.removed) return;
+				int hp = e.hp();
+				int maxHp = e.def().max_hp;
+				if (maxHp > 0 && hp > 0 && hp < maxHp) {
+					e.setHp(hp + 1);
+				}
+			});
+		}
+
 		// Advance world time
 		m_worldTime += (1.0f / 1200.0f) * dt; // 20-min cycle: 5min each night/morning/afternoon/evening
 
@@ -579,6 +594,7 @@ private:
 	float m_worldTime = 0.30f;
 	float m_activeBlockTimer = 0;
 	float m_stuckTimer = 0;
+	float m_regenTimer = 0;
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	glm::vec3 m_chestPos = {30, 10, 30};
 	std::vector<glm::vec3> m_houseChests;                           // one per non-barn house
