@@ -73,12 +73,10 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 
 	switch (action.type) {
 	case BehaviorAction::Idle:
-		// No movement proposal, but still send goalText via a zero-velocity Move
-		// so the server (and UI) always shows the current behavior status.
-		{
-			auto p = makeMove({0, 0, 0});
-			out.push_back(p);
-		}
+		// No proposal — entity keeps its last velocity. This prevents the agent
+		// from fighting GUI WASD control with zero-velocity stop actions.
+		// goalText is still propagated because the Move actions sent between
+		// decide() calls (line 150-158 in agent_client.h) carry it.
 		break;
 	case BehaviorAction::Move: {
 		glm::vec3 dir = action.targetPos - e.position;
