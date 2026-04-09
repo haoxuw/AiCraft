@@ -44,11 +44,10 @@ the engine (physics, networking, rendering).** See `docs/00_OVERVIEW.md`.
 - Creature definitions, behaviors, items, blocks, effects, models → Python artifacts
 - **NEVER hardcode gameplay constants in C++.** Every magic number (distance,
   speed, timer, radius) MUST be configurable from Python.
-- **Pathfinding and navigation are game logic** — they live in Python
-  (`python/pathfind.py`), not in C++. A modder must be able to replace
-  the pathfinding algorithm without touching C++. The C++ engine provides
-  block queries (`get_block`), physics (`moveAndCollide`), and the network
-  transport — Python decides *how* entities navigate.
+- **NPC AI behaviors are game logic** — they live in Python.
+  **Player click-to-move** uses server-side greedy steering (`src/server/pathfind.h`)
+  for simplicity and reliability. NPC pathfinding still uses Python (`python/pathfind.py`)
+  via agent clients. Navigation tuning constants are in `ServerTuning`.
 
 ### Rule 2: The Player Is Not Special
 
@@ -78,10 +77,10 @@ and camera tracking.
 - Each NPC entity has its own `modcraft-agent` process running Python `decide()`
 - Server spawns/manages agent clients via `ClientManager`
 - Python behavior code NEVER runs on the server
-- **Player entities also get agent clients** for pathfinding/navigation
-  (RTS click-to-move, RPG click-to-move). The agent runs a `player_nav`
-  behavior that is idle during WASD and activates on `C_SET_GOAL`.
-  The GUI client sends goals; the agent navigates using Python pathfinding.
+- **Player click-to-move navigation** is handled server-side (greedy local
+  steering in `src/server/pathfind.h`). The GUI client sends `C_SET_GOAL` or
+  `C_SET_GOAL_GROUP`; the server sets entity velocities each tick. Player
+  entities do NOT need agent clients for navigation.
 
 ### Rule 5: Server Has No Display Logic
 

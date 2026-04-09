@@ -60,15 +60,8 @@ void Game::updateEntityInspect(float dt, float aspect) {
 		ImGui::SameLine(200);
 		ImGui::TextColored({0.65f, 0.65f, 0.70f, 1}, "Type: %s", target->typeId().c_str());
 
-		if (!target->goalText.empty()) {
-			ImGui::TextColored({0.5f, 1.0f, 0.8f, 1}, "Goal: %s", target->goalText.c_str());
-		} else {
-			std::string bid = target->getProp<std::string>(Prop::BehaviorId, "");
-			if (!bid.empty())
-				ImGui::TextColored({0.65f, 0.65f, 0.55f, 1}, "Goal: (waiting for agent: %s)", bid.c_str());
-			else
-				ImGui::TextColored({0.60f, 0.60f, 0.60f, 1}, "Goal: (no agent)");
-		}
+		ImGui::TextColored({0.5f, 1.0f, 0.8f, 1}, "> %s",
+			target->goalText.empty() ? "(pending)" : target->goalText.c_str());
 		if (target->hasError) {
 			ImGui::TextColored({1.0f, 0.3f, 0.3f, 1}, "ERROR: %s", target->errorText.c_str());
 		}

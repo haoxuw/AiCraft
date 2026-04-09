@@ -68,6 +68,7 @@ enum MsgType : uint32_t {
 	C_SET_GOAL        = 0x0008,  // [u32 entityId][f32 x][f32 y][f32 z]
 	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
 	C_CLAIM_ENTITY    = 0x000A,  // [u32 entityId] — claim ownership (admin or unclaimed only)
+	C_SET_GOAL_GROUP  = 0x000B,  // [f32 x][f32 y][f32 z][u32 count][u32 eid...]
 
 	// Server → Client
 	S_WELCOME         = 0x1001,
@@ -85,8 +86,7 @@ enum MsgType : uint32_t {
 	S_CHUNK_Z         = 0x100F,  // zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
 	S_CHUNK_INFO      = 0x1010,  // full block census for a chunk: sent to agent clients only
 	S_CHUNK_INFO_DELTA= 0x1011,  // updated block census after a block change in a chunk
-	S_SET_GOAL        = 0x1012,  // [f32 x][f32 y][f32 z] — to agent
-	S_CANCEL_GOAL     = 0x1013,  // (no payload) — clear goal
+	// S_SET_GOAL and S_CANCEL_GOAL removed — server handles nav directly
 };
 
 // Message header (8 bytes)

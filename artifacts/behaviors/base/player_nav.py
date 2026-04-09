@@ -33,7 +33,12 @@ class PlayerNavBehavior(Behavior):
         action = self._nav.navigate(entity, local_world, goal_pos,
                                     speed=entity.walk_speed)
         if action is not None:
-            return action, self._nav.status
+            # Log the action type and target (once per new status)
+            status = self._nav.status
+            if not hasattr(self, '_last_status') or self._last_status != status:
+                print(f"[player_nav] Action: {action.type} → status='{status}'")
+                self._last_status = status
+            return action, status
 
         print(f"[player_nav] Arrived")
         self._logged_goal = None

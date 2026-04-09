@@ -18,6 +18,7 @@
 #include "shared/action.h"
 #include "shared/constants.h"
 #include "server/world_template.h"
+#include "server/pathfind.h"
 #include "shared/block_registry.h"
 #include <algorithm>
 #include <memory>
@@ -259,8 +260,7 @@ public:
 		EntityId eid = m_world->entities.spawn(EntityType::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
 		if (pe) pe->yaw = -90.0f; // face -Z (toward stairs from portal)
-		// Player gets a nav agent for RPG/RTS click-to-move pathfinding
-		if (pe) pe->setProp(Prop::BehaviorId, std::string("player_nav"));
+		// Server handles click-to-move navigation directly (no agent needed)
 		// Self-owned: player controls their own character
 		if (pe) pe->setProp(Prop::Owner, (int)eid);
 		// Store character skin as entity property (client reads for rendering)
@@ -326,22 +326,19 @@ public:
 		                             it->second.controlledEntities.end());
 	}
 
-	// Get entities that have a BehaviorId but no agent client.
-	// Includes player entities (GUI-owned) — they need a nav agent too.
+	// Get NPC entities that have a BehaviorId but no agent client.
+	// Player entities are excluded — server handles their navigation directly.
 	std::vector<EntityId> getUncontrolledNPCs() const {
 		std::vector<EntityId> result;
 		m_world->entities.forEach([&](Entity& e) {
 			if (e.removed) return;
 			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
 			if (bid.empty()) return;
+			// Skip player entities — they don't need agent clients for navigation
+			if (e.def().isCharacter()) return;
 			auto ownerIt = m_entityOwner.find(e.id());
 			if (ownerIt == m_entityOwner.end()) {
 				result.push_back(e.id());
-			} else {
-				// Owned by a client — only spawn agent if owner is NOT an agent
-				auto cit = m_clients.find(ownerIt->second);
-				if (cit != m_clients.end() && !cit->second.isAgent)
-					result.push_back(e.id());
 			}
 		});
 		return result;
@@ -420,12 +417,10 @@ public:
 		// while allowing full RTS control of owned entities.
 		if (!canClientControl(clientId, action.actorId)) return;
 
-		if (action.type == ActionProposal::Move) {
-			// Agent goal text: update server-side entity for broadcast
-			if (!action.goalText.empty()) {
-				Entity* e = m_world->entities.get(action.actorId);
-				if (e) e->goalText = action.goalText;
-			}
+		// Agent goal text: update server-side entity for broadcast (all action types)
+		if (!action.goalText.empty()) {
+			Entity* e = m_world->entities.get(action.actorId);
+			if (e) e->goalText = action.goalText;
 		}
 
 		// behaviorSource non-empty = hot-reload control message, not a game action.
@@ -472,6 +467,9 @@ public:
 			});
 		}
 
+		// Server-side navigation: set velocities for entities with active nav goals
+		updateNavigation(dt, m_world->entities);
+
 		// Physics for all entities (purges removed entities from the map)
 		m_world->entities.stepPhysics(dt, solidFn);
 
@@ -500,6 +498,8 @@ public:
 			m_world->entities.forEach([&](Entity& e) {
 				// Check all living entities (anything with HP)
 				if (!e.def().isLiving()) return;
+				// Skip entities with active nav — nav has its own stuck handling
+				if (e.nav.active) return;
 
 				EntityId id = e.id();
 				auto it = m_lastPositions.find(id);

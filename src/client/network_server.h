@@ -12,6 +12,7 @@
  */
 
 #include "shared/server_interface.h"
+#include "shared/physics.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
 #ifndef __EMSCRIPTEN__
@@ -184,53 +185,56 @@ public:
 			m_diagTimer = 0;
 		}
 
-		// Position update:
-		//   Local player — runs moveAndCollide() in gameplay_movement.cpp.
-		//                  Only hard-snap when server disagrees significantly.
-		//   Remote entities — dead-reckoning + smooth interpolation.
-		const float INTERP_SPEED = 18.0f;
-		const float SNAP_LOCAL  = 8.0f;   // lenient — client & server run same physics
-		const float SNAP_REMOTE = 12.0f;
+		// Position update — all entities use client-side moveAndCollide.
+		// Local player: velocity from input (gameplay_movement.cpp runs physics).
+		// Non-local:    velocity XZ from server, Y from local gravity.
+		// Both get soft correction toward server position via S_ENTITY.
+		const float SNAP_THRESHOLD = 8.0f;
+		const float CORRECTION_RATE = 5.0f;
+
+		BlockSolidFn clientSolidFn = [&](int x, int y, int z) -> float {
+			const auto& bd = m_blocks.get(m_chunks.getBlock(x, y, z));
+			return bd.solid ? bd.collision_height : 0.0f;
+		};
+
 		for (auto& [id, target] : m_interpTargets) {
 			auto it = m_entities.find(id);
 			if (it == m_entities.end()) continue;
 			auto& e = *it->second;
 			bool isLocal = (id == m_localPlayerId);
 
-			if (isLocal && !localPlayerServerDriven) {
-				// WASD mode: client runs moveAndCollide — position is self-managed.
-				// Only snap on large disagreement (teleport, missing chunks).
-				float dist = glm::length(target.position - e.position);
-				if (dist > SNAP_LOCAL) {
-					printf("[Net] SNAP local (dist=%.1f) local=(%.1f,%.1f,%.1f) srv=(%.1f,%.1f,%.1f)\n",
-						dist, e.position.x, e.position.y, e.position.z,
-						target.position.x, target.position.y, target.position.z);
-					e.position = target.position;
-					e.velocity = target.velocity;
-				}
-			} else {
-				// Remote entities: dead-reckoning + smooth interpolation
-				float cappedAge = std::min(target.age, 0.5f);
-				glm::vec3 predicted = target.position + target.velocity * cappedAge;
-				glm::vec3 diff = predicted - e.position;
-				float dist = glm::length(target.position - e.position);
-				if (dist > SNAP_REMOTE) {
-					printf("[Net] SNAP entity %u (dist=%.1f)\n", id, dist);
-					e.position = target.position;
-					target.age = 0.0f;
-				} else if (glm::length(diff) > 0.005f) {
-					e.position += diff * std::min(dt * INTERP_SPEED, 1.0f);
-				}
+			if (!isLocal) {
+				// Non-local: use server XZ velocity, preserve local Y velocity
+				// (same pattern as local player in gameplay_movement.cpp)
+				glm::vec3 localVel = {target.velocity.x, e.velocity.y, target.velocity.z};
+
+				// Run same physics as local player
+				const auto& def = e.def();
+				MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
+					def.gravity_scale, def.isLiving(), e.getProp<bool>("fly_mode", false));
+
+				auto result = moveAndCollide(clientSolidFn, e.position, localVel, dt, mp, e.onGround);
+				e.position = result.position;
+				e.velocity = result.velocity;
+				e.onGround = result.onGround;
+
+				// Face movement direction (same as local player)
+				if (std::abs(localVel.x) > 0.01f || std::abs(localVel.z) > 0.01f)
+					e.yaw = glm::degrees(std::atan2(localVel.z, localVel.x));
 			}
 
-			// Yaw: smooth for all entities
-			if (!isLocal) {
-				float yawDiff = target.yaw - e.yaw;
-				while (yawDiff > 180.0f) yawDiff -= 360.0f;
-				while (yawDiff < -180.0f) yawDiff += 360.0f;
-				e.yaw += yawDiff * std::min(dt * INTERP_SPEED, 1.0f);
-				// Remote: velocity from server for animation + prediction
+			// Server correction — same for local and non-local.
+			// Local: gameplay_movement already moved the entity; this is snap-only.
+			// Non-local: moveAndCollide just ran; this corrects drift.
+			glm::vec3 diff = target.position - e.position;
+			float dist = glm::length(diff);
+			if (dist > SNAP_THRESHOLD) {
+				e.position = target.position;
 				e.velocity = target.velocity;
+				e.onGround = true;
+			} else if (!isLocal && dist > 0.01f) {
+				// Gentle correction for non-local only (local is authoritative)
+				e.position += diff * std::min(dt * CORRECTION_RATE, 1.0f);
 			}
 
 			target.age += dt;
@@ -265,6 +269,15 @@ public:
 		wb.writeU32(eid);
 		wb.writeF32(pos.x); wb.writeF32(pos.y); wb.writeF32(pos.z);
 		net::sendMessage(m_tcp.fd(), net::C_SET_GOAL, wb);
+	}
+
+	void sendSetGoalGroup(glm::vec3 pos, const std::vector<EntityId>& eids) override {
+		if (!m_connected || eids.empty()) return;
+		net::WriteBuffer wb;
+		wb.writeF32(pos.x); wb.writeF32(pos.y); wb.writeF32(pos.z);
+		wb.writeU32((uint32_t)eids.size());
+		for (auto eid : eids) wb.writeU32(eid);
+		net::sendMessage(m_tcp.fd(), net::C_SET_GOAL_GROUP, wb);
 	}
 
 	void sendCancelGoal(EntityId eid) override {

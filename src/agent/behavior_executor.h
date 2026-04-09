@@ -61,39 +61,44 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 		e.yaw += diff * std::min(dt * TURN_SPEED, 1.0f);
 	};
 
-	switch (action.type) {
-	case BehaviorAction::Idle:
-		// Do nothing — no ActionProposal emitted. This prevents the agent
-		// from fighting GUI WASD control with zero-velocity stop actions.
-		break;
-	case BehaviorAction::Move: {
+	// Always attach goalText to Move proposals so it reaches the server
+	auto makeMove = [&](glm::vec3 vel) -> ActionProposal {
 		ActionProposal p;
 		p.type = ActionProposal::Move;
 		p.actorId = e.id();
-		// Agent clients do NOT send clientPos — their cached position (from S_ENTITY)
-		// is stale. The server position is authoritative for agent-controlled entities.
+		p.desiredVel = vel;
+		p.goalText = e.goalText;
+		return p;
+	};
+
+	switch (action.type) {
+	case BehaviorAction::Idle:
+		// No movement proposal, but still send goalText via a zero-velocity Move
+		// so the server (and UI) always shows the current behavior status.
+		{
+			auto p = makeMove({0, 0, 0});
+			out.push_back(p);
+		}
+		break;
+	case BehaviorAction::Move: {
 		glm::vec3 dir = action.targetPos - e.position;
 		dir.y = 0;
 		float dist = glm::length(dir);
+		glm::vec3 vel = {0, 0, 0};
 		if (dist > 0.5f) {
 			dir /= dist;
 			smoothYaw(glm::degrees(std::atan2(dir.z, dir.x)));
 			float rad = glm::radians(e.yaw);
-			p.desiredVel = {std::cos(rad) * action.speed, 0, std::sin(rad) * action.speed};
-		} else {
-			p.desiredVel = {0, 0, 0}; // arrived — stop
+			vel = {std::cos(rad) * action.speed, 0, std::sin(rad) * action.speed};
 		}
+		auto p = makeMove(vel);
 		out.push_back(p);
 		break;
 	}
 
 	case BehaviorAction::Relocate: {
-		// One-shot action — also produce a stop
-		ActionProposal stop;
-		stop.type       = ActionProposal::Move;
-		stop.actorId    = e.id();
-		stop.desiredVel = {0, 0, 0};
-		out.push_back(stop);
+		// One-shot: stop movement, then relocate
+		out.push_back(makeMove({0, 0, 0}));
 
 		ActionProposal p;
 		p.type         = ActionProposal::Relocate;
@@ -108,13 +113,7 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 	}
 
 	case BehaviorAction::Convert: {
-		ActionProposal stop;
-		stop.type         = ActionProposal::Move;
-		stop.actorId      = e.id();
-		stop.desiredVel   = {0, 0, 0};
-		stop.clientPos    = e.position;
-		stop.hasClientPos = true;
-		out.push_back(stop);
+		out.push_back(makeMove({0, 0, 0}));
 
 		ActionProposal p;
 		p.type        = ActionProposal::Convert;
@@ -130,13 +129,7 @@ inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
 	}
 
 	case BehaviorAction::Interact: {
-		ActionProposal stop;
-		stop.type         = ActionProposal::Move;
-		stop.actorId      = e.id();
-		stop.desiredVel   = {0, 0, 0};
-		stop.clientPos    = e.position;
-		stop.hasClientPos = true;
-		out.push_back(stop);
+		out.push_back(makeMove({0, 0, 0}));
 
 		ActionProposal p;
 		p.type     = ActionProposal::Interact;

@@ -52,12 +52,9 @@ public:
 	// Notify server that player reassigned a hotbar slot
 	virtual void sendHotbarSlot(int slot, const std::string& itemId) {}
 
-	// When true, local player position is server-driven (RTS move orders).
-	// Interpolation loop uses smooth tracking instead of snap-only.
-	bool localPlayerServerDriven = false;
-
-	// Navigation goals — RPG/RTS click-to-move, forwarded to entity's agent
+	// Navigation goals — RPG/RTS click-to-move, server handles directly
 	virtual void sendSetGoal(EntityId eid, glm::vec3 pos) {}
+	virtual void sendSetGoalGroup(glm::vec3 pos, const std::vector<EntityId>& eids) {}
 	virtual void sendCancelGoal(EntityId eid) {}
 
 	// Ownership — claim an entity (admin or unclaimed only)

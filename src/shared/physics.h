@@ -31,6 +31,20 @@ struct MoveParams {
 	bool smoothStep = false; // true = jump arc instead of instant step-up (for creatures)
 };
 
+// Build MoveParams from entity collision box + traits.
+// Used by both client (gameplay_movement, network_server) and server (entity_manager).
+inline MoveParams makeMoveParams(glm::vec3 boxMin, glm::vec3 boxMax,
+                                  float gravityScale, bool isLiving, bool canFly) {
+	MoveParams mp;
+	mp.halfWidth  = (boxMax.x - boxMin.x) * 0.5f;
+	mp.height     = boxMax.y - boxMin.y;
+	mp.gravity    = 32.0f * gravityScale;
+	mp.stepHeight = isLiving ? 1.0f : 0.0f;
+	mp.canFly     = canFly;
+	mp.smoothStep = false;
+	return mp;
+}
+
 // Block query: returns the collision height of the block at (x,y,z).
 // 0.0 = not solid (air/transparent), 1.0 = full block, 0.5 = half-height (stairs/slabs).
 // The block physically occupies [y, y + return_value] in world space.

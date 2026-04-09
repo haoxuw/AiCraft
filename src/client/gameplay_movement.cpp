@@ -17,6 +17,16 @@ void GameplayController::processMovement(float dt, GameState state,
                                          ServerInterface& server, Window& window,
                                          float jumpVelocity)
 {
+	// Movement state — shared by all modes (RTS virtual joystick, RPG click, WASD)
+	float speed = camera.moveSpeed;
+	bool sprinting = controls.held(Action::Sprint);
+	if (sprinting) speed *= 2.5f;
+	glm::vec3 move = {0, 0, 0};
+	bool hasWASD = controls.held(Action::MoveForward) ||
+	               controls.held(Action::MoveBackward) ||
+	               controls.held(Action::MoveLeft) ||
+	               controls.held(Action::MoveRight);
+
 	if (camera.mode == CameraMode::RTS) {
 		// ── RTS: left-click = box select (drag) OR move units (click) ──
 		double mx, my;
@@ -46,23 +56,16 @@ void GameplayController::processMovement(float dt, GameState state,
 			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
 
 			if (isClick && !m_rtsSelect.selected.empty() && m_hit) {
-				// Click with units selected → set move orders (grid formation)
+				// Click with units selected → send group goal (server computes formation)
 				glm::vec3 center = glm::vec3(m_hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
 				auto& bl = server.blockRegistry();
 				if (bl.get(server.chunks().getBlock(m_hit->blockPos.x, m_hit->blockPos.y, m_hit->blockPos.z)).solid) {
-					int n = (int)m_rtsSelect.selected.size();
-					int cols = std::max(1, (int)std::ceil(std::sqrt((float)n)));
-					float spacing = 2.0f;
-					float offX = (cols - 1) * spacing * 0.5f;
-					int rows = (n + cols - 1) / cols;
-					float offZ = (rows - 1) * spacing * 0.5f;
-					for (int i = 0; i < n; i++) {
-						glm::vec3 pos = center + glm::vec3(
-							(i % cols) * spacing - offX, 0,
-							(i / cols) * spacing - offZ);
-						EntityId eid = m_rtsSelect.selected[i];
-						m_moveOrders[eid] = {pos, true};
-						server.sendSetGoal(eid, pos);
+					printf("[RTS] Move order: %d entities → center (%.1f,%.1f,%.1f)\n",
+						(int)m_rtsSelect.selected.size(), center.x, center.y, center.z);
+					server.sendSetGoalGroup(center, m_rtsSelect.selected);
+					// Store local move orders for visual target rendering
+					for (auto eid : m_rtsSelect.selected) {
+						m_moveOrders[eid] = {center, true};
 					}
 					m_moveTargetPos = center;
 					m_hasMoveTarget = true;
@@ -92,46 +95,38 @@ void GameplayController::processMovement(float dt, GameState state,
 			}
 		}
 
-		// RTS: server drives all entities including local player
-		server.localPlayerServerDriven = true;
-
-		// Process active RTS move orders — send Move actions for each entity
+		// RTS: local player uses virtual joystick toward its move target
+		// (same as RPG click-to-move). Server handles OTHER entities via nav.
 		{
+			auto pit = m_moveOrders.find(player.id());
+			if (pit != m_moveOrders.end() && pit->second.active) {
+				glm::vec3 toTarget = pit->second.target - player.position;
+				toTarget.y = 0;
+				float dist = glm::length(toTarget);
+				if (dist < 1.0f) {
+					m_moveOrders.erase(pit);
+				} else {
+					move = glm::normalize(toTarget);
+				}
+			}
+			// Clean up move orders for other entities that arrived
 			std::vector<EntityId> arrived;
 			for (auto& [eid, order] : m_moveOrders) {
+				if (eid == player.id()) continue; // handled above
 				if (!order.active) { arrived.push_back(eid); continue; }
 				Entity* e = server.getEntity(eid);
 				if (!e) { arrived.push_back(eid); continue; }
-				glm::vec3 toTarget = order.target - e->position;
-				toTarget.y = 0;
-				float dist = glm::length(toTarget);
-				if (dist < 1.0f) { arrived.push_back(eid); continue; }
-				glm::vec3 dir = toTarget / dist;
-				float spd = e->def().walk_speed;
-				if (spd <= 0) spd = 4.0f;
-				ActionProposal p;
-				p.type = ActionProposal::Move;
-				p.actorId = eid;
-				p.desiredVel = {dir.x * spd, 0, dir.z * spd};
-				server.sendAction(p);
+				float hSpeed = std::sqrt(e->velocity.x * e->velocity.x + e->velocity.z * e->velocity.z);
+				glm::vec3 toTgt = order.target - e->position;
+				toTgt.y = 0;
+				if (glm::length(toTgt) < 2.0f || hSpeed < 0.1f)
+					arrived.push_back(eid);
 			}
 			for (auto eid : arrived) m_moveOrders.erase(eid);
 			if (m_moveOrders.empty()) m_hasMoveTarget = false;
 		}
-		return; // RTS: no WASD player movement
+		// Fall through to WASD/physics below — local player gets local moveAndCollide
 	}
-
-	// ── FPS / TPS / RPG: WASD movement ──
-	server.localPlayerServerDriven = false;
-	float speed = camera.moveSpeed;
-	bool sprinting = controls.held(Action::Sprint);
-	if (sprinting) speed *= 2.5f;
-
-	glm::vec3 move = {0, 0, 0};
-	bool hasWASD = controls.held(Action::MoveForward) ||
-	               controls.held(Action::MoveBackward) ||
-	               controls.held(Action::MoveLeft) ||
-	               controls.held(Action::MoveRight);
 
 	// WASD/jump cancels any active move order for the local player
 	bool wantsJump = controls.held(Action::Jump);
@@ -174,16 +169,19 @@ void GameplayController::processMovement(float dt, GameState state,
 				bool bodyClear = !blocks.get(chunks.getBlock(bp.x, bp.y + 1, bp.z)).solid &&
 				                 !blocks.get(chunks.getBlock(bp.x, bp.y + 2, bp.z)).solid;
 				if (groundSolid && bodyClear) {
+					printf("[RPG] Click-to-move → (%.1f,%.1f,%.1f) entity=%u\n",
+						target.x, target.y, target.z, player.id());
 					m_moveOrders[player.id()] = {target, true};
 					m_moveTargetPos = target;
 					m_hasMoveTarget = true;
-					// Also tell the player's agent so it can pathfind
 					server.sendSetGoal(player.id(), target);
 				}
 			}
 		}
 
-		// Process move order: walk toward target (virtual joystick)
+		// RPG click-to-move: virtual joystick toward target for responsive local movement.
+		// C_SET_GOAL was already sent on click; server runs nav in parallel.
+		// Client drives the local player directly for instant feedback.
 		auto pit = m_moveOrders.find(player.id());
 		if (pit != m_moveOrders.end() && pit->second.active && !hasWASD) {
 			glm::vec3 toTarget = pit->second.target - player.position;
@@ -258,13 +256,8 @@ void GameplayController::processMovement(float dt, GameState state,
 		};
 
 		const auto& def = player.def();
-		MoveParams mp;
-		mp.halfWidth  = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
-		mp.height     = def.collision_box_max.y - def.collision_box_min.y;
-		mp.gravity    = 32.0f * def.gravity_scale;
-		mp.stepHeight = def.isLiving() ? 1.0f : 0.0f;
-		mp.canFly     = moveAction.fly;
-		mp.smoothStep = false;
+		MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
+			def.gravity_scale, def.isLiving(), moveAction.fly);
 
 		glm::vec3 localVel = {moveAction.desiredVel.x, player.velocity.y, moveAction.desiredVel.z};
 		if (moveAction.fly)

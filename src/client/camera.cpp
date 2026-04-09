@@ -62,9 +62,12 @@ void Camera::processMouse(GLFWwindow* window) {
 		godAngle = std::clamp(godAngle, 15.0f, 80.0f);
 		break;
 	case CameraMode::RTS:
-		rtsOrbitYaw += dx;
-		rtsAngle += dy;
-		rtsAngle = std::clamp(rtsAngle, 15.0f, 80.0f);
+		// Only orbit when right mouse held (same controls as RPG)
+		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+			rtsOrbitYaw += dx;
+			rtsAngle += dy;
+			rtsAngle = std::clamp(rtsAngle, 15.0f, 80.0f);
+		}
 		break;
 	}
 }
@@ -160,7 +163,7 @@ void Camera::updateRPGPosition(float dt) {
 	);
 
 	float smoothedFeetY = smoothVertical(player.feetPos.y, dt);
-	glm::vec3 target(player.feetPos.x, smoothedFeetY + 1.0f, player.feetPos.z);
+	glm::vec3 target(player.feetPos.x, smoothedFeetY + player.eyeHeight * 0.8f, player.feetPos.z);
 	position = target + offset;
 
 	glm::vec3 dir = glm::normalize(target - position);
@@ -170,6 +173,14 @@ void Camera::updateRPGPosition(float dt) {
 
 void Camera::updateRTS(GLFWwindow* window, float dt) {
 	// Top-down camera, WASD pans relative to orbit, mouse for selection
+
+	// Keep m_smoothY updated for player model rendering (smoothedFeetPos)
+	smoothVertical(player.feetPos.y, dt);
+
+	// Middle mouse: center camera on player
+	if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS) {
+		rtsCenter = player.feetPos;
+	}
 
 	float speed = rtsPanSpeed * dt;
 	if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) speed *= 2.5f;

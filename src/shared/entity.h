@@ -157,6 +157,29 @@ public:
 	bool onGround = false;     // physics: is entity standing on solid ground
 	bool skipPhysics = false;  // set when clientPos accepted — client already ran physics
 
+	// --- Server-side navigation (C_SET_GOAL / C_SET_GOAL_GROUP click-to-move) ---
+	struct NavState {
+		bool active = false;
+		glm::vec3 longGoal  = {0, 0, 0};  // formation-adjusted destination
+		glm::vec3 shortGoal = {0, 0, 0};  // current steering target (may differ when dodging)
+
+		// Stuck detection
+		float stuckTimer = 0.0f;
+		glm::vec3 stuckCheckPos = {0, 0, 0};
+
+		// Dodge state (when obstacle detected)
+		float dodgeTimer = 0.0f;   // time remaining on current dodge
+		int   dodgeSign  = 0;      // -1=left, +1=right, 0=straight
+
+		void clear() { active = false; dodgeTimer = 0; dodgeSign = 0; stuckTimer = 0; }
+		void setGoal(glm::vec3 g) {
+			active = true; longGoal = g; shortGoal = g;
+			dodgeTimer = 0; dodgeSign = 0; stuckTimer = 0;
+			stuckCheckPos = {0, 0, 0};
+		}
+	};
+	NavState nav;
+
 	// --- Alive/active ---
 	bool removed = false;           // marked for removal
 	bool removalBroadcast = false;  // S_REMOVE sent to clients

@@ -15,6 +15,7 @@
 #include "server/world_template.h"
 #include "server/python_bridge.h"
 #include "server/world_accessibility.h"
+#include "server/pathfind.h"
 #include "shared/constants.h"
 #include <cstdio>
 #include <cmath>
@@ -1947,108 +1948,310 @@ class NavTestBehavior(Behavior):
 }
 
 // ================================================================
+// NAV1: Single entity walks toward goal on flat ground, arrives
 // ================================================================
-// B7: player_nav behavior loads, navigates with goal, idles without
-// ================================================================
-static std::string b7_player_nav_behavior() {
-	auto srv = makeVillageServer();
-	EntityId pid = srv->localPlayerId();
-	Entity* p = srv->getEntity(pid);
+static std::string nav1_single_entity_walks_to_goal() {
+	auto srv = makeFlatServer();
+	tickN(*srv, 60); // settle on ground
+
+	Entity* p = srv->getEntity(srv->localPlayerId());
 	if (!p) return "no player";
 
+	// Move entity to a clear area (away from village buildings)
+	p->position = {0, 9.0f, -30.0f};
 	tickN(*srv, 30); // settle on ground
 
-	// Load player_nav.py as a behavior
-	std::ifstream f("artifacts/behaviors/base/player_nav.py");
-	if (!f) return "cannot open player_nav.py";
-	std::ostringstream ss; ss << f.rdbuf();
-	std::string loadErr;
-	auto handle = pythonBridge().loadBehavior(ss.str(), loadErr);
-	if (handle < 0)
-		return "loadBehavior failed: " + loadErr;
+	glm::vec3 startPos = p->position;
+	glm::vec3 goalPos = startPos + glm::vec3(10.0f, 0, 0);
 
-	auto blockQueryFn = [&](int x, int y, int z) -> std::string {
-		BlockId bid = srv->server()->world().getBlock(x, y, z);
-		return srv->server()->world().blocks.get(bid).string_id;
-	};
+	// Set nav goal directly (simulating C_SET_GOAL)
+	p->nav.setGoal(goalPos);
+	if (!p->nav.active) return "nav not active after setGoal";
 
-	// Test 1: NO goal → should return Idle
-	{
-		std::string goalOut, errOut;
-		BehaviorAction action = pythonBridge().callDecide(
-			handle, *p, {}, {}, 0.25f, 0.5f, goalOut, errOut, blockQueryFn);
-		if (!errOut.empty()) return "decide() error (no goal): " + errOut;
-		if (action.type != BehaviorAction::Idle)
-			return "expected Idle with no goal, got type " + std::to_string((int)action.type);
-		if (goalOut.find("Idle") == std::string::npos)
-			return "expected 'Idle' in goalText, got: " + goalOut;
-	}
+	// Run enough ticks for entity to walk ~10 blocks
+	tickN(*srv, 60 * 5); // 5 seconds (at 8 blocks/sec, plenty)
 
-	// Test 2: WITH goal → should return Move toward it
-	// We need to inject goal into the pyWorld dict. The bridge reads s_hasGoal/s_goalX/Y/Z statics.
-	// But we removed those. Instead, test by re-adding goal support to the bridge.
-	// For now: verify behavior loads and idles correctly. Goal injection will be tested
-	// after C_SET_GOAL plumbing is re-added.
+	float dx = p->position.x - goalPos.x;
+	float dz = p->position.z - goalPos.z;
+	float dist = std::sqrt(dx * dx + dz * dz);
+	if (dist > 2.0f)
+		return "entity didn't arrive: dist=" + std::to_string(dist) +
+		       " pos=(" + std::to_string(p->position.x) + "," +
+		       std::to_string(p->position.z) + ")";
 
-	pythonBridge().unloadBehavior(handle);
+	// Nav should have cleared after arrival
+	if (p->nav.active)
+		return "nav still active after arriving (dist=" + std::to_string(dist) + ")";
+
 	return "";
 }
 
 // ================================================================
-// B8: player_nav with goal produces Move action
+// NAV2: Group of 3 entities get formation positions, all arrive
 // ================================================================
-static std::string b8_player_nav_with_goal() {
-	auto srv = makeVillageServer();
-	EntityId pid = srv->localPlayerId();
-	Entity* p = srv->getEntity(pid);
+static std::string nav2_group_formation() {
+	auto srv = makeFlatServer();
+	tickN(*srv, 60);
+
+	auto* gs = srv->server();
+
+	// Move player to clear area (away from village buildings)
+	Entity* p = srv->getEntity(srv->localPlayerId());
+	if (!p) return "no player";
+	p->position = {0, 9.0f, -30.0f};
+
+	// Spawn 2 more entities nearby in the clear area
+	EntityId e2 = gs->world().entities.spawn("base:player", p->position + glm::vec3(2, 0, 0));
+	EntityId e3 = gs->world().entities.spawn("base:player", p->position + glm::vec3(-2, 0, 0));
+	Entity* ent2 = gs->world().entities.get(e2);
+	Entity* ent3 = gs->world().entities.get(e3);
+	if (!ent2 || !ent3) return "failed to spawn test entities";
+
+	tickN(*srv, 30); // settle
+
+	// Group goal — all 3 entities to a point 15 blocks east
+	glm::vec3 target = p->position + glm::vec3(15.0f, 0, 0);
+	std::vector<Entity*> group = {p, ent2, ent3};
+	planGroupFormation(target, group);
+
+	// Verify each entity got a different long-term goal
+	if (!p->nav.active || !ent2->nav.active || !ent3->nav.active)
+		return "not all entities have active nav";
+
+	// At least 2 of the 3 should have different longGoals (formation offsets)
+	bool allSame = (p->nav.longGoal == ent2->nav.longGoal) &&
+	               (ent2->nav.longGoal == ent3->nav.longGoal);
+	if (allSame)
+		return "all 3 entities got identical goals (no formation spread)";
+
+	// Save goals before they get cleared on arrival
+	glm::vec3 goals[3] = {p->nav.longGoal, ent2->nav.longGoal, ent3->nav.longGoal};
+
+	// Run enough ticks for all to arrive
+	tickN(*srv, 60 * 5);
+
+	// Check all arrived (within reasonable distance of their individual goals)
+	Entity* ents[3] = {p, ent2, ent3};
+	for (int i = 0; i < 3; i++) {
+		float dx = ents[i]->position.x - goals[i].x;
+		float dz = ents[i]->position.z - goals[i].z;
+		float dist = std::sqrt(dx * dx + dz * dz);
+		if (dist > 3.0f)
+			return "entity " + std::to_string(ents[i]->id()) + " didn't arrive: dist=" +
+			       std::to_string(dist);
+	}
+
+	return "";
+}
+
+// ================================================================
+// NAV3: Entity facing a wall dodges and makes progress
+// ================================================================
+static std::string nav3_dodge_around_wall() {
+	auto srv = makeFlatServer();
+	tickN(*srv, 60);
+
+	auto* gs = srv->server();
+	auto& world = gs->world();
+	Entity* p = srv->getEntity(srv->localPlayerId());
 	if (!p) return "no player";
 
-	tickN(*srv, 30);
+	float startX = p->position.x;
 
-	// Load pathfind.py + player_nav inline with a goal hardcoded
-	std::ifstream pf("python/pathfind.py");
-	if (!pf) return "cannot open pathfind.py";
-	std::ostringstream pss; pss << pf.rdbuf();
+	// Place a wall 3 blocks east, 5 blocks wide in Z
+	BlockId stone = world.blocks.getId("base:stone");
+	int wx = (int)std::floor(p->position.x) + 3;
+	int wy = (int)std::floor(p->position.y);
+	int baseZ = (int)std::floor(p->position.z);
+	for (int dz = -2; dz <= 2; dz++) {
+		for (int dy = 0; dy <= 1; dy++) {
+			int wz = baseZ + dz;
+			ChunkPos cp = World::worldToChunk(wx, wy + dy, wz);
+			Chunk* c = world.getChunk(cp);
+			if (c) {
+				int lx = ((wx % 16) + 16) % 16;
+				int ly = (((wy + dy) % 16) + 16) % 16;
+				int lz = ((wz % 16) + 16) % 16;
+				c->set(lx, ly, lz, stone);
+			}
+		}
+	}
 
-	// Behavior that always has a goal 10 blocks east
-	std::string src = pss.str() + R"(
-from modcraft_engine import Move, Idle, get_block
-from behavior_base import Behavior
+	// Set goal 8 blocks east (past the wall)
+	glm::vec3 goal = p->position + glm::vec3(8.0f, 0, 0);
+	p->nav.setGoal(goal);
 
-class GoalNavTestBehavior(Behavior):
-    def __init__(self):
-        self._nav = Navigator()
-    def decide(self, entity, world):
-        goal = (entity.x + 10, entity.y, entity.z)
-        action = self._nav.navigate(entity, world, goal, speed=entity.walk_speed)
-        if action is None:
-            return Idle(), "Arrived"
-        return action, self._nav.status
-)";
+	// Run for a while — entity should dodge and make some progress
+	tickN(*srv, 60 * 10); // 10 seconds
 
-	std::string loadErr;
-	auto handle = pythonBridge().loadBehavior(src, loadErr);
-	if (handle < 0) return "loadBehavior failed: " + loadErr;
+	// Entity should have moved from start, even if not fully arrived
+	float progress = p->position.x - startX;
+	if (progress < 1.0f)
+		return "entity made no east progress past wall: moved " +
+		       std::to_string(progress) + " blocks";
 
-	auto blockQueryFn = [&](int x, int y, int z) -> std::string {
-		BlockId bid = srv->server()->world().getBlock(x, y, z);
-		return srv->server()->world().blocks.get(bid).string_id;
-	};
+	// Entity should still be actively navigating (never gives up)
+	// (may have arrived, which is also fine)
+	return "";
+}
 
-	std::string goalOut, errOut;
-	BehaviorAction action = pythonBridge().callDecide(
-		handle, *p, {}, {}, 0.25f, 0.5f, goalOut, errOut, blockQueryFn);
-	pythonBridge().unloadBehavior(handle);
+// ================================================================
+// NAV4: Entity in enclosed box keeps walking, never stops
+// ================================================================
+static std::string nav4_never_gives_up() {
+	auto srv = makeFlatServer();
+	tickN(*srv, 60);
 
-	if (!errOut.empty()) return "decide() error: " + errOut;
-	if (action.type != BehaviorAction::Move)
-		return "expected Move with goal, got type " + std::to_string((int)action.type) +
-		       " goal='" + goalOut + "'";
+	auto* gs = srv->server();
+	auto& world = gs->world();
+	Entity* p = srv->getEntity(srv->localPlayerId());
+	if (!p) return "no player";
 
-	// Verify the Move target is roughly east of the player
-	float dx = action.targetPos.x - p->position.x;
-	if (dx < 0.5f)
-		return "Move target not east of player: dx=" + std::to_string(dx);
+	// Build a box around the player (3x3 walls, 2 high)
+	BlockId stone = world.blocks.getId("base:stone");
+	int cx = (int)std::floor(p->position.x);
+	int cy = (int)std::floor(p->position.y);
+	int cz = (int)std::floor(p->position.z);
+	for (int dx = -2; dx <= 2; dx++) {
+		for (int dz = -2; dz <= 2; dz++) {
+			if (std::abs(dx) < 2 && std::abs(dz) < 2) continue; // skip interior
+			for (int dy = 0; dy <= 1; dy++) {
+				int bx = cx + dx, by = cy + dy, bz = cz + dz;
+				ChunkPos cp = World::worldToChunk(bx, by, bz);
+				Chunk* c = world.getChunk(cp);
+				if (c) {
+					int lx = ((bx % 16) + 16) % 16;
+					int ly = ((by % 16) + 16) % 16;
+					int lz = ((bz % 16) + 16) % 16;
+					c->set(lx, ly, lz, stone);
+				}
+			}
+		}
+	}
+
+	// Set goal far away (unreachable)
+	p->nav.setGoal(p->position + glm::vec3(50.0f, 0, 0));
+
+	// Run for a while
+	tickN(*srv, 60 * 6); // 6 seconds
+
+	// Entity should still be active (never gives up)
+	if (!p->nav.active)
+		return "entity gave up — nav should never deactivate in enclosed box";
+
+	// Entity should have non-zero velocity (still trying to walk)
+	float hSpeed = std::sqrt(p->velocity.x * p->velocity.x + p->velocity.z * p->velocity.z);
+	if (hSpeed < 0.1f)
+		return "entity stopped walking (speed=" + std::to_string(hSpeed) + ")";
+
+	return "";
+}
+
+// ================================================================
+// NAV5: Entity climbs 1-block step-ups during navigation
+// ================================================================
+static std::string nav5_step_up_climbing() {
+	auto srv = makeFlatServer();
+	tickN(*srv, 60);
+
+	auto* gs = srv->server();
+	auto& world = gs->world();
+	Entity* p = srv->getEntity(srv->localPlayerId());
+	if (!p) return "no player";
+
+	// Move to clear area (negative X to avoid houses near spawn)
+	p->position = {-20.0f, 9.0f, 0.0f};
+	tickN(*srv, 60); // settle
+
+	float startY = p->position.y;
+	float startX = p->position.x;
+
+	// Place a raised platform 4 blocks east — extends 6 blocks in X direction.
+	// This creates a 1-block step-up that the entity must climb and walk across.
+	BlockId stone = world.blocks.getId("base:stone");
+	int stepStartX = (int)std::floor(p->position.x) + 4;
+	int feetY = (int)std::floor(p->position.y);
+	int stepZ = (int)std::floor(p->position.z);
+	for (int dx = 0; dx < 6; dx++) {
+		for (int dz = -1; dz <= 1; dz++) {
+			int bx = stepStartX + dx;
+			int bz = stepZ + dz;
+			ChunkPos cp = World::worldToChunk(bx, feetY, bz);
+			Chunk* c = world.getChunk(cp);
+			if (c) {
+				int lx = ((bx % 16) + 16) % 16;
+				int ly = ((feetY % 16) + 16) % 16;
+				int lz = ((bz % 16) + 16) % 16;
+				c->set(lx, ly, lz, stone);
+			}
+		}
+	}
+	(void)stepStartX; // used during construction above
+
+	// Set goal 8 blocks east (past the step)
+	p->nav.setGoal(p->position + glm::vec3(8.0f, 0, 0));
+	tickN(*srv, 60 * 4); // 4 seconds
+
+	// Entity should have climbed up (Y increased by ~1)
+	float yGain = p->position.y - startY;
+	if (yGain < 0.8f)
+		return "entity didn't climb step: yGain=" + std::to_string(yGain) +
+		       " pos.y=" + std::to_string(p->position.y) +
+		       " startY=" + std::to_string(startY);
+
+	// Entity should have progressed past the step in X
+	float xProgress = p->position.x - startX;
+	if (xProgress < 5.0f)
+		return "entity didn't progress past step: xProgress=" + std::to_string(xProgress);
+
+	return "";
+}
+
+// ================================================================
+// NAV6: Entity stops at 2+ block wall (can't climb)
+// ================================================================
+static std::string nav6_blocked_by_tall_wall() {
+	auto srv = makeFlatServer();
+	tickN(*srv, 60);
+
+	auto* gs = srv->server();
+	auto& world = gs->world();
+	Entity* p = srv->getEntity(srv->localPlayerId());
+	if (!p) return "no player";
+
+	// Move to clear area (negative X to avoid houses)
+	p->position = {-20.0f, 9.0f, 0.0f};
+	tickN(*srv, 60);
+
+	// Place a 2-block wall 4 blocks east
+	BlockId stone = world.blocks.getId("base:stone");
+	int wallX = (int)std::floor(p->position.x) + 4;
+	int baseY = (int)std::floor(p->position.y);
+	int wallZ = (int)std::floor(p->position.z);
+	for (int dy = 0; dy <= 1; dy++) {
+		ChunkPos cp = World::worldToChunk(wallX, baseY + dy, wallZ);
+		Chunk* c = world.getChunk(cp);
+		if (c) {
+			int lx = ((wallX % 16) + 16) % 16;
+			int ly = (((baseY + dy) % 16) + 16) % 16;
+			int lz = ((wallZ % 16) + 16) % 16;
+			c->set(lx, ly, lz, stone);
+		}
+	}
+
+	// Set goal 8 blocks east (past the wall)
+	p->nav.setGoal(p->position + glm::vec3(8.0f, 0, 0));
+	tickN(*srv, 60 * 4); // 4 seconds
+
+	// Entity should NOT have crossed the wall (wall face is at wallX)
+	float xProgress = p->position.x;
+	if (xProgress > (float)wallX + 0.5f)
+		return "entity passed through 2-block wall: x=" + std::to_string(xProgress) +
+		       " wall at x=" + std::to_string(wallX);
+
+	// Entity should still be actively navigating (never gives up)
+	if (!p->nav.active)
+		return "entity gave up at 2-block wall";
 
 	return "";
 }
@@ -2364,8 +2567,13 @@ int main() {
 	run("B4: StoreItem transfers inventory to chest block",   b4_store_item_server_validation);
 	run("B5: pathfind.py module loads cleanly",              b5_pathfind_module_loads);
 	run("B6: Navigator returns MoveTo toward goal",          b6_navigator_returns_move_to_goal);
-	run("B7: player_nav loads and idles without goal",       b7_player_nav_behavior);
-	run("B8: player_nav with goal produces Move",            b8_player_nav_with_goal);
+	printf("\n--- Server Navigation ---\n");
+	run("NAV1: single entity walks to goal on flat ground",  nav1_single_entity_walks_to_goal);
+	run("NAV2: group formation assigns different goals",     nav2_group_formation);
+	run("NAV3: entity dodges around a wall",                 nav3_dodge_around_wall);
+	run("NAV4: entity in box never gives up",                nav4_never_gives_up);
+	run("NAV5: entity climbs 1-block step-ups",             nav5_step_up_climbing);
+	run("NAV6: entity blocked by 2-block wall",             nav6_blocked_by_tall_wall);
 
 	printf("\n--- World Generation ---\n");
 	run("W1: foundation columns are stone (not dirt/grass)", w1_foundation_is_stone);

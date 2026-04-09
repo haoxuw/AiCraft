@@ -119,14 +119,8 @@ public:
 			if (e.skipPhysics) {
 				e.skipPhysics = false;
 			} else {
-				MoveParams mp;
-				mp.halfWidth = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
-				mp.height = def.collision_box_max.y - def.collision_box_min.y;
-				mp.gravity = ServerTuning::gravity * def.gravity_scale;
-				bool isLiving = def.isLiving();
-				mp.stepHeight = isLiving ? ServerTuning::entityStepHeight : 0.0f;
-				mp.canFly = e.getProp<bool>("fly_mode", false);
-				mp.smoothStep = false;
+				MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
+					def.gravity_scale, def.isLiving(), e.getProp<bool>("fly_mode", false));
 
 				auto result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
 				e.position = result.position;

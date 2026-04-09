@@ -213,8 +213,7 @@ public:
 			};
 
 			// Build world view and run decide()
-			BehaviorWorldView view{e, nearby, chunkBlocks, dt, m_worldTime, blockQueryFn,
-			                       m_hasGoal, m_goalPos};
+			BehaviorWorldView view{e, nearby, chunkBlocks, dt, m_worldTime, blockQueryFn};
 
 			auto t0 = std::chrono::steady_clock::now();
 			state.currentAction = state.behavior->decide(view);
@@ -461,18 +460,6 @@ private:
 			reloadBehavior(eid, newSource);
 			break;
 		}
-		case net::S_SET_GOAL: {
-			m_hasGoal = true;
-			m_goalPos = {rb.readF32(), rb.readF32(), rb.readF32()};
-			printf("[Agent:%s] Goal: (%.1f, %.1f, %.1f)\n",
-				m_name.c_str(), m_goalPos.x, m_goalPos.y, m_goalPos.z);
-			break;
-		}
-		case net::S_CANCEL_GOAL: {
-			m_hasGoal = false;
-			printf("[Agent:%s] Goal cancelled\n", m_name.c_str());
-			break;
-		}
 			default:
 			// Unknown/unhandled server message — log so we notice missing handlers.
 			fprintf(stderr, "[Agent:%s] WARNING: unhandled server message type 0x%04X (%zu bytes) — check agent_client.h\n",
@@ -565,11 +552,6 @@ private:
 	EntityId m_targetEntityId = ENTITY_NONE;
 	float m_worldTime     = 0.3f;
 
-	// Navigation goal set by S_SET_GOAL (from GUI client click-to-move).
-	// When active, agent_client intercepts tick() and runs Navigator
-	// instead of calling the entity's normal behavior.decide().
-	bool m_hasGoal = false;
-	glm::vec3 m_goalPos = {0, 0, 0};
 	float m_prevWorldTime = -1.0f;  // used to detect time-of-day threshold crossings
 	float m_statusTimer   = 0.0f;   // periodic heartbeat
 

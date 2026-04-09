@@ -22,6 +22,14 @@ namespace modcraft::ServerTuning {
 	constexpr float gravity              = 32.0f; // ~3.2x real g, snappy Minecraft-like fall
 	constexpr float entityStepHeight     = 1.0f;
 
+	// Navigation (server-side greedy steering)
+	constexpr float navArriveDistance    = 1.2f;   // XZ distance to consider arrived
+	constexpr float navDodgeAngle        = 0.785f; // 45 degrees in radians
+	constexpr float navDodgeDuration     = 1.5f;   // seconds to commit to a dodge
+	constexpr float navStuckTimeout      = 2.0f;   // seconds without progress → dodge
+	constexpr float navStuckMinMove      = 0.5f;   // blocks — less than this in stuckTimeout = stuck
+	constexpr float navFormationSpacing  = 2.0f;   // blocks between entities in formation grid
+
 	// Network
 	constexpr float tickRate             = 1.0f / 60.0f;  // 60 tps
 	constexpr float broadcastInterval    = 0.05f;          // 20 Hz entity broadcasts

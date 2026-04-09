@@ -563,12 +563,13 @@ void Game::updatePlaying(float dt, float aspect) {
 
 	// Camera tracks entity position — same for all modes.
 	m_camera.player.feetPos = pe->position;
-	// Player model yaw: FPS = look direction, all others = server-set entity yaw (smooth)
+	// Player model yaw: FPS = look direction, all others = entity yaw (smooth)
 	if (m_camera.mode != CameraMode::FirstPerson) {
 		float diff = pe->yaw - m_camera.player.yaw;
 		while (diff > 180.0f) diff -= 360.0f;
 		while (diff < -180.0f) diff += 360.0f;
-		m_camera.player.yaw += diff * std::min(dt * 10.0f, 1.0f);
+		// Faster tracking (20x) for snappy turning; still smooth enough to avoid pops
+		m_camera.player.yaw += diff * std::min(dt * 20.0f, 1.0f);
 	}
 	m_worldTime = m_server->worldTime();
 	m_renderer.setTimeOfDay(m_worldTime);

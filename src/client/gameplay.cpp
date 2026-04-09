@@ -52,6 +52,8 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 	if (controls.pressed(Action::CycleView)) {
 		camera.cycleMode();
 		camera.resetMouseTracking();
+		const char* modeNames[] = {"FPS", "TPS", "RPG", "RTS"};
+		printf("[CameraMode] Switched to %s\n", modeNames[(int)camera.mode]);
 	}
 
 	// Cursor state: determined by camera mode + UI overlay

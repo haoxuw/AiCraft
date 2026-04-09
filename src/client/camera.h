@@ -56,8 +56,8 @@ public:
 	glm::vec3 rtsCenter = {0, 0, 0};  // camera looks at this point
 	float rtsHeight = 40.0f;
 	float rtsHeightTarget = 40.0f;
-	float rtsAngle = 65.0f;
-	float rtsOrbitYaw = 90.0f;  // horizontal orbit angle (default: looking north)
+	float rtsAngle = 55.0f;           // same angle as RPG (degrees from horizontal)
+	float rtsOrbitYaw = -90.0f;       // same orbit as RPG (looking south)
 	float rtsPanSpeed = 30.0f;
 
 	// Computed camera state (updated each frame)

@@ -839,26 +839,27 @@ private:
 			uint32_t eid = rb.readU32();
 			glm::vec3 gp = {rb.readF32(), rb.readF32(), rb.readF32()};
 			if (!m_server.canClientControl(cid, eid)) break;
-			// Forward to the agent controlling this entity
-			for (auto& [aid, ac] : m_clients) {
-				if (ac.isAgent && ac.playerId == eid) {
-					net::WriteBuffer wb;
-					wb.writeF32(gp.x); wb.writeF32(gp.y); wb.writeF32(gp.z);
-					net::sendMessage(ac.fd, net::S_SET_GOAL, wb);
-					break;
-				}
+			Entity* e = m_server.world().entities.get(eid);
+			if (e) e->nav.setGoal(gp);
+			break;
+		}
+		case net::C_SET_GOAL_GROUP: {
+			glm::vec3 gp = {rb.readF32(), rb.readF32(), rb.readF32()};
+			uint32_t count = rb.readU32();
+			std::vector<Entity*> group;
+			for (uint32_t i = 0; i < count; i++) {
+				uint32_t eid = rb.readU32();
+				if (!m_server.canClientControl(cid, eid)) continue;
+				Entity* e = m_server.world().entities.get(eid);
+				if (e) group.push_back(e);
 			}
+			planGroupFormation(gp, group);
 			break;
 		}
 		case net::C_CANCEL_GOAL: {
 			uint32_t eid = rb.readU32();
-			for (auto& [aid, ac] : m_clients) {
-				if (ac.isAgent && ac.playerId == eid) {
-					net::WriteBuffer wb;
-					net::sendMessage(ac.fd, net::S_CANCEL_GOAL, wb);
-					break;
-				}
-			}
+			Entity* e = m_server.world().entities.get(eid);
+			if (e) { e->nav.clear(); e->velocity = {0, 0, 0}; }
 			break;
 		}
 		case net::C_CLAIM_ENTITY: {

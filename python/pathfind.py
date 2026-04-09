@@ -272,9 +272,13 @@ class Navigator:
             self._path = find_path(start_i, goal_i)
             self._stuck_pos = None
             self._stuck_timer = 0.0
+            print(f"[Navigator] A* from ({ex},{ey},{ez}) → ({gx},{gy},{gz}): "
+                  f"{len(self._path)} waypoints")
+            if self._path:
+                print(f"[Navigator]   first={self._path[0]} last={self._path[-1]}")
             if not self._path:
                 self._status = f"No path to ({gx},{gy},{gz})"
-                # Fall back to direct movement — server physics will handle obstacles
+                print(f"[Navigator] No path found — falling back to direct move")
                 return Move(gx + 0.5, gy + 1.0, gz + 0.5, speed)
 
         # ── Stuck detection — re-plan if entity hasn't moved ──────────────
