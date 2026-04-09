@@ -114,11 +114,12 @@ public:
 			m_name.c_str(), id, behaviorId.c_str());
 	}
 
-	// Revoke control of an entity.
+	// Revoke control of an entity. Silent if the agent didn't control it.
 	void revokeEntity(EntityId id) {
-		m_controlled.erase(id);
-		m_behaviorStates.erase(id);
-		printf("[Agent:%s] Revoked entity %u\n", m_name.c_str(), id);
+		if (m_controlled.erase(id) > 0) {
+			m_behaviorStates.erase(id);
+			printf("[Agent:%s] Revoked entity %u\n", m_name.c_str(), id);
+		}
 	}
 
 	// Main tick: receive state, run behaviors, send actions.
@@ -209,8 +210,6 @@ public:
 		m_statusTimer += dt;
 		if (m_statusTimer >= 10.0f) {
 			m_statusTimer = 0.0f;
-			printf("[Agent:%s] Heartbeat — %zu entities, %zu chunkInfo, %zu chunks cached\n",
-			       m_name.c_str(), m_controlled.size(), m_chunkInfoCache.size(), m_chunks.size());
 		}
 	}
 

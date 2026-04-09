@@ -19,7 +19,7 @@ from behavior_base import Behavior
 from local_world import SelfEntity, LocalWorld
 
 EGG_COOLDOWN = 10.0
-EGG_CHANCE   = 0.20
+EGG_CHANCE   = 0.80
 
 
 class PeckBehavior(Behavior):

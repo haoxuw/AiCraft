@@ -413,10 +413,6 @@ public:
 		}
 		for (auto& [cid, c] : m_clients) {
 			auto* pe = m_server.world().entities.get(c.playerId);
-			if (pe) {
-				printf("[Server]   %s: pos=(%.1f,%.1f,%.1f)\n",
-					c.label().c_str(), pe->position.x, pe->position.y, pe->position.z);
-			}
 		}
 		tickCount = 0;
 		statusTimer = 0;
