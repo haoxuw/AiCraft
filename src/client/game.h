@@ -229,9 +229,9 @@ private:
 	// Door swing animations (client-side, 0.25s rotation overlay)
 	std::vector<DoorAnim> m_doorAnims;
 
-	// Chest inventory UI
+	// Chest inventory UI (keyed by block position, not entity)
 	bool m_showChestUI = false;
-	EntityId m_openChestEntityId = ENTITY_NONE;
+	glm::ivec3 m_openChestBlockPos = {0, 0, 0};
 
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;

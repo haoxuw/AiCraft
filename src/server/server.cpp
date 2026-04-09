@@ -143,48 +143,38 @@ void GameServer::resolveActions(float dt) {
 				break;
 			}
 
-			if (p.relocateTo.kind == Container::Kind::Entity) {
-				// Store: transfer all items from actor to chest entity.
-				// Entity must be within 2 blocks (prevents storing through walls).
+			if (p.relocateTo.kind == Container::Kind::Block) {
+				// Store: transfer all items from actor into a chest block's inventory.
+				// Actor must be within 2 blocks.
 				if (!actor->inventory) break;
-				Entity* chestEnt = m_world->entities.get(p.relocateTo.entityId);
-				if (!chestEnt || chestEnt->def().category != Category::Chest) break;
-				if (!chestEnt->inventory) break;
-
-				float storeDist = glm::length(chestEnt->position - actor->position);
-				if (storeDist > 2.0f) {
-					printf("[Server] StoreItem DENIED (entity %u): %.1f blocks from chest (max 2)\n",
-						actor->id(), storeDist);
-					break;
-				}
-
-				glm::ivec3 cp = {(int)std::floor(chestEnt->position.x),
-				                 (int)std::floor(chestEnt->position.y),
-				                 (int)std::floor(chestEnt->position.z)};
+				glm::ivec3 cp = p.relocateTo.pos;
 				BlockId bid = m_world->getBlock(cp.x, cp.y, cp.z);
 				const BlockDef& bdef = m_world->blocks.get(bid);
 				if (bdef.string_id != BlockType::Chest) break;
 
+				float storeDist = glm::length(glm::vec3(cp) + 0.5f - actor->position);
+				if (storeDist > 2.5f) {
+					printf("[Server] StoreItem DENIED (entity %u): %.1f blocks from chest (max 2.5)\n",
+						actor->id(), storeDist);
+					break;
+				}
+
+				uint64_t posKey = packBlockPos(cp.x, cp.y, cp.z);
+				auto& chestInv = m_blockInventories[posKey];
+
 				int totalTransferred = 0;
 				for (auto& [itemIdStr, count] : actor->inventory->items()) {
-					chestEnt->inventory->add(itemIdStr, count);
+					chestInv.add(itemIdStr, count);
 					totalTransferred += count;
 				}
 				actor->inventory->clear();
 				actor->inventory->autoPopulateHotbar();
 
-				uint64_t posKey = ((uint64_t)(uint32_t)cp.x)
-				                | ((uint64_t)(uint32_t)cp.y << 21)
-				                | ((uint64_t)(uint32_t)cp.z << 42);
-				m_blockInventories[posKey] = *chestEnt->inventory;
+				printf("[Server] Relocate/store: entity %u deposited %d items into chest at (%d,%d,%d)\n",
+					actor->id(), totalTransferred, cp.x, cp.y, cp.z);
 
-				printf("[Server] Relocate/store: entity %u deposited %d items into chest %u\n",
-					actor->id(), totalTransferred, chestEnt->id());
-
-				if (m_callbacks.onInventoryChange) {
+				if (m_callbacks.onInventoryChange)
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
-					m_callbacks.onInventoryChange(chestEnt->id(), *chestEnt->inventory);
-				}
 				break;
 			}
 
@@ -209,25 +199,6 @@ void GameServer::resolveActions(float dt) {
 					actor->inventory->autoPopulateHotbar();
 					if (m_callbacks.onInventoryChange)
 						m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
-				} else if (src->def().category == Category::Chest && src->inventory) {
-					// Chest: take specific item or all
-					if (p.itemId.empty() || p.itemCount == 0) {
-						// Take all
-						for (auto& [iid, cnt] : src->inventory->items())
-							actor->inventory->add(iid, cnt);
-						src->inventory->clear();
-					} else {
-						int cnt = std::min(p.itemCount, src->inventory->count(p.itemId));
-						if (cnt > 0) {
-							actor->inventory->add(p.itemId, cnt);
-							src->inventory->remove(p.itemId, cnt);
-						}
-					}
-					actor->inventory->autoPopulateHotbar();
-					if (m_callbacks.onInventoryChange) {
-						m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
-						m_callbacks.onInventoryChange(src->id(), *src->inventory);
-					}
 				}
 				break;
 			}

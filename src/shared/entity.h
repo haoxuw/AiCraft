@@ -26,24 +26,24 @@ using PropValue = std::variant<
 >;
 
 // ================================================================
-// Entity kind — OOP hierarchy for entity types.
-//   Object   → generic entity (no HP, no inventory)
-//   Item     → dropped item pickup
-//   Living   → has HP + inventory (generic living)
-//   Creature → Living + AI behavior (animals, NPCs)
-//   Character→ Living + playable (player characters)
+// Entity kind — there are only two:
+//   Living → moves, has HP, has inventory. Players, NPCs, animals.
+//            Players are Living with playable=true (any Living can be played).
+//            NPCs are Living with a BehaviorId (agent runs Python AI).
+//   Item   → dropped item on the ground, or held in an inventory.
+//
+// Blocks are NOT entities — they live in the chunk grid. Some blocks
+// (chests) have inventories managed by InventoryManager, keyed by
+// block position.
 // ================================================================
 enum class EntityKind {
-	Object,
-	Item,
 	Living,
-	Creature,
-	Character,
+	Item,
 };
 
 // Static definition of an entity type. Mirrors Python ObjectMeta for entities.
 struct EntityDef {
-	EntityKind kind = EntityKind::Object;
+	EntityKind kind = EntityKind::Living;
 	std::string string_id;      // "base:pig"
 	std::string display_name;
 	std::string category;       // string tag for behavior targeting ("animal", "player", etc.)
@@ -65,17 +65,15 @@ struct EntityDef {
 	float walk_speed = 0.0f;
 	float run_speed = 0.0f;
 
-	// Living (Creature, Character, Living kinds only)
+	// Living / Creature fields
 	int max_hp = 0;
 	float eye_height = 0.0f;     // eye position above feet (0 = use collision_box_max.y * 0.75)
-	bool playable = false;        // true = appears in character selection menu
+	bool playable = false;        // true = appears in character selection menu (player skins)
 	float pickup_range = 1.5f;   // max distance to pick up items (0 = cannot pickup)
 
 	// Kind helpers
-	bool isLiving()    const { return kind == EntityKind::Living || kind == EntityKind::Creature || kind == EntityKind::Character; }
+	bool isLiving()    const { return kind == EntityKind::Living; }
 	bool isItem()      const { return kind == EntityKind::Item; }
-	bool isCreature()  const { return kind == EntityKind::Creature; }
-	bool isCharacter() const { return kind == EntityKind::Character; }
 
 	// Default property values (template for new instances)
 	std::unordered_map<std::string, PropValue> default_props;

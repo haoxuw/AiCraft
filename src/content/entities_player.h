@@ -10,7 +10,7 @@ inline void registerPlayerEntity(EntityManager& mgr) {
 	EntityDef def;
 	def.string_id = EntityType::Player;
 	def.display_name = "Player";
-	def.kind = EntityKind::Character;
+	def.kind = EntityKind::Living;
 	def.category = Category::Player;
 	def.model = Asset::PlayerModel;
 	def.texture = Asset::PlayerTexture;

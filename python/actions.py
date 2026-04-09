@@ -48,6 +48,6 @@ def PickupItem(entity_id):
     return Relocate(relocate_from=Entity(entity_id))
 
 
-def StoreItem(chest_entity_id):
-    """Deposit all inventory into a chest entity."""
-    return Relocate(relocate_to=Entity(chest_entity_id))
+def StoreItem(x, y, z):
+    """Deposit all inventory into a chest block at (x, y, z)."""
+    return Relocate(relocate_to=Block(int(x), int(y), int(z)))

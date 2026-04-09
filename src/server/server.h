@@ -167,7 +167,6 @@ public:
 		auto houseChests = tmpl.houseChestPositions(m_world->seed());
 		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
 		m_houseChests.clear();
-		m_chestEntityIds.clear();
 		for (auto& cPos : houseChests) {
 			int cx = (int)std::round(cPos.x), cy = (int)std::round(cPos.y), cz = (int)std::round(cPos.z);
 			if (chestId != BLOCK_AIR) {
@@ -178,11 +177,10 @@ public:
 			glm::vec3 blockCenter = {(float)cx + 0.5f, (float)cy + 0.5f, (float)cz + 0.5f};
 			m_houseChests.push_back(blockCenter);
 
-			// Spawn chest pseudo-entity so Python behaviors can find it via world["nearby"].
-			EntityId ceid = m_world->entities.spawn(EntityType::ChestEntity, blockCenter);
-			m_chestEntityIds.push_back(ceid);
-			printf("[Server] Chest entity %u spawned at (%.1f,%.1f,%.1f)\n",
-			       ceid, blockCenter.x, blockCenter.y, blockCenter.z);
+			// Register block inventory for this chest (keyed by block position)
+			uint64_t posKey = packBlockPos(cx, cy, cz);
+			m_blockInventories[posKey]; // default-construct empty inventory
+			printf("[Server] Chest at (%d,%d,%d)\n", cx, cy, cz);
 		}
 		m_chestPos = m_houseChests.empty() ? m_spawnPos : m_houseChests[0];
 
@@ -203,9 +201,6 @@ public:
 					extraProps["chest_x"] = m_houseChests[i].x;
 					extraProps["chest_y"] = m_houseChests[i].y;
 					extraProps["chest_z"] = m_houseChests[i].z;
-					// Also pass the chest entity ID so woodcutter can use StoreItem(id)
-					if (i < m_chestEntityIds.size())
-						extraProps["chest_entity_id"] = (float)m_chestEntityIds[i];
 				}
 				m_world->entities.spawn(villagerType,
 					{bp.x, safeSpawnHeight(bp.x, bp.z), bp.z}, extraProps);
@@ -334,8 +329,8 @@ public:
 			if (e.removed) return;
 			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
 			if (bid.empty()) return;
-			// Skip player entities — they don't need agent clients for navigation
-			if (e.def().isCharacter()) return;
+			// Skip playable entities — server handles their navigation via C_SET_GOAL.
+			if (e.def().playable) return;
 			auto ownerIt = m_entityOwner.find(e.id());
 			if (ownerIt == m_entityOwner.end()) {
 				result.push_back(e.id());
@@ -556,8 +551,15 @@ public:
 	std::unordered_map<std::string, Inventory>& savedInventories() { return m_savedInventories; }
 	const std::unordered_map<std::string, Inventory>& savedInventories() const { return m_savedInventories; }
 
-	// Block inventories (chests)
+	// Block inventories (chests) — keyed by packed block position
 	const std::unordered_map<uint64_t, Inventory>& blockInventories() const { return m_blockInventories; }
+
+	// Pack block coords into a key for blockInventories
+	static uint64_t packBlockPos(int x, int y, int z) {
+		return ((uint64_t)(uint32_t)x)
+		     | ((uint64_t)(uint32_t)y << 21)
+		     | ((uint64_t)(uint32_t)z << 42);
+	}
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
@@ -575,7 +577,6 @@ private:
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	glm::vec3 m_chestPos = {30, 10, 30};
 	std::vector<glm::vec3> m_houseChests;                           // one per non-barn house
-	std::vector<EntityId>  m_chestEntityIds;                        // chest pseudo-entity per house
 	std::unordered_map<uint64_t, Inventory> m_blockInventories;     // packed(x,y,z) → inventory
 	std::unordered_map<std::string, Inventory> m_savedInventories;  // character_skin → inventory
 

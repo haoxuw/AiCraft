@@ -4,7 +4,6 @@ and sleeps at its assigned bed at night.
 Server assigns these props at spawn (see server.h):
   home_x, home_z       — XZ position of this villager's bed (their "home")
   chest_x, chest_y, chest_z — world-space position of their assigned chest block
-  chest_entity_id      — entity ID of the chest (for StoreItem)
   work_radius          — max radius to search for trees (default 80)
   collect_goal         — logs to collect before depositing (default 5)
 
@@ -85,8 +84,7 @@ class WoodcutterBehavior(Behavior):
     def __init__(self):
         self._state         = self.SLEEP
         self._home          = None   # cached (x, y, z) of bed / home position
-        self._chest         = None   # cached (x, y, z) of chest block
-        self._chest_eid     = None   # cached chest entity ID (int)
+        self._chest         = None   # cached (x, y, z) of chest block position
         self._chop_cooldown = 0.0    # seconds until next Convert is allowed
 
     # ── Top-level decide ──────────────────────────────────────────────────────
@@ -198,20 +196,15 @@ class WoodcutterBehavior(Behavior):
         spd  = entity.walk_speed
         logs = entity.inventory.count("base:trunk")
 
-        # Refresh chest entity ID from local_world if prop was missing at spawn
-        if self._chest_eid is None:
-            chest_ent = local_world.nearest("chest")
-            if chest_ent:
-                self._chest_eid = chest_ent.id
-
-        if self._chest_eid is None:
-            # No chest found at all — go home and wait for one
+        if self._chest is None:
             return Move(*self._home, speed=spd), "Looking for chest..."
 
         dist_to_chest = self.dist2d(entity.x, entity.z, self._chest[0], self._chest[2])
 
         if dist_to_chest <= STORE_RANGE:
-            return StoreItem(self._chest_eid), "Depositing %d logs" % logs
+            # StoreItem now takes block position, not entity ID
+            cx, cy, cz = int(self._chest[0]), int(self._chest[1]), int(self._chest[2])
+            return StoreItem(cx, cy, cz), "Depositing %d logs" % logs
 
         # Open any closed door blocking the path before walking through
         door = local_world.get("base:door", max_dist=3.0)
@@ -240,7 +233,3 @@ class WoodcutterBehavior(Behavior):
             self._home = self.init_home(entity, self._home)
         if self._chest is None:
             self._chest = self.get_chest(entity, self._home)
-        if self._chest_eid is None:
-            raw = entity.get("chest_entity_id")
-            if raw is not None:
-                self._chest_eid = int(raw)

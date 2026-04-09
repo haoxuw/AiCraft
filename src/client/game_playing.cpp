@@ -415,26 +415,15 @@ void Game::updateAudioAndDoors(float dt) {
 }
 
 void Game::updateChestUI() {
-	// Chest open: find the chest entity at the clicked block, toggle inventory UI
+	// Chest open: toggle inventory UI for the chest block at clicked position.
+	// Chest inventories are managed server-side by block position, not entities.
 	if (m_gameplay.chestOpened()) {
 		glm::ivec3 bp = m_gameplay.chestOpenedPos();
-		EntityId foundId = ENTITY_NONE;
-		m_server->forEachEntity([&](Entity& e) {
-			if (e.def().category == Category::Chest) {
-				int ex = (int)std::floor(e.position.x);
-				int ey = (int)std::floor(e.position.y);
-				int ez = (int)std::floor(e.position.z);
-				if (ex == bp.x && ey == bp.y && ez == bp.z)
-					foundId = e.id();
-			}
-		});
-		if (foundId != ENTITY_NONE) {
-			if (m_showChestUI && m_openChestEntityId == foundId) {
-				m_showChestUI = false;  // toggle off same chest
-			} else {
-				m_openChestEntityId = foundId;
-				m_showChestUI = true;
-			}
+		if (m_showChestUI && m_openChestBlockPos == bp) {
+			m_showChestUI = false;  // toggle off same chest
+		} else {
+			m_openChestBlockPos = bp;
+			m_showChestUI = true;
 		}
 		m_gameplay.clearChestOpened();
 	}

@@ -51,11 +51,14 @@ the engine (physics, networking, rendering).** See `docs/00_OVERVIEW.md`.
 
 ### Rule 2: The Player Is Not Special
 
-The player (`base:player`) is just another creature — same EntityDef, rendering,
-physics as pig/chicken/dog. The only difference is input source (WASD vs Python)
-and camera tracking.
+**Entity = Living + Item.** That's it.
 
-- **NEVER add code that checks `EntityType::Player` for gameplay logic.**
+- **Living** — moves, has HP, has inventory. Players, NPCs, animals are all Living.
+  The player is just a Living entity with `playable=true`. Any Living can be
+  played by hijacking its agent client. NPCs are Living with a BehaviorId.
+- **Item** — on the ground or in an inventory.
+- **Blocks** are NOT entities — they live in the chunk grid. Some blocks (chests)
+  have inventories managed separately, keyed by block position.
 
 ### Rule 3: Server-Authoritative World Ownership
 

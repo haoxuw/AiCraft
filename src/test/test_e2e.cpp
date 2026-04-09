@@ -279,7 +279,7 @@ static std::string t07_creatures_spawn_village() {
 
 	int creatures = 0;
 	srv->forEachEntity([&](Entity& e) {
-		if (e.def().isCreature()) creatures++;
+		if (e.def().isLiving()) creatures++;
 	});
 	if (creatures < 5)
 		return "expected >= 5 creatures, got " + std::to_string(creatures);
@@ -306,11 +306,11 @@ static std::string t09_creatures_have_hp() {
 
 	std::string bad;
 	srv->forEachEntity([&](Entity& e) {
-		if (e.def().isCreature() && e.hp() <= 0)
+		if (e.def().isLiving() && e.hp() <= 0)
 			bad = e.typeId();
 	});
 	if (!bad.empty())
-		return "Creature with hp <= 0: " + bad;
+		return "Living entity with hp <= 0: " + bad;
 	return "";
 }
 
@@ -512,8 +512,10 @@ static std::string t15_items_only_picked_up_by_player() {
 
 	std::string wrongPickup;
 	srv->forEachEntity([&](Entity& e) {
-		if (!e.def().isCreature()) return;
+		if (!e.def().isLiving()) return;
 		if (!e.inventory) return;
+		// Skip the player — they start with hotbar items
+		if (e.id() == pid) return;
 		if (e.inventory->distinctCount() > 0) {
 			wrongPickup = e.typeId() + " has items it shouldn't";
 		}
@@ -529,12 +531,12 @@ static std::string t15_items_only_picked_up_by_player() {
 static std::string t16_village_stable_300_ticks() {
 	auto srv = makeVillageServer();
 	int creaturesBefore = 0;
-	srv->forEachEntity([&](Entity& e) { if (e.def().isCreature()) creaturesBefore++; });
+	srv->forEachEntity([&](Entity& e) { if (e.def().isLiving()) creaturesBefore++; });
 
 	tickN(*srv, 300);
 
 	int creaturesAfter = 0;
-	srv->forEachEntity([&](Entity& e) { if (e.def().isCreature()) creaturesAfter++; });
+	srv->forEachEntity([&](Entity& e) { if (e.def().isLiving()) creaturesAfter++; });
 
 	if (creaturesAfter < creaturesBefore)
 		return "creatures died: " + std::to_string(creaturesBefore) +
@@ -779,7 +781,7 @@ static std::string t23_creatures_near_village_center() {
 	constexpr float maxDist = 60.0f;
 	bool found = false;
 	srv->forEachEntity([&](Entity& e) {
-		if (!e.def().isCreature()) return;
+		if (!e.def().isLiving()) return;
 		float dx = e.position.x - vcX;
 		float dz = e.position.z - vcZ;
 		if (std::sqrt(dx*dx + dz*dz) < maxDist) found = true;
@@ -1048,7 +1050,7 @@ static std::string t32_attack_damages_entity() {
 	EntityId targetId = ENTITY_NONE;
 	float closestDist = 999;
 	srv->forEachEntity([&](Entity& e) {
-		if (e.def().isCreature() && e.id() != pid) {
+		if (e.def().isLiving() && e.id() != pid) {
 			float d = glm::length(e.position - p->position);
 			if (d < closestDist) { closestDist = d; targetId = e.id(); }
 		}
@@ -1520,8 +1522,6 @@ static std::string p53_entities_never_inside_blocks_village() {
     std::string spawnBad;
     srv->forEachEntity([&](Entity& e) {
         if (!e.def().isLiving() || e.removed) return;
-        // Chest entities intentionally occupy chest block space — skip them.
-        if (e.def().category == Category::Chest) return;
         float hw = (e.def().collision_box_max.x - e.def().collision_box_min.x) * 0.5f;
         float ht = e.def().collision_box_max.y - e.def().collision_box_min.y;
         if (spawnBad.empty() && isInsideBlock(*srv, e.position, hw, ht))
@@ -1539,7 +1539,6 @@ static std::string p53_entities_never_inside_blocks_village() {
         srv->forEachEntity([&](Entity& e) {
             if (bad.empty() && !e.def().isLiving()) return;  // skip item entities
             if (bad.empty() && e.removed) return;
-            if (bad.empty() && e.def().category == Category::Chest) return;  // chest entities occupy block space
             float hw = (e.def().collision_box_max.x - e.def().collision_box_min.x) * 0.5f;
             float ht = e.def().collision_box_max.y - e.def().collision_box_min.y;
             if (isInsideBlock(*srv, e.position, hw, ht))
@@ -1650,40 +1649,42 @@ static std::string b3_woodcutter_collects_and_deposits() {
 // ================================================================
 static std::string b4_store_item_server_validation() {
     auto srv = makeVillageServer();
+    auto* gs = srv->server();
 
+    // Find a villager with chest position props
     Entity* villager = nullptr;
-    EntityId chestEntityId = ENTITY_NONE;
-
-    // Find a villager that has chest_entity_id prop set
+    glm::ivec3 chestPos = {0, 0, 0};
     srv->forEachEntity([&](Entity& e) {
         if (!villager && e.typeId() == "base:villager") {
-            float ceid = e.getProp<float>("chest_entity_id", -1.0f);
-            if (ceid >= 0) {
+            float cx = e.getProp<float>("chest_x", -999.0f);
+            if (cx > -900) {
                 villager = &e;
-                chestEntityId = (EntityId)ceid;
+                chestPos = {(int)std::floor(cx),
+                            (int)std::floor(e.getProp<float>("chest_y", 0.0f)),
+                            (int)std::floor(e.getProp<float>("chest_z", 0.0f))};
             }
         }
     });
-    if (!villager) return "no villager with chest_entity_id prop found";
+    if (!villager) return "no villager with chest props found";
     if (!villager->inventory) return "villager has no inventory";
-    if (chestEntityId == ENTITY_NONE) return "chest_entity_id prop is ENTITY_NONE";
 
-    // Find the chest entity and verify it exists
-    Entity* chestEnt = srv->server()->world().entities.get(chestEntityId);
-    if (!chestEnt) return "chest entity " + std::to_string(chestEntityId) + " not found";
-    if (!chestEnt->inventory) return "chest entity has no inventory";
+    // Verify chest block exists at that position
+    BlockId bid = gs->world().getBlock(chestPos.x, chestPos.y, chestPos.z);
+    if (gs->world().blocks.get(bid).string_id != BlockType::Chest)
+        return "no chest block at (" + std::to_string(chestPos.x) + "," +
+               std::to_string(chestPos.y) + "," + std::to_string(chestPos.z) + ")";
 
     // Give the villager some trunks
     villager->inventory->add("base:trunk", 3);
 
-    // Teleport villager next to the chest entity
-    villager->position = chestEnt->position + glm::vec3(1.5f, 0, 0);
+    // Teleport villager next to the chest
+    villager->position = glm::vec3(chestPos) + glm::vec3(1.5f, 0, 0);
 
-    // Send Relocate(toEntity) action using entity ID (bypasses ownership — testing server handler)
+    // Send Relocate(toBlock) — StoreItem now uses block position
     ActionProposal sp;
     sp.type = ActionProposal::Relocate;
     sp.actorId = villager->id();
-    sp.relocateTo = Container::entity(chestEntityId);
+    sp.relocateTo = Container::block(chestPos);
     srv->sendActionDirect(sp);
     srv->tick(1.0f / 60.0f);
 
@@ -1693,10 +1694,15 @@ static std::string b4_store_item_server_validation() {
         return "villager inventory not cleared after StoreItem (still has " +
                std::to_string(logsInInventory) + " base:trunk)";
 
-    // Verify chest entity received the items
-    int logsInChest = chestEnt->inventory->count("base:trunk");
+    // Verify chest block inventory received the items
+    uint64_t posKey = GameServer::packBlockPos(chestPos.x, chestPos.y, chestPos.z);
+    auto& blockInvs = gs->blockInventories();
+    auto it = blockInvs.find(posKey);
+    if (it == blockInvs.end())
+        return "no block inventory at chest position";
+    int logsInChest = it->second.count("base:trunk");
     if (logsInChest != 3)
-        return "chest entity has " + std::to_string(logsInChest) + " trunks, expected 3";
+        return "chest has " + std::to_string(logsInChest) + " trunks, expected 3";
 
     return "";
 }

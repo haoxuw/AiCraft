@@ -577,9 +577,9 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	}
 
 	// Chest inventory UI (right-click on chest block to open)
-	if (m_showChestUI && m_openChestEntityId != ENTITY_NONE) {
-		Entity* chestEnt = m_server->getEntity(m_openChestEntityId);
-		bool hasInventory = chestEnt && chestEnt->inventory;
+	// TODO: client needs server to send block inventory contents via a new message.
+	// For now, show chest position as a placeholder.
+	if (m_showChestUI) {
 		float sw = (float)m_window.width(), sh = (float)m_window.height();
 		ImGui::SetNextWindowPos(ImVec2(sw * 0.5f - 180, sh * 0.5f - 120), ImGuiCond_Always);
 		ImGui::SetNextWindowSize(ImVec2(360, 240), ImGuiCond_Always);
@@ -588,15 +588,10 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 		if (ImGui::Begin("Chest", &open,
 			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
 			ImGuiWindowFlags_NoSavedSettings)) {
-			if (!hasInventory || chestEnt->inventory->items().empty()) {
-				ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "(empty)");
-			} else {
-				for (auto& [itemId, count] : chestEnt->inventory->items()) {
-					const ArtifactEntry* entry = m_artifacts.findById(itemId);
-					std::string name = entry ? entry->name : itemId;
-					ImGui::Text("  %s  x%d", name.c_str(), count);
-				}
-			}
+			ImGui::Text("Chest at (%d, %d, %d)", m_openChestBlockPos.x,
+				m_openChestBlockPos.y, m_openChestBlockPos.z);
+			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1),
+				"(inventory display requires block inventory sync)");
 		}
 		ImGui::End();
 		if (!open) m_showChestUI = false;
