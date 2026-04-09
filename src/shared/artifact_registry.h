@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -53,12 +54,12 @@ public:
 		m_entries.clear();
 		m_basePath = basePath;
 
-		loadCategory("creatures", "creature");
+		loadCategory("creatures", "living");
+		loadCategory("characters", "living");
 		loadCategory("items", "item");
 		loadCategory("blocks", "block");
 		loadCategory("behaviors", "behavior");
 		loadCategory("effects", "effect");
-		loadCategory("characters", "character");
 		loadCategory("resources", "resource");
 		loadCategory("worlds", "world");
 
@@ -68,7 +69,7 @@ public:
 		// Validate: creatures, characters, and items must have a model file
 		int warnings = 0;
 		for (auto& e : m_entries) {
-			if (e.category == "creature" || e.category == "character" || e.category == "item") {
+			if (e.category == "living" || e.category == "item") {
 				std::string key = e.name;
 				for (auto& c : key) c = (char)std::tolower((unsigned char)c);
 				std::string modelPath = basePath + "/models/base/" + key + ".py";
@@ -100,6 +101,17 @@ public:
 		std::vector<const ArtifactEntry*> result;
 		for (auto& e : m_entries)
 			if (e.category == cat && e.isBuiltin == builtin) result.push_back(&e);
+		return result;
+	}
+
+	// All unique categories in load order (for dynamic UI tabs)
+	std::vector<std::string> allCategories() const {
+		std::vector<std::string> result;
+		std::unordered_set<std::string> seen;
+		for (auto& e : m_entries) {
+			if (seen.insert(e.category).second)
+				result.push_back(e.category);
+		}
 		return result;
 	}
 

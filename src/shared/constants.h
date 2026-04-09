@@ -1,18 +1,30 @@
 #pragma once
 
 /**
- * All string constants used as identifiers throughout the engine.
- * Single source of truth -- never use raw string literals for IDs.
+ * constants.h — single source of truth for all string identifiers.
  *
- * These match the Python definitions in python/modcraft/objects/ and python/modcraft/actions/.
- * When the pybind11 bridge is connected, these constants will be validated against
- * the Python registry at startup.
+ * Classification model:
+ *
+ *   EntityKind (enum, entity.h):
+ *     Living  — moves, has HP, has inventory (players, NPCs, animals)
+ *     Item    — on ground or in inventory
+ *
+ *   EntityType (string IDs, below):
+ *     Specific species/variant: "base:chicken", "base:player", etc.
+ *     Stored as Entity::typeId(). Use EntityType:: constants, never raw strings.
+ *
+ *   BlockType (string IDs, below):
+ *     Specific block: "base:stone", "base:door", etc.
+ *     Stored as BlockDef::string_id. Mapped to BlockId (uint16) by BlockRegistry.
+ *
+ * No Category namespace — EntityKind + EntityType cover all entity classification.
+ * Block display grouping uses inline strings in block registration (no enum needed).
  */
 
 namespace modcraft {
 
 // ============================================================
-// Entity Type IDs
+// Entity Type IDs (species/variant — matches EntityDef::string_id)
 // ============================================================
 namespace EntityType {
 	constexpr const char* Player      = "base:player";
@@ -91,9 +103,6 @@ namespace ItemId {
 	constexpr const char* Bread       = "base:bread";
 	constexpr const char* Egg         = "base:egg";
 }
-
-// Category namespace removed. Use EntityKind (Living/Item) and EntityType
-// for entity classification. Block category strings are set directly where needed.
 
 // ============================================================
 // Property Names (entity + block state keys)

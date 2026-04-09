@@ -75,30 +75,25 @@ public:
 
 private:
 	void renderGroupTabs(const ArtifactRegistry& registry) {
-		// Flat structure: 6 tabs directly (no nesting)
-		struct TabDef { const char* label; const char* category; };
-		TabDef tabs[] = {
-			{"Creatures", "creature"},
-			{"Characters", "character"},
-			{"Items", "item"},
-			{"Blocks", "block"},
-			{"Behaviors", "behavior"},
-			{"Effects", "effect"},
-			{"Resources", "resource"},
-		};
+		// Derive tabs dynamically from the registry — no hardcoded list.
+		// Each unique category becomes a tab, ordered by first appearance.
+		auto categories = registry.allCategories();
 
 		if (ImGui::BeginTabBar("HandbookTabs")) {
-			for (auto& tab : tabs) {
-				auto entries = registry.byCategory(tab.category);
-				char label[64];
-				snprintf(label, sizeof(label), "%s (%zu)", tab.label, entries.size());
-				if (ImGui::BeginTabItem(label)) {
-					// Blip on tab switch
-					if (m_audio && m_lastTab != tab.category) {
+			for (auto& cat : categories) {
+				auto entries = registry.byCategory(cat);
+				if (entries.empty()) continue;
+				// Capitalize first letter for display
+				std::string label = cat;
+				if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
+				char tabLabel[64];
+				snprintf(tabLabel, sizeof(tabLabel), "%s (%zu)", label.c_str(), entries.size());
+				if (ImGui::BeginTabItem(tabLabel)) {
+					if (m_audio && m_lastTab != cat) {
 						m_audio->playBlip(1.0f, 0.5f);
-						m_lastTab = tab.category;
+						m_lastTab = cat;
 					}
-					renderEntryList(entries, tab.category);
+					renderEntryList(entries, cat);
 					ImGui::EndTabItem();
 				}
 			}
