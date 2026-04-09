@@ -417,7 +417,10 @@ public:
 		// Agent goal text: update server-side entity for broadcast (all action types)
 		if (!action.goalText.empty()) {
 			Entity* e = m_world->entities.get(action.actorId);
-			if (e) e->goalText = action.goalText;
+			if (e && e->goalText != action.goalText) {
+				printf("[Goal] %s #%u: %s\n", e->typeId().c_str(), action.actorId, action.goalText.c_str());
+				e->goalText = action.goalText;
+			}
 		}
 
 		// behaviorSource non-empty = hot-reload control message, not a game action.

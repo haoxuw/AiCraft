@@ -29,6 +29,13 @@ _DIAG_INTERVAL = 30.0          # minimum seconds between dumps per entity
 _diag_last: dict[int, float] = {}  # entity_id → last dump timestamp
 
 
+class _BlockTarget:
+    """Lightweight stand-in for scan_blocks dict results, compatible with Behavior helpers."""
+    __slots__ = ("x", "y", "z", "distance", "type_id")
+    def __init__(self, x, y, z, distance, type_id):
+        self.x, self.y, self.z, self.distance, self.type_id = x, y, z, distance, type_id
+
+
 def dump_for_diagnoses(entity, local_world):
     """Dump LocalWorld + entity state to /tmp/modcraft_diag_<id>.json.
 
@@ -141,40 +148,38 @@ class WoodcutterBehavior(Behavior):
     # ── State: Work ───────────────────────────────────────────────────────────
 
     def _work(self, entity, local_world):
-        """Find and chop the nearest trunk or leaves block."""
+        """Find trees and chop them. Walk to a tree-rich area, then cut nearby blocks.
+        Prefers leaves (clears canopy first), falls back to trunk.
+        """
         spd         = entity.walk_speed
         work_radius = float(entity.get("work_radius", 80.0))
         logs        = entity.inventory.count("base:trunk")
         collect_goal= int(entity.get("collect_goal", 5))
 
-        # Use targeted block scan — searches real chunk data via ChunkInfo index
-        results = scan_blocks("base:trunk", max_dist=work_radius, max_results=5)
-        if not results:
-            results = scan_blocks("base:leaves", max_dist=work_radius, max_results=5)
-
-        if not results:
-            return self._search(entity, local_world, spd)
-
-        # Pick nearest result
-        target = results[0]
-        tx, ty, tz = target["x"], target["y"], target["z"]
-        dist = target["distance"]
-        label = target["type"].split(":")[1]
-
-        # Make a simple object for is_near check
-        class BlockTarget:
-            def __init__(self, x, y, z, d, t):
-                self.x, self.y, self.z, self.distance, self.type_id = x, y, z, d, t
-        bt = BlockTarget(tx, ty, tz, dist, target["type"])
-
-        if self.is_near(entity, bt, threshold=CHOP_RANGE):
+        # First check: anything close enough to chop right now?
+        nearby = scan_blocks("base:leaves", max_dist=CHOP_RANGE + 1, max_results=1)
+        if not nearby:
+            nearby = scan_blocks("base:trunk", max_dist=CHOP_RANGE + 1, max_results=1)
+        if nearby:
+            t = nearby[0]
+            bt = _BlockTarget(t["x"], t["y"], t["z"], t["distance"], t["type"])
+            label = t["type"].split(":")[1]
             return self._chop(entity, bt, logs, collect_goal, label)
 
+        # Nothing nearby — find a tree area to walk to (richest chunk first)
+        far = scan_blocks("base:leaves", max_dist=work_radius, max_results=1)
+        if not far:
+            far = scan_blocks("base:trunk", max_dist=work_radius, max_results=1)
+        if not far:
+            return self._search(entity, local_world, spd)
+
+        t = far[0]
+        label = t["type"].split(":")[1]
         return self._move_or_unstick(
             entity, local_world,
-            (tx + 0.5, ty, tz + 0.5),
+            (t["x"] + 0.5, t["y"], t["z"] + 0.5),
             spd,
-            "Walking to %s (%.0fm)" % (label, dist),
+            "Walking to %s (%.0fm)" % (label, t["distance"]),
         )
 
     def _chop(self, entity, target, logs, collect_goal, label):
