@@ -157,7 +157,9 @@ class WoodcutterBehavior(Behavior):
         collect_goal= int(entity.get("collect_goal", 5))
 
         # First check: anything close enough to chop right now?
-        nearby = scan_blocks("base:leaves", max_dist=CHOP_RANGE + 1, max_results=1)
+        # Leaves are above (canopy), so search wider range for them.
+        # Trunk is at ground level, only check close range.
+        nearby = scan_blocks("base:leaves", max_dist=8.0, max_results=1)
         if not nearby:
             nearby = scan_blocks("base:trunk", max_dist=CHOP_RANGE + 1, max_results=1)
         if nearby:
