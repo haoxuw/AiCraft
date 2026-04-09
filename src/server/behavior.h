@@ -73,7 +73,7 @@ struct BehaviorAction {
 struct NearbyEntity {
 	EntityId id;
 	std::string typeId;
-	std::string category;
+	EntityKind kind = EntityKind::Living;
 	glm::vec3 position;
 	float distance;
 	int hp;
@@ -104,24 +104,6 @@ struct BehaviorWorldView {
 	// Block scan function — targeted search by type ID from real chunk data.
 	std::function<std::vector<BlockSample>(const std::string&, float, int)> scanBlocksFn;
 
-	// Find closest entity matching a category
-	const NearbyEntity* closestByCategory(const std::string& cat) const {
-		const NearbyEntity* best = nullptr;
-		for (auto& ne : nearbyEntities) {
-			if (ne.category == cat && (!best || ne.distance < best->distance))
-				best = &ne;
-		}
-		return best;
-	}
-
-	// Find all entities matching a category within a radius
-	std::vector<const NearbyEntity*> allByCategory(const std::string& cat, float radius = 999.0f) const {
-		std::vector<const NearbyEntity*> result;
-		for (auto& ne : nearbyEntities)
-			if (ne.category == cat && ne.distance <= radius)
-				result.push_back(&ne);
-		return result;
-	}
 };
 
 // ================================================================

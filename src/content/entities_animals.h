@@ -11,7 +11,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::Pig;
 		def.display_name = "Pig";
 		def.kind = EntityKind::Living;
-		def.category = Category::Animal;
+	
 		def.model = Asset::PigModel;
 		def.texture = Asset::PigTexture;
 		def.color = {0.9f, 0.7f, 0.7f};
@@ -36,7 +36,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::Chicken;
 		def.display_name = "Chicken";
 		def.kind = EntityKind::Living;
-		def.category = Category::Animal;
+	
 		def.model = Asset::ChickenModel;
 		def.texture = Asset::ChickenTexture;
 		def.color = {0.95f, 0.95f, 0.90f};
@@ -62,7 +62,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::BraveChicken;
 		def.display_name = "Brave Chicken";
 		def.kind = EntityKind::Living;
-		def.category = Category::Animal;
+	
 		def.model = Asset::ChickenModel;
 		def.texture = Asset::ChickenTexture;
 		def.color = {1.0f, 0.85f, 0.30f}; // golden yellow
@@ -88,7 +88,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::Cat;
 		def.display_name = "Cat";
 		def.kind = EntityKind::Living;
-		def.category = Category::Animal;
+	
 		def.model = Asset::CatModel;
 		def.color = {0.90f, 0.55f, 0.20f}; // orange tabby
 		def.sound_group = "creature_cat";
@@ -113,7 +113,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::Dog;
 		def.display_name = "Dog";
 		def.kind = EntityKind::Living;
-		def.category = Category::Animal;
+	
 		def.model = Asset::DogModel;
 		def.color = {0.75f, 0.55f, 0.35f}; // brown
 		def.sound_group = "creature_dog";
@@ -138,7 +138,7 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 		def.string_id = EntityType::Villager;
 		def.display_name = "Villager";
 		def.kind = EntityKind::Living;
-		def.category = Category::Animal; // uses same AI dispatch as animals
+		// category removed — use EntityKind + EntityType // uses same AI dispatch as animals
 		def.model = Asset::VillagerModel;
 		def.color = {0.85f, 0.75f, 0.60f}; // tan skin
 		def.sound_group = "creature_villager";

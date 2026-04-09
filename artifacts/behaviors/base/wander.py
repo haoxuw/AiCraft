@@ -63,10 +63,11 @@ class WanderBehavior(Behavior):
         if dist_home > home_radius:
             return Move(*self._home, speed=spd * 0.8), "Wandering back home"
 
-        # ── Flee from threats ───────────────────────────────────────────────
-        threat_p = local_world.nearest("player", max_dist=flee_range)
-        threat_c = local_world.get("base:cat",   max_dist=flee_range)
-        threats  = [t for t in [threat_p, threat_c] if t]
+        # ── Flee from threats (any Living that isn't my species) ────────────
+        threats = [e for e in local_world.entities
+                   if e.distance <= flee_range
+                   and e.kind == "living"
+                   and e.type_id != entity.type_id]
         if threats:
             closest = min(threats, key=lambda t: t.distance)
             return Move(*self.flee_pos(entity, closest), speed=spd * 1.8), "Fleeing!"

@@ -347,7 +347,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			py::dict info;
 			info["id"] = ne.id;
 			info["type_id"] = ne.typeId;
-			info["category"] = ne.category;
+			info["kind"] = (ne.kind == EntityKind::Living) ? "living" : "item";
 			info["x"] = ne.position.x;
 			info["y"] = ne.position.y;
 			info["z"] = ne.position.z;

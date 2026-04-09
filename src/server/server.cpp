@@ -243,7 +243,7 @@ void GameServer::resolveActions(float dt) {
 						target->removed = true;
 
 						// Drop loot for animals
-						if (target->def().category == Category::Animal) {
+						if (target->def().isLiving()) {
 							int count = 1 + (rand() % 2);
 							glm::vec3 lootPos = target->position + glm::vec3(0, 0.3f, 0);
 							glm::vec3 fwd = (dist > 0.1f) ? glm::normalize(diff) : glm::vec3(0, 0, 1);

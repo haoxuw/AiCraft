@@ -154,7 +154,7 @@ inline std::vector<NearbyEntity> gatherNearby(
 		NearbyEntity ne;
 		ne.id       = eid;
 		ne.typeId   = entPtr->typeId();
-		ne.category = entPtr->def().category;
+		ne.kind     = entPtr->def().kind;
 		ne.position = entPtr->position;
 		ne.distance = dist;
 		ne.hp       = entPtr->hp();

@@ -46,7 +46,6 @@ struct EntityDef {
 	EntityKind kind = EntityKind::Living;
 	std::string string_id;      // "base:pig"
 	std::string display_name;
-	std::string category;       // string tag for behavior targeting ("animal", "player", etc.)
 
 	// Visual
 	std::string model;          // "pig.gltf" — key into client model registry

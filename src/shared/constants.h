@@ -92,21 +92,8 @@ namespace ItemId {
 	constexpr const char* Egg         = "base:egg";
 }
 
-// ============================================================
-// Categories (shared by blocks and entities)
-// ============================================================
-namespace Category {
-	constexpr const char* System      = "system";
-	constexpr const char* Terrain     = "terrain";
-	constexpr const char* Plant       = "plant";
-	constexpr const char* Crafted     = "crafted";
-	constexpr const char* Active      = "active";
-	constexpr const char* Crop        = "crop";
-	constexpr const char* Signal      = "signal";
-	constexpr const char* Player      = "player";
-	constexpr const char* Animal      = "animal";
-	constexpr const char* Item        = "item";
-}
+// Category namespace removed. Use EntityKind (Living/Item) and EntityType
+// for entity classification. Block category strings are set directly where needed.
 
 // ============================================================
 // Property Names (entity + block state keys)

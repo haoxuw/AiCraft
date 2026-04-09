@@ -170,7 +170,7 @@ class ProwlBehavior(Behavior):
         # ── MOOD: Curious ─────────────────────────────────────────────────────
         if self._mood == MOOD_CURIOUS:
             if self._curiosity_target is None:
-                player = local_world.nearest("player")
+                player = local_world.nearest("base:player")
                 if player:
                     self._curiosity_target = player.id
 

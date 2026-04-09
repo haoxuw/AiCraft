@@ -11,7 +11,6 @@ inline void registerPlayerEntity(EntityManager& mgr) {
 	def.string_id = EntityType::Player;
 	def.display_name = "Player";
 	def.kind = EntityKind::Living;
-	def.category = Category::Player;
 	def.model = Asset::PlayerModel;
 	def.texture = Asset::PlayerTexture;
 	def.color = {1, 1, 1};

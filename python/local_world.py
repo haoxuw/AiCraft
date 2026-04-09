@@ -69,8 +69,8 @@ class EntityView(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: int
-    type_id: str    # e.g. "base:chicken", "base:villager", "base:spider"
-    category: str   # e.g. "animal", "hostile", "player", "npc", "chest", "item"
+    type_id: str    # e.g. "base:chicken", "base:villager"
+    kind: str = "living"  # "living" or "item" (EntityKind)
     x: float
     y: float
     z: float
@@ -173,7 +173,7 @@ class LocalWorld(BaseModel):
     -------------
     On construction, blocks and entities are grouped by type_id into
     _by_type (nearest-first). Entities are also grouped by category into
-    _by_category. All queries are O(1) index lookup + O(k) early-exit scan.
+    _by_type. All queries are O(1) index lookup + O(k) early-exit scan.
 
     Query API
     ---------
@@ -197,31 +197,24 @@ class LocalWorld(BaseModel):
 
     # Spatial indices — built in model_post_init, not exposed as pydantic fields
     _by_type:     dict[str, list[Nearby]]     = PrivateAttr(default_factory=dict)
-    _by_category: dict[str, list[EntityView]] = PrivateAttr(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
         """Build spatial index after construction."""
         by_type: dict[str, list] = {}
-        # Blocks are pre-sorted nearest-first by C++ — preserve that order
         for b in self.blocks:
             by_type.setdefault(b.type_id, []).append(b)
 
         ent_by_type: dict[str, list] = {}
-        by_cat: dict[str, list] = {}
         for e in self.entities:
             ent_by_type.setdefault(e.type_id, []).append(e)
-            by_cat.setdefault(e.category, []).append(e)
 
         for lst in ent_by_type.values():
-            lst.sort(key=lambda e: e.distance)
-        for lst in by_cat.values():
             lst.sort(key=lambda e: e.distance)
 
         for type_id, lst in ent_by_type.items():
             by_type.setdefault(type_id, []).extend(lst)
 
         self._by_type     = by_type
-        self._by_category = by_cat
 
     # ── Block query (arbitrary world position) ────────────────────────────────
 
@@ -251,9 +244,10 @@ class LocalWorld(BaseModel):
             return list(hits)
         return [o for o in hits if o.distance <= max_dist]
 
-    def nearest(self, category: str, max_dist: float = None) -> Optional[EntityView]:
-        """Nearest entity by category (e.g. 'player', 'animal', 'chest', 'hostile')."""
-        for obj in self._by_category.get(category, ()):
+    def nearest(self, type_id: str, max_dist: float = None) -> Optional[EntityView]:
+        """Nearest entity by type_id (e.g. 'base:player', 'base:chicken')."""
+        for obj in self._by_type.get(type_id, ()):
+            if not isinstance(obj, EntityView): continue
             if max_dist is None or obj.distance <= max_dist:
                 return obj
         return None
@@ -277,7 +271,8 @@ class LocalWorld(BaseModel):
         ]
         entities = [
             EntityView.model_construct(
-                id=e["id"], type_id=e["type_id"], category=e["category"],
+                id=e["id"], type_id=e["type_id"],
+                kind=e.get("kind", "living"),
                 x=e["x"], y=e["y"], z=e["z"],
                 distance=e["distance"], hp=e["hp"],
             )

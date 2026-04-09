@@ -70,7 +70,7 @@ class BraveChickenBehavior(Behavior):
             return Move(cat.x, cat.y, cat.z, speed=spd * 1.5), "BAWK! Chasing cat!"
 
         # Follow player and occasionally lay eggs when near them
-        player = local_world.nearest("player")
+        player = local_world.nearest("base:player")
         if player:
             if player.distance < 3 and self._egg_cooldown <= 0 \
                     and random.random() < 0.15 and entity.hp > 2:

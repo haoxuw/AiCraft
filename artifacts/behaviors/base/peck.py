@@ -69,12 +69,11 @@ class PeckBehavior(Behavior):
         if dist_home > home_radius:
             return Move(*self._home, speed=spd * 0.8), "Wandering back home"
 
-        # ── Flee from threats (any Living that isn't a chicken) ──────────────
+        # ── Flee from threats (any Living that isn't my own species) ─────────
         threats = [e for e in local_world.entities
                    if e.distance <= scatter_range
-                   and e.type_id != "base:chicken"
-                   and e.type_id != "base:brave_chicken"
-                   and e.type_id != "base:item_entity"]
+                   and e.kind == "living"
+                   and e.type_id != entity.type_id]
         if threats:
             closest = min(threats, key=lambda t: t.distance)
             if not self._was_startled and self._egg_cooldown <= 0:
