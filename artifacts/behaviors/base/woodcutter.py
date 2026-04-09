@@ -17,7 +17,7 @@ import json
 import os
 import time
 
-from modcraft_engine import Move, Convert, Interact, Block
+from modcraft_engine import Move, Convert, Interact, Block, scan_blocks
 from actions import StoreItem
 from behavior_base import Behavior
 
@@ -147,23 +147,34 @@ class WoodcutterBehavior(Behavior):
         logs        = entity.inventory.count("base:trunk")
         collect_goal= int(entity.get("collect_goal", 5))
 
-        target = (local_world.get("base:leaves",  max_dist=work_radius) or
-                  local_world.get("base:trunk", max_dist=work_radius))
+        # Use targeted block scan — searches real chunk data via ChunkInfo index
+        results = scan_blocks("base:trunk", max_dist=work_radius, max_results=5)
+        if not results:
+            results = scan_blocks("base:leaves", max_dist=work_radius, max_results=5)
 
-        if target is None:
-            dump_for_diagnoses(entity, local_world)
+        if not results:
             return self._search(entity, local_world, spd)
 
-        label = target.type_id.split(":")[1]
+        # Pick nearest result
+        target = results[0]
+        tx, ty, tz = target["x"], target["y"], target["z"]
+        dist = target["distance"]
+        label = target["type"].split(":")[1]
 
-        if self.is_near(entity, target, threshold=CHOP_RANGE):
-            return self._chop(entity, target, logs, collect_goal, label)
+        # Make a simple object for is_near check
+        class BlockTarget:
+            def __init__(self, x, y, z, d, t):
+                self.x, self.y, self.z, self.distance, self.type_id = x, y, z, d, t
+        bt = BlockTarget(tx, ty, tz, dist, target["type"])
+
+        if self.is_near(entity, bt, threshold=CHOP_RANGE):
+            return self._chop(entity, bt, logs, collect_goal, label)
 
         return self._move_or_unstick(
             entity, local_world,
-            (target.x + 0.5, target.y, target.z + 0.5),
+            (tx + 0.5, ty, tz + 0.5),
             spd,
-            "Walking to %s (%.0fm)" % (label, target.distance),
+            "Walking to %s (%.0fm)" % (label, dist),
         )
 
     def _chop(self, entity, target, logs, collect_goal, label):

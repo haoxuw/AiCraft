@@ -287,8 +287,8 @@ private:
 		m_template->generate(*chunk, pos, m_seed, blocks);
 		auto* ptr = chunk.get();
 		m_chunks[pos] = std::move(chunk);
-		// Build ChunkInfo via stride scan — runs once per chunk, O(CHUNK_VOLUME).
-		m_chunkInfos[pos] = ChunkInfo::buildStride(pos, *ptr, blocks);
+		// Build ChunkInfo — counts + hasAir flag, O(CHUNK_VOLUME).
+		m_chunkInfos[pos] = ChunkInfo::build(pos, *ptr, blocks);
 		return ptr;
 	}
 

@@ -601,37 +601,27 @@ public:
 		const std::string& newTypeId = m_server.world().blocks.get(newBid).string_id;
 		ci->applyBlockChange(pos, oldTypeId, newTypeId);
 
-		// Send S_CHUNK_INFO_DELTA (changed entries only) to agent clients subscribed to this chunk
+		// Send S_CHUNK_INFO_DELTA (changed entries only) to agent clients
 		bool anyAgent = false;
 		for (auto& [cid, client] : m_clients)
 			if (client.isAgent && client.sentChunks.count(cp)) { anyAgent = true; break; }
 		if (!anyAgent) return;
 
-		// Build delta: send updated entries for old and new type ids
+		std::vector<std::string> changedTypes;
+		if (!oldTypeId.empty()) changedTypes.push_back(oldTypeId);
+		if (!newTypeId.empty() && newTypeId != oldTypeId) changedTypes.push_back(newTypeId);
+
+		std::vector<net::ChunkInfoWireEntry> wireEntries;
+		for (const auto& tid : changedTypes) {
+			auto eIt = ci->entries.find(tid);
+			int cnt = (eIt != ci->entries.end()) ? eIt->second.count : 0;
+			wireEntries.push_back({tid, cnt});
+		}
+
 		for (auto& [cid, client] : m_clients) {
 			if (!client.isAgent || !client.sentChunks.count(cp)) continue;
-			// Send a minimal S_CHUNK_INFO_DELTA: cp + entries for changed types
 			net::WriteBuffer db;
-			db.writeI32(cp.x); db.writeI32(cp.y); db.writeI32(cp.z);
-			// Collect unique type ids that changed
-			std::vector<std::string> changedTypes;
-			if (!oldTypeId.empty()) changedTypes.push_back(oldTypeId);
-			if (!newTypeId.empty() && newTypeId != oldTypeId) changedTypes.push_back(newTypeId);
-			db.writeU32((uint32_t)changedTypes.size());
-			for (const auto& tid : changedTypes) {
-				db.writeString(tid);
-				auto eIt = ci->entries.find(tid);
-				if (eIt != ci->entries.end()) {
-					db.writeI32(eIt->second.count);
-					db.writeU32((uint32_t)eIt->second.samples.size());
-					for (auto& s : eIt->second.samples) {
-						db.writeI32(s.x); db.writeI32(s.y); db.writeI32(s.z);
-					}
-				} else {
-					db.writeI32(0);
-					db.writeU32(0);
-				}
-			}
+			net::writeChunkInfoPayload(db, cp, ci->hasAir, wireEntries);
 			net::sendMessage(client.fd, net::S_CHUNK_INFO_DELTA, db);
 		}
 	}
@@ -981,24 +971,15 @@ private:
 		cc.pendingChunks.push_back({pos, std::move(msg)});
 		cc.sentChunks.insert(pos);
 
-		// Agent clients receive S_CHUNK_INFO so behaviors can query block types.
-		// ChunkInfo was built during generateChunk() — just send it here.
+		// Agent clients receive S_CHUNK_INFO (counts only) for block awareness.
 		if (cc.isAgent) {
 			ChunkInfo* ci = m_server.world().getChunkInfo(pos);
 			if (ci) {
+				std::vector<net::ChunkInfoWireEntry> wireEntries;
+				for (auto& [typeId, entry] : ci->entries)
+					wireEntries.push_back({typeId, entry.count});
 				net::WriteBuffer cib;
-				cib.writeI32(pos.x); cib.writeI32(pos.y); cib.writeI32(pos.z);
-				// Count non-empty entries
-				uint32_t entryCount = (uint32_t)ci->entries.size();
-				cib.writeU32(entryCount);
-				for (auto& [typeId, entry] : ci->entries) {
-					cib.writeString(typeId);
-					cib.writeI32(entry.count);
-					cib.writeU32((uint32_t)entry.samples.size());
-					for (auto& s : entry.samples) {
-						cib.writeI32(s.x); cib.writeI32(s.y); cib.writeI32(s.z);
-					}
-				}
+				net::writeChunkInfoPayload(cib, pos, ci->hasAir, wireEntries);
 				net::sendMessage(cc.fd, net::S_CHUNK_INFO, cib);
 			}
 		}

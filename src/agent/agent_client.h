@@ -166,71 +166,18 @@ public:
 			// Build NearbyEntities from m_entities cache
 			auto nearby = gatherNearby(e, m_entities, 64.0f);
 
-			// Build block samples from nearby ChunkInfo entries
-			std::vector<BlockSample> chunkBlocks;
-			{
-				struct ChunkDist { ChunkPos pos; float dist; };
-				std::vector<ChunkDist> nearbyCi;
-				for (auto& [cp, ci] : m_chunkInfoCache) {
-					glm::vec3 chunkCenter = {
-						cp.x * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
-						cp.y * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
-						cp.z * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
-					};
-					float d = glm::length(e.position - chunkCenter);
-					if (d < 96.0f)  // ~6 chunks radius
-						nearbyCi.push_back({cp, d});
-				}
-				std::sort(nearbyCi.begin(), nearbyCi.end(),
-				          [](const ChunkDist& a, const ChunkDist& b) { return a.dist < b.dist; });
-
-				// Per-type cap: keep at most K=8 nearest samples across all chunks
-				std::unordered_map<std::string, int> typeSampleCount;
-				for (auto& cd : nearbyCi) {
-					auto ciIt = m_chunkInfoCache.find(cd.pos);
-					if (ciIt == m_chunkInfoCache.end()) continue;
-					for (auto& [typeId, entry] : ciIt->second.entries) {
-						int& used = typeSampleCount[typeId];
-						if (used >= 8) continue;
-						for (auto& s : entry.samples) {
-							if (used >= 8) break;
-							glm::vec3 sp = {(float)s.x + 0.5f, (float)s.y + 0.5f, (float)s.z + 0.5f};
-							float dist = glm::length(e.position - sp);
-							chunkBlocks.push_back({typeId, s.x, s.y, s.z, dist});
-							used++;
-						}
-					}
-				}
-				// Sort overall nearest-first
-				std::sort(chunkBlocks.begin(), chunkBlocks.end(),
-				          [](const BlockSample& a, const BlockSample& b) { return a.distance < b.distance; });
-
-				// Debug: log block gather results on decide
-				if (state.decideCount <= 3) {
-					printf("[Agent:%s] entity %u gather: %zu nearby chunks (of %zu total), %zu blocks, %zu types\n",
-						m_name.c_str(), eid, nearbyCi.size(), m_chunkInfoCache.size(),
-						chunkBlocks.size(), typeSampleCount.size());
-					// Show distances to nearest + farthest cached chunk
-					float minD = 99999, maxD = 0;
-					for (auto& [cp2, ci2] : m_chunkInfoCache) {
-						glm::vec3 cc = {cp2.x*CHUNK_SIZE+8.0f, cp2.y*CHUNK_SIZE+8.0f, cp2.z*CHUNK_SIZE+8.0f};
-						float dd = glm::length(e.position - cc);
-						if (dd < minD) minD = dd;
-						if (dd > maxD) maxD = dd;
-					}
-					printf("[Agent:%s]   chunk dist range: %.0f - %.0f (threshold: 96)\n",
-						m_name.c_str(), minD, maxD);
-				}
-			}
-
-			// blockQueryFn for Python pathfinding get_block()
+			// Block query + scan callbacks for Python
 			auto blockQueryFn = [this](int x, int y, int z) -> std::string {
 				BlockId bid = getBlock(x, y, z);
 				return m_blocks.get(bid).string_id;
 			};
+			auto scanBlocksFn = [this, &e](const std::string& typeId, float maxDist, int maxResults) {
+				return scanBlocks(e.position, typeId, maxDist, maxResults);
+			};
 
-			// Build world view and run decide()
-			BehaviorWorldView view{e, nearby, chunkBlocks, dt, m_worldTime, blockQueryFn};
+			// Build world view — chunkBlocks is empty, behaviors use scan_blocks() directly
+			std::vector<BlockSample> chunkBlocks;
+			BehaviorWorldView view{e, nearby, chunkBlocks, dt, m_worldTime, blockQueryFn, scanBlocksFn};
 
 			auto t0 = std::chrono::steady_clock::now();
 			state.currentAction = state.behavior->decide(view);
@@ -262,14 +209,8 @@ public:
 		m_statusTimer += dt;
 		if (m_statusTimer >= 10.0f) {
 			m_statusTimer = 0.0f;
-			// Debug: show chunkInfo stats
-			int totalEntries = 0, totalSamples = 0;
-			for (auto& [cp, ci] : m_chunkInfoCache) {
-				totalEntries += (int)ci.entries.size();
-				for (auto& [t, e2] : ci.entries) totalSamples += (int)e2.samples.size();
-			}
-			printf("[Agent:%s] Heartbeat — %zu entities, %zu chunkInfo (%d types, %d samples)\n",
-			       m_name.c_str(), m_controlled.size(), m_chunkInfoCache.size(), totalEntries, totalSamples);
+			printf("[Agent:%s] Heartbeat — %zu entities, %zu chunkInfo, %zu chunks cached\n",
+			       m_name.c_str(), m_controlled.size(), m_chunkInfoCache.size(), m_chunks.size());
 		}
 	}
 
@@ -382,21 +323,17 @@ private:
 		}
 		case net::S_CHUNK_INFO:
 		case net::S_CHUNK_INFO_DELTA: {
-			ChunkPos cp;
-			auto wireEntries = net::readChunkInfoPayload(rb, cp);
-			if (m_chunkInfoCache.size() < 5) // log first few
-				printf("[Agent:%s] S_CHUNK_INFO (%d,%d,%d): %zu wire entries\n",
-					m_name.c_str(), cp.x, cp.y, cp.z, wireEntries.size());
-			AgentChunkInfo& ci = m_chunkInfoCache[cp];
-			ci.pos = cp;
-			if (type == net::S_CHUNK_INFO) {
+			auto payload = net::readChunkInfoPayload(rb);
+			AgentChunkInfo& ci = m_chunkInfoCache[payload.pos];
+			ci.pos = payload.pos;
+			ci.hasAir = payload.hasAir;
+			if (type == net::S_CHUNK_INFO)
 				ci.entries.clear();
-			}
-			for (auto& we : wireEntries) {
+			for (auto& we : payload.entries) {
 				if (we.count <= 0)
 					ci.entries.erase(we.typeId);
 				else
-					ci.entries[we.typeId] = {we.count, we.samples};
+					ci.entries[we.typeId] = {we.count};
 			}
 			break;
 		}
@@ -564,6 +501,84 @@ private:
 		return false;
 	}
 
+	// Targeted block scan: find blocks of a specific type using ChunkInfo index.
+	// 1. Resolve typeId string to BlockId (int) once
+	// 2. Use ChunkInfo counts to find chunks that have this block type
+	// 3. Sort by richness (count) then distance — prefer forests over lone trees
+	// 4. Scan real chunk data surface-down using int comparison (fast)
+	// 5. Request missing chunks from server if needed (sync wait)
+	std::vector<BlockSample> scanBlocks(glm::vec3 origin, const std::string& typeId,
+	                                     float maxDist, int maxResults) {
+		BlockId targetBid = m_blocks.getId(typeId);
+		if (targetBid == BLOCK_AIR && typeId != "base:air") return {}; // unknown type
+
+		// Step 1: find candidate chunks from ChunkInfo index
+		struct Candidate { ChunkPos pos; float dist; int count; };
+		std::vector<Candidate> candidates;
+		for (auto& [cp, ci] : m_chunkInfoCache) {
+			auto eIt = ci.entries.find(typeId);
+			if (eIt == ci.entries.end() || eIt->second.count <= 0) continue;
+			glm::vec3 cc = {cp.x * CHUNK_SIZE + 8.0f, cp.y * CHUNK_SIZE + 8.0f, cp.z * CHUNK_SIZE + 8.0f};
+			float d = glm::length(origin - cc);
+			if (d > maxDist + 16.0f) continue; // +16 for chunk diagonal
+			candidates.push_back({cp, d, eIt->second.count});
+		}
+		// Sort: richest first, then nearest (prefer dense areas like forests)
+		std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+			if (a.count != b.count) return a.count > b.count;
+			return a.dist < b.dist;
+		});
+
+		// Step 2: scan real chunk data for matching blocks
+		std::vector<BlockSample> result;
+		for (auto& cand : candidates) {
+			if ((int)result.size() >= maxResults) break;
+
+			// Ensure chunk is loaded — request from server if missing
+			if (m_chunks.find(cand.pos) == m_chunks.end()) {
+				requestAndWaitForChunk(cand.pos);
+			}
+			auto chunkIt = m_chunks.find(cand.pos);
+			if (chunkIt == m_chunks.end() || !chunkIt->second) continue;
+			const Chunk& chunk = *chunkIt->second;
+
+			// Scan surface-down (Y from top to bottom) — BlockId int comparison
+			for (int ly = CHUNK_SIZE - 1; ly >= 0 && (int)result.size() < maxResults; ly--) {
+				for (int lz = 0; lz < CHUNK_SIZE; lz++) {
+					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+						if (chunk.get(lx, ly, lz) != targetBid) continue;
+						int wx = cand.pos.x * CHUNK_SIZE + lx;
+						int wy = cand.pos.y * CHUNK_SIZE + ly;
+						int wz = cand.pos.z * CHUNK_SIZE + lz;
+						float dist = glm::length(origin - glm::vec3(wx + 0.5f, wy + 0.5f, wz + 0.5f));
+						if (dist <= maxDist)
+							result.push_back({typeId, wx, wy, wz, dist});
+					}
+				}
+			}
+		}
+
+		std::sort(result.begin(), result.end(),
+		          [](const BlockSample& a, const BlockSample& b) { return a.distance < b.distance; });
+		return result;
+	}
+
+	// Request a specific chunk from the server and wait for it to arrive.
+	// Blocks the agent process (not server or GUI) until the chunk is received.
+	void requestAndWaitForChunk(ChunkPos pos) {
+		net::WriteBuffer wb;
+		wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
+		net::sendMessage(m_tcp.fd(), net::C_RESYNC_CHUNK, wb);
+
+		// Poll for up to 500ms waiting for this chunk
+		for (int i = 0; i < 100; i++) {
+			if (m_chunks.find(pos) != m_chunks.end()) return; // arrived
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			receiveMessages();
+		}
+		// Timed out — chunk didn't arrive, scan will skip it
+	}
+
 	// --- Connection state ---
 	std::string m_host;
 	int m_port = 0;
@@ -587,10 +602,11 @@ private:
 	EntityManager m_entityDefs;  // type registry only
 	EntityDef m_defaultDef;
 
-	// --- ChunkInfo cache (received from server via S_CHUNK_INFO / S_CHUNK_INFO_DELTA) ---
+	// --- ChunkInfo cache (counts only, no samples) ---
 	struct AgentChunkInfo {
 		ChunkPos pos;
-		struct Entry { int count; std::vector<glm::ivec3> samples; };
+		bool hasAir = false;
+		struct Entry { int count = 0; };
 		std::unordered_map<std::string, Entry> entries;
 	};
 	std::unordered_map<ChunkPos, AgentChunkInfo, ChunkPosHash> m_chunkInfoCache;

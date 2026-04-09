@@ -100,9 +100,9 @@ struct BehaviorWorldView {
 	float dt;
 	float timeOfDay = 0.0f;
 	// Block query function — maps (x,y,z) → block type string.
-	// Used by Python pathfinding (get_block()). Block awareness for
-	// behaviors is provided via ChunkInfo (see docs/29_CHUNK_INFO.md).
 	std::function<std::string(int,int,int)> blockQueryFn;
+	// Block scan function — targeted search by type ID from real chunk data.
+	std::function<std::vector<BlockSample>(const std::string&, float, int)> scanBlocksFn;
 
 	// Find closest entity matching a category
 	const NearbyEntity* closestByCategory(const std::string& cat) const {

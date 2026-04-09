@@ -327,56 +327,54 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 // ================================================================
 // ChunkInfo wire protocol helpers
 //
-// S_CHUNK_INFO / S_CHUNK_INFO_DELTA share the same payload format:
+// S_CHUNK_INFO / S_CHUNK_INFO_DELTA payload format:
 //   i32 cx, i32 cy, i32 cz
+//   bool hasAir
 //   u32 entry_count
 //   for each entry:
 //       str  type_id
 //       u32  count
-//       u8   sample_count  (≤ ChunkInfo::K = 8)
-//       for each sample:
-//           i32 x, i32 y, i32 z
 // ================================================================
 
 struct ChunkInfoWireEntry {
 	std::string typeId;
 	int count = 0;
-	std::vector<glm::ivec3> samples;
 };
 
-inline void writeChunkInfoPayload(WriteBuffer& buf, ChunkPos pos,
+inline void writeChunkInfoPayload(WriteBuffer& buf, ChunkPos pos, bool hasAir,
                                    const std::vector<ChunkInfoWireEntry>& entries) {
 	buf.writeI32(pos.x);
 	buf.writeI32(pos.y);
 	buf.writeI32(pos.z);
+	buf.writeBool(hasAir);
 	buf.writeU32((uint32_t)entries.size());
 	for (auto& e : entries) {
 		buf.writeString(e.typeId);
 		buf.writeU32((uint32_t)e.count);
-		buf.writeU8((uint8_t)e.samples.size());
-		for (auto& s : e.samples)
-			buf.writeIVec3(s);
 	}
 }
 
-inline std::vector<ChunkInfoWireEntry> readChunkInfoPayload(ReadBuffer& buf, ChunkPos& posOut) {
-	posOut.x = buf.readI32();
-	posOut.y = buf.readI32();
-	posOut.z = buf.readI32();
-	uint32_t entryCount = buf.readU32();
+struct ChunkInfoPayload {
+	ChunkPos pos;
+	bool hasAir = false;
 	std::vector<ChunkInfoWireEntry> entries;
-	entries.reserve(entryCount);
+};
+
+inline ChunkInfoPayload readChunkInfoPayload(ReadBuffer& buf) {
+	ChunkInfoPayload result;
+	result.pos.x = buf.readI32();
+	result.pos.y = buf.readI32();
+	result.pos.z = buf.readI32();
+	result.hasAir = buf.readBool();
+	uint32_t entryCount = buf.readU32();
+	result.entries.reserve(entryCount);
 	for (uint32_t i = 0; i < entryCount && buf.hasMore(); i++) {
 		ChunkInfoWireEntry e;
 		e.typeId = buf.readString();
 		e.count  = (int)buf.readU32();
-		uint8_t sampleCount = buf.readU8();
-		e.samples.reserve(sampleCount);
-		for (uint8_t s = 0; s < sampleCount && buf.hasMore(); s++)
-			e.samples.push_back(buf.readIVec3());
-		entries.push_back(std::move(e));
+		result.entries.push_back(std::move(e));
 	}
-	return entries;
+	return result;
 }
 
 } // namespace modcraft::net

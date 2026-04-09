@@ -135,10 +135,10 @@ public:
 	// Returns the BehaviorAction the Python code chose.
 	// On error: returns Idle, errorOut contains the traceback.
 
-	// Block query function type — maps (x,y,z) → block type string (e.g. "base:stone").
-	// Injected per-call so Python pathfinding can query the agent's local chunk cache.
-	// Block awareness for behaviors comes from ChunkInfo (see docs/29_CHUNK_INFO.md).
+	// Block query function type — maps (x,y,z) → block type string.
 	using BlockQueryFn = std::function<std::string(int, int, int)>;
+	// Block scan function type — targeted search by type ID.
+	using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, float, int)>;
 
 	BehaviorAction callDecide(BehaviorHandle handle,
 	                           Entity& self,
@@ -148,7 +148,8 @@ public:
 	                           float timeOfDay,
 	                           std::string& goalOut,
 	                           std::string& errorOut,
-	                           BlockQueryFn blockQueryFn = nullptr);
+	                           BlockQueryFn blockQueryFn = nullptr,
+	                           ScanBlocksFn scanBlocksFn = nullptr);
 
 	// Get the source code of a loaded behavior
 	std::string getSource(BehaviorHandle handle) const;

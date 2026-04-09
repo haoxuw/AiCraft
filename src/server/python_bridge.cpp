@@ -87,7 +87,10 @@ struct PyAction {
 // Safe for single-threaded agent processes (one callDecide at a time).
 static std::function<std::string(int,int,int)> s_blockQueryFn;
 
-// Navigation goals are now handled server-side — no longer injected into Python.
+// Block scan callback — set by agent_client before callDecide().
+// Returns list of {type_id, x, y, z, distance} for blocks of a given type.
+using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, float, int)>;
+static ScanBlocksFn s_scanBlocksFn;
 
 PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	m.doc() = "ModCraft engine bridge — exposes world view to Python behaviors";
@@ -180,6 +183,26 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 		return "base:air";
 	}, py::arg("x"), py::arg("y"), py::arg("z"),
 	   "Query block type string at world position (x,y,z). Call only inside decide().");
+
+	// scan_blocks(type_id, max_dist, max_results) → list of dicts
+	// Targeted search: uses ChunkInfo index to find chunks with this block type,
+	// then scans real chunk data surface-down. Int comparison, very fast.
+	m.def("scan_blocks", [](const std::string& typeId, float maxDist, int maxResults) -> py::list {
+		py::list result;
+		if (!s_scanBlocksFn) return result;
+		auto blocks = s_scanBlocksFn(typeId, maxDist, maxResults);
+		for (auto& b : blocks) {
+			py::dict d;
+			d["type"] = b.typeId;
+			d["x"] = b.x;
+			d["y"] = b.y;
+			d["z"] = b.z;
+			d["distance"] = b.distance;
+			result.append(d);
+		}
+		return result;
+	}, py::arg("type_id"), py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
+	   "Find blocks of a specific type. Uses chunk index for fast lookup.");
 }
 
 // ================================================================
@@ -303,10 +326,12 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
                                          float timeOfDay,
                                          std::string& goalOut,
                                          std::string& errorOut,
-                                         BlockQueryFn blockQueryFn) {
-	// Inject block query for this call so Python's get_block() works.
+                                         BlockQueryFn blockQueryFn,
+                                         ScanBlocksFn scanBlocksFn) {
+	// Inject callbacks for this call so Python can query blocks.
 	s_blockQueryFn = blockQueryFn ? std::move(blockQueryFn) : [](int,int,int){ return std::string("base:air"); };
-	struct Cleanup { ~Cleanup() { s_blockQueryFn = nullptr; } } _cleanup;
+	s_scanBlocksFn = std::move(scanBlocksFn);
+	struct Cleanup { ~Cleanup() { s_blockQueryFn = nullptr; s_scanBlocksFn = nullptr; } } _cleanup;
 	auto it = m_behaviors.find(handle);
 	if (it == m_behaviors.end()) {
 		errorOut = "Invalid behavior handle";
@@ -494,7 +519,7 @@ BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
 	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities,
 	                                view.chunkBlocks,
 	                                view.dt, view.timeOfDay, goal, error,
-	                                view.blockQueryFn);
+	                                view.blockQueryFn, view.scanBlocksFn);
 
 	if (!error.empty()) {
 		view.self.goalText = "ERROR: " + error.substr(0, 80);
