@@ -29,7 +29,6 @@ class PeckBehavior(Behavior):
         self._resting = False
         self._activity = "idle"
         self._activity_timer = 0.0
-        self._was_startled = False
         self._egg_cooldown = 0.0
         self._rng_seeded = False
 
@@ -76,17 +75,15 @@ class PeckBehavior(Behavior):
                    and e.type_id != entity.type_id]
         if threats:
             closest = min(threats, key=lambda t: t.distance)
-            if not self._was_startled and self._egg_cooldown <= 0:
-                self._was_startled = True
-                if random.random() < EGG_CHANCE and entity.hp > 2:
+            # Try to lay egg each time cooldown is ready (20% chance, costs 2 HP)
+            if self._egg_cooldown <= 0 and entity.hp > 2:
+                if random.random() < EGG_CHANCE:
                     self._egg_cooldown = EGG_COOLDOWN
                     return (Convert(from_item="hp", from_count=2,
                                          to_item="base:egg", to_count=1,
                                          convert_into=Ground()),
                             "BAWK!! *lays egg!*")
             return Move(*self.flee_pos(entity, closest), speed=6.0), "BAWK!! Scattering!"
-
-        self._was_startled = False
 
         # ── Peck grass (if standing on grass block) ──────────────────────────
         if self._activity == "peck_grass" and self._activity_timer > 0:
