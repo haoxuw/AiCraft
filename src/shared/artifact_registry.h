@@ -35,8 +35,8 @@ namespace modcraft {
 struct ArtifactEntry {
 	std::string id;           // "base:pig"
 	std::string name;         // "Pig"
-	std::string category;     // "creature", "item", "block", "behavior", "effect"
-	std::string subcategory;  // "animal", "weapon", "terrain", etc.
+	std::string category;     // "living", "item", "block", "behavior", "effect", ...
+	std::string subcategory;  // for living: "humanoid" | "animal". Items: "weapon", etc.
 	std::string description;
 	std::string filePath;     // path to .py file
 	bool isBuiltin;           // true = base/, false = player/
@@ -54,8 +54,7 @@ public:
 		m_entries.clear();
 		m_basePath = basePath;
 
-		loadCategory("creatures", "living");
-		loadCategory("characters", "living");
+		loadCategory("living", "living");
 		loadCategory("items", "item");
 		loadCategory("blocks", "block");
 		loadCategory("behaviors", "behavior");
@@ -66,12 +65,19 @@ public:
 		printf("[ArtifactRegistry] Loaded %zu artifacts from %s\n",
 		       m_entries.size(), basePath.c_str());
 
-		// Validate: creatures, characters, and items must have a model file
+		// Validate: living entities and items must have a model file. Use
+		// the explicit "model": "<key>" field if present, otherwise fall
+		// back to the file stem (e.g. brave_chicken.py → "brave_chicken").
 		int warnings = 0;
 		for (auto& e : m_entries) {
 			if (e.category == "living" || e.category == "item") {
-				std::string key = e.name;
-				for (auto& c : key) c = (char)std::tolower((unsigned char)c);
+				std::string key;
+				auto mit = e.fields.find("model");
+				if (mit != e.fields.end() && !mit->second.empty()) {
+					key = mit->second;
+				} else {
+					key = std::filesystem::path(e.filePath).stem().string();
+				}
 				std::string modelPath = basePath + "/models/base/" + key + ".py";
 				std::string modelPathPlayer = basePath + "/models/player/" + key + ".py";
 				if (!std::filesystem::exists(modelPath) && !std::filesystem::exists(modelPathPlayer)) {
@@ -161,8 +167,9 @@ public:
 		printf("[ArtifactRegistry::forkEntry] Found: category='%s', file='%s', source=%zuB\n",
 			src->category.c_str(), src->filePath.c_str(), src->source.size());
 
-		// category → directory name (creature→creatures, item→items, etc.)
-		std::string dirName = src->category + "s";
+		// category → directory name (item→items, effect→effects, living→living).
+		// "living" is the only category that's already plural in meaning.
+		std::string dirName = (src->category == "living") ? "living" : src->category + "s";
 
 		// Extract the base name from the original filename
 		std::filesystem::path srcPath(src->filePath);
@@ -201,8 +208,8 @@ public:
 
 		printf("[ArtifactRegistry] Forked %s → %s (%s)\n", id.c_str(), destPath.c_str(), newId.c_str());
 
-		// Also fork the model file if one exists (creature/character/item need models)
-		if (src->category == "creature" || src->category == "character" || src->category == "item") {
+		// Also fork the model file if one exists (living entities and items need models)
+		if (src->category == "living" || src->category == "item") {
 			std::string modelSrc = m_basePath + "/models/base/" + stem + ".py";
 			if (std::filesystem::exists(modelSrc)) {
 				std::string modelDestDir = m_basePath + "/models/player";

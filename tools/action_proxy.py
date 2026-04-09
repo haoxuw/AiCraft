@@ -412,7 +412,7 @@ def action_move(req: MoveRequest):
     Velocity-based movement. The server clamps to the entity's `walk_speed`.
 
     Send every tick for smooth movement, or once for a single nudge.
-    Set `jump=true` to jump. For NPC control, set `actor_id` to the NPC's entity ID.
+    Set `jump=true` to jump. For Creatures control, set `actor_id` to the Creatures's entity ID.
     """
     try:
         p = req.model_dump()
@@ -509,7 +509,7 @@ def action_interact(req: InteractRequest):
 
 @app.post(
     "/action/reload_behavior",
-    summary="ReloadBehavior — hot-swap an NPC's Python behavior",
+    summary="ReloadBehavior — hot-swap an Creatures's Python behavior",
     tags=["Actions"],
 )
 def action_reload_behavior(req: ReloadBehaviorRequest):
@@ -517,7 +517,7 @@ def action_reload_behavior(req: ReloadBehaviorRequest):
     Replaces the Python behavior source code for the target entity without
     restarting the agent process.
 
-    Set `entity_id` to the NPC's entity ID. The server forwards the new
+    Set `entity_id` to the Creatures's entity ID. The server forwards the new
     source to the agent client that owns that entity.
     """
     try:
@@ -537,7 +537,7 @@ def action_reload_behavior(req: ReloadBehaviorRequest):
 #   src/shared/material_values.h  — material values (default 1.0 if absent)
 #   artifacts/blocks/**/*.py      — block definitions (variable `blocks`)
 #   artifacts/items/**/*.py       — item definitions  (variable `item`)
-#   artifacts/creatures/**/*.py   — creature defs     (variable `creature`)
+#   artifacts/living/**/*.py      — living defs       (variable `living`)
 #
 # "hp" is a special virtual type: 1 HP = 1.0 material value.
 

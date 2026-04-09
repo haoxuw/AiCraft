@@ -8,25 +8,28 @@ Unlike the normal timid chicken, this variant:
   - Has more HP (tougher fighter)
   - Distinctive golden color
 
-Uses the 'brave_chicken' behavior (artifacts/behaviors/base/brave_chicken.py).
-Fork this creature to create your own chicken personality!
+Fork this file to create your own chicken personality!
 """
 
-creature = {
+living = {
     "id": "base:brave_chicken",
     "name": "Brave Chicken",
+    "description": "A fearless golden hen. Follows players, fights cats, lays eggs when happy.",
+
     "category": "animal",
-    "behavior": "brave_chicken",
-
-    "collision": {"min": [-0.2, 0, -0.2], "max": [0.2, 0.6, 0.2]},
-    "gravity": 1.0,
-    "walk_speed": 3.0,
-    "run_speed": 7.0,
-
-    "max_hp": 8,
+    "playable": True,
 
     "model": "chicken",
-    "color": [1.0, 0.85, 0.30],   # golden yellow — stands out from white chickens
+    "behavior": "brave_chicken",
 
-    "description": "A fearless golden hen. Follows players, fights cats, lays eggs when happy.",
+    # Physics
+    "collision": {"min": [-0.2, 0, -0.2], "max": [0.2, 0.6, 0.2]},
+    "walk_speed": 3.0,
+    "run_speed": 7.0,
+    "gravity": 1.0,
+    "eye_height": 0.55,
+    "jump_velocity": 6.5,
+    "max_hp": 8,
+
+    "primary_color": [1.0, 0.85, 0.30],   # golden — stands out from white chickens
 }

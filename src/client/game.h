@@ -134,7 +134,7 @@ private:
 	std::string m_currentWorldPath;  // save directory for current game
 	int m_currentSeed = 42;
 	std::string m_playerName;        // display name (random default, renameable)
-	std::string m_selectedCreature; // selected from artifacts/characters/, auto-set to first
+	std::string m_selectedCreature; // selected from artifacts/living/, auto-set to first humanoid
 
 	float m_connectTimer = 0;  // timeout waiting for player entity / WebSocket welcome
 	GameState m_connectTargetState = GameState::PLAYING; // state to enter after connect

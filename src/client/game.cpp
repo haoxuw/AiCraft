@@ -121,11 +121,19 @@ bool Game::init(int argc, char** argv) {
 	// Missing models get the magenta "?" placeholder and a console warning.
 	{
 		int missing = 0;
-		// Check artifacts (creatures, characters, items)
-		for (auto* cat : {"creature", "character", "item"}) {
+		// Check artifacts (living entities, items).
+		// Prefer the artifact's explicit "model" field when present (lets
+		// multiple living entries share one model — e.g. brave_chicken → chicken).
+		// Fall back to file stem so names with spaces still resolve.
+		for (auto* cat : {"living", "item"}) {
 			for (auto* entry : m_artifacts.byCategory(cat)) {
-				std::string key = entry->name;
-				for (auto& c : key) c = (char)std::tolower((unsigned char)c);
+				std::string key;
+				auto mit = entry->fields.find("model");
+				if (mit != entry->fields.end() && !mit->second.empty()) {
+					key = mit->second;
+				} else {
+					key = std::filesystem::path(entry->filePath).stem().string();
+				}
 				if (!m_models.count(key)) {
 					printf("[MISSING MODEL] %s '%s' → expected artifacts/models/base/%s.py\n",
 						cat, entry->name.c_str(), key.c_str());
@@ -157,11 +165,17 @@ bool Game::init(int argc, char** argv) {
 	m_imguiMenu.setCharacterPreview(&m_artifacts, &m_modelPreview,
 		&m_renderer.modelRenderer(), &m_models);
 
-	// Auto-select first character if none set
+	// Auto-select first living entity if none set.
+	// Prefer humanoids (subcategory == "humanoid") for the default character;
+	// animals are still playable but humanoids feel like the canonical "player".
 	if (m_selectedCreature.empty()) {
-		auto chars = m_artifacts.byCategory("character");
-		if (!chars.empty()) m_selectedCreature = chars[0]->id;
-		else m_selectedCreature = "base:player"; // fallback
+		auto living = m_artifacts.byCategory("living");
+		const ArtifactEntry* pick = nullptr;
+		for (auto* e : living) {
+			if (e->subcategory == "humanoid") { pick = e; break; }
+		}
+		if (!pick && !living.empty()) pick = living[0];
+		m_selectedCreature = pick ? pick->id : "base:player";
 	}
 
 	// Register ALL models for Handbook 3D preview

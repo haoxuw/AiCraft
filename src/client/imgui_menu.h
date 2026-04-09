@@ -380,13 +380,13 @@ private:
 		if (ImGui::InputText("##playername", m_nameEditBuf, sizeof(m_nameEditBuf)))
 			*m_playerName = m_nameEditBuf;
 
-		// Character picker — from artifacts/characters/ (Knight, Mage, Skeleton, etc.)
+		// Character picker — from artifacts/living/ (every living thing is playable).
 		ImGui::Spacing();
 		ImGui::Text("Character");
 		ImGui::Spacing();
 
 		if (m_charRegistry) {
-			auto chars = m_charRegistry->byCategory("character");
+			auto chars = m_charRegistry->byCategory("living");
 			float cardW = 110.0f;
 			int col = 0;
 			for (auto* ch : chars) {
