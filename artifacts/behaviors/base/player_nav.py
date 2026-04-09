@@ -17,7 +17,7 @@ class PlayerNavBehavior(Behavior):
         self._nav = Navigator()
         self._logged_goal = None
 
-    def decide(self, entity, local_world):
+    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
         goal = getattr(local_world, 'goal', None)
         if goal is None:
             self._nav.reset()

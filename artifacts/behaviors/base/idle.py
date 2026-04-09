@@ -16,7 +16,7 @@ from behavior_base import Behavior
 
 class IdleBehavior(Behavior):
 
-    def decide(self, entity, local_world):
+    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
         return Move(entity.x, entity.y, entity.z), "Idle"
 
 
@@ -25,7 +25,7 @@ class IdleBehavior(Behavior):
 # from modcraft_engine import Move
 #
 # class IdleBehavior(Behavior):
-#     def decide(self, entity, local_world):
+#     def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
 #         pig = local_world.get("base:pig", max_dist=20)
 #         if pig:
 #             if pig.distance > 2:

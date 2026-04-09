@@ -138,12 +138,12 @@ class SelfEntity(BaseModel):
 
     @classmethod
     def _from_raw(cls, raw: dict) -> "SelfEntity":
-        """Construct from C++ bridge dict, bypassing pydantic validation.
+        """Construct from C++ bridge dict with full pydantic validation.
 
-        Called once per decide() tick per entity. model_construct() skips
-        all validators — the data is trusted (comes directly from C++).
+        Pydantic coerces types (e.g. "5" → 5 for int fields), so even if
+        C++ passes string-encoded values they're converted to the right type.
         """
-        return cls.model_construct(
+        return cls(
             id         = raw["id"],
             type_id    = raw["type_id"],
             x          = raw["x"],
@@ -153,9 +153,7 @@ class SelfEntity(BaseModel):
             hp         = raw["hp"],
             walk_speed = raw["walk_speed"],
             on_ground  = raw["on_ground"],
-            inventory  = InventoryView.model_construct(
-                items=dict(raw.get("inventory", {}))
-            ),
+            inventory  = InventoryView(items=dict(raw.get("inventory", {}))),
             props=raw,
         )
 
@@ -256,13 +254,11 @@ class LocalWorld(BaseModel):
 
     @classmethod
     def _from_raw(cls, raw: dict) -> "LocalWorld":
-        """Construct from C++ bridge dict, bypassing pydantic validation.
-
-        Note: blocks use 'type' key in the C++ bridge dict; we rename to type_id.
-        model_post_init is called manually since model_construct skips it.
+        """Construct from C++ bridge dict with full pydantic validation.
+        Pydantic coerces string→int/float as needed.
         """
         blocks = [
-            BlockView.model_construct(
+            BlockView(
                 x=b["x"], y=b["y"], z=b["z"],
                 type_id=b["type"],          # C++ bridge uses "type", not "type_id"
                 distance=b["distance"],
@@ -270,7 +266,7 @@ class LocalWorld(BaseModel):
             for b in raw.get("blocks", [])
         ]
         entities = [
-            EntityView.model_construct(
+            EntityView(
                 id=e["id"], type_id=e["type_id"],
                 kind=e.get("kind", "living"),
                 x=e["x"], y=e["y"], z=e["z"],
@@ -278,12 +274,10 @@ class LocalWorld(BaseModel):
             )
             for e in raw.get("nearby", [])
         ]
-        obj = cls.model_construct(
+        return cls(
             time=raw["time"],
             dt=raw["dt"],
             blocks=blocks,
             entities=entities,
             goal=raw.get("goal"),
         )
-        obj.model_post_init(None)
-        return obj

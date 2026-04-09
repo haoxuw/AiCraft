@@ -96,7 +96,7 @@ class WoodcutterBehavior(Behavior):
 
     # ── Top-level decide ──────────────────────────────────────────────────────
 
-    def decide(self, entity, local_world):
+    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
         self._chop_cooldown -= local_world.dt
         self._ensure_props(entity, local_world)
         self._update_state(entity, local_world)

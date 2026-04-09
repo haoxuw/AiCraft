@@ -16,6 +16,7 @@ Entity props (optional):
 import random
 from modcraft_engine import Move, Convert, Ground, LivingName, ItemName, BlockType
 from behavior_base import Behavior
+from local_world import SelfEntity, LocalWorld
 
 EGG_COOLDOWN = 10.0
 EGG_CHANCE   = 0.20
@@ -32,7 +33,7 @@ class PeckBehavior(Behavior):
         self._egg_cooldown = 0.0
         self._rng_seeded = False
 
-    def decide(self, entity, local_world):
+    def decide(self, entity: SelfEntity, local_world: LocalWorld):
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True
@@ -47,11 +48,6 @@ class PeckBehavior(Behavior):
         home_radius   = float(entity.get("home_radius",  25.0))
         spd           = entity.walk_speed
 
-        # ── DEBUG: log all visible entities every decide ─────────────────────
-        print(f"[chicken {entity.id}] pos=({entity.x:.0f},{entity.z:.0f}) sees {len(local_world.entities)} entities:", flush=True)
-        for e in local_world.entities:
-            print(f"  - id={e.id} type={e.type_id} kind={e.kind} dist={e.distance:.1f}", flush=True)
-
         # ── Flee from threats — HIGHEST PRIORITY (always check first) ────────
         threats = [e for e in local_world.entities
                    if e.distance <= scatter_range
@@ -59,13 +55,12 @@ class PeckBehavior(Behavior):
                    and e.type_id != entity.type_id]
         if threats:
             closest = min(threats, key=lambda t: t.distance)
-            print(f"[chicken {entity.id}] FLEEING from {closest.type_id} at dist {closest.distance:.1f}", flush=True)
             if self._egg_cooldown <= 0 and entity.hp > 2:
                 if random.random() < EGG_CHANCE:
                     self._egg_cooldown = EGG_COOLDOWN
                     return (Convert(from_item="hp", from_count=2,
-                                         to_item=ItemName.Egg, to_count=1,
-                                         convert_into=Ground()),
+                                    to_item=ItemName.Egg, to_count=1,
+                                    convert_into=Ground()),
                             "BAWK!! *lays egg!*")
             return Move(*self.flee_pos(entity, closest), speed=6.0), "BAWK!! Scattering!"
 

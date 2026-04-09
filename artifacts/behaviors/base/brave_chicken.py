@@ -30,7 +30,7 @@ class BraveChickenBehavior(Behavior):
         self._resting = False
         self._egg_cooldown = 0.0
 
-    def decide(self, entity, local_world):
+    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
         self._egg_cooldown -= local_world.dt
         self._home = self.init_home(entity, self._home)
 

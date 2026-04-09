@@ -54,7 +54,7 @@ class ProwlBehavior(Behavior):
         else:
             return MOOD_NAP
 
-    def decide(self, entity, local_world):
+    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True

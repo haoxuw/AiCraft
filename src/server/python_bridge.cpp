@@ -537,6 +537,8 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 
 	} catch (const py::error_already_set& e) {
 		errorOut = e.what();
+		fprintf(stderr, "[PythonBridge] decide() exception: %s\n", e.what());
+		fflush(stderr);
 		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 	}
 }
