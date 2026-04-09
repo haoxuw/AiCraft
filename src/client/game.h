@@ -69,7 +69,6 @@ private:
 	void handleGameplayInput(float dt);         // WASD, attack, item use/drop/equip
 	void updateItemPickupAnimations(float dt);  // proximity scan + pickup fly animations
 	void updateAudioAndDoors(float dt);         // creature sounds, door audio/animation
-	void updateChestUI();                       // chest open/close interaction
 
 	// renderPlaying helpers (game_render.cpp)
 	void renderWorld(float dt, float aspect);                    // chunk mesh, terrain, crosshair
@@ -216,9 +215,9 @@ private:
 	// Damage flash timer: entity flashes red for this many seconds after taking a hit
 	std::unordered_map<EntityId, float> m_damageFlash;
 
-	// Per-entity attack phase (0→1 during swing). Currently only populated for
-	// the local player via m_fpSwingTimer; mob swings require server attack events.
-	std::unordered_map<EntityId, float> m_entityAttackPhase;
+	// NOTE: the old m_entityAttackPhase / m_entityWorkTimer maps were removed
+	// when mob tool-swing animation migrated to the named-clip system.
+	// Mobs now pick clips from goalText via pickClip() in game_render.cpp.
 
 
 	// Game log — timestamped event stream (damage, deaths, AI decisions, pickups)
@@ -231,10 +230,6 @@ private:
 
 	// Door swing animations (client-side, 0.25s rotation overlay)
 	std::vector<DoorAnim> m_doorAnims;
-
-	// Chest inventory UI (keyed by block position, not entity)
-	bool m_showChestUI = false;
-	glm::ivec3 m_openChestBlockPos = {0, 0, 0};
 
 	// Models — keyed by base name (model filename without extension, e.g. "pig", "chicken")
 	std::unordered_map<std::string, BoxModel> m_models;

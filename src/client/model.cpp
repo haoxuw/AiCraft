@@ -123,49 +123,96 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 	GLint useTexLoc = glGetUniformLocation(m_shader->id(), "uUseTexture");
 	glBindVertexArray(m_cubeVAO);
 
-	const float PI = 3.14159265f;
+	constexpr float TWO_PI = 6.28318530718f;
+
+	// Is a named animation clip currently active? (mine, chop, dance, wave, ...)
+	const AnimClip* activeClip = nullptr;
+	if (!anim.currentClip.empty()) {
+		auto it = model.clips.find(anim.currentClip);
+		if (it != model.clips.end()) activeClip = &it->second;
+	}
+
 	for (auto& part : model.parts) {
 		glm::mat4 partMat = root;
 
-		// Limb swing: walk cycle + attack override
-		if (part.swingAmplitude > 0.001f) {
-			float angle = 0.0f;
-			bool doSwing = false;
+		// Resolve swing params: a named clip override (if this part is in it)
+		// REPLACES the part's default walk-swing params for the duration of
+		// the clip. Parts not in the clip keep walking normally.
+		glm::vec3 swingAxis = part.swingAxis;
+		float swingAmp   = part.swingAmplitude;
+		float swingPhase = part.swingPhase;
+		float swingSpeed = part.swingSpeed;
+		float swingBias  = 0.0f;
+		const ClipOverride* clipOv = nullptr;
+		if (activeClip && !part.name.empty()) {
+			auto ovIt = activeClip->overrides.find(part.name);
+			if (ovIt != activeClip->overrides.end()) {
+				clipOv = &ovIt->second;
+				swingAxis  = clipOv->axis;
+				swingAmp   = clipOv->amplitude;
+				swingPhase = clipOv->phase;
+				swingSpeed = clipOv->speed;
+				swingBias  = clipOv->bias;
+			}
+		}
 
-			// Walk cycle (speed-gated)
-			if (smoothSpeed > 0.02f) {
-				angle = std::sin(walkPhase * part.swingSpeed + part.swingPhase)
-				        * glm::radians(part.swingAmplitude) * smoothSpeed;
+		// Limb swing: clip override → walk cycle → player-melee override
+		if (swingAmp > 0.001f || swingBias != 0.0f) {
+			float angle = 0.0f;
+			bool  doSwing = false;
+
+			if (clipOv) {
+				// Clip is active and drives this part — runs regardless of walk
+				// speed (so dance/wave/sleep animate while standing still).
+				// Phase driver: real time × speed × 2π → speed=1 gives 1 Hz.
+				angle = std::sin(anim.time * swingSpeed * TWO_PI + swingPhase)
+				        * glm::radians(swingAmp)
+				        + glm::radians(swingBias);
+				doSwing = true;
+			} else if (smoothSpeed > 0.02f) {
+				// Walk cycle (speed-gated)
+				angle = std::sin(walkPhase * swingSpeed + swingPhase)
+				        * glm::radians(swingAmp) * smoothSpeed;
 				doSwing = true;
 			}
 
-			// Attack override: major limbs (amplitude >= 40°) animate during attack.
-			// Handled directly here; sets doSwing=false so the walk block below skips.
-			// cos(swingPhase): phase=0 → right arm/left leg (+1), phase=π → left arm/right leg (-1).
-			if (anim.attackPhase > 0.001f && part.swingAmplitude >= 40.0f) {
+			// Player melee attack override (keyframe-driven arm angles).
+			// ONLY fires when the local player's AttackAnimPlayer has populated
+			// armPitch/armYaw. Mob work-swings now go through clips instead of
+			// the old amplitude-sentinel heuristic. Right arm is identified via
+			// cos(swingPhase): phase=0 → right arm (+1), phase=π → left (-1).
+			bool hasPlayerMeleeAngles =
+				(std::abs(anim.armPitch) > 0.1f || std::abs(anim.armYaw) > 0.1f);
+			if (!clipOv && anim.attackPhase > 0.001f && swingAmp >= 40.0f
+			    && hasPlayerMeleeAngles) {
 				float phaseSign  = std::cos(part.swingPhase);
 				bool  isRightArm = (phaseSign > 0.5f);
-
-				partMat = glm::translate(partMat, part.pivot * s);
-				if (isRightArm && (std::abs(anim.armPitch) > 0.1f || std::abs(anim.armYaw) > 0.1f)) {
-					// Clip-specific: pitch (forward/back on swingAxis) + yaw (lateral sweep)
+				if (isRightArm) {
+					partMat = glm::translate(partMat, part.pivot * s);
 					partMat = glm::rotate(partMat, glm::radians(anim.armPitch), part.swingAxis);
 					partMat = glm::rotate(partMat, glm::radians(anim.armYaw),   glm::vec3(0, 1, 0));
-				} else {
-					// Generic counter-swing for left arm / legs (reduced amplitude)
-					float lunge = std::sin(anim.attackPhase * PI) * glm::radians(-45.0f) * phaseSign;
-					partMat = glm::rotate(partMat, lunge, part.swingAxis);
+					partMat = glm::translate(partMat, -part.pivot * s);
+					doSwing = false; // already applied
 				}
-				partMat = glm::translate(partMat, -part.pivot * s);
-				doSwing = false; // already applied — skip walk block below
+				// Left arm / legs keep walking normally during player melee.
 			}
 
 			if (doSwing) {
-				// Walk cycle (only reached when not attacking)
 				partMat = glm::translate(partMat, part.pivot * s);
-				partMat = glm::rotate(partMat, angle, part.swingAxis);
+				partMat = glm::rotate(partMat, angle, swingAxis);
 				partMat = glm::translate(partMat, -part.pivot * s);
 			}
+		}
+
+		// Head tracking — applied AFTER walk/clip swing, around the head pivot.
+		// Minecraft-style: yaw rotates horizontally, pitch tilts vertically.
+		// Values are expected to be clamped (e.g. ±45° yaw) before being passed.
+		if (part.isHead
+		    && (std::abs(anim.lookYaw) > 0.001f || std::abs(anim.lookPitch) > 0.001f)) {
+			partMat = glm::translate(partMat, model.headPivot * s);
+			partMat = glm::rotate(partMat, anim.lookYaw,   glm::vec3(0, 1, 0));
+			partMat = glm::rotate(partMat, anim.lookPitch, glm::vec3(1, 0, 0));
+			partMat = glm::translate(partMat, -model.headPivot * s);
 		}
 
 		// Position and scale

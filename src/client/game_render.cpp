@@ -66,8 +66,22 @@ void Game::renderEntities(float dt, float aspect) {
 	m_playerWalkDist += playerSpeed * dt;
 	float armPitch = 0.f, armYaw = 0.f;
 	m_attackAnim.currentArmAngles(armPitch, armYaw);
-	AnimState playerAnim = {m_playerWalkDist, playerSpeed, m_globalTime,
-	                        m_attackAnim.phase(), armPitch, armYaw};
+	AnimState playerAnim = {};
+	playerAnim.walkDistance = m_playerWalkDist;
+	playerAnim.speed        = playerSpeed;
+	playerAnim.time         = m_globalTime;
+	playerAnim.attackPhase  = m_attackAnim.phase();
+	playerAnim.armPitch     = armPitch;
+	playerAnim.armYaw       = armYaw;
+	// Local player head tracking: head follows camera pitch, clamped so the
+	// head doesn't rubber-neck past the shoulders. In FPS mode the camera yaw
+	// *is* the body yaw, so lookYaw stays zero — only pitch matters for the
+	// local player's nod. (For third-party observed-by-others view, the
+	// server-side lookPitch on Entity could drive this.)
+	{
+		playerAnim.lookYaw   = 0.0f;
+		playerAnim.lookPitch = glm::radians(glm::clamp(-m_camera.lookPitch, -30.f, 30.f));
+	}
 
 	// Footstep sounds — play every ~2.5 blocks of movement
 	if (pe->onGround && playerSpeed > 0.5f) {
@@ -108,7 +122,10 @@ void Game::renderEntities(float dt, float aspect) {
 
 		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
 		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);
-		AnimState mobAnim = {mobDist, mobSpeed, m_globalTime};
+		AnimState mobAnim = {};
+		mobAnim.walkDistance = mobDist;
+		mobAnim.speed        = mobSpeed;
+		mobAnim.time         = m_globalTime;
 
 		std::string modelKey = resolveModelKey(e);
 		auto mit = m_models.find(modelKey);
@@ -120,11 +137,22 @@ void Game::renderEntities(float dt, float aspect) {
 			auto flit = m_damageFlash.find(e.id());
 			if (flit != m_damageFlash.end()) flashT = flit->second;
 			float tintStr = std::max(0.0f, flashT / 0.25f);
-			// Attack phase: inject into AnimState for arm/limb lunge animation
-			float atkPhase = 0.0f;
-			auto apit = m_entityAttackPhase.find(e.id());
-			if (apit != m_entityAttackPhase.end()) atkPhase = apit->second;
-			mobAnim.attackPhase = atkPhase;
+
+			// Client-side animation clip selection for mobs.
+			// Driven purely from observable entity state (goal text) — server
+			// has no knowledge of animations per Rule 0. Keyword table is
+			// additive: modders can extend behaviors and add matching clip
+			// names to their model's `clips` dict.
+			auto pickClip = [](const std::string& goal) -> const char* {
+				if (goal.empty()) return "";
+				if (goal.find("Chopping")    != std::string::npos) return "chop";
+				if (goal.find("Mining")      != std::string::npos) return "mine";
+				if (goal.find("Sleeping")    != std::string::npos) return "sleep";
+				if (goal.find("Depositing")  != std::string::npos) return "wave";
+				if (goal.find("Dancing")     != std::string::npos) return "dance";
+				return "";
+			};
+			mobAnim.currentClip = pickClip(e.goalText);
 			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim, tintStr);
 		} else if (!modelKey.empty() && e.typeId() != ItemName::ItemEntity) {
 			// Warn once per model key
@@ -165,8 +193,11 @@ void Game::renderEntities(float dt, float aspect) {
 				// Fallback: colored cube
 				const BlockDef* idef = srv.blockRegistry().find(itemType);
 				glm::vec3 itemColor = idef ? idef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
-				itemModel.parts.push_back({{0, 0.15f, 0}, {0.12f, 0.12f, 0.12f},
-					{itemColor.r, itemColor.g, itemColor.b, 1.0f}});
+				BodyPart bp;
+				bp.offset = {0, 0.15f, 0};
+				bp.halfSize = {0.12f, 0.12f, 0.12f};
+				bp.color = {itemColor.r, itemColor.g, itemColor.b, 1.0f};
+				itemModel.parts.push_back(bp);
 			}
 			mr.draw(itemModel, vp, e.position + glm::vec3(ox, bobY + 0.3f, oz), spinYaw, {});
 		}
@@ -215,8 +246,11 @@ void Game::renderPickupAnimations() {
 			}
 		} else {
 			float hs = 0.12f * scale;
-			flyModel.parts.push_back({{0, 0.15f, 0}, {hs, hs, hs},
-				{pa.color.r, pa.color.g, pa.color.b, 1.0f}});
+			BodyPart bp;
+			bp.offset = {0, 0.15f, 0};
+			bp.halfSize = {hs, hs, hs};
+			bp.color = {pa.color.r, pa.color.g, pa.color.b, 1.0f};
+			flyModel.parts.push_back(bp);
 		}
 		mr.draw(flyModel, vp, drawPos, spinYaw, {});
 	}
@@ -244,9 +278,12 @@ void Game::renderEntityEffects(float dt, float aspect) {
 	// Lightbulb icon (UI indicator above AI entities, not game content)
 	static BoxModel lightbulb = []() {
 		BoxModel m; m.totalHeight = 0.4f;
-		m.parts.push_back({{0,0.15f,0},{0.08f,0.10f,0.08f},{1.0f,0.92f,0.3f,0.9f}});
-		m.parts.push_back({{0,0.27f,0},{0.05f,0.04f,0.05f},{1.0f,1.0f,0.7f,0.95f}});
-		m.parts.push_back({{0,0.04f,0},{0.06f,0.05f,0.06f},{0.5f,0.5f,0.5f,0.9f}});
+		auto mk = [](glm::vec3 off, glm::vec3 half, glm::vec4 col) {
+			BodyPart p; p.offset = off; p.halfSize = half; p.color = col; return p;
+		};
+		m.parts.push_back(mk({0,0.15f,0},{0.08f,0.10f,0.08f},{1.0f,0.92f,0.3f,0.9f}));
+		m.parts.push_back(mk({0,0.27f,0},{0.05f,0.04f,0.05f},{1.0f,1.0f,0.7f,0.95f}));
+		m.parts.push_back(mk({0,0.04f,0},{0.06f,0.05f,0.06f},{0.5f,0.5f,0.5f,0.9f}));
 		return m;
 	}();
 
@@ -352,8 +389,6 @@ void Game::renderEntityEffects(float dt, float aspect) {
 		}
 		for (auto it = m_damageFlash.begin(); it != m_damageFlash.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_damageFlash.erase(it);
-		for (auto it = m_entityAttackPhase.begin(); it != m_entityAttackPhase.end(); )
-			it = seen.count(it->first) ? std::next(it) : m_entityAttackPhase.erase(it);
 		for (auto it = m_entityGoalPopTimer.begin(); it != m_entityGoalPopTimer.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_entityGoalPopTimer.erase(it);
 		for (auto it = m_entityGoals.begin(); it != m_entityGoals.end(); )
@@ -574,27 +609,6 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 		m_equipUI.setModels(&m_models, &m_iconCache);
 		m_equipUI.render(*pe->inventory, m_server->blockRegistry(),
 			(float)m_window.width(), (float)m_window.height());
-	}
-
-	// Chest inventory UI (right-click on chest block to open)
-	// TODO: client needs server to send block inventory contents via a new message.
-	// For now, show chest position as a placeholder.
-	if (m_showChestUI) {
-		float sw = (float)m_window.width(), sh = (float)m_window.height();
-		ImGui::SetNextWindowPos(ImVec2(sw * 0.5f - 180, sh * 0.5f - 120), ImGuiCond_Always);
-		ImGui::SetNextWindowSize(ImVec2(360, 240), ImGuiCond_Always);
-		ImGui::SetNextWindowBgAlpha(0.92f);
-		bool open = true;
-		if (ImGui::Begin("Chest", &open,
-			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-			ImGuiWindowFlags_NoSavedSettings)) {
-			ImGui::Text("Chest at (%d, %d, %d)", m_openChestBlockPos.x,
-				m_openChestBlockPos.y, m_openChestBlockPos.z);
-			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1),
-				"(inventory display requires block inventory sync)");
-		}
-		ImGui::End();
-		if (!open) m_showChestUI = false;
 	}
 
 	// FPS counter

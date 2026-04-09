@@ -16,20 +16,26 @@ model = {
     "walk_speed": 9.0,
     "idle_bob": 0.005,
     "walk_bob": 0.015,
+    "head_pivot": [0, 0.45, -0.10],
     "parts": [
         # Body (round-ish)
-        {"offset": [0, 0.32, 0], "size": [0.32, 0.28, 0.44], "color": [0.95, 0.95, 0.90, 1]},
+        {"name": "torso",
+         "offset": [0, 0.32, 0], "size": [0.32, 0.28, 0.44], "color": [0.95, 0.95, 0.90, 1]},
         # Head
-        {"offset": [0, 0.55, -0.24], "size": [0.20, 0.20, 0.20], "color": [0.95, 0.95, 0.92, 1],
+        {"name": "head", "head": True,
+         "offset": [0, 0.55, -0.24], "size": [0.20, 0.20, 0.20], "color": [0.95, 0.95, 0.92, 1],
          "pivot": [0, 0.45, -0.10], "swing_axis": [1, 0, 0], "amplitude": 15, "phase": 0, "speed": 1.5},
         # Beak
-        {"offset": [0, 0.52, -0.35], "size": [0.08, 0.06, 0.10], "color": [0.95, 0.70, 0.20, 1],
+        {"head": True,
+         "offset": [0, 0.52, -0.35], "size": [0.08, 0.06, 0.10], "color": [0.95, 0.70, 0.20, 1],
          "pivot": [0, 0.45, -0.10], "swing_axis": [1, 0, 0], "amplitude": 15, "phase": 0, "speed": 1.5},
         # Comb
-        {"offset": [0, 0.66, -0.22], "size": [0.06, 0.10, 0.12], "color": [0.90, 0.15, 0.10, 1],
+        {"head": True,
+         "offset": [0, 0.66, -0.22], "size": [0.06, 0.10, 0.12], "color": [0.90, 0.15, 0.10, 1],
          "pivot": [0, 0.45, -0.10], "swing_axis": [1, 0, 0], "amplitude": 15, "phase": 0, "speed": 1.5},
         # Wattle
-        {"offset": [0, 0.44, -0.32], "size": [0.06, 0.08, 0.04], "color": [0.90, 0.20, 0.15, 1],
+        {"head": True,
+         "offset": [0, 0.44, -0.32], "size": [0.06, 0.08, 0.04], "color": [0.90, 0.20, 0.15, 1],
          "pivot": [0, 0.45, -0.10], "swing_axis": [1, 0, 0], "amplitude": 15, "phase": 0, "speed": 1.5},
         # Left wing
         {"offset": [-0.18, 0.33, 0.02], "size": [0.08, 0.20, 0.32], "color": [0.92, 0.92, 0.87, 1],

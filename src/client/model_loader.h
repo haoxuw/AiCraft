@@ -230,6 +230,9 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 
 		BodyPart part;
 
+		// Part name (optional — targetable by animation clip overrides)
+		if (auto* v = dictGet(pd, "name")) part.name = v->getStr();
+
 		// offset (center) and size (full size → halfSize)
 		if (auto* v = dictGet(pd, "offset")) part.offset = toVec3(v->list);
 		if (auto* v = dictGet(pd, "size")) {
@@ -245,7 +248,38 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 		if (auto* v = dictGet(pd, "phase"))       part.swingPhase = (float)v->getNum();
 		if (auto* v = dictGet(pd, "speed"))       part.swingSpeed = (float)v->getNum(1.0);
 
+		// Head tracking tag — head-flagged parts rotate around BoxModel.headPivot
+		// by AnimState.lookYaw/lookPitch.
+		if (auto* v = dictGet(pd, "head")) part.isHead = (v->getNum(0.0) != 0.0);
+
 		m.parts.push_back(part);
+	}
+
+	// Head tracking pivot (defaults to {0, 1.45, 0} in BoxModel)
+	if (auto* v = dictGet(d, "head_pivot")) m.headPivot = toVec3(v->list, m.headPivot);
+
+	// Named animation clips. Structure:
+	//   clips = { "mine": {"right_arm": {"amp":80, "bias":-30, ...}, ...}, ... }
+	// Each clip is a map of part-name → ClipOverride.
+	auto* clipsDict = dictGet(d, "clips");
+	if (clipsDict && clipsDict->type == Value::DICT) {
+		for (auto& [clipName, clipVal] : clipsDict->dict) {
+			if (clipVal.type != Value::DICT) continue;
+			AnimClip clip;
+			for (auto& [partName, overrideVal] : clipVal.dict) {
+				if (overrideVal.type != Value::DICT) continue;
+				auto& od = overrideVal.dict;
+				ClipOverride ov;
+				if (auto* v = dictGet(od, "axis"))  ov.axis = toVec3(v->list, {1, 0, 0});
+				if (auto* v = dictGet(od, "amp"))   ov.amplitude = (float)v->getNum();
+				if (auto* v = dictGet(od, "amplitude")) ov.amplitude = (float)v->getNum();
+				if (auto* v = dictGet(od, "phase")) ov.phase = (float)v->getNum();
+				if (auto* v = dictGet(od, "bias"))  ov.bias = (float)v->getNum();
+				if (auto* v = dictGet(od, "speed")) ov.speed = (float)v->getNum(1.0);
+				clip.overrides[partName] = ov;
+			}
+			m.clips[clipName] = std::move(clip);
+		}
 	}
 
 	// Parse equip transform (how item is held in hand)
