@@ -30,6 +30,11 @@ namespace modcraft::ServerTuning {
 	constexpr float navStuckMinMove      = 0.5f;   // blocks — less than this in stuckTimeout = stuck
 	constexpr float navFormationSpacing  = 2.0f;   // blocks between entities in formation grid
 
+	// Gameplay
+	constexpr float hpRegenInterval      = 10.0f;  // seconds between +1 HP regen ticks
+	constexpr float structureRegenCheckInterval = 5.0f;  // how often to scan the dirty-set for regen
+	                                                       // actual regen rate is per-blueprint regen_interval_s
+
 	// Network
 	constexpr float tickRate             = 1.0f / 60.0f;  // 60 tps
 	constexpr float broadcastInterval    = 0.05f;          // 20 Hz — agents need fresh position for behavior decisions

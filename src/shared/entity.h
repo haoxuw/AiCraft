@@ -15,6 +15,15 @@ namespace modcraft {
 
 // EntityKind, EntityId defined in constants.h
 
+// Per-entity structure state. Allocated only for EntityKind::Structure.
+// Blueprint data lives in StructureBlueprintManager (server-side); this struct
+// only carries the per-instance fields needed at runtime.
+struct StructureComponent {
+	std::string blueprintId;       // "base:tree" — key into StructureBlueprintManager
+	glm::ivec3  anchorPos = {0,0,0}; // absolute world position of the anchor block
+	float       regenTimer = 0.0f;   // counts toward blueprint.regen_interval_s
+};
+
 // Property value -- anything an entity can hold
 using PropValue = std::variant<
 	bool,
@@ -53,9 +62,15 @@ struct EntityDef {
 	bool playable = false;        // true = appears in character selection menu (player skins)
 	float pickup_range = 1.5f;   // max distance to pick up items (0 = cannot pickup)
 
+	// Structure fields (only meaningful when kind == EntityKind::Structure)
+	// Blueprint data (block list, anchor, regen rate) lives in StructureBlueprintManager,
+	// not here — per-entity blueprint state is on Entity::structure (StructureComponent).
+	bool has_inventory = false;  // true for inventory-bearing structures (e.g. Chest)
+
 	// Kind helpers
 	bool isLiving()    const { return kind == EntityKind::Living; }
 	bool isItem()      const { return kind == EntityKind::Item; }
+	bool isStructure() const { return kind == EntityKind::Structure; }
 
 	// Default property values (template for new instances)
 	std::unordered_map<std::string, PropValue> default_props;
@@ -69,8 +84,10 @@ public:
 	Entity(EntityId id, const std::string& typeId, const EntityDef& def)
 		: m_id(id), m_typeId(typeId), m_def(&def)
 		, m_props(def.default_props) {
-		if (def.isLiving())
+		if (def.isLiving() || (def.isStructure() && def.has_inventory))
 			inventory = std::make_unique<Inventory>();
+		if (def.isStructure())
+			structure = std::make_unique<StructureComponent>();
 	}
 
 	// --- Identity ---
@@ -81,8 +98,9 @@ public:
 	// --- Position & Physics ---
 	glm::vec3 position = {0, 0, 0};
 	glm::vec3 velocity = {0, 0, 0};
-	float yaw = 0.0f;
-	float pitch = 0.0f;
+	float yaw = 0.0f;       // facing direction (movement-derived)
+	float lookYaw = 0.0f;   // camera look yaw (independent of facing — for chunk view bias)
+	float lookPitch = 0.0f; // camera look pitch (for chunk view bias)
 
 	// --- Move destination (broadcast to clients for local physics prediction) ---
 	glm::vec3 moveTarget = {0, 0, 0};  // where entity is heading
@@ -119,6 +137,11 @@ public:
 	int hp() const { return getProp<int>(Prop::HP, m_def->max_hp); }
 	void setHp(int v) { setProp(Prop::HP, v); }
 	bool alive() const { return hp() > 0; }
+
+	// --- Structure (allocated only for EntityKind::Structure) ---
+	// Per-instance state. Static blueprint lives in StructureBlueprintManager,
+	// keyed by structure->blueprintId.
+	std::unique_ptr<StructureComponent> structure;
 
 	// --- Dirty tracking (for network sync) ---
 	const std::set<std::string>& dirtyProps() const { return m_dirty; }

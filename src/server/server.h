@@ -19,6 +19,8 @@
 #include "shared/constants.h"
 #include "server/world_template.h"
 #include "server/pathfind.h"
+#include "server/structure_blueprint.h"
+#include "server/structure_block_cacher.h"
 #include "shared/block_registry.h"
 #include <algorithm>
 #include <memory>
@@ -55,15 +57,16 @@ struct ServerCallbacks {
 	std::function<void(EntityId id, const Inventory&)> onInventoryChange; // inventory updated
 };
 
+// All server tuning constants in one header
+#include "server/server_tuning.h"
+
 struct ServerConfig {
 	int seed = 42;
 	int templateIndex = 1;  // VillageWorld (has trees)
 	int port = 7777;
+	float hpRegenInterval = ServerTuning::hpRegenInterval;  // seconds per +1 HP regen tick
 	WorldGenConfig worldGenConfig;
 };
-
-// All server tuning constants in one header
-#include "server/server_tuning.h"
 
 class GameServer {
 public:
@@ -75,6 +78,7 @@ public:
 
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
 		m_wgc = config.worldGenConfig;
+		m_hpRegenInterval = config.hpRegenInterval;
 		m_worldTime = 0.25f; // start at dawn
 
 		// Ask the template where the player should spawn
@@ -95,6 +99,9 @@ public:
 			spawnY++;
 		}
 		m_spawnPos = {sx, (float)spawnY, sz};
+
+		// Load structure blueprints from artifacts/structures/
+		m_blueprints.loadAll("artifacts/structures");
 	}
 
 	// Initialize server with world + spawn default entities (new world)
@@ -486,9 +493,9 @@ public:
 		// Server validates and executes in resolveActions().
 		// NPC pickup is handled by Python behavior → PickupItem action.
 
-		// HP regeneration: all Living entities regen +1 HP per second until full
+		// HP regeneration: all Living entities regen +1 HP per tick (configurable interval)
 		m_regenTimer += dt;
-		if (m_regenTimer >= 1.0f) {
+		if (m_regenTimer >= m_hpRegenInterval) {
 			m_regenTimer = 0;
 			m_world->entities.forEach([&](Entity& e) {
 				if (!e.def().isLiving()) return;
@@ -499,6 +506,56 @@ public:
 					e.setHp(hp + 1);
 				}
 			});
+		}
+
+		// Structure regeneration: scan dirty set, place one missing block per structure per interval
+		m_structureRegenTimer += dt;
+		if (m_structureRegenTimer >= ServerTuning::structureRegenCheckInterval) {
+			float elapsed = m_structureRegenTimer;
+			m_structureRegenTimer = 0;
+
+			auto blockAtFn = [&](int x, int y, int z) -> std::string {
+				return m_world->blocks.get(m_world->getBlock(x, y, z)).string_id;
+			};
+
+			for (auto it = m_incompleteStructures.begin(); it != m_incompleteStructures.end(); ) {
+				EntityId id = *it;
+				Entity* e = m_world->entities.get(id);
+				if (!e || e->removed || !e->structure) {
+					it = m_incompleteStructures.erase(it);
+					continue;
+				}
+				const auto* bp = m_blueprints.get(e->structure->blueprintId);
+				if (!bp) { it = m_incompleteStructures.erase(it); continue; }
+
+				auto missing = m_blueprints.firstMissingBlock(*e, blockAtFn);
+				if (!missing) {
+					// Fully healed
+					it = m_incompleteStructures.erase(it);
+					continue;
+				}
+
+				if (bp->regenerates) {
+					e->structure->regenTimer += elapsed;
+					if (e->structure->regenTimer >= bp->regen_interval_s) {
+						e->structure->regenTimer = 0;
+						glm::ivec3 wp = e->structure->anchorPos + missing->offset;
+						BlockId bid = m_world->blocks.getId(missing->block_type);
+						if (bid != BLOCK_AIR) {
+							ChunkPos cp = worldToChunk(wp.x, wp.y, wp.z);
+							Chunk* c = m_world->getChunk(cp);
+							if (c) {
+								c->set(((wp.x % 16) + 16) % 16,
+								       ((wp.y % 16) + 16) % 16,
+								       ((wp.z % 16) + 16) % 16, bid);
+								if (m_callbacks.onBlockChange)
+									m_callbacks.onBlockChange(wp, BLOCK_AIR, bid, 0);
+							}
+						}
+					}
+				}
+				++it;
+			}
 		}
 
 		// Advance world time
@@ -594,11 +651,18 @@ private:
 	float m_activeBlockTimer = 0;
 	float m_stuckTimer = 0;
 	float m_regenTimer = 0;
+	float m_hpRegenInterval = ServerTuning::hpRegenInterval;
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	glm::vec3 m_chestPos = {30, 10, 30};
 	std::vector<glm::vec3> m_houseChests;                           // one per non-barn house
 	std::unordered_map<uint64_t, Inventory> m_blockInventories;     // packed(x,y,z) → inventory
 	std::unordered_map<std::string, Inventory> m_savedInventories;  // character_skin → inventory
+
+	// Structure system
+	StructureBlueprintManager            m_blueprints;
+	StructureBlockCacher                 m_structureCacher;
+	std::unordered_set<EntityId>         m_incompleteStructures;  // dirty set: structures with missing blocks
+	float                                m_structureRegenTimer = 0;
 
 	// Stuck detection: last known position per entity (checked every stuckCheckInterval)
 	std::unordered_map<EntityId, glm::vec3> m_lastPositions;

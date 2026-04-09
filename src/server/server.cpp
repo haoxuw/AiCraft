@@ -61,7 +61,8 @@ void GameServer::resolveActions(float dt) {
 				e->moveTarget = e->position;
 				e->moveSpeed = 0;
 			}
-			e->pitch = p.lookPitch;
+			e->lookPitch = p.lookPitch;
+			e->lookYaw   = p.lookYaw;
 
 			if (p.hasClientPos) {
 				// Client ran moveAndCollide — trust its Y velocity (gravity, jump, etc.)
@@ -299,6 +300,22 @@ void GameServer::resolveActions(float dt) {
 				c->set(((bp.x % 16) + 16) % 16, ((bp.y % 16) + 16) % 16,
 				       ((bp.z % 16) + 16) % 16, BLOCK_AIR);
 				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(bp, bid, BLOCK_AIR, 0);
+
+				// Notify structure system of block destruction
+				EntityId sid = m_structureCacher.lookup(bp);
+				if (sid != ENTITY_NONE) {
+					Entity* se = m_world->entities.get(sid);
+					if (se && se->structure) {
+						if (bp == se->structure->anchorPos) {
+							// Anchor destroyed → remove structure entity
+							m_structureCacher.unregisterStructure(sid);
+							se->removed = true;
+							m_incompleteStructures.erase(sid);
+						} else {
+							m_incompleteStructures.insert(sid);
+						}
+					}
+				}
 			} else if (p.fromItem == "hp") {
 				// Consume HP
 				int hp = actor->hp();

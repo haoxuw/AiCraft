@@ -25,8 +25,9 @@ namespace modcraft {
 // EntityKind — the two kinds of entity
 // ================================================================
 enum class EntityKind {
-	Living,   // moves, has HP, has inventory (players, NPCs, animals)
-	Item,     // on ground or in inventory
+	Living,    // moves, has HP, has inventory (players, NPCs, animals)
+	Item,      // on ground or in inventory
+	Structure, // made of blocks; valid only while all blueprint blocks are present
 };
 
 using EntityId = uint32_t;
@@ -43,6 +44,17 @@ namespace LivingName {
 	constexpr const char* Villager     = "base:villager";
 	constexpr const char* Cat          = "base:cat";
 	constexpr const char* BraveChicken = "base:brave_chicken"; // todo: remove this, MOD from python side
+}
+
+// ================================================================
+// Structure entity names (multi-block assemblages in the world)
+// ================================================================
+namespace StructureName {
+	constexpr const char* Chest   = "base:chest";    // single block; owns an inventory
+	constexpr const char* Bed     = "base:bed";      // two-block head + foot
+	constexpr const char* Tree    = "base:tree";     // trunk + leaf canopy
+	constexpr const char* House   = "base:house";    // walls + roof + floor
+	constexpr const char* Spawner = "base:spawner";  // spawner block structure
 }
 
 // ================================================================

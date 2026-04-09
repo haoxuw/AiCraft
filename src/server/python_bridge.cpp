@@ -1,4 +1,5 @@
 #include "server/python_bridge.h"
+#include "server/structure_blueprint.h"
 #include <fstream>
 #include <iterator>
 
@@ -27,6 +28,9 @@ void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
 BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { { BehaviorAction a; a.type = BehaviorAction::Idle; return a; } }
 bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
+bool loadStructureBlueprint(const std::string&, StructureBlueprint&) { return false; }
+std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
+	const Entity&, const std::function<std::string(int,int,int)>&) const { return std::nullopt; }
 } // namespace modcraft
 #else
 // ================================================================
@@ -740,6 +744,107 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 		printf("[WorldConfig] Error loading %s: %s\n", filePath.c_str(), e.what());
 		return false;
 	}
+}
+
+// ================================================================
+// Structure blueprint loader — reads artifacts/structures/*.py via pybind11.
+// Same pattern as loadWorldConfig() above.
+// ================================================================
+
+bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out) {
+	auto& bridge = pythonBridge();
+	if (!bridge.isInitialized()) return false;
+
+	std::ifstream f(filePath);
+	if (!f.is_open()) {
+		printf("[StructureBlueprint] File not found: %s\n", filePath.c_str());
+		return false;
+	}
+	std::string src((std::istreambuf_iterator<char>(f)), {});
+
+	try {
+		py::dict ns;
+		py::exec(src.c_str(), ns);
+		if (!ns.contains("blueprint")) return false;
+
+		py::dict bp = ns["blueprint"].cast<py::dict>();
+
+		auto getStr = [&](py::dict& d, const char* k, const std::string& def) -> std::string {
+			return d.contains(k) ? d[k].cast<std::string>() : def;
+		};
+		auto getFloat = [&](py::dict& d, const char* k, float def) -> float {
+			return d.contains(k) ? (float)py::float_(d[k]) : def;
+		};
+		auto getInt = [&](py::dict& d, const char* k, int def) -> int {
+			return d.contains(k) ? d[k].cast<int>() : def;
+		};
+		auto getBool = [&](py::dict& d, const char* k, bool def) -> bool {
+			return d.contains(k) ? d[k].cast<bool>() : def;
+		};
+
+		out.id           = getStr(bp, "id", "");
+		out.display_name = getStr(bp, "display_name", "");
+		out.regenerates  = getBool(bp, "regenerates", false);
+		out.regen_interval_s = getFloat(bp, "regen_interval_s", 60.0f);
+
+		// Anchor
+		if (bp.contains("anchor")) {
+			py::dict a = bp["anchor"].cast<py::dict>();
+			out.anchor.block_type = getStr(a, "block_type", "base:root");
+			out.anchor.hardness   = getInt(a, "hardness", 3);
+			if (a.contains("offset")) {
+				py::list off = a["offset"].cast<py::list>();
+				out.anchor.offset = {off[0].cast<int>(), off[1].cast<int>(), off[2].cast<int>()};
+			}
+		}
+
+		// Blocks
+		if (bp.contains("blocks")) {
+			for (auto& item : bp["blocks"].cast<py::list>()) {
+				py::dict bd = item.cast<py::dict>();
+				BlockSlot slot;
+				slot.block_type = getStr(bd, "type", "");
+				if (bd.contains("offset")) {
+					py::list off = bd["offset"].cast<py::list>();
+					slot.offset = {off[0].cast<int>(), off[1].cast<int>(), off[2].cast<int>()};
+				}
+				out.blocks.push_back(std::move(slot));
+			}
+		}
+
+		printf("[StructureBlueprint] Loaded %s from %s (%zu blocks)\n",
+		       out.id.c_str(), filePath.c_str(), out.blocks.size());
+		return !out.id.empty();
+
+	} catch (const std::exception& e) {
+		printf("[StructureBlueprint] Error loading %s: %s\n", filePath.c_str(), e.what());
+		return false;
+	}
+}
+
+// ================================================================
+// StructureBlueprintManager::firstMissingBlock
+// ================================================================
+
+std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
+	const Entity& e,
+	const std::function<std::string(int,int,int)>& blockAt) const
+{
+	if (!e.structure) return std::nullopt;
+	const auto* bp = get(e.structure->blueprintId);
+	if (!bp) return std::nullopt;
+
+	const glm::ivec3& anchor = e.structure->anchorPos;
+	for (const auto& slot : bp->blocks) {
+		const glm::ivec3 wp = anchor + slot.offset;
+		const std::string actual = blockAt(wp.x, wp.y, wp.z);
+		if (slot.block_type.empty()) {
+			if (actual == BlockType::Air) return slot;
+		} else {
+			if (actual != slot.block_type) return slot;
+		}
+	}
+	return std::nullopt;
 }
 
 } // namespace modcraft

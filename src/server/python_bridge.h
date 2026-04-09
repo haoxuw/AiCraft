@@ -113,6 +113,13 @@ struct WorldPyConfig {
 // initialized, file not found, or any parse error occurs.
 bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out);
 
+// Forward-declare StructureBlueprint (defined in structure_blueprint.h).
+struct StructureBlueprint;
+
+// Load a structure blueprint from a Python artifact file.
+// Same py::exec() + dict pattern as loadWorldConfig().
+bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out);
+
 using BehaviorHandle = int;
 
 class PythonBridge {
