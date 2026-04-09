@@ -763,6 +763,12 @@ private:
 				float yrad2 = glm::radians(yaw2);
 				float fx2 = std::cos(yrad2), fz2 = std::sin(yrad2);
 
+				// Priority: send the feet chunk and chunk below FIRST so player
+				// doesn't fall through air while waiting for other chunks.
+				ChunkPos feetCp = client.lastChunkPos;
+				queueChunk(client, feetCp);
+				queueChunk(client, {feetCp.x, feetCp.y - 1, feetCp.z});
+
 				const int R = ConnectedClient::STREAM_R;
 				struct IC { ChunkPos pos; int dist; };
 				std::vector<IC> init;
@@ -773,9 +779,7 @@ private:
 					int base = std::abs(dx) + std::abs(dz) + std::abs(dy) * 2;
 					float dot = fx2 * dx + fz2 * dz;
 					int biased = base - (int)(dot * 1.5f);
-					init.push_back({{client.lastChunkPos.x + dx,
-					                 client.lastChunkPos.y + dy,
-					                 client.lastChunkPos.z + dz}, biased});
+					init.push_back({{feetCp.x + dx, feetCp.y + dy, feetCp.z + dz}, biased});
 				}
 				std::sort(init.begin(), init.end(),
 				          [](const IC& a, const IC& b){ return a.dist < b.dist; });

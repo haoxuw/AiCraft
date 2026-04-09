@@ -57,6 +57,9 @@ private:
 	void setupAfterConnect(GameState targetState);
 	void saveCurrentWorld();
 
+	// Loading state — wait for feet chunk before gameplay
+	void updateLoading(float dt, float aspect);
+
 	// Playing state
 	void updatePlaying(float dt, float aspect);
 	void renderPlaying(float dt, float aspect, bool skipImGui = false);

@@ -204,30 +204,40 @@ public:
 			bool isLocal = (id == m_localPlayerId);
 
 			if (!isLocal) {
-				// Virtual joystick toward server's moveTarget — same pattern
-				// as local player in RPG/RTS click-to-move (gameplay_movement.cpp).
-				// Client recomputes direction each frame for smooth turning.
-				glm::vec3 toTarget = target.moveTarget - e.position;
-				toTarget.y = 0;
-				float distToTarget = glm::length(toTarget);
+				// Skip physics if ground chunk not loaded (entity would fall through void)
+				int fbx = (int)std::floor(e.position.x);
+				int fby = (int)std::floor(e.position.y) - 1;
+				int fbz = (int)std::floor(e.position.z);
+				ChunkPos ecp = {fbx >> 4, fby >> 4, fbz >> 4};
+				bool groundLoaded = (m_chunkData.find(ecp) != m_chunkData.end());
 
-				glm::vec3 localVel = {0, e.velocity.y, 0};
-				if (distToTarget > 0.5f && target.moveSpeed > 0.01f) {
-					glm::vec3 dir = toTarget / distToTarget;
-					localVel.x = dir.x * target.moveSpeed;
-					localVel.z = dir.z * target.moveSpeed;
-					e.yaw = glm::degrees(std::atan2(dir.z, dir.x));
+				if (groundLoaded) {
+					// Virtual joystick toward server's moveTarget
+					glm::vec3 toTarget = target.moveTarget - e.position;
+					toTarget.y = 0;
+					float distToTarget = glm::length(toTarget);
+
+					glm::vec3 localVel = {0, e.velocity.y, 0};
+					if (distToTarget > 0.5f && target.moveSpeed > 0.01f) {
+						glm::vec3 dir = toTarget / distToTarget;
+						localVel.x = dir.x * target.moveSpeed;
+						localVel.z = dir.z * target.moveSpeed;
+						e.yaw = glm::degrees(std::atan2(dir.z, dir.x));
+					}
+
+					const auto& def = e.def();
+					MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
+						def.gravity_scale, def.isLiving(), e.getProp<bool>("fly_mode", false));
+
+					auto result = moveAndCollide(clientSolidFn, e.position, localVel, dt, mp, e.onGround);
+					e.position = result.position;
+					e.velocity = result.velocity;
+					e.onGround = result.onGround;
+				} else {
+					// No ground chunk — use server position directly (no local physics)
+					e.position = target.position;
+					e.velocity = target.velocity;
 				}
-
-				// Same physics as local player (step-up, gravity, collision)
-				const auto& def = e.def();
-				MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
-					def.gravity_scale, def.isLiving(), e.getProp<bool>("fly_mode", false));
-
-				auto result = moveAndCollide(clientSolidFn, e.position, localVel, dt, mp, e.onGround);
-				e.position = result.position;
-				e.velocity = result.velocity;
-				e.onGround = result.onGround;
 			}
 
 			// Server correction — same for local and non-local.

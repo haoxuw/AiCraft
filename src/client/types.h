@@ -8,6 +8,7 @@ enum class GameState {
 	MENU,
 	SERVER_BROWSER,   // show detected servers / start local
 	TEMPLATE_SELECT,
+	LOADING,      // waiting for feet chunk before gameplay starts
 	ADMIN,        // admin mode (F12: fly + instant break)
 	PLAYING,      // normal gameplay
 	CONTROLS,

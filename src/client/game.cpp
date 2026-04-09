@@ -221,13 +221,13 @@ bool Game::init(int argc, char** argv) {
 	if (m_skipMenu && !m_connectHost.empty()) {
 		printf("[Game] --skip-menu: auto-joining %s:%d\n",
 		       m_connectHost.c_str(), m_connectPort);
-		joinServer(m_connectHost, m_connectPort, GameState::PLAYING);
+		joinServer(m_connectHost, m_connectPort, GameState::LOADING);
 	// --skip-menu alone: always start a fresh world (no save loading for debug)
 	} else if (m_skipMenu) {
 		printf("[Game] --skip-menu: starting new world directly\n");
 		m_currentWorldPath = "";   // force new world, never resume a save
 		m_currentSeed = (int)std::random_device{}();
-		enterGame(1, GameState::PLAYING);
+		enterGame(1, GameState::LOADING);
 	// --host only: pre-populate the server list and show menu
 	} else if (!m_connectHost.empty()) {
 		printf("[Game] Server hint: %s:%d (join from menu)\n",
@@ -458,6 +458,9 @@ void Game::updateAndRender(float dt, float aspect) {
 	case GameState::CHARACTER:
 		m_state = GameState::MENU;
 		break;
+	case GameState::LOADING:
+		updateLoading(dt, aspect);
+		break;
 	case GameState::ADMIN:
 	case GameState::PLAYING:
 		updatePlaying(dt, aspect);
@@ -558,7 +561,7 @@ void Game::handleMenuAction(const MenuAction& action) {
 		m_currentWorldPath = action.worldPath;
 		m_currentSeed = 0;  // will be loaded from save
 		printf("[Game] Loading world from %s\n", action.worldPath.c_str());
-		enterGame(action.templateIndex, GameState::PLAYING);
+		enterGame(action.templateIndex, GameState::LOADING);
 		break;
 	}
 	case MenuAction::DeleteWorld:

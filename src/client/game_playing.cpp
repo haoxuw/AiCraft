@@ -23,7 +23,7 @@ bool Game::handleConnectionReconnect(float dt) {
 			printf("[Game] Connection lost — reconnecting (%d/%d) to %s:%d...\n",
 			       m_reconnectAttempt, kMaxReconnectAttempts,
 			       m_reconnectHost.c_str(), m_reconnectPort);
-			joinServer(m_reconnectHost, m_reconnectPort, GameState::PLAYING);
+			joinServer(m_reconnectHost, m_reconnectPort, GameState::LOADING);
 		} else {
 			if (isNetworkGame)
 				printf("[Game] Reconnect attempts exhausted, returning to menu\n");

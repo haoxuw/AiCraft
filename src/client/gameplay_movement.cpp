@@ -250,6 +250,24 @@ void GameplayController::processMovement(float dt, GameState state,
 	{
 		auto& chunks = server.chunks();
 		auto& blocks = server.blockRegistry();
+
+		// Safety: don't run physics if the ground chunk isn't loaded yet.
+		// Without ground data, getBlock returns air → entity falls through void.
+		// Hold position and wait for chunk to arrive (server SNAP will correct).
+		int feetBx = (int)std::floor(player.position.x);
+		int feetBy = (int)std::floor(player.position.y) - 1;
+		int feetBz = (int)std::floor(player.position.z);
+		ChunkPos feetCp = {feetBx >> 4, feetBy >> 4, feetBz >> 4};
+		if (!chunks.getChunk(feetCp)) {
+			// Ground chunk not loaded — freeze in place, don't apply gravity
+			player.velocity = {0, 0, 0};
+			moveAction.clientPos = player.position;
+			moveAction.hasClientPos = true;
+			moveAction.desiredVel = {0, 0, 0};
+			server.sendAction(moveAction);
+			return;
+		}
+
 		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
 			const auto& bd = blocks.get(chunks.getBlock(x, y, z));
 			return bd.solid ? bd.collision_height : 0.0f;

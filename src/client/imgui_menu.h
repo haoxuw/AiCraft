@@ -743,7 +743,7 @@ private:
 				action.seed = seed;
 				action.worldPath = path;
 				action.worldName = m_newWorldName;
-				action.targetState = GameState::PLAYING;
+				action.targetState = GameState::LOADING;
 				action.worldGenConfig = m_worldGenConfig;
 				m_showCreateWorld = false;
 				m_worldMgr.refresh();
