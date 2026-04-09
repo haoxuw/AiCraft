@@ -203,6 +203,59 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 		return result;
 	}, py::arg("type_id"), py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find blocks of a specific type. Uses chunk index for fast lookup.");
+
+	// Expose C++ name constants as Python submodules so behaviors can use the
+	// same identifiers as C++ code (LivingName.Chicken, BlockType.Stone, etc.).
+	auto living = m.def_submodule("LivingName", "Living entity type IDs");
+	living.attr("Player")       = LivingName::Player;
+	living.attr("Pig")          = LivingName::Pig;
+	living.attr("Chicken")      = LivingName::Chicken;
+	living.attr("Dog")          = LivingName::Dog;
+	living.attr("Villager")     = LivingName::Villager;
+	living.attr("Cat")          = LivingName::Cat;
+	living.attr("BraveChicken") = LivingName::BraveChicken;
+
+	auto item = m.def_submodule("ItemName", "Item type IDs");
+	item.attr("ItemEntity")  = ItemName::ItemEntity;
+	item.attr("Jetpack")     = ItemName::Jetpack;
+	item.attr("Parachute")   = ItemName::Parachute;
+	item.attr("WoodPickaxe") = ItemName::WoodPickaxe;
+	item.attr("StonePickaxe")= ItemName::StonePickaxe;
+	item.attr("WoodAxe")     = ItemName::WoodAxe;
+	item.attr("WoodShovel")  = ItemName::WoodShovel;
+	item.attr("Apple")       = ItemName::Apple;
+	item.attr("Bread")       = ItemName::Bread;
+	item.attr("Egg")         = ItemName::Egg;
+
+	auto block = m.def_submodule("BlockType", "Block type IDs");
+	block.attr("Air")         = BlockType::Air;
+	block.attr("Stone")       = BlockType::Stone;
+	block.attr("Cobblestone") = BlockType::Cobblestone;
+	block.attr("Dirt")        = BlockType::Dirt;
+	block.attr("Grass")       = BlockType::Grass;
+	block.attr("Sand")        = BlockType::Sand;
+	block.attr("Water")       = BlockType::Water;
+	block.attr("Wood")        = BlockType::Wood;
+	block.attr("Log")         = BlockType::Log;
+	block.attr("Leaves")      = BlockType::Leaves;
+	block.attr("Snow")        = BlockType::Snow;
+	block.attr("TNT")         = BlockType::TNT;
+	block.attr("Wheat")       = BlockType::Wheat;
+	block.attr("Wire")        = BlockType::Wire;
+	block.attr("NANDGate")    = BlockType::NANDGate;
+	block.attr("WheatSeeds")  = BlockType::WheatSeeds;
+	block.attr("Chest")       = BlockType::Chest;
+	block.attr("Planks")      = BlockType::Planks;
+	block.attr("Bed")         = BlockType::Bed;
+	block.attr("Fence")       = BlockType::Fence;
+	block.attr("Farmland")    = BlockType::Farmland;
+	block.attr("Stair")       = BlockType::Stair;
+	block.attr("Glass")       = BlockType::Glass;
+	block.attr("Door")        = BlockType::Door;
+	block.attr("DoorOpen")    = BlockType::DoorOpen;
+	block.attr("Portal")      = BlockType::Portal;
+	block.attr("ArcaneStone") = BlockType::ArcaneStone;
+	block.attr("SpawnPoint")  = BlockType::SpawnPoint;
 }
 
 // ================================================================

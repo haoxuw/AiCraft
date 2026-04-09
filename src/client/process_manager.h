@@ -60,9 +60,9 @@ public:
 			args.push_back(std::to_string(cfg.templateIndex));
 		}
 
-		char logPath[64];
-		snprintf(logPath, sizeof(logPath), "/tmp/modcraft_log_%d.log", m_port);
-		m_serverPid = spawnProcess(args, logPath);
+		// Pass nullptr to inherit GUI's stdout/stderr — server output (and
+		// agent output spawned by the server) appears in the GUI terminal.
+		m_serverPid = spawnProcess(args, nullptr);
 		if (m_serverPid <= 0) {
 			printf("[AgentManager] Failed to spawn server\n");
 			return -1;
@@ -119,12 +119,15 @@ private:
 			std::vector<char*> cargs;
 			for (auto& a : args) cargs.push_back(const_cast<char*>(a.c_str()));
 			cargs.push_back(nullptr);
-			int outFd = logPath ? open(logPath, O_WRONLY | O_CREAT | O_TRUNC, 0644) : -1;
-			if (outFd < 0) outFd = open("/dev/null", O_WRONLY);
-			if (outFd >= 0) {
-				dup2(outFd, STDOUT_FILENO);
-				dup2(outFd, STDERR_FILENO);
-				close(outFd);
+			// Inherit parent's stdout/stderr so child output appears in the
+			// GUI client's terminal. Set logPath to redirect to a file instead.
+			if (logPath) {
+				int outFd = open(logPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+				if (outFd >= 0) {
+					dup2(outFd, STDOUT_FILENO);
+					dup2(outFd, STDERR_FILENO);
+					close(outFd);
+				}
 			}
 			execv(cargs[0], cargs.data());
 			_exit(127);
