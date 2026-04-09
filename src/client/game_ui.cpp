@@ -399,7 +399,7 @@ void Game::updatePaused(float dt, float aspect) {
 			return key;
 		};
 		srv.forEachEntity([&](Entity& e) {
-			if (e.typeId() == EntityType::ItemEntity) return;
+			if (e.typeId() == ItemName::ItemEntity) return;
 			auto it = m_models.find(resolveKey(e));
 			if (it != m_models.end()) {
 				float spd = glm::length(glm::vec2(e.velocity.x, e.velocity.z));

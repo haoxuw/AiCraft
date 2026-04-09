@@ -5,46 +5,37 @@
 
 namespace modcraft::builtin {
 
-// Active blocks: TNT, crops, signals/logic gates.
-// These have per-instance state and Python behavior classes.
 inline void registerActiveBlocks(BlockRegistry& reg) {
 	namespace BT = BlockType;
-	namespace GR = Group;
-	namespace TL = Tool;
 	namespace PR = Prop;
-	namespace PY = PyClass;
 
-	reg.registerBlock({BT::TNT, "TNT", "active",
+	reg.registerBlock({BT::TNT, "TNT",
 		{0.80f,0.25f,0.20f},{0.80f,0.25f,0.20f},{0.80f,0.25f,0.20f},
-		true,false, 0.0f,"","",64,0,
-		{{GR::Tnt,1},{GR::Flammable,5}}, "","","",
+		true,false, "",64,0, "","","",
 		BlockBehavior::Active,
 		{{PR::FuseTicks, 0}, {PR::Lit, 0}},
-		PY::TNTBlock});
+		"base:tnt_block"});
 
-	reg.registerBlock({BT::Wheat, "Wheat", "active",
+	reg.registerBlock({BT::Wheat, "Wheat",
 		{0.70f,0.65f,0.20f},{0.55f,0.50f,0.15f},{0.60f,0.55f,0.18f},
-		true,false, 0.0f,"",BT::WheatSeeds,64,0,
-		{{GR::Cracky,1}}, "","","",
+		true,false, BT::WheatSeeds,64,0, "","","",
 		BlockBehavior::Active,
 		{{PR::GrowthStage, 0}, {PR::MaxStage, 7}},
-		PY::WheatCrop});
+		"base:wheat_crop"});
 
-	reg.registerBlock({BT::Wire, "Wire", "active",
+	reg.registerBlock({BT::Wire, "Wire",
 		{0.60f,0.10f,0.10f},{0.60f,0.10f,0.10f},{0.60f,0.10f,0.10f},
-		false,false, 0.0f,"",BT::Wire,64,0,
-		{{GR::SignalGrp,1}}, "","","",
+		false,false, BT::Wire,64,0, "","","",
 		BlockBehavior::Active,
 		{{PR::Power, 0}, {PR::MaxPower, 15}},
-		PY::WireBlock});
+		"base:wire_block"});
 
-	reg.registerBlock({BT::NANDGate, "NAND Gate", "active",
+	reg.registerBlock({BT::NANDGate, "NAND Gate",
 		{0.30f,0.30f,0.35f},{0.30f,0.30f,0.35f},{0.30f,0.30f,0.35f},
-		true,false, 1.0f,TL::Pickaxe,BT::NANDGate,64,0,
-		{{GR::SignalGrp,1},{GR::Logic,1}}, "","","",
+		true,false, BT::NANDGate,64,0, "","","",
 		BlockBehavior::Active,
 		{{PR::InputA, 0}, {PR::InputB, 0}, {PR::Output, 1}},
-		PY::NANDGateBlock});
+		"base:nand_gate_block"});
 }
 
 } // namespace modcraft::builtin

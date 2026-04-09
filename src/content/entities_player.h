@@ -8,11 +8,11 @@ namespace modcraft::builtin {
 
 inline void registerPlayerEntity(EntityManager& mgr) {
 	EntityDef def;
-	def.string_id = EntityType::Player;
+	def.string_id = LivingName::Player;
 	def.display_name = "Player";
 	def.kind = EntityKind::Living;
-	def.model = Asset::PlayerModel;
-	def.texture = Asset::PlayerTexture;
+	def.model = "player";
+	def.texture = "player.png";
 	def.color = {1, 1, 1};
 	def.collision_box_min = {-0.375f, 0.0f, -0.375f};
 	def.collision_box_max = { 0.375f, 2.5f,  0.375f};

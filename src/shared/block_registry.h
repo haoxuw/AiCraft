@@ -34,7 +34,6 @@ enum class Param2Type { None, FourDir };
 struct BlockDef {
 	std::string string_id;
 	std::string display_name;
-	std::string category;
 
 	glm::vec3 color_top    = {1, 0, 1};
 	glm::vec3 color_side   = {1, 0, 1};
@@ -43,13 +42,9 @@ struct BlockDef {
 	bool solid = true;
 	bool transparent = false;
 
-	float hardness = 1.0f;
-	std::string tool_group;
-	std::string drop;
+	std::string drop;         // block type dropped when broken (empty = drops itself)
 	int stack_max = 64;
 	int light_emission = 0;
-
-	std::unordered_map<std::string, int> groups;
 
 	std::string sound_place;
 	std::string sound_dig;

@@ -129,7 +129,7 @@ public:
 			}
 
 			// Item entity: freeze on ground (no bouncing), despawn after timeout
-			if (e.typeId() == EntityType::ItemEntity) {
+			if (e.typeId() == ItemName::ItemEntity) {
 				if (e.onGround) {
 					e.velocity = {0, 0, 0}; // stop moving once landed
 				}

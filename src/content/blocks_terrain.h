@@ -5,111 +5,83 @@
 
 namespace modcraft::builtin {
 
-// Natural terrain blocks: stone, dirt, grass, sand, snow, ice, water.
 inline void registerTerrainBlocks(BlockRegistry& reg) {
 	namespace BT = BlockType;
-	namespace GR = Group;
-	namespace TL = Tool;
 	namespace SN = Sound;
 
-	reg.registerBlock({BT::Air, "Air", "system",
+	reg.registerBlock({BT::Air, "Air",
 		{0,0,0},{0,0,0},{0,0,0}, false, true,
-		0,"","",64,0, {}, "","",""});
+		"",64,0, "","",""});
 
-	reg.registerBlock({BT::Stone, "Stone", "terrain",
+	reg.registerBlock({BT::Stone, "Stone",
 		{0.48f,0.48f,0.50f},{0.48f,0.48f,0.50f},{0.48f,0.48f,0.50f},
-		true,false, 4.0f,TL::Pickaxe,BT::Cobblestone,64,0,
-		{{GR::Cracky,3},{GR::Stone,1}}, "",SN::DigStone,SN::StepStone});
+		true,false, BT::Cobblestone,64,0, "",SN::DigStone,SN::StepStone});
 
-	reg.registerBlock({BT::Cobblestone, "Cobblestone", "terrain",
+	reg.registerBlock({BT::Cobblestone, "Cobblestone",
 		{0.42f,0.42f,0.44f},{0.42f,0.42f,0.44f},{0.42f,0.42f,0.44f},
-		true,false, 3.5f,TL::Pickaxe,"",64,0,
-		{{GR::Cracky,2},{GR::Stone,1}}, "",SN::DigStone,SN::StepStone});
+		true,false, "",64,0, "",SN::DigStone,SN::StepStone});
 
-	reg.registerBlock({BT::Dirt, "Dirt", "terrain",
+	reg.registerBlock({BT::Dirt, "Dirt",
 		{0.52f,0.34f,0.20f},{0.52f,0.34f,0.20f},{0.52f,0.34f,0.20f},
-		true,false, 0.8f,TL::Shovel,"",64,0,
-		{{GR::Crumbly,3},{GR::Soil,1}}, "",SN::DigDirt,SN::StepDirt});
+		true,false, "",64,0, "",SN::DigDirt,SN::StepDirt});
 
-	reg.registerBlock({BT::Grass, "Grass Block", "terrain",
+	reg.registerBlock({BT::Grass, "Grass Block",
 		{0.30f,0.58f,0.18f},{0.40f,0.38f,0.20f},{0.52f,0.34f,0.20f},
-		true,false, 0.9f,TL::Shovel,BT::Dirt,64,0,
-		{{GR::Crumbly,3},{GR::Soil,1},{GR::Spreadable,1}}, "",SN::DigDirt,SN::StepGrass});
+		true,false, BT::Dirt,64,0, "",SN::DigDirt,SN::StepGrass});
 
-	reg.registerBlock({BT::Sand, "Sand", "terrain",
+	reg.registerBlock({BT::Sand, "Sand",
 		{0.82f,0.77f,0.50f},{0.82f,0.77f,0.50f},{0.82f,0.77f,0.50f},
-		true,false, 0.6f,TL::Shovel,"",64,0,
-		{{GR::Crumbly,3},{GR::Sand,1},{GR::Falling,1}}, "",SN::DigSand,SN::StepSand});
+		true,false, "",64,0, "",SN::DigSand,SN::StepSand});
 
-	reg.registerBlock({BT::Water, "Water", "terrain",
+	reg.registerBlock({BT::Water, "Water",
 		{0.12f,0.35f,0.70f},{0.12f,0.35f,0.70f},{0.12f,0.35f,0.70f},
-		false,true, 0,"","",64,0,
-		{{GR::Liquid,1},{GR::WaterGrp,1}}, "","",""});
+		false,true, "",64,0, "","",""});
 
-	reg.registerBlock({BT::Snow, "Snow", "terrain",
+	reg.registerBlock({BT::Snow, "Snow",
 		{0.93f,0.95f,0.97f},{0.90f,0.92f,0.94f},{0.90f,0.92f,0.94f},
-		true,false, 0.3f,TL::Shovel,"",64,0,
-		{{GR::Crumbly,3},{GR::Snowy,1}}, "",SN::DigSnow,SN::StepSnow});
+		true,false, "",64,0, "",SN::DigSnow,SN::StepSnow});
 
-	// Fence (for animal pens and gardens)
-	reg.registerBlock({BT::Fence, "Fence", "crafted",
+	reg.registerBlock({BT::Fence, "Fence",
 		{0.55f,0.40f,0.22f},{0.50f,0.35f,0.18f},{0.55f,0.40f,0.22f},
-		true,false, 2.0f,TL::Axe,"",64,0,
-		{{GR::Choppy,2},{GR::Flammable,2}}, "",SN::DigWood,SN::StepWood});
+		true,false, "",64,0, "",SN::DigWood,SN::StepWood});
 
-	// Farmland (tilled soil for crops)
-	reg.registerBlock({BT::Farmland, "Farmland", "terrain",
+	reg.registerBlock({BT::Farmland, "Farmland",
 		{0.40f,0.28f,0.14f},{0.40f,0.28f,0.14f},{0.40f,0.28f,0.14f},
-		true,false, 0.6f,TL::Shovel,BT::Dirt,64,0,
-		{{GR::Crumbly,3},{GR::Soil,1}}, "",SN::DigDirt,SN::StepDirt});
+		true,false, BT::Dirt,64,0, "",SN::DigDirt,SN::StepDirt});
 
-	// Glass (window block — solid so players can't walk through, light blue)
-	reg.registerBlock({BT::Glass, "Glass", "crafted",
+	reg.registerBlock({BT::Glass, "Glass",
 		{0.62f,0.83f,0.88f},{0.58f,0.78f,0.84f},{0.62f,0.83f,0.88f},
-		true,true, 0.3f,"","",64,0,
-		{}, "","",""});
+		true,true, "",64,0, "","",""});
 
-	// Portal (spawn gateway — non-solid placeholder, not yet rendered)
-	reg.registerBlock({BT::Portal, "Portal", "system",
+	reg.registerBlock({BT::Portal, "Portal",
 		{0.65f,0.0f,1.0f},{0.55f,0.0f,0.90f},{0.65f,0.0f,1.0f},
-		false,true, 0.0f,"","",64,0,
-		{{GR::Unbreakable,1}}, "","",""});
+		false,true, "",64,0, "","",""});
 
-	// Arcane Stone (indestructible magical block — animated surface, client-side only)
 	reg.registerBlock({
 		.string_id    = BT::ArcaneStone,
 		.display_name = "Arcane Stone",
-		.category     = "system",
 		.color_top    = {0.28f, 0.06f, 0.48f},
 		.color_side   = {0.22f, 0.08f, 0.40f},
 		.color_bottom = {0.16f, 0.05f, 0.32f},
 		.solid        = true,
-		.hardness     = 0.0f,
 		.stack_max    = 64,
-		.groups       = {{GR::Unbreakable, 1}},
 		.surface_glow = true,
 	});
 
-	// Spawn Point (indestructible gold marker — placed at portal center)
 	reg.registerBlock({
 		.string_id    = BT::SpawnPoint,
 		.display_name = "Spawn Point",
-		.category     = "system",
 		.color_top    = {0.95f, 0.78f, 0.05f},
 		.color_side   = {0.85f, 0.65f, 0.02f},
 		.color_bottom = {0.70f, 0.50f, 0.01f},
 		.solid        = true,
-		.hardness     = 0.0f,
 		.stack_max    = 1,
-		.groups       = {{GR::Unbreakable, 1}},
 		.surface_glow = true,
 	});
 
-	// Chest (storage block)
-	reg.registerBlock({BT::Chest, "Chest", "crafted",
+	reg.registerBlock({BT::Chest, "Chest",
 		{0.55f,0.40f,0.20f},{0.50f,0.35f,0.18f},{0.45f,0.30f,0.15f},
-		true,false, 2.0f,"","",1,0,
-		{}, "",SN::DigWood,SN::StepWood});
+		true,false, "",1,0, "",SN::DigWood,SN::StepWood});
 }
 
 } // namespace modcraft::builtin

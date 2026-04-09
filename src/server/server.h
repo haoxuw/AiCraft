@@ -254,7 +254,7 @@ public:
 	EntityId addClient(ClientId clientId, const std::string& characterSkin = "") {
 		// Always spawn as base:player (has inventory, HP, physics).
 		// The characterSkin determines visual model, not entity type.
-		EntityId eid = m_world->entities.spawn(EntityType::Player, m_spawnPos);
+		EntityId eid = m_world->entities.spawn(LivingName::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
 		if (pe) pe->yaw = -90.0f; // face -Z (toward stairs from portal)
 		// Server handles click-to-move navigation directly (no agent needed)
@@ -272,7 +272,7 @@ public:
 				printf("[Server] Restored saved inventory for '%s'\n", skin.c_str());
 			} else {
 				// First time — give starting items
-				auto sit = m_wgc.startingItems.find(EntityType::Player);
+				auto sit = m_wgc.startingItems.find(LivingName::Player);
 				if (sit != m_wgc.startingItems.end()) {
 					for (auto& [item, count] : sit->second)
 						pe->inventory->add(item, count);

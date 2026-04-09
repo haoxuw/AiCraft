@@ -126,13 +126,13 @@ void Game::renderEntities(float dt, float aspect) {
 			if (apit != m_entityAttackPhase.end()) atkPhase = apit->second;
 			mobAnim.attackPhase = atkPhase;
 			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim, tintStr);
-		} else if (!modelKey.empty() && e.typeId() != EntityType::ItemEntity) {
+		} else if (!modelKey.empty() && e.typeId() != ItemName::ItemEntity) {
 			// Warn once per model key
 			static std::unordered_set<std::string> warned;
 			if (warned.insert(modelKey).second)
 				printf("[Render] WARNING: no model for key '%s' (entity %s)\n",
 					modelKey.c_str(), e.typeId().c_str());
-		} else if (e.typeId() == EntityType::ItemEntity) {
+		} else if (e.typeId() == ItemName::ItemEntity) {
 			// If pickup is pending, don't render the server entity at all.
 			if (m_pendingPickups.count(e.id())) return;
 

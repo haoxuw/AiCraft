@@ -13,8 +13,7 @@
 
 namespace modcraft {
 
-using EntityId = uint32_t;
-constexpr EntityId ENTITY_NONE = 0;
+// EntityKind, EntityId defined in constants.h
 
 // Property value -- anything an entity can hold
 using PropValue = std::variant<
@@ -24,22 +23,6 @@ using PropValue = std::variant<
 	std::string,
 	glm::vec3
 >;
-
-// ================================================================
-// Entity kind — there are only two:
-//   Living → moves, has HP, has inventory. Players, NPCs, animals.
-//            Players are Living with playable=true (any Living can be played).
-//            NPCs are Living with a BehaviorId (agent runs Python AI).
-//   Item   → dropped item on the ground, or held in an inventory.
-//
-// Blocks are NOT entities — they live in the chunk grid. Some blocks
-// (chests) have inventories managed by InventoryManager, keyed by
-// block position.
-// ================================================================
-enum class EntityKind {
-	Living,
-	Item,
-};
 
 // Static definition of an entity type. Mirrors Python ObjectMeta for entities.
 struct EntityDef {

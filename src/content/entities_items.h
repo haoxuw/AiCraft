@@ -10,7 +10,7 @@ inline void registerItemEntities(EntityManager& mgr) {
 	// GameServer::m_blockInventories, keyed by block position.
 
 	EntityDef def;
-	def.string_id = EntityType::ItemEntity;
+	def.string_id = ItemName::ItemEntity;
 	def.display_name = "Item";
 	def.kind = EntityKind::Item;
 	def.color = {1, 1, 1};

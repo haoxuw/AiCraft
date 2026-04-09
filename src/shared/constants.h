@@ -1,145 +1,128 @@
 #pragma once
 
 /**
- * constants.h — single source of truth for all string identifiers.
+ * constants.h — single source of truth for all identifiers and enums.
  *
- * Classification model:
+ * Classification model (Entity = Living + Item):
  *
- *   EntityKind (enum, entity.h):
+ *   EntityKind (enum):
  *     Living  — moves, has HP, has inventory (players, NPCs, animals)
  *     Item    — on ground or in inventory
  *
- *   EntityType (string IDs, below):
- *     Specific species/variant: "base:chicken", "base:player", etc.
- *     Stored as Entity::typeId(). Use EntityType:: constants, never raw strings.
+ *   LivingName — string IDs for Living entities: "base:player", "base:chicken", etc.
+ *   ItemName   — string IDs for Item entities: "base:egg", "base:apple", etc.
+ *   These are mutually exclusive: every entity is either Living or Item.
  *
- *   BlockType (string IDs, below):
- *     Specific block: "base:stone", "base:door", etc.
- *     Stored as BlockDef::string_id. Mapped to BlockId (uint16) by BlockRegistry.
- *
- * No Category namespace — EntityKind + EntityType cover all entity classification.
- * Block display grouping uses inline strings in block registration (no enum needed).
+ *   BlockType — string IDs for world blocks: "base:stone", "base:door", etc.
+ *   Blocks are NOT entities. Mapped to BlockId (uint16) by BlockRegistry.
  */
+
+#include <cstdint>
 
 namespace modcraft {
 
-// ============================================================
-// Entity Type IDs (species/variant — matches EntityDef::string_id)
-// ============================================================
-namespace EntityType {
-	constexpr const char* Player      = "base:player";
-	constexpr const char* Pig         = "base:pig";
-	constexpr const char* Chicken     = "base:chicken";
-	constexpr const char* Dog         = "base:dog";
-	constexpr const char* Villager    = "base:villager";
-	constexpr const char* Cat         = "base:cat";
+// ================================================================
+// EntityKind — the two kinds of entity
+// ================================================================
+enum class EntityKind {
+	Living,   // moves, has HP, has inventory (players, NPCs, animals)
+	Item,     // on ground or in inventory
+};
+
+using EntityId = uint32_t;
+constexpr EntityId ENTITY_NONE = 0;
+
+// ================================================================
+// Living entity names (species/variant)
+// ================================================================
+namespace LivingName {
+	constexpr const char* Player       = "base:player";
+	constexpr const char* Pig          = "base:pig";
+	constexpr const char* Chicken      = "base:chicken";
+	constexpr const char* Dog          = "base:dog";
+	constexpr const char* Villager     = "base:villager";
+	constexpr const char* Cat          = "base:cat";
 	constexpr const char* BraveChicken = "base:brave_chicken";
-	constexpr const char* ItemEntity  = "base:item_entity";
 }
 
-// ============================================================
-// Block Type IDs
-// ============================================================
-namespace BlockType {
-	constexpr const char* Air         = "base:air";
-	constexpr const char* Stone       = "base:stone";
-	constexpr const char* Cobblestone = "base:cobblestone";
-	constexpr const char* Dirt        = "base:dirt";
-	constexpr const char* Grass       = "base:grass";
-	constexpr const char* Sand        = "base:sand";
-	constexpr const char* Water       = "base:water";
-	constexpr const char* Wood        = "base:wood";
-	constexpr const char* Log         = "base:trunk";
-	constexpr const char* Leaves      = "base:leaves";
-	constexpr const char* Snow        = "base:snow";
-	constexpr const char* TNT         = "base:tnt";
-	constexpr const char* Wheat       = "base:wheat";
-	constexpr const char* Wire        = "base:wire";
-	constexpr const char* NANDGate    = "base:nand_gate";
-	constexpr const char* WheatSeeds  = "base:wheat_seeds";
-	constexpr const char* Chest       = "base:chest";
-	constexpr const char* Planks      = "base:planks";
-	constexpr const char* Bed         = "base:bed";
-	constexpr const char* Fence       = "base:fence";
-	constexpr const char* Farmland    = "base:farmland";
-	constexpr const char* Stair       = "base:stair";
-	constexpr const char* Glass       = "base:glass";
-	constexpr const char* Door        = "base:door";
-	constexpr const char* DoorOpen    = "base:door_open";
-	constexpr const char* Portal      = "base:portal";
-	constexpr const char* ArcaneStone = "base:arcane_stone";
-	constexpr const char* SpawnPoint  = "base:spawn_point";
-}
+// ================================================================
+// Item names (equipment, tools, consumables, dropped blocks)
+// ================================================================
+namespace ItemName {
+	// The item entity type (wrapper for any item on the ground)
+	constexpr const char* ItemEntity   = "base:item_entity";
 
-// ============================================================
-// Design note: Blocks vs Items
-// ============================================================
-// BlockType = PLACEABLE blocks. When broken they drop an item entity
-// with item_type = block string_id, which can be picked up and re-placed.
-// BlockRegistry is the source of truth for what is placeable.
-//
-// ItemId = PURE ITEMS (eggs, potions, tools). They float on the ground as
-// item entities but cannot be placed as world blocks.
-// Pure items are NEVER registered in BlockRegistry.
-// ============================================================
-
-// ============================================================
-// Item IDs (equipment, tools, consumables)
-// These are non-block items — they cannot be placed in the world.
-// ============================================================
-namespace ItemId {
 	// Equipment
-	constexpr const char* Jetpack     = "base:jetpack";
-	constexpr const char* Parachute   = "base:parachute";
+	constexpr const char* Jetpack      = "base:jetpack";
+	constexpr const char* Parachute    = "base:parachute";
 
 	// Tools
-	constexpr const char* WoodPickaxe = "base:wood_pickaxe";
-	constexpr const char* StonePickaxe= "base:stone_pickaxe";
-	constexpr const char* WoodAxe     = "base:wood_axe";
-	constexpr const char* WoodShovel  = "base:wood_shovel";
+	constexpr const char* WoodPickaxe  = "base:wood_pickaxe";
+	constexpr const char* StonePickaxe = "base:stone_pickaxe";
+	constexpr const char* WoodAxe      = "base:wood_axe";
+	constexpr const char* WoodShovel   = "base:wood_shovel";
 
 	// Consumables
-	constexpr const char* Apple       = "base:apple";
-	constexpr const char* Bread       = "base:bread";
-	constexpr const char* Egg         = "base:egg";
+	constexpr const char* Apple        = "base:apple";
+	constexpr const char* Bread        = "base:bread";
+	constexpr const char* Egg          = "base:egg";
 }
 
-// ============================================================
-// Property Names (entity + block state keys)
-// ============================================================
+// ================================================================
+// Block Type IDs (world blocks in the chunk grid)
+// ================================================================
+namespace BlockType {
+	constexpr const char* Air          = "base:air";
+	constexpr const char* Stone        = "base:stone";
+	constexpr const char* Cobblestone  = "base:cobblestone";
+	constexpr const char* Dirt         = "base:dirt";
+	constexpr const char* Grass        = "base:grass";
+	constexpr const char* Sand         = "base:sand";
+	constexpr const char* Water        = "base:water";
+	constexpr const char* Wood         = "base:wood";
+	constexpr const char* Log          = "base:trunk";
+	constexpr const char* Leaves       = "base:leaves";
+	constexpr const char* Snow         = "base:snow";
+	constexpr const char* TNT          = "base:tnt";
+	constexpr const char* Wheat        = "base:wheat";
+	constexpr const char* Wire         = "base:wire";
+	constexpr const char* NANDGate     = "base:nand_gate";
+	constexpr const char* WheatSeeds   = "base:wheat_seeds";
+	constexpr const char* Chest        = "base:chest";
+	constexpr const char* Planks       = "base:planks";
+	constexpr const char* Bed          = "base:bed";
+	constexpr const char* Fence        = "base:fence";
+	constexpr const char* Farmland     = "base:farmland";
+	constexpr const char* Stair        = "base:stair";
+	constexpr const char* Glass        = "base:glass";
+	constexpr const char* Door         = "base:door";
+	constexpr const char* DoorOpen     = "base:door_open";
+	constexpr const char* Portal       = "base:portal";
+	constexpr const char* ArcaneStone  = "base:arcane_stone";
+	constexpr const char* SpawnPoint   = "base:spawn_point";
+}
+
+// ================================================================
+// Property names (entity key-value store)
+// ================================================================
 namespace Prop {
-	// Living
 	constexpr const char* HP           = "hp";
 	constexpr const char* Hunger       = "hunger";
 	constexpr const char* Age          = "age";
-
-	// Player / Ownership
 	constexpr const char* SelectedSlot = "selected_slot";
-	constexpr const char* Owner        = "owner";  // EntityId of owning player (0 = unowned/world)
-
-	// Behavior
+	constexpr const char* Owner        = "owner";
 	constexpr const char* Goal         = "goal";
 	constexpr const char* BehaviorId   = "behavior_id";
-
-	// Mob AI (legacy, used by built-in WanderBehavior)
 	constexpr const char* WanderTimer  = "wander_timer";
 	constexpr const char* WanderYaw    = "wander_yaw";
 	constexpr const char* WalkDistance = "walk_distance";
-
-	// Item entity
 	constexpr const char* ItemType     = "item_type";
 	constexpr const char* Count        = "count";
 	constexpr const char* DespawnTime  = "despawn_time";
-
-	// TNT
 	constexpr const char* FuseTicks    = "fuse_ticks";
 	constexpr const char* Lit          = "lit";
-
-	// Crop
 	constexpr const char* GrowthStage  = "growth_stage";
 	constexpr const char* MaxStage     = "max_stage";
-
-	// Signal
 	constexpr const char* Power        = "power";
 	constexpr const char* MaxPower     = "max_power";
 	constexpr const char* InputA       = "input_a";
@@ -147,42 +130,9 @@ namespace Prop {
 	constexpr const char* Output       = "output";
 }
 
-// ============================================================
-// Groups (block game-mechanic tags)
-// ============================================================
-namespace Group {
-	constexpr const char* Cracky       = "cracky";
-	constexpr const char* Crumbly      = "crumbly";
-	constexpr const char* Choppy       = "choppy";
-	constexpr const char* Snappy       = "snappy";
-	constexpr const char* Stone        = "stone";
-	constexpr const char* Soil         = "soil";
-	constexpr const char* Sand         = "sand";
-	constexpr const char* Falling      = "falling";
-	constexpr const char* Liquid       = "liquid";
-	constexpr const char* WaterGrp     = "water";
-	constexpr const char* Tree         = "tree";
-	constexpr const char* Flammable    = "flammable";
-	constexpr const char* Snowy        = "snowy";
-	constexpr const char* Spreadable   = "spreadable";
-	constexpr const char* Tnt          = "tnt";
-	constexpr const char* SignalGrp    = "signal";
-	constexpr const char* Logic        = "logic";
-	constexpr const char* Unbreakable  = "unbreakable";
-}
-
-// ============================================================
-// Tool Groups
-// ============================================================
-namespace Tool {
-	constexpr const char* Pickaxe      = "pickaxe";
-	constexpr const char* Shovel       = "shovel";
-	constexpr const char* Axe          = "axe";
-}
-
-// ============================================================
-// Sounds
-// ============================================================
+// ================================================================
+// Sound IDs
+// ================================================================
 namespace Sound {
 	constexpr const char* DigStone     = "dig_stone";
 	constexpr const char* DigDirt      = "dig_dirt";
@@ -198,34 +148,9 @@ namespace Sound {
 	constexpr const char* StepSnow     = "step_snow";
 }
 
-// ============================================================
-// Assets (model/texture file names)
-// ============================================================
-namespace Asset {
-	constexpr const char* PlayerModel   = "player.gltf";
-	constexpr const char* PlayerTexture = "player.png";
-	constexpr const char* PigModel      = "pig.gltf";
-	constexpr const char* PigTexture    = "pig.png";
-	constexpr const char* ChickenModel  = "chicken.gltf";
-	constexpr const char* ChickenTexture= "chicken.png";
-	constexpr const char* DogModel      = "dog.gltf";
-	constexpr const char* CatModel      = "cat.gltf";
-	constexpr const char* VillagerModel = "villager.gltf";
-}
-
-// ============================================================
-// Python behavior class IDs (for pybind11 bridge)
-// ============================================================
-namespace PyClass {
-	constexpr const char* TNTBlock       = "base:tnt_block";
-	constexpr const char* WheatCrop      = "base:wheat_crop";
-	constexpr const char* WireBlock      = "base:wire_block";
-	constexpr const char* NANDGateBlock  = "base:nand_gate_block";
-}
-
-// ============================================================
+// ================================================================
 // Networking
-// ============================================================
-constexpr int MODCRAFT_DISCOVER_PORT = 7778; // UDP LAN discovery broadcast port
+// ================================================================
+constexpr int MODCRAFT_DISCOVER_PORT = 7778;
 
 } // namespace modcraft

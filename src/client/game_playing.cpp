@@ -272,7 +272,7 @@ void Game::updateItemPickupAnimations(float dt) {
 		auto& srv = *m_server;
 		EntityId playerId = srv.localPlayerId();
 		srv.forEachEntity([&](Entity& e) {
-			if (e.typeId() != EntityType::ItemEntity) return;
+			if (e.typeId() != ItemName::ItemEntity) return;
 			if (e.removed) return;
 			if (m_pendingPickups.count(e.id())) return;
 			float dist = glm::length(e.position - pe->position);

@@ -113,7 +113,7 @@ static int pickupNearbyItems(TestServer& srv, EntityId actor, float range = 1.5f
 	if (!p) return 0;
 	int sent = 0;
 	srv.forEachEntity([&](Entity& e) {
-		if (e.typeId() != EntityType::ItemEntity) return;
+		if (e.typeId() != ItemName::ItemEntity) return;
 		if (e.removed) return;
 		float dist = glm::length(e.position - p->position);
 		if (dist < range) {
@@ -357,9 +357,9 @@ static std::string t11_break_block_survival_item_spawns() {
 	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
 	if (bid == BLOCK_AIR) return "no surface block 4 units north of spawn";
 
-	int itemsBefore = countByType(*srv, EntityType::ItemEntity);
+	int itemsBefore = countByType(*srv, ItemName::ItemEntity);
 	breakAndTick(*srv, pid, blockPos);
-	int itemsAfter = countByType(*srv, EntityType::ItemEntity);
+	int itemsAfter = countByType(*srv, ItemName::ItemEntity);
 
 	if (itemsAfter <= itemsBefore)
 		return "no item entity spawned after break (before=" +
@@ -747,7 +747,7 @@ static std::string t22c_item_reaches_player() {
 
 	breakAndTick(*srv, pid, blockPos);
 
-	int itemCount = countByType(*srv, EntityType::ItemEntity);
+	int itemCount = countByType(*srv, ItemName::ItemEntity);
 	if (itemCount == 0) return "no item entity spawned after break";
 
 	// Item is ~2.5 blocks away. Walk player toward it.
@@ -758,7 +758,7 @@ static std::string t22c_item_reaches_player() {
 	pickupNearbyItems(*srv, pid, 2.0f);
 	tickN(*srv, 5);
 
-	int remaining = countByType(*srv, EntityType::ItemEntity);
+	int remaining = countByType(*srv, ItemName::ItemEntity);
 	if (remaining > 0) return "item not picked up after walking to it";
 	return "";
 }
@@ -875,7 +875,7 @@ static std::string t26_dropitem_no_duplication() {
 	// Count item entities before
 	int itemsBefore = 0;
 	srv->forEachEntity([&](Entity& e) {
-		if (e.typeId() == EntityType::ItemEntity) itemsBefore++;
+		if (e.typeId() == ItemName::ItemEntity) itemsBefore++;
 	});
 
 	// Send exactly 1 Relocate(toGround) action
@@ -895,7 +895,7 @@ static std::string t26_dropitem_no_duplication() {
 	// Count item entities after
 	int itemsAfter = 0;
 	srv->forEachEntity([&](Entity& e) {
-		if (e.typeId() == EntityType::ItemEntity) itemsAfter++;
+		if (e.typeId() == ItemName::ItemEntity) itemsAfter++;
 	});
 
 	int spawned = itemsAfter - itemsBefore;
@@ -928,7 +928,7 @@ static std::string t27_multiple_dropitems_correct_count() {
 
 	int itemsBefore = 0;
 	srv->forEachEntity([&](Entity& e) {
-		if (e.typeId() == EntityType::ItemEntity) itemsBefore++;
+		if (e.typeId() == ItemName::ItemEntity) itemsBefore++;
 	});
 
 	// Send exactly 3 Relocate(toGround) actions (3 separate intentional drops)
@@ -947,7 +947,7 @@ static std::string t27_multiple_dropitems_correct_count() {
 
 	int itemsAfter = 0;
 	srv->forEachEntity([&](Entity& e) {
-		if (e.typeId() == EntityType::ItemEntity) itemsAfter++;
+		if (e.typeId() == ItemName::ItemEntity) itemsAfter++;
 	});
 
 	int spawned = itemsAfter - itemsBefore;
@@ -1107,7 +1107,7 @@ static std::string t33_dropitem_deducts_inventory() {
 
 	int stoneAfter = p->inventory->count(BlockType::Stone);
 	if (stoneAfter >= stoneBefore) return "stone count didn't decrease";
-	int items = countByType(*srv, EntityType::ItemEntity);
+	int items = countByType(*srv, ItemName::ItemEntity);
 	if (items < 1) return "no item entity spawned after drop";
 	return "";
 }
@@ -1188,7 +1188,7 @@ static std::string t35_item_entity_has_type() {
 	// Find the spawned item entity and check its ItemType
 	std::string itemType;
 	srv->forEachEntity([&](Entity& e) {
-		if (e.typeId() == EntityType::ItemEntity) {
+		if (e.typeId() == ItemName::ItemEntity) {
 			itemType = e.getProp<std::string>(Prop::ItemType);
 		}
 	});
@@ -1245,14 +1245,14 @@ static std::string t37_pickup_denied_out_of_range() {
 	breakAndTick(*srv, pid, blockPos);
 
 	// Item should exist
-	int items = countByType(*srv, EntityType::ItemEntity);
+	int items = countByType(*srv, ItemName::ItemEntity);
 	if (items == 0) return "no item spawned";
 
 	// Try to pick it up (should be denied by server — too far)
 	pickupNearbyItems(*srv, pid, 10.0f); // generous client range
 	// Server denies because actual distance > pickup_range
 
-	int remaining = countByType(*srv, EntityType::ItemEntity);
+	int remaining = countByType(*srv, ItemName::ItemEntity);
 	if (remaining == 0) return "item was picked up despite being out of range";
 	return "";
 }

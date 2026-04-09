@@ -117,7 +117,7 @@ void GameServer::resolveActions(float dt) {
 				                              : glm::vec3(std::cos(glm::radians(actor->yaw)), 0,
 				                                          std::sin(glm::radians(actor->yaw)));
 				glm::vec3 dropPos = actor->position + fwd * 1.5f + glm::vec3(0, 1.2f, 0);
-				EntityId itemEntityId = m_world->entities.spawn(EntityType::ItemEntity, dropPos,
+				EntityId itemEntityId = m_world->entities.spawn(ItemName::ItemEntity, dropPos,
 					{{Prop::ItemType, dropType}, {Prop::Count, count}, {Prop::Age, 0.0f}});
 				Entity* ie = m_world->entities.get(itemEntityId);
 				if (ie) ie->velocity = tossDir;
@@ -184,7 +184,7 @@ void GameServer::resolveActions(float dt) {
 				if (!src || src->removed) { nudgeR(ActionRejectCode::SourceEntityGone); break; }
 				if (!actor->inventory) break;
 
-				if (src->typeId() == EntityType::ItemEntity) {
+				if (src->typeId() == ItemName::ItemEntity) {
 					// Item entity pickup: validate range using the actor's pickup_range
 					float dist = glm::length(src->position - actor->position);
 					float maxRange = actor->def().pickup_range;
@@ -247,7 +247,7 @@ void GameServer::resolveActions(float dt) {
 							int count = 1 + (rand() % 2);
 							glm::vec3 lootPos = target->position + glm::vec3(0, 0.3f, 0);
 							glm::vec3 fwd = (dist > 0.1f) ? glm::normalize(diff) : glm::vec3(0, 0, 1);
-							EntityId lootId = m_world->entities.spawn(EntityType::ItemEntity, lootPos,
+							EntityId lootId = m_world->entities.spawn(ItemName::ItemEntity, lootPos,
 								{{Prop::ItemType, std::string("base:meat")},
 								 {Prop::Count, count},
 								 {Prop::Age, 0.0f}});
@@ -377,7 +377,7 @@ void GameServer::resolveActions(float dt) {
 					glm::vec3 spawnPos = fromBlock
 						? (glm::vec3(p.convertFrom.pos) + glm::vec3(0.5f, 0.5f, 0.5f))
 						: (actor->position + glm::vec3(0, 0.3f, 0));
-					m_world->entities.spawn(EntityType::ItemEntity, spawnPos,
+					m_world->entities.spawn(ItemName::ItemEntity, spawnPos,
 						{{Prop::ItemType, p.toItem}, {Prop::Count, p.toCount}, {Prop::Age, 0.0f}});
 				} else {
 					// Default: add directly to actor's inventory (Self)

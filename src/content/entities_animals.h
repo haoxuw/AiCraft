@@ -8,12 +8,12 @@ namespace modcraft::builtin {
 inline void registerAnimalEntities(EntityManager& mgr) {
 	{
 		EntityDef def;
-		def.string_id = EntityType::Pig;
+		def.string_id = LivingName::Pig;
 		def.display_name = "Pig";
 		def.kind = EntityKind::Living;
 	
-		def.model = Asset::PigModel;
-		def.texture = Asset::PigTexture;
+		def.model = "pig";
+		def.texture = "pig.png";
 		def.color = {0.9f, 0.7f, 0.7f};
 		def.sound_group = "creature_pig";
 		def.sound_volume = 0.15f;
@@ -33,12 +33,12 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 
 	{
 		EntityDef def;
-		def.string_id = EntityType::Chicken;
+		def.string_id = LivingName::Chicken;
 		def.display_name = "Chicken";
 		def.kind = EntityKind::Living;
 	
-		def.model = Asset::ChickenModel;
-		def.texture = Asset::ChickenTexture;
+		def.model = "chicken";
+		def.texture = "chicken.png";
 		def.color = {0.95f, 0.95f, 0.90f};
 		def.sound_group = "creature_chicken";
 		def.sound_volume = 0.12f;
@@ -59,12 +59,12 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 	// Brave Chicken — fearless hen, follows player, fights cats
 	{
 		EntityDef def;
-		def.string_id = EntityType::BraveChicken;
+		def.string_id = LivingName::BraveChicken;
 		def.display_name = "Brave Chicken";
 		def.kind = EntityKind::Living;
 	
-		def.model = Asset::ChickenModel;
-		def.texture = Asset::ChickenTexture;
+		def.model = "chicken";
+		def.texture = "chicken.png";
 		def.color = {1.0f, 0.85f, 0.30f}; // golden yellow
 		def.sound_group = "creature_chicken";
 		def.sound_volume = 0.15f;
@@ -85,11 +85,11 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 	// Cat — independent, chases chickens
 	{
 		EntityDef def;
-		def.string_id = EntityType::Cat;
+		def.string_id = LivingName::Cat;
 		def.display_name = "Cat";
 		def.kind = EntityKind::Living;
 	
-		def.model = Asset::CatModel;
+		def.model = "cat";
 		def.color = {0.90f, 0.55f, 0.20f}; // orange tabby
 		def.sound_group = "creature_cat";
 		def.sound_volume = 0.10f;
@@ -110,11 +110,11 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 	// Dog — loyal companion
 	{
 		EntityDef def;
-		def.string_id = EntityType::Dog;
+		def.string_id = LivingName::Dog;
 		def.display_name = "Dog";
 		def.kind = EntityKind::Living;
 	
-		def.model = Asset::DogModel;
+		def.model = "dog";
 		def.color = {0.75f, 0.55f, 0.35f}; // brown
 		def.sound_group = "creature_dog";
 		def.sound_volume = 0.15f;
@@ -135,11 +135,11 @@ inline void registerAnimalEntities(EntityManager& mgr) {
 	// Villager — industrious NPC
 	{
 		EntityDef def;
-		def.string_id = EntityType::Villager;
+		def.string_id = LivingName::Villager;
 		def.display_name = "Villager";
 		def.kind = EntityKind::Living;
 		// category removed — use EntityKind + EntityType // uses same AI dispatch as animals
-		def.model = Asset::VillagerModel;
+		def.model = "villager";
 		def.color = {0.85f, 0.75f, 0.60f}; // tan skin
 		def.sound_group = "creature_villager";
 		def.sound_volume = 0.12f;
