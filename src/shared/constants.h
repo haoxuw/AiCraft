@@ -42,7 +42,7 @@ namespace LivingName {
 	constexpr const char* Dog          = "base:dog";
 	constexpr const char* Villager     = "base:villager";
 	constexpr const char* Cat          = "base:cat";
-	constexpr const char* BraveChicken = "base:brave_chicken";
+	constexpr const char* BraveChicken = "base:brave_chicken"; // todo: remove this, MOD from python side
 }
 
 // ================================================================

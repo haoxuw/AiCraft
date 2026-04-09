@@ -122,16 +122,10 @@ set(SERVER_SOURCES
 	src/server/world_template.h
 )
 
-# Content: data-driven definitions (linked by server)
+# Content: all block + entity definitions in one file
 set(CONTENT_SOURCES
 	src/content/builtin.h
 	src/content/builtin.cpp
-	src/content/blocks_terrain.h
-	src/content/blocks_plants.h
-	src/content/blocks_active.h
-	src/content/entities_animals.h
-	src/content/entities_player.h
-	src/content/entities_items.h
 )
 
 # Client: rendering + input + game UI
