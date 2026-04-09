@@ -204,11 +204,22 @@ public:
 			bool isLocal = (id == m_localPlayerId);
 
 			if (!isLocal) {
-				// Non-local: use server XZ velocity, preserve local Y velocity
-				// (same pattern as local player in gameplay_movement.cpp)
-				glm::vec3 localVel = {target.velocity.x, e.velocity.y, target.velocity.z};
+				// Virtual joystick toward server's moveTarget — same pattern
+				// as local player in RPG/RTS click-to-move (gameplay_movement.cpp).
+				// Client recomputes direction each frame for smooth turning.
+				glm::vec3 toTarget = target.moveTarget - e.position;
+				toTarget.y = 0;
+				float distToTarget = glm::length(toTarget);
 
-				// Run same physics as local player
+				glm::vec3 localVel = {0, e.velocity.y, 0};
+				if (distToTarget > 0.5f && target.moveSpeed > 0.01f) {
+					glm::vec3 dir = toTarget / distToTarget;
+					localVel.x = dir.x * target.moveSpeed;
+					localVel.z = dir.z * target.moveSpeed;
+					e.yaw = glm::degrees(std::atan2(dir.z, dir.x));
+				}
+
+				// Same physics as local player (step-up, gravity, collision)
 				const auto& def = e.def();
 				MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
 					def.gravity_scale, def.isLiving(), e.getProp<bool>("fly_mode", false));
@@ -217,15 +228,11 @@ public:
 				e.position = result.position;
 				e.velocity = result.velocity;
 				e.onGround = result.onGround;
-
-				// Face movement direction (same as local player)
-				if (std::abs(localVel.x) > 0.01f || std::abs(localVel.z) > 0.01f)
-					e.yaw = glm::degrees(std::atan2(localVel.z, localVel.x));
 			}
 
 			// Server correction — same for local and non-local.
 			// Local: gameplay_movement already moved the entity; this is snap-only.
-			// Non-local: moveAndCollide just ran; this corrects drift.
+			// Non-local: virtual joystick just ran; this corrects drift.
 			glm::vec3 diff = target.position - e.position;
 			float dist = glm::length(diff);
 			if (dist > SNAP_THRESHOLD) {
@@ -233,7 +240,6 @@ public:
 				e.velocity = target.velocity;
 				e.onGround = true;
 			} else if (!isLocal && dist > 0.01f) {
-				// Gentle correction for non-local only (local is authoritative)
 				e.position += diff * std::min(dt * CORRECTION_RATE, 1.0f);
 			}
 
@@ -410,14 +416,14 @@ private:
 				}
 				m_entities[es.id] = std::move(ent);
 				// Initialize interpolation target
-				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0};
+				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0, es.moveTarget, es.moveSpeed};
 			} else {
 				auto& e = *it->second;
 
 				// Update interp target from server. For the local player, this is
 				// only used for SNAP detection (client physics owns position).
-				// For remote entities, tick() interpolates toward this target.
-				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f};
+				// For remote entities, tick() runs virtual joystick toward moveTarget.
+				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f, es.moveTarget, es.moveSpeed};
 
 				// Sync non-positional state immediately.
 				// Skip onGround for local player — client physics owns it.
@@ -617,7 +623,9 @@ private:
 		glm::vec3 position;
 		glm::vec3 velocity;
 		float yaw;
-		float age; // time since last server update
+		float age;
+		glm::vec3 moveTarget = {0, 0, 0};
+		float moveSpeed = 0.0f;
 	};
 	std::unordered_map<EntityId, InterpTarget> m_interpTargets;
 

@@ -65,6 +65,8 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 			e.nav.clear();
 			e.velocity.x = 0;
 			e.velocity.z = 0;
+			e.moveTarget = e.position;
+			e.moveSpeed = 0;
 			return;
 		}
 
@@ -141,6 +143,10 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 		// --- Set velocity (always — never stop walking) ---
 		e.velocity.x = dirX * walkSpeed;
 		e.velocity.z = dirZ * walkSpeed;
+
+		// Broadcast move destination for client-side prediction
+		e.moveTarget = goal;
+		e.moveSpeed = walkSpeed;
 
 		// Face movement direction
 		e.yaw = std::atan2(-dirX, -dirZ) * (180.0f / 3.14159265f);

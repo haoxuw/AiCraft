@@ -270,6 +270,8 @@ public:
 				es.characterSkin = e.getProp<std::string>("character_skin", "");
 				es.hp = e.hp(); es.maxHp = e.def().max_hp;
 			es.owner = e.getProp<int>(Prop::Owner, 0);
+				es.moveTarget = e.moveTarget;
+				es.moveSpeed = e.moveSpeed;
 				for (auto& [key, val] : e.props()) {
 					if (auto* s = std::get_if<std::string>(&val))
 						es.stringProps.push_back({key, *s});

@@ -50,8 +50,17 @@ void GameServer::resolveActions(float dt) {
 			e->velocity.x = p.desiredVel.x;
 			e->velocity.z = p.desiredVel.z;
 
-			if (std::abs(p.desiredVel.x) > 0.01f || std::abs(p.desiredVel.z) > 0.01f)
+			// Derive move target for client-side prediction (10-block lookahead)
+			float hLen = std::sqrt(p.desiredVel.x * p.desiredVel.x + p.desiredVel.z * p.desiredVel.z);
+			if (hLen > 0.01f) {
+				glm::vec3 dir = {p.desiredVel.x / hLen, 0, p.desiredVel.z / hLen};
+				e->moveTarget = e->position + dir * 10.0f;
+				e->moveSpeed = hLen;
 				e->yaw = glm::degrees(std::atan2(p.desiredVel.z, p.desiredVel.x));
+			} else {
+				e->moveTarget = e->position;
+				e->moveSpeed = 0;
+			}
 			e->pitch = p.lookPitch;
 
 			if (p.hasClientPos) {

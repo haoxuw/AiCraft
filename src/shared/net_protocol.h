@@ -270,6 +270,8 @@ struct EntityState {
 	int hp;
 	int maxHp;
 	int owner = 0;  // EntityId of owning player (0 = unowned)
+	glm::vec3 moveTarget = {0, 0, 0};  // where entity is heading (client prediction)
+	float moveSpeed = 0.0f;            // speed toward moveTarget
 	// String properties (e.g., ItemType for item entities, BehaviorId for NPCs)
 	std::vector<std::pair<std::string, std::string>> stringProps;
 };
@@ -287,6 +289,8 @@ inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
 	buf.writeI32(e.hp);
 	buf.writeI32(e.maxHp);
 	buf.writeI32(e.owner);
+	buf.writeVec3(e.moveTarget);
+	buf.writeF32(e.moveSpeed);
 	buf.writeU32((uint32_t)e.stringProps.size());
 	for (auto& [k, v] : e.stringProps) {
 		buf.writeString(k);
@@ -308,6 +312,8 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	e.hp = buf.readI32();
 	e.maxHp = buf.readI32();
 	if (buf.hasMore()) e.owner = buf.readI32();
+	if (buf.hasMore()) e.moveTarget = buf.readVec3();
+	if (buf.hasMore()) e.moveSpeed = buf.readF32();
 	uint32_t propCount = buf.readU32();
 	for (uint32_t i = 0; i < propCount && buf.hasMore(); i++) {
 		std::string k = buf.readString();

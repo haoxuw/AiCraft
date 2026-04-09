@@ -32,6 +32,6 @@ namespace modcraft::ServerTuning {
 
 	// Network
 	constexpr float tickRate             = 1.0f / 60.0f;  // 60 tps
-	constexpr float broadcastInterval    = 0.05f;          // 20 Hz entity broadcasts
+	constexpr float broadcastInterval    = 0.25f;          // 4 Hz — client predicts locally from moveTarget
 	constexpr float statusLogInterval    = 5.0f;           // seconds between status prints
 }

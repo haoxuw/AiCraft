@@ -104,6 +104,10 @@ public:
 	float yaw = 0.0f;
 	float pitch = 0.0f;
 
+	// --- Move destination (broadcast to clients for local physics prediction) ---
+	glm::vec3 moveTarget = {0, 0, 0};  // where entity is heading
+	float moveSpeed = 0.0f;            // speed toward moveTarget (0 = stopped)
+
 	// --- Properties (dynamic key-value store) ---
 	// Get a property. Returns default if not set.
 	template<typename T>
