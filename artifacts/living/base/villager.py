@@ -18,10 +18,11 @@ living = {
     # Two groups only — "humanoid" or "animal" (field name stays "category" for
     # compatibility with ArtifactRegistry, which extracts it for subcategory).
     "category": "humanoid",
+    "tags": ["humanoid"],
     "playable": True,
 
     "model": "villager",
-    "behavior": "woodcutter",
+    "behavior": "pingpong",  # was "woodcutter" — temp swap for animation debugging
 
     # Physics
     "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 1.8, 0.3]},
