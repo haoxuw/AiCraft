@@ -6,6 +6,7 @@ living = {
     "description": "Undead warrior draped in rusted iron.",
 
     "category": "humanoid",
+    "tags": ["humanoid"],
     "playable": True,
 
     "model": "skeleton",

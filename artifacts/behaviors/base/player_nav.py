@@ -8,7 +8,7 @@ NOTE: The class MUST inherit from Behavior (not shadow it).
 """
 
 from pathfind import Navigator
-from modcraft_engine import Move, Idle
+from modcraft_engine import Idle
 from behavior_base import Behavior
 from stats import stats
 
@@ -17,6 +17,7 @@ class PlayerNavBehavior(Behavior):
     def __init__(self):
         self._nav = Navigator()
         self._logged_goal = None
+        self._last_status = None
 
     def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
         stats.inc("decide", entity.type)
@@ -37,7 +38,7 @@ class PlayerNavBehavior(Behavior):
         if action is not None:
             # Log the action type and target (once per new status)
             status = self._nav.status
-            if not hasattr(self, '_last_status') or self._last_status != status:
+            if self._last_status != status:
                 print(f"[player_nav] Action: {action.type} → status='{status}'")
                 self._last_status = status
             return action, status

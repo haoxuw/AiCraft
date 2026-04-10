@@ -6,6 +6,7 @@ living = {
     "description": "Iconic astronaut with egg-shaped body and teal visor.",
 
     "category": "humanoid",
+    "tags": ["humanoid"],
     "playable": True,
 
     "model": "crewmate",

@@ -6,6 +6,7 @@ living = {
     "description": "Wielder of arcane arts, draped in star-dusted robes.",
 
     "category": "humanoid",
+    "tags": ["humanoid"],
     "playable": True,
 
     "model": "mage",

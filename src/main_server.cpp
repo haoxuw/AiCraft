@@ -16,6 +16,7 @@
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
 #include "server/python_bridge.h"
+#include "shared/artifact_registry.h"
 #include <cstdio>
 #include <cstring>
 #include <chrono>
@@ -183,6 +184,13 @@ int main(int argc, char** argv) {
 		}
 	} else {
 		server.init(config, templates);
+	}
+
+	// Load artifact registry and merge Python-declared feature tags into EntityDefs
+	{
+		modcraft::ArtifactRegistry artifacts;
+		artifacts.loadAll("artifacts");
+		server.mergeArtifactTags(artifacts.livingTags());
 	}
 
 	// Start TCP listener

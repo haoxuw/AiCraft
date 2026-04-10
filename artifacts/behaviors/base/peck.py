@@ -14,7 +14,7 @@ Entity props (optional):
   home_radius   — max wander distance from spawn (default 25)
 """
 import random
-from modcraft_engine import Move, Convert, Ground, LivingName, ItemName, BlockType
+from modcraft_engine import Move, Convert, Ground, ItemName
 from behavior_base import Behavior
 from local_world import SelfEntity, LocalWorld
 from stats import stats
@@ -95,11 +95,11 @@ class PeckBehavior(Behavior):
         if self._activity == "peck_grass" and self._activity_timer > 0:
             return Move(entity.x, entity.y, entity.z),"Pecking grass"
 
-        on_grass = local_world.get(BlockType.Grass) is not None and any(
+        on_grass = local_world.get("base:grass") is not None and any(
             abs(b.x - entity.x) < 1.5 and
             abs(b.z - entity.z) < 1.5 and
             abs(b.y - (entity.y - 1)) < 1.5
-            for b in local_world.all(BlockType.Grass)
+            for b in local_world.all("base:grass")
         )
         if on_grass and random.random() < 0.10 and self._activity_timer <= 0:
             self._activity = "peck_grass"
@@ -109,14 +109,14 @@ class PeckBehavior(Behavior):
         # ── Flock (only if same-type animals are actually nearby) ─────────────
         friends = local_world.all(entity.type)
         if friends:
-            farthest = max(friends, key=lambda e: e.distance)
-            if farthest.distance > 4:
-                return Move(farthest.x, farthest.y, farthest.z, speed=spd), \
+            nearest = min(friends, key=lambda e: e.distance)
+            if nearest.distance > 4:
+                return Move(nearest.x, nearest.y, nearest.z, speed=spd), \
                        "Rejoining flock"
 
         # ── Peck or scratch ──────────────────────────────────────────────────
         self._activity = "idle"
         if random.random() < peck_chance:
-            return Move(entity.x, entity.y, entity.z),"Pecking at seeds"
+            return Move(entity.x, entity.y, entity.z), "Foraging"
 
-        return Move(*self.wander_target(entity, radius=8), speed=1.8), "Scratching ground"
+        return Move(*self.wander_target(entity, radius=8), speed=1.8), "Foraging"

@@ -22,8 +22,8 @@ counts and sample positions through `LocalWorld` — no per-entity scanning need
 
 ```
 ChunkInfo {
-    counts:  {type_id: int}          // census of every block in the chunk (air included)
-    samples: {type_id: [pos, ...]}   // up to K nearest-to-center positions per type
+    counts:  {type: int}          // census of every block in the chunk (air included)
+    samples: {type: [pos, ...]}   // up to K nearest-to-center positions per type
 }
 ```
 
@@ -62,7 +62,7 @@ S_CHUNK_INFO       0x1010
     u64 chunk_key             // packed (cx << 32 | cz)
     u32 entry_count
     for each entry:
-        str  type_id          // e.g. "base:trunk"
+        str  type          // e.g. "base:trunk"
         u32  count
         u8   sample_count     // ≤ K
         for each sample:

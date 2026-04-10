@@ -89,9 +89,9 @@ Compression: zstd for packets > 256 bytes
 | 0x41 | TOCLIENT_WEATHER                 | type, intensity, wind     |
 | 0x42 | TOCLIENT_CHAT                    | sender, message           |
 | 0x50 | TOCLIENT_CONTENT_DEFS            | [ObjectMeta/ActionMeta]   |
-| 0x51 | TOCLIENT_NEW_CONTENT             | type_id, ObjectMeta,      |
+| 0x51 | TOCLIENT_NEW_CONTENT             | type, ObjectMeta,      |
 |      |                                  | asset_manifest            |
-| 0x52 | TOCLIENT_REMOVE_CONTENT          | type_id                   |
+| 0x52 | TOCLIENT_REMOVE_CONTENT          | type                   |
 | 0x53 | TOCLIENT_ASSET_DATA              | asset_hash, binary_data   |
 | 0x60 | TOCLIENT_SOUND_PLAY              | sound_name, pos, gain     |
 | 0x61 | TOCLIENT_PARTICLES               | particle_spec, pos        |
@@ -278,7 +278,7 @@ When a player uploads a new Object or Action:
 
   On success, server broadcasts to ALL clients:
     TOCLIENT_NEW_CONTENT:
-      type_id: "alice:flying_pig"
+      type: "alice:flying_pig"
       meta: ObjectMeta(...)            # serialized definition
       asset_manifest: [
         {name: "flying_pig.png", hash: "a1b2c3..."},

@@ -240,7 +240,7 @@ void Game::renderEntities(float dt, float aspect) {
 	srv.forEachEntity([&](Entity& e) {
 		if (e.id() == m_server->localPlayerId()) return;
 
-		float mobSpeed = e.getProp<float>(Prop::AnimSpeed, 0.0f);
+		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
 		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);
 		AnimState mobAnim = {};
 		mobAnim.walkDistance = mobDist;

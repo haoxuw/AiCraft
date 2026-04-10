@@ -41,9 +41,24 @@ namespace LivingName {
 	constexpr const char* Pig          = "base:pig";
 	constexpr const char* Chicken      = "base:chicken";
 	constexpr const char* Dog          = "base:dog";
-	constexpr const char* Villager     = "base:villager";
 	constexpr const char* Cat          = "base:cat";
+	constexpr const char* Villager     = "base:villager";
+	constexpr const char* Crewmate     = "base:crewmate";
+	constexpr const char* Knight       = "base:knight";
+	constexpr const char* Mage         = "base:mage";
+	constexpr const char* Skeleton     = "base:skeleton";
+	constexpr const char* Giant        = "base:giant";
 	constexpr const char* BraveChicken = "base:brave_chicken"; // todo: remove this, MOD from python side
+}
+
+// ================================================================
+// Feature tags — orthogonal flags declared on Python artifacts.
+// An entity can have any subset. Used by behaviors, animation, etc.
+// ================================================================
+namespace FeatureTag {
+	constexpr const char* Humanoid   = "humanoid";   // bipedal (head/arms/legs) — walk anim, follow AI
+	constexpr const char* Hostile    = "hostile";     // aggressive to players — flee/combat AI
+	constexpr const char* Invincible = "invincible";  // immune to damage
 }
 
 // ================================================================

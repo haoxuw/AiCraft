@@ -6,6 +6,7 @@ living = {
     "description": "Stalwart defender in steel-trimmed blue plate.",
 
     "category": "humanoid",
+    "tags": ["humanoid"],
     "playable": True,
 
     "model": "knight",

@@ -82,6 +82,7 @@ struct NearbyEntity {
 	glm::vec3 position;
 	float distance;
 	int hp;
+	std::vector<std::string> tags;  // feature tags from EntityDef (e.g. "humanoid")
 };
 
 // ================================================================

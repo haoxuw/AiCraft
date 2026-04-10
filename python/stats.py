@@ -29,11 +29,6 @@ class Stats:
         if sub:
             self._sub[category][sub] += n
 
-    def get(self, category: str, sub: str = None) -> int:
-        if sub:
-            return self._sub[category].get(sub, 0)
-        return self._counters.get(category, 0)
-
     def dump(self):
         """Print a formatted summary to stderr."""
         if not self._counters:

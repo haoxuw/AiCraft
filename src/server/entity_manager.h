@@ -36,6 +36,21 @@ public:
 		return it != m_typeDefs.end() ? &it->second : nullptr;
 	}
 
+	// Merge feature tags from ArtifactRegistry into registered EntityDefs.
+	// Called after registerAllBuiltins() + ArtifactRegistry::loadAll().
+	void mergeArtifactTags(const std::vector<std::pair<std::string, std::vector<std::string>>>& tagsByType) {
+		int merged = 0;
+		for (auto& [typeId, tags] : tagsByType) {
+			auto it = m_typeDefs.find(typeId);
+			if (it != m_typeDefs.end()) {
+				it->second.tags = tags;
+				merged++;
+			}
+		}
+		if (merged > 0)
+			printf("[EntityManager] Merged feature tags for %d entity types\n", merged);
+	}
+
 	// --- Instance Management ---
 
 	EntityId spawn(const std::string& typeId, glm::vec3 pos) {

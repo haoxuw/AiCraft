@@ -30,6 +30,7 @@
 #include "server/entity_manager.h"
 #include "server/server_tuning.h"
 #include "content/builtin.h"
+#include "shared/artifact_registry.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
@@ -46,6 +47,11 @@ public:
 	AgentClient() {
 		// Register entity type definitions (same as server/client)
 		registerAllBuiltins(m_blocks, m_entityDefs);
+
+		// Load artifact registry and merge Python-declared feature tags into EntityDefs
+		ArtifactRegistry artifacts;
+		artifacts.loadAll("artifacts");
+		m_entityDefs.mergeArtifactTags(artifacts.livingTags());
 	}
 
 	// Set the entity ID this agent wants to control (call before connect).
@@ -185,6 +191,9 @@ public:
 			// Log goal changes
 			auto& lastGoal = m_lastLoggedGoal[eid];
 			if (e.goalText != lastGoal) {
+				printf("[goal eid=%u] \"%s\" → \"%s\"  (decide #%u, %.1fms)\n",
+					eid, lastGoal.c_str(), e.goalText.c_str(),
+					state.decideCount, state.lastDecideMs);
 				lastGoal = e.goalText;
 			}
 
@@ -229,23 +238,6 @@ public:
 						walkDbgTrackMove(p, state, e);
 					}
 				}
-			}
-		}
-
-		// ── Walk debug: dump per-entity Move stats every 1 second ───────────
-		for (auto& [eid, state] : m_behaviorStates) {
-			state.walkDbg_windowTimer += dt;
-			if (state.walkDbg_windowTimer >= 1.0f) {
-				if (state.walkDbg_movesSent > 0) {
-					fprintf(stderr,
-						"[walkdbg-agent eid=%u] moves=%d distinct=%d to_self=%d (in %.1fs)\n",
-						eid, state.walkDbg_movesSent, state.walkDbg_movesNewTgt,
-						state.walkDbg_movesToSelf, state.walkDbg_windowTimer);
-				}
-				state.walkDbg_movesSent   = 0;
-				state.walkDbg_movesNewTgt = 0;
-				state.walkDbg_movesToSelf = 0;
-				state.walkDbg_windowTimer = 0;
 			}
 		}
 

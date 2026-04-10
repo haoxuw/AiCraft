@@ -46,6 +46,9 @@ struct ArtifactEntry {
 
 	// Parsed fields (from Python dict)
 	std::unordered_map<std::string, std::string> fields;
+
+	// Feature tags parsed from "tags": ["humanoid", ...] in Python source
+	std::vector<std::string> tags;
 };
 
 class ArtifactRegistry {
@@ -126,6 +129,17 @@ public:
 		for (auto& e : m_entries)
 			if (e.id == id) return &e;
 		return nullptr;
+	}
+
+	// Collect (typeId → tags) pairs for all living artifacts that have tags.
+	// Used by EntityManager::mergeArtifactTags() to propagate Python-declared tags.
+	std::vector<std::pair<std::string, std::vector<std::string>>> livingTags() const {
+		std::vector<std::pair<std::string, std::vector<std::string>>> result;
+		for (auto& e : m_entries) {
+			if (e.category == "living" && !e.tags.empty())
+				result.push_back({e.id, e.tags});
+		}
+		return result;
 	}
 
 	// Count
@@ -355,6 +369,45 @@ private:
 			std::string val = extract(key);
 			if (!val.empty()) e.fields[key] = val;
 		}
+
+		// Parse list fields: "tags": ["humanoid", "hostile"]
+		e.tags = extractList(e.source, "tags");
+		if (!e.tags.empty()) {
+			std::string joined;
+			for (size_t i = 0; i < e.tags.size(); i++) {
+				if (i > 0) joined += ", ";
+				joined += e.tags[i];
+			}
+			e.fields["tags"] = joined;
+		}
+	}
+
+	// Extract a list of quoted strings from Python source: "key": ["a", "b", ...]
+	static std::vector<std::string> extractList(const std::string& source, const std::string& key) {
+		std::vector<std::string> result;
+		std::string pattern = "\"" + key + "\"";
+		auto pos = source.find(pattern);
+		if (pos == std::string::npos) return result;
+
+		// Find opening bracket
+		auto bracket = source.find('[', pos + pattern.size());
+		if (bracket == std::string::npos) return result;
+
+		// Find closing bracket
+		auto end = source.find(']', bracket);
+		if (end == std::string::npos) return result;
+
+		// Extract quoted strings between brackets
+		size_t cur = bracket + 1;
+		while (cur < end) {
+			auto qStart = source.find('"', cur);
+			if (qStart == std::string::npos || qStart >= end) break;
+			auto qEnd = source.find('"', qStart + 1);
+			if (qEnd == std::string::npos || qEnd >= end) break;
+			result.push_back(source.substr(qStart + 1, qEnd - qStart - 1));
+			cur = qEnd + 1;
+		}
+		return result;
 	}
 
 	std::string m_basePath;

@@ -206,7 +206,6 @@ def find_path(start: tuple, goal: tuple, max_nodes: int = 5000) -> list:
 # ── Navigator — stateful path-follower ───────────────────────────────────────
 
 _ARRIVE_DIST   = 1.2   # horizontal distance to consider a waypoint reached
-_REPLANN_DIST  = 4.0   # re-plan if entity is this far from the expected waypoint
 _STUCK_TIMEOUT = 6.0   # seconds without progress before re-planning
 
 

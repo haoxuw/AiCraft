@@ -114,7 +114,7 @@ new_instance = FlyingPigV2(**old_data)      # new class, old data
 ### C++ Side
 
 ```cpp
-bool PythonRuntime::hot_reload(const std::string& type_id,
+bool PythonRuntime::hot_reload(const std::string& type,
                                 const std::string& new_source) {
     // 1. Validate new source
     std::string error;
@@ -127,12 +127,12 @@ bool PythonRuntime::hot_reload(const std::string& type_id,
     py::object new_class = find_object_class(scope);
 
     // 3. Replace in registry
-    py::object old_class = m_object_types[type_id];
-    m_object_types[type_id] = new_class;
+    py::object old_class = m_object_types[type];
+    m_object_types[type] = new_class;
 
     // 4. Migrate existing instances
     for (auto& [id, obj] : m_world->entities()) {
-        if (obj.attr("meta").attr("id").cast<std::string>() == type_id) {
+        if (obj.attr("meta").attr("id").cast<std::string>() == type) {
             py::dict old_data = obj.attr("__dict__");
             py::object new_obj = new_class(**old_data);
             m_world->replace_entity(id, new_obj);

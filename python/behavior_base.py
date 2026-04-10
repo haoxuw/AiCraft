@@ -153,34 +153,6 @@ class Behavior:
             return (float(cx), float(cy) if cy is not None else home[1], float(cz))
         return home
 
-    # ── Stuck detection ───────────────────────────────────────────────────────
-
-    def check_stuck(self, entity: SelfEntity, dt: float,
-                    move_threshold: float = 1.0, timeout: float = 6.0) -> bool:
-        """Return True when the entity hasn't moved enough in the last timeout seconds.
-
-        Call every tick while navigating. Resets automatically when movement
-        is detected. Use reset_stuck() to restart after a goal change.
-        """
-        pos = (entity.x, entity.z)
-        if not hasattr(self, "_stuck_ref") or self._stuck_ref is None:
-            self._stuck_ref     = pos
-            self._stuck_elapsed = 0.0
-
-        self._stuck_elapsed += dt
-        if self._stuck_elapsed >= timeout:
-            moved = self.dist2d(pos[0], pos[1], self._stuck_ref[0], self._stuck_ref[1])
-            if moved < move_threshold:
-                return True
-            self._stuck_ref     = pos
-            self._stuck_elapsed = 0.0
-        return False
-
-    def reset_stuck(self):
-        """Reset stuck tracking (call after a deliberate goal change)."""
-        self._stuck_ref     = None
-        self._stuck_elapsed = 0.0
-
     # ── Movement helpers (return (x, y, z) — wrap with Move) ───────────────
 
     @staticmethod

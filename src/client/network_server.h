@@ -263,19 +263,11 @@ public:
 
 			target.age += dt;
 
-			// Smoothed animation speed — low-pass filter so walk→idle doesn't snap
+			// Walk distance for animation
 			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
-			float prevAnimSpeed = e.getProp<float>(Prop::AnimSpeed, 0.0f);
-			// Fast attack (ramp up quickly), slow decay (ramp down over ~0.3s)
-			float tau = (hSpeed > prevAnimSpeed) ? 15.0f : 5.0f;
-			float animSpeed = prevAnimSpeed + (hSpeed - prevAnimSpeed) * std::min(dt * tau, 1.0f);
-			if (animSpeed < 0.01f) animSpeed = 0.0f;
-			e.setProp(Prop::AnimSpeed, animSpeed);
-
-			// Walk distance for animation (use smoothed speed so legs don't freeze mid-stride)
-			if (animSpeed > 0.01f) {
+			if (hSpeed > 0.01f) {
 				float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
-				e.setProp(Prop::WalkDistance, wd + animSpeed * dt);
+				e.setProp(Prop::WalkDistance, wd + hSpeed * dt);
 			}
 		}
 

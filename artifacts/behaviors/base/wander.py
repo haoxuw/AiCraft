@@ -82,10 +82,10 @@ class WanderBehavior(Behavior):
         # ── Stay with herd ──────────────────────────────────────────────────
         friends = local_world.all(entity.type)
         if friends:
-            farthest = max(friends, key=lambda e: e.distance)
-            if farthest.distance > group_range:
+            nearest = min(friends, key=lambda e: e.distance)
+            if nearest.distance > group_range:
                 self._wander_target = None
-                return Move(farthest.x, farthest.y, farthest.z, speed=spd), \
+                return Move(nearest.x, nearest.y, nearest.z, speed=spd), \
                        "Joining herd"
 
         # ── Graze ───────────────────────────────────────────────────────────

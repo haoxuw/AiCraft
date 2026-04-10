@@ -174,14 +174,14 @@ from modcraft_engine import Idle, Wander, Follow, Flee, DropItem
 import random as _rng
 
 def decide(self, world):
-    if any((e["category"] == "player" or e["type_id"] == "base:cat")
+    if any((e["category"] == "player" or e["type"] == "base:cat")
            and e["distance"] < 5.0 for e in world["nearby"]):
-        if any((e["category"] == "player" or e["type_id"] == "base:cat")
+        if any((e["category"] == "player" or e["type"] == "base:cat")
                and e["distance"] < 4.0 for e in world["nearby"]):
             return DropItem("base:egg", 1)
         else:
             for e in world["nearby"]:
-                if e["type_id"] == "base:player":
+                if e["type"] == "base:player":
                     return Flee(e["id"], speed=5.0)
             return Wander()
     else:
@@ -189,9 +189,9 @@ def decide(self, world):
             # seek_roost code...
         else:
             if all(e["distance"] > 4 for e in world["nearby"]
-                   if e["type_id"] == self["type_id"]):
+                   if e["type"] == self["type"]):
                 for e in world["nearby"]:
-                    if e["type_id"] == "base:chicken":
+                    if e["type"] == "base:chicken":
                         return Follow(e["id"])
                 return Wander()
             else:

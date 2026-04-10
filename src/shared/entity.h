@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <variant>
 #include <vector>
+#include <algorithm>
 #include <set>
 #include <memory>
 #include <cstdint>
@@ -71,6 +72,14 @@ struct EntityDef {
 	bool isLiving()    const { return kind == EntityKind::Living; }
 	bool isItem()      const { return kind == EntityKind::Item; }
 	bool isStructure() const { return kind == EntityKind::Structure; }
+
+	// Feature tags — orthogonal flags from Python artifacts (e.g. "humanoid", "hostile").
+	// See FeatureTag namespace in constants.h for canonical names.
+	std::vector<std::string> tags;
+
+	bool hasTag(const std::string& tag) const {
+		return std::find(tags.begin(), tags.end(), tag) != tags.end();
+	}
 
 	// Default property values (template for new instances)
 	std::unordered_map<std::string, PropValue> default_props;

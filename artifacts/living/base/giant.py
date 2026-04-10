@@ -6,6 +6,7 @@ living = {
     "description": "Massive iron guardian. Each step shakes the ground.",
 
     "category": "humanoid",
+    "tags": ["humanoid"],
     "playable": True,
 
     "model": "giant",

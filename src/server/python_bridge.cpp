@@ -52,7 +52,6 @@ namespace modcraft {
 struct PyEntityInfo {
 	EntityId id;
 	std::string type;
-	std::string category;
 	float x, y, z;
 	float distance;
 	int hp;
@@ -108,7 +107,6 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	py::class_<PyEntityInfo>(m, "EntityInfo")
 		.def_readonly("id", &PyEntityInfo::id)
 		.def_readonly("type", &PyEntityInfo::type)
-		.def_readonly("category", &PyEntityInfo::category)
 		.def_readonly("x", &PyEntityInfo::x)
 		.def_readonly("y", &PyEntityInfo::y)
 		.def_readonly("z", &PyEntityInfo::z)
@@ -427,6 +425,9 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			info["z"] = ne.position.z;
 			info["distance"] = ne.distance;
 			info["hp"] = ne.hp;
+			py::list pyTags;
+			for (auto& t : ne.tags) pyTags.append(t);
+			info["tags"] = pyTags;
 			pyNearby.append(info);
 		}
 

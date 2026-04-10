@@ -219,7 +219,7 @@ public:
     void call_step(py::object obj, double dtime, WorldView& view);
 
     // Hot-reload
-    bool hot_reload(const std::string& type_id, const std::string& new_source);
+    bool hot_reload(const std::string& type, const std::string& new_source);
 
     // GIL management
     void acquire_gil();

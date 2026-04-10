@@ -74,6 +74,11 @@ struct ServerConfig {
 
 class GameServer {
 public:
+	// Merge Python-declared feature tags into registered EntityDefs.
+	void mergeArtifactTags(const std::vector<std::pair<std::string, std::vector<std::string>>>& tagsByType) {
+		m_world->entities.mergeArtifactTags(tagsByType);
+	}
+
 	// Initialize world only (no entity spawning) — used by loadWorld
 	void initWorld(const ServerConfig& config,
 	               const std::vector<std::shared_ptr<WorldTemplate>>& templates) {

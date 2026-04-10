@@ -17,12 +17,9 @@ State machine:
   DEPOSIT ─► WORK     when inventory is empty after depositing
   any     ─► SLEEP    when evening / night begins
 """
-import json
 import math
-import os
-import time
 
-from modcraft_engine import Move, Convert, Interact, Block, scan_blocks, get_block
+from modcraft_engine import Move, Convert, Block, scan_blocks, get_block
 from actions import StoreItem, DropItem
 from behavior_base import Behavior
 from local_world import SelfEntity, LocalWorld
@@ -33,66 +30,7 @@ STORE_RANGE  = 1.8   # must be <= server-side StoreItem range check (2.0 blocks)
 # Chop is gated on HORIZONTAL distance only (tree height is irrelevant).
 # 1.8 blocks ≈ standing directly adjacent to the target block on any cardinal side.
 CHOP_RANGE   = 1.8
-# When walking to a target, stand this far from the block center on the horizontal plane.
-# 1.2 keeps the entity flush with the block face (entity body radius ~0.4 + block half ~0.5 + slop).
-STAND_OFFSET = 1.2
 CHOP_PERIOD  = 0.5   # seconds between successive chop actions
-
-_DIAG_INTERVAL = 30.0          # minimum seconds between dumps per entity
-_diag_last: dict[int, float] = {}  # entity_id → last dump timestamp
-
-
-class _BlockTarget:
-    """Lightweight stand-in for scan_blocks dict results, compatible with Behavior helpers."""
-    __slots__ = ("x", "y", "z", "distance", "type")
-    def __init__(self, x, y, z, distance, type):
-        self.x, self.y, self.z, self.distance, self.type = x, y, z, distance, type
-
-
-def dump_for_diagnoses(entity, local_world):
-    """Dump LocalWorld + entity state to /tmp/modcraft_diag_<id>.json.
-
-    Rate-limited to once per DIAG_INTERVAL seconds per entity to avoid
-    flooding /tmp at 4 Hz when no trees are found.
-    """
-    now = time.monotonic()
-    eid = entity.id
-    if now - _diag_last.get(eid, 0.0) < _DIAG_INTERVAL:
-        return
-    _diag_last[eid] = now
-
-    data = {
-        "entity_id":  eid,
-        "type":    entity.type,
-        "position":   {"x": entity.x, "y": entity.y, "z": entity.z},
-        "hp":         entity.hp,
-        "walk_speed": entity.walk_speed,
-        "on_ground":  entity.on_ground,
-        "inventory":  dict(entity.inventory.items),
-        "props":      {k: v for k, v in entity.props.items()
-                       if k not in ("x", "y", "z", "hp", "walk_speed", "on_ground")},
-        "local_world": {
-            "time": local_world.time,
-            "dt":   local_world.dt,
-            "blocks": [
-                {"type": b.type, "x": b.x, "y": b.y, "z": b.z, "distance": round(b.distance, 2)}
-                for b in local_world.blocks
-            ],
-            "entities": [
-                {"id": e.id, "type": e.type, "category": e.category,
-                 "x": e.x, "y": e.y, "z": e.z, "hp": e.hp, "distance": round(e.distance, 2)}
-                for e in local_world.entities
-            ],
-        },
-    }
-
-    path = f"/tmp/modcraft_diag_{eid}.json"
-    try:
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
-        print(f"[woodcutter] diag dump → {path}  (entity #{eid}, {len(local_world.blocks)} blocks, {len(local_world.entities)} entities)")
-    except OSError as exc:
-        print(f"[woodcutter] diag dump failed: {exc}")
 
 
 class WoodcutterBehavior(Behavior):
@@ -158,16 +96,6 @@ class WoodcutterBehavior(Behavior):
         elif self._state == self.DEPOSIT and logs == 0:
             self._state = self.WORK
 
-    # ── Compatibility property for tests and external inspection ──────────────
-
-    @property
-    def _depositing(self):
-        return self._state == self.DEPOSIT
-
-    @_depositing.setter
-    def _depositing(self, value):
-        self._state = self.DEPOSIT if value else self.WORK
-
     # ── State: Sleep ──────────────────────────────────────────────────────────
 
     def _sleep(self, entity: SelfEntity, local_world: LocalWorld):
@@ -226,41 +154,41 @@ class WoodcutterBehavior(Behavior):
 
         # Adjacent on the XZ plane → chop
         if horiz <= CHOP_RANGE:
-            bt = _BlockTarget(tx, ty, tz, horiz, tid)
-            return self._chop(entity, bt, logs, label)
+            return self._chop(entity, tx, ty, tz, tid, logs, label)
 
         # Navigate to ground level adjacent to the tree (not to the canopy Y)
         goal = (int(tx), int(entity.y), int(tz))
         action = self._nav.navigate(entity, local_world, goal, speed=spd)
         if action:
-            return action, "Walking to %s (%.0fm)" % (label, horiz)
+            return action, "Walking to %s" % label
         return Move(tx + 0.5, entity.y, tz + 0.5, speed=spd), \
-               "Approaching %s (%.0fm)" % (label, horiz)
+               "Walking to %s" % label
 
-    def _chop(self, entity: SelfEntity, target: _BlockTarget, logs: int, label: str):
+    def _chop(self, entity: SelfEntity, tx: int, ty: int, tz: int,
+              tid: str, logs: int, label: str):
         """Issue a Convert to chop the block, respecting cooldown."""
         if self._chop_cooldown <= 0:
             self._chop_cooldown = self._chop_period
-            stats.inc("chop", target.type)
+            stats.inc("chop", tid)
             return (
                 Convert(
-                    from_item=target.type,
-                    to_item=target.type,
-                    convert_from=Block(target.x, target.y, target.z),
+                    from_item=tid,
+                    to_item=tid,
+                    convert_from=Block(tx, ty, tz),
                 ),
-                "Chopping %s! (%d/%d)" % (label, logs, self._collect_goal),
+                "Chopping %s" % label,
             )
         return Move(entity.x, entity.y, entity.z), \
-               "Chopping... (%d/%d)" % (logs, self._collect_goal), self._chop_cooldown
+               "Chopping %s" % label, self._chop_cooldown
 
     def _search(self, entity: SelfEntity, local_world: LocalWorld, spd: float):
-        """No trees in range — wander outward to find some."""
-        if self.check_stuck(entity, local_world.dt):
-            self.reset_stuck()
-        return (
-            Move(*self.wander_target(entity, radius=20), speed=spd),
-            "Searching for trees...",
-        )
+        """No trees in range — wander outward to find some, using Navigator."""
+        tx, ty, tz = self.wander_target(entity, radius=20)
+        goal = (int(tx), int(ty), int(tz))
+        action = self._nav.navigate(entity, local_world, goal, speed=spd)
+        if action:
+            return action, "Searching for trees..."
+        return Move(tx, ty, tz, speed=spd), "Searching for trees..."
 
     # ── State: Deposit ────────────────────────────────────────────────────────
 
@@ -271,20 +199,19 @@ class WoodcutterBehavior(Behavior):
 
         if self._chest_entity_id is None:
             print("[woodcutter] entity %d: no chest, dropping %d logs" % (entity.id, logs))
-            return DropItem("base:logs", count=logs), "Dropping %d logs (no chest)" % logs
+            return DropItem("base:logs", count=logs), "Dropping logs (no chest)"
 
         dist_to_chest = self.dist2d(entity.x, entity.z, self._chest[0], self._chest[2])
 
         if dist_to_chest <= STORE_RANGE:
             stats.inc("deposit", entity.type)
-            return StoreItem(self._chest_entity_id), "Depositing %d logs" % logs
+            return StoreItem(self._chest_entity_id), "Depositing logs"
 
         goal = (int(self._chest[0]), int(self._chest[1]), int(self._chest[2]))
         action = self._nav.navigate(entity, local_world, goal, speed=spd)
         if action:
-            return action, "Carrying %d logs to chest (%.0fm)" % (logs, dist_to_chest)
-        return Move(self._chest[0], self._chest[1], self._chest[2], speed=spd), \
-               "Approaching chest (%.0fm)" % dist_to_chest
+            return action, "Carrying logs to chest"
+        return Move(entity.x, entity.y, entity.z), "Waiting near chest"
 
     # ── Prop initialisation (reads server-injected spawn props once) ──────────
 

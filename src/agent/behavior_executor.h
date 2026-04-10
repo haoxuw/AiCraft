@@ -161,6 +161,7 @@ inline std::vector<NearbyEntity> gatherNearby(
 		ne.position = entPtr->position;
 		ne.distance = dist;
 		ne.hp       = entPtr->hp();
+		ne.tags     = entPtr->def().tags;
 		result.push_back(ne);
 	}
 	return result;

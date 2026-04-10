@@ -76,6 +76,11 @@ class EntityView(BaseModel):
     z: float
     distance: float
     hp: int
+    tags: list[str] = Field(default_factory=list)  # feature tags: "humanoid", "hostile", etc.
+
+    def has_tag(self, tag: str) -> bool:
+        """Check if this entity has the given feature tag."""
+        return tag in self.tags
 
 
 # Unified return type for block-or-entity queries
@@ -260,7 +265,7 @@ class LocalWorld(BaseModel):
         blocks = [
             BlockView(
                 x=b["x"], y=b["y"], z=b["z"],
-                type=b["type"],          # C++ bridge uses "type", not "type"
+                type=b["type"],
                 distance=b["distance"],
             )
             for b in raw.get("blocks", [])
@@ -271,6 +276,7 @@ class LocalWorld(BaseModel):
                 kind=e.get("kind", "living"),
                 x=e["x"], y=e["y"], z=e["z"],
                 distance=e["distance"], hp=e["hp"],
+                tags=list(e.get("tags", [])),
             )
             for e in raw.get("nearby", [])
         ]

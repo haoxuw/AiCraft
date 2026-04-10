@@ -59,7 +59,7 @@ Typed pydantic object. All fields are read-only.
 | Field | Type | Description |
 |-------|------|-------------|
 | `entity.id` | int | Entity ID (unique per creature) |
-| `entity.type_id` | str | e.g. `"base:pig"`, `"base:dog"` |
+| `entity.type` | str | e.g. `"base:pig"`, `"base:dog"` |
 | `entity.x / y / z` | float | World position |
 | `entity.yaw` | float | Facing direction (degrees) |
 | `entity.hp` | int | Current health points |
@@ -127,7 +127,7 @@ local_world.entities  # list[EntityView] — within 64-unit radius
 | Field | Type | Description |
 |-------|------|-------------|
 | `block.x / y / z` | int | Block position |
-| `block.type_id` | str | e.g. `"base:trunk"`, `"base:wood"` |
+| `block.type` | str | e.g. `"base:trunk"`, `"base:wood"` |
 | `block.distance` | float | Distance from this creature |
 
 ### EntityView fields
@@ -135,7 +135,7 @@ local_world.entities  # list[EntityView] — within 64-unit radius
 | Field | Type | Description |
 |-------|------|-------------|
 | `entity.id` | int | Entity ID |
-| `entity.type_id` | str | e.g. `"base:chicken"`, `"base:villager"` |
+| `entity.type` | str | e.g. `"base:chicken"`, `"base:villager"` |
 | `entity.category` | str | `"player"`, `"animal"`, `"npc"`, `"hostile"`, `"item"`, `"chest"` |
 | `entity.x / y / z` | float | World position |
 | `entity.distance` | float | Distance from this creature |
