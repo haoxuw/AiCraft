@@ -12,6 +12,7 @@
 #include "client/raycast.h"
 #include "client/entity_raycast.h"
 #include "client/window.h"
+#include "client/hotbar.h"
 #include <optional>
 #include <unordered_map>
 
@@ -21,6 +22,7 @@ class GameplayController {
 public:
 	// Called each gameplay frame. Gathers client input → ActionProposals.
 	void update(float dt, GameState state, ServerInterface& server, Entity& player,
+	            const Hotbar& hotbar,
 	            Camera& camera, ControlManager& controls, Renderer& renderer,
 	            ParticleSystem& particles, Window& window,
 	            float jumpVelocity = 8.3f);
@@ -53,7 +55,8 @@ private:
 	                     Camera& camera, Entity& player, ServerInterface& server,
 	                     Window& window, float jumpVelocity);
 	void processBlockInteraction(float dt, GameState state, ServerInterface& server,
-	                             Entity& player, Camera& camera, ControlManager& controls,
+	                             Entity& player, const Hotbar& hotbar,
+	                             Camera& camera, ControlManager& controls,
 	                             Window& window);
 
 	// --- Raycast results (set per frame by processBlockInteraction) ---
@@ -94,10 +97,10 @@ public:
 	glm::vec3 doorTogglePos() const { return m_doorTogglePos; }
 	void clearDoorToggle() { m_doorToggled = false; }
 
-	// Chest open event (right-click on chest block)
-	bool chestOpened() const { return m_chestOpened; }
-	glm::ivec3 chestOpenedPos() const { return m_chestOpenedPos; }
-	void clearChestOpened() { m_chestOpened = false; }
+	// Chest open event (set when player right-clicks a chest block)
+	struct ChestOpenEvent { bool happened = false; glm::ivec3 blockPos{0,0,0}; };
+	const ChestOpenEvent& chestOpenEvent() const { return m_chestOpenEvent; }
+	void clearChestOpenEvent() { m_chestOpenEvent.happened = false; }
 
 private:
 	struct BreakState {
@@ -112,8 +115,7 @@ private:
 	PlaceEvent m_placeEvent;
 	bool m_doorToggled = false;
 	glm::vec3 m_doorTogglePos = {};
-	bool m_chestOpened = false;
-	glm::ivec3 m_chestOpenedPos = {};
+	ChestOpenEvent m_chestOpenEvent;
 
 	// Cached cursor mode — only call glfwSetInputMode when it actually changes.
 	// Calling it every frame on Emscripten re-triggers requestPointerLock() which

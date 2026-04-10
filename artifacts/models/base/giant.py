@@ -56,16 +56,50 @@ model = {
         # Right shoulder bolt
         {"offset": [0.48, 1.34, 0], "size": [0.10, 0.10, 0.10], "color": [0.22, 0.20, 0.18, 1]},
         # Left arm (massive)
-        {"offset": [-0.64, 1.00, 0], "size": [0.40, 0.84, 0.40], "color": [0.45, 0.42, 0.40, 1],
+        {"name": "left_upper_arm",
+         "offset": [-0.64, 1.00, 0], "size": [0.40, 0.84, 0.40], "color": [0.45, 0.42, 0.40, 1],
          "pivot": [-0.48, 1.36, 0], "swing_axis": [1, 0, 0], "amplitude": 48, "phase": math.pi, "speed": 1},
         # Left fist
-        {"offset": [-0.64, 0.52, 0], "size": [0.48, 0.40, 0.48], "color": [0.32, 0.30, 0.28, 1],
+        {"name": "left_hand",
+         "offset": [-0.64, 0.52, 0], "size": [0.48, 0.40, 0.48], "color": [0.32, 0.30, 0.28, 1],
          "pivot": [-0.48, 1.36, 0], "swing_axis": [1, 0, 0], "amplitude": 48, "phase": math.pi, "speed": 1},
         # Right arm (massive)
-        {"offset": [0.64, 1.00, 0], "size": [0.40, 0.84, 0.40], "color": [0.45, 0.42, 0.40, 1],
+        {"name": "right_upper_arm",
+         "offset": [0.64, 1.00, 0], "size": [0.40, 0.84, 0.40], "color": [0.45, 0.42, 0.40, 1],
          "pivot": [0.48, 1.36, 0], "swing_axis": [1, 0, 0], "amplitude": 48, "phase": 0, "speed": 1},
         # Right fist
-        {"offset": [0.64, 0.52, 0], "size": [0.48, 0.40, 0.48], "color": [0.32, 0.30, 0.28, 1],
+        {"name": "right_hand",
+         "offset": [0.64, 0.52, 0], "size": [0.48, 0.40, 0.48], "color": [0.32, 0.30, 0.28, 1],
          "pivot": [0.48, 1.36, 0], "swing_axis": [1, 0, 0], "amplitude": 48, "phase": 0, "speed": 1},
-    ]
+    ],
+
+    # Shared humanoid clip vocabulary (giant has no separate forearm — fist is the hand).
+    "clips": {
+        "attack": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 2.5, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 2.5, "phase": 0},
+        },
+        "chop": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.0, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.0, "phase": 0},
+        },
+        "mine": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.2, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.2, "phase": 0},
+        },
+        "wave": {
+            "right_upper_arm": {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 1.8, "phase": 0},
+            "right_hand":      {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 1.8, "phase": 0},
+        },
+        "dance": {
+            "right_upper_arm": {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.2, "phase": 0},
+            "right_hand":      {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.2, "phase": 0},
+            "left_upper_arm":  {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.2, "phase": 0},
+            "left_hand":       {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.2, "phase": 0},
+        },
+        "sleep": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
+            "left_upper_arm":  {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
+        },
+    },
 }

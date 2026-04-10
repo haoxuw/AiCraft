@@ -44,9 +44,9 @@ the engine (physics, networking, rendering).** See `docs/00_OVERVIEW.md`.
 - Creature definitions, behaviors, items, blocks, effects, models → Python artifacts
 - **NEVER hardcode gameplay constants in C++.** Every magic number (distance,
   speed, timer, radius) MUST be configurable from Python.
-- **NPC AI behaviors are game logic** — they live in Python.
+- **Creatures AI behaviors are game logic** — they live in Python.
   **Player click-to-move** uses server-side greedy steering (`src/server/pathfind.h`)
-  for simplicity and reliability. NPC pathfinding still uses Python (`python/pathfind.py`)
+  for simplicity and reliability. Creatures pathfinding still uses Python (`python/pathfind.py`)
   via agent clients. Navigation tuning constants are in `ServerTuning`.
 
 ### Rule 2: The Player Is Not Special
@@ -77,7 +77,7 @@ the engine (physics, networking, rendering).** See `docs/00_OVERVIEW.md`.
 
 **The server has ZERO intelligence.** All AI runs on agent client processes.
 
-- Each NPC entity has its own `modcraft-agent` process running Python `decide()`
+- Each Creatures entity has its own `modcraft-agent` process running Python `decide()`
 - Server spawns/manages agent clients via `ClientManager`
 - Python behavior code NEVER runs on the server
 - **Player click-to-move navigation** is handled server-side (greedy local
@@ -192,7 +192,7 @@ src/
   content/            C++ fallback entity/block definitions
 
 artifacts/            Python game content (hot-loadable, no rebuild needed)
-  behaviors/          NPC AI: decide() functions
+  behaviors/          Creatures AI: decide() functions
   creatures/          EntityDef: stats, model, behavior assignment
   items/ blocks/      Item and block definitions
   worlds/             World templates (flat, village)

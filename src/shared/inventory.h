@@ -16,34 +16,41 @@
 
 namespace modcraft {
 
-// Equipment slots — what a character can wear
-// Right hand always shows the hotbar-selected item (not an equipment slot).
+// Equipment slots — what a character can wear.
+// The main hand always shows the hotbar-selected item, so there is no
+// "main hand" slot. Three persistent wear slots:
+//   Armor   — helmet/body (one combined armor piece)
+//   Offhand — shield, torch, etc. (the hand opposite the main hand)
+//   Back    — cape, jetpack, parachute
 enum class WearSlot {
-	Offhand   = 0,  // shield, torch (left hand)
-	RightHand = 1,  // right-hand item slot (hotbar item visually attached)
-	Helmet    = 2,  // head armor
-	Body      = 3,  // chest + legs (combined slot)
-	Back      = 4,  // cape, jetpack, parachute
+	Armor   = 0,
+	Offhand = 1,
+	Back    = 2,
 };
-constexpr int WEAR_SLOT_COUNT = 5;
+constexpr int WEAR_SLOT_COUNT = 3;
 
-// Parse equip slot from Python artifact string
+// Parse equip slot from Python artifact string. Accepts legacy
+// names (helmet/body/head/left_hand/right_hand) for migration.
 inline bool wearSlotFromString(const std::string& s, WearSlot& out) {
-	if (s == "offhand" || s == "left_hand") { out = WearSlot::Offhand; return true; }
-	if (s == "right_hand") { out = WearSlot::RightHand; return true; }
-	if (s == "helmet" || s == "head") { out = WearSlot::Helmet; return true; }
-	if (s == "body")       { out = WearSlot::Body;      return true; }
-	if (s == "back")       { out = WearSlot::Back;      return true; }
+	if (s == "armor" || s == "helmet" || s == "head" ||
+	    s == "body" || s == "Armor" || s == "Helmet" || s == "Body") {
+		out = WearSlot::Armor; return true;
+	}
+	if (s == "offhand" || s == "left_hand" || s == "right_hand" ||
+	    s == "main_hand" || s == "Offhand" || s == "Left Hand" || s == "Right Hand") {
+		out = WearSlot::Offhand; return true;
+	}
+	if (s == "back" || s == "Back") {
+		out = WearSlot::Back; return true;
+	}
 	return false; // not equippable
 }
 
 inline const char* equipSlotName(WearSlot slot) {
 	switch (slot) {
-	case WearSlot::Offhand:   return "Offhand";
-	case WearSlot::RightHand: return "Right Hand";
-	case WearSlot::Helmet:    return "Helmet";
-	case WearSlot::Body:      return "Body";
-	case WearSlot::Back:      return "Back";
+	case WearSlot::Armor:   return "Armor";
+	case WearSlot::Offhand: return "Offhand";
+	case WearSlot::Back:    return "Back";
 	default: return "?";
 	}
 }
@@ -96,51 +103,6 @@ public:
 	// Clear all items.
 	void clear() { m_items.clear(); }
 
-	// ---- Hotbar (shortcut slots referencing items in the counter) ----
-
-	// Assign an item type to a hotbar slot.
-	void setHotbar(int slot, const std::string& itemId) {
-		if (slot >= 0 && slot < HOTBAR_SLOTS)
-			m_hotbar[slot] = itemId;
-	}
-
-	// Auto-assign items to hotbar slots 0..N in sorted order.
-	// Call after any bulk inventory change (init, network sync, load).
-	// Does not overwrite manually-assigned slots that still have items.
-	void autoPopulateHotbar() {
-		// Build set of items already explicitly assigned
-		// Refill empty or stale slots from sorted item list
-		int slot = 0;
-		for (auto& [id, cnt] : m_items) {
-			if (cnt <= 0) continue;
-			if (slot >= HOTBAR_SLOTS) break;
-			m_hotbar[slot++] = id;
-		}
-		// Clear any remaining slots (items may have been removed)
-		for (; slot < HOTBAR_SLOTS; slot++)
-			m_hotbar[slot].clear();
-	}
-
-	// Get the item type in a hotbar slot (empty string if unset).
-	const std::string& hotbar(int slot) const {
-		static const std::string empty;
-		if (slot < 0 || slot >= HOTBAR_SLOTS) return empty;
-		return m_hotbar[slot];
-	}
-
-	// Get the count of the item in a hotbar slot (0 if empty or depleted).
-	int hotbarCount(int slot) const {
-		auto& id = hotbar(slot);
-		return id.empty() ? 0 : count(id);
-	}
-
-	// Check if hotbar slot has a usable item (exists in counter with count > 0).
-	bool hotbarHasItem(int slot) const {
-		return hotbarCount(slot) > 0;
-	}
-
-	static constexpr int HOTBAR_SLOTS = 10; // keys 1-9, 0
-
 	// ---- Equipment (wearable items) ----
 
 	void equip(WearSlot slot, const std::string& itemId) {
@@ -175,10 +137,17 @@ public:
 		return !equipped(slot).empty();
 	}
 
+	// Which hand visually displays the offhand item.
+	// false → offhand drawn in left hand (main hand = right);
+	// true  → offhand drawn in right hand (main hand = left).
+	// Default false (most players are right-handed, shield in left).
+	bool offhandInRightHand() const { return m_offhandRight; }
+	void setOffhandInRightHand(bool right) { m_offhandRight = right; }
+
 private:
 	std::map<std::string, int> m_items;
-	std::string m_hotbar[10];
 	std::string m_equipped[WEAR_SLOT_COUNT];
+	bool m_offhandRight = false;
 };
 
 } // namespace modcraft

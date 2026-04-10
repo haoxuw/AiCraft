@@ -22,6 +22,7 @@ break_block: MouseLeft
 place_block: MouseRight
 drop_item: Q
 equip_item: E
+dance: C
 
 # UI
 screenshot: PrintScreen

@@ -105,6 +105,20 @@ struct BoxModel {
 	glm::vec3 pivotL = {-0.37f,  1.40f,  0.00f }; // left shoulder pivot
 };
 
+// Items the entity is currently holding, drawn at the model's hand
+// attach points after the parts loop. Each pointer is owned by the
+// caller (typically a long-lived `m_models` map). nullptr = nothing
+// held in that hand.
+struct HeldItem {
+	const BoxModel* model = nullptr;
+	float scale = 1.0f;          // extra runtime scale (e.g. blocks shrink)
+};
+
+struct HeldItems {
+	HeldItem rightHand;
+	HeldItem leftHand;
+};
+
 // Animation state passed to draw().
 struct AnimState {
 	float walkDistance = 0.0f;  // total distance traveled (drives walk cycle)

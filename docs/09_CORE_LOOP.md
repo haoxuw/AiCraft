@@ -86,7 +86,7 @@ ActiveObject:
   - Called every step to produce Actions
   - decide() READS world state, RETURNS a list of Actions
   - decide() DOES NOT directly mutate anything
-  - Examples: water, fire, pig, player, NPC, ticking bomb
+  - Examples: water, fire, pig, player, Creatures, ticking bomb
 
 Key insight:
   ActiveObject.decide() is a PURE FUNCTION of (self_state, world_view) -> [Action]
@@ -167,7 +167,7 @@ Each game step follows a strict 3-phase order:
   |   validate()      |   the current      |   read input device
   |   execute()       |   world state      |   map to Actions
   |   apply mutations |   (the frame)      |
-  |   collect chains  |                     | For each NPC:
+  |   collect chains  |                     | For each Creatures:
   |                   |                     |   AI decision -> Actions
   | World state is    |                     |
   | now updated.      |                     | Queue all Actions for
@@ -360,7 +360,7 @@ A Player is just an ActiveObject whose `decide()` is driven by human input inste
         +-----------+-----------+
         |                       |
     AI-driven               Human-driven
-    (Mob, NPC)              (Player)
+    (Mob, Creatures)              (Player)
         |                       |
    decide() uses            decide() uses
    AI logic to              keyboard/mouse
@@ -387,7 +387,7 @@ class Player(ActiveObject):
         # puts them in the action queue for Phase 1.
         pass  # handled by server infrastructure, not this method
 
-class NPC(ActiveObject):
+class Creatures(ActiveObject):
     def decide(self, view: WorldView) -> list[Action]:
         # Real AI decision making
         if self.has_customer_nearby(view):
@@ -497,7 +497,7 @@ Client                          Server
 +--------------------+-------------------------------------------+
 | ActiveObject       | DATA + decide(). Proposes Actions.        |
 |                    | Never directly mutates World.              |
-|                    | Sub-types: Player, Mob, NPC, Fluid, etc.  |
+|                    | Sub-types: Player, Mob, Creatures, Fluid, etc.  |
 +--------------------+-------------------------------------------+
 | Action             | LOGIC. validate() + execute().            |
 |                    | The ONLY way to mutate World state.        |

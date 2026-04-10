@@ -1,6 +1,7 @@
 #include "client/game.h"
 #include "shared/constants.h"
 #include "shared/physics.h"
+#include "server/server_tuning.h"
 #include "imgui.h"
 #include <sstream>
 #include <cstring>
@@ -54,11 +55,11 @@ void Game::handleGameplayInput(float dt) {
 	if (!pe) return;
 
 	// Tell gameplay if UI wants the cursor (inventory, ImGui, chest, etc.)
-	m_gameplay.setUIWantsCursor(m_equipUI.isOpen() || m_showChestUI || m_ui.wantsMouse());
+	m_gameplay.setUIWantsCursor(m_equipUI.isOpen() || m_chestUI.isOpen() || m_ui.wantsMouse());
 
 	// Client-side: gather input → ActionProposals (works for local AND network)
 	float jumpVel = 10.5f; // tuned for gravity=32: reaches ~1.7 blocks
-	m_gameplay.update(dt, m_state, *m_server, *pe, m_camera, m_controls,
+	m_gameplay.update(dt, m_state, *m_server, *pe, m_hotbar, m_camera, m_controls,
 	                  m_renderer, m_particles, m_window, jumpVel);
 
 	// Register built-in attack clips once
@@ -79,7 +80,7 @@ void Game::handleGameplayInput(float dt) {
 
 		if (pe->inventory) {
 			int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
-			const std::string& itemId = pe->inventory->hotbar(slot);
+			const std::string& itemId = m_hotbar.get(slot);
 
 			// Reload combo when the held item changes
 			if (itemId != m_comboItemId) {
@@ -161,7 +162,7 @@ void Game::handleGameplayInput(float dt) {
 	// ── Item actions: Q=drop, E=equip, right-click=use ──
 	if (pe->inventory && (m_state == GameState::PLAYING || m_state == GameState::ADMIN)) {
 		int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
-		std::string heldItem = pe->inventory->hotbar(slot);
+		std::string heldItem = m_hotbar.get(slot);
 
 		// Q = drop selected item
 		m_dropCooldown -= dt;
@@ -414,21 +415,6 @@ void Game::updateAudioAndDoors(float dt) {
 	}
 }
 
-void Game::updateChestUI() {
-	// Chest open: toggle inventory UI for the chest block at clicked position.
-	// Chest inventories are managed server-side by block position, not entities.
-	if (m_gameplay.chestOpened()) {
-		glm::ivec3 bp = m_gameplay.chestOpenedPos();
-		if (m_showChestUI && m_openChestBlockPos == bp) {
-			m_showChestUI = false;  // toggle off same chest
-		} else {
-			m_openChestBlockPos = bp;
-			m_showChestUI = true;
-		}
-		m_gameplay.clearChestOpened();
-	}
-}
-
 // ============================================================
 // updatePlaying — orchestrates all playing-state helpers
 // ============================================================
@@ -501,7 +487,7 @@ void Game::updatePlaying(float dt, float aspect) {
 		};
 		cb.dropItem = [this, pe]() {
 			int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
-			std::string itemId = pe->inventory ? pe->inventory->hotbar(slot) : "";
+			std::string itemId = pe->inventory ? m_hotbar.get(slot) : "";
 			if (!itemId.empty() && pe->inventory->has(itemId)) {
 				ActionProposal drop;
 				drop.type = ActionProposal::Relocate;
@@ -520,6 +506,7 @@ void Game::updatePlaying(float dt, float aspect) {
 		cb.triggerSwing = [this]() {
 			m_attackAnim.triggerOnce("swing_right");
 		};
+		cb.hotbar = &m_hotbar;
 
 		m_debugCapture.tick(dt, pe, m_camera, cb);
 		if (m_debugCapture.done()) {
@@ -530,8 +517,12 @@ void Game::updatePlaying(float dt, float aspect) {
 
 	if (m_controls.pressed(Action::MenuBack)) {
 		// ESC closes overlays first, then shows pause menu
-		if (m_showChestUI) {
-			m_showChestUI = false;
+		if (m_chestUI.isOpen()) {
+			m_chestUI.close();
+			bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+			                    m_camera.mode == CameraMode::ThirdPerson);
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+				needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 			return;
 		}
 		if (m_equipUI.isOpen()) {
@@ -570,7 +561,24 @@ void Game::updatePlaying(float dt, float aspect) {
 
 	updateItemPickupAnimations(dt);
 	updateAudioAndDoors(dt);
-	updateChestUI();
+
+	// Creatures proximity detection — notify server which NPCs are near the player
+	// so their agent clients can trigger an immediate re-decide.
+	m_proximityTimer += dt;
+	if (m_proximityTimer >= ServerTuning::proximityCheckInterval) {
+		m_proximityTimer = 0.0f;
+		std::vector<EntityId> nearbyNPCs;
+		m_server->forEachEntity([&](Entity& e) {
+			if (e.id() == pe->id()) return;
+			if (!e.def().isLiving()) return;
+			if (e.getProp<std::string>(Prop::BehaviorId, "").empty()) return;
+			float dist = glm::length(e.position - pe->position);
+			if (dist <= ServerTuning::proximityRadius)
+				nearbyNPCs.push_back(e.id());
+		});
+		if (!nearbyNPCs.empty())
+			m_server->sendProximity(nearbyNPCs);
+	}
 
 	// Block place feedback (immediate client-side sound)
 	auto& placeEvt = m_gameplay.placeEvent();
@@ -597,6 +605,79 @@ void Game::updatePlaying(float dt, float aspect) {
 			m_audio.play("dig_leaves", hitEvt.pos, 0.3f);
 		else
 			m_audio.play("dig_dirt", hitEvt.pos, 0.4f);
+	}
+
+	// ── Chest open: right-click on a chest block ──
+	auto& chestEvt = m_gameplay.chestOpenEvent();
+	if (chestEvt.happened) {
+		// Locate the Structure entity for this chest block (spawned at block center).
+		glm::ivec3 bp = chestEvt.blockPos;
+		glm::vec3 blockCenter = {bp.x + 0.5f, bp.y + 0.5f, bp.z + 0.5f};
+		EntityId chestEid = ENTITY_NONE;
+		float bestDist = 0.5f; // must be very near the center
+		m_server->forEachEntity([&](Entity& e) {
+			if (e.typeId() != StructureName::Chest) return;
+			float d = glm::length(e.position - blockCenter);
+			if (d < bestDist) { bestDist = d; chestEid = e.id(); }
+		});
+		if (chestEid != ENTITY_NONE) {
+			// Request the latest inventory snapshot and open the UI.
+			m_server->sendGetInventory(chestEid);
+			m_chestUI.setModels(&m_models, &m_iconCache);
+			m_chestUI.open(chestEid);
+			m_chestUI.setTransferCallback(
+				[this](bool chestToPlayer, const std::string& itemId, int count) {
+					EntityId eid = m_chestUI.chestEntityId();
+					if (eid == ENTITY_NONE) return;
+					Entity* chestE = m_server->getEntity(eid);
+					Entity* pe2    = playerEntity();
+					if (!chestE || !pe2 || !chestE->inventory || !pe2->inventory) return;
+
+					// count == 0 means "move all": look up source stack size now.
+					int available = chestToPlayer
+						? chestE->inventory->count(itemId)
+						: pe2->inventory->count(itemId);
+					int n = (count <= 0) ? available : std::min(count, available);
+					if (n <= 0) return;
+
+					ActionProposal p;
+					p.type      = ActionProposal::Relocate;
+					p.actorId   = m_server->localPlayerId();
+					p.itemId    = itemId;
+					p.itemCount = n;
+					if (chestToPlayer) {
+						p.relocateFrom = Container::entity(eid);
+						p.relocateTo   = Container::self();
+					} else {
+						p.relocateFrom = Container::self();
+						p.relocateTo   = Container::entity(eid);
+					}
+					m_server->sendAction(p);
+					// Refresh chest view after the move lands on the server.
+					m_server->sendGetInventory(eid);
+				});
+			// Release mouse for UI interaction
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		}
+		m_gameplay.clearChestOpenEvent();
+	}
+
+	// Auto-close the chest UI when the player walks too far or the chest vanishes.
+	if (m_chestUI.isOpen()) {
+		EntityId eid = m_chestUI.chestEntityId();
+		Entity* chestE = m_server->getEntity(eid);
+		if (!chestE || chestE->removed) {
+			m_chestUI.close();
+		} else {
+			float d = glm::length(chestE->position - pe->position);
+			if (d > 6.0f) {
+				m_chestUI.close();
+				bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
+				                    m_camera.mode == CameraMode::ThirdPerson);
+				glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
+					needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+			}
+		}
 	}
 
 	// Check if player right-clicked an entity → enter inspection

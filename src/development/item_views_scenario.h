@@ -31,7 +31,7 @@ public:
 		case 0:
 			if (m_timer < kSettle) return false;
 			{
-				int slot = findHotbarSlot(player, m_itemId);
+				int slot = findHotbarSlot(cb, m_itemId);
 				if (slot < 0) {
 					fprintf(stderr, "[ItemViewsScenario] '%s' not in hotbar\n",
 					        m_itemId.c_str());

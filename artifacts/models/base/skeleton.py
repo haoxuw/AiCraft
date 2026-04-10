@@ -45,19 +45,24 @@ model = {
         {"offset": [0, 0.72, -0.10], "size": [0.40, 0.06, 0.04], "color": [0.52, 0.35, 0.22, 1]},
 
         # Left rusted pauldron
-        {"offset": [-0.32, 1.40, 0], "size": [0.24, 0.12, 0.20], "color": [0.52, 0.35, 0.22, 1],
+        {"name": "left_upper_arm",
+         "offset": [-0.32, 1.40, 0], "size": [0.24, 0.12, 0.20], "color": [0.52, 0.35, 0.22, 1],
          "pivot": [-0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
         # Left bone arm
-        {"offset": [-0.32, 1.10, 0], "size": [0.10, 0.52, 0.10], "color": [0.88, 0.85, 0.78, 1],
+        {"name": "left_forearm",
+         "offset": [-0.32, 1.10, 0], "size": [0.10, 0.52, 0.10], "color": [0.88, 0.85, 0.78, 1],
          "pivot": [-0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
         # Left hand
-        {"offset": [-0.32, 0.80, 0], "size": [0.12, 0.08, 0.08], "color": [0.70, 0.65, 0.58, 1],
+        {"name": "left_hand",
+         "offset": [-0.32, 0.80, 0], "size": [0.12, 0.08, 0.08], "color": [0.70, 0.65, 0.58, 1],
          "pivot": [-0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
         # Right bare bone arm
-        {"offset": [0.32, 1.10, 0], "size": [0.10, 0.52, 0.10], "color": [0.88, 0.85, 0.78, 1],
+        {"name": "right_forearm",
+         "offset": [0.32, 1.10, 0], "size": [0.10, 0.52, 0.10], "color": [0.88, 0.85, 0.78, 1],
          "pivot": [0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
         # Right hand
-        {"offset": [0.32, 0.80, 0], "size": [0.12, 0.08, 0.08], "color": [0.70, 0.65, 0.58, 1],
+        {"name": "right_hand",
+         "offset": [0.32, 0.80, 0], "size": [0.12, 0.08, 0.08], "color": [0.70, 0.65, 0.58, 1],
          "pivot": [0.32, 1.38, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
 
         # Shield fragment
@@ -77,5 +82,39 @@ model = {
         # Right foot
         {"offset": [0.12, 0.08, -0.04], "size": [0.14, 0.10, 0.22], "color": [0.70, 0.65, 0.58, 1],
          "pivot": [0.12, 0.66, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
-    ]
+    ],
+
+    # Shared humanoid clip vocabulary.
+    "clips": {
+        "attack": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+        },
+        "chop": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
+        },
+        "mine": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
+        },
+        "wave": {
+            "right_upper_arm": {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 2.0, "phase": 0},
+            "right_forearm":   {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 2.0, "phase": 0},
+            "right_hand":      {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 2.0, "phase": 0},
+        },
+        "dance": {
+            "right_upper_arm": {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.5, "phase": 0},
+            "right_forearm":   {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.5, "phase": 0},
+            "left_upper_arm":  {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.5, "phase": 0},
+            "left_forearm":    {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.5, "phase": 0},
+        },
+        "sleep": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
+            "left_upper_arm":  {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
+        },
+    },
 }

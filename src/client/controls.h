@@ -27,6 +27,7 @@ namespace Action {
 	constexpr const char* MenuBack     = "menu_back";
 	constexpr const char* DropItem     = "drop_item";
 	constexpr const char* EquipItem    = "equip_item";
+	constexpr const char* Dance        = "dance";
 }
 
 struct ActionBinding {

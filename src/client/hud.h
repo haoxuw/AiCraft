@@ -9,6 +9,7 @@
 #include "client/entity_raycast.h"
 #include "server/world.h"
 #include "shared/inventory.h"
+#include "client/hotbar.h"
 #include "client/gl.h"
 
 namespace modcraft {
@@ -18,6 +19,7 @@ struct HUDContext {
 	GameState state;
 	int selectedSlot;
 	const Inventory& inventory;
+	const Hotbar& hotbar;
 	const Camera& camera;
 	const BlockRegistry& blocks;
 	ChunkSource* chunkSource; // for debug block lookup (nullable)

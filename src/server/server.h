@@ -47,6 +47,10 @@ enum class ActionRejectCode : uint32_t {
 	UnknownBlockType          = 7,
 	ChunkNotLoaded            = 8,
 	PickupOutOfRange          = 9,
+	TargetEntityGone          = 10,
+	TargetHasNoInventory      = 11,
+	ActorHasNoInventory       = 12,
+	MissingItemId             = 13,
 };
 
 // Server-side callbacks — used by dedicated server (main_server.cpp) to broadcast
@@ -136,30 +140,32 @@ public:
 		auto vc = tmpl.villageCenter(m_world->seed());
 		float mobCX = (float)vc.x, mobCZ = (float)vc.y;
 
-		// Build mob list: prefer per-mob radius from template's Python config,
-		// fall back to wgc.mobs (which may have come from WorldGenConfig defaults or UI).
-		// If wgc.mobs is empty, use the template's Python config mobs.
+		// Build mob list from wgc.mobs (seeded from Python template by the GUI,
+		// possibly edited by the user). If empty (dedicated server, no GUI),
+		// fall back to the Python template's mob config directly.
 		std::vector<MobSpawn> mobList = wgc.mobs;
 		if (mobList.empty()) {
 			for (auto& mc : tmpl.pyConfig().mobs)
-				mobList.push_back({mc.type, mc.count, mc.radius});
+				mobList.push_back({mc.type, mc.count, mc.radius, mc.props});
 		}
 
-		auto spawnMob = [&](const std::string& typeId, int count, float radius, float baseOffset) {
-			for (int m = 0; m < count; m++) {
-				float angle = (float)m / (float)count * 6.28318f + baseOffset;
+		auto spawnMob = [&](const MobSpawn& ms, float baseOffset) {
+			float radius = (ms.radius > 0) ? ms.radius : wgc.mobSpawnRadius;
+			for (int m = 0; m < ms.count; m++) {
+				float angle = (float)m / (float)ms.count * 6.28318f + baseOffset;
 				float emx = mobCX + std::cos(angle) * radius;
 				float emz = mobCZ + std::sin(angle) * radius;
 
 				std::unordered_map<std::string, PropValue> extraProps;
-				auto bIt = wgc.behaviorOverrides.find(typeId);
+				for (auto& [k, v] : ms.props) extraProps[k] = v;
+				auto bIt = wgc.behaviorOverrides.find(ms.typeId);
 				if (bIt != wgc.behaviorOverrides.end())
 					extraProps[Prop::BehaviorId] = bIt->second;
 
-				EntityId eid = m_world->entities.spawn(typeId,
+				EntityId eid = m_world->entities.spawn(ms.typeId,
 					{emx, safeSpawnHeight(emx, emz), emz}, extraProps);
 
-				auto iIt = wgc.startingItems.find(typeId);
+				auto iIt = wgc.startingItems.find(ms.typeId);
 				if (iIt != wgc.startingItems.end()) {
 					Entity* e = m_world->entities.get(eid);
 					if (e && e->inventory) {
@@ -182,15 +188,13 @@ public:
 				if (c) c->set(((cx%16)+16)%16, ((cy%16)+16)%16, ((cz%16)+16)%16, chestId);
 			}
 			glm::vec3 blockCenter = {(float)cx + 0.5f, (float)cy + 0.5f, (float)cz + 0.5f};
+
+			// Spawn a Structure entity for this chest (owns the inventory)
+			EntityId chestEid = m_world->entities.spawn(StructureName::Chest, blockCenter, {});
 			m_houseChests.push_back(blockCenter);
-
-			// Register block inventory for this chest (keyed by block position)
-			uint64_t posKey = packBlockPos(cx, cy, cz);
-			m_blockInventories[posKey]; // default-construct empty inventory
-			printf("[Server] Chest at (%d,%d,%d)\n", cx, cy, cz);
+			m_houseChestEntities.push_back(chestEid);
+			printf("[Server] Chest entity %u at (%d,%d,%d)\n", chestEid, cx, cy, cz);
 		}
-		m_chestPos = m_houseChests.empty() ? m_spawnPos : m_houseChests[0];
-
 		// Spawn bed-assigned villagers: one per bed, home_x/home_z + chest_x/y/z set at spawn.
 		// This replaces the generic villager entry in mobList.
 		auto beds = tmpl.bedPositions(m_world->seed());
@@ -210,6 +214,14 @@ public:
 					extraProps["chest_x"] = m_houseChests[i].x;
 					extraProps["chest_y"] = m_houseChests[i].y;
 					extraProps["chest_z"] = m_houseChests[i].z;
+					extraProps["chest_entity_id"] = (int)m_houseChestEntities[i];
+				}
+				// Merge per-mob props from world config (e.g. speed_multiplier for testing)
+				for (auto& ms : mobList) {
+					if (ms.typeId == villagerType) {
+						for (auto& [k, v] : ms.props) extraProps[k] = v;
+						break;
+					}
 				}
 				m_world->entities.spawn(villagerType,
 					{bp.x, safeSpawnHeight(bp.x, bp.z), bp.z}, extraProps);
@@ -234,6 +246,7 @@ public:
 						float emx = (float)barnCtr.x + ((m % 3) - 1) * 4.0f;
 						float emz = (float)barnCtr.y + ((m / 3) - 1) * 4.0f;
 						std::unordered_map<std::string, PropValue> extraProps;
+						for (auto& [k, v] : ms.props) extraProps[k] = v;
 						auto bIt = wgc.behaviorOverrides.find(animalType);
 						if (bIt != wgc.behaviorOverrides.end())
 							extraProps[Prop::BehaviorId] = bIt->second;
@@ -249,8 +262,7 @@ public:
 
 		for (int i = 0; i < (int)mobList.size(); i++) {
 			if (mobList[i].count <= 0) continue;  // already spawned (barn animals)
-			float r = (mobList[i].radius > 0) ? mobList[i].radius : wgc.mobSpawnRadius;
-			spawnMob(mobList[i].typeId, mobList[i].count, r, (float)i);
+			spawnMob(mobList[i], (float)i);
 		}
 
 		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f  Chests: %zu houses\n",
@@ -290,7 +302,6 @@ public:
 					pe->inventory->add("base:shield", 1);
 					pe->inventory->add("base:potion", 3);
 				}
-				pe->inventory->autoPopulateHotbar();
 			}
 		}
 		m_clients[clientId] = {eid, false, {}};
@@ -298,7 +309,7 @@ public:
 		return eid;
 	}
 
-	// Add an agent client (no player entity — controls existing NPC entities).
+	// Add an agent client (no player entity — controls existing Creatures entities).
 	void addAgentClient(ClientId clientId) {
 		m_clients[clientId] = {ENTITY_NONE, true};
 		printf("[Server] Agent client %u joined.\n", clientId);
@@ -330,7 +341,7 @@ public:
 		                             it->second.controlledEntities.end());
 	}
 
-	// Get NPC entities that have a BehaviorId but no agent client.
+	// Get Creatures entities that have a BehaviorId but no agent client.
 	// Player entities are excluded — server handles their navigation directly.
 	std::vector<EntityId> getUncontrolledNPCs() const {
 		std::vector<EntityId> result;
@@ -491,7 +502,7 @@ public:
 
 		// Item pickup is CLIENT-INITIATED: clients send PickupItem actions.
 		// Server validates and executes in resolveActions().
-		// NPC pickup is handled by Python behavior → PickupItem action.
+		// Creatures pickup is handled by Python behavior → PickupItem action.
 
 		// HP regeneration: all Living entities regen +1 HP per tick (configurable interval)
 		m_regenTimer += dt;
@@ -627,15 +638,6 @@ public:
 	std::unordered_map<std::string, Inventory>& savedInventories() { return m_savedInventories; }
 	const std::unordered_map<std::string, Inventory>& savedInventories() const { return m_savedInventories; }
 
-	// Block inventories (chests) — keyed by packed block position
-	const std::unordered_map<uint64_t, Inventory>& blockInventories() const { return m_blockInventories; }
-
-	// Pack block coords into a key for blockInventories
-	static uint64_t packBlockPos(int x, int y, int z) {
-		return ((uint64_t)(uint32_t)x)
-		     | ((uint64_t)(uint32_t)y << 21)
-		     | ((uint64_t)(uint32_t)z << 42);
-	}
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
@@ -653,9 +655,8 @@ private:
 	float m_regenTimer = 0;
 	float m_hpRegenInterval = ServerTuning::hpRegenInterval;
 	glm::vec3 m_spawnPos = {30, 10, 30};
-	glm::vec3 m_chestPos = {30, 10, 30};
 	std::vector<glm::vec3> m_houseChests;                           // one per non-barn house
-	std::unordered_map<uint64_t, Inventory> m_blockInventories;     // packed(x,y,z) → inventory
+	std::vector<EntityId> m_houseChestEntities;                     // chest entity IDs (parallel to m_houseChests)
 	std::unordered_map<std::string, Inventory> m_savedInventories;  // character_skin → inventory
 
 	// Structure system

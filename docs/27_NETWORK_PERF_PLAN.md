@@ -299,8 +299,9 @@ C_RESYNC_CHUNK = 0x0007,  // client requests a chunk be re-sent: [i32 cx][i32 cy
 S_CHUNK_EVICT  = 0x100E,  // server tells client to discard a chunk: [i32 cx][i32 cy][i32 cz]
 ```
 
-(`C_RESYNC_CHUNK` is 0x0007; the previously planned `C_OPEN_CHEST` will use 0x0009 instead,
-since chest inventory is a later feature.)
+(`C_RESYNC_CHUNK` is 0x0007. Chest inventory was later implemented as
+Structure-entity `C_GET_INVENTORY` / `S_INVENTORY` — no chest-specific
+message IDs were ever consumed.)
 
 ### Step 1 — Track view distance and evict far chunks on the server
 

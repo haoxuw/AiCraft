@@ -6,7 +6,7 @@ Every creature in ModCraft has a behavior defined as a Python file. The behavior
 `decide()` method is called 4 times per second and returns `(action, goal_str)`.
 
 **Behaviors run on the agent CLIENT, not the server.**
-Each NPC has its own `modcraft-agent` process. The agent reads its `LocalWorld`
+Each Creatures has its own `modcraft-agent` process. The agent reads its `LocalWorld`
 cache (nearby entities, nearby blocks from loaded chunks), runs `decide()`, and
 sends the resulting `ActionProposal` over TCP. The server validates and executes.
 

@@ -16,7 +16,10 @@
 #include "server/python_bridge.h"
 #include "server/world_accessibility.h"
 #include "server/pathfind.h"
+#include "agent/block_search.h"
 #include "shared/constants.h"
+#include "shared/chunk.h"
+#include "shared/block_registry.h"
 #include <cstdio>
 #include <cmath>
 #include <string>
@@ -568,21 +571,17 @@ static std::string t17_player_not_stuck_with_obstacles() {
 }
 
 // ================================================================
-// T18: Inventory autoPopulateHotbar — slot 0 is usable
+// T18: Starting inventory has usable items (hotbar is a client-side concern)
 // ================================================================
 
-static std::string t18_hotbar_populated() {
+static std::string t18_starting_inventory_populated() {
 	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
 	Entity* p = srv->getEntity(pid);
 	if (!p || !p->inventory) return "no player or inventory";
 
-	// At least one hotbar slot should have an item
-	bool anyFilled = false;
-	for (int i = 0; i < 5; i++) {
-		if (!p->inventory->hotbar(i).empty()) { anyFilled = true; break; }
-	}
-	if (!anyFilled) return "all hotbar slots empty after autoPopulateHotbar";
+	if (p->inventory->distinctCount() == 0)
+		return "starting inventory is empty";
 	return "";
 }
 
@@ -972,13 +971,6 @@ static std::string t30_equip_item() {
 	if (!p || !p->inventory) return "no player/inventory";
 
 	if (!p->inventory->has("base:shield")) return "no shield in starting inventory";
-
-	// Find shield's hotbar slot
-	int shieldSlot = -1;
-	for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++) {
-		if (p->inventory->hotbar(i) == "base:shield") { shieldSlot = i; break; }
-	}
-	if (shieldSlot < 0) return "shield not in any hotbar slot";
 
 	// Equip shield to offhand
 	ActionProposal a;
@@ -1645,46 +1637,43 @@ static std::string b3_woodcutter_collects_and_deposits() {
 }
 
 // ================================================================
-// B4: Server StoreItem action transfers inventory to chest block
+// B4: Server StoreItem action transfers inventory to chest Structure entity
 // ================================================================
 static std::string b4_store_item_server_validation() {
     auto srv = makeVillageServer();
     auto* gs = srv->server();
 
-    // Find a villager with chest position props
+    // Find a villager with a chest_entity_id prop
     Entity* villager = nullptr;
-    glm::ivec3 chestPos = {0, 0, 0};
+    EntityId chestEid = ENTITY_NONE;
     srv->forEachEntity([&](Entity& e) {
         if (!villager && e.typeId() == "base:villager") {
-            float cx = e.getProp<float>("chest_x", -999.0f);
-            if (cx > -900) {
+            int eid = e.getProp<int>("chest_entity_id", 0);
+            if (eid > 0) {
                 villager = &e;
-                chestPos = {(int)std::floor(cx),
-                            (int)std::floor(e.getProp<float>("chest_y", 0.0f)),
-                            (int)std::floor(e.getProp<float>("chest_z", 0.0f))};
+                chestEid = (EntityId)eid;
             }
         }
     });
-    if (!villager) return "no villager with chest props found";
+    if (!villager) return "no villager with chest_entity_id prop found";
     if (!villager->inventory) return "villager has no inventory";
 
-    // Verify chest block exists at that position
-    BlockId bid = gs->world().getBlock(chestPos.x, chestPos.y, chestPos.z);
-    if (gs->world().blocks.get(bid).string_id != BlockType::Chest)
-        return "no chest block at (" + std::to_string(chestPos.x) + "," +
-               std::to_string(chestPos.y) + "," + std::to_string(chestPos.z) + ")";
+    // Resolve chest entity
+    Entity* chest = gs->world().entities.get(chestEid);
+    if (!chest) return "chest entity " + std::to_string(chestEid) + " not found";
+    if (!chest->inventory) return "chest entity has no inventory";
 
     // Give the villager some trunks
     villager->inventory->add("base:trunk", 3);
 
     // Teleport villager next to the chest
-    villager->position = glm::vec3(chestPos) + glm::vec3(1.5f, 0, 0);
+    villager->position = chest->position + glm::vec3(1.5f, 0, 0);
 
-    // Send Relocate(toBlock) — StoreItem now uses block position
+    // Send Relocate(to=Entity(chest)) — StoreItem deposits all items
     ActionProposal sp;
     sp.type = ActionProposal::Relocate;
     sp.actorId = villager->id();
-    sp.relocateTo = Container::block(chestPos);
+    sp.relocateTo = Container::entity(chestEid);
     srv->sendActionDirect(sp);
     srv->tick(1.0f / 60.0f);
 
@@ -1694,13 +1683,8 @@ static std::string b4_store_item_server_validation() {
         return "villager inventory not cleared after StoreItem (still has " +
                std::to_string(logsInInventory) + " base:trunk)";
 
-    // Verify chest block inventory received the items
-    uint64_t posKey = GameServer::packBlockPos(chestPos.x, chestPos.y, chestPos.z);
-    auto& blockInvs = gs->blockInventories();
-    auto it = blockInvs.find(posKey);
-    if (it == blockInvs.end())
-        return "no block inventory at chest position";
-    int logsInChest = it->second.count("base:trunk");
+    // Verify chest entity inventory received the items
+    int logsInChest = chest->inventory->count("base:trunk");
     if (logsInChest != 3)
         return "chest has " + std::to_string(logsInChest) + " trunks, expected 3";
 
@@ -1951,6 +1935,101 @@ class NavTestBehavior(Behavior):
         return "expected Move toward goal, got action type " +
                std::to_string((int)action.type) + " goal='" + goalOut + "'";
     return "";
+}
+
+// ================================================================
+// C2: block_search prefers the NEAREST non-empty chunk.
+//
+// Synthetic setup (no TestServer, no Python):
+//   - Near chunk A at ChunkPos{0,0,0} holding 1 trunk block (sparse)
+//   - Far chunk B at ChunkPos{3,0,0} holding 50 trunk blocks (rich)
+// After Phase 2 (distance-only sort + first-hit exit), run() must pick
+// the lone trunk in chunk A and never even load chunk B. A spy counter
+// on ensureChunkLoaded asserts chunk B was not accessed.
+// ================================================================
+static std::string c2_scan_blocks_prefers_nearest_chunk() {
+	BlockRegistry blocks;
+	BlockDef air;  air.string_id  = "base:air";  air.solid = false;
+	BlockDef trunk; trunk.string_id = "base:trunk";
+	blocks.registerBlock(air);    // id 0
+	BlockId trunkId = blocks.registerBlock(trunk);
+
+	using block_search::ChunkCensus;
+	std::unordered_map<ChunkPos, ChunkCensus, ChunkPosHash> census;
+	block_search::ChunkMap chunks;
+
+	auto makeChunk = [&]() { return std::make_unique<Chunk>(); };
+
+	// Near chunk A at (0,0,0) — 1 trunk at local (2,2,2).
+	ChunkPos cpA{0, 0, 0};
+	{
+		auto ch = makeChunk();
+		ch->set(2, 2, 2, trunkId);
+		chunks[cpA] = std::move(ch);
+		ChunkCensus ci;
+		ci.entries["base:trunk"] = {1};
+		census[cpA] = ci;
+	}
+
+	// Far chunk B at (3,0,0) — 50 trunks at local (lx,0,0) for lx in 0..49%16.
+	// Pack 50 trunks into a 16×16 y=0 layer.
+	ChunkPos cpB{3, 0, 0};
+	{
+		auto ch = makeChunk();
+		int placed = 0;
+		for (int lz = 0; lz < CHUNK_SIZE && placed < 50; lz++) {
+			for (int lx = 0; lx < CHUNK_SIZE && placed < 50; lx++) {
+				ch->set(lx, 0, lz, trunkId);
+				placed++;
+			}
+		}
+		chunks[cpB] = std::move(ch);
+		ChunkCensus ci;
+		ci.entries["base:trunk"] = {50};
+		census[cpB] = ci;
+	}
+
+	// Spy on ensureChunkLoaded so we can assert chunk B is never loaded.
+	std::vector<ChunkPos> loadSpy;
+	block_search::EnsureLoadedFn ensureLoaded =
+		[&](ChunkPos cp) { loadSpy.push_back(cp); };
+
+	// Origin right inside chunk A at world (2.5, 2.5, 2.5) — chunk A center
+	// is ~(8,8,8), chunk B center ~(56,8,8): B is ~53 blocks east.
+	block_search::Options opt;
+	opt.typeId       = "base:trunk";
+	opt.searchOrigin = {2.5f, 2.5f, 2.5f};
+	opt.maxDist      = 80.0f;
+	opt.maxResults   = 1;
+
+	auto results = block_search::run(opt, census, chunks, blocks, ensureLoaded);
+
+	if (results.empty())
+		return "no trunks found (the lone trunk in chunk A should have matched)";
+	if (results.size() != 1)
+		return "expected exactly 1 result, got " + std::to_string(results.size());
+
+	const auto& hit = results[0];
+	// Chunk A's trunk sits at local (2,2,2) → world (2,2,2). Chunk B starts
+	// at world x=48. The nearest-first search must pick chunk A.
+	if (hit.x >= 48)
+		return "expected nearest hit from chunk A (x<48), got x=" +
+		       std::to_string(hit.x) +
+		       " (distance-first sort/early-exit not working)";
+	if (hit.x != 2 || hit.y != 2 || hit.z != 2)
+		return "expected (2,2,2), got (" + std::to_string(hit.x) + "," +
+		       std::to_string(hit.y) + "," + std::to_string(hit.z) + ")";
+
+	// Chunk A is already in the chunk map, so ensureChunkLoaded should not
+	// have been called at all. In particular it must never have been asked
+	// to load chunk B — the whole point of the early-exit.
+	for (auto& cp : loadSpy) {
+		if (cp.x == 3 && cp.y == 0 && cp.z == 0)
+			return "ensureChunkLoaded was called for far chunk B — "
+			       "early-exit after first non-empty chunk failed";
+	}
+
+	return "";
 }
 
 // ================================================================
@@ -2434,7 +2513,7 @@ static std::string m03_rpg_click_to_move() {
 	return "";
 }
 
-// M4: RTS — Multi-Entity Movement (player + NPC toward different goals)
+// M4: RTS — Multi-Entity Movement (player + Creatures toward different goals)
 // Tests controlling multiple entities simultaneously.
 static std::string m04_rts_multi_entity() {
 	auto srv = makeVillageServer();
@@ -2453,14 +2532,14 @@ static std::string m04_rts_multi_entity() {
 		if (e.removed) return;
 		npcId = e.id();
 	});
-	if (npcId == ENTITY_NONE) return "no NPC found in village";
+	if (npcId == ENTITY_NONE) return "no Creatures found in village";
 
 	Entity* npc = srv->getEntity(npcId);
 	glm::vec3 playerStart = player->position;
 	glm::vec3 npcStart = npc->position;
 
-	// Move player east, NPC west (simultaneously)
-	// Use sendActionDirect for NPC (bypasses ownership — test simulates admin/agent)
+	// Move player east, Creatures west (simultaneously)
+	// Use sendActionDirect for Creatures (bypasses ownership — test simulates admin/agent)
 	float speed = 4.0f;
 	constexpr float dt = 1.0f / 60.0f;
 	for (int i = 0; i < 90; i++) {
@@ -2479,7 +2558,7 @@ static std::string m04_rts_multi_entity() {
 	if (playerMoved < 2.0f)
 		return "player didn't move east: " + std::to_string(playerMoved);
 	if (npcMoved < 2.0f)
-		return "NPC didn't move west: " + std::to_string(npcMoved);
+		return "Creatures didn't move west: " + std::to_string(npcMoved);
 
 	return "";
 }
@@ -2527,7 +2606,7 @@ int main() {
 	run("T17: player not stuck 600 ticks",        t17_player_not_stuck_with_obstacles);
 
 	printf("\n--- Inventory ---\n");
-	run("T18: hotbar populated on spawn",        t18_hotbar_populated);
+	run("T18: starting inventory populated",     t18_starting_inventory_populated);
 	run("T19: break+place deducts inventory",    t19_break_and_place_cycle);
 
 	printf("\n--- Spawn Integrity ---\n");
@@ -2573,6 +2652,10 @@ int main() {
 	run("B4: StoreItem transfers inventory to chest block",   b4_store_item_server_validation);
 	run("B5: pathfind.py module loads cleanly",              b5_pathfind_module_loads);
 	run("B6: Navigator returns MoveTo toward goal",          b6_navigator_returns_move_to_goal);
+
+	printf("\n--- Block Search ---\n");
+	run("C2: scan_blocks prefers nearest non-empty chunk",   c2_scan_blocks_prefers_nearest_chunk);
+
 	printf("\n--- Server Navigation ---\n");
 	run("NAV1: single entity walks to goal on flat ground",  nav1_single_entity_walks_to_goal);
 	run("NAV2: group formation assigns different goals",     nav2_group_formation);

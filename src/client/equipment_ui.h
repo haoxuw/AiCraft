@@ -4,7 +4,11 @@
  * Equipment & Inventory UI — Diablo-style dark panel with 3D item previews.
  *
  * Opened with [I] key. Features:
- *   - Left: character equipment slots (5 paper-doll slots)
+ *   - Left: character equipment slots (3 wear slots: armor, offhand, back).
+ *     The "main hand" is the hotbar-selected item, not a wear slot. The
+ *     offhand renders as two side-by-side boxes (left hand / right hand);
+ *     placing the offhand in one greys out the other and drives which
+ *     hand is shown holding it on screen.
  *   - Right: scrollable item grid with rotating isometric 3D models
  *   - Drag-and-drop between grid and equipment slots
  *   - Hover tooltip with item name + count
@@ -13,12 +17,17 @@
 
 #include "shared/inventory.h"
 #include "shared/block_registry.h"
+#include "shared/material_values.h"
 #include "client/box_model.h"
 #include "client/model_icon_cache.h"
+#include "client/inventory_visuals.h"
 #include <imgui.h>
 #include <string>
 #include <cmath>
 #include <unordered_map>
+#include <vector>
+#include <algorithm>
+#include <set>
 
 namespace modcraft {
 
@@ -84,16 +93,16 @@ public:
 			drawSectionHeader(dl, "EQUIPMENT");
 			ImGui::Spacing();
 
-			renderEquipSlot(dl, inventory, blocks, WearSlot::Helmet,    "Helmet",     "\xF0\x9F\xAA\x96");
+			renderEquipSlot(dl, inventory, blocks, WearSlot::Armor, "Armor", nullptr);
 			ImGui::Spacing();
 
-			// Offhand (shield, torch — left hand; right hand = hotbar item)
-			renderEquipSlot(dl, inventory, blocks, WearSlot::Offhand, "Offhand", nullptr);
+			// Offhand: two side-by-side boxes for left hand / right hand.
+			// One is active and holds the offhand item; the other is greyed
+			// out. Toggling moves the offhand to the other hand.
+			renderOffhandPair(dl, inventory, blocks);
 			ImGui::Spacing();
 
-			renderEquipSlot(dl, inventory, blocks, WearSlot::Body,      "Body",       nullptr);
-			ImGui::Spacing();
-			renderEquipSlot(dl, inventory, blocks, WearSlot::Back,      "Back",       nullptr);
+			renderEquipSlot(dl, inventory, blocks, WearSlot::Back, "Back", nullptr);
 		}
 		ImGui::EndChild();
 
@@ -114,6 +123,9 @@ public:
 			drawSectionHeader(dl, "ITEMS");
 			ImGui::Spacing();
 
+			renderViewToolbar();
+			ImGui::Spacing();
+
 			auto items = inventory.items();
 
 			// Grid layout
@@ -125,18 +137,10 @@ public:
 			if (items.empty()) {
 				ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 40);
 				ImGui::TextColored(ImVec4(0.40f, 0.38f, 0.35f, 1), "  No items.");
-			}
-
-			int col = 0;
-			for (auto& [id, count] : items) {
-				if (col > 0) ImGui::SameLine(0, gap);
-
-				ImGui::PushID(id.c_str());
-				renderItemCell(dl, inventory, blocks, id, count, cellSize);
-				ImGui::PopID();
-
-				col++;
-				if (col >= cols) col = 0;
+			} else if (m_sortMode == SortMode::Grid) {
+				renderGridView(dl, inventory, blocks, items, cellSize, gap, cols);
+			} else {
+				renderSortedList(dl, inventory, blocks, items, cellSize, gap, cols);
 			}
 		}
 		ImGui::EndChild();
@@ -158,103 +162,182 @@ public:
 	}
 
 private:
+	// Client-side view modes. Server only tracks {id → count}; these modes
+	// just change how the local player organizes that counter visually.
+	//   Name  — alphabetical by stripped display name
+	//   Value — descending total worth (count × material value)
+	//   Grid  — infinite slot grid the player can rearrange by drag-and-drop
+	enum class SortMode { Name, Value, Grid };
+
 	bool m_open = false;
 	float m_time = 0;
+	SortMode m_sortMode = SortMode::Name;
+	std::unordered_map<std::string, int> m_gridSlot; // id → slot index (Grid mode only)
 	std::string m_dragItem;     // item being dragged
 	std::string m_contextItem;  // for context menu
 	const std::unordered_map<std::string, BoxModel>* m_models = nullptr;
 	ModelIconCache* m_iconCache = nullptr;
 
-	glm::vec3 getItemColor(const std::string& id, const BlockRegistry& blocks) const {
-		if (m_models) {
-			std::string key = id;
-			auto colon = key.find(':');
-			if (colon != std::string::npos) key = key.substr(colon + 1);
-			auto it = m_models->find(key);
-			if (it != m_models->end() && !it->second.parts.empty()) {
-				auto& c = it->second.parts[0].color;
-				return {c.r, c.g, c.b};
-			}
-		}
-		const BlockDef* bdef = blocks.find(id);
-		if (bdef) return bdef->color_top;
-		return {0.5f, 0.6f, 0.75f};
-	}
-
-	// Draw a 3D model icon for an item, or fall back to isometric cube
+	// Draw a 3D model icon for an item, or fall back to isometric cube.
+	// Thin wrapper over inv_vis::drawItemIcon that injects this UI's models/time.
 	void drawItemIcon(ImDrawList* dl, const std::string& id, const BlockRegistry& blocks,
 	                   float x, float y, float size) {
-		// Try 3D model icon
-		if (m_models && m_iconCache) {
-			std::string key = id;
-			auto colon = key.find(':');
-			if (colon != std::string::npos) key = key.substr(colon + 1);
-			auto it = m_models->find(key);
-			if (it != m_models->end()) {
-				GLuint tex = m_iconCache->getIcon(key, it->second);
-				if (tex) {
-					dl->AddImage((ImTextureID)(intptr_t)tex,
-						{x, y}, {x + size, y + size}, {0, 1}, {1, 0});
-					return;
-				}
+		inv_vis::drawItemIcon(dl, id, blocks, m_models, m_iconCache, m_time, x, y, size);
+	}
+
+	void drawSectionHeader(ImDrawList* dl, const char* label) {
+		inv_vis::drawSectionHeader(dl, label);
+	}
+
+	// ── View-mode toolbar (Name / Value / Grid) ──
+	void renderViewToolbar() {
+		auto btn = [this](const char* label, SortMode mode) {
+			bool selected = (m_sortMode == mode);
+			if (selected) {
+				ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.38f, 0.30f, 0.13f, 1));
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.46f, 0.36f, 0.16f, 1));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.52f, 0.40f, 0.18f, 1));
+				ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.98f, 0.82f, 0.35f, 1));
+			} else {
+				ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.14f, 0.12f, 0.09f, 1));
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.18f, 0.12f, 1));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.28f, 0.22f, 0.14f, 1));
+				ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.70f, 0.65f, 0.55f, 1));
+			}
+			if (ImGui::Button(label, ImVec2(64, 22))) m_sortMode = mode;
+			ImGui::PopStyleColor(4);
+		};
+		btn("Name",  SortMode::Name);
+		ImGui::SameLine(0, 4);
+		btn("Value", SortMode::Value);
+		ImGui::SameLine(0, 4);
+		btn("Grid",  SortMode::Grid);
+	}
+
+	// Strip "base:" prefix for sorting/display.
+	static std::string stripPrefix(const std::string& s) {
+		return (s.size() > 5 && s.compare(0, 5, "base:") == 0) ? s.substr(5) : s;
+	}
+
+	// ── Sorted list view (Name or Value) ──
+	void renderSortedList(ImDrawList* dl, Inventory& inventory, const BlockRegistry& blocks,
+	                      std::vector<std::pair<std::string, int>>& items,
+	                      float cellSize, float gap, int cols) {
+		if (m_sortMode == SortMode::Name) {
+			std::sort(items.begin(), items.end(),
+				[](const auto& a, const auto& b) {
+					return stripPrefix(a.first) < stripPrefix(b.first);
+				});
+		} else { // Value
+			std::sort(items.begin(), items.end(),
+				[](const auto& a, const auto& b) {
+					float va = getMaterialValue(a.first) * a.second;
+					float vb = getMaterialValue(b.first) * b.second;
+					if (va != vb) return va > vb;
+					return a.first < b.first;
+				});
+		}
+
+		int col = 0;
+		for (auto& [id, count] : items) {
+			if (col > 0) ImGui::SameLine(0, gap);
+			ImGui::PushID(id.c_str());
+			renderItemCell(dl, inventory, blocks, id, count, cellSize, -1);
+			ImGui::PopID();
+			col++;
+			if (col >= cols) col = 0;
+		}
+	}
+
+	// ── Grid view: infinite slot grid, purely client-side organization ──
+	void renderGridView(ImDrawList* dl, Inventory& inventory, const BlockRegistry& blocks,
+	                    const std::vector<std::pair<std::string, int>>& items,
+	                    float cellSize, float gap, int cols) {
+		// 1. Drop stale slots (items removed from inventory).
+		std::set<std::string> liveIds;
+		for (const auto& [id, _] : items) liveIds.insert(id);
+		for (auto it = m_gridSlot.begin(); it != m_gridSlot.end(); ) {
+			if (!liveIds.count(it->first)) it = m_gridSlot.erase(it);
+			else ++it;
+		}
+
+		// 2. Assign new items to the lowest free slot.
+		std::set<int> used;
+		for (const auto& [_, s] : m_gridSlot) used.insert(s);
+		for (const auto& [id, _] : items) {
+			if (!m_gridSlot.count(id)) {
+				int s = 0;
+				while (used.count(s)) s++;
+				m_gridSlot[id] = s;
+				used.insert(s);
 			}
 		}
-		// Fallback: isometric cube with item color
-		glm::vec3 color = getItemColor(id, blocks);
-		drawIsoCube(dl, x + size * 0.5f, y + size * 0.4f, size * 0.34f,
-		            color, m_time, (int)(std::hash<std::string>{}(id) % 20));
+
+		// 3. Build slot → item map and find highest used slot.
+		std::unordered_map<int, std::string> slotToItem;
+		std::unordered_map<std::string, int> countById;
+		int maxSlot = -1;
+		for (const auto& [id, s] : m_gridSlot) {
+			slotToItem[s] = id;
+			if (s > maxSlot) maxSlot = s;
+		}
+		for (const auto& [id, cnt] : items) countById[id] = cnt;
+
+		// 4. Render cells up to one padding row past the highest used slot.
+		int totalSlots = maxSlot + 1 + cols;               // extra padding row
+		totalSlots = ((totalSlots + cols - 1) / cols) * cols; // round up to full row
+
+		for (int slot = 0; slot < totalSlots; slot++) {
+			int col = slot % cols;
+			if (col > 0) ImGui::SameLine(0, gap);
+
+			ImGui::PushID(slot);
+			auto it = slotToItem.find(slot);
+			if (it != slotToItem.end()) {
+				renderItemCell(dl, inventory, blocks, it->second,
+				               countById[it->second], cellSize, slot);
+			} else {
+				renderEmptyGridCell(dl, slot, cellSize);
+			}
+			ImGui::PopID();
+		}
 	}
 
-	// ── Draw section header with gold line ──
-	void drawSectionHeader(ImDrawList* dl, const char* label) {
+	// ── Empty cell in Grid view — just a drop target for rearranging ──
+	void renderEmptyGridCell(ImDrawList* dl, int slot, float cellSize) {
 		ImVec2 pos = ImGui::GetCursorScreenPos();
-		float w = ImGui::GetContentRegionAvail().x;
-		dl->AddText(ImGui::GetFont(), 15.0f, {pos.x + 4, pos.y},
-			IM_COL32(180, 150, 70, 220), label);
-		dl->AddLine({pos.x, pos.y + 18}, {pos.x + w, pos.y + 18},
-			IM_COL32(70, 56, 30, 120));
-		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 24);
-	}
+		ImU32 cellBg     = IM_COL32(10,  9,  7, 140);
+		ImU32 cellBorder = IM_COL32(40, 32, 20, 100);
+		dl->AddRectFilled(pos, {pos.x + cellSize, pos.y + cellSize}, cellBg, 4.0f);
+		dl->AddRect      (pos, {pos.x + cellSize, pos.y + cellSize}, cellBorder, 4.0f);
 
-	// ── Isometric rotating cube (same technique as hotbar) ──
-	void drawIsoCube(ImDrawList* dl, float cx, float cy, float sz,
-	                  glm::vec3 c, float time, int slotIdx, float alpha = 1.0f) {
-		float angle = time * 0.8f + slotIdx * 0.5f;
-		float ca = std::cos(angle), sa = std::sin(angle);
-		ImVec2 proj[8];
-		float corners[8][3] = {
-			{-1,-1,-1},{1,-1,-1},{1,-1,1},{-1,-1,1},
-			{-1, 1,-1},{1, 1,-1},{1, 1,1},{-1, 1,1},
-		};
-		for (int v = 0; v < 8; v++) {
-			float rx = corners[v][0]*ca - corners[v][2]*sa;
-			float rz = corners[v][0]*sa + corners[v][2]*ca;
-			float ry = corners[v][1];
-			proj[v] = {cx + (rx - rz) * sz * 0.5f,
-			           cy - (rx + rz) * sz * 0.25f - ry * sz * 0.5f};
+		ImGui::InvisibleButton("##empty", ImVec2(cellSize, cellSize));
+		bool hovered = ImGui::IsItemHovered();
+		if (hovered) {
+			dl->AddRect(pos, {pos.x + cellSize, pos.y + cellSize},
+				IM_COL32(120, 100, 40, 140), 4.0f, 0, 1.5f);
 		}
 
-		int a255 = (int)(alpha * 230);
-		auto drawFace = [&](int a, int b, int d, int e, float shade) {
-			ImVec2 pts[] = {proj[a], proj[b], proj[d], proj[e]};
-			ImU32 col = IM_COL32(
-				(int)(c.r*shade*255), (int)(c.g*shade*255), (int)(c.b*shade*255), a255);
-			dl->AddConvexPolyFilled(pts, 4, col);
-			dl->AddPolyline(pts, 4, IM_COL32(0, 0, 0, (int)(alpha * 60)), true, 1.0f);
-		};
-
-		drawFace(7, 6, 5, 4, 1.0f); // top
-		float nx_r = ca + sa;
-		float nx_f = -sa + ca;
-		if (nx_r > 0) drawFace(1, 2, 6, 5, 0.70f);
-		else          drawFace(3, 0, 4, 7, 0.70f);
-		if (nx_f > 0) drawFace(2, 3, 7, 6, 0.82f);
-		else          drawFace(0, 1, 5, 4, 0.82f);
+		if (ImGui::BeginDragDropTarget()) {
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GRID_SLOT")) {
+				int srcSlot = *(const int*)payload->Data;
+				if (srcSlot != slot) {
+					// Move the item occupying srcSlot into this empty slot.
+					for (auto& [iid, s] : m_gridSlot) {
+						if (s == srcSlot) { s = slot; break; }
+					}
+				}
+				m_dragItem.clear();
+			}
+			ImGui::EndDragDropTarget();
+		}
 	}
 
 	// ── Render a single item cell in the grid ──
+	// gridSlot >= 0  → Grid mode: drag/drop carries slot index for swap/move
+	// gridSlot == -1 → Name/Value mode: standard "ITEM" payload (no positional meaning)
 	void renderItemCell(ImDrawList* dl, Inventory& inv, const BlockRegistry& blocks,
-	                     const std::string& id, int count, float cellSize) {
+	                     const std::string& id, int count, float cellSize, int gridSlot = -1) {
 		const BlockDef* bdef = blocks.find(id);
 		glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
 
@@ -307,16 +390,37 @@ private:
 			m_dragItem = id;
 		}
 		if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
-			ImGui::SetDragDropPayload("ITEM", id.c_str(), id.size() + 1);
+			if (gridSlot >= 0) {
+				// Grid mode: carry slot index so the drop target can swap positions.
+				ImGui::SetDragDropPayload("GRID_SLOT", &gridSlot, sizeof(int));
+			} else {
+				ImGui::SetDragDropPayload("ITEM", id.c_str(), id.size() + 1);
+			}
 			// Custom preview drawn in render() as dragged item
 			m_dragItem = id;
 			ImGui::EndDragDropSource();
 		}
 
-		// ── Drop target (swap items in inventory — no-op for counter model) ──
+		// ── Drop target ──
 		if (ImGui::BeginDragDropTarget()) {
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ITEM")) {
+			if (ImGui::AcceptDragDropPayload("ITEM")) {
 				// Dropped an item onto another item cell — no action needed for counter-based inventory
+			}
+			if (gridSlot >= 0) {
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GRID_SLOT")) {
+					int srcSlot = *(const int*)payload->Data;
+					if (srcSlot != gridSlot) {
+						// Swap the two items' slot positions.
+						std::string srcId, dstId;
+						for (auto& [iid, s] : m_gridSlot) {
+							if (s == srcSlot)      srcId = iid;
+							else if (s == gridSlot) dstId = iid;
+						}
+						if (!srcId.empty()) m_gridSlot[srcId] = gridSlot;
+						if (!dstId.empty()) m_gridSlot[dstId] = srcSlot;
+					}
+					m_dragItem.clear();
+				}
 			}
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("EQUIP")) {
 				// Dragged from equip slot → unequip
@@ -345,14 +449,16 @@ private:
 			ImGui::TextColored(ImVec4(0.90f, 0.78f, 0.35f, 1), "%s", dispName.c_str());
 			ImGui::Separator();
 
-			if (ImGui::MenuItem("Equip Left Hand"))
+			if (ImGui::MenuItem("Equip Armor"))
+				inv.equip(WearSlot::Armor, m_contextItem);
+			if (ImGui::MenuItem("Equip Offhand (Left)")) {
+				inv.setOffhandInRightHand(false);
 				inv.equip(WearSlot::Offhand, m_contextItem);
-			if (ImGui::MenuItem("Equip Right Hand"))
-				inv.equip(WearSlot::RightHand, m_contextItem);
-			if (ImGui::MenuItem("Equip Helmet"))
-				inv.equip(WearSlot::Helmet, m_contextItem);
-			if (ImGui::MenuItem("Equip Body"))
-				inv.equip(WearSlot::Body, m_contextItem);
+			}
+			if (ImGui::MenuItem("Equip Offhand (Right)")) {
+				inv.setOffhandInRightHand(true);
+				inv.equip(WearSlot::Offhand, m_contextItem);
+			}
 			if (ImGui::MenuItem("Equip Back"))
 				inv.equip(WearSlot::Back, m_contextItem);
 			ImGui::Separator();
@@ -493,6 +599,165 @@ private:
 			if (!name.empty()) name[0] = (char)toupper(name[0]);
 			ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.38f, 1), "%s", name.c_str());
 			ImGui::TextColored(ImVec4(0.50f, 0.48f, 0.42f, 1), "Slot: %s", label);
+			ImGui::EndTooltip();
+			ImGui::PopStyleVar();
+			ImGui::PopStyleColor();
+		}
+
+		ImGui::PopID();
+	}
+
+	// ── Offhand: paired left/right hand boxes ──
+	// Renders two side-by-side mini-slots. Whichever side is "active"
+	// holds the offhand item; the other is greyed out. Clicking the
+	// inactive side moves the item there (toggles which hand displays it).
+	void renderOffhandPair(ImDrawList* dl, Inventory& inv, const BlockRegistry& blocks) {
+		const auto& itemId = inv.equipped(WearSlot::Offhand);
+		bool hasItem = !itemId.empty();
+		bool rightActive = inv.offhandInRightHand();
+
+		float totalW = ImGui::GetContentRegionAvail().x - 4;
+		float gap = 6;
+		float boxW = (totalW - gap) * 0.5f;
+		float slotH = 68;
+
+		// Left box first (visual order: L | R, matching the player's POV).
+		ImVec2 startCursor = ImGui::GetCursorScreenPos();
+
+		ImGui::PushID("OffhandPair");
+		// LEFT
+		renderOffhandHalf(dl, inv, blocks, /*isRightHand=*/false,
+		                  hasItem, rightActive, itemId, boxW, slotH);
+		ImGui::SameLine(0, gap);
+		// RIGHT
+		renderOffhandHalf(dl, inv, blocks, /*isRightHand=*/true,
+		                  hasItem, rightActive, itemId, boxW, slotH);
+		ImGui::PopID();
+		(void)startCursor;
+	}
+
+	void renderOffhandHalf(ImDrawList* dl, Inventory& inv, const BlockRegistry& blocks,
+	                        bool isRightHand, bool hasItem, bool rightActive,
+	                        const std::string& itemId, float slotW, float slotH) {
+		bool isActive = hasItem && (isRightHand == rightActive);
+		bool isInactive = hasItem && !isActive;
+		const char* label = isRightHand ? "Right Hand" : "Left Hand";
+
+		ImGui::PushID(isRightHand ? "R" : "L");
+		ImVec2 pos = ImGui::GetCursorScreenPos();
+
+		// Background
+		ImU32 bg, border;
+		if (isActive) {
+			bg = IM_COL32(22, 20, 16, 230);
+			border = IM_COL32(120, 100, 45, 200);
+		} else if (isInactive) {
+			// Greyed out — shows as disabled because the item is in the other hand
+			bg = IM_COL32(10, 9, 7, 160);
+			border = IM_COL32(35, 30, 22, 110);
+		} else {
+			// Empty — accept drop
+			bg = IM_COL32(14, 12, 10, 200);
+			border = IM_COL32(45, 38, 25, 140);
+		}
+		dl->AddRectFilled(pos, {pos.x + slotW, pos.y + slotH}, bg, 5.0f);
+		dl->AddRect(pos, {pos.x + slotW, pos.y + slotH}, border, 5.0f);
+
+		// Click target
+		if (ImGui::InvisibleButton("##offhand_half", ImVec2(slotW, slotH))) {
+			if (isActive) {
+				// Click active hand → unequip
+				inv.unequip(WearSlot::Offhand);
+			} else if (isInactive) {
+				// Click inactive (greyed) hand → toggle which hand holds it
+				inv.setOffhandInRightHand(isRightHand);
+			}
+		}
+		bool hovered = ImGui::IsItemHovered();
+
+		if (hovered && (isActive || !hasItem)) {
+			dl->AddRect(pos, {pos.x + slotW, pos.y + slotH},
+				IM_COL32(200, 165, 55, 140), 5.0f, 0, 2.0f);
+		} else if (hovered && isInactive) {
+			dl->AddRect(pos, {pos.x + slotW, pos.y + slotH},
+				IM_COL32(120, 100, 60, 120), 5.0f, 0, 1.5f);
+		}
+
+		// Content
+		if (isActive) {
+			drawItemIcon(dl, itemId, blocks, pos.x + 6, pos.y + 6, slotH - 12);
+			std::string name = itemId;
+			if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
+			if (!name.empty()) name[0] = (char)toupper(name[0]);
+			dl->AddText(ImGui::GetFont(), 12.0f, {pos.x + slotH - 6, pos.y + 10},
+				IM_COL32(200, 185, 140, 255), name.c_str());
+			dl->AddText(ImGui::GetFont(), 10.0f, {pos.x + slotH - 6, pos.y + 26},
+				IM_COL32(100, 90, 65, 180), label);
+		} else if (isInactive) {
+			// Faint icon shadow showing the item lives in the other hand
+			drawItemIcon(dl, itemId, blocks, pos.x + 6, pos.y + 6, slotH - 12);
+			dl->AddRectFilled(pos, {pos.x + slotW, pos.y + slotH},
+				IM_COL32(0, 0, 0, 130), 5.0f);
+			dl->AddText(ImGui::GetFont(), 10.0f, {pos.x + 8, pos.y + slotH - 16},
+				IM_COL32(110, 95, 60, 180), label);
+		} else {
+			dl->AddText(ImGui::GetFont(), 12.0f, {pos.x + 8, pos.y + (slotH - 12) * 0.5f},
+				IM_COL32(60, 55, 42, 160), label);
+		}
+
+		// Drag source (from active half)
+		if (isActive && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
+			int idx = (int)WearSlot::Offhand;
+			ImGui::SetDragDropPayload("EQUIP", &idx, sizeof(int));
+			m_dragItem = itemId;
+			ImGui::EndDragDropSource();
+		}
+
+		// Drop target — accept item and bind to this hand
+		if (ImGui::BeginDragDropTarget()) {
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ITEM")) {
+				std::string droppedId((const char*)payload->Data);
+				inv.setOffhandInRightHand(isRightHand);
+				inv.equip(WearSlot::Offhand, droppedId);
+				m_dragItem.clear();
+			}
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("EQUIP")) {
+				int fromIdx = *(const int*)payload->Data;
+				WearSlot fromSlot = (WearSlot)fromIdx;
+				if (fromSlot == WearSlot::Offhand) {
+					// Same item, just switching hands
+					inv.setOffhandInRightHand(isRightHand);
+				} else {
+					std::string fromItem = inv.equipped(fromSlot);
+					std::string toItem = inv.equipped(WearSlot::Offhand);
+					inv.unequip(fromSlot);
+					if (!toItem.empty()) inv.unequip(WearSlot::Offhand);
+					inv.setOffhandInRightHand(isRightHand);
+					if (!fromItem.empty()) inv.equip(WearSlot::Offhand, fromItem);
+					if (!toItem.empty()) inv.equip(fromSlot, toItem);
+				}
+				m_dragItem.clear();
+			}
+			ImGui::EndDragDropTarget();
+		}
+
+		// Tooltip
+		if (hovered && m_dragItem.empty()) {
+			ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.08f, 0.07f, 0.05f, 0.95f));
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 6));
+			ImGui::BeginTooltip();
+			if (isActive) {
+				std::string name = itemId;
+				if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
+				if (!name.empty()) name[0] = (char)toupper(name[0]);
+				ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.38f, 1), "%s", name.c_str());
+				ImGui::TextColored(ImVec4(0.50f, 0.48f, 0.42f, 1), "Slot: Offhand (%s)", label);
+				ImGui::TextColored(ImVec4(0.45f, 0.43f, 0.38f, 0.8f), "Click to unequip");
+			} else if (isInactive) {
+				ImGui::TextColored(ImVec4(0.55f, 0.50f, 0.40f, 1), "Move offhand here");
+			} else {
+				ImGui::TextColored(ImVec4(0.55f, 0.50f, 0.40f, 1), "Offhand: %s", label);
+			}
 			ImGui::EndTooltip();
 			ImGui::PopStyleVar();
 			ImGui::PopStyleColor();

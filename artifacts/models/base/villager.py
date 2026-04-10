@@ -163,6 +163,16 @@ model = {
     # AnimState.time so clips animate even when the entity is standing still.
     "clips": {
 
+        # "attack" — generic melee swing: right arm lunges forward fast.
+        # Used by humanoid creatures when attacking. Held items inherit
+        # the swing because they're anchored at the right_hand frame.
+        "attack": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "torso":           {"axis": [0, 1, 0], "amp": 10, "speed": 3.0, "phase": 0},
+        },
+
         # "chop" — woodcutter axe swing: right arm lifts high then chops down.
         # bias holds the arm up at shoulder height so the sinusoid oscillates
         # *around* a raised position (not the T-pose rest).

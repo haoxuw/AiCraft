@@ -5,6 +5,7 @@
 #include "client/code_editor.h"
 #include "client/behavior_editor.h"
 #include "client/equipment_ui.h"
+#include "client/chest_ui.h"
 #include "shared/artifact_registry.h"
 #include "shared/server_interface.h"
 #include "server/behavior_store.h"
@@ -22,6 +23,7 @@
 #include "client/model_icon_cache.h"
 #include "client/floating_text.h"
 #include "client/attack_anim.h"
+#include "client/hotbar.h"
 #include "client/ui.h"
 #include "client/audio.h"
 #include "development/debug_capture.h"
@@ -107,10 +109,12 @@ private:
 	CodeEditor                  m_codeEditor;
 	BehaviorEditorState         m_inspectEditor; // visual behavior tree for entity inspect
 	EquipmentUI                 m_equipUI;
+	ChestUI                     m_chestUI;
 	BehaviorStore               m_behaviorStore;
 	ImGuiMenu                   m_imguiMenu;
 	ArtifactRegistry            m_artifacts;
 	HUD                         m_hud;
+	Hotbar                      m_hotbar; // client-only 10-slot view over player inventory
 
 	// Player entity (from server)
 	Entity* playerEntity() {
@@ -179,6 +183,9 @@ private:
 	AudioManager m_audio;
 	float m_creatureSoundTimer = 3.0f;
 
+	// Creatures proximity detection — periodically send nearby Creatures IDs to server
+	float m_proximityTimer = 0.0f;
+
 	// Items the client has sent a PickupItem request for — hidden from rendering immediately
 	std::unordered_set<EntityId> m_pendingPickups;
 
@@ -237,6 +244,11 @@ private:
 	ModelIconCache m_iconCache;
 	float m_playerWalkDist = 0;
 	float m_globalTime = 0;
+
+	// Local-player named animation clip (dance, wave, ...). Empty = default
+	// walk/idle. Toggled by keybinds (C = dance) and cleared automatically
+	// when the player starts moving so the walk cycle takes over.
+	std::string m_playerClip;
 };
 
 } // namespace modcraft

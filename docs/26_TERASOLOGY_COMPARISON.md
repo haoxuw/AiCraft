@@ -73,7 +73,7 @@ Terasology source: `ref/Terasology/` (cloned from github.com/MovingBlocks/Teraso
 | **Ownership** | `EntityInfoComponent.owner`; client can own player entity | `m_entityOwner` map; server owns everything |
 | **Client prediction** | Yes: `ClientCharacterPredictionSystem` (circular input buffer, 128 frames) | No: pure server-authoritative |
 | **Lag compensation** | Yes: `@ServerEvent(lagCompensate=true)` rewinds state | No |
-| **NPC ownership** | Server-owned (RELEVANT replication) | Agent client process per NPC |
+| **Creatures ownership** | Server-owned (RELEVANT replication) | Agent client process per Creatures |
 | **Entity interpolation** | Yes (position interpolated between snapshots) | No (teleport on update) |
 
 **Terasology pros:** Client prediction makes player movement feel instant at any latency. Without it, 100ms ping causes visible input lag. Field-level replication reduces bandwidth — if only HP changes, only HP is sent, not the full entity.
@@ -118,29 +118,29 @@ However, **for the chest/bed placement**, consider batching two `S_BLOCK` update
 |-----------|-----------|---------|
 | **Model** | Slot grid: container entity with item child entities | Counter map: `item_id → count` |
 | **Wire format** | Component replication (`@Replicate stackCount`) | Full inventory dump `S_INVENTORY` on every change |
-| **Container (chest)** | Container entity; `InventoryComponent`; event-based open | Not yet implemented |
-| **Chest sync** | All viewers get component updates automatically | Plan: `S_CHEST_OPEN` targeted to opener only |
+| **Container (chest)** | Container entity; `InventoryComponent`; event-based open | Structure entity with `has_inventory=true`, shares `S_INVENTORY` path |
+| **Chest sync** | All viewers get component updates automatically | `S_INVENTORY` broadcast on every change — any client with the entity stays in sync |
 | **Item as entity** | Yes: each item stack is a networked entity with components | No: items are just string IDs in a map |
 | **Drop → world** | Spawn item entity with `ItemComponent` | Spawn item entity with `ItemType` property |
-| **Slot drag-drop** | `MoveItemRequest` event; server validates, replaces | Plan: `C_CHEST_MOVE` with explicit direction |
+| **Slot drag-drop** | `MoveItemRequest` event; server validates, replaces | `Relocate` action with `Container::self()` ↔ `Container::entity(eid)` |
 
 **Terasology pros:** Items-as-entities means item enchantments, durability, NBT data, etc., all fall out of the component system. No special cases. Container inventories are automatically replicated to viewers.
 
 **AiCraft pros:** Counter model is dead simple — perfect for a game where items don't have per-instance state. No entity spawning overhead for inventory manipulation.
 
-**Lesson for AiCraft:** The current counter model is correct for AiCraft. The planned `S_CHEST_OPEN` → `C_CHEST_MOVE` → `S_INVENTORY` + `S_CHEST_OPEN` pattern is clean and sufficient. One refinement from Terasology: **track all chest viewers in `m_chestViewers`** so any server-side inventory change (mob looting a chest, world-gen drop) also pushes updated `S_CHEST_OPEN` to all open viewers, not just the last actor.
+**Lesson for AiCraft (applied):** AiCraft achieves Terasology's "replicated to all viewers" property by broadcasting `S_INVENTORY` to all clients on every inventory change. No per-chest viewer tracking is needed — the broadcast itself does the job, and chest inventories ride the *same* wire format as player inventories because chests are just Structure entities.
 
 ---
 
-## 7. AI / NPC Architecture
+## 7. AI / Creatures Architecture
 
 | Dimension | Terasology | AiCraft |
 |-----------|-----------|---------|
-| **Where AI runs** | Server-side, same process, same JVM | Separate OS process per NPC |
+| **Where AI runs** | Server-side, same process, same JVM | Separate OS process per Creatures |
 | **AI model** | Behavior tree (XML-defined, `BehaviorSystem`) | Python `decide()` function at 4 Hz |
 | **Language** | Java behavior node classes | Python scripts (hot-swappable) |
 | **Frequency** | Every server tick | 4 Hz decide; 50 Hz action replay |
-| **Crash isolation** | NPC AI crash = server exception (needs try/catch) | Agent crash = server sees disconnection; NPC freezes; new agent spawned |
+| **Crash isolation** | Creatures AI crash = server exception (needs try/catch) | Agent crash = server sees disconnection; Creatures freezes; new agent spawned |
 | **Hot-reload** | Runtime BehaviorTree asset update | `C_RELOAD_BEHAVIOR` message with new Python source |
 | **World view** | Full server world access (same memory) | Partial: only `S_ENTITY` + `S_CHUNK` received via TCP |
 | **Action latency** | Zero (immediate) | ~1 tick (TCP round-trip to localhost) |
@@ -183,7 +183,7 @@ However, **for the chest/bed placement**, consider batching two `S_BLOCK` update
 | LZ4 chunk compression | **Yes** | Compress `S_CHUNK` payload only; add `zstd` or `lz4` to `net_socket.h` |
 | Atomic multi-block S_BLOCK | **Yes** | Add `onMultiBlockChange(vector<BlockChange>)` to `ServerCallbacks` for bed/door placement |
 | Chunk invalidation message | **Yes (small)** | Add `C_RESYNC_CHUNK` + server resends single chunk on request |
-| `m_chestViewers` push model | **Yes** | Track viewers, push `S_CHEST_OPEN` to all on any chest inventory change |
+| Per-viewer chest sync | **Done (differently)** | Chests are Structure entities; `S_INVENTORY` broadcasts on every change keep all clients in sync without a viewer set |
 | Client position interpolation | **Later** | Low priority; needed for WAN multi-player |
 | Client-side prediction | **No** | Adds complexity; not needed for AiCraft's scope |
 | Protobuf serialization | **No** | Overkill; AiCraft's hand-written binary is fine at current scale |
@@ -203,10 +203,11 @@ Terasology's patterns directly inform three changes to `docs/25_MULTI_BLOCK_OBJE
    Use this for bed placement (2 blocks), door placement, and any future N-block atomic change.
    This prevents the client from seeing a half-placed bed even for a single network tick.
 
-2. **Chest viewer push** (from Terasology's component replication to all owners):
-   `m_chestViewers: unordered_map<BlockStateKey, unordered_set<ClientId>>`.
-   Any server-side chest inventory change pushes `S_CHEST_OPEN` to all current viewers,
-   not just the last actor. Consistent with how `S_ENTITY` is pushed to all in range.
+2. **Chest viewer push** — *achieved without per-chest bookkeeping*:
+   Chests became Structure entities with `has_inventory=true`. `S_INVENTORY`
+   is already broadcast on every inventory change, so any client currently
+   viewing a chest entity stays in sync automatically — no `m_chestViewers`
+   map required.
 
 3. **World-gen param2 discipline** (from Terasology's structure generation):
    World gen code in `world_template.h` must set correct param2 on both halves of every

@@ -39,4 +39,11 @@ namespace modcraft::ServerTuning {
 	constexpr float tickRate             = 1.0f / 60.0f;  // 60 tps
 	constexpr float broadcastInterval    = 0.05f;          // 20 Hz — agents need fresh position for behavior decisions
 	constexpr float statusLogInterval    = 5.0f;           // seconds between status prints
+
+	// Decision queue (agent-side scheduling, constants here for single source of truth)
+	constexpr float defaultDecideDuration  = 0.25f;   // seconds — default when Python returns 2-tuple
+	constexpr int   maxDecidesPerTick      = 50;       // per-tick budget cap (at 50 Hz → 2500 decide/s)
+	constexpr float decisionSweepInterval  = 5.0f;     // seconds between orphan-detection sweeps
+	constexpr float proximityRadius        = 16.0f;    // blocks: player client Creatures proximity detection
+	constexpr float proximityCheckInterval = 0.5f;     // seconds: how often GUI client scans for nearby NPCs
 }

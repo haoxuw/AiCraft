@@ -47,6 +47,12 @@ class ImGuiMenu {
 public:
 	void init(const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		m_templates = templates;
+		// Seed mob list from default template's Python config
+		if (m_selectedTemplate < (int)m_templates.size()) {
+			m_worldGenConfig.mobs.clear();
+			for (auto& mc : m_templates[m_selectedTemplate]->pyConfig().mobs)
+				m_worldGenConfig.mobs.push_back({mc.type, mc.count, mc.radius, mc.props});
+		}
 		m_worldMgr.setSavesDir("saves");
 		m_worldMgr.refresh();
 #ifndef __EMSCRIPTEN__
@@ -573,8 +579,15 @@ private:
 					ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "%s",
 						m_templates[i]->description().c_str());
 				}
-				if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0))
-					m_selectedTemplate = i;
+				if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
+					if (m_selectedTemplate != i) {
+						m_selectedTemplate = i;
+						// Seed mob list from template's Python config
+						m_worldGenConfig.mobs.clear();
+						for (auto& mc : m_templates[i]->pyConfig().mobs)
+							m_worldGenConfig.mobs.push_back({mc.type, mc.count, mc.radius, mc.props});
+					}
+				}
 				ImGui::EndChild();
 				ImGui::PopStyleColor();
 				ImGui::Spacing();
@@ -594,6 +607,12 @@ private:
 					if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
 					ImGui::SliderInt(label.c_str(), &mob.count, 0, 20);
 				}
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Gameplay");
+				ImGui::SliderFloat("Pickup Range", &m_worldGenConfig.pickupRange, 0.5f, 30.0f, "%.1f blocks");
+				ImGui::TextDisabled("  Max distance any entity can pick up items.");
+				ImGui::SliderFloat("Store Range",  &m_worldGenConfig.storeRange,  1.0f, 10.0f, "%.1f blocks");
+				ImGui::TextDisabled("  Max distance to store/take items from a chest or entity.");
 				ImGui::Unindent(16);
 			}
 
@@ -976,6 +995,8 @@ private:
 				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "Items");
 				ImGui::SliderFloat("Max Pickup Range", &m_worldGenConfig.pickupRange, 0.5f, 30.0f, "%.1f blocks");
 				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "  (Server-wide cap. Villagers need ~16 to pick up logs from tall trees.)");
+				ImGui::SliderFloat("Max Store Range",  &m_worldGenConfig.storeRange,  1.0f, 10.0f, "%.1f blocks");
+				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "  (Max distance to store/take from a chest or entity inventory.)");
 				ImGui::Text("Despawn Time: 300s");
 				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.32f, 1), "TNT");

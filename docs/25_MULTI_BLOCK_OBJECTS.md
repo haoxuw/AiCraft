@@ -106,58 +106,54 @@ Breaking either half: read `CompanionDir` from param2 → compute partner positi
 
 ---
 
-## Chests — Storage Blocks
+## Chests — Structure Entities
 
 ### Overview
 
-`base:chest` is a single-block storage object (no companion block needed). On
-right-click (`Interact` action), the server sends the chest's inventory to
-the requesting client. The client shows a UI panel alongside the player inventory
-where items can be moved in either direction.
+`base:chest` is rendered as a single block in the world, but its *inventory* is
+owned by a `Structure` entity spawned alongside the block. Chests reuse the
+same inventory plumbing as living entities — no chest-specific wire messages,
+no block-keyed inventory storage.
+
+The flow is:
+
+1. World gen places the chest block and spawns a `Structure` entity at the
+   block's world-space center with `has_inventory = true`.
+2. The entity ID is stashed on nearby house NPCs via the `chest_entity_id`
+   prop so woodcutter behaviors can drop loot directly into it.
+3. On client right-click, the client sends `C_GET_INVENTORY(entityId)` and
+   renders the response alongside the player inventory.
+4. Item transfers use the standard `Relocate` action with `Container::self()`
+   and `Container::entity(chestEntityId)` — nothing chest-specific at all.
 
 ### Server Storage
 
-```cpp
-// In GameServer (server.h):
-std::unordered_map<BlockStateKey, Inventory, BlockStateKeyHash> m_blockInventories;
-std::unordered_map<BlockStateKey, std::unordered_set<ClientId>, BlockStateKeyHash> m_chestViewers;
-```
+No block-keyed inventory map exists. The chest entity stores its items in
+`Entity::inventory` like every other inventory owner. On save, entity inventory
+is part of the per-entity serialization in `entities.bin` (save format v2+).
 
-Chest inventories are NOT part of chunk data. They live in a separate
-`chest_inventories.bin` file alongside `inventories.bin`. Format:
-
-```
-[u32 count]
-For each chest:
-  [i32 x][i32 y][i32 z]
-  [u32 itemCount]
-  For each item: [string itemId][i32 count]
-```
-
-On `BreakBlock` for a chest: drop item entities for all contents, then erase the
-map entry.
+On block break: the matching Structure entity is removed; its inventory drops
+as ground items via the normal entity-removal path.
 
 ### Protocol
 
-| Message | Dir | Payload | Purpose |
-|---------|-----|---------|---------|
-| `C_OPEN_CHEST` (0x0007) | C→S | `[i32 x][i32 y][i32 z]` | Request chest contents |
-| `C_CHEST_MOVE` (0x0008) | C→S | `[i32 x][i32 y][i32 z][u8 dir][string itemId][i32 count]` | Transfer items; dir=0 player→chest, dir=1 chest→player |
-| `S_CHEST_OPEN` (0x100C) | S→C | `[i32 x][i32 y][i32 z][u32 n][pairs...]` | Full chest inventory snapshot |
+Chests introduce *no* new wire messages. They use:
 
-`S_CHEST_OPEN` is sent only to the requesting client — not broadcast. This avoids
-leaking inventory contents to bystanders and keeps bandwidth proportional to use,
-not proximity.
+| Message | Dir | Purpose |
+|---------|-----|---------|
+| `C_GET_INVENTORY` | C→S | Client requests a read-only inventory snapshot for an entity ID |
+| `S_INVENTORY`     | S→C | Server pushes inventory updates for any entity (player, NPC, or chest) |
+| `Relocate` action | C→S | Player moves items between `Container::self()` and `Container::entity(chestEid)` |
 
-Existing `S_INVENTORY` handles the player-side of transfers (server pushes updated
-player inventory after any `C_CHEST_MOVE`).
+Because `S_INVENTORY` is broadcast on every change, any client viewing a chest
+UI stays live-synced automatically.
 
 ### UI
 
-A `ChestUI` panel opens when the client receives `S_CHEST_OPEN`. It is a second
-ImGui window positioned beside the existing `InventoryUI`. Clicking an item sends
-`C_CHEST_MOVE`. Pressing ESC or moving more than 6 blocks from the chest closes it
-(client-side heuristic; server validates range on every `C_CHEST_MOVE` anyway).
+The inventory UI detects that the currently-viewed target is a chest entity
+and shows it as a second panel beside the player inventory. Clicking an item
+sends a `Relocate` action with the appropriate source/destination containers.
+Pressing ESC or moving out of interaction range closes the view.
 
 ---
 
@@ -243,11 +239,21 @@ redundant state that can desync on save/load edge cases.
 **Do not network chest inventory in chunk data.**
 Chunks carry structural state (block IDs, param2). Inventory is semantic state.
 Mixing them would send chest contents to every nearby client, a security and
-bandwidth problem. Use `S_CHEST_OPEN` targeted at the opener only.
+bandwidth problem. Chests use the Structure-entity inventory path (`S_INVENTORY`).
+
+**Do not add a chest-specific wire message.**
+Chests reuse `C_GET_INVENTORY` / `S_INVENTORY` / `Relocate` — the same path
+any other entity inventory uses. Adding `C_OPEN_CHEST` / `S_CHEST_OPEN` would
+fragment inventory plumbing and duplicate validation logic.
+
+**Do not store chest inventory keyed by block position.**
+Inventory lives on the chest's Structure entity, not in a `blockPos → Inventory`
+map on the server. Block-keyed storage would need its own save/load code path
+and could not reuse the generic `Relocate` + `S_INVENTORY` flow.
 
 **Do not use `Inventory::hotbar` for chest inventories.**
-Hotbar is a player concept. Chests use the plain `m_items` map only. Never call
-`autoPopulateHotbar` on a chest inventory.
+Hotbar is a client-only player-UI concept. Chests use the plain items map
+only — no slot indexing, no `autoPopulateHotbar` call.
 
 **Do not allow orphaned bed halves from player placement.**
 If the partner position is blocked, reject the entire placement. Orphaned halves

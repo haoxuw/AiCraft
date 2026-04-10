@@ -167,6 +167,7 @@ int main(int argc, char** argv) {
 	std::vector<std::shared_ptr<modcraft::WorldTemplate>> templates = {
 		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/flat.py"),
 		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/village.py"),
+		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_behaviors.py"),
 	};
 
 	if (interactive && isatty(fileno(stdin)))
@@ -240,11 +241,18 @@ int main(int argc, char** argv) {
 			wb.writeString(itemId);
 			wb.writeI32(count);
 		}
-		for (int i = 0; i < modcraft::Inventory::HOTBAR_SLOTS; i++)
-			wb.writeString(inv.hotbar(i));
-		// Equipment slots
+		// Equipment slots (count + slot/item pairs)
+		uint8_t equipCount = 0;
 		for (int i = 0; i < modcraft::WEAR_SLOT_COUNT; i++)
-			wb.writeString(inv.equipped((modcraft::WearSlot)i));
+			if (!inv.equipped((modcraft::WearSlot)i).empty()) equipCount++;
+		wb.writeU8(equipCount);
+		for (int i = 0; i < modcraft::WEAR_SLOT_COUNT; i++) {
+			const auto& eid = inv.equipped((modcraft::WearSlot)i);
+			if (!eid.empty()) {
+				wb.writeString(modcraft::equipSlotName((modcraft::WearSlot)i));
+				wb.writeString(eid);
+			}
+		}
 		clients.broadcastToAll(modcraft::net::S_INVENTORY, wb);
 	};
 	server.setCallbacks(cbs);

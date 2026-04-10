@@ -690,6 +690,15 @@ void Game::setupAfterConnect(GameState targetState) {
 		}
 	);
 
+	// Repopulate the client-only hotbar whenever the server pushes a fresh
+	// inventory snapshot for the local player.
+	m_server->setInventoryCallback([this](EntityId eid) {
+		if (!m_server || eid != m_server->localPlayerId()) return;
+		Entity* pe = m_server->getEntity(eid);
+		if (pe && pe->inventory)
+			m_hotbar.repopulateFrom(*pe->inventory);
+	});
+
 	m_state = targetState;
 	glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	m_camera.mode = CameraMode::FirstPerson;

@@ -262,6 +262,57 @@ public:
 				e.setProp(Prop::WalkDistance, wd + hSpeed * dt);
 			}
 		}
+
+		// ── Walk debug logging ──────────────────────────────────────────
+		m_walkDbgTimer += dt;
+
+		// Auto-select first non-player living entity as debug target
+		if (m_walkDbgEntity == ENTITY_NONE && m_uptime > 2.0f) {
+			for (auto& [id, ent] : m_entities) {
+				if (id == m_localPlayerId) continue;
+				if (ent->def().isLiving()) {
+					m_walkDbgEntity = id;
+					m_walkDbgFile = fopen("/tmp/modcraft_walkdbg.log", "w");
+					if (m_walkDbgFile) {
+						fprintf(m_walkDbgFile,
+							"# Walk debug for entity %u (%s)\n"
+							"# t\tdt\tsrvVelXZ\tmoveTargetX\tmoveTargetZ\tdistToTgt\t"
+							"eVelXZ\tePosX\tePosZ\thSpeed\twalkDist\n",
+							id, ent->typeId().c_str());
+						fflush(m_walkDbgFile);
+					}
+					printf("[walkdbg] Tracking entity %u (%s) → /tmp/modcraft_walkdbg.log\n",
+						id, ent->typeId().c_str());
+					break;
+				}
+			}
+		}
+
+		// Log one line per tick for the tracked entity
+		if (m_walkDbgEntity != ENTITY_NONE && m_walkDbgFile) {
+			auto it = m_entities.find(m_walkDbgEntity);
+			auto tit = m_interpTargets.find(m_walkDbgEntity);
+			if (it != m_entities.end() && tit != m_interpTargets.end()) {
+				auto& e = *it->second;
+				auto& t = tit->second;
+				float srvVelXZ = std::sqrt(t.velocity.x * t.velocity.x + t.velocity.z * t.velocity.z);
+				float eVelXZ = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
+				glm::vec3 toTgt = t.moveTarget - e.position;
+				toTgt.y = 0;
+				float distToTgt = glm::length(toTgt);
+				float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
+				fprintf(m_walkDbgFile,
+					"%.3f\t%.4f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\n",
+					m_walkDbgTimer, dt, srvVelXZ,
+					t.moveTarget.x, t.moveTarget.z, distToTgt,
+					eVelXZ, e.position.x, e.position.z,
+					std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z),
+					wd);
+				// Flush every 2 seconds to avoid too many syscalls
+				static int flushCounter = 0;
+				if (++flushCounter >= 120) { fflush(m_walkDbgFile); flushCounter = 0; }
+			}
+		}
 	}
 
 	void sendAction(const ActionProposal& action) override {
@@ -271,12 +322,11 @@ public:
 		net::sendMessage(m_tcp.fd(), net::C_ACTION, buf);
 	}
 
-	void sendHotbarSlot(int slot, const std::string& itemId) override {
+	void sendGetInventory(EntityId eid) override {
 		if (!m_connected) return;
 		net::WriteBuffer wb;
-		wb.writeU32((uint32_t)slot);
-		wb.writeString(itemId);
-		net::sendMessage(m_tcp.fd(), net::C_HOTBAR, wb);
+		wb.writeU32(eid);
+		net::sendMessage(m_tcp.fd(), net::C_GET_INVENTORY, wb);
 	}
 
 	void sendSetGoal(EntityId eid, glm::vec3 pos) override {
@@ -310,6 +360,14 @@ public:
 		net::sendMessage(m_tcp.fd(), net::C_CLAIM_ENTITY, wb);
 	}
 
+	void sendProximity(const std::vector<EntityId>& eids) override {
+		if (!m_connected || eids.empty()) return;
+		net::WriteBuffer wb;
+		wb.writeU32((uint32_t)eids.size());
+		for (auto eid : eids) wb.writeU32(eid);
+		net::sendMessage(m_tcp.fd(), net::C_PROXIMITY, wb);
+	}
+
 	// --- State access ---
 	ChunkSource& chunks() override { return m_chunks; }
 	EntityId localPlayerId() const override { return m_localPlayerId; }
@@ -340,6 +398,10 @@ public:
 		m_onChunkDirty      = onChunkDirty;
 		m_onBlockBreakText  = onBlockBreakText;
 		m_onBlockPlace      = onBlockPlace;
+	}
+
+	void setInventoryCallback(std::function<void(EntityId)> cb) override {
+		m_onInventoryUpdate = std::move(cb);
 	}
 
 	const std::string& clientUUID() const { return m_clientUUID; }
@@ -416,13 +478,8 @@ private:
 					inv.clear();
 					for (auto& [iid, amt] : pit->second.items)
 						inv.add(iid, amt);
-					bool hasHotbar = false;
-					for (int i = 0; i < (int)pit->second.hotbar.size(); i++) {
-						inv.setHotbar(i, pit->second.hotbar[i]);
-						if (!pit->second.hotbar[i].empty()) hasHotbar = true;
-					}
-					if (!hasHotbar) inv.autoPopulateHotbar();
 					m_pendingInventory.erase(pit);
+					if (m_onInventoryUpdate) m_onInventoryUpdate(es.id);
 				}
 				m_entities[es.id] = std::move(ent);
 				// Initialize interpolation target
@@ -445,13 +502,10 @@ private:
 					e.setProp(Prop::HP, es.hp);
 				if (es.owner != 0)
 					e.setProp(Prop::Owner, es.owner);
-				// Sync entity properties from server.
-				// SelectedSlot is client-owned UI state — never overwrite from server.
-				bool isLocal = (es.id == m_localPlayerId);
-				for (auto& [k, v] : es.props) {
-					if (isLocal && k == Prop::SelectedSlot) continue;
+				// Sync entity properties from server (server already filters
+				// out client-private props like SelectedSlot at broadcast time).
+				for (auto& [k, v] : es.props)
 					e.setProp(k, v);
-				}
 			}
 			break;
 		}
@@ -543,7 +597,7 @@ private:
 		}
 		case net::S_INVENTORY: {
 			EntityId id = rb.readU32();
-			// Always read the full payload first
+			// Read items
 			uint32_t count = rb.readU32();
 			std::vector<std::pair<std::string,int>> items;
 			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
@@ -551,29 +605,25 @@ private:
 				int amount = rb.readI32();
 				items.push_back({itemId, amount});
 			}
-			std::vector<std::string> hotbar;
-			for (int i = 0; i < Inventory::HOTBAR_SLOTS && rb.hasMore(); i++)
-				hotbar.push_back(rb.readString());
-
-			// Read equipment slots (if present)
-			std::vector<std::string> equipment;
-			for (int i = 0; i < WEAR_SLOT_COUNT && rb.hasMore(); i++)
-				equipment.push_back(rb.readString());
+			// Read equipment: [u8 equipCount][{str slot, str id}...]
+			std::vector<std::pair<std::string,std::string>> equipment;
+			if (rb.hasMore()) {
+				uint8_t equipCount = rb.readU8();
+				for (uint8_t i = 0; i < equipCount && rb.hasMore(); i++) {
+					std::string slot = rb.readString();
+					std::string eqId = rb.readString();
+					equipment.push_back({slot, eqId});
+				}
+			}
 
 			auto applyInv = [&](Inventory& inv) {
 				inv.clear();
 				for (auto& [iid, amt] : items) inv.add(iid, amt);
-				bool hasHotbar = false;
-				for (int i = 0; i < (int)hotbar.size(); i++) {
-					inv.setHotbar(i, hotbar[i]);
-					if (!hotbar[i].empty()) hasHotbar = true;
-				}
-				if (!hasHotbar) inv.autoPopulateHotbar();
-				// Apply equipment
-				for (int i = 0; i < (int)equipment.size(); i++) {
-					if (!equipment[i].empty()) {
-						inv.add(equipment[i], 1); // need it in counter for equip()
-						inv.equip((WearSlot)i, equipment[i]);
+				for (auto& [slot, eqId] : equipment) {
+					WearSlot ws;
+					if (wearSlotFromString(slot, ws)) {
+						inv.add(eqId, 1); // need it in counter for equip()
+						inv.equip(ws, eqId);
 					}
 				}
 			};
@@ -581,9 +631,10 @@ private:
 			auto it = m_entities.find(id);
 			if (it != m_entities.end() && it->second->inventory) {
 				applyInv(*it->second->inventory);
+				if (m_onInventoryUpdate) m_onInventoryUpdate(id);
 			} else {
 				// Entity not yet known — buffer for when S_ENTITY arrives
-				m_pendingInventory[id] = {std::move(items), std::move(hotbar)};
+				m_pendingInventory[id] = {std::move(items)};
 			}
 			break;
 		}
@@ -646,7 +697,6 @@ private:
 	// Pending inventory: arrived before entity — applied on first S_ENTITY
 	struct PendingInv {
 		std::vector<std::pair<std::string,int>> items;
-		std::vector<std::string> hotbar;
 	};
 	std::unordered_map<EntityId, PendingInv> m_pendingInventory;
 
@@ -661,9 +711,15 @@ private:
 	int m_totalMsgCount = 0;
 	float m_uptime = 0;
 
+	// Walk debug logging — tracks one villager's per-tick animation state
+	EntityId m_walkDbgEntity = ENTITY_NONE;
+	FILE* m_walkDbgFile = nullptr;
+	float m_walkDbgTimer = 0;  // total elapsed time for log timestamps
+
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockPlace;
+	std::function<void(EntityId)> m_onInventoryUpdate;
 };
 
 } // namespace modcraft

@@ -48,6 +48,16 @@ def PickupItem(entity_id):
     return Relocate(relocate_from=Entity(entity_id))
 
 
-def StoreItem(x, y, z):
-    """Deposit all inventory into a chest block at (x, y, z)."""
-    return Relocate(relocate_to=Block(int(x), int(y), int(z)))
+def StoreItem(entity_id, item_id="", count=0):
+    """Deposit items into another entity's inventory (chest, Creatures, etc.).
+
+    If item_id is empty, deposits all items. Otherwise deposits item_id × count.
+    """
+    if item_id:
+        return Relocate(relocate_to=Entity(int(entity_id)), item_id=item_id, count=count or 1)
+    return Relocate(relocate_to=Entity(int(entity_id)))
+
+
+def TakeItem(entity_id, item_id, count=1):
+    """Take item_id × count from another entity's inventory."""
+    return Relocate(relocate_from=Entity(int(entity_id)), item_id=item_id, count=count)

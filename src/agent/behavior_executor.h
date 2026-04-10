@@ -29,20 +29,23 @@ namespace modcraft {
 struct AgentBehaviorState {
 	std::unique_ptr<Behavior> behavior;
 	BehaviorAction currentAction;
-	float decideTimer = 0;
 	float wanderYaw = 0;
 	bool justDecided = false;  // true for the one tick immediately after decide() fires
 
-	// ── Active-trigger support ────────────────────────────────────────────────
-	// forceDecide is set by server events (HP drop, time-of-day change) to
-	// bypass the passive timer and call decide() immediately this tick.
-	bool forceDecide  = false;
+	// HP tracking for active triggers (HP drop → scheduleNow in DecisionQueue)
 	int  lastKnownHp  = -1;   // HP at last decide(); -1 = not yet observed
 
 	// ── Performance tracking ──────────────────────────────────────────────────
 	float lastDecideMs  = 0.0f;   // duration of the most recent decide() call
 	float totalDecideMs = 0.0f;   // cumulative decide() time
 	int   decideCount   = 0;      // total decide() calls fired
+
+	// ── Walk debug: Move issuance tracking ────────────────────────────────────
+	int   walkDbg_movesSent    = 0;  // Move proposals sent in current 1s window
+	int   walkDbg_movesNewTgt  = 0;  // Move proposals with target >0.1m from previous
+	int   walkDbg_movesToSelf  = 0;  // Move proposals where target ≈ current pos
+	float walkDbg_windowTimer  = 0;  // 1-second accumulator
+	glm::vec3 walkDbg_lastTarget = {0, 0, 0}; // previous Move target for distinct counting
 };
 
 // Block query function: returns block type string at world position.

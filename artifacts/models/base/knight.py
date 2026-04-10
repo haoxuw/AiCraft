@@ -116,6 +116,12 @@ model = {
     # ═══════════════ NAMED ANIMATION CLIPS ═══════════════
     # Shared humanoid clip vocabulary. See villager.py for the rationale.
     "clips": {
+        "attack": {
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "torso":           {"axis": [0, 1, 0], "amp": 10, "speed": 3.0, "phase": 0},
+        },
         "chop": {
             "right_upper_arm": {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
             "right_forearm":   {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},

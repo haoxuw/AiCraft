@@ -66,6 +66,14 @@ void Game::renderEntities(float dt, float aspect) {
 	m_playerWalkDist += playerSpeed * dt;
 	float armPitch = 0.f, armYaw = 0.f;
 	m_attackAnim.currentArmAngles(armPitch, armYaw);
+
+	// Clip toggles: C = dance. Pressing again cancels. Walking cancels too
+	// so the clip doesn't override the walk cycle while moving.
+	if (m_controls.pressed(Action::Dance)) {
+		m_playerClip = (m_playerClip == "dance") ? "" : "dance";
+	}
+	if (playerSpeed > 0.5f) m_playerClip.clear();
+
 	AnimState playerAnim = {};
 	playerAnim.walkDistance = m_playerWalkDist;
 	playerAnim.speed        = playerSpeed;
@@ -73,14 +81,14 @@ void Game::renderEntities(float dt, float aspect) {
 	playerAnim.attackPhase  = m_attackAnim.phase();
 	playerAnim.armPitch     = armPitch;
 	playerAnim.armYaw       = armYaw;
-	// Local player head tracking: head follows camera pitch, clamped so the
-	// head doesn't rubber-neck past the shoulders. In FPS mode the camera yaw
-	// *is* the body yaw, so lookYaw stays zero — only pitch matters for the
-	// local player's nod. (For third-party observed-by-others view, the
-	// server-side lookPitch on Entity could drive this.)
+	playerAnim.currentClip  = m_playerClip;
+	// Local player head tracking: head follows the camera's view direction.
+	// In FPS mode the player isn't drawn, so only orbit modes matter here.
+	// Clamp to the physical head rotation range so the head doesn't rubber-
+	// neck past the shoulders.
 	{
 		playerAnim.lookYaw   = 0.0f;
-		playerAnim.lookPitch = glm::radians(glm::clamp(-m_camera.lookPitch, -30.f, 30.f));
+		playerAnim.lookPitch = glm::radians(glm::clamp(m_camera.lookPitch, -45.f, 45.f));
 	}
 
 	// Footstep sounds — play every ~2.5 blocks of movement
@@ -112,8 +120,45 @@ void Game::renderEntities(float dt, float aspect) {
 	// Draw local player — skip in first-person (camera at eyes)
 	if (m_camera.mode != CameraMode::FirstPerson) {
 		auto pit = m_models.find(resolveModelKey(*pe));
-		if (pit != m_models.end())
-			mr.draw(pit->second, vp, m_camera.smoothedFeetPos(), m_camera.player.yaw, playerAnim);
+		if (pit != m_models.end()) {
+			// Resolve held items: hotbar selected → main hand,
+			// offhand inventory slot → opposite (or chosen) hand.
+			HeldItems held;
+			auto resolveItemModel = [&](const std::string& itemId) -> const BoxModel* {
+				if (itemId.empty()) return nullptr;
+				std::string key = itemId;
+				auto colon = key.find(':');
+				if (colon != std::string::npos) key = key.substr(colon + 1);
+				auto mit = m_models.find(key);
+				return (mit != m_models.end()) ? &mit->second : nullptr;
+			};
+
+			int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
+			std::string mainItemId = m_hotbar.get(slot);
+			if (!mainItemId.empty() && pe->inventory
+			    && m_hotbar.count(slot, *pe->inventory) <= 0) {
+				mainItemId.clear();
+			}
+			std::string offhandItemId =
+				pe->inventory ? pe->inventory->equipped(WearSlot::Offhand) : "";
+			bool offhandRight = pe->inventory && pe->inventory->offhandInRightHand();
+
+			HeldItem mainItem;  mainItem.model = resolveItemModel(mainItemId);
+			HeldItem offItem;   offItem.model  = resolveItemModel(offhandItemId);
+			if (offhandRight) {
+				held.rightHand = offItem;
+				held.leftHand  = mainItem;
+			} else {
+				held.rightHand = mainItem;
+				held.leftHand  = offItem;
+			}
+
+			mr.draw(pit->second, vp, m_camera.smoothedFeetPos(),
+			        m_camera.player.yaw, playerAnim, 0.0f,
+			        glm::vec3(1.0f, 0.15f, 0.15f),
+			        glm::normalize(glm::vec3(0.5f, 0.85f, 0.3f)),
+			        &held);
+		}
 	}
 
 	// Mob models — all entities except the locally-possessed one (drawn above)
@@ -405,8 +450,8 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	// ── First-person held item (Minecraft-style, bottom-right) ──
 	if (m_camera.mode == CameraMode::FirstPerson && pe->inventory) {
 		int slot = pe->getProp<int>(Prop::SelectedSlot, 0);
-		std::string heldId = pe->inventory->hotbar(slot);
-		if (!heldId.empty() && pe->inventory->hotbarCount(slot) > 0) {
+		std::string heldId = m_hotbar.get(slot);
+		if (!heldId.empty() && m_hotbar.count(slot, *pe->inventory) > 0) {
 			std::string fpKey = heldId;
 			auto fpColon = fpKey.find(':');
 			if (fpColon != std::string::npos) fpKey = fpKey.substr(fpColon + 1);
@@ -470,6 +515,7 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	HUDContext ctx{
 		aspect, m_state, selectedSlot,
 		pe->inventory ? *pe->inventory : emptyInv,
+		m_hotbar,
 		m_camera, srv.blockRegistry(), &srv.chunks(),
 		m_worldTime, m_currentFPS, m_showDebug, m_equipUI.isOpen(),
 		hit, m_gameplay.currentEntityHit(),
@@ -488,7 +534,7 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	{
 		ImDrawList* dl = ImGui::GetForegroundDrawList();
 		float ww = (float)m_window.width(), wh = (float)m_window.height();
-		int slots = Inventory::HOTBAR_SLOTS;
+		int slots = Hotbar::SLOTS;
 		float slotPx = 60.0f;
 		float gapPx = 4.0f;
 		float totalW = slots * (slotPx + gapPx) - gapPx;
@@ -529,8 +575,8 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 			}
 
 			// Item content: 3D model icon
-			std::string itemId = inv.hotbar(i);
-			int itemCount = inv.hotbarCount(i);
+			std::string itemId = m_hotbar.get(i);
+			int itemCount = m_hotbar.count(i, inv);
 			if (!itemId.empty() && itemCount > 0) {
 				std::string modelKey = itemId;
 				auto colon = modelKey.find(':');
@@ -611,6 +657,17 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 			(float)m_window.width(), (float)m_window.height());
 	}
 
+	// Chest UI (opened by right-clicking a chest block)
+	if (pe->inventory && m_chestUI.isOpen()) {
+		Entity* chestE = m_server->getEntity(m_chestUI.chestEntityId());
+		if (chestE && chestE->inventory) {
+			m_chestUI.setModels(&m_models, &m_iconCache);
+			m_chestUI.render(*pe->inventory, *chestE->inventory,
+				m_server->blockRegistry(),
+				(float)m_window.width(), (float)m_window.height());
+		}
+	}
+
 	// FPS counter
 	ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
 	ImGui::SetNextWindowBgAlpha(0.5f);
@@ -654,7 +711,7 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	// ── Hotbar drag/drop interaction layer ──
 	if (pe->inventory) {
 		float ww = (float)m_window.width(), wh = (float)m_window.height();
-		int hslots = Inventory::HOTBAR_SLOTS;
+		int hslots = Hotbar::SLOTS;
 		float slotPx = 60.0f, gapPx = 4.0f, hpad = 8.0f;
 		float totalW = hslots * (slotPx + gapPx) - gapPx;
 		float startX = (ww - totalW) * 0.5f;
@@ -672,7 +729,6 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav)) {
 
 			struct DragSlot { char itemId[64]; int slot; };
-			Inventory& inv = *pe->inventory;
 
 			for (int i = 0; i < hslots; i++) {
 				if (i > 0) ImGui::SameLine(0.0f, gapPx);
@@ -682,7 +738,7 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 				// Drag source — pick up item from this hotbar slot
 				if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
 					DragSlot ds{}; ds.slot = i;
-					snprintf(ds.itemId, sizeof(ds.itemId), "%s", inv.hotbar(i).c_str());
+					snprintf(ds.itemId, sizeof(ds.itemId), "%s", m_hotbar.get(i).c_str());
 					ImGui::SetDragDropPayload("INV_SLOT", &ds, sizeof(ds));
 					if (ds.itemId[0]) ImGui::Text("%s", ds.itemId); else ImGui::Text("(empty)");
 					ImGui::EndDragDropSource();
@@ -693,14 +749,12 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 					if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("INV_SLOT")) {
 						auto* ds = (const DragSlot*)pl->Data;
 						std::string newId = ds->itemId;
-						std::string oldId = inv.hotbar(i);
+						std::string oldId = m_hotbar.get(i);
 						if (ds->slot >= 0) {
-							// Hotbar ↔ hotbar swap
-							inv.setHotbar(ds->slot, oldId);
-							m_server->sendHotbarSlot(ds->slot, oldId);
+							// Hotbar ↔ hotbar swap (client-only alias)
+							m_hotbar.set(ds->slot, oldId);
 						}
-						inv.setHotbar(i, newId);
-						m_server->sendHotbarSlot(i, newId);
+						m_hotbar.set(i, newId);
 					}
 					ImGui::EndDragDropTarget();
 				}

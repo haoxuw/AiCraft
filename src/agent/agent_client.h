@@ -5,7 +5,8 @@
  *
  * Connects to a GameServer via TCP (same protocol as GUI client).
  * Receives entity/chunk state updates, runs Python behavior decide()
- * at 4Hz, and sends ActionProposals back to the server.
+ * on a per-entity schedule (DecisionQueue), and sends ActionProposals
+ * back to the server.
  *
  * From the server's perspective, an agent client is indistinguishable
  * from a human player — it just sends C_ACTION messages.
@@ -24,7 +25,10 @@
 #include "server/behavior_store.h"
 #include "server/python_bridge.h"
 #include "agent/behavior_executor.h"
+#include "agent/block_search.h"
+#include "agent/decision_queue.h"
 #include "server/entity_manager.h"
+#include "server/server_tuning.h"
 #include "content/builtin.h"
 #include <unordered_map>
 #include <unordered_set>
@@ -54,7 +58,7 @@ public:
 		m_name = name;
 
 		if (!m_tcp.connect(host.c_str(), port)) {
-			printf("[Agent:%s] Cannot connect to %s:%d\n", name.c_str(), host.c_str(), port);
+			// printf("[Agent:%s] Cannot connect to %s:%d\n", name.c_str(), host.c_str(), port);
 			return false;
 		}
 		m_connected = true;
@@ -80,8 +84,6 @@ public:
 					EntityId eid = rb.readU32();
 					std::string behaviorId = rb.readString();
 					assignEntity(eid, behaviorId);
-					printf("[Agent:%s] Connected, assigned entity %u (behavior: %s)\n",
-						m_name.c_str(), eid, behaviorId.c_str());
 					return true;
 				}
 				// Handle other messages that arrive before assignment (S_ENTITY, etc.)
@@ -90,7 +92,7 @@ public:
 
 			auto elapsed = std::chrono::steady_clock::now() - start;
 			if (std::chrono::duration<float>(elapsed).count() > 5.0f) {
-				printf("[Agent:%s] Timeout waiting for entity assignment\n", m_name.c_str());
+				// printf("[Agent:%s] Timeout waiting for entity assignment\n", m_name.c_str());
 				disconnect();
 				return false;
 			}
@@ -110,19 +112,19 @@ public:
 	void assignEntity(EntityId id, const std::string& behaviorId) {
 		if (m_controlled.count(id)) return;
 		m_controlled.insert(id);
-		printf("[Agent:%s] Now controlling entity %u (behavior: %s)\n",
-			m_name.c_str(), id, behaviorId.c_str());
+		m_decideQueue.scheduleNow(id);
 	}
 
 	// Revoke control of an entity. Silent if the agent didn't control it.
 	void revokeEntity(EntityId id) {
 		if (m_controlled.erase(id) > 0) {
 			m_behaviorStates.erase(id);
-			printf("[Agent:%s] Revoked entity %u\n", m_name.c_str(), id);
+			m_decideQueue.remove(id);
+			// printf("[Agent:%s] Revoked entity %u\n", m_name.c_str(), id);
 		}
 	}
 
-	// Main tick: receive state, run behaviors, send actions.
+	// Main tick: receive state, drain decision queue, send actions.
 	void tick(float dt) {
 		if (!m_connected) return;
 		if (!receiveMessages()) {
@@ -130,39 +132,22 @@ public:
 			return;
 		}
 
-		for (EntityId eid : m_controlled) {
+		// ── Phase 1: Drain decision queue — run decide() for due entities ────
+		auto dueEntities = m_decideQueue.drain(ServerTuning::maxDecidesPerTick);
+		std::unordered_set<EntityId> decidedThisTick(dueEntities.begin(), dueEntities.end());
+
+		for (EntityId eid : dueEntities) {
 			auto entIt = m_entities.find(eid);
 			if (entIt == m_entities.end() || entIt->second->removed) continue;
+			if (!m_controlled.count(eid)) continue;
 			Entity& e = *entIt->second;
-
 			auto& state = m_behaviorStates[eid];
 
 			// Lazy-load behavior
 			if (!state.behavior) {
 				std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
 				state.behavior = loadBehavior(bid);
-				state.decideTimer = 0;
 			}
-
-			// Decide timer: fire at ~4 Hz or when forceDecide set
-			state.decideTimer -= dt;
-			if (state.decideTimer > 0 && !state.forceDecide) {
-				// Not time to decide — but still send Move to keep physics smooth
-				if (state.currentAction.type == BehaviorAction::Move) {
-					std::vector<ActionProposal> proposals;
-					behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
-					for (auto& p : proposals) {
-						net::WriteBuffer wb;
-						net::serializeAction(wb, p);
-						net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
-					}
-				}
-				continue;
-			}
-
-			// Fire decide()
-			state.decideTimer = 0.25f;  // 4 Hz
-			state.forceDecide = false;
 
 			// Build NearbyEntities from m_entities cache
 			auto nearby = gatherNearby(e, m_entities, 64.0f);
@@ -172,8 +157,9 @@ public:
 				BlockId bid = getBlock(x, y, z);
 				return m_blocks.get(bid).string_id;
 			};
-			auto scanBlocksFn = [this, &e](const std::string& typeId, float maxDist, int maxResults) {
-				return scanBlocks(e.position, typeId, maxDist, maxResults);
+			auto scanBlocksFn = [this](const std::string& typeId, glm::vec3 nearPos,
+			                           float maxDist, int maxResults) {
+				return scanBlocks(nearPos, typeId, maxDist, maxResults);
 			};
 
 			// Build world view — chunkBlocks is empty, behaviors use scan_blocks() directly
@@ -189,6 +175,13 @@ public:
 			state.decideCount++;
 			state.justDecided = true;
 
+			// Schedule next decide based on duration from behavior
+			float duration = state.currentAction.decideDuration;
+			auto nextTime = SteadyClock::now() +
+				std::chrono::duration_cast<SteadyClock::duration>(
+					std::chrono::duration<float>(duration));
+			m_decideQueue.schedule(eid, nextTime);
+
 			// Log goal changes
 			auto& lastGoal = m_lastLoggedGoal[eid];
 			if (e.goalText != lastGoal) {
@@ -202,8 +195,57 @@ public:
 				net::WriteBuffer wb;
 				net::serializeAction(wb, p);
 				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
+				walkDbgTrackMove(p, state, e);
 			}
 			state.justDecided = false;
+		}
+
+		// ── Phase 2: Re-send Move for entities NOT decided this tick ─────────
+		// Keeps physics smooth between decide() calls.
+		for (EntityId eid : m_controlled) {
+			if (decidedThisTick.count(eid)) continue;
+			auto entIt = m_entities.find(eid);
+			if (entIt == m_entities.end() || entIt->second->removed) continue;
+			Entity& e = *entIt->second;
+			auto& state = m_behaviorStates[eid];
+			if (state.currentAction.type == BehaviorAction::Move) {
+				std::vector<ActionProposal> proposals;
+				behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
+				for (auto& p : proposals) {
+					net::WriteBuffer wb;
+					net::serializeAction(wb, p);
+					net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
+					walkDbgTrackMove(p, state, e);
+				}
+			}
+		}
+
+		// ── Walk debug: dump per-entity Move stats every 1 second ───────────
+		for (auto& [eid, state] : m_behaviorStates) {
+			state.walkDbg_windowTimer += dt;
+			if (state.walkDbg_windowTimer >= 1.0f) {
+				if (state.walkDbg_movesSent > 0) {
+					fprintf(stderr,
+						"[walkdbg-agent eid=%u] moves=%d distinct=%d to_self=%d (in %.1fs)\n",
+						eid, state.walkDbg_movesSent, state.walkDbg_movesNewTgt,
+						state.walkDbg_movesToSelf, state.walkDbg_windowTimer);
+				}
+				state.walkDbg_movesSent   = 0;
+				state.walkDbg_movesNewTgt = 0;
+				state.walkDbg_movesToSelf = 0;
+				state.walkDbg_windowTimer = 0;
+			}
+		}
+
+		// ── Phase 3: Periodic sweep — ensure no entity is orphaned ───────────
+		m_sweepTimer += dt;
+		if (m_sweepTimer >= ServerTuning::decisionSweepInterval) {
+			m_sweepTimer = 0.0f;
+			for (EntityId eid : m_controlled) {
+				if (!m_decideQueue.hasPending(eid)) {
+					m_decideQueue.scheduleNow(eid);
+				}
+			}
 		}
 
 		// Periodic heartbeat
@@ -262,13 +304,11 @@ private:
 				for (auto& [k, v] : es.props)
 					e.setProp(k, v);
 			}
-			// Active trigger: if a controlled entity just lost HP → decide immediately
+			// Active trigger: if a controlled entity just lost HP → re-decide
 			if (m_controlled.count(es.id)) {
 				auto& state = m_behaviorStates[es.id];
 				if (state.lastKnownHp >= 0 && es.hp < state.lastKnownHp) {
-					state.forceDecide = true;
-					printf("[Agent:%s] Entity #%u attacked (hp %d→%d) — forcing re-decide\n",
-					       m_name.c_str(), es.id, state.lastKnownHp, es.hp);
+					m_decideQueue.scheduleNow(es.id);
 				}
 				state.lastKnownHp = es.hp;
 			}
@@ -354,9 +394,14 @@ private:
 				int count = rb.readI32();
 				items.push_back({itemId, count});
 			}
-			// Skip hotbar strings (10 slots) + equipment strings (WEAR_SLOT_COUNT=5)
-			for (int i = 0; i < Inventory::HOTBAR_SLOTS + WEAR_SLOT_COUNT; i++)
-				if (rb.hasMore()) rb.readString();
+			// Skip equipment: [u8 equipCount][{str slot, str id}...]
+			if (rb.hasMore()) {
+				uint8_t equipCount = rb.readU8();
+				for (uint8_t i = 0; i < equipCount; i++) {
+					if (rb.hasMore()) rb.readString(); // slot
+					if (rb.hasMore()) rb.readString(); // item
+				}
+			}
 
 			auto it = m_entities.find(eid);
 			if (it != m_entities.end() && it->second->inventory) {
@@ -370,14 +415,8 @@ private:
 			float newTime = rb.readF32();
 			// Active trigger: time-of-day threshold crossing → all entities re-decide
 			if (m_prevWorldTime >= 0.0f && isTimeOfDayEvent(m_prevWorldTime, newTime)) {
-				const char* phase = (newTime < 0.10f)  ? "midnight"
-				                  : (newTime < 0.50f)  ? "dawn"
-				                  : (newTime < 0.75f)  ? "noon"
-				                                       : "dusk";
-				printf("[Agent:%s] Time-of-day event: %s (%.2f→%.2f) — all entities re-decide\n",
-				       m_name.c_str(), phase, m_prevWorldTime, newTime);
 				for (EntityId eid : m_controlled)
-					m_behaviorStates[eid].forceDecide = true;
+					m_decideQueue.scheduleNow(eid);
 			}
 			m_prevWorldTime = m_worldTime;
 			m_worldTime = newTime;
@@ -401,22 +440,31 @@ private:
 		case net::S_ASSIGN_ENTITY: {
 			EntityId eid = rb.readU32();
 			std::string behaviorId = rb.readString();
-			printf("[Agent:%s] Server assigned entity %u (behavior: %s)\n",
-				m_name.c_str(), eid, behaviorId.c_str());
+			// printf("[Agent:%s] Server assigned entity %u (behavior: %s)\n",
+			//	m_name.c_str(), eid, behaviorId.c_str());
 			assignEntity(eid, behaviorId);
 			break;
 		}
 		case net::S_REVOKE_ENTITY: {
 			EntityId eid = rb.readU32();
-			printf("[Agent:%s] Server revoked entity %u\n", m_name.c_str(), eid);
+			// printf("[Agent:%s] Server revoked entity %u\n", m_name.c_str(), eid);
 			revokeEntity(eid);
 			break;
 		}
 		case net::S_RELOAD_BEHAVIOR: {
 			EntityId eid = rb.readU32();
 			std::string newSource = rb.readString();
-			printf("[Agent:%s] Reloading behavior for entity %u\n", m_name.c_str(), eid);
+			// printf("[Agent:%s] Reloading behavior for entity %u\n", m_name.c_str(), eid);
 			reloadBehavior(eid, newSource);
+			break;
+		}
+		case net::S_PROXIMITY: {
+			uint32_t count = rb.readU32();
+			for (uint32_t i = 0; i < count; i++) {
+				EntityId eid = rb.readU32();
+				if (m_controlled.count(eid))
+					m_decideQueue.scheduleNow(eid);
+			}
 			break;
 		}
 			default:
@@ -449,8 +497,8 @@ private:
 
 		std::string source = m_behaviorStore.load(behaviorId);
 		if (source.empty()) {
-			printf("[Agent:%s] No .py file for behavior '%s'\n",
-				m_name.c_str(), behaviorId.c_str());
+			// printf("[Agent:%s] No .py file for behavior '%s'\n",
+			//	m_name.c_str(), behaviorId.c_str());
 			return std::make_unique<IdleFallbackBehavior>();
 		}
 
@@ -466,7 +514,7 @@ private:
 			return std::make_unique<IdleFallbackBehavior>();
 		}
 
-		printf("[Agent:%s] Loaded behavior '%s'\n", m_name.c_str(), behaviorId.c_str());
+		// printf("[Agent:%s] Loaded behavior '%s'\n", m_name.c_str(), behaviorId.c_str());
 		return std::make_unique<PythonBehavior>(handle, source);
 	}
 
@@ -479,12 +527,27 @@ private:
 		auto handle = bridge.loadBehavior(newSource, error);
 		if (handle >= 0) {
 			m_behaviorStates[eid].behavior = std::make_unique<PythonBehavior>(handle, newSource);
-			m_behaviorStates[eid].decideTimer = 0; // decide immediately
-			printf("[Agent:%s] Behavior reloaded for entity %u\n", m_name.c_str(), eid);
+			m_decideQueue.scheduleNow(eid); // decide immediately with new behavior
+			// printf("[Agent:%s] Behavior reloaded for entity %u\n", m_name.c_str(), eid);
 		} else {
 			printf("[Agent:%s] Behavior reload failed for entity %u: %s\n",
 				m_name.c_str(), eid, error.c_str());
 		}
+	}
+
+	// ── Walk debug: track Move proposal stats ──────────────────────────────
+	void walkDbgTrackMove(const ActionProposal& p, AgentBehaviorState& state, const Entity& e) {
+		if (p.type != ActionProposal::Move) return;
+		state.walkDbg_movesSent++;
+		glm::vec3 tgt = state.currentAction.targetPos;
+		float distFromPrev = glm::length(glm::vec2(
+			tgt.x - state.walkDbg_lastTarget.x,
+			tgt.z - state.walkDbg_lastTarget.z));
+		float distToSelf = glm::length(glm::vec2(
+			tgt.x - e.position.x, tgt.z - e.position.z));
+		if (distFromPrev > 0.1f) state.walkDbg_movesNewTgt++;
+		if (distToSelf < 0.5f) state.walkDbg_movesToSelf++;
+		state.walkDbg_lastTarget = tgt;
 	}
 
 	// ── Time-of-day thresholds that trigger active re-decide for all entities ──
@@ -500,66 +563,14 @@ private:
 		return false;
 	}
 
-	// Targeted block scan: find blocks of a specific type using ChunkInfo index.
-	// 1. Resolve typeId string to BlockId (int) once
-	// 2. Use ChunkInfo counts to find chunks that have this block type
-	// 3. Sort by richness (count) then distance — prefer forests over lone trees
-	// 4. Scan real chunk data surface-down using int comparison (fast)
-	// 5. Request missing chunks from server if needed (sync wait)
+	// Targeted block scan: thin wrapper around block_search::run which owns
+	// the actual logic (see src/agent/block_search.h). Kept here so the lambda
+	// in gatherNearby() can bind to m_chunkInfoCache / m_chunks directly.
 	std::vector<BlockSample> scanBlocks(glm::vec3 origin, const std::string& typeId,
 	                                     float maxDist, int maxResults) {
-		BlockId targetBid = m_blocks.getId(typeId);
-		if (targetBid == BLOCK_AIR && typeId != "base:air") return {}; // unknown type
-
-		// Step 1: find candidate chunks from ChunkInfo index
-		struct Candidate { ChunkPos pos; float dist; int count; };
-		std::vector<Candidate> candidates;
-		for (auto& [cp, ci] : m_chunkInfoCache) {
-			auto eIt = ci.entries.find(typeId);
-			if (eIt == ci.entries.end() || eIt->second.count <= 0) continue;
-			glm::vec3 cc = {cp.x * CHUNK_SIZE + 8.0f, cp.y * CHUNK_SIZE + 8.0f, cp.z * CHUNK_SIZE + 8.0f};
-			float d = glm::length(origin - cc);
-			if (d > maxDist + 16.0f) continue; // +16 for chunk diagonal
-			candidates.push_back({cp, d, eIt->second.count});
-		}
-		// Sort: richest first, then nearest (prefer dense areas like forests)
-		std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
-			if (a.count != b.count) return a.count > b.count;
-			return a.dist < b.dist;
-		});
-
-		// Step 2: scan real chunk data for matching blocks
-		std::vector<BlockSample> result;
-		for (auto& cand : candidates) {
-			if ((int)result.size() >= maxResults) break;
-
-			// Ensure chunk is loaded — request from server if missing
-			if (m_chunks.find(cand.pos) == m_chunks.end()) {
-				requestAndWaitForChunk(cand.pos);
-			}
-			auto chunkIt = m_chunks.find(cand.pos);
-			if (chunkIt == m_chunks.end() || !chunkIt->second) continue;
-			const Chunk& chunk = *chunkIt->second;
-
-			// Scan surface-down (Y from top to bottom) — BlockId int comparison
-			for (int ly = CHUNK_SIZE - 1; ly >= 0 && (int)result.size() < maxResults; ly--) {
-				for (int lz = 0; lz < CHUNK_SIZE; lz++) {
-					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-						if (chunk.get(lx, ly, lz) != targetBid) continue;
-						int wx = cand.pos.x * CHUNK_SIZE + lx;
-						int wy = cand.pos.y * CHUNK_SIZE + ly;
-						int wz = cand.pos.z * CHUNK_SIZE + lz;
-						float dist = glm::length(origin - glm::vec3(wx + 0.5f, wy + 0.5f, wz + 0.5f));
-						if (dist <= maxDist)
-							result.push_back({typeId, wx, wy, wz, dist});
-					}
-				}
-			}
-		}
-
-		std::sort(result.begin(), result.end(),
-		          [](const BlockSample& a, const BlockSample& b) { return a.distance < b.distance; });
-		return result;
+		block_search::Options opt{typeId, origin, maxDist, maxResults};
+		return block_search::run(opt, m_chunkInfoCache, m_chunks, m_blocks,
+			[this](ChunkPos cp) { requestAndWaitForChunk(cp); });
 	}
 
 	// Request a specific chunk from the server and wait for it to arrive.
@@ -615,6 +626,10 @@ private:
 	std::unordered_map<EntityId, AgentBehaviorState> m_behaviorStates;
 	std::unordered_map<EntityId, std::string> m_lastLoggedGoal;
 	BehaviorStore m_behaviorStore;
+
+	// --- Decision queue (replaces fixed 4 Hz timer) ---
+	DecisionQueue m_decideQueue;
+	float m_sweepTimer = 0.0f;
 };
 
 } // namespace modcraft

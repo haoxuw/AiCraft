@@ -101,7 +101,7 @@ void HUD::renderHealthBars(const HUDContext& ctx, TextRenderer& text) {
 // Hotbar: DST-inspired dark slots at bottom center
 // ================================================================
 void HUD::renderHotbar(const HUDContext& ctx, TextRenderer& text) {
-	const int slots = Inventory::HOTBAR_SLOTS;
+	const int slots = Hotbar::SLOTS;
 	const float slotW = 0.062f;
 	const float slotH = slotW * ctx.aspect;
 	const float gap   = 0.005f;
@@ -151,8 +151,8 @@ void HUD::renderHotbar(const HUDContext& ctx, TextRenderer& text) {
 		}
 
 		// Item color swatch
-		std::string itemId = ctx.inventory.hotbar(i);
-		int itemCount = ctx.inventory.hotbarCount(i);
+		std::string itemId = ctx.hotbar.get(i);
+		int itemCount = ctx.hotbar.count(i, ctx.inventory);
 		if (!itemId.empty() && itemCount > 0) {
 			const BlockDef* bdef = ctx.blocks.find(itemId);
 			glm::vec3 c = bdef ? bdef->color_top : glm::vec3(0.50f, 0.60f, 0.75f);

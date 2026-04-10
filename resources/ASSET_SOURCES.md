@@ -100,7 +100,7 @@ All packs listed are free. CC0 preferred; CC-BY-SA noted where unavoidable.
 | `base:skeleton` | KayKit Skeletons | Skeleton Warrior | Undead + weapons |
 | `base:crewmate` | Kenney Blocky Characters | Astronaut-style | Closest match |
 | `base:giant` | Quaternius + scale up | Large humanoid | Scale 2-3x |
-| `base:villager` | Kenney Blocky Characters | Villager/NPC | Civilian clothing |
+| `base:villager` | Kenney Blocky Characters | Villager/Creatures | Civilian clothing |
 
 ---
 

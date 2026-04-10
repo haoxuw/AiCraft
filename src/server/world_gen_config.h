@@ -20,19 +20,15 @@ struct MobSpawn {
 	std::string typeId;
 	int         count;
 	float       radius = -1.0f;  // < 0 = use template Python config radius
+	std::unordered_map<std::string, std::string> props;  // extra spawn props from world config
 };
 
 struct WorldGenConfig {
-	// Mob overrides: when non-empty, replaces the template's mob list entirely.
-	// Each entry gives the creature type, desired count, and spawn radius.
-	// If empty, the template's Python config mobs are used.
-	std::vector<MobSpawn> mobs = {
-		{"base:pig",      4},
-		{"base:chicken",  3},
-		{"base:dog",      1},
-		{"base:cat",      2},
-		{"base:villager", 2},
-	};
+	// Mob list — seeded from the Python template's mobs config.
+	// The GUI menu populates this from the selected template, allowing
+	// the player to adjust counts before starting. If empty at init(),
+	// the server loads directly from the template.
+	std::vector<MobSpawn> mobs;
 	float mobSpawnRadius = 30.0f;
 
 	// Per-creature behavior overrides (typeId → behaviorId)
@@ -43,6 +39,7 @@ struct WorldGenConfig {
 
 	// Gameplay tuning
 	float pickupRange = 16.0f; // server-wide max distance any entity can pick up items (blocks)
+	float storeRange  = 5.0f;  // max distance to store/take items from an entity inventory (blocks)
 };
 
 } // namespace modcraft

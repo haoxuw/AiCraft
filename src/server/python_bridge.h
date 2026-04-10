@@ -97,7 +97,10 @@ struct WorldPyConfig {
 	float chestOffsetZ           = 0.0f;
 
 	// Mobs
-	struct MobConfig { std::string type; int count = 0; float radius = 20.0f; };
+	struct MobConfig {
+		std::string type; int count = 0; float radius = 20.0f;
+		std::unordered_map<std::string, std::string> props;  // extra spawn props from Python
+	};
 	std::vector<MobConfig> mobs = {
 		{"base:villager", 3, 10.0f},
 		{"base:pig",      4, 22.0f},
@@ -144,8 +147,8 @@ public:
 
 	// Block query function type — maps (x,y,z) → block type string.
 	using BlockQueryFn = std::function<std::string(int, int, int)>;
-	// Block scan function type — targeted search by type ID.
-	using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, float, int)>;
+	// Block scan function type — targeted search by type ID, anchored at nearPos.
+	using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 
 	BehaviorAction callDecide(BehaviorHandle handle,
 	                           Entity& self,

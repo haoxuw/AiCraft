@@ -49,17 +49,19 @@ void Camera::processMouse(GLFWwindow* window) {
 		player.yaw = lookYaw;
 		break;
 	case CameraMode::ThirdPerson:
-		orbitYaw += dx; orbitPitch -= dy;  // Minecraft-style: mouse up → look up (camera lowers)
-		orbitPitch = std::clamp(orbitPitch, 5.0f, 80.0f);
+		orbitYaw += dx; orbitPitch -= dy;  // mouse up → orbit lowers → view aims upward
+		// Allow camera to orbit below player so you can look up at the sky.
+		orbitPitch = std::clamp(orbitPitch, -60.0f, 85.0f);
 		// Don't set player.yaw here — character faces movement direction,
 		// handled by gameplay.cpp smooth turn logic (like Fortnite)
 		break;
 	case CameraMode::RPG:
 		// Mouse orbits camera around player (player yaw unchanged)
-		// X: rotate orbit, Y: raise/lower camera angle
+		// X: rotate orbit, Y: raise/lower camera. Mouse up → camera lowers →
+		// view aims upward (same convention as TPS).
 		godOrbitYaw += dx;
-		godAngle += dy;
-		godAngle = std::clamp(godAngle, 15.0f, 80.0f);
+		godAngle -= dy;
+		godAngle = std::clamp(godAngle, -60.0f, 85.0f);
 		break;
 	case CameraMode::RTS:
 		// Only orbit when right mouse held (same controls as RPG)

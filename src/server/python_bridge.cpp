@@ -92,9 +92,15 @@ struct PyAction {
 static std::function<std::string(int,int,int)> s_blockQueryFn;
 
 // Block scan callback — set by agent_client before callDecide().
-// Returns list of {type_id, x, y, z, distance} for blocks of a given type.
-using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, float, int)>;
+// Returns list of {type_id, x, y, z, distance} for blocks of a given type
+// near the supplied origin (anchor for distance sorting + early-exit).
+using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 static ScanBlocksFn s_scanBlocksFn;
+
+// Default search anchor when Python passes near=None: the entity's current
+// position. Set by callDecide() alongside s_scanBlocksFn so the binding
+// can substitute it without needing access to `self`.
+static glm::vec3 s_selfPos;
 
 PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	m.doc() = "ModCraft engine bridge — exposes world view to Python behaviors";
@@ -188,13 +194,22 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	}, py::arg("x"), py::arg("y"), py::arg("z"),
 	   "Query block type string at world position (x,y,z). Call only inside decide().");
 
-	// scan_blocks(type_id, max_dist, max_results) → list of dicts
-	// Targeted search: uses ChunkInfo index to find chunks with this block type,
-	// then scans real chunk data surface-down. Int comparison, very fast.
-	m.def("scan_blocks", [](const std::string& typeId, float maxDist, int maxResults) -> py::list {
+	// scan_blocks(type_id, near=None, max_dist, max_results) → list of dicts
+	// Targeted search: picks the nearest non-empty chunk (per the ChunkInfo
+	// index) and scans its real data. `near` is the world-space anchor for
+	// distance sorting; pass an entity's home/bed position to keep AI from
+	// chasing dense matches across the map. Defaults to the calling
+	// entity's position when omitted.
+	m.def("scan_blocks", [](const std::string& typeId, py::object near,
+	                        float maxDist, int maxResults) -> py::list {
 		py::list result;
 		if (!s_scanBlocksFn) return result;
-		auto blocks = s_scanBlocksFn(typeId, maxDist, maxResults);
+		glm::vec3 origin = s_selfPos;
+		if (!near.is_none()) {
+			auto t = near.cast<std::tuple<float, float, float>>();
+			origin = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+		}
+		auto blocks = s_scanBlocksFn(typeId, origin, maxDist, maxResults);
 		for (auto& b : blocks) {
 			py::dict d;
 			d["type"] = b.typeId;
@@ -205,8 +220,9 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 			result.append(d);
 		}
 		return result;
-	}, py::arg("type_id"), py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
-	   "Find blocks of a specific type. Uses chunk index for fast lookup.");
+	}, py::arg("type_id"), py::arg("near") = py::none(),
+	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
+	   "Find blocks of a specific type near `near` (default: self position).");
 
 	// Expose C++ name constants as Python submodules so behaviors can use the
 	// same identifiers as C++ code (LivingName.Chicken, BlockType.Stone, etc.).
@@ -388,6 +404,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 	// Inject callbacks for this call so Python can query blocks.
 	s_blockQueryFn = blockQueryFn ? std::move(blockQueryFn) : [](int,int,int){ return std::string("base:air"); };
 	s_scanBlocksFn = std::move(scanBlocksFn);
+	s_selfPos      = self.position;
 	struct Cleanup { ~Cleanup() { s_blockQueryFn = nullptr; s_scanBlocksFn = nullptr; } } _cleanup;
 	auto it = m_behaviors.find(handle);
 	if (it == m_behaviors.end()) {
@@ -485,16 +502,31 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		// Call instance.decide(entity, world) — returns (action, goal_str)
 		py::object result = instance.attr("decide")(pySelfEntity, pyLocalWorld);
 
-		// Validate tuple return: (action, goal_str)
-		if (!py::isinstance<py::tuple>(result) || result.cast<py::tuple>().size() != 2) {
-			goalOut = "ERROR: decide() must return (action, goal_str) — got " +
+		// Validate tuple return: (action, goal_str) or (action, goal_str, duration_seconds)
+		if (!py::isinstance<py::tuple>(result)) {
+			goalOut = "ERROR: decide() must return (action, goal_str[, duration]) — got " +
 			          std::string(py::str(result));
 			errorOut = goalOut;
 			{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
 		}
 		py::tuple tup = result.cast<py::tuple>();
+		size_t tupSize = tup.size();
+		if (tupSize < 2 || tupSize > 3) {
+			goalOut = "ERROR: decide() must return 2- or 3-tuple — got " +
+			          std::to_string(tupSize) + "-tuple";
+			errorOut = goalOut;
+			{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
+		}
 		py::object pyActionObj = tup[0];
 		goalOut = tup[1].cast<std::string>();
+
+		// Optional 3rd element: duration (seconds) until next decide()
+		float decideDuration = 0.25f;
+		if (tupSize == 3) {
+			decideDuration = tup[2].cast<float>();
+			if (decideDuration < 0.02f) decideDuration = 0.02f;   // floor: 1 tick at 50 Hz
+			if (decideDuration > 30.0f) decideDuration = 30.0f;   // ceiling: 30 seconds
+		}
 
 		// Enforce non-empty goal (engine synthesizes if behavior forgot)
 		PyAction pyAction;
@@ -537,6 +569,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 			action.type = BehaviorAction::Idle;
 		}
 
+		action.decideDuration = decideDuration;
 		return action;
 
 	} catch (const py::error_already_set& e) {
@@ -733,6 +766,10 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 				mc.type   = md["type"].cast<std::string>();
 				mc.count  = md["count"].cast<int>();
 				mc.radius = getFloat(md, "radius", 20.0f);
+				if (md.contains("props")) {
+					for (auto& [k, v] : md["props"].cast<py::dict>())
+						mc.props[k.cast<std::string>()] = py::str(v).cast<std::string>();
+				}
 				out.mobs.push_back(mc);
 			}
 		}

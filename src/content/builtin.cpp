@@ -72,7 +72,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		def.playable = true;
 		def.pickup_range = 1.5f;
 		def.default_props = {
-			{PR::HP, 20}, {PR::Hunger, 20.0f}, {PR::SelectedSlot, 0},
+			{PR::HP, 20}, {PR::Hunger, 20.0f},
 			{PR::Age, 0.0f}, {PR::WalkDistance, 0.0f},
 		};
 		entities.registerType(def);
@@ -130,6 +130,18 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	animal(LivingName::Villager, "Villager", "villager", {0.85f,0.75f,0.60f},
 		{-0.3f,0,-0.3f},{0.3f,1.8f,0.3f}, 2.5f,5.0f, 20, "woodcutter",
 		"creature_villager", "", 0.12f);
+
+	// Structure entities
+	{
+		EntityDef def;
+		def.string_id = StructureName::Chest;
+		def.display_name = "Chest";
+		def.kind = EntityKind::Structure;
+		def.has_inventory = true;
+		def.collision_box_min = {0, 0, 0};
+		def.collision_box_max = {1, 1, 1};
+		entities.registerType(def);
+	}
 
 	// Item entity (wrapper for any dropped item)
 	{

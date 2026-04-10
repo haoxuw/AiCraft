@@ -100,7 +100,6 @@ void GameServer::resolveActions(float dt) {
 
 				int count = std::clamp(p.itemCount, 1, 64);
 				actor->inventory->remove(dropType, count);
-				actor->inventory->autoPopulateHotbar();
 				if (m_callbacks.onInventoryChange)
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 
@@ -138,52 +137,79 @@ void GameServer::resolveActions(float dt) {
 				if (!actor->inventory->has(equipId)) break;
 				printf("[Server] Relocate/equip: '%s' → slot '%s'\n", equipId.c_str(), p.equipSlot.c_str());
 				actor->inventory->equip(ws, equipId);
-				actor->inventory->autoPopulateHotbar();
 				if (m_callbacks.onInventoryChange)
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 				break;
 			}
 
-			if (p.relocateTo.kind == Container::Kind::Block) {
-				// Store: transfer all items from actor into a chest block's inventory.
-				// Actor must be within 2 blocks.
-				if (!actor->inventory) break;
-				glm::ivec3 cp = p.relocateTo.pos;
-				BlockId bid = m_world->getBlock(cp.x, cp.y, cp.z);
-				const BlockDef& bdef = m_world->blocks.get(bid);
-				if (bdef.string_id != BlockType::Chest) break;
-
-				float storeDist = glm::length(glm::vec3(cp) + 0.5f - actor->position);
-				if (storeDist > 2.5f) {
-					printf("[Server] StoreItem DENIED (entity %u): %.1f blocks from chest (max 2.5)\n",
-						actor->id(), storeDist);
+			if (p.relocateTo.kind == Container::Kind::Entity) {
+				// Store into another entity's inventory (chest, Creatures, etc.)
+				Entity* target = m_world->entities.get(p.relocateTo.entityId);
+				if (!target || target->removed) {
+					printf("[Server] Relocate/store DENIED (entity %u): target entity %u missing/removed\n",
+						actor->id(), p.relocateTo.entityId);
+					nudgeR(ActionRejectCode::TargetEntityGone);
+					break;
+				}
+				if (!target->inventory) {
+					printf("[Server] Relocate/store DENIED (entity %u): target entity %u has no inventory\n",
+						actor->id(), target->id());
+					nudgeR(ActionRejectCode::TargetHasNoInventory);
+					break;
+				}
+				if (!actor->inventory) {
+					printf("[Server] Relocate/store DENIED: actor %u has no inventory\n", actor->id());
+					nudgeR(ActionRejectCode::ActorHasNoInventory);
 					break;
 				}
 
-				uint64_t posKey = packBlockPos(cp.x, cp.y, cp.z);
-				auto& chestInv = m_blockInventories[posKey];
+				float dist = glm::length(target->position - actor->position);
+				if (dist > m_wgc.storeRange) {
+					printf("[Server] Relocate/store DENIED (entity %u): %.1f blocks from target %u (max %.1f)\n",
+						actor->id(), dist, target->id(), m_wgc.storeRange);
+					break;
+				}
 
 				int totalTransferred = 0;
-				for (auto& [itemIdStr, count] : actor->inventory->items()) {
-					chestInv.add(itemIdStr, count);
-					totalTransferred += count;
+				if (!p.itemId.empty()) {
+					// Transfer specific item × count
+					int count = std::clamp(p.itemCount, 1, 64);
+					if (!actor->inventory->has(p.itemId, count)) { nudgeR(ActionRejectCode::ItemNotInInventory); break; }
+					actor->inventory->remove(p.itemId, count);
+					target->inventory->add(p.itemId, count);
+					totalTransferred = count;
+				} else {
+					// Transfer all items
+					for (auto& [itemIdStr, count] : actor->inventory->items()) {
+						target->inventory->add(itemIdStr, count);
+						totalTransferred += count;
+					}
+					actor->inventory->clear();
 				}
-				actor->inventory->clear();
-				actor->inventory->autoPopulateHotbar();
 
-				printf("[Server] Relocate/store: entity %u deposited %d items into chest at (%d,%d,%d)\n",
-					actor->id(), totalTransferred, cp.x, cp.y, cp.z);
+				printf("[Server] Relocate/store: entity %u deposited %d items into entity %u\n",
+					actor->id(), totalTransferred, target->id());
 
-				if (m_callbacks.onInventoryChange)
+				if (m_callbacks.onInventoryChange) {
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
+					m_callbacks.onInventoryChange(target->id(), *target->inventory);
+				}
 				break;
 			}
 
 			if (p.relocateFrom.kind == Container::Kind::Entity) {
-				// Pickup from entity (item entity or chest)
 				Entity* src = m_world->entities.get(p.relocateFrom.entityId);
-				if (!src || src->removed) { nudgeR(ActionRejectCode::SourceEntityGone); break; }
-				if (!actor->inventory) break;
+				if (!src || src->removed) {
+					printf("[Server] Relocate/take DENIED (entity %u): source entity %u missing/removed\n",
+						actor->id(), p.relocateFrom.entityId);
+					nudgeR(ActionRejectCode::SourceEntityGone);
+					break;
+				}
+				if (!actor->inventory) {
+					printf("[Server] Relocate/take DENIED: actor %u has no inventory\n", actor->id());
+					nudgeR(ActionRejectCode::ActorHasNoInventory);
+					break;
+				}
 
 				if (src->typeId() == ItemName::ItemEntity) {
 					// Item entity pickup: validate range using the actor's pickup_range
@@ -197,9 +223,35 @@ void GameServer::resolveActions(float dt) {
 					actor->inventory->add(itemType, count);
 					src->removed = true;
 
-					actor->inventory->autoPopulateHotbar();
 					if (m_callbacks.onInventoryChange)
 						m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
+				} else if (src->inventory) {
+					// Take from another entity's inventory (chest, Creatures, etc.)
+					float dist = glm::length(src->position - actor->position);
+					if (dist > m_wgc.storeRange) {
+						printf("[Server] Relocate/take DENIED (entity %u): %.1f blocks from entity %u (max %.1f)\n",
+							actor->id(), dist, src->id(), m_wgc.storeRange);
+						break;
+					}
+					if (p.itemId.empty()) {
+						printf("[Server] Relocate/take DENIED (entity %u): no itemId specified (cannot take 'all' from entity)\n",
+							actor->id());
+						nudgeR(ActionRejectCode::MissingItemId);
+						break;
+					}
+					int count = std::clamp(p.itemCount, 1, 64);
+					if (!src->inventory->has(p.itemId, count)) { nudgeR(ActionRejectCode::ItemNotInInventory); break; }
+
+					src->inventory->remove(p.itemId, count);
+					actor->inventory->add(p.itemId, count);
+
+					printf("[Server] Relocate/take: entity %u took %d×%s from entity %u\n",
+						actor->id(), count, p.itemId.c_str(), src->id());
+
+					if (m_callbacks.onInventoryChange) {
+						m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
+						m_callbacks.onInventoryChange(src->id(), *src->inventory);
+					}
 				}
 				break;
 			}
@@ -400,7 +452,6 @@ void GameServer::resolveActions(float dt) {
 					// Default: add directly to actor's inventory (Self)
 					if (actor->inventory) {
 						actor->inventory->add(p.toItem, p.toCount);
-						actor->inventory->autoPopulateHotbar();
 					}
 				}
 			}

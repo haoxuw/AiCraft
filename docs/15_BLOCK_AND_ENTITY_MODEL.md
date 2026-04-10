@@ -162,7 +162,7 @@ Entities have:
 | Furnace              | Grid+State| Active  |
 | Player               | Entity   | Active   |
 | Pig                  | Entity   | Active   |
-| Villager NPC         | Entity   | Active   |
+| Villager Creatures         | Entity   | Active   |
 | Dropped item         | Entity   | Active   |
 | Arrow projectile     | Entity   | Active   |
 | Potion effect        | Entity   | Active   |

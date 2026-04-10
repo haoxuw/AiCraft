@@ -17,7 +17,7 @@ namespace modcraft {
 // both submit the same ActionProposals via ServerInterface.
 // ================================================================
 void GameplayController::update(float dt, GameState state, ServerInterface& server,
-                                Entity& player, Camera& camera,
+                                Entity& player, const Hotbar& hotbar, Camera& camera,
                                 ControlManager& controls, Renderer& renderer,
                                 ParticleSystem& particles, Window& window,
                                 float jumpVelocity)
@@ -34,7 +34,7 @@ void GameplayController::update(float dt, GameState state, ServerInterface& serv
 
 	// Block/entity interaction runs first so m_entityHit and m_attackTarget
 	// are set before processMovement can check them (RPG: attack > click-to-move).
-	processBlockInteraction(dt, state, server, player, camera, controls, window);
+	processBlockInteraction(dt, state, server, player, hotbar, camera, controls, window);
 	processMovement(dt, state, controls, camera, player, server, window, jumpVelocity);
 
 	// Particles (client-side animation only)

@@ -259,11 +259,14 @@ void GameplayController::processMovement(float dt, GameState state,
 		int feetBz = (int)std::floor(player.position.z);
 		ChunkPos feetCp = {feetBx >> 4, feetBy >> 4, feetBz >> 4};
 		if (!chunks.getChunk(feetCp)) {
-			// Ground chunk not loaded — freeze in place, don't apply gravity
+			// Ground chunk not loaded — freeze in place, don't apply gravity.
+			// Still send look direction so chunk streaming view-bias is correct.
 			player.velocity = {0, 0, 0};
 			moveAction.clientPos = player.position;
 			moveAction.hasClientPos = true;
 			moveAction.desiredVel = {0, 0, 0};
+			moveAction.lookPitch = camera.lookPitch;
+			moveAction.lookYaw   = camera.lookYaw;
 			server.sendAction(moveAction);
 			return;
 		}
@@ -300,7 +303,7 @@ void GameplayController::processMovement(float dt, GameState state,
 	// desiredVel.y is normally 0 (non-fly); we override it after local physics.
 	moveAction.desiredVel.y = player.velocity.y;
 	moveAction.lookPitch = camera.lookPitch;
-	moveAction.lookYaw   = camera.player.yaw;
+	moveAction.lookYaw   = camera.lookYaw;
 	server.sendAction(moveAction);
 }
 

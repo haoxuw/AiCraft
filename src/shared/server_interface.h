@@ -49,8 +49,8 @@ public:
 	// Send an action proposal to the server
 	virtual void sendAction(const ActionProposal& action) = 0;
 
-	// Notify server that player reassigned a hotbar slot
-	virtual void sendHotbarSlot(int slot, const std::string& itemId) {}
+	// Request an entity's inventory (chest, Creatures, etc.)
+	virtual void sendGetInventory(EntityId eid) {}
 
 	// Navigation goals — RPG/RTS click-to-move, server handles directly
 	virtual void sendSetGoal(EntityId eid, glm::vec3 pos) {}
@@ -59,6 +59,9 @@ public:
 
 	// Ownership — claim an entity (admin or unclaimed only)
 	virtual void sendClaimEntity(EntityId eid) {}
+
+	// Proximity — notify server which NPCs are near the player (triggers AI re-decide)
+	virtual void sendProximity(const std::vector<EntityId>& eids) {}
 
 	// --- State access (for rendering) ---
 
@@ -99,6 +102,11 @@ public:
 		std::function<void(glm::vec3, const std::string&)> onBlockBreakText = nullptr,
 		std::function<void(glm::vec3, const std::string&)> onBlockPlace = nullptr
 	) = 0;
+
+	// Fired whenever an S_INVENTORY snapshot is applied to a known entity.
+	// The client uses this to repopulate UI-only views (e.g. the hotbar) when
+	// the server pushes a fresh inventory. Default: no-op.
+	virtual void setInventoryCallback(std::function<void(EntityId)> /*onInventoryUpdate*/) {}
 };
 
 } // namespace modcraft

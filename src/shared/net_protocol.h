@@ -19,13 +19,12 @@
  * Message index
  * ─────────────
  * C_ACTION        0x0001  ActionProposal (move / block / attack …)
- * C_SLOT          0x0002  Selected hotbar slot (u32)
  * C_HELLO         0x0003  GUI client hello  [u32 version][str uuid][str name][str skin]
  * C_AGENT_HELLO   0x0004  Agent hello       [str name][u32 entityId]
  * C_RELOAD_BEHAVIOR 0x0005 Hot-reload behavior [u32 entityId][str source]
- * C_HOTBAR        0x0006  Hotbar slot assign [u32 slot][str itemId]
  * C_RESYNC_CHUNK  0x0007  Request chunk re-send [i32 cx][i32 cy][i32 cz]  (v2)
- * (0x0008, 0x0009 reserved)
+ * C_PROXIMITY      0x000C  [u32 count][u32 eid...] — NPCs detected near player
+ * C_GET_INVENTORY 0x000D  [u32 entityId] — request entity inventory snapshot
  *
  * S_WELCOME       0x1001  [u32 entityId][vec3 spawn]
  * S_ENTITY        0x1002  EntityState (see serializeEntityState)
@@ -33,7 +32,7 @@
  * S_REMOVE        0x1004  [u32 entityId]
  * S_TIME          0x1005  [f32 worldTime]
  * S_BLOCK         0x1006  [i32 x][i32 y][i32 z][u32 blockId][u8 param2]
- * S_INVENTORY     0x1007  [u32 entityId][u32 n][str×n id][i32×n count][str×10 hotbar]
+ * S_INVENTORY     0x1007  [u32 entityId][u32 n][str×n id][i32×n count][u8 equipN][str×equipN slot][str×equipN id]
  * S_ASSIGN_ENTITY 0x1008  [u32 entityId][str behaviorId]
  * S_REVOKE_ENTITY 0x1009  [u32 entityId]
  * S_RELOAD_BEHAVIOR 0x100A [u32 entityId][str source]
@@ -59,16 +58,16 @@ static constexpr uint32_t PROTOCOL_VERSION = 2;
 enum MsgType : uint32_t {
 	// Client → Server
 	C_ACTION          = 0x0001,
-	C_SLOT            = 0x0002,
 	C_HELLO           = 0x0003,  // [u32 version][str uuid][str displayName][str creatureType]
 	C_AGENT_HELLO     = 0x0004,  // [str name][u32 entityId]
 	C_RELOAD_BEHAVIOR = 0x0005,  // [u32 entityId][str sourceCode]
-	C_HOTBAR          = 0x0006,  // [u32 slot][str itemId]
 	C_RESYNC_CHUNK    = 0x0007,  // request chunk re-send: [i32 cx][i32 cy][i32 cz]  (v2)
 	C_SET_GOAL        = 0x0008,  // [u32 entityId][f32 x][f32 y][f32 z]
 	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
 	C_CLAIM_ENTITY    = 0x000A,  // [u32 entityId] — claim ownership (admin or unclaimed only)
 	C_SET_GOAL_GROUP  = 0x000B,  // [f32 x][f32 y][f32 z][u32 count][u32 eid...]
+	C_PROXIMITY       = 0x000C,  // [u32 count][u32 eid...] — NPCs detected near player
+	C_GET_INVENTORY   = 0x000D,  // [u32 entityId] — request entity inventory snapshot
 
 	// Server → Client
 	S_WELCOME         = 0x1001,
@@ -86,6 +85,7 @@ enum MsgType : uint32_t {
 	S_CHUNK_Z         = 0x100F,  // zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
 	S_CHUNK_INFO      = 0x1010,  // full block census for a chunk: sent to agent clients only
 	S_CHUNK_INFO_DELTA= 0x1011,  // updated block census after a block change in a chunk
+	S_PROXIMITY       = 0x1012,  // [u32 count][u32 eid...] — player proximity relay to agents
 	// S_SET_GOAL and S_CANCEL_GOAL removed — server handles nav directly
 };
 
@@ -263,7 +263,6 @@ struct EntityState {
 	glm::vec3 position;
 	glm::vec3 velocity;
 	float yaw;
-	float pitch = 0.0f;  // camera look pitch — used for view-biased chunk streaming
 	bool onGround;
 	std::string goalText;
 	std::string characterSkin; // visual override (e.g., "base:knight")
@@ -283,7 +282,6 @@ inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
 	buf.writeVec3(e.position);
 	buf.writeVec3(e.velocity);
 	buf.writeF32(e.yaw);
-	buf.writeF32(e.pitch);
 	buf.writeBool(e.onGround);
 	buf.writeString(e.goalText);
 	buf.writeString(e.characterSkin);
@@ -306,7 +304,6 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	e.position = buf.readVec3();
 	e.velocity = buf.readVec3();
 	e.yaw = buf.readF32();
-	e.pitch = buf.readF32();
 	e.onGround = buf.readBool();
 	e.goalText = buf.readString();
 	e.characterSkin = buf.readString();

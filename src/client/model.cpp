@@ -76,7 +76,8 @@ void ModelRenderer::shutdown() {
 
 void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
                           glm::vec3 feetPos, float yaw, const AnimState& anim,
-                          float tintStrength, glm::vec3 tint, glm::vec3 sunDir) {
+                          float tintStrength, glm::vec3 tint, glm::vec3 sunDir,
+                          const HeldItems* held) {
 	m_shader->use();
 	glEnable(GL_DEPTH_TEST);
 
@@ -131,6 +132,15 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 		auto it = model.clips.find(anim.currentClip);
 		if (it != model.clips.end()) activeClip = &it->second;
 	}
+
+	// Captured hand frames — set when we encounter the named "right_hand" /
+	// "left_hand" parts in the loop. Used to anchor held items after the
+	// loop completes, so the items inherit the same swing/clip/melee
+	// transform as the hand they're attached to.
+	glm::mat4 rightHandFrame(1.0f);
+	glm::mat4 leftHandFrame(1.0f);
+	bool gotRightHand = false;
+	bool gotLeftHand = false;
 
 	for (auto& part : model.parts) {
 		glm::mat4 partMat = root;
@@ -204,6 +214,18 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 			}
 		}
 
+		// Capture hand frames for held items. Done AFTER swing/clip/melee
+		// transforms but BEFORE head tracking and offset/scale, so the
+		// captured matrix represents the bone-space frame of the hand.
+		if (!gotRightHand && part.name == "right_hand") {
+			rightHandFrame = partMat;
+			gotRightHand = true;
+		}
+		if (!gotLeftHand && part.name == "left_hand") {
+			leftHandFrame = partMat;
+			gotLeftHand = true;
+		}
+
 		// Head tracking — applied AFTER walk/clip swing, around the head pivot.
 		// Minecraft-style: yaw rotates horizontally, pitch tilts vertically.
 		// Values are expected to be clamped (e.g. ±45° yaw) before being passed.
@@ -234,6 +256,65 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 		}
 
 		glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+	}
+
+	// ── Held items ──
+	// Drawn after the parts loop so they inherit the captured hand frame.
+	// Each item is anchored at the model's hand grip position (handR/handL),
+	// then transformed by its own EquipTransform (rotation/offset/scale)
+	// declared in the item's BoxModel.equip block.
+	auto drawHeld = [&](const HeldItem& hi, const glm::mat4& handFrame, const glm::vec3& gripPos) {
+		if (!hi.model) return;
+		const BoxModel& itemModel = *hi.model;
+
+		// Anchor at the hand grip in the parent character's coordinate system.
+		// `s` is the parent character's modelScale (already in scope).
+		glm::mat4 root = handFrame;
+		root = glm::translate(root, gripPos * s);
+
+		// Apply the item's equip transform (Z, Y, X rotation order matches
+		// the FPS held-item path in game_render.cpp so item poses are consistent).
+		const EquipTransform& eqt = itemModel.equip;
+		root = glm::translate(root, eqt.offset * s);
+		root = glm::rotate(root, glm::radians(eqt.rotation.y), glm::vec3(0, 1, 0));
+		root = glm::rotate(root, glm::radians(eqt.rotation.x), glm::vec3(1, 0, 0));
+		root = glm::rotate(root, glm::radians(eqt.rotation.z), glm::vec3(0, 0, 1));
+		// equip.scale is the per-item "how big when held" multiplier.
+		// hi.scale is an extra runtime shrink (e.g. blocks shown small).
+		root = glm::scale(root, glm::vec3(eqt.scale * hi.scale * s));
+
+		// Draw item parts using the item's own scale internally. We pass the
+		// pre-scaled root, but the per-part offsets still want to be in the
+		// item's intrinsic units, so undo s and pass the item's intrinsic
+		// modelScale via a per-part loop here (same shape as drawStatic).
+		float itemScale = itemModel.modelScale;
+
+		for (auto& part : itemModel.parts) {
+			glm::mat4 partMat = root;
+			glm::mat4 worldMat = glm::translate(partMat, (part.offset - part.halfSize) * itemScale);
+			partMat = glm::scale(worldMat, part.halfSize * 2.0f * itemScale);
+			m_shader->setMat4("uModel", worldMat);
+			m_shader->setMat4("uMVP", viewProj * partMat);
+			if (part.texture != 0) {
+				glActiveTexture(GL_TEXTURE0);
+				glBindTexture(GL_TEXTURE_2D, part.texture);
+				glUniform1i(useTexLoc, 1);
+			} else {
+				glUniform1i(useTexLoc, 0);
+				glUniform4f(colorLoc, part.color.r, part.color.g, part.color.b, part.color.a);
+			}
+			glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+		}
+	};
+
+	if (held) {
+		// Items inherit no character tint (so a hit-flash on the holder
+		// doesn't bleed onto the sword). Reset tint for held draws.
+		m_shader->setFloat("uTintStrength", 0.0f);
+		if (gotRightHand) drawHeld(held->rightHand, rightHandFrame, model.handR);
+		if (gotLeftHand)  drawHeld(held->leftHand,  leftHandFrame,  model.handL);
+		// Restore tint state for any subsequent draw() calls in the same frame.
+		m_shader->setFloat("uTintStrength", tintStrength);
 	}
 
 	// Unbind texture

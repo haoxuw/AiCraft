@@ -265,15 +265,32 @@ public:
 				net::EntityState es;
 				es.id = e.id(); es.typeId = e.typeId();
 				es.position = e.position; es.velocity = e.velocity;
-				es.yaw = e.yaw; es.pitch = e.pitch; es.onGround = e.onGround;
+				es.yaw = e.yaw; es.onGround = e.onGround;
 				es.goalText = e.goalText;
 				es.characterSkin = e.getProp<std::string>("character_skin", "");
 				es.hp = e.hp(); es.maxHp = e.def().max_hp;
 			es.owner = e.getProp<int>(Prop::Owner, 0);
 				es.moveTarget = e.moveTarget;
 				es.moveSpeed = e.moveSpeed;
-				// Serialize ALL prop types as string key-value pairs
+				// Serialize entity props that other clients/agents need.
+				// Skip props that are: (a) UI-only state, (b) duplicates of
+				// EntityState fields, or (c) internal Creatures bookkeeping.
+				// Skip props that duplicate EntityState fields or are internal Creatures AI state.
+				// Hunger is only sent to the owning player (their HUD), not others.
+				bool isOwnEntity = (e.id() == client.playerId);
+				auto isPrivateProp = [&](const std::string& k) {
+					if (k == Prop::HP) return true;          // already in es.hp
+					if (k == Prop::Owner) return true;       // already in es.owner
+					if (k == Prop::Goal) return true;        // already in es.goalText
+					if (k == "character_skin") return true;  // already in es.characterSkin
+					if (k == Prop::WanderTimer) return true; // internal Creatures AI state
+					if (k == Prop::WanderYaw) return true;   // internal Creatures AI state
+					if (k == Prop::Age) return true;         // internal Creatures bookkeeping
+					if (k == Prop::Hunger) return !isOwnEntity; // HUD: owner only
+					return false;
+				};
 				for (auto& [key, val] : e.props()) {
+					if (isPrivateProp(key)) continue;
 					std::string sv;
 					if (auto* s = std::get_if<std::string>(&val)) sv = *s;
 					else if (auto* f = std::get_if<float>(&val)) sv = std::to_string(*f);
@@ -328,8 +345,10 @@ public:
 				// 3-D look direction for view-biased chunk priority.
 				// When pitching down (looking at a valley from a cliff), fwdY < 0
 				// so chunks below the player get a lower (better) biasedDist.
-				float yaw_rad   = glm::radians(streamAnchor->yaw);
-				float pitch_rad = glm::radians(std::clamp(streamAnchor->pitch, -89.0f, 89.0f));
+				// Use lookYaw/lookPitch (camera direction) — NOT entity yaw which is
+				// the movement-derived facing direction and may differ in RPG/RTS.
+				float yaw_rad   = glm::radians(streamAnchor->lookYaw);
+				float pitch_rad = glm::radians(std::clamp(streamAnchor->lookPitch, -89.0f, 89.0f));
 				float cosPitch  = std::cos(pitch_rad);
 				float fwdX = std::cos(yaw_rad) * cosPitch;
 				float fwdY = -std::sin(pitch_rad);   // negative pitch = looking down
@@ -438,7 +457,7 @@ public:
 		m_announceUdp.broadcast(msg, (int)strlen(msg), MODCRAFT_DISCOVER_PORT);
 	}
 
-	// Spawn AI client processes for uncontrolled NPC entities.
+	// Spawn AI client processes for uncontrolled Creatures entities.
 	// Called periodically from the server main loop.
 	void spawnAIClients() {
 		if (m_execDir.empty() || m_port <= 0) return;
@@ -648,17 +667,31 @@ private:
 		}
 	}
 
+	// Serialize an inventory into S_INVENTORY wire format:
+	// [u32 entityId][u32 n][{str id, i32 count}...][u8 equipCount][{str slot, str id}...]
+	static void writeInventoryPayload(net::WriteBuffer& wb, EntityId eid, const Inventory& inv) {
+		wb.writeU32(eid);
+		auto items = inv.items();
+		wb.writeU32((uint32_t)items.size());
+		for (auto& [itemId, cnt] : items) { wb.writeString(itemId); wb.writeI32(cnt); }
+		uint8_t equipCount = 0;
+		for (int i = 0; i < WEAR_SLOT_COUNT; i++)
+			if (!inv.equipped((WearSlot)i).empty()) equipCount++;
+		wb.writeU8(equipCount);
+		for (int i = 0; i < WEAR_SLOT_COUNT; i++) {
+			const auto& eq = inv.equipped((WearSlot)i);
+			if (!eq.empty()) {
+				wb.writeString(equipSlotName((WearSlot)i));
+				wb.writeString(eq);
+			}
+		}
+	}
+
 	void handleMessage(ClientId cid, ConnectedClient& client, uint32_t type, net::ReadBuffer& rb) {
 		switch (type) {
 		case net::C_ACTION: {
 			auto action = net::deserializeAction(rb);
 			m_server.receiveAction(cid, action);
-			break;
-		}
-		case net::C_SLOT: {
-			uint32_t slot = rb.readU32();
-			auto* pe = m_server.world().entities.get(client.playerId);
-			if (pe) pe->setProp(Prop::SelectedSlot, (int)slot);
 			break;
 		}
 		case net::C_HELLO: {
@@ -686,12 +719,7 @@ private:
 				Entity* pe = m_server.world().entities.get(eid);
 				if (pe && pe->inventory) {
 					net::WriteBuffer iwb;
-					iwb.writeU32(eid);
-					auto items = pe->inventory->items();
-					iwb.writeU32((uint32_t)items.size());
-					for (auto& [itemId, cnt] : items) { iwb.writeString(itemId); iwb.writeI32(cnt); }
-					for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
-						iwb.writeString(pe->inventory->hotbar(i));
+					writeInventoryPayload(iwb, eid, *pe->inventory);
 					net::sendMessage(client.fd, net::S_INVENTORY, iwb);
 				}
 			}
@@ -731,17 +759,9 @@ private:
 						}
 						// else: keep starting items given by addClient
 
-						// Resend inventory (with hotbar) now that skin is resolved
+						// Resend inventory now that skin is resolved
 						net::WriteBuffer wb;
-						wb.writeU32(client.playerId);
-						auto items = pe->inventory->items();
-						wb.writeU32((uint32_t)items.size());
-						for (auto& [itemId, cnt] : items) {
-							wb.writeString(itemId);
-							wb.writeI32(cnt);
-						}
-						for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
-							wb.writeString(pe->inventory->hotbar(i));
+						writeInventoryPayload(wb, client.playerId, *pe->inventory);
 						net::sendMessage(client.fd, net::S_INVENTORY, wb);
 					}
 				}
@@ -799,14 +819,6 @@ private:
 			break;
 		}
 
-		case net::C_HOTBAR: {
-			uint32_t slot = rb.readU32();
-			std::string itemId = rb.hasMore() ? rb.readString() : "";
-			Entity* pe = m_server.world().entities.get(client.playerId);
-			if (pe && pe->inventory && (int)slot < Inventory::HOTBAR_SLOTS)
-				pe->inventory->setHotbar((int)slot, itemId);
-			break;
-		}
 		case net::C_AGENT_HELLO: {
 			client.name = rb.readString();
 			uint32_t targetEntity = rb.readU32();
@@ -861,6 +873,26 @@ private:
 			if (e) { e->nav.clear(); e->velocity = {0, 0, 0}; }
 			break;
 		}
+		case net::C_PROXIMITY: {
+			uint32_t count = rb.readU32();
+			// Group entity IDs by their controlling agent client
+			std::unordered_map<ClientId, std::vector<EntityId>> byAgent;
+			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
+				EntityId eid = rb.readU32();
+				ClientId owner = m_server.getEntityOwner(eid);
+				if (owner != 0) byAgent[owner].push_back(eid);
+			}
+			// Relay S_PROXIMITY to each relevant agent client
+			for (auto& [agentCid, eids] : byAgent) {
+				auto ait = m_clients.find(agentCid);
+				if (ait == m_clients.end() || !ait->second.isAgent) continue;
+				net::WriteBuffer wb;
+				wb.writeU32((uint32_t)eids.size());
+				for (auto eid : eids) wb.writeU32(eid);
+				net::sendMessage(ait->second.fd, net::S_PROXIMITY, wb);
+			}
+			break;
+		}
 		case net::C_CLAIM_ENTITY: {
 			uint32_t eid = rb.readU32();
 			Entity* target = m_server.world().entities.get(eid);
@@ -873,6 +905,19 @@ private:
 				target->setProp(Prop::Owner, (int)client.playerId);
 				printf("[Server] Entity %u claimed by player %u\n", eid, client.playerId);
 			}
+			break;
+		}
+		case net::C_GET_INVENTORY: {
+			EntityId eid = rb.readU32();
+			Entity* target = m_server.world().entities.get(eid);
+			Entity* player = m_server.world().entities.get(client.playerId);
+			if (!target || !target->inventory || !player) break;
+			// Range check: must be within 6 blocks
+			float dist = glm::length(target->position - player->position);
+			if (dist > 6.0f) break;
+			net::WriteBuffer wb;
+			writeInventoryPayload(wb, eid, *target->inventory);
+			net::sendMessage(client.fd, net::S_INVENTORY, wb);
 			break;
 		}
 		default: break;

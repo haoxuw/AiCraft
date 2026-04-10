@@ -71,8 +71,8 @@ struct ActionProposal {
 	bool      sprint      = false;
 	bool      fly         = false;
 	float     jumpVelocity= 17.0f;
-	float     lookPitch   = 0.0f;
-	float     lookYaw     = 0.0f;
+	float     lookPitch   = 0.0f;  // for chunk streaming view bias (vertical)
+	float     lookYaw     = 0.0f;  // for chunk streaming view bias (horizontal, when standing still)
 	std::string goalText;
 	// Client-reported position. Server accepts this as authoritative if within
 	// CLIENT_POS_TOLERANCE, eliminating client/server position drift and overshoot.

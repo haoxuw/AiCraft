@@ -48,7 +48,7 @@ These layers are INDEPENDENT. You can swap the rendering engine (e.g. replace Op
 |       |         Bucket                     Wheat (can grow)             |
 |       |         TNT                                                     |
 |       |                                                                  |
-|   Items                                  NPC                            |
+|   Items                                  Creatures                            |
 |     Potions                                Bees                         |
 |     (Anything can                          Pigs                         |
 |      be in inventory)                      Villager                     |

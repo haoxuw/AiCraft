@@ -141,7 +141,7 @@ public:
 	}
 
 	// Item pickup is client-initiated via ActionProposal::PickupItem.
-	// NPC pickup is handled by Python behavior code sending the same action.
+	// Creatures pickup is handled by Python behavior code sending the same action.
 
 	void forEach(std::function<void(Entity&)> fn) {
 		for (auto& [id, e] : m_entities)

@@ -1,7 +1,8 @@
 """Player — 2 blocks tall, Minecraft-style proportions.
 
-Arms and legs swing opposite when walking.
-Edit parts to customize the player's appearance!
+Arms and legs swing opposite when walking. Right arm and left arm are
+``name``-tagged so held items attach at the hand grip and named clips
+(chop/mine/wave/dance/attack) can drive them.
 
 Each part: offset=[x,y,z] (center), size=[w,h,d] (full size), color=[r,g,b,a]
 Optional animation: pivot, swing_axis, amplitude (degrees), phase (radians), speed
@@ -25,22 +26,57 @@ model = {
     "pivot_l": [-0.37,  1.40,  0.00],
     "parts": [
         # Head -- nods once per step (2x walk freq)
-        {"offset": [0, 1.75, 0], "size": [0.50, 0.50, 0.50], "color": [0.85, 0.70, 0.55, 1],
+        {"name": "head", "head": True,
+         "offset": [0, 1.75, 0], "size": [0.50, 0.50, 0.50], "color": [0.85, 0.70, 0.55, 1],
          "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 5, "phase": 0, "speed": 2},
         # Torso -- Y-axis counter-twist
-        {"offset": [0, 1.05, 0], "size": [0.50, 0.70, 0.30], "color": [0.20, 0.45, 0.75, 1],
+        {"name": "torso",
+         "offset": [0, 1.05, 0], "size": [0.50, 0.70, 0.30], "color": [0.20, 0.45, 0.75, 1],
          "pivot": [0, 1.05, 0], "swing_axis": [0, 1, 0], "amplitude": 5, "phase": math.pi, "speed": 1},
-        # Left arm -- large confident swing
-        {"offset": [-0.37, 1.05, 0], "size": [0.20, 0.70, 0.20], "color": [0.80, 0.65, 0.50, 1],
+        # Left arm (named so clips and held items can target it)
+        {"name": "left_hand",
+         "offset": [-0.37, 1.05, 0], "size": [0.20, 0.70, 0.20], "color": [0.80, 0.65, 0.50, 1],
          "pivot": [-0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
         # Right arm
-        {"offset": [0.37, 1.05, 0], "size": [0.20, 0.70, 0.20], "color": [0.80, 0.65, 0.50, 1],
+        {"name": "right_hand",
+         "offset": [0.37, 1.05, 0], "size": [0.20, 0.70, 0.20], "color": [0.80, 0.65, 0.50, 1],
          "pivot": [0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
         # Left leg -- big stride
-        {"offset": [-0.12, 0.35, 0], "size": [0.24, 0.70, 0.24], "color": [0.22, 0.22, 0.32, 1],
+        {"name": "left_leg",
+         "offset": [-0.12, 0.35, 0], "size": [0.24, 0.70, 0.24], "color": [0.22, 0.22, 0.32, 1],
          "pivot": [-0.12, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
         # Right leg
-        {"offset": [0.12, 0.35, 0], "size": [0.24, 0.70, 0.24], "color": [0.22, 0.22, 0.32, 1],
+        {"name": "right_leg",
+         "offset": [0.12, 0.35, 0], "size": [0.24, 0.70, 0.24], "color": [0.22, 0.22, 0.32, 1],
          "pivot": [0.12, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
-    ]
+    ],
+
+    # Standard humanoid clip vocabulary. Same shape as villager.py / knight.py.
+    "clips": {
+        "attack": {
+            "right_hand": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+        },
+        "chop": {
+            "right_hand": {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
+            "torso":      {"axis": [0, 1, 0], "amp": 8,  "speed": 1.2, "phase": 0},
+        },
+        "mine": {
+            "right_hand": {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
+            "torso":      {"axis": [0, 1, 0], "amp": 6,  "speed": 1.4, "phase": 0},
+        },
+        "wave": {
+            "right_hand": {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 2.0, "phase": 0},
+        },
+        "dance": {
+            "right_hand": {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.5, "phase": 0},
+            "left_hand":  {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.5, "phase": 0},
+            "torso":      {"axis": [0, 1, 0], "amp": 15, "speed": 1.5, "phase": 0},
+            "head":       {"axis": [0, 1, 0], "amp": 12, "speed": 1.5, "phase": 1.5708},
+        },
+        "sleep": {
+            "right_hand": {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
+            "left_hand":  {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
+            "torso":      {"axis": [1, 0, 0], "amp": 2, "bias": 0, "speed": 0.5, "phase": 0},
+        },
+    },
 }

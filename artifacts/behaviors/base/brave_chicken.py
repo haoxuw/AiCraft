@@ -64,11 +64,6 @@ class BraveChickenBehavior(Behavior):
             self._sleeping = False
             return Move(entity.x, entity.y, entity.z),"BAWK! Good morning!"
 
-        # Chase cats! (brave chicken is aggressive toward felines — daytime only)
-        cat = local_world.get("base:cat", max_dist=8)
-        if cat:
-            return Move(cat.x, cat.y, cat.z, speed=spd * 1.5), "BAWK! Chasing cat!"
-
         # Follow player and occasionally lay eggs when near them
         player = local_world.nearest("base:player")
         if player:

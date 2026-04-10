@@ -18,6 +18,7 @@ namespace modcraft {
 void GameplayController::processBlockInteraction(float dt, GameState state,
                                                  ServerInterface& server,
                                                  Entity& player,
+                                                 const Hotbar& hotbar,
                                                  Camera& camera,
                                                  ControlManager& controls,
                                                  Window& window)
@@ -74,7 +75,7 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	m_placeEvent.happened = false;
 	m_attackTarget = ENTITY_NONE;
 	m_doorToggled = false;
-	m_chestOpened = false;
+	m_chestOpenEvent.happened = false;
 
 	// Break progress decay: cancel if no hit for 2 seconds
 	if (m_breaking.active) {
@@ -189,14 +190,14 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 				m_doorToggled = true;
 				m_doorTogglePos = glm::vec3(bp) + glm::vec3(0.5f);
 			} else if (blockStr == BlockType::Chest) {
-				// Chest interaction: open inventory UI
-				m_chestOpened = true;
-				m_chestOpenedPos = bp;
+				// Chest interaction: open chest UI (handled by Game layer).
+				m_chestOpenEvent.happened = true;
+				m_chestOpenEvent.blockPos = bp;
 				m_breakCD = 0.3f;
 			} else {
 				// Place block from inventory
 				int slot = player.getProp<int>(Prop::SelectedSlot, 0);
-				const std::string& blockType = player.inventory->hotbar(slot);
+				const std::string& blockType = hotbar.get(slot);
 				if (!blockType.empty() && player.inventory->has(blockType)) {
 					ActionProposal p;
 					p.actorId     = player.id();

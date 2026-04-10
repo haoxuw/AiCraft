@@ -1,11 +1,41 @@
 # ModCraft — Architecture Overview
 
-A voxel game where the world is code. Players write Python to define new
-objects and actions, then upload them into a shared world.
-
 ## Game Design
 
-Server holds the source of truth of the world. Many clients (human plaer or AI agents) connect to server.
+A voxel sandbox game, where players write Python to MOD new objects and actions, then upload them into a shared world.
+
+At core, the gameplay is for
+
+Kids, new gamers:
+> casual fun sandbox builder
+> gather resources, refine
+> fun mechanics, MODded creatures
+
+Veteran gamers:
+> invent creative ways to mass harvesting, while maintaining sustainability
+> take the risk gathering resources from the depth
+> balance the damanges you delt to the ecosystem and its recovery
+
+Advanced gameplays:
+> MOD Everything and Anything
+> terraform with thousands of scripted Agents
+> build your kindom with your AI Agents -- integrate with LLM
+> map real AWS resources / gmail files INTO THE GAME
+
+### No Difficulty Selection
+
+Think of Lost, it's a survival TV show, but weird smoke mounster show up in the first episode. We take the same game start -- a casual sandbox, no presure, no death. Threats and presure comes only when you choose to unlock.
+
+Villagers would kept destroy a (recurring) beacon (inspires curiosity) if you choose to protected it, then threat will come from sky
+
+Like Silent Hill games, To fend off a known thread off, you will need to venture take other risks. Inspires excitment. The loop goes like:
+
+Want to craft new stuff -> needs resources -> repetitive slow gathering -> you want buffs given by the beacon -> threads from sky if you keep the beacon up -> needs defence items -> needs more resources -> needs to destroy the environment -> unleash new threat in the depth -> balance sustainable resource harvesting VS dealing with gameplay threads
+
+We offer gameplay mixing FPS shooter, action RPG and mass army RTS, all in 1 game
+
+Use villager behavior and special strucures to natrually introduce you with new game element, should you choose to accept
+
 
 ### MOD everything
 
@@ -23,18 +53,18 @@ Everything the player creates, has to consume material value of a higher sum.
 
 Meanwhile the world can slowly generate/recover energy, by 2 kinds of regeneration: 1. ecosystems regnerating (trees/plants growing); 2. Creatures/NPCs regenerating HP (naturally healing).
 
-> sometimes to make an OP item, you'll need to terraform and dig deep into the dangerous depth of the unknown
+### Terraforming
 
-At core, the game is designed to
+Trees and Living entities are essential to the game. While most type of crafting loss material value, only regeneration of trees and Livng HP can create value. While the core game journey require harvesting the world's resources. (todo) When we regenerate each tree from anchor, we will check for nearby vegitations, if none, we will turn the soil from dirt to desert. Desert would remove any tree anchors and spreads the desert. A desert(sand) can only be reverted back to dirt by placing new tree anchors. Villagers may do that, but it cost X more times the resources from what a tree generates.
 
-> casual fun sandbox builder
-> gather resources, refine
-> balance the damanges you delt to the ecosystem and its recovery
-> in epic mode, threats are attack your village from sky
-> but you need to take the risk gathering resources from the depth
-> build your kindom with your AI Agents
+You may also ask villagers to convert dirt to material values, and find underground gemstones with high value, but it distroys landscape and unleash monsters, and expose infertile desert(rocky) land.
 
-## Core Principles
+With thousands of villagers, this creates a dynamic strategy of epic-scale resource harvesting, while balancing sustainable terraforming.
+
+
+## System Design
+
+Server holds the source of truth of the world. Many clients (human plaer or AI agents) connect to server, submit action proposals.
 
 **Python is the game. C++ is the engine.**
 
@@ -65,7 +95,7 @@ are Python-level strategies that emit these primitives.
 
 **There is also one infrastructure type** (not a gameplay action):
 
-| 4 | `TYPE_RELOAD_BEHAVIOR` | Hot-swap Python source for an NPC agent. Forwarded to agent process; no world mutation. |
+| 4 | `TYPE_RELOAD_BEHAVIOR` | Hot-swap Python source for an Creatures agent. Forwarded to agent process; no world mutation. |
 
 ### What this means in practice
 
@@ -97,7 +127,7 @@ Headless. **NO Python, NO OpenGL.** Owns all world state.
 - Validates `ActionProposal`s from all clients
 - Runs physics at 50 Hz, broadcasts entity state at 20 Hz
 - Tracks entity ownership (which client controls which entity)
-- **Auto-spawns agent client processes** for NPC entities (via `ClientManager`)
+- **Auto-spawns agent client processes** for Creatures entities (via `ClientManager`)
 - Perception-scoped: each client only receives state within 64 blocks
 
 ### Player Client (`modcraft`)
@@ -113,7 +143,7 @@ GUI. **OpenGL, NO Python.**
 
 Headless. **Python + pybind11, NO OpenGL.**
 
-- One process per NPC entity (avoids Python GIL, full parallelism)
+- One process per Creatures entity (avoids Python GIL, full parallelism)
 - Runs `decide(self, world)` at 4 Hz, sends ActionProposals
 - Receives perception-scoped entity/chunk state from server
 - **Spawned and managed by the server** — not by the player client
@@ -124,8 +154,8 @@ Headless. **Python + pybind11, NO OpenGL.**
 1. Player clicks "Play"
 2. AgentManager (GUI) fork+execs modcraft-server on localhost
 3. GUI connects to server as a regular player client
-4. Server's ClientManager detects NPC entities with BehaviorId
-5. Server fork+execs one modcraft-agent per NPC entity
+4. Server's ClientManager detects Creatures entities with BehaviorId
+5. Server fork+execs one modcraft-agent per Creatures entity
 6. Each agent connects back to server, receives S_ASSIGN_ENTITY
 7. Agents run Python AI, entities start moving
 ```
@@ -139,7 +169,7 @@ Every living entity is controlled by exactly one client:
 | Client Type | Controls | Identified By |
 |-------------|----------|---------------|
 | Player client | Its player entity | `C_HELLO` on connect |
-| Agent client | One NPC entity | `C_AGENT_HELLO` + entity ID |
+| Agent client | One Creatures entity | `C_AGENT_HELLO` + entity ID |
 
 Server validates: only the owning client can act on its entity.
 If an agent crashes, server restarts it — entities recover in seconds.

@@ -46,6 +46,8 @@ class PeckBehavior(Behavior):
         scatter_range = float(entity.get("scatter_range", 4.0))
         peck_chance   = float(entity.get("peck_chance",   0.45))
         home_radius   = float(entity.get("home_radius",  25.0))
+        egg_cooldown  = float(entity.get("egg_cooldown",  EGG_COOLDOWN))
+        egg_chance    = float(entity.get("egg_chance",    EGG_CHANCE))
         spd           = entity.walk_speed
 
         # ── Flee from threats — HIGHEST PRIORITY (always check first) ────────
@@ -56,8 +58,8 @@ class PeckBehavior(Behavior):
         if threats:
             closest = min(threats, key=lambda t: t.distance)
             if self._egg_cooldown <= 0 and entity.hp > 2:
-                if random.random() < EGG_CHANCE:
-                    self._egg_cooldown = EGG_COOLDOWN
+                if random.random() < egg_chance:
+                    self._egg_cooldown = egg_cooldown
                     return (Convert(from_item="hp", from_count=2,
                                     to_item=ItemName.Egg, to_count=1,
                                     convert_into=Ground()),

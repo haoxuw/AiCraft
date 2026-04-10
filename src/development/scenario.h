@@ -9,6 +9,7 @@
 // tick() is never called in production builds unless the flag is set).
 
 #include "client/camera.h"
+#include "client/hotbar.h"
 #include "shared/entity.h"
 #include <string>
 #include <functional>
@@ -31,6 +32,8 @@ struct ScenarioCallbacks {
 	std::function<void()>                          dropItem;
 	// Trigger the FPS swing animation (for animation scenario)
 	std::function<void()>                          triggerSwing;
+	// Client-only hotbar (for looking up slot numbers by item ID)
+	const Hotbar*                                  hotbar = nullptr;
 };
 
 // Abstract base for all debug scenarios.
@@ -50,10 +53,10 @@ protected:
 	// Helpers available to all derived scenarios.
 
 	// Find the hotbar slot holding itemId. Returns -1 if not found.
-	static int findHotbarSlot(Entity* player, const std::string& itemId) {
-		if (!player || !player->inventory) return -1;
-		for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++) {
-			if (player->inventory->hotbar(i) == itemId) return i;
+	static int findHotbarSlot(const ScenarioCallbacks& cb, const std::string& itemId) {
+		if (!cb.hotbar) return -1;
+		for (int i = 0; i < Hotbar::SLOTS; i++) {
+			if (cb.hotbar->get(i) == itemId) return i;
 		}
 		return -1;
 	}

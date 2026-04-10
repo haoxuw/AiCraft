@@ -46,7 +46,7 @@ Object                          ← everything in the world
 ├── Creature                    ← living entity with behavior + stats
 │   ├── Player                  ← human-controlled (keyboard/mouse/auto-pilot)
 │   ├── Animal                  ← AI-driven (pig, chicken, dog)
-│   └── NPC                     ← AI-driven humanoid (villager)
+│   └── Creatures                     ← AI-driven humanoid (villager)
 │
 └── Item                        ← exists in inventory, usable
     ├── Weapon                  ← sword, bow
@@ -281,7 +281,7 @@ The `Behavior` base class provides a `wander_target(entity, radius)` helper.
 
 A single server may host hundreds of players and NPCs. AI behaviors, pathfinding,
 and decision-making are computationally expensive. If the server ran AI for every
-NPC, it would become the bottleneck. Instead, each client runs behaviors for the
+Creatures, it would become the bottleneck. Instead, each client runs behaviors for the
 entities it controls, and the server only validates the resulting intents.
 
 ```

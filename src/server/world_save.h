@@ -34,7 +34,10 @@ struct WorldMetadata {
 	float worldTime = 0.30f;
 	glm::vec3 spawnPos = {30, 5, 30};
 	std::string lastPlayed;
-	int version = 1;
+	// version history:
+	//   1 — initial format; entities serialize only (typeId, pos, vel, yaw, props)
+	//   2 — entities also serialize per-entity inventory (items + equipment)
+	int version = 2;
 };
 
 // ================================================================
@@ -123,6 +126,30 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 				case 4: wb.writeVec3(std::get<glm::vec3>(val)); break;
 				}
 			}
+
+			// Serialize inventory (v2+): [u8 hasInventory] then items + equipment
+			if (e.inventory) {
+				wb.writeU8(1);
+				auto items = e.inventory->items();
+				wb.writeU32((uint32_t)items.size());
+				for (auto& [id, cnt] : items) {
+					wb.writeString(id);
+					wb.writeI32(cnt);
+				}
+				uint8_t equipCount = 0;
+				for (int i = 0; i < WEAR_SLOT_COUNT; i++)
+					if (!e.inventory->equipped((WearSlot)i).empty()) equipCount++;
+				wb.writeU8(equipCount);
+				for (int i = 0; i < WEAR_SLOT_COUNT; i++) {
+					const auto& eq = e.inventory->equipped((WearSlot)i);
+					if (!eq.empty()) {
+						wb.writeString(equipSlotName((WearSlot)i));
+						wb.writeString(eq);
+					}
+				}
+			} else {
+				wb.writeU8(0);
+			}
 			entityCount++;
 		});
 
@@ -173,12 +200,18 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 				wb.writeString(id);
 				wb.writeI32(cnt);
 			}
-			// Hotbar
-			for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
-				wb.writeString(e.inventory->hotbar(i));
-			// Equipment
+			// Equipment: [u8 count][{str slot, str id}...]
+			uint8_t equipCount = 0;
 			for (int i = 0; i < WEAR_SLOT_COUNT; i++)
-				wb.writeString(e.inventory->equipped((WearSlot)i));
+				if (!e.inventory->equipped((WearSlot)i).empty()) equipCount++;
+			wb.writeU8(equipCount);
+			for (int i = 0; i < WEAR_SLOT_COUNT; i++) {
+				const auto& eq = e.inventory->equipped((WearSlot)i);
+				if (!eq.empty()) {
+					wb.writeString(equipSlotName((WearSlot)i));
+					wb.writeString(eq);
+				}
+			}
 			count++;
 		});
 		// Also save any previously stored inventories that aren't currently online
@@ -198,10 +231,18 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 				wb.writeString(id);
 				wb.writeI32(cnt);
 			}
-			for (int i = 0; i < Inventory::HOTBAR_SLOTS; i++)
-				wb.writeString(inv.hotbar(i));
+			// Equipment: [u8 count][{str slot, str id}...]
+			uint8_t eqCount = 0;
 			for (int i = 0; i < WEAR_SLOT_COUNT; i++)
-				wb.writeString(inv.equipped((WearSlot)i));
+				if (!inv.equipped((WearSlot)i).empty()) eqCount++;
+			wb.writeU8(eqCount);
+			for (int i = 0; i < WEAR_SLOT_COUNT; i++) {
+				const auto& eq = inv.equipped((WearSlot)i);
+				if (!eq.empty()) {
+					wb.writeString(equipSlotName((WearSlot)i));
+					wb.writeString(eq);
+				}
+			}
 			count++;
 		}
 
@@ -344,6 +385,9 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 			                           std::istreambuf_iterator<char>());
 			net::ReadBuffer rb(data.data(), data.size());
 
+			// v1 saves have no per-entity inventory; v2+ saves do.
+			bool hasInventoryData = (meta.version >= 2);
+
 			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
 				std::string typeId = rb.readString();
 				glm::vec3 pos = rb.readVec3();
@@ -374,6 +418,48 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 				if (e) {
 					e->velocity = vel;
 					e->yaw = yaw;
+				}
+
+				// Read inventory (v2+): [u8 hasInventory] then items + equipment
+				if (hasInventoryData && rb.hasMore()) {
+					uint8_t hasInv = rb.readU8();
+					if (hasInv) {
+						uint32_t itemCount = rb.readU32();
+						std::vector<std::pair<std::string, int>> items;
+						items.reserve(itemCount);
+						for (uint32_t j = 0; j < itemCount && rb.hasMore(); j++) {
+							std::string id = rb.readString();
+							int cnt = rb.readI32();
+							items.push_back({id, cnt});
+						}
+						uint8_t equipCount = rb.hasMore() ? rb.readU8() : 0;
+						std::vector<std::pair<std::string, std::string>> equips;
+						equips.reserve(equipCount);
+						for (uint8_t q = 0; q < equipCount && rb.hasMore(); q++) {
+							std::string slotName = rb.readString();
+							std::string eqId = rb.readString();
+							equips.push_back({slotName, eqId});
+						}
+						// Apply to the spawned entity if it has an inventory
+						if (e && e->inventory) {
+							e->inventory->clear();
+							for (auto& [id, cnt] : items)
+								if (cnt > 0) e->inventory->add(id, cnt);
+							for (auto& [slotName, eqId] : equips) {
+								WearSlot ws;
+								if (!eqId.empty() && wearSlotFromString(slotName, ws)) {
+									e->inventory->add(eqId, 1);
+									e->inventory->equip(ws, eqId);
+								}
+							}
+						} else if (hasInv) {
+							// Saved inventory but current entity def has no inventory —
+							// log and discard rather than silently losing it.
+							printf("[WorldSave] Warning: entity type '%s' had saved inventory (%u items) "
+							       "but current def has no inventory; discarded.\n",
+							       typeId.c_str(), itemCount);
+						}
+					}
 				}
 			}
 		}
@@ -425,18 +511,17 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 					int cnt = rb.readI32();
 					if (cnt > 0) inv.add(id, cnt);
 				}
-				// Hotbar
-				for (int h = 0; h < Inventory::HOTBAR_SLOTS && rb.hasMore(); h++) {
-					std::string hid = rb.readString();
-					if (!hid.empty()) inv.setHotbar(h, hid);
-				}
-				// Equipment
-				for (int e = 0; e < WEAR_SLOT_COUNT && rb.hasMore(); e++) {
-					std::string eid = rb.readString();
-					if (!eid.empty()) {
-						// Direct-set equipment (bypass equip/unequip which modifies counter)
-						inv.add(eid, 1);
-						inv.equip((WearSlot)e, eid);
+				// Equipment: [u8 count][{str slot, str id}...]
+				if (rb.hasMore()) {
+					uint8_t equipCount = rb.readU8();
+					for (uint8_t e = 0; e < equipCount && rb.hasMore(); e++) {
+						std::string slotName = rb.readString();
+						std::string eqId = rb.readString();
+						WearSlot ws;
+						if (!eqId.empty() && wearSlotFromString(slotName, ws)) {
+							inv.add(eqId, 1);
+							inv.equip(ws, eqId);
+						}
 					}
 				}
 				server.savedInventories()[skin] = std::move(inv);

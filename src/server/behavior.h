@@ -3,9 +3,10 @@
 /**
  * Behavior system interface for living entities.
  *
- * Every living entity (player, animal, NPC) has a Behavior that drives
- * its actions. Behaviors implement decide() which is called at 4 Hz
- * and returns what the entity should do next.
+ * Every living entity (player, animal, Creatures) has a Behavior that drives
+ * its actions. Behaviors implement decide() which is called on a
+ * per-entity schedule (driven by DecisionQueue) and returns what
+ * the entity should do next, along with a duration until the next call.
  *
  * All behavior logic lives in Python files (artifacts/behaviors/).
  * PythonBehavior wraps the pybind11 bridge to call user-written .py files.
@@ -64,6 +65,10 @@ struct BehaviorAction {
 	// Interact (reuses no extra fields — block pos is in convertFrom for Convert,
 	// or specified explicitly via blockPos below)
 	glm::ivec3  blockPos   = {0, 0, 0};
+
+	// Decision queue: how long (seconds) before the next decide() call.
+	// Set by Python behaviors via 3-tuple return; default 0.25s (4 Hz) for backward compat.
+	float decideDuration = 0.25f;
 };
 
 // ================================================================
@@ -102,7 +107,11 @@ struct BehaviorWorldView {
 	// Block query function — maps (x,y,z) → block type string.
 	std::function<std::string(int,int,int)> blockQueryFn;
 	// Block scan function — targeted search by type ID from real chunk data.
-	std::function<std::vector<BlockSample>(const std::string&, float, int)> scanBlocksFn;
+	// nearPos = world-space anchor for the search; results are sorted by
+	// distance to this point. Behaviors should pass the entity's "home"
+	// or current position so the agent doesn't drift far chasing the
+	// densest match.
+	std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)> scanBlocksFn;
 
 };
 
@@ -117,7 +126,7 @@ public:
 	// Human-readable name of this behavior type
 	virtual std::string name() const = 0;
 
-	// Called at 4 Hz. Inspect the world, set self.goalText, return action.
+	// Called on schedule. Inspect the world, set self.goalText, return action.
 	virtual BehaviorAction decide(BehaviorWorldView& view) = 0;
 
 	// Python source code for display in editor.
