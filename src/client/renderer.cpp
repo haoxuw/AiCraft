@@ -165,6 +165,15 @@ bool Renderer::init(const std::string& dir) {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
 	glEnableVertexAttribArray(0);
 
+	// Plan path dynamic VAO (position-only, used with highlight shader)
+	glGenVertexArrays(1, &m_pathVAO);
+	glGenBuffers(1, &m_pathVBO);
+	glBindVertexArray(m_pathVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, m_pathVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 512, nullptr, GL_DYNAMIC_DRAW);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+	glEnableVertexAttribArray(0);
+
 	// Door animation dynamic VAO
 	glGenVertexArrays(1, &m_doorAnimVAO);
 	glGenBuffers(1, &m_doorAnimVBO);
@@ -836,6 +845,82 @@ void Renderer::renderDoorAnims(const Camera& cam, float aspect,
 	glDisable(GL_CULL_FACE);
 	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)verts.size());
 	glEnable(GL_CULL_FACE);
+	glBindVertexArray(0);
+}
+
+void Renderer::renderPlanPath(const Camera& cam, float aspect,
+                              const std::vector<glm::vec3>& points,
+                              glm::vec4 color, float dashLen, float time) {
+	if (points.size() < 2) return;
+
+	// Build dashed line segments along the polyline.
+	// The "flow" effect: offset the dash pattern by time so dashes move toward destination.
+	std::vector<float> verts;
+	float accum = -time * 4.0f; // animated offset (flows toward destination)
+
+	for (size_t i = 0; i + 1 < points.size(); i++) {
+		glm::vec3 a = points[i];
+		glm::vec3 b = points[i + 1];
+		float segLen = glm::length(b - a);
+		if (segLen < 0.01f) continue;
+		glm::vec3 dir = (b - a) / segLen;
+
+		// Walk along segment, emitting dash-on / dash-off
+		float t = 0;
+		while (t < segLen) {
+			float phase = std::fmod(accum + t, dashLen * 2.0f);
+			if (phase < 0) phase += dashLen * 2.0f;
+
+			bool on = (phase < dashLen);
+			float remaining = on ? (dashLen - phase) : (dashLen * 2.0f - phase);
+			float end = std::min(t + remaining, segLen);
+
+			if (on) {
+				glm::vec3 p0 = a + dir * t;
+				glm::vec3 p1 = a + dir * end;
+				// Lift slightly to avoid z-fighting with terrain
+				p0.y += 0.15f;
+				p1.y += 0.15f;
+				verts.push_back(p0.x); verts.push_back(p0.y); verts.push_back(p0.z);
+				verts.push_back(p1.x); verts.push_back(p1.y); verts.push_back(p1.z);
+			}
+
+			t = end + 0.001f; // tiny epsilon to avoid infinite loop
+		}
+		accum += segLen;
+	}
+
+	if (verts.empty()) return;
+
+	// Upload and draw
+	glBindVertexArray(m_pathVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, m_pathVBO);
+	size_t byteSize = verts.size() * sizeof(float);
+	glBufferData(GL_ARRAY_BUFFER, byteSize, verts.data(), GL_DYNAMIC_DRAW);
+
+	glm::mat4 mvp = cam.projectionMatrix(aspect) * cam.viewMatrix();
+
+	m_highlightShader.use();
+	m_highlightShader.setMat4("uMVP", mvp);
+	m_highlightShader.setMat4("uModel", glm::mat4(1.0f));
+	m_highlightShader.setVec3("uSunDir", glm::vec3(0, 1, 0));
+	// Set default normal (up) for unbound attribute 1 — avoids normalize(0,0,0) NaN
+	glVertexAttrib3f(1, 0.0f, 1.0f, 0.0f);
+	// Disable tinting and texture for flat color
+	glUniform1f(glGetUniformLocation(m_highlightShader.id(), "uTintStrength"), 0.0f);
+	glUniform1i(glGetUniformLocation(m_highlightShader.id(), "uUseTexture"), 0);
+	GLint loc = glGetUniformLocation(m_highlightShader.id(), "uColor");
+	glUniform4f(loc, color.r, color.g, color.b, color.a);
+
+	glDisable(GL_DEPTH_TEST);  // always visible (show through terrain)
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glLineWidth(3.0f);
+
+	glDrawArrays(GL_LINES, 0, (GLsizei)(verts.size() / 3));
+
+	glEnable(GL_DEPTH_TEST);
+	glDisable(GL_BLEND);
 	glBindVertexArray(0);
 }
 

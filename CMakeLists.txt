@@ -249,26 +249,6 @@ else()
 		imgui_lib libzstd_static
 	)
 
-	# === Headless agent client (AI entity controller, no OpenGL) ===
-	add_executable(modcraft-agent
-		src/agent/main_agent.cpp
-		src/server/python_bridge.cpp
-		${CONTENT_SOURCES}
-	)
-	target_include_directories(modcraft-agent PRIVATE src)
-	target_link_libraries(modcraft-agent PRIVATE
-		glm::glm
-		Python3::Python pybind11::embed
-		libzstd_static
-	)
-	# Copy python/ and artifacts/ so behavior loading works
-	add_custom_command(TARGET modcraft-agent POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/python $<TARGET_FILE_DIR:modcraft-agent>/python
-		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/artifacts $<TARGET_FILE_DIR:modcraft-agent>/artifacts
-	)
-
 	# === Headless E2E test runner ===
 	add_executable(modcraft-test
 		src/test/test_e2e.cpp

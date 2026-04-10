@@ -73,22 +73,26 @@ world = {
     # Village center = spawn_anchor + (offset_x, offset_z).
     # All house coordinates are relative to the village center.
     # House 0 is the MAIN house — the starter chest is placed inside it.
+    # The portal stairs descend in +Z, so village is placed in +Z direction
+    # so the player walks out of the gateway straight into the village.
     "village": {
-        "offset_x":        40,
-        "offset_z":        12,
+        "offset_x":         5,
+        "offset_z":        40,
         "clearing_radius": 60,    # enlarged to accommodate barn
 
         # Dict fields: cx, cz, w, d (required); stories (default 1);
         #              type (optional: "barn" = open pillared barn);
         #              wall, roof (optional — overrides village default for this house)
+        # Houses are arranged around the monument at village center (0,0).
+        # The player approaches from -Z (portal stairs), so leave the -Z side open.
         "houses": [
-            {"cx":   0, "cz":   0, "w": 14, "d": 14, "stories": 2},
-            {"cx":  26, "cz":  -8, "w": 12, "d": 10, "wall": "base:wood", "roof": "base:wood"},
-            {"cx": -22, "cz":   9, "w": 10, "d": 12, "wall": "base:wood", "roof": "base:wood"},
-            {"cx":   9, "cz":  28, "w": 12, "d": 10},
-            {"cx": -20, "cz": -26, "w": 12, "d": 12, "stories": 2},
+            {"cx":  10, "cz":  -6, "w": 14, "d": 14, "stories": 2},
+            {"cx": -24, "cz":  -6, "w": 12, "d": 10, "wall": "base:wood", "roof": "base:wood"},
+            {"cx":  12, "cz":  18, "w": 10, "d": 12, "wall": "base:wood", "roof": "base:wood"},
+            {"cx": -18, "cz":  18, "w": 12, "d": 10},
+            {"cx": -24, "cz": -24, "w": 12, "d": 12, "stories": 2},
             # Large open barn for cats and dogs — no walls, just pillars and a huge roof
-            {"cx": 20, "cz": 40, "w": 26, "d": 18, "type": "barn", "roof": "base:wood"},
+            {"cx": 20, "cz": 32, "w": 26, "d": 18, "type": "barn", "roof": "base:wood"},
         ],
 
         "wall_block":  "base:cobblestone",

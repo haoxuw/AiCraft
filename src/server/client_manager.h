@@ -20,11 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
-#include <fcntl.h>
-#include <csignal>
-#include <sys/wait.h>
 #include <cmath>
-#include <filesystem>
 
 namespace modcraft {
 
@@ -39,7 +35,6 @@ struct ConnectedClient {
 	std::string ip;
 	int port = 0;
 	std::string name;
-	bool isAgent = false;
 	int chunkSendErrors = 0;
 	float pendingAge = 0; // seconds in pending pool before hello received
 
@@ -66,13 +61,10 @@ class ClientManager {
 public:
 	explicit ClientManager(GameServer& server) : m_server(server) {}
 
-	~ClientManager() { stopAllAIClients(); }
+	~ClientManager() = default;
 
 	// Set the directory containing modcraft-agent binary.
-	// Call before the main loop. If empty, AI client spawning is disabled.
-	void setExecDir(const std::string& dir) { m_execDir = dir; }
-
-	// Set the server port (needed to tell AI clients where to connect).
+	// Set the server port (for LAN discovery announcements).
 	void setPort(int port) { m_port = port; }
 
 	// Accept new TCP connections and register as clients.
@@ -83,10 +75,9 @@ public:
 
 		ClientId cid = m_nextClientId++;
 
-		// Hold in pending pool until C_HELLO/C_AGENT_HELLO identifies this client.
-		// No entity is created yet — prevents ghost entities from agent connections.
-		// Pending clients are invisible to the broadcast + chunk pipeline, so
-		// there is no timing dependency between C_HELLO arrival and broadcastState().
+		// Hold in pending pool until C_HELLO identifies this client.
+		// No entity is created yet — pending clients are invisible to
+		// the broadcast + chunk pipeline.
 		ConnectedClient cc;
 		cc.fd = accepted.fd; cc.id = cid; cc.playerId = ENTITY_NONE;
 		cc.ip = accepted.ip; cc.port = accepted.port;
@@ -138,10 +129,9 @@ public:
 	}
 
 	// Receive and dispatch all pending messages from clients.
-	// Pending (unidentified) clients are only promoted to active on C_HELLO/C_AGENT_HELLO.
-	// This eliminates all timing races between C_HELLO arrival and broadcastState().
+	// Pending (unidentified) clients are only promoted to active on C_HELLO.
 	void receiveMessages(float dt) {
-		// --- Pending pool: only accept C_HELLO / C_AGENT_HELLO ---
+		// --- Pending pool: only accept C_HELLO ---
 		struct Hello { ClientId cid; uint32_t type; std::vector<uint8_t> payload; };
 		std::vector<Hello> hellos;
 
@@ -160,7 +150,7 @@ public:
 			net::MsgHeader hdr;
 			std::vector<uint8_t> payload;
 			while (client.recvBuf.tryExtract(hdr, payload)) {
-				if (hdr.type == net::C_HELLO || hdr.type == net::C_AGENT_HELLO) {
+				if (hdr.type == net::C_HELLO) {
 					hellos.push_back({cid, hdr.type, std::move(payload)});
 					break; // one hello per client per tick
 				}
@@ -216,23 +206,8 @@ public:
 	}
 
 	// Forward pending behavior reloads to controlling agent clients.
-	void forwardBehaviorReloads() {
-		for (auto& reload : m_server.drainPendingReloads()) {
-			ClientId owner = m_server.getEntityOwner(reload.actorId);
-			if (owner == 0) {
-				printf("[Server] No agent controls entity %u, reload dropped\n", reload.actorId);
-				continue;
-			}
-			auto it = m_clients.find(owner);
-			if (it == m_clients.end()) continue;
-			net::WriteBuffer wb;
-			wb.writeU32(reload.actorId);
-			wb.writeString(reload.behaviorSource);
-			net::sendMessage(it->second.fd, net::S_RELOAD_BEHAVIOR, wb);
-			printf("[Server] Forwarded behavior reload for entity %u to %s\n",
-				reload.actorId, it->second.label().c_str());
-		}
-	}
+	// NOTE: Behavior reload forwarding removed. AgentClient runs in-process
+	// with PlayerClient and can reload behaviors directly.
 
 	// Broadcast entity state with perception scoping + stream chunks.
 	void broadcastState(float dt) {
@@ -243,14 +218,10 @@ public:
 		const float PERCEPTION_R2 = 64.0f * 64.0f;
 
 		for (auto& [cid, client] : m_clients) {
-			// Gather viewpoints for perception scoping
+			// Gather viewpoints for perception scoping (player position only)
 			std::vector<glm::vec3> viewPoints;
 			Entity* pe = m_server.world().entities.get(client.playerId);
 			if (pe) viewPoints.push_back(pe->position);
-			for (auto eid : m_server.getControlledEntities(cid)) {
-				auto* ce = m_server.world().entities.get(eid);
-				if (ce) viewPoints.push_back(ce->position);
-			}
 
 			// Entity + time broadcast — always fires regardless of pending chunks
 			m_server.world().entities.forEach([&](Entity& e) {
@@ -319,15 +290,7 @@ public:
 			// Chunk streaming — two-tier: near (priority) then far (opportunistic).
 			// Near tier covers the full view frustum so the player never sees void.
 			// Far tier loads distant terrain (mountains, vistas) when near is caught up.
-			// For agent clients, use the controlled entity's position as viewpoint.
 			Entity* streamAnchor = pe;
-			if (!streamAnchor && client.isAgent && !viewPoints.empty()) {
-				// Agent client: find first controlled entity to use as chunk stream anchor
-				for (auto eid : m_server.getControlledEntities(cid)) {
-					streamAnchor = m_server.world().entities.get(eid);
-					if (streamAnchor) break;
-				}
-			}
 			if (streamAnchor) {
 				auto cp = worldToChunk((int)streamAnchor->position.x, (int)streamAnchor->position.y, (int)streamAnchor->position.z);
 
@@ -454,149 +417,19 @@ public:
 		if (!m_announceUdp.isOpen())
 			if (!m_announceUdp.open(0, true)) return;
 
-		int humans = 0;
-		for (auto& [cid, c] : m_clients)
-			if (!c.isAgent) humans++;
+		int humans = (int)m_clients.size();
 
 		char msg[64];
 		snprintf(msg, sizeof(msg), "MODCRAFT %d %d", m_port, humans);
 		m_announceUdp.broadcast(msg, (int)strlen(msg), MODCRAFT_DISCOVER_PORT);
 	}
 
-	// Spawn AI client processes for uncontrolled Creatures entities.
-	// Called periodically from the server main loop.
-	void spawnAIClients() {
-		if (m_execDir.empty() || m_port <= 0) return;
+	// NOTE: Agent processes removed. AgentClient now runs inside PlayerClient.
+	// Server no longer spawns or manages agent processes.
+	// NPCs are assigned to the PlayerClient that owns them.
 
-		std::string agentBin = m_execDir + "/modcraft-agent";
-		if (!std::filesystem::exists(agentBin)) return;
-
-		// Reap finished AI client processes
-		for (auto it = m_aiProcesses.begin(); it != m_aiProcesses.end(); ) {
-			int status;
-			pid_t result = waitpid(it->pid, &status, WNOHANG);
-			if (result > 0) {
-				drainOnePipe(*it);  // flush any final output
-				if (it->logFd >= 0) { close(it->logFd); it->logFd = -1; }
-				if (WIFEXITED(status)) {
-					int code = WEXITSTATUS(status);
-					if (code == 0)
-						printf("[AI] Agent for entity %u exited normally (pid %d)\n", it->entityId, it->pid);
-					else
-						printf("[AI] Agent for entity %u CRASHED with exit code %d (pid %d)\n", it->entityId, it->pid, code);
-				} else if (WIFSIGNALED(status)) {
-					printf("[AI] Agent for entity %u KILLED by signal %d (pid %d)\n", it->entityId, it->pid, WTERMSIG(status));
-				} else {
-					printf("[AI] Agent for entity %u exited (pid %d, raw status=%d)\n", it->entityId, it->pid, status);
-				}
-				it = m_aiProcesses.erase(it);
-			} else {
-				++it;
-			}
-		}
-
-		// Find entities that need AI clients (NPCs + player for navigation)
-		auto uncontrolled = m_server.getUncontrolledNPCs();
-		for (EntityId eid : uncontrolled) {
-			// Skip if we already have a process for this entity
-			bool hasProcess = false;
-			for (auto& ai : m_aiProcesses) {
-				if (ai.entityId == eid) { hasProcess = true; break; }
-			}
-			if (hasProcess) continue;
-
-			// Create a pipe: child writes stdout → server reads logs
-			int pipefd[2] = {-1, -1};
-			pipe(pipefd);
-
-			// Spawn AI client process
-			std::string name = "ai_" + std::to_string(eid);
-			std::vector<std::string> args = {
-				agentBin,
-				"--host", "127.0.0.1",
-				"--port", std::to_string(m_port),
-				"--entity", std::to_string(eid),
-				"--name", name
-			};
-
-			pid_t pid = fork();
-			if (pid == 0) {
-				// Child: route stdout+stderr through the pipe
-				if (pipefd[1] >= 0) {
-					dup2(pipefd[1], STDOUT_FILENO);
-					dup2(pipefd[1], STDERR_FILENO);
-					close(pipefd[0]);
-					close(pipefd[1]);
-				}
-				std::vector<char*> cargs;
-				for (auto& a : args) cargs.push_back(const_cast<char*>(a.c_str()));
-				cargs.push_back(nullptr);
-				execv(cargs[0], cargs.data());
-				_exit(127);
-			} else if (pid > 0) {
-				// Parent: close write end, make read end non-blocking
-				if (pipefd[1] >= 0) close(pipefd[1]);
-				if (pipefd[0] >= 0)
-					fcntl(pipefd[0], F_SETFL, fcntl(pipefd[0], F_GETFL) | O_NONBLOCK);
-				AIProcess ap;
-				ap.pid = pid; ap.entityId = eid; ap.logFd = pipefd[0];
-				m_aiProcesses.push_back(std::move(ap));
-				printf("[AI] Spawned agent for entity %u (pid %d)\n", eid, pid);
-			} else {
-				if (pipefd[0] >= 0) close(pipefd[0]);
-				if (pipefd[1] >= 0) close(pipefd[1]);
-			}
-		}
-	}
-
-	// Drain stdout from all agent pipes and print to server console.
-	// Non-blocking: returns immediately if no data is available.
-	void drainAgentLogs() {
-		for (auto& ai : m_aiProcesses)
-			drainOnePipe(ai);
-	}
-
-	// Stop all AI client processes.
-	void stopAllAIClients() {
-		for (auto& ai : m_aiProcesses) {
-			if (ai.pid > 0 && kill(ai.pid, 0) == 0)
-				kill(ai.pid, SIGTERM);
-		}
-
-		// Wait for all agents to exit (atexit stats flush), with a hard timeout.
-		constexpr int TIMEOUT_MS = 2000;
-		constexpr int POLL_MS    = 10;
-		int remaining = (int)m_aiProcesses.size();
-		for (int elapsed = 0; elapsed < TIMEOUT_MS && remaining > 0; elapsed += POLL_MS) {
-			remaining = 0;
-			for (auto& ai : m_aiProcesses) {
-				if (ai.pid <= 0) continue;
-				int status;
-				if (waitpid(ai.pid, &status, WNOHANG) > 0)
-					ai.pid = -1;  // mark as reaped
-				else
-					remaining++;
-			}
-			if (remaining > 0)
-				usleep(POLL_MS * 1000);
-		}
-
-		// SIGKILL any agents still alive after timeout
-		for (auto& ai : m_aiProcesses) {
-			if (ai.pid > 0) {
-				kill(ai.pid, SIGKILL);
-				int status;
-				waitpid(ai.pid, &status, 0);
-			}
-			drainOnePipe(ai);  // flush final output (stats dump) before closing
-			if (ai.logFd >= 0) close(ai.logFd);
-		}
-		m_aiProcesses.clear();
-	}
-
-	// Close all client connections and stop AI processes.
+	// Close all client connections.
 	void disconnectAll() {
-		stopAllAIClients();
 		for (auto& [cid, client] : m_clients)
 			close(client.fd);
 		m_clients.clear();
@@ -606,7 +439,6 @@ public:
 	}
 
 	size_t clientCount() const { return m_clients.size(); }
-	size_t aiClientCount() const { return m_aiProcesses.size(); }
 
 	// Access for callbacks (block change, entity remove, inventory)
 	void broadcastToAll(net::MsgType msgType, const net::WriteBuffer& wb) {
@@ -640,57 +472,10 @@ public:
 		const std::string& newTypeId = m_server.world().blocks.get(newBid).string_id;
 		ci->applyBlockChange(pos, oldTypeId, newTypeId);
 
-		// Send S_CHUNK_INFO_DELTA (changed entries only) to agent clients
-		bool anyAgent = false;
-		for (auto& [cid, client] : m_clients)
-			if (client.isAgent && client.sentChunks.count(cp)) { anyAgent = true; break; }
-		if (!anyAgent) return;
-
-		std::vector<std::string> changedTypes;
-		if (!oldTypeId.empty()) changedTypes.push_back(oldTypeId);
-		if (!newTypeId.empty() && newTypeId != oldTypeId) changedTypes.push_back(newTypeId);
-
-		std::vector<net::ChunkInfoWireEntry> wireEntries;
-		for (const auto& tid : changedTypes) {
-			auto eIt = ci->entries.find(tid);
-			int cnt = (eIt != ci->entries.end()) ? eIt->second.count : 0;
-			wireEntries.push_back({tid, cnt});
-		}
-
-		for (auto& [cid, client] : m_clients) {
-			if (!client.isAgent || !client.sentChunks.count(cp)) continue;
-			net::WriteBuffer db;
-			net::writeChunkInfoPayload(db, cp, ci->hasAir, wireEntries);
-			net::sendMessage(client.fd, net::S_CHUNK_INFO_DELTA, db);
-		}
+		// S_CHUNK_INFO_DELTA removed — agents share PlayerClient's chunk cache
 	}
 
 private:
-	struct AIProcess {
-		pid_t       pid;
-		EntityId    entityId;
-		int         logFd = -1;   // read end of stdout pipe from child
-		std::string logBuf;       // partial-line accumulator
-	};
-
-	// Read available bytes from one agent pipe, split into lines, print each.
-	void drainOnePipe(AIProcess& ai) {
-		if (ai.logFd < 0) return;
-		char buf[4096];
-		ssize_t n;
-		while ((n = read(ai.logFd, buf, sizeof(buf) - 1)) > 0) {
-			buf[n] = '\0';
-			ai.logBuf += buf;
-		}
-		size_t pos;
-		while ((pos = ai.logBuf.find('\n')) != std::string::npos) {
-			std::string line = ai.logBuf.substr(0, pos);
-			ai.logBuf.erase(0, pos + 1);
-			if (!line.empty())
-				printf("%s\n", line.c_str());
-		}
-	}
-
 	// Serialize an inventory into S_INVENTORY wire format:
 	// [u32 entityId][u32 n][{str id, i32 count}...][u8 equipCount][{str slot, str id}...]
 	static void writeInventoryPayload(net::WriteBuffer& wb, EntityId eid, const Inventory& inv) {
@@ -752,7 +537,7 @@ private:
 				// Enforce one-character-per-server: reject if skin already occupied
 				bool skinTaken = false;
 				for (auto& [otherId, other] : m_clients) {
-					if (otherId == client.id || other.isAgent) continue;
+					if (otherId == client.id) continue;
 					Entity* oe = m_server.world().entities.get(other.playerId);
 					if (oe && oe->getProp<std::string>("character_skin", "") == creatureType) {
 						skinTaken = true;
@@ -831,45 +616,9 @@ private:
 			break;
 		}
 
-		case net::C_RESYNC_CHUNK: {
-			ChunkPos pos = {rb.readI32(), rb.readI32(), rb.readI32()};
-			// Remove from sentChunks so the chunk gets re-queued on next broadcastState
-			client.sentChunks.erase(pos);
-			// Cancel any in-flight stale version of this chunk
-			client.pendingChunks.erase(
-				std::remove_if(client.pendingChunks.begin(), client.pendingChunks.end(),
-					[&](const auto& p) { return p.first == pos; }),
-				client.pendingChunks.end());
-			break;
-		}
+		// C_RESYNC_CHUNK removed — was agent-only; PlayerClient uses chunk streaming
 
-		case net::C_AGENT_HELLO: {
-			client.name = rb.readString();
-			uint32_t targetEntity = rb.readU32();
-			client.isAgent = true;
-			m_server.addAgentClient(cid);
-			printf("[Server] %s identified as agent, wants entity %u\n",
-				client.label().c_str(), targetEntity);
-
-			Entity* te = m_server.world().entities.get(targetEntity);
-			if (!te || te->removed) {
-				printf("[Server] Entity %u not found for agent %s\n",
-					targetEntity, client.label().c_str());
-				break;
-			}
-
-			client.playerId = targetEntity; // so C_SET_GOAL can find this agent by entity ID
-			m_server.assignEntityToClient(cid, targetEntity);
-			std::string behaviorId = te->getProp<std::string>(Prop::BehaviorId, "");
-
-			net::WriteBuffer awb;
-			awb.writeU32(targetEntity);
-			awb.writeString(behaviorId);
-			net::sendMessage(client.fd, net::S_ASSIGN_ENTITY, awb);
-			printf("[Server] Assigned entity %u (behavior: %s) to %s\n",
-				targetEntity, behaviorId.c_str(), client.label().c_str());
-			break;
-		}
+		// C_AGENT_HELLO removed — agents run inside PlayerClient now
 		case net::C_SET_GOAL: {
 			uint32_t eid = rb.readU32();
 			glm::vec3 gp = {rb.readF32(), rb.readF32(), rb.readF32()};
@@ -897,26 +646,7 @@ private:
 			if (e) { e->nav.clear(); e->velocity = {0, 0, 0}; }
 			break;
 		}
-		case net::C_PROXIMITY: {
-			uint32_t count = rb.readU32();
-			// Group entity IDs by their controlling agent client
-			std::unordered_map<ClientId, std::vector<EntityId>> byAgent;
-			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
-				EntityId eid = rb.readU32();
-				ClientId owner = m_server.getEntityOwner(eid);
-				if (owner != 0) byAgent[owner].push_back(eid);
-			}
-			// Relay S_PROXIMITY to each relevant agent client
-			for (auto& [agentCid, eids] : byAgent) {
-				auto ait = m_clients.find(agentCid);
-				if (ait == m_clients.end() || !ait->second.isAgent) continue;
-				net::WriteBuffer wb;
-				wb.writeU32((uint32_t)eids.size());
-				for (auto eid : eids) wb.writeU32(eid);
-				net::sendMessage(ait->second.fd, net::S_PROXIMITY, wb);
-			}
-			break;
-		}
+		// C_PROXIMITY removed — agents run inside PlayerClient, no relay needed
 		case net::C_CLAIM_ENTITY: {
 			uint32_t eid = rb.readU32();
 			Entity* target = m_server.world().entities.get(eid);
@@ -1039,19 +769,7 @@ private:
 		memcpy(msg.data() + 8, payload.data(), payload.size());
 		cc.pendingChunks.push_back({pos, std::move(msg)});
 		cc.sentChunks.insert(pos);
-
-		// Agent clients receive S_CHUNK_INFO (counts only) for block awareness.
-		if (cc.isAgent) {
-			ChunkInfo* ci = m_server.world().getChunkInfo(pos);
-			if (ci) {
-				std::vector<net::ChunkInfoWireEntry> wireEntries;
-				for (auto& [typeId, entry] : ci->entries)
-					wireEntries.push_back({typeId, entry.count});
-				net::WriteBuffer cib;
-				net::writeChunkInfoPayload(cib, pos, ci->hasAir, wireEntries);
-				net::sendMessage(cc.fd, net::S_CHUNK_INFO, cib);
-			}
-		}
+		// S_CHUNK_INFO removed — agents share PlayerClient's chunk cache
 	}
 
 	GameServer& m_server;
@@ -1061,10 +779,7 @@ private:
 	ClientId m_nextClientId = 1;
 	float m_broadcastTimer = 0;
 
-	// AI client process management
-	std::string m_execDir;
 	int m_port = 0;
-	std::vector<AIProcess> m_aiProcesses;
 
 	// LAN discovery
 	net::UdpSocket m_announceUdp;

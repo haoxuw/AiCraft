@@ -15,18 +15,15 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) 
 	err = "Python not available in web build";
 	return -1;
 }
-BehaviorAction PythonBridge::callDecide(BehaviorHandle, Entity&,
-                                         const std::vector<NearbyEntity>&,
-                                         const std::vector<BlockSample>&,
-                                         float, float, std::string&, std::string& err,
-                                         BlockQueryFn) {
-	err = "Python not available in web build";
-	{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
+Plan PythonBridge::callDecide(BehaviorHandle, Entity&,
+                               const std::vector<NearbyEntity>&,
+                               float, float, std::string&, std::string& err,
+                               BlockQueryFn, ScanBlocksFn) {
+	err = "Python not available in web build"; return {};
 }
 std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
 void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
-BehaviorAction PythonBehavior::decide(BehaviorWorldView&) { { BehaviorAction a; a.type = BehaviorAction::Idle; return a; } }
 bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
 bool loadStructureBlueprint(const std::string&, StructureBlueprint&) { return false; }
 std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
@@ -64,10 +61,15 @@ struct PyContainer {
 	float    x = 0, y = 0, z = 0;       // block position (kind=Block)
 };
 
-// Python-visible action types (what a behavior can return)
+// PyAction — the Python-visible action type.
+// TODO: Replace with Plan/PlanStep return type from decide().
+// The PyAction struct and its action constructors (Move, Idle, Relocate, Convert,
+// Interact) in the PYBIND11_EMBEDDED_MODULE below are still used by existing
+// Python behaviors during the transition. They will be replaced when decide()
+// returns Plan instead of (action, goal_str).
 struct PyAction {
 	std::string type;    // "move", "relocate", "convert", "interact"
-	float x = 0, y = 0, z = 0;  // target position (Move, Interact)
+	float x = 0, y = 0, z = 0;
 	float speed = 2.0f;
 
 	// Relocate
@@ -82,8 +84,8 @@ struct PyAction {
 	int         from_count = 1;
 	std::string to_item;
 	int         to_count   = 1;
-	PyContainer convert_from;   // source container (default = Self)
-	PyContainer convert_into;   // dest container (default = Self)
+	PyContainer convert_from;
+	PyContainer convert_into;
 };
 
 // Per-call state — set before callDecide(), cleared after.
@@ -321,6 +323,7 @@ void PythonBridge::shutdown() {
 }
 
 // Helper: translate PyContainer → C++ Container
+// Used by Plan step execution when converting Relocate/Convert steps to ActionProposals.
 static Container pyContainerToC(const PyContainer& pc) {
 	switch (pc.kind) {
 	case 1:  return Container::ground();
@@ -328,15 +331,6 @@ static Container pyContainerToC(const PyContainer& pc) {
 	case 3:  return Container::block((int)pc.x, (int)pc.y, (int)pc.z);
 	default: return Container::self();
 	}
-}
-
-// Goal string synthesized from action type when the behavior doesn't provide one.
-static const char* goalForAction(const std::string& actionType) {
-	if (actionType == "move")     return "Moving...";
-	if (actionType == "relocate") return "Relocating item";
-	if (actionType == "convert")  return "Converting";
-	if (actionType == "interact") return "Interacting";
-	return "Active";
 }
 
 BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::string& errorOut) {
@@ -389,79 +383,69 @@ del _i, _n, _c
 	}
 }
 
-BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
-                                         Entity& self,
-                                         const std::vector<NearbyEntity>& nearby,
-                                         const std::vector<BlockSample>& blocks,
-                                         float dt,
-                                         float timeOfDay,
-                                         std::string& goalOut,
-                                         std::string& errorOut,
-                                         BlockQueryFn blockQueryFn,
-                                         ScanBlocksFn scanBlocksFn) {
-	// Inject callbacks for this call so Python can query blocks.
-	s_blockQueryFn = blockQueryFn ? std::move(blockQueryFn) : [](int,int,int){ return std::string("base:air"); };
+// Convert a single old-format PyAction to a PlanStep.
+static PlanStep pyActionToPlanStep(const PyAction& pa) {
+	if (pa.type == "move")
+		return PlanStep::move({pa.x, pa.y, pa.z}, pa.speed);
+	if (pa.type == "convert")
+		return PlanStep::harvest({pa.x, pa.y, pa.z});
+	if (pa.type == "relocate")
+		return PlanStep::relocate(pyContainerToC(pa.relocate_from),
+		                          pyContainerToC(pa.relocate_to),
+		                          pa.item_id, pa.item_count);
+	// idle / interact / unknown → stand still
+	return PlanStep::move({pa.x, pa.y, pa.z}, 0.0f);
+}
+
+Plan PythonBridge::callDecide(BehaviorHandle handle,
+                               Entity& self,
+                               const std::vector<NearbyEntity>& nearby,
+                               float dt, float timeOfDay,
+                               std::string& goalOut,
+                               std::string& errorOut,
+                               BlockQueryFn blockQueryFn,
+                               ScanBlocksFn scanBlocksFn) {
+	// Set per-call block query callbacks (cleared on return)
+	s_blockQueryFn = blockQueryFn ? std::move(blockQueryFn)
+	                              : [](int,int,int){ return std::string("base:air"); };
 	s_scanBlocksFn = std::move(scanBlocksFn);
 	s_selfPos      = self.position;
 	struct Cleanup { ~Cleanup() { s_blockQueryFn = nullptr; s_scanBlocksFn = nullptr; } } _cleanup;
+
 	auto it = m_behaviors.find(handle);
 	if (it == m_behaviors.end()) {
 		errorOut = "Invalid behavior handle";
-		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
+		return {};
 	}
 
 	try {
 		py::object& instance = *static_cast<py::object*>(it->second.instanceObj);
 
-		// Build the world view for Python — entities as dicts (consistent with blocks)
+		// Build nearby entities list
 		py::list pyNearby;
 		for (auto& ne : nearby) {
 			py::dict info;
-			info["id"] = ne.id;
-			info["type"] = ne.typeId;
+			info["id"] = ne.id; info["type"] = ne.typeId;
 			info["kind"] = (ne.kind == EntityKind::Living) ? "living" : "item";
-			info["x"] = ne.position.x;
-			info["y"] = ne.position.y;
-			info["z"] = ne.position.z;
-			info["distance"] = ne.distance;
-			info["hp"] = ne.hp;
-			py::list pyTags;
-			for (auto& t : ne.tags) pyTags.append(t);
+			info["x"] = ne.position.x; info["y"] = ne.position.y; info["z"] = ne.position.z;
+			info["distance"] = ne.distance; info["hp"] = ne.hp;
+			py::list pyTags; for (auto& t : ne.tags) pyTags.append(t);
 			info["tags"] = pyTags;
 			pyNearby.append(info);
 		}
 
-		// Build self info — start with all entity props (custom fields set by server),
-		// then override with authoritative C++ values so hardcoded fields are always correct.
+		// Build self entity dict
 		py::dict pySelf;
 		for (auto& [key, val] : self.props()) {
-			if (auto* s = std::get_if<std::string>(&val))
-				pySelf[key.c_str()] = *s;
-			else if (auto* iv = std::get_if<int>(&val))
-				pySelf[key.c_str()] = *iv;
-			else if (auto* fv = std::get_if<float>(&val))
-				pySelf[key.c_str()] = *fv;
-			else if (auto* bv = std::get_if<bool>(&val))
-				pySelf[key.c_str()] = *bv;
-		}
-		pySelf["id"] = self.id();
-		pySelf["type"] = self.typeId();
-		pySelf["x"] = self.position.x;
-		pySelf["y"] = self.position.y;
-		pySelf["z"] = self.position.z;
-		pySelf["yaw"] = self.yaw;
-		pySelf["hp"] = self.hp();
-		pySelf["walk_speed"] = self.def().walk_speed;
-		pySelf["on_ground"] = self.onGround;
-		// Expose ALL entity props so Python behaviors can read custom values
-		// (home_x, chest_x, work_radius, etc.) via entity.get("prop_name")
-		for (auto& [key, val] : self.props()) {
 			if (auto* s = std::get_if<std::string>(&val)) pySelf[key.c_str()] = *s;
-			else if (auto* f = std::get_if<float>(&val)) pySelf[key.c_str()] = *f;
-			else if (auto* i = std::get_if<int>(&val)) pySelf[key.c_str()] = *i;
-			else if (auto* b = std::get_if<bool>(&val)) pySelf[key.c_str()] = *b;
+			else if (auto* i = std::get_if<int>(&val))     pySelf[key.c_str()] = *i;
+			else if (auto* f = std::get_if<float>(&val))   pySelf[key.c_str()] = *f;
+			else if (auto* b = std::get_if<bool>(&val))    pySelf[key.c_str()] = *b;
 		}
-		// Inventory: expose as {"item_id": count, ...} dict
+		pySelf["id"] = self.id(); pySelf["type"] = self.typeId();
+		pySelf["x"] = self.position.x; pySelf["y"] = self.position.y; pySelf["z"] = self.position.z;
+		pySelf["yaw"] = self.yaw; pySelf["hp"] = self.hp();
+		pySelf["walk_speed"] = self.def().walk_speed; pySelf["on_ground"] = self.onGround;
 		if (self.inventory) {
 			py::dict pyInv;
 			for (auto& [itemId, count] : self.inventory->items())
@@ -470,114 +454,85 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		} else {
 			pySelf["inventory"] = py::dict();
 		}
-		// Build block list from ChunkInfo samples (see docs/29_CHUNK_INFO.md).
-		py::list pyBlocks;
-		for (auto& b : blocks) {
-			py::dict bd;
-			bd["type"]     = b.typeId;
-			bd["x"]        = b.x;
-			bd["y"]        = b.y;
-			bd["z"]        = b.z;
-			bd["distance"] = b.distance;
-			pyBlocks.append(bd);
-		}
 
-		// Build raw dicts (intermediate form — consumed by LocalWorld._from_raw /
-		// SelfEntity._from_raw which produce the pydantic objects behaviors receive).
+		// Build LocalWorld dict
 		py::dict pyWorld;
 		pyWorld["nearby"] = pyNearby;
-		pyWorld["blocks"] = pyBlocks;
-		pyWorld["dt"] = dt;
-		pyWorld["time"] = timeOfDay;
-
-		// Goal is no longer injected — server handles navigation directly.
+		pyWorld["blocks"] = py::list();
+		pyWorld["dt"] = dt; pyWorld["time"] = timeOfDay;
 		pyWorld["goal"] = py::none();
 
-		// Wrap in LocalWorld / SelfEntity pydantic objects.
-		// _from_raw() uses model_construct() to skip validators (trusted C++ data).
+		// Construct pydantic objects
 		py::object& LocalWorldCls = *static_cast<py::object*>(m_localWorldClass);
 		py::object& SelfEntityCls = *static_cast<py::object*>(m_selfEntityClass);
 		py::object pyLocalWorld = LocalWorldCls.attr("_from_raw")(pyWorld);
 		py::object pySelfEntity = SelfEntityCls.attr("_from_raw")(pySelf);
 
-		// Call instance.decide(entity, world) — returns (action, goal_str)
+		// Call Python decide()
 		py::object result = instance.attr("decide")(pySelfEntity, pyLocalWorld);
 
-		// Validate tuple return: (action, goal_str) or (action, goal_str, duration_seconds)
+		// Parse return — expect (action_or_plan, goal_str)
 		if (!py::isinstance<py::tuple>(result)) {
-			goalOut = "ERROR: decide() must return (action, goal_str[, duration]) — got " +
-			          std::string(py::str(result));
-			errorOut = goalOut;
-			{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
+			errorOut = "decide() must return a tuple";
+			return {};
 		}
 		py::tuple tup = result.cast<py::tuple>();
-		size_t tupSize = tup.size();
-		if (tupSize < 2 || tupSize > 3) {
-			goalOut = "ERROR: decide() must return 2- or 3-tuple — got " +
-			          std::to_string(tupSize) + "-tuple";
-			errorOut = goalOut;
-			{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
+		if (tup.size() < 2) {
+			errorOut = "decide() must return at least (action/plan, goal_str)";
+			return {};
 		}
-		py::object pyActionObj = tup[0];
+
 		goalOut = tup[1].cast<std::string>();
+		if (goalOut.empty()) goalOut = "Active";
 
-		// Optional 3rd element: duration (seconds) until next decide()
-		float decideDuration = 0.25f;
-		if (tupSize == 3) {
-			decideDuration = tup[2].cast<float>();
-			if (decideDuration < 0.02f) decideDuration = 0.02f;   // floor: 1 tick at 50 Hz
-			if (decideDuration > 30.0f) decideDuration = 30.0f;   // ceiling: 30 seconds
-		}
+		// Parse first element: old-format PyAction or new-format list of dicts
+		py::object first = tup[0];
+		Plan plan;
 
-		// Enforce non-empty goal (engine synthesizes if behavior forgot)
-		PyAction pyAction;
-		if (pyActionObj.is_none()) {
-			pyAction.type = "idle";
+		if (first.is_none()) {
+			// Idle — empty plan (stand still)
+		} else if (py::isinstance<py::list>(first)) {
+			// New format: list of PlanStep dicts.
+			// Each step type has a fixed, required schema:
+			//   move:     {"type":"move",     "x":float, "y":float, "z":float, "speed":float}
+			//   harvest:  {"type":"harvest",  "x":float, "y":float, "z":float}
+			//   attack:   {"type":"attack",   "entity_id":int}
+			//   relocate: {"type":"relocate", "from":Container, "to":Container, "item":str, "count":int}
+			for (auto& item : first.cast<py::list>()) {
+				py::dict d = item.cast<py::dict>();
+				std::string stype = d["type"].cast<std::string>();
+				if (stype == "move") {
+					plan.push_back(PlanStep::move(
+						{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()},
+						 d["speed"].cast<float>()));
+				} else if (stype == "harvest") {
+					plan.push_back(PlanStep::harvest(
+						{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()}));
+				} else if (stype == "attack") {
+					plan.push_back(PlanStep::attack(d["entity_id"].cast<EntityId>()));
+				} else if (stype == "relocate") {
+					plan.push_back(PlanStep::relocate(
+						Container::self(), Container::self(),
+						d["item"].cast<std::string>(),
+						d["count"].cast<int>()));
+				} else {
+					errorOut = "Unknown PlanStep type: " + stype;
+					return {};
+				}
+			}
 		} else {
-			pyAction = pyActionObj.cast<PyAction>();
-		}
-		if (goalOut.empty())
-			goalOut = goalForAction(pyAction.type);
-
-		BehaviorAction action;
-		action.targetPos = {pyAction.x, pyAction.y, pyAction.z};
-		action.speed = pyAction.speed;
-
-		if (pyAction.type == "move") {
-			action.type = BehaviorAction::Move;
-		} else if (pyAction.type == "relocate") {
-			action.type        = BehaviorAction::Relocate;
-			action.relocateFrom= pyContainerToC(pyAction.relocate_from);
-			action.relocateTo  = pyContainerToC(pyAction.relocate_to);
-			action.itemId      = pyAction.item_id;
-			action.itemCount   = pyAction.item_count;
-			action.equipSlot   = pyAction.equip_slot;
-		} else if (pyAction.type == "convert") {
-			action.type        = BehaviorAction::Convert;
-			action.fromItem    = pyAction.from_item;
-			action.fromCount   = pyAction.from_count;
-			action.toItem      = pyAction.to_item;
-			action.toCount     = pyAction.to_count;
-			action.convertFrom = pyContainerToC(pyAction.convert_from);
-			action.convertInto = pyContainerToC(pyAction.convert_into);
-		} else if (pyAction.type == "interact") {
-			action.type    = BehaviorAction::Interact;
-			action.blockPos= {(int)pyAction.x, (int)pyAction.y, (int)pyAction.z};
-		} else if (pyAction.type == "idle") {
-			action.type = BehaviorAction::Idle;
-		} else {
-			// Unknown type — idle (no action)
-			action.type = BehaviorAction::Idle;
+			// Old format: single PyAction → single-step Plan (backward compat)
+			PyAction pa = first.cast<PyAction>();
+			plan.push_back(pyActionToPlanStep(pa));
 		}
 
-		action.decideDuration = decideDuration;
-		return action;
+		return plan;
 
 	} catch (const py::error_already_set& e) {
 		errorOut = e.what();
 		fprintf(stderr, "[PythonBridge] decide() exception: %s\n", e.what());
 		fflush(stderr);
-		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
+		return {};
 	}
 }
 
@@ -597,37 +552,9 @@ void PythonBridge::unloadBehavior(BehaviorHandle handle) {
 	}
 }
 
-// ================================================================
-// PythonBehavior::decide — runs the Python decide() function
-// ================================================================
-
-BehaviorAction PythonBehavior::decide(BehaviorWorldView& view) {
-	auto& bridge = pythonBridge();
-	if (!bridge.isInitialized()) {
-		view.self.goalText = "Python not initialized";
-		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
-	}
-
-	std::string goal, error;
-	auto action = bridge.callDecide(m_handle, view.self, view.nearbyEntities,
-	                                view.chunkBlocks,
-	                                view.dt, view.timeOfDay, goal, error,
-	                                view.blockQueryFn, view.scanBlocksFn);
-
-	if (!error.empty()) {
-		view.self.goalText = "ERROR: " + error.substr(0, 80);
-		view.self.hasError = true;
-		view.self.errorText = error;
-		{ BehaviorAction a; a.type = BehaviorAction::Idle; return a; }
-	}
-
-	// Goal is always set by bridge (synthesized if behavior returned empty).
-	view.self.goalText = goal;
-	view.self.hasError = false;
-	view.self.errorText.clear();
-
-	return action;
-}
+// PythonBehavior::decide — REMOVED
+// The old Behavior class hierarchy (PythonBehavior, IdleFallbackBehavior) has been
+// deleted. AgentClient now calls Python decide() directly via PythonBridge.
 
 // ================================================================
 // World config loader — reads artifacts/worlds/*.py via pybind11

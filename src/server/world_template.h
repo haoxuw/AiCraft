@@ -377,7 +377,7 @@ private:
 	// ── Spawn portal (grand elevated stone temple arch) ──────────
 	// 17-wide × 25-tall stone arch on a 5-block raised platform.
 	// 7-wide descending staircase exits the +Z face to ground level.
-	// Player spawns on the platform (groundY+5) facing +Z (toward stairs).
+	// Player spawns on the platform (groundY+5) facing +Z (toward stairs and village).
 	//
 	// Z layout (offsets from anchor pz):
 	//   dz=-5..-4 : back wall (2 thick, with windows)
@@ -1004,6 +1004,142 @@ private:
 			// Gate opening (2 wide)
 			ctx.set(px+4, py, pzz, BLOCK_AIR);
 			ctx.set(px+5, py, pzz, BLOCK_AIR);
+		}
+
+		// ── Village center monument — magical trident tower ─────
+		// Tall arcane spire with glass windows, portal glow rings,
+		// and a three-pronged trident crown.  Visible from spawn.
+		{
+			BlockId arcaneB = blocks.getId(BlockType::ArcaneStone);
+			BlockId glassB  = blocks.getId(BlockType::Glass);
+			BlockId portalB = blocks.getId(BlockType::Portal);
+			BlockId fenceB  = blocks.getId(BlockType::Fence);
+			if (arcaneB == BLOCK_AIR) arcaneB = stoneB;
+			if (glassB  == BLOCK_AIR) glassB  = arcaneB;
+			if (portalB == BLOCK_AIR) portalB = arcaneB;
+			if (fenceB  == BLOCK_AIR) fenceB  = stoneB;
+
+			int mx = vc.x, mz = vc.y;
+			int my = (int)std::round(groundHeight(seed, (float)mx, (float)mz)) + 1;
+
+			// ─ Stepped base pyramid (3 tiers) ─
+			for (int tier = 0; tier < 3; tier++) {
+				int r = 3 - tier;   // radii: 3, 2, 1
+				BlockId tb = (tier == 0) ? stoneB : arcaneB;
+				for (int dx = -r; dx <= r; dx++)
+					for (int dz = -r; dz <= r; dz++)
+						ctx.set(mx+dx, my+tier, mz+dz, tb);
+			}
+
+			// ─ Tower body: 5x5 walls, 18 blocks tall, hollow 3x3 ─
+			constexpr int towerH = 18;
+			int bodyBase = my + 3;  // sits on top of pyramid
+			for (int dy = 0; dy < towerH; dy++) {
+				int y = bodyBase + dy;
+				for (int dx = -2; dx <= 2; dx++)
+					for (int dz = -2; dz <= 2; dz++) {
+						bool edge = (std::abs(dx) == 2 || std::abs(dz) == 2);
+						bool corner = (std::abs(dx) == 2 && std::abs(dz) == 2);
+						if (corner) {
+							// Corner columns: alternate arcane/stone every 3
+							ctx.set(mx+dx, y, mz+dz, (dy % 3 == 0) ? stoneB : arcaneB);
+						} else if (edge) {
+							ctx.set(mx+dx, y, mz+dz, arcaneB);
+						} else {
+							ctx.set(mx+dx, y, mz+dz, BLOCK_AIR);
+						}
+					}
+			}
+
+			// ─ Portal glow rings at base, 1/3, 2/3 height ─
+			for (int ring : {0, 6, 12}) {
+				int y = bodyBase + ring;
+				for (int dx = -2; dx <= 2; dx++)
+					for (int dz = -2; dz <= 2; dz++) {
+						bool edge = (std::abs(dx) == 2 || std::abs(dz) == 2);
+						bool corner = (std::abs(dx) == 2 && std::abs(dz) == 2);
+						if (edge && !corner)
+							ctx.set(mx+dx, y, mz+dz, portalB);
+					}
+			}
+
+			// ─ Glass windows on each face (centered, at 1/4 and 3/4 height) ─
+			for (int winY : {4, 9, 14}) {
+				int y = bodyBase + winY;
+				// ±Z faces: center column
+				ctx.set(mx, y,   mz-2, glassB);
+				ctx.set(mx, y+1, mz-2, glassB);
+				ctx.set(mx, y,   mz+2, glassB);
+				ctx.set(mx, y+1, mz+2, glassB);
+				// ±X faces: center column
+				ctx.set(mx-2, y,   mz, glassB);
+				ctx.set(mx-2, y+1, mz, glassB);
+				ctx.set(mx+2, y,   mz, glassB);
+				ctx.set(mx+2, y+1, mz, glassB);
+			}
+
+			// ─ Door on -Z face ─
+			for (int dy = 0; dy <= 2; dy++)
+				ctx.set(mx, bodyBase+dy, mz-2, BLOCK_AIR);
+
+			// ─ Observation deck (7x7 overhang) ─
+			int deckY = bodyBase + towerH;
+			for (int dx = -3; dx <= 3; dx++)
+				for (int dz = -3; dz <= 3; dz++)
+					ctx.set(mx+dx, deckY, mz+dz, stoneB);
+			// Portal inlay on deck edge
+			for (int dx = -2; dx <= 2; dx++) {
+				ctx.set(mx+dx, deckY, mz-3, portalB);
+				ctx.set(mx+dx, deckY, mz+3, portalB);
+			}
+			for (int dz = -2; dz <= 2; dz++) {
+				ctx.set(mx-3, deckY, mz+dz, portalB);
+				ctx.set(mx+3, deckY, mz+dz, portalB);
+			}
+
+			// ─ Fence railing on deck perimeter ─
+			for (int dx = -3; dx <= 3; dx++) {
+				ctx.set(mx+dx, deckY+1, mz-3, fenceB);
+				ctx.set(mx+dx, deckY+1, mz+3, fenceB);
+			}
+			for (int dz = -2; dz <= 2; dz++) {
+				ctx.set(mx-3, deckY+1, mz+dz, fenceB);
+				ctx.set(mx+3, deckY+1, mz+dz, fenceB);
+			}
+
+			// ─ Trident crown (3 prongs along X axis) ─
+			// Center prong: 10 blocks, arcane with portal cap
+			int tridentBase = deckY + 1;
+			for (int dy = 1; dy <= 10; dy++)
+				ctx.set(mx, tridentBase+dy, mz, arcaneB);
+			ctx.set(mx, tridentBase+11, mz, portalB);  // glowing tip
+
+			// Left prong (-X): branches at +3, curves outward
+			for (int dy = 1; dy <= 3; dy++)
+				ctx.set(mx-1, tridentBase+dy, mz, arcaneB);
+			ctx.set(mx-2, tridentBase+4, mz, arcaneB);
+			ctx.set(mx-2, tridentBase+5, mz, arcaneB);
+			ctx.set(mx-3, tridentBase+6, mz, arcaneB);
+			ctx.set(mx-3, tridentBase+7, mz, arcaneB);
+			ctx.set(mx-3, tridentBase+8, mz, portalB);  // glowing tip
+
+			// Right prong (+X): mirror of left
+			for (int dy = 1; dy <= 3; dy++)
+				ctx.set(mx+1, tridentBase+dy, mz, arcaneB);
+			ctx.set(mx+2, tridentBase+4, mz, arcaneB);
+			ctx.set(mx+2, tridentBase+5, mz, arcaneB);
+			ctx.set(mx+3, tridentBase+6, mz, arcaneB);
+			ctx.set(mx+3, tridentBase+7, mz, arcaneB);
+			ctx.set(mx+3, tridentBase+8, mz, portalB);  // glowing tip
+
+			// Crossbar connecting prongs at branch point
+			for (int dx = -2; dx <= 2; dx++)
+				ctx.set(mx+dx, tridentBase+3, mz, arcaneB);
+
+			// Portal orbs floating at corner posts of deck
+			for (int sx : {-3, 3})
+				for (int sz : {-3, 3})
+					ctx.set(mx+sx, deckY+2, mz+sz, portalB);
 		}
 
 		// ── Village pond (small water feature) ───────────────────

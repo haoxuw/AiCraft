@@ -1,148 +1,82 @@
 #pragma once
 
 /**
- * BehaviorExecutor — converts BehaviorAction to ActionProposal.
+ * BehaviorExecutor — executes PlanSteps by converting them to ActionProposals.
  *
- * Extracted from EntityManager::behaviorToMoveProposal().
- * Used by the agent client to translate Python AI decisions into
- * server-compatible ActionProposals sent over TCP.
+ * NEW ARCHITECTURE (Plan-based):
+ *   The old behaviorToActionProposals() converted a single BehaviorAction to
+ *   ActionProposals. That's been deleted — replaced by plan-step execution.
  *
- * Also contains gatherNearby() for entity awareness.
- * Block awareness is provided via ChunkInfo (see docs/29_CHUNK_INFO.md).
+ *   Each PlanStep type maps to ActionProposal(s):
+ *     Move(pos)        → pathfind waypoints → TYPE_MOVE proposals
+ *     Harvest(block)   → pathfind to range + TYPE_CONVERT
+ *     Attack(entity)   → pathfind to range + TYPE_CONVERT
+ *     Relocate(f,t,i)  → pathfind to range + TYPE_RELOCATE
+ *
+ * Kept: gatherNearby() for entity awareness (used by LocalWorld construction).
  */
 
 #include "server/behavior.h"
 #include "shared/entity.h"
 #include "shared/action.h"
-#include "shared/constants.h"
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <functional>
 #include <cmath>
-#include <algorithm>
-#include <glm/trigonometric.hpp>
 
 namespace modcraft {
 
-// Per-entity state for behavior execution (wander direction, timers)
-struct AgentBehaviorState {
-	std::unique_ptr<Behavior> behavior;
-	BehaviorAction currentAction;
-	float wanderYaw = 0;
-	bool justDecided = false;  // true for the one tick immediately after decide() fires
+// Per-entity state for plan execution
+struct AgentEntityState {
+	int behaviorHandle = -1;  // PythonBridge handle for this entity's behavior
 
-	// HP tracking for active triggers (HP drop → scheduleNow in DecisionQueue)
-	int  lastKnownHp  = -1;   // HP at last decide(); -1 = not yet observed
+	// TODO: Plan execution state
+	// Plan currentPlan;
+	// int currentStep = 0;
+	// std::vector<glm::vec3> pathWaypoints;  // pathfind result for current Move step
+	// int waypointIndex = 0;
 
-	// ── Performance tracking ──────────────────────────────────────────────────
-	float lastDecideMs  = 0.0f;   // duration of the most recent decide() call
-	float totalDecideMs = 0.0f;   // cumulative decide() time
-	int   decideCount   = 0;      // total decide() calls fired
+	// HP tracking for reactive re-decide (HP drop → immediate re-plan)
+	int lastKnownHp = -1;
 
-	// ── Walk debug: Move issuance tracking ────────────────────────────────────
-	int   walkDbg_movesSent    = 0;  // Move proposals sent in current 1s window
-	int   walkDbg_movesNewTgt  = 0;  // Move proposals with target >0.1m from previous
-	int   walkDbg_movesToSelf  = 0;  // Move proposals where target ≈ current pos
-	float walkDbg_windowTimer  = 0;  // 1-second accumulator
-	glm::vec3 walkDbg_lastTarget = {0, 0, 0}; // previous Move target for distinct counting
+	// Performance tracking
+	float lastDecideMs  = 0.0f;
+	float totalDecideMs = 0.0f;
+	int   decideCount   = 0;
 };
 
 // Block query function: returns block type string at world position.
-// Used by Python pathfinding (get_block()) — queries agent's local chunk cache.
+// Used by Python pathfinding (get_block()) — queries shared chunk cache.
 using BlockTypeFn = std::function<std::string(int, int, int)>;
 
-// Convert a BehaviorAction to ActionProposal(s) and push to the output list.
-inline void behaviorToActionProposals(Entity& e, AgentBehaviorState& state,
-                                       const BehaviorAction& action, float dt,
-                                       std::vector<ActionProposal>& out) {
-	const float TURN_SPEED = 4.0f;
-	auto smoothYaw = [&](float targetYaw) {
-		float diff = targetYaw - e.yaw;
-		while (diff > 180.0f) diff -= 360.0f;
-		while (diff < -180.0f) diff += 360.0f;
-		e.yaw += diff * std::min(dt * TURN_SPEED, 1.0f);
-	};
+// TODO: Plan step execution
+//
+// Execute one tick of a PlanStep, emitting ActionProposals:
+//
+// void executePlanStep(Entity& entity, AgentEntityState& state,
+//                      float dt, std::vector<ActionProposal>& out) {
+//     switch (currentStep.type) {
+//     case PlanStep::Move:
+//         // pathfind from entity.position to step.targetPos
+//         // emit TYPE_MOVE proposals along waypoints
+//         // advance step when entity reaches destination
+//         break;
+//     case PlanStep::Harvest:
+//         // if in range: emit TYPE_CONVERT (break block)
+//         // else: pathfind to block, emit TYPE_MOVE
+//         break;
+//     case PlanStep::Attack:
+//         // if in range: emit TYPE_CONVERT (deal damage)
+//         // else: pathfind to entity, emit TYPE_MOVE
+//         break;
+//     case PlanStep::Relocate:
+//         // if in range: emit TYPE_RELOCATE
+//         // else: pathfind to container, emit TYPE_MOVE
+//         break;
+//     }
+// }
 
-	// Always attach goalText to Move proposals so it reaches the server
-	auto makeMove = [&](glm::vec3 vel) -> ActionProposal {
-		ActionProposal p;
-		p.type = ActionProposal::Move;
-		p.actorId = e.id();
-		p.desiredVel = vel;
-		p.goalText = e.goalText;
-		return p;
-	};
-
-	switch (action.type) {
-	case BehaviorAction::Idle:
-		// No proposal — entity keeps its last velocity. This prevents the agent
-		// from fighting GUI WASD control with zero-velocity stop actions.
-		// goalText is still propagated because the Move actions sent between
-		// decide() calls (line 150-158 in agent_client.h) carry it.
-		break;
-	case BehaviorAction::Move: {
-		glm::vec3 dir = action.targetPos - e.position;
-		dir.y = 0;
-		float dist = glm::length(dir);
-		glm::vec3 vel = {0, 0, 0};
-		if (dist > 0.5f) {
-			dir /= dist;
-			smoothYaw(glm::degrees(std::atan2(dir.z, dir.x)));
-			float rad = glm::radians(e.yaw);
-			vel = {std::cos(rad) * action.speed, 0, std::sin(rad) * action.speed};
-		}
-		auto p = makeMove(vel);
-		out.push_back(p);
-		break;
-	}
-
-	case BehaviorAction::Relocate: {
-		// One-shot: stop movement, then relocate
-		out.push_back(makeMove({0, 0, 0}));
-
-		ActionProposal p;
-		p.type         = ActionProposal::Relocate;
-		p.actorId      = e.id();
-		p.relocateFrom = action.relocateFrom;
-		p.relocateTo   = action.relocateTo;
-		p.itemId       = action.itemId;
-		p.itemCount    = action.itemCount;
-		p.equipSlot    = action.equipSlot;
-		out.push_back(p);
-		break;
-	}
-
-	case BehaviorAction::Convert: {
-		out.push_back(makeMove({0, 0, 0}));
-
-		ActionProposal p;
-		p.type        = ActionProposal::Convert;
-		p.actorId     = e.id();
-		p.fromItem    = action.fromItem;
-		p.fromCount   = action.fromCount;
-		p.toItem      = action.toItem;
-		p.toCount     = action.toCount;
-		p.convertFrom = action.convertFrom;
-		p.convertInto = action.convertInto;
-		out.push_back(p);
-		break;
-	}
-
-	case BehaviorAction::Interact: {
-		out.push_back(makeMove({0, 0, 0}));
-
-		ActionProposal p;
-		p.type     = ActionProposal::Interact;
-		p.actorId  = e.id();
-		p.blockPos = action.blockPos;
-		out.push_back(p);
-		break;
-	}
-	} // end switch
-}
-
-// Gather nearby entity info from the agent's local entity cache.
+// Gather nearby entity info from the shared entity cache.
 inline std::vector<NearbyEntity> gatherNearby(
 		const Entity& self,
 		const std::unordered_map<EntityId, std::unique_ptr<Entity>>& entities,
@@ -166,8 +100,5 @@ inline std::vector<NearbyEntity> gatherNearby(
 	}
 	return result;
 }
-
-// Block scanning (getKnownBlocks, BlockCache, kIgnoredBlockTypes) removed.
-// Block awareness is now provided by ChunkInfo — see docs/29_CHUNK_INFO.md.
 
 } // namespace modcraft

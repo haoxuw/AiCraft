@@ -45,6 +45,13 @@ public:
 	void renderDoorAnims(const Camera& cam, float aspect,
 	                     const std::vector<DoorAnim>& anims);
 	float sunStrength() const { return m_sunStrength; }
+	float time() const { return m_time; }
+
+	// Render an animated flowing dashed path from a list of world-space points.
+	// Used for agent plan visualization.
+	void renderPlanPath(const Camera& cam, float aspect,
+	                    const std::vector<glm::vec3>& points,
+	                    glm::vec4 color, float dashLen, float time);
 
 private:
 	void renderSky(const Camera& cam, float aspect);
@@ -66,6 +73,7 @@ private:
 	GLuint m_quadVAO = 0, m_quadVBO = 0;
 	GLuint m_shadowVAO = 0, m_shadowVBO = 0;
 	GLuint m_doorAnimVAO = 0, m_doorAnimVBO = 0;
+	GLuint m_pathVAO = 0, m_pathVBO = 0;
 	ModelRenderer m_modelRenderer;
 
 	ChunkMesher m_mesher;

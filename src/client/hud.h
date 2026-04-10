@@ -34,6 +34,9 @@ struct HUDContext {
 	size_t particleCount;
 	int playerHP, playerMaxHP;
 	float playerHunger;
+	// Frame profiler (F5)
+	bool showProfiler;
+	float profileWorldMs, profileEntityMs, profileHudMs, profileTotalMs;
 };
 
 class HUD {
@@ -49,6 +52,7 @@ private:
 	void renderModeLabel(const HUDContext& ctx, TextRenderer& text);
 	void renderTimeOfDay(const HUDContext& ctx, TextRenderer& text);
 	void renderDebugOverlay(const HUDContext& ctx, TextRenderer& text);
+	void renderProfilerOverlay(const HUDContext& ctx, TextRenderer& text);
 	void renderEntityTooltip(const HUDContext& ctx, TextRenderer& text);
 };
 

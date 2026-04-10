@@ -92,6 +92,7 @@ bool Game::init(int argc, char** argv) {
 		development::DebugCapture::Config dbgCfg;
 		for (int i = 1; i < argc; i++) {
 			if (strcmp(argv[i], "--skip-menu") == 0) m_skipMenu = true;
+			else if (strcmp(argv[i], "--profiler") == 0) m_showProfiler = true;
 			else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) m_connectHost = argv[++i];
 			else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
 				m_connectPort = atoi(argv[++i]);
@@ -326,6 +327,15 @@ void Game::handleGlobalInput() {
 		saveScreenshot();
 	if (m_controls.pressed(Action::ToggleDebug))
 		m_showDebug = !m_showDebug;
+
+	// F5: toggle frame profiler
+	static bool prevF5 = false;
+	bool f5 = glfwGetKey(m_window.handle(), GLFW_KEY_F5) == GLFW_PRESS;
+	if (f5 && !prevF5) {
+		m_showProfiler = !m_showProfiler;
+		printf("[Game] Frame profiler %s\n", m_showProfiler ? "ON" : "OFF");
+	}
+	prevF5 = f5;
 
 	// F12: toggle admin mode (unlimited blocks, claim any entity)
 	static bool prevF12 = false;
@@ -708,12 +718,14 @@ void Game::setupAfterConnect(GameState targetState) {
 	glm::vec3 spawn = m_server->spawnPos();
 	m_camera.player.feetPos = spawn;
 
-	// Spawn facing +Z by default. TODO: server could send preferred spawn yaw in S_WELCOME.
-	float spawnYaw = -90.0f;
+	// Face +Z: toward portal stairs and village beyond
+	float spawnYaw = 90.0f;
 	m_camera.player.yaw = spawnYaw;
 	m_camera.lookYaw = spawnYaw;
 	m_camera.lookPitch = -5;
 	m_camera.resetSmoothing();
+	// Pre-initialize RTS/RPG camera centers to player spawn so switching
+	// to those modes looks at the right place from the start.
 	m_camera.rtsCenter = spawn;
 
 	ChunkSource& chunks = m_server->chunks();
@@ -724,6 +736,9 @@ void Game::setupAfterConnect(GameState targetState) {
 	m_worldTime = 0.25f; // dawn — server will sync via S_TIME
 	m_playerWalkDist = 0;
 	m_globalTime = 0;
+
+	// Create AgentClient for controlling owned NPCs
+	m_agentClient = std::make_unique<AgentClient>(*m_server, m_behaviorStore);
 }
 
 void Game::saveCurrentWorld() {

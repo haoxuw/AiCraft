@@ -397,6 +397,50 @@ void Game::renderEntityEffects(float dt, float aspect) {
 	glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
 	auto& mr = m_renderer.modelRenderer();
 
+	// ── Agent plan visualization: flowing dashed lines + destination marker ──
+	if (m_agentClient) {
+		// Destination marker: pulsing green diamond
+		static BoxModel destMarker = []() {
+			BoxModel m; m.totalHeight = 0.6f;
+			BodyPart p;
+			p.offset = {0, 0.3f, 0};
+			p.halfSize = {0.12f, 0.12f, 0.12f};
+			p.color = {0.2f, 1.0f, 0.5f, 0.85f};
+			m.parts.push_back(p);
+			return m;
+		}();
+
+		float flowTime = m_renderer.time();
+
+		m_agentClient->forEachAgent([&](EntityId eid, const AgentClient::PlanViz& viz) {
+			if (viz.waypoints.empty()) return;
+			Entity* agent = m_server->getEntity(eid);
+			if (!agent) return;
+
+			// Build full path from entity → waypoints
+			std::vector<glm::vec3> path;
+			path.push_back(agent->position);
+			for (auto& wp : viz.waypoints)
+				path.push_back(wp);
+
+			// Draw flowing green dashed line (bright, visible through terrain)
+			m_renderer.renderPlanPath(m_camera, aspect, path,
+				{0.4f, 1.0f, 0.6f, 0.9f},  // bright green, high alpha
+				0.8f,                         // dash length
+				flowTime);
+
+			// Draw pulsing destination marker at final waypoint
+			glm::vec3 dest = viz.waypoints.back();
+			float pulse = 0.85f + 0.15f * std::sin(flowTime * 3.0f);
+			BoxModel pulseDest = destMarker;
+			for (auto& p : pulseDest.parts) {
+				p.halfSize *= pulse;
+				p.color.a = pulse;
+			}
+			mr.draw(pulseDest, vp, dest, flowTime * 45.0f, {}); // slowly spinning
+		});
+	}
+
 	// Resolve model key helper (same logic as renderEntities)
 	auto resolveModelKey = [](const Entity& e) -> std::string {
 		std::string skin = e.getProp<std::string>("character_skin", "");
@@ -611,7 +655,9 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 		hit, m_gameplay.currentEntityHit(),
 		m_renderer.sunStrength(),
 		srv.entityCount(), m_particles.count(),
-		playerHP, pe->def().max_hp, playerHunger
+		playerHP, pe->def().max_hp, playerHunger,
+		m_showProfiler,
+		m_profile.worldMs, m_profile.entityMs, m_profile.hudMs, m_profile.totalMs
 	};
 	m_hud.render(ctx, m_text, m_renderer.highlightShader());
 
@@ -924,9 +970,33 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	Entity* pe = playerEntity();
 	if (!pe) { printf("[Game] renderPlaying: no player entity\n"); return; }
 
+	using Clock = std::chrono::steady_clock;
+
+	auto t0 = Clock::now();
 	renderWorld(dt, aspect);
+	auto t1 = Clock::now();
 	renderEntities(dt, aspect);
+	auto t2 = Clock::now();
 	renderHUD(dt, aspect, skipImGui);
+	auto t3 = Clock::now();
+
+	auto ms = [](Clock::duration d) {
+		return std::chrono::duration<float, std::milli>(d).count();
+	};
+	m_profile.worldMs  = ms(t1 - t0);
+	m_profile.entityMs = ms(t2 - t1);
+	m_profile.hudMs    = ms(t3 - t2);
+	m_profile.totalMs  = ms(t3 - t0);
+
+	if (m_showProfiler) {
+		static float logTimer = 0;
+		logTimer += dt;
+		if (logTimer >= 1.0f) {
+			logTimer = 0;
+			printf("[Profiler] total=%.1fms  world=%.1fms  entities=%.1fms  hud=%.1fms  FPS=%.0f\n",
+			       m_profile.totalMs, m_profile.worldMs, m_profile.entityMs, m_profile.hudMs, m_currentFPS);
+		}
+	}
 }
 
 } // namespace modcraft

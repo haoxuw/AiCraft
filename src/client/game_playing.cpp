@@ -471,6 +471,9 @@ void Game::updatePlaying(float dt, float aspect) {
 		cb.cycleCamera = [this]() {
 			m_camera.cycleMode();
 			m_camera.resetMouseTracking();
+			// Center RTS/RPG camera on current player position when entering those modes
+			if (m_camera.mode == CameraMode::RTS)
+				m_camera.rtsCenter = m_camera.player.feetPos;
 			bool needCapture = (m_camera.mode == CameraMode::FirstPerson ||
 			                    m_camera.mode == CameraMode::ThirdPerson);
 			glfwSetInputMode(m_window.handle(), GLFW_CURSOR,
@@ -566,23 +569,9 @@ void Game::updatePlaying(float dt, float aspect) {
 	updateItemPickupAnimations(dt);
 	updateAudioAndDoors(dt);
 
-	// Creatures proximity detection — notify server which NPCs are near the player
-	// so their agent clients can trigger an immediate re-decide.
-	m_proximityTimer += dt;
-	if (m_proximityTimer >= ServerTuning::proximityCheckInterval) {
-		m_proximityTimer = 0.0f;
-		std::vector<EntityId> nearbyNPCs;
-		m_server->forEachEntity([&](Entity& e) {
-			if (e.id() == pe->id()) return;
-			if (!e.def().isLiving()) return;
-			if (e.getProp<std::string>(Prop::BehaviorId, "").empty()) return;
-			float dist = glm::length(e.position - pe->position);
-			if (dist <= ServerTuning::proximityRadius)
-				nearbyNPCs.push_back(e.id());
-		});
-		if (!nearbyNPCs.empty())
-			m_server->sendProximity(nearbyNPCs);
-	}
+	// Tick NPC agents (owned NPCs running Python behaviors in-process)
+	if (m_agentClient)
+		m_agentClient->tick(dt);
 
 	// Block place feedback (immediate client-side sound)
 	auto& placeEvt = m_gameplay.placeEvent();

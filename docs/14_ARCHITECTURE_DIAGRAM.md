@@ -1,6 +1,121 @@
 # ModCraft - Architecture Diagram
 
-Transcribed from the design diagram. Three cleanly separated layers.
+Two process types: **WorldServer** and **Client** (PlayerClient + AgentClient in one binary).
+
+---
+
+## Process Architecture
+
+```
++===========================================================+
+|                     WORLD SERVER                           |
+|                     (C++ Engine)                           |
+|                                                            |
+|  Source of truth: blocks, entities, HP, inventory, items   |
+|  Validates action proposals from all clients               |
+|  Broadcasts state via UDP (positions, blocks, time)        |
+|  Handles proposals via TCP (move, harvest, attack, etc.)   |
+|  1 process per world (separate processes, not batched)     |
++==================+========================================+
+                   |  UDP state sync + TCP proposals
+                   |
+      +------------+-------------+------------+
+      |                          |             |
+      v                          v             v
++============+            +============+   +============+
+|  Client A  |            |  Client B  |   |  Client C  |
+| (Player 1) |            | (Player 2) |   | (Player 3) |
++============+            +============+   +============+
+
+Each Client is ONE process containing:
+  - PlayerClient: GUI, input, rendering
+  - AgentClient:  AI for all NPCs owned by this player
+  - Shared chunk cache (up to 200MB, always connected, no gaps)
+```
+
+---
+
+## Inside a Client Process
+
+```
++=================================================================+
+|                        CLIENT PROCESS                            |
+|                                                                  |
+|  +---------------------------+   +----------------------------+  |
+|  |      PLAYER CLIENT        |   |       AGENT CLIENT         |  |
+|  |                           |   |                            |  |
+|  |  GUI / Input / Rendering  |   |  Python AI for owned NPCs  |  |
+|  |  Camera, HUD, Controls    |   |  decide() -> Plan          |  |
+|  |  Sends human actions      |   |  execute Plan each tick    |  |
+|  +-------------+-------------+   +-------------+--------------+  |
+|                |                               |                 |
+|                +---------- SHARED -------------+                 |
+|                |                               |                 |
+|  +-------------v-------------------------------v--------------+  |
+|  |              SHARED CHUNK + ENTITY CACHE                   |  |
+|  |                                                            |  |
+|  |  Chunks: eagerly fetched from server, up to 200MB          |  |
+|  |  Entities: positions, HP, inventory (from server broadcast) |  |
+|  |  Always connected — no isolated chunks                     |  |
+|  +------------------------------------------------------------+  |
+|                                                                  |
+|  +------------------------------------------------------------+  |
+|  |              NETWORK LAYER                                 |  |
+|  |  UDP: receive state sync (entity pos, block changes, time) |  |
+|  |  TCP: send action proposals, receive approval/rejection    |  |
+|  +------------------------------------------------------------+  |
++=================================================================+
+```
+
+---
+
+## Agent AI Loop (per tick)
+
+```
+Phase 1 — DECIDE (for agents needing a new plan):
+  +------------------+
+  | Python decide()  |  -> Returns a Plan (list of steps)
+  | sees: entity,    |
+  | local_world      |  Plan = [Move(A), Move(B), Harvest(tree), Move(chest), Relocate(logs)]
+  +------------------+
+  If chunks not loaded for planning -> defer (put back in queue)
+
+Phase 2 — EXECUTE (for all agents with active plans):
+  +------------------+
+  | Tick current step|  Move: pathfind waypoints, send Move proposals
+  |                  |  Harvest: Convert proposal if in range, else pathfind
+  |                  |  Attack: Move toward + Convert when in range
+  |                  |  Relocate: Relocate proposal if in range, else pathfind
+  +------------------+
+  Step complete -> advance to next
+  Plan complete or failed -> mark for re-decide
+```
+
+---
+
+## Plan Step Types (4 total)
+
+All map to the server's 4 action types: Move, Convert, Relocate, Interact.
+
+| Plan Step | What it does | Server Action |
+|-----------|-------------|---------------|
+| **Move(pos)** | Walk to position (client-side pathfinding) | TYPE_MOVE |
+| **Harvest(block_pos)** | Break block (tree, ore) | TYPE_CONVERT |
+| **Attack(entity_id)** | Melee hit | TYPE_CONVERT |
+| **Relocate(from, to, item)** | Move item between containers | TYPE_RELOCATE |
+
+---
+
+## Plan Visualization (owner only)
+
+```
+  PlayerClient renders plans for entities owned by local player:
+
+  [Crewmate] ------> A ------> B ------> C ---[axe icon]---> tree
+                green dashed polyline        action icon
+
+  Only visible to the owning player, not other players.
+```
 
 ---
 
@@ -9,127 +124,98 @@ Transcribed from the design diagram. Three cleanly separated layers.
 ```
 +===========================+     +============================+
 |    GAME MODEL LAYER       |     |    RENDERING LAYER         |
-|    (Python code)          |     |    (C++ Engine)            |
+|    (Python artifacts)     |     |    (C++ Engine)            |
 |                           |     |                            |
-|    World / Objects /      |     |    Game Client GUI         |
-|    Actions / Behaviours   |     |    Animations, Textures,   |
-|                           |     |    Sounds, Input, Views    |
+|    Creatures, Items,      |     |    PlayerClient GUI        |
+|    Behaviors, Blocks,     |     |    Animations, Textures,   |
+|    World templates        |     |    Sounds, Input, Views    |
 +============+==============+     +============+===============+
              |                                 |
              v                                 v
 +==============================================================+
-|                    SERVER LAYER (C++ Engine)                   |
+|                WORLD SERVER LAYER (C++ Engine)                 |
 |                                                                |
-|    Manages World. Hosts & loads Python Definitions             |
-|    (Behaviour and Actions).                                    |
-|    Single source of truth.                                     |
+|    Owns the World. Validates actions. Broadcasts state.       |
+|    Single source of truth. No rendering. No AI.               |
 +==============================================================+
 ```
 
-These layers are INDEPENDENT. You can swap the rendering engine (e.g. replace OpenGL with Vulkan, or use Unreal) without touching any game model code. You can add new Objects and Actions without recompiling the server or client.
-
 ---
 
-## Full Diagram (text version of the whiteboard)
+## Object Model
 
 ```
 +-------------------------------------------------------------------------+
 |                                                                          |
-|   OBJECTS (everything in the world)                                     |
+|   ENTITIES (everything in the world)                                    |
 |                                                                          |
-|   Player(s)                                                             |
-|   (takes input)                                                         |
-|       |                                                                  |
-|       +-----> Passive                    Active                         |
-|       |       e.g.                       e.g.                           |
-|       |         Trees                      Player                       |
-|       |         Blocks                     Bees                         |
-|       |         Potion                     Lava                         |
-|       |         Bucket                     Wheat (can grow)             |
-|       |         TNT                                                     |
-|       |                                                                  |
-|   Items                                  Creatures                            |
-|     Potions                                Bees                         |
-|     (Anything can                          Pigs                         |
-|      be in inventory)                      Villager                     |
+|   Living (moves, has HP, has inventory)                                 |
+|     Player    — just a Living with playable=true                        |
+|     Crewmate  — NPC, controlled by AgentClient                         |
+|     Knight    — NPC, controlled by AgentClient                         |
+|     Chicken   — animal, controlled by AgentClient                      |
+|     Pig       — animal, controlled by AgentClient                      |
 |                                                                          |
-|   Properties (on ALL objects):                                          |
-|     Inventory, Weight, HP, MP,                                          |
-|     Affections towards other NPCs (or category of NPCs),               |
-|     etc. -- Altered by World & Actions                                  |
+|   Item (on ground or in inventory)                                      |
+|     Apple, Bread, Sword, Pickaxe, etc.                                  |
 |                                                                          |
-+---+---------------------------------------------------------------------+
-    |
-    v
-+-------------------------------------------------------------------------+
+|   Blocks are NOT entities — they live in the chunk grid                 |
 |                                                                          |
-|   SERVER -- C++ Engine                                                  |
-|   Manages World. Hosts & loads Python Definitions (Behaviour & Actions) |
-|                                                                          |
-|   +-------------------------------+                                     |
-|   |          WORLD                |                                     |
-|   |   Open, Endlessly generated   |                                     |
-|   |                               |                                     |
-|   |   +--------+   +---------+   |   +----------+                      |
-|   |   | Objects |   | States  |   |   | Actions  |                      |
-|   |   |         |   | Weather |   |   |          |                      |
-|   |   |         |   | etc.    |   |   |          |                      |
-|   |   +--------+   +---------+   |   +----------+                      |
-|   +-------------------------------+                                     |
-|                                                                          |
-|   User Artifacts -> Hot loaded in the C++ Server                        |
-|   (Code: Object Behaviour, Action Definition)                           |
-|                                                                          |
-|   +----------------------+      +------------------+                    |
-|   | World Gen Engine     |      | Actions          |                    |
-|   | Many Templates +     |      | (examples)       |                    |
-|   | Randomizer           |      |   TNT Explode    |                    |
-|   +----------------------+      |   Potion Heal    |                    |
-|                                 |   Cast Fireball  |                    |
-|                                 |   Chicken lay egg|                    |
-|                                 +------------------+                    |
-+---+---------------------------------------------------------------------+
-    |
-    |  <--- Python code, hot-loaded --->
-    |
-+---+---------------------------------------------------------------------+
-|                                                                          |
-|   BEHAVIOUR DEFINITION                  ACTION DEFINITION               |
-|   (Python Code)                         (Python Code)                   |
-|                                                                          |
-|   Bees: go between flower               TNT: Blink 5s, Remove 5x5     |
-|     and nest                               near blocks, play animation |
-|   Pigs: wander around                   Fireball: travel direction,    |
-|   Villager: trade, hangout                 remove 3x3 blocks if hit    |
-|     together                                                            |
-|                                                                          |
-|   ** Can be generated by LLM            ** Can be generated by LLM     |
-|      during play time **                   during play time **          |
-|                                                                          |
-+-------------------------------------------------------------------------+
-
-+-------------------------------------------------------------------------+
-|                                                                          |
-|   GAME CLIENT -- C++ Engine (SEPARATE from game model)                  |
-|                                                                          |
-|   +----------------+    +---------------------+                         |
-|   | Keyboard /     |    | Game Client GUI     |    +-- Animations       |
-|   | Controller     |    |                     |    +-- Textures         |
-|   +----------------+    | 1st & 3rd & RTS     |    +-- Sounds          |
-|                         | view (Black & White) |                        |
-|                         +---------------------+                         |
-|                                                                          |
-|                         +---------------------+                         |
-|                         | LLM Editor          |                         |
-|                         | (in-game code editor)|                        |
-|                         +---------------------+                         |
+|   Properties (on all entities):                                         |
+|     HP, Inventory, Owner, BehaviorId, Goal, etc.                        |
+|     Altered by server-validated actions only                            |
 |                                                                          |
 +-------------------------------------------------------------------------+
 ```
 
 ---
 
-## Product Roadmap (bottom of diagram)
+## Server Action Types (4 total)
+
+The server validates exactly four action types. All gameplay compiles down to these:
+
+| Type | What | Constraint |
+|------|------|-----------|
+| **Move** (0) | Set entity velocity/direction | No tunnelling |
+| **Relocate** (1) | Move item between containers | Value conserved |
+| **Convert** (2) | Transform item type | Value must not increase |
+| **Interact** (3) | Toggle block state (door, TNT) | — |
+
+---
+
+## Separation Rules
+
+### Rule 1: Python is the Game, C++ is the Engine
+
+All game content defined in Python artifacts (creatures, behaviors, items, blocks).
+C++ provides physics, networking, rendering. No gameplay constants in C++.
+
+### Rule 2: The Player is Not Special
+
+Player is just a Living entity with `playable=true`. Any Living can be controlled
+by an AgentClient. NPCs are Living with a BehaviorId.
+
+### Rule 3: Server is Authoritative
+
+Server owns and modifies all world state. Clients submit proposals (intent).
+Server validates and executes. Client-side prediction for responsiveness,
+server corrects if diverged.
+
+### Rule 4: All AI Runs on Client
+
+The server has ZERO intelligence. All AI runs in AgentClient inside each
+player's Client process. Python `decide()` produces plans, execution sends
+proposals to server for validation.
+
+### Rule 5: Server Has No Display Logic
+
+Server never decides what to show on any client's screen. Each client
+observes the state stream and decides its own display (damage text, particles,
+sound effects, plan visualization).
+
+---
+
+## Product Roadmap
 
 ```
 Playable       -->   FUN   -->  Programmable  -->  Creative  -->  Agentic  -->  Meta realworld
@@ -138,73 +224,9 @@ Sandbox                                                                         
 
 | Stage | What it means |
 |-------|---------------|
-| **Playable Sandbox** | Walk around, place/mine blocks, flat world (Milestone 1) |
+| **Playable Sandbox** | Walk around, place/mine blocks, flat world |
 | **FUN** | Combat, mobs, crafting, survival mechanics |
 | **Programmable** | In-game Python editor, hot-load objects & actions |
 | **Creative** | Players create and share content, artifact marketplace |
 | **Agentic** | LLM generates objects/actions during gameplay, AI NPCs |
 | **Meta realworld assets** | Bridge game creations to real-world value |
-
----
-
-## Separation Rules
-
-### Rule 1: Game Model knows NOTHING about rendering
-
-```
-Objects, Actions, World, Behaviours:
-  - Pure Python classes
-  - No OpenGL calls
-  - No texture references (only texture NAME strings)
-  - No animation code (only animation NAME strings)
-  - No sound playback (only sound NAME strings)
-  - No input handling (only receives structured Action requests)
-
-The model says WHAT exists and WHAT happens.
-The renderer decides HOW it looks and sounds.
-```
-
-### Rule 2: Renderer knows NOTHING about game logic
-
-```
-Renderer / Client:
-  - Receives state snapshots from server
-  - Maps object type names to visual assets
-  - Does NOT know what a "pig" does
-  - Does NOT validate actions
-  - Does NOT run object behaviour code
-  - Only knows: "entity X is at position Y with model Z"
-```
-
-### Rule 3: Server is the bridge
-
-```
-Server (C++):
-  - Hosts the World data structure
-  - Embeds Python runtime
-  - Loads Object and Action Python code
-  - Runs the 3-phase step loop
-  - Sends state deltas to clients
-  - Receives input from clients
-  - Does NOT render
-  - Does NOT handle keyboard/mouse
-```
-
-### Consequence: You can swap any layer
-
-```
-Want better graphics?
-  -> Replace the C++ client renderer with Unreal/Godot/custom Vulkan
-  -> Game model Python code unchanged
-  -> Server C++ code unchanged
-
-Want different game content?
-  -> Write new Python objects and actions
-  -> Client renderer unchanged (auto-discovers new assets)
-  -> Server C++ code unchanged
-
-Want a different server?
-  -> Rewrite in Rust, Go, whatever
-  -> As long as it embeds Python and runs the step loop
-  -> Client and game model unchanged
-```

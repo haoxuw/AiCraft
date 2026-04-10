@@ -200,41 +200,55 @@ public:
 			m_houseChestEntities.push_back(chestEid);
 			printf("[Server] Chest entity %u at (%d,%d,%d)\n", chestEid, cx, cy, cz);
 		}
-		// Spawn bed-assigned villagers: one per bed, home_x/home_z + chest_x/y/z set at spawn.
-		// This replaces the generic villager entry in mobList.
+		// Spawn villagers in a ring around the village center monument.
+		// Each villager gets a home position (bed) and nearest chest assignment.
 		auto beds = tmpl.bedPositions(m_world->seed());
-		if (!beds.empty()) {
+		{
 			const std::string villagerType = "base:villager";
-			for (size_t i = 0; i < beds.size(); i++) {
-				const auto& bp = beds[i];
-				std::unordered_map<std::string, PropValue> extraProps;
-				auto bIt = wgc.behaviorOverrides.find(villagerType);
-				if (bIt != wgc.behaviorOverrides.end())
-					extraProps[Prop::BehaviorId] = bIt->second;
-				float homeY = safeSpawnHeight(bp.x, bp.z);
-				extraProps["home_x"] = bp.x;
-				extraProps["home_y"] = homeY;
-				extraProps["home_z"] = bp.z;
-				if (i < m_houseChests.size()) {
-					extraProps["chest_x"] = m_houseChests[i].x;
-					extraProps["chest_y"] = m_houseChests[i].y;
-					extraProps["chest_z"] = m_houseChests[i].z;
-					extraProps["chest_entity_id"] = (int)m_houseChestEntities[i];
-				}
-				// Merge per-mob props from world config (e.g. speed_multiplier for testing)
-				for (auto& ms : mobList) {
-					if (ms.typeId == villagerType) {
-						for (auto& [k, v] : ms.props) extraProps[k] = v;
-						break;
+			int villagerCount = 0;
+			for (auto& ms : mobList)
+				if (ms.typeId == villagerType) { villagerCount = ms.count; break; }
+
+			if (villagerCount > 0) {
+				float spawnRadius = 6.0f; // ring around monument
+				for (int i = 0; i < villagerCount; i++) {
+					float angle = (float)i / (float)villagerCount * 6.28318f;
+					float vx = mobCX + std::cos(angle) * spawnRadius;
+					float vz = mobCZ + std::sin(angle) * spawnRadius;
+
+					std::unordered_map<std::string, PropValue> extraProps;
+					auto bIt = wgc.behaviorOverrides.find(villagerType);
+					if (bIt != wgc.behaviorOverrides.end())
+						extraProps[Prop::BehaviorId] = bIt->second;
+
+					// Assign home from bed positions (if available)
+					if (i < (int)beds.size()) {
+						const auto& bp = beds[i];
+						extraProps["home_x"] = bp.x;
+						extraProps["home_y"] = safeSpawnHeight(bp.x, bp.z);
+						extraProps["home_z"] = bp.z;
 					}
+					if (i < (int)m_houseChests.size()) {
+						extraProps["chest_x"] = m_houseChests[i].x;
+						extraProps["chest_y"] = m_houseChests[i].y;
+						extraProps["chest_z"] = m_houseChests[i].z;
+						extraProps["chest_entity_id"] = (int)m_houseChestEntities[i];
+					}
+					// Merge per-mob props from world config
+					for (auto& ms : mobList) {
+						if (ms.typeId == villagerType) {
+							for (auto& [k, v] : ms.props) extraProps[k] = v;
+							break;
+						}
+					}
+					m_world->entities.spawn(villagerType,
+						{vx, safeSpawnHeight(vx, vz), vz}, extraProps);
 				}
-				m_world->entities.spawn(villagerType,
-					{bp.x, safeSpawnHeight(bp.x, bp.z), bp.z}, extraProps);
+				// Remove villagers from general mob list to avoid double-spawning
+				mobList.erase(std::remove_if(mobList.begin(), mobList.end(),
+					[&](const MobSpawn& ms) { return ms.typeId == villagerType; }),
+					mobList.end());
 			}
-			// Remove villagers from general mob list to avoid double-spawning
-			mobList.erase(std::remove_if(mobList.begin(), mobList.end(),
-				[&](const MobSpawn& ms) { return ms.typeId == villagerType; }),
-				mobList.end());
 		}
 
 		// Spawn cats and dogs inside the barn (home_x/home_z set to barn center).
@@ -280,7 +294,7 @@ public:
 		// The characterSkin determines visual model, not entity type.
 		EntityId eid = m_world->entities.spawn(LivingName::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
-		if (pe) pe->yaw = -90.0f; // face -Z (toward stairs from portal)
+		if (pe) pe->yaw = 90.0f; // face +Z (toward stairs and village)
 		// Server handles click-to-move navigation directly (no agent needed)
 		// Self-owned: player controls their own character
 		if (pe) pe->setProp(Prop::Owner, (int)eid);
@@ -309,90 +323,30 @@ public:
 				}
 			}
 		}
-		m_clients[clientId] = {eid, false, {}};
+		m_clients[clientId] = {eid};
 		printf("[Server] Client %u joined. Player entity: %u\n", clientId, eid);
 		return eid;
 	}
 
-	// Add an agent client (no player entity — controls existing Creatures entities).
-	void addAgentClient(ClientId clientId) {
-		m_clients[clientId] = {ENTITY_NONE, true};
-		printf("[Server] Agent client %u joined.\n", clientId);
-	}
-
-	// Assign an entity to a bot client for AI control.
-	bool assignEntityToClient(ClientId clientId, EntityId entityId) {
-		auto it = m_clients.find(clientId);
-		if (it == m_clients.end()) return false;
-		it->second.controlledEntities.insert(entityId);
-		m_entityOwner[entityId] = clientId;
-		printf("[Server] Entity %u assigned to client %u\n", entityId, clientId);
-		return true;
-	}
-
-	// Revoke entity control from a client.
-	void revokeEntityFromClient(ClientId clientId, EntityId entityId) {
-		auto it = m_clients.find(clientId);
-		if (it != m_clients.end())
-			it->second.controlledEntities.erase(entityId);
-		m_entityOwner.erase(entityId);
-	}
-
-	// Get entities controlled by a client.
-	std::vector<EntityId> getControlledEntities(ClientId clientId) const {
-		auto it = m_clients.find(clientId);
-		if (it == m_clients.end()) return {};
-		return std::vector<EntityId>(it->second.controlledEntities.begin(),
-		                             it->second.controlledEntities.end());
-	}
-
-	// Get Creatures entities that have a BehaviorId but no agent client.
-	// Player entities are excluded — server handles their navigation directly.
-	std::vector<EntityId> getUncontrolledNPCs() const {
-		std::vector<EntityId> result;
-		m_world->entities.forEach([&](Entity& e) {
-			if (e.removed) return;
-			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
-			if (bid.empty()) return;
-			// Skip playable entities — server handles their navigation via C_SET_GOAL.
-			if (e.def().playable) return;
-			auto ownerIt = m_entityOwner.find(e.id());
-			if (ownerIt == m_entityOwner.end()) {
-				result.push_back(e.id());
-			}
-		});
-		return result;
-	}
-
-	// Check if an entity is controlled by any client.
-	bool isEntityControlled(EntityId id) const {
-		return m_entityOwner.find(id) != m_entityOwner.end();
-	}
+	// NOTE: Agent-specific APIs removed (addAgentClient, assignEntityToClient,
+	// revokeEntityFromClient, getControlledEntities, getUncontrolledNPCs).
+	// AgentClient now runs inside PlayerClient — no server-side agent management.
 
 	// Check if a client is allowed to control an entity.
-	// Rules: (1) agent clients can always control their assigned entities,
-	//        (2) GUI clients can control entities they own (Prop::Owner matches their player),
-	//        (3) admin clients (player has fly_mode) can control any entity.
+	// Rules: (1) GUI clients can control entities they own (Prop::Owner matches their player),
+	//        (2) admin clients (player has fly_mode) can control any entity.
 	bool canClientControl(ClientId clientId, EntityId targetId) const {
 		auto cit = m_clients.find(clientId);
 		if (cit == m_clients.end()) return false;
-		// Agent clients: always allowed (they're assigned by the server)
-		if (cit->second.isAgent) return true;
-		// GUI client: check admin (fly_mode on their player entity)
+		// Admin: fly_mode on their player entity
 		Entity* playerEnt = m_world->entities.get(cit->second.playerEntityId);
 		if (playerEnt && playerEnt->getProp<bool>("fly_mode", false))
-			return true; // admin — control anything
+			return true;
 		// Normal: target must be owned by this client's player
 		Entity* target = m_world->entities.get(targetId);
 		if (!target) return false;
 		int ownerId = target->getProp<int>(Prop::Owner, 0);
 		return ownerId == (int)cit->second.playerEntityId;
-	}
-
-	// Get the client that controls an entity (ENTITY_NONE if uncontrolled).
-	ClientId getEntityOwner(EntityId id) const {
-		auto it = m_entityOwner.find(id);
-		return it != m_entityOwner.end() ? it->second : 0;
 	}
 
 	void removeClient(ClientId clientId) {
@@ -408,21 +362,13 @@ public:
 				}
 				m_world->entities.remove(it->second.playerEntityId);
 			}
-			// Release all controlled entities
-			for (EntityId eid : it->second.controlledEntities)
-				m_entityOwner.erase(eid);
 			m_clients.erase(it);
 			printf("[Server] Client %u disconnected.\n", clientId);
 		}
 	}
 
-	// Receive an action from a client
-	// Submit action directly without ownership check (test-only / agent-internal use).
+	// Submit action directly without ownership check (test-only).
 	void receiveActionDirect(const ActionProposal& action) {
-		if (!action.behaviorSource.empty()) {
-			m_pendingReloads.push_back(action);
-			return;
-		}
 		m_world->proposals.propose(action);
 	}
 
@@ -430,14 +376,9 @@ public:
 		auto it = m_clients.find(clientId);
 		if (it == m_clients.end()) return;
 
-		// Ownership check: client must own the entity or be admin.
-		// Agent clients are always allowed (server-assigned). GUI clients
-		// must own the target entity (Prop::Owner == their player) or be
-		// in admin mode (fly_mode). This prevents griefing in multiplayer
-		// while allowing full RTS control of owned entities.
 		if (!canClientControl(clientId, action.actorId)) return;
 
-		// Agent goal text: update server-side entity for broadcast (all action types)
+		// Goal text: update server-side entity for broadcast
 		if (!action.goalText.empty()) {
 			Entity* e = m_world->entities.get(action.actorId);
 			if (e && e->goalText != action.goalText) {
@@ -445,21 +386,7 @@ public:
 			}
 		}
 
-		// behaviorSource non-empty = hot-reload control message, not a game action.
-		// Store separately for the network layer to forward to agent clients.
-		if (!action.behaviorSource.empty()) {
-			m_pendingReloads.push_back(action);
-			return;
-		}
-
 		m_world->proposals.propose(action);
-	}
-
-	// Get and clear pending behavior reload requests.
-	std::vector<ActionProposal> drainPendingReloads() {
-		auto result = std::move(m_pendingReloads);
-		m_pendingReloads.clear();
-		return result;
 	}
 
 	// Set callbacks for visual effects (client provides these)
@@ -675,12 +602,8 @@ private:
 
 	struct ClientState {
 		EntityId playerEntityId = ENTITY_NONE;
-		bool isAgent = false;
-		std::unordered_set<EntityId> controlledEntities;
 	};
 	std::unordered_map<ClientId, ClientState> m_clients;
-	std::unordered_map<EntityId, ClientId> m_entityOwner; // entity → controlling client
-	std::vector<ActionProposal> m_pendingReloads; // behavior reload requests to forward to bots
 };
 
 } // namespace modcraft

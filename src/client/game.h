@@ -26,6 +26,7 @@
 #include "client/hotbar.h"
 #include "client/ui.h"
 #include "client/audio.h"
+#include "agent/agent_client.h"
 #include "development/debug_capture.h"
 #include "server/world_template.h"
 #include <chrono>
@@ -105,6 +106,11 @@ private:
 	// Network: client connects to a remote/global server
 	std::unique_ptr<ServerInterface> m_server;
 
+	// AgentClient — controls all NPCs owned by this player.
+	// Created after server connection is established (in setupAfterConnect).
+	// Ticked in updatePlaying() after network tick, before render.
+	std::unique_ptr<AgentClient> m_agentClient;
+
 	GameplayController          m_gameplay;
 	CodeEditor                  m_codeEditor;
 	BehaviorEditorState         m_inspectEditor; // visual behavior tree for entity inspect
@@ -171,6 +177,16 @@ private:
 
 	// Display
 	bool m_showDebug = false;
+	bool m_showProfiler = false;
+
+	// Frame profiler (F5) — per-phase timing in milliseconds
+	struct FrameProfile {
+		float worldMs  = 0;
+		float entityMs = 0;
+		float hudMs    = 0;
+		float totalMs  = 0;
+	};
+	FrameProfile m_profile;
 	bool m_adminFly = false;  // F11 fly (separate from F12 admin)
 	GameState m_preInspectState = GameState::PLAYING;
 	GameState m_preMenuState = GameState::PLAYING;
@@ -183,8 +199,7 @@ private:
 	AudioManager m_audio;
 	float m_creatureSoundTimer = 3.0f;
 
-	// Creatures proximity detection — periodically send nearby Creatures IDs to server
-	float m_proximityTimer = 0.0f;
+	// NOTE: m_proximityTimer removed — agents run in-process now, no proximity notifications needed
 
 	// Items the client has sent a PickupItem request for — hidden from rendering immediately
 	std::unordered_set<EntityId> m_pendingPickups;

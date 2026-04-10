@@ -1,20 +1,23 @@
 #pragma once
 
 /**
- * Python bridge — embeds CPython via pybind11 for behavior execution.
+ * Python bridge — embeds CPython via pybind11.
  *
- * This is the connection between C++ server simulation and Python
- * game content. All behaviors, actions, and item definitions are
- * Python code loaded and executed through this bridge.
+ * NEW ARCHITECTURE:
+ *   PythonBridge owns the interpreter lifecycle (init/shutdown) and provides
+ *   behavior loading. AgentClient calls decide() on a background thread with
+ *   GIL management.
  *
- * Lifecycle:
- *   1. PythonBridge::init() — starts interpreter, adds python/ to path
- *   2. loadBehavior(code) — compiles Python source, returns handle
- *   3. callDecide(handle, worldView) — calls decide(), returns actions
- *   4. PythonBridge::shutdown() — stops interpreter
+ *   The old callDecide() that returned a single BehaviorAction has been removed.
+ *   The new flow:
+ *     1. loadBehavior(code) → handle (unchanged)
+ *     2. AgentClient acquires GIL, calls Python decide(), gets Plan back
+ *     3. AgentClient releases GIL, executes Plan steps as ActionProposals
  *
- * The bridge runs on the SERVER only. Client never executes Python
- * game logic (it only renders based on entity properties).
+ *   Thread safety: static block query callbacks (s_blockQueryFn, s_scanBlocksFn)
+ *   must be protected by a mutex since multiple agent ticks may overlap.
+ *
+ * Also provides world config and structure blueprint loading from Python artifacts.
  */
 
 #include "shared/entity.h"
@@ -22,6 +25,7 @@
 #include "server/behavior.h"
 #include <string>
 #include <memory>
+#include <functional>
 #include <vector>
 #include <unordered_map>
 
@@ -111,16 +115,12 @@ struct WorldPyConfig {
 };
 
 // Load world template config from a Python artifact file.
-// Returns true and fills 'out' on success.
-// Returns false (out stays at C++ defaults) if Python is not
-// initialized, file not found, or any parse error occurs.
 bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out);
 
 // Forward-declare StructureBlueprint (defined in structure_blueprint.h).
 struct StructureBlueprint;
 
 // Load a structure blueprint from a Python artifact file.
-// Same py::exec() + dict pattern as loadWorldConfig().
 bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out);
 
 using BehaviorHandle = int;
@@ -137,35 +137,29 @@ public:
 
 	// Load a behavior from Python source code string.
 	// Returns a handle for calling decide() later.
-	// On error: returns -1, errorOut contains the traceback.
 	BehaviorHandle loadBehavior(const std::string& sourceCode, std::string& errorOut);
-
-	// Call decide() on a loaded behavior.
-	// Provides a WorldView context with nearby entities.
-	// Returns the BehaviorAction the Python code chose.
-	// On error: returns Idle, errorOut contains the traceback.
-
-	// Block query function type — maps (x,y,z) → block type string.
-	using BlockQueryFn = std::function<std::string(int, int, int)>;
-	// Block scan function type — targeted search by type ID, anchored at nearPos.
-	using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
-
-	BehaviorAction callDecide(BehaviorHandle handle,
-	                           Entity& self,
-	                           const std::vector<NearbyEntity>& nearby,
-	                           const std::vector<BlockSample>& blocks,
-	                           float dt,
-	                           float timeOfDay,
-	                           std::string& goalOut,
-	                           std::string& errorOut,
-	                           BlockQueryFn blockQueryFn = nullptr,
-	                           ScanBlocksFn scanBlocksFn = nullptr);
 
 	// Get the source code of a loaded behavior
 	std::string getSource(BehaviorHandle handle) const;
 
 	// Unload a behavior (free Python objects)
 	void unloadBehavior(BehaviorHandle handle);
+
+	// Block query function types — set per-call, protected by mutex
+	using BlockQueryFn = std::function<std::string(int, int, int)>;
+	using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
+
+	// Call decide() on a loaded behavior.
+	// Returns a Plan (list of PlanSteps). Backward compatible: if the behavior
+	// returns old-format (action, goal_str), it's converted to a single-step Plan.
+	Plan callDecide(BehaviorHandle handle,
+	                Entity& self,
+	                const std::vector<NearbyEntity>& nearby,
+	                float dt, float timeOfDay,
+	                std::string& goalOut,
+	                std::string& errorOut,
+	                BlockQueryFn blockQueryFn = nullptr,
+	                ScanBlocksFn scanBlocksFn = nullptr);
 
 private:
 	bool m_initialized = false;
@@ -181,13 +175,11 @@ private:
 	std::unordered_map<int, LoadedBehavior> m_behaviors;
 
 	// Cached pydantic class references for LocalWorld and SelfEntity.
-	// Loaded once on init(), destroyed on shutdown(). Avoids re-importing
-	// local_world every tick.
-	void* m_localWorldClass  = nullptr;   // py::object* → LocalWorld
-	void* m_selfEntityClass  = nullptr;   // py::object* → SelfEntity
+	void* m_localWorldClass  = nullptr;
+	void* m_selfEntityClass  = nullptr;
 };
 
-// Global bridge instance (owned by server)
+// Global bridge instance
 PythonBridge& pythonBridge();
 
 } // namespace modcraft

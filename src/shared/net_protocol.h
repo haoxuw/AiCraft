@@ -11,20 +11,15 @@
  * send S_CHUNK_Z (zstd-compressed) instead of S_CHUNK (uncompressed).
  * WASM clients send version = 1 and always receive uncompressed S_CHUNK.
  *
- * Version history:
- *   1 — original (S_CHUNK uncompressed, no version field in C_HELLO)
- *   2 — S_CHUNK_Z (zstd); C_HELLO prefixed with u32 version;
- *       S_CHUNK_EVICT and C_RESYNC_CHUNK added
- *
  * Message index
  * ─────────────
  * C_ACTION        0x0001  ActionProposal (move / block / attack …)
  * C_HELLO         0x0003  GUI client hello  [u32 version][str uuid][str name][str skin]
- * C_AGENT_HELLO   0x0004  Agent hello       [str name][u32 entityId]
- * C_RELOAD_BEHAVIOR 0x0005 Hot-reload behavior [u32 entityId][str source]
- * C_RESYNC_CHUNK  0x0007  Request chunk re-send [i32 cx][i32 cy][i32 cz]  (v2)
- * C_PROXIMITY      0x000C  [u32 count][u32 eid...] — NPCs detected near player
- * C_GET_INVENTORY 0x000D  [u32 entityId] — request entity inventory snapshot
+ * C_SET_GOAL      0x0008  [u32 entityId][f32 x][f32 y][f32 z]
+ * C_CANCEL_GOAL   0x0009  [u32 entityId]
+ * C_CLAIM_ENTITY  0x000A  [u32 entityId]
+ * C_SET_GOAL_GROUP 0x000B [f32 x][f32 y][f32 z][u32 count][u32 eid...]
+ * C_GET_INVENTORY 0x000D  [u32 entityId]
  *
  * S_WELCOME       0x1001  [u32 entityId][vec3 spawn]
  * S_ENTITY        0x1002  EntityState (see serializeEntityState)
@@ -32,13 +27,10 @@
  * S_REMOVE        0x1004  [u32 entityId]
  * S_TIME          0x1005  [f32 worldTime]
  * S_BLOCK         0x1006  [i32 x][i32 y][i32 z][u32 blockId][u8 param2]
- * S_INVENTORY     0x1007  [u32 entityId][u32 n][str×n id][i32×n count][u8 equipN][str×equipN slot][str×equipN id]
- * S_ASSIGN_ENTITY 0x1008  [u32 entityId][str behaviorId]
- * S_REVOKE_ENTITY 0x1009  [u32 entityId]
- * S_RELOAD_BEHAVIOR 0x100A [u32 entityId][str source]
+ * S_INVENTORY     0x1007  [u32 eid][u32 n][str×n id][i32×n count][u8 equipN][str×equipN slot][str×equipN id]
  * S_ERROR         0x100B  [u32 entityId][str message]
- * S_CHUNK_EVICT   0x100E  Discard chunk from client cache [i32 cx][i32 cy][i32 cz]  (v2)
- * S_CHUNK_Z       0x100F  zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
+ * S_CHUNK_EVICT   0x100E  Discard chunk [i32 cx][i32 cy][i32 cz]  (v2)
+ * S_CHUNK_Z       0x100F  zstd-compressed chunk (v2)
  */
 
 #include "shared/entity.h"
@@ -59,14 +51,10 @@ enum MsgType : uint32_t {
 	// Client → Server
 	C_ACTION          = 0x0001,
 	C_HELLO           = 0x0003,  // [u32 version][str uuid][str displayName][str creatureType]
-	C_AGENT_HELLO     = 0x0004,  // [str name][u32 entityId]
-	C_RELOAD_BEHAVIOR = 0x0005,  // [u32 entityId][str sourceCode]
-	C_RESYNC_CHUNK    = 0x0007,  // request chunk re-send: [i32 cx][i32 cy][i32 cz]  (v2)
 	C_SET_GOAL        = 0x0008,  // [u32 entityId][f32 x][f32 y][f32 z]
 	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
 	C_CLAIM_ENTITY    = 0x000A,  // [u32 entityId] — claim ownership (admin or unclaimed only)
 	C_SET_GOAL_GROUP  = 0x000B,  // [f32 x][f32 y][f32 z][u32 count][u32 eid...]
-	C_PROXIMITY       = 0x000C,  // [u32 count][u32 eid...] — NPCs detected near player
 	C_GET_INVENTORY   = 0x000D,  // [u32 entityId] — request entity inventory snapshot
 
 	// Server → Client
@@ -77,16 +65,9 @@ enum MsgType : uint32_t {
 	S_TIME            = 0x1005,
 	S_BLOCK           = 0x1006,
 	S_INVENTORY       = 0x1007,
-	S_ASSIGN_ENTITY   = 0x1008,
-	S_REVOKE_ENTITY   = 0x1009,
-	S_RELOAD_BEHAVIOR = 0x100A,
 	S_ERROR           = 0x100B,
 	S_CHUNK_EVICT     = 0x100E,  // discard chunk from client cache: [i32 cx][i32 cy][i32 cz]  (v2)
 	S_CHUNK_Z         = 0x100F,  // zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
-	S_CHUNK_INFO      = 0x1010,  // full block census for a chunk: sent to agent clients only
-	S_CHUNK_INFO_DELTA= 0x1011,  // updated block census after a block change in a chunk
-	S_PROXIMITY       = 0x1012,  // [u32 count][u32 eid...] — player proximity relay to agents
-	// S_SET_GOAL and S_CANCEL_GOAL removed — server handles nav directly
 };
 
 // Message header (8 bytes)
@@ -327,57 +308,6 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	return e;
 }
 
-// ================================================================
-// ChunkInfo wire protocol helpers
-//
-// S_CHUNK_INFO / S_CHUNK_INFO_DELTA payload format:
-//   i32 cx, i32 cy, i32 cz
-//   bool hasAir
-//   u32 entry_count
-//   for each entry:
-//       str  type
-//       u32  count
-// ================================================================
-
-struct ChunkInfoWireEntry {
-	std::string typeId;
-	int count = 0;
-};
-
-inline void writeChunkInfoPayload(WriteBuffer& buf, ChunkPos pos, bool hasAir,
-                                   const std::vector<ChunkInfoWireEntry>& entries) {
-	buf.writeI32(pos.x);
-	buf.writeI32(pos.y);
-	buf.writeI32(pos.z);
-	buf.writeBool(hasAir);
-	buf.writeU32((uint32_t)entries.size());
-	for (auto& e : entries) {
-		buf.writeString(e.typeId);
-		buf.writeU32((uint32_t)e.count);
-	}
-}
-
-struct ChunkInfoPayload {
-	ChunkPos pos;
-	bool hasAir = false;
-	std::vector<ChunkInfoWireEntry> entries;
-};
-
-inline ChunkInfoPayload readChunkInfoPayload(ReadBuffer& buf) {
-	ChunkInfoPayload result;
-	result.pos.x = buf.readI32();
-	result.pos.y = buf.readI32();
-	result.pos.z = buf.readI32();
-	result.hasAir = buf.readBool();
-	uint32_t entryCount = buf.readU32();
-	result.entries.reserve(entryCount);
-	for (uint32_t i = 0; i < entryCount && buf.hasMore(); i++) {
-		ChunkInfoWireEntry e;
-		e.typeId = buf.readString();
-		e.count  = (int)buf.readU32();
-		result.entries.push_back(std::move(e));
-	}
-	return result;
-}
+// ChunkInfo wire protocol removed — agents share PlayerClient's chunk cache
 
 } // namespace modcraft::net

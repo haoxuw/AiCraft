@@ -369,11 +369,8 @@ public:
 	}
 
 	void sendProximity(const std::vector<EntityId>& eids) override {
-		if (!m_connected || eids.empty()) return;
-		net::WriteBuffer wb;
-		wb.writeU32((uint32_t)eids.size());
-		for (auto eid : eids) wb.writeU32(eid);
-		net::sendMessage(m_tcp.fd(), net::C_PROXIMITY, wb);
+		// C_PROXIMITY removed — agents run inside PlayerClient now, no server relay needed
+		(void)eids;
 	}
 
 	// --- State access ---

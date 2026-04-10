@@ -33,6 +33,10 @@ EMSDK := $(HOME)/emsdk
 game: build
 	./$(BUILD_DIR)/modcraft --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
 
+# Singleplayer with frame profiler overlay enabled
+profiler: build
+	./$(BUILD_DIR)/modcraft --skip-menu --profiler$(if $(GAME_PORT), --port $(GAME_PORT),)
+
 # Dedicated server (interactive world select, or --world/--seed/--template flags)
 server: build
 	./$(BUILD_DIR)/modcraft-server --port $(PORT)

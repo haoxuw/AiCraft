@@ -9,7 +9,7 @@ enum class CameraMode {
 	FirstPerson,  // FPS: camera at player eyes
 	ThirdPerson,  // Behind player, orbiting
 	RPG,      // Minecraft Dungeons style, fixed angle from above
-	RTS,          // Top-down, free camera, mouse select
+	RTS,          // Angled overhead, free camera, mouse select
 };
 
 // Player physical properties

@@ -2,44 +2,35 @@
 
 Every behavior inherits from Behavior and overrides decide().
 
-Contract
---------
-    decide(entity: SelfEntity, local_world: LocalWorld) → (action, goal_str)
+NEW CONTRACT (Plan-based)
+-------------------------
+    decide(entity: SelfEntity, local_world: LocalWorld) → (plan, goal_str)
 
-    action    — one of the four server-accepted primitives, constructed via the
-                modcraft_engine helpers: Move(entity.x, entity.y, entity.z), Move(x,y,z,speed),
-                Convert(…), StoreItem(id), PickupItem(id), DropItem(…),
-                BreakBlock(x,y,z), Interact(x,y,z).
-    goal_str  — non-empty human-readable string (shown above entity's head
-                and in the right-click inspect panel). Never return "".
+    plan      — a list of PlanStep dicts, each with a "type" key:
+                  {"type": "move", "x": ..., "y": ..., "z": ...}
+                  {"type": "harvest", "x": ..., "y": ..., "z": ...}
+                  {"type": "attack", "entity_id": ...}
+                  {"type": "relocate", "from": Container, "to": Container,
+                   "item": "base:logs", "count": 1}
+    goal_str  — non-empty human-readable string (shown above entity's head).
 
-High-level strategies (Follow, Flee, Wander) are NOT action types.
-They are Python helpers on this Behavior base class that compute a target
-position and return Move.  See wander_target() and flee_pos() below.
-
-World model
------------
-    LocalWorld  — agent-side cached subset of GlobalWorld. May be stale;
-                  server validates all actions and rejects impossible ones.
-    SelfEntity  — full state of the entity running this behavior.
-
-    See python/local_world.py for the complete API.
+    The old single-action return (Move(...), goal) is DEPRECATED.
+    Behaviors should return a list of plan steps that the AgentClient
+    executes sequentially.
 
 Example
 -------
-    from modcraft_engine import Move
     from behavior_base import Behavior
 
-    class GuardBehavior(Behavior):
-        def __init__(self):
-            self._home = None
-
+    class WoodcutterBehavior(Behavior):
         def decide(self, entity, local_world):
-            self._home = self.init_home(entity, self._home)
-            threat = local_world.nearest("hostile", max_dist=8)
-            if threat:
-                return Move(*self.flee_pos(entity, threat), speed=entity.walk_speed * 1.5), "Retreating!"
-            return Move(entity.x, entity.y, entity.z), "Standing guard"
+            tree = local_world.get("base:logs", max_dist=40)
+            if tree:
+                return [
+                    {"type": "move", "x": tree.x, "y": tree.y, "z": tree.z},
+                    {"type": "harvest", "x": tree.x, "y": tree.y, "z": tree.z},
+                ], "Chopping wood"
+            return [{"type": "move", **self._wander_target(entity)}], "Wandering"
 """
 
 import math
@@ -51,60 +42,65 @@ from stats import stats
 class Behavior:
     """Abstract base for all entity behaviors.
 
-    Subclasses must implement decide(entity, local_world) → (action, goal_str).
+    Subclasses must implement decide(entity, local_world) → (plan, goal_str).
     """
 
     def decide(self, entity: SelfEntity, local_world: LocalWorld) -> tuple:
-        """Called at ~4 Hz. Must return (action, goal: str).
+        """Called at ~4 Hz. Must return (plan: list[dict], goal: str).
 
         Parameters
         ----------
         entity : SelfEntity
-            Live entity state. Read-only. Access via attributes:
+            Live entity state (read-only). Attributes:
             entity.x, entity.y, entity.z, entity.hp, entity.walk_speed,
             entity.on_ground, entity.inventory.count("base:logs"),
-            entity.get("work_radius", 80.0)   ← server-assigned custom props
+            entity.get("work_radius", 80.0)
 
         local_world : LocalWorld
             Spatial snapshot of what this agent can currently perceive.
-            local_world.get("base:logs")           ← nearest block/entity of type
-            local_world.get("base:logs", max_dist=40)
-            local_world.all("base:logs")           ← all, nearest-first
-            local_world.nearest("player")           ← nearest entity by category
-            local_world.time                        ← 0.0–1.0 day fraction
-            local_world.dt                          ← frame delta seconds
+            local_world.get("base:logs")
+            local_world.all("base:logs", max_dist=40)
+            local_world.nearest("player")
+            local_world.time
+            local_world.dt
+
+        Returns
+        -------
+        (plan, goal_str) where:
+            plan = list of PlanStep dicts, e.g.:
+                [{"type": "move", "x": 10, "y": 4, "z": 20}]
+                [{"type": "move", ...}, {"type": "harvest", "x": 5, "y": 4, "z": 8}]
+                [{"type": "attack", "entity_id": 42}]
+                [{"type": "relocate", "from": Self(), "to": Block(x,y,z),
+                  "item": "base:logs", "count": 1}]
+            goal_str = non-empty human-readable string
         """
         raise NotImplementedError(
-            f"{type(self).__name__} must implement decide(entity, local_world) → (action, goal)"
+            f"{type(self).__name__} must implement decide(entity, local_world) → (plan, goal)"
         )
 
     # ── Time-of-day helpers ───────────────────────────────────────────────────
 
     @staticmethod
     def is_night(local_world: LocalWorld) -> bool:
-        """True during night: midnight to dawn (0%–25%)."""
         return local_world.time < 0.25
 
     @staticmethod
     def is_morning(local_world: LocalWorld) -> bool:
-        """True during morning: dawn to noon (25%–50%)."""
         return 0.25 <= local_world.time < 0.50
 
     @staticmethod
     def is_afternoon(local_world: LocalWorld) -> bool:
-        """True during afternoon: noon to dusk (50%–75%)."""
         return 0.50 <= local_world.time < 0.75
 
     @staticmethod
     def is_evening(local_world: LocalWorld) -> bool:
-        """True during evening: dusk to midnight (75%–100%)."""
         return local_world.time >= 0.75
 
     # ── Distance helpers ──────────────────────────────────────────────────────
 
     @staticmethod
     def dist2d(ax: float, az: float, bx: float, bz: float) -> float:
-        """Horizontal (XZ) distance between two positions."""
         dx, dz = ax - bx, az - bz
         return (dx * dx + dz * dz) ** 0.5
 
@@ -112,10 +108,6 @@ class Behavior:
 
     @staticmethod
     def is_near(entity: SelfEntity, pos, threshold: float = 2.5) -> bool:
-        """True if entity is within threshold horizontal distance of pos.
-
-        pos may be a BlockView, EntityView, (x, y, z) tuple, or plain dict.
-        """
         if isinstance(pos, (BlockView, EntityView)):
             tx, tz = pos.x, pos.z
         elif isinstance(pos, dict):
@@ -129,11 +121,6 @@ class Behavior:
     # ── Home / chest helpers ──────────────────────────────────────────────────
 
     def init_home(self, entity: SelfEntity, home: tuple) -> tuple:
-        """Return home (x, y, z), initialising from server props if not set yet.
-
-        Uses home_x / home_y / home_z server-assigned props when present,
-        otherwise records the entity's current spawn position as home.
-        """
         if home is not None:
             return home
         hx = entity.get("home_x")
@@ -145,7 +132,6 @@ class Behavior:
 
     @staticmethod
     def get_chest(entity: SelfEntity, home: tuple) -> tuple:
-        """Return (x, y, z) of the entity's assigned chest, or fall back to home."""
         cx = entity.get("chest_x")
         cy = entity.get("chest_y")
         cz = entity.get("chest_z")
@@ -153,7 +139,7 @@ class Behavior:
             return (float(cx), float(cy) if cy is not None else home[1], float(cz))
         return home
 
-    # ── Movement helpers (return (x, y, z) — wrap with Move) ───────────────
+    # ── Movement helpers (return (x, y, z) tuple — used with Move()) ───────
 
     @staticmethod
     def wander_target(entity: SelfEntity, radius: float = 8.0) -> tuple:
@@ -172,8 +158,6 @@ class Behavior:
     @staticmethod
     def flee_pos(entity: SelfEntity, threat, distance: float = 12.0) -> tuple:
         """Compute a position to flee to, moving directly away from threat.
-
-        threat may be a BlockView, EntityView, or any object with .x and .z.
 
         Usage:
             return Move(*self.flee_pos(entity, threat), speed=spd * 1.8), "Fleeing!"

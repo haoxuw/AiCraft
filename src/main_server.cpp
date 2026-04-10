@@ -211,13 +211,6 @@ int main(int argc, char** argv) {
 	// Client manager handles all TCP client operations + AI agent spawning
 	modcraft::ClientManager clients(server);
 
-	// Determine executable directory for spawning AI agent processes
-	{
-		std::string exe = argv[0];
-		auto pos = exe.rfind('/');
-		std::string execDir = (pos != std::string::npos) ? exe.substr(0, pos) : ".";
-		clients.setExecDir(execDir);
-	}
 	clients.setPort(config.port);
 
 	// Network broadcast callbacks
@@ -226,16 +219,6 @@ int main(int argc, char** argv) {
 		clients.onBlockChanged(pos, oldBid, newBid, p2);
 	};
 	cbs.onEntityRemove = [&](modcraft::EntityId id) {
-		modcraft::ClientId owner = server.getEntityOwner(id);
-		if (owner != 0) {
-			server.revokeEntityFromClient(owner, id);
-			auto* c = clients.getClient(owner);
-			if (c) {
-				modcraft::net::WriteBuffer rwb;
-				rwb.writeU32(id);
-				modcraft::net::sendMessage(c->fd, modcraft::net::S_REVOKE_ENTITY, rwb);
-			}
-		}
 		modcraft::net::WriteBuffer wb;
 		wb.writeU32(id);
 		clients.broadcastToAll(modcraft::net::S_REMOVE, wb);
@@ -290,9 +273,6 @@ int main(int argc, char** argv) {
 			tickCount++;
 		}
 
-		clients.forwardBehaviorReloads();
-		clients.spawnAIClients(); // spawn agent processes for uncontrolled NPCs
-		clients.drainAgentLogs(); // forward agent stdout to server console
 		clients.broadcastState(dt);
 		clients.announceOnLAN(dt);
 		clients.logStatus(statusTimer, tickCount, logFile);

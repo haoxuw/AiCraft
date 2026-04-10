@@ -1,75 +1,28 @@
 #pragma once
 
 /**
- * Behavior system interface for living entities.
+ * Behavior system — data types for entity AI.
  *
- * Every living entity (player, animal, Creatures) has a Behavior that drives
- * its actions. Behaviors implement decide() which is called on a
- * per-entity schedule (driven by DecisionQueue) and returns what
- * the entity should do next, along with a duration until the next call.
+ * NEW ARCHITECTURE (Plan-based):
+ *   Python decide(entity, local_world) → Plan (list of PlanStep)
+ *   PlanStep types: Move(pos), Harvest(block_pos), Attack(entity_id),
+ *                   Relocate(from, to, item)
  *
- * All behavior logic lives in Python files (artifacts/behaviors/).
- * PythonBehavior wraps the pybind11 bridge to call user-written .py files.
- * C++ only defines the interface types (BehaviorAction, BehaviorWorldView)
- * and the action executor (in entity_manager.h).
+ * The old single-action BehaviorAction / Behavior class hierarchy / BehaviorWorldView
+ * have been removed. AgentClient now calls Python decide() directly via
+ * PythonBridge and gets back a Plan, which it executes step by step.
+ *
+ * Kept: NearbyEntity (used by gatherNearby), BlockSample (used by scan_blocks).
  */
 
 #include "shared/action.h"
 #include "shared/entity.h"
 #include "shared/constants.h"
 #include <glm/glm.hpp>
-#include <glm/gtc/constants.hpp>
 #include <vector>
 #include <string>
-#include <memory>
-#include <functional>
-#include <cmath>
-#include <algorithm>
 
 namespace modcraft {
-
-class EntityManager;
-
-// ================================================================
-// BehaviorAction -- what a behavior wants the entity to do
-// ================================================================
-
-struct BehaviorAction {
-	enum Type {
-		Idle,      // do nothing — agent sends no action this tick
-		Move,      // walk toward targetPos
-		Relocate,  // move item between containers
-		Convert,   // transform item (toItem="" = destroy; value must not increase)
-		Interact,  // toggle block state (door/button/TNT)
-	};
-
-	Type      type      = Idle;
-	glm::vec3 targetPos = {0, 0, 0};  // for Move: destination
-	float     speed     = 2.0f;
-
-	// Relocate
-	Container   relocateFrom;
-	Container   relocateTo;
-	std::string itemId;
-	int         itemCount  = 1;
-	std::string equipSlot;
-
-	// Convert
-	std::string fromItem;
-	int         fromCount  = 1;
-	std::string toItem;                // empty = destroy (value decreases, always ok)
-	int         toCount    = 1;
-	Container   convertFrom;           // where source is taken from (default = Self)
-	Container   convertInto;           // where result is placed (default = Self)
-
-	// Interact (reuses no extra fields — block pos is in convertFrom for Convert,
-	// or specified explicitly via blockPos below)
-	glm::ivec3  blockPos   = {0, 0, 0};
-
-	// Decision queue: how long (seconds) before the next decide() call.
-	// Set by Python behaviors via 3-tuple return; default 0.25s (4 Hz) for backward compat.
-	float decideDuration = 0.25f;
-};
 
 // ================================================================
 // NearbyEntity -- info about an entity visible to a behavior
@@ -86,7 +39,7 @@ struct NearbyEntity {
 };
 
 // ================================================================
-// BlockSample — a block position from ChunkInfo, passed to behaviors
+// BlockSample — a block position returned by scan_blocks()
 // ================================================================
 
 struct BlockSample {
@@ -96,92 +49,38 @@ struct BlockSample {
 };
 
 // ================================================================
-// BehaviorWorldView -- what a behavior can see
+// PlanStep — one step in a Plan returned by Python decide()
 // ================================================================
 
-struct BehaviorWorldView {
-	Entity& self;
-	std::vector<NearbyEntity> nearbyEntities;
-	std::vector<BlockSample> chunkBlocks;
-	float dt;
-	float timeOfDay = 0.0f;
-	// Block query function — maps (x,y,z) → block type string.
-	std::function<std::string(int,int,int)> blockQueryFn;
-	// Block scan function — targeted search by type ID from real chunk data.
-	// nearPos = world-space anchor for the search; results are sorted by
-	// distance to this point. Behaviors should pass the entity's "home"
-	// or current position so the agent doesn't drift far chasing the
-	// densest match.
-	std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)> scanBlocksFn;
+struct PlanStep {
+	enum Type { Move, Harvest, Attack, Relocate };
 
-};
+	Type      type          = Move;
+	glm::vec3 targetPos     = {0, 0, 0};     // Move/Harvest: world position
+	EntityId  targetEntity  = ENTITY_NONE;    // Attack: entity to hit
+	Container relocateFrom;                   // Relocate: source container
+	Container relocateTo;                     // Relocate: destination container
+	std::string itemId;                       // Relocate: item type
+	int       itemCount     = 1;
+	float     speed         = 2.0f;           // Move: walk speed
 
-// ================================================================
-// Behavior -- abstract base class
-// ================================================================
-
-class Behavior {
-public:
-	virtual ~Behavior() = default;
-
-	// Human-readable name of this behavior type
-	virtual std::string name() const = 0;
-
-	// Called on schedule. Inspect the world, set self.goalText, return action.
-	virtual BehaviorAction decide(BehaviorWorldView& view) = 0;
-
-	// Python source code for display in editor.
-	virtual std::string sourceCode() const { return "# No behavior loaded\n"; }
-};
-
-// ================================================================
-// Per-entity behavior state
-// ================================================================
-
-struct BehaviorState {
-	std::unique_ptr<Behavior> behavior;
-	BehaviorAction currentAction;
-	float decideTimer = 0.0f;
-	float wanderYaw = 0.0f;  // kept for smooth turning in MoveTo
-};
-
-// ================================================================
-// IdleFallbackBehavior -- used when Python behavior fails to load
-// ================================================================
-
-class IdleFallbackBehavior : public Behavior {
-public:
-	std::string name() const override { return "Idle"; }
-
-	BehaviorAction decide(BehaviorWorldView& view) override {
-		view.self.goalText = "No behavior loaded";
-		BehaviorAction a;
-		a.type      = BehaviorAction::Move;
-		a.targetPos = view.self.position;  // move to current pos = stand still
-		return a;
+	static PlanStep move(glm::vec3 pos, float spd = 2.0f) {
+		PlanStep s; s.type = Move; s.targetPos = pos; s.speed = spd; return s;
+	}
+	static PlanStep harvest(glm::vec3 pos) {
+		PlanStep s; s.type = Harvest; s.targetPos = pos; return s;
+	}
+	static PlanStep attack(EntityId eid) {
+		PlanStep s; s.type = Attack; s.targetEntity = eid; return s;
+	}
+	static PlanStep relocate(Container from, Container to,
+	                         const std::string& item, int count = 1) {
+		PlanStep s; s.type = Relocate;
+		s.relocateFrom = from; s.relocateTo = to;
+		s.itemId = item; s.itemCount = count; return s;
 	}
 };
 
-// ================================================================
-// PythonBehavior -- wraps pybind11 bridge to run user-written Python
-// ================================================================
-
-class PythonBehavior : public Behavior {
-public:
-	PythonBehavior(int handle, const std::string& source)
-		: m_handle(handle), m_source(source) {}
-
-	std::string name() const override { return "Python"; }
-
-	BehaviorAction decide(BehaviorWorldView& view) override;  // implemented in python_bridge.cpp
-
-	std::string sourceCode() const override { return m_source; }
-
-	int handle() const { return m_handle; }
-
-private:
-	int m_handle;
-	std::string m_source;
-};
+using Plan = std::vector<PlanStep>;
 
 } // namespace modcraft

@@ -1,640 +1,486 @@
 #pragma once
 
 /**
- * AgentClient — headless AI client that controls one or more entities.
+ * AgentClient — AI controller for NPC entities.
  *
- * Connects to a GameServer via TCP (same protocol as GUI client).
- * Receives entity/chunk state updates, runs Python behavior decide()
- * on a per-entity schedule (DecisionQueue), and sends ActionProposals
- * back to the server.
+ * Runs inside the PlayerClient process, sharing chunk/entity cache.
+ * No separate TCP connection — reads world state from ServerInterface
+ * and sends ActionProposals through the same connection as the player.
  *
- * From the server's perspective, an agent client is indistinguishable
- * from a human player — it just sends C_ACTION messages.
+ * Two-phase tick loop:
+ *   Phase 1 (DECIDE):  drain DecisionQueue → call Python decide() → get Plan
+ *   Phase 2 (EXECUTE): tick current PlanStep for each agent → emit ActionProposals
+ *
+ * Pathfinding is intentionally dumb: straight-line waypoints with jitter.
+ * Plan visualization data is exposed for the renderer.
  */
 
-#include "shared/types.h"
-#include "shared/entity.h"
-#include "shared/chunk.h"
-#include "shared/block_registry.h"
-#include "shared/net_socket.h"
-#include "shared/net_protocol.h"
-#include "server/chunk_info.h"
-#include <zstd.h>
-#include "shared/constants.h"
-#include "server/behavior.h"
+#include "shared/server_interface.h"
 #include "server/behavior_store.h"
+#include "server/behavior.h"
 #include "server/python_bridge.h"
-#include "agent/behavior_executor.h"
-#include "agent/block_search.h"
 #include "agent/decision_queue.h"
-#include "server/entity_manager.h"
-#include "server/server_tuning.h"
-#include "content/builtin.h"
-#include "shared/artifact_registry.h"
+#include "agent/behavior_executor.h"
 #include <unordered_map>
-#include <unordered_set>
-#include <memory>
-#include <string>
 #include <vector>
-#include <thread>
-#include <chrono>
-#include <ctime>
+#include <string>
+#include <random>
 
 namespace modcraft {
 
+// ================================================================
+// AgentClient
+// ================================================================
+
 class AgentClient {
 public:
-	AgentClient() {
-		// Register entity type definitions (same as server/client)
-		registerAllBuiltins(m_blocks, m_entityDefs);
+	AgentClient(ServerInterface& server, BehaviorStore& behaviors)
+		: m_server(server), m_behaviors(behaviors), m_rng(std::random_device{}()) {}
 
-		// Load artifact registry and merge Python-declared feature tags into EntityDefs
-		ArtifactRegistry artifacts;
-		artifacts.loadAll("artifacts");
-		m_entityDefs.mergeArtifactTags(artifacts.livingTags());
-	}
+	// ── Main tick (called from Game::updatePlaying) ──────────────────────
 
-	// Set the entity ID this agent wants to control (call before connect).
-	void setTargetEntity(EntityId id) { m_targetEntityId = id; }
-
-	// Connect to server. Returns true on success.
-	bool connect(const std::string& host, int port, const std::string& name = "agent") {
-		m_host = host;
-		m_port = port;
-		m_name = name;
-
-		if (!m_tcp.connect(host.c_str(), port)) {
-			// printf("[Agent:%s] Cannot connect to %s:%d\n", name.c_str(), host.c_str(), port);
-			return false;
-		}
-		m_connected = true;
-
-		// Identify immediately — server defers all setup until it knows
-		// whether this is a GUI client (C_HELLO) or agent (C_AGENT_HELLO).
-		{
-			net::WriteBuffer hello;
-			hello.writeString(m_name);
-			hello.writeU32(m_targetEntityId);
-			net::sendMessage(m_tcp.fd(), net::C_AGENT_HELLO, hello);
-		}
-
-		// Wait for S_ASSIGN_ENTITY (server assigns us the target entity)
-		auto start = std::chrono::steady_clock::now();
-		while (true) {
-			m_recv.readFrom(m_tcp.fd());
-			net::MsgHeader hdr;
-			std::vector<uint8_t> payload;
-			while (m_recv.tryExtract(hdr, payload)) {
-				if (hdr.type == net::S_ASSIGN_ENTITY) {
-					net::ReadBuffer rb(payload.data(), payload.size());
-					EntityId eid = rb.readU32();
-					std::string behaviorId = rb.readString();
-					assignEntity(eid, behaviorId);
-					return true;
-				}
-				// Handle other messages that arrive before assignment (S_ENTITY, etc.)
-				handleMessage(hdr.type, payload);
-			}
-
-			auto elapsed = std::chrono::steady_clock::now() - start;
-			if (std::chrono::duration<float>(elapsed).count() > 5.0f) {
-				// printf("[Agent:%s] Timeout waiting for entity assignment\n", m_name.c_str());
-				disconnect();
-				return false;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		}
-	}
-
-	void disconnect() {
-		m_tcp.disconnect();
-		m_connected = false;
-	}
-
-	bool isConnected() const { return m_connected; }
-	bool hasControlledEntities() const { return !m_controlled.empty(); }
-
-	// Assign an entity for this agent to control.
-	void assignEntity(EntityId id, const std::string& behaviorId) {
-		if (m_controlled.count(id)) return;
-		m_controlled.insert(id);
-		m_decideQueue.scheduleNow(id);
-	}
-
-	// Revoke control of an entity. Silent if the agent didn't control it.
-	void revokeEntity(EntityId id) {
-		if (m_controlled.erase(id) > 0) {
-			m_behaviorStates.erase(id);
-			m_decideQueue.remove(id);
-			// printf("[Agent:%s] Revoked entity %u\n", m_name.c_str(), id);
-		}
-	}
-
-	// Main tick: receive state, drain decision queue, send actions.
 	void tick(float dt) {
-		if (!m_connected) return;
-		if (!receiveMessages()) {
-			m_connected = false;
-			return;
-		}
+		m_time += dt;
+		discoverEntities();
+		phaseDecide();
+		phaseExecute(dt);
+	}
 
-		// ── Phase 1: Drain decision queue — run decide() for due entities ────
-		auto dueEntities = m_decideQueue.drain(ServerTuning::maxDecidesPerTick);
-		std::unordered_set<EntityId> decidedThisTick(dueEntities.begin(), dueEntities.end());
+	// ── Visualization data for renderEntityEffects ──────────────────────
 
-		for (EntityId eid : dueEntities) {
-			auto entIt = m_entities.find(eid);
-			if (entIt == m_entities.end() || entIt->second->removed) continue;
-			if (!m_controlled.count(eid)) continue;
-			Entity& e = *entIt->second;
-			auto& state = m_behaviorStates[eid];
+	struct PlanViz {
+		std::vector<glm::vec3> waypoints;  // full path (entity→waypoints→destination)
+		PlanStep::Type actionType = PlanStep::Move;
+		glm::vec3 actionPos = {0,0,0};    // where final action happens
+		bool hasAction = false;
+	};
 
-			// Lazy-load behavior
-			if (!state.behavior) {
-				std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
-				state.behavior = loadBehavior(bid);
-			}
+	const PlanViz* getPlanViz(EntityId id) const {
+		auto it = m_agents.find(id);
+		if (it == m_agents.end()) return nullptr;
+		if (it->second.plan.empty()) return nullptr;
+		return &it->second.viz;
+	}
 
-			// Build NearbyEntities from m_entities cache
-			auto nearby = gatherNearby(e, m_entities, 64.0f);
-
-			// Block query + scan callbacks for Python
-			auto blockQueryFn = [this](int x, int y, int z) -> std::string {
-				BlockId bid = getBlock(x, y, z);
-				return m_blocks.get(bid).string_id;
-			};
-			auto scanBlocksFn = [this](const std::string& typeId, glm::vec3 nearPos,
-			                           float maxDist, int maxResults) {
-				return scanBlocks(nearPos, typeId, maxDist, maxResults);
-			};
-
-			// Build world view — chunkBlocks is empty, behaviors use scan_blocks() directly
-			std::vector<BlockSample> chunkBlocks;
-			BehaviorWorldView view{e, nearby, chunkBlocks, dt, m_worldTime, blockQueryFn, scanBlocksFn};
-
-			auto t0 = std::chrono::steady_clock::now();
-			state.currentAction = state.behavior->decide(view);
-			float ms = std::chrono::duration<float, std::milli>(
-			               std::chrono::steady_clock::now() - t0).count();
-			state.lastDecideMs   = ms;
-			state.totalDecideMs += ms;
-			state.decideCount++;
-			state.justDecided = true;
-
-			// Schedule next decide based on duration from behavior
-			float duration = state.currentAction.decideDuration;
-			auto nextTime = SteadyClock::now() +
-				std::chrono::duration_cast<SteadyClock::duration>(
-					std::chrono::duration<float>(duration));
-			m_decideQueue.schedule(eid, nextTime);
-
-			// Log goal changes
-			auto& lastGoal = m_lastLoggedGoal[eid];
-			if (e.goalText != lastGoal) {
-				printf("[goal eid=%u] \"%s\" → \"%s\"  (decide #%u, %.1fms)\n",
-					eid, lastGoal.c_str(), e.goalText.c_str(),
-					state.decideCount, state.lastDecideMs);
-				lastGoal = e.goalText;
-			}
-
-			// Send proposals
-			std::vector<ActionProposal> proposals;
-			behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
-			for (auto& p : proposals) {
-				net::WriteBuffer wb;
-				net::serializeAction(wb, p);
-				net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
-				walkDbgTrackMove(p, state, e);
-			}
-			state.justDecided = false;
-		}
-
-		// ── Phase 2: Re-send Move for entities NOT decided this tick ─────────
-		// Only resend at ~4 Hz (not every 50 Hz tick) and skip if target ≈ self.
-		m_resendTimer += dt;
-		bool doResend = (m_resendTimer >= 0.25f);
-		if (doResend) m_resendTimer = 0;
-
-		if (doResend) {
-			for (EntityId eid : m_controlled) {
-				if (decidedThisTick.count(eid)) continue;
-				auto entIt = m_entities.find(eid);
-				if (entIt == m_entities.end() || entIt->second->removed) continue;
-				Entity& e = *entIt->second;
-				auto& state = m_behaviorStates[eid];
-				if (state.currentAction.type == BehaviorAction::Move) {
-					// Skip resend if target ≈ current position (entity is idle)
-					glm::vec3 tgt = state.currentAction.targetPos;
-					float distToSelf = glm::length(glm::vec2(
-						tgt.x - e.position.x, tgt.z - e.position.z));
-					if (distToSelf < 0.5f) continue;
-
-					std::vector<ActionProposal> proposals;
-					behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
-					for (auto& p : proposals) {
-						net::WriteBuffer wb;
-						net::serializeAction(wb, p);
-						net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
-						walkDbgTrackMove(p, state, e);
-					}
-				}
-			}
-		}
-
-		// ── Phase 3: Periodic sweep — ensure no entity is orphaned ───────────
-		m_sweepTimer += dt;
-		if (m_sweepTimer >= ServerTuning::decisionSweepInterval) {
-			m_sweepTimer = 0.0f;
-			for (EntityId eid : m_controlled) {
-				if (!m_decideQueue.hasPending(eid)) {
-					m_decideQueue.scheduleNow(eid);
-				}
-			}
-		}
-
-		// Periodic heartbeat
-		m_statusTimer += dt;
-		if (m_statusTimer >= 10.0f) {
-			m_statusTimer = 0.0f;
-		}
+	// Iterate all agents (for rendering)
+	template<typename Fn>
+	void forEachAgent(Fn&& fn) const {
+		for (auto& [eid, state] : m_agents) fn(eid, state.viz);
 	}
 
 private:
-	// Receive and process all pending network messages.
-	bool receiveMessages() {
-		if (!m_recv.readFrom(m_tcp.fd()))
-			return false;
+	// ── Per-entity agent state ──────────────────────────────────────────
 
-		net::MsgHeader hdr;
-		std::vector<uint8_t> payload;
-		while (m_recv.tryExtract(hdr, payload)) {
-			handleMessage(hdr.type, payload);
-		}
-		return true;
-	}
+	struct AgentState {
+		std::string behaviorId;
+		BehaviorHandle handle = -1;
 
-	void handleMessage(uint32_t type, const std::vector<uint8_t>& payload) {
-		net::ReadBuffer rb(payload.data(), payload.size());
+		// Current plan from Python decide()
+		Plan plan;
+		int stepIndex = 0;
+		std::string goalText;
 
-		switch (type) {
-		case net::S_ENTITY: {
-			auto es = net::deserializeEntityState(rb);
-			auto it = m_entities.find(es.id);
-			if (it == m_entities.end()) {
-				// New entity
-				const EntityDef* def = m_entityDefs.getTypeDef(es.typeId);
-				if (!def) def = &m_defaultDef;
-				auto ent = std::make_unique<Entity>(es.id, es.typeId, *def);
-				ent->position = es.position;
-				ent->velocity = es.velocity;
-				ent->yaw = es.yaw;
-				ent->onGround = es.onGround;
-				ent->goalText = es.goalText;
-				if (def->isLiving())
-					ent->setProp(Prop::HP, es.hp);
-				for (auto& [k, v] : es.props)
-					ent->setProp(k, v);
-				m_entities[es.id] = std::move(ent);
-			} else {
-				// Update existing entity
-				auto& e = *it->second;
-				e.position = es.position;
-				e.velocity = es.velocity;
-				e.yaw = es.yaw;
-				e.onGround = es.onGround;
-				e.goalText = es.goalText;
-				if (e.def().isLiving())
-					e.setProp(Prop::HP, es.hp);
-				for (auto& [k, v] : es.props)
-					e.setProp(k, v);
-			}
-			// Active trigger: if a controlled entity just lost HP → re-decide
-			if (m_controlled.count(es.id)) {
-				auto& state = m_behaviorStates[es.id];
-				if (state.lastKnownHp >= 0 && es.hp < state.lastKnownHp) {
-					m_decideQueue.scheduleNow(es.id);
-				}
-				state.lastKnownHp = es.hp;
-			}
-			break;
-		}
-		case net::S_CHUNK: {
-			int cx = rb.readI32(), cy = rb.readI32(), cz = rb.readI32();
-			ChunkPos cp = {cx, cy, cz};
-			auto chunk = std::make_unique<Chunk>();
-			for (int ly = 0; ly < CHUNK_SIZE; ly++)
-				for (int lz = 0; lz < CHUNK_SIZE; lz++)
-					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-						uint32_t v = rb.readU32();
-						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
-					}
-			m_chunks[cp] = std::move(chunk);
-			break;
-		}
-		case net::S_CHUNK_Z: {
-			size_t compSize = rb.remaining();
-			const uint8_t* compData = rb.remainingData();
-			size_t decompBound = ZSTD_getFrameContentSize(compData, compSize);
-			if (decompBound == ZSTD_CONTENTSIZE_ERROR || decompBound == ZSTD_CONTENTSIZE_UNKNOWN) {
-				fprintf(stderr, "[Agent] S_CHUNK_Z: bad zstd frame\n");
-				break;
-			}
-			std::vector<uint8_t> decomp(decompBound);
-			size_t actual = ZSTD_decompress(decomp.data(), decompBound, compData, compSize);
-			if (ZSTD_isError(actual)) {
-				fprintf(stderr, "[Agent] S_CHUNK_Z: decompression error: %s\n",
-				        ZSTD_getErrorName(actual));
-				break;
-			}
-			net::ReadBuffer zrb(decomp.data(), actual);
-			ChunkPos cp = {zrb.readI32(), zrb.readI32(), zrb.readI32()};
-			auto chunk = std::make_unique<Chunk>();
-			for (int ly = 0; ly < CHUNK_SIZE; ly++)
-				for (int lz = 0; lz < CHUNK_SIZE; lz++)
-					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-						uint32_t v = zrb.readU32();
-						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
-					}
-			m_chunks[cp] = std::move(chunk);
-			break;
-		}
-		case net::S_CHUNK_EVICT: {
-			ChunkPos cp = {rb.readI32(), rb.readI32(), rb.readI32()};
-			m_chunks.erase(cp);
-			m_chunkInfoCache.erase(cp);
-			break;
-		}
-		case net::S_CHUNK_INFO:
-		case net::S_CHUNK_INFO_DELTA: {
-			auto payload = net::readChunkInfoPayload(rb);
-			AgentChunkInfo& ci = m_chunkInfoCache[payload.pos];
-			ci.pos = payload.pos;
-			ci.hasAir = payload.hasAir;
-			if (type == net::S_CHUNK_INFO)
-				ci.entries.clear();
-			for (auto& we : payload.entries) {
-				if (we.count <= 0)
-					ci.entries.erase(we.typeId);
-				else
-					ci.entries[we.typeId] = {we.count};
-			}
-			break;
-		}
-		case net::S_REMOVE: {
-			EntityId id = rb.readU32();
-			m_entities.erase(id);
-			revokeEntity(id);
-			break;
-		}
-		case net::S_INVENTORY: {
-			// Server broadcasts full inventory for an entity after any change.
-			// Agent updates local entity so decide() sees current item counts.
-			EntityId eid = rb.readU32();
-			uint32_t n = rb.readU32();
-			std::vector<std::pair<std::string, int>> items;
-			items.reserve(n);
-			for (uint32_t i = 0; i < n; i++) {
-				std::string itemId = rb.readString();
-				int count = rb.readI32();
-				items.push_back({itemId, count});
-			}
-			// Skip equipment: [u8 equipCount][{str slot, str id}...]
-			if (rb.hasMore()) {
-				uint8_t equipCount = rb.readU8();
-				for (uint8_t i = 0; i < equipCount; i++) {
-					if (rb.hasMore()) rb.readString(); // slot
-					if (rb.hasMore()) rb.readString(); // item
-				}
-			}
+		// Move execution: waypoints for current Move step
+		std::vector<glm::vec3> waypoints;
+		int wpIndex = 0;
 
-			auto it = m_entities.find(eid);
-			if (it != m_entities.end() && it->second->inventory) {
-				it->second->inventory->clear();
-				for (auto& [itemId, count] : items)
-					if (count > 0) it->second->inventory->add(itemId, count);
-			}
-			break;
-		}
-		case net::S_TIME: {
-			float newTime = rb.readF32();
-			// Active trigger: time-of-day threshold crossing → all entities re-decide
-			if (m_prevWorldTime >= 0.0f && isTimeOfDayEvent(m_prevWorldTime, newTime)) {
-				for (EntityId eid : m_controlled)
-					m_decideQueue.scheduleNow(eid);
-			}
-			m_prevWorldTime = m_worldTime;
-			m_worldTime = newTime;
-			break;
-		}
-		case net::S_BLOCK: {
-			int bx = rb.readI32(), by = rb.readI32(), bz = rb.readI32();
-			BlockId bid = (BlockId)rb.readU32();
-			uint8_t p2 = rb.hasMore() ? rb.readU8() : 0;
-			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
-			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
-			auto it = m_chunks.find(cp);
-			if (it != m_chunks.end()) {
-				int lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-				int ly = ((by % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-				int lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-				it->second->set(lx, ly, lz, bid, p2);
-			}
-			break;
-		}
-		case net::S_ASSIGN_ENTITY: {
-			EntityId eid = rb.readU32();
-			std::string behaviorId = rb.readString();
-			// printf("[Agent:%s] Server assigned entity %u (behavior: %s)\n",
-			//	m_name.c_str(), eid, behaviorId.c_str());
-			assignEntity(eid, behaviorId);
-			break;
-		}
-		case net::S_REVOKE_ENTITY: {
-			EntityId eid = rb.readU32();
-			// printf("[Agent:%s] Server revoked entity %u\n", m_name.c_str(), eid);
-			revokeEntity(eid);
-			break;
-		}
-		case net::S_RELOAD_BEHAVIOR: {
-			EntityId eid = rb.readU32();
-			std::string newSource = rb.readString();
-			// printf("[Agent:%s] Reloading behavior for entity %u\n", m_name.c_str(), eid);
-			reloadBehavior(eid, newSource);
-			break;
-		}
-		case net::S_PROXIMITY: {
-			uint32_t count = rb.readU32();
-			for (uint32_t i = 0; i < count; i++) {
-				EntityId eid = rb.readU32();
-				if (m_controlled.count(eid))
-					m_decideQueue.scheduleNow(eid);
-			}
-			break;
-		}
-			default:
-			// Unknown/unhandled server message — log so we notice missing handlers.
-			fprintf(stderr, "[Agent:%s] WARNING: unhandled server message type 0x%04X (%zu bytes) — check agent_client.h\n",
-				m_name.c_str(), type, rb.remaining());
-			break;
-		}
-	}
+		// Visualization (rebuilt each time a new plan arrives)
+		PlanViz viz;
 
-	// Look up a block from local chunk cache
-	BlockId getBlock(int x, int y, int z) const {
-		auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
-		ChunkPos cp = {div(x, CHUNK_SIZE), div(y, CHUNK_SIZE), div(z, CHUNK_SIZE)};
-		auto it = m_chunks.find(cp);
-		if (it == m_chunks.end() || !it->second) return BLOCK_AIR;
-		int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-		int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-		int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-		return it->second->get(lx, ly, lz);
-	}
-
-	// Load a Python behavior by name
-	std::unique_ptr<Behavior> loadBehavior(const std::string& behaviorId) {
-		if (behaviorId.empty())
-			return std::make_unique<IdleFallbackBehavior>();
-
-		if (!m_behaviorStore.isInitialized())
-			m_behaviorStore.init();
-
-		std::string source = m_behaviorStore.load(behaviorId);
-		if (source.empty()) {
-			// printf("[Agent:%s] No .py file for behavior '%s'\n",
-			//	m_name.c_str(), behaviorId.c_str());
-			return std::make_unique<IdleFallbackBehavior>();
-		}
-
-		auto& bridge = pythonBridge();
-		if (!bridge.isInitialized())
-			return std::make_unique<IdleFallbackBehavior>();
-
-		std::string error;
-		auto handle = bridge.loadBehavior(source, error);
-		if (handle < 0) {
-			printf("[Agent:%s] Failed to load behavior '%s': %s\n",
-				m_name.c_str(), behaviorId.c_str(), error.c_str());
-			return std::make_unique<IdleFallbackBehavior>();
-		}
-
-		// printf("[Agent:%s] Loaded behavior '%s'\n", m_name.c_str(), behaviorId.c_str());
-		return std::make_unique<PythonBehavior>(handle, source);
-	}
-
-	// Reload behavior for an entity with new source code.
-	void reloadBehavior(EntityId eid, const std::string& newSource) {
-		auto& bridge = pythonBridge();
-		if (!bridge.isInitialized()) return;
-
-		std::string error;
-		auto handle = bridge.loadBehavior(newSource, error);
-		if (handle >= 0) {
-			m_behaviorStates[eid].behavior = std::make_unique<PythonBehavior>(handle, newSource);
-			m_decideQueue.scheduleNow(eid); // decide immediately with new behavior
-			// printf("[Agent:%s] Behavior reloaded for entity %u\n", m_name.c_str(), eid);
-		} else {
-			printf("[Agent:%s] Behavior reload failed for entity %u: %s\n",
-				m_name.c_str(), eid, error.c_str());
-		}
-	}
-
-	// ── Walk debug: track Move proposal stats ──────────────────────────────
-	void walkDbgTrackMove(const ActionProposal& p, AgentBehaviorState& state, const Entity& e) {
-		if (p.type != ActionProposal::Move) return;
-		state.walkDbg_movesSent++;
-		glm::vec3 tgt = state.currentAction.targetPos;
-		float distFromPrev = glm::length(glm::vec2(
-			tgt.x - state.walkDbg_lastTarget.x,
-			tgt.z - state.walkDbg_lastTarget.z));
-		float distToSelf = glm::length(glm::vec2(
-			tgt.x - e.position.x, tgt.z - e.position.z));
-		if (distFromPrev > 0.1f) state.walkDbg_movesNewTgt++;
-		if (distToSelf < 0.5f) state.walkDbg_movesToSelf++;
-		state.walkDbg_lastTarget = tgt;
-	}
-
-	// ── Time-of-day thresholds that trigger active re-decide for all entities ──
-	// Behaviors care about dawn (0.25) and dusk (0.75); midnight (0.0 wrap) is
-	// also caught. Returns true if prevTime→newTime crosses any threshold.
-	static bool isTimeOfDayEvent(float prevTime, float newTime) {
-		// Forward crossing of dawn / noon / dusk thresholds
-		static const float kThresholds[] = {0.25f, 0.50f, 0.75f};
-		for (float t : kThresholds)
-			if (prevTime < t && newTime >= t) return true;
-		// Midnight wrap-around: time jumps from ~1.0 back to ~0.0
-		if (prevTime > 0.90f && newTime < 0.10f) return true;
-		return false;
-	}
-
-	// Targeted block scan: thin wrapper around block_search::run which owns
-	// the actual logic (see src/agent/block_search.h). Kept here so the lambda
-	// in gatherNearby() can bind to m_chunkInfoCache / m_chunks directly.
-	std::vector<BlockSample> scanBlocks(glm::vec3 origin, const std::string& typeId,
-	                                     float maxDist, int maxResults) {
-		block_search::Options opt{typeId, origin, maxDist, maxResults};
-		return block_search::run(opt, m_chunkInfoCache, m_chunks, m_blocks,
-			[this](ChunkPos cp) { requestAndWaitForChunk(cp); });
-	}
-
-	// Request a specific chunk from the server and wait for it to arrive.
-	// Blocks the agent process (not server or GUI) until the chunk is received.
-	void requestAndWaitForChunk(ChunkPos pos) {
-		net::WriteBuffer wb;
-		wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
-		net::sendMessage(m_tcp.fd(), net::C_RESYNC_CHUNK, wb);
-
-		// Poll for up to 500ms waiting for this chunk
-		for (int i = 0; i < 100; i++) {
-			if (m_chunks.find(pos) != m_chunks.end()) return; // arrived
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
-			receiveMessages();
-		}
-		// Timed out — chunk didn't arrive, scan will skip it
-	}
-
-	// --- Connection state ---
-	std::string m_host;
-	int m_port = 0;
-	std::string m_name;
-	bool m_connected = false;
-	net::TcpClient m_tcp;
-	net::RecvBuffer m_recv;
-
-	EntityId m_targetEntityId = ENTITY_NONE;
-	float m_worldTime     = 0.3f;
-
-	float m_prevWorldTime = -1.0f;  // used to detect time-of-day threshold crossings
-	float m_statusTimer   = 0.0f;   // periodic heartbeat
-	float m_resendTimer   = 0.0f;   // Phase 2 Move resend throttle (4 Hz)
-
-	// --- Entity state cache (received from server) ---
-	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
-	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunks;
-
-	// --- Entity type definitions ---
-	BlockRegistry m_blocks;
-	EntityManager m_entityDefs;  // type registry only
-	EntityDef m_defaultDef;
-
-	// --- ChunkInfo cache (counts only, no samples) ---
-	struct AgentChunkInfo {
-		ChunkPos pos;
-		bool hasAir = false;
-		struct Entry { int count = 0; };
-		std::unordered_map<std::string, Entry> entries;
+		// Timing
+		bool claimed = false;
+		bool needsDecide = true;
 	};
-	std::unordered_map<ChunkPos, AgentChunkInfo, ChunkPosHash> m_chunkInfoCache;
 
-	// --- Controlled entities ---
-	std::unordered_set<EntityId> m_controlled;
-	std::unordered_map<EntityId, AgentBehaviorState> m_behaviorStates;
-	std::unordered_map<EntityId, std::string> m_lastLoggedGoal;
-	BehaviorStore m_behaviorStore;
+	// ── Entity discovery ────────────────────────────────────────────────
 
-	// --- Decision queue (replaces fixed 4 Hz timer) ---
-	DecisionQueue m_decideQueue;
-	float m_sweepTimer = 0.0f;
+	void discoverEntities() {
+		// Periodic scan: discover NPCs with BehaviorId owned by (or unclaimed for) this player
+		m_discoveryTimer += 0.05f; // rough dt approximation
+		if (m_discoveryTimer < 2.0f && !m_agents.empty()) return;
+		m_discoveryTimer = 0;
+
+		EntityId myId = m_server.localPlayerId();
+		if (myId == ENTITY_NONE) return;
+
+		m_server.forEachEntity([&](Entity& e) {
+			if (e.id() == myId) return;
+			if (!e.def().isLiving()) return;
+			if (e.removed) return;
+			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
+			if (bid.empty()) return;
+
+			// Already tracking?
+			if (m_agents.count(e.id())) return;
+
+			// Claim unclaimed entities
+			int owner = e.getProp<int>(Prop::Owner, 0);
+			if (owner != 0 && owner != (int)myId) return; // owned by someone else
+
+			if (owner == 0) {
+				m_server.sendClaimEntity(e.id());
+			}
+
+			// Register agent
+			AgentState state;
+			state.behaviorId = bid;
+			state.handle = loadBehaviorForEntity(bid);
+			state.claimed = (owner == (int)myId);
+			m_agents[e.id()] = std::move(state);
+
+			if (state.handle >= 0) {
+				m_decisionQueue.scheduleNow(e.id());
+			}
+		});
+
+		// Remove dead/removed agents
+		for (auto it = m_agents.begin(); it != m_agents.end(); ) {
+			Entity* e = m_server.getEntity(it->first);
+			if (!e || e->removed) {
+				if (it->second.handle >= 0)
+					pythonBridge().unloadBehavior(it->second.handle);
+				m_decisionQueue.remove(it->first);
+				it = m_agents.erase(it);
+			} else {
+				// Update claim status
+				if (!it->second.claimed) {
+					int owner = e->getProp<int>(Prop::Owner, 0);
+					if (owner == (int)m_server.localPlayerId()) {
+						it->second.claimed = true;
+						if (!m_decisionQueue.hasPending(it->first))
+							m_decisionQueue.scheduleNow(it->first);
+					}
+				}
+				++it;
+			}
+		}
+	}
+
+	// ── Phase 1: DECIDE ─────────────────────────────────────────────────
+
+	void phaseDecide() {
+		auto ready = m_decisionQueue.drain(4); // max 4 decisions per tick
+		for (EntityId eid : ready) {
+			auto ait = m_agents.find(eid);
+			if (ait == m_agents.end()) continue;
+			if (!ait->second.claimed) continue;
+
+			Entity* e = m_server.getEntity(eid);
+			if (!e || e->removed) continue;
+
+			runDecide(eid, ait->second, *e);
+		}
+	}
+
+	void runDecide(EntityId eid, AgentState& state, Entity& entity) {
+		if (state.handle < 0) {
+			// Try reloading
+			state.handle = loadBehaviorForEntity(state.behaviorId);
+			if (state.handle < 0) {
+				m_decisionQueue.schedule(eid,
+					SteadyClock::now() + std::chrono::seconds(5));
+				return;
+			}
+		}
+
+		// Gather nearby entities
+		auto nearby = gatherNearbyFromServer(entity);
+
+		// Block query callback (reads from shared chunk cache)
+		auto blockQuery = [&](int x, int y, int z) -> std::string {
+			auto& chunks = m_server.chunks();
+			ChunkPos cp;
+			cp.x = (x < 0 ? (x - 15) : x) / 16;
+			cp.y = 0;
+			cp.z = (z < 0 ? (z - 15) : z) / 16;
+			auto* chunk = chunks.getChunk(cp);
+			if (!chunk) return "base:air";
+			int lx = ((x % 16) + 16) % 16;
+			int lz = ((z % 16) + 16) % 16;
+			if (y < 0 || y >= 256) return "base:air";
+			BlockId bid = chunk->get(lx, y, lz);
+			return m_server.blockRegistry().get(bid).string_id;
+		};
+
+		std::string goalOut, errorOut;
+		Plan plan = pythonBridge().callDecide(
+			state.handle, entity, nearby, 0.25f,
+			m_server.worldTime(), goalOut, errorOut, blockQuery);
+
+		if (!errorOut.empty()) {
+			entity.goalText = "ERROR: " + errorOut.substr(0, 60);
+			entity.hasError = true;
+			entity.errorText = errorOut;
+			m_decisionQueue.schedule(eid,
+				SteadyClock::now() + std::chrono::seconds(2));
+			return;
+		}
+
+		entity.goalText = goalOut;
+		entity.hasError = false;
+		entity.errorText.clear();
+
+		// Install new plan
+		state.plan = std::move(plan);
+		state.stepIndex = 0;
+		state.goalText = goalOut;
+		state.waypoints.clear();
+		state.wpIndex = 0;
+
+		// Build visualization
+		rebuildViz(eid, state, entity);
+
+		// Schedule next decide
+		m_decisionQueue.schedule(eid,
+			SteadyClock::now() + std::chrono::milliseconds(250));
+	}
+
+	// ── Phase 2: EXECUTE ────────────────────────────────────────────────
+
+	void phaseExecute(float dt) {
+		for (auto& [eid, state] : m_agents) {
+			if (!state.claimed) continue;
+			if (state.plan.empty()) continue;
+			if (state.stepIndex >= (int)state.plan.size()) {
+				// Plan complete → re-decide
+				state.plan.clear();
+				state.viz.waypoints.clear();
+				if (!m_decisionQueue.hasPending(eid))
+					m_decisionQueue.scheduleNow(eid);
+				continue;
+			}
+
+			Entity* e = m_server.getEntity(eid);
+			if (!e || e->removed) continue;
+
+			executeStep(eid, state, *e, dt);
+		}
+	}
+
+	void executeStep(EntityId eid, AgentState& state, Entity& entity, float dt) {
+		PlanStep& step = state.plan[state.stepIndex];
+
+		switch (step.type) {
+		case PlanStep::Move:
+			executeMoveStep(eid, state, entity, step);
+			break;
+		case PlanStep::Harvest:
+			executeHarvestStep(eid, state, entity, step);
+			break;
+		case PlanStep::Attack:
+			executeAttackStep(eid, state, entity, step);
+			break;
+		case PlanStep::Relocate:
+			executeRelocateStep(eid, state, entity, step);
+			break;
+		}
+	}
+
+	void executeMoveStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+		// Generate waypoints on first tick of this step
+		if (state.waypoints.empty()) {
+			state.waypoints = generateWaypoints(entity.position, step.targetPos);
+			state.wpIndex = 0;
+		}
+
+		if (state.wpIndex >= (int)state.waypoints.size()) {
+			// Reached destination — advance plan
+			advanceStep(eid, state);
+			return;
+		}
+
+		glm::vec3 target = state.waypoints[state.wpIndex];
+		glm::vec3 dir = target - entity.position;
+		dir.y = 0;
+		float dist = glm::length(dir);
+
+		if (dist < 1.5f) {
+			// Reached waypoint — next
+			state.wpIndex++;
+			if (state.wpIndex >= (int)state.waypoints.size()) {
+				sendStopMove(eid, entity, state.goalText);
+				advanceStep(eid, state);
+			}
+			return;
+		}
+
+		// Send Move proposal toward current waypoint
+		dir /= dist;
+		float speed = step.speed > 0 ? step.speed : entity.def().walk_speed;
+		glm::vec3 vel = dir * speed;
+		sendMove(eid, vel, state.goalText);
+	}
+
+	void executeHarvestStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+		float dist = glm::length(step.targetPos - entity.position);
+		if (dist > 3.0f) {
+			// Too far — walk closer
+			glm::vec3 dir = glm::normalize(step.targetPos - entity.position);
+			sendMove(eid, dir * entity.def().walk_speed, state.goalText);
+		} else {
+			// In range — send Convert (break block)
+			sendStopMove(eid, entity, state.goalText);
+			ActionProposal p;
+			p.type = ActionProposal::Convert;
+			p.actorId = eid;
+			p.fromItem = ""; p.fromCount = 0;
+			p.toItem = ""; p.toCount = 0;
+			p.convertFrom = Container::block(glm::ivec3(step.targetPos));
+			p.convertInto = Container::self();
+			m_server.sendAction(p);
+			advanceStep(eid, state);
+		}
+	}
+
+	void executeAttackStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+		Entity* target = m_server.getEntity(step.targetEntity);
+		if (!target || target->removed) {
+			advanceStep(eid, state);
+			return;
+		}
+		float dist = glm::length(target->position - entity.position);
+		if (dist > 2.5f) {
+			glm::vec3 dir = glm::normalize(target->position - entity.position);
+			sendMove(eid, dir * entity.def().walk_speed, state.goalText);
+		} else {
+			sendStopMove(eid, entity, state.goalText);
+			// TODO: send Convert for melee attack
+			advanceStep(eid, state);
+		}
+	}
+
+	void executeRelocateStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+		// TODO: walk to container, then send Relocate
+		ActionProposal p;
+		p.type = ActionProposal::Relocate;
+		p.actorId = eid;
+		p.relocateFrom = step.relocateFrom;
+		p.relocateTo = step.relocateTo;
+		p.itemId = step.itemId;
+		p.itemCount = step.itemCount;
+		m_server.sendAction(p);
+		advanceStep(eid, state);
+	}
+
+	void advanceStep(EntityId eid, AgentState& state) {
+		state.stepIndex++;
+		state.waypoints.clear();
+		state.wpIndex = 0;
+	}
+
+	// ── Action helpers ──────────────────────────────────────────────────
+
+	void sendMove(EntityId eid, glm::vec3 vel, const std::string& goal) {
+		ActionProposal p;
+		p.type = ActionProposal::Move;
+		p.actorId = eid;
+		p.desiredVel = vel;
+		p.goalText = goal;
+		m_server.sendAction(p);
+	}
+
+	void sendStopMove(EntityId eid, Entity& entity, const std::string& goal) {
+		sendMove(eid, {0, 0, 0}, goal);
+	}
+
+	// ── Dumb pathfinding: straight-line waypoints with jitter ───────────
+
+	std::vector<glm::vec3> generateWaypoints(glm::vec3 from, glm::vec3 to) {
+		std::vector<glm::vec3> wps;
+		float totalDist = glm::length(to - from);
+
+		if (totalDist < 3.0f) {
+			// Very close — go direct
+			wps.push_back(to);
+			return wps;
+		}
+
+		// 2-4 intermediate waypoints along the route
+		std::uniform_real_distribution<float> jitter(-2.0f, 2.0f);
+		int numIntermediate = 2 + (int)(totalDist / 15.0f);
+		if (numIntermediate > 4) numIntermediate = 4;
+
+		for (int i = 1; i <= numIntermediate; i++) {
+			float t = (float)i / (numIntermediate + 1);
+			glm::vec3 p = glm::mix(from, to, t);
+			p.x += jitter(m_rng);
+			p.z += jitter(m_rng);
+			wps.push_back(p);
+		}
+
+		wps.push_back(to); // final destination always exact
+		return wps;
+	}
+
+	// ── Visualization rebuild ───────────────────────────────────────────
+
+	void rebuildViz(EntityId eid, AgentState& state, Entity& entity) {
+		state.viz.waypoints.clear();
+		state.viz.hasAction = false;
+
+		if (state.plan.empty()) return;
+
+		// Build full path: entity position → each Move step target
+		glm::vec3 cursor = entity.position;
+		for (auto& step : state.plan) {
+			if (step.type == PlanStep::Move) {
+				auto wps = generateWaypoints(cursor, step.targetPos);
+				for (auto& wp : wps)
+					state.viz.waypoints.push_back(wp);
+				cursor = step.targetPos;
+			} else {
+				// Non-move action at current cursor position
+				state.viz.actionPos = step.targetPos;
+				state.viz.actionType = step.type;
+				state.viz.hasAction = true;
+				state.viz.waypoints.push_back(step.targetPos);
+				cursor = step.targetPos;
+			}
+		}
+	}
+
+	// ── Helpers ─────────────────────────────────────────────────────────
+
+	BehaviorHandle loadBehaviorForEntity(const std::string& behaviorId) {
+		std::string src = m_behaviors.load(behaviorId);
+		if (src.empty()) {
+			printf("[AgentClient] No behavior source for '%s'\n", behaviorId.c_str());
+			return -1;
+		}
+		std::string err;
+		BehaviorHandle h = pythonBridge().loadBehavior(src, err);
+		if (h < 0) {
+			printf("[AgentClient] Failed to load '%s': %s\n", behaviorId.c_str(), err.c_str());
+		}
+		return h;
+	}
+
+	std::vector<NearbyEntity> gatherNearbyFromServer(const Entity& self) {
+		std::vector<NearbyEntity> result;
+		m_server.forEachEntity([&](Entity& e) {
+			if (e.id() == self.id() || e.removed) return;
+			glm::vec3 delta = e.position - self.position;
+			float dist = glm::length(delta);
+			if (dist > 64.0f) return;
+			NearbyEntity ne;
+			ne.id = e.id(); ne.typeId = e.typeId();
+			ne.kind = e.def().kind; ne.position = e.position;
+			ne.distance = dist; ne.hp = e.hp();
+			ne.tags = e.def().tags;
+			result.push_back(ne);
+		});
+		return result;
+	}
+
+	// ── Members ─────────────────────────────────────────────────────────
+
+	ServerInterface& m_server;
+	BehaviorStore& m_behaviors;
+	std::unordered_map<EntityId, AgentState> m_agents;
+	DecisionQueue m_decisionQueue;
+	std::mt19937 m_rng;
+	float m_time = 0;
+	float m_discoveryTimer = 100.0f; // trigger immediate discovery on first tick
 };
 
 } // namespace modcraft

@@ -343,6 +343,37 @@ void HUD::renderDebugOverlay(const HUDContext& ctx, TextRenderer& text) {
 }
 
 // ================================================================
+// Frame profiler overlay (F5)
+// ================================================================
+void HUD::renderProfilerOverlay(const HUDContext& ctx, TextRenderer& text) {
+	if (!ctx.showProfiler) return;
+	char buf[256];
+	float lineH = 0.065f;
+	float x = 0.40f, y = 0.84f;
+
+	// Semi-transparent background panel
+	text.drawRect(x - 0.02f, y - 0.34f, 0.60f, 0.40f, {0.0f, 0.0f, 0.0f, 0.55f});
+
+	snprintf(buf, sizeof(buf), "-- Frame Profiler --");
+	text.drawText(buf, x, y, 0.60f, {1.0f, 0.85f, 0.3f, 0.95f}, ctx.aspect); y -= lineH;
+	snprintf(buf, sizeof(buf), "FPS: %.0f  (%.1f ms)", ctx.fps, ctx.profileTotalMs);
+	text.drawText(buf, x, y, 0.60f, {1,1,1,0.90f}, ctx.aspect); y -= lineH;
+
+	auto barColor = [](float ms) -> glm::vec4 {
+		if (ms > 10.0f) return {1.0f, 0.3f, 0.3f, 0.90f};  // red: >10ms
+		if (ms >  5.0f) return {1.0f, 0.8f, 0.2f, 0.90f};  // yellow: >5ms
+		return {0.4f, 1.0f, 0.4f, 0.90f};                   // green
+	};
+
+	snprintf(buf, sizeof(buf), "World:    %6.2f ms", ctx.profileWorldMs);
+	text.drawText(buf, x, y, 0.60f, barColor(ctx.profileWorldMs), ctx.aspect); y -= lineH;
+	snprintf(buf, sizeof(buf), "Entities: %6.2f ms", ctx.profileEntityMs);
+	text.drawText(buf, x, y, 0.60f, barColor(ctx.profileEntityMs), ctx.aspect); y -= lineH;
+	snprintf(buf, sizeof(buf), "HUD:      %6.2f ms", ctx.profileHudMs);
+	text.drawText(buf, x, y, 0.60f, barColor(ctx.profileHudMs), ctx.aspect); y -= lineH;
+}
+
+// ================================================================
 // Entity tooltip (crosshair on entity)
 // ================================================================
 void HUD::renderEntityTooltip(const HUDContext& ctx, TextRenderer& text) {
@@ -394,6 +425,7 @@ void HUD::render(const HUDContext& ctx, TextRenderer& text, Shader& highlightSha
 	renderTimeOfDay(ctx, text);
 	renderEntityTooltip(ctx, text);
 	renderDebugOverlay(ctx, text);
+	renderProfilerOverlay(ctx, text);
 }
 
 } // namespace modcraft
