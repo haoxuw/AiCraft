@@ -45,6 +45,7 @@ Example
 import math
 import random as _random
 from local_world import LocalWorld, SelfEntity, BlockView, EntityView
+from stats import stats
 
 
 class Behavior:
@@ -61,14 +62,14 @@ class Behavior:
         entity : SelfEntity
             Live entity state. Read-only. Access via attributes:
             entity.x, entity.y, entity.z, entity.hp, entity.walk_speed,
-            entity.on_ground, entity.inventory.count("base:trunk"),
+            entity.on_ground, entity.inventory.count("base:logs"),
             entity.get("work_radius", 80.0)   ← server-assigned custom props
 
         local_world : LocalWorld
             Spatial snapshot of what this agent can currently perceive.
-            local_world.get("base:trunk")           ← nearest block/entity of type
-            local_world.get("base:trunk", max_dist=40)
-            local_world.all("base:trunk")           ← all, nearest-first
+            local_world.get("base:logs")           ← nearest block/entity of type
+            local_world.get("base:logs", max_dist=40)
+            local_world.all("base:logs")           ← all, nearest-first
             local_world.nearest("player")           ← nearest entity by category
             local_world.time                        ← 0.0–1.0 day fraction
             local_world.dt                          ← frame delta seconds

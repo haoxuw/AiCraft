@@ -1616,11 +1616,8 @@ static std::string b3_woodcutter_collects_and_deposits() {
     auto handle = pythonBridge().loadBehavior(ss.str(), loadErr);
     if (handle < 0) return "loadBehavior failed: " + loadErr;
 
-    // Set collect_goal to 2 for fast test
-    villager->setProp("collect_goal", 2);
-
-    // Give the villager 2 trunks (simulating successful chops)
-    villager->inventory->add("base:trunk", 2);
+    // Give the villager enough logs to trigger depositing (collect_goal default is 5)
+    villager->inventory->add("base:logs", 5);
 
     std::string goalOut, errOut;
     // Call decide() — should trigger depositing since log_count >= collect_goal
@@ -1664,7 +1661,7 @@ static std::string b4_store_item_server_validation() {
     if (!chest->inventory) return "chest entity has no inventory";
 
     // Give the villager some trunks
-    villager->inventory->add("base:trunk", 3);
+    villager->inventory->add("base:logs", 3);
 
     // Teleport villager next to the chest
     villager->position = chest->position + glm::vec3(1.5f, 0, 0);
@@ -1678,13 +1675,13 @@ static std::string b4_store_item_server_validation() {
     srv->tick(1.0f / 60.0f);
 
     // Verify actor inventory is now empty
-    int logsInInventory = villager->inventory->count("base:trunk");
+    int logsInInventory = villager->inventory->count("base:logs");
     if (logsInInventory > 0)
         return "villager inventory not cleared after StoreItem (still has " +
-               std::to_string(logsInInventory) + " base:trunk)";
+               std::to_string(logsInInventory) + " base:logs)";
 
     // Verify chest entity inventory received the items
-    int logsInChest = chest->inventory->count("base:trunk");
+    int logsInChest = chest->inventory->count("base:logs");
     if (logsInChest != 3)
         return "chest has " + std::to_string(logsInChest) + " trunks, expected 3";
 
@@ -1950,7 +1947,7 @@ class NavTestBehavior(Behavior):
 static std::string c2_scan_blocks_prefers_nearest_chunk() {
 	BlockRegistry blocks;
 	BlockDef air;  air.string_id  = "base:air";  air.solid = false;
-	BlockDef trunk; trunk.string_id = "base:trunk";
+	BlockDef trunk; trunk.string_id = "base:logs";
 	blocks.registerBlock(air);    // id 0
 	BlockId trunkId = blocks.registerBlock(trunk);
 
@@ -1967,7 +1964,7 @@ static std::string c2_scan_blocks_prefers_nearest_chunk() {
 		ch->set(2, 2, 2, trunkId);
 		chunks[cpA] = std::move(ch);
 		ChunkCensus ci;
-		ci.entries["base:trunk"] = {1};
+		ci.entries["base:logs"] = {1};
 		census[cpA] = ci;
 	}
 
@@ -1985,7 +1982,7 @@ static std::string c2_scan_blocks_prefers_nearest_chunk() {
 		}
 		chunks[cpB] = std::move(ch);
 		ChunkCensus ci;
-		ci.entries["base:trunk"] = {50};
+		ci.entries["base:logs"] = {50};
 		census[cpB] = ci;
 	}
 
@@ -1997,7 +1994,7 @@ static std::string c2_scan_blocks_prefers_nearest_chunk() {
 	// Origin right inside chunk A at world (2.5, 2.5, 2.5) — chunk A center
 	// is ~(8,8,8), chunk B center ~(56,8,8): B is ~53 blocks east.
 	block_search::Options opt;
-	opt.typeId       = "base:trunk";
+	opt.typeId       = "base:logs";
 	opt.searchOrigin = {2.5f, 2.5f, 2.5f};
 	opt.maxDist      = 80.0f;
 	opt.maxResults   = 1;

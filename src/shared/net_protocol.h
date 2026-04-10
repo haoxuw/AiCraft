@@ -329,7 +329,7 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 //   bool hasAir
 //   u32 entry_count
 //   for each entry:
-//       str  type_id
+//       str  type
 //       u32  count
 // ================================================================
 

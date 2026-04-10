@@ -57,7 +57,7 @@ class BlockView(BaseModel):
     x: int
     y: int
     z: int
-    type_id: str    # e.g. "base:trunk", "base:wood", "base:cobblestone"
+    type: str    # e.g. "base:logs", "base:wood", "base:cobblestone"
     distance: float
 
 
@@ -69,7 +69,7 @@ class EntityView(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: int
-    type_id: str    # e.g. "base:chicken", "base:villager"
+    type: str    # e.g. "base:chicken", "base:villager"
     kind: str = "living"  # "living" or "item" (EntityKind)
     x: float
     y: float
@@ -112,13 +112,13 @@ class SelfEntity(BaseModel):
     -----
         entity.x, entity.y, entity.z      # position
         entity.hp, entity.walk_speed       # stats
-        entity.inventory.count("base:trunk")
+        entity.inventory.count("base:logs")
         entity.get("work_radius", 80.0)    # custom server prop
     """
     model_config = ConfigDict(frozen=True)
 
     id:         int
-    type_id:    str
+    type:    str
     x:          float
     y:          float
     z:          float
@@ -145,7 +145,7 @@ class SelfEntity(BaseModel):
         """
         return cls(
             id         = raw["id"],
-            type_id    = raw["type_id"],
+            type    = raw["type"],
             x          = raw["x"],
             y          = raw["y"],
             z          = raw["z"],
@@ -169,17 +169,17 @@ class LocalWorld(BaseModel):
 
     Spatial index
     -------------
-    On construction, blocks and entities are grouped by type_id into
+    On construction, blocks and entities are grouped by type into
     _by_type (nearest-first). Entities are also grouped by category into
     _by_type. All queries are O(1) index lookup + O(k) early-exit scan.
 
     Query API
     ---------
-        world.get("base:trunk")                 # nearest Block, or None
-        world.get("base:trunk", max_dist=40)    # nearest within 40 units
+        world.get("base:logs")                 # nearest Block, or None
+        world.get("base:logs", max_dist=40)    # nearest within 40 units
         world.get("base:spider")                # nearest spider Entity, or None
-        world.all("base:trunk")                 # [BlockView, …] nearest-first
-        world.all("base:trunk", max_dist=40)    # filtered by distance
+        world.all("base:logs")                 # [BlockView, …] nearest-first
+        world.all("base:logs", max_dist=40)    # filtered by distance
         world.nearest("player")                 # nearest player EntityView
         world.nearest("animal", max_dist=12)    # with distance cap
         world.time                              # 0.0–1.0 day fraction
@@ -200,17 +200,17 @@ class LocalWorld(BaseModel):
         """Build spatial index after construction."""
         by_type: dict[str, list] = {}
         for b in self.blocks:
-            by_type.setdefault(b.type_id, []).append(b)
+            by_type.setdefault(b.type, []).append(b)
 
         ent_by_type: dict[str, list] = {}
         for e in self.entities:
-            ent_by_type.setdefault(e.type_id, []).append(e)
+            ent_by_type.setdefault(e.type, []).append(e)
 
         for lst in ent_by_type.values():
             lst.sort(key=lambda e: e.distance)
 
-        for type_id, lst in ent_by_type.items():
-            by_type.setdefault(type_id, []).extend(lst)
+        for type, lst in ent_by_type.items():
+            by_type.setdefault(type, []).extend(lst)
 
         self._by_type     = by_type
 
@@ -228,23 +228,23 @@ class LocalWorld(BaseModel):
 
     # ── Spatial queries ───────────────────────────────────────────────────────
 
-    def get(self, type_id: str, max_dist: float = None) -> Optional[Nearby]:
-        """Nearest block or entity of type_id within max_dist, or None."""
-        for obj in self._by_type.get(type_id, ()):
+    def get(self, type: str, max_dist: float = None) -> Optional[Nearby]:
+        """Nearest block or entity of type within max_dist, or None."""
+        for obj in self._by_type.get(type, ()):
             if max_dist is None or obj.distance <= max_dist:
                 return obj
         return None
 
-    def all(self, type_id: str, max_dist: float = None) -> list[Nearby]:
-        """All blocks or entities of type_id, nearest-first, within max_dist."""
-        hits = self._by_type.get(type_id, ())
+    def all(self, type: str, max_dist: float = None) -> list[Nearby]:
+        """All blocks or entities of type, nearest-first, within max_dist."""
+        hits = self._by_type.get(type, ())
         if max_dist is None:
             return list(hits)
         return [o for o in hits if o.distance <= max_dist]
 
-    def nearest(self, type_id: str, max_dist: float = None) -> Optional[EntityView]:
-        """Nearest entity by type_id (e.g. 'base:player', 'base:chicken')."""
-        for obj in self._by_type.get(type_id, ()):
+    def nearest(self, type: str, max_dist: float = None) -> Optional[EntityView]:
+        """Nearest entity by type (e.g. 'base:player', 'base:chicken')."""
+        for obj in self._by_type.get(type, ()):
             if not isinstance(obj, EntityView): continue
             if max_dist is None or obj.distance <= max_dist:
                 return obj
@@ -260,14 +260,14 @@ class LocalWorld(BaseModel):
         blocks = [
             BlockView(
                 x=b["x"], y=b["y"], z=b["z"],
-                type_id=b["type"],          # C++ bridge uses "type", not "type_id"
+                type=b["type"],          # C++ bridge uses "type", not "type"
                 distance=b["distance"],
             )
             for b in raw.get("blocks", [])
         ]
         entities = [
             EntityView(
-                id=e["id"], type_id=e["type_id"],
+                id=e["id"], type=e["type"],
                 kind=e.get("kind", "living"),
                 x=e["x"], y=e["y"], z=e["z"],
                 distance=e["distance"], hp=e["hp"],

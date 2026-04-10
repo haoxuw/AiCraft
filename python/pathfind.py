@@ -38,6 +38,7 @@ find_path(local_world, start_xyz, goal_xyz, max_nodes=2000) → list[tuple] or [
 from __future__ import annotations
 from typing import Optional
 from modcraft_engine import get_block, Move, Interact
+from stats import stats
 import heapq
 import math
 
@@ -56,17 +57,17 @@ _NON_SOLID = frozenset({
 _DOOR_TYPES = frozenset({"base:door"})
 
 
-def _is_solid(type_id: str) -> bool:
+def _is_solid(type: str) -> bool:
     """Return True if a block type is solid (entity cannot occupy its space)."""
-    if type_id in _SOLID_CACHE:
-        return _SOLID_CACHE[type_id]
-    result = type_id not in _NON_SOLID and not type_id.endswith(":air")
-    _SOLID_CACHE[type_id] = result
+    if type in _SOLID_CACHE:
+        return _SOLID_CACHE[type]
+    result = type not in _NON_SOLID and not type.endswith(":air")
+    _SOLID_CACHE[type] = result
     return result
 
 
-def _is_door(type_id: str) -> bool:
-    return type_id in _DOOR_TYPES
+def _is_door(type: str) -> bool:
+    return type in _DOOR_TYPES
 
 
 def _block(x: int, y: int, z: int) -> str:
@@ -100,7 +101,7 @@ _MOVE_COST  = 1.0   # flat step
 _STEP_COST  = 1.5   # step-up (slightly penalised to prefer flat paths)
 _FALL_COST  = 0.5   # falling is cheap
 _DOOR_COST  = 3.0   # door adds penalty to prefer routes without doors
-_MAX_FALL   = 4     # maximum consecutive downward blocks before giving up
+_MAX_FALL   = 2     # maximum consecutive downward blocks before giving up
 
 
 def _heuristic(a: tuple, b: tuple) -> float:
@@ -141,7 +142,7 @@ def _neighbors(x: int, y: int, z: int):
             # Still falling — keep dropping
 
 
-def find_path(start: tuple, goal: tuple, max_nodes: int = 2000) -> list:
+def find_path(start: tuple, goal: tuple, max_nodes: int = 5000) -> list:
     """A* path from start to goal on the block grid.
 
     Parameters
@@ -154,6 +155,7 @@ def find_path(start: tuple, goal: tuple, max_nodes: int = 2000) -> list:
     List of (x, y, z) waypoints from start+1 to goal (inclusive),
     or [] if unreachable within budget.
     """
+    stats.inc("pathfind")
     start = (int(start[0]), int(start[1]), int(start[2]))
     goal  = (int(goal[0]),  int(goal[1]),  int(goal[2]))
 
@@ -297,6 +299,7 @@ class Navigator:
                 self._stuck_timer = 0.0
             elif self._stuck_timer > _STUCK_TIMEOUT:
                 # Re-plan from current position
+                stats.inc("stuck")
                 self._path = find_path(start_i, goal_i)
                 self._stuck_pos   = pos2
                 self._stuck_timer = 0.0

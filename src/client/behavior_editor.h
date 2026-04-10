@@ -182,7 +182,7 @@ private:
 			return p + "self[\"goal\"] = \"Patrolling\"\n" + p + "return Wander(speed=self.get(\"walk_speed\", 2) * 0.5)\n";
 		if (fn.id == "socialize") {
 			return p + "for e in world[\"nearby\"]:\n" +
-			       p + "    if e[\"type_id\"] == self[\"type_id\"] and e[\"id\"] != self[\"id\"]:\n" +
+			       p + "    if e[\"type\"] == self[\"type\"] and e[\"id\"] != self[\"id\"]:\n" +
 			       p + "        self[\"goal\"] = \"Chatting\"\n" +
 			       p + "        return Follow(e[\"id\"], speed=2.0, min_distance=2.0)\n" +
 			       p + "return Idle()\n";
@@ -221,7 +221,7 @@ private:
 			else action = "Follow(e[\"id\"], speed=4.0)";
 
 			return p + "for e in world[\"nearby\"]:\n" +
-			       p + "    if e[\"type_id\"] == \"base:" + type + "\":\n" +
+			       p + "    if e[\"type\"] == \"base:" + type + "\":\n" +
 			       p + "        return " + action + "\n" +
 			       p + "return Wander()\n";
 		}
@@ -256,14 +256,14 @@ private:
 
 		// Threat / awareness
 		if (fn.id == "threatened")
-			return "any((e[\"category\"] == \"player\" or e[\"type_id\"] == \"base:cat\") and e[\"distance\"] < 5.0 for e in world[\"nearby\"])";
+			return "any((e[\"category\"] == \"player\" or e[\"type\"] == \"base:cat\") and e[\"distance\"] < 5.0 for e in world[\"nearby\"])";
 		if (fn.id == "startled")
-			return "any((e[\"category\"] == \"player\" or e[\"type_id\"] == \"base:cat\") and e[\"distance\"] < 4.0 for e in world[\"nearby\"])";
+			return "any((e[\"category\"] == \"player\" or e[\"type\"] == \"base:cat\") and e[\"distance\"] < 4.0 for e in world[\"nearby\"])";
 		if (fn.id == "hp_low")
 			return "self.get(\"hp\", 10) < self.get(\"max_hp\", 10) * 0.3";
 		if (fn.id == "see_entity") {
 			std::string type = expr.param.empty() ? "player" : expr.param;
-			return "any(e[\"type_id\"] == \"base:" + type + "\" for e in world[\"nearby\"])";
+			return "any(e[\"type\"] == \"base:" + type + "\" for e in world[\"nearby\"])";
 		}
 		if (fn.id == "near_block") {
 			std::string type = expr.param.empty() ? "wood" : expr.param;
@@ -272,7 +272,7 @@ private:
 
 		// Social / spatial
 		if (fn.id == "far_from_flock")
-			return "all(e[\"distance\"] > 4 for e in world[\"nearby\"] if e[\"type_id\"] == self[\"type_id\"] and e[\"id\"] != self[\"id\"])";
+			return "all(e[\"distance\"] > 4 for e in world[\"nearby\"] if e[\"type\"] == self[\"type\"] and e[\"id\"] != self[\"id\"])";
 		if (fn.id == "near_water")
 			return "any(b[\"type\"] == \"base:water\" and b[\"distance\"] < 15 for b in world[\"blocks\"])";
 

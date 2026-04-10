@@ -78,7 +78,7 @@ def _f32(v) -> bytes:
 
 
 def _parse_entity_state(payload: bytes) -> Optional[dict]:
-    """Parse S_ENTITY payload → dict with id, type_id, x, y, z, hp, max_hp, props.
+    """Parse S_ENTITY payload → dict with id, type, x, y, z, hp, max_hp, props.
 
     Mirrors net_protocol.h::deserializeEntityState.  Returns None on parse error.
     """
@@ -97,7 +97,7 @@ def _parse_entity_state(payload: bytes) -> Optional[dict]:
             nonlocal o; v = payload[o] != 0; o += 1; return v
 
         eid     = ru32()
-        type_id = rstr()
+        type = rstr()
         x, y, z = rf32(), rf32(), rf32()
         rf32(); rf32(); rf32()   # velocity
         rf32(); rf32()           # yaw, pitch
@@ -110,7 +110,7 @@ def _parse_entity_state(payload: bytes) -> Optional[dict]:
         for _ in range(ru32()):
             k = rstr(); v = rstr()
             props[k] = v
-        return {"id": eid, "type_id": type_id,
+        return {"id": eid, "type": type,
                 "x": x, "y": y, "z": z,
                 "hp": hp, "max_hp": max_hp, "props": props}
     except Exception:
@@ -173,7 +173,7 @@ class Connection:
         self._connected = False
         self.entity_id: Optional[int] = None
         self.server_errors: list[str] = []
-        # Live entity table: entity_id → {type_id, x, y, z, hp, max_hp, props}
+        # Live entity table: entity_id → {type, x, y, z, hp, max_hp, props}
         self._entities: dict[int, dict] = {}
         self._entity_lock = threading.Lock()
 
@@ -561,7 +561,7 @@ _SPECIAL = [
 
 
 def _load_material_values() -> dict:
-    """Parse src/shared/material_values.h → {type_id: float}."""
+    """Parse src/shared/material_values.h → {type: float}."""
     values = {}
     header = _REPO_ROOT / "src" / "shared" / "material_values.h"
     try:
@@ -658,11 +658,11 @@ def metadata():
     """
     entities = conn.entity_snapshot()
 
-    # Count live entities by type_id
+    # Count live entities by type
     type_counts: dict[str, int] = {}
     dropped: dict[str, int] = {}
     for e in entities.values():
-        tid = e["type_id"]
+        tid = e["type"]
         type_counts[tid] = type_counts.get(tid, 0) + 1
         if tid == "base:item_entity":
             item_type = e["props"].get("item_type", "unknown")

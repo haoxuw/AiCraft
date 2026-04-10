@@ -556,15 +556,33 @@ public:
 			if (ai.pid > 0 && kill(ai.pid, 0) == 0)
 				kill(ai.pid, SIGTERM);
 		}
-		usleep(300000);
+
+		// Wait for all agents to exit (atexit stats flush), with a hard timeout.
+		constexpr int TIMEOUT_MS = 2000;
+		constexpr int POLL_MS    = 10;
+		int remaining = (int)m_aiProcesses.size();
+		for (int elapsed = 0; elapsed < TIMEOUT_MS && remaining > 0; elapsed += POLL_MS) {
+			remaining = 0;
+			for (auto& ai : m_aiProcesses) {
+				if (ai.pid <= 0) continue;
+				int status;
+				if (waitpid(ai.pid, &status, WNOHANG) > 0)
+					ai.pid = -1;  // mark as reaped
+				else
+					remaining++;
+			}
+			if (remaining > 0)
+				usleep(POLL_MS * 1000);
+		}
+
+		// SIGKILL any agents still alive after timeout
 		for (auto& ai : m_aiProcesses) {
 			if (ai.pid > 0) {
+				kill(ai.pid, SIGKILL);
 				int status;
-				if (waitpid(ai.pid, &status, WNOHANG) == 0) {
-					kill(ai.pid, SIGKILL);
-					waitpid(ai.pid, &status, 0);
-				}
+				waitpid(ai.pid, &status, 0);
 			}
+			drainOnePipe(ai);  // flush final output (stats dump) before closing
 			if (ai.logFd >= 0) close(ai.logFd);
 		}
 		m_aiProcesses.clear();

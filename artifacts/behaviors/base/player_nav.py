@@ -10,6 +10,7 @@ NOTE: The class MUST inherit from Behavior (not shadow it).
 from pathfind import Navigator
 from modcraft_engine import Move, Idle
 from behavior_base import Behavior
+from stats import stats
 
 
 class PlayerNavBehavior(Behavior):
@@ -18,6 +19,7 @@ class PlayerNavBehavior(Behavior):
         self._logged_goal = None
 
     def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+        stats.inc("decide", entity.type)
         goal = getattr(local_world, 'goal', None)
         if goal is None:
             self._nav.reset()

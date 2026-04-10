@@ -117,15 +117,15 @@ class GameHarness:
                 f"after {timeout}s: {list(self.observer.entities.values())}"
             )
 
-    def wait_for_type(self, type_id, timeout=30.0):
+    def wait_for_type(self, type, timeout=30.0):
         """Poll until at least one entity of the given type appears."""
         ok = self.observer.poll_until(
-            lambda: any(e.type_id == type_id for e in self.observer.entities.values()),
+            lambda: any(e.type == type for e in self.observer.entities.values()),
             timeout=timeout,
         )
         if not ok:
-            types = {e.type_id for e in self.observer.entities.values()}
+            types = {e.type for e in self.observer.entities.values()}
             raise TimeoutError(
-                f"No entity of type {type_id!r} after {timeout}s. "
+                f"No entity of type {type!r} after {timeout}s. "
                 f"Visible types: {types}"
             )

@@ -17,6 +17,7 @@ import random
 from modcraft_engine import Move, Convert, Ground, LivingName, ItemName, BlockType
 from behavior_base import Behavior
 from local_world import SelfEntity, LocalWorld
+from stats import stats
 
 EGG_COOLDOWN = 10.0
 EGG_CHANCE   = 0.80
@@ -34,6 +35,7 @@ class PeckBehavior(Behavior):
         self._rng_seeded = False
 
     def decide(self, entity: SelfEntity, local_world: LocalWorld):
+        stats.inc("decide", entity.type)
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True
@@ -54,16 +56,18 @@ class PeckBehavior(Behavior):
         threats = [e for e in local_world.entities
                    if e.distance <= scatter_range
                    and e.kind == "living"
-                   and e.type_id != entity.type_id]
+                   and e.type != entity.type]
         if threats:
             closest = min(threats, key=lambda t: t.distance)
             if self._egg_cooldown <= 0 and entity.hp > 2:
                 if random.random() < egg_chance:
                     self._egg_cooldown = egg_cooldown
+                    stats.inc("lay_egg", entity.type)
                     return (Convert(from_item="hp", from_count=2,
                                     to_item=ItemName.Egg, to_count=1,
                                     convert_into=Ground()),
                             "BAWK!! *lays egg!*")
+            stats.inc("flee", entity.type)
             return Move(*self.flee_pos(entity, closest), speed=6.0), "BAWK!! Scattering!"
 
         dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
@@ -103,7 +107,7 @@ class PeckBehavior(Behavior):
             return Move(entity.x, entity.y, entity.z),"Pecking grass"
 
         # ── Flock (only if same-type animals are actually nearby) ─────────────
-        friends = local_world.all(entity.type_id)
+        friends = local_world.all(entity.type)
         if friends:
             farthest = max(friends, key=lambda e: e.distance)
             if farthest.distance > 4:

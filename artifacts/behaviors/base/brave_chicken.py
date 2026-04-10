@@ -20,6 +20,7 @@ Tree structure:
 import random
 from modcraft_engine import Move, Convert, Ground
 from behavior_base import Behavior
+from stats import stats
 
 
 class BraveChickenBehavior(Behavior):
@@ -31,6 +32,7 @@ class BraveChickenBehavior(Behavior):
         self._egg_cooldown = 0.0
 
     def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+        stats.inc("decide", entity.type)
         self._egg_cooldown -= local_world.dt
         self._home = self.init_home(entity, self._home)
 
@@ -70,6 +72,7 @@ class BraveChickenBehavior(Behavior):
             if player.distance < 3 and self._egg_cooldown <= 0 \
                     and random.random() < 0.15 and entity.hp > 2:
                 self._egg_cooldown = 8.0
+                stats.inc("lay_egg", entity.type)
                 return (Convert(from_item="hp", from_count=2,
                                      to_item="base:egg", to_count=1,
                                      convert_into=Ground()),
@@ -79,7 +82,7 @@ class BraveChickenBehavior(Behavior):
             return Move(entity.x, entity.y, entity.z),"Sitting by player"
 
         # Rejoin flock if same-type animals are nearby and we're far from them
-        friends = local_world.all(entity.type_id)
+        friends = local_world.all(entity.type)
         if friends and all(e.distance > 4 for e in friends):
             nearest = min(friends, key=lambda e: e.distance)
             return Move(nearest.x, nearest.y, nearest.z, speed=spd), "Rejoining flock"

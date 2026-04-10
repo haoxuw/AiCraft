@@ -17,6 +17,7 @@ Parameters (set via entity dict, all optional):
 import random
 from modcraft_engine import Move
 from behavior_base import Behavior
+from stats import stats
 
 MOOD_IDLE    = "idle"
 MOOD_HUNT    = "hunt"
@@ -55,6 +56,7 @@ class ProwlBehavior(Behavior):
             return MOOD_NAP
 
     def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+        stats.inc("decide", entity.type)
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True

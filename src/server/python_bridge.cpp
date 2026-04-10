@@ -51,7 +51,7 @@ namespace modcraft {
 // Python-visible entity info (what a behavior can see about nearby entities)
 struct PyEntityInfo {
 	EntityId id;
-	std::string type_id;
+	std::string type;
 	std::string category;
 	float x, y, z;
 	float distance;
@@ -92,7 +92,7 @@ struct PyAction {
 static std::function<std::string(int,int,int)> s_blockQueryFn;
 
 // Block scan callback — set by agent_client before callDecide().
-// Returns list of {type_id, x, y, z, distance} for blocks of a given type
+// Returns list of {type, x, y, z, distance} for blocks of a given type
 // near the supplied origin (anchor for distance sorting + early-exit).
 using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 static ScanBlocksFn s_scanBlocksFn;
@@ -107,7 +107,7 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 
 	py::class_<PyEntityInfo>(m, "EntityInfo")
 		.def_readonly("id", &PyEntityInfo::id)
-		.def_readonly("type_id", &PyEntityInfo::type_id)
+		.def_readonly("type", &PyEntityInfo::type)
 		.def_readonly("category", &PyEntityInfo::category)
 		.def_readonly("x", &PyEntityInfo::x)
 		.def_readonly("y", &PyEntityInfo::y)
@@ -194,7 +194,7 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	}, py::arg("x"), py::arg("y"), py::arg("z"),
 	   "Query block type string at world position (x,y,z). Call only inside decide().");
 
-	// scan_blocks(type_id, near=None, max_dist, max_results) → list of dicts
+	// scan_blocks(type, near=None, max_dist, max_results) → list of dicts
 	// Targeted search: picks the nearest non-empty chunk (per the ChunkInfo
 	// index) and scans its real data. `near` is the world-space anchor for
 	// distance sorting; pass an entity's home/bed position to keep AI from
@@ -220,7 +220,7 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 			result.append(d);
 		}
 		return result;
-	}, py::arg("type_id"), py::arg("near") = py::none(),
+	}, py::arg("type"), py::arg("near") = py::none(),
 	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find blocks of a specific type near `near` (default: self position).");
 
@@ -420,7 +420,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 		for (auto& ne : nearby) {
 			py::dict info;
 			info["id"] = ne.id;
-			info["type_id"] = ne.typeId;
+			info["type"] = ne.typeId;
 			info["kind"] = (ne.kind == EntityKind::Living) ? "living" : "item";
 			info["x"] = ne.position.x;
 			info["y"] = ne.position.y;
@@ -444,7 +444,7 @@ BehaviorAction PythonBridge::callDecide(BehaviorHandle handle,
 				pySelf[key.c_str()] = *bv;
 		}
 		pySelf["id"] = self.id();
-		pySelf["type_id"] = self.typeId();
+		pySelf["type"] = self.typeId();
 		pySelf["x"] = self.position.x;
 		pySelf["y"] = self.position.y;
 		pySelf["z"] = self.position.z;

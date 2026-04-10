@@ -9,9 +9,9 @@ blueprint = {
         "hardness": 16,
     },
     "blocks": [
-        {"offset": [0, 0, 0], "type": "base:trunk"},
-        {"offset": [0, 1, 0], "type": "base:trunk"},
-        {"offset": [0, 2, 0], "type": "base:trunk"},
+        {"offset": [0, 0, 0], "type": "base:logs"},
+        {"offset": [0, 1, 0], "type": "base:logs"},
+        {"offset": [0, 2, 0], "type": "base:logs"},
         {"offset": [1, 2, 0], "type": "base:leaves"},
         {"offset": [-1, 2, 0], "type": "base:leaves"},
         {"offset": [0, 2, 1], "type": "base:leaves"},

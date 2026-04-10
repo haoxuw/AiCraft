@@ -75,12 +75,12 @@ class ReadBuffer:
 
 class EntityState:
     """Parsed S_ENTITY payload."""
-    __slots__ = ("id", "type_id", "position", "velocity", "yaw", "on_ground",
+    __slots__ = ("id", "type", "position", "velocity", "yaw", "on_ground",
                  "goal_text", "character_skin", "hp", "max_hp", "owner",
                  "move_target", "move_speed", "props")
 
     def __repr__(self):
-        return (f"Entity(id={self.id}, type={self.type_id}, "
+        return (f"Entity(id={self.id}, type={self.type}, "
                 f"pos=({self.position[0]:.1f},{self.position[1]:.1f},{self.position[2]:.1f}), "
                 f"hp={self.hp}, goal={self.goal_text!r})")
 
@@ -89,7 +89,7 @@ def parse_entity_state(rb: ReadBuffer) -> EntityState:
     """Parse EntityState matching C++ deserializeEntityState."""
     es = EntityState()
     es.id = rb.u32()
-    es.type_id = rb.string()
+    es.type = rb.string()
     es.position = rb.vec3()
     es.velocity = rb.vec3()
     es.yaw = rb.f32()
@@ -206,8 +206,8 @@ class ObserverClient:
     def get_inventory(self, eid):
         return self.inventories.get(eid)
 
-    def find_entities_by_type(self, type_id):
-        return [e for e in self.entities.values() if e.type_id == type_id]
+    def find_entities_by_type(self, type):
+        return [e for e in self.entities.values() if e.type == type]
 
     def disconnect(self):
         if self.sock:

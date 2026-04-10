@@ -17,6 +17,7 @@ Entity props (optional):
 import random
 from modcraft_engine import Move
 from behavior_base import Behavior
+from stats import stats
 
 
 class WanderBehavior(Behavior):
@@ -27,8 +28,10 @@ class WanderBehavior(Behavior):
         self._sleeping = False
         self._resting = False
         self._rng_seeded = False
+        self._wander_target = None  # cached (x, y, z) — sticky until arrival
 
     def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+        stats.inc("decide", entity.type)
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)
             self._rng_seeded = True
@@ -47,46 +50,61 @@ class WanderBehavior(Behavior):
         # ── Evening/Night: go home ──────────────────────────────────────────
         if self.is_night(local_world) or self.is_evening(local_world):
             self._resting = True
+            self._wander_target = None
             if self.is_night(local_world):
                 self._sleeping = True
             if dist_home > 3:
                 return Move(*self._home, speed=spd), "Heading home..."
             if self._sleeping:
-                return Move(entity.x, entity.y, entity.z),"Sleeping zzz"
-            return Move(entity.x, entity.y, entity.z),"Settling in for the night"
+                return Move(entity.x, entity.y, entity.z), "Sleeping zzz", 3.0
+            return Move(entity.x, entity.y, entity.z), "Settling in for the night", 2.0
 
         if self._resting:
             self._resting = False
             self._sleeping = False
-            return Move(entity.x, entity.y, entity.z),"Good morning!"
+            return Move(entity.x, entity.y, entity.z), "Good morning!"
 
         if dist_home > home_radius:
+            self._wander_target = None
             return Move(*self._home, speed=spd * 0.8), "Wandering back home"
 
         # ── Flee from threats (any Living that isn't my species) ────────────
         threats = [e for e in local_world.entities
                    if e.distance <= flee_range
                    and e.kind == "living"
-                   and e.type_id != entity.type_id]
+                   and e.type != entity.type]
         if threats:
             closest = min(threats, key=lambda t: t.distance)
+            self._wander_target = None
+            stats.inc("flee", entity.type)
             return Move(*self.flee_pos(entity, closest), speed=spd * 1.8), "Fleeing!"
 
         # ── Stay with herd ──────────────────────────────────────────────────
-        # local_world.all(entity.type_id) excludes self (C++ gatherNearby skips self)
-        friends = local_world.all(entity.type_id)
+        friends = local_world.all(entity.type)
         if friends:
             farthest = max(friends, key=lambda e: e.distance)
             if farthest.distance > group_range:
+                self._wander_target = None
                 return Move(farthest.x, farthest.y, farthest.z, speed=spd), \
                        "Joining herd"
 
         # ── Graze ───────────────────────────────────────────────────────────
         if self._graze_timer <= 0 and random.random() < graze_chance:
             self._graze_timer = 3.0 + random.random() * 4.0
-            return Move(entity.x, entity.y, entity.z),"Grazing"
+            self._wander_target = None
+            return Move(entity.x, entity.y, entity.z), "Grazing", self._graze_timer
 
         if self._graze_timer > 0:
-            return Move(entity.x, entity.y, entity.z),"Grazing"
+            return Move(entity.x, entity.y, entity.z), "Grazing", self._graze_timer
 
-        return Move(*self.wander_target(entity, radius=12), speed=spd), "Wandering"
+        # ── Wander (sticky target — only pick new one on arrival or first time) ─
+        if self._wander_target is not None:
+            dist_to_tgt = self.dist2d(entity.x, entity.z,
+                                      self._wander_target[0], self._wander_target[2])
+            if dist_to_tgt < 1.5:
+                self._wander_target = None  # arrived — pick new next decide
+
+        if self._wander_target is None:
+            self._wander_target = self.wander_target(entity, radius=12)
+
+        return Move(*self._wander_target, speed=spd), "Wandering"

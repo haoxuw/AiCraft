@@ -27,7 +27,7 @@ class Entity; // forward — defined in shared/entity.h
 // Offsets are relative to the structure's anchor position.
 struct BlockSlot {
 	glm::ivec3  offset;
-	std::string block_type;  // expected block type string ID (e.g. "base:trunk")
+	std::string block_type;  // expected block type string ID (e.g. "base:logs")
 	                         // empty = any non-air block satisfies this slot
 };
 

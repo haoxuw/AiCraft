@@ -201,21 +201,33 @@ public:
 		}
 
 		// ── Phase 2: Re-send Move for entities NOT decided this tick ─────────
-		// Keeps physics smooth between decide() calls.
-		for (EntityId eid : m_controlled) {
-			if (decidedThisTick.count(eid)) continue;
-			auto entIt = m_entities.find(eid);
-			if (entIt == m_entities.end() || entIt->second->removed) continue;
-			Entity& e = *entIt->second;
-			auto& state = m_behaviorStates[eid];
-			if (state.currentAction.type == BehaviorAction::Move) {
-				std::vector<ActionProposal> proposals;
-				behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
-				for (auto& p : proposals) {
-					net::WriteBuffer wb;
-					net::serializeAction(wb, p);
-					net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
-					walkDbgTrackMove(p, state, e);
+		// Only resend at ~4 Hz (not every 50 Hz tick) and skip if target ≈ self.
+		m_resendTimer += dt;
+		bool doResend = (m_resendTimer >= 0.25f);
+		if (doResend) m_resendTimer = 0;
+
+		if (doResend) {
+			for (EntityId eid : m_controlled) {
+				if (decidedThisTick.count(eid)) continue;
+				auto entIt = m_entities.find(eid);
+				if (entIt == m_entities.end() || entIt->second->removed) continue;
+				Entity& e = *entIt->second;
+				auto& state = m_behaviorStates[eid];
+				if (state.currentAction.type == BehaviorAction::Move) {
+					// Skip resend if target ≈ current position (entity is idle)
+					glm::vec3 tgt = state.currentAction.targetPos;
+					float distToSelf = glm::length(glm::vec2(
+						tgt.x - e.position.x, tgt.z - e.position.z));
+					if (distToSelf < 0.5f) continue;
+
+					std::vector<ActionProposal> proposals;
+					behaviorToActionProposals(e, state, state.currentAction, dt, proposals);
+					for (auto& p : proposals) {
+						net::WriteBuffer wb;
+						net::serializeAction(wb, p);
+						net::sendMessage(m_tcp.fd(), net::C_ACTION, wb);
+						walkDbgTrackMove(p, state, e);
+					}
 				}
 			}
 		}
@@ -602,6 +614,7 @@ private:
 
 	float m_prevWorldTime = -1.0f;  // used to detect time-of-day threshold crossings
 	float m_statusTimer   = 0.0f;   // periodic heartbeat
+	float m_resendTimer   = 0.0f;   // Phase 2 Move resend throttle (4 Hz)
 
 	// --- Entity state cache (received from server) ---
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;

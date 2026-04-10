@@ -51,7 +51,7 @@ class TestWoodcutterLifecycle:
         """Villager has a non-empty goal text (behavior is running)."""
         ok = game.observer.poll_until(
             lambda: any(
-                e.type_id == VILLAGER_TYPE and e.goal_text
+                e.type == VILLAGER_TYPE and e.goal_text
                 for e in game.observer.entities.values()
             ),
             timeout=30.0,
@@ -68,7 +68,7 @@ class TestWoodcutterLifecycle:
 
         def has_work_goal():
             for e in game.observer.entities.values():
-                if e.type_id != VILLAGER_TYPE:
+                if e.type != VILLAGER_TYPE:
                     continue
                 goal = e.goal_text.lower()
                 if any(kw in goal for kw in work_keywords):
@@ -89,7 +89,7 @@ class TestWoodcutterLifecycle:
         def check():
             nonlocal seen_chopping
             for e in game.observer.entities.values():
-                if e.type_id == VILLAGER_TYPE and "chop" in e.goal_text.lower():
+                if e.type == VILLAGER_TYPE and "chop" in e.goal_text.lower():
                     seen_chopping = True
             return seen_chopping
 
@@ -103,7 +103,7 @@ class TestWoodcutterLifecycle:
         def check():
             nonlocal seen_deposit
             for e in game.observer.entities.values():
-                if e.type_id == VILLAGER_TYPE and "deposit" in e.goal_text.lower():
+                if e.type == VILLAGER_TYPE and "deposit" in e.goal_text.lower():
                     seen_deposit = True
             return seen_deposit
 
@@ -117,9 +117,9 @@ class TestWoodcutterLifecycle:
         def chest_has_logs():
             # Find chest entities
             for e in game.observer.entities.values():
-                if e.type_id == CHEST_TYPE:
+                if e.type == CHEST_TYPE:
                     inv = game.observer.get_inventory(e.id)
-                    if inv and inv.count("base:trunk") > 0:
+                    if inv and inv.count("base:logs") > 0:
                         return True
             return False
 
@@ -137,7 +137,7 @@ class TestWoodcutterLifecycle:
 
         def moved():
             for e in game.observer.entities.values():
-                if e.type_id != VILLAGER_TYPE:
+                if e.type != VILLAGER_TYPE:
                     continue
                 dx = e.position[0] - start_pos[0]
                 dz = e.position[2] - start_pos[2]
@@ -175,7 +175,7 @@ class TestWoodcutterLifecycle:
 
         def probe():
             for e in game.observer.entities.values():
-                if e.type_id != VILLAGER_TYPE:
+                if e.type != VILLAGER_TYPE:
                     continue
                 dx = e.position[0] - home_x
                 dz = e.position[2] - home_z

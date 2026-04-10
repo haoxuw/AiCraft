@@ -1,16 +1,19 @@
 """Woodcutter — villager that chops trees during the day, deposits at its chest,
 and sleeps at its assigned bed at night.
 
-Server assigns these props at spawn (see server.h):
-  home_x, home_z       — XZ position of this villager's bed (their "home")
-  chest_entity_id      — entity ID of the assigned chest Structure entity
-  chest_x, chest_y, chest_z — world-space position of the chest (for navigation)
-  work_radius          — max radius to search for trees (default 80)
-  collect_goal         — logs to collect before depositing (default 5)
+Server-assigned spawn props (see server.h):
+  home_x, home_z                 — XZ position of this villager's bed
+  chest_entity_id                — entity ID of the assigned chest
+  chest_x, chest_y, chest_z     — world-space position of the chest
+
+Behavior-local tuning (class defaults, overridable via __init__):
+  COLLECT_GOAL  — logs to collect before depositing (default 5)
+  WORK_RADIUS   — max radius to search for trees (default 80)
+  CHOP_PERIOD   — seconds between chop actions (default 0.5)
 
 State machine:
   SLEEP   ─► WORK     when morning / afternoon begins
-  WORK    ─► DEPOSIT  when inventory reaches collect_goal logs
+  WORK    ─► DEPOSIT  when inventory reaches COLLECT_GOAL logs
   DEPOSIT ─► WORK     when inventory is empty after depositing
   any     ─► SLEEP    when evening / night begins
 """
@@ -19,9 +22,12 @@ import math
 import os
 import time
 
-from modcraft_engine import Move, Convert, Interact, Block, scan_blocks
+from modcraft_engine import Move, Convert, Interact, Block, scan_blocks, get_block
 from actions import StoreItem, DropItem
 from behavior_base import Behavior
+from local_world import SelfEntity, LocalWorld
+from pathfind import Navigator
+from stats import stats
 
 STORE_RANGE  = 1.8   # must be <= server-side StoreItem range check (2.0 blocks)
 # Chop is gated on HORIZONTAL distance only (tree height is irrelevant).
@@ -38,9 +44,9 @@ _diag_last: dict[int, float] = {}  # entity_id → last dump timestamp
 
 class _BlockTarget:
     """Lightweight stand-in for scan_blocks dict results, compatible with Behavior helpers."""
-    __slots__ = ("x", "y", "z", "distance", "type_id")
-    def __init__(self, x, y, z, distance, type_id):
-        self.x, self.y, self.z, self.distance, self.type_id = x, y, z, distance, type_id
+    __slots__ = ("x", "y", "z", "distance", "type")
+    def __init__(self, x, y, z, distance, type):
+        self.x, self.y, self.z, self.distance, self.type = x, y, z, distance, type
 
 
 def dump_for_diagnoses(entity, local_world):
@@ -57,7 +63,7 @@ def dump_for_diagnoses(entity, local_world):
 
     data = {
         "entity_id":  eid,
-        "type_id":    entity.type_id,
+        "type":    entity.type,
         "position":   {"x": entity.x, "y": entity.y, "z": entity.z},
         "hp":         entity.hp,
         "walk_speed": entity.walk_speed,
@@ -69,11 +75,11 @@ def dump_for_diagnoses(entity, local_world):
             "time": local_world.time,
             "dt":   local_world.dt,
             "blocks": [
-                {"type_id": b.type_id, "x": b.x, "y": b.y, "z": b.z, "distance": round(b.distance, 2)}
+                {"type": b.type, "x": b.x, "y": b.y, "z": b.z, "distance": round(b.distance, 2)}
                 for b in local_world.blocks
             ],
             "entities": [
-                {"id": e.id, "type_id": e.type_id, "category": e.category,
+                {"id": e.id, "type": e.type, "category": e.category,
                  "x": e.x, "y": e.y, "z": e.z, "hp": e.hp, "distance": round(e.distance, 2)}
                 for e in local_world.entities
             ],
@@ -95,20 +101,38 @@ class WoodcutterBehavior(Behavior):
     WORK    = "work"
     DEPOSIT = "deposit"
 
-    def __init__(self):
+    # Behavior-local tuning (not server props — these belong to the behavior)
+    COLLECT_GOAL = 5      # logs to collect before depositing
+    WORK_RADIUS  = 80.0   # max radius to search for trees
+
+    def __init__(self, collect_goal: int = COLLECT_GOAL,
+                 work_radius: float = WORK_RADIUS,
+                 chop_period: float = CHOP_PERIOD):
         self._state           = self.SLEEP
         self._home            = None   # cached (x, y, z) of bed / home position
         self._chest           = None   # cached (x, y, z) of chest position (for navigation)
         self._chest_entity_id = None   # entity ID of the chest Structure entity
         self._chop_cooldown   = 0.0    # seconds until next Convert is allowed
-        self._chop_period     = None   # optional chop period override from props
+        self._collect_goal    = collect_goal
+        self._work_radius     = work_radius
+        self._chop_period     = chop_period
+        self._nav             = Navigator()  # A* path-follower (replans on goal change or stuck)
+        self._tree_target     = None   # cached (x, y, z, type) of current tree block
+        self._prev_state      = None   # detect state transitions to reset nav
 
     # ── Top-level decide ──────────────────────────────────────────────────────
 
-    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+    def decide(self, entity: SelfEntity, local_world: LocalWorld):
+        stats.inc("decide", entity.type)
         self._chop_cooldown -= local_world.dt
-        self._ensure_props(entity, local_world)
+        self._ensure_props(entity)
         self._update_state(entity, local_world)
+
+        # Reset nav + tree cache on state transitions
+        if self._state != self._prev_state:
+            self._nav.reset()
+            self._tree_target = None
+            self._prev_state = self._state
 
         if self._state == self.SLEEP:
             return self._sleep(entity, local_world)
@@ -118,19 +142,18 @@ class WoodcutterBehavior(Behavior):
 
     # ── State transitions ─────────────────────────────────────────────────────
 
-    def _update_state(self, entity, local_world):
-        logs         = entity.inventory.count("base:trunk")
-        collect_goal = int(entity.get("collect_goal", 5))
-        is_day       = self.is_morning(local_world) or self.is_afternoon(local_world)
-        is_night_now = self.is_night(local_world) or self.is_evening(local_world)
+    def _update_state(self, entity: SelfEntity, local_world: LocalWorld):
+        logs     = entity.inventory.count("base:logs")
+        is_day   = self.is_morning(local_world) or self.is_afternoon(local_world)
+        is_night = self.is_night(local_world) or self.is_evening(local_world)
 
-        if is_night_now:
+        if is_night:
             self._state = self.SLEEP
         elif self._state == self.SLEEP and is_day:
             self._state = self.WORK   # may advance immediately to DEPOSIT below
 
         # Checked independently so SLEEP→WORK→DEPOSIT can fire in one tick
-        if self._state == self.WORK and logs >= collect_goal:
+        if self._state == self.WORK and logs >= self._collect_goal:
             self._state = self.DEPOSIT
         elif self._state == self.DEPOSIT and logs == 0:
             self._state = self.WORK
@@ -147,84 +170,90 @@ class WoodcutterBehavior(Behavior):
 
     # ── State: Sleep ──────────────────────────────────────────────────────────
 
-    def _sleep(self, entity, local_world):
+    def _sleep(self, entity: SelfEntity, local_world: LocalWorld):
         """Walk to bed; once there, stand still and rest."""
         spd = entity.walk_speed
         if not self.is_near(entity, self._home, threshold=2.0):
-            return self._move_or_unstick(entity, local_world, self._home, spd, "Going home...")
-        return Move(entity.x, entity.y, entity.z), "Sleeping zzz"
+            goal = (int(self._home[0]), int(self._home[1]), int(self._home[2]))
+            action = self._nav.navigate(entity, local_world, goal, speed=spd)
+            if action:
+                return action, "Going home..."
+        return Move(entity.x, entity.y, entity.z), "Sleeping zzz", 3.0
 
     # ── State: Work ───────────────────────────────────────────────────────────
 
-    def _work(self, entity, local_world):
-        """Find the nearest tree block and approach it horizontally.
+    def _work(self, entity: SelfEntity, local_world: LocalWorld):
+        """Find the nearest tree block and approach it.
 
-        Chop is gated on horizontal (XZ) distance — tree height is irrelevant.
-        The walk target is placed 1 block horizontally next to the target block
-        so the woodcutter ends up flush with the trunk/leaf face before chopping.
-        Prefers trunk (reachable from ground) and falls back to leaves.
+        Caches the target tree block — only re-scans when the cached target
+        is gone (chopped by self or another entity) or no target exists yet.
+        Uses Navigator (A*) for pathfinding to avoid obstacles.
         """
-        spd          = entity.walk_speed
-        work_radius  = float(entity.get("work_radius", 80.0))
-        logs         = entity.inventory.count("base:trunk")
-        collect_goal = int(entity.get("collect_goal", 5))
+        spd  = entity.walk_speed
+        logs = entity.inventory.count("base:logs")
 
-        # Scan_blocks distance is 3D, so max_dist must account for tree height.
-        # Trunk base is at ground level → cheap and reliable to reach first.
-        # Anchor the search at home (bed) so the woodcutter never wanders past
-        # its work_radius even after walking partway toward a previous tree.
-        results = scan_blocks("base:trunk", near=self._home,
-                              max_dist=work_radius, max_results=1)
-        label   = "trunk"
-        if not results:
+        # Validate cached tree target — is the block still there?
+        if self._tree_target is not None:
+            ttx, tty, ttz, ttid = self._tree_target
+            actual = get_block(ttx, tty, ttz)
+            if actual != ttid:
+                self._tree_target = None
+                self._nav.reset()
+
+        # Only scan for a new tree when cache is empty
+        if self._tree_target is None:
+            stats.inc("scan_blocks")
             results = scan_blocks("base:leaves", near=self._home,
-                                  max_dist=work_radius, max_results=1)
-            label   = "leaves"
-        if not results:
-            return self._search(entity, local_world, spd)
+                                  max_dist=self._work_radius, max_results=1)
+            label = "leaves"
+            if not results:
+                results = scan_blocks("base:logs", near=self._home,
+                                      max_dist=self._work_radius, max_results=1)
+                label = "log"
+            if not results:
+                return self._search(entity, local_world, spd)
+            t = results[0]
+            self._tree_target = (t["x"], t["y"], t["z"], t["type"])
+            self._nav.reset()
 
-        t = results[0]
-        tx, ty, tz = t["x"], t["y"], t["z"]
+        tx, ty, tz, tid = self._tree_target
+        label = "leaves" if "leaves" in tid else "log"
 
-        # Horizontal vector from target to entity.
+        # Horizontal distance to target
         dx = entity.x - (tx + 0.5)
         dz = entity.z - (tz + 0.5)
         horiz = math.hypot(dx, dz)
 
-        # Adjacent on the XZ plane → chop, regardless of vertical offset.
+        # Adjacent on the XZ plane → chop
         if horiz <= CHOP_RANGE:
-            bt = _BlockTarget(tx, ty, tz, horiz, t["type"])
-            return self._chop(entity, bt, logs, collect_goal, label)
+            bt = _BlockTarget(tx, ty, tz, horiz, tid)
+            return self._chop(entity, bt, logs, label)
 
-        # Walk to a standing position 1 block horizontally next to the target,
-        # on the side nearest the entity (so we don't circle the tree).
-        if horiz > 1e-3:
-            stand_x = (tx + 0.5) + (dx / horiz) * STAND_OFFSET
-            stand_z = (tz + 0.5) + (dz / horiz) * STAND_OFFSET
-        else:
-            stand_x, stand_z = tx + 0.5 + STAND_OFFSET, tz + 0.5
-        return self._move_or_unstick(
-            entity, local_world,
-            (stand_x, entity.y, stand_z),
-            spd,
-            "Walking to %s (%.0fm)" % (label, horiz),
-        )
+        # Navigate to ground level adjacent to the tree (not to the canopy Y)
+        goal = (int(tx), int(entity.y), int(tz))
+        action = self._nav.navigate(entity, local_world, goal, speed=spd)
+        if action:
+            return action, "Walking to %s (%.0fm)" % (label, horiz)
+        return Move(tx + 0.5, entity.y, tz + 0.5, speed=spd), \
+               "Approaching %s (%.0fm)" % (label, horiz)
 
-    def _chop(self, entity, target, logs, collect_goal, label):
+    def _chop(self, entity: SelfEntity, target: _BlockTarget, logs: int, label: str):
         """Issue a Convert to chop the block, respecting cooldown."""
         if self._chop_cooldown <= 0:
-            self._chop_cooldown = self._chop_period or CHOP_PERIOD
+            self._chop_cooldown = self._chop_period
+            stats.inc("chop", target.type)
             return (
                 Convert(
-                    from_item=target.type_id,
-                    to_item=target.type_id,
+                    from_item=target.type,
+                    to_item=target.type,
                     convert_from=Block(target.x, target.y, target.z),
                 ),
-                "Chopping %s! (%d/%d)" % (label, logs, collect_goal),
+                "Chopping %s! (%d/%d)" % (label, logs, self._collect_goal),
             )
-        return Move(entity.x, entity.y, entity.z), "Chopping... (%d/%d)" % (logs, collect_goal)
+        return Move(entity.x, entity.y, entity.z), \
+               "Chopping... (%d/%d)" % (logs, self._collect_goal), self._chop_cooldown
 
-    def _search(self, entity, local_world, spd):
+    def _search(self, entity: SelfEntity, local_world: LocalWorld, spd: float):
         """No trees in range — wander outward to find some."""
         if self.check_stuck(entity, local_world.dt):
             self.reset_stuck()
@@ -235,44 +264,32 @@ class WoodcutterBehavior(Behavior):
 
     # ── State: Deposit ────────────────────────────────────────────────────────
 
-    def _deposit(self, entity, local_world):
-        """Walk to the chest, open any door in the way, and store logs."""
+    def _deposit(self, entity: SelfEntity, local_world: LocalWorld):
+        """Walk to the chest and store logs. Uses Navigator for pathfinding."""
         spd  = entity.walk_speed
-        logs = entity.inventory.count("base:trunk")
+        logs = entity.inventory.count("base:logs")
 
         if self._chest_entity_id is None:
-            # No chest assigned — drop items on the ground
-            print("[woodcutter] entity %d: no chest_entity_id prop, dropping %d logs on ground" % (entity.id, logs))
-            return DropItem("base:trunk", count=logs), "Dropping %d logs (no chest)" % logs
+            print("[woodcutter] entity %d: no chest, dropping %d logs" % (entity.id, logs))
+            return DropItem("base:logs", count=logs), "Dropping %d logs (no chest)" % logs
 
         dist_to_chest = self.dist2d(entity.x, entity.z, self._chest[0], self._chest[2])
 
         if dist_to_chest <= STORE_RANGE:
+            stats.inc("deposit", entity.type)
             return StoreItem(self._chest_entity_id), "Depositing %d logs" % logs
 
-        # Open any closed door blocking the path before walking through
-        door = local_world.get("base:door", max_dist=3.0)
-        if door and door.distance < 2.0:
-            return Interact(int(door.x), int(door.y), int(door.z)), "Opening door"
+        goal = (int(self._chest[0]), int(self._chest[1]), int(self._chest[2]))
+        action = self._nav.navigate(entity, local_world, goal, speed=spd)
+        if action:
+            return action, "Carrying %d logs to chest (%.0fm)" % (logs, dist_to_chest)
+        return Move(self._chest[0], self._chest[1], self._chest[2], speed=spd), \
+               "Approaching chest (%.0fm)" % dist_to_chest
 
-        return self._move_or_unstick(
-            entity, local_world, self._chest, spd,
-            "Carrying %d logs to chest (%.0fm)" % (logs, dist_to_chest),
-        )
+    # ── Prop initialisation (reads server-injected spawn props once) ──────────
 
-    # ── Movement helper with stuck recovery ───────────────────────────────────
-
-    def _move_or_unstick(self, entity, local_world, target, speed, goal_text):
-        """Move toward target; wander briefly if stuck."""
-        if self.check_stuck(entity, local_world.dt):
-            self.reset_stuck()
-            return Move(*self.wander_target(entity, radius=5), speed=speed), "Stuck — finding way"
-        return Move(*target, speed=speed), goal_text
-
-    # ── Prop initialisation (called each tick until populated) ────────────────
-
-    def _ensure_props(self, entity, local_world):
-        """Read server-assigned props into cached fields (cheap after first call)."""
+    def _ensure_props(self, entity: SelfEntity):
+        """Cache server-assigned spawn props (home_x, chest_entity_id, etc.)."""
         if self._home is None:
             self._home = self.init_home(entity, self._home)
         if self._chest is None:
@@ -280,5 +297,3 @@ class WoodcutterBehavior(Behavior):
         if self._chest_entity_id is None:
             eid = entity.get("chest_entity_id", 0)
             if eid: self._chest_entity_id = int(eid)
-        if self._chop_period is None:
-            self._chop_period = float(entity.get("chop_period", CHOP_PERIOD))

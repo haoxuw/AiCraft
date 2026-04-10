@@ -24,7 +24,7 @@ inline float getMaterialValue(const std::string& typeId) {
 		{"base:sand",       1.0f},
 		{"base:gravel",     1.0f},
 		{"base:wood",       4.0f},
-		{"base:trunk",      4.0f},   // tree trunk block
+		{"base:logs",      4.0f},   // tree log block
 		{"base:leaves",     0.5f},
 		{"base:planks",     2.0f},
 		{"base:stairs",     2.0f},
