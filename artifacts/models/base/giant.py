@@ -88,14 +88,14 @@ model = {
             "right_hand":      {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.2, "phase": 0},
         },
         "wave": {
-            "right_upper_arm": {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 1.8, "phase": 0},
-            "right_hand":      {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 1.8, "phase": 0},
+            "right_upper_arm": {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 1.8, "phase": 0},
+            "right_hand":      {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 1.8, "phase": 0},
         },
         "dance": {
-            "right_upper_arm": {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.2, "phase": 0},
-            "right_hand":      {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.2, "phase": 0},
-            "left_upper_arm":  {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.2, "phase": 0},
-            "left_hand":       {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.2, "phase": 0},
+            "right_upper_arm": {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.2, "phase": 0},
+            "right_hand":      {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.2, "phase": 0},
+            "left_upper_arm":  {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.2, "phase": math.pi},
+            "left_hand":       {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.2, "phase": math.pi},
         },
         "sleep": {
             "right_upper_arm": {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},

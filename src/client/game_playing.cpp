@@ -71,11 +71,15 @@ void Game::handleGameplayInput(float dt) {
 		m_gameplay.clearSwing();
 	}
 	m_attackAnim.update(dt);
+	if (!m_attackAnim.active() && !m_gameplay.isBreaking())
+		m_lastAttackTargetId = ENTITY_NONE;
 
 	// ── Entity attack: swing on left-click + optionally send ActionProposal ──
 	m_attackCD -= dt;
 	{
 		EntityId attackId = m_gameplay.attackTarget();
+		if (attackId != ENTITY_NONE)
+			m_lastAttackTargetId = attackId;
 		m_gameplay.clearAttack();
 
 		if (pe->inventory) {

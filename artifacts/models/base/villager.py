@@ -193,17 +193,19 @@ model = {
 
         # "wave" — friendly greeting: right arm raised, swinging side-to-side.
         "wave": {
-            "right_upper_arm": {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 2.0, "phase": 0},
-            "right_forearm":   {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 2.0, "phase": 0},
-            "right_hand":      {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 2.0, "phase": 0},
+            "right_upper_arm": {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 2.0, "phase": 0},
+            "right_forearm":   {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 2.0, "phase": 0},
+            "right_hand":      {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 2.0, "phase": 0},
         },
 
         # "dance" — both arms waving, torso bouncing, hip sway.
         "dance": {
-            "right_upper_arm": {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.5, "phase": 0},
-            "right_forearm":   {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.5, "phase": 0},
-            "left_upper_arm":  {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.5, "phase": 0},
-            "left_forearm":    {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.5, "phase": 0},
+            "right_upper_arm": {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.5, "phase": 0},
+            "right_forearm":   {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.5, "phase": 0},
+            "right_hand":      {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.5, "phase": 0},
+            "left_upper_arm":  {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.5, "phase": math.pi},
+            "left_forearm":    {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.5, "phase": math.pi},
+            "left_hand":       {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.5, "phase": math.pi},
             "torso":           {"axis": [0, 1, 0], "amp": 15, "speed": 1.5, "phase": 0},
             "head":            {"axis": [0, 1, 0], "amp": 12, "speed": 1.5, "phase": 1.5708},
         },

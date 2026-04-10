@@ -249,6 +249,13 @@ private:
 	// walk/idle. Toggled by keybinds (C = dance) and cleared automatically
 	// when the player starts moving so the walk cycle takes over.
 	std::string m_playerClip;
+
+	// Head/body target tracking: when attacking or mining, the model
+	// looks at the target.  In TPS/RPG/RTS, the head also tracks the
+	// camera yaw with a ±45° neck limit; excess rotates the body.
+	EntityId m_lastAttackTargetId = ENTITY_NONE;
+	float m_actionBodyYawOffset  = 0.0f; // smoothed body rotation toward action target
+	float m_cameraBodyYawOffset  = 0.0f; // smoothed body rotation toward camera look dir
 };
 
 } // namespace modcraft

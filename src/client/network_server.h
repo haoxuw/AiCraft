@@ -22,6 +22,7 @@
 #include "shared/chunk.h"
 #include "server/entity_manager.h"
 #include "content/builtin.h"
+#include "shared/artifact_registry.h"
 #include <unordered_map>
 #include <functional>
 #include <string>
@@ -38,6 +39,13 @@ public:
 		// Register all block and entity definitions (same as server)
 		// so entities have proper collision boxes, HP, inventory, etc.
 		registerAllBuiltins(m_blocks, m_entityDefs);
+
+		// Merge Python-declared feature tags into EntityDefs
+		{
+			ArtifactRegistry artifacts;
+			artifacts.loadAll("artifacts");
+			m_entityDefs.mergeArtifactTags(artifacts.livingTags());
+		}
 
 		// Generate random UUID for this client
 		std::random_device rd;
@@ -255,11 +263,19 @@ public:
 
 			target.age += dt;
 
-			// Walk distance for animation
+			// Smoothed animation speed — low-pass filter so walk→idle doesn't snap
 			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
-			if (hSpeed > 0.01f) {
+			float prevAnimSpeed = e.getProp<float>(Prop::AnimSpeed, 0.0f);
+			// Fast attack (ramp up quickly), slow decay (ramp down over ~0.3s)
+			float tau = (hSpeed > prevAnimSpeed) ? 15.0f : 5.0f;
+			float animSpeed = prevAnimSpeed + (hSpeed - prevAnimSpeed) * std::min(dt * tau, 1.0f);
+			if (animSpeed < 0.01f) animSpeed = 0.0f;
+			e.setProp(Prop::AnimSpeed, animSpeed);
+
+			// Walk distance for animation (use smoothed speed so legs don't freeze mid-stride)
+			if (animSpeed > 0.01f) {
 				float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
-				e.setProp(Prop::WalkDistance, wd + hSpeed * dt);
+				e.setProp(Prop::WalkDistance, wd + animSpeed * dt);
 			}
 		}
 
@@ -459,6 +475,8 @@ private:
 				ent->yaw = es.yaw;
 				ent->onGround = es.onGround;
 				ent->goalText = es.goalText;
+				ent->lookYaw   = es.lookYaw;
+				ent->lookPitch = es.lookPitch;
 				if (!es.characterSkin.empty())
 					ent->setProp("character_skin", es.characterSkin);
 				// Apply string properties (ItemType, BehaviorId, etc.)
@@ -497,6 +515,8 @@ private:
 				// Server's onGround is stale (20Hz) and would re-trigger jumps.
 				if (es.id != m_localPlayerId)
 					e.onGround = es.onGround;
+				e.lookYaw   = es.lookYaw;
+				e.lookPitch = es.lookPitch;
 				e.goalText = es.goalText;
 				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);

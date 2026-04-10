@@ -272,6 +272,12 @@ public:
 			es.owner = e.getProp<int>(Prop::Owner, 0);
 				es.moveTarget = e.moveTarget;
 				es.moveSpeed = e.moveSpeed;
+				// Player-controlled entities broadcast their camera look direction
+				// for remote head tracking.  AI creatures don't set lookYaw/Pitch
+				// (defaults to 0 = world +X), so use body yaw → head faces forward.
+				bool hasOwner = e.getProp<int>(Prop::Owner, 0) != 0;
+				es.lookYaw   = hasOwner ? e.lookYaw   : e.yaw;
+				es.lookPitch = hasOwner ? e.lookPitch  : 0.0f;
 				// Serialize entity props that other clients/agents need.
 				// Skip props that are: (a) UI-only state, (b) duplicates of
 				// EntityState fields, or (c) internal Creatures bookkeeping.

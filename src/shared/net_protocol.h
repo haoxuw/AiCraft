@@ -271,6 +271,8 @@ struct EntityState {
 	int owner = 0;  // EntityId of owning player (0 = unowned)
 	glm::vec3 moveTarget = {0, 0, 0};  // where entity is heading (client prediction)
 	float moveSpeed = 0.0f;            // speed toward moveTarget
+	float lookYaw   = 0.0f;           // head look yaw (degrees, for remote head tracking)
+	float lookPitch = 0.0f;           // head look pitch (degrees)
 	// All properties — serialized as string key-value pairs.
 	// Float/int/bool/vec3 props are converted to strings for transport.
 	std::vector<std::pair<std::string, std::string>> props;
@@ -290,6 +292,8 @@ inline void serializeEntityState(WriteBuffer& buf, const EntityState& e) {
 	buf.writeI32(e.owner);
 	buf.writeVec3(e.moveTarget);
 	buf.writeF32(e.moveSpeed);
+	buf.writeF32(e.lookYaw);
+	buf.writeF32(e.lookPitch);
 	buf.writeU32((uint32_t)e.props.size());
 	for (auto& [k, v] : e.props) {
 		buf.writeString(k);
@@ -312,6 +316,8 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 	if (buf.hasMore()) e.owner = buf.readI32();
 	if (buf.hasMore()) e.moveTarget = buf.readVec3();
 	if (buf.hasMore()) e.moveSpeed = buf.readF32();
+	if (buf.hasMore()) e.lookYaw   = buf.readF32();
+	if (buf.hasMore()) e.lookPitch = buf.readF32();
 	uint32_t propCount = buf.readU32();
 	for (uint32_t i = 0; i < propCount && buf.hasMore(); i++) {
 		std::string k = buf.readString();

@@ -65,11 +65,11 @@ model = {
             "torso":      {"axis": [0, 1, 0], "amp": 6,  "speed": 1.4, "phase": 0},
         },
         "wave": {
-            "right_hand": {"axis": [0, 0, 1], "amp": 25, "bias": -150, "speed": 2.0, "phase": 0},
+            "right_hand": {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 2.0, "phase": 0},
         },
         "dance": {
-            "right_hand": {"axis": [0, 0, 1], "amp": 40, "bias": -100, "speed": 1.5, "phase": 0},
-            "left_hand":  {"axis": [0, 0, 1], "amp": 40, "bias":  100, "speed": 1.5, "phase": 0},
+            "right_hand": {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.5, "phase": 0},
+            "left_hand":  {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.5, "phase": math.pi},
             "torso":      {"axis": [0, 1, 0], "amp": 15, "speed": 1.5, "phase": 0},
             "head":       {"axis": [0, 1, 0], "amp": 12, "speed": 1.5, "phase": 1.5708},
         },

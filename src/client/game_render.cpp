@@ -82,14 +82,89 @@ void Game::renderEntities(float dt, float aspect) {
 	playerAnim.armPitch     = armPitch;
 	playerAnim.armYaw       = armYaw;
 	playerAnim.currentClip  = m_playerClip;
-	// Local player head tracking: head follows the camera's view direction.
-	// In FPS mode the player isn't drawn, so only orbit modes matter here.
-	// Clamp to the physical head rotation range so the head doesn't rubber-
-	// neck past the shoulders.
+	// Head/body look tracking.
+	// Priority: action target (attack/mine) > camera look direction.
+	// The head rotates up to ±45° from the body; excess yaw rotates the body.
+	float headYawDeg = 0.0f;
+	float targetPitchDeg = 0.0f;
+	float bodyYawOffset = 0.0f; // extra body rotation applied at draw time
 	{
-		playerAnim.lookYaw   = 0.0f;
-		playerAnim.lookPitch = glm::radians(glm::clamp(m_camera.lookPitch, -45.f, 45.f));
+		constexpr float kHeadYawMax = 45.0f;
+		float bodyYaw = m_camera.player.yaw;  // current body facing (degrees)
+		bool hasActionTarget = false;
+		// Head tracking only in TPS (camera is behind player, head follows look).
+		// In RPG/RTS the camera is detached — head faces forward.
+		// During named clips (dance, wave, etc.) head stays neutral.
+		bool trackCamera = (m_camera.mode == CameraMode::ThirdPerson)
+		                    && m_playerClip.empty();
+		float targetWorldYaw = trackCamera ? m_camera.lookYaw : bodyYaw;
+		if (trackCamera) targetPitchDeg = m_camera.lookPitch;
+
+		// Action target: look at attacked entity or mined block
+		if (m_attackAnim.active() || m_gameplay.isBreaking()) {
+			glm::vec3 targetPos;
+			bool gotTarget = false;
+
+			if (m_lastAttackTargetId != ENTITY_NONE) {
+				Entity* target = m_server->getEntity(m_lastAttackTargetId);
+				if (target) {
+					targetPos = target->position + (target->eyePos() - target->position) * 0.5f;
+					gotTarget = true;
+				}
+			}
+			if (!gotTarget && m_gameplay.isBreaking()) {
+				targetPos = glm::vec3(m_gameplay.breakTarget()) + glm::vec3(0.5f);
+				gotTarget = true;
+			}
+
+			if (gotTarget) {
+				glm::vec3 delta = targetPos - pe->position;
+				targetWorldYaw = glm::degrees(atan2(delta.z, delta.x));
+				float hDist = glm::length(glm::vec2(delta.x, delta.z));
+				float eyeH = pe->eyePos().y - pe->position.y;
+				targetPitchDeg = glm::degrees(atan2(delta.y - eyeH, hDist));
+				hasActionTarget = true;
+			}
+		}
+
+		// Compute relative yaw from the *effective* body direction (body + current
+		// offset) so the offset accumulates continuously — no 180° snap.
+		float& smoothed = hasActionTarget ? m_actionBodyYawOffset : m_cameraBodyYawOffset;
+		float effectiveBodyYaw = bodyYaw + smoothed;
+		float relYaw = targetWorldYaw - effectiveBodyYaw;
+		while (relYaw >  180.f) relYaw -= 360.f;
+		while (relYaw < -180.f) relYaw += 360.f;
+
+		// Head covers ±45°; excess drives continuous body rotation
+		headYawDeg = glm::clamp(relYaw, -kHeadYawMax, kHeadYawMax);
+		float excess = relYaw - headYawDeg;
+
+		float lerpRate = hasActionTarget ? 15.0f : 10.0f;
+		smoothed += excess * std::min(lerpRate * dt, 1.0f);
+
+		// Decay whichever offset is NOT active toward 0
+		float& inactive = hasActionTarget ? m_cameraBodyYawOffset : m_actionBodyYawOffset;
+		inactive *= std::max(0.0f, 1.0f - dt * 8.0f);
+
+		// When walking, decay camera body offset so body faces movement direction.
+		// The faster the player moves, the stronger the pull back to forward.
+		if (!hasActionTarget) {
+			float walkDecay = std::min(playerSpeed * 3.0f * dt, 1.0f);
+			m_cameraBodyYawOffset *= (1.0f - walkDecay);
+		}
+
+		// In RPG/RTS the camera is detached — decay all offsets to zero.
+		if (!trackCamera && !hasActionTarget) {
+			float decay = std::min(dt * 8.0f, 1.0f);
+			m_cameraBodyYawOffset *= (1.0f - decay);
+			m_actionBodyYawOffset *= (1.0f - decay);
+		}
+
+		bodyYawOffset = m_actionBodyYawOffset + m_cameraBodyYawOffset;
 	}
+	// Negate head yaw: model root uses -yaw, so model-local Y rotation is mirrored
+	playerAnim.lookYaw   = glm::radians(-headYawDeg);
+	playerAnim.lookPitch = glm::radians(glm::clamp(targetPitchDeg, -45.f, 45.f));
 
 	// Footstep sounds — play every ~2.5 blocks of movement
 	if (pe->onGround && playerSpeed > 0.5f) {
@@ -154,7 +229,7 @@ void Game::renderEntities(float dt, float aspect) {
 			}
 
 			mr.draw(pit->second, vp, m_camera.smoothedFeetPos(),
-			        m_camera.player.yaw, playerAnim, 0.0f,
+			        m_camera.player.yaw + bodyYawOffset, playerAnim, 0.0f,
 			        glm::vec3(1.0f, 0.15f, 0.15f),
 			        glm::normalize(glm::vec3(0.5f, 0.85f, 0.3f)),
 			        &held);
@@ -165,7 +240,7 @@ void Game::renderEntities(float dt, float aspect) {
 	srv.forEachEntity([&](Entity& e) {
 		if (e.id() == m_server->localPlayerId()) return;
 
-		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
+		float mobSpeed = e.getProp<float>(Prop::AnimSpeed, 0.0f);
 		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);
 		AnimState mobAnim = {};
 		mobAnim.walkDistance = mobDist;
@@ -198,7 +273,22 @@ void Game::renderEntities(float dt, float aspect) {
 				return "";
 			};
 			mobAnim.currentClip = pickClip(e.goalText);
-			mr.draw(mobModel, vp, e.position, e.yaw, mobAnim, tintStr);
+
+			// Remote head tracking: split lookYaw into head + body overflow.
+			// AI creatures get lookYaw=bodyYaw from the server, so their
+			// heads naturally face forward with no special-casing here.
+			float remoteBodyYaw = e.yaw;
+			if (e.def().isLiving()) {
+				constexpr float kMax = 45.0f;
+				float rel = e.lookYaw - e.yaw;
+				while (rel >  180.f) rel -= 360.f;
+				while (rel < -180.f) rel += 360.f;
+				float headDeg = glm::clamp(rel, -kMax, kMax);
+				remoteBodyYaw = e.yaw + (rel - headDeg);
+				mobAnim.lookYaw   = glm::radians(-headDeg);
+				mobAnim.lookPitch = glm::radians(glm::clamp(e.lookPitch, -45.f, 45.f));
+			}
+			mr.draw(mobModel, vp, e.position, remoteBodyYaw, mobAnim, tintStr);
 		} else if (!modelKey.empty() && e.typeId() != ItemName::ItemEntity) {
 			// Warn once per model key
 			static std::unordered_set<std::string> warned;
