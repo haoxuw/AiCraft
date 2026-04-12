@@ -103,34 +103,25 @@ private:
 		int stepIndex = 0;
 		std::string goalText;
 
-		// Move execution: waypoints for current Move step
-		std::vector<glm::vec3> waypoints;
-		int wpIndex = 0;
-
 		// Visualization (rebuilt each time a new plan arrives)
 		PlanViz viz;
 
 		bool claimed = false;
 
-		// ── Event-driven decide-loop scratch — TODO(decide-loop) Step 5 ──
 		// Per-step observable-outcome bookkeeping. evaluateStep() uses these
-		// to detect Success/Failed from world state only (no timers except
-		// action-internal durations like Rest/Graze/Sleep).
-		//
-		// struct StepWatch {
-		//     glm::vec3 lastPos       = {0,0,0};
-		//     float     stillAccum    = 0.0f;   // seconds with ~zero movement (dt-integrated)
-		//     float     progress      = 0.0f;   // for duration-based steps
-		//     int       prevTargetHP  = 0;      // Attack: detect Success on kill
-		//     uint32_t  prevTargetBid = 0;      // Harvest: detect Success on block→air
-		// };
-		// StepWatch watch;
+		// to detect Success/Failed from world state only. `initialized` resets
+		// to false on each stepIndex advance via advanceStep().
+		struct StepWatch {
+			bool        initialized   = false;
+			float       stillAccum    = 0.0f;   // seconds with ~zero horizontal speed
+			float       progress      = 0.0f;   // for duration-based actions
+			int         prevTargetHP  = 0;      // Attack
+			std::string failReason;
+		};
+		StepWatch watch;
 
 		// ── Client-side interrupt diff snapshot — Step 6 ──
-		// Previous-frame snapshot for detecting HP drops, target disappearance, etc.
-		// Snapshot is taken at end of each tick; next tick compares cur vs prev.
-		// int prevHp       = 0;
-		// bool prevTargetAlive = true;
+		int prevHp = 0;
 	};
 
 	// ── Entity discovery ────────────────────────────────────────────────
@@ -309,8 +300,7 @@ private:
 			state.plan = std::move(r.plan);
 			state.stepIndex = 0;
 			state.goalText = std::move(r.goalText);
-			state.waypoints.clear();
-			state.wpIndex = 0;
+			state.watch = AgentState::StepWatch{};
 
 			rebuildViz(r.eid, state, *e);
 		}
@@ -337,126 +327,199 @@ private:
 	}
 
 	// ── Phase 2: EXECUTE ────────────────────────────────────────────────
+	//
+	// Each step is evaluated against observable world state every tick.
+	// evaluateStep returns Success/Failed/InProgress from data — no timers
+	// except action-internal durations (via StepWatch::progress).
+	// applyStep sends the ActionProposal for an InProgress step.
+	// Terminal outcomes (Success on final step, Failed anywhere) enqueue
+	// a re-decide with LastOutcome describing what happened.
+
+	static constexpr float kArriveEps     = 1.5f;   // blocks
+	static constexpr float kStillEps      = 0.1f;   // speed blocks/s
+	static constexpr float kStuckSeconds  = 2.0f;
+	static constexpr float kReachHarvest  = 3.0f;
+	static constexpr float kReachAttack   = 2.5f;
 
 	void phaseExecute(float dt) {
 		for (auto& [eid, state] : m_agents) {
 			if (!state.claimed) continue;
 			if (state.plan.empty()) continue;
-			if (state.stepIndex >= (int)state.plan.size()) {
-				// Plan complete → re-decide
-				LastOutcome next;
-				next.outcome     = StepOutcome::Success;
-				next.goalText    = state.goalText;
-				next.stepTypeRaw = state.plan.empty() ? 0
-				                    : (int)state.plan.back().type;
-				state.plan.clear();
-				state.viz.waypoints.clear();
-				if (!m_decisionQueue.hasPending(eid))
-					m_decisionQueue.enqueue(eid, std::move(next));
-				continue;
-			}
 
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
 
-			executeStep(eid, state, *e, dt);
-		}
-	}
-
-	void executeStep(EntityId eid, AgentState& state, Entity& entity, float dt) {
-		PlanStep& step = state.plan[state.stepIndex];
-
-		switch (step.type) {
-		case PlanStep::Move:
-			executeMoveStep(eid, state, entity, step);
-			break;
-		case PlanStep::Harvest:
-			executeHarvestStep(eid, state, entity, step);
-			break;
-		case PlanStep::Attack:
-			executeAttackStep(eid, state, entity, step);
-			break;
-		case PlanStep::Relocate:
-			executeRelocateStep(eid, state, entity, step);
-			break;
-		}
-	}
-
-	void executeMoveStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
-		// Generate waypoints on first tick of this step
-		if (state.waypoints.empty()) {
-			state.waypoints = generateWaypoints(entity.position, step.targetPos);
-			state.wpIndex = 0;
-		}
-
-		if (state.wpIndex >= (int)state.waypoints.size()) {
-			// Reached destination — advance plan
-			advanceStep(eid, state);
-			return;
-		}
-
-		glm::vec3 target = state.waypoints[state.wpIndex];
-		glm::vec3 dir = target - entity.position;
-		dir.y = 0;
-		float dist = glm::length(dir);
-
-		if (dist < 1.5f) {
-			// Reached waypoint — next
-			state.wpIndex++;
-			if (state.wpIndex >= (int)state.waypoints.size()) {
-				sendStopMove(eid, entity, state.goalText);
-				advanceStep(eid, state);
+			if (state.stepIndex >= (int)state.plan.size()) {
+				finishPlan(eid, state, StepOutcome::Success, {});
+				continue;
 			}
-			return;
-		}
 
-		// Send Move proposal toward current waypoint
-		dir /= dist;
-		float speed = step.speed > 0 ? step.speed : entity.def().walk_speed;
-		glm::vec3 vel = dir * speed;
-		sendMove(eid, vel, state.goalText);
+			PlanStep& step = state.plan[state.stepIndex];
+			if (!state.watch.initialized) {
+				state.watch = AgentState::StepWatch{};
+				state.watch.initialized = true;
+				if (step.type == PlanStep::Attack) {
+					if (Entity* t = m_server.getEntity(step.targetEntity))
+						state.watch.prevTargetHP = t->hp();
+				}
+			}
+
+			StepOutcome outcome = evaluateStep(step, *e, state.watch, dt);
+
+			switch (outcome) {
+			case StepOutcome::InProgress:
+				applyStep(eid, state, *e, step);
+				break;
+			case StepOutcome::Success:
+				advanceStep(state);
+				if (state.stepIndex >= (int)state.plan.size())
+					finishPlan(eid, state, StepOutcome::Success, {});
+				break;
+			case StepOutcome::Failed:
+				finishPlan(eid, state, StepOutcome::Failed,
+				           state.watch.failReason);
+				break;
+			}
+		}
 	}
 
-	void executeHarvestStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
-		float dist = glm::length(step.targetPos - entity.position);
-		if (dist > 3.0f) {
-			// Too far — walk closer
-			glm::vec3 dir = glm::normalize(step.targetPos - entity.position);
-			sendMove(eid, dir * entity.def().walk_speed, state.goalText);
+	StepOutcome evaluateStep(PlanStep& step, Entity& entity,
+	                         AgentState::StepWatch& watch, float dt) {
+		switch (step.type) {
+		case PlanStep::Move:     return evaluateMove(step, entity, watch, dt);
+		case PlanStep::Harvest:  return evaluateHarvest(step, entity, watch, dt);
+		case PlanStep::Attack:   return evaluateAttack(step, entity, watch, dt);
+		case PlanStep::Relocate: return evaluateRelocate(step, entity, watch, dt);
+		}
+		return StepOutcome::Success;
+	}
+
+	StepOutcome evaluateMove(PlanStep& step, Entity& entity,
+	                         AgentState::StepWatch& watch, float dt) {
+		glm::vec3 delta = step.targetPos - entity.position;
+		delta.y = 0;
+		if (glm::length(delta) < kArriveEps) return StepOutcome::Success;
+
+		float horiz = std::sqrt(entity.velocity.x * entity.velocity.x +
+		                        entity.velocity.z * entity.velocity.z);
+		if (horiz < kStillEps) {
+			watch.stillAccum += dt;
+			if (watch.stillAccum > kStuckSeconds) {
+				watch.failReason = "stuck";
+				return StepOutcome::Failed;
+			}
 		} else {
-			// In range — send Convert (break block)
-			sendStopMove(eid, entity, state.goalText);
-			ActionProposal p;
-			p.type = ActionProposal::Convert;
-			p.actorId = eid;
-			p.fromItem = ""; p.fromCount = 0;
-			p.toItem = ""; p.toCount = 0;
-			p.convertFrom = Container::block(glm::ivec3(step.targetPos));
-			p.convertInto = Container::self();
-			m_server.sendAction(p);
-			advanceStep(eid, state);
+			watch.stillAccum = 0;
 		}
+		return StepOutcome::InProgress;
 	}
 
-	void executeAttackStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+	StepOutcome evaluateHarvest(PlanStep& step, Entity& entity,
+	                            AgentState::StepWatch& watch, float /*dt*/) {
+		glm::ivec3 bp = glm::ivec3(glm::floor(step.targetPos));
+		BlockId bid = m_server.chunks().getBlock(bp.x, bp.y, bp.z);
+		const BlockDef& bd = m_server.blockRegistry().get(bid);
+		if (bd.string_id == "base:air") return StepOutcome::Success;
+
+		glm::vec3 delta = step.targetPos - entity.position;
+		delta.y = 0;
+		if (glm::length(delta) > kReachHarvest + 2.0f) {
+			// Walk closer — applyStep handles the move; stuck-detect applies.
+			float horiz = std::sqrt(entity.velocity.x * entity.velocity.x +
+			                        entity.velocity.z * entity.velocity.z);
+			if (horiz < kStillEps) {
+				watch.stillAccum += 1.0f / 60.0f; // dt-free fallback
+				if (watch.stillAccum > kStuckSeconds) {
+					watch.failReason = "stuck";
+					return StepOutcome::Failed;
+				}
+			} else watch.stillAccum = 0;
+		}
+		return StepOutcome::InProgress;
+	}
+
+	StepOutcome evaluateAttack(PlanStep& step, Entity& /*entity*/,
+	                           AgentState::StepWatch& watch, float /*dt*/) {
 		Entity* target = m_server.getEntity(step.targetEntity);
 		if (!target || target->removed) {
-			advanceStep(eid, state);
-			return;
+			// Target gone — treat as Success (kill or disappear)
+			return StepOutcome::Success;
 		}
-		float dist = glm::length(target->position - entity.position);
-		if (dist > 2.5f) {
-			glm::vec3 dir = glm::normalize(target->position - entity.position);
-			sendMove(eid, dir * entity.def().walk_speed, state.goalText);
-		} else {
-			sendStopMove(eid, entity, state.goalText);
-			// TODO: send Convert for melee attack
-			advanceStep(eid, state);
+		if (target->hp() <= 0) return StepOutcome::Success;
+		watch.prevTargetHP = target->hp();
+		return StepOutcome::InProgress;
+	}
+
+	StepOutcome evaluateRelocate(PlanStep& /*step*/, Entity& /*entity*/,
+	                             AgentState::StepWatch& /*watch*/, float /*dt*/) {
+		// Relocate is one-shot: applyStep sends the proposal, step advances
+		// unconditionally on the next tick via Success.
+		return StepOutcome::Success;
+	}
+
+	void applyStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+		switch (step.type) {
+		case PlanStep::Move:
+			applyMove(eid, state, entity, step);
+			break;
+		case PlanStep::Harvest:
+			applyHarvest(eid, state, entity, step);
+			break;
+		case PlanStep::Attack:
+			applyAttack(eid, state, entity, step);
+			break;
+		case PlanStep::Relocate:
+			applyRelocate(eid, state, step);
+			break;
 		}
 	}
 
-	void executeRelocateStep(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
-		// TODO: walk to container, then send Relocate
+	void applyMove(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+		glm::vec3 dir = step.targetPos - entity.position;
+		dir.y = 0;
+		float dist = glm::length(dir);
+		if (dist < 1e-4f) return;
+		dir /= dist;
+		float speed = step.speed > 0 ? step.speed : entity.def().walk_speed;
+		sendMove(eid, dir * speed, state.goalText);
+	}
+
+	void applyHarvest(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+		glm::vec3 delta = step.targetPos - entity.position;
+		delta.y = 0;
+		float dist = glm::length(delta);
+		if (dist > kReachHarvest) {
+			glm::vec3 dir = glm::normalize(delta);
+			sendMove(eid, dir * entity.def().walk_speed, state.goalText);
+			return;
+		}
+		sendStopMove(eid, entity, state.goalText);
+		ActionProposal p;
+		p.type = ActionProposal::Convert;
+		p.actorId = eid;
+		p.fromItem = ""; p.fromCount = 0;
+		p.toItem = ""; p.toCount = 0;
+		p.convertFrom = Container::block(glm::ivec3(step.targetPos));
+		p.convertInto = Container::self();
+		m_server.sendAction(p);
+	}
+
+	void applyAttack(EntityId eid, AgentState& state, Entity& entity, PlanStep& step) {
+		Entity* target = m_server.getEntity(step.targetEntity);
+		if (!target || target->removed) return;
+		glm::vec3 delta = target->position - entity.position;
+		delta.y = 0;
+		float dist = glm::length(delta);
+		if (dist > kReachAttack) {
+			glm::vec3 dir = glm::normalize(delta);
+			sendMove(eid, dir * entity.def().walk_speed, state.goalText);
+		} else {
+			sendStopMove(eid, entity, state.goalText);
+			// TODO: melee damage Convert — currently no attack proposal.
+		}
+	}
+
+	void applyRelocate(EntityId eid, AgentState& /*state*/, PlanStep& step) {
 		ActionProposal p;
 		p.type = ActionProposal::Relocate;
 		p.actorId = eid;
@@ -465,13 +528,30 @@ private:
 		p.itemId = step.itemId;
 		p.itemCount = step.itemCount;
 		m_server.sendAction(p);
-		advanceStep(eid, state);
 	}
 
-	void advanceStep(EntityId eid, AgentState& state) {
+	void advanceStep(AgentState& state) {
 		state.stepIndex++;
-		state.waypoints.clear();
-		state.wpIndex = 0;
+		state.watch = AgentState::StepWatch{};
+	}
+
+	// Terminate the current plan and enqueue a re-decide with outcome info.
+	void finishPlan(EntityId eid, AgentState& state, StepOutcome outcome,
+	                const std::string& reason) {
+		PlanStep::Type lastType = PlanStep::Move;
+		if (!state.plan.empty())
+			lastType = state.plan[std::min(state.stepIndex,
+			                               (int)state.plan.size() - 1)].type;
+		LastOutcome next;
+		next.outcome     = outcome;
+		next.goalText    = state.goalText;
+		next.stepTypeRaw = (int)lastType;
+		next.reason      = reason;
+		state.plan.clear();
+		state.stepIndex  = 0;
+		state.viz.waypoints.clear();
+		if (!m_decisionQueue.hasPending(eid))
+			m_decisionQueue.enqueue(eid, std::move(next));
 	}
 
 	// ── Action helpers ──────────────────────────────────────────────────
@@ -499,138 +579,27 @@ private:
 		sendMove(eid, {0, 0, 0}, goal);
 	}
 
-	// ── Straight-line movement: just one waypoint at the destination ────
-	// Pathfinding removed intentionally. Entities walk directly at their
-	// goal; if they hit a wall they get stuck. Collision is the server's
-	// concern, not the AI's.
-
-	std::vector<glm::vec3> generateWaypoints(glm::vec3 /*from*/, glm::vec3 to) {
-		return { to };
-	}
-
 	// ── Visualization rebuild ───────────────────────────────────────────
+	// Straight-line: entities walk directly at their goal. Collision is
+	// the server's concern, not the AI's.
 
-	void rebuildViz(EntityId eid, AgentState& state, Entity& entity) {
+	void rebuildViz(EntityId /*eid*/, AgentState& state, Entity& /*entity*/) {
 		state.viz.waypoints.clear();
 		state.viz.hasAction = false;
 
 		if (state.plan.empty()) return;
 
-		// Build full path: entity position → each Move step target
-		glm::vec3 cursor = entity.position;
 		for (auto& step : state.plan) {
 			if (step.type == PlanStep::Move) {
-				auto wps = generateWaypoints(cursor, step.targetPos);
-				for (auto& wp : wps)
-					state.viz.waypoints.push_back(wp);
-				cursor = step.targetPos;
+				state.viz.waypoints.push_back(step.targetPos);
 			} else {
-				// Non-move action at current cursor position
 				state.viz.actionPos = step.targetPos;
 				state.viz.actionType = step.type;
 				state.viz.hasAction = true;
 				state.viz.waypoints.push_back(step.targetPos);
-				cursor = step.targetPos;
 			}
 		}
 	}
-
-	// ── Event-driven decide-loop API — TODO(decide-loop) ────────────────
-	//
-	// These replace executeMoveStep/executeHarvestStep/executeAttackStep/
-	// executeRelocateStep in Step 5. Signatures committed now so reviewers
-	// see the shape; bodies are pseudocode-only until their step lands.
-
-	// Step 5 — classify a step by observable world state only.
-	//   Pseudocode:
-	//     switch (step.type):
-	//       Move:     if arrived(target): return Success
-	//                 if stillAccum>STUCK_SECONDS: return Failed("stuck")
-	//                 return InProgress
-	//       Harvest:  if blockAt(target)==air: return Success
-	//                 if out_of_reach(target): return Failed("out_of_range")
-	//                 return InProgress
-	//       Attack:   if !target or target.removed: return Success
-	//                 if out_of_reach(target): return Failed("fled")
-	//                 return InProgress
-	//       Rest/Graze/Sleep: progress += dt
-	//                 if progress >= step.duration: return Success
-	//                 return InProgress
-	//       Relocate: if inventoryChangeMatches(...): return Success
-	//                 return InProgress
-	StepOutcome evaluateStep(const PlanStep& /*step*/, Entity& /*entity*/,
-	                         AgentState& /*state*/, float /*dt*/) {
-		// TODO(decide-loop) Step 5: implement per pseudocode above.
-		return StepOutcome::InProgress;
-	}
-
-	// Step 5 — emit ActionProposal for a step currently InProgress.
-	//   Pseudocode:
-	//     Move:     sendMove(eid, dir*speed, goal)
-	//     Harvest:  if in_reach: sendStopMove + sendConvert(block→nothing)
-	//               else:         sendMove toward block
-	//     Attack:   if in_reach: sendStopMove + sendConvert(target.hp→0)
-	//               else:         sendMove toward target
-	//     Rest/Graze/Sleep: sendStopMove (idle)
-	//     Relocate: sendRelocate(...)
-	void applyStep(EntityId /*eid*/, AgentState& /*state*/, Entity& /*entity*/,
-	               const PlanStep& /*step*/) {
-		// TODO(decide-loop) Step 5: implement per pseudocode above.
-	}
-
-	// Step 5 — install a plan that came back from the worker (or from
-	// legacy main-thread decide). Only place rebuildViz() is called:
-	// the plan is immutable between re-decides, so viz never flickers.
-	//   Pseudocode:
-	//     state.plan = result.plan
-	//     state.stepIndex = 0
-	//     state.waypoints.clear(); state.wpIndex = 0
-	//     state.watch = StepWatch{}
-	//     state.goalText = result.goalText
-	//     rebuildViz(eid, state, entity)
-	void installPlan(EntityId /*eid*/, AgentState& /*state*/, Entity& /*entity*/,
-	                 Plan /*plan*/, const std::string& /*goalText*/) {
-		// TODO(decide-loop) Step 5: implement per pseudocode above.
-	}
-
-	// Step 6 — detect client-side interrupts (HP drop, target gone, ...)
-	// by diffing previous-frame and current-frame snapshots.
-	//   Pseudocode:
-	//     for each agent:
-	//       if entity.hp < state.prevHp:
-	//           m_decisionQueue.enqueue(eid, {Success, goal, step.type, "interrupt:hp"})
-	//           state.plan.clear()
-	//       if step.type==Attack and target missing:
-	//           m_decisionQueue.enqueue(eid, {Success, goal, Attack, "interrupt:target_gone"})
-	//           state.plan.clear()
-	//       state.prevHp = entity.hp
-	void scanClientInterrupts() {
-		// TODO(decide-loop) Step 6: implement per pseudocode above.
-	}
-
-	// Step 7 — handlers for server-broadcast interrupts (proximity edge,
-	// world events like day/night). Called from network_server.h when
-	// S_NPC_INTERRUPT / S_WORLD_EVENT arrive.
-public:
-	//   Pseudocode:
-	//     void onInterrupt(eid, reason):
-	//         if m_agents.find(eid) != end:
-	//             m_decisionQueue.enqueue(eid,
-	//                 {Success, state.goalText, step.type, "interrupt:"+reason})
-	//             state.plan.clear()
-	void onInterrupt(EntityId /*eid*/, const std::string& /*reason*/) {
-		// TODO(decide-loop) Step 7: implement per pseudocode above.
-	}
-
-	//   Pseudocode:
-	//     void onWorldEvent(kind, payload):
-	//         for each agent that cares about `kind` (e.g. day/night-sensitive):
-	//             m_decisionQueue.enqueue(eid, {Success, goal, type, "interrupt:"+kind})
-	//             state.plan.clear()
-	void onWorldEvent(const std::string& /*kind*/, const std::string& /*payload*/) {
-		// TODO(decide-loop) Step 7: implement per pseudocode above.
-	}
-private:
 
 	// ── Helpers ─────────────────────────────────────────────────────────
 
