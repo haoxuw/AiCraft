@@ -201,6 +201,14 @@ public:
 		// Both get soft correction toward server position via S_ENTITY.
 		const float SNAP_THRESHOLD = 8.0f;
 		const float CORRECTION_RATE = 5.0f;
+		// Sustained-drift snap: if the client/server gap stays above this
+		// for longer than kSustainedDriftSec, force a snap. Closes the
+		// "drift stuck at 2 blocks forever" window — the lerp at
+		// CORRECTION_RATE can be matched by a ~5u/s opposing push from
+		// client prediction, producing a steady offset that the plain
+		// SNAP_THRESHOLD path never catches.
+		const float kSustainedDriftBlocks = 2.0f;
+		const float kSustainedDriftSec    = 1.0f;
 
 		BlockSolidFn clientSolidFn = [&](int x, int y, int z) -> float {
 			const auto& bd = m_blocks.get(m_chunks.getBlock(x, y, z));
@@ -277,17 +285,30 @@ public:
 			// Non-local: virtual joystick just ran; this corrects drift.
 			glm::vec3 diff = target.position - e.position;
 			float dist = glm::length(diff);
-			if (dist > SNAP_THRESHOLD) {
-				// ── DEBUG: stuck-in-place — client/server divergence snap ──
+			// Track sustained drift above kSustainedDriftBlocks; this is a
+			// second trigger for snap that fires even when dist never
+			// crosses SNAP_THRESHOLD. Reset to zero as soon as we're
+			// within the tolerance band so momentary corrections don't
+			// count toward the sustained-drift deadline.
+			if (dist > kSustainedDriftBlocks) {
+				target.sustainedDriftSec += dt;
+			} else {
+				target.sustainedDriftSec = 0.0f;
+			}
+			bool sustainedSnap = (target.sustainedDriftSec >= kSustainedDriftSec);
+
+			if (dist > SNAP_THRESHOLD || sustainedSnap) {
+				// ── DEBUG: client/server divergence snap ──
 				printf("[PosSnap] eid=%u SNAP client=(%.2f,%.2f,%.2f) "
-					"→ server=(%.2f,%.2f,%.2f) dist=%.2f (threshold=%.1f)\n",
+					"→ server=(%.2f,%.2f,%.2f) dist=%.2f trigger=%s\n",
 					id, e.position.x, e.position.y, e.position.z,
 					target.position.x, target.position.y, target.position.z,
-					dist, SNAP_THRESHOLD);
+					dist, sustainedSnap ? "sustained-drift" : "hard-threshold");
 				fflush(stdout);
 				e.position = target.position;
 				e.velocity = target.velocity;
 				e.onGround = true;
+				target.sustainedDriftSec = 0.0f;
 			} else if (!isLocal && dist > 0.01f) {
 				// Drift probe: log any client/server gap above 1.0 block,
 				// rate-limited to ~2 lines/sec per entity so the stream is
@@ -571,14 +592,23 @@ private:
 				}
 				m_entities[es.id] = std::move(ent);
 				// Initialize interpolation target
-				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0, es.moveTarget, es.moveSpeed};
+				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f,
+				                          es.moveTarget, es.moveSpeed, 0.0f};
 			} else {
 				auto& e = *it->second;
 
 				// Update interp target from server. For the local player, this is
 				// only used for SNAP detection (client physics owns position).
 				// For remote entities, tick() runs virtual joystick toward moveTarget.
-				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f, es.moveTarget, es.moveSpeed};
+				// Preserve sustainedDriftSec across updates so sustained drift
+				// across multiple S_ENTITY broadcasts still accumulates to a snap.
+				auto& t = m_interpTargets[es.id];
+				t.position   = es.position;
+				t.velocity   = es.velocity;
+				t.yaw        = es.yaw;
+				t.age        = 0.0f;
+				t.moveTarget = es.moveTarget;
+				t.moveSpeed  = es.moveSpeed;
 
 				// Sync non-positional state immediately.
 				// Skip onGround for local player — client physics owns it.
@@ -810,6 +840,14 @@ private:
 		float age;
 		glm::vec3 moveTarget = {0, 0, 0};
 		float moveSpeed = 0.0f;
+		// Sustained-drift snap counter. Accumulates dt while client/server
+		// gap exceeds kSustainedDriftBlocks; when it reaches
+		// kSustainedDriftSec the reconcile path snaps, even if the gap
+		// never crossed SNAP_THRESHOLD. Prevents a steady 2–3 block drift
+		// equilibrium from persisting forever (lerp rate == opposing
+		// divergence rate). Preserved across S_ENTITY updates; reset only
+		// on snap or when gap drops below threshold.
+		float sustainedDriftSec = 0.0f;
 	};
 	std::unordered_map<EntityId, InterpTarget> m_interpTargets;
 

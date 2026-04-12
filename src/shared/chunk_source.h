@@ -3,10 +3,10 @@
 /**
  * ChunkSource — abstract interface for reading chunk data.
  *
- * Both World (server) and ClientWorld (client) implement this.
- * The Renderer and ChunkMesher use this interface instead of
- * depending on World directly, enabling the network client to
- * render terrain from cached server data.
+ * World (server) and NetworkServer (client chunk cache) implement
+ * this. The Renderer and ChunkMesher use this interface instead of
+ * depending on World directly, enabling the network client to render
+ * terrain from cached server data.
  */
 
 #include "shared/types.h"
