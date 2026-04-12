@@ -69,6 +69,9 @@ struct WorldPyConfig {
 	float spawnMinH              = 2.0f;
 	float spawnMaxH              = 12.0f;
 
+	// Spawn portal (set false for minimal test worlds → just a spawn-point block).
+	bool  hasPortal              = true;
+
 	// Village
 	bool  hasVillage             = true;
 	float villageOffsetX         = 40.0f;

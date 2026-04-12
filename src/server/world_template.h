@@ -99,7 +99,7 @@ public:
 	glm::vec3 preferredSpawn(int seed) const override {
 		// Player spawns on the portal platform (groundY + kPlatH) at the exact center
 		// of the arch interior — world XZ origin when spawnSearch is (0,0).
-		// The spawn block is at the same X,Z on the platform floor.
+		// For portal-less worlds, spawn directly on top of the bare spawn block.
 		float gY, sx, sz;
 		if (m_py.terrainType == "flat") {
 			gY = m_py.surfaceY;
@@ -111,21 +111,30 @@ public:
 			sx = anchor.x;
 			sz = anchor.y;
 		}
+		int bx = (int)std::round(sx);
+		int bz = (int)std::round(sz);
+		if (!m_py.hasPortal) {
+			// Player stands directly on top of the bare spawn-point block at (bx, gY, bz).
+			return {(float)bx + 0.5f, gY + 1.0f, (float)bz + 0.5f};
+		}
 		// +0.5 in X and Z to center the player within the block's [bx, bx+1) footprint.
 		// -1.0 in Z: spawn block is at dz=-1 (center of the 9-block floor: backDZ=-5..frontDZ=+3).
-		return {(float)(int)std::round(sx) + 0.5f,
-		        gY + kPlatH,
-		        (float)(int)std::round(sz) - 0.5f};
+		return {(float)bx + 0.5f, gY + kPlatH, (float)bz - 0.5f};
 	}
 
 	glm::ivec2 villageCenter(int seed) const override {
+		// When there is no village, mobs spawn around the player spawn anchor
+		// instead of the (usually distant) villageOffset. Keeps test worlds
+		// tight: the dog spawns next to the player, not 50 blocks away.
+		float offX = m_py.hasVillage ? m_py.villageOffsetX : 0.0f;
+		float offZ = m_py.hasVillage ? m_py.villageOffsetZ : 0.0f;
 		if (m_py.terrainType == "flat") {
-			return {(int)m_py.spawnSearchX + (int)m_py.villageOffsetX,
-			        (int)m_py.spawnSearchZ + (int)m_py.villageOffsetZ};
+			return {(int)m_py.spawnSearchX + (int)offX,
+			        (int)m_py.spawnSearchZ + (int)offZ};
 		}
 		auto anchor = findAnchor(seed);
-		return {(int)anchor.x + (int)m_py.villageOffsetX,
-		        (int)anchor.y + (int)m_py.villageOffsetZ};
+		return {(int)anchor.x + (int)offX,
+		        (int)anchor.y + (int)offZ};
 	}
 
 	glm::vec3 chestPosition(int seed, glm::vec3 spawnPos) const override {
@@ -328,13 +337,17 @@ public:
 		if (m_py.hasVillage)
 			generateVillage(chunk, cpos, seed, wallB, roofB, floorB, pathB, vc, blocks);
 
-		// ── Spawn portal ──────────────────────────────────────────
-		BlockId stairB   = blocks.getId(BlockType::Stair);
-		BlockId planksB  = blocks.getId(BlockType::Planks);
-		BlockId arcaneB  = blocks.getId(BlockType::ArcaneStone);
-		BlockId portalB  = blocks.getId(BlockType::Portal);
+		// ── Spawn portal (or bare spawn-point block for minimal test worlds) ──
 		BlockId spawnPtB = blocks.getId(BlockType::SpawnPoint);
-		generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, arcaneB, portalB, spawnPtB, anchor);
+		if (m_py.hasPortal) {
+			BlockId stairB   = blocks.getId(BlockType::Stair);
+			BlockId planksB  = blocks.getId(BlockType::Planks);
+			BlockId arcaneB  = blocks.getId(BlockType::ArcaneStone);
+			BlockId portalB  = blocks.getId(BlockType::Portal);
+			generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, arcaneB, portalB, spawnPtB, anchor);
+		} else {
+			placeBareSpawnBlock(chunk, cpos, seed, spawnPtB, anchor);
+		}
 	}
 
 	// Portal platform height (blocks above groundY). Used in preferredSpawn + generatePortal.
@@ -372,6 +385,27 @@ private:
 		}
 		m_anchorCache[seed] = {sx, sz};
 		return {sx, sz};
+	}
+
+	// Bare spawn-point block for minimal test worlds. Places a single
+	// SpawnPoint block at ground level at the anchor, with no surrounding
+	// structure — player stands on top of it (see preferredSpawn).
+	void placeBareSpawnBlock(Chunk& chunk, ChunkPos cpos, int seed,
+	                         BlockId spawnPtB, glm::vec2 anchor) {
+		if (spawnPtB == BLOCK_AIR) return;
+		int ox = cpos.x * CHUNK_SIZE;
+		int oy = cpos.y * CHUNK_SIZE;
+		int oz = cpos.z * CHUNK_SIZE;
+		int px = (int)std::round(anchor.x);
+		int pz = (int)std::round(anchor.y);
+		int groundY = (m_py.terrainType == "flat")
+			? (int)m_py.surfaceY
+			: (int)std::round(naturalTerrainHeight(seed, (float)px, (float)pz, m_tp));
+		int lx = px - ox, ly = groundY - oy, lz = pz - oz;
+		if (lx >= 0 && lx < CHUNK_SIZE &&
+		    ly >= 0 && ly < CHUNK_SIZE &&
+		    lz >= 0 && lz < CHUNK_SIZE)
+			chunk.set(lx, ly, lz, spawnPtB);
 	}
 
 	// ── Spawn portal (grand elevated stone temple arch) ──────────

@@ -12,12 +12,13 @@ Ideas to try:
 """
 from modcraft_engine import Move
 from behavior_base import Behavior
+from local_world import SelfEntity, LocalWorld
 from stats import stats
 
 
 class IdleBehavior(Behavior):
 
-    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+    def decide(self, entity: SelfEntity, local_world: LocalWorld):
         stats.inc("decide", entity.type)
         return Move(entity.x, entity.y, entity.z), "Idle"
 

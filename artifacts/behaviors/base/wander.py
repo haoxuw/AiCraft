@@ -17,6 +17,7 @@ Entity props (optional):
 import random
 from modcraft_engine import Move
 from behavior_base import Behavior
+from local_world import SelfEntity, LocalWorld
 from stats import stats
 
 
@@ -29,7 +30,7 @@ class WanderBehavior(Behavior):
         self._resting = False
         self._rng_seeded = False
 
-    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+    def decide(self, entity: SelfEntity, local_world: LocalWorld):
         stats.inc("decide", entity.type)
         if not self._rng_seeded:
             random.seed(entity.id * 31337 + 42)

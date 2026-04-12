@@ -149,7 +149,8 @@ int main(int argc, char** argv) {
 			       "  --port PORT       Listen port (default 7777)\n"
 			       "  --world PATH      Load saved world from PATH\n"
 			       "  --seed N          World seed (default 42)\n"
-			       "  --template N      World template: 0=flat, 1=village (default 1)\n"
+			       "  --template N      World template: 0=flat, 1=village, 2=test_behaviors,\n"
+			       "                    3=test_dog, 4=test_villager (default 1)\n"
 			       "  --help, -h        Show this help\n", argv[0]);
 			return 0;
 		}
@@ -164,11 +165,14 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	// World templates
+	// World templates — indices referenced by --template:
+	//   0 flat  1 village  2 test_behaviors  3 test_dog  4 test_villager
 	std::vector<std::shared_ptr<modcraft::WorldTemplate>> templates = {
 		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/flat.py"),
 		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/village.py"),
 		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_behaviors.py"),
+		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_dog.py"),
+		std::make_shared<modcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_villager.py"),
 	};
 
 	if (interactive && isatty(fileno(stdin)))

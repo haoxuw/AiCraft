@@ -1,15 +1,30 @@
-"""Follow — loyal companion that trails the nearest humanoid.
+"""Follow — trail a nearby entity of a configurable tag.
 
-Dogs and similar pets use this behavior to stay near players and
-villagers. When no humanoid is in range, the entity wanders idly.
+Generic companion/trailing behavior. Not hardcoded to the player — works
+for dogs trailing humanoids, villagers following a chief, shepherd dogs
+herding sheep, baby ducks chasing mama duck, etc.
 
 Parameters (set via entity dict, all optional):
-  follow_dist   — stop following when within this distance (default 3.0)
-  patrol_range  — max range to detect humanoids (default 12.0)
+  target_tag    — tag to match on a nearby entity (default "humanoid")
+  follow_range  — preset stopping distance: "close" | "near" | "far"
+                  (default "near")
+                    close ≈ 1.5 blocks — at-heels, like a clingy pet
+                    near  ≈ 3.0 blocks — social spacing, default companion
+                    far   ≈ 8.0 blocks — wide escort, like a shepherd dog
+  follow_dist   — explicit distance override in blocks; wins over preset
+  patrol_range  — max range to detect targets (default 12.0)
 """
 import random
 from modcraft_engine import Move
 from behavior_base import Behavior
+from local_world import SelfEntity, LocalWorld
+
+
+_FOLLOW_PRESETS = {
+    "close": 1.5,
+    "near":  3.0,
+    "far":   8.0,
+}
 
 
 class FollowBehavior(Behavior):
@@ -18,17 +33,20 @@ class FollowBehavior(Behavior):
         self._home = None
         self._target_id = None
 
-    def decide(self, entity, local_world):
+    def decide(self, entity: SelfEntity, local_world: LocalWorld):
         self._home = self.init_home(entity, self._home)
 
-        follow_dist  = float(entity.get("follow_dist", 3.0))
+        target_tag   = entity.get("target_tag", "humanoid")
+        preset       = entity.get("follow_range", "near")
+        follow_dist  = float(entity.get("follow_dist",
+                                        _FOLLOW_PRESETS.get(preset, 3.0)))
         patrol_range = float(entity.get("patrol_range", 12.0))
         spd          = entity.walk_speed
 
-        # Find nearest humanoid within patrol range
+        # Find nearest entity matching target_tag within patrol range
         target = None
         for e in local_world.entities:
-            if not e.has_tag("humanoid"):
+            if not e.has_tag(target_tag):
                 continue
             if e.distance > patrol_range:
                 continue
@@ -37,7 +55,6 @@ class FollowBehavior(Behavior):
 
         if target is None:
             self._target_id = None
-            # Wander near home
             dist_home = self.dist2d(entity.x, entity.z, self._home[0], self._home[2])
             if dist_home > patrol_range:
                 return Move(*self._home, speed=spd * 0.5), "Heading home"

@@ -98,6 +98,9 @@ bool Game::init(int argc, char** argv) {
 				m_connectPort = atoi(argv[++i]);
 				m_serverPort = m_connectPort;
 			}
+			else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) {
+				m_skipMenuTemplate = atoi(argv[++i]);
+			}
 			else if (strcmp(argv[i], "--debug-scenario") == 0 && i + 1 < argc) {
 				dbgCfg.scenario = argv[++i];
 				dbgCfg.active = true;
@@ -242,7 +245,7 @@ bool Game::init(int argc, char** argv) {
 		printf("[Game] --skip-menu: starting new world directly\n");
 		m_currentWorldPath = "";   // force new world, never resume a save
 		m_currentSeed = (int)std::random_device{}();
-		enterGame(1, GameState::LOADING);
+		enterGame(m_skipMenuTemplate, GameState::LOADING);
 	// --host only: pre-populate the server list and show menu
 	} else if (!m_connectHost.empty()) {
 		printf("[Game] Server hint: %s:%d (join from menu)\n",

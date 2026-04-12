@@ -114,6 +114,8 @@ private:
 		// to false on each stepIndex advance via advanceStep().
 		struct StepWatch {
 			bool        initialized   = false;
+			bool        modeDetected  = false;  // first-tick mode latch (Move idle vs. travel)
+			bool        isIdleHold    = false;  // Move target == current pos → hold for kIdleHoldSeconds
 			float       stillAccum    = 0.0f;   // seconds with ~zero horizontal speed
 			float       progress      = 0.0f;   // for duration-based actions
 			int         prevTargetHP  = 0;      // Attack
@@ -336,11 +338,16 @@ private:
 	// Terminal outcomes (Success on final step, Failed anywhere) enqueue
 	// a re-decide with LastOutcome describing what happened.
 
-	static constexpr float kArriveEps     = 1.5f;   // blocks
-	static constexpr float kStillEps      = 0.1f;   // speed blocks/s
-	static constexpr float kStuckSeconds  = 2.0f;
-	static constexpr float kReachHarvest  = 3.0f;
-	static constexpr float kReachAttack   = 2.5f;
+	static constexpr float kArriveEps       = 1.5f;   // blocks
+	static constexpr float kStillEps        = 0.1f;   // speed blocks/s
+	static constexpr float kStuckSeconds    = 2.0f;
+	static constexpr float kReachHarvest    = 3.0f;
+	static constexpr float kReachAttack     = 2.5f;
+	// When a behavior returns Move(entity.x, y, z) (stand-still), the plan would
+	// Success in one frame and thrash the decide loop at ~60 Hz. Hold idle Moves
+	// for this long before re-deciding — lets the behavior check "am I still
+	// near my target?" at a human-reasonable cadence, not per frame.
+	static constexpr float kIdleHoldSeconds = 1.0f;
 
 	void phaseExecute(float dt) {
 		for (auto& [eid, state] : m_agents) {
@@ -399,7 +406,23 @@ private:
 	                         AgentState::StepWatch& watch, float dt) {
 		glm::vec3 delta = step.targetPos - entity.position;
 		delta.y = 0;
-		if (glm::length(delta) < kArriveEps) return StepOutcome::Success;
+		float dist = glm::length(delta);
+
+		// Latch mode on the first evaluation: if the behavior returned a
+		// stand-still Move (target == current pos), enter idle-hold. Applied
+		// Move will zero velocity; plan Successes after kIdleHoldSeconds.
+		if (!watch.modeDetected) {
+			watch.modeDetected = true;
+			watch.isIdleHold   = (dist < kArriveEps);
+		}
+
+		if (watch.isIdleHold) {
+			watch.progress += dt;
+			if (watch.progress >= kIdleHoldSeconds) return StepOutcome::Success;
+			return StepOutcome::InProgress;
+		}
+
+		if (dist < kArriveEps) return StepOutcome::Success;
 
 		float horiz = std::sqrt(entity.velocity.x * entity.velocity.x +
 		                        entity.velocity.z * entity.velocity.z);
@@ -479,7 +502,12 @@ private:
 		glm::vec3 dir = step.targetPos - entity.position;
 		dir.y = 0;
 		float dist = glm::length(dir);
-		if (dist < 1e-4f) return;
+		// Idle-hold or already-at-target: zero velocity so residual drift from
+		// a prior travel plan doesn't carry the entity past its target.
+		if (dist < kArriveEps) {
+			sendStopMove(eid, entity, state.goalText);
+			return;
+		}
 		dir /= dist;
 		float speed = step.speed > 0 ? step.speed : entity.def().walk_speed;
 		sendMove(eid, dir * speed, state.goalText);
@@ -543,6 +571,13 @@ private:
 		if (!state.plan.empty())
 			lastType = state.plan[std::min(state.stepIndex,
 			                               (int)state.plan.size() - 1)].type;
+		// On Move-Success, zero velocity so residual drift doesn't carry the
+		// entity past its target while the worker computes the next plan
+		// (decide runs async — can be multiple frames in flight).
+		if (lastType == PlanStep::Move && outcome == StepOutcome::Success) {
+			if (Entity* e = m_server.getEntity(eid))
+				sendStopMove(eid, *e, state.goalText);
+		}
 		LastOutcome next;
 		next.outcome     = outcome;
 		next.goalText    = state.goalText;

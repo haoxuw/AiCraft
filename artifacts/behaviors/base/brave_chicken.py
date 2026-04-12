@@ -20,6 +20,7 @@ Tree structure:
 import random
 from modcraft_engine import Move, Convert, Ground
 from behavior_base import Behavior
+from local_world import SelfEntity, LocalWorld
 from stats import stats
 
 
@@ -31,7 +32,7 @@ class BraveChickenBehavior(Behavior):
         self._resting = False
         self._egg_cooldown = 0.0
 
-    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+    def decide(self, entity: SelfEntity, local_world: LocalWorld):
         stats.inc("decide", entity.type)
         self._egg_cooldown -= local_world.dt
         self._home = self.init_home(entity, self._home)

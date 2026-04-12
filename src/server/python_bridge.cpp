@@ -670,6 +670,12 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			out.chestOffsetZ = getFloat(c, "offset_z", out.chestOffsetZ);
 		}
 
+		// portal — default true; set "portal": False to disable the temple arch.
+		if (w.contains("portal") && !w["portal"].is_none()) {
+			py::object p = w["portal"];
+			out.hasPortal = p.cast<bool>();
+		}
+
 		// village
 		out.hasVillage = w.contains("village") && !w["village"].is_none();
 		if (out.hasVillage) {

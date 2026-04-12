@@ -166,6 +166,7 @@ private:
 
 	// Startup flags
 	bool m_skipMenu = false;   // --skip-menu: skip main menu, start survival world directly
+	int  m_skipMenuTemplate = 1;  // --template N with --skip-menu: world template index (default village)
 
 	// Screenshots (F2 manual, or external trigger via /tmp/modcraft_screenshot_request)
 	int m_screenshotCounter = 0;

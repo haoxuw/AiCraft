@@ -5,6 +5,7 @@ No pathfinding, no scanning, no complex decisions — just Move.
 """
 from modcraft_engine import Move
 from behavior_base import Behavior
+from local_world import SelfEntity, LocalWorld
 from stats import stats
 
 
@@ -14,7 +15,7 @@ class PingpongBehavior(Behavior):
         self._origin = None
         self._going_east = True
 
-    def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+    def decide(self, entity: SelfEntity, local_world: LocalWorld):
         stats.inc("decide", entity.type)
         spd = entity.walk_speed
 

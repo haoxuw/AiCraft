@@ -8,7 +8,7 @@ GAME_PORT :=
 WEB_PORT := 8080
 EMSDK := $(HOME)/emsdk
 
-.PHONY: game build configure clean server client stop test_e2e web web-build web-configure web-clean proxy
+.PHONY: game build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler
 
 # ── Native ─────────────────────────────────────────────────
 #
@@ -36,6 +36,15 @@ game: build
 # Singleplayer with frame profiler overlay enabled
 profiler: build
 	./$(BUILD_DIR)/modcraft --skip-menu --profiler$(if $(GAME_PORT), --port $(GAME_PORT),)
+
+# Minimal isolation worlds for focused behavior testing.
+#   test-dog       flat world, player + 1 dog, nothing else
+#   test-villager  1 player, 1 villager, 1 dog, 1 house, 1 chest, sparse trees
+test-dog: build
+	./$(BUILD_DIR)/modcraft --skip-menu --template 3
+
+test-villager: build
+	./$(BUILD_DIR)/modcraft --skip-menu --template 4
 
 # Dedicated server (interactive world select, or --world/--seed/--template flags)
 server: build
