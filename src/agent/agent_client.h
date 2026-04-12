@@ -54,6 +54,7 @@ public:
 		drainWorkerResults();
 		auto t2 = Clock::now();
 		phaseExecute(dt);
+		scanClientInterrupts();
 		auto t3 = Clock::now();
 		auto ms = [](Clock::duration d) {
 			return std::chrono::duration<float, std::milli>(d).count();
@@ -552,6 +553,81 @@ private:
 		state.viz.waypoints.clear();
 		if (!m_decisionQueue.hasPending(eid))
 			m_decisionQueue.enqueue(eid, std::move(next));
+	}
+
+	// ── Client-side interrupt diff ──────────────────────────────────────
+	// Observe world state each tick; if something reasonably urgent
+	// happened (HP drop, attack target vanished), interrupt the current
+	// plan and enqueue a re-decide. Visual-only races are fine.
+	void scanClientInterrupts() {
+		for (auto& [eid, state] : m_agents) {
+			if (!state.claimed) continue;
+			Entity* e = m_server.getEntity(eid);
+			if (!e || e->removed) continue;
+
+			int curHp = e->hp();
+			bool hpDropped = (state.prevHp > 0 && curHp < state.prevHp);
+			state.prevHp = curHp;
+
+			if (state.plan.empty()) continue;
+
+			if (hpDropped) {
+				interruptPlan(eid, state, *e, "hp");
+				continue;
+			}
+
+			if (state.stepIndex < (int)state.plan.size()) {
+				PlanStep& step = state.plan[state.stepIndex];
+				if (step.type == PlanStep::Attack) {
+					Entity* t = m_server.getEntity(step.targetEntity);
+					if (!t || t->removed) {
+						interruptPlan(eid, state, *e, "target_gone");
+						continue;
+					}
+				}
+			}
+		}
+	}
+
+public:
+	// Called from network layer when server broadcasts a per-entity
+	// interrupt (e.g. proximity trigger). See Step 7.
+	void onInterrupt(EntityId eid, const std::string& reason) {
+		auto it = m_agents.find(eid);
+		if (it == m_agents.end()) return;
+		Entity* e = m_server.getEntity(eid);
+		if (!e) return;
+		interruptPlan(eid, it->second, *e, reason);
+	}
+
+	// Called from network layer when server broadcasts a world-wide
+	// event (e.g. day/night edge). See Step 7.
+	void onWorldEvent(const std::string& kind, const std::string& /*payload*/) {
+		std::string reason = kind;
+		for (auto& [eid, state] : m_agents) {
+			if (!state.claimed) continue;
+			Entity* e = m_server.getEntity(eid);
+			if (!e || e->removed) continue;
+			interruptPlan(eid, state, *e, reason);
+		}
+	}
+private:
+
+	// Abort the current plan and enqueue re-decide with interrupt:<reason>.
+	void interruptPlan(EntityId eid, AgentState& state, Entity& /*entity*/,
+	                   const std::string& reason) {
+		if (state.plan.empty()) return;
+		PlanStep::Type lastType = state.plan[std::min(state.stepIndex,
+		                                              (int)state.plan.size() - 1)].type;
+		LastOutcome next;
+		next.outcome     = StepOutcome::Success;
+		next.goalText    = state.goalText;
+		next.stepTypeRaw = (int)lastType;
+		next.reason      = "interrupt:" + reason;
+		state.plan.clear();
+		state.stepIndex  = 0;
+		state.viz.waypoints.clear();
+		m_decisionQueue.enqueue(eid, std::move(next));
 	}
 
 	// ── Action helpers ──────────────────────────────────────────────────
