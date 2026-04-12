@@ -19,6 +19,8 @@
 #include "client/particles.h"
 #include "client/controls.h"
 #include "client/model.h"
+#include "client/entity_drawer.h"
+#include "client/lightbulb_drawer.h"
 #include "client/model_preview.h"
 #include "client/model_icon_cache.h"
 #include "client/floating_text.h"
@@ -111,6 +113,11 @@ private:
 	// Ticked in updatePlaying() after network tick, before render.
 	std::unique_ptr<AgentClient> m_agentClient;
 
+	// Per-entity drawing modules. Lazily initialised once the renderer /
+	// ModelRenderer is ready (Renderer::init fills m_renderer.modelRenderer()).
+	std::unique_ptr<EntityDrawer>     m_entityDrawer;
+	std::unique_ptr<LightbulbDrawer>  m_lightbulbDrawer;
+
 	GameplayController          m_gameplay;
 	CodeEditor                  m_codeEditor;
 	BehaviorEditorState         m_inspectEditor; // visual behavior tree for entity inspect
@@ -194,7 +201,6 @@ private:
 	int m_renderDistance = 8;
 	bool m_vsync = true;
 	bool m_showGoalBubbles = true;  // lightbulb icons above AI entities
-	bool m_showGoalText    = true;  // goal text label above lightbulbs
 
 	// Display
 	bool m_showDebug = false;
@@ -250,10 +256,8 @@ private:
 	// HP snapshot for damage/death detection (client-side, works over network)
 	std::unordered_map<EntityId, int> m_prevEntityHP;
 
-	// Last-seen goal per entity — used to detect changes and drive the pop animation
+	// Last-seen goal per entity — used to log goal-change lines to the in-game log
 	std::unordered_map<EntityId, std::string> m_entityGoals;
-	// Pop timer per entity: counts down from 1→0 after a goal change (drives scale burst)
-	std::unordered_map<EntityId, float> m_entityGoalPopTimer;
 
 	// Damage flash timer: entity flashes red for this many seconds after taking a hit
 	std::unordered_map<EntityId, float> m_damageFlash;

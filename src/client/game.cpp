@@ -50,6 +50,9 @@ bool Game::init(int argc, char** argv) {
 	if (!m_text.init("shaders")) return false;
 	if (!m_particles.init("shaders")) return false;
 
+	m_entityDrawer    = std::make_unique<EntityDrawer>(m_renderer.modelRenderer());
+	m_lightbulbDrawer = std::make_unique<LightbulbDrawer>(m_renderer.modelRenderer(), m_text);
+
 	m_controls.load("config/controls.yaml");
 	m_ui.init(m_window.handle());
 
@@ -316,12 +319,7 @@ void Game::runOneFrame() {
 		if (frameMs > 33.0f) {
 			m_slowFrameCount++;
 			if (frameMs > m_worstFrameMs) m_worstFrameMs = frameMs;
-			if (m_slowFrameCount <= 5 || m_slowFrameCount % 60 == 0) {
-				fprintf(stderr, "[Perf] SLOW frame: %.1fms — begin=%.1f input=%.1f upd+render=%.1f swap=%.1f "
-					"(world=%.1f entity=%.1f hud=%.1f)\n",
-					frameMs, beginMs, inputMs, updMs, swapMs,
-					m_profile.worldMs, m_profile.entityMs, m_profile.hudMs);
-			}
+			// Per-frame SLOW log is noisy; the 5-second summary below is enough.
 		}
 		if (m_perfTimer >= 5.0f) {
 			if (m_slowFrameCount > 0)

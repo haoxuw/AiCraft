@@ -232,12 +232,8 @@ static void buildTextVerts(std::vector<float>& verts, const std::string& text,
 	}
 }
 
-void TextRenderer::drawText(const std::string& text, float x, float y,
-                            float scale, glm::vec4 color, float aspect) {
-	std::vector<float> verts;
-	buildTextVerts(verts, text, x, y, scale);
-	if (verts.empty()) return;
-
+void TextRenderer::uploadAndDraw(const float* verts, size_t floatCount,
+                                 int mode, glm::vec4 color) {
 	glDisable(GL_DEPTH_TEST);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -246,46 +242,35 @@ void TextRenderer::drawText(const std::string& text, float x, float y,
 	m_textShader.setVec3("uColor", glm::vec3(color));
 	m_textShader.setFloat("uAlpha", color.a);
 	m_textShader.setInt("uFontTex", 0);
-	m_textShader.setInt("uMode", 0); // SDF text
+	m_textShader.setInt("uMode", mode);
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, m_fontTexture);
 
 	glBindVertexArray(m_vao);
 	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, verts.size() * sizeof(float), verts.data());
-	glDrawArrays(GL_TRIANGLES, 0, (int)(verts.size() / 4));
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(floatCount * sizeof(float)),
+		verts, GL_DYNAMIC_DRAW);
+	glDrawArrays(GL_TRIANGLES, 0, (int)(floatCount / 4));
 
 	glDisable(GL_BLEND);
 	glEnable(GL_DEPTH_TEST);
 }
 
-void TextRenderer::drawTitle(const std::string& text, float x, float y,
-                             float scale, glm::vec4 color, float aspect) {
+void TextRenderer::drawText(const std::string& text, float x, float y,
+                            float scale, glm::vec4 color, float /*aspect*/) {
 	std::vector<float> verts;
 	buildTextVerts(verts, text, x, y, scale);
 	if (verts.empty()) return;
+	uploadAndDraw(verts.data(), verts.size(), 0, color);
+}
 
-	glDisable(GL_DEPTH_TEST);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	m_textShader.use();
-	m_textShader.setVec3("uColor", glm::vec3(color));
-	m_textShader.setFloat("uAlpha", color.a);
-	m_textShader.setInt("uFontTex", 0);
-	m_textShader.setInt("uMode", 2); // title mode: outline + glow
-
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, m_fontTexture);
-
-	glBindVertexArray(m_vao);
-	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, verts.size() * sizeof(float), verts.data());
-	glDrawArrays(GL_TRIANGLES, 0, (int)(verts.size() / 4));
-
-	glDisable(GL_BLEND);
-	glEnable(GL_DEPTH_TEST);
+void TextRenderer::drawTitle(const std::string& text, float x, float y,
+                             float scale, glm::vec4 color, float /*aspect*/) {
+	std::vector<float> verts;
+	buildTextVerts(verts, text, x, y, scale);
+	if (verts.empty()) return;
+	uploadAndDraw(verts.data(), verts.size(), 2, color);
 }
 
 void TextRenderer::drawRect(float x, float y, float w, float h, glm::vec4 color) {
@@ -297,26 +282,7 @@ void TextRenderer::drawRect(float x, float y, float w, float h, glm::vec4 color)
 		x+w, y+h, 1, 1,
 		x,   y+h, 0, 1,
 	};
-
-	glDisable(GL_DEPTH_TEST);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	m_textShader.use();
-	m_textShader.setVec3("uColor", glm::vec3(color));
-	m_textShader.setFloat("uAlpha", color.a);
-	m_textShader.setInt("uFontTex", 0);
-	m_textShader.setInt("uMode", 1); // solid rect mode
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, m_fontTexture);
-
-	glBindVertexArray(m_vao);
-	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-
-	glDisable(GL_BLEND);
-	glEnable(GL_DEPTH_TEST);
+	uploadAndDraw(verts, std::size(verts), 1, color);
 }
 
 void TextRenderer::drawArc(float cx, float cy, float r_inner, float r_outer,
@@ -345,24 +311,7 @@ void TextRenderer::drawArc(float cx, float cy, float r_inner, float r_outer,
 		};
 		verts.insert(verts.end(), std::begin(seg), std::end(seg));
 	}
-
-	glDisable(GL_DEPTH_TEST);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	m_textShader.use();
-	m_textShader.setVec3("uColor", glm::vec3(color));
-	m_textShader.setFloat("uAlpha", color.a);
-	m_textShader.setInt("uFontTex", 0);
-	m_textShader.setInt("uMode", 1); // solid fill
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, m_fontTexture);
-	glBindVertexArray(m_vao);
-	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-	size_t bytes = verts.size() * sizeof(float);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)bytes, verts.data(), GL_DYNAMIC_DRAW);
-	glDrawArrays(GL_TRIANGLES, 0, (int)(verts.size() / 4));
-	glDisable(GL_BLEND);
-	glEnable(GL_DEPTH_TEST);
+	uploadAndDraw(verts.data(), verts.size(), 1, color);
 }
 
 } // namespace modcraft

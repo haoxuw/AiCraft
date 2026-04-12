@@ -187,8 +187,8 @@ class WoodcutterBehavior(Behavior):
         goal = (int(tx), int(ty), int(tz))
         action = self._nav.navigate(entity, local_world, goal, speed=spd)
         if action:
-            return action, "Searching for trees..."
-        return Move(tx, ty, tz, speed=spd), "Searching for trees..."
+            return action, "Searching for trees"
+        return Move(tx, ty, tz, speed=spd), "Searching for trees"
 
     # ── State: Deposit ────────────────────────────────────────────────────────
 

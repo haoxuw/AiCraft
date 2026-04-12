@@ -156,6 +156,39 @@ cmake --build build -j$(nproc) && \
 # writes /tmp/debug_N_<suffix>.ppm per camera angle (FPS/TPS/RPG/RTS/ground)
 ```
 
+**Behavioral QA without a window (headless log mode):**
+
+Use this instead of screenshots when you need to verify *what creatures are deciding and doing*, not what the world looks like. The log is a WoW-style combat/event stream derived entirely from the TCP state stream (Rule 5 compliant — no server-side logging).
+
+```bash
+./build/modcraft --skip-menu --log-only            # singleplayer, no GUI
+./build/modcraft --log-only --host H --port P      # attach to remote server
+# Streams events to stdout AND /tmp/modcraft_game.log (truncated on start;
+# prior session preserved as /tmp/modcraft_game.log.prev)
+```
+
+In GUI mode the same log is also written to `/tmp/modcraft_game.log` and viewable from **Main Menu → Game Log** and the pause menu. One source of truth; Claude reads the file.
+
+**Log format** — `[HH:MM:SS] [CATEGORY] <actor> <event>`:
+| Category  | Source                                   | Example |
+|-----------|------------------------------------------|---------|
+| `DECIDE`  | `goalText` deltas in `S_ENTITY`          | `woodcutter#7 → MoveTo tree@(45,60,30)` |
+| `MOVE`    | position deltas in `S_ENTITY` (throttled)| `chicken#5 @ (32,64,25)` |
+| `ACTION`  | `S_BLOCK` break/place                    | `woodcutter#7 broke base:log@(45,60,30)` |
+| `COMBAT`  | HP deltas across `S_ENTITY` snapshots    | `wolf#9 → sheep#3 for -5hp (12→7)` |
+| `DEATH`   | `S_REMOVE` with last HP=0                | `sheep#3` |
+| `INV`     | `S_INVENTORY` diffs                      | `player#1 picked up base:log ×1` |
+
+**Verification recipe (replaces screenshot-driven loops for AI behavior work):**
+```bash
+cmake --build build -j$(nproc) && pkill -f "build/modcraft"; sleep 0.5 && \
+  ./build/modcraft --skip-menu --log-only &
+sleep 10 && pkill -f "build/modcraft"
+# then Read /tmp/modcraft_game.log — grep for DECIDE/ACTION/COMBAT
+```
+
+This is the preferred verification path for behavior/AI/pathfinding changes. Use screenshots only when the bug is visual (rendering, animation, UI).
+
 **In-game shortcuts:**
 
 | Key | Action |

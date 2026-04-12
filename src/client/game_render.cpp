@@ -1,5 +1,6 @@
 #include "client/game.h"
 #include "imgui.h"
+#include <unordered_map>
 #include <unordered_set>
 #include <filesystem>
 
@@ -250,55 +251,16 @@ void Game::renderEntities(float dt, float aspect) {
 		if (controllingLocalPlayer && e.id() == localId) return;
 		if (e.id() == controlledId && m_camera.mode == CameraMode::FirstPerson) return;
 
-		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
-		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);
-		AnimState mobAnim = {};
-		mobAnim.walkDistance = mobDist;
-		mobAnim.speed        = mobSpeed;
-		mobAnim.time         = m_globalTime;
-
 		std::string modelKey = resolveModelKey(e);
 		auto mit = m_models.find(modelKey);
 		if (mit != m_models.end()) {
-			const BoxModel& mobModel = mit->second;
-
 			// Damage flash: entity flashes red for a short time after being hit
 			float flashT = 0.0f;
 			auto flit = m_damageFlash.find(e.id());
 			if (flit != m_damageFlash.end()) flashT = flit->second;
 			float tintStr = std::max(0.0f, flashT / 0.25f);
 
-			// Client-side animation clip selection for mobs.
-			// Driven purely from observable entity state (goal text) — server
-			// has no knowledge of animations per Rule 0. Keyword table is
-			// additive: modders can extend behaviors and add matching clip
-			// names to their model's `clips` dict.
-			auto pickClip = [](const std::string& goal) -> const char* {
-				if (goal.empty()) return "";
-				if (goal.find("Chopping")    != std::string::npos) return "chop";
-				if (goal.find("Mining")      != std::string::npos) return "mine";
-				if (goal.find("Sleeping")    != std::string::npos) return "sleep";
-				if (goal.find("Depositing")  != std::string::npos) return "wave";
-				if (goal.find("Dancing")     != std::string::npos) return "dance";
-				return "";
-			};
-			mobAnim.currentClip = pickClip(e.goalText);
-
-			// Remote head tracking: split lookYaw into head + body overflow.
-			// AI creatures get lookYaw=bodyYaw from the server, so their
-			// heads naturally face forward with no special-casing here.
-			float remoteBodyYaw = e.yaw;
-			if (e.def().isLiving()) {
-				constexpr float kMax = 45.0f;
-				float rel = e.lookYaw - e.yaw;
-				while (rel >  180.f) rel -= 360.f;
-				while (rel < -180.f) rel += 360.f;
-				float headDeg = glm::clamp(rel, -kMax, kMax);
-				remoteBodyYaw = e.yaw + (rel - headDeg);
-				mobAnim.lookYaw   = glm::radians(-headDeg);
-				mobAnim.lookPitch = glm::radians(glm::clamp(e.lookPitch, -45.f, 45.f));
-			}
-			mr.draw(mobModel, vp, e.position, remoteBodyYaw, mobAnim, tintStr);
+			m_entityDrawer->draw(e, mit->second, vp, m_globalTime, tintStr);
 		} else if (!modelKey.empty() && e.typeId() != ItemName::ItemEntity) {
 			// Warn once per model key
 			static std::unordered_set<std::string> warned;
@@ -465,37 +427,16 @@ void Game::renderEntityEffects(float dt, float aspect) {
 		return key;
 	};
 
-	// Lightbulb icon (UI indicator above AI entities, not game content)
-	static BoxModel lightbulb = []() {
-		BoxModel m; m.totalHeight = 0.4f;
-		auto mk = [](glm::vec3 off, glm::vec3 half, glm::vec4 col) {
-			BodyPart p; p.offset = off; p.halfSize = half; p.color = col; return p;
-		};
-		m.parts.push_back(mk({0,0.15f,0},{0.08f,0.10f,0.08f},{1.0f,0.92f,0.3f,0.9f}));
-		m.parts.push_back(mk({0,0.27f,0},{0.05f,0.04f,0.05f},{1.0f,1.0f,0.7f,0.95f}));
-		m.parts.push_back(mk({0,0.04f,0},{0.06f,0.05f,0.06f},{0.5f,0.5f,0.5f,0.9f}));
-		return m;
-	}();
-
 	srv.forEachEntity([&](Entity& e) {
 		if (e.id() == m_server->localPlayerId()) return;
 		if (!e.def().isLiving()) return; // only living entities
 
 		float entityTop = e.def().collision_box_max.y;
-		float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;
-		glm::vec3 bulbPos = e.position + glm::vec3(0, entityTop + 0.3f + bobY, 0);
 
-		if (m_showGoalBubbles) {
-			// Red tint if behavior has error
-			BoxModel bulb = lightbulb;
-			if (e.hasError) {
-				for (auto& p : bulb.parts)
-					p.color = {1.0f, 0.2f, 0.2f, 0.9f};
-			}
-			mr.draw(bulb, vp, bulbPos, m_camera.lookYaw, {}); // billboard: face camera
-		}
+		if (m_showGoalBubbles)
+			m_lightbulbDrawer->draw(e, vp, m_globalTime, m_camera.lookYaw, aspect);
 
-		// Goal change detection — log to in-game overlay and trigger pop animation
+		// Goal change detection — log to in-game overlay
 		{
 			auto& prev = m_entityGoals[e.id()];
 			if (!e.goalText.empty() && e.goalText != prev) {
@@ -505,7 +446,6 @@ void Game::renderEntityEffects(float dt, float aspect) {
 				if (col != std::string::npos) typeName = typeName.substr(col + 1);
 				if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
 				appendLog(typeName + " #" + std::to_string(e.id()) + ": " + e.goalText);
-				m_entityGoalPopTimer[e.id()] = 3.0f;  // text visible for 3s then fades
 			}
 		}
 
@@ -560,11 +500,6 @@ void Game::renderEntityEffects(float dt, float aspect) {
 				flit->second -= dt;
 				if (flit->second <= 0) m_damageFlash.erase(flit);
 			}
-			auto plit = m_entityGoalPopTimer.find(e.id());
-			if (plit != m_entityGoalPopTimer.end()) {
-				plit->second -= dt;
-				if (plit->second <= 0) m_entityGoalPopTimer.erase(plit);
-			}
 		}
 	});
 
@@ -579,8 +514,6 @@ void Game::renderEntityEffects(float dt, float aspect) {
 		}
 		for (auto it = m_damageFlash.begin(); it != m_damageFlash.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_damageFlash.erase(it);
-		for (auto it = m_entityGoalPopTimer.begin(); it != m_entityGoalPopTimer.end(); )
-			it = seen.count(it->first) ? std::next(it) : m_entityGoalPopTimer.erase(it);
 		for (auto it = m_entityGoals.begin(); it != m_entityGoals.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_entityGoals.erase(it);
 	}
@@ -914,48 +847,6 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 		}
 		ImGui::End();
 		ImGui::PopStyleVar(2);
-	}
-
-	// Goal text overlay — world-anchored label above each entity's lightbulb
-	if (m_showGoalText) {
-		glm::mat4 vp2 = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
-		m_server->forEachEntity([&](Entity& e) {
-			if (e.id() == m_server->localPlayerId()) return;
-			if (!e.def().isLiving() || e.removed) return;
-
-			float entityTop = e.def().collision_box_max.y;
-			float bobY = std::sin(m_globalTime * 2.0f + e.id() * 0.7f) * 0.05f;
-			glm::vec3 textPos = e.position + glm::vec3(0, entityTop + 0.6f + bobY, 0);
-			glm::vec4 clip = vp2 * glm::vec4(textPos, 1.0f);
-			if (clip.w <= 0.0f || clip.z <= 0.0f) return;
-			float nx = clip.x / clip.w, ny = clip.y / clip.w;
-			if (nx < -1.5f || nx > 1.5f || ny < -1.5f || ny > 1.5f) return;
-
-			const auto pit = m_entityGoalPopTimer.find(e.id());
-			const bool hasTimer = (pit != m_entityGoalPopTimer.end());
-			if (!e.hasError && !hasTimer) return;
-
-			const float visT   = hasTimer ? pit->second / 3.0f : 0.0f;
-			const float burstT = hasTimer ? std::min(pit->second / 0.45f, 1.0f) : 0.0f;
-
-			const char* label;
-			glm::vec4   color;
-			if (e.hasError) {
-				label = e.goalText.empty() ? "ERROR" : e.goalText.c_str();
-				color = {1.0f, 0.35f + 0.15f * burstT, 0.35f + 0.15f * burstT, 0.95f};
-			} else if (!e.goalText.empty()) {
-				label = e.goalText.c_str();
-				color = {0.88f + 0.12f * burstT, 1.0f, 0.80f + 0.20f * burstT, visT};
-			} else {
-				const auto& bid = e.getProp<std::string>(Prop::BehaviorId, "");
-				label = bid.empty() ? e.typeId().c_str() : bid.c_str();
-				color = {0.5f, 0.5f, 0.5f, 0.35f};
-			}
-
-			const float scale = 0.80f + 0.30f * burstT;
-			float textW = (float)std::strlen(label) * scale * 0.018f;
-			m_text.drawText(label, nx - textW * 0.5f, ny, scale, color, aspect);
-		});
 	}
 
 	// Floating text notifications (damage, pickups, heals)

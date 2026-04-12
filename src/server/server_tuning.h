@@ -38,7 +38,7 @@ namespace modcraft::ServerTuning {
 	// Network
 	constexpr float tickRate             = 1.0f / 60.0f;  // 60 tps
 	constexpr float broadcastInterval    = 0.05f;          // 20 Hz — agents need fresh position for behavior decisions
-	constexpr float statusLogInterval    = 5.0f;           // seconds between status prints
+	constexpr float statusLogInterval    = 60.0f;          // seconds between status prints
 
 	// Decision queue (agent-side scheduling, constants here for single source of truth)
 	constexpr float defaultDecideDuration  = 0.25f;   // seconds — default when Python returns 2-tuple

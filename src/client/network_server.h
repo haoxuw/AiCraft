@@ -554,7 +554,10 @@ private:
 				ent->velocity = es.velocity;
 				ent->yaw = es.yaw;
 				ent->onGround = es.onGround;
-				ent->goalText = es.goalText;
+				// Placeholder until first decide() lands — the render path asserts
+			// goalText is non-empty, but S_ENTITY on first spawn arrives before
+			// any Python decide() has populated a goal.
+			ent->goalText = es.goalText.empty() ? "Spawning..." : es.goalText;
 				// Entities owned by our in-process agent client keep lookYaw
 				// locally predicted (same reason as the S_ENTITY update path).
 				bool ownedByUs = (es.owner == (int)m_localPlayerId);
@@ -627,7 +630,7 @@ private:
 						e.lookPitch = es.lookPitch;
 					}
 				}
-				e.goalText = es.goalText;
+				if (!es.goalText.empty()) e.goalText = es.goalText;
 				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);
 				if (es.owner != 0)

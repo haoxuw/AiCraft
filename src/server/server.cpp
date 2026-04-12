@@ -52,21 +52,8 @@ void GameServer::resolveActions(float dt) {
 			e->velocity.z = p.desiredVel.z;
 
 			// ── DEBUG: server-side Move receipt probe (10-min cooldown) ──
-			// Logs the first Move action received per entity so we can see
-			// whether client-authoritative (hasClientPos=1, skipPhys=1) or
-			// server-authoritative (both 0) path is in use.
-			{
-				char detail[192];
-				snprintf(detail, sizeof(detail),
-					"pos=(%.2f,%.2f,%.2f) velIn=(%.2f,%.2f,%.2f) hasClientPos=%d skipPhys=%d",
-					e->position.x, e->position.y, e->position.z,
-					p.desiredVel.x, p.desiredVel.y, p.desiredVel.z,
-					p.hasClientPos ? 1 : 0, e->skipPhysics ? 1 : 0);
-				const char* reason = p.hasClientPos
-					? "server receives Move with clientPos (client-authoritative path)"
-					: "server receives Move, no clientPos (server runs own physics)";
-				logMoveStuck(p.actorId, "Server", reason, detail);
-			}
+			// (noisy per-entity startup diagnostic removed — re-enable if
+			// you need to debug client-vs-server physics routing.)
 
 			// Derive move target for client-side prediction (10-block lookahead)
 			float hLen = std::sqrt(p.desiredVel.x * p.desiredVel.x + p.desiredVel.z * p.desiredVel.z);

@@ -835,16 +835,9 @@ private:
 		// First Move command the agent sends for this entity. Pair with
 		// [MoveStuck:Server] to see whether the server accepts it
 		// unchanged or clamps it.
-		if (e) {
-			char detail[160];
-			snprintf(detail, sizeof(detail),
-				"pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f)",
-				e->position.x, e->position.y, e->position.z,
-				vel.x, vel.y, vel.z);
-			logMoveStuck(eid, "Agent",
-				"agent sending Move command (client-side prediction applied)",
-				detail);
-		}
+		// (noisy per-entity startup diagnostic removed; Agent-Stuck path
+		// above still fires when an agent genuinely fails to progress.)
+		(void)e;
 
 		ActionProposal p;
 		p.type = ActionProposal::Move;

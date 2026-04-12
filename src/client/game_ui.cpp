@@ -512,8 +512,6 @@ void Game::updatePaused(float dt, float aspect) {
 	ImGui::Spacing();
 	ImGui::SetCursorPosX(28);
 	ImGui::Checkbox("Show lightbulbs", &m_showGoalBubbles);
-	ImGui::SetCursorPosX(28);
-	ImGui::Checkbox("Show goal text",  &m_showGoalText);
 	ImGui::Spacing();
 
 	// Quit Game

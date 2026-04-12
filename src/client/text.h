@@ -35,6 +35,9 @@ public:
 
 private:
 	void generateFontTexture();
+	// Upload `floatCount` floats (pos.xy + uv.xy per vertex) and draw them as
+	// triangles. `mode` is the shader branch: 0=SDF text, 1=solid fill, 2=title.
+	void uploadAndDraw(const float* verts, size_t floatCount, int mode, glm::vec4 color);
 
 	Shader m_textShader;
 	GLuint m_fontTexture = 0;

@@ -144,6 +144,10 @@ set(CLIENT_SOURCES
 	src/client/text.cpp
 	src/client/model.h
 	src/client/model.cpp
+	src/client/entity_drawer.h
+	src/client/entity_drawer.cpp
+	src/client/lightbulb_drawer.h
+	src/client/lightbulb_drawer.cpp
 	src/client/particles.h
 	src/client/particles.cpp
 	src/client/controls.h
