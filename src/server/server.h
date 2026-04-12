@@ -156,21 +156,23 @@ public:
 		auto& tmpl = m_world->getTemplate();
 		auto& wgc  = m_wgc;
 
-		// Scan upward from terrain noise height to find the actual topmost solid block,
-		// so mobs don't spawn inside village buildings placed on top of terrain.
+		// Finds the standing surface at (x,z): starts at terrain noise height
+		// and walks up through built-up solid blocks (piled dirt, paths,
+		// house floors) until the first air block. Returns that air Y —
+		// i.e. where a mob's feet would rest. We do NOT keep scanning for
+		// the topmost solid in the column, which would land mobs on ROOFTOPS
+		// whenever a house covers (x,z). surfaceHeight() is terrain-only, so
+		// we stay grounded even directly under a placed building.
 		auto actualSurfaceY = [&](float x, float z) -> float {
 			float terrainY = m_world->surfaceHeight(x, z);
-			int startY = std::max(0, (int)std::round(terrainY) - 1);
-			int topSolid = startY - 1;
 			int bx = (int)std::round(x), bz = (int)std::round(z);
-			for (int y = startY; y <= startY + 30; y++) {
+			int y = std::max(0, (int)std::round(terrainY));
+			for (int i = 0; i < 8; i++) {
 				BlockId bid = m_world->getBlock(bx, y, bz);
-				if (m_world->blocks.get(bid).solid)
-					topSolid = y;
-				else if (y > topSolid + 5)
-					break;
+				if (!m_world->blocks.get(bid).solid) break;
+				y++;
 			}
-			return (float)(topSolid + 1);
+			return (float)y;
 		};
 		auto safeSpawnHeight = [&](float x, float z) {
 			return actualSurfaceY(x, z) + ServerTuning::spawnHeightOffset;
