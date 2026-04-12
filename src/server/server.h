@@ -151,38 +151,97 @@ public:
 		std::vector<MobSpawn> mobList = wgc.mobs;
 		if (mobList.empty()) {
 			for (auto& mc : tmpl.pyConfig().mobs)
-				mobList.push_back({mc.type, mc.count, mc.radius, mc.props});
+				mobList.push_back({mc.type, mc.count, mc.radius,
+					parseSpawnAnchor(mc.spawnAt), mc.props});
 		}
 
-		auto spawnMob = [&](const MobSpawn& ms, float baseOffset) {
-			float radius = (ms.radius > 0) ? ms.radius : wgc.mobSpawnRadius;
-			for (int m = 0; m < ms.count; m++) {
-				float angle = (float)m / (float)ms.count * 6.28318f + baseOffset;
-				float emx = mobCX + std::cos(angle) * radius;
-				float emz = mobCZ + std::sin(angle) * radius;
-
-				std::unordered_map<std::string, PropValue> extraProps;
-				for (auto& [k, v] : ms.props) extraProps[k] = v;
-				auto bIt = wgc.behaviorOverrides.find(ms.typeId);
-				if (bIt != wgc.behaviorOverrides.end())
-					extraProps[Prop::BehaviorId] = bIt->second;
-
-				EntityId eid = m_world->entities.spawn(ms.typeId,
-					{emx, safeSpawnHeight(emx, emz), emz}, extraProps);
-
-				auto iIt = wgc.startingItems.find(ms.typeId);
-				if (iIt != wgc.startingItems.end()) {
-					Entity* e = m_world->entities.get(eid);
-					if (e && e->inventory) {
-						for (auto& [itemId, cnt] : iIt->second)
-							e->inventory->add(itemId, cnt);
-					}
-				}
+		// Resolve where each SpawnAnchor positions a mob group in world XZ.
+		// Returns (cx, cz) anchor point and (spacing, insideBuilding):
+		//   insideBuilding=true distributes entities in a grid inside the
+		//   building (barn). Otherwise they're placed on a circular ring.
+		auto portalSpawn = tmpl.preferredSpawn(m_world->seed());
+		auto barnCtr     = tmpl.barnCenter(m_world->seed());
+		int  barnFY      = tmpl.barnFloorY(m_world->seed());
+		int barnSlot = 0;  // flat counter across all species so no two land on the same cell
+		struct AnchorInfo { float cx, cz, defaultRadius; bool inside; float fixedY; };
+		auto resolveAnchor = [&](SpawnAnchor a) -> AnchorInfo {
+			switch (a) {
+			case SpawnAnchor::Monument:
+				return {mobCX, mobCZ, 6.0f, false, -1.0f};
+			case SpawnAnchor::Barn:
+				if (barnCtr.x >= 0)
+					return {(float)barnCtr.x, (float)barnCtr.y, 4.0f, true, (float)barnFY};
+				return {mobCX, mobCZ, 10.0f, false, -1.0f};  // no barn → fall back to ring
+			case SpawnAnchor::Portal:
+				return {portalSpawn.x, portalSpawn.z, 3.0f, false, -1.0f};
+			case SpawnAnchor::VillageCenter:
+			default:
+				return {mobCX, mobCZ, wgc.mobSpawnRadius, false, -1.0f};
 			}
 		};
 
-		// Place chests in all non-barn houses. Returns positions in house order.
+		// Place chests in houses BEFORE spawning mobs — villagers need
+		// bed/chest assignments when they're spawned at the Monument anchor.
 		auto houseChests = tmpl.houseChestPositions(m_world->seed());
+		auto beds        = tmpl.bedPositions(m_world->seed());
+
+		auto spawnOne = [&](const MobSpawn& ms, float x, float z, float fixedY,
+		                    std::unordered_map<std::string, PropValue> extraProps) {
+			for (auto& [k, v] : ms.props) extraProps[k] = v;
+			auto bIt = wgc.behaviorOverrides.find(ms.typeId);
+			if (bIt != wgc.behaviorOverrides.end())
+				extraProps[Prop::BehaviorId] = bIt->second;
+			float y = (fixedY >= 0.0f) ? fixedY : safeSpawnHeight(x, z);
+			EntityId eid = m_world->entities.spawn(ms.typeId, {x, y, z}, extraProps);
+			auto iIt = wgc.startingItems.find(ms.typeId);
+			if (iIt != wgc.startingItems.end()) {
+				Entity* e = m_world->entities.get(eid);
+				if (e && e->inventory) {
+					for (auto& [itemId, cnt] : iIt->second)
+						e->inventory->add(itemId, cnt);
+				}
+			}
+			return eid;
+		};
+
+		auto spawnMob = [&](const MobSpawn& ms, float baseOffset) {
+			AnchorInfo a = resolveAnchor(ms.anchor);
+			float radius = (ms.radius > 0) ? ms.radius : a.defaultRadius;
+			for (int m = 0; m < ms.count; m++) {
+				std::unordered_map<std::string, PropValue> extraProps;
+				float ex, ez;
+				if (a.inside) {
+					int slotIdx = barnSlot++;
+					int gx = slotIdx % 6;
+					int gz = (slotIdx / 6) % 4;
+					ex = a.cx + (gx - 2.5f) * radius;
+					ez = a.cz + (gz - 1.5f) * radius;
+					extraProps["home_x"] = a.cx;
+					extraProps["home_z"] = a.cz;
+				} else {
+					float angle = (float)m / (float)ms.count * 6.28318f + baseOffset;
+					ex = a.cx + std::cos(angle) * radius;
+					ez = a.cz + std::sin(angle) * radius;
+				}
+				if (ms.anchor == SpawnAnchor::Monument && ms.typeId == "base:villager") {
+					if (m < (int)beds.size()) {
+						extraProps["home_x"] = beds[m].x;
+						extraProps["home_y"] = beds[m].y;
+						extraProps["home_z"] = beds[m].z;
+					}
+					if (m < (int)m_houseChests.size()) {
+						extraProps["chest_x"]         = m_houseChests[m].x;
+						extraProps["chest_y"]         = m_houseChests[m].y;
+						extraProps["chest_z"]         = m_houseChests[m].z;
+						extraProps["chest_entity_id"] = (int)m_houseChestEntities[m];
+					}
+				}
+				spawnOne(ms, ex, ez, a.fixedY, std::move(extraProps));
+			}
+		};
+
+		// Place chests in all non-barn houses. Chest positions feed villager
+		// bed/chest assignments when mobs are spawned below.
 		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
 		m_houseChests.clear();
 		for (auto& cPos : houseChests) {
@@ -193,94 +252,14 @@ public:
 				if (c) c->set(((cx%16)+16)%16, ((cy%16)+16)%16, ((cz%16)+16)%16, chestId);
 			}
 			glm::vec3 blockCenter = {(float)cx + 0.5f, (float)cy + 0.5f, (float)cz + 0.5f};
-
-			// Spawn a Structure entity for this chest (owns the inventory)
 			EntityId chestEid = m_world->entities.spawn(StructureName::Chest, blockCenter, {});
 			m_houseChests.push_back(blockCenter);
 			m_houseChestEntities.push_back(chestEid);
 			printf("[Server] Chest entity %u at (%d,%d,%d)\n", chestEid, cx, cy, cz);
 		}
-		// Spawn villagers in a ring around the village center monument.
-		// Each villager gets a home position (bed) and nearest chest assignment.
-		auto beds = tmpl.bedPositions(m_world->seed());
-		{
-			const std::string villagerType = "base:villager";
-			int villagerCount = 0;
-			for (auto& ms : mobList)
-				if (ms.typeId == villagerType) { villagerCount = ms.count; break; }
-
-			if (villagerCount > 0) {
-				float spawnRadius = 6.0f; // ring around monument
-				for (int i = 0; i < villagerCount; i++) {
-					float angle = (float)i / (float)villagerCount * 6.28318f;
-					float vx = mobCX + std::cos(angle) * spawnRadius;
-					float vz = mobCZ + std::sin(angle) * spawnRadius;
-
-					std::unordered_map<std::string, PropValue> extraProps;
-					auto bIt = wgc.behaviorOverrides.find(villagerType);
-					if (bIt != wgc.behaviorOverrides.end())
-						extraProps[Prop::BehaviorId] = bIt->second;
-
-					// Assign home from bed positions (if available)
-					if (i < (int)beds.size()) {
-						const auto& bp = beds[i];
-						extraProps["home_x"] = bp.x;
-						extraProps["home_y"] = safeSpawnHeight(bp.x, bp.z);
-						extraProps["home_z"] = bp.z;
-					}
-					if (i < (int)m_houseChests.size()) {
-						extraProps["chest_x"] = m_houseChests[i].x;
-						extraProps["chest_y"] = m_houseChests[i].y;
-						extraProps["chest_z"] = m_houseChests[i].z;
-						extraProps["chest_entity_id"] = (int)m_houseChestEntities[i];
-					}
-					// Merge per-mob props from world config
-					for (auto& ms : mobList) {
-						if (ms.typeId == villagerType) {
-							for (auto& [k, v] : ms.props) extraProps[k] = v;
-							break;
-						}
-					}
-					m_world->entities.spawn(villagerType,
-						{vx, safeSpawnHeight(vx, vz), vz}, extraProps);
-				}
-				// Remove villagers from general mob list to avoid double-spawning
-				mobList.erase(std::remove_if(mobList.begin(), mobList.end(),
-					[&](const MobSpawn& ms) { return ms.typeId == villagerType; }),
-					mobList.end());
-			}
-		}
-
-		// Spawn cats and dogs inside the barn (home_x/home_z set to barn center).
-		// If no barn in this template, they fall through to the regular mob spawn.
-		auto barnCtr = tmpl.barnCenter(m_world->seed());
-		if (barnCtr.x >= 0) {
-			const std::vector<std::string> barnAnimals = {"base:cat", "base:dog"};
-			for (const auto& animalType : barnAnimals) {
-				// Find this mob in the list
-				for (auto& ms : mobList) {
-					if (ms.typeId != animalType) continue;
-					for (int m = 0; m < ms.count; m++) {
-						// Spread randomly inside the barn interior (±5 blocks from center)
-						float emx = (float)barnCtr.x + ((m % 3) - 1) * 4.0f;
-						float emz = (float)barnCtr.y + ((m / 3) - 1) * 4.0f;
-						std::unordered_map<std::string, PropValue> extraProps;
-						for (auto& [k, v] : ms.props) extraProps[k] = v;
-						auto bIt = wgc.behaviorOverrides.find(animalType);
-						if (bIt != wgc.behaviorOverrides.end())
-							extraProps[Prop::BehaviorId] = bIt->second;
-						extraProps["home_x"] = (float)barnCtr.x;
-						extraProps["home_z"] = (float)barnCtr.y;
-						m_world->entities.spawn(animalType,
-							{emx, safeSpawnHeight(emx, emz), emz}, extraProps);
-					}
-					ms.count = 0;  // mark as spawned so spawnMob loop skips it
-				}
-			}
-		}
 
 		for (int i = 0; i < (int)mobList.size(); i++) {
-			if (mobList[i].count <= 0) continue;  // already spawned (barn animals)
+			if (mobList[i].count <= 0) continue;
 			spawnMob(mobList[i], (float)i);
 		}
 
@@ -294,7 +273,24 @@ public:
 		// The characterSkin determines visual model, not entity type.
 		EntityId eid = m_world->entities.spawn(LivingName::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
-		if (pe) pe->yaw = 90.0f; // face +Z (toward stairs and village)
+		if (pe) {
+			// Default yaw: +Z (toward stairs and village).
+			pe->yaw = 90.0f;
+			// When enabled and the template has a village/monument, orient
+			// the player toward the monument so they spawn already looking
+			// through the gateway arch at the village center.
+			if (m_wgc.playerFacesMonument && m_world) {
+				auto vc = m_world->getTemplate().villageCenter(m_world->seed());
+				float dx = (float)vc.x - m_spawnPos.x;
+				float dz = (float)vc.y - m_spawnPos.z;
+				if (dx * dx + dz * dz > 0.1f) {
+					// Yaw convention: 0=+X, 90=+Z (see gameplay_movement.cpp).
+					// atan2(dz, dx) gives the angle from +X to the
+					// gateway→monument vector.
+					pe->yaw = glm::degrees(std::atan2(dz, dx));
+				}
+			}
+		}
 		// Server handles click-to-move navigation directly (no agent needed)
 		// Self-owned: player controls their own character
 		if (pe) pe->setProp(Prop::Owner, (int)eid);

@@ -104,16 +104,20 @@ struct WorldPyConfig {
 	float chestOffsetZ           = 0.0f;
 
 	// Mobs
+	//   spawnAt: optional "monument" | "barn" | "portal" string from Python.
+	//     Translated to WorldGenConfig::SpawnAnchor in server init. Empty
+	//     string falls back to legacy circular ring around villageCenter().
 	struct MobConfig {
 		std::string type; int count = 0; float radius = 20.0f;
-		std::unordered_map<std::string, std::string> props;  // extra spawn props from Python
+		std::string spawnAt;  // e.g. "monument", "barn", "portal", "" (village ring)
+		std::unordered_map<std::string, std::string> props;
 	};
 	std::vector<MobConfig> mobs = {
-		{"base:villager", 3, 10.0f},
-		{"base:pig",      4, 22.0f},
-		{"base:chicken",  3, 18.0f},
-		{"base:dog",      2, 14.0f},
-		{"base:cat",      2, 12.0f},
+		{"base:villager", 3, 10.0f, "monument"},
+		{"base:pig",      4, 22.0f, ""},
+		{"base:chicken",  3, 18.0f, ""},
+		{"base:dog",      2, 14.0f, "barn"},
+		{"base:cat",      2, 12.0f, "barn"},
 	};
 };
 

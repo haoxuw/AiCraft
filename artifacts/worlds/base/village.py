@@ -71,28 +71,33 @@ world = {
 
     # ── Village ────────────────────────────────────────────────
     # Village center = spawn_anchor + (offset_x, offset_z).
+    # The monument (trident tower) stands at village center.
     # All house coordinates are relative to the village center.
     # House 0 is the MAIN house — the starter chest is placed inside it.
-    # The portal stairs descend in +Z, so village is placed in +Z direction
-    # so the player walks out of the gateway straight into the village.
+    # The portal stairs descend in +Z, so the village is placed in +Z
+    # so the player walks out of the gateway facing the monument.
+    #
+    # Building spacing: monument at (0,0), houses kept ≥ 15 blocks from it,
+    # barn pushed well out to +X+Z so it's clearly a separate structure.
     "village": {
-        "offset_x":         5,
-        "offset_z":        40,
-        "clearing_radius": 60,    # enlarged to accommodate barn
+        "offset_x":          0,
+        "offset_z":         45,    # a bit farther so the gateway→monument sightline is long
+        "clearing_radius":  70,    # enlarged to accommodate far-out barn
 
         # Dict fields: cx, cz, w, d (required); stories (default 1);
         #              type (optional: "barn" = open pillared barn);
         #              wall, roof (optional — overrides village default for this house)
-        # Houses are arranged around the monument at village center (0,0).
-        # The player approaches from -Z (portal stairs), so leave the -Z side open.
+        # Houses encircle the monument at generous radius so the trident
+        # tower is visible from anywhere inside the village clearing.
+        # Player approaches from -Z (portal), so leave the -Z side clearer.
         "houses": [
-            {"cx":  10, "cz":  -6, "w": 14, "d": 14, "stories": 2},
-            {"cx": -24, "cz":  -6, "w": 12, "d": 10, "wall": "base:wood", "roof": "base:wood"},
-            {"cx":  12, "cz":  18, "w": 10, "d": 12, "wall": "base:wood", "roof": "base:wood"},
-            {"cx": -18, "cz":  18, "w": 12, "d": 10},
-            {"cx": -24, "cz": -24, "w": 12, "d": 12, "stories": 2},
-            # Large open barn for cats and dogs — no walls, just pillars and a huge roof
-            {"cx": 20, "cz": 32, "w": 26, "d": 18, "type": "barn", "roof": "base:wood"},
+            {"cx":  18, "cz":  -8, "w": 14, "d": 14, "stories": 2},
+            {"cx": -28, "cz":  -8, "w": 12, "d": 10, "wall": "base:wood", "roof": "base:wood"},
+            {"cx":  16, "cz":  22, "w": 10, "d": 12, "wall": "base:wood", "roof": "base:wood"},
+            {"cx": -22, "cz":  22, "w": 12, "d": 10},
+            {"cx": -28, "cz": -28, "w": 12, "d": 12, "stories": 2},
+            # Barn — east of the house cluster. All animals spawn inside.
+            {"cx":  32, "cz":  32, "w": 26, "d": 18, "type": "barn", "roof": "base:wood"},
         ],
 
         "wall_block":  "base:cobblestone",
@@ -106,15 +111,14 @@ world = {
     },
 
     # ── Mobs ───────────────────────────────────────────────────
-    # radius = max distance from VILLAGE CENTER (not spawn).
-    # With village at ~41 blocks from spawn, all mobs below radius 19
-    # stay within 60 blocks of the player at start.
+    # spawn_at: "monument" | "barn" | "portal" | ""(=village ring).
+    # radius: ring radius around anchor, or grid cell spacing inside the barn.
     "mobs": [
-        {"type": "base:villager",       "count": 5, "radius": 10},
-        {"type": "base:pig",            "count": 4, "radius": 22},
-        {"type": "base:chicken",        "count": 3, "radius": 18},
-        {"type": "base:brave_chicken",  "count": 1, "radius": 16},
-        {"type": "base:dog",            "count": 2, "radius": 14},
-        {"type": "base:cat",            "count": 2, "radius": 12},
+        {"type": "base:villager",      "count": 5, "radius": 10, "spawn_at": "monument"},
+        {"type": "base:dog",           "count": 1, "radius": 3, "spawn_at": "barn"},
+        {"type": "base:cat",           "count": 1, "radius": 3, "spawn_at": "barn"},
+        {"type": "base:pig",           "count": 3, "radius": 3, "spawn_at": "barn"},
+        {"type": "base:chicken",       "count": 2, "radius": 3, "spawn_at": "barn"},
+        {"type": "base:brave_chicken", "count": 1, "radius": 3, "spawn_at": "barn"},
     ],
 }

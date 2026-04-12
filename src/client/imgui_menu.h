@@ -51,7 +51,8 @@ public:
 		if (m_selectedTemplate < (int)m_templates.size()) {
 			m_worldGenConfig.mobs.clear();
 			for (auto& mc : m_templates[m_selectedTemplate]->pyConfig().mobs)
-				m_worldGenConfig.mobs.push_back({mc.type, mc.count, mc.radius, mc.props});
+				m_worldGenConfig.mobs.push_back({mc.type, mc.count, mc.radius,
+					parseSpawnAnchor(mc.spawnAt), mc.props});
 		}
 		m_worldMgr.setSavesDir("saves");
 		m_worldMgr.refresh();
@@ -585,7 +586,8 @@ private:
 						// Seed mob list from template's Python config
 						m_worldGenConfig.mobs.clear();
 						for (auto& mc : m_templates[i]->pyConfig().mobs)
-							m_worldGenConfig.mobs.push_back({mc.type, mc.count, mc.radius, mc.props});
+							m_worldGenConfig.mobs.push_back({mc.type, mc.count, mc.radius,
+								parseSpawnAnchor(mc.spawnAt), mc.props});
 					}
 				}
 				ImGui::EndChild();

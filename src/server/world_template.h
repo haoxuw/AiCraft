@@ -54,6 +54,9 @@ public:
 	// Returns {-1, -1} if this template has no barn.
 	virtual glm::ivec2 barnCenter(int seed) const { return {-1, -1}; }
 
+	// Barn floor Y — use this instead of column-scanning for animals inside the barn.
+	virtual int barnFloorY(int seed) const { return -1; }
+
 	// Chest positions (world XYZ) for all non-barn houses, in house order.
 	// Villager[i] is assigned chest[i] so they know where to deposit items.
 	// Returns empty if this template has no village.
@@ -107,9 +110,11 @@ public:
 			sz = m_py.spawnSearchZ;
 		} else {
 			auto anchor = findAnchor(seed);
-			gY = naturalTerrainHeight(seed, anchor.x, anchor.y, m_tp);
 			sx = anchor.x;
 			sz = anchor.y;
+			gY = m_py.hasPortal
+				? (float)portalGroundY(seed)
+				: naturalTerrainHeight(seed, anchor.x, anchor.y, m_tp);
 		}
 		int bx = (int)std::round(sx);
 		int bz = (int)std::round(sz);
@@ -141,10 +146,11 @@ public:
 		if (m_py.hasVillage && !m_py.houses.empty()) {
 			auto vc = villageCenter(seed);
 			const auto& h0 = m_py.houses[0];
-			float hx = (float)(vc.x + h0.cx) + (float)(h0.w - 3);
-			float hz = (float)(vc.y + h0.cz) + 1.0f;
-			float hy = surfaceHeight(seed, hx, hz) + 1.0f;
-			return {hx, hy, hz};
+			int hcx = vc.x + h0.cx, hcz = vc.y + h0.cz;
+			int floorY = structureFloorY(seed, hcx, hcz, h0.w, h0.d);
+			float hx = (float)(hcx + h0.w - 3);
+			float hz = (float)(hcz + 1);
+			return {hx, (float)floorY, hz};
 		}
 		// Fallback: offset from spawn (flat world without village)
 		float sy = surfaceHeight(seed, spawnPos.x + m_py.chestOffsetX,
@@ -160,6 +166,18 @@ public:
 				return {vc.x + h.cx + h.w / 2, vc.y + h.cz + h.d / 2};
 		}
 		return {-1, -1};
+	}
+
+	// Animals go here directly — actualSurfaceY() column-scans can latch onto
+	// sparse roof blocks inside the barn and return the wrong Y.
+	int barnFloorY(int seed) const {
+		if (!m_py.hasVillage) return -1;
+		auto vc = villageCenter(seed);
+		for (const auto& h : m_py.houses) {
+			if (h.type == "barn")
+				return structureFloorY(seed, vc.x + h.cx, vc.y + h.cz, h.w, h.d);
+		}
+		return -1;
 	}
 
 	// Scan every (x,z) in the structure footprint and return {minGroundY, maxGroundY}.
@@ -182,6 +200,16 @@ public:
 	// floorY = maxGroundY + 1 so the structure always sits above the hillside peak.
 	int structureFloorY(int seed, int hcx, int hcz, int w, int d) const {
 		return footprintHeightRange(seed, hcx, hcz, w, d).second + 1;
+	}
+
+	// Portal footprint: 17-wide platform + descending staircase on +Z.
+	// Max terrain over the footprint, so the arch never lands in a ditch.
+	int portalGroundY(int seed) const {
+		if (m_py.terrainType == "flat") return (int)m_py.surfaceY;
+		auto anchor = findAnchor(seed);
+		int px = (int)std::round(anchor.x);
+		int pz = (int)std::round(anchor.y);
+		return footprintHeightRange(seed, px - 8, pz - 5, 17, 14).second;
 	}
 
 	// Chest position for each non-barn house, in house order — matches bedPositions() order.
@@ -435,9 +463,13 @@ private:
 
 		int px = (int)std::round(anchor.x);
 		int pz = (int)std::round(anchor.y);
-		int groundY = (m_py.terrainType == "flat")
-			? (int)m_py.surfaceY
-			: (int)std::round(naturalTerrainHeight(seed, (float)px, (float)pz, m_tp));
+		int groundY = portalGroundY(seed);
+
+		// Per-column terrain — fills the platform/stair foundation down to real ground.
+		auto columnTerrainY = [&](int wx, int wz) -> int {
+			if (m_py.terrainType == "flat") return (int)m_py.surfaceY;
+			return (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
+		};
 
 		auto set = [&](int wx, int wy, int wz, BlockId bid, uint8_t p2 = 0) {
 			int lx = wx - ox, ly = wy - oy, lz = wz - oz;
@@ -485,8 +517,10 @@ private:
 		// ── 2. Platform foundation ────────────────────────────────
 		for (int dx = -towerOW; dx <= towerOW; dx++) {
 			for (int dz = backDZ; dz <= frontDZ; dz++) {
-				for (int dy = 0; dy < platH - 1; dy++)
-					set(px + dx, groundY + dy, pz + dz, wallB);
+				int colY = columnTerrainY(px + dx, pz + dz);
+				int fillBot = std::min(colY, groundY);
+				for (int wy = fillBot; wy < groundY + platH - 1; wy++)
+					set(px + dx, wy, pz + dz, wallB);
 				// Top surface: plank floor inside opening, stone elsewhere
 				bool inner = (std::abs(dx) <= openHW);
 				set(px + dx, groundY + platH - 1, pz + dz, inner ? planksB : stoneB);
@@ -575,7 +609,8 @@ private:
 			int stepDZ = frontDZ + 1 + i;
 			for (int dx = -openHW; dx <= openHW; dx++) {
 				set(px + dx, stepY, pz + stepDZ, stairB, /*param2=*/2);
-				for (int fy = groundY; fy < stepY; fy++)
+				int fillBot = std::min(columnTerrainY(px + dx, pz + stepDZ), groundY);
+				for (int fy = fillBot; fy < stepY; fy++)
 					set(px + dx, fy, pz + stepDZ, wallB);
 			}
 		}
@@ -585,7 +620,8 @@ private:
 			for (int i = 0; i < numSteps; i++) {
 				int stepY  = groundY + platH - 1 - i;
 				int stepDZ = frontDZ + 1 + i;
-				for (int wy = groundY; wy <= stepY + 1; wy++)
+				int fillBot = std::min(columnTerrainY(px + sign * (openHW + 1), pz + stepDZ), groundY);
+				for (int wy = fillBot; wy <= stepY + 1; wy++)
 					set(px + sign * (openHW + 1), wy, pz + stepDZ, stoneB);
 			}
 		}

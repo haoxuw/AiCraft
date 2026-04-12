@@ -398,7 +398,8 @@ void Game::renderEntityEffects(float dt, float aspect) {
 	auto& mr = m_renderer.modelRenderer();
 
 	// ── Agent plan visualization: flowing dashed lines + destination marker ──
-	if (m_agentClient) {
+	// Only visible in F3 debug overlay — it's a debug aid, not player HUD.
+	if (m_agentClient && m_showDebug) {
 		// Destination marker: pulsing green diamond
 		static BoxModel destMarker = []() {
 			BoxModel m; m.totalHeight = 0.6f;
