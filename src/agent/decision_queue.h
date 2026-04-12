@@ -1,19 +1,25 @@
 #pragma once
 
 /**
- * DecisionQueue — priority queue for scheduling entity decide() calls.
+ * DecisionQueue — event set for triggering entity decide() calls.
  *
- * Replaces the old fixed-rate 4 Hz polling timer. Each entity schedules
- * its next decide() at an absolute timestamp (now + duration returned by
- * the behavior). Active triggers (HP loss, proximity, time-of-day) push
- * entries at "now" to force immediate re-evaluation.
+ * **Event-driven, not timer-driven.** Re-decides fire only on terminal
+ * step outcomes (Success/Failed) or broadcast interrupts. No timestamps,
+ * no polling.
  *
- * Implementation: std::priority_queue (min-heap) with generation-based
- * lazy deletion. When a new entry is pushed for an entity, its generation
- * counter increments — stale entries are skipped on pop.
+ * TODO(decide-loop): Step 4 of the plan replaces the current timestamp
+ * min-heap (`schedule(eid, when)`) with a pure event map keyed by eid,
+ * storing the `LastOutcome` that should be handed to the next decide()
+ * call. Until then both APIs coexist: new `enqueue(eid, LastOutcome)`
+ * below is unused, and callers keep using `schedule` / `scheduleNow`.
  *
- * A separate `m_scheduled` set tracks which entities have a valid pending
- * entry, enabling O(1) hasPending() checks for the periodic sweep.
+ * Final shape (Step 4):
+ *     class DecisionQueue {
+ *         std::unordered_map<EntityId, LastOutcome> m_ready;
+ *         void enqueue(EntityId eid, LastOutcome o) { m_ready[eid] = o; }
+ *         std::vector<std::pair<EntityId, LastOutcome>> drain(int max);
+ *     };
+ * No heap, no chrono.
  */
 
 #include "shared/types.h"
@@ -27,6 +33,25 @@ namespace modcraft {
 
 using SteadyClock = std::chrono::steady_clock;
 using SteadyTime  = SteadyClock::time_point;
+
+// ── Event-driven decide types (TODO(decide-loop): used in Step 4+) ──
+
+// Why the previous plan ended. Handed to the next decide() call so Python
+// behaviors can branch on outcome rather than re-evaluating from scratch.
+enum class StepOutcome {
+	InProgress,   // executor shouldn't enqueue this — sentinel for evaluator
+	Success,      // goal observably reached (or duration elapsed)
+	Failed,       // observably unreachable / invalid
+};
+
+struct PlanStep;  // from server/behavior.h via agent/behavior_executor.h
+
+struct LastOutcome {
+	StepOutcome  outcome     = StepOutcome::Success;
+	std::string  goalText;                   // previous goal
+	int          stepTypeRaw = 0;            // PlanStep::Type (kept as int to avoid include cycle)
+	std::string  reason;                     // "stuck", "target_gone", "interrupt:proximity", ...
+};
 
 struct DecideEntry {
 	SteadyTime timestamp;
@@ -86,6 +111,17 @@ public:
 	}
 
 	size_t pendingCount() const { return m_scheduled.size(); }
+
+	// ── Event-driven API — TODO(decide-loop) Step 4 ───────────────────
+	// Pseudocode:
+	//     void enqueue(EntityId eid, LastOutcome o):
+	//         m_ready[eid] = o       # latest-wins; newest interrupt trumps
+	//                                # older terminal outcomes for same eid
+	//     std::vector<std::pair<EntityId, LastOutcome>> drainReady(int max):
+	//         pop up to `max` entries from m_ready, return them
+	//
+	// Generation bump still useful for stale-result filtering in the worker.
+	// Data member (future): std::unordered_map<EntityId, LastOutcome> m_ready;
 
 private:
 	std::priority_queue<DecideEntry, std::vector<DecideEntry>,

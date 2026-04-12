@@ -287,6 +287,37 @@ public:
 			tb.writeF32(m_server.worldTime());
 			net::sendMessage(client.fd, net::S_TIME, tb);
 
+			// ── Event-driven decision-loop interrupts — TODO(decide-loop) Step 7 ──
+			// Edge-triggered broadcasts. Diff this broadcast's snapshot against
+			// the previous one and emit S_NPC_INTERRUPT / S_WORLD_EVENT only on
+			// prev→cur transitions. Piggy-backs on this existing ~20 Hz tick —
+			// NO new timer.
+			//
+			// Pseudocode:
+			//   // Proximity edges (per NPC, per client)
+			//   for each npc in livingEntities with BehaviorId:
+			//       if npc.owner != client.playerId: continue   // owner-scoped
+			//       prevClose = anyPlayerWithin(npc, ServerTuning::proximityRadius,
+			//                                   m_prevSnapshot)
+			//       curClose  = anyPlayerWithin(npc, ServerTuning::proximityRadius,
+			//                                   curSnapshot)
+			//       if !prevClose and curClose:
+			//           WriteBuffer b;
+			//           b.writeU32(npc.id); b.writeString("proximity");
+			//           net::sendMessage(client.fd, net::S_NPC_INTERRUPT, b);
+			//
+			//   // Day/night edges (broadcast to all)
+			//   if crossedSunrise(m_prevWorldTime, curWorldTime):
+			//       b.writeString("time_of_day"); b.writeString("day");
+			//       net::sendMessage(client.fd, net::S_WORLD_EVENT, b);
+			//   else if crossedSunset(m_prevWorldTime, curWorldTime):
+			//       b.writeString("time_of_day"); b.writeString("night");
+			//       net::sendMessage(client.fd, net::S_WORLD_EVENT, b);
+			//
+			// Stored state (future):
+			//   std::unordered_map<EntityId, bool> m_prevProximity;  // per-npc edge
+			//   float                              m_prevWorldTime;
+
 			// Chunk streaming — two-tier: near (priority) then far (opportunistic).
 			// Near tier covers the full view frustum so the player never sees void.
 			// Far tier loads distant terrain (mountains, vistas) when near is caught up.

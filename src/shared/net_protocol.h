@@ -31,6 +31,8 @@
  * S_ERROR         0x100B  [u32 entityId][str message]
  * S_CHUNK_EVICT   0x100E  Discard chunk [i32 cx][i32 cy][i32 cz]  (v2)
  * S_CHUNK_Z       0x100F  zstd-compressed chunk (v2)
+ * S_NPC_INTERRUPT 0x1010  [u32 eid][str reason]                  (v3, TODO(decide-loop))
+ * S_WORLD_EVENT   0x1011  [str kind][str payload]                (v3, TODO(decide-loop))
  */
 
 #include "shared/entity.h"
@@ -68,6 +70,12 @@ enum MsgType : uint32_t {
 	S_ERROR           = 0x100B,
 	S_CHUNK_EVICT     = 0x100E,  // discard chunk from client cache: [i32 cx][i32 cy][i32 cz]  (v2)
 	S_CHUNK_Z         = 0x100F,  // zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
+
+	// Event-driven decision-loop interrupts — see plans/cosmic-tinkering-forest.md
+	// TODO(decide-loop): not yet emitted by server nor handled by client. Step 7
+	// wires them to AgentClient::onInterrupt / onWorldEvent.
+	S_NPC_INTERRUPT   = 0x1010,  // [u32 entityId][str reason]  ("proximity", ...)
+	S_WORLD_EVENT     = 0x1011,  // [str kind][str payload]     ("time_of_day", "day"|"night")
 };
 
 // Message header (8 bytes)

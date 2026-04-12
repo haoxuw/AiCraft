@@ -21,6 +21,7 @@
 #include "server/python_bridge.h"
 #include "agent/decision_queue.h"
 #include "agent/behavior_executor.h"
+#include "agent/decide_worker.h"  // TODO(decide-loop) Step 3: used when worker is wired up
 #include <unordered_map>
 #include <vector>
 #include <string>
@@ -106,7 +107,28 @@ private:
 
 		// Timing
 		bool claimed = false;
-		bool needsDecide = true;
+		bool needsDecide = true;  // TODO(decide-loop) Step 5: delete — superseded
+		                          // by DecisionQueue::hasPending().
+
+		// ── Event-driven decide-loop scratch — TODO(decide-loop) Step 5 ──
+		// Per-step observable-outcome bookkeeping. evaluateStep() uses these
+		// to detect Success/Failed from world state only (no timers except
+		// action-internal durations like Rest/Graze/Sleep).
+		//
+		// struct StepWatch {
+		//     glm::vec3 lastPos       = {0,0,0};
+		//     float     stillAccum    = 0.0f;   // seconds with ~zero movement (dt-integrated)
+		//     float     progress      = 0.0f;   // for duration-based steps
+		//     int       prevTargetHP  = 0;      // Attack: detect Success on kill
+		//     uint32_t  prevTargetBid = 0;      // Harvest: detect Success on block→air
+		// };
+		// StepWatch watch;
+
+		// ── Client-side interrupt diff snapshot — Step 6 ──
+		// Previous-frame snapshot for detecting HP drops, target disappearance, etc.
+		// Snapshot is taken at end of each tick; next tick compares cur vs prev.
+		// int prevHp       = 0;
+		// bool prevTargetAlive = true;
 	};
 
 	// ── Entity discovery ────────────────────────────────────────────────
@@ -461,6 +483,103 @@ private:
 		}
 	}
 
+	// ── Event-driven decide-loop API — TODO(decide-loop) ────────────────
+	//
+	// These replace executeMoveStep/executeHarvestStep/executeAttackStep/
+	// executeRelocateStep in Step 5. Signatures committed now so reviewers
+	// see the shape; bodies are pseudocode-only until their step lands.
+
+	// Step 5 — classify a step by observable world state only.
+	//   Pseudocode:
+	//     switch (step.type):
+	//       Move:     if arrived(target): return Success
+	//                 if stillAccum>STUCK_SECONDS: return Failed("stuck")
+	//                 return InProgress
+	//       Harvest:  if blockAt(target)==air: return Success
+	//                 if out_of_reach(target): return Failed("out_of_range")
+	//                 return InProgress
+	//       Attack:   if !target or target.removed: return Success
+	//                 if out_of_reach(target): return Failed("fled")
+	//                 return InProgress
+	//       Rest/Graze/Sleep: progress += dt
+	//                 if progress >= step.duration: return Success
+	//                 return InProgress
+	//       Relocate: if inventoryChangeMatches(...): return Success
+	//                 return InProgress
+	StepOutcome evaluateStep(const PlanStep& /*step*/, Entity& /*entity*/,
+	                         AgentState& /*state*/, float /*dt*/) {
+		// TODO(decide-loop) Step 5: implement per pseudocode above.
+		return StepOutcome::InProgress;
+	}
+
+	// Step 5 — emit ActionProposal for a step currently InProgress.
+	//   Pseudocode:
+	//     Move:     sendMove(eid, dir*speed, goal)
+	//     Harvest:  if in_reach: sendStopMove + sendConvert(block→nothing)
+	//               else:         sendMove toward block
+	//     Attack:   if in_reach: sendStopMove + sendConvert(target.hp→0)
+	//               else:         sendMove toward target
+	//     Rest/Graze/Sleep: sendStopMove (idle)
+	//     Relocate: sendRelocate(...)
+	void applyStep(EntityId /*eid*/, AgentState& /*state*/, Entity& /*entity*/,
+	               const PlanStep& /*step*/) {
+		// TODO(decide-loop) Step 5: implement per pseudocode above.
+	}
+
+	// Step 5 — install a plan that came back from the worker (or from
+	// legacy main-thread decide). Only place rebuildViz() is called:
+	// the plan is immutable between re-decides, so viz never flickers.
+	//   Pseudocode:
+	//     state.plan = result.plan
+	//     state.stepIndex = 0
+	//     state.waypoints.clear(); state.wpIndex = 0
+	//     state.watch = StepWatch{}
+	//     state.goalText = result.goalText
+	//     rebuildViz(eid, state, entity)
+	void installPlan(EntityId /*eid*/, AgentState& /*state*/, Entity& /*entity*/,
+	                 Plan /*plan*/, const std::string& /*goalText*/) {
+		// TODO(decide-loop) Step 5: implement per pseudocode above.
+	}
+
+	// Step 6 — detect client-side interrupts (HP drop, target gone, ...)
+	// by diffing previous-frame and current-frame snapshots.
+	//   Pseudocode:
+	//     for each agent:
+	//       if entity.hp < state.prevHp:
+	//           m_decisionQueue.enqueue(eid, {Success, goal, step.type, "interrupt:hp"})
+	//           state.plan.clear()
+	//       if step.type==Attack and target missing:
+	//           m_decisionQueue.enqueue(eid, {Success, goal, Attack, "interrupt:target_gone"})
+	//           state.plan.clear()
+	//       state.prevHp = entity.hp
+	void scanClientInterrupts() {
+		// TODO(decide-loop) Step 6: implement per pseudocode above.
+	}
+
+	// Step 7 — handlers for server-broadcast interrupts (proximity edge,
+	// world events like day/night). Called from network_server.h when
+	// S_NPC_INTERRUPT / S_WORLD_EVENT arrive.
+public:
+	//   Pseudocode:
+	//     void onInterrupt(eid, reason):
+	//         if m_agents.find(eid) != end:
+	//             m_decisionQueue.enqueue(eid,
+	//                 {Success, state.goalText, step.type, "interrupt:"+reason})
+	//             state.plan.clear()
+	void onInterrupt(EntityId /*eid*/, const std::string& /*reason*/) {
+		// TODO(decide-loop) Step 7: implement per pseudocode above.
+	}
+
+	//   Pseudocode:
+	//     void onWorldEvent(kind, payload):
+	//         for each agent that cares about `kind` (e.g. day/night-sensitive):
+	//             m_decisionQueue.enqueue(eid, {Success, goal, type, "interrupt:"+kind})
+	//             state.plan.clear()
+	void onWorldEvent(const std::string& /*kind*/, const std::string& /*payload*/) {
+		// TODO(decide-loop) Step 7: implement per pseudocode above.
+	}
+private:
+
 	// ── Helpers ─────────────────────────────────────────────────────────
 
 	BehaviorHandle loadBehaviorForEntity(const std::string& behaviorId) {
@@ -504,6 +623,20 @@ private:
 	float m_time = 0;
 	float m_discoveryTimer = 100.0f; // trigger immediate discovery on first tick
 	int m_lastDecidesRun = 0;
+
+	// ── Worker-thread decide loop — TODO(decide-loop) Step 3 ───────────
+	// Wire-up pseudocode (in tick, runs after phaseDecide / before phaseExecute):
+	//   for (eid, last) in m_decisionQueue.drain(kMaxDecidesPerFrame):
+	//       DecideRequest req{eid, ++m_decideGen[eid], handle, snapshot(entity),
+	//                         gatherNearbyFromServer(entity), worldTime, dt, last};
+	//       m_decideWorker.push(std::move(req));
+	//   DecideResult r;
+	//   while (m_decideWorker.tryPop(r)):
+	//       if (r.generation != m_decideGen[r.eid]) continue;   // stale
+	//       installPlan(r.eid, m_agents[r.eid], *m_server.getEntity(r.eid),
+	//                   r.plan, r.goalText);
+	// DecideWorker                                m_decideWorker;
+	// std::unordered_map<EntityId, uint32_t>      m_decideGen;
 };
 
 } // namespace modcraft
