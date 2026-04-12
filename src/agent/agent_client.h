@@ -22,6 +22,7 @@
 #include "agent/decision_queue.h"
 #include "agent/behavior_executor.h"
 #include "agent/decide_worker.h"  // TODO(decide-loop) Step 3: used when worker is wired up
+#include "shared/move_stuck_log.h"
 #include <unordered_map>
 #include <vector>
 #include <string>
@@ -769,17 +770,26 @@ private:
 				if (intent > kIntentThresh && moved < kMoveThresh) {
 					s.stuckAccum += dt;
 					if (s.stuckAccum >= kStuckWindow && !s.stuckLogged) {
-						fprintf(stderr, "[MoveStuck:Agent-Stuck] eid=%u pos=(%.2f,%.2f,%.2f) "
-							"intent=(%.2f,%.2f) goal=\"%s\" — velocity held %.1fs, no displacement. "
-							"Likely server collision clamp or client/server pos delta.\n",
-							eid, e->position.x, e->position.y, e->position.z,
+						char detail[192];
+						snprintf(detail, sizeof(detail),
+							"pos=(%.2f,%.2f,%.2f) intent=(%.2f,%.2f) goal=\"%s\" held=%.1fs",
+							e->position.x, e->position.y, e->position.z,
 							vel.x, vel.z, goal.c_str(), s.stuckAccum);
+						logMoveStuck(eid, "Agent-Stuck",
+							"agent held non-zero velocity but entity failed to displace "
+							"(likely server collision clamp or client/server pos delta)",
+							detail);
 						s.stuckLogged = true;
 					}
 				} else {
 					if (s.stuckLogged) {
-						fprintf(stderr, "[MoveStuck:Agent-Unstuck] eid=%u pos=(%.2f,%.2f,%.2f) — moving again\n",
-							eid, e->position.x, e->position.y, e->position.z);
+						char detail[96];
+						snprintf(detail, sizeof(detail),
+							"pos=(%.2f,%.2f,%.2f)",
+							e->position.x, e->position.y, e->position.z);
+						logMoveStuck(eid, "Agent-Unstuck",
+							"entity resumed displacement after prior Agent-Stuck",
+							detail);
 					}
 					s.stuckAccum  = 0.0f;
 					s.stuckLogged = false;
@@ -788,17 +798,19 @@ private:
 			}
 		}
 
-		// ── DEBUG: periodic per-entity dump of client-predicted pos + intent vel ──
-		// Pair with [MoveStuck:Server] / [MoveStuck:Snap] to see where client/server diverge.
-		{
-			static std::unordered_map<EntityId, int> s_tick;
-			int& n = s_tick[eid];
-			if (++n % 60 == 0 && e) {
-				fprintf(stderr, "[MoveStuck:Agent] eid=%u pos=(%.2f,%.2f,%.2f) "
-					"vel=(%.2f,%.2f,%.2f)\n",
-					eid, e->position.x, e->position.y, e->position.z,
-					vel.x, vel.y, vel.z);
-			}
+		// ── DEBUG: agent Move-send probe (10-min cooldown) ──
+		// First Move command the agent sends for this entity. Pair with
+		// [MoveStuck:Server] to see whether the server accepts it
+		// unchanged or clamps it.
+		if (e) {
+			char detail[160];
+			snprintf(detail, sizeof(detail),
+				"pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f)",
+				e->position.x, e->position.y, e->position.z,
+				vel.x, vel.y, vel.z);
+			logMoveStuck(eid, "Agent",
+				"agent sending Move command (client-side prediction applied)",
+				detail);
 		}
 
 		ActionProposal p;

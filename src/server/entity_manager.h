@@ -11,6 +11,7 @@
 #include "shared/entity.h"
 #include "shared/constants.h"
 #include "shared/physics.h"
+#include "shared/move_stuck_log.h"
 #include "server/server_tuning.h"
 #include "shared/action.h"
 #include <unordered_map>
@@ -153,15 +154,16 @@ public:
 				float outHoriz = std::sqrt(result.velocity.x * result.velocity.x +
 				                            result.velocity.z * result.velocity.z);
 				if (inHoriz > 0.5f && outHoriz < 0.05f) {
-					static std::unordered_map<EntityId, int> s_tick;
-					int& n = s_tick[e.id()];
-					if (++n % 30 == 0) {
-						fprintf(stderr, "[MoveStuck:Clamp] eid=%u pos=(%.2f,%.2f,%.2f) "
-							"velIn=(%.2f,%.2f) velOut=(%.2f,%.2f) box=[%.2f,%.2f]\n",
-							e.id(), prePos.x, prePos.y, prePos.z,
-							preVel.x, preVel.z, result.velocity.x, result.velocity.z,
-							def.collision_box_min.x, def.collision_box_max.x);
-					}
+					char detail[192];
+					snprintf(detail, sizeof(detail),
+						"pos=(%.2f,%.2f,%.2f) velIn=(%.2f,%.2f) velOut=(%.2f,%.2f) box=[%.2f,%.2f]",
+						prePos.x, prePos.y, prePos.z,
+						preVel.x, preVel.z, result.velocity.x, result.velocity.z,
+						def.collision_box_min.x, def.collision_box_max.x);
+					logMoveStuck(e.id(), "Clamp",
+						"server collision clamped horizontal velocity to ~0 "
+						"(entity walking into geometry — 'walks in place' symptom)",
+						detail);
 				}
 			}
 
