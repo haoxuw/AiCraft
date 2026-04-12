@@ -125,6 +125,26 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 
 using BehaviorHandle = int;
 
+// Immutable snapshot of an entity's decide()-relevant state. Built on the
+// main thread before pushing to DecideWorker so the worker reads no shared
+// mutable state. Inventory and props are copied here to avoid iterating
+// live containers from another thread (unordered_map rehash = UB).
+struct EntitySnapshot {
+	EntityId    id       = ENTITY_NONE;
+	std::string typeId;
+	glm::vec3   position = {0, 0, 0};
+	glm::vec3   velocity = {0, 0, 0};
+	float       yaw      = 0;
+	float       lookYaw  = 0;
+	float       lookPitch= 0;
+	int         hp       = 0;
+	int         maxHp    = 0;
+	float       walkSpeed= 0;
+	bool        onGround = false;
+	std::vector<std::pair<std::string, int>>       inventory;  // itemId -> count
+	std::vector<std::pair<std::string, PropValue>> props;      // copy of entity props
+};
+
 class PythonBridge {
 public:
 	// Start the Python interpreter. Call once at startup.
@@ -152,8 +172,11 @@ public:
 	// Call decide() on a loaded behavior.
 	// Returns a Plan (list of PlanSteps). Backward compatible: if the behavior
 	// returns old-format (action, goal_str), it's converted to a single-step Plan.
+	//
+	// Thread-safe. Internally acquires the GIL, so callers must NOT hold it.
+	// Typically invoked from DecideWorker's thread.
 	Plan callDecide(BehaviorHandle handle,
-	                Entity& self,
+	                const EntitySnapshot& self,
 	                const std::vector<NearbyEntity>& nearby,
 	                float dt, float timeOfDay,
 	                std::string& goalOut,
@@ -177,6 +200,11 @@ private:
 	// Cached pydantic class references for LocalWorld and SelfEntity.
 	void* m_localWorldClass  = nullptr;
 	void* m_selfEntityClass  = nullptr;
+
+	// Main thread's GIL release, held between init() and shutdown() so
+	// background threads (DecideWorker) can acquire the GIL on demand.
+	// Stored as void* to avoid leaking pybind11 into the header.
+	void* m_gilReleaser = nullptr;
 };
 
 // Global bridge instance

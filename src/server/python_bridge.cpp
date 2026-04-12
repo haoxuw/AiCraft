@@ -15,7 +15,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) 
 	err = "Python not available in web build";
 	return -1;
 }
-Plan PythonBridge::callDecide(BehaviorHandle, Entity&,
+Plan PythonBridge::callDecide(BehaviorHandle, const EntitySnapshot&,
                                const std::vector<NearbyEntity>&,
                                float, float, std::string&, std::string& err,
                                BlockQueryFn, ScanBlocksFn) {
@@ -287,36 +287,54 @@ PythonBridge& pythonBridge() { return s_bridge; }
 
 bool PythonBridge::init(const std::string& pythonPath) {
 	if (m_initialized) return true;
-	try {
-		py::initialize_interpreter();
-		auto sys = py::module_::import("sys");
-		// Add python/ directory to sys.path so behaviors can import modcraft
-		sys.attr("path").cast<py::list>().append(pythonPath);
-		// Force line-buffered stdout so Python print() flushes immediately
-		// (needed when agent stdout is piped through to server log)
-		sys.attr("stdout").attr("reconfigure")(py::arg("line_buffering") = true);
 
-		// Cache LocalWorld and SelfEntity pydantic classes so we don't re-import
-		// local_world on every callDecide() tick.
-		auto localWorldMod = py::module_::import("local_world");
-		m_localWorldClass = new py::object(localWorldMod.attr("LocalWorld"));
-		m_selfEntityClass = new py::object(localWorldMod.attr("SelfEntity"));
+	py::initialize_interpreter();
 
-		m_initialized = true;
-		printf("[PythonBridge] Initialized. Python path: %s\n", pythonPath.c_str());
-		return true;
-	} catch (const py::error_already_set& e) {
-		printf("[PythonBridge] Init failed: %s\n", e.what());
+	// Inner scope so all stack-allocated pybind11 objects (sys, localWorldMod)
+	// destruct — calling Py_DECREF — while the GIL is still held by this
+	// thread. We release the GIL only after this scope exits.
+	bool ok = false;
+	{
+		try {
+			auto sys = py::module_::import("sys");
+			sys.attr("path").cast<py::list>().append(pythonPath);
+			sys.attr("stdout").attr("reconfigure")(py::arg("line_buffering") = true);
+
+			auto localWorldMod = py::module_::import("local_world");
+			m_localWorldClass = new py::object(localWorldMod.attr("LocalWorld"));
+			m_selfEntityClass = new py::object(localWorldMod.attr("SelfEntity"));
+
+			printf("[PythonBridge] Initialized. Python path: %s\n", pythonPath.c_str());
+			ok = true;
+		} catch (const py::error_already_set& e) {
+			printf("[PythonBridge] Init failed: %s\n", e.what());
+		}
+	}
+
+	if (!ok) {
+		py::finalize_interpreter();
 		return false;
 	}
+
+	m_initialized = true;
+	// Release the main thread's GIL so background threads (DecideWorker) can
+	// acquire it. All subsequent Python calls — from any thread, including
+	// main — must scope-acquire via py::gil_scoped_acquire.
+	m_gilReleaser = new py::gil_scoped_release();
+	return true;
 }
 
 void PythonBridge::shutdown() {
 	if (!m_initialized) return;
-	m_behaviors.clear();
-	// Destroy cached pydantic class refs before finalizing interpreter
-	delete static_cast<py::object*>(m_localWorldClass);  m_localWorldClass = nullptr;
-	delete static_cast<py::object*>(m_selfEntityClass);  m_selfEntityClass = nullptr;
+	// Re-acquire GIL to tear down Python objects; then release to finalize.
+	{
+		py::gil_scoped_acquire gil;
+		m_behaviors.clear();
+		delete static_cast<py::object*>(m_localWorldClass);  m_localWorldClass = nullptr;
+		delete static_cast<py::object*>(m_selfEntityClass);  m_selfEntityClass = nullptr;
+	}
+	delete static_cast<py::gil_scoped_release*>(m_gilReleaser);
+	m_gilReleaser = nullptr;
 	py::finalize_interpreter();
 	m_initialized = false;
 	printf("[PythonBridge] Shutdown.\n");
@@ -338,6 +356,8 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 		errorOut = "Python bridge not initialized";
 		return -1;
 	}
+
+	py::gil_scoped_acquire gil;
 
 	try {
 		// Isolated namespace per behavior (one per entity instance).
@@ -398,14 +418,18 @@ static PlanStep pyActionToPlanStep(const PyAction& pa) {
 }
 
 Plan PythonBridge::callDecide(BehaviorHandle handle,
-                               Entity& self,
+                               const EntitySnapshot& self,
                                const std::vector<NearbyEntity>& nearby,
                                float dt, float timeOfDay,
                                std::string& goalOut,
                                std::string& errorOut,
                                BlockQueryFn blockQueryFn,
                                ScanBlocksFn scanBlocksFn) {
-	// Set per-call block query callbacks (cleared on return)
+	// Acquire GIL — callDecide runs on DecideWorker's thread.
+	py::gil_scoped_acquire gil;
+
+	// Set per-call block query callbacks (cleared on return). Serialized by
+	// the GIL: only one callDecide runs at a time, so the statics are safe.
 	s_blockQueryFn = blockQueryFn ? std::move(blockQueryFn)
 	                              : [](int,int,int){ return std::string("base:air"); };
 	s_scanBlocksFn = std::move(scanBlocksFn);
@@ -434,26 +458,22 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 			pyNearby.append(info);
 		}
 
-		// Build self entity dict
+		// Build self entity dict from snapshot
 		py::dict pySelf;
-		for (auto& [key, val] : self.props()) {
+		for (auto& [key, val] : self.props) {
 			if (auto* s = std::get_if<std::string>(&val)) pySelf[key.c_str()] = *s;
 			else if (auto* i = std::get_if<int>(&val))     pySelf[key.c_str()] = *i;
 			else if (auto* f = std::get_if<float>(&val))   pySelf[key.c_str()] = *f;
 			else if (auto* b = std::get_if<bool>(&val))    pySelf[key.c_str()] = *b;
 		}
-		pySelf["id"] = self.id(); pySelf["type"] = self.typeId();
+		pySelf["id"] = self.id; pySelf["type"] = self.typeId;
 		pySelf["x"] = self.position.x; pySelf["y"] = self.position.y; pySelf["z"] = self.position.z;
-		pySelf["yaw"] = self.yaw; pySelf["hp"] = self.hp();
-		pySelf["walk_speed"] = self.def().walk_speed; pySelf["on_ground"] = self.onGround;
-		if (self.inventory) {
-			py::dict pyInv;
-			for (auto& [itemId, count] : self.inventory->items())
-				pyInv[itemId.c_str()] = count;
-			pySelf["inventory"] = pyInv;
-		} else {
-			pySelf["inventory"] = py::dict();
-		}
+		pySelf["yaw"] = self.yaw; pySelf["hp"] = self.hp;
+		pySelf["walk_speed"] = self.walkSpeed; pySelf["on_ground"] = self.onGround;
+		py::dict pyInv;
+		for (auto& [itemId, count] : self.inventory)
+			pyInv[itemId.c_str()] = count;
+		pySelf["inventory"] = pyInv;
 
 		// Build LocalWorld dict
 		py::dict pyWorld;
@@ -542,6 +562,7 @@ std::string PythonBridge::getSource(BehaviorHandle handle) const {
 }
 
 void PythonBridge::unloadBehavior(BehaviorHandle handle) {
+	py::gil_scoped_acquire gil;
 	auto it = m_behaviors.find(handle);
 	if (it != m_behaviors.end()) {
 		if (it->second.moduleObj)
@@ -570,6 +591,8 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 		return false;
 	}
 	std::string src((std::istreambuf_iterator<char>(f)), {});
+
+	py::gil_scoped_acquire gil;
 
 	try {
 		py::dict ns;
@@ -726,6 +749,8 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 		return false;
 	}
 	std::string src((std::istreambuf_iterator<char>(f)), {});
+
+	py::gil_scoped_acquire gil;
 
 	try {
 		py::dict ns;

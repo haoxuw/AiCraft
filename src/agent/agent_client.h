@@ -36,7 +36,11 @@ namespace modcraft {
 class AgentClient {
 public:
 	AgentClient(ServerInterface& server, BehaviorStore& behaviors)
-		: m_server(server), m_behaviors(behaviors), m_rng(std::random_device{}()) {}
+		: m_server(server), m_behaviors(behaviors), m_rng(std::random_device{}()) {
+		m_decideWorker.start();
+	}
+
+	~AgentClient() { m_decideWorker.stop(); }
 
 	// ── Main tick (called from Game::updatePlaying) ──────────────────────
 
@@ -47,6 +51,7 @@ public:
 		discoverEntities();
 		auto t1 = Clock::now();
 		phaseDecide();
+		drainWorkerResults();
 		auto t2 = Clock::now();
 		phaseExecute(dt);
 		auto t3 = Clock::now();
@@ -228,7 +233,6 @@ private:
 
 	void runDecide(EntityId eid, AgentState& state, Entity& entity) {
 		if (state.handle < 0) {
-			// Try reloading
 			state.handle = loadBehaviorForEntity(state.behaviorId);
 			if (state.handle < 0) {
 				m_decisionQueue.schedule(eid,
@@ -237,12 +241,23 @@ private:
 			}
 		}
 
-		// Gather nearby entities
-		auto nearby = gatherNearbyFromServer(entity);
+		// Build snapshot + request on main thread; worker reads immutably.
+		DecideRequest req;
+		req.eid        = eid;
+		req.generation = ++m_decideGen[eid];
+		req.handle     = state.handle;
+		req.self       = snapshotEntity(entity);
+		req.nearby     = gatherNearbyFromServer(entity);
+		req.worldTime  = m_server.worldTime();
+		req.dt         = 0.25f;
+		// TODO(decide-loop) Step 8: fill req.lastOutcome from DecisionQueue drain.
 
-		// Block query callback (reads from shared chunk cache)
-		auto blockQuery = [&](int x, int y, int z) -> std::string {
-			auto& chunks = m_server.chunks();
+		// Block query callback — runs on worker thread. Captures a
+		// ServerInterface* (stable for AgentClient's lifetime). Worst-case
+		// race is a stale block read (visual only).
+		ServerInterface* srv = &m_server;
+		req.blockQuery = [srv](int x, int y, int z) -> std::string {
+			auto& chunks = srv->chunks();
 			ChunkPos cp;
 			cp.x = (x < 0 ? (x - 15) : x) / 16;
 			cp.y = 0;
@@ -253,40 +268,75 @@ private:
 			int lz = ((z % 16) + 16) % 16;
 			if (y < 0 || y >= 256) return "base:air";
 			BlockId bid = chunk->get(lx, y, lz);
-			return m_server.blockRegistry().get(bid).string_id;
+			return srv->blockRegistry().get(bid).string_id;
 		};
 
-		std::string goalOut, errorOut;
-		Plan plan = pythonBridge().callDecide(
-			state.handle, entity, nearby, 0.25f,
-			m_server.worldTime(), goalOut, errorOut, blockQuery);
+		m_decideWorker.push(std::move(req));
 
-		if (!errorOut.empty()) {
-			entity.goalText = "ERROR: " + errorOut.substr(0, 60);
-			entity.hasError = true;
-			entity.errorText = errorOut;
-			m_decisionQueue.schedule(eid,
-				SteadyClock::now() + std::chrono::seconds(2));
-			return;
-		}
-
-		entity.goalText = goalOut;
-		entity.hasError = false;
-		entity.errorText.clear();
-
-		// Install new plan
-		state.plan = std::move(plan);
-		state.stepIndex = 0;
-		state.goalText = goalOut;
-		state.waypoints.clear();
-		state.wpIndex = 0;
-
-		// Build visualization
-		rebuildViz(eid, state, entity);
-
-		// Schedule next decide (500ms — pathfinding is expensive on main thread)
+		// Still re-schedule at 500ms until Step 4 swaps to event-driven queue.
+		// TODO(decide-loop) Step 4: delete — re-decide only on terminal outcomes.
 		m_decisionQueue.schedule(eid,
 			SteadyClock::now() + std::chrono::milliseconds(500));
+	}
+
+	// Drain completed decides from the worker and install plans on main thread.
+	void drainWorkerResults() {
+		DecideResult r;
+		while (m_decideWorker.tryPop(r)) {
+			// Stale-generation filter — discard results whose request was
+			// superseded by a newer decide (interrupt, etc.).
+			auto git = m_decideGen.find(r.eid);
+			if (git == m_decideGen.end() || git->second != r.generation)
+				continue;
+
+			auto ait = m_agents.find(r.eid);
+			if (ait == m_agents.end()) continue;
+			AgentState& state = ait->second;
+
+			Entity* e = m_server.getEntity(r.eid);
+			if (!e || e->removed) continue;
+
+			if (!r.error.empty()) {
+				e->goalText = "ERROR: " + r.error.substr(0, 60);
+				e->hasError = true;
+				e->errorText = r.error;
+				m_decisionQueue.schedule(r.eid,
+					SteadyClock::now() + std::chrono::seconds(2));
+				continue;
+			}
+
+			e->goalText = r.goalText;
+			e->hasError = false;
+			e->errorText.clear();
+
+			state.plan = std::move(r.plan);
+			state.stepIndex = 0;
+			state.goalText = std::move(r.goalText);
+			state.waypoints.clear();
+			state.wpIndex = 0;
+
+			rebuildViz(r.eid, state, *e);
+		}
+	}
+
+	// Snapshot entity state for off-thread consumption (DecideWorker).
+	EntitySnapshot snapshotEntity(const Entity& e) const {
+		EntitySnapshot s;
+		s.id        = e.id();
+		s.typeId    = e.typeId();
+		s.position  = e.position;
+		s.velocity  = e.velocity;
+		s.yaw       = e.yaw;
+		s.lookYaw   = e.lookYaw;
+		s.lookPitch = e.lookPitch;
+		s.hp        = e.hp();
+		s.maxHp     = e.def().max_hp;
+		s.walkSpeed = e.def().walk_speed;
+		s.onGround  = e.onGround;
+		if (e.inventory) s.inventory = e.inventory->items();
+		s.props.reserve(e.props().size());
+		for (auto& [k, v] : e.props()) s.props.emplace_back(k, v);
+		return s;
 	}
 
 	// ── Phase 2: EXECUTE ────────────────────────────────────────────────
@@ -624,19 +674,9 @@ private:
 	float m_discoveryTimer = 100.0f; // trigger immediate discovery on first tick
 	int m_lastDecidesRun = 0;
 
-	// ── Worker-thread decide loop — TODO(decide-loop) Step 3 ───────────
-	// Wire-up pseudocode (in tick, runs after phaseDecide / before phaseExecute):
-	//   for (eid, last) in m_decisionQueue.drain(kMaxDecidesPerFrame):
-	//       DecideRequest req{eid, ++m_decideGen[eid], handle, snapshot(entity),
-	//                         gatherNearbyFromServer(entity), worldTime, dt, last};
-	//       m_decideWorker.push(std::move(req));
-	//   DecideResult r;
-	//   while (m_decideWorker.tryPop(r)):
-	//       if (r.generation != m_decideGen[r.eid]) continue;   // stale
-	//       installPlan(r.eid, m_agents[r.eid], *m_server.getEntity(r.eid),
-	//                   r.plan, r.goalText);
-	// DecideWorker                                m_decideWorker;
-	// std::unordered_map<EntityId, uint32_t>      m_decideGen;
+	// ── Worker-thread decide loop ──────────────────────────────────────
+	DecideWorker                           m_decideWorker;
+	std::unordered_map<EntityId, uint32_t> m_decideGen;
 };
 
 } // namespace modcraft
