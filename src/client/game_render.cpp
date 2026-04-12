@@ -192,9 +192,15 @@ void Game::renderEntities(float dt, float aspect) {
 		return key;
 	};
 
-	// Draw local player — skip in first-person (camera at eyes)
-	if (m_camera.mode != CameraMode::FirstPerson) {
-		auto pit = m_models.find(resolveModelKey(*pe));
+	// Draw local player humanoid — skip in FPS (camera at eyes), and skip
+	// whenever the user is Control-driving some other entity (the local body
+	// is then drawn via the mob loop below instead).
+	bool controllingLocalPlayer =
+		(m_server->controlledEntityId() == m_server->localPlayerId());
+	Entity* localPe = localPlayerEntity();
+	if (m_camera.mode != CameraMode::FirstPerson && controllingLocalPlayer && localPe) {
+		Entity* pe_draw = localPe;
+		auto pit = m_models.find(resolveModelKey(*pe_draw));
 		if (pit != m_models.end()) {
 			// Resolve held items: hotbar selected → main hand,
 			// offhand inventory slot → opposite (or chosen) hand.
@@ -236,9 +242,13 @@ void Game::renderEntities(float dt, float aspect) {
 		}
 	}
 
-	// Mob models — all entities except the locally-possessed one (drawn above)
+	// Mob models — draw everything except whatever the humanoid block above
+	// already drew, and skip the controlled entity in FPS (camera is inside).
+	EntityId controlledId = m_server->controlledEntityId();
+	EntityId localId      = m_server->localPlayerId();
 	srv.forEachEntity([&](Entity& e) {
-		if (e.id() == m_server->localPlayerId()) return;
+		if (controllingLocalPlayer && e.id() == localId) return;
+		if (e.id() == controlledId && m_camera.mode == CameraMode::FirstPerson) return;
 
 		float mobSpeed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
 		float mobDist = e.getProp<float>(Prop::WalkDistance, 0.0f);

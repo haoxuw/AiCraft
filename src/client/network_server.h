@@ -149,6 +149,7 @@ public:
 		m_tcp.disconnect();
 		m_connected = false;
 		m_serverReady = false;
+		m_controlledEid = ENTITY_NONE;
 	}
 
 	bool isConnected() const override { return m_connected; }
@@ -408,6 +409,10 @@ public:
 	// --- State access ---
 	ChunkSource& chunks() override { return m_chunks; }
 	EntityId localPlayerId() const override { return m_localPlayerId; }
+	EntityId controlledEntityId() const override {
+		return m_controlledEid != ENTITY_NONE ? m_controlledEid : m_localPlayerId;
+	}
+	void setControlledEntityId(EntityId eid) override { m_controlledEid = eid; }
 	bool isServerReady() const override { return m_serverReady; }
 
 	// Latest server-authoritative position from the broadcast stream.
@@ -782,6 +787,7 @@ private:
 	net::RecvBuffer m_recv;
 
 	EntityId m_localPlayerId = ENTITY_NONE;
+	EntityId m_controlledEid = ENTITY_NONE; // Control mode; ENTITY_NONE = drive local player
 	glm::vec3 m_spawnPos = {0, 0, 0};
 	float m_worldTime = 0.25f;
 	bool m_serverReady = false;

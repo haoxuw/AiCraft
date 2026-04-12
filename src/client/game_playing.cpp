@@ -14,6 +14,38 @@ namespace modcraft {
 // updatePlaying helpers
 // ============================================================
 
+void Game::takeControlOf(EntityId eid) {
+	if (!m_server || !m_server->isConnected()) return;
+	EntityId me  = m_server->localPlayerId();
+	EntityId cur = m_server->controlledEntityId();
+	if (cur == eid) return;
+
+	Entity* target = m_server->getEntity(eid);
+	if (!target) return;
+
+	// Leaving an NPC: resume its AI.
+	if (cur != me && m_agentClient) m_agentClient->resumeAgent(cur);
+
+	m_server->setControlledEntityId(eid);
+
+	// Entering an NPC: pause its AI so it stops wandering while driven.
+	if (eid != me && m_agentClient) m_agentClient->pauseAgent(eid);
+
+	// Rebind the client-only hotbar to the new controlled inventory
+	// (may be empty for a pig, etc. — that's fine, it just reads empty slots).
+	if (target->inventory) m_hotbar.repopulateFrom(*target->inventory);
+
+	// Snap camera smoothing so the view doesn't sweep across the world to
+	// catch up to the new body.
+	m_camera.player.feetPos = target->position;
+	m_camera.player.yaw     = target->yaw;
+	m_camera.rtsCenter      = target->position;
+	m_camera.resetSmoothing();
+
+	printf("[Control] Now driving entity %u (%s)\n",
+		eid, target->typeId().c_str());
+}
+
 // Returns true if the connection was lost and handled (caller should return).
 bool Game::handleConnectionReconnect(float dt) {
 	auto handleDisconnect = [&]() {
@@ -173,7 +205,7 @@ void Game::handleGameplayInput(float dt) {
 		if (m_controls.pressed(Action::DropItem) && !heldItem.empty() && pe->inventory->has(heldItem)) {
 			ActionProposal p;
 			p.type = ActionProposal::Relocate;
-			p.actorId = m_server->localPlayerId();
+			p.actorId = m_server->controlledEntityId();
 			p.relocateTo = Container::ground();
 			p.itemId = heldItem;
 			p.itemCount = 1;
@@ -211,7 +243,7 @@ void Game::handleGameplayInput(float dt) {
 					printf("[Equip] '%s' → slot '%s'\n", heldItem.c_str(), slotIt->second.c_str());
 					ActionProposal p;
 					p.type = ActionProposal::Relocate;
-					p.actorId = m_server->localPlayerId();
+					p.actorId = m_server->controlledEntityId();
 					p.itemId = heldItem;
 					p.equipSlot = slotIt->second;
 					m_server->sendAction(p);
@@ -240,7 +272,7 @@ void Game::handleGameplayInput(float dt) {
 
 					ActionProposal p;
 					p.type    = ActionProposal::Convert;
-					p.actorId = m_server->localPlayerId();
+					p.actorId = m_server->controlledEntityId();
 					p.fromItem  = heldItem;
 					p.fromCount = 1;
 					p.toItem    = "hp";
@@ -275,7 +307,7 @@ void Game::updateItemPickupAnimations(float dt) {
 	{
 		float pickupRange = pe->def().pickup_range;
 		auto& srv = *m_server;
-		EntityId playerId = srv.localPlayerId();
+		EntityId playerId = srv.controlledEntityId();
 		srv.forEachEntity([&](Entity& e) {
 			if (e.typeId() != ItemName::ItemEntity) return;
 			if (e.removed) return;
@@ -498,7 +530,7 @@ void Game::updatePlaying(float dt, float aspect) {
 			if (!itemId.empty() && pe->inventory->has(itemId)) {
 				ActionProposal drop;
 				drop.type = ActionProposal::Relocate;
-				drop.actorId = m_server->localPlayerId();
+				drop.actorId = m_server->controlledEntityId();
 				drop.itemId = itemId;
 				drop.itemCount = 1;
 				drop.relocateTo = Container::ground();
@@ -642,7 +674,7 @@ void Game::updatePlaying(float dt, float aspect) {
 
 					ActionProposal p;
 					p.type      = ActionProposal::Relocate;
-					p.actorId   = m_server->localPlayerId();
+					p.actorId   = m_server->controlledEntityId();
 					p.itemId    = itemId;
 					p.itemCount = n;
 					if (chestToPlayer) {

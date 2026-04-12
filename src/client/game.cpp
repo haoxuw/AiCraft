@@ -387,7 +387,9 @@ void Game::handleGlobalInput() {
 		if (m_state == GameState::ADMIN) {
 			m_state = GameState::PLAYING;
 			m_adminFly = false;
-			Entity* pe = playerEntity();
+			// Admin/fly lives on the local player body (drives canClientControl),
+			// not on whatever is currently being Control-driven.
+			Entity* pe = localPlayerEntity();
 			if (pe) pe->setProp("fly_mode", false);
 			printf("[Game] Admin mode OFF\n");
 		} else {
@@ -402,7 +404,7 @@ void Game::handleGlobalInput() {
 	bool f11 = glfwGetKey(m_window.handle(), GLFW_KEY_F11) == GLFW_PRESS;
 	if (f11 && !prevF11 && m_state == GameState::ADMIN) {
 		m_adminFly = !m_adminFly;
-		Entity* pe = playerEntity();
+		Entity* pe = localPlayerEntity();
 		if (pe) pe->setProp("fly_mode", m_adminFly);
 		printf("[Game] Fly mode %s\n", m_adminFly ? "ON" : "OFF");
 	}

@@ -67,6 +67,12 @@ public:
 
 	// Entity access
 	virtual EntityId localPlayerId() const = 0;
+
+	// The entity the local client is currently "driving" with input + camera.
+	// Defaults to the local player, but may be any owned entity via Control mode.
+	virtual EntityId controlledEntityId() const { return localPlayerId(); }
+	virtual void setControlledEntityId(EntityId /*eid*/) {}
+
 	virtual Entity* getEntity(EntityId id) = 0;
 	virtual void forEachEntity(std::function<void(Entity&)> fn) = 0;
 	virtual size_t entityCount() const = 0;

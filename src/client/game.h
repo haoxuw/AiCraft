@@ -122,11 +122,27 @@ private:
 	HUD                         m_hud;
 	Hotbar                      m_hotbar; // client-only 10-slot view over player inventory
 
-	// Player entity (from server)
+	// The entity whose input/camera the user is currently driving.
+	// Defaults to the local player; switches when the user enters Control mode
+	// on another owned entity (via the entity-inspector "Control" button).
 	Entity* playerEntity() {
+		return m_server && m_server->isConnected()
+			? m_server->getEntity(m_server->controlledEntityId()) : nullptr;
+	}
+
+	// The literal player-character entity, regardless of Control mode. Used
+	// for operations that must target the player's own body (admin flags,
+	// disconnect/reconnect loading gates).
+	Entity* localPlayerEntity() {
 		return m_server && m_server->isConnected()
 			? m_server->getEntity(m_server->localPlayerId()) : nullptr;
 	}
+
+	// Enter Control mode on `eid` (owned by the local player). Pauses that
+	// entity's agent AI; input + camera follow it. Passing localPlayerId()
+	// restores normal control.
+	void takeControlOf(EntityId eid);
+	void releaseControl() { takeControlOf(m_server->localPlayerId()); }
 
 	// World templates
 	std::vector<std::shared_ptr<WorldTemplate>> m_templates;

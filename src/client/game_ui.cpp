@@ -78,6 +78,26 @@ void Game::updateEntityInspect(float dt, float aspect) {
 			} else {
 				ImGui::TextColored({0.8f, 0.6f, 0.3f, 1}, "Owned by entity %d", owner);
 			}
+
+			// Control button: player can drive any owned living entity.
+			// Shows "Release" when this IS the controlled entity, restoring
+			// input + camera to the player body.
+			if (target->def().isLiving() && owner == (int)myId) {
+				EntityId controlled = m_server->controlledEntityId();
+				if (controlled == eid && eid != myId) {
+					if (ImGui::Button("Release", {100, 0})) {
+						releaseControl();
+						m_gameplay.clearInspection();
+						m_state = m_preInspectState;
+					}
+				} else if (eid != myId) {
+					if (ImGui::Button("Control", {100, 0})) {
+						takeControlOf(eid);
+						m_gameplay.clearInspection();
+						m_state = m_preInspectState;
+					}
+				}
+			}
 		}
 
 		ImGui::Separator();

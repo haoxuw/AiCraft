@@ -663,6 +663,40 @@ public:
 		rebuildViz(eid, state, *e);
 	}
 
+	// Called when the player enters Control mode on `eid`. Clears the
+	// current plan so the entity stops acting under AI, and parks the
+	// override-pause timer at ~forever — phaseExecute will skip plan
+	// progression + re-decide while paused. The pending outcome is left
+	// unset so there's nothing queued to flush on resume.
+	void pauseAgent(EntityId eid) {
+		auto it = m_agents.find(eid);
+		if (it == m_agents.end()) return;
+		Entity* e = m_server.getEntity(eid);
+		if (!e) return;
+		AgentState& state = it->second;
+		state.plan.clear();
+		state.stepIndex = 0;
+		state.watch = AgentState::StepWatch{};
+		state.viz.waypoints.clear();
+		state.goalText = "controlled";
+		state.overridePauseTimer = 1e9f;
+		state.hasPendingOutcome = false;
+		e->goalText = "controlled";
+		rebuildViz(eid, state, *e);
+	}
+
+	// Called when the player releases Control of `eid`. Clears the pause
+	// timer and enqueues an immediate decide() so Python autonomy resumes.
+	void resumeAgent(EntityId eid) {
+		auto it = m_agents.find(eid);
+		if (it == m_agents.end()) return;
+		AgentState& state = it->second;
+		state.overridePauseTimer = 0.0f;
+		state.hasPendingOutcome = false;
+		if (!m_decisionQueue.hasPending(eid))
+			m_decisionQueue.enqueue(eid);
+	}
+
 	// Called from network layer when server broadcasts a per-entity
 	// interrupt (e.g. proximity trigger). See Step 7.
 	void onInterrupt(EntityId eid, const std::string& reason) {
