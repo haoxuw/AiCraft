@@ -101,7 +101,7 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	// Does NOT set m_swingTriggered here — the attack dispatch in game.cpp
 	// handles the swing with weapon-appropriate duration (and only when the
 	// item actually allows attacking, preventing "potion swing").
-	if (m_entityHit && controls.pressed(Action::BreakBlock)) {
+	if (m_entityHit && controls.held(Action::BreakBlock)) {
 		bool entityIsNearer = !m_hit || m_entityHit->distance <= m_hit->distance;
 		if (entityIsNearer)
 			m_attackTarget = m_entityHit->entityId;
@@ -112,7 +112,7 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 	if (m_hit && !entityAttack && (camera.mode == CameraMode::FirstPerson ||
 	              camera.mode == CameraMode::ThirdPerson) && player.inventory) {
 		// Left-click: break / ignite TNT
-		if (controls.pressed(Action::BreakBlock) && m_breakCD <= 0) {
+		if (controls.held(Action::BreakBlock) && m_breakCD <= 0) {
 			m_swingTriggered = true; // trigger first-person hand swing
 			auto& bp = m_hit->blockPos;
 			BlockId bid = chunks.getBlock(bp.x, bp.y, bp.z);

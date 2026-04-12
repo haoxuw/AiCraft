@@ -131,7 +131,7 @@ void Game::handleGameplayInput(float dt) {
 			bool canAirSwing = (m_camera.mode == CameraMode::FirstPerson ||
 			                    m_camera.mode == CameraMode::ThirdPerson);
 			bool leftClick = (attackId != ENTITY_NONE) ||
-			                 (canAirSwing && m_controls.pressed(Action::BreakBlock));
+			                 (canAirSwing && m_controls.held(Action::BreakBlock));
 			if (leftClick && canAttack && m_attackCD <= 0) {
 				if (m_attackAnim.trigger()) {
 					m_attackCD = cooldown;
