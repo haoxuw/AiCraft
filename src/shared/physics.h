@@ -45,6 +45,23 @@ inline MoveParams makeMoveParams(glm::vec3 boxMin, glm::vec3 boxMax,
 	return mp;
 }
 
+// Smoothly rotate `yaw` (degrees) toward the direction of horizontal velocity.
+// Shared between server tick (entity_manager) and client prediction
+// (network_server) so both paths produce the same turn rate. Matches the
+// player-movement lerp at game_playing.cpp. No-op when speed is below
+// minSpeedSq to avoid chasing a zero vector.
+inline void smoothYawTowardsVelocity(float& yaw, glm::vec3 vel, float dt,
+                                     float rate = 20.0f,
+                                     float minSpeedSq = 0.0025f) {
+	float horizSpeedSq = vel.x * vel.x + vel.z * vel.z;
+	if (horizSpeedSq <= minSpeedSq) return;
+	float targetYaw = glm::degrees(std::atan2(vel.z, vel.x));
+	float diff = targetYaw - yaw;
+	while (diff >  180.0f) diff -= 360.0f;
+	while (diff < -180.0f) diff += 360.0f;
+	yaw += diff * std::min(dt * rate, 1.0f);
+}
+
 // Block query: returns the collision height of the block at (x,y,z).
 // 0.0 = not solid (air/transparent), 1.0 = full block, 0.5 = half-height (stairs/slabs).
 // The block physically occupies [y, y + return_value] in world space.

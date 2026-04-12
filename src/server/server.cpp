@@ -56,7 +56,7 @@ void GameServer::resolveActions(float dt) {
 				glm::vec3 dir = {p.desiredVel.x / hLen, 0, p.desiredVel.z / hLen};
 				e->moveTarget = e->position + dir * 10.0f;
 				e->moveSpeed = hLen;
-				e->yaw = glm::degrees(std::atan2(p.desiredVel.z, p.desiredVel.x));
+				// yaw is smoothed per-tick in GameServer::tick from velocity.
 			} else {
 				e->moveTarget = e->position;
 				e->moveSpeed = 0;

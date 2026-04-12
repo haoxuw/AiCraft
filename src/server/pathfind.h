@@ -148,8 +148,7 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 		e.moveTarget = goal;
 		e.moveSpeed = walkSpeed;
 
-		// Face movement direction
-		e.yaw = std::atan2(-dirX, -dirZ) * (180.0f / 3.14159265f);
+		// yaw is smoothed per-tick in GameServer::tick from velocity.
 	});
 }
 

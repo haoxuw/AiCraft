@@ -18,6 +18,8 @@
 
 namespace modcraft {
 
+class AgentClient;
+
 class GameplayController {
 public:
 	// Called each gameplay frame. Gathers client input → ActionProposals.
@@ -47,6 +49,11 @@ public:
 	// Set by game loop: true when inventory/ImGui/chat is open and wants cursor
 	void setUIWantsCursor(bool v) { m_uiWantsCursor = v; }
 
+	// Injected by Game::startPlaying so click-to-move can clear the
+	// target NPC's agent plan and install a "player override" synthetic
+	// plan. Raw pointer — lifetime owned by Game.
+	void setAgentClient(AgentClient* ac) { m_agentClient = ac; }
+
 private:
 	// --- Subsystems (each has its own .cpp implementation) ---
 
@@ -69,6 +76,7 @@ private:
 
 	float m_breakCD = 0;
 	bool m_uiWantsCursor = false;
+	AgentClient* m_agentClient = nullptr;
 
 	// --- Block breaking progress (survival = 3 hits) ---
 public:

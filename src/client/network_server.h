@@ -243,8 +243,8 @@ public:
 							glm::vec3 dir = toTarget / distToTarget;
 							localVel.x = dir.x * target.moveSpeed;
 							localVel.z = dir.z * target.moveSpeed;
-							e.yaw = glm::degrees(std::atan2(dir.z, dir.x));
 						}
+						// yaw comes from server-broadcast (already smoothed); no snap here.
 					}
 
 					const auto& def = e.def();
@@ -256,13 +256,10 @@ public:
 					e.velocity = result.velocity;
 					e.onGround = result.onGround;
 
-					// Mirror of gameplay_movement.cpp:296 for the player: derive
-					// yaw from velocity every tick so body facing tracks motion
-					// without waiting for the next decide() cycle. lookYaw=yaw
-					// keeps the render body-offset (game_render.cpp:285) at 0.
+					// Smooth yaw toward intent (pre-collision localVel), matching
+					// the server-side lerp so local feel matches broadcast.
 					if (ownedByUs) {
-						if (std::abs(e.velocity.x) > 0.01f || std::abs(e.velocity.z) > 0.01f)
-							e.yaw = glm::degrees(std::atan2(e.velocity.z, e.velocity.x));
+						smoothYawTowardsVelocity(e.yaw, localVel, dt);
 						e.lookYaw = e.yaw;
 						e.lookPitch = 0.0f;
 					}

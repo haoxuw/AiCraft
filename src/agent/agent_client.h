@@ -125,6 +125,15 @@ private:
 
 		// ── Client-side interrupt diff snapshot — Step 6 ──
 		int prevHp = 0;
+
+		// Player-override pause: when the local player clicks to move a
+		// claimed NPC, we install a synthetic Move plan and arm this timer.
+		// On plan completion (finishPlan), decide() is NOT re-queued until
+		// the timer expires — giving the NPC a visible "I'm obeying you"
+		// idle beat before its Python behavior resumes.
+		float overridePauseTimer  = 0.0f;
+		bool  hasPendingOutcome   = false;
+		LastOutcome pendingOutcome;
 	};
 
 	// ── Entity discovery ────────────────────────────────────────────────
@@ -352,6 +361,21 @@ private:
 	void phaseExecute(float dt) {
 		for (auto& [eid, state] : m_agents) {
 			if (!state.claimed) continue;
+
+			// Drain player-override pause; once it expires, flush the
+			// deferred outcome so Python decide() can pick up control.
+			if (state.overridePauseTimer > 0.0f) {
+				state.overridePauseTimer -= dt;
+				if (state.overridePauseTimer <= 0.0f) {
+					state.overridePauseTimer = 0.0f;
+					if (state.hasPendingOutcome) {
+						state.hasPendingOutcome = false;
+						if (!m_decisionQueue.hasPending(eid))
+							m_decisionQueue.enqueue(eid, std::move(state.pendingOutcome));
+					}
+				}
+			}
+
 			if (state.plan.empty()) continue;
 
 			Entity* e = m_server.getEntity(eid);
@@ -586,6 +610,15 @@ private:
 		state.plan.clear();
 		state.stepIndex  = 0;
 		state.viz.waypoints.clear();
+		// If player override is active, hold off on re-decide until the
+		// pause timer drains (see phaseExecute). The pending outcome is
+		// stashed so the eventual enqueue carries "interrupt:player_override".
+		if (state.overridePauseTimer > 0.0f) {
+			next.reason = "interrupt:player_override";
+			state.pendingOutcome = std::move(next);
+			state.hasPendingOutcome = true;
+			return;
+		}
 		if (!m_decisionQueue.hasPending(eid))
 			m_decisionQueue.enqueue(eid, std::move(next));
 	}
@@ -625,6 +658,28 @@ private:
 	}
 
 public:
+	// Called in-process when the local player click-drives a claimed NPC
+	// (RTS/RPG right-click). Replaces any in-flight plan with a single
+	// Move to the clicked goal, arms a 3.14 s idle pause, and refreshes
+	// viz so the dash line snaps to the new target this frame. The
+	// re-decide is deferred until the pause expires (see phaseExecute
+	// + finishPlan).
+	void onOverride(EntityId eid, glm::vec3 goal) {
+		auto it = m_agents.find(eid);
+		if (it == m_agents.end()) return;
+		Entity* e = m_server.getEntity(eid);
+		if (!e) return;
+		AgentState& state = it->second;
+
+		state.plan.clear();
+		state.stepIndex = 0;
+		state.watch = AgentState::StepWatch{};
+		state.plan.push_back(PlanStep::move(goal));
+		state.goalText = "player_override";
+		state.overridePauseTimer = 3.14f;
+		rebuildViz(eid, state, *e);
+	}
+
 	// Called from network layer when server broadcasts a per-entity
 	// interrupt (e.g. proximity trigger). See Step 7.
 	void onInterrupt(EntityId eid, const std::string& reason) {

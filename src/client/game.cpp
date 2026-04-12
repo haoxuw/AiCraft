@@ -782,6 +782,7 @@ void Game::setupAfterConnect(GameState targetState) {
 
 	// Create AgentClient for controlling owned NPCs
 	m_agentClient = std::make_unique<AgentClient>(*m_server, m_behaviorStore);
+	m_gameplay.setAgentClient(m_agentClient.get());
 
 	// Wire server-broadcast interrupts (S_NPC_INTERRUPT, S_WORLD_EVENT) to
 	// the agent client. Only NetworkServer delivers these — TestServer is

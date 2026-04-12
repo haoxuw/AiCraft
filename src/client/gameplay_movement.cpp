@@ -1,4 +1,5 @@
 #include "client/gameplay.h"
+#include "agent/agent_client.h"
 #include "shared/physics.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
@@ -66,6 +67,7 @@ void GameplayController::processMovement(float dt, GameState state,
 					// Store local move orders for visual target rendering
 					for (auto eid : m_rtsSelect.selected) {
 						m_moveOrders[eid] = {center, true};
+						if (m_agentClient) m_agentClient->onOverride(eid, center);
 					}
 					m_moveTargetPos = center;
 					m_hasMoveTarget = true;
@@ -175,6 +177,7 @@ void GameplayController::processMovement(float dt, GameState state,
 					m_moveTargetPos = target;
 					m_hasMoveTarget = true;
 					server.sendSetGoal(player.id(), target);
+					if (m_agentClient) m_agentClient->onOverride(player.id(), target);
 				}
 			}
 		}

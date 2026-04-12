@@ -17,6 +17,7 @@
 #include "server/world_gen_config.h"
 #include "shared/action.h"
 #include "shared/constants.h"
+#include "shared/physics.h"
 #include "server/world_template.h"
 #include "server/pathfind.h"
 #include "server/structure_blueprint.h"
@@ -417,6 +418,15 @@ public:
 
 		// Physics for all entities (purges removed entities from the map)
 		m_world->entities.stepPhysics(dt, solidFn);
+
+		// Smooth body yaw toward direction of travel for every entity.
+		// Single authoritative source — replaces per-event yaw snaps in
+		// server.cpp and pathfind.h so NPCs turn naturally instead of
+		// flipping instantly when velocity reverses.
+		m_world->entities.forEach([&](Entity& e) {
+			if (e.removed) return;
+			smoothYawTowardsVelocity(e.yaw, e.velocity, dt);
+		});
 
 		// Active block ticking (TNT, wheat, wire)
 		m_activeBlockTimer += dt;
