@@ -22,7 +22,7 @@ living = {
     "playable": True,
 
     "model": "villager",
-    "behavior": "pingpong",  # was "woodcutter" — temp swap for animation debugging
+    "behavior": "woodcutter",
 
     # Physics
     "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 1.8, 0.3]},

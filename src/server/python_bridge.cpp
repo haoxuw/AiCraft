@@ -373,14 +373,21 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 
 		// Find the Behavior subclass and instantiate it.
 		// Uses Python introspection so behaviors don't need registration boilerplate.
+		// Picks the most-derived candidate so behaviors using rule-list base
+		// classes (e.g. RulesBehavior) don't get the base class instantiated
+		// instead of the concrete subclass.
 		py::exec(R"(
 import inspect as _i
+_candidates = [_c for _n, _c in list(globals().items())
+               if _i.isclass(_c) and _c is not Behavior and issubclass(_c, Behavior)]
 _behavior_instance = None
-for _n, _c in list(globals().items()):
-    if _i.isclass(_c) and _c is not Behavior and issubclass(_c, Behavior):
+for _c in _candidates:
+    if not any(_o is not _c and issubclass(_o, _c) for _o in _candidates):
         _behavior_instance = _c()
         break
-del _i, _n, _c
+del _i, _candidates
+try: del _c, _o, _n
+except NameError: pass
 )", ns);
 
 		if (!ns.contains("_behavior_instance") || ns["_behavior_instance"].is_none()) {
