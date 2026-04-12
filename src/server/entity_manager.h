@@ -137,10 +137,32 @@ public:
 				MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
 					def.gravity_scale, def.isLiving(), e.getProp<bool>("fly_mode", false));
 
+				glm::vec3 preVel = e.velocity;
+				glm::vec3 prePos = e.position;
 				auto result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
 				e.position = result.position;
 				e.velocity = result.velocity;
 				e.onGround = result.onGround;
+
+				// ── DEBUG: stuck-in-place — server-side collision clamp ──
+				// Input horiz velocity non-zero but output near-zero ⇒ the
+				// server thinks this entity is walking into a wall. Client
+				// animation plays regardless, producing the "walks in place"
+				// symptom until drift exceeds SNAP_THRESHOLD.
+				float inHoriz  = std::sqrt(preVel.x * preVel.x + preVel.z * preVel.z);
+				float outHoriz = std::sqrt(result.velocity.x * result.velocity.x +
+				                            result.velocity.z * result.velocity.z);
+				if (inHoriz > 0.5f && outHoriz < 0.05f) {
+					static std::unordered_map<EntityId, int> s_tick;
+					int& n = s_tick[e.id()];
+					if (++n % 30 == 0) {
+						fprintf(stderr, "[MoveStuck:Clamp] eid=%u pos=(%.2f,%.2f,%.2f) "
+							"velIn=(%.2f,%.2f) velOut=(%.2f,%.2f) box=[%.2f,%.2f]\n",
+							e.id(), prePos.x, prePos.y, prePos.z,
+							preVel.x, preVel.z, result.velocity.x, result.velocity.z,
+							def.collision_box_min.x, def.collision_box_max.x);
+					}
+				}
 			}
 
 			// Item entity: freeze on ground (no bouncing), despawn after timeout

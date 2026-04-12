@@ -380,7 +380,7 @@ void Game::handleGlobalInput() {
 	}
 	prevF5 = f5;
 
-	// F12: toggle admin mode (unlimited blocks, claim any entity)
+	// F12: toggle admin mode (unlimited blocks, control any entity via possession)
 	static bool prevF12 = false;
 	bool f12 = glfwGetKey(m_window.handle(), GLFW_KEY_F12) == GLFW_PRESS;
 	if (f12 && !prevF12 && (m_state == GameState::ADMIN || m_state == GameState::PLAYING)) {

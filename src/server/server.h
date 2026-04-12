@@ -114,13 +114,47 @@ public:
 		m_blueprints.loadAll("artifacts/structures");
 	}
 
-	// Initialize server with world + spawn default entities (new world)
+	// Initialize server with world + world-scope static entities (chests).
+	// Mobs are NOT spawned here — they spawn per-client in spawnMobsForClient()
+	// when a GUI client connects. Chests are world-scope (persist across
+	// sessions, owner=0, never despawn).
 	void init(const ServerConfig& config,
 	          const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		initWorld(config, templates);
 
 		auto& tmpl = m_world->getTemplate();
-		auto& wgc  = config.worldGenConfig;
+
+		// Place chests in all non-barn houses. Chest positions are read later
+		// by spawnMobsForClient() to assign villager bed/chest props.
+		auto houseChests = tmpl.houseChestPositions(m_world->seed());
+		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
+		m_houseChests.clear();
+		m_houseChestEntities.clear();
+		for (auto& cPos : houseChests) {
+			int cx = (int)std::round(cPos.x), cy = (int)std::round(cPos.y), cz = (int)std::round(cPos.z);
+			if (chestId != BLOCK_AIR) {
+				ChunkPos cp = worldToChunk(cx, cy, cz);
+				Chunk* c = m_world->getChunk(cp);
+				if (c) c->set(((cx%16)+16)%16, ((cy%16)+16)%16, ((cz%16)+16)%16, chestId);
+			}
+			glm::vec3 blockCenter = {(float)cx + 0.5f, (float)cy + 0.5f, (float)cz + 0.5f};
+			EntityId chestEid = m_world->entities.spawn(StructureName::Chest, blockCenter, {});
+			m_houseChests.push_back(blockCenter);
+			m_houseChestEntities.push_back(chestEid);
+			printf("[Server] Chest entity %u at (%d,%d,%d)\n", chestEid, cx, cy, cz);
+		}
+
+		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f  Chests: %zu houses\n",
+		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z, m_houseChests.size());
+	}
+
+	// Spawn the mob set for one connecting client. Every mob gets
+	// Prop::Owner = ownerId baked in, so the agent hosted by that client
+	// can drive them and so disconnect cleanup can despawn them.
+	void spawnMobsForClient(EntityId ownerId) {
+		if (!m_world) return;
+		auto& tmpl = m_world->getTemplate();
+		auto& wgc  = m_wgc;
 
 		// Scan upward from terrain noise height to find the actual topmost solid block,
 		// so mobs don't spawn inside village buildings placed on top of terrain.
@@ -181,10 +215,9 @@ public:
 			}
 		};
 
-		// Place chests in houses BEFORE spawning mobs — villagers need
-		// bed/chest assignments when they're spawned at the Monument anchor.
-		auto houseChests = tmpl.houseChestPositions(m_world->seed());
-		auto beds        = tmpl.bedPositions(m_world->seed());
+		// Villager bed assignments come from the template; chest positions
+		// were pre-populated in init() and kept in m_houseChests.
+		auto beds = tmpl.bedPositions(m_world->seed());
 
 		auto spawnOne = [&](const MobSpawn& ms, float x, float z, float fixedY,
 		                    std::unordered_map<std::string, PropValue> extraProps) {
@@ -192,6 +225,9 @@ public:
 			auto bIt = wgc.behaviorOverrides.find(ms.typeId);
 			if (bIt != wgc.behaviorOverrides.end())
 				extraProps[Prop::BehaviorId] = bIt->second;
+			// Every mob is owned by the connecting client so their in-process
+			// AgentClient can drive it and so logout cleanup is straightforward.
+			extraProps[Prop::Owner] = (int)ownerId;
 			float y = (fixedY >= 0.0f) ? fixedY : safeSpawnHeight(x, z);
 			EntityId eid = m_world->entities.spawn(ms.typeId, {x, y, z}, extraProps);
 			auto iIt = wgc.startingItems.find(ms.typeId);
@@ -241,31 +277,13 @@ public:
 			}
 		};
 
-		// Place chests in all non-barn houses. Chest positions feed villager
-		// bed/chest assignments when mobs are spawned below.
-		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
-		m_houseChests.clear();
-		for (auto& cPos : houseChests) {
-			int cx = (int)std::round(cPos.x), cy = (int)std::round(cPos.y), cz = (int)std::round(cPos.z);
-			if (chestId != BLOCK_AIR) {
-				ChunkPos cp = worldToChunk(cx, cy, cz);
-				Chunk* c = m_world->getChunk(cp);
-				if (c) c->set(((cx%16)+16)%16, ((cy%16)+16)%16, ((cz%16)+16)%16, chestId);
-			}
-			glm::vec3 blockCenter = {(float)cx + 0.5f, (float)cy + 0.5f, (float)cz + 0.5f};
-			EntityId chestEid = m_world->entities.spawn(StructureName::Chest, blockCenter, {});
-			m_houseChests.push_back(blockCenter);
-			m_houseChestEntities.push_back(chestEid);
-			printf("[Server] Chest entity %u at (%d,%d,%d)\n", chestEid, cx, cy, cz);
-		}
-
+		int mobsBefore = (int)m_world->entities.count();
 		for (int i = 0; i < (int)mobList.size(); i++) {
 			if (mobList[i].count <= 0) continue;
 			spawnMob(mobList[i], (float)i);
 		}
-
-		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f  Chests: %zu houses\n",
-		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z, m_houseChests.size());
+		int spawned = (int)m_world->entities.count() - mobsBefore;
+		printf("[Server] Spawned %d mobs for owner=%u\n", spawned, ownerId);
 	}
 
 	// Add a client. Returns the player's EntityId.
@@ -322,6 +340,12 @@ public:
 		}
 		m_clients[clientId] = {eid};
 		printf("[Server] Client %u joined. Player entity: %u\n", clientId, eid);
+
+		// Spawn this client's mob set. Every mob is owned by the player entity
+		// just created, so the client's in-process AgentClient can drive them
+		// and so removeClient() can despawn them on disconnect.
+		spawnMobsForClient(eid);
+
 		return eid;
 	}
 
@@ -349,15 +373,28 @@ public:
 	void removeClient(ClientId clientId) {
 		auto it = m_clients.find(clientId);
 		if (it != m_clients.end()) {
+			EntityId playerId = it->second.playerEntityId;
 			// Save player inventory before removing
-			if (it->second.playerEntityId != ENTITY_NONE) {
-				Entity* pe = m_world->entities.get(it->second.playerEntityId);
+			if (playerId != ENTITY_NONE) {
+				Entity* pe = m_world->entities.get(playerId);
 				if (pe && pe->inventory) {
 					std::string skin = pe->getProp<std::string>("character_skin", "default");
 					m_savedInventories[skin] = *pe->inventory;
 					printf("[Server] Saved inventory for '%s'\n", skin.c_str());
 				}
-				m_world->entities.remove(it->second.playerEntityId);
+				// Despawn every entity owned by this client (their mob set).
+				// Entities with owner=0 (static chests, etc.) are world-scope
+				// and stay. Self-ownership of the player entity matches here
+				// too, so the player itself gets removed in the same pass.
+				int despawned = 0;
+				m_world->entities.forEach([&](Entity& e) {
+					if (e.getProp<int>(Prop::Owner, 0) == (int)playerId) {
+						m_world->entities.remove(e.id());
+						despawned++;
+					}
+				});
+				printf("[Server] Despawned %d entities owned by player %u\n",
+					despawned, playerId);
 			}
 			m_clients.erase(it);
 			printf("[Server] Client %u disconnected.\n", clientId);

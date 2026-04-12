@@ -57,9 +57,6 @@ public:
 	virtual void sendSetGoalGroup(glm::vec3 pos, const std::vector<EntityId>& eids) {}
 	virtual void sendCancelGoal(EntityId eid) {}
 
-	// Ownership — claim an entity (admin or unclaimed only)
-	virtual void sendClaimEntity(EntityId eid) {}
-
 	// Proximity — notify server which NPCs are near the player (triggers AI re-decide)
 	virtual void sendProximity(const std::vector<EntityId>& eids) {}
 
@@ -88,6 +85,11 @@ public:
 	virtual float worldTime() const = 0;
 	virtual glm::vec3 spawnPos() const = 0;
 	virtual float pickupRange() const = 0;
+
+	// True once the server has finished initial setup for this client
+	// (mobs spawned, welcome/inventory sent). Loading screen waits on this.
+	// Default: assume ready (in-process TestServer etc).
+	virtual bool isServerReady() const { return true; }
 
 	// Latest server-reported position for an entity (from broadcast).
 	// Used by the debug HUD to show client-server divergence.

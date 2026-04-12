@@ -107,8 +107,6 @@ private:
 		// Visualization (rebuilt each time a new plan arrives)
 		PlanViz viz;
 
-		bool claimed = false;
-
 		// Per-step observable-outcome bookkeeping. evaluateStep() uses these
 		// to detect Success/Failed from world state only. `initialized` resets
 		// to false on each stepIndex advance via advanceStep().
@@ -127,19 +125,30 @@ private:
 		int prevHp = 0;
 
 		// Player-override pause: when the local player clicks to move a
-		// claimed NPC, we install a synthetic Move plan and arm this timer.
+		// controlled NPC, we install a synthetic Move plan and arm this timer.
 		// On plan completion (finishPlan), decide() is NOT re-queued until
 		// the timer expires — giving the NPC a visible "I'm obeying you"
 		// idle beat before its Python behavior resumes.
 		float overridePauseTimer  = 0.0f;
 		bool  hasPendingOutcome   = false;
 		LastOutcome pendingOutcome;
+
+		// Stuck detection: rolling window of (last position sample, seconds since
+		// last notable progress). If velocity stays non-zero but position doesn't
+		// advance, we emit a [MoveStuck:Agent-Stuck] diagnostic — this is the
+		// canonical "wants to move, not moving" signal the user cares about.
+		glm::vec3 lastSampledPos   = glm::vec3(0.0f);
+		float     stuckAccum       = 0.0f;
+		bool      stuckLogged      = false;
 	};
 
 	// ── Entity discovery ────────────────────────────────────────────────
 
 	void discoverEntities() {
-		// Periodic scan: discover NPCs with BehaviorId owned by (or unclaimed for) this player
+		// Periodic scan: track NPCs with BehaviorId owned by this player.
+		// Ownership is baked in at spawn (server::spawnMobsForClient), so we
+		// never send a claim — we just register the entities the server
+		// already assigned to us.
 		m_discoveryTimer += 0.05f; // rough dt approximation
 		if (m_discoveryTimer < 2.0f && !m_agents.empty()) return;
 		m_discoveryTimer = 0;
@@ -153,31 +162,18 @@ private:
 			if (e.removed) return;
 			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
 			if (bid.empty()) return;
-
-			// Already tracking?
 			if (m_agents.count(e.id())) return;
+			if (e.getProp<int>(Prop::Owner, 0) != (int)myId) return;
 
-			// Claim unclaimed entities
-			int owner = e.getProp<int>(Prop::Owner, 0);
-			if (owner != 0 && owner != (int)myId) return; // owned by someone else
-
-			if (owner == 0) {
-				m_server.sendClaimEntity(e.id());
-			}
-
-			// Register agent
 			AgentState state;
 			state.behaviorId = bid;
 			state.handle = loadBehaviorForEntity(bid);
-			state.claimed = (owner == (int)myId);
 			m_agents[e.id()] = std::move(state);
-
-			if (state.handle >= 0) {
+			if (m_agents[e.id()].handle >= 0)
 				m_decisionQueue.enqueue(e.id());
-			}
 		});
 
-		// Remove dead/removed agents
+		// Drop agents whose entity disappeared.
 		for (auto it = m_agents.begin(); it != m_agents.end(); ) {
 			Entity* e = m_server.getEntity(it->first);
 			if (!e || e->removed) {
@@ -186,15 +182,6 @@ private:
 				m_decisionQueue.remove(it->first);
 				it = m_agents.erase(it);
 			} else {
-				// Update claim status
-				if (!it->second.claimed) {
-					int owner = e->getProp<int>(Prop::Owner, 0);
-					if (owner == (int)m_server.localPlayerId()) {
-						it->second.claimed = true;
-						if (!m_decisionQueue.hasPending(it->first))
-							m_decisionQueue.enqueue(it->first);
-					}
-				}
 				++it;
 			}
 		}
@@ -222,7 +209,6 @@ private:
 			m_lastDecidesRun++;
 			auto ait = m_agents.find(eid);
 			if (ait == m_agents.end()) continue;
-			if (!ait->second.claimed) continue;
 
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
@@ -360,8 +346,6 @@ private:
 
 	void phaseExecute(float dt) {
 		for (auto& [eid, state] : m_agents) {
-			if (!state.claimed) continue;
-
 			// Drain player-override pause; once it expires, flush the
 			// deferred outcome so Python decide() can pick up control.
 			if (state.overridePauseTimer > 0.0f) {
@@ -629,7 +613,6 @@ private:
 	// plan and enqueue a re-decide. Visual-only races are fine.
 	void scanClientInterrupts() {
 		for (auto& [eid, state] : m_agents) {
-			if (!state.claimed) continue;
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
 
@@ -658,7 +641,7 @@ private:
 	}
 
 public:
-	// Called in-process when the local player click-drives a claimed NPC
+	// Called in-process when the local player click-drives a controlled NPC
 	// (RTS/RPG right-click). Replaces any in-flight plan with a single
 	// Move to the clicked goal, arms a 3.14 s idle pause, and refreshes
 	// viz so the dash line snaps to the new target this frame. The
@@ -695,7 +678,6 @@ public:
 	void onWorldEvent(const std::string& kind, const std::string& /*payload*/) {
 		std::string reason = kind;
 		for (auto& [eid, state] : m_agents) {
-			if (!state.claimed) continue;
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
 			interruptPlan(eid, state, *e, reason);
@@ -728,9 +710,61 @@ private:
 		// immediately. Yaw is derived from velocity each tick in
 		// network_server.h (mirror of gameplay_movement.cpp:297) — setting
 		// it here would only provide one snap at decision boundaries.
-		if (Entity* e = m_server.getEntity(eid)) {
+		Entity* e = m_server.getEntity(eid);
+		if (e) {
 			e->velocity.x = vel.x;
 			e->velocity.z = vel.z;
+		}
+
+		// ── Stuck detection: velocity non-zero but position not advancing ──
+		// Fires once per entity when the agent has been commanding motion
+		// for >=1.5 s without meaningful displacement. Resets when the
+		// entity starts moving again or the agent stops commanding motion.
+		if (e) {
+			auto it = m_agents.find(eid);
+			if (it != m_agents.end()) {
+				auto& s = it->second;
+				float intent = std::sqrt(vel.x * vel.x + vel.z * vel.z);
+				float moved  = glm::length(glm::vec2(e->position.x, e->position.z) -
+				                           glm::vec2(s.lastSampledPos.x, s.lastSampledPos.z));
+				constexpr float kIntentThresh = 0.2f;   // agent wants motion
+				constexpr float kMoveThresh   = 0.05f;  // actually displaced
+				constexpr float kStuckWindow  = 1.5f;   // seconds before we yell
+				const float dt = 1.0f / 60.0f;          // rough; sendMove is tick-cadenced
+
+				if (intent > kIntentThresh && moved < kMoveThresh) {
+					s.stuckAccum += dt;
+					if (s.stuckAccum >= kStuckWindow && !s.stuckLogged) {
+						fprintf(stderr, "[MoveStuck:Agent-Stuck] eid=%u pos=(%.2f,%.2f,%.2f) "
+							"intent=(%.2f,%.2f) goal=\"%s\" — velocity held %.1fs, no displacement. "
+							"Likely server collision clamp or client/server pos delta.\n",
+							eid, e->position.x, e->position.y, e->position.z,
+							vel.x, vel.z, goal.c_str(), s.stuckAccum);
+						s.stuckLogged = true;
+					}
+				} else {
+					if (s.stuckLogged) {
+						fprintf(stderr, "[MoveStuck:Agent-Unstuck] eid=%u pos=(%.2f,%.2f,%.2f) — moving again\n",
+							eid, e->position.x, e->position.y, e->position.z);
+					}
+					s.stuckAccum  = 0.0f;
+					s.stuckLogged = false;
+				}
+				s.lastSampledPos = e->position;
+			}
+		}
+
+		// ── DEBUG: periodic per-entity dump of client-predicted pos + intent vel ──
+		// Pair with [MoveStuck:Server] / [MoveStuck:Snap] to see where client/server diverge.
+		{
+			static std::unordered_map<EntityId, int> s_tick;
+			int& n = s_tick[eid];
+			if (++n % 60 == 0 && e) {
+				fprintf(stderr, "[MoveStuck:Agent] eid=%u pos=(%.2f,%.2f,%.2f) "
+					"vel=(%.2f,%.2f,%.2f)\n",
+					eid, e->position.x, e->position.y, e->position.z,
+					vel.x, vel.y, vel.z);
+			}
 		}
 
 		ActionProposal p;

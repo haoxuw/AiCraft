@@ -17,7 +17,6 @@
  * C_HELLO         0x0003  GUI client hello  [u32 version][str uuid][str name][str skin]
  * C_SET_GOAL      0x0008  [u32 entityId][f32 x][f32 y][f32 z]
  * C_CANCEL_GOAL   0x0009  [u32 entityId]
- * C_CLAIM_ENTITY  0x000A  [u32 entityId]
  * C_SET_GOAL_GROUP 0x000B [f32 x][f32 y][f32 z][u32 count][u32 eid...]
  * C_GET_INVENTORY 0x000D  [u32 entityId]
  *
@@ -55,7 +54,6 @@ enum MsgType : uint32_t {
 	C_HELLO           = 0x0003,  // [u32 version][str uuid][str displayName][str creatureType]
 	C_SET_GOAL        = 0x0008,  // [u32 entityId][f32 x][f32 y][f32 z]
 	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
-	C_CLAIM_ENTITY    = 0x000A,  // [u32 entityId] — claim ownership (admin or unclaimed only)
 	C_SET_GOAL_GROUP  = 0x000B,  // [f32 x][f32 y][f32 z][u32 count][u32 eid...]
 	C_GET_INVENTORY   = 0x000D,  // [u32 entityId] — request entity inventory snapshot
 
@@ -70,6 +68,8 @@ enum MsgType : uint32_t {
 	S_ERROR           = 0x100B,
 	S_CHUNK_EVICT     = 0x100E,  // discard chunk from client cache: [i32 cx][i32 cy][i32 cz]  (v2)
 	S_CHUNK_Z         = 0x100F,  // zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
+	S_READY           = 0x1012,  // [] — sent after addClient finishes mob spawn. Client holds
+	                             // the LOADING screen until this arrives.
 
 	// Event-driven decision-loop interrupts — see plans/cosmic-tinkering-forest.md
 	// TODO(decide-loop): not yet emitted by server nor handled by client. Step 7

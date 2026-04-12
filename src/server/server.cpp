@@ -50,6 +50,22 @@ void GameServer::resolveActions(float dt) {
 			e->velocity.x = p.desiredVel.x;
 			e->velocity.z = p.desiredVel.z;
 
+			// ── DEBUG: stuck-in-place investigation ───────────────
+			// Per-entity throttled dump at Move-action receipt.
+			// hasClientPos=0 for NPCs means the server will also run
+			// physics this tick — suspect for divergence from client.
+			{
+				static std::unordered_map<EntityId, int> s_tick;
+				int& n = s_tick[p.actorId];
+				if (++n % 60 == 0) {
+					fprintf(stderr, "[MoveStuck:Server] eid=%u pos=(%.2f,%.2f,%.2f) "
+						"velIn=(%.2f,%.2f,%.2f) hasClientPos=%d skipPhys=%d\n",
+						p.actorId, e->position.x, e->position.y, e->position.z,
+						p.desiredVel.x, p.desiredVel.y, p.desiredVel.z,
+						p.hasClientPos ? 1 : 0, e->skipPhysics ? 1 : 0);
+				}
+			}
+
 			// Derive move target for client-side prediction (10-block lookahead)
 			float hLen = std::sqrt(p.desiredVel.x * p.desiredVel.x + p.desiredVel.z * p.desiredVel.z);
 			if (hLen > 0.01f) {

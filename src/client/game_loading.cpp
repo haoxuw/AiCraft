@@ -43,7 +43,7 @@ void Game::updateLoading(float dt, float aspect) {
 
 	float progress = totalChunks > 0 ? (float)loadedChunks / totalChunks : 0.0f;
 
-	if (feetLoaded && progress > 0.3f) {
+	if (m_server->isServerReady() && feetLoaded && progress > 0.3f) {
 		printf("[Game] Loading complete: %d/%d chunks (%.0f%%), entering gameplay\n",
 			loadedChunks, totalChunks, progress * 100);
 		m_state = GameState::PLAYING;

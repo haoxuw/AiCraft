@@ -148,6 +148,7 @@ public:
 	void disconnect() override {
 		m_tcp.disconnect();
 		m_connected = false;
+		m_serverReady = false;
 	}
 
 	bool isConnected() const override { return m_connected; }
@@ -276,10 +277,26 @@ public:
 			glm::vec3 diff = target.position - e.position;
 			float dist = glm::length(diff);
 			if (dist > SNAP_THRESHOLD) {
+				// ── DEBUG: stuck-in-place — client/server divergence snap ──
+				fprintf(stderr, "[MoveStuck:Snap] eid=%u client=(%.2f,%.2f,%.2f) "
+					"server=(%.2f,%.2f,%.2f) dist=%.2f → teleport back\n",
+					id, e.position.x, e.position.y, e.position.z,
+					target.position.x, target.position.y, target.position.z, dist);
 				e.position = target.position;
 				e.velocity = target.velocity;
 				e.onGround = true;
 			} else if (!isLocal && dist > 0.01f) {
+				// Rate-limited drift probe: periodic client-vs-server gap dump.
+				if (dist > 1.5f) {
+					static std::unordered_map<EntityId, int> s_tick;
+					int& n = s_tick[id];
+					if (++n % 60 == 0) {
+						fprintf(stderr, "[MoveStuck:Drift] eid=%u client=(%.2f,%.2f,%.2f) "
+							"server=(%.2f,%.2f,%.2f) dist=%.2f\n",
+							id, e.position.x, e.position.y, e.position.z,
+							target.position.x, target.position.y, target.position.z, dist);
+					}
+				}
 				e.position += diff * std::min(dt * CORRECTION_RATE, 1.0f);
 			}
 
@@ -383,13 +400,6 @@ public:
 		net::sendMessage(m_tcp.fd(), net::C_CANCEL_GOAL, wb);
 	}
 
-	void sendClaimEntity(EntityId eid) override {
-		if (!m_connected) return;
-		net::WriteBuffer wb;
-		wb.writeU32(eid);
-		net::sendMessage(m_tcp.fd(), net::C_CLAIM_ENTITY, wb);
-	}
-
 	void sendProximity(const std::vector<EntityId>& eids) override {
 		// C_PROXIMITY removed — agents run inside PlayerClient now, no server relay needed
 		(void)eids;
@@ -398,6 +408,7 @@ public:
 	// --- State access ---
 	ChunkSource& chunks() override { return m_chunks; }
 	EntityId localPlayerId() const override { return m_localPlayerId; }
+	bool isServerReady() const override { return m_serverReady; }
 
 	// Latest server-authoritative position from the broadcast stream.
 	// Falls back to the last applied entity position if no interp target.
@@ -484,6 +495,13 @@ private:
 		net::ReadBuffer rb(payload.data(), payload.size());
 
 		switch (type) {
+		case net::S_READY: {
+			// Server finished per-client setup (mobs spawned, welcome done).
+			// The loading screen waits on this before handing off to gameplay.
+			m_serverReady = true;
+			printf("[Net] Server ready.\n");
+			break;
+		}
 		case net::S_ENTITY: {
 			auto es = net::deserializeEntityState(rb);
 
@@ -766,6 +784,7 @@ private:
 	EntityId m_localPlayerId = ENTITY_NONE;
 	glm::vec3 m_spawnPos = {0, 0, 0};
 	float m_worldTime = 0.25f;
+	bool m_serverReady = false;
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;

@@ -666,6 +666,14 @@ private:
 			}
 			printf("[Server] %s: queued %zu initial chunks (sorted nearest-first)\n",
 				client.label().c_str(), client.pendingChunks.size());
+
+			// Signal end-of-setup: mobs have been spawned (in addClient) and
+			// welcome/inventory/chunks queued. The client's loading screen
+			// waits on this before handing off to gameplay.
+			{
+				net::WriteBuffer rb;
+				net::sendMessage(client.fd, net::S_READY, rb);
+			}
 			break;
 		}
 
@@ -700,20 +708,7 @@ private:
 			break;
 		}
 		// C_PROXIMITY removed — agents run inside PlayerClient, no relay needed
-		case net::C_CLAIM_ENTITY: {
-			uint32_t eid = rb.readU32();
-			Entity* target = m_server.world().entities.get(eid);
-			Entity* player = m_server.world().entities.get(client.playerId);
-			if (!target || !player) break;
-			int currentOwner = target->getProp<int>(Prop::Owner, 0);
-			bool isAdmin = player->getProp<bool>("fly_mode", false);
-			// Can claim if: unclaimed (owner=0) or admin
-			if (currentOwner == 0 || isAdmin) {
-				target->setProp(Prop::Owner, (int)client.playerId);
-				printf("[Server] Entity %u claimed by player %u\n", eid, client.playerId);
-			}
-			break;
-		}
+		// C_CLAIM_ENTITY removed — ownership is baked in at spawn time.
 		case net::C_GET_INVENTORY: {
 			EntityId eid = rb.readU32();
 			Entity* target = m_server.world().entities.get(eid);

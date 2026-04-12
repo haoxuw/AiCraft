@@ -66,28 +66,17 @@ void Game::updateEntityInspect(float dt, float aspect) {
 			ImGui::TextColored({1.0f, 0.3f, 0.3f, 1}, "ERROR: %s", target->errorText.c_str());
 		}
 
-		// Ownership display + claim button
+		// Ownership display (read-only; ownership is baked at spawn and
+		// changes only via despawn-on-disconnect)
 		{
 			int owner = target->getProp<int>(Prop::Owner, 0);
 			EntityId myId = m_server->localPlayerId();
-			bool isMine = (owner == (int)myId);
-			bool isAdmin = (m_state == GameState::ADMIN);
-			if (isMine) {
+			if (owner == (int)myId) {
 				ImGui::TextColored({0.3f, 0.9f, 0.3f, 1}, "Owned by you");
 			} else if (owner == 0) {
-				ImGui::TextColored({0.6f, 0.6f, 0.6f, 1}, "Unclaimed");
-				ImGui::SameLine();
-				if (ImGui::SmallButton("Claim")) {
-					m_server->sendClaimEntity(eid);
-				}
+				ImGui::TextColored({0.6f, 0.6f, 0.6f, 1}, "World entity");
 			} else {
 				ImGui::TextColored({0.8f, 0.6f, 0.3f, 1}, "Owned by entity %d", owner);
-				if (isAdmin) {
-					ImGui::SameLine();
-					if (ImGui::SmallButton("Claim (Admin)")) {
-						m_server->sendClaimEntity(eid);
-					}
-				}
 			}
 		}
 
