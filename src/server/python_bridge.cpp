@@ -424,7 +424,10 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
                                std::string& goalOut,
                                std::string& errorOut,
                                BlockQueryFn blockQueryFn,
-                               ScanBlocksFn scanBlocksFn) {
+                               ScanBlocksFn scanBlocksFn,
+                               const std::string& lastOutcome,
+                               const std::string& lastGoal,
+                               const std::string& lastReason) {
 	// Acquire GIL — callDecide runs on DecideWorker's thread.
 	py::gil_scoped_acquire gil;
 
@@ -481,6 +484,9 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 		pyWorld["blocks"] = py::list();
 		pyWorld["dt"] = dt; pyWorld["time"] = timeOfDay;
 		pyWorld["goal"] = py::none();
+		pyWorld["last_outcome"] = lastOutcome;
+		pyWorld["last_goal"]    = lastGoal;
+		pyWorld["last_reason"]  = lastReason;
 
 		// Construct pydantic objects
 		py::object& LocalWorldCls = *static_cast<py::object*>(m_localWorldClass);

@@ -175,6 +175,9 @@ public:
 	//
 	// Thread-safe. Internally acquires the GIL, so callers must NOT hold it.
 	// Typically invoked from DecideWorker's thread.
+	// lastOutcome/lastGoal/lastReason describe the outcome of the previous
+	// plan (event-driven decide loop). See python/local_world.py for the
+	// exposed Python fields (world.last_outcome / last_goal / last_reason).
 	Plan callDecide(BehaviorHandle handle,
 	                const EntitySnapshot& self,
 	                const std::vector<NearbyEntity>& nearby,
@@ -182,7 +185,10 @@ public:
 	                std::string& goalOut,
 	                std::string& errorOut,
 	                BlockQueryFn blockQueryFn = nullptr,
-	                ScanBlocksFn scanBlocksFn = nullptr);
+	                ScanBlocksFn scanBlocksFn = nullptr,
+	                const std::string& lastOutcome = "none",
+	                const std::string& lastGoal    = "",
+	                const std::string& lastReason  = "");
 
 private:
 	bool m_initialized = false;

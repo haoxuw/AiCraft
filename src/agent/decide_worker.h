@@ -116,10 +116,18 @@ private:
 			res.eid = req.eid;
 			res.generation = req.generation;
 
+			// Translate StepOutcome enum → string for Python:
+			//   Success → "success", Failed → "failed", else "none".
+			// See python/local_world.py for the field semantics.
+			std::string outcomeStr = "none";
+			if (req.lastOutcome.outcome == StepOutcome::Success) outcomeStr = "success";
+			else if (req.lastOutcome.outcome == StepOutcome::Failed) outcomeStr = "failed";
+
 			res.plan = pythonBridge().callDecide(
 				req.handle, req.self, req.nearby, req.dt,
 				req.worldTime, res.goalText, res.error,
-				std::move(req.blockQuery), std::move(req.scanBlocks));
+				std::move(req.blockQuery), std::move(req.scanBlocks),
+				outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason);
 
 			{
 				std::lock_guard<std::mutex> lk(m_resMutex);

@@ -198,6 +198,21 @@ class LocalWorld(BaseModel):
     entities: list[EntityView] = Field(default_factory=list)
     goal:     Optional[dict]   = None  # {"x","y","z"} from C_SET_GOAL, or None
 
+    # Outcome of the previous plan (event-driven decide loop).
+    # decide() is called only when the previous plan ended or was
+    # interrupted; this field carries the "why" so a behavior can
+    # branch (e.g. Failed("stuck") → pick a different target).
+    #
+    # last_outcome is one of:
+    #   "success" — plan finished normally
+    #   "failed"  — plan aborted; last_reason describes it
+    #   "none"    — this is the first decide() for the entity
+    last_outcome: str = "none"
+    last_goal:    str = ""    # previous decide()'s goal string
+    last_reason:  str = ""    # e.g. "stuck", "target_gone",
+                              # "interrupt:hp", "interrupt:proximity",
+                              # "interrupt:time_of_day"
+
     # Spatial indices — built in model_post_init, not exposed as pydantic fields
     _by_type:     dict[str, list[Nearby]]     = PrivateAttr(default_factory=dict)
 
@@ -286,4 +301,7 @@ class LocalWorld(BaseModel):
             blocks=blocks,
             entities=entities,
             goal=raw.get("goal"),
+            last_outcome=raw.get("last_outcome", "none"),
+            last_goal=raw.get("last_goal", ""),
+            last_reason=raw.get("last_reason", ""),
         )

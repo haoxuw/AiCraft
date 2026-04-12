@@ -18,6 +18,26 @@ NEW CONTRACT (Plan-based)
     Behaviors should return a list of plan steps that the AgentClient
     executes sequentially.
 
+Event-driven loop
+-----------------
+    decide() is called ONLY when the previous plan terminates or is
+    interrupted — not on a polling timer. The plan executor runs each
+    frame and classifies each step as InProgress/Success/Failed from
+    observable world state. Terminal outcomes enqueue a re-decide.
+
+    This means the returned plan is immutable until it completes, so
+    targets are automatically "sticky" — no need to cache them in self.
+
+    local_world.last_outcome / last_goal / last_reason describe why the
+    previous plan ended, so decide() can branch:
+
+      last_outcome == "success" — plan finished normally
+      last_outcome == "failed"  — plan aborted; last_reason gives detail
+                                  ("stuck", "target_gone",
+                                   "interrupt:hp", "interrupt:proximity",
+                                   "interrupt:time_of_day")
+      last_outcome == "none"    — first decide() for this entity
+
 Example
 -------
     from behavior_base import Behavior
