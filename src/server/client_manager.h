@@ -42,6 +42,10 @@ struct ConnectedClient {
 	uint32_t protocolVersion = 1;
 	bool supportsZstd = false; // true when protocolVersion >= 2
 
+	// Edge-trigger state for S_NPC_INTERRUPT. True if a player was within
+	// proximity radius of this NPC on the previous broadcast tick.
+	std::unordered_map<EntityId, bool> prevProximity;
+
 	// Chunk streaming radii.
 	// STREAM_R must exceed fogEnd/CHUNK_SIZE so the player never sees void at the fog boundary.
 	// fogEnd = 160 blocks → 10 chunks; use 11 for a 1-chunk safety margin.
@@ -217,6 +221,20 @@ public:
 
 		const float PERCEPTION_R2 = 64.0f * 64.0f;
 
+		// Day/night edges (world-wide). Day = [0.25, 0.75), night = the rest.
+		float curWT = m_server.worldTime();
+		std::string worldEventPhase;
+		if (m_prevWorldTime >= 0.0f) {
+			auto isDay = [](float t) {
+				float f = t - std::floor(t);
+				return f >= 0.25f && f < 0.75f;
+			};
+			bool prevDay = isDay(m_prevWorldTime);
+			bool curDay  = isDay(curWT);
+			if (prevDay != curDay) worldEventPhase = curDay ? "day" : "night";
+		}
+		m_prevWorldTime = curWT;
+
 		for (auto& [cid, client] : m_clients) {
 			// Gather viewpoints for perception scoping (player position only)
 			std::vector<glm::vec3> viewPoints;
@@ -287,36 +305,40 @@ public:
 			tb.writeF32(m_server.worldTime());
 			net::sendMessage(client.fd, net::S_TIME, tb);
 
-			// ── Event-driven decision-loop interrupts — TODO(decide-loop) Step 7 ──
-			// Edge-triggered broadcasts. Diff this broadcast's snapshot against
-			// the previous one and emit S_NPC_INTERRUPT / S_WORLD_EVENT only on
-			// prev→cur transitions. Piggy-backs on this existing ~20 Hz tick —
-			// NO new timer.
-			//
-			// Pseudocode:
-			//   // Proximity edges (per NPC, per client)
-			//   for each npc in livingEntities with BehaviorId:
-			//       if npc.owner != client.playerId: continue   // owner-scoped
-			//       prevClose = anyPlayerWithin(npc, ServerTuning::proximityRadius,
-			//                                   m_prevSnapshot)
-			//       curClose  = anyPlayerWithin(npc, ServerTuning::proximityRadius,
-			//                                   curSnapshot)
-			//       if !prevClose and curClose:
-			//           WriteBuffer b;
-			//           b.writeU32(npc.id); b.writeString("proximity");
-			//           net::sendMessage(client.fd, net::S_NPC_INTERRUPT, b);
-			//
-			//   // Day/night edges (broadcast to all)
-			//   if crossedSunrise(m_prevWorldTime, curWorldTime):
-			//       b.writeString("time_of_day"); b.writeString("day");
-			//       net::sendMessage(client.fd, net::S_WORLD_EVENT, b);
-			//   else if crossedSunset(m_prevWorldTime, curWorldTime):
-			//       b.writeString("time_of_day"); b.writeString("night");
-			//       net::sendMessage(client.fd, net::S_WORLD_EVENT, b);
-			//
-			// Stored state (future):
-			//   std::unordered_map<EntityId, bool> m_prevProximity;  // per-npc edge
-			//   float                              m_prevWorldTime;
+			// ── Event-driven decide-loop interrupts ────────────────────
+			// Edge-triggered, owner-scoped: emit only on prev→cur rising
+			// edge, only for NPCs owned by this client (so each agent
+			// client gets exactly one notification).
+			const float r2Prox = ServerTuning::proximityRadius *
+			                     ServerTuning::proximityRadius;
+			m_server.world().entities.forEach([&](Entity& e) {
+				int owner = e.getProp<int>(Prop::Owner, 0);
+				if (owner != (int)client.playerId) return;
+				if (!e.def().isLiving() || e.removed) return;
+				const std::string& bid = e.getProp<std::string>(Prop::BehaviorId, "");
+				if (bid.empty()) return;
+
+				bool curClose = false;
+				for (auto& vp : viewPoints) {
+					glm::vec3 d = e.position - vp;
+					if (glm::dot(d, d) <= r2Prox) { curClose = true; break; }
+				}
+				bool prevClose = client.prevProximity[e.id()];
+				if (curClose && !prevClose) {
+					net::WriteBuffer b;
+					b.writeU32(e.id());
+					b.writeString("proximity");
+					net::sendMessage(client.fd, net::S_NPC_INTERRUPT, b);
+				}
+				client.prevProximity[e.id()] = curClose;
+			});
+
+			if (!worldEventPhase.empty()) {
+				net::WriteBuffer b;
+				b.writeString("time_of_day");
+				b.writeString(worldEventPhase);
+				net::sendMessage(client.fd, net::S_WORLD_EVENT, b);
+			}
 
 			// Chunk streaming — two-tier: near (priority) then far (opportunistic).
 			// Near tier covers the full view frustum so the player never sees void.
@@ -809,6 +831,12 @@ private:
 	std::vector<ClientId> m_disconnected;
 	ClientId m_nextClientId = 1;
 	float m_broadcastTimer = 0;
+
+	// Event-driven decide-loop edge tracking. Rising edges on worldTime
+	// crossing the 0.25/0.75 day/night boundaries trigger S_WORLD_EVENT.
+	// Initialized to -1 so the very first broadcastState call does not
+	// emit a spurious edge event.
+	float m_prevWorldTime = -1.0f;
 
 	int m_port = 0;
 

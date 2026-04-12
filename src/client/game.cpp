@@ -779,6 +779,20 @@ void Game::setupAfterConnect(GameState targetState) {
 
 	// Create AgentClient for controlling owned NPCs
 	m_agentClient = std::make_unique<AgentClient>(*m_server, m_behaviorStore);
+
+	// Wire server-broadcast interrupts (S_NPC_INTERRUPT, S_WORLD_EVENT) to
+	// the agent client. Only NetworkServer delivers these — TestServer is
+	// headless and does not broadcast them.
+	if (auto* net = dynamic_cast<NetworkServer*>(m_server.get())) {
+		AgentClient* ac = m_agentClient.get();
+		net->setInterruptHandlers(
+			[ac](EntityId eid, const std::string& reason) {
+				ac->onInterrupt(eid, reason);
+			},
+			[ac](const std::string& kind, const std::string& payload) {
+				ac->onWorldEvent(kind, payload);
+			});
+	}
 }
 
 void Game::saveCurrentWorld() {

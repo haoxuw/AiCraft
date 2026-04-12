@@ -443,6 +443,16 @@ public:
 		m_onInventoryUpdate = std::move(cb);
 	}
 
+	// Wired to AgentClient::onInterrupt / onWorldEvent by game.cpp after
+	// the agent client is constructed. See Step 7 of the decide-loop plan.
+	void setInterruptHandlers(
+		std::function<void(EntityId, const std::string&)> onNpcInterrupt,
+		std::function<void(const std::string&, const std::string&)> onWorldEvent)
+	{
+		m_onNpcInterrupt = std::move(onNpcInterrupt);
+		m_onWorldEvent   = std::move(onWorldEvent);
+	}
+
 	const std::string& clientUUID() const { return m_clientUUID; }
 	void setDisplayName(const std::string& name) { m_displayName = name; }
 	void setCreatureType(const std::string& type) { m_creatureType = type; }
@@ -639,6 +649,18 @@ private:
 			m_worldTime = rb.readF32();
 			break;
 		}
+		case net::S_NPC_INTERRUPT: {
+			EntityId eid = (EntityId)rb.readU32();
+			std::string reason = rb.readString();
+			if (m_onNpcInterrupt) m_onNpcInterrupt(eid, reason);
+			break;
+		}
+		case net::S_WORLD_EVENT: {
+			std::string kind    = rb.readString();
+			std::string payload = rb.readString();
+			if (m_onWorldEvent) m_onWorldEvent(kind, payload);
+			break;
+		}
 		case net::S_BLOCK: {
 			int bx = rb.readI32(), by = rb.readI32(), bz = rb.readI32();
 			BlockId bid = (BlockId)rb.readU32();
@@ -789,6 +811,8 @@ private:
 	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockPlace;
 	std::function<void(EntityId)> m_onInventoryUpdate;
+	std::function<void(EntityId, const std::string&)> m_onNpcInterrupt;
+	std::function<void(const std::string&, const std::string&)> m_onWorldEvent;
 };
 
 } // namespace modcraft
