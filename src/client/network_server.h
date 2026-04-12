@@ -220,17 +220,31 @@ public:
 				bool groundLoaded = (m_chunkData.find(ecp) != m_chunkData.end());
 
 				if (groundLoaded) {
-					// Virtual joystick toward server's moveTarget
-					glm::vec3 toTarget = target.moveTarget - e.position;
-					toTarget.y = 0;
-					float distToTarget = glm::length(toTarget);
+					// Entities owned by this player (NPCs under our in-process
+					// AgentClient) get client-side prediction: agent sets
+					// e.velocity/e.yaw directly, identical to how the player's
+					// input writes velocity in gameplay_movement.cpp. Other
+					// clients' entities fall back to the virtual joystick
+					// toward the server-broadcast moveTarget.
+					int owner = e.getProp<int>(Prop::Owner, 0);
+					bool ownedByUs = (owner == (int)m_localPlayerId);
 
-					glm::vec3 localVel = {0, e.velocity.y, 0};
-					if (distToTarget > 0.5f && target.moveSpeed > 0.01f) {
-						glm::vec3 dir = toTarget / distToTarget;
-						localVel.x = dir.x * target.moveSpeed;
-						localVel.z = dir.z * target.moveSpeed;
-						e.yaw = glm::degrees(std::atan2(dir.z, dir.x));
+					glm::vec3 localVel;
+					if (ownedByUs) {
+						// Use agent-provided velocity directly
+						localVel = {e.velocity.x, e.velocity.y, e.velocity.z};
+					} else {
+						// Virtual joystick toward server's moveTarget
+						glm::vec3 toTarget = target.moveTarget - e.position;
+						toTarget.y = 0;
+						float distToTarget = glm::length(toTarget);
+						localVel = {0, e.velocity.y, 0};
+						if (distToTarget > 0.5f && target.moveSpeed > 0.01f) {
+							glm::vec3 dir = toTarget / distToTarget;
+							localVel.x = dir.x * target.moveSpeed;
+							localVel.z = dir.z * target.moveSpeed;
+							e.yaw = glm::degrees(std::atan2(dir.z, dir.x));
+						}
 					}
 
 					const auto& def = e.def();
@@ -377,6 +391,15 @@ public:
 	ChunkSource& chunks() override { return m_chunks; }
 	EntityId localPlayerId() const override { return m_localPlayerId; }
 
+	// Latest server-authoritative position from the broadcast stream.
+	// Falls back to the last applied entity position if no interp target.
+	glm::vec3 getServerPosition(EntityId id) override {
+		auto it = m_interpTargets.find(id);
+		if (it != m_interpTargets.end()) return it->second.position;
+		Entity* e = getEntity(id);
+		return e ? e->position : glm::vec3(0);
+	}
+
 	Entity* getEntity(EntityId id) override {
 		auto it = m_entities.find(id);
 		return it != m_entities.end() ? it->second.get() : nullptr;
@@ -469,8 +492,11 @@ private:
 				if (!es.characterSkin.empty())
 					ent->setProp("character_skin", es.characterSkin);
 				// Apply string properties (ItemType, BehaviorId, etc.)
-				for (auto& [k, v] : es.props)
+				// WalkDistance is client-local (see tick() sync path).
+				for (auto& [k, v] : es.props) {
+					if (k == Prop::WalkDistance) continue;
 					ent->setProp(k, v);
+				}
 				if (es.id == m_localPlayerId)
 					printf("[Net] Local player entity created: type=%s pos=(%.1f,%.1f,%.1f)\n",
 						es.typeId.c_str(), es.position.x, es.position.y, es.position.z);
@@ -513,8 +539,13 @@ private:
 					e.setProp(Prop::Owner, es.owner);
 				// Sync entity properties from server (server already filters
 				// out client-private props like SelectedSlot at broadcast time).
-				for (auto& [k, v] : es.props)
+				// WalkDistance is client-local for smooth animation (same as
+				// player's m_playerWalkDist) — the server's 20Hz broadcasts
+				// would stairstep the walk cycle if we applied them.
+				for (auto& [k, v] : es.props) {
+					if (k == Prop::WalkDistance) continue;
 					e.setProp(k, v);
+				}
 			}
 			break;
 		}

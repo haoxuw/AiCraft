@@ -89,6 +89,14 @@ public:
 	virtual glm::vec3 spawnPos() const = 0;
 	virtual float pickupRange() const = 0;
 
+	// Latest server-reported position for an entity (from broadcast).
+	// Used by the debug HUD to show client-server divergence.
+	// Default: same as the entity's current position (no divergence info).
+	virtual glm::vec3 getServerPosition(EntityId id) {
+		Entity* e = getEntity(id);
+		return e ? e->position : glm::vec3(0);
+	}
+
 	// Block registry (for HUD, raycast)
 	virtual const BlockRegistry& blockRegistry() const = 0;
 

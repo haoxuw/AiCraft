@@ -37,6 +37,10 @@ struct HUDContext {
 	// Frame profiler (F5)
 	bool showProfiler;
 	float profileWorldMs, profileEntityMs, profileHudMs, profileTotalMs;
+	// Server-client position divergence (shown in F3)
+	glm::vec3 serverPos;
+	glm::vec3 clientPos;
+	float posErrorSq;
 };
 
 class HUD {

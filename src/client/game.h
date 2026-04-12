@@ -159,6 +159,10 @@ private:
 	float m_fpsTimer = 0;
 	int m_frameCount = 0;
 	float m_currentFPS = 0;
+	// Frame-time budget monitoring
+	float m_perfTimer = 0;
+	int m_slowFrameCount = 0;
+	float m_worstFrameMs = 0;
 
 	// Startup flags
 	bool m_skipMenu = false;   // --skip-menu: skip main menu, start survival world directly

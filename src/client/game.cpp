@@ -284,11 +284,51 @@ void Game::appendLog(const std::string& msg) {
 // Main loop
 // ============================================================
 void Game::runOneFrame() {
+	auto frameStart = std::chrono::steady_clock::now();
+
 	float dt = beginFrame();
+	auto afterBegin = std::chrono::steady_clock::now();
+
 	float aspect = m_window.aspectRatio();
 	handleGlobalInput();
+	auto afterInput = std::chrono::steady_clock::now();
+
 	updateAndRender(dt, aspect);
+	auto afterUpdate = std::chrono::steady_clock::now();
+
 	endFrame();
+	auto frameEnd = std::chrono::steady_clock::now();
+
+	if (m_state == GameState::PLAYING || m_state == GameState::ADMIN) {
+		auto ms = [](auto a, auto b) {
+			return std::chrono::duration<float, std::milli>(b - a).count();
+		};
+		float frameMs  = ms(frameStart, frameEnd);
+		float beginMs  = ms(frameStart, afterBegin);
+		float inputMs  = ms(afterBegin, afterInput);
+		float updMs    = ms(afterInput, afterUpdate);
+		float swapMs   = ms(afterUpdate, frameEnd);
+
+		m_perfTimer += dt;
+		if (frameMs > 33.0f) {
+			m_slowFrameCount++;
+			if (frameMs > m_worstFrameMs) m_worstFrameMs = frameMs;
+			if (m_slowFrameCount <= 5 || m_slowFrameCount % 60 == 0) {
+				fprintf(stderr, "[Perf] SLOW frame: %.1fms — begin=%.1f input=%.1f upd+render=%.1f swap=%.1f "
+					"(world=%.1f entity=%.1f hud=%.1f)\n",
+					frameMs, beginMs, inputMs, updMs, swapMs,
+					m_profile.worldMs, m_profile.entityMs, m_profile.hudMs);
+			}
+		}
+		if (m_perfTimer >= 5.0f) {
+			if (m_slowFrameCount > 0)
+				fprintf(stderr, "[Perf] Last %.0fs: %d slow frames, worst=%.1fms\n",
+					m_perfTimer, m_slowFrameCount, m_worstFrameMs);
+			m_perfTimer = 0;
+			m_slowFrameCount = 0;
+			m_worstFrameMs = 0;
+		}
+	}
 }
 
 void Game::run() {

@@ -546,7 +546,10 @@ void Game::updatePlaying(float dt, float aspect) {
 		return;
 	}
 
+	using Clock = std::chrono::steady_clock;
+	auto _tP0 = Clock::now();
 	handleGameplayInput(dt);
+	auto _tP1 = Clock::now();
 
 	// Camera tracks entity position — same for all modes.
 	m_camera.player.feetPos = pe->position;
@@ -566,12 +569,16 @@ void Game::updatePlaying(float dt, float aspect) {
 	m_audio.setListener(m_camera.position, m_camera.front());
 	m_audio.updateMusic();
 
+	auto _tP2 = Clock::now();
 	updateItemPickupAnimations(dt);
+	auto _tP3 = Clock::now();
 	updateAudioAndDoors(dt);
+	auto _tP4 = Clock::now();
 
 	// Tick NPC agents (owned NPCs running Python behaviors in-process)
 	if (m_agentClient)
 		m_agentClient->tick(dt);
+	auto _tP5 = Clock::now();
 
 	// Block place feedback (immediate client-side sound)
 	auto& placeEvt = m_gameplay.placeEvent();
@@ -681,7 +688,25 @@ void Game::updatePlaying(float dt, float aspect) {
 		m_camera.resetMouseTracking(); // prevent jump when returning to gameplay
 	}
 
+	auto _tP6 = Clock::now();
 	renderPlaying(dt, aspect);
+	auto _tP7 = Clock::now();
+
+	auto _ms = [](Clock::duration d) {
+		return std::chrono::duration<float, std::milli>(d).count();
+	};
+	float tot = _ms(_tP7 - _tP0);
+	if (tot > 33.0f) {
+		static int slowUpdCount = 0;
+		slowUpdCount++;
+		if (slowUpdCount <= 5 || slowUpdCount % 60 == 0) {
+			fprintf(stderr, "[PerfUpd] total=%.1fms  input=%.1f cam/audio=%.1f pickups=%.1f doors=%.1f agents=%.1f misc=%.1f render=%.1f\n",
+				tot,
+				_ms(_tP1 - _tP0), _ms(_tP2 - _tP1), _ms(_tP3 - _tP2),
+				_ms(_tP4 - _tP3), _ms(_tP5 - _tP4), _ms(_tP6 - _tP5),
+				_ms(_tP7 - _tP6));
+		}
+	}
 }
 
 } // namespace modcraft

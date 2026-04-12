@@ -646,6 +646,10 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	int playerHP = pe->getProp<int>(Prop::HP, pe->def().max_hp);
 	float playerHunger = pe->getProp<float>(Prop::Hunger, 20.0f);
 	Inventory emptyInv;
+	glm::vec3 clientPosF = m_camera.player.feetPos;
+	glm::vec3 serverPosF = srv.getServerPosition(srv.localPlayerId());
+	glm::vec3 diffF = serverPosF - clientPosF;
+	float posErrSq = glm::dot(diffF, diffF);
 	HUDContext ctx{
 		aspect, m_state, selectedSlot,
 		pe->inventory ? *pe->inventory : emptyInv,
@@ -657,7 +661,8 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 		srv.entityCount(), m_particles.count(),
 		playerHP, pe->def().max_hp, playerHunger,
 		m_showProfiler,
-		m_profile.worldMs, m_profile.entityMs, m_profile.hudMs, m_profile.totalMs
+		m_profile.worldMs, m_profile.entityMs, m_profile.hudMs, m_profile.totalMs,
+		serverPosF, clientPosF, posErrSq
 	};
 	m_hud.render(ctx, m_text, m_renderer.highlightShader());
 

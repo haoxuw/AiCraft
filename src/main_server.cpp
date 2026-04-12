@@ -250,32 +250,69 @@ int main(int argc, char** argv) {
 
 	// Main loop
 	const float TICK_RATE = modcraft::ServerTuning::tickRate;
+	const double TICK_BUDGET_MS = TICK_RATE * 1000.0;  // 16.67ms at 60tps
 	auto lastTime = std::chrono::steady_clock::now();
 	float accumulator = 0;
 	int tickCount = 0;
 	float statusTimer = 0;
+	int slowTickCount = 0;
+	double worstTickMs = 0.0;
+	float perfTimer = 0.0f;
+	constexpr float PERF_LOG_INTERVAL = 5.0f;  // same cadence as status log
 
 	while (g_running) {
-		auto now = std::chrono::steady_clock::now();
+		auto frameStart = std::chrono::steady_clock::now();
+		auto now = frameStart;
 		float dt = std::chrono::duration<float>(now - lastTime).count();
 		lastTime = now;
 		accumulator += dt;
 		statusTimer += dt;
+		perfTimer += dt;
 
 		clients.acceptConnections(listener);
 		clients.sendPendingChunks();
 		clients.receiveMessages(dt);
 		clients.pruneDisconnected();
 
+		// Measure only the simulation cost (physics, AI, entity updates) —
+		// this is what the fixed tick budget applies to.
+		auto tickStart = std::chrono::steady_clock::now();
+		int ticksThisFrame = 0;
 		while (accumulator >= TICK_RATE) {
 			server.tick(TICK_RATE);
 			accumulator -= TICK_RATE;
 			tickCount++;
+			ticksThisFrame++;
+		}
+		auto tickEnd = std::chrono::steady_clock::now();
+
+		if (ticksThisFrame > 0) {
+			double tickMs = std::chrono::duration<double, std::milli>(tickEnd - tickStart).count();
+			double perTickMs = tickMs / ticksThisFrame;
+			if (perTickMs > TICK_BUDGET_MS) {
+				slowTickCount++;
+				if (perTickMs > worstTickMs) worstTickMs = perTickMs;
+				// Log the first few and then every 30th breach to avoid spam
+				if (slowTickCount <= 5 || slowTickCount % 30 == 0) {
+					fprintf(stderr, "[Perf] SLOW tick: %.1fms (budget %.1fms, %d ticks this frame, %zu entities)\n",
+						perTickMs, TICK_BUDGET_MS, ticksThisFrame,
+						server.world().entities.count());
+				}
+			}
 		}
 
 		clients.broadcastState(dt);
 		clients.announceOnLAN(dt);
 		clients.logStatus(statusTimer, tickCount, logFile);
+
+		if (perfTimer >= PERF_LOG_INTERVAL) {
+			if (slowTickCount > 0)
+				fprintf(stderr, "[Perf] Last %.0fs: %d slow ticks, worst=%.1fms (budget %.1fms)\n",
+					perfTimer, slowTickCount, worstTickMs, TICK_BUDGET_MS);
+			slowTickCount = 0;
+			worstTickMs = 0;
+			perfTimer = 0;
+		}
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}

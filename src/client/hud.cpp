@@ -323,10 +323,22 @@ void HUD::renderDebugOverlay(const HUDContext& ctx, TextRenderer& text) {
 	ChunkPos cp = World::worldToChunk((int)p.x, (int)p.y, (int)p.z);
 	float lineH = 0.065f;
 	float x = -0.98f, y = 0.84f;
+	// FPS — red when below 30, yellow below 45, green/white otherwise
+	glm::vec4 fpsCol = {1,1,1,0.80f};
+	if (ctx.fps < 30.0f)      fpsCol = {1.0f, 0.3f, 0.3f, 0.90f};
+	else if (ctx.fps < 45.0f) fpsCol = {1.0f, 0.85f, 0.3f, 0.90f};
 	snprintf(dbg, sizeof(dbg), "FPS: %.0f", ctx.fps);
+	text.drawText(dbg, x, y, 0.65f, fpsCol, ctx.aspect); y -= lineH;
+	snprintf(dbg, sizeof(dbg), "CliXYZ: %.1f / %.1f / %.1f", ctx.clientPos.x, ctx.clientPos.y, ctx.clientPos.z);
 	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
-	snprintf(dbg, sizeof(dbg), "XYZ: %.1f / %.1f / %.1f", p.x, p.y, p.z);
+	snprintf(dbg, sizeof(dbg), "SrvXYZ: %.1f / %.1f / %.1f", ctx.serverPos.x, ctx.serverPos.y, ctx.serverPos.z);
 	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
+	// PosErr² — red when > 4.0 (2-block divergence)
+	glm::vec4 errCol = ctx.posErrorSq > 4.0f
+		? glm::vec4{1.0f, 0.3f, 0.3f, 0.95f}
+		: glm::vec4{0.5f, 1.0f, 0.5f, 0.85f};
+	snprintf(dbg, sizeof(dbg), "PosErr2: %.2f", ctx.posErrorSq);
+	text.drawText(dbg, x, y, 0.65f, errCol, ctx.aspect); y -= lineH;
 	snprintf(dbg, sizeof(dbg), "Chunk: %d %d %d", cp.x, cp.y, cp.z);
 	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
 	snprintf(dbg, sizeof(dbg), "Entities: %zu  Particles: %zu", ctx.entityCount, ctx.particleCount);

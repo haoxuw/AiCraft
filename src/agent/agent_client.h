@@ -40,10 +40,27 @@ public:
 	// ── Main tick (called from Game::updatePlaying) ──────────────────────
 
 	void tick(float dt) {
+		using Clock = std::chrono::steady_clock;
 		m_time += dt;
+		auto t0 = Clock::now();
 		discoverEntities();
+		auto t1 = Clock::now();
 		phaseDecide();
+		auto t2 = Clock::now();
 		phaseExecute(dt);
+		auto t3 = Clock::now();
+		auto ms = [](Clock::duration d) {
+			return std::chrono::duration<float, std::milli>(d).count();
+		};
+		float total = ms(t3 - t0);
+		if (total > 20.0f) {
+			static int cnt = 0; cnt++;
+			if (cnt <= 5 || cnt % 60 == 0)
+				fprintf(stderr, "[Agent] slow tick %.1fms — discover=%.1f decide=%.1f exec=%.1f "
+					"(decides=%d agents=%zu)\n",
+					total, ms(t1 - t0), ms(t2 - t1), ms(t3 - t2),
+					m_lastDecidesRun, m_agents.size());
+		}
 	}
 
 	// ── Visualization data for renderEntityEffects ──────────────────────
@@ -159,8 +176,23 @@ private:
 	// ── Phase 1: DECIDE ─────────────────────────────────────────────────
 
 	void phaseDecide() {
-		auto ready = m_decisionQueue.drain(4); // max 4 decisions per tick
+		// Budgeted: run decisions until we've spent kBudgetMs on this phase.
+		// Python decide() (esp. A* pathfinding) is heavy. Over-budget decides
+		// get re-queued so agents still update, just a frame or two later.
+		constexpr float kBudgetMs = 8.0f;
+		using Clock = std::chrono::steady_clock;
+		auto phaseStart = Clock::now();
+
+		auto ready = m_decisionQueue.drain(8);
+		m_lastDecidesRun = 0;
 		for (EntityId eid : ready) {
+			float elapsedMs = std::chrono::duration<float, std::milli>(
+				Clock::now() - phaseStart).count();
+			if (elapsedMs > kBudgetMs) {
+				m_decisionQueue.scheduleNow(eid); // re-queue for next tick
+				continue;
+			}
+			m_lastDecidesRun++;
 			auto ait = m_agents.find(eid);
 			if (ait == m_agents.end()) continue;
 			if (!ait->second.claimed) continue;
@@ -230,9 +262,9 @@ private:
 		// Build visualization
 		rebuildViz(eid, state, entity);
 
-		// Schedule next decide
+		// Schedule next decide (500ms — pathfinding is expensive on main thread)
 		m_decisionQueue.schedule(eid,
-			SteadyClock::now() + std::chrono::milliseconds(250));
+			SteadyClock::now() + std::chrono::milliseconds(500));
 	}
 
 	// ── Phase 2: EXECUTE ────────────────────────────────────────────────
@@ -371,6 +403,19 @@ private:
 	// ── Action helpers ──────────────────────────────────────────────────
 
 	void sendMove(EntityId eid, glm::vec3 vel, const std::string& goal) {
+		// Client-side prediction (same pattern as gameplay_movement.cpp for
+		// the player): update the entity's velocity and facing direction
+		// locally so the render loop sees them immediately, without waiting
+		// for the server round-trip. The server remains authoritative — it
+		// will correct position via broadcast — but facing/animation should
+		// track input as snappy as the player's does.
+		if (Entity* e = m_server.getEntity(eid)) {
+			e->velocity.x = vel.x;
+			e->velocity.z = vel.z;
+			if (std::abs(vel.x) > 0.01f || std::abs(vel.z) > 0.01f)
+				e->yaw = glm::degrees(std::atan2(vel.z, vel.x));
+		}
+
 		ActionProposal p;
 		p.type = ActionProposal::Move;
 		p.actorId = eid;
@@ -383,33 +428,13 @@ private:
 		sendMove(eid, {0, 0, 0}, goal);
 	}
 
-	// ── Dumb pathfinding: straight-line waypoints with jitter ───────────
+	// ── Straight-line movement: just one waypoint at the destination ────
+	// Pathfinding removed intentionally. Entities walk directly at their
+	// goal; if they hit a wall they get stuck. Collision is the server's
+	// concern, not the AI's.
 
-	std::vector<glm::vec3> generateWaypoints(glm::vec3 from, glm::vec3 to) {
-		std::vector<glm::vec3> wps;
-		float totalDist = glm::length(to - from);
-
-		if (totalDist < 3.0f) {
-			// Very close — go direct
-			wps.push_back(to);
-			return wps;
-		}
-
-		// 2-4 intermediate waypoints along the route
-		std::uniform_real_distribution<float> jitter(-2.0f, 2.0f);
-		int numIntermediate = 2 + (int)(totalDist / 15.0f);
-		if (numIntermediate > 4) numIntermediate = 4;
-
-		for (int i = 1; i <= numIntermediate; i++) {
-			float t = (float)i / (numIntermediate + 1);
-			glm::vec3 p = glm::mix(from, to, t);
-			p.x += jitter(m_rng);
-			p.z += jitter(m_rng);
-			wps.push_back(p);
-		}
-
-		wps.push_back(to); // final destination always exact
-		return wps;
+	std::vector<glm::vec3> generateWaypoints(glm::vec3 /*from*/, glm::vec3 to) {
+		return { to };
 	}
 
 	// ── Visualization rebuild ───────────────────────────────────────────
@@ -481,6 +506,7 @@ private:
 	std::mt19937 m_rng;
 	float m_time = 0;
 	float m_discoveryTimer = 100.0f; // trigger immediate discovery on first tick
+	int m_lastDecidesRun = 0;
 };
 
 } // namespace modcraft
