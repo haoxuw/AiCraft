@@ -110,10 +110,7 @@ private:
 		// Visualization (rebuilt each time a new plan arrives)
 		PlanViz viz;
 
-		// Timing
 		bool claimed = false;
-		bool needsDecide = true;  // TODO(decide-loop) Step 5: delete — superseded
-		                          // by DecisionQueue::hasPending().
 
 		// ── Event-driven decide-loop scratch — TODO(decide-loop) Step 5 ──
 		// Per-step observable-outcome bookkeeping. evaluateStep() uses these
@@ -173,7 +170,7 @@ private:
 			m_agents[e.id()] = std::move(state);
 
 			if (state.handle >= 0) {
-				m_decisionQueue.scheduleNow(e.id());
+				m_decisionQueue.enqueue(e.id());
 			}
 		});
 
@@ -192,7 +189,7 @@ private:
 					if (owner == (int)m_server.localPlayerId()) {
 						it->second.claimed = true;
 						if (!m_decisionQueue.hasPending(it->first))
-							m_decisionQueue.scheduleNow(it->first);
+							m_decisionQueue.enqueue(it->first);
 					}
 				}
 				++it;
@@ -210,13 +207,13 @@ private:
 		using Clock = std::chrono::steady_clock;
 		auto phaseStart = Clock::now();
 
-		auto ready = m_decisionQueue.drain(8);
+		auto ready = m_decisionQueue.drainReady(8);
 		m_lastDecidesRun = 0;
-		for (EntityId eid : ready) {
+		for (auto& [eid, last] : ready) {
 			float elapsedMs = std::chrono::duration<float, std::milli>(
 				Clock::now() - phaseStart).count();
 			if (elapsedMs > kBudgetMs) {
-				m_decisionQueue.scheduleNow(eid); // re-queue for next tick
+				m_decisionQueue.enqueue(eid, std::move(last)); // re-queue for next tick
 				continue;
 			}
 			m_lastDecidesRun++;
@@ -227,16 +224,17 @@ private:
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
 
-			runDecide(eid, ait->second, *e);
+			runDecide(eid, ait->second, *e, last);
 		}
 	}
 
-	void runDecide(EntityId eid, AgentState& state, Entity& entity) {
+	void runDecide(EntityId eid, AgentState& state, Entity& entity,
+	               const LastOutcome& lastOutcome) {
 		if (state.handle < 0) {
 			state.handle = loadBehaviorForEntity(state.behaviorId);
 			if (state.handle < 0) {
-				m_decisionQueue.schedule(eid,
-					SteadyClock::now() + std::chrono::seconds(5));
+				// Behavior load failed — re-enqueue; next tick will retry.
+				m_decisionQueue.enqueue(eid, lastOutcome);
 				return;
 			}
 		}
@@ -250,7 +248,7 @@ private:
 		req.nearby     = gatherNearbyFromServer(entity);
 		req.worldTime  = m_server.worldTime();
 		req.dt         = 0.25f;
-		// TODO(decide-loop) Step 8: fill req.lastOutcome from DecisionQueue drain.
+		req.lastOutcome = lastOutcome;
 
 		// Block query callback — runs on worker thread. Captures a
 		// ServerInterface* (stable for AgentClient's lifetime). Worst-case
@@ -272,11 +270,6 @@ private:
 		};
 
 		m_decideWorker.push(std::move(req));
-
-		// Still re-schedule at 500ms until Step 4 swaps to event-driven queue.
-		// TODO(decide-loop) Step 4: delete — re-decide only on terminal outcomes.
-		m_decisionQueue.schedule(eid,
-			SteadyClock::now() + std::chrono::milliseconds(500));
 	}
 
 	// Drain completed decides from the worker and install plans on main thread.
@@ -300,8 +293,12 @@ private:
 				e->goalText = "ERROR: " + r.error.substr(0, 60);
 				e->hasError = true;
 				e->errorText = r.error;
-				m_decisionQueue.schedule(r.eid,
-					SteadyClock::now() + std::chrono::seconds(2));
+				// Re-enqueue so decide() is retried; next tick will hit the
+				// error again unless the behavior file changed on disk.
+				LastOutcome next;
+				next.outcome = StepOutcome::Failed;
+				next.reason  = "decide_error";
+				m_decisionQueue.enqueue(r.eid, std::move(next));
 				continue;
 			}
 
@@ -347,10 +344,15 @@ private:
 			if (state.plan.empty()) continue;
 			if (state.stepIndex >= (int)state.plan.size()) {
 				// Plan complete → re-decide
+				LastOutcome next;
+				next.outcome     = StepOutcome::Success;
+				next.goalText    = state.goalText;
+				next.stepTypeRaw = state.plan.empty() ? 0
+				                    : (int)state.plan.back().type;
 				state.plan.clear();
 				state.viz.waypoints.clear();
 				if (!m_decisionQueue.hasPending(eid))
-					m_decisionQueue.scheduleNow(eid);
+					m_decisionQueue.enqueue(eid, std::move(next));
 				continue;
 			}
 
