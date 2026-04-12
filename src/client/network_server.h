@@ -255,6 +255,17 @@ public:
 					e.position = result.position;
 					e.velocity = result.velocity;
 					e.onGround = result.onGround;
+
+					// Mirror of gameplay_movement.cpp:296 for the player: derive
+					// yaw from velocity every tick so body facing tracks motion
+					// without waiting for the next decide() cycle. lookYaw=yaw
+					// keeps the render body-offset (game_render.cpp:285) at 0.
+					if (ownedByUs) {
+						if (std::abs(e.velocity.x) > 0.01f || std::abs(e.velocity.z) > 0.01f)
+							e.yaw = glm::degrees(std::atan2(e.velocity.z, e.velocity.x));
+						e.lookYaw = e.yaw;
+						e.lookPitch = 0.0f;
+					}
 				} else {
 					// No ground chunk — use server position directly (no local physics)
 					e.position = target.position;
@@ -487,8 +498,16 @@ private:
 				ent->yaw = es.yaw;
 				ent->onGround = es.onGround;
 				ent->goalText = es.goalText;
-				ent->lookYaw   = es.lookYaw;
-				ent->lookPitch = es.lookPitch;
+				// Entities owned by our in-process agent client keep lookYaw
+				// locally predicted (same reason as the S_ENTITY update path).
+				bool ownedByUs = (es.owner == (int)m_localPlayerId);
+				if (!ownedByUs) {
+					ent->lookYaw   = es.lookYaw;
+					ent->lookPitch = es.lookPitch;
+				} else {
+					ent->lookYaw   = es.yaw;
+					ent->lookPitch = 0.0f;
+				}
 				if (!es.characterSkin.empty())
 					ent->setProp("character_skin", es.characterSkin);
 				// Apply string properties (ItemType, BehaviorId, etc.)
@@ -530,8 +549,18 @@ private:
 				// Server's onGround is stale (20Hz) and would re-trigger jumps.
 				if (es.id != m_localPlayerId)
 					e.onGround = es.onGround;
-				e.lookYaw   = es.lookYaw;
-				e.lookPitch = es.lookPitch;
+				// lookYaw/lookPitch are locally predicted for entities owned by
+				// our in-process agent (mirror of the WalkDistance filter below).
+				// Server broadcasts would stomp the agent's fast yaw updates and
+				// reintroduce the sideways-body bug.
+				{
+					int owner = e.getProp<int>(Prop::Owner, 0);
+					bool ownedByUs = (owner == (int)m_localPlayerId);
+					if (!ownedByUs) {
+						e.lookYaw   = es.lookYaw;
+						e.lookPitch = es.lookPitch;
+					}
+				}
 				e.goalText = es.goalText;
 				if (e.def().isLiving())
 					e.setProp(Prop::HP, es.hp);

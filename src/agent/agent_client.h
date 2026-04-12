@@ -404,16 +404,13 @@ private:
 
 	void sendMove(EntityId eid, glm::vec3 vel, const std::string& goal) {
 		// Client-side prediction (same pattern as gameplay_movement.cpp for
-		// the player): update the entity's velocity and facing direction
-		// locally so the render loop sees them immediately, without waiting
-		// for the server round-trip. The server remains authoritative — it
-		// will correct position via broadcast — but facing/animation should
-		// track input as snappy as the player's does.
+		// the player): update the entity's velocity locally so physics runs
+		// immediately. Yaw is derived from velocity each tick in
+		// network_server.h (mirror of gameplay_movement.cpp:297) — setting
+		// it here would only provide one snap at decision boundaries.
 		if (Entity* e = m_server.getEntity(eid)) {
 			e->velocity.x = vel.x;
 			e->velocity.z = vel.z;
-			if (std::abs(vel.x) > 0.01f || std::abs(vel.z) > 0.01f)
-				e->yaw = glm::degrees(std::atan2(vel.z, vel.x));
 		}
 
 		ActionProposal p;
