@@ -134,6 +134,15 @@ private:
 		bool  hasPendingOutcome   = false;
 		LastOutcome pendingOutcome;
 
+		// Tier-1 periodic rethink backstop. Counts time since the current
+		// plan was installed; when it crosses kPeriodicRethinkSec, the
+		// agent is interrupted with reason="periodic" so Python's rule
+		// list re-evaluates against the current world state. Catches any
+		// condition that flipped mid-plan (e.g. Threatened becoming true
+		// while Rejoin is walking) without special-casing per condition.
+		// Reset to 0 whenever state.plan is replaced.
+		float timeSinceDecide = 0.0f;
+
 		// Stuck detection: rolling window of (last position sample, seconds since
 		// last notable progress). If velocity stays non-zero but position doesn't
 		// advance, we emit a [MoveStuck:Agent-Stuck] diagnostic — this is the
@@ -300,6 +309,7 @@ private:
 			state.stepIndex = 0;
 			state.goalText = std::move(r.goalText);
 			state.watch = AgentState::StepWatch{};
+			state.timeSinceDecide = 0.0f;
 
 			rebuildViz(r.eid, state, *e);
 		}
@@ -344,6 +354,13 @@ private:
 	// for this long before re-deciding — lets the behavior check "am I still
 	// near my target?" at a human-reasonable cadence, not per frame.
 	static constexpr float kIdleHoldSeconds = 1.0f;
+	// Tier-1 periodic-rethink backstop. Generic across all entities and
+	// behaviors: every kPeriodicRethinkSec the current plan is interrupted
+	// (reason="periodic") so Python's rule list re-evaluates. Gives
+	// condition changes that no explicit event models (new predator
+	// approaches, HP climb/drop that didn't cross the delta, world
+	// weather, etc.) a bounded time before the agent notices.
+	static constexpr float kPeriodicRethinkSec = 1.0f;
 
 	void phaseExecute(float dt) {
 		for (auto& [eid, state] : m_agents) {
@@ -365,6 +382,21 @@ private:
 
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
+
+			// Tier-1 periodic rethink: interrupt and re-decide every
+			// kPeriodicRethinkSec while a plan is running. Cheap backstop
+			// for any condition that flipped mid-plan and isn't covered
+			// by an explicit server event or scanClientInterrupts probe.
+			// Skipped while overridePauseTimer is armed — the pause is
+			// the explicit "sit still" promise to the player.
+			if (state.overridePauseTimer <= 0.0f) {
+				state.timeSinceDecide += dt;
+				if (state.timeSinceDecide >= kPeriodicRethinkSec &&
+				    !m_decisionQueue.hasPending(eid)) {
+					interruptPlan(eid, state, *e, "periodic");
+					continue;
+				}
+			}
 
 			if (state.stepIndex >= (int)state.plan.size()) {
 				finishPlan(eid, state, StepOutcome::Success, {});
@@ -661,6 +693,7 @@ public:
 		state.plan.push_back(PlanStep::move(goal));
 		state.goalText = "player_override";
 		state.overridePauseTimer = 3.14f;
+		state.timeSinceDecide = 0.0f;
 		rebuildViz(eid, state, *e);
 	}
 
