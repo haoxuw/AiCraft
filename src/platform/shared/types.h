@@ -8,6 +8,11 @@
 
 namespace modcraft {
 
+// Stable, small type aliases shared across platform/ and game code.
+// Defined here (not in server.h) so non-server translation units — like
+// chunk_gen_service.h — can use them without pulling the whole server.
+using ClientId = uint32_t;
+
 constexpr int CHUNK_SIZE = 16;
 constexpr int CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 

@@ -110,6 +110,8 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/server/entity_manager.h
 	src/platform/server/behavior.h
 	src/platform/server/behavior_store.h
+	src/platform/server/chunk_gen_service.h
+	src/platform/server/chunk_gen_service.cpp
 	src/platform/server/client_manager.h
 	src/platform/server/pathfind.h
 	src/platform/server/python_bridge.h
@@ -262,6 +264,7 @@ else()
 	target_link_libraries(modcraft-test PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
+		libzstd_static
 	)
 
 	# --- Asset staging to $BUILD_DIR ---

@@ -36,7 +36,8 @@
 
 namespace modcraft {
 
-using ClientId = uint32_t;
+// ClientId moved to shared/types.h so services like ChunkGenService can
+// reference it without pulling the server header.
 
 // Rejection codes logged when server rejects an action proposal.
 // Stored as uint32_t in log output for fast filtering without string allocation.
