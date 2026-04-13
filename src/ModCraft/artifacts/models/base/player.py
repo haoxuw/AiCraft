@@ -49,6 +49,21 @@ model = {
         {"name": "right_leg",
          "offset": [0.12, 0.35, 0], "size": [0.24, 0.70, 0.24], "color": [0.22, 0.22, 0.32, 1],
          "pivot": [0.12, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
+
+        # ═══ LEATHER BELT + GOLD BUCKLE ═══
+        {"offset": [0, 0.75, 0], "size": [0.52, 0.08, 0.32], "color": [0.32, 0.20, 0.12, 1]},
+        {"offset": [0, 0.75, -0.18], "size": [0.10, 0.06, 0.02], "color": [0.85, 0.68, 0.20, 1]},
+
+        # ═══ RED CAPE (hero accent, gentle sway) ═══
+        # Gold collar trim
+        {"offset": [0, 1.34, 0.20], "size": [0.42, 0.04, 0.03], "color": [0.78, 0.62, 0.18, 1],
+         "pivot": [0, 1.38, 0.17], "swing_axis": [1, 0, 0], "amplitude": 6, "phase": 0, "speed": 1.2},
+        # Main cape slab
+        {"offset": [0, 0.94, 0.19], "size": [0.44, 0.88, 0.04], "color": [0.55, 0.12, 0.14, 1],
+         "pivot": [0, 1.38, 0.17], "swing_axis": [1, 0, 0], "amplitude": 8, "phase": 0, "speed": 1.2},
+        # Darker inner lining peek (tapered)
+        {"offset": [0, 0.80, 0.21], "size": [0.36, 0.52, 0.02], "color": [0.38, 0.08, 0.10, 1],
+         "pivot": [0, 1.38, 0.17], "swing_axis": [1, 0, 0], "amplitude": 9, "phase": 0, "speed": 1.2},
     ],
 
     # Standard humanoid clip vocabulary. Same shape as villager.py / knight.py.
