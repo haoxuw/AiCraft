@@ -7,6 +7,7 @@ namespace modcraft {
 
 void GameServer::resolveActions(float dt) {
 	auto proposals = m_world->proposals.drain();
+	m_actionStats.resolved += (int)proposals.size();
 
 	// Per-tick deduplication: each entity gets at most one nudge-back per tick.
 	// Prevents inventory resend spam when a client sends many invalid actions.

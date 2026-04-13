@@ -590,8 +590,8 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	int playerHP = pe->getProp<int>(Prop::HP, pe->def().max_hp);
 	float playerHunger = pe->getProp<float>(Prop::Hunger, 20.0f);
 	Inventory emptyInv;
-	glm::vec3 clientPosF = m_camera.player.feetPos;
-	glm::vec3 serverPosF = srv.getServerPosition(srv.localPlayerId());
+	glm::vec3 clientPosF = pe->position;
+	glm::vec3 serverPosF = srv.getServerPosition(pe->id());
 	glm::vec3 diffF = serverPosF - clientPosF;
 	float posErrSq = glm::dot(diffF, diffF);
 	EntityId ctrlId = srv.controlledEntityId();

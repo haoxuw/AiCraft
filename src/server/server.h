@@ -315,8 +315,8 @@ public:
 				// longer carry home/chest props — at decide() time the behavior
 				// scans for chests and beds in the world.
 				if (ms.typeId == "base:villager" && m < (int)beds.size()) {
-					ex = (float)beds[m].x + 0.5f;
-					ez = (float)beds[m].z + 0.5f;
+					ex = (float)beds[m].x;
+					ez = (float)beds[m].z;
 					fixedY = (float)beds[m].y;
 				}
 				spawnOne(ms, ex, ez, fixedY, std::move(extraProps));
@@ -453,8 +453,16 @@ public:
 	}
 
 	void receiveAction(ClientId clientId, ActionProposal action) {
+		m_actionStats.received++;
+		switch (action.type) {
+		case ActionProposal::Move:     m_actionStats.moveRecv++;     break;
+		case ActionProposal::Relocate: m_actionStats.relocateRecv++; break;
+		case ActionProposal::Convert:  m_actionStats.convertRecv++;  break;
+		case ActionProposal::Interact: m_actionStats.interactRecv++; break;
+		}
 		auto it = m_clients.find(clientId);
 		if (it == m_clients.end()) {
+			m_actionStats.rejected++;
 			if (action.type == ActionProposal::Move) {
 				char buf[96];
 				std::snprintf(buf, sizeof(buf), "unknown client=%u", clientId);
@@ -464,6 +472,7 @@ public:
 		}
 
 		if (!canClientControl(clientId, action.actorId)) {
+			m_actionStats.rejected++;
 			if (action.type == ActionProposal::Move) {
 				Entity* t = m_world->entities.get(action.actorId);
 				char buf[160];
@@ -688,9 +697,30 @@ public:
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
 	}
 
+public:
+	// Action-proposal counters — reset externally by the status log every 2s
+	// so we can confirm the server is actually receiving and resolving the
+	// C_ACTION messages the client claims to have sent. Missing the "recv"
+	// side of this pair means the TCP stream is delivering but the server
+	// rejected before queueing (ownership/unknown-client).
+	struct ActionStats {
+		int received = 0;
+		int rejected = 0;
+		int resolved = 0;
+		// Per-type breakdown of received proposals so [ServerAlive] can show
+		// WHICH kind of action (move/relocate/convert/interact) is pouring in,
+		// and whether any specific type is disproportionately rejected.
+		int moveRecv     = 0;
+		int relocateRecv = 0;
+		int convertRecv  = 0;
+		int interactRecv = 0;
+	};
+	ActionStats& actionStats() { return m_actionStats; }
+
 private:
 	void resolveActions(float dt);
 
+	ActionStats m_actionStats;
 	std::unique_ptr<World> m_world;
 	ServerCallbacks m_callbacks;
 	WorldGenConfig m_wgc;

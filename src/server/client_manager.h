@@ -61,6 +61,22 @@ struct ConnectedClient {
 	}
 };
 
+// Perception predicate — decides whether to broadcast an entity to a given
+// client. Lifted to a pure function so test_e2e can assert the invariant
+// "every owned entity is broadcast, regardless of distance" without standing
+// up a full TCP loopback pair. Match the check in broadcastState() exactly.
+inline bool shouldBroadcastEntityToClient(const Entity& e,
+                                          EntityId clientPlayerId,
+                                          const std::vector<glm::vec3>& viewPoints,
+                                          float perceptionR2 = 64.0f * 64.0f) {
+	int ownerId = e.getProp<int>(Prop::Owner, 0);
+	if (ownerId == (int)clientPlayerId) return true;  // owner-override
+	for (auto& vp : viewPoints)
+		if (glm::dot(e.position - vp, e.position - vp) <= perceptionR2)
+			return true;
+	return false;
+}
+
 class ClientManager {
 public:
 	explicit ClientManager(GameServer& server) : m_server(server) {}
@@ -241,15 +257,18 @@ public:
 			Entity* pe = m_server.world().entities.get(client.playerId);
 			if (pe) viewPoints.push_back(pe->position);
 
-			// Entity + time broadcast — always fires regardless of pending chunks
+			// Entity + time broadcast — always fires regardless of pending chunks.
+			// Owner-override: entities owned by THIS client's player are ALWAYS
+			// broadcast, even beyond PERCEPTION_R2. Rule 4 requires the agent
+			// client to drive its owned NPCs, which means it must receive their
+			// S_ENTITY updates. Without this override, a wandering mob that
+			// steps past the 64-block perception ring goes stale on the owner
+			// client (→ red lightbulb, stuck reconciler) while the server keeps
+			// simulating it perfectly — the exact false-positive stale signal
+			// that was misdiagnosed as "server stopped responding".
 			m_server.world().entities.forEach([&](Entity& e) {
-				bool visible = false;
-				for (auto& vp : viewPoints) {
-					if (glm::dot(e.position - vp, e.position - vp) <= PERCEPTION_R2) {
-						visible = true; break;
-					}
-				}
-				if (!visible) return;
+				if (!shouldBroadcastEntityToClient(e, client.playerId, viewPoints, PERCEPTION_R2))
+					return;
 
 				net::EntityState es;
 				es.id = e.id(); es.typeId = e.typeId();
@@ -299,6 +318,7 @@ public:
 				net::WriteBuffer wb;
 				net::serializeEntityState(wb, es);
 				net::sendMessage(client.fd, net::S_ENTITY, wb);
+				m_broadcastStats.sEntity++;
 			});
 
 			net::WriteBuffer tb;
@@ -493,10 +513,28 @@ public:
 
 	size_t clientCount() const { return m_clients.size(); }
 
+	// Broadcast activity counters — main_server.cpp reads these in the
+	// [ServerAlive] log to confirm the server is actually pushing data to
+	// every connected client (not just receiving C_ACTION). Reset externally.
+	struct BroadcastStats {
+		int sEntity    = 0;
+		int sBlock     = 0;
+		int sRemove    = 0;
+		int sInventory = 0;
+	};
+	const BroadcastStats& broadcastStats() const { return m_broadcastStats; }
+	void resetBroadcastStats() { m_broadcastStats = {}; }
+
 	// Access for callbacks (block change, entity remove, inventory)
 	void broadcastToAll(net::MsgType msgType, const net::WriteBuffer& wb) {
 		for (auto& [cid, c] : m_clients)
 			net::sendMessage(c.fd, msgType, wb);
+		switch (msgType) {
+		case net::S_BLOCK:     m_broadcastStats.sBlock     += (int)m_clients.size(); break;
+		case net::S_REMOVE:    m_broadcastStats.sRemove    += (int)m_clients.size(); break;
+		case net::S_INVENTORY: m_broadcastStats.sInventory += (int)m_clients.size(); break;
+		default: break;
+		}
 	}
 
 	ConnectedClient* getClient(ClientId id) {
@@ -826,6 +864,7 @@ private:
 	std::vector<ClientId> m_disconnected;
 	ClientId m_nextClientId = 1;
 	float m_broadcastTimer = 0;
+	BroadcastStats m_broadcastStats;
 
 	// Event-driven decide-loop edge tracking. Rising edges on worldTime
 	// crossing the 0.25/0.75 day/night boundaries trigger S_WORLD_EVENT.

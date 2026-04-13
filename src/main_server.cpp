@@ -283,7 +283,19 @@ int main(int argc, char** argv) {
 		auto tickStart = std::chrono::steady_clock::now();
 		int ticksThisFrame = 0;
 		while (accumulator >= TICK_RATE) {
-			server.tick(TICK_RATE);
+			// Catch C++ exceptions so a single bad tick doesn't kill the
+			// server silently — client would then see "server silent" with
+			// no hint of what happened. We log and advance the accumulator
+			// to avoid hot-spinning on a permanently-broken tick.
+			try {
+				server.tick(TICK_RATE);
+			} catch (const std::exception& ex) {
+				fprintf(stderr, "[ServerCrash] tick threw std::exception: %s\n", ex.what());
+				fflush(stderr);
+			} catch (...) {
+				fprintf(stderr, "[ServerCrash] tick threw unknown exception\n");
+				fflush(stderr);
+			}
 			accumulator -= TICK_RATE;
 			tickCount++;
 			ticksThisFrame++;

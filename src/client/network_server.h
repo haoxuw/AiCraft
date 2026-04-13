@@ -16,6 +16,7 @@
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
 #include "client/entity_reconciler.h"
+#include <array>
 #ifndef __EMSCRIPTEN__
 #include <zstd.h>
 #endif
@@ -172,9 +173,37 @@ public:
 			handleMessage(hdr.type, payload);
 			msgCount++;
 		}
-		m_tickMsgCount += msgCount;
 		m_totalMsgCount += msgCount;
 		m_uptime += dt;
+
+		// Silent-server detection + escalating response:
+		//   @2s → warn once (lets a brief hiccup self-recover)
+		//   @5s → disconnect() to force the reconnect / return-to-menu flow
+		// The reconciler will also flag individual entities red after 2s of
+		// their own staleness, so the player sees trouble before the full
+		// disconnect fires.
+		if (msgCount > 0) {
+			if (m_silentWarned) {
+				std::printf("[NetDiag] Server back (silent %.1fs)\n", m_silentTime);
+				std::fflush(stdout);
+			}
+			m_silentTime = 0;
+			m_silentWarned = false;
+		} else {
+			m_silentTime += dt;
+			if (!m_silentWarned && m_silentTime > 2.0f) {
+				std::printf("[NetDiag] Server silent for %.1fs — no messages arriving\n", m_silentTime);
+				std::fflush(stdout);
+				m_silentWarned = true;
+			}
+			if (m_silentTime > kHeartbeatDisconnectSec) {
+				std::printf("[NetDiag] Server heartbeat lost >%.0fs — disconnecting to menu\n",
+				            kHeartbeatDisconnectSec);
+				std::fflush(stdout);
+				disconnect();
+				return;
+			}
+		}
 
 		// Early connection logging — only warn if player entity is missing
 		if (m_uptime < 5.0f && !getEntity(m_localPlayerId) && msgCount > 0) {
@@ -200,14 +229,22 @@ public:
 			const auto& bd = m_blocks.get(m_chunks.getBlock(x, y, z));
 			return bd.solid ? bd.collision_height : 0.0f;
 		};
-		m_reconciler.tick(dt, m_localPlayerId, m_entities, solidFn);
+		bool serverSilent = m_silentTime > 2.0f;
+		m_reconciler.tick(dt, m_localPlayerId, m_entities, solidFn, serverSilent);
 	}
 
 	void sendAction(const ActionProposal& action) override {
 		if (!m_connected) return;
 		net::WriteBuffer buf;
 		net::serializeAction(buf, action);
-		net::sendMessage(m_tcp.fd(), net::C_ACTION, buf);
+		bool ok = net::sendMessage(m_tcp.fd(), net::C_ACTION, buf);
+		if (!ok) {
+			std::printf("[Net] sendAction FAILED (fd closed?) actor=%u type=%d\n",
+				action.actorId, (int)action.type);
+			std::fflush(stdout);
+			m_connected = false;
+			return;
+		}
 	}
 
 	void sendGetInventory(EntityId eid) override {
@@ -652,9 +689,12 @@ private:
 
 	// Diagnostics
 	float m_diagTimer = 0;
-	int m_tickMsgCount = 0;
 	int m_totalMsgCount = 0;
 	float m_uptime = 0;
+
+	float m_silentTime = 0;
+	bool  m_silentWarned = false;
+	static constexpr float kHeartbeatDisconnectSec = 5.0f;
 
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;

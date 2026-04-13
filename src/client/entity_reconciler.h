@@ -11,15 +11,16 @@ namespace modcraft {
 
 // Owns client-side smoothing of remote entity movement between 20Hz server
 // broadcasts. Pulled out of NetworkServer so that file stays focused on
-// networking — all per-entity physics, interpolation, and drift correction
-// live here.
+// networking.
 //
-// Per tick, for every non-local entity, run the same moveAndCollide() that
-// the server uses (via stepEntityPhysics). Then for every entity (local
-// player included) nudge client position toward the server's last-known
-// position. Small gaps smooth at a fixed rate; mid-size gaps close faster
-// (rate scales with distance); huge gaps hard-snap so a teleport/respawn
-// doesn't spend seconds crawling to the new location.
+// Design: server is authoritative. For every NON-local entity the client
+// mirrors server state directly — position = server.pos + server.vel * age.
+// No client-side gravity, no client-side collision. Any local physics here
+// would eventually drift (gravity vs. slightly-different collision grid)
+// and was the cause of the persistent ~1m Y-gap.
+// For the LOCAL PLAYER, client-side prediction in gameplay runs
+// moveAndCollide and typed input drives position; we then gently pull that
+// client-predicted position back to the server's authoritative value.
 class EntityReconciler {
 public:
 	void onEntityCreate(EntityId id, glm::vec3 pos, glm::vec3 vel, float yaw,
@@ -50,18 +51,45 @@ public:
 	}
 
 	// Run physics + reconciliation for all tracked entities.
+	// serverSilent=true means NetworkServer hasn't received ANY message in
+	// kStaleThreshold seconds — only then do we flag entities red.
+	// (A single entity silently falling out of perception scope is normal and
+	// shouldn't light up a red lightbulb: the server is still healthy, that
+	// entity just stepped past the 64-block view range.)
 	void tick(float dt, EntityId localPlayerId,
 	          std::unordered_map<EntityId, std::unique_ptr<Entity>>& entities,
-	          const BlockSolidFn& solidFn) {
+	          const BlockSolidFn& solidFn,
+	          bool serverSilent) {
 		for (auto& [id, target] : m_targets) {
 			auto it = entities.find(id);
 			if (it == entities.end()) continue;
 			Entity& e = *it->second;
 
-			if (id != localPlayerId)
-				stepRemoteEntity(e, target, solidFn, dt);
+			bool stale = (target.age > kStaleThreshold);
+			bool realError = stale && serverSilent;
+			if (realError && !e.hasError) {
+				e.hasError = true;
+				e.goalText = "⚠ stale (server silent)";
+				std::printf("[Reconciler] eid=%u stale+silent (age=%.2fs) — frozen+red\n",
+				            id, target.age);
+				std::fflush(stdout);
+			} else if (!realError && e.hasError && (!stale || !serverSilent)) {
+				e.hasError = false;
+			}
+			target.age += dt;
+			if (stale) continue;  // freeze in place regardless — no fresh data
 
-			reconcileToServer(id, e, target, dt);
+			if (id == localPlayerId) {
+				// Client predicts own motion; reconcile closes any divergence.
+				reconcileToServer(id, e, target, dt);
+			} else {
+				// Remote entity: mirror the server directly. Extrapolate by
+				// target.velocity * age to hide 20Hz broadcast stagger.
+				float extrapAge = std::min(target.age, kMaxExtrapAge);
+				e.position = target.position + target.velocity * extrapAge;
+				e.velocity = target.velocity;
+				updateYaw(e, target.velocity, dt);
+			}
 			updateWalkDistance(e, dt);
 		}
 	}
@@ -82,24 +110,22 @@ private:
 		bool      prevInitialized = false;
 	};
 
-	// Tuning. kCorrectionRate is a floor — real rate scales with distance so
-	// that a drift growing faster than the base rate still closes. kHardSnap
-	// is the escape hatch: above this we teleport rather than smooth, because
-	// the gap is almost certainly a respawn or large desync, not prediction
-	// error worth hiding.
-	static constexpr float kDriftTolerance  = 2.0f;   // start correcting past this gap (blocks)
-	static constexpr float kCorrectionRate  = 5.0f;   // blocks/sec floor
+	// Tuning. The deadband is narrow (0.15m) because anything wider creates a
+	// floor the steady-state drift parks on — 2m is literally how far behind
+	// client ran when tolerance was 2m. kCorrectionRate is a floor; the real
+	// rate grows with distance so the pull beats any bounded server motion.
+	// kHardSnap is the escape hatch for respawn/teleport/large desync.
+	// kMaxExtrapAge caps forward prediction when broadcasts stop (stalled
+	// NPC, death, server hiccup) so we don't fling an entity into the void.
+	static constexpr float kDriftTolerance   = 0.15f; // anti-jitter only
+	static constexpr float kCorrectionRate   = 5.0f;  // blocks/sec floor
 	static constexpr float kHardSnapDistance = 16.0f; // gap > 1 chunk → teleport
-
-	// Remote entity: run local physics using the server's last-known velocity
-	// (x/z) plus our own y (so gravity integrates smoothly between broadcasts),
-	// then apply TPS-style head-snap + body-catch-up yaw.
-	void stepRemoteEntity(Entity& e, const InterpTarget& t,
-	                      const BlockSolidFn& solidFn, float dt) {
-		glm::vec3 localVel = {t.velocity.x, e.velocity.y, t.velocity.z};
-		stepEntityPhysics(e, localVel, solidFn, dt);
-		updateYaw(e, localVel, dt);
-	}
+	static constexpr float kMaxExtrapAge     = 0.2f;  // 4× broadcast interval
+	// Entity is "stale" if we haven't received an S_ENTITY update for this many
+	// seconds. Stale entities freeze in place and render with hasError=true so
+	// the user sees a red lightbulb instead of an entity drifting arbitrarily
+	// under whatever the last broadcast velocity happened to be.
+	static constexpr float kStaleThreshold   = 2.0f;
 
 	// TPS-style turn: head snaps to movement direction; body smoothly catches
 	// up. Renderer caps the head→body offset at ±45°, so a sharp direction
@@ -111,11 +137,27 @@ private:
 		smoothYawTowardsVelocity(e.yaw, localVel, dt);
 	}
 
-	// Pull client pos toward server pos. The fixed 5u/s rate would lose
-	// ground whenever the server moves faster than that, so scale the rate
-	// with the gap — the farther behind we are, the harder we pull.
+	// Pull client pos toward server pos. Two fixes stacked on top of the old
+	// "fixed deadband + fixed rate" approach, which parked every entity at
+	// exactly `kDriftTolerance` blocks of lag:
+	//
+	// 1. Extrapolate target forward by target.velocity * age. The server
+	//    broadcasts at 20Hz but client physics runs at 60Hz, so between
+	//    broadcasts `target.position` is frozen while the client keeps
+	//    moving at `target.velocity`. That stair-step produced a constant
+	//    ~half-broadcast lead for the client that the old deadband-gated
+	//    correction never erased. Extrapolating the target forward removes
+	//    the bias: now `diff` is real prediction error, not stair-step lag.
+	// 2. Scale the pull with distance (`rate = floor + dist`). Keeps up
+	//    with any bounded server velocity; still gentle when the gap is
+	//    small.
+	//
+	// Age is clamped because if broadcasts stop (stalled mob, death, server
+	// hiccup) we don't want to extrapolate into the void.
 	void reconcileToServer(EntityId id, Entity& e, InterpTarget& target, float dt) {
-		glm::vec3 diff = target.position - e.position;
+		float extrapAge = std::min(target.age, kMaxExtrapAge);
+		glm::vec3 predicted = target.position + target.velocity * extrapAge;
+		glm::vec3 diff = predicted - e.position;
 		float dist = glm::length(diff);
 
 		if (dist > kHardSnapDistance) {
@@ -123,13 +165,12 @@ private:
 			e.velocity = target.velocity;
 			logDrift(id, e, target, dist);
 		} else if (dist > kDriftTolerance) {
-			float rate = kCorrectionRate + dist;  // 2 blocks → 7u/s, 10 blocks → 15u/s
+			float rate = kCorrectionRate + dist;  // 0.5 blocks → 5.5u/s, 5 blocks → 10u/s
 			e.position += diff * std::min(dt * rate, 1.0f);
 			logDrift(id, e, target, dist);
 		}
 
 		target.prevClientPos = e.position;
-		target.age += dt;
 	}
 
 	// Walk distance for animation (tracks any horizontal motion).
@@ -144,7 +185,7 @@ private:
 	void logDrift(EntityId id, const Entity& e, const InterpTarget& t, float dist) {
 		static std::unordered_map<EntityId, int> s_tick;
 		int& n = s_tick[id];
-		if (++n % 30 != 0) return;  // ~2 lines/sec per entity
+		if (++n % 60 != 0) return;  // ~1 line/sec per entity
 		glm::vec3 serverD = t.prevInitialized ? (t.position - t.prevServerPos) : glm::vec3(0.0f);
 		glm::vec3 clientD = t.prevInitialized ? (e.position - t.prevClientPos) : glm::vec3(0.0f);
 		std::printf("[PosDrift] eid=%u client=(%.2f,%.2f,%.2f) "

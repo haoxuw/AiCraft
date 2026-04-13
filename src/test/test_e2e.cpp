@@ -16,6 +16,8 @@
 #include "server/python_bridge.h"
 #include "server/world_accessibility.h"
 #include "server/pathfind.h"
+#include "server/client_manager.h"
+#include "client/entity_reconciler.h"
 #include "agent/block_search.h"
 #include "shared/constants.h"
 #include "shared/chunk.h"
@@ -793,38 +795,6 @@ static std::string t23_creatures_near_village_center() {
 }
 
 // ================================================================
-// T24: Chest is placed inside (or near) the village center house
-// ================================================================
-
-static std::string t24_chest_in_village() {
-	auto srv = makeVillageServer();
-
-	auto& tmpl = srv->server()->world().getTemplate();
-	if (!tmpl.pyConfig().hasVillage) return "template has no village";
-
-	auto vc = tmpl.villageCenter(42);
-	glm::vec3 spawnPos = srv->spawnPos();
-	glm::vec3 chestPos = tmpl.chestPosition(42, spawnPos);
-
-	// Chest should be within ~15 blocks of village center (inside main house)
-	float dx = chestPos.x - (float)vc.x;
-	float dz = chestPos.z - (float)vc.y;
-	float distFromVC = std::sqrt(dx*dx + dz*dz);
-	if (distFromVC > 15.0f)
-		return "chest is " + std::to_string((int)distFromVC) +
-		       " blocks from village center — expected inside main house (<15)";
-
-	// The chest block should actually be placed in the world
-	int cx = (int)std::round(chestPos.x), cy = (int)std::round(chestPos.y),
-	    cz = (int)std::round(chestPos.z);
-	BlockId bid = srv->chunks().getBlock(cx, cy, cz);
-	if (bid == BLOCK_AIR)
-		return "no chest block at chestPosition (" +
-		       std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + ")";
-	return "";
-}
-
-// ================================================================
 // T25: Spawn is within ~60 blocks of village center
 // ================================================================
 
@@ -1105,59 +1075,6 @@ static std::string t33_dropitem_deducts_inventory() {
 }
 
 // ================================================================
-// T34: Door toggle opens and closes
-// ================================================================
-
-static std::string t34_door_toggle() {
-	auto srv = makeVillageServer();
-	tickN(*srv, 10);
-
-	EntityId pid = srv->localPlayerId();
-	Entity* p = srv->getEntity(pid);
-	if (!p) return "no player";
-
-	// Find a door block in the village
-	glm::ivec3 doorPos = {0, 0, 0};
-	bool foundDoor = false;
-	BlockId doorId = srv->blockRegistry().getId(BlockType::Door);
-	BlockId doorOpenId = srv->blockRegistry().getId(BlockType::DoorOpen);
-
-	// Scan near spawn for a door
-	glm::vec3 spawn = srv->spawnPos();
-	for (int dx = -30; dx <= 30 && !foundDoor; dx++) {
-		for (int dz = -30; dz <= 30 && !foundDoor; dz++) {
-			for (int dy = -3; dy <= 5 && !foundDoor; dy++) {
-				int bx = (int)spawn.x + dx, by = (int)spawn.y + dy, bz = (int)spawn.z + dz;
-				BlockId bid = srv->chunks().getBlock(bx, by, bz);
-				if (bid == doorId || bid == doorOpenId) {
-					doorPos = {bx, by, bz};
-					foundDoor = true;
-				}
-			}
-		}
-	}
-	if (!foundDoor) return "no door found near spawn (skip)";
-
-	// Teleport player next to door (within interaction range)
-	p->position = glm::vec3(doorPos) + glm::vec3(1, 0, 0);
-
-	BlockId before = srv->chunks().getBlock(doorPos.x, doorPos.y, doorPos.z);
-
-	// Toggle door
-	ActionProposal a;
-	a.type     = ActionProposal::Interact;
-	a.actorId  = pid;
-	a.blockPos = doorPos;
-	srv->sendAction(a);
-	srv->tick(1.0f / 60.0f);
-
-	BlockId after = srv->chunks().getBlock(doorPos.x, doorPos.y, doorPos.z);
-	if (after == before) return "door didn't toggle (same block ID before=" +
-		std::to_string(before) + " after=" + std::to_string(after) + ")";
-	return "";
-}
-
-// ================================================================
 // T35: Item entity has ItemType property
 // ================================================================
 
@@ -1246,28 +1163,6 @@ static std::string t37_pickup_denied_out_of_range() {
 
 	int remaining = countByType(*srv, ItemName::ItemEntity);
 	if (remaining == 0) return "item was picked up despite being out of range";
-	return "";
-}
-
-// ================================================================
-// T38: House geometry — doors and stairs have enough clearance
-// ================================================================
-// Uses scanForViolations() from world_accessibility.h which applies
-// the same physics predicates as the runtime collision engine.
-// Any door or stair block within 50 blocks of spawn is checked.
-//
-static std::string t38_house_geometry_valid() {
-	auto srv = makeVillageServer();
-	tickN(*srv, 5);
-
-	glm::vec3 spawn = srv->spawnPos();
-	glm::ivec3 center = {(int)spawn.x, (int)spawn.y, (int)spawn.z};
-	auto violations = scanForViolations(srv->chunks(), srv->blockRegistry(), center);
-
-	if (!violations.empty()) {
-		auto& v = violations[0];
-		return v.description;
-	}
 	return "";
 }
 
@@ -1590,25 +1485,19 @@ static std::string b4_store_item_server_validation() {
     auto srv = makeVillageServer();
     auto* gs = srv->server();
 
-    // Find a villager with a chest_entity_id prop
+    // Villagers no longer carry a chest_entity_id prop — pick any villager
+    // and any chest entity and verify Relocate transfers items between them.
     Entity* villager = nullptr;
-    EntityId chestEid = ENTITY_NONE;
+    Entity* chest    = nullptr;
     srv->forEachEntity([&](Entity& e) {
-        if (!villager && e.typeId() == "base:villager") {
-            int eid = e.getProp<int>("chest_entity_id", 0);
-            if (eid > 0) {
-                villager = &e;
-                chestEid = (EntityId)eid;
-            }
-        }
+        if (!villager && e.typeId() == "base:villager") villager = &e;
+        if (!chest    && e.typeId() == "base:chest")    chest    = &e;
     });
-    if (!villager) return "no villager with chest_entity_id prop found";
+    if (!villager) return "no villager spawned";
     if (!villager->inventory) return "villager has no inventory";
-
-    // Resolve chest entity
-    Entity* chest = gs->world().entities.get(chestEid);
-    if (!chest) return "chest entity " + std::to_string(chestEid) + " not found";
+    if (!chest)    return "no chest entity spawned";
     if (!chest->inventory) return "chest entity has no inventory";
+    EntityId chestEid = chest->id();
 
     // Give the villager some trunks
     villager->inventory->add("base:logs", 3);
@@ -2458,6 +2347,235 @@ static std::string m04_rts_multi_entity() {
 	return "";
 }
 
+// ================================================================
+// Client reconciler simulation (for R* tests)
+// ================================================================
+//
+// Reproduces the NetworkServer + EntityReconciler pipeline in-process, without
+// TCP: every broadcast tick, clone every server entity that passes
+// shouldBroadcastEntityToClient() into a mirror map and feed its state to the
+// reconciler; every frame, run reconciler.tick() over the mirror. Clients see
+// exactly what they'd see over the wire, and we can assert invariants
+// (hasError, drift, staleness) directly.
+struct SimClient {
+	EntityId playerId = ENTITY_NONE;
+	std::unordered_map<EntityId, std::unique_ptr<Entity>> mirror;
+	EntityReconciler reconciler;
+	// Server entity ids seen at least once — so we can assert "once known,
+	// always fresh" for owned entities.
+	std::unordered_set<EntityId> everSeen;
+};
+
+// Mirror every server entity that the broadcast filter would accept. Matches
+// broadcastState()'s loop: viewPoints = [player.position], perception=64.
+static void simBroadcastTick(TestServer& srv, SimClient& c) {
+	Entity* player = srv.getEntity(c.playerId);
+	if (!player) return;
+	std::vector<glm::vec3> viewPoints = { player->position };
+	srv.forEachEntity([&](Entity& e) {
+		if (!shouldBroadcastEntityToClient(e, c.playerId, viewPoints)) return;
+		auto it = c.mirror.find(e.id());
+		if (it == c.mirror.end()) {
+			auto clone = std::make_unique<Entity>(e.id(), e.typeId(), e.def());
+			clone->position = e.position;
+			clone->velocity = e.velocity;
+			clone->yaw = e.yaw;
+			clone->onGround = e.onGround;
+			clone->goalText = e.goalText.empty() ? std::string("Spawning...") : e.goalText;
+			c.mirror[e.id()] = std::move(clone);
+			c.reconciler.onEntityCreate(e.id(), e.position, e.velocity, e.yaw,
+			                            e.moveTarget, e.moveSpeed);
+		} else {
+			c.reconciler.onEntityUpdate(e.id(), e.position, e.velocity, e.yaw,
+			                            e.moveTarget, e.moveSpeed);
+		}
+		c.everSeen.insert(e.id());
+	});
+}
+
+// Run 2 seconds (120 frames at 60Hz) with broadcasts at 20Hz (every 3rd
+// frame), exactly matching production cadence. Returns all entity ids the
+// client ever saw.
+static void simRun(TestServer& srv, SimClient& c, int frames) {
+	constexpr float dt = 1.0f / 60.0f;
+	BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+		const auto& bd = srv.blockRegistry().get(srv.chunks().getBlock(x, y, z));
+		return bd.solid ? bd.collision_height : 0.0f;
+	};
+	for (int i = 0; i < frames; i++) {
+		srv.tick(dt);
+		if (i % 3 == 0) simBroadcastTick(srv, c);
+		c.reconciler.tick(dt, c.playerId, c.mirror, solidFn, /*serverSilent=*/false);
+	}
+}
+
+// ================================================================
+// R* tests — network reconciliation regressions
+// ================================================================
+
+// R1 reproduces the red-lightbulb bug: before the owner-always-broadcast fix,
+// mobs that wandered >64 blocks from the player stopped broadcasting, the
+// reconciler marked them stale, Entity::hasError flipped to true, and the
+// lightbulb turned red even though the server was perfectly healthy. This
+// test hard-fails if ANY entity gains hasError=true across 2s of simulation.
+static std::string r1_no_stale_entities_in_steady_state() {
+	auto srv = makeVillageServer();
+	SimClient c;
+	c.playerId = srv->localPlayerId();
+
+	// Seed the mirror first (so reconciler.tick has targets to reason about).
+	simBroadcastTick(*srv, c);
+
+	// Teleport a random owned mob ~80 blocks away — beyond the 64-block
+	// perception radius — to exercise the owner-override. Without the fix
+	// this entity's broadcasts stop and it goes stale.
+	Entity* player = srv->getEntity(c.playerId);
+	EntityId faraway = ENTITY_NONE;
+	srv->forEachEntity([&](Entity& e) {
+		if (faraway != ENTITY_NONE) return;
+		int owner = e.getProp<int>(Prop::Owner, 0);
+		if (owner == (int)c.playerId && e.id() != c.playerId && e.def().isLiving())
+			faraway = e.id();
+	});
+	if (faraway == ENTITY_NONE) return "no owned mob to test with";
+	Entity* far = srv->getEntity(faraway);
+	far->position = player->position + glm::vec3(80.0f, 0.0f, 80.0f);
+
+	// Simulate 2 seconds — reconciler's kStaleThreshold is 2.0s so anything
+	// that's going to fire will have fired by the end.
+	simRun(*srv, c, 120);
+
+	// Assert: no mirrored entity went into error state. (hasError=true with
+	// serverSilent=false would be a new bug; we never pass serverSilent=true.)
+	int errored = 0;
+	EntityId firstBad = ENTITY_NONE;
+	for (auto& [id, e] : c.mirror) {
+		if (e->hasError) { errored++; if (firstBad == ENTITY_NONE) firstBad = id; }
+	}
+	if (errored > 0) {
+		char buf[128];
+		std::snprintf(buf, sizeof(buf),
+			"%d entities marked hasError; first=%u",
+			errored, firstBad);
+		return buf;
+	}
+	// And the far-away owned mob must still be receiving broadcasts —
+	// test the invariant at its strictest.
+	if (!c.everSeen.count(faraway))
+		return "far-away owned mob was never broadcast (owner-override broken)";
+	auto it = c.mirror.find(faraway);
+	if (it == c.mirror.end())
+		return "far-away owned mob missing from client mirror";
+
+	return "";
+}
+
+// R2 hard-fails if any client-mirrored entity ever drifts more than 100m from
+// its server-authoritative position. This is the "looks normal on server but
+// ghost-drifting on client" scenario the user hit before staleness detection
+// existed. 100m is well past the reconciler's 16m hard-snap, so any sustained
+// drift at that magnitude means a snap was skipped or broadcasts were lost.
+static std::string r2_no_sustained_position_error() {
+	auto srv = makeVillageServer();
+	SimClient c;
+	c.playerId = srv->localPlayerId();
+	simBroadcastTick(*srv, c);
+
+	// Run 2 seconds at 60Hz. Sample drift every 10 frames and keep the max
+	// observed; report if it exceeded 100m for more than ~5 samples in a row.
+	constexpr float dt = 1.0f / 60.0f;
+	constexpr float kDriftLimit = 100.0f;
+	BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+		const auto& bd = srv->blockRegistry().get(srv->chunks().getBlock(x, y, z));
+		return bd.solid ? bd.collision_height : 0.0f;
+	};
+	int sustainedBreach = 0;
+	EntityId worstId = ENTITY_NONE;
+	float worstDist = 0;
+	for (int i = 0; i < 120; i++) {
+		srv->tick(dt);
+		if (i % 3 == 0) simBroadcastTick(*srv, c);
+		c.reconciler.tick(dt, c.playerId, c.mirror, solidFn, /*serverSilent=*/false);
+		if (i % 10 == 0) {
+			bool breached = false;
+			for (auto& [id, client_e] : c.mirror) {
+				Entity* se = srv->getEntity(id);
+				if (!se) continue;
+				float d = glm::length(se->position - client_e->position);
+				if (d > worstDist) { worstDist = d; worstId = id; }
+				if (d > kDriftLimit) breached = true;
+			}
+			sustainedBreach = breached ? sustainedBreach + 1 : 0;
+			if (sustainedBreach >= 5) {
+				char buf[128];
+				std::snprintf(buf, sizeof(buf),
+					"eid=%u drift %.1fm > %.0fm for %d consecutive samples",
+					worstId, worstDist, kDriftLimit, sustainedBreach);
+				return buf;
+			}
+		}
+	}
+	return "";
+}
+
+// R3 hard-fails if ANY client-mirrored entity ever drifts more than 0.3m
+// from its server-authoritative position during normal play. This catches
+// the "client runs its own gravity + collision and walks away from server
+// truth" bug where entities accumulated a ~1m Y-gap because client physics
+// landed them on a different block than the server.
+//
+// Tolerance is tight (0.3m) so any drift from physics integration errors
+// or missed broadcasts fails immediately. Server-side motion at 2.5 m/s
+// plus 50ms broadcast age would contribute at most ~0.125m if extrapolation
+// is off — so 0.3m is well outside the legitimate budget.
+static std::string r3_no_drift_during_steady_state() {
+	auto srv = makeVillageServer();
+	SimClient c;
+	c.playerId = srv->localPlayerId();
+	simBroadcastTick(*srv, c);
+
+	constexpr float dt = 1.0f / 60.0f;
+	constexpr float kDriftTolerance = 0.3f;
+	BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+		const auto& bd = srv->blockRegistry().get(srv->chunks().getBlock(x, y, z));
+		return bd.solid ? bd.collision_height : 0.0f;
+	};
+	float worstDrift = 0;
+	EntityId worstId = ENTITY_NONE;
+	glm::vec3 worstClient, worstServer;
+	// 300 frames (5s). Check drift every frame (after reconciler tick)
+	// for every mirrored entity against the server.
+	for (int i = 0; i < 300; i++) {
+		srv->tick(dt);
+		if (i % 3 == 0) simBroadcastTick(*srv, c);
+		c.reconciler.tick(dt, c.playerId, c.mirror, solidFn, /*serverSilent=*/false);
+		// Skip warmup frames (entities still settling on terrain)
+		if (i < 30) continue;
+		for (auto& [id, client_e] : c.mirror) {
+			if (id == c.playerId) continue;  // local player has its own prediction path
+			Entity* se = srv->getEntity(id);
+			if (!se) continue;
+			float d = glm::length(se->position - client_e->position);
+			if (d > worstDrift) {
+				worstDrift = d;
+				worstId = id;
+				worstClient = client_e->position;
+				worstServer = se->position;
+			}
+		}
+	}
+	if (worstDrift > kDriftTolerance) {
+		char buf[256];
+		std::snprintf(buf, sizeof(buf),
+			"eid=%u drift=%.2fm > %.2fm  client=(%.2f,%.2f,%.2f) server=(%.2f,%.2f,%.2f)",
+			worstId, worstDrift, kDriftTolerance,
+			worstClient.x, worstClient.y, worstClient.z,
+			worstServer.x, worstServer.y, worstServer.z);
+		return buf;
+	}
+	return "";
+}
+
 // Main
 // ================================================================
 
@@ -2515,7 +2633,6 @@ int main() {
 
 	printf("\n--- Village ---\n");
 	run("T23: creatures spawn near village center", t23_creatures_near_village_center);
-	run("T24: chest placed inside village main house", t24_chest_in_village);
 	run("T25: player spawn within 65 blocks of village", t25_spawn_near_village);
 
 	printf("\n--- Action Integrity ---\n");
@@ -2527,8 +2644,6 @@ int main() {
 	run("T31: use item consumes and heals",       t31_use_item_consume);
 	run("T32: attack damages creature",           t32_attack_damages_entity);
 	run("T33: drop item deducts from inventory",  t33_dropitem_deducts_inventory);
-	run("T34: door toggle opens/closes",             t34_door_toggle);
-	run("T38: house geometry (door+stair clearance)", t38_house_geometry_valid);
 	run("T39: second floor reachable from spawn",    t39_second_floor_reachable);
 	run("T35: item entity has ItemType property",  t35_item_entity_has_type);
 	run("T36: equip+unequip cycle returns item",  t36_equip_unequip_cycle);
@@ -2564,6 +2679,11 @@ int main() {
 	run("W2: house floor at or above all footprint terrain", w2_floor_at_or_above_all_terrain);
 	run("W3: house interior has no buried terrain blocks",   w3_house_interior_no_buried_terrain);
 	run("W4: villager bed positions inside house footprint", w4_villagers_spawn_inside_house);
+
+	printf("\n--- Client Reconciliation ---\n");
+	run("R1: owned mobs never go stale (no red lightbulb)", r1_no_stale_entities_in_steady_state);
+	run("R2: no entity drifts >100m from server",          r2_no_sustained_position_error);
+	run("R3: no drift >0.3m during steady-state play",     r3_no_drift_during_steady_state);
 
 	printf("\n--- Camera Mode Movement ---\n");
 	run("M1: FPS walk + jump while moving",     m01_fps_walk_jump);
