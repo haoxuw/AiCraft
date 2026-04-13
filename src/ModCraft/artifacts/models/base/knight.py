@@ -43,8 +43,8 @@ model = {
         {"offset": [0, 1.12, -0.14], "size": [0.44, 0.52, 0.04], "color": [0.55, 0.58, 0.62, 1]},
         # Chestplate emblem
         {"offset": [0, 1.18, -0.17], "size": [0.10, 0.10, 0.02], "color": [0.80, 0.70, 0.20, 1]},
-        # Gorget
-        {"offset": [0, 1.39, 0], "size": [0.46, 0.08, 0.30], "color": [0.55, 0.58, 0.62, 1]},
+        # Gorget (narrower in z than torso to avoid coplanar z faces)
+        {"offset": [0, 1.39, 0], "size": [0.46, 0.08, 0.28], "color": [0.55, 0.58, 0.62, 1]},
         # Belt
         {"offset": [0, 0.76, 0], "size": [0.52, 0.08, 0.32], "color": [0.35, 0.25, 0.15, 1]},
         # Belt buckle
@@ -117,21 +117,21 @@ model = {
     # Shared humanoid clip vocabulary. See villager.py for the rationale.
     "clips": {
         "attack": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
             "torso":           {"axis": [0, 1, 0], "amp": 10, "speed": 3.0, "phase": 0},
         },
         "chop": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},
             "torso":           {"axis": [0, 1, 0], "amp": 8,  "speed": 1.2, "phase": 0},
         },
         "mine": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
             "torso":           {"axis": [0, 1, 0], "amp": 6,  "speed": 1.4, "phase": 0},
         },
         "wave": {

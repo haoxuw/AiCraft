@@ -211,11 +211,17 @@ void Camera::updateRTS(GLFWwindow* window, float dt) {
 	// Smooth zoom
 	rtsHeight += (rtsHeightTarget - rtsHeight) * std::min(dt * 10.0f, 1.0f);
 
+	// Angled overhead: `rtsAngle` is the elevation (deg above horizontal).
+	// height = rtsHeight, horizontalDist = rtsHeight / tan(angle) so the
+	// camera sits at the requested elevation from rtsCenter. The earlier
+	// `* 0.3f` squashed horizontalDist into a near-top-down view; removed
+	// so the angle tag matches what you see.
 	float angle = glm::radians(rtsAngle);
-	float horizontalDist = cos(angle) * rtsHeight * 0.3f;
+	float tanA = std::max(0.1f, (float)std::tan(angle));
+	float horizontalDist = rtsHeight / tanA;
 	position = rtsCenter + glm::vec3(
 		cos(yaw) * horizontalDist,
-		sin(angle) * rtsHeight,
+		rtsHeight,
 		sin(yaw) * horizontalDist
 	);
 

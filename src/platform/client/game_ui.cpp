@@ -1,4 +1,5 @@
 #include "client/game.h"
+#include "client/model_loader.h"
 #include "imgui.h"
 #include <sstream>
 
@@ -397,14 +398,21 @@ void Game::updatePaused(float dt, float aspect) {
 		m_renderer.render(m_camera, aspect, nullptr, 0, 7, {0,0}, false);
 		// Draw entities — same resolveModelKey as renderPlaying
 		auto& mr = m_renderer.modelRenderer();
-		auto resolveKey = [](const Entity& e) -> std::string {
+		auto resolveKey = [this](const Entity& e) -> std::string {
 			std::string skin = e.getProp<std::string>("character_skin", "");
+			std::string key;
 			if (!skin.empty()) {
 				auto colon = skin.find(':');
-				return (colon != std::string::npos) ? skin.substr(colon + 1) : skin;
+				key = (colon != std::string::npos) ? skin.substr(colon + 1) : skin;
+			} else {
+				key = e.def().model;
+				auto dot = key.rfind('.'); if (dot != std::string::npos) key = key.substr(0, dot);
 			}
-			std::string key = e.def().model;
-			auto dot = key.rfind('.'); if (dot != std::string::npos) key = key.substr(0, dot);
+			int n = model_loader::countVariants(m_models, key);
+			if (n > 0) {
+				uint64_t h = (uint64_t)e.id() * 2654435761u;
+				return key + "#" + std::to_string((int)(h % (uint64_t)n));
+			}
 			return key;
 		};
 		srv.forEachEntity([&](Entity& e) {

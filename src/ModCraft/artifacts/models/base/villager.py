@@ -100,12 +100,12 @@ model = {
         {"offset": [-0.19, 0.92, -0.18], "size": [0.11, 0.10, 0.06], "color": [0.32, 0.22, 0.14, 1]},
         {"offset": [ 0.19, 0.92, -0.18], "size": [0.11, 0.10, 0.06], "color": [0.32, 0.22, 0.14, 1]},
         # Bandolier
-        {"offset": [-0.10, 1.16, -0.15], "size": [0.08, 0.36, 0.03], "color": [0.22, 0.16, 0.09, 1]},
+        {"offset": [-0.10, 1.16, -0.16], "size": [0.08, 0.36, 0.03], "color": [0.22, 0.16, 0.09, 1]},
 
         # ═══════════════ BACKPACK (static) ═══════════════
         {"offset": [0, 1.12, 0.22], "size": [0.40, 0.52, 0.16], "color": [0.32, 0.22, 0.14, 1]},
         {"offset": [0, 1.34, 0.22], "size": [0.42, 0.06, 0.17], "color": [0.22, 0.16, 0.09, 1]},
-        {"offset": [0, 0.90, 0.22], "size": [0.38, 0.10, 0.16], "color": [0.22, 0.16, 0.09, 1]},
+        {"offset": [0, 0.90, 0.22], "size": [0.38, 0.10, 0.18], "color": [0.22, 0.16, 0.09, 1]},
         {"offset": [-0.16, 1.18, -0.145], "size": [0.05, 0.36, 0.03], "color": [0.22, 0.16, 0.09, 1]},
         {"offset": [ 0.16, 1.18, -0.145], "size": [0.05, 0.36, 0.03], "color": [0.22, 0.16, 0.09, 1]},
         {"offset": [0, 1.42, 0.22], "size": [0.38, 0.10, 0.14], "color": [0.62, 0.50, 0.32, 1]},
@@ -143,7 +143,7 @@ model = {
          "offset": [-0.11, 0.36, 0], "size": [0.21, 0.48, 0.21], "color": [0.26, 0.20, 0.14, 1],
          "pivot": [-0.10, 0.61, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
         {"name": "left_leg",
-         "offset": [-0.11, 0.08, 0.01], "size": [0.24, 0.17, 0.26], "color": [0.12, 0.08, 0.05, 1],
+         "offset": [-0.11, 0.08, 0.01], "size": [0.20, 0.17, 0.26], "color": [0.12, 0.08, 0.05, 1],
          "pivot": [-0.10, 0.61, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
 
         # ═══════════════ RIGHT LEG (phase=pi) ═══════════════
@@ -151,7 +151,7 @@ model = {
          "offset": [ 0.11, 0.36, 0], "size": [0.21, 0.48, 0.21], "color": [0.26, 0.20, 0.14, 1],
          "pivot": [ 0.10, 0.61, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
         {"name": "right_leg",
-         "offset": [ 0.11, 0.08, 0.01], "size": [0.24, 0.17, 0.26], "color": [0.12, 0.08, 0.05, 1],
+         "offset": [ 0.11, 0.08, 0.01], "size": [0.20, 0.17, 0.26], "color": [0.12, 0.08, 0.05, 1],
          "pivot": [ 0.10, 0.61, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
     ],
 
@@ -167,9 +167,9 @@ model = {
         # Used by humanoid creatures when attacking. Held items inherit
         # the swing because they're anchored at the right_hand frame.
         "attack": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
             "torso":           {"axis": [0, 1, 0], "amp": 10, "speed": 3.0, "phase": 0},
         },
 
@@ -177,17 +177,17 @@ model = {
         # bias holds the arm up at shoulder height so the sinusoid oscillates
         # *around* a raised position (not the T-pose rest).
         "chop": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": -35, "bias": -70, "speed": 1.2, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": -35, "bias": -70, "speed": 1.2, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": -35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": -35, "bias":  70, "speed": 1.2, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": -35, "bias":  70, "speed": 1.2, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": -35, "bias":  70, "speed": 1.2, "phase": 0},
             "torso":           {"axis": [0, 1, 0], "amp": 8,  "speed": 1.2, "phase": 0},
         },
 
         # "mine" — pickaxe up/down, slightly faster and more forward-biased.
         "mine": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
             "torso":           {"axis": [0, 1, 0], "amp": 6,  "speed": 1.4, "phase": 0},
         },
 

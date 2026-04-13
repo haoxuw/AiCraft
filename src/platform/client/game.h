@@ -295,6 +295,11 @@ private:
 	// when the player starts moving so the walk cycle takes over.
 	std::string m_playerClip;
 
+	// Debug: scenario-driven override for the animation clock fed into the
+	// player model. Negative = use real time (m_globalTime). Used by
+	// character_views to sample a clip at specific phases.
+	float m_debugAnimTime = -1.0f;
+
 	// Head/body target tracking: when attacking or mining, the model
 	// looks at the target.  In TPS/RPG/RTS, the head also tracks the
 	// camera yaw with a ±45° neck limit; excess rotates the body.

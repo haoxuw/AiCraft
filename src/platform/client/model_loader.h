@@ -72,6 +72,11 @@ struct Lexer {
 			if (c == '-' || c == '+') num += advance();
 			while (pos < src.size() && ((src[pos] >= '0' && src[pos] <= '9') || src[pos] == '.'))
 				num += advance();
+			// Not actually a number (e.g. bare `-` before an ident, or `...`
+			// inside a docstring). Skip and keep lexing.
+			bool hasDigit = false;
+			for (char nc : num) if (nc >= '0' && nc <= '9') { hasDigit = true; break; }
+			if (!hasDigit) return next();
 			if (pos < src.size() && (src[pos] == 'e' || src[pos] == 'E')) {
 				num += advance();
 				if (pos < src.size() && (src[pos] == '+' || src[pos] == '-')) num += advance();
@@ -232,6 +237,8 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 
 		// Part name (optional — targetable by animation clip overrides)
 		if (auto* v = dictGet(pd, "name")) part.name = v->getStr();
+		// Part role (optional — targetable by variant color overrides)
+		if (auto* v = dictGet(pd, "role")) part.role = v->getStr();
 
 		// offset (center) and size (full size → halfSize)
 		if (auto* v = dictGet(pd, "offset")) part.offset = toVec3(v->list);
@@ -334,26 +341,138 @@ inline bool loadModel(const std::string& artifactsDir, const std::string& name, 
 }
 
 /**
+ * Bake a variant: clone `base`, apply color overrides by role, and drop parts
+ * whose role is in hideRoles. A variant dict looks like:
+ *   { "fur": [r,g,b,a], "stripe": [r,g,b,a], "hide": ["stripe"] }
+ */
+inline BoxModel bakeVariant(const BoxModel& base, const Dict& variant) {
+	BoxModel out = base;
+
+	// Collect hidden roles
+	std::vector<std::string> hide;
+	if (auto* v = dictGet(variant, "hide"); v && v->type == Value::LIST) {
+		for (auto& e : v->list)
+			if (e.type == Value::STR) hide.push_back(e.str);
+	}
+	auto isHidden = [&](const std::string& role) {
+		if (role.empty()) return false;
+		for (auto& h : hide) if (h == role) return true;
+		return false;
+	};
+
+	// Build role → color map
+	std::unordered_map<std::string, glm::vec4> roleColor;
+	for (auto& [k, v] : variant) {
+		if (k == "hide") continue;
+		if (v.type == Value::LIST) roleColor[k] = toVec4(v.list);
+	}
+
+	// Filter + recolor
+	std::vector<BodyPart> kept;
+	kept.reserve(out.parts.size());
+	for (auto& p : out.parts) {
+		if (isHidden(p.role)) continue;
+		auto it = roleColor.find(p.role);
+		if (it != roleColor.end()) p.color = it->second;
+		kept.push_back(p);
+	}
+	out.parts = std::move(kept);
+	return out;
+}
+
+/**
+ * Load a model file and, if it declares `variants`, also extract them.
+ * `outVariants` is filled with raw variant dicts; caller bakes them.
+ */
+inline bool loadModelFileWithVariants(const std::string& path, BoxModel& out,
+                                      std::vector<Dict>& outVariants) {
+	std::ifstream f(path);
+	if (!f.is_open()) return false;
+	std::ostringstream ss;
+	ss << f.rdbuf();
+	std::string src = ss.str();
+	if (src.empty()) return false;
+
+	Parser parser;
+	parser.lex.src = std::move(src);
+	Value root;
+	try {
+		root = parser.parse();
+	} catch (const std::exception& e) {
+		fprintf(stderr, "[model_loader] parse failed for %s: %s\n", path.c_str(), e.what());
+		return false;
+	}
+	if (root.type != Value::DICT || root.dict.empty()) return false;
+
+	out = dictToBoxModel(root.dict);
+
+	// Scan remaining source for top-level `variants = [...]`.
+	while (parser.cur.type != Tok::End) {
+		if (parser.cur.type == Tok::Ident && parser.cur.strVal == "variants") {
+			parser.advance();
+			Value v = parser.parseValue();
+			if (v.type == Value::LIST) {
+				for (auto& ve : v.list)
+					if (ve.type == Value::DICT) outVariants.push_back(ve.dict);
+			}
+			break;
+		}
+		parser.advance();
+	}
+
+	return !out.parts.empty();
+}
+
+/**
  * Load all models, using Python files where available, C++ builtins as fallback.
- * Returns a map of name → BoxModel.
+ * Returns a map of name → BoxModel. If a model declares `variants`, extra
+ * entries are emitted as `name#0`, `name#1`, ... (one per variant), and `name`
+ * itself resolves to variant 0.
  */
 inline std::unordered_map<std::string, BoxModel> loadAllModels(const std::string& artifactsDir) {
 	std::unordered_map<std::string, BoxModel> models;
 
-	// Scan artifacts/models/base/ and artifacts/models/player/ for all .py files
 	for (auto* sub : {"base", "player"}) {
 		std::string dir = artifactsDir + "/models/" + sub;
 		if (!std::filesystem::exists(dir)) continue;
 		for (auto& entry : std::filesystem::directory_iterator(dir)) {
 			if (entry.path().extension() != ".py") continue;
 			std::string name = entry.path().stem().string();
+
+			// Try player override first, then base
+			std::string playerPath = artifactsDir + "/models/player/" + name + ".py";
+			std::string basePath   = artifactsDir + "/models/base/"   + name + ".py";
 			BoxModel m;
-			if (loadModel(artifactsDir, name, m))
+			std::vector<Dict> variants;
+			if (!loadModelFileWithVariants(playerPath, m, variants))
+				if (!loadModelFileWithVariants(basePath, m, variants))
+					continue;
+
+			if (variants.empty()) {
 				models[name] = std::move(m);
+			} else {
+				for (size_t i = 0; i < variants.size(); ++i) {
+					BoxModel baked = bakeVariant(m, variants[i]);
+					models[name + "#" + std::to_string(i)] = baked;
+				}
+				// Default lookup (`name`) → variant 0
+				models[name] = models[name + "#0"];
+			}
 		}
 	}
 
 	return models;
+}
+
+/**
+ * Count variants of a given model (entries matching `name#N`). Returns 0 if
+ * only the default `name` key exists (no variation).
+ */
+inline int countVariants(const std::unordered_map<std::string, BoxModel>& models,
+                         const std::string& name) {
+	int n = 0;
+	while (models.count(name + "#" + std::to_string(n))) ++n;
+	return n;
 }
 
 } // namespace model_loader

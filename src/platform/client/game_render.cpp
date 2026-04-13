@@ -1,4 +1,5 @@
 #include "client/game.h"
+#include "client/model_loader.h"
 #include "imgui.h"
 #include <unordered_map>
 #include <unordered_set>
@@ -78,7 +79,7 @@ void Game::renderEntities(float dt, float aspect) {
 	AnimState playerAnim = {};
 	playerAnim.walkDistance = m_playerWalkDist;
 	playerAnim.speed        = playerSpeed;
-	playerAnim.time         = m_globalTime;
+	playerAnim.time         = (m_debugAnimTime >= 0) ? m_debugAnimTime : m_globalTime;
 	playerAnim.attackPhase  = m_attackAnim.phase();
 	playerAnim.armPitch     = armPitch;
 	playerAnim.armYaw       = armYaw;
@@ -180,16 +181,25 @@ void Game::renderEntities(float dt, float aspect) {
 		}
 	}
 
-	// Resolve model key: character_skin prop overrides EntityDef.model
-	auto resolveModelKey = [](const Entity& e) -> std::string {
+	// Resolve model key: character_skin prop overrides EntityDef.model. If the
+	// model has baked variants (name#0, name#1, ...), pick one deterministically
+	// from the entity id so instances look different without server state.
+	auto resolveModelKey = [this](const Entity& e) -> std::string {
 		std::string skin = e.getProp<std::string>("character_skin", "");
+		std::string key;
 		if (!skin.empty()) {
 			auto colon = skin.find(':');
-			return (colon != std::string::npos) ? skin.substr(colon + 1) : skin;
+			key = (colon != std::string::npos) ? skin.substr(colon + 1) : skin;
+		} else {
+			key = e.def().model;
+			auto dot = key.rfind('.');
+			if (dot != std::string::npos) key = key.substr(0, dot);
 		}
-		std::string key = e.def().model;
-		auto dot = key.rfind('.');
-		if (dot != std::string::npos) key = key.substr(0, dot);
+		int n = model_loader::countVariants(m_models, key);
+		if (n > 0) {
+			uint64_t h = (uint64_t)e.id() * 2654435761u;
+			return key + "#" + std::to_string((int)(h % (uint64_t)n));
+		}
 		return key;
 	};
 
@@ -414,16 +424,23 @@ void Game::renderEntityEffects(float dt, float aspect) {
 		});
 	}
 
-	// Resolve model key helper (same logic as renderEntities)
-	auto resolveModelKey = [](const Entity& e) -> std::string {
+	// Resolve model key helper (same logic as renderEntities — variant-aware)
+	auto resolveModelKey = [this](const Entity& e) -> std::string {
 		std::string skin = e.getProp<std::string>("character_skin", "");
+		std::string key;
 		if (!skin.empty()) {
 			auto colon = skin.find(':');
-			return (colon != std::string::npos) ? skin.substr(colon + 1) : skin;
+			key = (colon != std::string::npos) ? skin.substr(colon + 1) : skin;
+		} else {
+			key = e.def().model;
+			auto dot = key.rfind('.');
+			if (dot != std::string::npos) key = key.substr(0, dot);
 		}
-		std::string key = e.def().model;
-		auto dot = key.rfind('.');
-		if (dot != std::string::npos) key = key.substr(0, dot);
+		int n = model_loader::countVariants(m_models, key);
+		if (n > 0) {
+			uint64_t h = (uint64_t)e.id() * 2654435761u;
+			return key + "#" + std::to_string((int)(h % (uint64_t)n));
+		}
 		return key;
 	};
 
@@ -718,7 +735,7 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 
 				// Stack count (large, Roboto, bottom-right with shadow)
 				if (itemCount > 1) {
-					char buf[8]; snprintf(buf, sizeof(buf), "%d", itemCount);
+					char buf[16]; snprintf(buf, sizeof(buf), "%d", itemCount);
 					ImFont* bigFont = ImGui::GetIO().Fonts->Fonts.Size > 1
 						? ImGui::GetIO().Fonts->Fonts[1] : ImGui::GetFont();
 					float tx = sx + slotPx - 8.0f;

@@ -581,6 +581,30 @@ void Game::updatePlaying(float dt, float aspect) {
 			m_attackAnim.triggerOnce("swing_right");
 		};
 		cb.hotbar = &m_hotbar;
+		cb.setCharacterSkin = [pe](const std::string& skinId) {
+			pe->setProp("character_skin", skinId);
+		};
+		cb.setPlayerYaw = [pe, this](float yawDeg) {
+			pe->yaw = yawDeg;
+			m_camera.player.yaw = yawDeg;
+		};
+		cb.setRPGCameraOrbit = [this](float orbitYaw, float angle, float dist) {
+			m_camera.godOrbitYaw     = orbitYaw;
+			m_camera.godAngle        = angle;
+			m_camera.godDistance     = dist;
+			m_camera.godDistanceTarget = dist;
+		};
+		// RPG aim target = feetPos + eyeHeight*0.8; override eyeHeight so
+		// small characters are framed at their center, not at player eye level.
+		cb.setCameraAimHeight = [this](float h) {
+			m_camera.player.eyeHeight = h / 0.8f;
+		};
+		cb.setPlayerClip = [this](const std::string& clip) {
+			m_playerClip = clip;
+		};
+		cb.setPlayerAnimTime = [this](float t) {
+			m_debugAnimTime = t;
+		};
 
 		m_debugCapture.tick(dt, pe, m_camera, cb);
 		if (m_debugCapture.done()) {

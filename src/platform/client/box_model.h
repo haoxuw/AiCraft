@@ -32,6 +32,7 @@ namespace modcraft {
 // A body part = a colored 3D box with optional animation.
 struct BodyPart {
 	std::string name;         // optional — targetable by animation clip overrides
+	std::string role;         // optional — targeted by variant color overrides (e.g. "fur", "stripe")
 	glm::vec3 offset;         // center relative to model origin (feet)
 	glm::vec3 halfSize;       // half extents
 	glm::vec4 color;          // RGBA (used when texture == 0)

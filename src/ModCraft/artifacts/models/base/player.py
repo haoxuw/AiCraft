@@ -54,14 +54,14 @@ model = {
     # Standard humanoid clip vocabulary. Same shape as villager.py / knight.py.
     "clips": {
         "attack": {
-            "right_hand": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_hand": {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
         },
         "chop": {
-            "right_hand": {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_hand": {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},
             "torso":      {"axis": [0, 1, 0], "amp": 8,  "speed": 1.2, "phase": 0},
         },
         "mine": {
-            "right_hand": {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
+            "right_hand": {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
             "torso":      {"axis": [0, 1, 0], "amp": 6,  "speed": 1.4, "phase": 0},
         },
         "wave": {

@@ -34,6 +34,30 @@ struct ScenarioCallbacks {
 	std::function<void()>                          triggerSwing;
 	// Client-only hotbar (for looking up slot numbers by item ID)
 	const Hotbar*                                  hotbar = nullptr;
+
+	// Override the local player's rendered model (character_views scenario).
+	// Accepts "base:pig" or "pig"; resolves via the same character_skin prop
+	// path used by the normal render flow.
+	std::function<void(const std::string& skinId)> setCharacterSkin;
+	// Set player body yaw in degrees (facing direction).
+	std::function<void(float yawDeg)>              setPlayerYaw;
+	// Set RPG camera orbit: yaw around player, angle above horizontal,
+	// distance from player. All degrees/blocks.
+	std::function<void(float orbitYaw, float angle, float distance)>
+	                                               setRPGCameraOrbit;
+	// Override the camera-aim height (feetPos + h). Normal render uses
+	// eyeHeight*0.8; for small characters (animals) we want the camera
+	// pointed near ground level instead.
+	std::function<void(float h)>                   setCameraAimHeight;
+	// Force a named animation clip on the local player model (e.g. "chop",
+	// "mine", "attack"). Empty string clears. Lets character_views verify
+	// mine/chop/attack arm direction without needing an AI target.
+	std::function<void(const std::string& clip)>   setPlayerClip;
+	// Override the animation clock the player model samples. This advances
+	// the `time` argument of the sin() in clip evaluation, letting a scenario
+	// sample different swing phases deterministically. Negative = reset to
+	// real time.
+	std::function<void(float t)>                   setPlayerAnimTime;
 };
 
 // Abstract base for all debug scenarios.

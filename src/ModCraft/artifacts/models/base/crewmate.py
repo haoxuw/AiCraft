@@ -36,7 +36,7 @@ model = {
         # O2 port
         {"offset": [0, 0.92, 0.43], "size": [0.10, 0.10, 0.04], "color": [0.34, 0.06, 0.06, 1]},
         # Strap
-        {"offset": [0, 1.08, 0.26], "size": [0.24, 0.06, 0.12], "color": [0.42, 0.08, 0.08, 1]},
+        {"offset": [0, 1.08, 0.26], "size": [0.24, 0.06, 0.16], "color": [0.42, 0.08, 0.08, 1]},
         # Left arm
         {"name": "left_hand",
          "offset": [-0.46, 0.82, 0], "size": [0.20, 0.30, 0.20], "color": [0.68, 0.14, 0.14, 1],
@@ -62,13 +62,13 @@ model = {
     # Clips target the merged arm-hand parts (crewmate has no separate forearm).
     "clips": {
         "attack": {
-            "right_hand": {"axis": [1, 0, 0], "amp": 60, "bias": -30, "speed": 3.0, "phase": 0},
+            "right_hand": {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
         },
         "chop": {
-            "right_hand": {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_hand": {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},
         },
         "mine": {
-            "right_hand": {"axis": [1, 0, 0], "amp": 40, "bias": -60, "speed": 1.4, "phase": 0},
+            "right_hand": {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
         },
         "wave": {
             "right_hand": {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 2.0, "phase": 0},

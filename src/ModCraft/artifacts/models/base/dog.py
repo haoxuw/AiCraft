@@ -28,12 +28,12 @@ model = {
         {"head": True,
          "offset": [0, 0.46, -0.54], "size": [0.16, 0.12, 0.12], "color": [0.70, 0.48, 0.30, 1],
          "pivot": [0, 0.50, -0.22], "swing_axis": [1, 0, 0], "amplitude": 10, "phase": 0, "speed": 0.5},
-        # Left ear
+        # Left ear (pushed out so outer face doesn't z-fight with head x-face)
         {"head": True,
-         "offset": [-0.12, 0.66, -0.34], "size": [0.08, 0.16, 0.08], "color": [0.65, 0.42, 0.25, 1]},
+         "offset": [-0.125, 0.66, -0.34], "size": [0.08, 0.16, 0.08], "color": [0.65, 0.42, 0.25, 1]},
         # Right ear
         {"head": True,
-         "offset": [0.12, 0.66, -0.34], "size": [0.08, 0.16, 0.08], "color": [0.65, 0.42, 0.25, 1]},
+         "offset": [0.125, 0.66, -0.34], "size": [0.08, 0.16, 0.08], "color": [0.65, 0.42, 0.25, 1]},
         # Front-left leg
         {"offset": [-0.10, 0.12, -0.20], "size": [0.10, 0.28, 0.10], "color": [0.72, 0.52, 0.32, 1],
          "pivot": [-0.10, 0.26, -0.20], "swing_axis": [1, 0, 0], "amplitude": 40, "phase": 0, "speed": 1},

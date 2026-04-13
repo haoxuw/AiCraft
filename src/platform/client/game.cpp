@@ -122,14 +122,22 @@ bool Game::init(int argc, char** argv) {
 			else if (strcmp(argv[i], "--debug-item") == 0 && i + 1 < argc) {
 				dbgCfg.targetItem = argv[++i];
 			}
+			else if (strcmp(argv[i], "--debug-character") == 0 && i + 1 < argc) {
+				dbgCfg.targetCharacter = argv[++i];
+			}
+			else if (strcmp(argv[i], "--debug-clip") == 0 && i + 1 < argc) {
+				dbgCfg.targetClip = argv[++i];
+			}
 			else if (strcmp(argv[i], "--log-only") == 0) {
 				/* handled above */
 			}
 		}
 		if (dbgCfg.active) {
 			m_debugCapture.configure(dbgCfg);
-			printf("[Debug] Scenario '%s' for item '%s'\n",
-			       dbgCfg.scenario.c_str(), dbgCfg.targetItem.c_str());
+			printf("[Debug] Scenario '%s' item='%s' character='%s'\n",
+			       dbgCfg.scenario.c_str(),
+			       dbgCfg.targetItem.c_str(),
+			       dbgCfg.targetCharacter.c_str());
 		}
 	}
 

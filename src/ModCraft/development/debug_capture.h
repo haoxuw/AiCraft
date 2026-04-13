@@ -21,6 +21,7 @@
 #include "development/scenario.h"
 #include "development/item_views_scenario.h"
 #include "development/animation_scenario.h"
+#include "development/character_views_scenario.h"
 #include <memory>
 #include <string>
 #include <cstdio>
@@ -32,8 +33,10 @@ class DebugCapture {
 public:
 	struct Config {
 		bool        active      = false;
-		std::string scenario;           // "item_views" | "animation"
+		std::string scenario;           // "item_views" | "animation" | "character_views"
 		std::string targetItem;         // e.g. "base:sword"
+		std::string targetCharacter;    // e.g. "base:pig" (character_views only)
+		std::string targetClip;         // e.g. "chop" (character_views only, optional)
 		std::string outputDir   = "/tmp";
 	};
 
@@ -46,6 +49,9 @@ public:
 			m_scenario = std::make_unique<ItemViewsScenario>(cfg.targetItem);
 		} else if (cfg.scenario == "animation") {
 			m_scenario = std::make_unique<AnimationScenario>(cfg.targetItem);
+		} else if (cfg.scenario == "character_views") {
+			m_scenario = std::make_unique<CharacterViewsScenario>(
+				cfg.targetCharacter, cfg.targetClip);
 		} else {
 			fprintf(stderr, "[DebugCapture] Unknown scenario '%s'\n",
 			        cfg.scenario.c_str());
