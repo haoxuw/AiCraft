@@ -2,7 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Read `docs/00_OVERVIEW.md` before making ANY gameplay changes.**
+## Two games, one engine
+
+This repo builds **two** games on top of a single C++ engine:
+
+```
+src/platform/     C++ engine (headers + cpps) — no game content
+src/ModCraft/     Voxel sandbox game (chunks, blocks, structures)
+src/EvolveCraft/  Spore-like cell stage — stub; see src/EvolveCraft/README.md
+```
+
+Everything game-specific — artifacts, python, shaders, resources, config, docs,
+tests, tools — lives under the owning game directory. Shared UI fonts and
+generic shaders (crosshair, highlight, particle, shadow, text) live under
+`src/platform/`.
+
+All current gameplay rules in this file apply to **ModCraft**. EvolveCraft
+will get its own CLAUDE.md when it has real code. For ModCraft-specific
+mechanics (chunks, inventory, structures, world gen), read
+`src/ModCraft/src/ModCraft/docs/00_OVERVIEW.md`.
+
+**Dependency rule (enforced by CMake + convention):**
+- `platform/` must not reference `ModCraft/` or `EvolveCraft/` identifiers.
+- `ModCraft/` must never `#include "EvolveCraft/..."` and vice versa.
+- Shared code between the two games must be promoted into `platform/` first.
+
+**Read `src/ModCraft/src/ModCraft/docs/00_OVERVIEW.md` before making ANY gameplay changes.**
 
 ## Mandatory Design Rules
 
@@ -34,12 +59,12 @@ TYPE_INTERACT (3) — toggle interactive block state (door, button, TNT fuse)
 - The C++ bridge (`python_bridge.cpp`) must never resolve or interpret high-level
   action names — it only translates the 4 primitives into `ActionProposal`.
 
-See `docs/00_OVERVIEW.md` § Action Types and `docs/03_ACTIONS.md`.
+See `src/ModCraft/docs/00_OVERVIEW.md` § Action Types and `src/ModCraft/docs/03_ACTIONS.md`.
 
 ### Rule 1: Python Is the Game, C++ Is the Engine
 
 **All game content and gameplay rules are defined in Python. C++ only provides
-the engine (physics, networking, rendering).** See `docs/00_OVERVIEW.md`.
+the engine (physics, networking, rendering).** See `src/ModCraft/docs/00_OVERVIEW.md`.
 
 - Creature definitions, behaviors, items, blocks, effects, models → Python artifacts
 - **NEVER hardcode gameplay constants in C++.** Every magic number (distance,
@@ -204,38 +229,53 @@ This is the preferred verification path for behavior/AI/pathfinding changes. Use
 
 ```
 src/
-  main.cpp            Player client entry: spawns modcraft-server, connects via TCP
-  main_server.cpp     Dedicated server entry: spawns agent clients via ClientManager
-  main_client.cpp     Network-only player client entry
+  platform/                 ← C++ engine, game-agnostic
+    shared/                 Pure data types — linked by ALL, no OpenGL, no Python
+                            action.h, entity.h, inventory.h, physics.h, net_protocol.h, …
+    server/                 Authoritative simulation — no OpenGL
+      server.h                GameServer: tick, action validation, entity ownership
+      client_manager.h        TCP connections, agent process spawning, state broadcast
+      entity_manager.h        Spawn, physics — no AI
+      python_bridge.cpp       pybind11 module exposed to Python
+      test_server.h           GameServer wrapper for headless tests only
+    agent/                  Agent client — Python + pybind11, no OpenGL
+      agent_client.h          TCP, receives world state, runs Python decide(), sends actions
+      behavior_executor.h     BehaviorAction → ActionProposal translation
+    client/                 Rendering + input — OpenGL, no Python, no server-ownership
+      game.cpp                Main game loop, state machine, UI orchestration
+      gameplay.cpp            Player input → ActionProposals
+      process_manager.h       AgentManager: spawns the game server for singleplayer
+    shaders/  fonts/  docs/ Platform-level assets + architecture docs
 
-  shared/             Pure data types — linked by ALL, no OpenGL, no Python
-  server/             Authoritative simulation — no OpenGL
-    server.h            GameServer: tick, action validation, entity ownership
-    client_manager.h    TCP connections, agent process spawning, state broadcast
-    entity_manager.h    Spawn, physics — no AI
-    test_server.h       GameServer wrapper for headless tests only
-  agent/              Agent client — Python + pybind11, no OpenGL
-    agent_client.h      TCP, receives world state, runs Python decide(), sends actions
-    behavior_executor.h BehaviorAction → ActionProposal translation
-  client/             Rendering + input — OpenGL, no Python, no server/
-    game.cpp            Main game loop, state machine, UI orchestration
-    gameplay.cpp        Player input → ActionProposals
-    process_manager.h   AgentManager: spawns modcraft-server for singleplayer
-  server/python_bridge.cpp  pybind11 module `modcraft_engine` exposed to Python
-  content/            C++ fallback entity/block definitions
+  ModCraft/                 ← Voxel sandbox game
+    main.cpp, main_server.cpp, main_client.cpp
+    shared/                 chunk.h, block_registry.h, chunk_source.h
+    server/                 world.h, world_template.h, noise.h, structure_blueprint.h, pathfind (voxel), …
+    client/                 chunk_mesher, renderer, raycast, fog_of_war, hotbar, inventory_visuals, gameplay_interaction
+    content/                C++ fallback block + entity registrations (builtin.cpp)
+    artifacts/              Python game content — hot-loadable, no rebuild needed
+      behaviors/            Creature AI: decide() functions
+      living/               EntityDef: stats, model, behavior
+      items/  blocks/       Item + block definitions
+      worlds/               World templates (flat, village)
+      structures/ models/ effects/ actions/ resources/
+    python/                 ModCraft-only python helpers (pathfind.py, local_world.py, …)
+    shaders/  config/  resources/  docs/  tests/  tools/
 
-artifacts/            Python game content (hot-loadable, no rebuild needed)
-  behaviors/          Creatures AI: decide() functions
-  creatures/          EntityDef: stats, model, behavior assignment
-  items/ blocks/      Item and block definitions
-  worlds/             World templates (flat, village)
+  EvolveCraft/              ← Spore-cell-stage game (stub — see its README.md)
 ```
 
 ### Dependency Rules
-- `shared/` → nothing
-- `server/` → `shared/` + `content/` (no OpenGL, no Python)
-- `agent/` → `shared/` + `server/behavior.h` + Python
-- `client/` → `shared/` + `content/` (no Python, no `server/`)
+- `platform/shared/` → nothing
+- `platform/server/` → `shared/` (no OpenGL, no Python except via pybind)
+- `platform/agent/` → `shared/` + `server/behavior.h` + Python
+- `platform/client/` → `shared/` (no Python, no server ownership)
+- `ModCraft/` → `platform/` + its own files (**never** `EvolveCraft/`)
+- `EvolveCraft/` → `platform/` + its own files (**never** `ModCraft/`)
+
+Cross-game file references (e.g. `ModCraft/` code reaching into `EvolveCraft/`
+or vice versa) are design bugs. Shared code must be promoted to `platform/`
+first.
 
 ## Code Style
 
@@ -245,17 +285,17 @@ artifacts/            Python game content (hot-loadable, no rebuild needed)
 - Header-only for small classes; `.h` + `.cpp` split for larger ones
 - When adding a new `BehaviorAction` type: decide if one-shot or continuous.
   One-shot (creates entities, modifies blocks, deals damage) → add to `extractOneShots()`
-  in `agent/behavior_executor.h`. See `docs/24_COMMON_PITFALLS.md` #1.
+  in `agent/behavior_executor.h`. See `src/ModCraft/docs/24_COMMON_PITFALLS.md` #1.
 - **Header-only changes don't trigger rebuild**: after editing a header-only content file
   (e.g. `content/entities_animals.h`), `touch` its including `.cpp` to force recompilation:
-  `touch src/content/builtin.cpp`
+  `touch src/ModCraft/content/builtin.cpp`
 
 ## Key Docs
 
-- `docs/00_OVERVIEW.md` — Full architecture, artifact system, TCP protocol
-- `docs/22_BEHAVIORS.md` — Entity AI: wander, peck, prowl, follow, woodcutter
-- `docs/24_COMMON_PITFALLS.md` — Known bugs to avoid (one-shot actions, ImGui frames, camera jumps)
-- `DEBUGGING.md` — Dev iteration loop, screenshot pipeline
+- `src/ModCraft/docs/00_OVERVIEW.md` — Full architecture, artifact system, TCP protocol
+- `src/ModCraft/docs/22_BEHAVIORS.md` — Entity AI: wander, peck, prowl, follow, woodcutter
+- `src/ModCraft/docs/24_COMMON_PITFALLS.md` — Known bugs to avoid (one-shot actions, ImGui frames, camera jumps)
+- `src/ModCraft/docs/DEBUGGING.md` — Dev iteration loop, screenshot pipeline
 
 ## Game Identity
 

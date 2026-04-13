@@ -1,8 +1,15 @@
 # Build
 saves/
 build/
+build-perf/
 build-web/
 cmake-build-*/
+
+# Local Claude state (per-session, not shared)
+.claude/
+
+# Experimental/scratch work
+prototypes/
 
 # IDE
 imgui.ini
