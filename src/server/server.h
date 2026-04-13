@@ -265,11 +265,6 @@ public:
 			}
 		};
 
-		// Villager bed assignments come from the template; chest blocks /
-		// entities are placed in init() and discovered at decide() time via
-		// scan_entities("base:chest").
-		auto beds = tmpl.bedPositions(m_world->seed());
-
 		auto spawnOne = [&](const MobSpawn& ms, float x, float z, float fixedY,
 		                    std::unordered_map<std::string, PropValue> extraProps) {
 			for (auto& [k, v] : ms.props) extraProps[k] = v;
@@ -309,15 +304,6 @@ public:
 					float angle = (float)m / (float)ms.count * 6.28318f + baseOffset;
 					ex = a.cx + std::cos(angle) * radius;
 					ez = a.cz + std::sin(angle) * radius;
-				}
-				// Villagers: spawn AT a template-provided bed (not on the ring)
-				// so they don't land on a monument/roof and get wedged. They no
-				// longer carry home/chest props — at decide() time the behavior
-				// scans for chests and beds in the world.
-				if (ms.typeId == "base:villager" && m < (int)beds.size()) {
-					ex = (float)beds[m].x;
-					ez = (float)beds[m].z;
-					fixedY = (float)beds[m].y;
 				}
 				spawnOne(ms, ex, ez, fixedY, std::move(extraProps));
 			}

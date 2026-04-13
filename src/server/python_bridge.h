@@ -113,11 +113,11 @@ struct WorldPyConfig {
 		std::unordered_map<std::string, std::string> props;
 	};
 	std::vector<MobConfig> mobs = {
-		{"base:villager", 3, 10.0f, "monument"},
-		{"base:pig",      4, 22.0f, ""},
-		{"base:chicken",  3, 18.0f, ""},
-		{"base:dog",      2, 14.0f, "barn"},
-		{"base:cat",      2, 12.0f, "barn"},
+		{"base:villager", 3, 6.0f,  "monument"},
+		{"base:pig",      4, 4.0f,  "barn"},
+		{"base:chicken",  3, 4.0f,  "barn"},
+		{"base:dog",      2, 4.0f,  "barn"},
+		{"base:cat",      2, 4.0f,  "barn"},
 	};
 };
 
@@ -174,8 +174,9 @@ public:
 	void unloadBehavior(BehaviorHandle handle);
 
 	// Block query function types — set per-call, protected by mutex
-	using BlockQueryFn = std::function<std::string(int, int, int)>;
-	using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
+	using BlockQueryFn   = std::function<std::string(int, int, int)>;
+	using ScanBlocksFn   = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
+	using ScanEntitiesFn = std::function<std::vector<NearbyEntity>(const std::string&, glm::vec3, float, int)>;
 
 	// Call decide() on a loaded behavior.
 	// Returns a Plan (list of PlanSteps). Backward compatible: if the behavior
@@ -194,6 +195,7 @@ public:
 	                std::string& errorOut,
 	                BlockQueryFn blockQueryFn = nullptr,
 	                ScanBlocksFn scanBlocksFn = nullptr,
+	                ScanEntitiesFn scanEntitiesFn = nullptr,
 	                const std::string& lastOutcome = "none",
 	                const std::string& lastGoal    = "",
 	                const std::string& lastReason  = "");

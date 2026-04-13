@@ -67,6 +67,29 @@ inline void smoothYawTowardsVelocity(float& yaw, glm::vec3 vel, float dt,
 // The block physically occupies [y, y + return_value] in world space.
 using BlockSolidFn = std::function<float(int, int, int)>;
 
+// True if an AABB (centered at p.x,p.z, base at p.y, size halfWidth×height×halfWidth)
+// overlaps any solid block. Same predicate as moveAndCollide's internal `blocked`,
+// exposed so callers can validate a position before trusting it (client pre-send
+// check, server clientPos acceptance check).
+inline bool isPositionBlocked(const BlockSolidFn& isSolid, glm::vec3 p,
+                              float halfWidth, float height) {
+	int x0 = (int)std::floor(p.x - halfWidth);
+	int x1 = (int)std::floor(p.x + halfWidth);
+	int y0 = (int)std::floor(p.y);
+	int y1 = (int)std::floor(p.y + height);
+	int z0 = (int)std::floor(p.z - halfWidth);
+	int z1 = (int)std::floor(p.z + halfWidth);
+	for (int y = y0; y <= y1; y++)
+		for (int z = z0; z <= z1; z++)
+			for (int x = x0; x <= x1; x++) {
+				float bh = isSolid(x, y, z);
+				if (bh <= 0.0f) continue;
+				if (p.y < (float)y + bh && p.y + height > (float)y)
+					return true;
+			}
+	return false;
+}
+
 /**
  * Move an object with full collision. Used by players and entities.
  */

@@ -46,10 +46,6 @@ public:
 	// Mob spawn list with per-mob radius (populated from Python config or defaults)
 	virtual const WorldPyConfig& pyConfig() const = 0;
 
-	// Bed positions (world XYZ, above the bed block) — one per house that has a bed.
-	// Returns empty if this template has no village / no beds.
-	virtual std::vector<glm::vec3> bedPositions(int seed) const { return {}; }
-
 	// Center of the first barn in world XZ (for animal spawn placement).
 	// Returns {-1, -1} if this template has no barn.
 	virtual glm::ivec2 barnCenter(int seed) const { return {-1, -1}; }
@@ -227,25 +223,6 @@ public:
 			chests.push_back({hx, (float)floorY, hz});
 		}
 		return chests;
-	}
-
-	// Villager spawn positions: one per non-barn house, at the interior bed location.
-	// Matches generateFurniture(): bed is at (hcx+2, floorY, hcz+d-2).
-	std::vector<glm::vec3> bedPositions(int seed) const override {
-		if (!m_py.hasVillage || m_py.houses.empty()) return {};
-		auto vc = villageCenter(seed);
-		std::vector<glm::vec3> beds;
-		for (const auto& h : m_py.houses) {
-			if (h.type == "barn") continue;
-			int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-			int floorY = structureFloorY(seed, hcx, hcz, h.w, h.d);
-			// Interior bed position (same as generateFurniture bed block + 1 for standing)
-			float bx = (float)(hcx + 2) + 0.5f;
-			float bz = (float)(hcz + h.d - 2) + 0.5f;
-			float by = (float)floorY + 1.0f;  // standing height above floor
-			beds.push_back({bx, by, bz});
-		}
-		return beds;
 	}
 
 	// ── Chunk generation ─────────────────────────────────────────

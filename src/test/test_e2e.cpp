@@ -1439,6 +1439,64 @@ static std::string p53_entities_never_inside_blocks_village() {
 }
 
 // ================================================================
+// P54: Server rejects clientPos that overlaps a solid block.
+// Simulates a malicious/buggy client repeatedly asserting a position
+// inside a wall — the server must never accept it.
+// ================================================================
+static std::string p54_server_rejects_client_pos_in_wall() {
+    auto srv = makeFlatServer();
+    EntityId pid = srv->localPlayerId();
+    Entity* p = srv->getEntity(pid);
+    if (!p) return "no player";
+
+    tickN(*srv, 30);  // settle on ground
+    float groundY = p->position.y;
+    float hw = (p->def().collision_box_max.x - p->def().collision_box_min.x) * 0.5f;
+    float ht = p->def().collision_box_max.y - p->def().collision_box_min.y;
+
+    // Place a 3-block-tall stone wall 2 blocks east of the player.
+    int wallX = (int)std::floor(p->position.x) + 2;
+    int wallY = (int)std::round(groundY);
+    int wallZ = (int)std::floor(p->position.z);
+    for (int dy = 0; dy <= 3; dy++)
+        placeBlockDirect(*srv, wallX, wallY + dy, wallZ, BlockType::Stone);
+
+    // Each frame, send a Move with clientPos = current + 0.3m eastward,
+    // shoving the entity into the wall. If the server trusts clientPos
+    // naively, the entity will slide into the stone.
+    for (int i = 0; i < 60; i++) {
+        Entity* pe = srv->getEntity(pid);
+        if (!pe) return "player removed";
+        ActionProposal a;
+        a.type = ActionProposal::Move;
+        a.actorId = pid;
+        a.desiredVel = {5.0f, 0, 0};
+        a.hasClientPos = true;
+        a.clientPos = pe->position + glm::vec3(0.3f, 0, 0);
+        srv->sendAction(a);
+        srv->tick(1.0f / 60.0f);
+        if (isInsideBlock(*srv, pe->position, hw, ht)) {
+            char buf[192];
+            std::snprintf(buf, sizeof(buf),
+                "server accepted clientPos inside wall at frame %d: pos=(%.3f,%.3f,%.3f) wallX=%d",
+                i, pe->position.x, pe->position.y, pe->position.z, wallX);
+            return buf;
+        }
+    }
+
+    // Also assert the entity never crossed the west face of the wall.
+    Entity* pe = srv->getEntity(pid);
+    float eastEdge = pe->position.x + hw;
+    if (eastEdge > (float)wallX + 0.001f) {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf),
+            "entity east edge %.3f crossed wall face at x=%d", eastEdge, wallX);
+        return buf;
+    }
+    return "";
+}
+
+// ================================================================
 // B1: Woodcutter behavior sets goalText when wood is nearby
 // ================================================================
 static std::string b1_woodcutter_sets_goal_text() {
@@ -1651,35 +1709,67 @@ static std::string w3_house_interior_no_buried_terrain() {
 }
 
 // ================================================================
-// W4: Villagers spawn inside house footprint (not outside)
+// W4: Villagers spawn near the monument; animals spawn inside the barn
 // ================================================================
-static std::string w4_villagers_spawn_inside_house() {
-    auto* ctmpl = dynamic_cast<ConfigurableWorldTemplate*>(g_templates[1].get());
-    if (!ctmpl) return "village template is not ConfigurableWorldTemplate";
-    int seed = 42;
+static std::string w4_mob_spawn_anchors() {
+    auto srv = makeVillageServer();
+    auto& tmpl = srv->server()->world().getTemplate();
+    int seed = srv->server()->world().seed();
+    auto vc = tmpl.villageCenter(seed);
+    auto barnCtr = tmpl.barnCenter(seed);
+    if (barnCtr.x < 0) return "village template has no barn";
 
-    auto vc    = ctmpl->villageCenter(seed);
-    auto beds  = ctmpl->bedPositions(seed);
-    if (beds.empty()) return "bedPositions() returned empty";
-
-    const auto& houses = ctmpl->pyConfig().houses;
-    int i = 0;
+    // Barn footprint: find the barn house in the config and use its (cx,cz,w,d).
+    const auto& houses = tmpl.pyConfig().houses;
+    glm::ivec2 barnMin{0,0}, barnMax{0,0};
+    bool foundBarn = false;
     for (const auto& h : houses) {
-        if (h.type == "barn") continue;
-        if (i >= (int)beds.size()) break;
-        glm::vec3 pos = beds[i++];
-        int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
-
-        // Bed is at (hcx+2, floorY, hcz+d-2). Spawn is at (hcx+2.5, floorY+1, hcz+d-1.5).
-        // Just verify XZ is within the house footprint [hcx, hcx+w) × [hcz, hcz+d).
-        if (pos.x < (float)hcx || pos.x >= (float)(hcx + h.w) ||
-            pos.z < (float)hcz || pos.z >= (float)(hcz + h.d)) {
-            return "house bed spawn (" + std::to_string(pos.x) + "," +
-                   std::to_string(pos.z) + ") is outside footprint [" +
-                   std::to_string(hcx) + ".." + std::to_string(hcx+h.w) + ") x [" +
-                   std::to_string(hcz) + ".." + std::to_string(hcz+h.d) + ")";
+        if (h.type == "barn") {
+            barnMin = {vc.x + h.cx, vc.y + h.cz};
+            barnMax = {vc.x + h.cx + h.w, vc.y + h.cz + h.d};
+            foundBarn = true;
+            break;
         }
     }
+    if (!foundBarn) return "no barn house in template";
+
+    // Monument ring: villagers should land within ~12 blocks of the village
+    // center (village.py sets radius=10; allow jitter for gravity-settle).
+    constexpr float kMonumentRadius = 12.0f;
+
+    int villagerCount = 0, animalCount = 0;
+    srv->forEachEntity([&](Entity& e) {
+        if (!e.def().isLiving() || e.removed) return;
+        const std::string& tid = e.typeId();
+        if (tid == "base:player") return;
+        if (tid == "base:villager") {
+            villagerCount++;
+            float dx = e.position.x - (float)vc.x;
+            float dz = e.position.z - (float)vc.y;
+            float d = std::sqrt(dx*dx + dz*dz);
+            if (d > kMonumentRadius) {
+                char buf[160];
+                std::snprintf(buf, sizeof(buf),
+                    "villager id=%u at (%.1f,%.1f,%.1f) is %.1fm from monument — want <%.1f",
+                    e.id(), e.position.x, e.position.y, e.position.z, d, kMonumentRadius);
+                throw std::runtime_error(buf);
+            }
+        } else {
+            animalCount++;
+            if (e.position.x < (float)barnMin.x || e.position.x >= (float)barnMax.x ||
+                e.position.z < (float)barnMin.y || e.position.z >= (float)barnMax.y) {
+                char buf[192];
+                std::snprintf(buf, sizeof(buf),
+                    "%s id=%u at (%.1f,_,%.1f) is outside barn footprint [%d..%d) x [%d..%d)",
+                    tid.c_str(), e.id(), e.position.x, e.position.z,
+                    barnMin.x, barnMax.x, barnMin.y, barnMax.y);
+                throw std::runtime_error(buf);
+            }
+        }
+    });
+
+    if (villagerCount == 0) return "no villagers spawned";
+    if (animalCount == 0)   return "no animals spawned";
     return "";
 }
 
@@ -2654,6 +2744,7 @@ int main() {
 	run("P51: no vertical tunneling at 50 m/s",   p51_no_vertical_tunneling);
 	run("P52: knockback no tunneling in box",      p52_knockback_no_tunneling);
 	run("P53: village entities never inside blocks (120 frames)", p53_entities_never_inside_blocks_village);
+	run("P54: server rejects clientPos inside wall",              p54_server_rejects_client_pos_in_wall);
 
 	printf("\n--- Behavior ---\n");
 	run("B1: woodcutter sets goalText when wood nearby",     b1_woodcutter_sets_goal_text);
@@ -2678,7 +2769,7 @@ int main() {
 	run("W1: foundation columns are stone (not dirt/grass)", w1_foundation_is_stone);
 	run("W2: house floor at or above all footprint terrain", w2_floor_at_or_above_all_terrain);
 	run("W3: house interior has no buried terrain blocks",   w3_house_interior_no_buried_terrain);
-	run("W4: villager bed positions inside house footprint", w4_villagers_spawn_inside_house);
+	run("W4: villagers near monument, animals in barn",      w4_mob_spawn_anchors);
 
 	printf("\n--- Client Reconciliation ---\n");
 	run("R1: owned mobs never go stale (no red lightbulb)", r1_no_stale_entities_in_steady_state);

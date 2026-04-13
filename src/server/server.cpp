@@ -27,17 +27,36 @@ void GameServer::resolveActions(float dt) {
 				break;
 			}
 
-			// Accept client-reported position if within tolerance.
-			// Client tracks its own position; server only corrects on large errors.
-			// Server still runs collision after this, so wall-phasing is impossible.
+			// Accept client-reported position if within tolerance AND it doesn't
+			// overlap any solid block. Client runs moveAndCollide locally; the
+			// server trusts the result only after verifying no wall-phasing.
+			// Rejected clientPos falls through to server-authoritative physics.
 			constexpr float CLIENT_POS_TOLERANCE = 8.0f;
 			if (p.hasClientPos) {
 				float dist = glm::length(p.clientPos - e->position);
 				if (dist < CLIENT_POS_TOLERANCE) {
-					e->position = p.clientPos;
-					// Client already ran moveAndCollide — skip server physics this tick
-					// to prevent double gravity/collision application.
-					e->skipPhysics = true;
+					const auto& def = e->def();
+					MoveParams mp = makeMoveParams(
+						def.collision_box_min, def.collision_box_max,
+						def.gravity_scale, def.isLiving(), p.fly);
+					BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+						const auto& bd = m_world->blocks.get(
+							m_world->getBlock(x, y, z));
+						return bd.solid ? bd.collision_height : 0.0f;
+					};
+					if (!isPositionBlocked(solidFn, p.clientPos,
+					                       mp.halfWidth, mp.height)) {
+						e->position = p.clientPos;
+						// Client already ran moveAndCollide — skip server physics
+						// this tick to prevent double gravity/collision.
+						e->skipPhysics = true;
+					} else {
+						char detail[160];
+						std::snprintf(detail, sizeof(detail),
+							"clientPos=(%.2f,%.2f,%.2f) overlaps solid block — rejected",
+							p.clientPos.x, p.clientPos.y, p.clientPos.z);
+						logMoveReject(p.actorId, "client-pos-in-wall", detail);
+					}
 				}
 			}
 

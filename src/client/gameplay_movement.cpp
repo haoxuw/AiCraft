@@ -286,7 +286,23 @@ void GameplayController::processMovement(float dt, GameState state,
 		else if (moveAction.jump && player.onGround)
 			localVel.y = jumpVelocity;
 
+		glm::vec3 prePos = player.position;
+		glm::vec3 preVel = player.velocity;
+		bool preOnGround = player.onGround;
 		stepEntityPhysics(player, localVel, solidFn, dt, moveAction.fly);
+
+		// Defense-in-depth: if physics produced a position that overlaps a block
+		// (edge cases around step-up, thin floors, or block changes mid-frame),
+		// revert rather than send an invalid clientPos. Server would reject it
+		// anyway; reverting keeps client/server mirrors consistent immediately.
+		const auto& def = player.def();
+		MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
+		                               def.gravity_scale, def.isLiving(), moveAction.fly);
+		if (isPositionBlocked(solidFn, player.position, mp.halfWidth, mp.height)) {
+			player.position = prePos;
+			player.velocity = preVel;
+			player.onGround = preOnGround;
+		}
 
 		// Face movement direction (same logic as server.cpp)
 		if (std::abs(localVel.x) > 0.01f || std::abs(localVel.z) > 0.01f)
