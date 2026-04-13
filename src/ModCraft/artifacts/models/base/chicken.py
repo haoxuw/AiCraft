@@ -37,6 +37,13 @@ model = {
         {"head": True,
          "offset": [0, 0.44, -0.33], "size": [0.06, 0.08, 0.04], "color": [0.90, 0.20, 0.15, 1],
          "pivot": [0, 0.45, -0.10], "swing_axis": [1, 0, 0], "amplitude": 15, "phase": 0, "speed": 1.5},
+        # Eyes — small black dots on head sides
+        {"head": True,
+         "offset": [-0.101, 0.58, -0.26], "size": [0.01, 0.04, 0.04], "color": [0.04, 0.03, 0.03, 1],
+         "pivot": [0, 0.45, -0.10], "swing_axis": [1, 0, 0], "amplitude": 15, "phase": 0, "speed": 1.5},
+        {"head": True,
+         "offset": [ 0.101, 0.58, -0.26], "size": [0.01, 0.04, 0.04], "color": [0.04, 0.03, 0.03, 1],
+         "pivot": [0, 0.45, -0.10], "swing_axis": [1, 0, 0], "amplitude": 15, "phase": 0, "speed": 1.5},
         # Left wing
         {"offset": [-0.18, 0.33, 0.02], "size": [0.08, 0.20, 0.32], "color": [0.92, 0.92, 0.87, 1],
          "pivot": [-0.14, 0.42, 0], "swing_axis": [0, 0, 1], "amplitude": 12, "phase": 0, "speed": 1},
@@ -49,7 +56,12 @@ model = {
         # Right leg
         {"offset": [0.07, 0.08, 0], "size": [0.06, 0.20, 0.06], "color": [0.90, 0.70, 0.20, 1],
          "pivot": [0.07, 0.18, 0], "swing_axis": [1, 0, 0], "amplitude": 35, "phase": math.pi, "speed": 1},
-        # Tail feathers
+        # Tail feathers — layered for depth
         {"offset": [0, 0.42, 0.26], "size": [0.16, 0.24, 0.08], "color": [0.88, 0.88, 0.82, 1]},
+        # Upper central feather (taller, slightly darker accent)
+        {"offset": [0, 0.56, 0.29], "size": [0.08, 0.14, 0.05], "color": [0.74, 0.74, 0.68, 1]},
+        # Side feathers forming a fan
+        {"offset": [-0.11, 0.40, 0.28], "size": [0.06, 0.18, 0.05], "color": [0.82, 0.82, 0.76, 1]},
+        {"offset": [ 0.11, 0.40, 0.28], "size": [0.06, 0.18, 0.05], "color": [0.82, 0.82, 0.76, 1]},
     ]
 }
