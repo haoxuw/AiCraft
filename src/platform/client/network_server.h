@@ -88,7 +88,10 @@ public:
 			net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
 		}
 
-		// Wait for S_WELCOME (polling for up to 3 seconds)
+		// Wait for S_WELCOME. The server may spend many seconds in its
+		// async Preparing phase (generating chunks) before sending welcome,
+		// so use a generous timeout and process any prep-phase traffic
+		// (S_PREPARING, S_CHUNK, S_CHUNK_Z) that arrives in the meantime.
 		auto start = std::chrono::steady_clock::now();
 		while (true) {
 			m_recv.readFrom(m_tcp.fd()); // non-blocking, may return EAGAIN
@@ -96,8 +99,8 @@ public:
 			if (recvWelcomeFromBuffer()) return true;
 
 			auto elapsed = std::chrono::steady_clock::now() - start;
-			if (std::chrono::duration<float>(elapsed).count() > 3.0f) {
-				printf("[Net] Timeout waiting for welcome\n");
+			if (std::chrono::duration<float>(elapsed).count() > 60.0f) {
+				printf("[Net] Timeout waiting for welcome (60s)\n");
 				break;
 			}
 
@@ -354,11 +357,16 @@ public:
 	}
 
 private:
-	// Parse S_WELCOME from receive buffer. C_HELLO was already sent on connect.
+	// Drain the receive buffer while waiting for S_WELCOME.
+	//
+	// The async Preparing phase streams S_PREPARING + chunk messages BEFORE
+	// welcome, so this loop must process them (otherwise chunks would be
+	// silently dropped and we'd just wait forever on the wire queue).
+	// Returns true the instant S_WELCOME is parsed.
 	bool recvWelcomeFromBuffer() {
 		net::MsgHeader hdr;
 		std::vector<uint8_t> payload;
-		if (m_recv.tryExtract(hdr, payload)) {
+		while (m_recv.tryExtract(hdr, payload)) {
 			if (hdr.type == net::S_WELCOME) {
 				net::ReadBuffer rb(payload.data(), payload.size());
 				m_localPlayerId = rb.readU32();
@@ -367,6 +375,20 @@ private:
 					m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
 				return true;
 			}
+			if (hdr.type == net::S_PREPARING) {
+				// Progress pulse; log sparsely. TODO(step4): plumb to loading UI.
+				net::ReadBuffer rb(payload.data(), payload.size());
+				float pct = rb.readF32();
+				static float s_lastLoggedPct = -1.0f;
+				if (pct - s_lastLoggedPct >= 0.1f || pct >= 1.0f) {
+					printf("[Net] Preparing world: %.0f%%\n", pct * 100.0f);
+					s_lastLoggedPct = pct;
+				}
+				continue;
+			}
+			// Other messages (S_CHUNK, S_CHUNK_Z, …) arrive before welcome
+			// during prep — dispatch so the chunk cache is populated.
+			handleMessage(hdr.type, payload);
 		}
 		return false;
 	}

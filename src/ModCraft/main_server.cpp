@@ -309,6 +309,8 @@ int main(int argc, char** argv) {
 		markPhase(fp.sendChunksMs);
 		clients.receiveMessages(dt);
 		markPhase(fp.receiveMs);
+		// Drain async chunk-gen results + finalize Preparing clients.
+		clients.advancePreparing();
 		clients.pruneDisconnected();
 		markPhase(fp.pruneMs);
 

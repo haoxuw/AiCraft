@@ -70,6 +70,10 @@ enum MsgType : uint32_t {
 	S_CHUNK_Z         = 0x100F,  // zstd-compressed chunk; decompresses to S_CHUNK layout  (v2)
 	S_READY           = 0x1012,  // [] — sent after addClient finishes mob spawn. Client holds
 	                             // the LOADING screen until this arrives.
+	S_PREPARING       = 0x1013,  // [f32 progress 0..1] — emitted while the server
+	                             // generates required chunks for this client. Client
+	                             // shows a progress UI; heartbeat-timeout is suppressed
+	                             // until S_READY arrives. No entities exist yet.
 
 	// Event-driven decision-loop interrupts — see plans/cosmic-tinkering-forest.md
 	// TODO(decide-loop): not yet emitted by server nor handled by client. Step 7

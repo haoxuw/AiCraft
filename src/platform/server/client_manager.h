@@ -9,10 +9,12 @@
 
 #include "server/server.h"
 #include "server/chunk_info.h"
+#include "server/chunk_gen_service.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
 #include "shared/constants.h"
 #include <zstd.h>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -23,6 +25,16 @@
 #include <cmath>
 
 namespace modcraft {
+
+// Async-handshake phase. Clients start in Preparing (HELLO received, chunks
+// being generated in the background). They transition to Ready once all
+// required chunks are delivered and the player entity has been spawned.
+// Preparing clients never receive S_ENTITY broadcasts — they have no
+// playerId yet, and ownerId==0 would falsely match every unowned entity.
+enum class ClientPhase : uint8_t {
+	Preparing,
+	Ready,
+};
 
 struct ConnectedClient {
 	int fd;
@@ -41,6 +53,15 @@ struct ConnectedClient {
 	// Protocol negotiation (set from C_HELLO version field)
 	uint32_t protocolVersion = 1;
 	bool supportsZstd = false; // true when protocolVersion >= 2
+
+	// Async handshake state. Preparing until the background chunk prep
+	// finishes; then flipped to Ready by ClientManager::advancePreparing().
+	ClientPhase phase = ClientPhase::Ready;
+	std::string pendingDisplayName;   // HELLO fields stashed until Ready
+	std::string pendingCreatureType;
+	size_t requiredChunkCount    = 0;
+	size_t chunksCompletedForPrep = 0;
+	float  lastProgressSent      = -1.0f; // last pct emitted via S_PREPARING
 
 	// Edge-trigger state for S_NPC_INTERRUPT. True if a player was within
 	// proximity radius of this NPC on the previous broadcast tick.
@@ -79,7 +100,9 @@ inline bool shouldBroadcastEntityToClient(const Entity& e,
 
 class ClientManager {
 public:
-	explicit ClientManager(GameServer& server) : m_server(server) {}
+	explicit ClientManager(GameServer& server)
+		: m_server(server),
+		  m_chunkGen(std::make_unique<ChunkGenService>(m_server.world())) {}
 
 	~ClientManager() = default;
 
@@ -109,6 +132,47 @@ public:
 		m_pendingClients[cid] = std::move(cc);
 		printf("[Server] %s connected. Waiting for hello...\n",
 		       m_pendingClients[cid].label().c_str());
+	}
+
+	// Drain results from the ChunkGenService worker pool, route each into
+	// its client's pendingChunks/sentChunks, emit S_PREPARING progress, and
+	// finalize the handshake (spawn player + send S_WELCOME/S_INVENTORY/
+	// S_READY) when all required chunks for a Preparing client have arrived.
+	void advancePreparing() {
+		auto results = m_chunkGen->drain();
+		for (auto& r : results) {
+			auto it = m_clients.find(r.cid);
+			if (it == m_clients.end()) continue; // client disconnected
+			auto& c = it->second;
+			if (c.sentChunks.count(r.pos)) continue; // dedup (shouldn't happen in prep)
+			c.pendingChunks.push_back({r.pos, std::move(r.message)});
+			c.sentChunks.insert(r.pos);
+			if (c.phase == ClientPhase::Preparing)
+				c.chunksCompletedForPrep++;
+		}
+
+		// Pump progress + finalize. Collect cids first — finalizePreparing
+		// may mutate m_clients (it doesn't today but keep this safe).
+		std::vector<ClientId> toFinalize;
+		for (auto& [cid, c] : m_clients) {
+			if (c.phase != ClientPhase::Preparing) continue;
+			float pct = c.requiredChunkCount == 0 ? 1.0f
+				: (float)c.chunksCompletedForPrep / (float)c.requiredChunkCount;
+			if (pct >= 1.0f) pct = 1.0f;
+			// Emit at ~2% granularity to avoid flooding tiny packets.
+			if (pct - c.lastProgressSent >= 0.02f || (pct >= 1.0f && c.lastProgressSent < 1.0f)) {
+				c.lastProgressSent = pct;
+				net::WriteBuffer wb;
+				wb.writeF32(pct);
+				net::sendMessage(c.fd, net::S_PREPARING, wb);
+			}
+			if (c.chunksCompletedForPrep >= c.requiredChunkCount)
+				toFinalize.push_back(cid);
+		}
+		for (auto cid : toFinalize) {
+			auto it = m_clients.find(cid);
+			if (it != m_clients.end()) finalizePreparing(it->second);
+		}
 	}
 
 	// Send queued chunks to clients (non-blocking, batched).
@@ -226,6 +290,10 @@ public:
 	// Remove clients that disconnected since last call.
 	void pruneDisconnected() {
 		for (auto cid : m_disconnected) {
+			// Always cancel outstanding chunk-gen jobs so workers don't
+			// burn CPU generating chunks for a client that's already gone.
+			if (m_chunkGen) m_chunkGen->cancelClient(cid);
+
 			auto pit = m_pendingClients.find(cid);
 			if (pit != m_pendingClients.end()) {
 				printf("[Server] %s disconnected (no hello).\n", pit->second.label().c_str());
@@ -272,6 +340,12 @@ public:
 		m_prevWorldTime = curWT;
 
 		for (auto& [cid, client] : m_clients) {
+			// Preparing clients have no player entity yet. Skip entity/time/
+			// chunk-stream broadcasts — they'd either no-op or (worse) match
+			// every unowned entity via ownerId==0==ENTITY_NONE==playerId.
+			// advancePreparing() owns the prep-phase wire traffic instead.
+			if (client.phase == ClientPhase::Preparing) continue;
+
 			// Gather viewpoints for perception scoping (player position only)
 			std::vector<glm::vec3> viewPoints;
 			Entity* pe = m_server.world().entities.get(client.playerId);
@@ -607,6 +681,66 @@ private:
 		}
 	}
 
+	// Complete the HELLO handshake once ChunkGenService has produced every
+	// required chunk for this client. Spawns the player entity (addClient
+	// also spawns owned NPCs), restores saved inventory, and emits the
+	// S_WELCOME / S_INVENTORY / S_READY sequence the client is waiting for.
+	void finalizePreparing(ConnectedClient& client) {
+		const std::string& creatureType = client.pendingCreatureType;
+
+#ifdef MODCRAFT_PERF
+		auto t_add0 = std::chrono::steady_clock::now();
+#endif
+		EntityId eid = m_server.addClient(client.id, creatureType);
+#ifdef MODCRAFT_PERF
+		double add_ms = std::chrono::duration<double, std::milli>(
+			std::chrono::steady_clock::now() - t_add0).count();
+		if (add_ms > 5.0)
+			fprintf(stderr, "[Perf] finalizePreparing.addClient took %.1fms (creature=%s)\n",
+				add_ms, creatureType.c_str());
+#endif
+		client.playerId = eid;
+
+		{
+			net::WriteBuffer swb;
+			swb.writeU32(eid);
+			swb.writeVec3(m_server.spawnPos());
+			net::sendMessage(client.fd, net::S_WELCOME, swb);
+		}
+
+		Entity* pe = m_server.world().entities.get(eid);
+		if (pe && pe->inventory) {
+			net::WriteBuffer iwb;
+			writeInventoryPayload(iwb, eid, *pe->inventory);
+			net::sendMessage(client.fd, net::S_INVENTORY, iwb);
+		}
+
+		if (!creatureType.empty() && pe) {
+			pe->setProp("character_skin", creatureType);
+			if (pe->inventory) {
+				auto& saved = m_server.savedInventories();
+				auto sit = saved.find(creatureType);
+				if (sit != saved.end()) {
+					*pe->inventory = sit->second;
+					printf("[Server] Restored inventory for '%s'\n", creatureType.c_str());
+				}
+				net::WriteBuffer wb;
+				writeInventoryPayload(wb, client.playerId, *pe->inventory);
+				net::sendMessage(client.fd, net::S_INVENTORY, wb);
+			}
+		}
+
+		client.phase = ClientPhase::Ready;
+
+		{
+			net::WriteBuffer wb;
+			net::sendMessage(client.fd, net::S_READY, wb);
+		}
+
+		printf("[Server] %s: ready (player eid=%u, %zu chunks queued)\n",
+			client.label().c_str(), eid, client.pendingChunks.size());
+	}
+
 	void handleMessage(ClientId cid, ConnectedClient& client, uint32_t type, net::ReadBuffer& rb) {
 		switch (type) {
 		case net::C_ACTION: {
@@ -616,6 +750,14 @@ private:
 		}
 		case net::C_HELLO: {
 			// Wire format: [u32 version][str uuid][str displayName][str creatureType]
+			//
+			// The HELLO handler used to call getChunk()+zstd for ~2000 chunks
+			// synchronously (5+ seconds), starving the tick loop and causing
+			// clients to time out. We now enter a Preparing phase: submit every
+			// required chunk to the ChunkGenService worker pool and return
+			// immediately. advancePreparing() drains results each tick and
+			// finalizes the handshake (S_WELCOME/S_INVENTORY/S_READY + entity
+			// spawn) only after all chunks are queued for delivery.
 			client.protocolVersion = rb.readU32();
 			client.supportsZstd    = (client.protocolVersion >= 2);
 			client.name = rb.readString();
@@ -627,38 +769,17 @@ private:
 			if (!displayName.empty())
 				client.name = displayName + " (" + client.name.substr(0, 8) + ")";
 
-			// Create player entity (deferred from acceptConnections to prevent
-			// ghost entities from agent connections).
-			{
-#ifdef MODCRAFT_PERF
-				auto t_add0 = std::chrono::steady_clock::now();
-#endif
-				EntityId eid = m_server.addClient(cid, creatureType);
-#ifdef MODCRAFT_PERF
-				double add_ms = std::chrono::duration<double, std::milli>(
-					std::chrono::steady_clock::now() - t_add0).count();
-				if (add_ms > 5.0)
-					fprintf(stderr, "[Perf] HELLO.addClient took %.1fms (creature=%s)\n",
-						add_ms, creatureType.c_str());
-#endif
-				client.playerId = eid;
-				net::WriteBuffer swb;
-				swb.writeU32(eid);
-				swb.writeVec3(m_server.spawnPos());
-				net::sendMessage(client.fd, net::S_WELCOME, swb);
-				Entity* pe = m_server.world().entities.get(eid);
-				if (pe && pe->inventory) {
-					net::WriteBuffer iwb;
-					writeInventoryPayload(iwb, eid, *pe->inventory);
-					net::sendMessage(client.fd, net::S_INVENTORY, iwb);
-				}
-			}
-
+			// Reject early: one-character-per-server skin lock. Also matches
+			// against clients that are still in Preparing with the same skin
+			// — otherwise two simultaneous joins could both pass.
 			if (!creatureType.empty()) {
-				// Enforce one-character-per-server: reject if skin already occupied
 				bool skinTaken = false;
 				for (auto& [otherId, other] : m_clients) {
 					if (otherId == client.id) continue;
+					if (other.phase == ClientPhase::Preparing) {
+						if (other.pendingCreatureType == creatureType) { skinTaken = true; break; }
+						continue;
+					}
 					Entity* oe = m_server.world().entities.get(other.playerId);
 					if (oe && oe->getProp<std::string>("character_skin", "") == creatureType) {
 						skinTaken = true;
@@ -667,102 +788,58 @@ private:
 				}
 				if (skinTaken) {
 					net::WriteBuffer err;
-					err.writeU32(client.playerId);
+					err.writeU32(0);
 					err.writeString("Character '" + creatureType + "' is already in use.");
 					net::sendMessage(client.fd, net::S_ERROR, err);
 					printf("[Server] %s rejected: '%s' already online\n",
 						client.label().c_str(), creatureType.c_str());
+					m_disconnected.push_back(client.id);
 					break;
 				}
-
-				Entity* pe = m_server.world().entities.get(client.playerId);
-				if (pe) {
-					pe->setProp("character_skin", creatureType);
-
-					// Restore saved inventory for this character skin
-					if (pe->inventory) {
-						auto& saved = m_server.savedInventories();
-						auto sit = saved.find(creatureType);
-						if (sit != saved.end()) {
-							*pe->inventory = sit->second;
-							printf("[Server] Restored inventory for '%s'\n", creatureType.c_str());
-						}
-						// else: keep starting items given by addClient
-
-						// Resend inventory now that skin is resolved
-						net::WriteBuffer wb;
-						writeInventoryPayload(wb, client.playerId, *pe->inventory);
-						net::sendMessage(client.fd, net::S_INVENTORY, wb);
-					}
-				}
 			}
-			printf("[Server] %s identified: creature=%s\n",
+
+			client.phase              = ClientPhase::Preparing;
+			client.pendingDisplayName = displayName;
+			client.pendingCreatureType = creatureType;
+
+			// Build the required chunk set around the spawn column. Same shape
+			// as the old synchronous path: feet + feet-1 + (2R+1)² horizontal
+			// over dy=[-1..2]. Dedup via a temporary sentChunks reservation.
+			ChunkPos feetCp = client.lastChunkPos;
+			std::vector<ChunkPos> required;
+			auto tryAdd = [&](ChunkPos p) {
+				if (!client.sentChunks.insert(p).second) return; // already queued
+				required.push_back(p);
+			};
+			tryAdd(feetCp);
+			tryAdd({feetCp.x, feetCp.y - 1, feetCp.z});
+			const int R = ConnectedClient::STREAM_R;
+			for (int dy = -1; dy <= 2; dy++)
+			for (int dz = -R; dz <= R; dz++)
+			for (int dx = -R; dx <= R; dx++)
+				tryAdd({feetCp.x + dx, feetCp.y + dy, feetCp.z + dz});
+
+			// Clear the reservation — each chunk flips to "sent" only when the
+			// worker's message actually lands in pendingChunks (advancePreparing).
+			for (auto& p : required) client.sentChunks.erase(p);
+
+			client.requiredChunkCount    = required.size();
+			client.chunksCompletedForPrep = 0;
+			client.lastProgressSent       = -1.0f;
+			for (auto& p : required)
+				m_chunkGen->submit(client.id, p, client.supportsZstd);
+
+			{
+				net::WriteBuffer wb;
+				wb.writeF32(0.0f);
+				net::sendMessage(client.fd, net::S_PREPARING, wb);
+				client.lastProgressSent = 0.0f;
+			}
+
+			printf("[Server] %s identified: creature=%s; preparing %zu chunks\n",
 				client.label().c_str(),
-				creatureType.empty() ? "default" : creatureType.c_str());
-
-			// Queue initial world chunks now that the human player is confirmed.
-			// Sorted nearest-first so the player sees terrain under their feet
-			// immediately, not far corners of the load radius first.
-			//
-			// NOTE: This is synchronous and heavy (5+ sec for STREAM_R=11). The
-			// async prep-phase refactor (ChunkGenService + S_PREPARING) replaces
-			// this path in a subsequent commit. Kept here as the baseline for
-			// that refactor.
-			{
-#ifdef MODCRAFT_PERF
-				auto t_q0 = std::chrono::steady_clock::now();
-				double genMs = 0, compMs = 0;
-				int genCount = 0, compCount = 0;
-#endif
-				Entity* pe2 = m_server.world().entities.get(client.playerId);
-				float yaw2 = pe2 ? pe2->yaw : 0.0f;
-				float yrad2 = glm::radians(yaw2);
-				float fx2 = std::cos(yrad2), fz2 = std::sin(yrad2);
-
-				// Priority: send the feet chunk and chunk below FIRST so player
-				// doesn't fall through air while waiting for other chunks.
-				ChunkPos feetCp = client.lastChunkPos;
-				queueChunk(client, feetCp);
-				queueChunk(client, {feetCp.x, feetCp.y - 1, feetCp.z});
-
-				const int R = ConnectedClient::STREAM_R;
-				struct IC { ChunkPos pos; int dist; };
-				std::vector<IC> init;
-				init.reserve((2*R+1) * (2*R+1) * 4);
-				for (int dy = -1; dy <= 2; dy++)
-				for (int dz = -R; dz <= R; dz++)
-				for (int dx = -R; dx <= R; dx++) {
-					int base = std::abs(dx) + std::abs(dz) + std::abs(dy) * 2;
-					float dot = fx2 * dx + fz2 * dz;
-					int biased = base - (int)(dot * 1.5f);
-					init.push_back({{feetCp.x + dx, feetCp.y + dy, feetCp.z + dz}, biased});
-				}
-				std::sort(init.begin(), init.end(),
-				          [](const IC& a, const IC& b){ return a.dist < b.dist; });
-				for (auto& ic : init)
-					queueChunk(client, ic.pos
-#ifdef MODCRAFT_PERF
-						, &genMs, &genCount, &compMs, &compCount
-#endif
-					);
-#ifdef MODCRAFT_PERF
-				double qms = std::chrono::duration<double, std::milli>(
-					std::chrono::steady_clock::now() - t_q0).count();
-				if (qms > 50.0)
-					fprintf(stderr, "[Perf] HELLO.queueChunks: total=%.1fms, %zu chunks queued, getChunk(gen)=%.1fms over %d calls, zstd=%.1fms over %d calls\n",
-						qms, client.pendingChunks.size(), genMs, genCount, compMs, compCount);
-#endif
-			}
-			printf("[Server] %s: queued %zu initial chunks (sorted nearest-first)\n",
-				client.label().c_str(), client.pendingChunks.size());
-
-			// Signal end-of-setup: mobs have been spawned (in addClient) and
-			// welcome/inventory/chunks queued. The client's loading screen
-			// waits on this before handing off to gameplay.
-			{
-				net::WriteBuffer rb;
-				net::sendMessage(client.fd, net::S_READY, rb);
-			}
+				creatureType.empty() ? "default" : creatureType.c_str(),
+				client.requiredChunkCount);
 			break;
 		}
 
@@ -935,6 +1012,7 @@ private:
 	}
 
 	GameServer& m_server;
+	std::unique_ptr<ChunkGenService> m_chunkGen;
 	std::unordered_map<ClientId, ConnectedClient> m_clients;         // identified
 	std::unordered_map<ClientId, ConnectedClient> m_pendingClients;  // awaiting hello
 	std::vector<ClientId> m_disconnected;
