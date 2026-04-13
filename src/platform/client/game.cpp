@@ -671,42 +671,38 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 	m_reconnectHost = host;  // remember for auto-reconnect on mid-game disconnect
 	m_reconnectPort = port;
 
-#ifdef __EMSCRIPTEN__
-	// Web: WebSocket connect is async — initiate and wait across frames
-	auto netServer = std::make_unique<NetworkServer>(host, port);
-	netServer->setDisplayName(m_playerName);
-	netServer->setCreatureType(m_selectedCreature);
-	if (netServer->beginConnect()) {
-		m_server = std::move(netServer);
-		m_connectTargetState = targetState;
-		m_state = GameState::CONNECTING;
-		m_connectTimer = 0;
-	} else {
-		printf("[Game] Failed to begin connect to %s:%d\n", host.c_str(), port);
-		m_state = GameState::MENU;
-	}
-#else
-	// Native: retry up to 5 times with 200ms delay (server may just be starting)
+	// Async connect for both native and web. The sync createGame() path used
+	// to block for up to 60s during the server's async Preparing phase — no
+	// UI could render. Now we beginConnect() (sends C_HELLO, returns
+	// immediately), hop straight to LOADING, and updateLoading() polls for
+	// S_WELCOME each frame while showing the S_PREPARING progress bar.
+	//
+	// Native keeps its retry-on-refused-connect behaviour since the server
+	// may still be starting; beginConnect() itself is the retryable part.
+#ifndef __EMSCRIPTEN__
 	for (int attempt = 0; attempt < 5; attempt++) {
 		if (attempt > 0) {
 			printf("[Game] Connect attempt %d/5 failed, retrying in 200ms...\n", attempt);
 			usleep(200000);
 		}
+#endif
 		auto netServer = std::make_unique<NetworkServer>(host, port);
 		netServer->setDisplayName(m_playerName);
 		netServer->setCreatureType(m_selectedCreature);
-		if (netServer->createGame(42, 0)) {
-			printf("[Game] Connected to %s:%d as %s (%s)\n",
-			       host.c_str(), port, m_playerName.c_str(), m_selectedCreature.c_str());
+		if (netServer->beginConnect()) {
 			m_server = std::move(netServer);
-			setupAfterConnect(targetState);
+			m_connectTargetState = targetState;
+			m_state = targetState;     // LOADING — updateLoading() polls welcome
+			m_connectTimer = 0;
 			return;
 		}
+#ifndef __EMSCRIPTEN__
 	}
 	printf("[Game] Failed to join %s:%d after 5 attempts\n", host.c_str(), port);
-	// Stay in menu on failure
-	m_state = GameState::MENU;
+#else
+	printf("[Game] Failed to begin connect to %s:%d\n", host.c_str(), port);
 #endif
+	m_state = GameState::MENU;
 }
 
 // ============================================================

@@ -294,6 +294,7 @@ public:
 	}
 	void setControlledEntityId(EntityId eid) override { m_controlledEid = eid; }
 	bool isServerReady() const override { return m_serverReady; }
+	float preparingProgress() const override { return m_preparingPct; }
 
 	// Latest server-authoritative position from the broadcast stream.
 	// Falls back to the last applied entity position if no interp target.
@@ -376,9 +377,9 @@ private:
 				return true;
 			}
 			if (hdr.type == net::S_PREPARING) {
-				// Progress pulse; log sparsely. TODO(step4): plumb to loading UI.
 				net::ReadBuffer rb(payload.data(), payload.size());
 				float pct = rb.readF32();
+				m_preparingPct = pct;  // surfaced to loading UI via preparingProgress()
 				static float s_lastLoggedPct = -1.0f;
 				if (pct - s_lastLoggedPct >= 0.1f || pct >= 1.0f) {
 					printf("[Net] Preparing world: %.0f%%\n", pct * 100.0f);
@@ -689,6 +690,7 @@ private:
 	glm::vec3 m_spawnPos = {0, 0, 0};
 	float m_worldTime = 0.25f;
 	bool m_serverReady = false;
+	float m_preparingPct = -1.0f;  // -1 = no S_PREPARING seen; else [0..1]
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;

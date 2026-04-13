@@ -1,24 +1,68 @@
 #include "client/game.h"
+#include "client/network_server.h"
 #include "imgui.h"
 
 namespace modcraft {
 
 // ============================================================
-// Loading screen — wait for feet chunk before starting gameplay
+// Loading screen — runs from right after C_HELLO through to
+// "player entity + feet chunk loaded", covering the server's
+// async Preparing phase with a progress bar driven by S_PREPARING.
 // ============================================================
 void Game::updateLoading(float dt, float aspect) {
 	if (!m_server) { m_state = GameState::MENU; return; }
+
+	// If this is a NetworkServer still waiting for S_WELCOME, poll it.
+	// setupAfterConnect wires gameplay callbacks once welcome lands; until
+	// then we only drain prep-phase traffic (S_PREPARING + chunks).
+	if (auto* net = dynamic_cast<NetworkServer*>(m_server.get())) {
+		if (net->localPlayerId() == ENTITY_NONE) {
+			if (!net->pollWelcome() && !net->isConnected()) {
+				m_server.reset();
+				m_state = GameState::MENU;
+				return;
+			}
+			if (net->localPlayerId() != ENTITY_NONE)
+				setupAfterConnect(m_connectTargetState);
+		}
+	}
+
 	m_server->tick(dt);
 	if (!m_server->isConnected()) { m_state = GameState::MENU; return; }
 
 	Entity* pe = playerEntity();
 	if (!pe) {
-		// Entity not yet received — keep ticking
+		// Entity not yet received. Either we're still in the server's async
+		// Preparing phase (S_PREPARING pulses arrive before S_WELCOME) or
+		// a brand-new TestServer-style flow that hasn't streamed yet.
 		m_ui.beginFrame();
 		float sw = (float)m_window.width(), sh = (float)m_window.height();
 		ImDrawList* bg = ImGui::GetBackgroundDrawList();
 		bg->AddRectFilled({0, 0}, {sw, sh}, IM_COL32(15, 18, 25, 255));
-		bg->AddText({sw * 0.5f - 60, sh * 0.5f - 10}, IM_COL32(200, 200, 200, 255), "Connecting...");
+
+		float prep = m_server->preparingProgress();
+		if (prep >= 0.0f) {
+			const char* title = "Preparing World";
+			auto titleSize = ImGui::CalcTextSize(title);
+			bg->AddText({(sw - titleSize.x) * 0.5f, sh * 0.4f},
+				IM_COL32(220, 220, 220, 255), title);
+
+			float barW = 300, barH = 12;
+			float barX = (sw - barW) * 0.5f, barY = sh * 0.5f;
+			bg->AddRectFilled({barX, barY}, {barX + barW, barY + barH},
+				IM_COL32(40, 44, 55, 255), 4.0f);
+			bg->AddRectFilled({barX, barY}, {barX + barW * prep, barY + barH},
+				IM_COL32(80, 160, 255, 255), 4.0f);
+
+			char status[32];
+			snprintf(status, sizeof(status), "%.0f%%", prep * 100.0f);
+			auto statusSize = ImGui::CalcTextSize(status);
+			bg->AddText({(sw - statusSize.x) * 0.5f, barY + barH + 8},
+				IM_COL32(150, 150, 160, 255), status);
+		} else {
+			bg->AddText({sw * 0.5f - 60, sh * 0.5f - 10},
+				IM_COL32(200, 200, 200, 255), "Connecting...");
+		}
 		m_ui.endFrame();
 		return;
 	}

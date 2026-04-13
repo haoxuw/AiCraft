@@ -97,6 +97,12 @@ public:
 	// Default: assume ready (in-process TestServer etc).
 	virtual bool isServerReady() const { return true; }
 
+	// Server-reported prep progress in [0..1], pushed via S_PREPARING while
+	// the server generates required chunks in the background. Returns -1
+	// when no S_PREPARING has been seen yet (e.g. in-process TestServer
+	// that skips the handshake entirely). Default: -1.
+	virtual float preparingProgress() const { return -1.0f; }
+
 	// Latest server-reported position for an entity (from broadcast).
 	// Used by the debug HUD to show client-server divergence.
 	// Default: same as the entity's current position (no divergence info).
