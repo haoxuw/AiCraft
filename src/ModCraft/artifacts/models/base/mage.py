@@ -24,6 +24,21 @@ model = {
         # Head (texture provides face -- must be parts[0])
         {"offset": [0, 1.65, 0], "size": [0.44, 0.44, 0.44], "color": [0.92, 0.82, 0.70, 1],
          "pivot": [0, 1.44, 0], "swing_axis": [1, 0, 0], "amplitude": 5, "phase": 0, "speed": 2},
+        # Long white beard
+        {"head": True,
+         "offset": [0, 1.48, -0.20], "size": [0.28, 0.14, 0.08], "color": [0.92, 0.90, 0.86, 1],
+         "pivot": [0, 1.44, 0], "swing_axis": [1, 0, 0], "amplitude": 5, "phase": 0, "speed": 2},
+        # Nose
+        {"head": True,
+         "offset": [0, 1.64, -0.24], "size": [0.04, 0.06, 0.04], "color": [0.78, 0.62, 0.50, 1],
+         "pivot": [0, 1.44, 0], "swing_axis": [1, 0, 0], "amplitude": 5, "phase": 0, "speed": 2},
+        # Deep-set mage eyes (blue, slightly glowing)
+        {"head": True,
+         "offset": [-0.08, 1.72, -0.231], "size": [0.04, 0.03, 0.01], "color": [0.35, 0.55, 0.90, 1],
+         "pivot": [0, 1.44, 0], "swing_axis": [1, 0, 0], "amplitude": 5, "phase": 0, "speed": 2},
+        {"head": True,
+         "offset": [ 0.08, 1.72, -0.231], "size": [0.04, 0.03, 0.01], "color": [0.35, 0.55, 0.90, 1],
+         "pivot": [0, 1.44, 0], "swing_axis": [1, 0, 0], "amplitude": 5, "phase": 0, "speed": 2},
 
         # Robe base (wide hem)
         {"offset": [0, 0.40, 0], "size": [0.68, 0.20, 0.48], "color": [0.36, 0.06, 0.54, 1]},

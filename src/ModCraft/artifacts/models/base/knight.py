@@ -35,6 +35,17 @@ model = {
         {"name": "head", "head": True,
          "offset": [0, 1.75, 0], "size": [0.50, 0.50, 0.50], "color": [0.85, 0.70, 0.55, 1],
          "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 4, "phase": 0, "speed": 2},
+        # Helm visor slot (dark horizontal band)
+        {"head": True,
+         "offset": [0, 1.76, -0.255], "size": [0.32, 0.06, 0.01], "color": [0.10, 0.10, 0.12, 1],
+         "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 4, "phase": 0, "speed": 2},
+        # Glowing blue eyes in visor slot
+        {"head": True,
+         "offset": [-0.08, 1.76, -0.262], "size": [0.04, 0.03, 0.01], "color": [0.55, 0.78, 0.95, 1],
+         "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 4, "phase": 0, "speed": 2},
+        {"head": True,
+         "offset": [ 0.08, 1.76, -0.262], "size": [0.04, 0.03, 0.01], "color": [0.55, 0.78, 0.95, 1],
+         "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 4, "phase": 0, "speed": 2},
         # Torso (Y-axis counter-twist)
         {"name": "torso",
          "offset": [0, 1.08, 0], "size": [0.50, 0.64, 0.30], "color": [0.18, 0.32, 0.72, 1],
