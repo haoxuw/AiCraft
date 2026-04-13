@@ -40,6 +40,12 @@ namespace modcraft::ServerTuning {
 	constexpr float broadcastInterval    = 0.05f;          // 20 Hz — agents need fresh position for behavior decisions
 	constexpr float statusLogInterval    = 60.0f;          // seconds between status prints
 
+	// Heartbeat / liveness. Client must send *something* (C_HEARTBEAT or any
+	// other message) at least this often, or the server will drop it and run
+	// the full disconnect cleanup (snapshot owned NPCs, save inventory, despawn).
+	// Headroom: client sends C_HEARTBEAT every 2s, so 15s = ~7 missed beats.
+	constexpr float clientIdleTimeoutSec = 15.0f;
+
 	// Decision queue (agent-side scheduling, constants here for single source of truth)
 	constexpr float defaultDecideDuration  = 0.25f;   // seconds — default when Python returns 2-tuple
 	constexpr int   maxDecidesPerTick      = 50;       // per-tick budget cap (at 50 Hz → 2500 decide/s)

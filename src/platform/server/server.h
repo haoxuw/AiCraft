@@ -23,6 +23,10 @@
 #include "server/structure_blueprint.h"
 #include "server/structure_block_cacher.h"
 #include "shared/block_registry.h"
+// Owned-NPC persistence across client sessions. Included at namespace scope
+// (before the `namespace modcraft {` below) because its <string>/<vector>
+// system includes must not land inside the modcraft namespace.
+#include "server/owned_entity_store.h"
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -377,7 +381,14 @@ public:
 		// Spawn this client's mob set. Every mob is owned by the player entity
 		// just created, so the client's in-process AgentClient can drive them
 		// and so removeClient() can despawn them on disconnect.
-		spawnMobsForClient(eid);
+		//
+		// Prior sessions leave a per-skin snapshot behind (see removeClient).
+		// If one exists, restore from that instead of respawning fresh — a
+		// dog you led to the far hills will still be at the far hills next
+		// login, not warped back to the village.
+		std::string skin = characterSkin.empty() ? "default" : characterSkin;
+		if (!m_ownedEntities.restore(m_world->entities, eid, skin))
+			spawnMobsForClient(eid);
 
 		return eid;
 	}
@@ -410,11 +421,18 @@ public:
 			// Save player inventory before removing
 			if (playerId != ENTITY_NONE) {
 				Entity* pe = m_world->entities.get(playerId);
+				std::string skin = "default";
+				if (pe) skin = pe->getProp<std::string>("character_skin", "default");
 				if (pe && pe->inventory) {
-					std::string skin = pe->getProp<std::string>("character_skin", "default");
 					m_savedInventories[skin] = *pe->inventory;
 					printf("[Server] Saved inventory for '%s'\n", skin.c_str());
 				}
+				// Snapshot every owned NPC (not the player itself) so next
+				// login restores them in place instead of respawning fresh
+				// from the template. Dead entities and unknown types are
+				// dropped, not snapshotted — see OwnedEntityStore::snapshot.
+				m_ownedEntities.snapshot(m_world->entities, playerId, skin);
+
 				// Despawn every entity owned by this client (their mob set).
 				// Entities with owner=0 (static chests, etc.) are world-scope
 				// and stay. Self-ownership of the player entity matches here
@@ -706,6 +724,12 @@ public:
 	std::unordered_map<std::string, Inventory>& savedInventories() { return m_savedInventories; }
 	const std::unordered_map<std::string, Inventory>& savedInventories() const { return m_savedInventories; }
 
+	// Per-character owned-NPC snapshots. Written on disconnect, consumed on
+	// next login. Exposed for world_save.h so snapshots survive across
+	// server restarts (owned_entities.bin).
+	OwnedEntityStore&       ownedEntities()       { return m_ownedEntities; }
+	const OwnedEntityStore& ownedEntities() const { return m_ownedEntities; }
+
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
@@ -761,6 +785,7 @@ private:
 	float m_hpRegenInterval = ServerTuning::hpRegenInterval;
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	std::unordered_map<std::string, Inventory> m_savedInventories;  // character_skin → inventory
+	OwnedEntityStore m_ownedEntities;  // character_skin → owned NPCs awaiting owner's next login
 
 	// Structure system
 	StructureBlueprintManager            m_blueprints;

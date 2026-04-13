@@ -262,8 +262,6 @@ int main(int argc, char** argv) {
 #ifdef MODCRAFT_PERF
 	int slowTickCount = 0;
 	double worstTickMs = 0.0;
-	double totalTickMs = 0.0;      // sum across the perf window, for average
-	int totalTicksInWindow = 0;    // count of ticks (not frames) in the window
 	modcraft::GameServer::TickProfile worstProfile{};
 	float perfTimer = 0.0f;
 	constexpr float PERF_LOG_INTERVAL = 5.0f;  // same cadence as status log
@@ -311,6 +309,9 @@ int main(int argc, char** argv) {
 		markPhase(fp.receiveMs);
 		// Drain async chunk-gen results + finalize Preparing clients.
 		clients.advancePreparing();
+		// Drop any client whose heartbeat stopped arriving (convergent path
+		// with C_QUIT and TCP close: all three end up in pruneDisconnected).
+		clients.checkIdleTimeouts(dt);
 		clients.pruneDisconnected();
 		markPhase(fp.pruneMs);
 
@@ -346,8 +347,6 @@ int main(int argc, char** argv) {
 		if (ticksThisFrame > 0) {
 			double tickMs = std::chrono::duration<double, std::milli>(tickEnd - tickStart).count();
 			double perTickMs = tickMs / ticksThisFrame;
-			totalTickMs += tickMs;
-			totalTicksInWindow += ticksThisFrame;
 			if (perTickMs > TICK_BUDGET_MS) {
 				slowTickCount++;
 				if (perTickMs > worstTickMs) {
@@ -358,16 +357,8 @@ int main(int argc, char** argv) {
 					// single-tick case is what we care about.
 					worstProfile = server.lastTickProfile();
 				}
-				// Log the first few and then every 30th breach to avoid spam
-				if (slowTickCount <= 5 || slowTickCount % 30 == 0) {
-					const auto& p = server.lastTickProfile();
-					fprintf(stderr, "[Perf] SLOW tick: %.1fms (budget %.1fms, %d ticks this frame, %zu entities) "
-						"[resolve=%.2f nav=%.2f phys=%.2f yaw=%.2f blocks=%.2f hpregen=%.2f structregen=%.2f stuck=%.2f]\n",
-						perTickMs, TICK_BUDGET_MS, ticksThisFrame,
-						server.world().entities.count(),
-						p.resolveActionsMs, p.navigationMs, p.physicsMs, p.yawSmoothMs,
-						p.activeBlocksMs, p.hpRegenMs, p.structureRegenMs, p.stuckDetectionMs);
-				}
+				// Per-breach logging removed — the 5s window summary below
+				// reports count + worst + top phase, which is what you need.
 			}
 		}
 #endif
@@ -391,31 +382,57 @@ int main(int argc, char** argv) {
 		}
 
 		if (perfTimer >= PERF_LOG_INTERVAL) {
-			double avgMs = totalTicksInWindow > 0 ? totalTickMs / totalTicksInWindow : 0.0;
+			// Healthy windows stay silent — only report when something breached
+			// a budget. Each breach type collapses to "count, worst, top phase"
+			// so one line tells you "how bad, and where to look next".
 			if (slowTickCount > 0 || slowFrameCount > 0) {
-				fprintf(stderr, "[Perf] Last %.0fs: %d slow ticks, %d slow frames, worstTick=%.1fms worstFrame=%.1fms avg=%.2fms (budget %.1fms, %d ticks)\n",
-					perfTimer, slowTickCount, slowFrameCount,
-					worstTickMs, worstFrameMs, avgMs, TICK_BUDGET_MS, totalTicksInWindow);
-				if (slowTickCount > 0)
-					fprintf(stderr, "[Perf] worst-tick breakdown: resolve=%.2f nav=%.2f phys=%.2f yaw=%.2f blocks=%.2f hpregen=%.2f structregen=%.2f stuck=%.2f (total=%.2f)\n",
-						worstProfile.resolveActionsMs, worstProfile.navigationMs,
-						worstProfile.physicsMs, worstProfile.yawSmoothMs,
-						worstProfile.activeBlocksMs, worstProfile.hpRegenMs,
-						worstProfile.structureRegenMs, worstProfile.stuckDetectionMs,
-						worstProfile.totalMs);
-				if (slowFrameCount > 0)
-					fprintf(stderr, "[Perf] worst-frame breakdown: accept=%.2f sendChunks=%.2f recv=%.2f prune=%.2f tick=%.2f broadcast=%.2f lan=%.2f statusLog=%.2f (total=%.2f)\n",
-						worstFrame.acceptMs, worstFrame.sendChunksMs, worstFrame.receiveMs,
-						worstFrame.pruneMs, worstFrame.tickMs, worstFrame.broadcastMs,
-						worstFrame.announceLanMs, worstFrame.statusLogMs, worstFrame.totalMs);
-			} else if (totalTicksInWindow > 0) {
-				fprintf(stderr, "[Perf] Last %.0fs: avg=%.2fms (budget %.1fms, %d ticks)\n",
-					perfTimer, avgMs, TICK_BUDGET_MS, totalTicksInWindow);
+				auto topTick = [&]() {
+					struct { const char* n; double v; } x[] = {
+						{"resolve",   worstProfile.resolveActionsMs},
+						{"nav",       worstProfile.navigationMs},
+						{"phys",      worstProfile.physicsMs},
+						{"yaw",       worstProfile.yawSmoothMs},
+						{"blocks",    worstProfile.activeBlocksMs},
+						{"hpregen",   worstProfile.hpRegenMs},
+						{"structregen", worstProfile.structureRegenMs},
+						{"stuck",     worstProfile.stuckDetectionMs},
+					};
+					const char* bn = "?"; double bv = 0.0;
+					for (auto& e : x) if (e.v > bv) { bv = e.v; bn = e.n; }
+					return std::make_pair(bn, bv);
+				};
+				auto topFrame = [&]() {
+					struct { const char* n; double v; } x[] = {
+						{"tick",       worstFrame.tickMs},
+						{"broadcast",  worstFrame.broadcastMs},
+						{"sendChunks", worstFrame.sendChunksMs},
+						{"recv",       worstFrame.receiveMs},
+						{"prune",      worstFrame.pruneMs},
+						{"accept",     worstFrame.acceptMs},
+						{"lan",        worstFrame.announceLanMs},
+						{"statusLog",  worstFrame.statusLogMs},
+					};
+					const char* bn = "?"; double bv = 0.0;
+					for (auto& e : x) if (e.v > bv) { bv = e.v; bn = e.n; }
+					return std::make_pair(bn, bv);
+				};
+				char tickPart[96] = "";
+				char framePart[96] = "";
+				if (slowTickCount > 0) {
+					auto [n, v] = topTick();
+					snprintf(tickPart, sizeof(tickPart), " ticks=%d worst=%.1fms(%s=%.1f)",
+						slowTickCount, worstTickMs, n, v);
+				}
+				if (slowFrameCount > 0) {
+					auto [n, v] = topFrame();
+					snprintf(framePart, sizeof(framePart), " frames=%d worst=%.1fms(%s=%.1f)",
+						slowFrameCount, worstFrameMs, n, v);
+				}
+				fprintf(stderr, "[Perf] 5s budget=%.1fms:%s%s\n",
+					TICK_BUDGET_MS, tickPart, framePart);
 			}
 			slowTickCount = 0;
 			worstTickMs = 0;
-			totalTickMs = 0;
-			totalTicksInWindow = 0;
 			worstProfile = {};
 			slowFrameCount = 0;
 			worstFrameMs = 0;
@@ -426,6 +443,13 @@ int main(int argc, char** argv) {
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
+
+	// Order matters: disconnect clients FIRST so their owned NPCs get
+	// snapshotted into savedOwnedEntities (via removeClient), then save.
+	// Otherwise entities.bin would carry owned mobs into the next boot as
+	// orphaned zombies with stale owner ids, and owned_entities.bin would
+	// be empty.
+	clients.disconnectAll();
 
 	// Save world on shutdown
 	if (!worldPath.empty()) {
@@ -441,7 +465,6 @@ int main(int argc, char** argv) {
 		modcraft::saveWorld(server, worldPath, meta);
 	}
 
-	clients.disconnectAll();
 	listener.shutdown();
 	if (logFile) fclose(logFile);
 

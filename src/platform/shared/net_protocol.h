@@ -19,6 +19,8 @@
  * C_CANCEL_GOAL   0x0009  [u32 entityId]
  * C_SET_GOAL_GROUP 0x000B [f32 x][f32 y][f32 z][u32 count][u32 eid...]
  * C_GET_INVENTORY 0x000D  [u32 entityId]
+ * C_QUIT          0x000E  []  — graceful disconnect; server runs full cleanup
+ * C_HEARTBEAT     0x000F  []  — liveness ping; resets server-side idle timer
  *
  * S_WELCOME       0x1001  [u32 entityId][vec3 spawn]
  * S_ENTITY        0x1002  EntityState (see serializeEntityState)
@@ -56,6 +58,8 @@ enum MsgType : uint32_t {
 	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
 	C_SET_GOAL_GROUP  = 0x000B,  // [f32 x][f32 y][f32 z][u32 count][u32 eid...]
 	C_GET_INVENTORY   = 0x000D,  // [u32 entityId] — request entity inventory snapshot
+	C_QUIT            = 0x000E,  // []  — graceful disconnect (client leaving); server runs full cleanup
+	C_HEARTBEAT       = 0x000F,  // []  — keepalive ping; resets server's per-client idle timer
 
 	// Server → Client
 	S_WELCOME         = 0x1001,

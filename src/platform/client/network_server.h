@@ -151,16 +151,35 @@ public:
 	}
 
 	void disconnect() override {
+		// Polite quit: tell the server we're leaving so it can run cleanup
+		// immediately (snapshot owned NPCs, save inventory, despawn) instead
+		// of waiting for the heartbeat timeout. Best-effort — if the socket
+		// is already dead the send just fails silently.
+		if (m_connected && m_tcp.connected()) {
+			net::WriteBuffer wb;
+			net::sendMessage(m_tcp.fd(), net::C_QUIT, wb);
+		}
 		m_tcp.disconnect();
 		m_connected = false;
 		m_serverReady = false;
 		m_controlledEid = ENTITY_NONE;
+		m_heartbeatTimer = 0.0f;
 	}
 
 	bool isConnected() const override { return m_connected; }
 
 	void tick(float dt) override {
 		if (!m_connected) return;
+
+		// Emit liveness pings on a fixed cadence. Any outbound traffic counts
+		// server-side, so this loop only fires when the player is otherwise
+		// quiet — no action, no goal, no inventory request.
+		m_heartbeatTimer += dt;
+		if (m_heartbeatTimer >= kHeartbeatSendInterval) {
+			m_heartbeatTimer = 0.0f;
+			net::WriteBuffer wb;
+			net::sendMessage(m_tcp.fd(), net::C_HEARTBEAT, wb);
+		}
 
 		// Read incoming messages
 		if (!m_recv.readFrom(m_tcp.fd())) {
@@ -719,6 +738,12 @@ private:
 	float m_silentTime = 0;
 	bool  m_silentWarned = false;
 	static constexpr float kHeartbeatDisconnectSec = 5.0f;
+
+	// Outbound heartbeat. Keeps the server's per-client idle timer reset so
+	// the server can drop a silent client (crashed GUI, network drop) and
+	// run its normal cleanup — snapshot owned NPCs, save inventory, despawn.
+	float m_heartbeatTimer = 0.0f;
+	static constexpr float kHeartbeatSendInterval = 2.0f; // seconds
 
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;

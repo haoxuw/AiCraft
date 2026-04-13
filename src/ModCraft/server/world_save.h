@@ -254,6 +254,53 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		}
 	}
 
+	// --- owned_entities.bin --- (per-character NPC snapshots from logged-out
+	//   players). Shape intentionally mirrors entities.bin so we can reuse the
+	//   same serializer on both sides: per-skin groups, each group is a count
+	//   followed by records { typeId, pos, vel, yaw, props, inventory, nav }.
+	{
+		net::WriteBuffer wb;
+		uint32_t skinCount = 0;
+		auto writeSnap = [&](const OwnedEntitySnapshot& s) {
+			wb.writeString(s.typeId);
+			wb.writeVec3(s.position);
+			wb.writeVec3(s.velocity);
+			wb.writeF32(s.yaw);
+			wb.writeU32((uint32_t)s.props.size());
+			for (auto& [key, val] : s.props) {
+				wb.writeString(key);
+				uint8_t idx = (uint8_t)val.index();
+				wb.writeU8(idx);
+				switch (idx) {
+				case 0: wb.writeBool(std::get<bool>(val));       break;
+				case 1: wb.writeI32 (std::get<int>(val));        break;
+				case 2: wb.writeF32 (std::get<float>(val));      break;
+				case 3: wb.writeString(std::get<std::string>(val)); break;
+				case 4: wb.writeVec3(std::get<glm::vec3>(val));  break;
+				}
+			}
+			wb.writeU32((uint32_t)s.items.size());
+			for (auto& [id, cnt] : s.items) { wb.writeString(id); wb.writeI32(cnt); }
+			wb.writeU8((uint8_t)s.equipment.size());
+			for (auto& [slot, id] : s.equipment) { wb.writeString(slot); wb.writeString(id); }
+			wb.writeBool(s.navActive);
+			wb.writeVec3(s.navLongGoal);
+		};
+		for (auto& [skin, snaps] : server.ownedEntities().all()) {
+			if (snaps.empty()) continue;
+			wb.writeString(skin);
+			wb.writeU32((uint32_t)snaps.size());
+			for (auto& s : snaps) writeSnap(s);
+			skinCount++;
+		}
+		std::ofstream of(savePath + "/owned_entities.bin", std::ios::binary);
+		if (of.is_open()) {
+			of.write(reinterpret_cast<const char*>(&skinCount), 4);
+			of.write(reinterpret_cast<const char*>(wb.data().data()), wb.data().size());
+			printf("[WorldSave] Saved owned-entity snapshots for %u character(s)\n", skinCount);
+		}
+	}
+
 	printf("[WorldSave] Saved to %s (%d chunks)\n", savePath.c_str(), chunkCount);
 	return true;
 }
@@ -527,6 +574,67 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 				server.savedInventories()[skin] = std::move(inv);
 			}
 			printf("[WorldSave] Loaded %d saved character inventories\n", count);
+		}
+	}
+
+	// --- owned_entities.bin --- (per-character NPC snapshots from logged-out players)
+	{
+		std::ifstream of(savePath + "/owned_entities.bin", std::ios::binary);
+		if (of.is_open()) {
+			uint32_t skinCount;
+			of.read(reinterpret_cast<char*>(&skinCount), 4);
+			std::vector<uint8_t> data((std::istreambuf_iterator<char>(of)),
+			                           std::istreambuf_iterator<char>());
+			net::ReadBuffer rb(data.data(), data.size());
+			uint32_t totalSnaps = 0;
+			for (uint32_t i = 0; i < skinCount && rb.hasMore(); i++) {
+				std::string skin = rb.readString();
+				uint32_t entCount = rb.readU32();
+				std::vector<OwnedEntitySnapshot> snaps;
+				snaps.reserve(entCount);
+				for (uint32_t j = 0; j < entCount && rb.hasMore(); j++) {
+					OwnedEntitySnapshot s;
+					s.typeId   = rb.readString();
+					s.position = rb.readVec3();
+					s.velocity = rb.readVec3();
+					s.yaw      = rb.readF32();
+					uint32_t propCount = rb.readU32();
+					for (uint32_t p = 0; p < propCount && rb.hasMore(); p++) {
+						std::string key = rb.readString();
+						uint8_t idx = rb.readU8();
+						PropValue val;
+						switch (idx) {
+						case 0: val = rb.readBool(); break;
+						case 1: val = (int)rb.readI32(); break;
+						case 2: val = rb.readF32(); break;
+						case 3: val = rb.readString(); break;
+						case 4: val = rb.readVec3(); break;
+						default: val = 0; break;
+						}
+						s.props[key] = val;
+					}
+					uint32_t itemCount = rb.readU32();
+					for (uint32_t k = 0; k < itemCount && rb.hasMore(); k++) {
+						std::string id = rb.readString();
+						int cnt = rb.readI32();
+						s.items.push_back({id, cnt});
+					}
+					uint8_t eqCount = rb.hasMore() ? rb.readU8() : 0;
+					for (uint8_t k = 0; k < eqCount && rb.hasMore(); k++) {
+						std::string slot = rb.readString();
+						std::string id   = rb.readString();
+						s.equipment.push_back({slot, id});
+					}
+					s.navActive   = rb.hasMore() ? rb.readBool() : false;
+					s.navLongGoal = rb.hasMore() ? rb.readVec3() : glm::vec3(0);
+					snaps.push_back(std::move(s));
+				}
+				totalSnaps += (uint32_t)snaps.size();
+				server.ownedEntities().loadFromDisk(skin, std::move(snaps));
+			}
+			if (totalSnaps)
+				printf("[WorldSave] Loaded %u owned-entity snapshots for %u character(s)\n",
+					totalSnaps, skinCount);
 		}
 	}
 

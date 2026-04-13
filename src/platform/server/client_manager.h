@@ -19,6 +19,7 @@
 #include <unordered_set>
 #include <vector>
 #include <string>
+#include <string_view>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -36,32 +37,82 @@ enum class ClientPhase : uint8_t {
 	Ready,
 };
 
-struct ConnectedClient {
-	int fd;
-	ClientId id;
-	EntityId playerId;
-	net::RecvBuffer recvBuf;
-	std::vector<std::pair<ChunkPos, std::vector<uint8_t>>> pendingChunks;
-	ChunkPos lastChunkPos = {0, 0, 0};
-	std::unordered_set<ChunkPos, ChunkPosHash> sentChunks;
+// ─── TransportClient ────────────────────────────────────────────────
+// Owns the raw TCP pipe to one GUI client: file descriptor, peer address,
+// inbound RecvBuffer, and the outbound queue of pre-serialised chunk messages.
+// No game state, no session identity — those live on ClientSession. Split
+// out so the network plumbing can be tested or swapped (e.g. a WebSocket
+// transport for the WASM build) without disturbing game-level code.
+struct TransportClient {
+	int         fd   = -1;
 	std::string ip;
-	int port = 0;
-	std::string name;
+	int         port = 0;
+
+	net::RecvBuffer recvBuf;
+
+	// Outbound chunk messages, already prepended with their 8-byte header.
+	// Drained by flushPendingChunks() under a per-tick cap so large prep
+	// bursts don't starve the rest of the loop.
+	std::vector<std::pair<ChunkPos, std::vector<uint8_t>>> pendingChunks;
+
+	// Count of consecutive send() failures on pendingChunks. Reset on any
+	// successful send; escalates to disconnect at the 5th failure.
 	int chunkSendErrors = 0;
-	float pendingAge = 0; // seconds in pending pool before hello received
+
+	bool isOpen() const { return fd >= 0; }
+	void close() { if (fd >= 0) { ::close(fd); fd = -1; } }
+
+	// Format the peer address as "ip:port" for log messages.
+	std::string addr() const { return ip + ":" + std::to_string(port); }
+};
+
+struct ClientSession {
+	// TCP transport (fd, recvBuf, pending queue, errors, peer addr).
+	TransportClient transport;
+
+	ClientId  id       = 0;
+	EntityId  playerId = ENTITY_NONE;
+
+	// Sticky chunk-streaming bookkeeping: the last chunk the player stood in
+	// (used to decide when to re-evaluate the streaming region) and the set
+	// of chunks already sent (dedup so we never re-send and never evict a
+	// chunk that was never delivered).
+	ChunkPos                                  lastChunkPos = {0, 0, 0};
+	std::unordered_set<ChunkPos, ChunkPosHash> sentChunks;
+
+	std::string name;              // display label assembled from HELLO fields
+	float       pendingAge = 0;    // seconds in pending pool before hello received
+
+	// ─── Liveness tracking ──────────────────────────────────────────
+	// Seconds since this client last sent ANY message (C_ACTION, C_HEARTBEAT,
+	// C_QUIT, …). A well-behaved client keeps this near zero by sending
+	// C_HEARTBEAT every few seconds. When it exceeds ServerTuning::
+	// clientIdleTimeoutSec, ClientManager drops the client and runs the
+	// standard cleanup (snapshot owned NPCs + save inventory + despawn).
+	// disconnectQueued is set once the session has been queued for removal
+	// so concurrent detectors (TCP close + C_QUIT in the same tick) don't
+	// enqueue it twice.
+	float idleSec          = 0.0f;
+	bool  disconnectQueued = false;
+
+	// Mark "we just got a real message from this client" — resets idle timer.
+	void noteActivity() { idleSec = 0.0f; }
+	// Advance the idle counter by one frame's dt.
+	void accumulateIdle(float dt) { idleSec += dt; }
+	bool isStale(float thresholdSec) const { return idleSec > thresholdSec; }
 
 	// Protocol negotiation (set from C_HELLO version field)
 	uint32_t protocolVersion = 1;
-	bool supportsZstd = false; // true when protocolVersion >= 2
+	bool     supportsZstd    = false; // true when protocolVersion >= 2
 
 	// Async handshake state. Preparing until the background chunk prep
 	// finishes; then flipped to Ready by ClientManager::advancePreparing().
 	ClientPhase phase = ClientPhase::Ready;
 	std::string pendingDisplayName;   // HELLO fields stashed until Ready
 	std::string pendingCreatureType;
-	size_t requiredChunkCount    = 0;
+	size_t requiredChunkCount     = 0;
 	size_t chunksCompletedForPrep = 0;
-	float  lastProgressSent      = -1.0f; // last pct emitted via S_PREPARING
+	float  lastProgressSent       = -1.0f; // last pct emitted via S_PREPARING
 
 	// Edge-trigger state for S_NPC_INTERRUPT. True if a player was within
 	// proximity radius of this NPC on the previous broadcast tick.
@@ -76,6 +127,8 @@ struct ConnectedClient {
 	static constexpr int EVICT_DY     =  4;  // vertical eviction radius
 
 	std::string label() const {
+		const std::string& ip = transport.ip;
+		int port              = transport.port;
 		if (!name.empty())
 			return "Client " + std::to_string(id) + " (" + name + "@" + ip + ":" + std::to_string(port) + ")";
 		return "Client " + std::to_string(id) + " (" + ip + ":" + std::to_string(port) + ")";
@@ -121,9 +174,11 @@ public:
 		// Hold in pending pool until C_HELLO identifies this client.
 		// No entity is created yet — pending clients are invisible to
 		// the broadcast + chunk pipeline.
-		ConnectedClient cc;
-		cc.fd = accepted.fd; cc.id = cid; cc.playerId = ENTITY_NONE;
-		cc.ip = accepted.ip; cc.port = accepted.port;
+		ClientSession cc;
+		cc.transport.fd   = accepted.fd;
+		cc.transport.ip   = accepted.ip;
+		cc.transport.port = accepted.port;
+		cc.id = cid; cc.playerId = ENTITY_NONE;
 
 		auto sp = m_server.spawnPos();
 		auto cp = worldToChunk((int)sp.x, (int)sp.y, (int)sp.z);
@@ -145,7 +200,7 @@ public:
 			if (it == m_clients.end()) continue; // client disconnected
 			auto& c = it->second;
 			if (c.sentChunks.count(r.pos)) continue; // dedup (shouldn't happen in prep)
-			c.pendingChunks.push_back({r.pos, std::move(r.message)});
+			c.transport.pendingChunks.push_back({r.pos, std::move(r.message)});
 			c.sentChunks.insert(r.pos);
 			if (c.phase == ClientPhase::Preparing)
 				c.chunksCompletedForPrep++;
@@ -164,7 +219,7 @@ public:
 				c.lastProgressSent = pct;
 				net::WriteBuffer wb;
 				wb.writeF32(pct);
-				net::sendMessage(c.fd, net::S_PREPARING, wb);
+				net::sendMessage(c.transport.fd, net::S_PREPARING, wb);
 			}
 			if (c.chunksCompletedForPrep >= c.requiredChunkCount)
 				toFinalize.push_back(cid);
@@ -179,34 +234,32 @@ public:
 	void sendPendingChunks() {
 		for (auto& [cid, client] : m_clients) {
 			int sent = 0;
-			while (!client.pendingChunks.empty() && sent < 10) {
-				auto& msg = client.pendingChunks.front().second;
-				ssize_t n = send(client.fd, msg.data(), msg.size(), MSG_NOSIGNAL);
+			while (!client.transport.pendingChunks.empty() && sent < 10) {
+				auto& msg = client.transport.pendingChunks.front().second;
+				ssize_t n = send(client.transport.fd, msg.data(), msg.size(), MSG_NOSIGNAL);
 				if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
 				if (n <= 0) {
-					client.chunkSendErrors++;
-					if (client.chunkSendErrors <= 3)
+					client.transport.chunkSendErrors++;
+					if (client.transport.chunkSendErrors <= 3)
 						printf("[Server] sendChunk: n=%zd errno=%d (%s) for %s, pending=%zu\n",
 							n, errno, strerror(errno), client.label().c_str(),
-							client.pendingChunks.size());
-					if (client.chunkSendErrors >= 5) {
+							client.transport.pendingChunks.size());
+					if (client.transport.chunkSendErrors >= 5) {
 						// Persistent send failure — treat as disconnect to avoid zombie client
-						printf("[Server] %s: too many send errors, disconnecting\n",
-						       client.label().c_str());
-						m_disconnected.push_back(cid);
+						markDisconnect(cid, "send errors");
 					}
 					break;
 				}
 				if (n != (ssize_t)msg.size()) {
 					// Partial send — trim and retry next tick
-					if (++client.chunkSendErrors <= 3)
+					if (++client.transport.chunkSendErrors <= 3)
 						printf("[Server] sendChunk: partial send n=%zd/%zu for %s\n",
 							n, msg.size(), client.label().c_str());
 					msg.erase(msg.begin(), msg.begin() + n);
 					break;
 				}
-				client.chunkSendErrors = 0; // reset on success
-				client.pendingChunks.erase(client.pendingChunks.begin());
+				client.transport.chunkSendErrors = 0; // reset on success
+				client.transport.pendingChunks.erase(client.transport.pendingChunks.begin());
 				sent++;
 			}
 		}
@@ -220,20 +273,19 @@ public:
 		std::vector<Hello> hellos;
 
 		for (auto& [cid, client] : m_pendingClients) {
+			if (client.disconnectQueued) continue;
 			client.pendingAge += dt;
 			if (client.pendingAge > 10.0f) {
-				printf("[Server] %s: timed out waiting for hello, dropping\n",
-				       client.label().c_str());
-				m_disconnected.push_back(cid);
+				markDisconnect(cid, "no hello within 10s");
 				continue;
 			}
-			if (!client.recvBuf.readFrom(client.fd)) {
-				m_disconnected.push_back(cid);
+			if (!client.transport.recvBuf.readFrom(client.transport.fd)) {
+				markDisconnect(cid, "tcp closed (pre-hello)");
 				continue;
 			}
 			net::MsgHeader hdr;
 			std::vector<uint8_t> payload;
-			while (client.recvBuf.tryExtract(hdr, payload)) {
+			while (client.transport.recvBuf.tryExtract(hdr, payload)) {
 				if (hdr.type == net::C_HELLO) {
 					hellos.push_back({cid, hdr.type, std::move(payload)});
 					break; // one hello per client per tick
@@ -264,13 +316,18 @@ public:
 
 		// --- Active pool: handle all messages ---
 		for (auto& [cid, client] : m_clients) {
-			if (!client.recvBuf.readFrom(client.fd)) {
-				m_disconnected.push_back(cid);
+			if (client.disconnectQueued) continue;
+			if (!client.transport.recvBuf.readFrom(client.transport.fd)) {
+				markDisconnect(cid, "tcp closed");
 				continue;
 			}
 			net::MsgHeader hdr;
 			std::vector<uint8_t> payload;
-			while (client.recvBuf.tryExtract(hdr, payload)) {
+			while (client.transport.recvBuf.tryExtract(hdr, payload)) {
+				// Any well-formed message from the client counts as liveness
+				// — reset the idle timer before dispatch so C_HEARTBEAT is
+				// purely a keepalive (no handler logic needed).
+				client.noteActivity();
 				net::ReadBuffer rb(payload.data(), payload.size());
 #ifdef MODCRAFT_PERF
 				auto t0 = std::chrono::steady_clock::now();
@@ -283,7 +340,24 @@ public:
 					fprintf(stderr, "[Perf] handleMessage type=%u took %.1fms (cid=%u)\n",
 						hdr.type, ms, cid);
 #endif
+				if (client.disconnectQueued) break; // handler triggered quit — stop draining
 			}
+		}
+	}
+
+	// Sweep active + pending clients for idle timeouts. Any client whose
+	// last incoming message is older than ServerTuning::clientIdleTimeoutSec
+	// is marked for disconnect, which converges on the same cleanup as a
+	// graceful C_QUIT or TCP close (snapshot NPCs + save inventory + despawn).
+	// Preparing clients are exempt — they send no application traffic while
+	// waiting for chunks; they have their own hello-timeout path.
+	void checkIdleTimeouts(float dt) {
+		for (auto& [cid, client] : m_clients) {
+			if (client.disconnectQueued) continue;
+			if (client.phase == ClientPhase::Preparing) continue;
+			client.accumulateIdle(dt);
+			if (client.isStale(ServerTuning::clientIdleTimeoutSec))
+				markDisconnect(cid, "heartbeat timeout");
 		}
 	}
 
@@ -297,7 +371,7 @@ public:
 			auto pit = m_pendingClients.find(cid);
 			if (pit != m_pendingClients.end()) {
 				printf("[Server] %s disconnected (no hello).\n", pit->second.label().c_str());
-				close(pit->second.fd);
+				pit->second.transport.close();
 				m_server.removeClient(cid);
 				m_pendingClients.erase(pit);
 				continue;
@@ -305,7 +379,7 @@ public:
 			auto it = m_clients.find(cid);
 			if (it != m_clients.end()) {
 				printf("[Server] %s disconnected.\n", it->second.label().c_str());
-				close(it->second.fd);
+				it->second.transport.close();
 				m_server.removeClient(cid);
 				m_clients.erase(it);
 			}
@@ -411,13 +485,13 @@ public:
 
 				net::WriteBuffer wb;
 				net::serializeEntityState(wb, es);
-				net::sendMessage(client.fd, net::S_ENTITY, wb);
+				net::sendMessage(client.transport.fd, net::S_ENTITY, wb);
 				m_broadcastStats.sEntity++;
 			});
 
 			net::WriteBuffer tb;
 			tb.writeF32(m_server.worldTime());
-			net::sendMessage(client.fd, net::S_TIME, tb);
+			net::sendMessage(client.transport.fd, net::S_TIME, tb);
 
 			// ── Event-driven decide-loop interrupts ────────────────────
 			// Edge-triggered, owner-scoped: emit only on prev→cur rising
@@ -442,7 +516,7 @@ public:
 					net::WriteBuffer b;
 					b.writeU32(e.id());
 					b.writeString("proximity");
-					net::sendMessage(client.fd, net::S_NPC_INTERRUPT, b);
+					net::sendMessage(client.transport.fd, net::S_NPC_INTERRUPT, b);
 				}
 				client.prevProximity[e.id()] = curClose;
 			});
@@ -451,7 +525,7 @@ public:
 				net::WriteBuffer b;
 				b.writeString("time_of_day");
 				b.writeString(worldEventPhase);
-				net::sendMessage(client.fd, net::S_WORLD_EVENT, b);
+				net::sendMessage(client.transport.fd, net::S_WORLD_EVENT, b);
 			}
 
 			// Chunk streaming — two-tier: near (priority) then far (opportunistic).
@@ -495,9 +569,9 @@ public:
 				// ── Tier 1: near radius (R=STREAM_R) — must have no void at fog boundary ──
 				// No hasChunk() guard — force generation of new areas eagerly.
 				// dy range is dynamic so ground is always included regardless of altitude.
-				if (client.pendingChunks.size() < 40) {
+				if (client.transport.pendingChunks.size() < 40) {
 					std::vector<Candidate> near;
-					const int R = ConnectedClient::STREAM_R;
+					const int R = ClientSession::STREAM_R;
 					for (int dy = dyMin; dy <= dyMax; dy++)
 					for (int dz = -R; dz <= R; dz++)
 					for (int dx = -R; dx <= R; dx++) {
@@ -513,7 +587,7 @@ public:
 					          [](const Candidate& a, const Candidate& b) { return a.dist < b.dist; });
 					int queued = 0;
 					for (auto& c : near) {
-						if (queued >= 6 || client.pendingChunks.size() >= 40) break;
+						if (queued >= 6 || client.transport.pendingChunks.size() >= 40) break;
 						queueChunk(client, c.pos);
 						queued++;
 					}
@@ -523,9 +597,9 @@ public:
 				// Only runs when near tier is fully satisfied (pendingChunks empty).
 				// Loads distant terrain (mountains, scouting from high ground).
 				// Also uses dynamic vertical range so looking down from altitude works.
-				if (client.pendingChunks.empty()) {
-					const int NEAR = ConnectedClient::STREAM_R;
-					const int FAR  = ConnectedClient::STREAM_FAR_R;
+				if (client.transport.pendingChunks.empty()) {
+					const int NEAR = ClientSession::STREAM_R;
+					const int FAR  = ClientSession::STREAM_FAR_R;
 					Candidate best{};
 					bool found = false;
 					for (int dy = dyMin; dy <= dyMax; dy++)
@@ -597,11 +671,17 @@ public:
 
 	// Close all client connections.
 	void disconnectAll() {
-		for (auto& [cid, client] : m_clients)
-			close(client.fd);
+		// Route through GameServer::removeClient so owned NPCs are snapshotted
+		// and player inventories saved, exactly as on a normal TCP disconnect.
+		// Without this step, a server shutdown loses everything the disconnect
+		// path normally persists.
+		for (auto& [cid, client] : m_clients) {
+			client.transport.close();
+			m_server.removeClient(cid);
+		}
 		m_clients.clear();
 		for (auto& [cid, client] : m_pendingClients)
-			close(client.fd);
+			client.transport.close();
 		m_pendingClients.clear();
 	}
 
@@ -622,7 +702,7 @@ public:
 	// Access for callbacks (block change, entity remove, inventory)
 	void broadcastToAll(net::MsgType msgType, const net::WriteBuffer& wb) {
 		for (auto& [cid, c] : m_clients)
-			net::sendMessage(c.fd, msgType, wb);
+			net::sendMessage(c.transport.fd, msgType, wb);
 		switch (msgType) {
 		case net::S_BLOCK:     m_broadcastStats.sBlock     += (int)m_clients.size(); break;
 		case net::S_REMOVE:    m_broadcastStats.sRemove    += (int)m_clients.size(); break;
@@ -631,7 +711,7 @@ public:
 		}
 	}
 
-	ConnectedClient* getClient(ClientId id) {
+	ClientSession* getClient(ClientId id) {
 		auto it = m_clients.find(id);
 		return it != m_clients.end() ? &it->second : nullptr;
 	}
@@ -661,6 +741,33 @@ public:
 	}
 
 private:
+	// The one chokepoint that schedules a client for removal. Every
+	// disconnect cause — TCP close, C_QUIT, idle heartbeat timeout, hello
+	// timeout, skin conflict, persistent send error — routes through here
+	// so the cleanup sequence in pruneDisconnected() stays uniform. Idempotent:
+	// if the client is already queued, this is a no-op.
+	void markDisconnect(ClientId cid, std::string_view reason) {
+		auto applyFlag = [&](ClientSession& c) {
+			if (c.disconnectQueued) return false;
+			c.disconnectQueued = true;
+			return true;
+		};
+		if (auto it = m_clients.find(cid); it != m_clients.end()) {
+			if (!applyFlag(it->second)) return;
+			printf("[Server] %s queued for disconnect: %.*s\n",
+			       it->second.label().c_str(),
+			       (int)reason.size(), reason.data());
+		} else if (auto pit = m_pendingClients.find(cid); pit != m_pendingClients.end()) {
+			if (!applyFlag(pit->second)) return;
+			printf("[Server] %s queued for disconnect (pending): %.*s\n",
+			       pit->second.label().c_str(),
+			       (int)reason.size(), reason.data());
+		} else {
+			return; // unknown cid — nothing to do
+		}
+		m_disconnected.push_back(cid);
+	}
+
 	// Serialize an inventory into S_INVENTORY wire format:
 	// [u32 entityId][u32 n][{str id, i32 count}...][u8 equipCount][{str slot, str id}...]
 	static void writeInventoryPayload(net::WriteBuffer& wb, EntityId eid, const Inventory& inv) {
@@ -685,7 +792,7 @@ private:
 	// required chunk for this client. Spawns the player entity (addClient
 	// also spawns owned NPCs), restores saved inventory, and emits the
 	// S_WELCOME / S_INVENTORY / S_READY sequence the client is waiting for.
-	void finalizePreparing(ConnectedClient& client) {
+	void finalizePreparing(ClientSession& client) {
 		const std::string& creatureType = client.pendingCreatureType;
 
 #ifdef MODCRAFT_PERF
@@ -705,14 +812,14 @@ private:
 			net::WriteBuffer swb;
 			swb.writeU32(eid);
 			swb.writeVec3(m_server.spawnPos());
-			net::sendMessage(client.fd, net::S_WELCOME, swb);
+			net::sendMessage(client.transport.fd, net::S_WELCOME, swb);
 		}
 
 		Entity* pe = m_server.world().entities.get(eid);
 		if (pe && pe->inventory) {
 			net::WriteBuffer iwb;
 			writeInventoryPayload(iwb, eid, *pe->inventory);
-			net::sendMessage(client.fd, net::S_INVENTORY, iwb);
+			net::sendMessage(client.transport.fd, net::S_INVENTORY, iwb);
 		}
 
 		if (!creatureType.empty() && pe) {
@@ -726,7 +833,7 @@ private:
 				}
 				net::WriteBuffer wb;
 				writeInventoryPayload(wb, client.playerId, *pe->inventory);
-				net::sendMessage(client.fd, net::S_INVENTORY, wb);
+				net::sendMessage(client.transport.fd, net::S_INVENTORY, wb);
 			}
 		}
 
@@ -734,14 +841,14 @@ private:
 
 		{
 			net::WriteBuffer wb;
-			net::sendMessage(client.fd, net::S_READY, wb);
+			net::sendMessage(client.transport.fd, net::S_READY, wb);
 		}
 
 		printf("[Server] %s: ready (player eid=%u, %zu chunks queued)\n",
-			client.label().c_str(), eid, client.pendingChunks.size());
+			client.label().c_str(), eid, client.transport.pendingChunks.size());
 	}
 
-	void handleMessage(ClientId cid, ConnectedClient& client, uint32_t type, net::ReadBuffer& rb) {
+	void handleMessage(ClientId cid, ClientSession& client, uint32_t type, net::ReadBuffer& rb) {
 		switch (type) {
 		case net::C_ACTION: {
 			auto action = net::deserializeAction(rb);
@@ -788,10 +895,9 @@ private:
 					net::WriteBuffer err;
 					err.writeU32(0);
 					err.writeString("Character '" + creatureType + "' is already in use.");
-					net::sendMessage(client.fd, net::S_ERROR, err);
-					printf("[Server] %s rejected: '%s' already online\n",
-						client.label().c_str(), creatureType.c_str());
-					m_disconnected.push_back(client.id);
+					net::sendMessage(client.transport.fd, net::S_ERROR, err);
+					std::string reason = "skin '" + creatureType + "' already online";
+					markDisconnect(client.id, reason);
 					break;
 				}
 			}
@@ -833,7 +939,7 @@ private:
 			{
 				net::WriteBuffer wb;
 				wb.writeF32(0.0f);
-				net::sendMessage(client.fd, net::S_PREPARING, wb);
+				net::sendMessage(client.transport.fd, net::S_PREPARING, wb);
 				client.lastProgressSent = 0.0f;
 			}
 
@@ -876,6 +982,18 @@ private:
 		}
 		// C_PROXIMITY removed — agents run inside PlayerClient, no relay needed
 		// C_CLAIM_ENTITY removed — ownership is baked in at spawn time.
+		case net::C_QUIT: {
+			// Graceful shutdown. Same cleanup as a TCP close or an idle timeout
+			// — pruneDisconnected() routes through GameServer::removeClient
+			// which snapshots owned NPCs and saves inventory.
+			markDisconnect(cid, "client quit");
+			break;
+		}
+		case net::C_HEARTBEAT: {
+			// No-op. noteActivity() already fired in receiveMessages when this
+			// message was extracted; that is the entire point of C_HEARTBEAT.
+			break;
+		}
 		case net::C_GET_INVENTORY: {
 			EntityId eid = rb.readU32();
 			Entity* target = m_server.world().entities.get(eid);
@@ -886,7 +1004,7 @@ private:
 			if (dist > 6.0f) break;
 			net::WriteBuffer wb;
 			writeInventoryPayload(wb, eid, *target->inventory);
-			net::sendMessage(client.fd, net::S_INVENTORY, wb);
+			net::sendMessage(client.transport.fd, net::S_INVENTORY, wb);
 			break;
 		}
 		default: break;
@@ -896,13 +1014,13 @@ private:
 	// Remove sentChunks that are now too far from `center` and tell the client to evict them.
 	// `groundChunkY` is the chunk Y of the terrain surface at the player's XZ; used so
 	// chunks between the player and the ground are never evicted while flying.
-	void evictFarChunks(ConnectedClient& cc, ChunkPos center, int groundChunkY) {
+	void evictFarChunks(ClientSession& cc, ChunkPos center, int groundChunkY) {
 		// Keep everything from groundChunkY-1 up to player+3 vertically
-		int dyDown = center.y - std::max(groundChunkY - 1, center.y - ConnectedClient::EVICT_DY);
+		int dyDown = center.y - std::max(groundChunkY - 1, center.y - ClientSession::EVICT_DY);
 		std::vector<ChunkPos> toEvict;
 		for (const auto& pos : cc.sentChunks) {
-			bool horizFar = std::abs(pos.x - center.x) > ConnectedClient::EVICT_R ||
-			                std::abs(pos.z - center.z) > ConnectedClient::EVICT_R;
+			bool horizFar = std::abs(pos.x - center.x) > ClientSession::EVICT_R ||
+			                std::abs(pos.z - center.z) > ClientSession::EVICT_R;
 			bool vertFar  = pos.y < center.y - dyDown || pos.y > center.y + 3;
 			if (horizFar || vertFar) toEvict.push_back(pos);
 		}
@@ -913,15 +1031,15 @@ private:
 			// ChunkInfo is now owned by World — no eviction needed here
 			net::WriteBuffer wb;
 			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
-			net::sendMessage(cc.fd, net::S_CHUNK_EVICT, wb);
+			net::sendMessage(cc.transport.fd, net::S_CHUNK_EVICT, wb);
 		}
 		// Cancel any queued (but not yet sent) messages for evicted chunks
-		cc.pendingChunks.erase(
-			std::remove_if(cc.pendingChunks.begin(), cc.pendingChunks.end(),
+		cc.transport.pendingChunks.erase(
+			std::remove_if(cc.transport.pendingChunks.begin(), cc.transport.pendingChunks.end(),
 				[&](const auto& p) {
 					return std::find(toEvict.begin(), toEvict.end(), p.first) != toEvict.end();
 				}),
-			cc.pendingChunks.end());
+			cc.transport.pendingChunks.end());
 	}
 
 	// Force all clients to discard and re-fetch a chunk (e.g. after a bulk terrain change).
@@ -929,17 +1047,17 @@ private:
 		for (auto& [cid, client] : m_clients) {
 			if (!client.sentChunks.count(pos)) continue;
 			client.sentChunks.erase(pos);
-			client.pendingChunks.erase(
-				std::remove_if(client.pendingChunks.begin(), client.pendingChunks.end(),
+			client.transport.pendingChunks.erase(
+				std::remove_if(client.transport.pendingChunks.begin(), client.transport.pendingChunks.end(),
 					[&](const auto& p) { return p.first == pos; }),
-				client.pendingChunks.end());
+				client.transport.pendingChunks.end());
 			net::WriteBuffer wb;
 			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
-			net::sendMessage(client.fd, net::S_CHUNK_EVICT, wb);
+			net::sendMessage(client.transport.fd, net::S_CHUNK_EVICT, wb);
 		}
 	}
 
-	void queueChunk(ConnectedClient& cc, ChunkPos pos) {
+	void queueChunk(ClientSession& cc, ChunkPos pos) {
 		if (cc.sentChunks.count(pos)) return;
 		Chunk* chunk = m_server.world().getChunk(pos);
 		if (!chunk) return;
@@ -982,15 +1100,15 @@ private:
 		net::MsgHeader hdr{ (uint32_t)msgType, (uint32_t)payload.size() };
 		memcpy(msg.data(), &hdr, 8);
 		memcpy(msg.data() + 8, payload.data(), payload.size());
-		cc.pendingChunks.push_back({pos, std::move(msg)});
+		cc.transport.pendingChunks.push_back({pos, std::move(msg)});
 		cc.sentChunks.insert(pos);
 		// S_CHUNK_INFO removed — agents share PlayerClient's chunk cache
 	}
 
 	GameServer& m_server;
 	std::unique_ptr<ChunkGenService> m_chunkGen;
-	std::unordered_map<ClientId, ConnectedClient> m_clients;         // identified
-	std::unordered_map<ClientId, ConnectedClient> m_pendingClients;  // awaiting hello
+	std::unordered_map<ClientId, ClientSession> m_clients;         // identified
+	std::unordered_map<ClientId, ClientSession> m_pendingClients;  // awaiting hello
 	std::vector<ClientId> m_disconnected;
 	ClientId m_nextClientId = 1;
 	float m_broadcastTimer = 0;
