@@ -25,7 +25,7 @@ namespace modcraft {
 enum class SpawnAnchor {
 	VillageCenter,  // legacy default — circular ring around villageCenter()
 	Monument,       // ring around the village monument tower
-	Barn,           // scattered inside the barn interior (home_x/z set to barn)
+	Barn,           // scattered inside the barn interior
 	Portal,         // near the player spawn gateway
 };
 

@@ -65,20 +65,16 @@ class Action:
 
 
 def init_home(entity, ctx):
-    """Resolve home position from ctx cache, entity.home_* props, or
-    entity's first-seen position. Cached in ctx so later rules see it."""
+    """Resolve home position: ctx cache, else the entity's first-observed
+    position. Cached in ctx so later rules in the same decide() see it.
+
+    Villagers/NPCs no longer receive server-assigned home_x/home_z props —
+    "home" is just "where the entity first woke up".
+    """
     home = ctx.get("home")
     if home is not None:
         return home
-    hx = entity.get("home_x")
-    hy = entity.get("home_y")
-    hz = entity.get("home_z")
-    if hx is not None and hz is not None:
-        home = (float(hx),
-                float(hy) if hy is not None else entity.y,
-                float(hz))
-    else:
-        home = (entity.x, entity.y, entity.z)
+    home = (entity.x, entity.y, entity.z)
     ctx["home"] = home
     return home
 

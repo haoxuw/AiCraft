@@ -129,9 +129,8 @@ class SelfEntity(BaseModel):
     """Full state of the entity running this behavior.
 
     Standard engine attributes are typed fields. Server-assigned custom
-    props (home_x, home_z, work_radius, collect_goal, chest_x, …) are
-    accessed via .get(prop, default) — they vary per entity type and are
-    set by server spawn logic.
+    props (work_radius, collect_goal, …) are accessed via .get(prop,
+    default) — they vary per entity type and are set by server spawn logic.
 
     Usage
     -----
@@ -159,7 +158,7 @@ class SelfEntity(BaseModel):
     props: dict[str, Any] = Field(default_factory=dict)
 
     def get(self, prop: str, default=None):
-        """Read a server-assigned custom property (e.g. 'work_radius', 'home_x')."""
+        """Read a server-assigned custom property (e.g. 'work_radius')."""
         return self.props.get(prop, default)
 
     @classmethod

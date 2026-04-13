@@ -149,27 +149,24 @@ class TestWoodcutterLifecycle:
         assert ok, "Villager did not move from its starting position"
 
     def test_villager_stays_near_home(self, game):
-        """Villager must not wander far from its bed while working.
+        """Villager must not wander unboundedly far from its spawn point.
 
-        Two layered fixes both contribute to this guarantee:
-          1. block_search now picks the *nearest* non-empty chunk and exits
-             at the first hit, so even an unanchored search can't walk
-             past a closer tree to reach a denser one.
-          2. woodcutter passes near=self._home into scan_blocks, anchoring
-             every search at the bed even after the villager has wandered
-             partway toward the previous tree.
-
-        Together, drift should stay roughly within work_radius + path slop.
-        Bound is set well below the buggy worst case (~45 blocks) to act as
-        a regression catch.
+        Regression catch: a block_search bug once let villagers drift ~45+
+        blocks chasing denser-but-further tree clusters. The fix —
+        block_search picks the *nearest* non-empty chunk and exits on
+        first hit — still holds even though the woodcutter now scans from
+        its current position each cycle (no fixed "home" anchor).
         """
         v = _find_villager(game)
-        home_x = float(v.props.get("home_x", v.position[0]))
-        home_z = float(v.props.get("home_z", v.position[2]))
+        # Villagers no longer have home_x/home_z props — use their spawn
+        # position as the anchor. woodcutter scans for trees from the
+        # villager's current position bounded by work_radius per scan.
+        home_x = float(v.position[0])
+        home_z = float(v.position[2])
         work_radius = float(v.props.get("work_radius", 40.0))
-        # Both fixes together: search anchored at home + nearest-chunk-first.
-        # Allow half the work radius + slack for path/standoff.
-        max_drift = work_radius * 0.5 + 8.0
+        # Cap at work_radius + slack: a single scan can't reach trees further
+        # than work_radius from the villager, so drift per scan is bounded.
+        max_drift = work_radius + 8.0
 
         state = {"max_d": 0.0, "worst_pos": None}
 

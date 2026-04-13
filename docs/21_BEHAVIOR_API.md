@@ -67,10 +67,10 @@ Typed pydantic object. All fields are read-only.
 | `entity.on_ground` | bool | Whether standing on solid ground |
 | `entity.inventory` | InventoryView | Read-only inventory snapshot |
 
-**Custom server-assigned props** (home_x, work_radius, collect_goal, …):
+**Custom server-assigned props** (work_radius, collect_goal, …):
 ```python
 entity.get("work_radius", 80.0)   # float, with default
-entity.get("home_x")              # None if not set
+entity.get("collect_goal", 5)     # int, with default
 ```
 
 **Inventory:**
@@ -158,9 +158,15 @@ self.dist2d(ax, az, bx, bz)              # XZ horizontal distance
 # Proximity check (works with BlockView, EntityView, tuple, or dict)
 self.is_near(entity, pos, threshold=2.5)
 
-# Home management
-self._home = self.init_home(entity, self._home)   # reads home_x/home_z props
-self._chest = self.get_chest(entity, self._home)  # reads chest_x/y/z props
+# Home anchor (= first-observed position; no server-assigned props)
+self._home = self.init_home(entity, self._home)
+
+# Chest lookup (discover chests dynamically — no pre-assigned chest IDs)
+hits = scan_entities("base:chest", near=(entity.x, entity.y, entity.z),
+                     max_dist=120, max_results=1)
+if hits:
+    chest_eid = int(hits[0]["id"])
+    return StoreItem(chest_eid), "Depositing"
 
 # Stuck detection (call each tick while navigating)
 if self.check_stuck(entity, local_world.dt):

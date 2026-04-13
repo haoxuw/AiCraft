@@ -68,10 +68,9 @@ world = {
     },
 
     "mobs": [
-        # spawn_at="monument" is required so the server wires home_x/home_z
-        # (the bed position) and chest_entity_id into the villager's props.
-        # Without it the woodcutter behavior falls back to its spawn position
-        # as "home" and has no chest to deposit into.
+        # spawn_at="monument" places the villager on a ring around the
+        # village monument. No per-villager home/chest props — the
+        # woodcutter behavior discovers chests via scan_entities("base:chest").
         {"type": "base:villager", "count": 1, "radius": 3, "spawn_at": "monument",
          "props": {
             "chop_period":  0.1,

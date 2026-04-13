@@ -99,6 +99,12 @@ static std::function<std::string(int,int,int)> s_blockQueryFn;
 using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 static ScanBlocksFn s_scanBlocksFn;
 
+// Entity scan callback — mirrors scan_blocks but for world entities.
+// Returns list of {id, type, x, y, z, distance} for entities of a given
+// type within maxDist of origin, sorted nearest-first and capped at maxResults.
+using ScanEntitiesFn = std::function<std::vector<NearbyEntity>(const std::string&, glm::vec3, float, int)>;
+static ScanEntitiesFn s_scanEntitiesFn;
+
 // Default search anchor when Python passes near=None: the entity's current
 // position. Set by callDecide() alongside s_scanBlocksFn so the binding
 // can substitute it without needing access to `self`.
@@ -230,6 +236,35 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	}, py::arg("type"), py::arg("near") = py::none(),
 	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find blocks of a specific type near `near` (default: self position).");
+
+	// scan_entities(type, near=None, max_dist, max_results) → list of dicts.
+	// World-wide entity lookup (bypasses the per-agent 64-block nearby cache).
+	// Each hit: {id, type, x, y, z, distance}.
+	m.def("scan_entities", [](const std::string& typeId, py::object near,
+	                          float maxDist, int maxResults) -> py::list {
+		py::list result;
+		if (!s_scanEntitiesFn) return result;
+		glm::vec3 origin = s_selfPos;
+		if (!near.is_none()) {
+			auto t = near.cast<std::tuple<float, float, float>>();
+			origin = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+		}
+		auto hits = s_scanEntitiesFn(typeId, origin, maxDist, maxResults);
+		for (auto& e : hits) {
+			py::dict d;
+			d["id"]       = e.id;
+			d["type"]     = e.typeId;
+			d["x"]        = e.position.x;
+			d["y"]        = e.position.y;
+			d["z"]        = e.position.z;
+			d["distance"] = e.distance;
+			result.append(d);
+		}
+		return result;
+	}, py::arg("type"), py::arg("near") = py::none(),
+	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
+	   "Find entities of a specific type near `near` (default: self position). "
+	   "Bypasses the per-agent nearby cache; scans the whole entity list.");
 
 	// Expose C++ name constants as Python submodules so behaviors can use the
 	// same identifiers as C++ code (LivingName.Chicken, BlockType.Stone, etc.).
@@ -450,6 +485,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
                                std::string& errorOut,
                                BlockQueryFn blockQueryFn,
                                ScanBlocksFn scanBlocksFn,
+                               ScanEntitiesFn scanEntitiesFn,
                                const std::string& lastOutcome,
                                const std::string& lastGoal,
                                const std::string& lastReason) {
@@ -458,11 +494,18 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 
 	// Set per-call block query callbacks (cleared on return). Serialized by
 	// the GIL: only one callDecide runs at a time, so the statics are safe.
-	s_blockQueryFn = blockQueryFn ? std::move(blockQueryFn)
-	                              : [](int,int,int){ return std::string("base:air"); };
-	s_scanBlocksFn = std::move(scanBlocksFn);
-	s_selfPos      = self.position;
-	struct Cleanup { ~Cleanup() { s_blockQueryFn = nullptr; s_scanBlocksFn = nullptr; } } _cleanup;
+	s_blockQueryFn   = blockQueryFn ? std::move(blockQueryFn)
+	                                : [](int,int,int){ return std::string("base:air"); };
+	s_scanBlocksFn   = std::move(scanBlocksFn);
+	s_scanEntitiesFn = std::move(scanEntitiesFn);
+	s_selfPos        = self.position;
+	struct Cleanup {
+		~Cleanup() {
+			s_blockQueryFn = nullptr;
+			s_scanBlocksFn = nullptr;
+			s_scanEntitiesFn = nullptr;
+		}
+	} _cleanup;
 
 	auto it = m_behaviors.find(handle);
 	if (it == m_behaviors.end()) {

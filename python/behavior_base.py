@@ -138,26 +138,16 @@ class Behavior:
         dz = entity.z - tz
         return (dx * dx + dz * dz) < threshold * threshold
 
-    # ── Home / chest helpers ──────────────────────────────────────────────────
+    # ── Home helper ───────────────────────────────────────────────────────────
+    # Behaviors like prowl use a "home" (territory anchor) — here it's simply
+    # the entity's first-observed position. The server no longer assigns
+    # home_x/home_z spawn props: anything that used to be "assigned home/chest"
+    # is now discovered at decide() time (e.g. scan_entities("base:chest")).
 
     def init_home(self, entity: SelfEntity, home: tuple) -> tuple:
         if home is not None:
             return home
-        hx = entity.get("home_x")
-        hy = entity.get("home_y")
-        hz = entity.get("home_z")
-        if hx is not None and hz is not None:
-            return (float(hx), float(hy) if hy is not None else entity.y, float(hz))
         return (entity.x, entity.y, entity.z)
-
-    @staticmethod
-    def get_chest(entity: SelfEntity, home: tuple) -> tuple:
-        cx = entity.get("chest_x")
-        cy = entity.get("chest_y")
-        cz = entity.get("chest_z")
-        if cx is not None and cz is not None:
-            return (float(cx), float(cy) if cy is not None else home[1], float(cz))
-        return home
 
     # ── Movement helpers (return (x, y, z) tuple — used with Move()) ───────
 

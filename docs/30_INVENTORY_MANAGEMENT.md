@@ -177,27 +177,31 @@ Relocate(
 
 ### Chest entity ID resolution
 
-Behaviors that interact with chests need the chest's entity ID. Two approaches:
+Behaviors that interact with chests discover them dynamically at decide()
+time via `scan_entities("base:chest", near=..., max_dist=..., max_results=1)`.
+The server does NOT pre-assign a chest to any NPC — any chest in range is
+valid, including chests placed by players after world generation.
 
-1. **Spawn property** — the server assigns `chest_entity_id` as a prop when
-   spawning the Creatures. The behavior reads it with `entity.get("chest_entity_id")`.
-
-2. **Runtime lookup** — the `StructureBlockCacher` maps block position → entity ID.
-   If the behavior knows the block position (e.g. `chest_x, chest_y, chest_z`),
-   the agent client or Python bridge can resolve it to an entity ID.
+```python
+hits = scan_entities("base:chest", near=(entity.x, entity.y, entity.z),
+                     max_dist=120, max_results=1)
+if hits:
+    chest_eid = int(hits[0]["id"])
+    return StoreItem(chest_eid), "Depositing"
+```
 
 ### Woodcutter example (`artifacts/behaviors/base/woodcutter.py`)
 
 The woodcutter demonstrates the full inventory cycle:
 
 ```
-1. WORK state    → scan_blocks("base:trunk", near=self._home) to find trees
-                 → Convert(from_item="base:trunk", convert_from=Block(x,y,z))
-                   Server: block removed, "base:trunk" added to actor inventory
+1. WORK state    → scan_blocks("base:logs", near=entity.pos) to find trees
+                 → Convert(from_item="base:logs", convert_from=Block(x,y,z))
+                   Server: block removed, "base:logs" added to actor inventory
 
-2. DEPOSIT state → Walk to chest entity within STORE_RANGE (1.8 blocks)
-                 → StoreItem(chest_entity_id)
-                   Server: all items moved from actor inventory to chest entity inventory
+2. DEPOSIT state → scan_entities("base:chest", near=entity.pos) to find a chest
+                 → Walk within STORE_RANGE (3 blocks), then StoreItem(chest_eid)
+                   Server: all items moved from actor to chest entity inventory
                    Server: broadcasts S_INVENTORY for both actor and chest entity
 
 3. Agent receives S_INVENTORY → rebuilds entity.inventory for next decide()
@@ -205,10 +209,9 @@ The woodcutter demonstrates the full inventory cycle:
 ```
 
 Key properties set at spawn (see `server.h` initWorld):
-- `chest_entity_id` — entity ID of the assigned chest Structure
 - `collect_goal` — logs to collect before depositing (default 5)
-- `work_radius` — max scan_blocks distance (default 80)
-- `home_x, home_z` — bed position for sleep state
+- `work_radius` — max scan_blocks distance for trees (default 80)
+- `chop_period` — seconds between chop actions (default 0.5)
 
 ---
 

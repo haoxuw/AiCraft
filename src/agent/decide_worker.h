@@ -47,6 +47,7 @@ struct DecideRequest {
 	LastOutcome                     lastOutcome;
 	PythonBridge::BlockQueryFn      blockQuery;
 	PythonBridge::ScanBlocksFn      scanBlocks;
+	PythonBridge::ScanEntitiesFn    scanEntities;
 };
 
 // ── Result (worker → main) ──────────────────────────────────────────────
@@ -127,6 +128,7 @@ private:
 				req.handle, req.self, req.nearby, req.dt,
 				req.worldTime, res.goalText, res.error,
 				std::move(req.blockQuery), std::move(req.scanBlocks),
+				std::move(req.scanEntities),
 				outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason);
 
 			{

@@ -119,8 +119,8 @@ The flow is:
 
 1. World gen places the chest block and spawns a `Structure` entity at the
    block's world-space center with `has_inventory = true`.
-2. The entity ID is stashed on nearby house NPCs via the `chest_entity_id`
-   prop so woodcutter behaviors can drop loot directly into it.
+2. NPC behaviors discover chests dynamically at decide() time with
+   `scan_entities("base:chest", near=…, max_dist=…)`. No per-NPC chest wiring.
 3. On client right-click, the client sends `C_GET_INVENTORY(entityId)` and
    renders the response alongside the player inventory.
 4. Item transfers use the standard `Relocate` action with `Container::self()`

@@ -365,6 +365,36 @@ private:
 			return out;
 		};
 
+		// Scan all server-side entities by typeId within maxDist of origin.
+		// Used by Python behaviors that need world-wide entity lookup (e.g.
+		// villager finding any chest to deposit into — bypasses the 64-block
+		// per-agent nearby cache).
+		req.scanEntities = [srv](const std::string& typeId, glm::vec3 origin,
+		                         float maxDist, int maxResults)
+		    -> std::vector<NearbyEntity> {
+			std::vector<NearbyEntity> out;
+			float maxDist2 = maxDist * maxDist;
+			srv->forEachEntity([&](Entity& e) {
+				if (e.removed) return;
+				if (e.typeId() != typeId) return;
+				glm::vec3 d = e.position - origin;
+				float d2 = glm::dot(d, d);
+				if (d2 > maxDist2) return;
+				NearbyEntity ne;
+				ne.id = e.id(); ne.typeId = e.typeId();
+				ne.kind = e.def().kind; ne.position = e.position;
+				ne.distance = std::sqrt(d2); ne.hp = e.hp();
+				ne.tags = e.def().tags;
+				out.push_back(ne);
+			});
+			std::sort(out.begin(), out.end(),
+			          [](const NearbyEntity& a, const NearbyEntity& b) {
+			              return a.distance < b.distance;
+			          });
+			if ((int)out.size() > maxResults) out.resize(maxResults);
+			return out;
+		};
+
 		m_decideWorker.push(std::move(req));
 	}
 
