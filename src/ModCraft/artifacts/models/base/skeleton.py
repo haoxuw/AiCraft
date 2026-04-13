@@ -70,6 +70,25 @@ model = {
         # Shield boss
         {"offset": [0.08, 1.05, 0.13], "size": [0.08, 0.08, 0.04], "color": [0.52, 0.35, 0.22, 1]},
 
+        # ═══ TATTERED CLOAK (hangs from shoulders, frayed hem) ═══
+        # Main slab — dark rusted gray, mild sway
+        {"offset": [0, 1.02, 0.22], "size": [0.50, 0.76, 0.03], "color": [0.22, 0.18, 0.16, 1],
+         "pivot": [0, 1.38, 0.20], "swing_axis": [1, 0, 0], "amplitude": 5, "phase": 0, "speed": 1.0},
+        # Tatter strip — left (long, darkest)
+        {"offset": [-0.16, 0.48, 0.245], "size": [0.14, 0.36, 0.02], "color": [0.14, 0.10, 0.08, 1],
+         "pivot": [0, 1.38, 0.20], "swing_axis": [1, 0, 0], "amplitude": 7, "phase": 0, "speed": 1.0},
+        # Tatter strip — center (medium, torn mid-length)
+        {"offset": [0.02, 0.52, 0.245], "size": [0.10, 0.26, 0.02], "color": [0.18, 0.14, 0.12, 1],
+         "pivot": [0, 1.38, 0.20], "swing_axis": [1, 0, 0], "amplitude": 6, "phase": 0, "speed": 1.0},
+        # Tatter strip — right (short, jagged)
+        {"offset": [0.18, 0.58, 0.245], "size": [0.12, 0.18, 0.02], "color": [0.16, 0.12, 0.10, 1],
+         "pivot": [0, 1.38, 0.20], "swing_axis": [1, 0, 0], "amplitude": 6, "phase": 0, "speed": 1.0},
+        # Frayed fragment — drifting below
+        {"offset": [-0.06, 0.26, 0.255], "size": [0.06, 0.10, 0.02], "color": [0.10, 0.08, 0.06, 1],
+         "pivot": [0, 1.38, 0.20], "swing_axis": [1, 0, 0], "amplitude": 9, "phase": 0, "speed": 1.0},
+        {"offset": [ 0.14, 0.30, 0.255], "size": [0.05, 0.12, 0.02], "color": [0.10, 0.08, 0.06, 1],
+         "pivot": [0, 1.38, 0.20], "swing_axis": [1, 0, 0], "amplitude": 9, "phase": 0, "speed": 1.0},
+
         # Left leg
         {"offset": [-0.12, 0.38, 0], "size": [0.12, 0.44, 0.12], "color": [0.88, 0.85, 0.78, 1],
          "pivot": [-0.12, 0.66, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
