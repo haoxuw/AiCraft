@@ -28,6 +28,8 @@ namespace Action {
 	constexpr const char* DropItem     = "drop_item";
 	constexpr const char* EquipItem    = "equip_item";
 	constexpr const char* Dance        = "dance";
+	constexpr const char* ControlPrev  = "control_prev";  // [ — cycle to previous owned entity
+	constexpr const char* ControlNext  = "control_next";  // ] — cycle to next owned entity
 }
 
 struct ActionBinding {

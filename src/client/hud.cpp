@@ -343,6 +343,13 @@ void HUD::renderDebugOverlay(const HUDContext& ctx, TextRenderer& text) {
 	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
 	snprintf(dbg, sizeof(dbg), "Entities: %zu  Particles: %zu", ctx.entityCount, ctx.particleCount);
 	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
+	// Show controlled entity when driving an NPC (via [/] cycle or Control button).
+	// Orange so it stands out — reminds the user their input is steering another body.
+	if (ctx.controlledId != ENTITY_NONE) {
+		snprintf(dbg, sizeof(dbg), "Controlled: %s #%u",
+			ctx.controlledType.c_str(), ctx.controlledId);
+		text.drawText(dbg, x, y, 0.65f, {1.0f, 0.75f, 0.3f, 0.95f}, ctx.aspect); y -= lineH;
+	}
 	snprintf(dbg, sizeof(dbg), "Time: %.3f  Sun: %.2f", ctx.worldTime, ctx.sunStrength);
 	text.drawText(dbg, x, y, 0.65f, {1,1,1,0.80f}, ctx.aspect); y -= lineH;
 	if (ctx.hit) {

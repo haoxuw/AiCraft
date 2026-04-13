@@ -11,6 +11,7 @@
 #include "shared/entity.h"
 #include "shared/constants.h"
 #include "shared/physics.h"
+#include "shared/entity_physics.h"
 #include "shared/move_stuck_log.h"
 #include "server/server_tuning.h"
 #include "shared/action.h"
@@ -135,15 +136,9 @@ public:
 			if (e.skipPhysics) {
 				e.skipPhysics = false;
 			} else {
-				MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
-					def.gravity_scale, def.isLiving(), e.getProp<bool>("fly_mode", false));
-
 				glm::vec3 preVel = e.velocity;
 				glm::vec3 prePos = e.position;
-				auto result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
-				e.position = result.position;
-				e.velocity = result.velocity;
-				e.onGround = result.onGround;
+				auto result = stepEntityPhysics(e, e.velocity, isSolid, dt);
 
 				// ── DEBUG: stuck-in-place — server-side collision clamp ──
 				// Input horiz velocity non-zero but output near-zero ⇒ the

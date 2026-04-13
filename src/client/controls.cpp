@@ -58,6 +58,9 @@ static const KeyMapping KEY_TABLE[] = {
 	{"RightControl", GLFW_KEY_RIGHT_CONTROL, false},
 	{"LeftAlt", GLFW_KEY_LEFT_ALT, false},
 	{"RightAlt", GLFW_KEY_RIGHT_ALT, false},
+	// Punctuation
+	{"LeftBracket",  GLFW_KEY_LEFT_BRACKET,  false},
+	{"RightBracket", GLFW_KEY_RIGHT_BRACKET, false},
 	// Mouse buttons
 	{"MouseLeft", GLFW_MOUSE_BUTTON_LEFT, true},
 	{"MouseRight", GLFW_MOUSE_BUTTON_RIGHT, true},

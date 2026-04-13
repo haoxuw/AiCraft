@@ -594,6 +594,8 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	glm::vec3 serverPosF = srv.getServerPosition(srv.localPlayerId());
 	glm::vec3 diffF = serverPosF - clientPosF;
 	float posErrSq = glm::dot(diffF, diffF);
+	EntityId ctrlId = srv.controlledEntityId();
+	bool drivingOther = (ctrlId != srv.localPlayerId());
 	HUDContext ctx{
 		aspect, m_state, selectedSlot,
 		pe->inventory ? *pe->inventory : emptyInv,
@@ -606,7 +608,9 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 		playerHP, pe->def().max_hp, playerHunger,
 		m_showProfiler,
 		m_profile.worldMs, m_profile.entityMs, m_profile.hudMs, m_profile.totalMs,
-		serverPosF, clientPosF, posErrSq
+		serverPosF, clientPosF, posErrSq,
+		drivingOther ? ctrlId : ENTITY_NONE,
+		drivingOther ? pe->typeId() : std::string()
 	};
 	m_hud.render(ctx, m_text, m_renderer.highlightShader());
 

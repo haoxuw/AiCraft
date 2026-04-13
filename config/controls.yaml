@@ -17,6 +17,10 @@ sprint: LeftShift
 # Camera
 cycle_view: V
 
+# Entity control
+control_prev: LeftBracket
+control_next: RightBracket
+
 # Interaction
 break_block: MouseLeft
 place_block: MouseRight

@@ -1,6 +1,7 @@
 #include "client/gameplay.h"
 #include "agent/agent_client.h"
 #include "shared/physics.h"
+#include "shared/entity_physics.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <algorithm>
@@ -279,21 +280,13 @@ void GameplayController::processMovement(float dt, GameState state,
 			return bd.solid ? bd.collision_height : 0.0f;
 		};
 
-		const auto& def = player.def();
-		MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
-			def.gravity_scale, def.isLiving(), moveAction.fly);
-
 		glm::vec3 localVel = {moveAction.desiredVel.x, player.velocity.y, moveAction.desiredVel.z};
 		if (moveAction.fly)
 			localVel.y = moveAction.desiredVel.y;
 		else if (moveAction.jump && player.onGround)
 			localVel.y = jumpVelocity;
 
-		auto result = moveAndCollide(solidFn, player.position, localVel, dt, mp, player.onGround);
-
-		player.position = result.position;
-		player.velocity = result.velocity;
-		player.onGround = result.onGround;
+		stepEntityPhysics(player, localVel, solidFn, dt, moveAction.fly);
 
 		// Face movement direction (same logic as server.cpp)
 		if (std::abs(localVel.x) > 0.01f || std::abs(localVel.z) > 0.01f)

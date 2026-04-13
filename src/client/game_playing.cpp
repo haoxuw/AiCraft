@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <vector>
+#include <algorithm>
 
 namespace modcraft {
 
@@ -85,6 +86,34 @@ bool Game::handleConnectionReconnect(float dt) {
 void Game::handleGameplayInput(float dt) {
 	Entity* pe = playerEntity();
 	if (!pe) return;
+
+	// [ / ] cycle through owned Living entities (FPS/TPS/RPG). Matches the
+	// Control button in the entity inspector: find all Living entities owned
+	// by the local player (plus the player itself), sort by id, step ±1 from
+	// the currently controlled entity, and hand off via takeControlOf().
+	if (m_camera.mode != CameraMode::RTS) {
+		bool wantPrev = m_controls.pressed(Action::ControlPrev);
+		bool wantNext = m_controls.pressed(Action::ControlNext);
+		if (wantPrev || wantNext) {
+			EntityId me  = m_server->localPlayerId();
+			EntityId cur = m_server->controlledEntityId();
+			std::vector<EntityId> owned;
+			m_server->forEachEntity([&](Entity& e) {
+				if (!e.def().isLiving()) return;
+				if (e.id() == me) { owned.push_back(e.id()); return; }
+				int owner = e.getProp<int>(Prop::Owner, 0);
+				if (owner == (int)me) owned.push_back(e.id());
+			});
+			if (!owned.empty()) {
+				std::sort(owned.begin(), owned.end());
+				auto it = std::find(owned.begin(), owned.end(), cur);
+				int idx = (it != owned.end()) ? (int)(it - owned.begin()) : 0;
+				int n = (int)owned.size();
+				int next = wantNext ? (idx + 1) % n : (idx - 1 + n) % n;
+				takeControlOf(owned[next]);
+			}
+		}
+	}
 
 	// Tell gameplay if UI wants the cursor (inventory, ImGui, chest, etc.)
 	m_gameplay.setUIWantsCursor(m_equipUI.isOpen() || m_chestUI.isOpen() || m_ui.wantsMouse());

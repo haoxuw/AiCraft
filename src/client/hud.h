@@ -1,6 +1,8 @@
 #pragma once
 
 #include "client/types.h"
+#include "shared/constants.h"
+#include <string>
 #include "client/text.h"
 #include "client/shader.h"
 #include "client/camera.h"
@@ -41,6 +43,10 @@ struct HUDContext {
 	glm::vec3 serverPos;
 	glm::vec3 clientPos;
 	float posErrorSq;
+	// Controlled entity (shown in F3 when driving a non-player Living).
+	// id = ENTITY_NONE means "driving own body" — overlay hides the line.
+	EntityId controlledId = ENTITY_NONE;
+	std::string controlledType;
 };
 
 class HUD {

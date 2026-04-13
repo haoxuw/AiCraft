@@ -15,8 +15,7 @@
 #include "shared/physics.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
-#include "shared/crash_log.h"
-#include "client/game_logger.h"
+#include "client/entity_reconciler.h"
 #ifndef __EMSCRIPTEN__
 #include <zstd.h>
 #endif
@@ -31,7 +30,6 @@
 #include <random>
 #include <thread>
 #include <chrono>
-#include <deque>
 
 namespace modcraft {
 
@@ -198,66 +196,11 @@ public:
 			m_diagTimer = 0;
 		}
 
-		// Position reconciliation — one rule for every entity, no special
-		// case for the local player. If the client position is more than
-		// kDriftTolerance blocks from the server's position, nudge toward
-		// server at CORRECTION_RATE blocks/sec each tick. Below tolerance,
-		// leave the client position alone (normal prediction/interpolation).
-		//
-		// There is no hard snap: a large gap just takes proportionally
-		// longer to close, but the correction is always smooth.
-		const float kDriftTolerance = 2.0f;  // start correcting past this gap
-		const float CORRECTION_RATE = 5.0f;  // blocks/sec pulled toward server
-
-		for (auto& [id, target] : m_interpTargets) {
-			auto it = m_entities.find(id);
-			if (it == m_entities.end()) continue;
-			auto& e = *it->second;
-
-			glm::vec3 diff = target.position - e.position;
-			float dist = glm::length(diff);
-
-			if (dist > kDriftTolerance) {
-				// Per-tick nudge: move a fraction of the gap toward server.
-				// std::min caps at 1.0 so we never overshoot on a huge dt.
-				e.position += diff * std::min(dt * CORRECTION_RATE, 1.0f);
-
-				// Diagnostic log, rate-limited to ~2 lines/sec per entity.
-				static std::unordered_map<EntityId, int> s_tick;
-				int& n = s_tick[id];
-				if (++n % 30 == 0) {
-					glm::vec3 serverD = target.prevInitialized
-						? (target.position - target.prevServerPos) : glm::vec3(0.0f);
-					glm::vec3 clientD = target.prevInitialized
-						? (e.position - target.prevClientPos) : glm::vec3(0.0f);
-					printf("[PosDrift] eid=%u client=(%.2f,%.2f,%.2f) "
-						"server=(%.2f,%.2f,%.2f) dist=%.2f "
-						"serverΔ=(%.2f,%.2f,%.2f) clientΔ=(%.2f,%.2f,%.2f) "
-						"vel=(%.2f,%.2f,%.2f) (tol=%.1f, lerp=%.1fu/s)\n",
-						id, e.position.x, e.position.y, e.position.z,
-						target.position.x, target.position.y, target.position.z,
-						dist,
-						serverD.x, serverD.y, serverD.z,
-						clientD.x, clientD.y, clientD.z,
-						e.velocity.x, e.velocity.y, e.velocity.z,
-						kDriftTolerance, CORRECTION_RATE);
-					fflush(stdout);
-				}
-			}
-
-			// Remember this tick's client position so the next [PosDrift]
-			// can show clientΔ.
-			target.prevClientPos = e.position;
-			target.age += dt;
-
-			// Walk distance for animation
-			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
-			if (hSpeed > 0.01f) {
-				float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
-				e.setProp(Prop::WalkDistance, wd + hSpeed * dt);
-			}
-		}
-
+		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
+			const auto& bd = m_blocks.get(m_chunks.getBlock(x, y, z));
+			return bd.solid ? bd.collision_height : 0.0f;
+		};
+		m_reconciler.tick(dt, m_localPlayerId, m_entities, solidFn);
 	}
 
 	void sendAction(const ActionProposal& action) override {
@@ -315,10 +258,8 @@ public:
 	// Latest server-authoritative position from the broadcast stream.
 	// Falls back to the last applied entity position if no interp target.
 	glm::vec3 getServerPosition(EntityId id) override {
-		auto it = m_interpTargets.find(id);
-		if (it != m_interpTargets.end()) return it->second.position;
 		Entity* e = getEntity(id);
-		return e ? e->position : glm::vec3(0);
+		return m_reconciler.getServerPosition(id, e ? e->position : glm::vec3(0));
 	}
 
 	Entity* getEntity(EntityId id) override {
@@ -464,27 +405,13 @@ private:
 					if (m_onInventoryUpdate) m_onInventoryUpdate(es.id);
 				}
 				m_entities[es.id] = std::move(ent);
-				// Initialize interpolation target
-				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f,
-				                          es.moveTarget, es.moveSpeed};
+				m_reconciler.onEntityCreate(es.id, es.position, es.velocity, es.yaw,
+				                            es.moveTarget, es.moveSpeed);
 			} else {
 				auto& e = *it->second;
 
-				// Update interp target from server. The main-loop reconciler
-				// uses target.position to nudge e.position toward server each
-				// tick whenever the gap exceeds kDriftTolerance — applied the
-				// same way for the local player and every other entity.
-				auto& t = m_interpTargets[es.id];
-				// Stash the pre-update server position so drift logs can
-				// describe how far the server moved the entity this update.
-				t.prevServerPos    = t.position;
-				t.prevInitialized  = true;
-				t.position   = es.position;
-				t.velocity   = es.velocity;
-				t.yaw        = es.yaw;
-				t.age        = 0.0f;
-				t.moveTarget = es.moveTarget;
-				t.moveSpeed  = es.moveSpeed;
+				m_reconciler.onEntityUpdate(es.id, es.position, es.velocity, es.yaw,
+				                            es.moveTarget, es.moveSpeed);
 
 				// Sync non-positional state immediately.
 				// Skip onGround for local player — client physics owns it.
@@ -574,7 +501,7 @@ private:
 		case net::S_REMOVE: {
 			EntityId id = rb.readU32();
 			m_entities.erase(id);
-			m_interpTargets.erase(id);
+			m_reconciler.onEntityRemove(id);
 			break;
 		}
 		case net::S_TIME: {
@@ -708,25 +635,9 @@ private:
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;
 	NetChunkSource m_chunks{*this};
 
-	// Interpolation: smooth remote entity movement between 20Hz server updates.
-	// Reconciliation is unified — the per-tick nudge in the main loop treats
-	// every entity (local player included) the same way.
-	struct InterpTarget {
-		glm::vec3 position;
-		glm::vec3 velocity;
-		float yaw;
-		float age;
-		glm::vec3 moveTarget = {0, 0, 0};
-		float moveSpeed = 0.0f;
-		// Diagnostics for [PosDrift] — snapshot of state at the previous
-		// server update + previous client tick. Lets us describe *why* the
-		// gap exists: is the server actively moving the entity, or is the
-		// client drifting while the server stays put?
-		glm::vec3 prevServerPos = {0, 0, 0};
-		glm::vec3 prevClientPos = {0, 0, 0};
-		bool      prevInitialized  = false;
-	};
-	std::unordered_map<EntityId, InterpTarget> m_interpTargets;
+	// Client-side smoothing + reconciliation for remote entities.
+	// Owns all per-entity physics + drift-correction between 20Hz broadcasts.
+	EntityReconciler m_reconciler;
 
 	// Pending inventory: arrived before entity — applied on first S_ENTITY
 	struct PendingInv {
