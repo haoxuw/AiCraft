@@ -15,6 +15,8 @@
 #include "shared/physics.h"
 #include "shared/net_socket.h"
 #include "shared/net_protocol.h"
+#include "shared/crash_log.h"
+#include "client/game_logger.h"
 #ifndef __EMSCRIPTEN__
 #include <zstd.h>
 #endif
@@ -29,6 +31,7 @@
 #include <random>
 #include <thread>
 #include <chrono>
+#include <deque>
 
 namespace modcraft {
 
@@ -195,139 +198,56 @@ public:
 			m_diagTimer = 0;
 		}
 
-		// Position update — all entities use client-side moveAndCollide.
-		// Local player: velocity from input (gameplay_movement.cpp runs physics).
-		// Non-local:    velocity XZ from server, Y from local gravity.
-		// Both get soft correction toward server position via S_ENTITY.
-		const float SNAP_THRESHOLD = 8.0f;
-		const float CORRECTION_RATE = 5.0f;
-		// Sustained-drift snap: if the client/server gap stays above this
-		// for longer than kSustainedDriftSec, force a snap. Closes the
-		// "drift stuck at 2 blocks forever" window — the lerp at
-		// CORRECTION_RATE can be matched by a ~5u/s opposing push from
-		// client prediction, producing a steady offset that the plain
-		// SNAP_THRESHOLD path never catches.
-		const float kSustainedDriftBlocks = 2.0f;
-		const float kSustainedDriftSec    = 1.0f;
-
-		BlockSolidFn clientSolidFn = [&](int x, int y, int z) -> float {
-			const auto& bd = m_blocks.get(m_chunks.getBlock(x, y, z));
-			return bd.solid ? bd.collision_height : 0.0f;
-		};
+		// Position reconciliation — one rule for every entity, no special
+		// case for the local player. If the client position is more than
+		// kDriftTolerance blocks from the server's position, nudge toward
+		// server at CORRECTION_RATE blocks/sec each tick. Below tolerance,
+		// leave the client position alone (normal prediction/interpolation).
+		//
+		// There is no hard snap: a large gap just takes proportionally
+		// longer to close, but the correction is always smooth.
+		const float kDriftTolerance = 2.0f;  // start correcting past this gap
+		const float CORRECTION_RATE = 5.0f;  // blocks/sec pulled toward server
 
 		for (auto& [id, target] : m_interpTargets) {
 			auto it = m_entities.find(id);
 			if (it == m_entities.end()) continue;
 			auto& e = *it->second;
-			bool isLocal = (id == m_localPlayerId);
 
-			if (!isLocal) {
-				// Skip physics if ground chunk not loaded (entity would fall through void)
-				int fbx = (int)std::floor(e.position.x);
-				int fby = (int)std::floor(e.position.y) - 1;
-				int fbz = (int)std::floor(e.position.z);
-				ChunkPos ecp = {fbx >> 4, fby >> 4, fbz >> 4};
-				bool groundLoaded = (m_chunkData.find(ecp) != m_chunkData.end());
-
-				if (groundLoaded) {
-					// Entities owned by this player (NPCs under our in-process
-					// AgentClient) get client-side prediction: agent sets
-					// e.velocity/e.yaw directly, identical to how the player's
-					// input writes velocity in gameplay_movement.cpp. Other
-					// clients' entities fall back to the virtual joystick
-					// toward the server-broadcast moveTarget.
-					int owner = e.getProp<int>(Prop::Owner, 0);
-					bool ownedByUs = (owner == (int)m_localPlayerId);
-
-					glm::vec3 localVel;
-					if (ownedByUs) {
-						// Use agent-provided velocity directly
-						localVel = {e.velocity.x, e.velocity.y, e.velocity.z};
-					} else {
-						// Virtual joystick toward server's moveTarget
-						glm::vec3 toTarget = target.moveTarget - e.position;
-						toTarget.y = 0;
-						float distToTarget = glm::length(toTarget);
-						localVel = {0, e.velocity.y, 0};
-						if (distToTarget > 0.5f && target.moveSpeed > 0.01f) {
-							glm::vec3 dir = toTarget / distToTarget;
-							localVel.x = dir.x * target.moveSpeed;
-							localVel.z = dir.z * target.moveSpeed;
-						}
-						// yaw comes from server-broadcast (already smoothed); no snap here.
-					}
-
-					const auto& def = e.def();
-					MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
-						def.gravity_scale, def.isLiving(), e.getProp<bool>("fly_mode", false));
-
-					auto result = moveAndCollide(clientSolidFn, e.position, localVel, dt, mp, e.onGround);
-					e.position = result.position;
-					e.velocity = result.velocity;
-					e.onGround = result.onGround;
-
-					// Smooth yaw toward intent (pre-collision localVel), matching
-					// the server-side lerp so local feel matches broadcast.
-					if (ownedByUs) {
-						smoothYawTowardsVelocity(e.yaw, localVel, dt);
-						e.lookYaw = e.yaw;
-						e.lookPitch = 0.0f;
-					}
-				} else {
-					// No ground chunk — use server position directly (no local physics)
-					e.position = target.position;
-					e.velocity = target.velocity;
-				}
-			}
-
-			// Server correction — same for local and non-local.
-			// Local: gameplay_movement already moved the entity; this is snap-only.
-			// Non-local: virtual joystick just ran; this corrects drift.
 			glm::vec3 diff = target.position - e.position;
 			float dist = glm::length(diff);
-			// Track sustained drift above kSustainedDriftBlocks; this is a
-			// second trigger for snap that fires even when dist never
-			// crosses SNAP_THRESHOLD. Reset to zero as soon as we're
-			// within the tolerance band so momentary corrections don't
-			// count toward the sustained-drift deadline.
-			if (dist > kSustainedDriftBlocks) {
-				target.sustainedDriftSec += dt;
-			} else {
-				target.sustainedDriftSec = 0.0f;
-			}
-			bool sustainedSnap = (target.sustainedDriftSec >= kSustainedDriftSec);
 
-			if (dist > SNAP_THRESHOLD || sustainedSnap) {
-				// ── DEBUG: client/server divergence snap ──
-				printf("[PosSnap] eid=%u SNAP client=(%.2f,%.2f,%.2f) "
-					"→ server=(%.2f,%.2f,%.2f) dist=%.2f trigger=%s\n",
-					id, e.position.x, e.position.y, e.position.z,
-					target.position.x, target.position.y, target.position.z,
-					dist, sustainedSnap ? "sustained-drift" : "hard-threshold");
-				fflush(stdout);
-				e.position = target.position;
-				e.velocity = target.velocity;
-				e.onGround = true;
-				target.sustainedDriftSec = 0.0f;
-			} else if (!isLocal && dist > 0.01f) {
-				// Drift probe: log any client/server gap above 1.0 block,
-				// rate-limited to ~2 lines/sec per entity so the stream is
-				// readable. Does not affect correction logic.
-				if (dist > 1.0f) {
-					static std::unordered_map<EntityId, int> s_tick;
-					int& n = s_tick[id];
-					if (++n % 30 == 0) {
-						printf("[PosDrift] eid=%u client=(%.2f,%.2f,%.2f) "
-							"server=(%.2f,%.2f,%.2f) dist=%.2f (snap at %.1f, lerp=%.1fu/s)\n",
-							id, e.position.x, e.position.y, e.position.z,
-							target.position.x, target.position.y, target.position.z,
-							dist, SNAP_THRESHOLD, CORRECTION_RATE);
-						fflush(stdout);
-					}
-				}
+			if (dist > kDriftTolerance) {
+				// Per-tick nudge: move a fraction of the gap toward server.
+				// std::min caps at 1.0 so we never overshoot on a huge dt.
 				e.position += diff * std::min(dt * CORRECTION_RATE, 1.0f);
+
+				// Diagnostic log, rate-limited to ~2 lines/sec per entity.
+				static std::unordered_map<EntityId, int> s_tick;
+				int& n = s_tick[id];
+				if (++n % 30 == 0) {
+					glm::vec3 serverD = target.prevInitialized
+						? (target.position - target.prevServerPos) : glm::vec3(0.0f);
+					glm::vec3 clientD = target.prevInitialized
+						? (e.position - target.prevClientPos) : glm::vec3(0.0f);
+					printf("[PosDrift] eid=%u client=(%.2f,%.2f,%.2f) "
+						"server=(%.2f,%.2f,%.2f) dist=%.2f "
+						"serverΔ=(%.2f,%.2f,%.2f) clientΔ=(%.2f,%.2f,%.2f) "
+						"vel=(%.2f,%.2f,%.2f) (tol=%.1f, lerp=%.1fu/s)\n",
+						id, e.position.x, e.position.y, e.position.z,
+						target.position.x, target.position.y, target.position.z,
+						dist,
+						serverD.x, serverD.y, serverD.z,
+						clientD.x, clientD.y, clientD.z,
+						e.velocity.x, e.velocity.y, e.velocity.z,
+						kDriftTolerance, CORRECTION_RATE);
+					fflush(stdout);
+				}
 			}
 
+			// Remember this tick's client position so the next [PosDrift]
+			// can show clientΔ.
+			target.prevClientPos = e.position;
 			target.age += dt;
 
 			// Walk distance for animation
@@ -338,56 +258,6 @@ public:
 			}
 		}
 
-		// ── Walk debug logging ──────────────────────────────────────────
-		m_walkDbgTimer += dt;
-
-		// Auto-select first non-player living entity as debug target
-		if (m_walkDbgEntity == ENTITY_NONE && m_uptime > 2.0f) {
-			for (auto& [id, ent] : m_entities) {
-				if (id == m_localPlayerId) continue;
-				if (ent->def().isLiving()) {
-					m_walkDbgEntity = id;
-					m_walkDbgFile = fopen("/tmp/modcraft_walkdbg.log", "w");
-					if (m_walkDbgFile) {
-						fprintf(m_walkDbgFile,
-							"# Walk debug for entity %u (%s)\n"
-							"# t\tdt\tsrvVelXZ\tmoveTargetX\tmoveTargetZ\tdistToTgt\t"
-							"eVelXZ\tePosX\tePosZ\thSpeed\twalkDist\n",
-							id, ent->typeId().c_str());
-						fflush(m_walkDbgFile);
-					}
-					printf("[walkdbg] Tracking entity %u (%s) → /tmp/modcraft_walkdbg.log\n",
-						id, ent->typeId().c_str());
-					break;
-				}
-			}
-		}
-
-		// Log one line per tick for the tracked entity
-		if (m_walkDbgEntity != ENTITY_NONE && m_walkDbgFile) {
-			auto it = m_entities.find(m_walkDbgEntity);
-			auto tit = m_interpTargets.find(m_walkDbgEntity);
-			if (it != m_entities.end() && tit != m_interpTargets.end()) {
-				auto& e = *it->second;
-				auto& t = tit->second;
-				float srvVelXZ = std::sqrt(t.velocity.x * t.velocity.x + t.velocity.z * t.velocity.z);
-				float eVelXZ = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
-				glm::vec3 toTgt = t.moveTarget - e.position;
-				toTgt.y = 0;
-				float distToTgt = glm::length(toTgt);
-				float wd = e.getProp<float>(Prop::WalkDistance, 0.0f);
-				fprintf(m_walkDbgFile,
-					"%.3f\t%.4f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\n",
-					m_walkDbgTimer, dt, srvVelXZ,
-					t.moveTarget.x, t.moveTarget.z, distToTgt,
-					eVelXZ, e.position.x, e.position.z,
-					std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z),
-					wd);
-				// Flush every 2 seconds to avoid too many syscalls
-				static int flushCounter = 0;
-				if (++flushCounter >= 120) { fflush(m_walkDbgFile); flushCounter = 0; }
-			}
-		}
 	}
 
 	void sendAction(const ActionProposal& action) override {
@@ -596,16 +466,19 @@ private:
 				m_entities[es.id] = std::move(ent);
 				// Initialize interpolation target
 				m_interpTargets[es.id] = {es.position, es.velocity, es.yaw, 0.0f,
-				                          es.moveTarget, es.moveSpeed, 0.0f};
+				                          es.moveTarget, es.moveSpeed};
 			} else {
 				auto& e = *it->second;
 
-				// Update interp target from server. For the local player, this is
-				// only used for SNAP detection (client physics owns position).
-				// For remote entities, tick() runs virtual joystick toward moveTarget.
-				// Preserve sustainedDriftSec across updates so sustained drift
-				// across multiple S_ENTITY broadcasts still accumulates to a snap.
+				// Update interp target from server. The main-loop reconciler
+				// uses target.position to nudge e.position toward server each
+				// tick whenever the gap exceeds kDriftTolerance — applied the
+				// same way for the local player and every other entity.
 				auto& t = m_interpTargets[es.id];
+				// Stash the pre-update server position so drift logs can
+				// describe how far the server moved the entity this update.
+				t.prevServerPos    = t.position;
+				t.prevInitialized  = true;
 				t.position   = es.position;
 				t.velocity   = es.velocity;
 				t.yaw        = es.yaw;
@@ -835,7 +708,9 @@ private:
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;
 	NetChunkSource m_chunks{*this};
 
-	// Interpolation: smooth remote entity movement between 20Hz server updates
+	// Interpolation: smooth remote entity movement between 20Hz server updates.
+	// Reconciliation is unified — the per-tick nudge in the main loop treats
+	// every entity (local player included) the same way.
 	struct InterpTarget {
 		glm::vec3 position;
 		glm::vec3 velocity;
@@ -843,14 +718,13 @@ private:
 		float age;
 		glm::vec3 moveTarget = {0, 0, 0};
 		float moveSpeed = 0.0f;
-		// Sustained-drift snap counter. Accumulates dt while client/server
-		// gap exceeds kSustainedDriftBlocks; when it reaches
-		// kSustainedDriftSec the reconcile path snaps, even if the gap
-		// never crossed SNAP_THRESHOLD. Prevents a steady 2–3 block drift
-		// equilibrium from persisting forever (lerp rate == opposing
-		// divergence rate). Preserved across S_ENTITY updates; reset only
-		// on snap or when gap drops below threshold.
-		float sustainedDriftSec = 0.0f;
+		// Diagnostics for [PosDrift] — snapshot of state at the previous
+		// server update + previous client tick. Lets us describe *why* the
+		// gap exists: is the server actively moving the entity, or is the
+		// client drifting while the server stays put?
+		glm::vec3 prevServerPos = {0, 0, 0};
+		glm::vec3 prevClientPos = {0, 0, 0};
+		bool      prevInitialized  = false;
 	};
 	std::unordered_map<EntityId, InterpTarget> m_interpTargets;
 
@@ -870,11 +744,6 @@ private:
 	int m_tickMsgCount = 0;
 	int m_totalMsgCount = 0;
 	float m_uptime = 0;
-
-	// Walk debug logging — tracks one villager's per-tick animation state
-	EntityId m_walkDbgEntity = ENTITY_NONE;
-	FILE* m_walkDbgFile = nullptr;
-	float m_walkDbgTimer = 0;  // total elapsed time for log timestamps
 
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;

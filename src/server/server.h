@@ -31,6 +31,8 @@
 #include <string>
 #include <functional>
 #include <cstdio>
+#include <chrono>
+#include <mutex>
 
 namespace modcraft {
 
@@ -53,6 +55,53 @@ enum class ActionRejectCode : uint32_t {
 	ActorHasNoInventory       = 12,
 	MissingItemId             = 13,
 };
+
+// Count-throttled action-reject log. Counts rejections per (entity, kind,
+// reason) and emits to stdout only on the 100th, 200th, 300th... hit.
+// Rare one-off rejections stay silent (normal gameplay churn); only
+// entities stuck in a rejection LOOP surface, which is what we want to
+// diagnose. count=N in the output tells you how bad the loop is.
+inline void logActionReject(const char* kind, EntityId eid,
+                            const char* reason, const char* detail) {
+	static std::unordered_map<uint64_t, uint32_t> s_count;
+	static std::mutex s_mu;
+	uint64_t key = ((uint64_t)eid << 32)
+	             ^ (uint64_t)std::hash<std::string>{}(std::string(kind) + ":" + reason);
+	uint32_t c;
+	{
+		std::lock_guard<std::mutex> lk(s_mu);
+		c = ++s_count[key];
+	}
+	if (c % 100 == 0) {
+		std::printf("[Server][Reject] %s entity=%u reason=\"%s\" count=%u %s\n",
+		            kind, eid, reason, c, detail ? detail : "");
+		std::fflush(stdout);
+	}
+}
+
+// Legacy shim (Move-only paths) — same throttle, prefixes kind="Move".
+inline void logMoveReject(EntityId eid, const char* reason, const char* detail) {
+	logActionReject("Move", eid, reason, detail);
+}
+
+inline const char* rejectCodeName(ActionRejectCode c) {
+	switch (c) {
+	case ActionRejectCode::ValueConservationViolated: return "ValueConservationViolated";
+	case ActionRejectCode::ItemNotInInventory:        return "ItemNotInInventory";
+	case ActionRejectCode::SourceEntityGone:          return "SourceEntityGone";
+	case ActionRejectCode::SourceBlockGone:           return "SourceBlockGone";
+	case ActionRejectCode::SourceBlockTypeMismatch:   return "SourceBlockTypeMismatch";
+	case ActionRejectCode::PlacementTargetOccupied:   return "PlacementTargetOccupied";
+	case ActionRejectCode::UnknownBlockType:          return "UnknownBlockType";
+	case ActionRejectCode::ChunkNotLoaded:            return "ChunkNotLoaded";
+	case ActionRejectCode::PickupOutOfRange:          return "PickupOutOfRange";
+	case ActionRejectCode::TargetEntityGone:          return "TargetEntityGone";
+	case ActionRejectCode::TargetHasNoInventory:      return "TargetHasNoInventory";
+	case ActionRejectCode::ActorHasNoInventory:       return "ActorHasNoInventory";
+	case ActionRejectCode::MissingItemId:             return "MissingItemId";
+	}
+	return "Unknown";
+}
 
 // Server-side callbacks — used by dedicated server (main_server.cpp) to broadcast
 // world state changes to all connected clients over TCP.
@@ -124,12 +173,12 @@ public:
 
 		auto& tmpl = m_world->getTemplate();
 
-		// Place chests in all non-barn houses. Chest positions are read later
-		// by spawnMobsForClient() to assign villager bed/chest props.
+		// Place chest blocks + matching Structure entities in all non-barn
+		// houses. Villager behaviors discover these dynamically via
+		// scan_entities("base:chest") — no per-villager chest wiring.
 		auto houseChests = tmpl.houseChestPositions(m_world->seed());
 		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
-		m_houseChests.clear();
-		m_houseChestEntities.clear();
+		int chestCount = 0;
 		for (auto& cPos : houseChests) {
 			int cx = (int)std::round(cPos.x), cy = (int)std::round(cPos.y), cz = (int)std::round(cPos.z);
 			if (chestId != BLOCK_AIR) {
@@ -139,13 +188,12 @@ public:
 			}
 			glm::vec3 blockCenter = {(float)cx + 0.5f, (float)cy + 0.5f, (float)cz + 0.5f};
 			EntityId chestEid = m_world->entities.spawn(StructureName::Chest, blockCenter, {});
-			m_houseChests.push_back(blockCenter);
-			m_houseChestEntities.push_back(chestEid);
 			printf("[Server] Chest entity %u at (%d,%d,%d)\n", chestEid, cx, cy, cz);
+			chestCount++;
 		}
 
-		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f  Chests: %zu houses\n",
-		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z, m_houseChests.size());
+		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f  Chests: %d houses\n",
+		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z, chestCount);
 	}
 
 	// Spawn the mob set for one connecting client. Every mob gets
@@ -217,8 +265,9 @@ public:
 			}
 		};
 
-		// Villager bed assignments come from the template; chest positions
-		// were pre-populated in init() and kept in m_houseChests.
+		// Villager bed assignments come from the template; chest blocks /
+		// entities are placed in init() and discovered at decide() time via
+		// scan_entities("base:chest").
 		auto beds = tmpl.bedPositions(m_world->seed());
 
 		auto spawnOne = [&](const MobSpawn& ms, float x, float z, float fixedY,
@@ -256,34 +305,19 @@ public:
 					int gz = (slotIdx / 6) % 4;
 					ex = a.cx + (gx - 2.5f) * radius;
 					ez = a.cz + (gz - 1.5f) * radius;
-					extraProps["home_x"] = a.cx;
-					extraProps["home_z"] = a.cz;
 				} else {
 					float angle = (float)m / (float)ms.count * 6.28318f + baseOffset;
 					ex = a.cx + std::cos(angle) * radius;
 					ez = a.cz + std::sin(angle) * radius;
 				}
-				// Villagers: always wire home + chest from the template's bed
-				// list (independent of anchor). Also spawn the villager AT its
-				// bed rather than on the ring, so it doesn't land on top of the
-				// monument/roof and get wedged there. This was the root cause
-				// of villagers showing goalText="Searching for trees" forever
-				// in headless debug runs: they couldn't walk off the monument.
-				if (ms.typeId == "base:villager") {
-					if (m < (int)beds.size()) {
-						ex = (float)beds[m].x + 0.5f;
-						ez = (float)beds[m].z + 0.5f;
-						fixedY = (float)beds[m].y;
-						extraProps["home_x"] = beds[m].x;
-						extraProps["home_y"] = beds[m].y;
-						extraProps["home_z"] = beds[m].z;
-					}
-					if (m < (int)m_houseChests.size()) {
-						extraProps["chest_x"]         = m_houseChests[m].x;
-						extraProps["chest_y"]         = m_houseChests[m].y;
-						extraProps["chest_z"]         = m_houseChests[m].z;
-						extraProps["chest_entity_id"] = (int)m_houseChestEntities[m];
-					}
+				// Villagers: spawn AT a template-provided bed (not on the ring)
+				// so they don't land on a monument/roof and get wedged. They no
+				// longer carry home/chest props — at decide() time the behavior
+				// scans for chests and beds in the world.
+				if (ms.typeId == "base:villager" && m < (int)beds.size()) {
+					ex = (float)beds[m].x + 0.5f;
+					ez = (float)beds[m].z + 0.5f;
+					fixedY = (float)beds[m].y;
 				}
 				spawnOne(ms, ex, ez, fixedY, std::move(extraProps));
 			}
@@ -420,9 +454,33 @@ public:
 
 	void receiveAction(ClientId clientId, ActionProposal action) {
 		auto it = m_clients.find(clientId);
-		if (it == m_clients.end()) return;
+		if (it == m_clients.end()) {
+			if (action.type == ActionProposal::Move) {
+				char buf[96];
+				std::snprintf(buf, sizeof(buf), "unknown client=%u", clientId);
+				logMoveReject(action.actorId, "unknown-client", buf);
+			}
+			return;
+		}
 
-		if (!canClientControl(clientId, action.actorId)) return;
+		if (!canClientControl(clientId, action.actorId)) {
+			if (action.type == ActionProposal::Move) {
+				Entity* t = m_world->entities.get(action.actorId);
+				char buf[160];
+				if (!t) {
+					std::snprintf(buf, sizeof(buf),
+						"actor entity=%u not found (client=%u)",
+						action.actorId, clientId);
+				} else {
+					int ownerId = t->getProp<int>(Prop::Owner, 0);
+					std::snprintf(buf, sizeof(buf),
+						"owner=%d but client player=%u (client=%u)",
+						ownerId, it->second.playerEntityId, clientId);
+				}
+				logMoveReject(action.actorId, "ownership-check-failed", buf);
+			}
+			return;
+		}
 
 		// Goal text: update server-side entity for broadcast
 		if (!action.goalText.empty()) {
@@ -642,8 +700,6 @@ private:
 	float m_regenTimer = 0;
 	float m_hpRegenInterval = ServerTuning::hpRegenInterval;
 	glm::vec3 m_spawnPos = {30, 10, 30};
-	std::vector<glm::vec3> m_houseChests;                           // one per non-barn house
-	std::vector<EntityId> m_houseChestEntities;                     // chest entity IDs (parallel to m_houseChests)
 	std::unordered_map<std::string, Inventory> m_savedInventories;  // character_skin → inventory
 
 	// Structure system

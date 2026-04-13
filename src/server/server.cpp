@@ -17,7 +17,14 @@ void GameServer::resolveActions(float dt) {
 
 		case ActionProposal::Move: {
 			Entity* e = m_world->entities.get(p.actorId);
-			if (!e) break;
+			if (!e) {
+				char buf[96];
+				std::snprintf(buf, sizeof(buf),
+					"entity gone between receive and resolve (intent=(%.2f,%.2f))",
+					p.desiredVel.x, p.desiredVel.z);
+				logMoveReject(p.actorId, "entity-gone-at-resolve", buf);
+				break;
+			}
 
 			// Accept client-reported position if within tolerance.
 			// Client tracks its own position; server only corrects on large errors.
@@ -87,9 +94,14 @@ void GameServer::resolveActions(float dt) {
 
 			// Nudge: re-send current inventory so client corrects any optimistic state.
 			// Deduplicated per tick — at most one resend per entity regardless of spam.
-			auto nudgeR = [&](ActionRejectCode code) {
-				printf("[Server] Relocate rejected entity=%u code=%u\n",
-				       p.actorId, (uint32_t)code);
+			//
+			// The caller supplies a `why` string describing what was attempted
+			// (item, source→dest, distance vs threshold). Without it, a
+			// rejected Relocate is opaque: you only see the numeric code. Log
+			// what we were trying to do so the user can diagnose without
+			// reading server source for every code.
+			auto nudgeR = [&](ActionRejectCode code, const std::string& why) {
+				logActionReject("Relocate", p.actorId, rejectCodeName(code), why.c_str());
 				if (nudgedThisTick.count(p.actorId)) return;
 				nudgedThisTick.insert(p.actorId);
 				if (actor->inventory && m_callbacks.onInventoryChange)
@@ -101,7 +113,11 @@ void GameServer::resolveActions(float dt) {
 				if (!actor->inventory) break;
 				std::string dropType = p.itemId;
 				if (dropType.empty()) break;
-				if (!actor->inventory->has(dropType)) { nudgeR(ActionRejectCode::ItemNotInInventory); break; }
+				if (!actor->inventory->has(dropType)) {
+					nudgeR(ActionRejectCode::ItemNotInInventory,
+						"drop: actor has 0× '" + dropType + "'");
+					break;
+				}
 
 				int count = std::clamp(p.itemCount, 1, 64);
 				actor->inventory->remove(dropType, count);
@@ -151,27 +167,34 @@ void GameServer::resolveActions(float dt) {
 				// Store into another entity's inventory (chest, Creatures, etc.)
 				Entity* target = m_world->entities.get(p.relocateTo.entityId);
 				if (!target || target->removed) {
-					printf("[Server] Relocate/store DENIED (entity %u): target entity %u missing/removed\n",
-						actor->id(), p.relocateTo.entityId);
-					nudgeR(ActionRejectCode::TargetEntityGone);
+					char buf[128];
+					snprintf(buf, sizeof(buf), "store: target entity=%u missing/removed",
+						p.relocateTo.entityId);
+					nudgeR(ActionRejectCode::TargetEntityGone, buf);
 					break;
 				}
 				if (!target->inventory) {
-					printf("[Server] Relocate/store DENIED (entity %u): target entity %u has no inventory\n",
-						actor->id(), target->id());
-					nudgeR(ActionRejectCode::TargetHasNoInventory);
+					char buf[128];
+					snprintf(buf, sizeof(buf), "store: target entity=%u type='%s' has no inventory",
+						target->id(), target->typeId().c_str());
+					nudgeR(ActionRejectCode::TargetHasNoInventory, buf);
 					break;
 				}
 				if (!actor->inventory) {
-					printf("[Server] Relocate/store DENIED: actor %u has no inventory\n", actor->id());
-					nudgeR(ActionRejectCode::ActorHasNoInventory);
+					nudgeR(ActionRejectCode::ActorHasNoInventory, "store: actor has no inventory");
 					break;
 				}
 
 				float dist = glm::length(target->position - actor->position);
 				if (dist > m_wgc.storeRange) {
-					printf("[Server] Relocate/store DENIED (entity %u): %.1f blocks from target %u (max %.1f)\n",
-						actor->id(), dist, target->id(), m_wgc.storeRange);
+					char buf[192];
+					snprintf(buf, sizeof(buf),
+						"store: %.2f blocks from target=%u (max %.1f) actor@(%.1f,%.1f,%.1f) target@(%.1f,%.1f,%.1f)",
+						dist, target->id(), m_wgc.storeRange,
+						actor->position.x, actor->position.y, actor->position.z,
+						target->position.x, target->position.y, target->position.z);
+					// Out-of-range store is not a code-based reject today; log and drop.
+					printf("[Server] Relocate rejected entity=%u (%s)\n", actor->id(), buf);
 					break;
 				}
 
@@ -179,7 +202,14 @@ void GameServer::resolveActions(float dt) {
 				if (!p.itemId.empty()) {
 					// Transfer specific item × count
 					int count = std::clamp(p.itemCount, 1, 64);
-					if (!actor->inventory->has(p.itemId, count)) { nudgeR(ActionRejectCode::ItemNotInInventory); break; }
+					if (!actor->inventory->has(p.itemId, count)) {
+						char buf[160];
+						snprintf(buf, sizeof(buf),
+							"store: actor lacks %d× '%s' (has %d)", count,
+							p.itemId.c_str(), actor->inventory->count(p.itemId));
+						nudgeR(ActionRejectCode::ItemNotInInventory, buf);
+						break;
+					}
 					actor->inventory->remove(p.itemId, count);
 					target->inventory->add(p.itemId, count);
 					totalTransferred = count;
@@ -205,14 +235,15 @@ void GameServer::resolveActions(float dt) {
 			if (p.relocateFrom.kind == Container::Kind::Entity) {
 				Entity* src = m_world->entities.get(p.relocateFrom.entityId);
 				if (!src || src->removed) {
-					printf("[Server] Relocate/take DENIED (entity %u): source entity %u missing/removed\n",
-						actor->id(), p.relocateFrom.entityId);
-					nudgeR(ActionRejectCode::SourceEntityGone);
+					char buf[128];
+					snprintf(buf, sizeof(buf),
+						"take: source entity=%u missing/removed (likely item already picked up by someone else)",
+						p.relocateFrom.entityId);
+					nudgeR(ActionRejectCode::SourceEntityGone, buf);
 					break;
 				}
 				if (!actor->inventory) {
-					printf("[Server] Relocate/take DENIED: actor %u has no inventory\n", actor->id());
-					nudgeR(ActionRejectCode::ActorHasNoInventory);
+					nudgeR(ActionRejectCode::ActorHasNoInventory, "take: actor has no inventory");
 					break;
 				}
 
@@ -221,13 +252,30 @@ void GameServer::resolveActions(float dt) {
 					float dist = glm::length(src->position - actor->position);
 					float maxRange = actor->def().pickup_range;
 					if (maxRange <= 0) maxRange = 1.5f;
-					if (dist > maxRange) { nudgeR(ActionRejectCode::PickupOutOfRange); break; }
+					if (dist > maxRange) {
+						std::string itemType = src->getProp<std::string>(Prop::ItemType);
+						int cnt = src->getProp<int>(Prop::Count, 1);
+						char buf[256];
+						snprintf(buf, sizeof(buf),
+							"pickup: %d× '%s' (item entity=%u) %.2f blocks away (max %.2f) "
+							"actor@(%.2f,%.2f,%.2f) item@(%.2f,%.2f,%.2f)",
+							cnt, itemType.c_str(), src->id(), dist, maxRange,
+							actor->position.x, actor->position.y, actor->position.z,
+							src->position.x, src->position.y, src->position.z);
+						nudgeR(ActionRejectCode::PickupOutOfRange, buf);
+						break;
+					}
 
 					std::string itemType = src->getProp<std::string>(Prop::ItemType);
 					int count = src->getProp<int>(Prop::Count, 1);
 					if (!actor->inventory->canAccept(itemType, count,
 					                                 actor->def().inventory_capacity)) {
-						nudgeR(ActionRejectCode::ItemNotInInventory);
+						char buf[192];
+						float cap = actor->def().inventory_capacity;
+						snprintf(buf, sizeof(buf),
+							"pickup: inventory can't accept %d× '%s' (cap=%.1f, used=%.1f)",
+							count, itemType.c_str(), cap, actor->inventory->totalValue());
+						nudgeR(ActionRejectCode::ItemNotInInventory, buf);
 						break;
 					}
 					actor->inventory->add(itemType, count);
@@ -239,21 +287,35 @@ void GameServer::resolveActions(float dt) {
 					// Take from another entity's inventory (chest, Creatures, etc.)
 					float dist = glm::length(src->position - actor->position);
 					if (dist > m_wgc.storeRange) {
-						printf("[Server] Relocate/take DENIED (entity %u): %.1f blocks from entity %u (max %.1f)\n",
-							actor->id(), dist, src->id(), m_wgc.storeRange);
+						char buf[160];
+						snprintf(buf, sizeof(buf),
+							"take: %.2f blocks from source=%u (max %.1f)",
+							dist, src->id(), m_wgc.storeRange);
+						printf("[Server] Relocate rejected entity=%u (%s)\n", actor->id(), buf);
 						break;
 					}
 					if (p.itemId.empty()) {
-						printf("[Server] Relocate/take DENIED (entity %u): no itemId specified (cannot take 'all' from entity)\n",
-							actor->id());
-						nudgeR(ActionRejectCode::MissingItemId);
+						nudgeR(ActionRejectCode::MissingItemId,
+							"take: no itemId specified (cannot take 'all' from entity)");
 						break;
 					}
 					int count = std::clamp(p.itemCount, 1, 64);
-					if (!src->inventory->has(p.itemId, count)) { nudgeR(ActionRejectCode::ItemNotInInventory); break; }
+					if (!src->inventory->has(p.itemId, count)) {
+						char buf[160];
+						snprintf(buf, sizeof(buf),
+							"take: source=%u has %d× '%s', asked for %d",
+							src->id(), src->inventory->count(p.itemId), p.itemId.c_str(), count);
+						nudgeR(ActionRejectCode::ItemNotInInventory, buf);
+						break;
+					}
 					if (!actor->inventory->canAccept(p.itemId, count,
 					                                  actor->def().inventory_capacity)) {
-						nudgeR(ActionRejectCode::ItemNotInInventory);
+						char buf[160];
+						snprintf(buf, sizeof(buf),
+							"take: actor inventory can't accept %d× '%s' (cap=%.1f, used=%.1f)",
+							count, p.itemId.c_str(), actor->def().inventory_capacity,
+							actor->inventory->totalValue());
+						nudgeR(ActionRejectCode::ItemNotInInventory, buf);
 						break;
 					}
 
