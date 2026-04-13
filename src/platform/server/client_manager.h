@@ -751,13 +751,11 @@ private:
 		case net::C_HELLO: {
 			// Wire format: [u32 version][str uuid][str displayName][str creatureType]
 			//
-			// The HELLO handler used to call getChunk()+zstd for ~2000 chunks
-			// synchronously (5+ seconds), starving the tick loop and causing
-			// clients to time out. We now enter a Preparing phase: submit every
-			// required chunk to the ChunkGenService worker pool and return
-			// immediately. advancePreparing() drains results each tick and
-			// finalizes the handshake (S_WELCOME/S_INVENTORY/S_READY + entity
-			// spawn) only after all chunks are queued for delivery.
+			// Enters the Preparing phase: submits every required chunk to the
+			// ChunkGenService worker pool and returns immediately so the tick
+			// loop keeps running. advancePreparing() drains results each tick
+			// and finalizes the handshake (S_WELCOME/S_INVENTORY/S_READY +
+			// entity spawn) once all chunks are queued for delivery.
 			client.protocolVersion = rb.readU32();
 			client.supportsZstd    = (client.protocolVersion >= 2);
 			client.name = rb.readString();
@@ -802,9 +800,9 @@ private:
 			client.pendingDisplayName = displayName;
 			client.pendingCreatureType = creatureType;
 
-			// Build the required chunk set around the spawn column. Same shape
-			// as the old synchronous path: feet + feet-1 + (2R+1)² horizontal
-			// over dy=[-1..2]. Dedup via a temporary sentChunks reservation.
+			// Build the required chunk set around the spawn column:
+			// feet + feet-1 + (2R+1)² horizontal over dy=[-1..2]. Dedup via a
+			// temporary sentChunks reservation.
 			ChunkPos feetCp = client.lastChunkPos;
 			std::vector<ChunkPos> required;
 			auto tryAdd = [&](ChunkPos p) {
@@ -938,24 +936,9 @@ private:
 		}
 	}
 
-	void queueChunk(ConnectedClient& cc, ChunkPos pos
-#ifdef MODCRAFT_PERF
-		, double* outGenMs = nullptr, int* outGenCount = nullptr,
-		  double* outCompMs = nullptr, int* outCompCount = nullptr
-#endif
-	) {
+	void queueChunk(ConnectedClient& cc, ChunkPos pos) {
 		if (cc.sentChunks.count(pos)) return;
-#ifdef MODCRAFT_PERF
-		auto t_g0 = std::chrono::steady_clock::now();
-#endif
 		Chunk* chunk = m_server.world().getChunk(pos);
-#ifdef MODCRAFT_PERF
-		if (outGenMs) {
-			*outGenMs += std::chrono::duration<double, std::milli>(
-				std::chrono::steady_clock::now() - t_g0).count();
-			(*outGenCount)++;
-		}
-#endif
 		if (!chunk) return;
 
 		// Build uncompressed payload: [i32 cx][i32 cy][i32 cz][u32×4096]
@@ -969,9 +952,6 @@ private:
 		std::vector<uint8_t> payload;
 
 		if (cc.supportsZstd) {
-#ifdef MODCRAFT_PERF
-			auto t_c0 = std::chrono::steady_clock::now();
-#endif
 			size_t srcSize  = cb.size();
 			size_t dstBound = ZSTD_compressBound(srcSize);
 			payload.resize(dstBound);
@@ -981,13 +961,6 @@ private:
 				1 /* level 1 = fastest */);
 			payload.resize(compSize);
 			msgType = net::S_CHUNK_Z;
-#ifdef MODCRAFT_PERF
-			if (outCompMs) {
-				*outCompMs += std::chrono::duration<double, std::milli>(
-					std::chrono::steady_clock::now() - t_c0).count();
-				(*outCompCount)++;
-			}
-#endif
 
 			// Log compression ratio once per server run
 			static bool s_logged = false;
