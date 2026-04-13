@@ -103,6 +103,14 @@ struct WorldPyConfig {
 	float chestOffsetX           = 5.0f;
 	float chestOffsetZ           = 0.0f;
 
+	// Preparing-phase chunk radius (HELLO handshake). Read by ClientManager
+	// to size the (2R+1)² chunk grid preloaded around spawn before the
+	// player is admitted to the world. Post-spawn streaming still uses the
+	// engine's STREAM_R/STREAM_FAR_R constants (fog-bound). A smaller value
+	// here means faster joins; a larger value means more world visible at
+	// spawn. Default 11 mirrors the historical STREAM_R behavior.
+	int   preloadRadiusChunks    = 11;
+
 	// Mobs
 	//   spawnAt: optional "monument" | "barn" | "portal" string from Python.
 	//     Translated to WorldGenConfig::SpawnAnchor in server init. Empty

@@ -811,7 +811,10 @@ private:
 			};
 			tryAdd(feetCp);
 			tryAdd({feetCp.x, feetCp.y - 1, feetCp.z});
-			const int R = ConnectedClient::STREAM_R;
+			// Prep radius is data-driven per world template (preload_radius_chunks
+			// in artifacts/worlds/*.py). Falls back to STREAM_R = 11 via the
+			// WorldPyConfig default. Post-spawn streaming still uses STREAM_R.
+			const int R = m_server.world().getTemplate().pyConfig().preloadRadiusChunks;
 			for (int dy = -1; dy <= 2; dy++)
 			for (int dz = -R; dz <= R; dz++)
 			for (int dx = -R; dx <= R; dx++)

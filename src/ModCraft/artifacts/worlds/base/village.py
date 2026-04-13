@@ -21,6 +21,11 @@ world = {
     "name":        "Village",
     "description": "Rolling hills, a village with houses, villagers and animals nearby.",
 
+    # Prep-phase chunk preload radius. Village world is larger than flat and
+    # the player should see terrain to the village center at spawn, so load
+    # the full fog-bound radius (clamped to [1, 24]).
+    "preload_radius_chunks": 11,
+
     # ── Terrain ────────────────────────────────────────────────
     # Continental-style terrain: large flat plains separated by gradual hills.
     # Amplitudes and scales are tuned so most terrain is 0-12 blocks above

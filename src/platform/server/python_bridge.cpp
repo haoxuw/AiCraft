@@ -739,6 +739,12 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			out.chestOffsetZ = getFloat(c, "offset_z", out.chestOffsetZ);
 		}
 
+		// Preparing-phase preload radius (in chunks). Clamp to sane bounds
+		// so a typo can't stall the server with a 10k-chunk grid.
+		out.preloadRadiusChunks = getInt(w, "preload_radius_chunks", out.preloadRadiusChunks);
+		if (out.preloadRadiusChunks < 1)  out.preloadRadiusChunks = 1;
+		if (out.preloadRadiusChunks > 24) out.preloadRadiusChunks = 24;
+
 		// portal — default true; set "portal": False to disable the temple arch.
 		if (w.contains("portal") && !w["portal"].is_none()) {
 			py::object p = w["portal"];

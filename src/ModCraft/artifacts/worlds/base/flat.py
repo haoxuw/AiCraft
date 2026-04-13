@@ -14,6 +14,11 @@ world = {
     "name":        "Flat World",
     "description": "Flat grass plane with a small village and animals.",
 
+    # Prep-phase chunk preload radius. A flat world is trivial to generate,
+    # so a smaller radius here keeps joins snappy while post-spawn streaming
+    # fills in the rest (clamped to [1, 24]).
+    "preload_radius_chunks": 6,
+
     # ── Terrain ────────────────────────────────────────────────
     "terrain": {
         "type":      "flat",
