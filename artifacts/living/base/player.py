@@ -18,5 +18,4 @@ living = {
 
     "walk_speed": 8.0,
     "run_speed": 20.0,
-    "max_hp": 20,
 }

@@ -29,7 +29,6 @@ living = {
     "gravity": 1.0,
     "eye_height": 0.55,
     "jump_velocity": 6.5,
-    "max_hp": 8,
 
     "primary_color": [1.0, 0.85, 0.30],   # golden — stands out from white chickens
 }

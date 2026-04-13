@@ -225,6 +225,11 @@ void GameServer::resolveActions(float dt) {
 
 					std::string itemType = src->getProp<std::string>(Prop::ItemType);
 					int count = src->getProp<int>(Prop::Count, 1);
+					if (!actor->inventory->canAccept(itemType, count,
+					                                 actor->def().inventory_capacity)) {
+						nudgeR(ActionRejectCode::ItemNotInInventory);
+						break;
+					}
 					actor->inventory->add(itemType, count);
 					src->removed = true;
 
@@ -246,6 +251,11 @@ void GameServer::resolveActions(float dt) {
 					}
 					int count = std::clamp(p.itemCount, 1, 64);
 					if (!src->inventory->has(p.itemId, count)) { nudgeR(ActionRejectCode::ItemNotInInventory); break; }
+					if (!actor->inventory->canAccept(p.itemId, count,
+					                                  actor->def().inventory_capacity)) {
+						nudgeR(ActionRejectCode::ItemNotInInventory);
+						break;
+					}
 
 					src->inventory->remove(p.itemId, count);
 					actor->inventory->add(p.itemId, count);

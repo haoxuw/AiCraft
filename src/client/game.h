@@ -189,6 +189,7 @@ private:
 
 	// Startup flags
 	bool m_skipMenu = false;   // --skip-menu: skip main menu, start survival world directly
+	bool m_logOnly  = false;   // --log-only: hidden window, event log to /tmp (forces --skip-menu)
 	int  m_skipMenuTemplate = 1;  // --template N with --skip-menu: world template index (default village)
 
 	// Screenshots (F2 manual, or external trigger via /tmp/modcraft_screenshot_request)
@@ -258,6 +259,10 @@ private:
 
 	// Last-seen goal per entity — used to log goal-change lines to the in-game log
 	std::unordered_map<EntityId, std::string> m_entityGoals;
+
+	// Last-seen inventory per entity — used to derive pickup/drop/deposit events
+	// from S_INVENTORY deltas. Logged category = INV.
+	std::unordered_map<EntityId, std::unordered_map<std::string,int>> m_prevInv;
 
 	// Damage flash timer: entity flashes red for this many seconds after taking a hit
 	std::unordered_map<EntityId, float> m_damageFlash;

@@ -49,6 +49,24 @@ inline float getMaterialValue(const std::string& typeId) {
 		{"base:boots",     10.0f},
 		{"base:cape",       8.0f},
 		{"base:potion",     5.0f},
+		// Living entities — value is also the entity's inventory capacity
+		// (sum of material values the entity can carry must be ≤ this).
+		// Living entities — value is simultaneously:
+		//   (a) the entity's inventory capacity (sum of carried items ≤ value)
+		//   (b) the entity's max HP
+		// Keep these in sync with artifacts/living/*.py display-only data.
+		{"base:player",       128.0f},
+		{"base:villager",      20.0f},
+		{"base:dog",           15.0f},
+		{"base:cat",            8.0f},
+		{"base:pig",           10.0f},
+		{"base:chicken",        5.0f},
+		{"base:brave_chicken",  8.0f},
+		{"base:crewmate",      20.0f},
+		{"base:giant",         80.0f},
+		{"base:knight",        40.0f},
+		{"base:mage",          18.0f},
+		{"base:skeleton",      22.0f},
 	};
 	auto it = s_values.find(typeId);
 	return (it != s_values.end()) ? it->second : 1.0f; // default: 1.0

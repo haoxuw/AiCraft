@@ -3,11 +3,15 @@
 
 namespace modcraft {
 
-bool Window::init(int width, int height, const std::string& title) {
+bool Window::init(int width, int height, const std::string& title, bool hidden) {
 	if (!glfwInit()) {
 		fprintf(stderr, "Failed to init GLFW\n");
 		return false;
 	}
+
+#ifndef __EMSCRIPTEN__
+	if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+#endif
 
 #ifdef __EMSCRIPTEN__
 	// WebGL 2.0 (GL ES 3.0)
@@ -49,8 +53,10 @@ bool Window::init(int width, int height, const std::string& title) {
 	glfwSwapInterval(1);
 
 #ifndef __EMSCRIPTEN__
-	// Native: capture mouse immediately (menu will release it)
-	glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	// Native: capture mouse immediately (menu will release it).
+	// Hidden (headless) window never captures — there is no interactive mouse.
+	if (!hidden)
+		glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 #endif
 	// Web: don't capture here -- pointer lock requires user gesture.
 	// The game captures when entering play mode via a click.

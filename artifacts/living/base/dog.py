@@ -18,7 +18,6 @@ living = {
     "gravity": 1.0,
     "eye_height": 0.60,
     "jump_velocity": 9.0,
-    "max_hp": 15,
 
     "primary_color": [0.75, 0.55, 0.35],
 

@@ -1,4 +1,5 @@
 #include "client/game.h"
+#include "client/game_logger.h"
 #include "server/python_bridge.h"
 #include <cstring>
 #include <cstdio>
@@ -10,17 +11,25 @@
 int main(int argc, char** argv) {
 	setvbuf(stdout, nullptr, _IONBF, 0); // unbuffered stdout
 
+	bool logOnly = false;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
 			printf("ModCraft — voxel game (singleplayer)\n\n"
 			       "Usage: %s [options]\n"
 			       "  --skip-menu       Start game directly (skip menu)\n"
+			       "  --log-only        Headless: no window, stream WoW-style events\n"
+			       "                    to stdout and /tmp/modcraft_game.log\n"
 			       "  --host HOST       Connect to server instead of local\n"
 			       "  --port PORT       Server port (default 7777)\n"
 			       "  --help, -h        Show this help\n", argv[0]);
 			return 0;
 		}
+		if (strcmp(argv[i], "--log-only") == 0) logOnly = true;
 	}
+
+	// Set up the persistent event log BEFORE any subsystem might want to emit.
+	// Every session truncates /tmp/modcraft_game.log (prior session → .prev).
+	modcraft::GameLogger::instance().init(/*echoStdout=*/logOnly);
 #ifdef __EMSCRIPTEN__
 	// Web: set up canvas for keyboard input and pointer lock
 	EM_ASM({

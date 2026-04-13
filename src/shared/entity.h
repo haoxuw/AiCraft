@@ -62,6 +62,10 @@ struct EntityDef {
 	float eye_height = 0.0f;     // eye position above feet (0 = use collision_box_max.y * 0.75)
 	bool playable = false;        // true = appears in character selection menu (player skins)
 	float pickup_range = 1.5f;   // max distance to pick up items (0 = cannot pickup)
+	// Carry capacity, measured in material-value units (see material_values.h).
+	// The sum of (count × material_value) for all items in this entity's
+	// inventory must be ≤ inventory_capacity. 0 = no capacity (cannot carry).
+	float inventory_capacity = 0.0f;
 
 	// Structure fields (only meaningful when kind == EntityKind::Structure)
 	// Blueprint data (block list, anchor, regen rate) lives in StructureBlueprintManager,

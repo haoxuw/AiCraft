@@ -2,6 +2,7 @@
 #include "shared/block_registry.h"
 #include "server/entity_manager.h"
 #include "shared/constants.h"
+#include "shared/material_values.h"
 
 namespace modcraft {
 
@@ -67,12 +68,13 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		def.gravity_scale = 1.0f;
 		def.walk_speed = 8.0f;
 		def.run_speed = 20.0f;
-		def.max_hp = 20;
+		def.max_hp = (int)getMaterialValue(def.string_id);
 		def.eye_height = 1.9f;
 		def.playable = true;
 		def.pickup_range = 1.5f;
+		def.inventory_capacity = getMaterialValue(def.string_id);
 		def.default_props = {
-			{PR::HP, 20}, {PR::Hunger, 20.0f},
+			{PR::HP, def.max_hp}, {PR::Hunger, 20.0f},
 			{PR::Age, 0.0f}, {PR::WalkDistance, 0.0f},
 		};
 		entities.registerType(def);
@@ -81,7 +83,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	// Animals — all Living, differ by model/stats/behavior
 	auto animal = [&](const char* id, const char* name, const char* model,
 	                   glm::vec3 color, glm::vec3 boxMin, glm::vec3 boxMax,
-	                   float walkSpeed, float runSpeed, int maxHp,
+	                   float walkSpeed, float runSpeed,
 	                   const char* behavior, const char* soundGroup = "",
 	                   const char* texture = "", float soundVol = 0.12f) {
 		EntityDef def;
@@ -98,9 +100,11 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		def.gravity_scale = 1.0f;
 		def.walk_speed = walkSpeed;
 		def.run_speed = runSpeed;
-		def.max_hp = maxHp;
+		def.max_hp = (int)getMaterialValue(id);
+		def.inventory_capacity = getMaterialValue(id);
+		def.pickup_range = def.inventory_capacity > 0.0f ? 1.5f : 0.0f;
 		def.default_props = {
-			{PR::HP, maxHp}, {PR::Age, 0.0f}, {PR::WalkDistance, 0.0f},
+			{PR::HP, def.max_hp}, {PR::Age, 0.0f}, {PR::WalkDistance, 0.0f},
 			{PR::WanderTimer, 0.0f},
 			{PR::BehaviorId, std::string(behavior)},
 		};
@@ -108,27 +112,27 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	};
 
 	animal(LivingName::Pig, "Pig", "pig", {0.9f,0.7f,0.7f},
-		{-0.4f,0,-0.4f},{0.4f,0.9f,0.4f}, 2.0f,5.0f, 10, "woodcutter",
+		{-0.4f,0,-0.4f},{0.4f,0.9f,0.4f}, 2.0f,5.0f, "woodcutter",
 		"creature_pig", "pig.png", 0.15f);
 
 	animal(LivingName::Chicken, "Chicken", "chicken", {0.95f,0.95f,0.90f},
-		{-0.2f,0,-0.2f},{0.2f,0.6f,0.2f}, 2.5f,6.0f, 5, "peck",
+		{-0.2f,0,-0.2f},{0.2f,0.6f,0.2f}, 2.5f,6.0f, "peck",
 		"creature_chicken", "chicken.png", 0.12f);
 
 	animal(LivingName::BraveChicken, "Brave Chicken", "chicken", {1.0f,0.85f,0.30f},
-		{-0.2f,0,-0.2f},{0.2f,0.6f,0.2f}, 3.0f,7.0f, 8, "brave_chicken",
+		{-0.2f,0,-0.2f},{0.2f,0.6f,0.2f}, 3.0f,7.0f, "brave_chicken",
 		"creature_chicken", "chicken.png", 0.15f);
 
 	animal(LivingName::Cat, "Cat", "cat", {0.90f,0.55f,0.20f},
-		{-0.2f,0,-0.2f},{0.2f,0.5f,0.2f}, 3.5f,7.0f, 8, "prowl",
+		{-0.2f,0,-0.2f},{0.2f,0.5f,0.2f}, 3.5f,7.0f, "prowl",
 		"creature_cat", "", 0.10f);
 
 	animal(LivingName::Dog, "Dog", "dog", {0.75f,0.55f,0.35f},
-		{-0.3f,0,-0.3f},{0.3f,0.7f,0.3f}, 4.0f,8.0f, 15, "follow",
+		{-0.3f,0,-0.3f},{0.3f,0.7f,0.3f}, 4.0f,8.0f, "follow",
 		"creature_dog", "", 0.15f);
 
 	animal(LivingName::Villager, "Villager", "villager", {0.85f,0.75f,0.60f},
-		{-0.3f,0,-0.3f},{0.3f,1.8f,0.3f}, 2.5f,5.0f, 20, "woodcutter",
+		{-0.3f,0,-0.3f},{0.3f,1.8f,0.3f}, 2.5f,5.0f, "woodcutter",
 		"creature_villager", "", 0.12f);
 
 	// Structure entities

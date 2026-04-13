@@ -99,6 +99,26 @@ class InventoryView(BaseModel):
         """How many of item_id the entity is carrying."""
         return self.items.get(item_id, 0)
 
+    def total_value(self) -> float:
+        """Sum of material values across all items.
+
+        Uses modcraft_engine.material_value() — single source of truth in
+        src/shared/material_values.h. Never hardcode values in Python.
+        """
+        from modcraft_engine import material_value
+        return sum(material_value(k) * v for k, v in self.items.items() if v > 0)
+
+    def can_accept(self, item_id: str, count: int, capacity: float) -> bool:
+        """Would adding (item × count) keep total value ≤ capacity?
+
+        Mirrors C++ Inventory::canAccept (shared/inventory.h) — same logic,
+        same values (via modcraft_engine.material_value).
+        """
+        from modcraft_engine import material_value
+        if capacity <= 0:
+            return False
+        return self.total_value() + material_value(item_id) * count <= capacity + 1e-4
+
     def __bool__(self) -> bool:
         return bool(self.items)
 
@@ -130,6 +150,7 @@ class SelfEntity(BaseModel):
     yaw:        float
     hp:         int
     walk_speed: float
+    inventory_capacity: float = 0.0
     on_ground:  bool
     inventory:  InventoryView
 
@@ -157,6 +178,7 @@ class SelfEntity(BaseModel):
             yaw        = raw["yaw"],
             hp         = raw["hp"],
             walk_speed = raw["walk_speed"],
+            inventory_capacity = raw.get("inventory_capacity", 0.0),
             on_ground  = raw["on_ground"],
             inventory  = InventoryView(items=dict(raw.get("inventory", {}))),
             props=raw,

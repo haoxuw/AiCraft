@@ -313,7 +313,15 @@ void Game::updateItemPickupAnimations(float dt) {
 			if (e.removed) return;
 			if (m_pendingPickups.count(e.id())) return;
 			float dist = glm::length(e.position - pe->position);
-			if (dist < pickupRange) {
+			if (dist >= pickupRange) return;
+			// Shared capacity check — same logic the server will run on
+			// its side. If we can't carry it, skip so the item stays visible.
+			std::string itemType = e.getProp<std::string>(Prop::ItemType);
+			int count = e.getProp<int>(Prop::Count, 1);
+			if (pe->inventory && !pe->inventory->canAccept(itemType, count,
+			                                                pe->def().inventory_capacity))
+				return;
+			{
 				ActionProposal p;
 				p.type = ActionProposal::Relocate;
 				p.actorId = playerId;
@@ -322,7 +330,6 @@ void Game::updateItemPickupAnimations(float dt) {
 				m_pendingPickups.insert(e.id());
 
 				// Start fly-toward-player animation (optimistic, client-side)
-				std::string itemType = e.getProp<std::string>(Prop::ItemType);
 				const BlockDef* bdef = srv.blockRegistry().find(itemType);
 				glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
 				// Model key for rendering during fly animation
@@ -333,7 +340,6 @@ void Game::updateItemPickupAnimations(float dt) {
 				std::string name = mk;
 				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
 				for (auto& c : name) if (c == '_') c = ' ';
-				int count = e.getProp<int>(Prop::Count, 1);
 				m_pickupAnims.push_back({e.id(), e.position, color, name, mk, count, 0, 0.35f});
 			}
 		});

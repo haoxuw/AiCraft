@@ -1,5 +1,6 @@
 #include "server/python_bridge.h"
 #include "server/structure_blueprint.h"
+#include "shared/material_values.h"
 #include <fstream>
 #include <iterator>
 
@@ -181,6 +182,12 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	}, py::arg("from_item") = "", py::arg("from_count") = 1,
 	   py::arg("to_item") = "", py::arg("to_count") = 1,
 	   py::arg("convert_from") = PyContainer{}, py::arg("convert_into") = PyContainer{});
+	m.def("material_value", [](const std::string& itemId) {
+		return getMaterialValue(itemId);
+	}, py::arg("item_id"),
+	   "Lookup material value for an item/block. Single source of truth "
+	   "is src/shared/material_values.h — never hardcode values in Python.");
+
 	m.def("Interact", [](int x, int y, int z) {
 		PyAction a; a.type = "interact"; a.x = (float)x; a.y = (float)y; a.z = (float)z; return a;
 	}, py::arg("x"), py::arg("y"), py::arg("z"));
@@ -414,8 +421,19 @@ except NameError: pass
 static PlanStep pyActionToPlanStep(const PyAction& pa) {
 	if (pa.type == "move")
 		return PlanStep::move({pa.x, pa.y, pa.z}, pa.speed);
-	if (pa.type == "convert")
-		return PlanStep::harvest({pa.x, pa.y, pa.z});
+	if (pa.type == "convert") {
+		// Target block position is carried in convert_from (kind=Block).
+		// Fall back to (x,y,z) for legacy callers that set it directly.
+		glm::vec3 pos = (pa.convert_from.kind == 3)
+			? glm::vec3(pa.convert_from.x, pa.convert_from.y, pa.convert_from.z)
+			: glm::vec3(pa.x, pa.y, pa.z);
+		PlanStep s = PlanStep::harvest(pos);
+		// Carry the output item so the executor knows what to place in
+		// the actor's inventory. An empty to_item means "just destroy".
+		s.itemId    = pa.to_item;
+		s.itemCount = pa.to_count;
+		return s;
+	}
 	if (pa.type == "relocate")
 		return PlanStep::relocate(pyContainerToC(pa.relocate_from),
 		                          pyContainerToC(pa.relocate_to),
@@ -480,6 +498,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 		pySelf["x"] = self.position.x; pySelf["y"] = self.position.y; pySelf["z"] = self.position.z;
 		pySelf["yaw"] = self.yaw; pySelf["hp"] = self.hp;
 		pySelf["walk_speed"] = self.walkSpeed; pySelf["on_ground"] = self.onGround;
+		pySelf["inventory_capacity"] = self.inventoryCapacity;
 		py::dict pyInv;
 		for (auto& [itemId, count] : self.inventory)
 			pyInv[itemId.c_str()] = count;

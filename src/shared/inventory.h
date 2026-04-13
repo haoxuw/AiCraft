@@ -14,6 +14,8 @@
 #include <map>
 #include <vector>
 
+#include "material_values.h"
+
 namespace modcraft {
 
 // Equipment slots — what a character can wear.
@@ -98,6 +100,25 @@ public:
 		for (auto& [_, cnt] : m_items)
 			if (cnt > 0) n++;
 		return n;
+	}
+
+	// Sum of material-values across all items + equipped wear (worn items
+	// still count — the entity is carrying their mass). See material_values.h.
+	float totalValue() const {
+		float v = 0.0f;
+		for (auto& [id, cnt] : m_items)
+			if (cnt > 0) v += getMaterialValue(id) * (float)cnt;
+		for (auto& id : m_equipped)
+			if (!id.empty()) v += getMaterialValue(id);
+		return v;
+	}
+
+	// Would adding (item × count) keep totalValue ≤ capacity?
+	// capacity == 0 is treated as "no carry allowed".
+	bool canAccept(const std::string& itemId, int count, float capacity) const {
+		if (capacity <= 0.0f) return false;
+		float cost = getMaterialValue(itemId) * (float)count;
+		return totalValue() + cost <= capacity + 1e-4f;
 	}
 
 	// Clear all items.

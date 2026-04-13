@@ -50,6 +50,7 @@ public:
 		m_time += dt;
 		auto t0 = Clock::now();
 		discoverEntities();
+		phaseAutoPickup();
 		auto t1 = Clock::now();
 		phaseDecide();
 		drainWorkerResults();
@@ -197,6 +198,55 @@ private:
 		}
 	}
 
+	// ── Phase: AUTO-PICKUP ───────────────────────────────────────────────
+	//
+	// Every tick, for each controlled agent, scan nearby ItemEntities and
+	// send a Relocate proposal to pick them up when the agent has capacity.
+	// The *server* runs the same canAccept() check (shared/inventory.h) to
+	// validate, so this is purely a client-side intent — no authority.
+	// Behaviors don't need to emit pickup actions themselves; the engine
+	// handles it uniformly across all Living types.
+
+	void phaseAutoPickup() {
+		// Throttle: at most once per 0.25s per agent — pickup rate is bounded
+		// by server validation anyway, but this avoids spamming proposals.
+		m_autoPickupTimer += 1.0f / 60.0f;
+		if (m_autoPickupTimer < 0.25f) return;
+		m_autoPickupTimer = 0.0f;
+
+		for (auto& [eid, state] : m_agents) {
+			Entity* actor = m_server.getEntity(eid);
+			if (!actor || actor->removed || !actor->inventory) continue;
+			float cap = actor->def().inventory_capacity;
+			if (cap <= 0.0f) continue;
+			float range = actor->def().pickup_range > 0.0f
+			              ? actor->def().pickup_range : 1.5f;
+
+			EntityId bestItemId = 0;
+			float    bestDist2  = range * range;
+			m_server.forEachEntity([&](Entity& e) {
+				if (e.removed) return;
+				if (e.typeId() != ItemName::ItemEntity) return;
+				glm::vec3 d = e.position - actor->position;
+				float d2 = glm::dot(d, d);
+				if (d2 > bestDist2) return;
+				std::string itemType = e.getProp<std::string>(Prop::ItemType);
+				int count = e.getProp<int>(Prop::Count, 1);
+				if (!actor->inventory->canAccept(itemType, count, cap)) return;
+				bestDist2  = d2;
+				bestItemId = e.id();
+			});
+			if (!bestItemId) continue;
+
+			ActionProposal p;
+			p.type = ActionProposal::Relocate;
+			p.actorId = eid;
+			p.relocateFrom = Container::entity(bestItemId);
+			p.relocateTo   = Container::self();
+			m_server.sendAction(p);
+		}
+	}
+
 	// ── Phase 1: DECIDE ─────────────────────────────────────────────────
 
 	void phaseDecide() {
@@ -255,17 +305,64 @@ private:
 		ServerInterface* srv = &m_server;
 		req.blockQuery = [srv](int x, int y, int z) -> std::string {
 			auto& chunks = srv->chunks();
-			ChunkPos cp;
-			cp.x = (x < 0 ? (x - 15) : x) / 16;
-			cp.y = 0;
-			cp.z = (z < 0 ? (z - 15) : z) / 16;
-			auto* chunk = chunks.getChunk(cp);
+			ChunkPos cp = worldToChunk(x, y, z);
+			auto* chunk = chunks.getChunkIfLoaded(cp);
 			if (!chunk) return "base:air";
-			int lx = ((x % 16) + 16) % 16;
-			int lz = ((z % 16) + 16) % 16;
-			if (y < 0 || y >= 256) return "base:air";
-			BlockId bid = chunk->get(lx, y, lz);
+			int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			BlockId bid = chunk->get(lx, ly, lz);
 			return srv->blockRegistry().get(bid).string_id;
+		};
+
+		// Scan loaded chunks around `origin` for blocks matching `typeId`,
+		// returning up to `maxResults` nearest matches (Chebyshev-bounded
+		// by maxDist on XZ). Runs on the worker thread; stale reads are
+		// acceptable per project policy (visual-only race).
+		req.scanBlocks = [srv](const std::string& typeId, glm::vec3 origin,
+		                       float maxDist, int maxResults)
+		    -> std::vector<BlockSample> {
+			std::vector<BlockSample> out;
+			auto& reg = srv->blockRegistry();
+			BlockId want = reg.getId(typeId);
+			if (want == BLOCK_AIR) return out;
+			auto& chunks = srv->chunks();
+			int cxMin = (int)std::floor((origin.x - maxDist) / (float)CHUNK_SIZE);
+			int cxMax = (int)std::floor((origin.x + maxDist) / (float)CHUNK_SIZE);
+			int czMin = (int)std::floor((origin.z - maxDist) / (float)CHUNK_SIZE);
+			int czMax = (int)std::floor((origin.z + maxDist) / (float)CHUNK_SIZE);
+			int cyMin = (int)std::floor((origin.y - maxDist) / (float)CHUNK_SIZE);
+			int cyMax = (int)std::floor((origin.y + maxDist) / (float)CHUNK_SIZE);
+			float maxDist2 = maxDist * maxDist;
+			for (int cx = cxMin; cx <= cxMax; cx++)
+			for (int cz = czMin; cz <= czMax; cz++)
+			for (int cy = cyMin; cy <= cyMax; cy++) {
+				Chunk* chunk = chunks.getChunkIfLoaded({cx, cy, cz});
+				if (!chunk) continue;
+				for (int ly = 0; ly < CHUNK_SIZE; ly++)
+				for (int lz = 0; lz < CHUNK_SIZE; lz++)
+				for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+					if (chunk->get(lx, ly, lz) != want) continue;
+					int wx = cx * CHUNK_SIZE + lx;
+					int wy = cy * CHUNK_SIZE + ly;
+					int wz = cz * CHUNK_SIZE + lz;
+					float dx = (wx + 0.5f) - origin.x;
+					float dz = (wz + 0.5f) - origin.z;
+					float d2 = dx*dx + dz*dz;
+					if (d2 > maxDist2) continue;
+					BlockSample s;
+					s.typeId = typeId;
+					s.x = wx; s.y = wy; s.z = wz;
+					s.distance = std::sqrt(d2);
+					out.push_back(s);
+				}
+			}
+			std::sort(out.begin(), out.end(),
+			          [](const BlockSample& a, const BlockSample& b) {
+			              return a.distance < b.distance;
+			          });
+			if ((int)out.size() > maxResults) out.resize(maxResults);
+			return out;
 		};
 
 		m_decideWorker.push(std::move(req));
@@ -328,6 +425,7 @@ private:
 		s.hp        = e.hp();
 		s.maxHp     = e.def().max_hp;
 		s.walkSpeed = e.def().walk_speed;
+		s.inventoryCapacity = e.def().inventory_capacity;
 		s.onGround  = e.onGround;
 		if (e.inventory) s.inventory = e.inventory->items();
 		s.props.reserve(e.props().size());
@@ -516,9 +614,14 @@ private:
 	}
 
 	StepOutcome evaluateRelocate(PlanStep& /*step*/, Entity& /*entity*/,
-	                             AgentState::StepWatch& /*watch*/, float /*dt*/) {
-		// Relocate is one-shot: applyStep sends the proposal, step advances
-		// unconditionally on the next tick via Success.
+	                             AgentState::StepWatch& watch, float /*dt*/) {
+		// First evaluation: return InProgress so applyStep fires once and sends
+		// the Relocate ActionProposal. modeDetected latches "already applied";
+		// the next evaluation returns Success to advance past this step.
+		if (!watch.modeDetected) {
+			watch.modeDetected = true;
+			return StepOutcome::InProgress;
+		}
 		return StepOutcome::Success;
 	}
 
@@ -567,8 +670,13 @@ private:
 		ActionProposal p;
 		p.type = ActionProposal::Convert;
 		p.actorId = eid;
-		p.fromItem = ""; p.fromCount = 0;
-		p.toItem = ""; p.toCount = 0;
+		// fromItem mirrors toItem: the value-conservation check on the
+		// server needs the input side to have at least the output's value.
+		// Harvesting a block of type X to produce item X is value-preserving.
+		p.fromItem  = step.itemId;
+		p.fromCount = step.itemCount > 0 ? step.itemCount : 1;
+		p.toItem    = step.itemId;
+		p.toCount   = step.itemCount > 0 ? step.itemCount : 1;
 		p.convertFrom = Container::block(glm::ivec3(step.targetPos));
 		p.convertInto = Container::self();
 		m_server.sendAction(p);
@@ -914,6 +1022,7 @@ private:
 	DecisionQueue m_decisionQueue;
 	std::mt19937 m_rng;
 	float m_time = 0;
+	float m_autoPickupTimer = 0.0f;
 	float m_discoveryTimer = 100.0f; // trigger immediate discovery on first tick
 	int m_lastDecidesRun = 0;
 

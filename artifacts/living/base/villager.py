@@ -31,7 +31,6 @@ living = {
     "gravity": 1.0,
     "eye_height": 1.5,
     "jump_velocity": 11.2,
-    "max_hp": 20,
 
     # Character stats (humanoids only — animals omit this)
     "stats": {"strength": 2, "stamina": 3, "agility": 3, "intelligence": 3},

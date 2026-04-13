@@ -177,9 +177,9 @@ model = {
         # bias holds the arm up at shoulder height so the sinusoid oscillates
         # *around* a raised position (not the T-pose rest).
         "chop": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_upper_arm": {"axis": [1, 0, 0], "amp": -35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_forearm":   {"axis": [1, 0, 0], "amp": -35, "bias": -70, "speed": 1.2, "phase": 0},
+            "right_hand":      {"axis": [1, 0, 0], "amp": -35, "bias": -70, "speed": 1.2, "phase": 0},
             "torso":           {"axis": [0, 1, 0], "amp": 8,  "speed": 1.2, "phase": 0},
         },
 

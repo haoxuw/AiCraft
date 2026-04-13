@@ -18,6 +18,7 @@ State machine:
   any     ─► SLEEP    when evening / night begins
 """
 import math
+import random
 
 from modcraft_engine import Move, Convert, Block, scan_blocks, get_block
 from actions import StoreItem, DropItem
@@ -26,7 +27,9 @@ from local_world import SelfEntity, LocalWorld
 from pathfind import Navigator
 from stats import stats
 
-STORE_RANGE  = 1.8   # must be <= server-side StoreItem range check (2.0 blocks)
+STORE_RANGE  = 3.0   # must be <= server-side StoreItem range (5.0 blocks).
+                     # Larger than Navigator's arrive radius (1.5) so the
+                     # villager doesn't get stuck idling next to the chest.
 # Chop is gated on HORIZONTAL distance only (tree height is irrelevant).
 # 1.8 blocks ≈ standing directly adjacent to the target block on any cardinal side.
 CHOP_RANGE   = 1.8
@@ -81,7 +84,6 @@ class WoodcutterBehavior(Behavior):
     # ── State transitions ─────────────────────────────────────────────────────
 
     def _update_state(self, entity: SelfEntity, local_world: LocalWorld):
-        logs     = entity.inventory.count("base:logs")
         is_day   = self.is_morning(local_world) or self.is_afternoon(local_world)
         is_night = self.is_night(local_world) or self.is_evening(local_world)
 
@@ -90,10 +92,14 @@ class WoodcutterBehavior(Behavior):
         elif self._state == self.SLEEP and is_day:
             self._state = self.WORK   # may advance immediately to DEPOSIT below
 
-        # Checked independently so SLEEP→WORK→DEPOSIT can fire in one tick
-        if self._state == self.WORK and logs >= self._collect_goal:
+        # DEPOSIT when the inventory can't fit another log — chop until full,
+        # then return. Uses the same value-capacity logic as pickup validation.
+        cap  = entity.inventory_capacity
+        full = not entity.inventory.can_accept("base:logs", 1, cap)
+        empty = entity.inventory.total_value() <= 0
+        if self._state == self.WORK and full:
             self._state = self.DEPOSIT
-        elif self._state == self.DEPOSIT and logs == 0:
+        elif self._state == self.DEPOSIT and empty:
             self._state = self.WORK
 
     # ── State: Sleep ──────────────────────────────────────────────────────────
@@ -128,16 +134,17 @@ class WoodcutterBehavior(Behavior):
                 self._tree_target = None
                 self._nav.reset()
 
-        # Only scan for a new tree when cache is empty
+        # Randomly target either logs (trunks) or leaves; fall back to the
+        # other type if the preferred one isn't in range.
         if self._tree_target is None:
             stats.inc("scan_blocks")
-            results = scan_blocks("base:leaves", near=self._home,
+            prefer  = "base:leaves" if random.random() < 0.5 else "base:logs"
+            fallback = "base:logs" if prefer == "base:leaves" else "base:leaves"
+            results = scan_blocks(prefer, near=self._home,
                                   max_dist=self._work_radius, max_results=1)
-            label = "leaves"
             if not results:
-                results = scan_blocks("base:logs", near=self._home,
+                results = scan_blocks(fallback, near=self._home,
                                       max_dist=self._work_radius, max_results=1)
-                label = "log"
             if not results:
                 return self._search(entity, local_world, spd)
             t = results[0]
@@ -145,7 +152,7 @@ class WoodcutterBehavior(Behavior):
             self._nav.reset()
 
         tx, ty, tz, tid = self._tree_target
-        label = "leaves" if "leaves" in tid else "log"
+        label = "leaves" if tid == "base:leaves" else "log"
 
         # Horizontal distance to target
         dx = entity.x - (tx + 0.5)
@@ -201,7 +208,13 @@ class WoodcutterBehavior(Behavior):
             print("[woodcutter] entity %d: no chest, dropping %d logs" % (entity.id, logs))
             return DropItem("base:logs", count=logs), "Dropping logs (no chest)"
 
-        dist_to_chest = self.dist2d(entity.x, entity.z, self._chest[0], self._chest[2])
+        # 3D distance — must match the server's glm::length check (storeRange=5.0).
+        # A 2D check passes when the villager is above the chest (e.g. on a tree
+        # canopy or rooftop) but the server still rejects because Y diverges.
+        dx = entity.x - self._chest[0]
+        dy = entity.y - self._chest[1]
+        dz = entity.z - self._chest[2]
+        dist_to_chest = math.sqrt(dx*dx + dy*dy + dz*dz)
 
         if dist_to_chest <= STORE_RANGE:
             stats.inc("deposit", entity.type)

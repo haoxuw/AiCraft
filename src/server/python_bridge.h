@@ -147,6 +147,7 @@ struct EntitySnapshot {
 	int         hp       = 0;
 	int         maxHp    = 0;
 	float       walkSpeed= 0;
+	float       inventoryCapacity = 0;
 	bool        onGround = false;
 	std::vector<std::pair<std::string, int>>       inventory;  // itemId -> count
 	std::vector<std::pair<std::string, PropValue>> props;      // copy of entity props

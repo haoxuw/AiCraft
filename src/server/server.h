@@ -249,6 +249,7 @@ public:
 			for (int m = 0; m < ms.count; m++) {
 				std::unordered_map<std::string, PropValue> extraProps;
 				float ex, ez;
+				float fixedY = a.fixedY;
 				if (a.inside) {
 					int slotIdx = barnSlot++;
 					int gx = slotIdx % 6;
@@ -262,8 +263,17 @@ public:
 					ex = a.cx + std::cos(angle) * radius;
 					ez = a.cz + std::sin(angle) * radius;
 				}
-				if (ms.anchor == SpawnAnchor::Monument && ms.typeId == "base:villager") {
+				// Villagers: always wire home + chest from the template's bed
+				// list (independent of anchor). Also spawn the villager AT its
+				// bed rather than on the ring, so it doesn't land on top of the
+				// monument/roof and get wedged there. This was the root cause
+				// of villagers showing goalText="Searching for trees" forever
+				// in headless debug runs: they couldn't walk off the monument.
+				if (ms.typeId == "base:villager") {
 					if (m < (int)beds.size()) {
+						ex = (float)beds[m].x + 0.5f;
+						ez = (float)beds[m].z + 0.5f;
+						fixedY = (float)beds[m].y;
 						extraProps["home_x"] = beds[m].x;
 						extraProps["home_y"] = beds[m].y;
 						extraProps["home_z"] = beds[m].z;
@@ -275,7 +285,7 @@ public:
 						extraProps["chest_entity_id"] = (int)m_houseChestEntities[m];
 					}
 				}
-				spawnOne(ms, ex, ez, a.fixedY, std::move(extraProps));
+				spawnOne(ms, ex, ez, fixedY, std::move(extraProps));
 			}
 		};
 

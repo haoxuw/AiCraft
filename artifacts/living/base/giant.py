@@ -19,7 +19,6 @@ living = {
     "gravity": 1.0,
     "eye_height": 2.80,
     "jump_velocity": 9.0,
-    "max_hp": 80,
 
     "stats": {"strength": 5, "stamina": 5, "agility": 1, "intelligence": 2},
 

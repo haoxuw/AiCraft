@@ -335,7 +335,7 @@ private:
 		if (!subcat.empty()) e.fields["subcategory"] = subcat;
 
 		// Extract numeric fields
-		for (auto& key : {"max_hp", "walk_speed", "damage", "range", "cooldown", "hardness"}) {
+		for (auto& key : {"walk_speed", "damage", "range", "cooldown", "hardness"}) {
 			std::string val = extract(key);
 			if (!val.empty()) e.fields[key] = val;
 		}

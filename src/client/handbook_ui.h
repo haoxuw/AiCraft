@@ -18,6 +18,7 @@
  */
 
 #include "shared/artifact_registry.h"
+#include "shared/material_values.h"
 #include "client/box_model.h"
 #include "client/model_preview.h"
 #include "client/model.h"
@@ -182,6 +183,17 @@ private:
 		{
 			// Collect displayable properties
 			std::vector<std::pair<std::string, std::string>> displayProps;
+
+			// Material value — looked up directly from shared/material_values.h.
+			// Single source of truth: everything (items, blocks, entities) has a value.
+			// For living entities, this value also doubles as their inventory capacity.
+			if (!entry->id.empty()) {
+				float v = getMaterialValue(entry->id);
+				char buf[32];
+				snprintf(buf, sizeof(buf), "%g", v);
+				displayProps.push_back({"Material value", buf});
+			}
+
 			for (auto& [key, val] : entry->fields) {
 				// Skip internal/duplicate fields
 				if (key == "name" || key == "id" || key == "description" ||

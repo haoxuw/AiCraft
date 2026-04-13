@@ -1,4 +1,5 @@
 #include "client/game.h"
+#include "client/game_logger.h"
 #include "server/entity_manager.h"
 #include "shared/constants.h"
 #include "client/model_loader.h"
@@ -45,7 +46,16 @@ bool Game::init(int argc, char** argv) {
 		m_execDir = (pos != std::string::npos) ? exe.substr(0, pos) : ".";
 	}
 
-	if (!m_window.init(1600, 900, "ModCraft")) return false;
+	// Early scan for --log-only so the window is created hidden AND we can
+	// force --skip-menu (no GUI to click through). Other flags handled below.
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--log-only") == 0) {
+			m_logOnly = true;
+			m_skipMenu = true;
+		}
+	}
+
+	if (!m_window.init(1600, 900, "ModCraft", m_logOnly)) return false;
 	if (!m_renderer.init("shaders")) return false;
 	if (!m_text.init("shaders")) return false;
 	if (!m_particles.init("shaders")) return false;
@@ -111,6 +121,9 @@ bool Game::init(int argc, char** argv) {
 			}
 			else if (strcmp(argv[i], "--debug-item") == 0 && i + 1 < argc) {
 				dbgCfg.targetItem = argv[++i];
+			}
+			else if (strcmp(argv[i], "--log-only") == 0) {
+				/* handled above */
 			}
 		}
 		if (dbgCfg.active) {
@@ -277,13 +290,28 @@ m_audio.shutdown();
 
 
 void Game::appendLog(const std::string& msg) {
-	// Game-time timestamp: map worldTime [0..1] to HH:MM
+	// Game-time timestamp: map worldTime [0..1] to HH:MM (for the ImGui viewer)
 	int hours = (int)(m_worldTime * 24.0f) % 24;
 	int mins  = (int)(m_worldTime * 24.0f * 60.0f) % 60;
 	char entry[280];
 	snprintf(entry, sizeof(entry), "[%02d:%02d] %s", hours, mins, msg.c_str());
 	m_gameLog.push_back(entry);
 	if (m_gameLog.size() > 200) m_gameLog.pop_front();
+
+	// Tee to the persistent logger. Pick a coarse category from the text so
+	// Claude / external readers can grep. The event derivation sites
+	// (game_render.cpp, network_server hooks) already prefix "<entity>: <goal>"
+	// for decisions and "<name> took N damage|died" for combat.
+	const char* cat = "EVENT";
+	if      (msg.find(" died")            != std::string::npos) cat = "DEATH";
+	else if (msg.find(" damage")          != std::string::npos) cat = "COMBAT";
+	else if (msg.find("Picked up")        != std::string::npos) cat = "INV";
+	else if (msg.find("Dropped")          != std::string::npos) cat = "INV";
+	else if (msg.find("Deposited")        != std::string::npos) cat = "INV";
+	else if (msg.find("broke ")           != std::string::npos) cat = "ACTION";
+	else if (msg.find("placed ")          != std::string::npos) cat = "ACTION";
+	else if (msg.find(": ")               != std::string::npos) cat = "DECIDE";
+	GameLogger::instance().emit(cat, "%s", msg.c_str());
 }
 
 // ============================================================
@@ -731,6 +759,11 @@ void Game::setupAfterConnect(GameState targetState) {
 			ft.text        = name;
 			ft.value       = 1.0f;
 			m_floatText.add(ft);
+			// Log: ACTION entry (category derived from "broke ")
+			char buf[160];
+			snprintf(buf, sizeof(buf), "broke %s @(%d,%d,%d)",
+				blockName.c_str(), (int)pos.x, (int)pos.y, (int)pos.z);
+			appendLog(buf);
 		},
 		// onBlockPlace: play placement sound (sound_place field from BlockDef)
 		[this](glm::vec3 pos, const std::string& soundPlace) {
@@ -744,12 +777,43 @@ void Game::setupAfterConnect(GameState targetState) {
 	);
 
 	// Repopulate the client-only hotbar whenever the server pushes a fresh
-	// inventory snapshot for the local player.
+	// inventory snapshot for the local player. Also log inventory deltas
+	// for every entity (so we can see "woodcutter picked up base:logs ×3"
+	// and "woodcutter deposited base:logs ×5" in the headless log stream).
 	m_server->setInventoryCallback([this](EntityId eid) {
-		if (!m_server || eid != m_server->localPlayerId()) return;
-		Entity* pe = m_server->getEntity(eid);
-		if (pe && pe->inventory)
-			m_hotbar.repopulateFrom(*pe->inventory);
+		if (!m_server) return;
+		Entity* ent = m_server->getEntity(eid);
+		if (!ent) return;
+		if (eid == m_server->localPlayerId() && ent->inventory)
+			m_hotbar.repopulateFrom(*ent->inventory);
+
+		// Inventory-delta log. Compare against last snapshot per entity.
+		if (!ent->inventory) return;
+		auto& prev = m_prevInv[eid];
+		std::unordered_map<std::string,int> cur;
+		for (auto& [iid, cnt] : ent->inventory->items()) cur[iid] = cnt;
+		std::string typeName = ent->typeId();
+		auto col = typeName.find(':');
+		if (col != std::string::npos) typeName = typeName.substr(col + 1);
+		if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
+		auto diff = [&](const std::string& iid, int delta) {
+			char buf[160];
+			const char* verb = delta > 0 ? "Picked up" : "Dropped";
+			int n = delta > 0 ? delta : -delta;
+			snprintf(buf, sizeof(buf), "%s #%u %s %s x%d",
+				typeName.c_str(), eid, verb, iid.c_str(), n);
+			appendLog(buf);
+		};
+		for (auto& [iid, cnt] : cur) {
+			int was = 0;
+			auto it = prev.find(iid);
+			if (it != prev.end()) was = it->second;
+			if (cnt != was) diff(iid, cnt - was);
+		}
+		for (auto& [iid, was] : prev) {
+			if (cur.find(iid) == cur.end() && was != 0) diff(iid, -was);
+		}
+		prev.swap(cur);
 	});
 
 	m_state = targetState;
