@@ -1,6 +1,16 @@
 #pragma once
 
+// MoveStuck logging — per-entity, written to /tmp/modcraft_entity_<id>.log.
+//
+// Many detection sites (server collision clamp, agent stuck, client/server
+// snap) can fire for the same entity within the same second. Routing each
+// entity's diagnostics into its own file keeps the main game log clean
+// while preserving full detail when you want to investigate one eid. The
+// per-entity cooldown still applies so a single flailing entity doesn't
+// overrun its own file either.
+
 #include "types.h"
+#include "entity_log.h"
 
 #include <chrono>
 #include <cstdarg>
@@ -11,12 +21,9 @@
 
 namespace modcraft {
 
-// Per-entity cooldown for [MoveStuck] diagnostic logs. Many detection sites
-// (server collision clamp, agent stuck, client/server snap) can all fire for
-// the same entity within the same second; without this gate the console is
-// unreadable. First call for an entity logs; subsequent calls within
-// kMoveStuckCooldownSec are dropped. Cross-site: a Clamp log silences an
-// Agent-Stuck log for the same entity for 10 min.
+// Per-entity cooldown. First call for an entity within the window logs;
+// subsequent calls are dropped. Cross-site: a Clamp log silences an
+// Agent-Stuck log for the same entity for the window duration.
 constexpr double kMoveStuckCooldownSec = 600.0;
 
 inline bool moveStuckShouldLog(EntityId eid) {
@@ -31,15 +38,14 @@ inline bool moveStuckShouldLog(EntityId eid) {
 	return true;
 }
 
-// Caller supplies site tag ("Clamp", "Agent-Stuck", ...), a short reason
-// string, and a preformatted detail body. Emits a single line:
-//   [MoveStuck:<tag>] eid=# reason="..." <detail>
+// Caller supplies site tag ("Clamp", "Agent-Stuck", ...), a short reason,
+// and preformatted detail. Writes one line to the per-entity log:
+//   [MoveStuck:<tag>] reason="..." <detail>
 inline void logMoveStuck(EntityId eid, const char* tag,
                          const char* reason, const char* detail) {
 	if (!moveStuckShouldLog(eid)) return;
-	fprintf(stderr, "[MoveStuck:%s] eid=%u reason=\"%s\" %s\n",
-		tag, eid, reason, detail ? detail : "");
-	fflush(stderr);
+	entityLog(eid, "[MoveStuck:%s] reason=\"%s\" %s",
+		tag, reason, detail ? detail : "");
 }
 
 } // namespace modcraft
