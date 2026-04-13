@@ -19,7 +19,8 @@ endif()
 #
 #   src/platform/   Engine: shared types, server loop, agent runtime, renderer
 #   src/ModCraft/   Voxel sandbox game (chunks, blocks, structures)
-#   src/EvolveCraft/ Spore-cell-stage game (cells, fluid field) — stub
+#   src/EvoCraft/   Spore-cell-stage game — C++ server + Godot 4 client
+#                   (supersedes the retired src/EvolveCraft/ OpenGL attempt)
 #
 # Each game's executables run with CWD = $BUILD_DIR, so assets copied into
 # $BUILD_DIR by POST_BUILD are found via "shaders/...", "artifacts/...", etc.
@@ -271,10 +272,6 @@ else()
 	# All executables run with CWD=$BUILD_DIR, so POST_BUILD copies assets
 	# from the per-game source tree into the build dir with the same
 	# "shaders/", "artifacts/", etc. names that the C++ code expects.
-	# NOTE: do NOT rm -rf the shaders dir here — EvolveCraft's POST_BUILD
-	# copies pond/creature/food shaders into the same dir. Clobbering would
-	# break `make game GAME=evolvecraft` on rebuilds where only modcraft's
-	# POST_BUILD fires. copy_directory is idempotent and creates it.
 	add_custom_command(TARGET modcraft POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_SOURCE_DIR}/src/platform/shaders $<TARGET_FILE_DIR:modcraft>/shaders
@@ -291,6 +288,30 @@ else()
 		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/ModCraft/resources $<TARGET_FILE_DIR:modcraft>/
 	)
 
+	# === Model editor (standalone model viewer / snapshot tool) ===
+	# Shared by ModCraft + EvoCraft — renders any .py box model without
+	# launching a world, server, or full client. Snapshot mode writes
+	# 6-angle PPMs to disk (front/three_q/side/back/top/rts) and exits.
+	add_executable(model-editor
+		src/platform/tools/model_editor/main.cpp
+		src/platform/client/shader.h
+		src/platform/client/shader.cpp
+		src/platform/client/model.h
+		src/platform/client/model.cpp
+	)
+	target_include_directories(model-editor PRIVATE src/platform)
+	target_link_libraries(model-editor PRIVATE
+		glfw glad_gl_core_41 glm::glm OpenGL::GL
+	)
+	# Stage the highlight shader so model-editor can find it at runtime.
+	add_custom_command(TARGET model-editor POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:model-editor>/shaders
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			${CMAKE_SOURCE_DIR}/src/platform/shaders/highlight.vert
+			${CMAKE_SOURCE_DIR}/src/platform/shaders/highlight.frag
+			$<TARGET_FILE_DIR:model-editor>/shaders/
+	)
+
 	# modcraft-test needs python/ + artifacts/ in its CWD to load behaviors.
 	add_custom_command(TARGET modcraft-test POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -300,36 +321,11 @@ else()
 	)
 
 	# =================================================================
-	# EvolveCraft — Spore cell stage game.
-	# Singleplayer one-process for now. No network, no embedded Python.
-	# Reuses Window/Shader from src/platform; everything else is in
-	# src/EvolveCraft/.
+	# EvoCraft — Spore cell stage game (C++ server + Godot 4 client).
+	# The client is a standalone Godot project at src/EvoCraft/godot/ and is
+	# NOT built by CMake; see src/EvoCraft/docs/00_PLAN.md for the full plan.
+	# This target is the authoritative TCP server. M1 scope: accept
+	# connections and broadcast a 1Hz tick counter.
 	# =================================================================
-	add_executable(evolvecraft
-		src/EvolveCraft/main.cpp
-		src/platform/client/window.cpp
-		src/platform/client/shader.cpp
-		src/platform/client/text.cpp
-		src/platform/client/particles.cpp
-	)
-	target_include_directories(evolvecraft PRIVATE
-		src/platform
-		src/EvolveCraft
-	)
-	target_link_libraries(evolvecraft PRIVATE
-		glfw glad_gl_core_41 glm::glm OpenGL::GL
-	)
-	# EvolveCraft shader filenames (pond/creature/food) do not collide with
-	# ModCraft's, so we merge them into $BUILD_DIR/shaders without wiping.
-	add_custom_command(TARGET evolvecraft POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:evolvecraft>/shaders
-		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/EvolveCraft/shaders $<TARGET_FILE_DIR:evolvecraft>/shaders
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			${CMAKE_SOURCE_DIR}/src/platform/shaders/text.vert
-			${CMAKE_SOURCE_DIR}/src/platform/shaders/text.frag
-			${CMAKE_SOURCE_DIR}/src/platform/shaders/particle.vert
-			${CMAKE_SOURCE_DIR}/src/platform/shaders/particle.frag
-			$<TARGET_FILE_DIR:evolvecraft>/shaders/
-	)
+	add_subdirectory(src/EvoCraft)
 endif()
