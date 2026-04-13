@@ -15,7 +15,7 @@ import time
 from .protocol import ObserverClient
 
 # Locate the build directory relative to repo root
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 BUILD_DIR = os.path.join(REPO_ROOT, "build")
 SERVER_BIN = os.path.join(BUILD_DIR, "modcraft-server")
 

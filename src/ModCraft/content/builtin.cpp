@@ -112,7 +112,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	};
 
 	animal(LivingName::Pig, "Pig", "pig", {0.9f,0.7f,0.7f},
-		{-0.4f,0,-0.4f},{0.4f,0.9f,0.4f}, 2.0f,5.0f, "woodcutter",
+		{-0.4f,0,-0.4f},{0.4f,0.9f,0.4f}, 2.0f,5.0f, "wander",
 		"creature_pig", "pig.png", 0.15f);
 
 	animal(LivingName::Chicken, "Chicken", "chicken", {0.95f,0.95f,0.90f},

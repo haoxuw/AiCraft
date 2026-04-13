@@ -1711,6 +1711,41 @@ static std::string w3_house_interior_no_buried_terrain() {
 // ================================================================
 // W4: Villagers spawn near the monument; animals spawn inside the barn
 // ================================================================
+// Guards the species→default-behavior mapping in builtin.cpp. If someone
+// edits the behavior string for an animal (e.g. sets pig to "woodcutter"
+// again) pigs would march from the barn to the nearest tree within a
+// second, making it look like "all animals spawned near the monument".
+// Checking EntityDef.default_props[BehaviorId] catches that at registration
+// time, long before the visual symptom appears.
+static std::string w4b_default_behaviors_per_species() {
+    auto srv = makeVillageServer();
+    auto& em = srv->server()->world().entities;
+    struct Expected { const char* typeId; const char* behavior; };
+    const Expected want[] = {
+        {"base:pig",           "wander"},
+        {"base:chicken",       "peck"},
+        {"base:brave_chicken", "brave_chicken"},
+        {"base:cat",           "prowl"},
+        {"base:dog",           "follow"},
+        {"base:villager",      "woodcutter"},
+    };
+    for (auto& w : want) {
+        auto* def = em.getTypeDef(w.typeId);
+        if (!def) { char b[96]; std::snprintf(b, sizeof(b), "no EntityDef for %s", w.typeId); return b; }
+        auto it = def->default_props.find(Prop::BehaviorId);
+        if (it == def->default_props.end())
+            return std::string(w.typeId) + " has no default BehaviorId";
+        const auto* s = std::get_if<std::string>(&it->second);
+        if (!s || *s != w.behavior) {
+            char b[160];
+            std::snprintf(b, sizeof(b), "%s behavior=%s want=%s", w.typeId,
+                s ? s->c_str() : "<non-string>", w.behavior);
+            return b;
+        }
+    }
+    return "";
+}
+
 static std::string w4_mob_spawn_anchors() {
     auto srv = makeVillageServer();
     auto& tmpl = srv->server()->world().getTemplate();
@@ -2770,6 +2805,7 @@ int main() {
 	run("W2: house floor at or above all footprint terrain", w2_floor_at_or_above_all_terrain);
 	run("W3: house interior has no buried terrain blocks",   w3_house_interior_no_buried_terrain);
 	run("W4: villagers near monument, animals in barn",      w4_mob_spawn_anchors);
+	run("W4b: species→default behavior mapping",             w4b_default_behaviors_per_species);
 
 	printf("\n--- Client Reconciliation ---\n");
 	run("R1: owned mobs never go stale (no red lightbulb)", r1_no_stale_entities_in_steady_state);

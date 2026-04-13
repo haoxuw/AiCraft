@@ -120,16 +120,6 @@ private:
 	static constexpr float kDriftTolerance   = 0.15f; // anti-jitter only
 	static constexpr float kCorrectionRate   = 5.0f;  // blocks/sec floor
 	static constexpr float kHardSnapDistance = 16.0f; // gap > 1 chunk → teleport
-	// Tighter snap threshold for the OWNED PLAYER. If the client's prediction
-	// has drifted more than this from the server, snap hard instead of
-	// soft-pulling. Reason: if the server rejected the last clientPos (e.g.
-	// wall-phasing), the soft-pull at `kCorrectionRate` blocks/sec can take
-	// many frames to land, during which the client keeps proposing the same
-	// bad position and the server logs [Server][Reject] on every tick.
-	// A 1m threshold is well above the 0.15m deadband (no jitter) but well
-	// below any legitimate movement-in-one-broadcast (~0.3m at walk speed),
-	// so it fires only on genuine divergence.
-	static constexpr float kLocalPlayerSnapDistance = 1.0f;
 	static constexpr float kMaxExtrapAge     = 0.2f;  // 4× broadcast interval
 	// Entity is "stale" if we haven't received an S_ENTITY update for this many
 	// seconds. Stale entities freeze in place and render with hasError=true so
@@ -170,17 +160,17 @@ private:
 		glm::vec3 diff = predicted - e.position;
 		float dist = glm::length(diff);
 
-		// Owned player: hard-snap above 1m so a server rejection (wall-phase,
-		// tolerance exceeded) lands in a single frame. Soft-pull is still
-		// used for the 0.15m..1m band to keep sub-block nudges smooth.
-		if (dist > kHardSnapDistance ||
-		    dist > kLocalPlayerSnapDistance) {
+		// Owned player: client prediction is authoritative for smooth
+		// motion. We only intervene on genuine teleport-scale gaps
+		// (respawn, forced relocation, major desync). No soft-pull —
+		// it fights forward motion every frame and shakes the camera
+		// in RPG/TPS views. The server-side reject cooldown handles
+		// stale clientPos recovery; anything under kHardSnapDistance
+		// converges naturally as client and server physics run the same
+		// moveAndCollide on the same block data.
+		if (dist > kHardSnapDistance) {
 			e.position = target.position;
 			e.velocity = target.velocity;
-			logDrift(id, e, target, dist);
-		} else if (dist > kDriftTolerance) {
-			float rate = kCorrectionRate + dist;  // 0.5 blocks → 5.5u/s, 5 blocks → 10u/s
-			e.position += diff * std::min(dt * rate, 1.0f);
 			logDrift(id, e, target, dist);
 		}
 
