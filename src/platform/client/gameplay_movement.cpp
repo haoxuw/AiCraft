@@ -251,6 +251,7 @@ void GameplayController::processMovement(float dt, GameState state,
 	// Client-side physics: run the same moveAndCollide() as the server so
 	// movement feels local — walls block, gravity pulls, step-up works.
 	// Server accepts clientPos and normally agrees; it only snaps on large errors.
+	bool clientPosInvalid = false;
 	{
 		auto& chunks = server.chunks();
 		auto& blocks = server.blockRegistry();
@@ -298,7 +299,8 @@ void GameplayController::processMovement(float dt, GameState state,
 		const auto& def = player.def();
 		MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
 		                               def.gravity_scale, def.isLiving(), moveAction.fly);
-		if (isPositionBlocked(solidFn, player.position, mp.halfWidth, mp.height)) {
+		clientPosInvalid = isPositionBlocked(solidFn, player.position, mp.halfWidth, mp.height);
+		if (clientPosInvalid) {
 			player.position = prePos;
 			player.velocity = preVel;
 			player.onGround = preOnGround;
@@ -310,7 +312,12 @@ void GameplayController::processMovement(float dt, GameState state,
 	}
 
 	moveAction.clientPos    = player.position;
-	moveAction.hasClientPos = true;
+	// When our own collision check flagged the predicted position as in-wall,
+	// hand authority back to the server this tick: it will run moveAndCollide
+	// with its own block data and write an authoritative position. Continuing
+	// to send the reverted clientPos would (a) be a stale position the server
+	// may also reject, and (b) keep the client stuck re-proposing it.
+	moveAction.hasClientPos = !clientPosInvalid;
 	// Send post-physics Y velocity so server stays in sync during jumps/falls.
 	// desiredVel.y is normally 0 (non-fly); we override it after local physics.
 	moveAction.desiredVel.y = player.velocity.y;

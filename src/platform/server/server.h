@@ -61,11 +61,11 @@ enum class ActionRejectCode : uint32_t {
 	MissingItemId             = 13,
 };
 
-// Count-throttled action-reject log. Counts rejections per (entity, kind,
-// reason) and emits to stdout only on the 100th, 200th, 300th... hit.
-// Rare one-off rejections stay silent (normal gameplay churn); only
-// entities stuck in a rejection LOOP surface, which is what we want to
-// diagnose. count=N in the output tells you how bad the loop is.
+// Count-throttled action-reject log. Prints the FIRST 5 hits immediately so
+// a fresh desync is visible the moment it starts, then every 100th hit to
+// show sustained loops without flooding. Singleplayer localhost should
+// never see any of these at all — every occurrence is a bug worth fixing.
+// Emits to stderr with "[!!]" so it stands out in mixed stdout/stderr logs.
 inline void logActionReject(const char* kind, EntityId eid,
                             const char* reason, const char* detail) {
 	static std::unordered_map<uint64_t, uint32_t> s_count;
@@ -77,10 +77,10 @@ inline void logActionReject(const char* kind, EntityId eid,
 		std::lock_guard<std::mutex> lk(s_mu);
 		c = ++s_count[key];
 	}
-	if (c % 100 == 0) {
-		std::printf("[Server][Reject] %s entity=%u reason=\"%s\" count=%u %s\n",
-		            kind, eid, reason, c, detail ? detail : "");
-		std::fflush(stdout);
+	if (c <= 5 || c % 100 == 0) {
+		std::fprintf(stderr, "[!!][Server][Reject] %s entity=%u reason=\"%s\" count=%u %s\n",
+		             kind, eid, reason, c, detail ? detail : "");
+		std::fflush(stderr);
 	}
 }
 
@@ -795,6 +795,14 @@ private:
 
 	// Stuck detection: last known position per entity (checked every stuckCheckInterval)
 	std::unordered_map<EntityId, glm::vec3> m_lastPositions;
+
+	// After rejecting a clientPos for an entity (wall-phase, etc.) we drop
+	// `hasClientPos` on its Move actions for this many ticks. Reason: a handful
+	// of stale proposals are typically in the TCP pipe before the client's
+	// next frame processes S_BLOCK and sees the new world state; rejecting
+	// each one individually would spam the log. Counter is decremented once
+	// per tick in resolveActions. ~10 ticks ≈ 167ms at 60tps — a round trip.
+	std::unordered_map<EntityId, int> m_clientPosRejectCooldown;
 
 	struct ClientState {
 		EntityId playerEntityId = ENTITY_NONE;

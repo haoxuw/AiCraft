@@ -9,6 +9,13 @@ void GameServer::resolveActions(float dt) {
 	auto proposals = m_world->proposals.drain();
 	m_actionStats.resolved += (int)proposals.size();
 
+	// Advance per-entity reject cooldowns once per tick; entries expire to 0
+	// naturally and are cleaned out so the map doesn't grow unbounded.
+	for (auto it = m_clientPosRejectCooldown.begin(); it != m_clientPosRejectCooldown.end();) {
+		if (--it->second <= 0) it = m_clientPosRejectCooldown.erase(it);
+		else                    ++it;
+	}
+
 	// Per-tick deduplication: each entity gets at most one nudge-back per tick.
 	// Prevents inventory resend spam when a client sends many invalid actions.
 	std::unordered_set<EntityId> nudgedThisTick;
@@ -31,8 +38,18 @@ void GameServer::resolveActions(float dt) {
 			// overlap any solid block. Client runs moveAndCollide locally; the
 			// server trusts the result only after verifying no wall-phasing.
 			// Rejected clientPos falls through to server-authoritative physics.
+			//
+			// Cooldown: after a rejection we skip subsequent clientPos checks
+			// for this entity for kRejectCooldownTicks ticks. This swallows
+			// the stale Move actions already in the TCP pipe from before the
+			// client received the S_BLOCK update that would have taught it
+			// about the new block. Suppressed proposals fall through to
+			// server-authoritative physics silently — the first reject already
+			// logged, additional logs would just be noise.
 			constexpr float CLIENT_POS_TOLERANCE = 8.0f;
-			if (p.hasClientPos) {
+			constexpr int   kRejectCooldownTicks = 10;
+			bool inCooldown = m_clientPosRejectCooldown.count(p.actorId) > 0;
+			if (p.hasClientPos && !inCooldown) {
 				float dist = glm::length(p.clientPos - e->position);
 				if (dist < CLIENT_POS_TOLERANCE) {
 					const auto& def = e->def();
@@ -51,14 +68,24 @@ void GameServer::resolveActions(float dt) {
 						// this tick to prevent double gravity/collision.
 						e->skipPhysics = true;
 					} else {
+						// First rejection in this burst: log, then open the
+						// cooldown window. In-flight stale proposals that
+						// arrive over the next ~167ms hit the cooldown branch
+						// above and are silently server-authored.
+						m_clientPosRejectCooldown[p.actorId] = kRejectCooldownTicks;
 						char detail[160];
 						std::snprintf(detail, sizeof(detail),
-							"clientPos=(%.2f,%.2f,%.2f) overlaps solid block — rejected",
-							p.clientPos.x, p.clientPos.y, p.clientPos.z);
+							"clientPos=(%.2f,%.2f,%.2f) overlaps solid block — rejected, cooldown %d ticks",
+							p.clientPos.x, p.clientPos.y, p.clientPos.z,
+							kRejectCooldownTicks);
 						logMoveReject(p.actorId, "client-pos-in-wall", detail);
 					}
 				}
 			}
+			// During cooldown we must also ignore p.hasClientPos for the Y
+			// velocity branch below, otherwise server would trust a stale
+			// post-physics Y and desync vertically.
+			if (inCooldown) p.hasClientPos = false;
 
 			// Clamp to entity's max speed (anti-cheat).
 			// Sprint allows 2.5x, admin/fly is uncapped. Tolerance: 3.5x walk.

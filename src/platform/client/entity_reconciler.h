@@ -120,6 +120,16 @@ private:
 	static constexpr float kDriftTolerance   = 0.15f; // anti-jitter only
 	static constexpr float kCorrectionRate   = 5.0f;  // blocks/sec floor
 	static constexpr float kHardSnapDistance = 16.0f; // gap > 1 chunk → teleport
+	// Tighter snap threshold for the OWNED PLAYER. If the client's prediction
+	// has drifted more than this from the server, snap hard instead of
+	// soft-pulling. Reason: if the server rejected the last clientPos (e.g.
+	// wall-phasing), the soft-pull at `kCorrectionRate` blocks/sec can take
+	// many frames to land, during which the client keeps proposing the same
+	// bad position and the server logs [Server][Reject] on every tick.
+	// A 1m threshold is well above the 0.15m deadband (no jitter) but well
+	// below any legitimate movement-in-one-broadcast (~0.3m at walk speed),
+	// so it fires only on genuine divergence.
+	static constexpr float kLocalPlayerSnapDistance = 1.0f;
 	static constexpr float kMaxExtrapAge     = 0.2f;  // 4× broadcast interval
 	// Entity is "stale" if we haven't received an S_ENTITY update for this many
 	// seconds. Stale entities freeze in place and render with hasError=true so
@@ -160,7 +170,11 @@ private:
 		glm::vec3 diff = predicted - e.position;
 		float dist = glm::length(diff);
 
-		if (dist > kHardSnapDistance) {
+		// Owned player: hard-snap above 1m so a server rejection (wall-phase,
+		// tolerance exceeded) lands in a single frame. Soft-pull is still
+		// used for the 0.15m..1m band to keep sub-block nudges smooth.
+		if (dist > kHardSnapDistance ||
+		    dist > kLocalPlayerSnapDistance) {
 			e.position = target.position;
 			e.velocity = target.velocity;
 			logDrift(id, e, target, dist);
@@ -182,23 +196,28 @@ private:
 		}
 	}
 
+	// Prints the FIRST 10 drift events per entity immediately so the start of
+	// a desync is visible, then throttles to ~1 line/sec. Singleplayer on
+	// localhost should never trip this — every line is a real divergence
+	// between client prediction and server physics worth investigating.
 	void logDrift(EntityId id, const Entity& e, const InterpTarget& t, float dist) {
 		static std::unordered_map<EntityId, int> s_tick;
 		int& n = s_tick[id];
-		if (++n % 60 != 0) return;  // ~1 line/sec per entity
+		n++;
+		if (n > 10 && n % 60 != 0) return;
 		glm::vec3 serverD = t.prevInitialized ? (t.position - t.prevServerPos) : glm::vec3(0.0f);
 		glm::vec3 clientD = t.prevInitialized ? (e.position - t.prevClientPos) : glm::vec3(0.0f);
-		std::printf("[PosDrift] eid=%u client=(%.2f,%.2f,%.2f) "
-		            "server=(%.2f,%.2f,%.2f) dist=%.2f "
-		            "serverD=(%.2f,%.2f,%.2f) clientD=(%.2f,%.2f,%.2f) "
-		            "vel=(%.2f,%.2f,%.2f) (tol=%.1f, rateFloor=%.1fu/s, snap=%.1f)\n",
-		            id, e.position.x, e.position.y, e.position.z,
-		            t.position.x, t.position.y, t.position.z, dist,
-		            serverD.x, serverD.y, serverD.z,
-		            clientD.x, clientD.y, clientD.z,
-		            e.velocity.x, e.velocity.y, e.velocity.z,
-		            kDriftTolerance, kCorrectionRate, kHardSnapDistance);
-		std::fflush(stdout);
+		std::fprintf(stderr, "[!!][PosDrift] eid=%u n=%d client=(%.2f,%.2f,%.2f) "
+		             "server=(%.2f,%.2f,%.2f) dist=%.2f "
+		             "serverD=(%.2f,%.2f,%.2f) clientD=(%.2f,%.2f,%.2f) "
+		             "vel=(%.2f,%.2f,%.2f) (tol=%.2f snap=%.1f)\n",
+		             id, n, e.position.x, e.position.y, e.position.z,
+		             t.position.x, t.position.y, t.position.z, dist,
+		             serverD.x, serverD.y, serverD.z,
+		             clientD.x, clientD.y, clientD.z,
+		             e.velocity.x, e.velocity.y, e.velocity.z,
+		             kDriftTolerance, kHardSnapDistance);
+		std::fflush(stderr);
 	}
 
 	std::unordered_map<EntityId, InterpTarget> m_targets;
