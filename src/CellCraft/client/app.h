@@ -19,6 +19,9 @@
 #include "CellCraft/client/creature_lab.h"
 #include "CellCraft/client/game_log.h"
 #include "CellCraft/client/name_generator.h"
+#include "CellCraft/client/post_fx.h"
+#include "CellCraft/client/ambient_particles.h"
+#include "CellCraft/client/screen_shake.h"
 #include "CellCraft/sim/action.h"
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/sim.h"
@@ -124,6 +127,9 @@ private:
 	Window window_;
 	std::unique_ptr<ChalkRenderer> renderer_;
 	std::unique_ptr<TextRenderer>  text_;
+	std::unique_ptr<PostFX>        post_fx_;
+	AmbientParticles               ambient_;
+	ScreenShake                    shake_;
 	GameLog log_;
 
 	AppState state_ = AppState::LOADING;

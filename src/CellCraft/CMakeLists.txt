@@ -35,6 +35,9 @@ add_executable(cellcraft
 	${CMAKE_CURRENT_SOURCE_DIR}/client/part_render.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/creature_lab.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/name_generator.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/post_fx.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/ambient_particles.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/screen_shake.cpp
 	${CELLCRAFT_PLATFORM_SOURCES}
 )
 target_include_directories(cellcraft PRIVATE ${CELLCRAFT_INCLUDE_DIRS})

@@ -93,6 +93,12 @@ bool App::init(const AppOptions& opts) {
 	if (!renderer_->init()) return false;
 	text_ = std::make_unique<TextRenderer>();
 	if (!text_->init("shaders")) return false;
+	post_fx_ = std::make_unique<PostFX>();
+	if (!post_fx_->init()) {
+		std::fprintf(stderr, "PostFX init failed — continuing without post-fx\n");
+		post_fx_.reset();
+	}
+	ambient_.init(opts_.seed);
 
 	log_.open();
 	prebuilts_ = monsters::getPrebuiltMonsters();
@@ -132,6 +138,7 @@ bool App::init(const AppOptions& opts) {
 
 void App::shutdown() {
 	log_.close();
+	if (post_fx_)  { post_fx_->shutdown();  post_fx_.reset(); }
 	if (text_)     { text_->shutdown();     text_.reset(); }
 	if (renderer_) { renderer_->shutdown(); renderer_.reset(); }
 	window_.shutdown();
@@ -166,11 +173,17 @@ void App::run() {
 				window_.pollEvents();
 				int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
 				glViewport(0, 0, fw, fh);
+				ambient_.update(0.0f, fw, fh);
+				bool use_fx = (bool)post_fx_;
+				if (use_fx) post_fx_->begin(fw, fh);
+				glViewport(0, 0, fw, fh);
 				renderer_->drawBoard(fw, fh, (float)glfwGetTime());
+				ambient_.draw(renderer_.get(), fw, fh);
 				drawFood();
 				drawMonsters();
 				updateAndDrawParticles(0.0f);
 				drawHUD();
+				if (use_fx) post_fx_->render_to_default(fw, fh, (float)glfwGetTime());
 				window_.swapBuffers();
 				char path[64];
 				std::snprintf(path, sizeof(path), "/tmp/autotest_%d.ppm",
@@ -197,11 +210,17 @@ void App::run() {
 					window_.pollEvents();
 					int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
 					glViewport(0, 0, fw, fh);
+					ambient_.update(0.0f, fw, fh);
+					bool use_fx2 = (bool)post_fx_;
+					if (use_fx2) post_fx_->begin(fw, fh);
+					glViewport(0, 0, fw, fh);
 					renderer_->drawBoard(fw, fh, (float)glfwGetTime());
+					ambient_.draw(renderer_.get(), fw, fh);
 					drawFood();
 					drawMonsters();
 					updateAndDrawParticles(0.0f);
 					drawHUD();
+					if (use_fx2) post_fx_->render_to_default(fw, fh, (float)glfwGetTime());
 					window_.swapBuffers();
 					char path[64];
 					std::snprintf(path, sizeof(path), "/tmp/autotest_%d.ppm",
@@ -240,13 +259,20 @@ void App::run() {
 			window_.pollEvents();
 			float dt = 1.0f / 60.0f;
 			stepPlaying(dt);
+			shake_.update(dt);
 			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 			glViewport(0, 0, w, h);
+			ambient_.update(dt, w, h);
+			bool use_fx = (bool)post_fx_;
+			if (use_fx) post_fx_->begin(w, h);
+			glViewport(0, 0, w, h);
 			renderer_->drawBoard(w, h, (float)(glfwGetTime() - t0));
+			ambient_.draw(renderer_.get(), w, h);
 			drawFood();
 			drawMonsters();
 			updateAndDrawParticles(dt);
 			drawHUD();
+			if (use_fx) post_fx_->render_to_default(w, h, (float)(glfwGetTime() - t0));
 			window_.swapBuffers();
 		}
 		writePPM(opts_.play_screenshot_path.c_str());
@@ -263,7 +289,12 @@ void App::run() {
 			state_time_ += dt;
 			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 			glViewport(0, 0, w, h);
+			ambient_.update(dt, w, h);
+			bool use_fx = (bool)post_fx_;
+			if (use_fx) post_fx_->begin(w, h);
+			glViewport(0, 0, w, h);
 			renderer_->drawBoard(w, h, (float)glfwGetTime());
+			ambient_.draw(renderer_.get(), w, h);
 			switch (st) {
 			case AppState::MAIN_MENU: drawMainMenu(dt); break;
 			case AppState::STARTER:   drawStarter(dt);  break;
@@ -271,6 +302,7 @@ void App::run() {
 			case AppState::CELEBRATE: drawCelebrate(dt); break;
 			default: break;
 			}
+			if (use_fx) post_fx_->render_to_default(w, h, (float)glfwGetTime());
 			mouse_left_click_ = false;
 			mouse_right_click_ = false;
 			keys_pressed_this_frame_.clear();
@@ -307,7 +339,27 @@ void App::run() {
 
 		int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 		glViewport(0, 0, w, h);
+
+		// Update low-HP vignette driver.
+		if (post_fx_) {
+			float low = 0.0f;
+			if (state_ == AppState::PLAYING) {
+				if (const sim::Monster* pm = world_.get(player_id_)) {
+					float hp_frac = pm->hp_max > 0.0f ? pm->hp / pm->hp_max : 1.0f;
+					if (hp_frac < 0.35f) low = (0.35f - hp_frac) / 0.35f;
+				}
+			}
+			post_fx_->low_hp = low;
+		}
+		shake_.update(dt);
+		ambient_.update(dt, w, h);
+
+		// Scene pass → offscreen HDR buffer if PostFX available.
+		bool use_fx = (bool)post_fx_;
+		if (use_fx) post_fx_->begin(w, h);
+		glViewport(0, 0, w, h);
 		renderer_->drawBoard(w, h, (float)now);
+		ambient_.draw(renderer_.get(), w, h);
 
 		switch (state_) {
 		case AppState::LOADING:    drawLoading(dt);   break;
@@ -319,6 +371,9 @@ void App::run() {
 		case AppState::END_SCREEN: drawEndScreen(dt); break;
 		}
 		if (state_ == AppState::PLAYING) updateAndDrawParticles(dt);
+
+		// Composite bloom + vignette + low-HP overlay to default FB.
+		if (use_fx) post_fx_->render_to_default(w, h, (float)now);
 
 		// consume edge triggers at end of frame
 		mouse_left_click_ = false;
@@ -426,7 +481,8 @@ glm::vec2 App::pxToNDC(glm::vec2 px) const {
 glm::vec2 App::worldToScreen(glm::vec2 wpos) const {
 	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 	glm::vec2 rel = wpos - camera_world_;
-	return glm::vec2(rel.x + w * 0.5f, -rel.y + h * 0.5f);
+	glm::vec2 sh  = shake_.offset();
+	return glm::vec2(rel.x + sh.x + w * 0.5f, -rel.y + sh.y + h * 0.5f);
 }
 
 bool App::pointInButton(glm::vec2 mouse_ndc, const Button& b) const {
@@ -831,6 +887,12 @@ void App::drainSimEvents() {
 			glm::vec3 col(1.0f, 0.5f, 0.4f);
 			if (const sim::Monster* am = world_.get(e.actor)) col = am->color;
 			emitKillParticles(e.pos, col);
+			// Kick the camera a bit if the player is the killer OR target.
+			if (e.actor == player_id_ || e.target == player_id_) {
+				shake_.add(e.target == player_id_ ? 9.0f : 6.0f, 0.15f);
+			} else {
+				shake_.add(2.5f, 0.10f);
+			}
 			if (e.actor == player_id_) {
 				++kills_;
 				pushFloating("KILL!", glm::vec3(1.0f, 0.6f, 0.6f));
