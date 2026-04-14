@@ -555,6 +555,12 @@ void Game::updateAndRender(float dt, float aspect) {
 			(float)m_window.width(), (float)m_window.height());
 		m_ui.endFrame();
 		handleMenuAction(action);
+		// External screenshot trigger (same as in-game path) — useful for
+		// menu-layout regression capture.
+		if (std::filesystem::exists("/tmp/civcraft_screenshot_request")) {
+			std::filesystem::remove("/tmp/civcraft_screenshot_request");
+			saveScreenshot();
+		}
 		break;
 	}
 	// Legacy screens — redirect to ImGui menu

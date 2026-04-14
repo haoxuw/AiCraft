@@ -67,12 +67,72 @@ public:
 		MenuAction action;
 		action.type = MenuAction::None;
 
-		// Fullscreen background
+		// ── Open-world "clear and beautiful" backdrop ──
+		// Sky-blue to soft-green vertical gradient, painted to the background
+		// drawlist so it sits behind every ImGui window. Horizon band gets a
+		// warm wash for depth; a subtle mountain silhouette is sketched in.
+		{
+			ImDrawList* bg = ImGui::GetBackgroundDrawList();
+			ImU32 sky_top   = IM_COL32(134, 196, 232, 255);  // soft dawn blue
+			ImU32 sky_mid   = IM_COL32(203, 229, 244, 255);  // hazy horizon
+			ImU32 grass_hi  = IM_COL32(184, 212, 150, 255);  // distant field
+			ImU32 grass_lo  = IM_COL32(132, 176, 108, 255);  // near meadow
+			float horizon_y = H * 0.58f;
+			bg->AddRectFilledMultiColor(
+				ImVec2(0, 0), ImVec2(W, horizon_y),
+				sky_top, sky_top, sky_mid, sky_mid);
+			bg->AddRectFilledMultiColor(
+				ImVec2(0, horizon_y), ImVec2(W, H),
+				grass_hi, grass_hi, grass_lo, grass_lo);
+
+			// Warm horizon glow band — a thin strip blended over the seam.
+			bg->AddRectFilledMultiColor(
+				ImVec2(0, horizon_y - 14), ImVec2(W, horizon_y + 6),
+				IM_COL32(255, 230, 190, 0),   IM_COL32(255, 230, 190, 0),
+				IM_COL32(255, 210, 160, 120), IM_COL32(255, 210, 160, 120));
+
+			// Distant mountain silhouettes — a few overlapping triangles.
+			ImU32 mtn_far  = IM_COL32(160, 178, 190, 200);
+			ImU32 mtn_near = IM_COL32(120, 150, 140, 220);
+			auto peak = [&](float cx, float width, float height, ImU32 col) {
+				ImVec2 p1(cx - width * 0.5f, horizon_y);
+				ImVec2 p2(cx,                horizon_y - height);
+				ImVec2 p3(cx + width * 0.5f, horizon_y);
+				bg->AddTriangleFilled(p1, p2, p3, col);
+			};
+			peak(W * 0.15f, W * 0.24f, 90, mtn_far);
+			peak(W * 0.32f, W * 0.20f, 64, mtn_far);
+			peak(W * 0.62f, W * 0.28f, 110, mtn_near);
+			peak(W * 0.82f, W * 0.22f, 78, mtn_near);
+			peak(W * 0.98f, W * 0.16f, 54, mtn_far);
+
+			// A few drifting clouds — slow, gentle horizontal motion. Each
+			// cloud has a static phase offset (0..1) so they're pre-scattered
+			// across the screen instead of all entering from the left edge.
+			double t = ImGui::GetTime();
+			auto cloud = [&](float y_frac, float speed, float size, float alpha_f, float phase) {
+				float span = W + 300.0f;
+				float cx = std::fmod((float)t * speed + phase * span, span) - 150.0f;
+				float cy = H * y_frac;
+				ImU32 c = IM_COL32(255, 255, 255, (int)(alpha_f * 255));
+				bg->AddCircleFilled(ImVec2(cx,          cy),       size,       c, 24);
+				bg->AddCircleFilled(ImVec2(cx + size*0.9f, cy - 6),  size*0.75f, c, 24);
+				bg->AddCircleFilled(ImVec2(cx - size*0.9f, cy - 4),  size*0.70f, c, 24);
+				bg->AddCircleFilled(ImVec2(cx + size*0.4f, cy - 12), size*0.55f, c, 24);
+			};
+			cloud(0.12f,  6.0f, 34.0f, 0.80f, 0.15f);
+			cloud(0.22f,  9.0f, 22.0f, 0.65f, 0.55f);
+			cloud(0.32f,  5.0f, 28.0f, 0.55f, 0.80f);
+			cloud(0.45f, 11.0f, 18.0f, 0.70f, 0.35f);
+		}
+
+		// Fullscreen container — transparent so the backdrop shows through.
+		// Top bar, sidebar, and content cards paint their own opaque panels.
 		ImGui::SetNextWindowPos(ImVec2(0, 0));
 		ImGui::SetNextWindowSize(ImVec2(W, H));
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
-		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.95f, 0.96f, 0.97f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
 		ImGui::Begin("##FullscreenMenu", nullptr,
 			ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
 			ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
@@ -82,7 +142,7 @@ public:
 
 		// ── Top bar ──
 		float topBarH = 56;
-		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.98f, 0.97f, 0.95f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.99f, 0.98f, 0.96f, 0.86f));
 		ImGui::BeginChild("TopBar", ImVec2(W, topBarH), false);
 		{
 			ImGui::SetCursorPos(ImVec2(24, 10));
@@ -116,7 +176,7 @@ public:
 		float contentH = H - contentY;
 
 		ImGui::SetCursorPos(ImVec2(0, contentY));
-		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.98f, 0.97f, 0.95f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.99f, 0.98f, 0.96f, 0.82f));
 		ImGui::BeginChild("Sidebar", ImVec2(sideW, contentH), false);
 		{
 			ImGui::Spacing(); ImGui::Spacing();
@@ -193,7 +253,7 @@ public:
 
 		// ── Content area ──
 		ImGui::SetCursorPos(ImVec2(sideW, contentY));
-		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.96f, 0.97f, 0.98f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.97f, 0.98f, 0.99f, 0.80f));
 		ImGui::BeginChild("Content", ImVec2(W - sideW, contentH), false);
 		{
 			ImGui::SetCursorPos(ImVec2(32, 24));
