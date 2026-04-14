@@ -34,6 +34,7 @@ struct MobSpawn {
 	int         count  = 1;
 	float       radius = -1.0f;                     // < 0 = use anchor's default spacing
 	SpawnAnchor anchor = SpawnAnchor::VillageCenter;
+	float       yOffset = 0.0f;                     // blocks above ground Y (flyers hover at +3)
 	std::unordered_map<std::string, std::string> props;  // extra spawn props from world config
 };
 

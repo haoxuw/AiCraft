@@ -31,6 +31,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	blocks.registerBlock({.string_id=BT::ArcaneStone, .display_name="Arcane Stone", .color_top={0.28f,0.06f,0.48f}, .color_side={0.22f,0.08f,0.40f}, .color_bottom={0.16f,0.05f,0.32f}, .solid=true, .stack_max=64, .surface_glow=true});
 	blocks.registerBlock({.string_id=BT::SpawnPoint, .display_name="Spawn Point", .color_top={0.95f,0.78f,0.05f}, .color_side={0.85f,0.65f,0.02f}, .color_bottom={0.70f,0.50f,0.01f}, .solid=true, .stack_max=1, .surface_glow=true});
 	blocks.registerBlock({BT::Chest, "Chest", {0.55f,0.40f,0.20f},{0.50f,0.35f,0.18f},{0.45f,0.30f,0.15f}, true,false, "",1,0, "",SN::DigWood,SN::StepWood});
+	blocks.registerBlock({BT::BeeNest, "Bee Nest", {0.85f,0.60f,0.15f},{0.75f,0.50f,0.12f},{0.60f,0.40f,0.10f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood});
 
 	// Plants
 	blocks.registerBlock({BT::Log, "Log", {0.38f,0.28f,0.14f},{0.52f,0.38f,0.20f},{0.38f,0.28f,0.14f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood});
@@ -80,12 +81,15 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		entities.registerType(def);
 	}
 
-	// Animals — all Living, differ by model/stats/behavior
+	// Animals — all Living, differ by model/stats/behavior.
+	// gravityScale defaults to 1.0 (grounded). Flyers pass 0.0 so they hover
+	// at whatever Y the server spawned them at (no falling).
 	auto animal = [&](const char* id, const char* name, const char* model,
 	                   glm::vec3 color, glm::vec3 boxMin, glm::vec3 boxMax,
 	                   float walkSpeed, float runSpeed,
 	                   const char* behavior, const char* soundGroup = "",
-	                   const char* texture = "", float soundVol = 0.12f) {
+	                   const char* texture = "", float soundVol = 0.12f,
+	                   float gravityScale = 1.0f) {
 		EntityDef def;
 		def.string_id = id;
 		def.display_name = name;
@@ -97,7 +101,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		def.sound_volume = soundVol;
 		def.collision_box_min = boxMin;
 		def.collision_box_max = boxMax;
-		def.gravity_scale = 1.0f;
+		def.gravity_scale = gravityScale;
 		def.walk_speed = walkSpeed;
 		def.run_speed = runSpeed;
 		def.max_hp = (int)getMaterialValue(id);
@@ -134,6 +138,22 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	animal(LivingName::Villager, "Villager", "villager", {0.85f,0.75f,0.60f},
 		{-0.3f,0,-0.3f},{0.3f,1.8f,0.3f}, 2.5f,5.0f, "woodcutter",
 		"creature_villager", "", 0.12f);
+
+	// Altar animals (Phase 1: all wander; real behaviors come later)
+	animal(LivingName::Squirrel, "Squirrel", "squirrel", {0.55f,0.32f,0.15f},
+		{-0.12f,0,-0.12f},{0.12f,0.35f,0.12f}, 4.0f,9.0f, "wander", "", "", 0.10f);
+	animal(LivingName::Raccoon, "Raccoon", "raccoon", {0.45f,0.45f,0.48f},
+		{-0.2f,0,-0.2f},{0.2f,0.55f,0.2f}, 3.0f,6.5f, "wander", "", "", 0.10f);
+	animal(LivingName::Beaver, "Beaver", "beaver", {0.42f,0.26f,0.14f},
+		{-0.2f,0,-0.2f},{0.2f,0.5f,0.2f}, 2.5f,5.0f, "wander", "", "", 0.10f);
+
+	// Flyers — gravity_scale=0 so they hover at spawn Y (3 blocks above ground)
+	animal(LivingName::Bee, "Bee", "bee", {0.95f,0.78f,0.15f},
+		{-0.1f,0,-0.1f},{0.1f,0.3f,0.1f}, 4.0f,8.0f, "wander", "", "", 0.10f, 0.0f);
+	animal(LivingName::Owl, "Owl", "owl", {0.45f,0.30f,0.15f},
+		{-0.2f,0,-0.2f},{0.2f,0.8f,0.2f}, 3.0f,6.0f, "wander", "", "", 0.10f, 0.0f);
+	animal(LivingName::Goose, "Goose", "goose", {0.94f,0.93f,0.90f},
+		{-0.2f,0,-0.2f},{0.2f,1.0f,0.2f}, 3.5f,7.0f, "wander", "", "", 0.10f, 0.0f);
 
 	// Structure entities
 	{

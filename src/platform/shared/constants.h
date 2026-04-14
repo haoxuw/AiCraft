@@ -49,6 +49,12 @@ namespace LivingName {
 	constexpr const char* Skeleton     = "base:skeleton";
 	constexpr const char* Giant        = "base:giant";
 	constexpr const char* BraveChicken = "base:brave_chicken"; // todo: remove this, MOD from python side
+	constexpr const char* Squirrel     = "base:squirrel";
+	constexpr const char* Raccoon      = "base:raccoon";
+	constexpr const char* Beaver       = "base:beaver";
+	constexpr const char* Bee          = "base:bee";
+	constexpr const char* Owl          = "base:owl";
+	constexpr const char* Goose        = "base:goose";
 }
 
 // ================================================================
@@ -127,6 +133,7 @@ namespace BlockType {
 	constexpr const char* Portal       = "base:portal";
 	constexpr const char* ArcaneStone  = "base:arcane_stone";
 	constexpr const char* SpawnPoint   = "base:spawn_point";
+	constexpr const char* BeeNest      = "base:beenest";
 }
 
 // ================================================================

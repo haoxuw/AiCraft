@@ -92,4 +92,12 @@ blocks = [
         "color": [0.75, 0.85, 0.90],
         "drop": "",                    # doesn't drop when broken
     },
+    {
+        "id": "base:beenest",
+        "name": "Bee Nest",
+        "solid": True,
+        "hardness": 0.6,
+        # Warm honeycomb amber — bees anchor their wander radius around this.
+        "color": [0.85, 0.60, 0.15],
+    },
 ]

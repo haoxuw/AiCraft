@@ -125,5 +125,14 @@ world = {
         {"type": "base:pig",           "count": 3, "radius": 3, "spawn_at": "barn"},
         {"type": "base:chicken",       "count": 2, "radius": 3, "spawn_at": "barn"},
         {"type": "base:brave_chicken", "count": 1, "radius": 3, "spawn_at": "barn"},
+
+        # Altar animals — wander near the portal
+        {"type": "base:squirrel", "count": 2, "radius": 6, "spawn_at": "portal"},
+        {"type": "base:raccoon",  "count": 2, "radius": 8, "spawn_at": "portal"},
+        {"type": "base:beaver",   "count": 1, "radius": 8, "spawn_at": "portal"},
+        # Flyers — hover at their spawn Y (gravity_scale=0 in C++)
+        {"type": "base:bee",      "count": 3, "radius": 4, "spawn_at": "portal", "y_offset": 3},
+        {"type": "base:owl",      "count": 1, "radius": 6, "spawn_at": "portal", "y_offset": 3},
+        {"type": "base:goose",    "count": 2, "radius": 6, "spawn_at": "portal", "y_offset": 3},
     ],
 }

@@ -118,6 +118,7 @@ struct WorldPyConfig {
 	struct MobConfig {
 		std::string type; int count = 0; float radius = 20.0f;
 		std::string spawnAt;  // e.g. "monument", "barn", "portal", "" (village ring)
+		float yOffset = 0.0f;  // blocks above the resolved ground Y (flyers spawn at +3)
 		std::unordered_map<std::string, std::string> props;
 	};
 	std::vector<MobConfig> mobs = {

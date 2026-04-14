@@ -52,7 +52,7 @@ public:
 			m_worldGenConfig.mobs.clear();
 			for (auto& mc : m_templates[m_selectedTemplate]->pyConfig().mobs)
 				m_worldGenConfig.mobs.push_back({mc.type, mc.count, mc.radius,
-					parseSpawnAnchor(mc.spawnAt), mc.props});
+					parseSpawnAnchor(mc.spawnAt), mc.yOffset, mc.props});
 		}
 		m_worldMgr.setSavesDir("saves");
 		m_worldMgr.refresh();
@@ -587,7 +587,7 @@ private:
 						m_worldGenConfig.mobs.clear();
 						for (auto& mc : m_templates[i]->pyConfig().mobs)
 							m_worldGenConfig.mobs.push_back({mc.type, mc.count, mc.radius,
-								parseSpawnAnchor(mc.spawnAt), mc.props});
+								parseSpawnAnchor(mc.spawnAt), mc.yOffset, mc.props});
 					}
 				}
 				ImGui::EndChild();

@@ -242,7 +242,7 @@ public:
 		if (mobList.empty()) {
 			for (auto& mc : tmpl.pyConfig().mobs)
 				mobList.push_back({mc.type, mc.count, mc.radius,
-					parseSpawnAnchor(mc.spawnAt), mc.props});
+					parseSpawnAnchor(mc.spawnAt), mc.yOffset, mc.props});
 		}
 
 		// Resolve where each SpawnAnchor positions a mob group in world XZ.
@@ -280,6 +280,7 @@ public:
 			// AgentClient can drive it and so logout cleanup is straightforward.
 			extraProps[Prop::Owner] = (int)ownerId;
 			float y = (fixedY >= 0.0f) ? fixedY : safeSpawnHeight(x, z);
+			y += ms.yOffset;
 			EntityId eid = m_world->entities.spawn(ms.typeId, {x, y, z}, extraProps);
 			auto iIt = wgc.startingItems.find(ms.typeId);
 			if (iIt != wgc.startingItems.end()) {

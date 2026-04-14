@@ -349,7 +349,8 @@ public:
 			BlockId planksB  = blocks.getId(BlockType::Planks);
 			BlockId arcaneB  = blocks.getId(BlockType::ArcaneStone);
 			BlockId portalB  = blocks.getId(BlockType::Portal);
-			generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, arcaneB, portalB, spawnPtB, anchor);
+			BlockId beeNestB = blocks.getId(BlockType::BeeNest);
+			generatePortal(chunk, cpos, seed, wallB, bStone, stairB, planksB, arcaneB, portalB, spawnPtB, beeNestB, anchor);
 		} else {
 			placeBareSpawnBlock(chunk, cpos, seed, spawnPtB, anchor);
 		}
@@ -413,27 +414,29 @@ private:
 			chunk.set(lx, ly, lz, spawnPtB);
 	}
 
-	// ── Spawn portal (grand elevated stone temple arch) ──────────
-	// 17-wide × 25-tall stone arch on a 5-block raised platform.
-	// 7-wide descending staircase exits the +Z face to ground level.
-	// Player spawns on the platform (groundY+5) facing +Z (toward stairs and village).
+	// ── Spawn altar ──────────────────────────────────────────────
+	// Open-air raised stone altar, flanked by two rows of free-standing
+	// pillars. No roof, no walls, so the spawn area reads clearly from
+	// the RTS / RPG overhead view.
 	//
-	// Z layout (offsets from anchor pz):
-	//   dz=-5..-4 : back wall (2 thick, with windows)
-	//   dz=-3..+3 : interior chamber (9-block floor, center at dz=-1 = spawn block)
-	//   dz=+3     : front arch opening
-	//   dz=+4..+8 : descending staircase (5 steps, 0.5–1.0 drop each)
+	// Layout (centered on anchor):
+	//   Platform   : 13 wide (dx=-6..+6) × 8 deep (dz=-4..+3), 5 tall
+	//   Altar back : 3 blocks tall on the back edge (dz=-4), dx=-3..+3,
+	//                with a portal plane inlay at dx=-2..+2 (glowing)
+	//   Pillars    : 4 per side at dx=±5..±6 × dz ∈ {-3,-1,+1,+3}, 7 tall,
+	//                with a capital block widened by 1 on top
+	//   Stairs     : 7-wide descending +Z, same as before
+	//   Spawn block: floor center (dx=0, dz=-1)
 	//
-	// X layout (offsets from anchor px):
-	//   dx=±3     : arch passage (7-wide opening)
-	//   dx=±4     : arch jambs
-	//   dx=±5..±6 : inner pillar pair
-	//   dx=±7..±8 : outer tower pair
-	//
+	// Design intent: tall enough to feel ceremonial, open enough that
+	// RTS view from above has a clear sightline to the spawn block and
+	// any units on the platform. Portal magic concentrated on the back
+	// altar — no ambiguity about which way is "out" (player faces +Z
+	// toward the stairs, away from the portal).
 	void generatePortal(Chunk& chunk, ChunkPos cpos, int seed,
 	                    BlockId wallB, BlockId stoneB, BlockId stairB,
 	                    BlockId planksB, BlockId arcaneB, BlockId portalB,
-	                    BlockId spawnPtB, glm::vec2 anchor) {
+	                    BlockId spawnPtB, BlockId beeNestB, glm::vec2 anchor) {
 		int ox = cpos.x * CHUNK_SIZE;
 		int oy = cpos.y * CHUNK_SIZE;
 		int oz = cpos.z * CHUNK_SIZE;
@@ -442,7 +445,6 @@ private:
 		int pz = (int)std::round(anchor.y);
 		int groundY = portalGroundY(seed);
 
-		// Per-column terrain — fills the platform/stair foundation down to real ground.
 		auto columnTerrainY = [&](int wx, int wz) -> int {
 			if (m_py.terrainType == "flat") return (int)m_py.surfaceY;
 			return (int)std::round(naturalTerrainHeight(seed, (float)wx, (float)wz, m_tp));
@@ -456,131 +458,107 @@ private:
 				chunk.set(lx, ly, lz, bid, p2);
 		};
 
-		// Stone accent ring every 4 blocks of height above groundY
-		auto pickBlock = [&](int wy) -> BlockId {
-			return (((wy - groundY) % 4) == 0) ? stoneB : wallB;
-		};
-
 		if (stoneB  == BLOCK_AIR) stoneB  = wallB;
 		if (planksB == BLOCK_AIR) planksB = stoneB;
 		if (stairB  == BLOCK_AIR) stairB  = wallB;
 		if (arcaneB == BLOCK_AIR) arcaneB = stoneB;
 
 		// Dimensions
-		constexpr int platH   = kPlatH; // platform height above groundY
-		constexpr int openH   = 13;  // arch opening height
-		constexpr int crownH  = 2;   // arch crown thickness above opening
-		constexpr int towerXH = 5;   // extra tower height above crown
-		constexpr int openHW  = 3;   // opening half-width (7-wide passage)
-		constexpr int jambHW  = 4;   // arch jamb column
-		constexpr int pier2HW = 6;   // inner pillar outer edge
-		constexpr int towerHW = 7;   // outer tower inner edge
-		constexpr int towerOW = 8;   // outer tower outer edge
-		constexpr int backDZ  = -5;  // back wall Z
-		constexpr int frontDZ = +3;  // front arch face Z (9-deep floor: backDZ..frontDZ = ODD → center at dz=0)
-		constexpr int numSteps = platH;
+		constexpr int platH      = kPlatH;   // platform height above groundY
+		constexpr int openHW     = 3;        // interior / stair half-width (7 wide)
+		constexpr int platHW     = 6;        // platform half-width (13 wide)
+		constexpr int backDZ     = -4;       // back edge of platform (altar row)
+		constexpr int frontDZ    = +3;       // front edge (where stairs start)
+		constexpr int pillarHW   = 5;        // pillar inner edge
+		constexpr int pillarOW   = 6;        // pillar outer edge (= platHW)
+		constexpr int pillarH    = 7;        // pillar height above platform
+		constexpr int altarH     = 3;        // altar-back height above platform
+		constexpr int numSteps   = platH;
 
-		const int platSurfY = groundY + platH;
-		const int archTopY  = platSurfY + openH;
-		const int crownTopY = archTopY  + crownH;
-		const int towerTopY = crownTopY + towerXH;
+		const int platSurfY = groundY + platH;          // walkable floor Y
+		const int pillarTopY = platSurfY + pillarH - 1; // top of pillar shaft
+		const int capY       = pillarTopY + 1;          // capital row
 
-		// ── 1. Wipe ──────────────────────────────────────────────
-		for (int dy = 0; dy <= towerTopY - groundY + 3; dy++)
-			for (int dx = -(towerOW + 1); dx <= towerOW + 1; dx++)
+		// ── 1. Wipe build envelope ──────────────────────────────
+		// Cover anywhere we might place blocks, so old world gen / trees
+		// don't leak through.
+		for (int dy = 0; dy <= pillarH + 3; dy++)
+			for (int dx = -(pillarOW + 1); dx <= pillarOW + 1; dx++)
 				for (int dz = backDZ - 1; dz <= frontDZ + numSteps + 3; dz++)
 					set(px + dx, groundY + dy, pz + dz, BLOCK_AIR);
 
-		// ── 2. Platform foundation ────────────────────────────────
-		for (int dx = -towerOW; dx <= towerOW; dx++) {
+		// ── 2. Platform foundation (stone fill to ground) ──────
+		for (int dx = -platHW; dx <= platHW; dx++) {
 			for (int dz = backDZ; dz <= frontDZ; dz++) {
 				int colY = columnTerrainY(px + dx, pz + dz);
 				int fillBot = std::min(colY, groundY);
-				for (int wy = fillBot; wy < groundY + platH - 1; wy++)
+				for (int wy = fillBot; wy < platSurfY - 1; wy++)
 					set(px + dx, wy, pz + dz, wallB);
-				// Top surface: plank floor inside opening, stone elsewhere
+				// Top deck: plank inner floor (center aisle), stone trim outside
 				bool inner = (std::abs(dx) <= openHW);
-				set(px + dx, groundY + platH - 1, pz + dz, inner ? planksB : stoneB);
+				set(px + dx, platSurfY - 1, pz + dz, inner ? planksB : stoneB);
 			}
 		}
 
-		// ── 2b. Spawn point block — at floor center (dx=0, dz=-1) ────────────────
-		// Floor depth backDZ..frontDZ = -5..+3 = 9 blocks (ODD) → center at dz=-1.
-		// Player spawns centered above it at (px+0.5, groundY+platH, pz-0.5).
+		// ── 2b. Spawn point block (floor center) ───────────────
+		// Floor depth backDZ..frontDZ = -4..+3 = 8 blocks. Place spawn
+		// near the altar so the player materializes facing the opening.
 		if (spawnPtB != BLOCK_AIR)
-			set(px, groundY + platH - 1, pz - 1, spawnPtB);
+			set(px, platSurfY - 1, pz - 1, spawnPtB);
 
-		// ── 3. Outer towers (dx=±7..±8, to towerTopY) — arcane ──
-		for (int sign : {-1, 1})
-			for (int tw = towerHW; tw <= towerOW; tw++)
-				for (int dz = backDZ; dz <= frontDZ; dz++)
-					for (int wy = platSurfY; wy <= towerTopY; wy++)
-						set(px + sign * tw, wy, pz + dz, arcaneB);
-
-		// ── 4. Inner pillars (dx=±5..±6, to crownTopY) — arcane ─
-		for (int sign : {-1, 1})
-			for (int pw = 5; pw <= pier2HW; pw++)
-				for (int dz = backDZ; dz <= frontDZ; dz++)
-					for (int wy = platSurfY; wy <= crownTopY; wy++)
-						set(px + sign * pw, wy, pz + dz, arcaneB);
-
-		// ── 5. Arch jambs (dx=±4, to archTopY) — arcane ─────────
-		for (int sign : {-1, 1})
-			for (int dz = backDZ; dz <= frontDZ; dz++)
-				for (int wy = platSurfY; wy < archTopY; wy++)
-					set(px + sign * jambHW, wy, pz + dz, arcaneB);
-
-		// ── 6. Arch crown span (dx=-6..+6, archTopY..crownTopY) — arcane ─
-		for (int dz = backDZ; dz <= frontDZ; dz++) {
-			for (int wy = archTopY; wy < crownTopY; wy++)
-				for (int dx = -pier2HW; dx <= pier2HW; dx++)
-					set(px + dx, wy, pz + dz, arcaneB);
-			// Keystone at crownTopY: narrower span dx=-4..+4
-			for (int dx = -jambHW; dx <= jambHW; dx++)
-				set(px + dx, crownTopY, pz + dz, arcaneB);
-		}
-
-		// ── 7. Back wall (dz=backDZ..backDZ+1, with windows) ────
-		for (int dz = backDZ; dz <= backDZ + 1; dz++) {
-			for (int dx = -openHW; dx <= openHW; dx++) {
-				for (int wy = platSurfY; wy < archTopY; wy++) {
-					int relY = wy - platSurfY;
-					bool mainWin = (std::abs(dx) <= 2 && relY >= 3 && relY <= 8);
-					bool topWin  = (dx == 0           && relY >= 10 && relY <= 12);
-					if (!mainWin && !topWin)
-						set(px + dx, wy, pz + dz, wallB);
-				}
-			}
-			// Crown fill above opening on back face — arcane
-			for (int dx = -(pier2HW - 1); dx <= pier2HW - 1; dx++)
-				for (int wy = archTopY; wy <= crownTopY; wy++)
-					set(px + dx, wy, pz + dz, arcaneB);
-		}
-
-		// ── 8. Interior clear (dz=backDZ+2..frontDZ) ─────────────
+		// ── 3. Back altar (low wall behind spawn, portal plane inlay) ─
+		// Stone frame, 3 blocks tall, at dz=backDZ. Portal plane sits
+		// flush on the inner face (dz=backDZ) at dx=-2..+2.
 		for (int dx = -openHW; dx <= openHW; dx++)
-			for (int dz = backDZ + 2; dz <= frontDZ; dz++)
-				for (int wy = platSurfY; wy < archTopY; wy++)
-					set(px + dx, wy, pz + dz, BLOCK_AIR);
+			for (int h = 0; h < altarH; h++)
+				set(px + dx, platSurfY + h, pz + backDZ, stoneB);
+		// Portal plane inlay (glowing center)
+		if (portalB != BLOCK_AIR) {
+			for (int dx = -2; dx <= 2; dx++)
+				for (int h = 0; h < altarH; h++)
+					set(px + dx, platSurfY + h, pz + backDZ, portalB);
+		}
+		// Arcane cap row on the altar top (decorative ridge)
+		for (int dx = -openHW; dx <= openHW; dx++)
+			set(px + dx, platSurfY + altarH, pz + backDZ, arcaneB);
 
-		// ── 9. Tower battlements — alternating arcane/stone ─────
+		// ── 4. Colonnade: 4 free-standing pillars per side ─────
+		// Pillar cross-section: 2×2 (dx ∈ {pillarHW, pillarOW}, dz ∈ {z, z+1}).
+		// Positions chosen so they frame the spawn block and staircase
+		// without crossing the aisle.
+		constexpr int kPillarZs[] = {-3, -1, +1, +3};
 		for (int sign : {-1, 1}) {
-			for (int tw = towerHW; tw <= towerOW; tw++)
-				for (int dz = backDZ; dz <= frontDZ; dz++)
-					if (((dz - backDZ) % 2) == 0)
-						set(px + sign * tw, towerTopY + 1, pz + dz, arcaneB);
-			// Corner turret posts (2 high) — arcane
-			for (int h = 1; h <= 2; h++) {
-				set(px + sign * towerOW, towerTopY + h, pz + backDZ,  arcaneB);
-				set(px + sign * towerOW, towerTopY + h, pz + frontDZ, arcaneB);
+			for (int pz0 : kPillarZs) {
+				// Shaft (stone) with an arcane ring at mid-height for accent
+				for (int pw = pillarHW; pw <= pillarOW; pw++) {
+					for (int h = 0; h < pillarH; h++) {
+						BlockId bid = (h == pillarH / 2) ? arcaneB : stoneB;
+						set(px + sign * pw, platSurfY + h, pz + pz0, bid);
+					}
+				}
+				// Capital: 1-block-wider cap on top (arcane), dx extends
+				// inward by 1 so silhouette reads as "pillar with bracket"
+				int capInner = (pillarHW - 1) * sign;
+				int capOuter = pillarOW * sign;
+				int capLo = std::min(capInner, capOuter);
+				int capHi = std::max(capInner, capOuter);
+				for (int dx = capLo; dx <= capHi; dx++)
+					set(px + dx, capY, pz + pz0, arcaneB);
+				// Capital back row (dz+1) — full width too
+				for (int dx = capLo; dx <= capHi; dx++)
+					set(px + dx, capY, pz + pz0 + 0, arcaneB);
 			}
 		}
 
-		// ── 10. Descending staircase (dz=+4..+8) ────────────────────
-		// Step i at (Y=groundY+platH-1-i, dz=frontDZ+1+i).
-		// param2=2: stair rises in -Z → HIGH backing wall on -Z (uphill/platform side),
-		// LOW tread on +Z (downhill side).  Player walks +Z to descend; the backing wall
-		// is behind them and the tread extends forward, giving a clear downward view.
+		// ── 4b. Bee nest perched atop front-left pillar capital ─
+		// Signals "bees live here" to visiting players. One nest is
+		// enough; more would clutter the altar silhouette.
+		if (beeNestB != BLOCK_AIR)
+			set(px - pillarHW, capY + 1, pz + 3, beeNestB);
+
+		// ── 5. Descending staircase (unchanged) ────────────────
+		// param2=2: stair rises in -Z → HIGH backing wall on -Z (uphill),
+		// LOW tread on +Z. Player walks +Z to descend.
 		for (int i = 0; i < numSteps; i++) {
 			int stepY  = groundY + platH - 1 - i;
 			int stepDZ = frontDZ + 1 + i;
@@ -592,22 +570,15 @@ private:
 			}
 		}
 
-		// ── 11. Stair side walls (dx=±4, descending parapets) ────
+		// ── 6. Stair side rails (low parapet, no ceiling) ──────
 		for (int sign : {-1, 1}) {
 			for (int i = 0; i < numSteps; i++) {
 				int stepY  = groundY + platH - 1 - i;
 				int stepDZ = frontDZ + 1 + i;
 				int fillBot = std::min(columnTerrainY(px + sign * (openHW + 1), pz + stepDZ), groundY);
-				for (int wy = fillBot; wy <= stepY + 1; wy++)
+				for (int wy = fillBot; wy <= stepY; wy++)
 					set(px + sign * (openHW + 1), wy, pz + stepDZ, stoneB);
 			}
-		}
-
-		// ── 12. Portal plane (dz=backDZ+1) ───────────────────────
-		if (portalB != BLOCK_AIR) {
-			for (int dx = -openHW; dx <= openHW; dx++)
-				for (int wy = platSurfY; wy < archTopY; wy++)
-					set(px + dx, wy, pz + backDZ + 1, portalB);
 		}
 	}
 

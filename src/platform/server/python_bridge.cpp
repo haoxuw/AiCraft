@@ -806,6 +806,7 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 				mc.radius = getFloat(md, "radius", 20.0f);
 				if (md.contains("spawn_at"))
 					mc.spawnAt = md["spawn_at"].cast<std::string>();
+				mc.yOffset = getFloat(md, "y_offset", 0.0f);
 				if (md.contains("props")) {
 					for (auto& [k, v] : md["props"].cast<py::dict>())
 						mc.props[k.cast<std::string>()] = py::str(v).cast<std::string>();
