@@ -22,6 +22,7 @@
 #include "CellCraft/client/post_fx.h"
 #include "CellCraft/client/ambient_particles.h"
 #include "CellCraft/client/screen_shake.h"
+#include "CellCraft/client/ui_anim.h"
 #include "CellCraft/sim/action.h"
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/sim.h"
@@ -131,6 +132,8 @@ private:
 	AmbientParticles               ambient_;
 	ScreenShake                    shake_;
 	GameLog log_;
+	ui::AnimMap                    ui_anim_;
+	float                          ui_frame_dt_ = 1.0f / 60.0f;
 
 	AppState state_ = AppState::LOADING;
 	float state_time_ = 0.0f;

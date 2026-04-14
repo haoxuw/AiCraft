@@ -288,7 +288,7 @@ void App::run() {
 		while (!window_.shouldClose() && (glfwGetTime() - t0) < dur) {
 			window_.pollEvents();
 			float dt = 1.0f / 60.0f;
-			state_time_ += dt;
+			state_time_ += dt; ui_frame_dt_ = dt;
 			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 			glViewport(0, 0, w, h);
 			ambient_.update(dt, w, h);
@@ -338,6 +338,7 @@ void App::run() {
 		if (dt > 0.1f) dt = 0.1f;
 		prev = now;
 		state_time_ += dt;
+		ui_frame_dt_ = dt;
 
 		int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 		glViewport(0, 0, w, h);
@@ -495,14 +496,19 @@ bool App::pointInButton(glm::vec2 mouse_ndc, const Button& b) const {
 bool App::drawButton(const Button& b) {
 	glm::vec2 m = pxToNDC(mouse_px_);
 	bool hover = pointInButton(m, b) && b.enabled;
+	bool clicked = hover && mouse_left_click_;
+
+	// Key by label for persistent anim state. Note: identical labels
+	// across screens share state, which is fine for this UI.
+	ui::AnimState& a = ui_anim_.get(std::string("btn:") + b.label);
+	a.tick(ui_frame_dt_, hover, clicked);
 
 	ui::PillButton pb;
 	pb.x = b.x; pb.y = b.y; pb.w = b.w; pb.h = b.h;
 	pb.label = b.label; pb.enabled = b.enabled; pb.hovered = hover;
 	pb.label_scale = 1.1f;
 
-	// Semantic role by label. PLAY/PLAY AGAIN = go-green; QUIT/MENU/BACK
-	// = neutral cream with dark text; everything else = primary pink.
+	// Semantic role by label.
 	if (b.label == "LET'S GO!" || b.label == "PLAY AGAIN!") {
 		pb.top = ui::BTN_GO_TOP; pb.bottom = ui::BTN_GO_BOTTOM;
 		pb.label_fill = ui::TEXT_LIGHT;
@@ -514,12 +520,15 @@ bool App::drawButton(const Button& b) {
 		pb.label_fill = ui::TEXT_LIGHT;
 	}
 
-	// Hover scale + press squish applied by ui_anim in Commit 3; for now
-	// just a subtle hover lift so Commit 2 already feels bouncier.
-	if (hover) pb.scale = 1.03f;
+	// Idle bobble on the big call-to-action buttons.
+	bool bobble = (b.label == "LET'S GO!" || b.label == "PLAY AGAIN!" ||
+	               b.label == "PLAY");
+	pb.scale = a.scale(bobble);
+	float dy = a.idle_offset(bobble);
+	pb.y += dy;
 
 	ui::drawPill(text_.get(), pb, window_.aspectRatio());
-	return hover && mouse_left_click_;
+	return clicked;
 }
 
 // ========================================================================
@@ -1413,6 +1422,20 @@ void App::drawStarter(float dt) {
 		              y0 + (1 - row) * (tile_h + pad_y),
 		              tile_w, tile_h, "" };
 		bool hover = pointInButton(pxToNDC(mouse_px_), tile);
+		bool clicked = hover && mouse_left_click_;
+		char tkey[32]; std::snprintf(tkey, sizeof(tkey), "tile:%d", i);
+		ui::AnimState& ta = ui_anim_.get(tkey);
+		ta.tick(ui_frame_dt_, hover, clicked);
+		float tscale = ta.scale(true);
+		float tdy = ta.idle_offset(true);
+		// Apply scale about tile center + idle bobble.
+		{
+			float cx = tile.x + tile.w * 0.5f, cy = tile.y + tile.h * 0.5f;
+			float nw = tile.w * tscale, nh = tile.h * tscale;
+			tile.x = cx - nw * 0.5f;
+			tile.y = cy - nh * 0.5f + tdy;
+			tile.w = nw; tile.h = nh;
+		}
 		// Tile = card-button with gradient, shadow, outline, rounded corners.
 		// Tinted per tile with the accent color rotation.
 		glm::vec4 tints[6] = {
