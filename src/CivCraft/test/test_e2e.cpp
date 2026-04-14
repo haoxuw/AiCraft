@@ -1498,16 +1498,6 @@ static std::string p54_server_rejects_client_pos_in_wall() {
 }
 
 // ================================================================
-// B1: Woodcutter behavior sets goalText when wood is nearby
-// ================================================================
-static std::string b1_woodcutter_sets_goal_text() {
-    // TODO: Rewrite for Plan-based decide() API.
-    // callDecide() has been removed — AgentClient will call Python decide()
-    // directly and parse Plan (list of PlanStep dicts) instead of single action.
-    return "";  // skip until Plan API is implemented
-}
-
-// ================================================================
 // B2: All behavior files load without Python errors
 // ================================================================
 static std::string b2_all_behaviors_load_cleanly() {
@@ -1526,15 +1516,6 @@ static std::string b2_all_behaviors_load_cleanly() {
         pythonBridge().unloadBehavior(handle);
     }
     return "";
-}
-
-// ================================================================
-// B3: Woodcutter collects logs and transitions to depositing
-// ================================================================
-static std::string b3_woodcutter_collects_and_deposits() {
-    // TODO: Rewrite for Plan-based decide() API.
-    // callDecide() has been removed — will test Plan return type instead.
-    return "";  // skip until Plan API is implemented
 }
 
 // ================================================================
@@ -1836,15 +1817,6 @@ class PathfindTestBehavior(Behavior):
     if (handle < 0) return "loadBehavior failed: " + loadErr;
     pythonBridge().unloadBehavior(handle);
     return "";
-}
-
-// ================================================================
-// B6: Navigator returns MoveTo toward goal, get_block accessible
-// ================================================================
-static std::string b6_navigator_returns_move_to_goal() {
-    // TODO: Rewrite for Plan-based decide() API.
-    // callDecide() has been removed — will test Plan return from decide() instead.
-    return "";  // skip until Plan API is implemented
 }
 
 // ================================================================
@@ -2783,12 +2755,9 @@ int main() {
 	run("P54: server rejects clientPos inside wall",              p54_server_rejects_client_pos_in_wall);
 
 	printf("\n--- Behavior ---\n");
-	run("B1: woodcutter sets goalText when wood nearby",     b1_woodcutter_sets_goal_text);
 	run("B2: all behavior files load cleanly",               b2_all_behaviors_load_cleanly);
-	run("B3: woodcutter transitions to depositing when full", b3_woodcutter_collects_and_deposits);
 	run("B4: StoreItem transfers inventory to chest block",   b4_store_item_server_validation);
 	run("B5: pathfind.py module loads cleanly",              b5_pathfind_module_loads);
-	run("B6: Navigator returns MoveTo toward goal",          b6_navigator_returns_move_to_goal);
 
 	printf("\n--- Block Search ---\n");
 	run("C2: scan_blocks prefers nearest non-empty chunk",   c2_scan_blocks_prefers_nearest_chunk);

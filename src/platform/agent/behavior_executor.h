@@ -30,12 +30,6 @@ namespace civcraft {
 struct AgentEntityState {
 	int behaviorHandle = -1;  // PythonBridge handle for this entity's behavior
 
-	// TODO: Plan execution state
-	// Plan currentPlan;
-	// int currentStep = 0;
-	// std::vector<glm::vec3> pathWaypoints;  // pathfind result for current Move step
-	// int waypointIndex = 0;
-
 	// HP tracking for reactive re-decide (HP drop → immediate re-plan)
 	int lastKnownHp = -1;
 
@@ -48,33 +42,6 @@ struct AgentEntityState {
 // Block query function: returns block type string at world position.
 // Used by Python pathfinding (get_block()) — queries shared chunk cache.
 using BlockTypeFn = std::function<std::string(int, int, int)>;
-
-// TODO: Plan step execution
-//
-// Execute one tick of a PlanStep, emitting ActionProposals:
-//
-// void executePlanStep(Entity& entity, AgentEntityState& state,
-//                      float dt, std::vector<ActionProposal>& out) {
-//     switch (currentStep.type) {
-//     case PlanStep::Move:
-//         // pathfind from entity.position to step.targetPos
-//         // emit TYPE_MOVE proposals along waypoints
-//         // advance step when entity reaches destination
-//         break;
-//     case PlanStep::Harvest:
-//         // if in range: emit TYPE_CONVERT (break block)
-//         // else: pathfind to block, emit TYPE_MOVE
-//         break;
-//     case PlanStep::Attack:
-//         // if in range: emit TYPE_CONVERT (deal damage)
-//         // else: pathfind to entity, emit TYPE_MOVE
-//         break;
-//     case PlanStep::Relocate:
-//         // if in range: emit TYPE_RELOCATE
-//         // else: pathfind to container, emit TYPE_MOVE
-//         break;
-//     }
-// }
 
 // Gather nearby entity info from the shared entity cache.
 inline std::vector<NearbyEntity> gatherNearby(
