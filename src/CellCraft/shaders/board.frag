@@ -1,8 +1,8 @@
 #version 410 core
 
-// Black board with subtle drifting cloud currents. Domain-warped FBM
-// produces slow rolling shapes, but amplitude is kept low so the board
-// reads as near-black — clouds are a hint, not a feature.
+// Bright pastel "paper" board. Warm cream base with soft peach undertones
+// and gentle drifting cloud currents — modern kids-game energy (Roblox /
+// Fall Guys vibe) rather than chalkboard darkness.
 
 in vec2 v_uv;
 out vec4 f_color;
@@ -42,25 +42,32 @@ void main() {
 	vec2 pix = gl_FragCoord.xy;
 	vec2 uv  = pix / u_resolution.y;
 
-	// Domain warp: two slow-drifting FBM fields, second one warps the
-	// first. Creates the looped "rolling clouds" look without hard edges.
+	// Domain warp cloud currents, kept for subtle movement.
 	vec2 q = vec2(
 		fbm(uv * 1.4 + vec2( u_time * 0.04,  u_time * 0.02)),
 		fbm(uv * 1.4 + vec2(-u_time * 0.03,  u_time * 0.05) + 5.2)
 	);
 	float f = fbm(uv * 2.0 + 3.5 * q + vec2(u_time * 0.06, 0.0));
 
-	// Near-black base with a whisper of cool tint so it doesn't look dead.
-	vec3 base = vec3(0.015, 0.020, 0.025);
+	// Warm cream paper base with soft peach undertones.
+	vec3 base = vec3(0.97, 0.94, 0.88);
 
-	// Cloud lift: very small amplitude, centered so f≈0.5 is neutral.
-	// 0.06 max lift means the brightest wisps only reach ~vec3(0.07).
-	base += vec3(0.05, 0.06, 0.07) * (f - 0.5) * 1.2;
+	// Cloud tint: warm peach in one direction, cool sky-tint the other.
+	// Keep amplitude gentle so the surface reads calm, not busy.
+	vec3 warm = vec3(0.99, 0.91, 0.82);   // peach
+	vec3 cool = vec3(0.93, 0.96, 0.99);   // sky
+	base = mix(base, mix(cool, warm, f), 0.18);
 
-	// Fine pixel tooth — keeps the board from looking flat/gradient-y
-	// at monitor resolution without reading as "chalkboard texture".
+	// Soft radial vignette pulling the edges toward a slightly deeper cream
+	// — helps UI cards pop without going dark.
+	vec2  ndc   = (pix / u_resolution) * 2.0 - 1.0;
+	float rad   = length(ndc * vec2(u_resolution.x / u_resolution.y, 1.0));
+	float vigs  = smoothstep(0.8, 1.6, rad);
+	base = mix(base, vec3(0.91, 0.86, 0.80), vigs * 0.35);
+
+	// Fine paper tooth — keeps a tactile feel without reading as chalkboard.
 	float tooth = hash12(floor(pix));
-	base += (tooth - 0.5) * 0.010;
+	base += (tooth - 0.5) * 0.012;
 
-	f_color = vec4(max(base, vec3(0.0)), 1.0);
+	f_color = vec4(clamp(base, vec3(0.0), vec3(1.0)), 1.0);
 }

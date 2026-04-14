@@ -11,6 +11,7 @@
 
 #include "CellCraft/client/name_generator.h"
 #include "CellCraft/client/part_render.h"
+#include "CellCraft/client/ui_theme.h"
 #include "CellCraft/sim/monster.h"
 #include "CellCraft/sim/part_stats.h"
 #include "CellCraft/sim/tuning.h"
@@ -34,16 +35,17 @@ const sim::PartType kPaletteTypes[] = {
 };
 constexpr int kPaletteCount = (int)(sizeof(kPaletteTypes) / sizeof(kPaletteTypes[0]));
 
-// Eight pastel chalk colors.
+// Saturated modern kids-game palette (6 slots + warm white + charcoal).
+// Mirrors ui::STROKE_PALETTE with two neutrals for creature recoloring.
 const glm::vec3 kColorPalette[8] = {
-	{0.95f, 0.55f, 0.65f}, // pink
-	{1.00f, 0.78f, 0.45f}, // orange
-	{1.00f, 0.95f, 0.55f}, // yellow
-	{0.60f, 0.95f, 0.60f}, // green
-	{0.55f, 0.85f, 0.95f}, // sky
-	{0.75f, 0.65f, 0.95f}, // lavender
-	{0.95f, 0.92f, 0.85f}, // white
-	{0.65f, 0.65f, 0.72f}, // grey
+	{1.00f, 0.31f, 0.55f}, // hot pink  #FF4F8B
+	{0.31f, 0.76f, 1.00f}, // cyan      #4FC1FF
+	{0.50f, 0.83f, 0.31f}, // lime      #7FD44F
+	{1.00f, 0.76f, 0.31f}, // gold      #FFC34F
+	{0.77f, 0.31f, 1.00f}, // magenta   #C44FFF
+	{1.00f, 0.56f, 0.31f}, // orange    #FF8F4F
+	{1.00f, 0.99f, 0.96f}, // warm white
+	{0.20f, 0.18f, 0.26f}, // charcoal
 };
 constexpr int kColorPaletteCount = 8;
 
@@ -294,11 +296,16 @@ bool CreatureLab::pixel_button_(float x, float y, float w, float h, const char* 
 	float nx = a.x, ny = a.y, nw = b.x - a.x, nh = b.y - a.y;
 	bool hover = enabled && in.mouse_px.x >= x && in.mouse_px.x <= x + w
 	          && in.mouse_px.y >= y && in.mouse_px.y <= y + h;
-	glm::vec4 bg = enabled ? glm::vec4(fill * (hover ? 1.15f : 1.0f), 0.92f)
-	                       : glm::vec4(0.10f, 0.10f, 0.10f, 0.5f);
+	glm::vec4 bg = enabled ? glm::vec4(fill * (hover ? 1.12f : 1.0f), 0.98f)
+	                       : glm::vec4(0.85f, 0.82f, 0.78f, 0.5f);
+	// Drop shadow under button (kids-game depth).
+	text_->drawRect(nx + 0.004f, ny - 0.008f, nw, nh, ui::SHADOW);
 	text_->drawRect(nx, ny, nw, nh, bg);
-	// border
-	glm::vec4 edge(0.95f, 0.92f, 0.78f, enabled ? 1.0f : 0.4f);
+	// Top-edge highlight for faux gradient.
+	text_->drawRect(nx, ny + nh - nh * 0.12f, nw, nh * 0.09f,
+		glm::vec4(1.0f, 1.0f, 1.0f, 0.22f));
+	// Charcoal border.
+	glm::vec4 edge = ui::OUTLINE; if (!enabled) edge.a = 0.4f;
 	float t = 0.004f;
 	text_->drawRect(nx, ny,         nw, t, edge);
 	text_->drawRect(nx, ny + nh - t, nw, t, edge);
@@ -370,8 +377,9 @@ void CreatureLab::draw_top_bar_(const Layout& l, const LabInput& in) {
 	};
 	glm::vec2 a = px2ndc(0.0f, l.top_bar_h);
 	glm::vec2 b = px2ndc((float)fw, 0.0f);
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y,
-		glm::vec4(0.04f, 0.04f, 0.06f, 0.85f));
+	// Top bar — cream card with charcoal underline.
+	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::CARD_FILL);
+	text_->drawRect(a.x, a.y, b.x - a.x, 0.004f, ui::CARD_STROKE);
 	// Centered name + pencil
 	float scale = l.top_bar_h / 32.0f;
 	if (scale > 3.5f) scale = 3.5f;
@@ -379,8 +387,10 @@ void CreatureLab::draw_top_bar_(const Layout& l, const LabInput& in) {
 	float nx = ((float)fw * 0.5f - (w_chars * fw * 0.5f)) ;
 	(void)nx;
 	float ndc_y = (1.0f - (l.top_bar_h * 0.30f / fh) * 2.0f);
-	text_->drawText(name_, -w_chars * 0.5f, ndc_y - 0.05f, scale,
-		glm::vec4(0.98f, 0.95f, 0.80f, 1.0f), aspect);
+	// Colored shadow + dark fill title treatment.
+	glm::vec4 nshadow = ui::ACCENT_PINK; nshadow.a = 0.75f;
+	text_->drawText(name_, -w_chars * 0.5f + 0.005f, ndc_y - 0.05f - 0.007f, scale, nshadow, aspect);
+	text_->drawText(name_, -w_chars * 0.5f,          ndc_y - 0.05f,          scale, ui::TEXT_DARK, aspect);
 	// Pencil button (a small box right of the name)
 	float btn_w = l.top_bar_h * 0.6f;
 	float btn_h = l.top_bar_h * 0.6f;
@@ -400,8 +410,9 @@ void CreatureLab::draw_left_rail_(const Layout& l, const LabInput& in) {
 	};
 	glm::vec2 a = px2ndc(0.0f, (float)fh);
 	glm::vec2 b = px2ndc(l.left_w, l.top_bar_h);
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y,
-		glm::vec4(0.06f, 0.06f, 0.08f, 0.85f));
+	// Left rail — lavender-tinted card with pink stroke on the right edge.
+	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::PANEL_TINT);
+	text_->drawRect(b.x - 0.004f, a.y, 0.004f, b.y - a.y, ui::ACCENT_PINK);
 
 	const char* labels[3] = { "SHAPE", "PARTS", "COLOR" };
 	Drawer drawers[3] = { Drawer::SHAPE, Drawer::PARTS, Drawer::COLOR };
@@ -411,9 +422,10 @@ void CreatureLab::draw_left_rail_(const Layout& l, const LabInput& in) {
 	float by0 = l.top_bar_h + 12.0f;
 	for (int i = 0; i < 3; ++i) {
 		float by = by0 + i * (btn_h + 8.0f);
+		// Active drawer = hot pink; inactive = cream. Saturated, not drab.
 		glm::vec3 fill = (drawer_ == drawers[i])
-			? glm::vec3(0.40f, 0.55f, 0.30f)
-			: glm::vec3(0.18f, 0.20f, 0.22f);
+			? glm::vec3(1.00f, 0.31f, 0.55f)
+			: glm::vec3(1.00f, 0.99f, 0.96f);
 		if (pixel_button_(bx, by, btn_w, btn_h, labels[i], true, in, fill)) {
 			drawer_ = drawers[i];
 		}
@@ -428,8 +440,8 @@ void CreatureLab::draw_right_rail_(const Layout& l) {
 	};
 	glm::vec2 a = px2ndc(l.right_x, (float)fh);
 	glm::vec2 b = px2ndc((float)fw, l.top_bar_h);
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y,
-		glm::vec4(0.06f, 0.06f, 0.08f, 0.85f));
+	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::PANEL_TINT);
+	text_->drawRect(a.x, a.y, 0.004f, b.y - a.y, ui::ACCENT_CYAN);
 
 	// Fullness jar — large, ~220px tall.
 	float jar_w = l.right_w - 60.0f;
@@ -443,7 +455,7 @@ void CreatureLab::draw_right_rail_(const Layout& l) {
 	glm::vec2 ja = px2ndc(jar_x, jar_y + jar_h);
 	glm::vec2 jb = px2ndc(jar_x + jar_w, jar_y);
 	text_->drawRect(ja.x, ja.y, jb.x - ja.x, jb.y - ja.y,
-		glm::vec4(0.10f, 0.10f, 0.13f, 0.95f));
+		glm::vec4(0.96f, 0.92f, 0.85f, 0.95f));
 	float frac = fullness_frac_();
 	glm::vec4 fillcol = (frac > 0.85f) ? glm::vec4(0.95f, 0.40f, 0.40f, 1.0f)
 	                  : (frac > 0.60f) ? glm::vec4(0.95f, 0.85f, 0.45f, 1.0f)
@@ -453,7 +465,7 @@ void CreatureLab::draw_right_rail_(const Layout& l) {
 	glm::vec2 fb = px2ndc(jar_x + jar_w - 4.0f, jar_y + jar_h - 4.0f - fill_h);
 	if (fill_h > 0.5f) text_->drawRect(fa.x, fa.y, fb.x - fa.x, fb.y - fa.y, fillcol);
 	// Border
-	glm::vec4 edge(0.92f, 0.88f, 0.70f, 1.0f);
+	glm::vec4 edge = ui::CARD_STROKE;
 	float t = 0.005f;
 	text_->drawRect(ja.x, ja.y, jb.x - ja.x, t, edge);
 	text_->drawRect(ja.x, jb.y - t, jb.x - ja.x, t, edge);
@@ -462,7 +474,7 @@ void CreatureLab::draw_right_rail_(const Layout& l) {
 	// Label
 	float ndc_label_y = 1.0f - (jar_y + jar_h + 10.0f) / fh * 2.0f;
 	text_->drawText("FULLNESS", ja.x + 0.005f, ndc_label_y, 1.4f,
-		glm::vec4(0.92f, 0.88f, 0.70f, 1.0f), aspect);
+		ui::TEXT_DARK, aspect);
 
 	// 3 stat bars below.
 	float bar_x = jar_x;
@@ -481,12 +493,12 @@ void CreatureLab::draw_right_rail_(const Layout& l) {
 		// label
 		float lndc_y = 1.0f - (by - 6.0f) / fh * 2.0f;
 		text_->drawText(labels[i], px2ndc(bar_x, 0.0f).x + 0.005f, lndc_y, 1.3f,
-			glm::vec4(0.95f, 0.92f, 0.78f, 1.0f), aspect);
+			ui::TEXT_DARK, aspect);
 		// bar bg
 		glm::vec2 ba = px2ndc(bar_x, by + bar_h);
 		glm::vec2 bb = px2ndc(bar_x + bar_w, by);
 		text_->drawRect(ba.x, ba.y, bb.x - ba.x, bb.y - ba.y,
-			glm::vec4(0.10f, 0.10f, 0.13f, 0.9f));
+			glm::vec4(0.96f, 0.92f, 0.85f, 0.9f));
 		// fill
 		glm::vec2 fa2 = px2ndc(bar_x + 3.0f, by + bar_h - 3.0f);
 		glm::vec2 fb2 = px2ndc(bar_x + 3.0f + (bar_w - 6.0f) * fracs[i], by + 3.0f);
@@ -595,8 +607,10 @@ void CreatureLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 	{
 		glm::vec2 a = px2ndc(l.canvas_x, (float)l.fh - l.bottom_bar_h);
 		glm::vec2 b = px2ndc(l.canvas_x + l.canvas_w, l.top_bar_h);
+		// Canvas backdrop — cream card so the creature pops against a
+		// bright surface rather than a dark slate.
 		text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y,
-			glm::vec4(0.10f, 0.13f, 0.10f, 0.55f));
+			glm::vec4(1.0f, 0.99f, 0.95f, 0.65f));
 	}
 
 	// Mirror axis dashed
@@ -729,15 +743,14 @@ void CreatureLab::draw_drawer_(const Layout& l, const LabInput& in) {
 	if (dh < 60.0f) return;
 	glm::vec2 a = px2ndc(dx, dy + dh);
 	glm::vec2 b = px2ndc(dx + dw, dy);
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y,
-		glm::vec4(0.10f, 0.12f, 0.10f, 0.85f));
+	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::CARD_FILL);
 
 	if (drawer_ == Drawer::SHAPE) {
 		float ndc_y = 1.0f - (dy + 16.0f) / fh * 2.0f;
 		text_->drawText("DRAG THE CREATURE", a.x + 0.01f, ndc_y, 1.0f,
-			glm::vec4(0.95f, 0.92f, 0.75f, 1.0f), aspect);
+			ui::TEXT_DARK, aspect);
 		text_->drawText("TO BEND IT!", a.x + 0.01f, ndc_y - 0.05f, 1.0f,
-			glm::vec4(0.95f, 0.92f, 0.75f, 1.0f), aspect);
+			ui::TEXT_DARK, aspect);
 	} else if (drawer_ == Drawer::PARTS) {
 		// Grid 2 columns × 6 rows.
 		float pad = 8.0f;
@@ -788,8 +801,8 @@ void CreatureLab::draw_bottom_bar_(const Layout& l, const LabInput& in, LabOutco
 	};
 	glm::vec2 a = px2ndc(0.0f, (float)fh);
 	glm::vec2 b = px2ndc((float)fw, (float)fh - l.bottom_bar_h);
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y,
-		glm::vec4(0.04f, 0.04f, 0.06f, 0.92f));
+	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::CARD_FILL);
+	text_->drawRect(a.x, b.y - 0.004f, b.x - a.x, 0.004f, ui::CARD_STROKE);
 
 	float by = (float)fh - l.bottom_bar_h + 14.0f;
 	float bh = l.bottom_bar_h - 28.0f;

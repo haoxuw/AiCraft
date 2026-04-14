@@ -26,6 +26,7 @@
 #include <sstream>
 
 #include "CellCraft/client/part_render.h"
+#include "CellCraft/client/ui_theme.h"
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/part_stats.h"
 #include "CellCraft/sim/shape_validate.h"
@@ -493,24 +494,57 @@ bool App::pointInButton(glm::vec2 mouse_ndc, const Button& b) const {
 bool App::drawButton(const Button& b) {
 	glm::vec2 m = pxToNDC(mouse_px_);
 	bool hover = pointInButton(m, b) && b.enabled;
-	glm::vec4 bg = b.enabled
-		? (hover ? glm::vec4(0.22f, 0.22f, 0.25f, 0.9f) : glm::vec4(0.10f, 0.10f, 0.12f, 0.8f))
-		: glm::vec4(0.06f, 0.06f, 0.06f, 0.7f);
-	text_->drawRect(b.x, b.y, b.w, b.h, bg);
-	// chalk-outlined border: draw 4 thin rects
-	glm::vec4 edge(0.85f, 0.85f, 0.80f, b.enabled ? 0.95f : 0.4f);
-	float t = 0.003f;
+
+	// Pick gradient colors. PLAY/PLAY AGAIN/LET'S GO = primary pink;
+	// LET'S GO! always green; QUIT/MENU = neutral cream; else primary.
+	glm::vec4 top = ui::BTN_PRIMARY_TOP, bot = ui::BTN_PRIMARY_BOTTOM;
+	if (b.label == "LET'S GO!" || b.label == "PLAY AGAIN!") {
+		top = ui::BTN_GO_TOP; bot = ui::BTN_GO_BOTTOM;
+	} else if (b.label == "QUIT" || b.label == "MENU" || b.label == "BACK") {
+		top = ui::BTN_NEUTRAL_TOP; bot = ui::BTN_NEUTRAL_BOTTOM;
+	}
+	if (!b.enabled) { top.a = 0.5f; bot.a = 0.5f; }
+	if (hover) {
+		top += glm::vec4(0.06f, 0.06f, 0.06f, 0.0f);
+		bot += glm::vec4(0.06f, 0.06f, 0.06f, 0.0f);
+	}
+
+	// Drop shadow.
+	text_->drawRect(b.x + 0.006f, b.y - 0.012f, b.w, b.h, ui::SHADOW);
+
+	// Faux gradient: 8 horizontal stripes interpolating top → bottom.
+	const int STRIPES = 8;
+	for (int i = 0; i < STRIPES; ++i) {
+		float t0 = (float)i / (float)STRIPES;
+		float t1 = (float)(i + 1) / (float)STRIPES;
+		glm::vec4 c = glm::mix(top, bot, 0.5f * (t0 + t1));
+		float sy = b.y + b.h * (1.0f - t1);
+		float sh = b.h * (t1 - t0) + 0.0005f; // avoid hairline gaps
+		text_->drawRect(b.x, sy, b.w, sh, c);
+	}
+	// Top-edge highlight (5% tall, white-alpha).
+	text_->drawRect(b.x, b.y + b.h - b.h * 0.12f, b.w, b.h * 0.09f,
+		glm::vec4(1.0f, 1.0f, 1.0f, 0.22f));
+
+	// 3-4px charcoal outline.
+	glm::vec4 edge = ui::OUTLINE; if (!b.enabled) edge.a = 0.4f;
+	float t = 0.004f;
 	text_->drawRect(b.x, b.y, b.w, t, edge);
 	text_->drawRect(b.x, b.y + b.h - t, b.w, t, edge);
 	text_->drawRect(b.x, b.y, t, b.h, edge);
 	text_->drawRect(b.x + b.w - t, b.y, t, b.h, edge);
-	// centered label
-	float label_w = (float)b.label.size() * 0.018f * 1.1f; // approx, matches buildTextVerts
+
+	// Centered label with outline (drop shadow for depth).
+	float label_w = (float)b.label.size() * 0.018f * 1.1f;
 	float tx = b.x + (b.w - label_w) * 0.5f;
 	float ty = b.y + (b.h - 0.032f * 1.1f) * 0.5f;
-	glm::vec4 col = b.enabled ? glm::vec4(0.97f, 0.97f, 0.92f, 1.0f)
-	                          : glm::vec4(0.5f, 0.5f, 0.5f, 1.0f);
-	text_->drawText(b.label, tx, ty, 1.1f, col, window_.aspectRatio());
+	glm::vec4 shadow = ui::OUTLINE; shadow.a = b.enabled ? 0.85f : 0.4f;
+	glm::vec4 fill   = (b.label == "QUIT" || b.label == "MENU" || b.label == "BACK")
+		? ui::TEXT_DARK
+		: ui::TEXT_LIGHT;
+	if (!b.enabled) fill = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f);
+	text_->drawText(b.label, tx + 0.003f, ty - 0.004f, 1.1f, shadow, window_.aspectRatio());
+	text_->drawText(b.label, tx,          ty,          1.1f, fill,   window_.aspectRatio());
 	return hover && mouse_left_click_;
 }
 
@@ -519,17 +553,17 @@ bool App::drawButton(const Button& b) {
 // ========================================================================
 
 void App::drawLoading(float) {
-	text_->drawTitle("CELLCRAFT", -0.26f, 0.05f, 3.0f,
-		glm::vec4(1.0f, 1.0f, 0.95f, 1.0f), window_.aspectRatio());
+	glm::vec4 shadow = ui::ACCENT_PINK; shadow.a = 0.8f;
+	text_->drawTitle("CELLCRAFT", -0.26f + 0.010f, 0.05f - 0.012f, 3.0f, shadow, window_.aspectRatio());
+	text_->drawTitle("CELLCRAFT", -0.26f,          0.05f,          3.0f, ui::TEXT_DARK, window_.aspectRatio());
 
 	float total = 0.8f;
 	float frac = std::min(1.0f, state_time_ / total);
 	float bw = 0.5f, bh = 0.02f;
 	float bx = -bw * 0.5f, by = -0.12f;
-	text_->drawRect(bx, by, bw, bh, glm::vec4(0.15f, 0.15f, 0.15f, 0.8f));
-	text_->drawRect(bx, by, bw * frac, bh, glm::vec4(0.85f, 0.85f, 0.75f, 1.0f));
-	text_->drawText("LOADING...", -0.08f, -0.2f, 0.9f,
-		glm::vec4(0.8f, 0.8f, 0.8f, 1.0f), window_.aspectRatio());
+	text_->drawRect(bx, by, bw, bh, glm::vec4(0.85f, 0.82f, 0.76f, 0.9f));
+	text_->drawRect(bx, by, bw * frac, bh, ui::ACCENT_PINK);
+	text_->drawText("LOADING...", -0.08f, -0.2f, 0.9f, ui::TEXT_MUTED, window_.aspectRatio());
 
 	if (state_time_ >= total) goToMainMenu();
 }
@@ -621,25 +655,28 @@ void App::drawMainMenu(float dt) {
 
 	float aspect = window_.aspectRatio();
 
-	// 2) Dim overlay so menu text reads against busy sim.
-	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.0f, 0.0f, 0.0f, 0.45f));
+	// 2) Soft cream overlay so menu text reads against busy sim — but keep
+	//    the background airy. (theme: low-opacity cream, not dim black.)
+	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.35f));
 
-	// 3) Centered panel (RA1-inspired): semi-opaque slab with double chalk
-	//    border + corner ticks.
+	// 3) Centered card: cream fill, charcoal outline, drop shadow.
 	float px = -0.34f, py = -0.48f, pw = 0.68f, ph = 0.96f;
-	text_->drawRect(px, py, pw, ph, glm::vec4(0.04f, 0.05f, 0.06f, 0.88f));
+	// Drop shadow (offset down-right).
+	text_->drawRect(px + 0.012f, py - 0.018f, pw, ph, ui::SHADOW);
+	// Card fill.
+	text_->drawRect(px, py, pw, ph, ui::CARD_FILL);
 	auto chalkBorder = [&](float x, float y, float w, float h, float t, glm::vec4 c) {
 		text_->drawRect(x, y,         w, t, c);
 		text_->drawRect(x, y + h - t, w, t, c);
 		text_->drawRect(x, y,         t, h, c);
 		text_->drawRect(x + w - t, y, t, h, c);
 	};
-	chalkBorder(px, py, pw, ph, 0.004f, glm::vec4(0.92f, 0.90f, 0.78f, 0.95f));
+	chalkBorder(px, py, pw, ph, 0.004f, ui::CARD_STROKE);
 	chalkBorder(px + 0.012f, py + 0.012f, pw - 0.024f, ph - 0.024f, 0.002f,
-		glm::vec4(0.70f, 0.68f, 0.58f, 0.8f));
+		ui::ACCENT_PINK);
 	// Corner tick marks — small L-brackets outside the outer border.
 	float tk = 0.03f, tt = 0.005f;
-	glm::vec4 tkc(0.95f, 0.75f, 0.30f, 1.0f);   // warm amber, RA1 vibe
+	glm::vec4 tkc = ui::ACCENT_GOLD;
 	text_->drawRect(px - 0.01f,       py + ph - tt,     tk, tt, tkc);
 	text_->drawRect(px - 0.01f,       py + ph - tk,     tt, tk, tkc);
 	text_->drawRect(px + pw + 0.01f - tk, py + ph - tt, tk, tt, tkc);
@@ -649,13 +686,12 @@ void App::drawMainMenu(float dt) {
 	text_->drawRect(px + pw + 0.01f - tk, py,           tk, tt, tkc);
 	text_->drawRect(px + pw + 0.01f - tt, py,           tt, tk, tkc);
 
-	// 4) Stenciled title — double-draw with an offset shadow.
-	glm::vec4 shadow(0.95f, 0.45f, 0.10f, 0.7f);
-	glm::vec4 chalk (1.0f, 1.0f, 0.95f, 1.0f);
-	text_->drawTitle("CELLCRAFT", -0.26f + 0.008f, 0.30f - 0.008f, 3.0f, shadow, aspect);
-	text_->drawTitle("CELLCRAFT", -0.26f,          0.30f,          3.0f, chalk,  aspect);
-	text_->drawText ("// CHALKBOARD SURVIVAL //", -0.24f, 0.18f, 1.0f,
-		glm::vec4(0.85f, 0.82f, 0.70f, 0.95f), aspect);
+	// 4) Stenciled title — colored drop shadow + dark fill on cream.
+	glm::vec4 shadow = ui::ACCENT_PINK; shadow.a = 0.75f;
+	text_->drawTitle("CELLCRAFT", -0.26f + 0.010f, 0.30f - 0.012f, 3.0f, shadow, aspect);
+	text_->drawTitle("CELLCRAFT", -0.26f,          0.30f,          3.0f, ui::TEXT_DARK, aspect);
+	text_->drawText ("// SCRIBBLE SURVIVAL //", -0.23f, 0.18f, 1.0f,
+		ui::TEXT_MUTED, aspect);
 
 	// 5) Buttons (inside panel). Single unified flow: PLAY → starter picker.
 	Button play { -0.22f,  0.05f, 0.44f, 0.08f, "PLAY" };
@@ -667,7 +703,7 @@ void App::drawMainMenu(float dt) {
 	// 6) Hint line at panel bottom.
 	text_->drawText("v0.1  //  CLICK OR ESC",
 		-0.14f, -0.43f, 0.7f,
-		glm::vec4(0.7f, 0.7f, 0.6f, 0.8f), aspect);
+		ui::TEXT_MUTED, aspect);
 }
 
 
@@ -1224,8 +1260,16 @@ void App::drawHUD() {
 	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 	float mm_size_ndc = 0.2f;
 	float mm_x = 0.78f, mm_y = 0.68f;
-	text_->drawRect(mm_x, mm_y, mm_size_ndc, mm_size_ndc,
-		glm::vec4(0.05f, 0.05f, 0.05f, 0.85f));
+	text_->drawRect(mm_x, mm_y, mm_size_ndc, mm_size_ndc, ui::CARD_FILL);
+	// Minimap border — pink accent matches card style.
+	{
+		glm::vec4 bc = ui::ACCENT_PINK;
+		float t = 0.003f;
+		text_->drawRect(mm_x, mm_y, mm_size_ndc, t, bc);
+		text_->drawRect(mm_x, mm_y + mm_size_ndc - t, mm_size_ndc, t, bc);
+		text_->drawRect(mm_x, mm_y, t, mm_size_ndc, bc);
+		text_->drawRect(mm_x + mm_size_ndc - t, mm_y, t, mm_size_ndc, bc);
+	}
 	float R = world_.map_radius;
 	for (auto& [id, m] : world_.monsters) {
 		if (!m.alive) continue;
@@ -1257,12 +1301,13 @@ void App::drawPlaying(float dt) {
 void App::drawEndScreen(float dt) {
 	{
 		float aspect = window_.aspectRatio();
-		text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.04f, 0.04f, 0.06f, 0.92f));
+		// Warm cream overlay — bright, not dim.
+		text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.78f));
 		const char* banner = end_won_ ? "YOU WON!" : "SO CLOSE!";
-		text_->drawTitle(banner, -0.30f, 0.45f, 2.8f,
-			end_won_ ? glm::vec4(0.55f, 1.0f, 0.55f, 1.0f)
-			         : glm::vec4(1.0f, 0.85f, 0.45f, 1.0f),
-			aspect);
+		glm::vec4 banner_shadow = end_won_ ? ui::ACCENT_LIME : ui::ACCENT_ORANGE;
+		banner_shadow.a = 0.8f;
+		text_->drawTitle(banner, -0.30f + 0.010f, 0.45f - 0.012f, 2.8f, banner_shadow, aspect);
+		text_->drawTitle(banner, -0.30f,          0.45f,          2.8f, ui::TEXT_DARK, aspect);
 
 		// Creature wiggle / slump animation in center.
 		state_time_ += 0.0f; // already accumulated by main loop
@@ -1360,9 +1405,13 @@ void App::startMatchFromLab() {
 void App::drawStarter(float dt) {
 	(void)dt;
 	float aspect = window_.aspectRatio();
-	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.04f, 0.04f, 0.06f, 1.0f));
+	// Cream overlay so the starter picker reads bright and airy.
+	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.72f));
+	glm::vec4 title_shadow = ui::ACCENT_CYAN; title_shadow.a = 0.80f;
+	text_->drawTitle("WHAT DO YOU WANT TO BUILD?", -0.55f + 0.008f, 0.78f - 0.010f, 1.6f,
+		title_shadow, aspect);
 	text_->drawTitle("WHAT DO YOU WANT TO BUILD?", -0.55f, 0.78f, 1.6f,
-		glm::vec4(1.0f, 0.95f, 0.75f, 1.0f), aspect);
+		ui::TEXT_DARK, aspect);
 
 	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
 	const int n = 6;

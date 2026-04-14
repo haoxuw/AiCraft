@@ -45,11 +45,11 @@ void main() {
 	// 15-30% of it has small gaps where "pigment missed the board".
 	float a_grit = mix(0.75, 1.0, smoothstep(0.18, 0.65, grit));
 
-	// Slight color jitter — chalk isn't uniform in hue either. Lift the
-	// darkest pixels toward white so the stroke feels like pigment, not
-	// ink.
+	// Slight color jitter — pigment isn't uniform in hue either. Against a
+	// bright cream paper we want the stroke to read as saturated marker,
+	// so push toward deeper color rather than lifting toward white.
 	vec3 col = u_color + (grit - 0.5) * 0.06;
-	col = mix(col, vec3(1.0), 0.18 * a_grit);
+	col = mix(col * 0.85, col, a_grit);
 
 	f_color = vec4(col, a_edge * a_grit);
 }

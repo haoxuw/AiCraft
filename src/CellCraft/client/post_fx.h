@@ -31,9 +31,12 @@ public:
 	void render_to_default(int screen_w, int screen_h, float time_seconds);
 
 	// Tunables.
-	float bloom_threshold = 0.55f;
-	float bloom_strength  = 0.9f;
-	float vignette        = 0.75f;
+	// Tuned for bright pastel board: threshold tuned above paper luminance,
+	// strength low so saturated strokes just kiss the highlights rather
+	// than washing the scene out. Vignette softened but kept for depth.
+	float bloom_threshold = 1.05f;
+	float bloom_strength  = 0.25f;
+	float vignette        = 0.30f;
 	float low_hp          = 0.0f;  // 0..1 red-edge pulse
 
 private:
