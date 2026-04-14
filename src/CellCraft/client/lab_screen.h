@@ -1,7 +1,7 @@
-// CellCraft — Spore-style creature lab screen. Self-contained state machine
-// that handles DRAWING and ASSEMBLING modes in one screen. The owning App
-// dispatches update()+draw() each frame while state_ == DRAW_LAB and reads
-// out the finished monster via take_*(). See app.cpp for hookup.
+// CellCraft — Creature Lab. Playdough-sculpt cell body, painted armor
+// plates, and drag-and-drop mods. One screen; three modes toggled at the
+// top (SCULPT / PLATE / MODS). The owning App calls update() each frame
+// and, when the user confirms, reads cell/plates/parts via accessors.
 
 #pragma once
 
@@ -13,6 +13,8 @@
 #include "CellCraft/client/chalk_renderer.h"
 #include "CellCraft/client/chalk_stroke.h"
 #include "CellCraft/sim/part.h"
+#include "CellCraft/sim/plate.h"
+#include "CellCraft/sim/radial_cell.h"
 
 struct GLFWwindow;
 
@@ -24,19 +26,20 @@ using civcraft::Window;
 using civcraft::TextRenderer;
 
 enum class LabOutcome {
-	NONE,       // still running
-	USE,        // user hit USE THIS MONSTER — caller should take_*() and start match
-	BACK,       // user hit MENU — caller should goToMainMenu or goToMonsterSelect
+	NONE,
+	USE,   // USE THIS MONSTER clicked — read cell/plates/parts
+	BACK,  // MENU clicked — go back
 };
 
-// Frame input snapshot. App builds this per-frame.
+// Per-frame input snapshot built by App.
 struct LabInput {
-	glm::vec2 mouse_px      = glm::vec2(-1.0f);
+	glm::vec2 mouse_px       = glm::vec2(-1.0f);
 	bool      mouse_left_down  = false;
 	bool      mouse_right_down = false;
-	bool      mouse_left_click  = false;  // edge (press this frame)
-	bool      mouse_right_click = false;  // edge (press this frame)
-	std::vector<int> keys_pressed;        // GLFW_KEY_* pressed this frame
+	bool      mouse_left_click  = false;
+	bool      mouse_right_click = false;
+	float     scroll_y = 0.0f;
+	std::vector<int> keys_pressed;
 };
 
 class LabScreen {
@@ -44,112 +47,124 @@ public:
 	void init(Window* window, ChalkRenderer* renderer, TextRenderer* text);
 	void reset();
 
-	// Tick + render; returns what the app should do next.
 	LabOutcome update(float dt, const LabInput& in);
 
-	// After USE: read final polygon + parts.
-	const std::vector<glm::vec2>& local_shape() const { return validated_local_; }
-	const std::vector<sim::Part>& parts()       const { return parts_; }
-	glm::vec3                     color()       const { return color_; }
+	// Finalized outputs — read after LabOutcome::USE.
+	const sim::RadialCell&         cell()   const { return cell_; }
+	const std::vector<sim::Plate>& plates() const { return plates_; }
+	const std::vector<sim::Part>&  parts()  const { return parts_; }
+	glm::vec3                      color()  const { return color_; }
+
+	// Screenshot seeders — pre-configure a mode with representative state.
+	void seed_sculpt_for_screenshot();
+	void seed_plate_for_screenshot();
+	void seed_mods_for_screenshot();
 
 private:
-	// Layout in pixel space — recomputed each frame from framebuffer size.
 	struct Layout {
 		int   fw = 0, fh = 0;
-		float left_x = 0.0f, left_w = 0.0f;        // left rail
-		float right_x = 0.0f, right_w = 0.0f;      // right rail
-		float canvas_x = 0.0f, canvas_w = 0.0f;    // center canvas
-		float canvas_cx = 0.0f, canvas_cy = 0.0f;  // canvas center pixel
+		float left_x = 0.0f, left_w = 0.0f;
+		float right_x = 0.0f, right_w = 0.0f;
+		float canvas_x = 0.0f, canvas_w = 0.0f;
+		float canvas_cx = 0.0f, canvas_cy = 0.0f;
 		float top_bar_h = 0.0f;
 		float bottom_bar_h = 0.0f;
 	};
 
-	enum class Mode { DRAWING, ASSEMBLING };
+	enum class Mode { SCULPT, PLATE, MODS };
 
 	Layout compute_layout_() const;
-	glm::vec2 px_to_ndc_(glm::vec2 px) const;
 
-	// Rendering helpers.
-	void draw_chalk_grid_(std::vector<ChalkStroke>& out, const Layout& l);
-	void draw_body_and_parts_(std::vector<ChalkStroke>& out, const Layout& l, float time_s,
-	                          bool include_ghost);
+	// Costs.
+	float cell_cost_() const;
+	float plates_cost_() const;
+	float parts_cost_() const;
+	float total_cost_() const { return cell_cost_() + plates_cost_() + parts_cost_(); }
+	float budget_() const;
+
+	// Rendering.
+	void draw_grid_(std::vector<ChalkStroke>& out, const Layout& l);
 	void draw_mirror_line_(std::vector<ChalkStroke>& out, const Layout& l);
-	void draw_highlight_pulses_(std::vector<ChalkStroke>& out, const Layout& l, float time_s);
+	void draw_cell_(std::vector<ChalkStroke>& out, const Layout& l, float time_s);
+	void draw_plates_(std::vector<ChalkStroke>& out, const Layout& l);
+	void draw_parts_(std::vector<ChalkStroke>& out, const Layout& l, float time_s);
+	void draw_head_tail_markers_(std::vector<ChalkStroke>& out, const Layout& l);
+	void draw_flashes_(std::vector<ChalkStroke>& out);
 
-	void draw_top_bar_();
+	void draw_top_tabs_(const Layout& l, const LabInput& in);
 	void draw_palette_(const Layout& l, const LabInput& in, float time_s);
-	void draw_loadout_(const Layout& l, const LabInput& in);
-	void draw_stats_readout_(const Layout& l);
-	void draw_mode_indicator_(const Layout& l);
-	void draw_canvas_buttons_(const Layout& l, const LabInput& in, LabOutcome& outc);
+	void draw_loadout_and_stats_(const Layout& l, const LabInput& in);
+	void draw_bottom_buttons_(const Layout& l, const LabInput& in, LabOutcome& outc);
+	void draw_title_bar_();
 
-	// Rect button helpers (pixel-space). Returns click edge.
 	bool pixel_button_(float x, float y, float w, float h,
 	                   const char* label, bool enabled,
-	                   const LabInput& in);
+	                   const LabInput& in, bool selected = false);
 
-	// Mouse position test against a pixel rect.
 	static bool pt_in_rect_(glm::vec2 p, float x, float y, float w, float h) {
 		return p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h;
 	}
 
-	// Finalize body: smooth strokes, compute centroid → core, validate.
-	void finalize_body_();
-	float parts_cost_total_() const;
+	// Coord conversions.
+	// Local space: core at origin, y-up (head = +y, tail = -y).
+	// Canvas px: screen pixel. canvas_cx → local (0,0).
+	glm::vec2 local_to_canvas_px_(glm::vec2 local, const Layout& l) const;
+	glm::vec2 canvas_px_to_local_(glm::vec2 px, const Layout& l) const;
+	// Angle (radians, RadialCell convention: θ=0 → +x) from a mouse px.
+	float     mouse_angle_(glm::vec2 mouse_px, const Layout& l) const;
 
-	// Place/remove logic (pixel-space mouse, local-space part anchors).
-	void try_place_part_(glm::vec2 mouse_px, const Layout& l);
-	void remove_part_at_(glm::vec2 mouse_px, const Layout& l);
+	// Interaction.
+	void handle_sculpt_(const LabInput& in, const Layout& l, float dt);
+	void handle_plate_(const LabInput& in, const Layout& l);
+	void handle_mods_(const LabInput& in, const Layout& l);
+	void rebuild_polygon_();
 
-	// Convert mouse pixel position to monster-local space using the canvas.
-	glm::vec2 mouse_to_local_(glm::vec2 mouse_px, const Layout& l, float wobble_rad) const;
-	// And the inverse for ghost preview / drawing existing parts.
-	glm::vec2 local_to_canvas_px_(glm::vec2 local, const Layout& l, float wobble_rad) const;
+	bool pt_inside_cell_(glm::vec2 local) const;
+	// Stack cap for a given part type (design number lives in part_stats.h).
+	static int part_cap_(sim::PartType t);
+
+	// Flash marker for tactile feedback (placements, rejections).
+	struct Flash { glm::vec2 pos_px; float t_left; glm::vec3 color; };
+	void push_flash_(glm::vec2 pos_px, glm::vec3 col = glm::vec3(1.0f, 0.9f, 0.4f));
 
 	// Data ----------------------------------------------------------------
 	Window*        window_    = nullptr;
 	ChalkRenderer* renderer_  = nullptr;
 	TextRenderer*  text_      = nullptr;
 
-	Mode mode_ = Mode::DRAWING;
+	Mode mode_ = Mode::SCULPT;
 
-	// DRAWING mode.
-	std::vector<ChalkStroke> strokes_;
-	ChalkStroke              live_stroke_;
-	bool                     drawing_ = false;
-	bool                     symmetric_draw_ = true;  // mirror axis on; draw on right half only
-	bool                     used_symmetric_ = false; // set by finalize_body_ if symmetric path used
+	sim::RadialCell         cell_;
+	std::vector<glm::vec2>  local_poly_;   // cached polygon from cell (for rendering/hit-tests)
 
-	// Validated body (set after finalize_body_).
-	std::vector<glm::vec2>   smoothed_local_;    // in monster-local space, core at origin
-	std::vector<glm::vec2>   validated_local_;   // same as smoothed; kept for parity with old code
-	glm::vec3                color_ = glm::vec3(0.95f, 0.95f, 0.92f);
-	float                    body_scale_ = 1.0f; // pixels-per-local-unit inside canvas
+	std::vector<sim::Plate> plates_;
+	std::vector<sim::Part>  parts_;
+	glm::vec3               color_ = glm::vec3(0.95f, 0.95f, 0.92f);
 
-	// ASSEMBLING mode.
-	std::vector<sim::Part>   parts_;
-	int                      selected_palette_ = -1;   // PartType int, -1 = none
-	float                    ghost_rotation_   = 0.0f; // radians, 30° snap on 'R'
-	bool                     mirror_mode_      = false;
-	float                    biomass_budget_   = 40.0f;
+	// SCULPT.
+	float brush_sigma_ = 0.18f;
+	bool  prev_mouse_left_down_sc_ = false;
+	glm::vec2 prev_mouse_px_sc_ = glm::vec2(-1.0f);
 
-	// Right-rail click-to-highlight.
-	int                      highlight_type_ = -1; // PartType or -1
-	float                    highlight_t_    = 0.0f;
+	// PLATE painting.
+	bool  plate_painting_ = false;
+	float plate_theta_min_ = 0.0f;
+	float plate_theta_max_ = 0.0f;
 
-	// Tactile placement flash — short-lived burst markers in pixel space.
-	struct Flash { glm::vec2 pos_px; float t_left; };
-	std::vector<Flash>       flashes_;
+	// MODS drag-and-drop.
+	int   drag_palette_idx_ = -1;    // palette slot being dragged
+	float ghost_rotation_   = 0.0f;  // 30° snap via scroll
+	bool  prev_mouse_left_down_md_ = false;
 
-	// Status bar text (top bar or mode indicator).
-	std::string              status_;
-	glm::vec3                status_color_ = glm::vec3(0.85f);
+	// Status line (below title).
+	std::string status_;
+	glm::vec3   status_color_ = glm::vec3(0.85f);
 
-	// Gentle visual wobble so the creature looks alive.
-	float                    time_acc_ = 0.0f;
+	// Flash markers.
+	std::vector<Flash> flashes_;
 
-	// Edge-state trackers for right-click (we get edge from input now).
-	bool prev_right_ = false;
+	float time_acc_ = 0.0f;
+	bool  prev_right_ = false;
 };
 
 } // namespace civcraft::cellcraft

@@ -1,9 +1,11 @@
-// CellCraft — prebuilt monster templates. Hand-authored polygons in
-// monster-local space (core at origin). Three archetypes keyed by id.
+// CellCraft — prebuilt monster templates.
 //
-// TODO: move to Python artifacts (artifacts/monsters/base/*.py) once
-// the pybind surface lands; this header is a C++ stub so the sim has
-// content to exercise in unit tests and the client's first bring-up.
+// Authored as RadialCell + plates + parts (the same representation the
+// Creature Lab produces). `makeMonsterFromTemplate` materializes a
+// sim::Monster ready to spawn.
+//
+// Convention: head is at local +y (θ = π/2), tail at −y. Parts and
+// plates are stored in the monster's local angle space.
 
 #pragma once
 
@@ -14,124 +16,135 @@
 
 #include "CellCraft/sim/monster.h"
 #include "CellCraft/sim/part.h"
+#include "CellCraft/sim/plate.h"
+#include "CellCraft/sim/radial_cell.h"
 
 namespace civcraft::cellcraft::monsters {
 
 struct MonsterTemplate {
 	std::string id;
 	std::string name;
-	std::vector<glm::vec2> shape;     // local space, core at origin
+	sim::RadialCell cell;              // playdough shape
+	std::vector<sim::Plate> plates;    // armored arcs
+	std::vector<sim::Part>  parts;     // mods
 	glm::vec3 color = glm::vec3(1.0f);
 	float     initial_biomass = 20.0f;
-	std::vector<sim::Part> parts;
+
+	// Convenience: polygon derived from the cell.
+	std::vector<glm::vec2> shape() const { return sim::cellToPolygon(cell, 1); }
 };
 
+namespace detail {
+
+// Build an elongated cell: head_r at θ=π/2 (+y), side_r at θ=0 (+x). Uses
+// a cosine-shaped interpolation so the body tapers smoothly.
+inline sim::RadialCell elongated(float head_r, float tail_r, float side_r) {
+	sim::RadialCell c; c.init_circle(side_r);
+	for (int i = 0; i < sim::RadialCell::N; ++i) {
+		float a = sim::RadialCell::TWO_PI * (float)i / (float)sim::RadialCell::N;
+		// Interpolate between side_r (at ±x) and head_r/tail_r (at ±y).
+		float sy = std::sin(a);                // +1 head, −1 tail
+		float k  = sy * sy;                    // 1 at poles, 0 at equator
+		float pole = (sy >= 0.0f) ? head_r : tail_r;
+		c.r[i] = side_r + (pole - side_r) * k;
+	}
+	c.enforce_symmetry_();
+	return c;
+}
+
+// Circle with low-frequency wobble so it isn't a perfect disk.
+inline sim::RadialCell wobble_circle(float R, float amp, int freq) {
+	sim::RadialCell c; c.init_circle(R);
+	for (int i = 0; i < sim::RadialCell::N; ++i) {
+		float a = sim::RadialCell::TWO_PI * (float)i / (float)sim::RadialCell::N;
+		c.r[i] = R * (1.0f + amp * std::cos(a * (float)freq));
+	}
+	c.enforce_symmetry_();
+	return c;
+}
+
+// Add a plate on the right half and auto-mirror to the left half.
+inline void add_plate_mirrored(std::vector<sim::Plate>& plates,
+                               float start, float end) {
+	sim::Plate p; p.theta_start = start; p.theta_end = end; p.thickness = 4.0f;
+	plates.push_back(p);
+	plates.push_back(sim::mirrored_plate(p));
+}
+
+} // namespace detail
+
 inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
+	using namespace detail;
+	const float PI = 3.14159265359f;
 	std::vector<MonsterTemplate> out;
 
-	// ── stinger ────────────────────────────────────────────────────────
-	// Long narrow triangle-ish wedge, sharp tip on +X. Narrow frontal
-	// area → fast forward; tight core radius on the wide end → decent
-	// turn. 8 verts.
+	// ── Stinger ─ tall narrow body, twin spikes + venom up top, flagella down.
 	{
 		MonsterTemplate m;
-		m.id = "base:stinger";
-		m.name = "Stinger";
+		m.id    = "base:stinger";
+		m.name  = "Stinger";
 		m.color = glm::vec3(0.95f, 0.30f, 0.35f);
 		m.initial_biomass = 18.0f;
-		m.shape = {
-			{ 60.0f,  0.0f},
-			{ 30.0f,  6.0f},
-			{  5.0f, 10.0f},
-			{-20.0f, 12.0f},
-			{-25.0f,  0.0f},
-			{-20.0f,-12.0f},
-			{  5.0f,-10.0f},
-			{ 30.0f, -6.0f},
-		};
-		// Pointy wedge: 1 spike + 1 venom spike at the tip + a flagella.
-		m.parts.push_back({sim::PartType::SPIKE,       { 58.0f,  4.0f}, 0.0f});
-		m.parts.push_back({sim::PartType::VENOM_SPIKE, { 58.0f, -4.0f}, 0.0f});
-		m.parts.push_back({sim::PartType::FLAGELLA,    {-24.0f,  0.0f}, 3.14159f});
+		m.cell = elongated(70.0f, 70.0f, 18.0f);
+		// SPIKES at top (head +y); VENOM also at top; FLAGELLA at bottom.
+		m.parts.push_back({sim::PartType::SPIKE,       {  8.0f,  58.0f}, PI * 0.5f});
+		m.parts.push_back({sim::PartType::SPIKE,       { -8.0f,  58.0f}, PI * 0.5f});
+		m.parts.push_back({sim::PartType::VENOM_SPIKE, {  0.0f,  64.0f}, PI * 0.5f});
+		m.parts.push_back({sim::PartType::FLAGELLA,    {  0.0f, -60.0f}, -PI * 0.5f});
 		out.push_back(m);
 	}
 
-	// ── blob ──────────────────────────────────────────────────────────
-	// Near-circle, 16 verts, radius ~22. Tanky, medium turn/speed.
+	// ── Blob ─ nearly-circular, 2 ARMOR + REGEN + POISON + 2 demo plates.
 	{
 		MonsterTemplate m;
-		m.id = "base:blob";
-		m.name = "Blob";
+		m.id    = "base:blob";
+		m.name  = "Blob";
 		m.color = glm::vec3(0.45f, 0.80f, 0.55f);
 		m.initial_biomass = 40.0f;
-		const int N = 16;
-		const float R = 22.0f;
-		for (int i = 0; i < N; ++i) {
-			float a = 6.28318530718f * float(i) / float(N);
-			// Slight wobble so it isn't a perfect circle.
-			float r = R * (0.92f + 0.08f * std::cos(a * 3.0f));
-			m.shape.emplace_back(std::cos(a) * r, std::sin(a) * r);
-		}
-		// 2 armor plates + poison core + 2 regen for tanky-healer feel.
-		m.parts.push_back({sim::PartType::ARMOR,  { 20.0f,   0.0f}, 0.0f});
-		m.parts.push_back({sim::PartType::ARMOR,  {-10.0f,  17.0f}, 2.094f});
-		m.parts.push_back({sim::PartType::POISON, {  0.0f,   0.0f}, 0.0f});
-		m.parts.push_back({sim::PartType::REGEN,  { -8.0f,  -8.0f}, 0.0f});
-		m.parts.push_back({sim::PartType::REGEN,  {  8.0f,  -8.0f}, 0.0f});
+		m.cell = wobble_circle(50.0f, 0.04f, 3);
+		m.parts.push_back({sim::PartType::ARMOR,  {  15.0f,   0.0f}, 0.0f});
+		m.parts.push_back({sim::PartType::ARMOR,  { -15.0f,   0.0f}, PI});
+		m.parts.push_back({sim::PartType::REGEN,  {   0.0f,   0.0f}, 0.0f});
+		m.parts.push_back({sim::PartType::POISON, {   0.0f, -18.0f}, -PI * 0.5f});
+		// Two demo plates on the right half (auto-mirror to the left).
+		add_plate_mirrored(m.plates, -PI * 0.10f,  PI * 0.10f); // east cap
+		add_plate_mirrored(m.plates,  PI * 0.30f,  PI * 0.45f); // upper-right arc
 		out.push_back(m);
 	}
 
-	// ── dart ───────────────────────────────────────────────────────────
-	// Elongated ellipse (long on X). Fast forward, slow turn (long
-	// reach radius). 20 verts.
+	// ── Dart ─ elongated, FLAGELLAx2 at tail, TEETH up top, EYES.
 	{
 		MonsterTemplate m;
-		m.id = "base:dart";
-		m.name = "Dart";
+		m.id    = "base:dart";
+		m.name  = "Dart";
 		m.color = glm::vec3(0.35f, 0.55f, 0.95f);
 		m.initial_biomass = 25.0f;
-		const int N = 20;
-		const float A = 55.0f; // semi-major
-		const float B = 10.0f; // semi-minor
-		for (int i = 0; i < N; ++i) {
-			float t = 6.28318530718f * float(i) / float(N);
-			m.shape.emplace_back(std::cos(t) * A, std::sin(t) * B);
-		}
-		// Speedster: 2 flagella + 1 cilia for turn + mouth for food + teeth.
-		m.parts.push_back({sim::PartType::FLAGELLA, {-50.0f,  4.0f}, 3.14159f});
-		m.parts.push_back({sim::PartType::FLAGELLA, {-50.0f, -4.0f}, 3.14159f});
-		m.parts.push_back({sim::PartType::CILIA,    {  0.0f,  9.0f}, 1.57f});
-		m.parts.push_back({sim::PartType::MOUTH,    { 52.0f,  0.0f}, 0.0f});
-		// Scout flavor: +1 EYES gives it wider perception for hunting/feeding.
-		m.parts.push_back({sim::PartType::EYES,     { 40.0f,  0.0f}, 0.0f});
+		m.cell = elongated(80.0f, 80.0f, 22.0f);
+		m.parts.push_back({sim::PartType::FLAGELLA, {  8.0f, -68.0f}, -PI * 0.5f});
+		m.parts.push_back({sim::PartType::FLAGELLA, { -8.0f, -68.0f}, -PI * 0.5f});
+		m.parts.push_back({sim::PartType::TEETH,    {  0.0f,  70.0f},  PI * 0.5f});
+		m.parts.push_back({sim::PartType::EYES,     {  0.0f,  40.0f},  PI * 0.5f});
 		out.push_back(m);
+	}
 
-		// ── tusker ────────────────────────────────────────────────────────
-		// Chonky attacker with a HORN out front — hits like a truck frontally.
-		{
-			MonsterTemplate tk;
-			tk.id = "base:tusker";
-			tk.name = "Tusker";
-			tk.color = glm::vec3(0.85f, 0.65f, 0.35f);
-			tk.initial_biomass = 32.0f;
-			// Teardrop pointing +X.
-			const int N2 = 14;
-			for (int i = 0; i < N2; ++i) {
-				float a = 6.28318530718f * float(i) / float(N2);
-				float r = 26.0f + 8.0f * std::cos(a);
-				tk.shape.emplace_back(std::cos(a) * r * 1.1f, std::sin(a) * r * 0.8f);
-			}
-			tk.parts.push_back({sim::PartType::HORN,     { 34.0f,  0.0f}, 0.0f});
-			tk.parts.push_back({sim::PartType::FLAGELLA, {-30.0f,  0.0f}, 3.14159f});
-			tk.parts.push_back({sim::PartType::ARMOR,    { -6.0f, 16.0f}, 1.57f});
-			out.push_back(tk);
-		}
+	// ── Tusker ─ wide body, HORN frontal, flagella tail, armor side.
+	{
+		MonsterTemplate m;
+		m.id    = "base:tusker";
+		m.name  = "Tusker";
+		m.color = glm::vec3(0.85f, 0.65f, 0.35f);
+		m.initial_biomass = 32.0f;
+		m.cell = elongated(50.0f, 42.0f, 40.0f);
+		m.parts.push_back({sim::PartType::HORN,     {  0.0f,  40.0f},  PI * 0.5f});
+		m.parts.push_back({sim::PartType::FLAGELLA, {  0.0f, -36.0f}, -PI * 0.5f});
+		m.parts.push_back({sim::PartType::ARMOR,    { 34.0f,   0.0f},  0.0f});
+		out.push_back(m);
 	}
 
 	return out;
 }
 
-// Convenience: build a Monster ready to hand to World::spawn_monster.
+// Build a Monster ready to hand to World::spawn_monster.
 inline sim::Monster makeMonsterFromTemplate(const MonsterTemplate& t,
                                             uint32_t owner,
                                             glm::vec2 pos,
@@ -140,12 +153,13 @@ inline sim::Monster makeMonsterFromTemplate(const MonsterTemplate& t,
 	m.owner_id = owner;
 	m.core_pos = pos;
 	m.heading  = heading;
-	m.shape    = t.shape;
+	m.shape    = t.shape();
 	m.color    = t.color;
 	m.biomass  = t.initial_biomass;
 	m.parts    = t.parts;
-	m.refresh_stats(); // sets hp_max from biomass + parts
-	m.hp       = m.hp_max;
+	m.plates   = t.plates;
+	m.refresh_stats();
+	m.hp = m.hp_max;
 	return m;
 }
 

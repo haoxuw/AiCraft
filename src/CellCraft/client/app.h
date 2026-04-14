@@ -82,8 +82,7 @@ private:
 	void goToMonsterSelect();
 	void goToDrawLab();
 	void startMatchWithTemplate(const monsters::MonsterTemplate& t);
-	void startMatchWithCustomShape(const std::vector<glm::vec2>& local_shape,
-	                               glm::vec3 color);
+	void startMatchFromLab();
 	void goToEndScreen(bool won);
 
 	// ---- Menu background simulation (screensaver) -----------------------
