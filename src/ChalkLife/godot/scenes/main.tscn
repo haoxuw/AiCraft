@@ -1,0 +1,25 @@
+[gd_scene load_steps=4 format=3 uid="uid://chalklife_main_aa"]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Shader" path="res://shaders/chalk_post.gdshader" id="2_chalk"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_chalk"]
+shader = ExtResource("2_chalk")
+shader_parameter/grain_strength = 0.55
+shader_parameter/break_threshold = 0.12
+shader_parameter/board_grain = 0.05
+shader_parameter/board_color = Vector3(0.055, 0.085, 0.06)
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="PostFx" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="Overlay" type="ColorRect" parent="PostFx"]
+material = SubResource("ShaderMaterial_chalk")
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 0.0
+offset_bottom = 0.0
+color = Color(1, 1, 1, 1)
