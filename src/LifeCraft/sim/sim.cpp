@@ -74,7 +74,10 @@ void Sim::tick(float dt, const std::unordered_map<uint32_t, ActionProposal>& act
 	// 5) Passive poison auras.
 	apply_poison_auras_(dt);
 
-	// 6) Kill book-keeping.
+	// 6) Status effects (venom DoT) + passive regen.
+	apply_status_and_regen_(dt);
+
+	// 7) Kill book-keeping.
 	finalize_deaths_();
 }
 
@@ -155,8 +158,19 @@ void Sim::pickup_food_() {
 	for (auto& [id, m] : world_->monsters) {
 		if (!m.alive) continue;
 		auto world_poly = transform_to_world(m.shape, m.core_pos, m.heading);
+		// MOUTH widens the effective grab zone using a scaled bounding-circle
+		// check around the body — cheap and reads "mouth is bigger" visually.
+		float pickup_r = (m.part_effect.pickup_radius_mult > 1.0f)
+			? (m.max_core_radius * m.part_effect.pickup_radius_mult)
+			: 0.0f;
+		float pickup_r2 = pickup_r * pickup_r;
 		for (size_t i = 0; i < food.size();) {
-			if (point_in_polygon(food[i].pos, world_poly)) {
+			bool hit = point_in_polygon(food[i].pos, world_poly);
+			if (!hit && pickup_r2 > 0.0f) {
+				glm::vec2 d = food[i].pos - m.core_pos;
+				if (d.x * d.x + d.y * d.y <= pickup_r2) hit = true;
+			}
+			if (hit) {
 				m.biomass += food[i].biomass;
 				m.hp_max = std::max(1.0f, m.biomass * HP_PER_BIOMASS);
 				m.hp = std::min(m.hp_max, m.hp + food[i].biomass * 0.25f);
@@ -238,10 +252,7 @@ void Sim::resolve_contacts_(float dt) {
 			auto apply_parts_attacker = [](const Monster& atk, glm::vec2 dir_world_into_def,
 			                               float& dmg) {
 				float mult = 1.0f;
-				// TEETH: +50% damage on contact (flat).
 				if (!atk.part_effect.teeth_anchors_local.empty()) mult += PART_TEETH_DMG_ADD;
-				// SPIKE: if attack direction lines up with any spike (in world) within ±30°,
-				// apply PART_SPIKE_DMG_ADD.
 				float cos30 = 0.8660254f;
 				for (const auto& sdir_local : atk.part_effect.spike_dirs) {
 					float c = std::cos(atk.heading);
@@ -252,6 +263,21 @@ void Sim::resolve_contacts_(float dt) {
 						mult += PART_SPIKE_DMG_ADD;
 						break;
 					}
+				}
+				// HORN: massive damage only when the horn's world direction is within
+				// ±15° of the bite direction. Outside that narrow cone, only a small
+				// side contribution — horns are committed frontal weapons.
+				if (!atk.part_effect.horn_dirs.empty()) {
+					float c = std::cos(atk.heading);
+					float s = std::sin(atk.heading);
+					float best = -1.0f;
+					for (const auto& hdl : atk.part_effect.horn_dirs) {
+						glm::vec2 wdir(c * hdl.x - s * hdl.y, s * hdl.x + c * hdl.y);
+						float cd = glm::dot(wdir, dir_world_into_def);
+						if (cd > best) best = cd;
+					}
+					if (best >= PART_HORN_CONE_COS) mult += PART_HORN_DMG_MULT;
+					else                            mult += PART_HORN_DMG_SIDE;
 				}
 				dmg *= mult * atk.part_effect.damage_mult;
 			};
@@ -265,17 +291,30 @@ void Sim::resolve_contacts_(float dt) {
 			apply_parts_attacker(*B, -dir_ab, dmg_to_a);
 			apply_parts_defender(*A, dmg_to_a);
 
+			auto apply_venom_on_bite = [](Monster* attacker, Monster* victim) {
+				int n = attacker->part_effect.venom_stacks;
+				for (int i = 0; i < n; ++i) {
+					StatusEffect se;
+					se.type = StatusEffect::VENOM;
+					se.remaining = PART_VENOM_DURATION;
+					se.magnitude = PART_VENOM_DPS;
+					se.source = attacker->id;
+					victim->status.push_back(se);
+				}
+			};
 			if (dmg_to_b > 0.0f) {
 				B->hp -= dmg_to_b;
 				last_damager_[B->id] = A->id;
 				Event e{EventKind::BITE, A->id, B->id, dmg_to_b, contact};
 				events_.push_back(e);
+				apply_venom_on_bite(A, B);
 			}
 			if (dmg_to_a > 0.0f) {
 				A->hp -= dmg_to_a;
 				last_damager_[A->id] = B->id;
 				Event e{EventKind::BITE, B->id, A->id, dmg_to_a, contact};
 				events_.push_back(e);
+				apply_venom_on_bite(B, A);
 			}
 
 			// Separating impulse — push both apart along dir_ab.
@@ -310,6 +349,32 @@ void Sim::apply_poison_auras_(float dt) {
 			m.hp -= amt;
 			last_damager_[id] = e.id;
 			events_.push_back({EventKind::POISON_HIT, e.id, id, amt, m.core_pos});
+		}
+	}
+}
+
+void Sim::apply_status_and_regen_(float dt) {
+	for (auto& [id, m] : world_->monsters) {
+		if (!m.alive) continue;
+
+		// Venom DoT — additive across stacks, each ticks independently.
+		for (auto& se : m.status) {
+			if (se.remaining <= 0.0f) continue;
+			float amt = se.magnitude * dt * (1.0f - m.part_effect.armor_dr);
+			if (amt < 0.0f) amt = 0.0f;
+			if (amt > 0.0f) {
+				m.hp -= amt;
+				last_damager_[id] = se.source;
+				events_.push_back({EventKind::VENOM_HIT, se.source, id, amt, m.core_pos});
+			}
+			se.remaining -= dt;
+		}
+		m.status.erase(std::remove_if(m.status.begin(), m.status.end(),
+			[](const StatusEffect& s){ return s.remaining <= 0.0f; }), m.status.end());
+
+		// Passive regen (does not over-heal past hp_max; no effect on dead).
+		if (m.part_effect.regen_hps > 0.0f && m.hp > 0.0f && m.hp < m.hp_max) {
+			m.hp = std::min(m.hp_max, m.hp + m.part_effect.regen_hps * dt);
 		}
 	}
 }

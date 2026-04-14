@@ -17,6 +17,7 @@
 #include "LifeCraft/client/chalk_renderer.h"
 #include "LifeCraft/client/chalk_stroke.h"
 #include "LifeCraft/client/game_log.h"
+#include "LifeCraft/client/lab_screen.h"
 #include "LifeCraft/sim/action.h"
 #include "LifeCraft/sim/part.h"
 #include "LifeCraft/sim/sim.h"
@@ -36,7 +37,8 @@ struct AppOptions {
 	std::string play_screenshot_path;   // if set: run PLAYING for ~1s then snap PPM + exit
 	std::string menu_screenshot_path;   // if set: render MAIN_MENU then snap PPM + exit
 	std::string select_screenshot_path; // if set: render MONSTER_SELECT then snap PPM + exit
-	std::string draw_lab_screenshot_path; // if set: render DRAW_LAB with synthetic strokes then snap PPM
+	std::string lab_screenshot_path;      // DRAWING mode with preseeded squiggle
+	std::string lab_assemble_screenshot_path; // ASSEMBLING mode with preplaced parts + mirror on
 	bool shape_test = false;            // run smooth_body on synthetic input and print result
 };
 
@@ -127,38 +129,15 @@ private:
 	bool      mouse_left_down_  = false;
 	bool      mouse_right_down_ = false;
 	bool      mouse_left_click_ = false;   // one-frame edge trigger
+	bool      mouse_right_click_ = false;  // one-frame edge trigger
 	std::vector<int> keys_pressed_this_frame_; // GLFW_KEY_* pressed since last consume
 
 	// monster select
 	std::vector<monsters::MonsterTemplate> prebuilts_;
 	int hovered_tile_ = -1;
 
-	// draw lab — multi-stroke then parts-placement
-	enum class LabPhase { BODY, PARTS };
-	LabPhase                 lab_phase_ = LabPhase::BODY;
-	std::vector<ChalkStroke> lab_strokes_;      // finalized strokes
-	ChalkStroke              lab_live_stroke_;   // currently being drawn
-	bool                     lab_drawing_ = false;
-	bool                     lab_core_placement_mode_ = false;
-	glm::vec2                lab_core_px_ = glm::vec2(0.0f);
-	bool                     lab_core_placed_ = false;
-	std::string              lab_status_;
-	glm::vec3                lab_status_color_ = glm::vec3(1.0f);
-	bool                     lab_valid_ = false;
-	std::vector<glm::vec2>   lab_smoothed_px_;      // smoothed polygon in pixel space
-	std::vector<glm::vec2>   lab_validated_local_;  // local-space shape (core subtracted)
-	glm::vec3                lab_color_ = glm::vec3(0.95f, 0.95f, 0.92f);
-
-	// parts phase
-	std::vector<sim::Part>   lab_parts_;
-	int                      lab_part_select_ = -1; // -1 = none selected; else PartType int
-	float                    lab_biomass_budget_ = 40.0f;
-
-	void finalizeLabBody();
-	void resetLab();
-	float labPartsCost() const;
-	void drawDrawLabBody(float dt);
-	void drawDrawLabParts(float dt);
+	// Creature Lab — delegated to LabScreen.
+	LabScreen lab_;
 
 	// playing
 	sim::World world_;

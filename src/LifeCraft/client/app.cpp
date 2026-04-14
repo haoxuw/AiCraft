@@ -48,40 +48,13 @@ void App::onMouseButton(int button, int action) {
 		if (action == GLFW_PRESS)   { mouse_left_down_ = true;  mouse_left_click_ = true; }
 		else                        { mouse_left_down_ = false; }
 	} else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-		mouse_right_down_ = (action == GLFW_PRESS);
-	}
-	// DRAW_LAB stroke handling (BODY phase only — parts phase uses click-to-place).
-	if (state_ == AppState::DRAW_LAB && lab_phase_ == LabPhase::BODY
-	    && button == GLFW_MOUSE_BUTTON_LEFT) {
-		if (action == GLFW_PRESS) {
-			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
-			if (mouse_px_.x < (float)w * 0.7f) {
-				lab_drawing_ = true;
-				lab_live_stroke_ = ChalkStroke{};
-				lab_live_stroke_.color = lab_color_;
-				lab_live_stroke_.half_width = 3.0f;
-				lab_live_stroke_.points.push_back(mouse_px_);
-			}
-		} else if (action == GLFW_RELEASE) {
-			if (lab_drawing_) {
-				lab_drawing_ = false;
-				if (lab_live_stroke_.points.size() >= 2) {
-					lab_live_stroke_.simplify(1.5f);
-					lab_strokes_.push_back(lab_live_stroke_);
-				}
-				lab_live_stroke_ = ChalkStroke{};
-			}
-		}
+		if (action == GLFW_PRESS) { mouse_right_down_ = true; mouse_right_click_ = true; }
+		else                      { mouse_right_down_ = false; }
 	}
 }
 
 void App::onMouseMove(double x, double y) {
 	mouse_px_ = glm::vec2((float)x, (float)y);
-	if (lab_drawing_ && !lab_live_stroke_.points.empty()) {
-		if (glm::length(mouse_px_ - lab_live_stroke_.points.back()) >= 2.0f) {
-			lab_live_stroke_.points.push_back(mouse_px_);
-		}
-	}
 }
 
 void App::onKey(int key, int action) {
@@ -123,6 +96,7 @@ bool App::init(const AppOptions& opts) {
 
 	log_.open();
 	prebuilts_ = monsters::getPrebuiltMonsters();
+	lab_.init(&window_, renderer_.get(), text_.get());
 
 	if (opts_.autotest || !opts_.play_screenshot_path.empty()) {
 		// jump straight into PLAYING with stinger vs 4 AIs, seeded.
@@ -138,7 +112,8 @@ bool App::init(const AppOptions& opts) {
 		state_ = AppState::MAIN_MENU;
 	} else if (!opts_.select_screenshot_path.empty()) {
 		state_ = AppState::MONSTER_SELECT;
-	} else if (!opts_.draw_lab_screenshot_path.empty()) {
+	} else if (!opts_.lab_screenshot_path.empty()
+	        || !opts_.lab_assemble_screenshot_path.empty()) {
 		state_ = AppState::DRAW_LAB;
 	} else {
 		state_ = AppState::LOADING;
@@ -269,35 +244,103 @@ void App::run() {
 		return;
 	}
 
-	// --- draw-lab screenshot: synthesize strokes, finalize, add a few parts, render.
-	if (!opts_.draw_lab_screenshot_path.empty()) {
-		int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
-		// Synthesize two strokes forming a blobby ring around (fw/2, fh/2).
-		resetLab();
-		lab_phase_ = LabPhase::BODY;
-		glm::vec2 c((float)fw * 0.35f, (float)fh * 0.5f);
-		ChalkStroke s1, s2;
-		s1.color = lab_color_; s1.half_width = 3.0f;
-		s2.color = lab_color_; s2.half_width = 3.0f;
-		for (int i = 0; i < 24; ++i) {
-			float a = 3.14159f * (float)i / 23.0f;
-			s1.points.push_back(c + glm::vec2(std::cos(a) * 140.0f, std::sin(a) * 110.0f));
-		}
-		for (int i = 0; i < 24; ++i) {
-			float a = 3.14159f + 3.14159f * (float)i / 23.0f;
-			s2.points.push_back(c + glm::vec2(std::cos(a) * 140.0f, std::sin(a) * 110.0f));
-		}
-		lab_strokes_.push_back(s1);
-		lab_strokes_.push_back(s2);
-		finalizeLabBody();
-		// Place sample parts.
-		lab_parts_.push_back({sim::PartType::SPIKE,    { 120.0f,  20.0f}, 0.0f});
-		lab_parts_.push_back({sim::PartType::TEETH,    {  90.0f, -40.0f}, 0.0f});
-		lab_parts_.push_back({sim::PartType::FLAGELLA, {-120.0f,  10.0f}, 3.14f});
-		lab_parts_.push_back({sim::PartType::ARMOR,    {   0.0f, 100.0f}, 1.57f});
-		lab_parts_.push_back({sim::PartType::POISON,   {   0.0f,   0.0f}, 0.0f});
-
+	// --- lab screenshots: either DRAWING with preseeded strokes, or ASSEMBLING
+	// with a finalized body and preplaced parts + mirror on.
+	if (!opts_.lab_screenshot_path.empty() || !opts_.lab_assemble_screenshot_path.empty()) {
+		bool assemble = !opts_.lab_assemble_screenshot_path.empty();
+		const char* out_path = assemble ? opts_.lab_assemble_screenshot_path.c_str()
+		                                : opts_.lab_screenshot_path.c_str();
 		state_ = AppState::DRAW_LAB;
+		int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
+		// Seed some squiggly strokes forming a blob in the canvas.
+		float cx = (float)fw * 0.50f;
+		float cy = (float)fh * 0.55f;
+		{
+			ChalkStroke s1;
+			s1.color = glm::vec3(0.95f, 0.95f, 0.92f);
+			s1.half_width = 3.0f;
+			for (int i = 0; i < 36; ++i) {
+				float a = 6.28318530718f * (float)i / 35.0f;
+				float r = 140.0f + 12.0f * std::cos(a * 4.0f);
+				s1.points.push_back({cx + std::cos(a) * r, cy + std::sin(a) * r * 0.75f});
+			}
+			LabInput seed;
+			// Feed one big stroke as a "finalized" stroke via update() is awkward;
+			// easier to poke lab_ internals through its public seed API. We use
+			// reset() + a small helper: simulate by doing dummy updates.
+			// Instead: we inject by calling update() with the seeded stroke — the
+			// simplest route is to keep a private seed function; to avoid adding
+			// one, run a short simulated drag:
+			lab_.reset();
+			// Fake a drag: press, move through each point, release.
+			LabInput p = seed;
+			p.mouse_px = s1.points.front();
+			p.mouse_left_down = true;
+			p.mouse_left_click = true;
+			lab_.update(1.0f / 60.0f, p);
+			p.mouse_left_click = false;
+			for (auto& pt : s1.points) {
+				p.mouse_px = pt;
+				lab_.update(1.0f / 60.0f, p);
+			}
+			// release
+			p.mouse_left_down = false;
+			lab_.update(1.0f / 60.0f, p);
+		}
+		if (assemble) {
+			// Finalize by synthesizing a click on FINALIZE — easier: call update
+			// enough times, and tell it "left-click at the finalize button"...
+			// Actually simplest: expose by adding a test-only helper. We do the
+			// minimum hack: render a frame first so buttons exist in-screen-space,
+			// then click at the approximate FINALIZE position. The button rect
+			// is centered at canvas_cx, bottom row.
+			int w2, h2; glfwGetFramebufferSize(window_.handle(), &w2, &h2);
+			float bottom_bar = (float)h2 * 0.10f;
+			float cw = (float)w2 * 0.64f;
+			float canvas_cx2 = (float)w2 * 0.18f + cw * 0.5f;
+			float bw = std::min(180.0f, cw * 0.18f);
+			float gap = 10.0f;
+			float total = bw * 3.0f + gap * 2.0f;
+			float bx0 = canvas_cx2 - total * 0.5f;
+			float by = (float)h2 - bottom_bar + 8.0f;
+			float bh = bottom_bar - 16.0f;
+			// FINALIZE is index 2.
+			glm::vec2 click_pt(bx0 + 2 * (bw + gap) + bw * 0.5f, by + bh * 0.5f);
+			LabInput p;
+			p.mouse_px = click_pt;
+			p.mouse_left_click = true;
+			lab_.update(1.0f / 60.0f, p);
+			// Now place some parts by selecting the palette then clicking canvas.
+			p.mouse_left_click = false;
+			// Helper to click a pixel.
+			auto click = [&](glm::vec2 at) {
+				LabInput q; q.mouse_px = at; q.mouse_left_click = true;
+				lab_.update(1.0f / 60.0f, q);
+			};
+			// Mirror on.
+			{
+				LabInput q; q.mouse_px = click_pt; q.keys_pressed = { GLFW_KEY_M };
+				lab_.update(1.0f / 60.0f, q);
+			}
+			// Select SPIKE (first palette row).
+			float left_w = (float)w2 * 0.18f;
+			float y0 = (float)h2 * 0.08f + 120.0f;
+			float row_h = 50.0f;
+			auto select_row = [&](int idx) {
+				float rx = 6.0f + 0.5f * (left_w - 12.0f);
+				float ry = y0 + (float)idx * row_h + (row_h - 4.0f) * 0.5f;
+				click({rx, ry});
+			};
+			select_row(0); // SPIKE
+			click({canvas_cx2 + 60.0f, (float)h2 * 0.55f - 20.0f});
+			select_row(5); // CILIA
+			click({canvas_cx2 - 80.0f, (float)h2 * 0.55f});
+			select_row(6); // HORN
+			click({canvas_cx2 + 100.0f, (float)h2 * 0.55f + 30.0f});
+			select_row(7); // REGEN
+			click({canvas_cx2 - 40.0f, (float)h2 * 0.55f + 40.0f});
+		}
+		// Render a few frames.
 		double t0 = glfwGetTime();
 		while (!window_.shouldClose() && (glfwGetTime() - t0) < 0.5) {
 			window_.pollEvents();
@@ -307,10 +350,11 @@ void App::run() {
 			renderer_->drawBoard(w, h, (float)glfwGetTime());
 			drawDrawLab(dt);
 			mouse_left_click_ = false;
+			mouse_right_click_ = false;
 			keys_pressed_this_frame_.clear();
 			window_.swapBuffers();
 		}
-		writePPM(opts_.draw_lab_screenshot_path.c_str());
+		writePPM(out_path);
 		return;
 	}
 
@@ -364,6 +408,7 @@ void App::run() {
 
 		// consume edge triggers at end of frame
 		mouse_left_click_ = false;
+		mouse_right_click_ = false;
 		keys_pressed_this_frame_.clear();
 
 		window_.swapBuffers();
@@ -376,26 +421,10 @@ void App::run() {
 
 void App::goToMainMenu()       { state_ = AppState::MAIN_MENU;      state_time_ = 0.0f; }
 void App::goToMonsterSelect()  { state_ = AppState::MONSTER_SELECT; state_time_ = 0.0f; }
-void App::resetLab() {
-	lab_phase_ = LabPhase::BODY;
-	lab_strokes_.clear();
-	lab_live_stroke_ = ChalkStroke{};
-	lab_drawing_ = false;
-	lab_core_placed_ = false;
-	lab_core_placement_mode_ = false;
-	lab_status_ = "Left-drag to add strokes. Many strokes ok. Click FINALIZE.";
-	lab_status_color_ = glm::vec3(0.85f, 0.85f, 0.85f);
-	lab_valid_ = false;
-	lab_smoothed_px_.clear();
-	lab_validated_local_.clear();
-	lab_parts_.clear();
-	lab_part_select_ = -1;
-	lab_biomass_budget_ = 40.0f;
-}
 void App::goToDrawLab() {
 	state_ = AppState::DRAW_LAB;
 	state_time_ = 0.0f;
-	resetLab();
+	lab_.reset();
 }
 
 void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
@@ -465,7 +494,7 @@ void App::startMatchWithCustomShape(const std::vector<glm::vec2>& local_shape,
 	t.shape = local_shape;
 	t.color = color;
 	t.initial_biomass = 25.0f;
-	t.parts = lab_parts_;
+	t.parts = lab_.parts();
 	startMatchWithTemplate(t);
 }
 
@@ -677,233 +706,28 @@ void App::drawMonsterSelect(float) {
 }
 
 // ========================================================================
-// DRAW_LAB
+// DRAW_LAB — delegated to LabScreen.
 // ========================================================================
 
-void App::finalizeLabBody() {
-	// Pool all strokes (ignore trivially tiny ones), smooth, compute centroid,
-	// emit a local-space polygon.
-	std::vector<std::vector<glm::vec2>> pool;
-	for (auto& s : lab_strokes_) {
-		if (s.points.size() >= 2) pool.push_back(s.points);
-	}
-	if (pool.empty()) {
-		lab_status_ = "draw at least one stroke first";
-		lab_status_color_ = glm::vec3(1.0f, 0.5f, 0.55f);
-		return;
-	}
-	lab_smoothed_px_ = sim::smooth_body(pool, 48);
-	if (lab_smoothed_px_.size() < 3) {
-		lab_status_ = "strokes too small to form a polygon";
-		lab_status_color_ = glm::vec3(1.0f, 0.5f, 0.55f);
-		return;
-	}
-	// Validate (perimeter, self-intersect — smoothed hull is convex so should pass).
-	glm::vec2 centroid(0.0f);
-	for (auto& p : lab_smoothed_px_) centroid += p;
-	centroid /= (float)lab_smoothed_px_.size();
-	glm::vec2 core_px = lab_core_placed_ ? lab_core_px_ : centroid;
-
-	std::vector<glm::vec2> poly = lab_smoothed_px_;
-	auto res = sim::validate_shape(poly, core_px);
-	if (res.code != sim::ShapeValidation::OK) {
-		lab_status_ = "shape: " + res.message;
-		lab_status_color_ = glm::vec3(1.0f, 0.5f, 0.55f);
-		return;
-	}
-	lab_core_px_ = core_px;
-	lab_core_placed_ = true;
-	lab_smoothed_px_ = poly;
-	lab_validated_local_.clear();
-	lab_validated_local_.reserve(poly.size());
-	for (auto& p : poly) {
-		lab_validated_local_.push_back(glm::vec2(p.x - core_px.x, -(p.y - core_px.y)));
-	}
-	lab_valid_ = true;
-	lab_phase_ = LabPhase::PARTS;
-	lab_status_ = "Place parts on the body. 40 biomass budget.";
-	lab_status_color_ = glm::vec3(0.85f, 0.85f, 0.85f);
-}
-
-float App::labPartsCost() const {
-	float sum = 0.0f;
-	for (auto& p : lab_parts_) sum += sim::part_cost(p.type);
-	return sum;
-}
-
 void App::drawDrawLab(float dt) {
-	text_->drawTitle("MONSTER LAB", -0.18f, 0.85f, 1.4f,
-		glm::vec4(1.0f, 1.0f, 0.95f, 1.0f), window_.aspectRatio());
-	if (lab_phase_ == LabPhase::BODY) drawDrawLabBody(dt);
-	else                               drawDrawLabParts(dt);
-}
+	LabInput in;
+	in.mouse_px         = mouse_px_;
+	in.mouse_left_down  = mouse_left_down_;
+	in.mouse_right_down = mouse_right_down_;
+	in.mouse_left_click  = mouse_left_click_;
+	in.mouse_right_click = mouse_right_click_;
+	in.keys_pressed = keys_pressed_this_frame_;
 
-void App::drawDrawLabBody(float) {
-	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
-
-	// All strokes + live stroke preview.
-	std::vector<ChalkStroke> strokes = lab_strokes_;
-	if (!lab_live_stroke_.points.empty()) strokes.push_back(lab_live_stroke_);
-	if (!strokes.empty()) renderer_->drawStrokes(strokes, nullptr, w, h);
-
-	// --- Sidebar.
-	float sx = 0.45f;
-	text_->drawText("BODY DRAWING", sx, 0.60f, 1.2f, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), 1.0f);
-	char stat[64];
-	std::snprintf(stat, sizeof(stat), "%d strokes", (int)lab_strokes_.size());
-	text_->drawText(stat, sx, 0.50f, 1.0f, glm::vec4(0.85f, 0.85f, 0.85f, 1.0f), 1.0f);
-	text_->drawText(lab_status_, sx, 0.42f, 0.75f,
-		glm::vec4(lab_status_color_, 1.0f), 1.0f);
-
-	// Tips
-	text_->drawText("Drag to sketch. Many strokes OK.", sx, 0.30f, 0.7f,
-		glm::vec4(0.7f, 0.7f, 0.7f, 1.0f), 1.0f);
-	text_->drawText("FINALIZE smooths + closes.", sx, 0.25f, 0.7f,
-		glm::vec4(0.7f, 0.7f, 0.7f, 1.0f), 1.0f);
-
-	Button btn_undo     { sx,  0.10f, 0.45f, 0.08f, "UNDO" };
-	Button btn_clear    { sx, -0.02f, 0.45f, 0.08f, "CLEAR" };
-	Button btn_finalize { sx, -0.14f, 0.45f, 0.08f, "FINALIZE" };
-	btn_undo.enabled     = !lab_strokes_.empty();
-	btn_finalize.enabled = !lab_strokes_.empty();
-	Button btn_back { sx, -0.30f, 0.45f, 0.08f, "BACK" };
-
-	if (drawButton(btn_undo) && !lab_strokes_.empty()) lab_strokes_.pop_back();
-	if (drawButton(btn_clear)) {
-		lab_strokes_.clear();
-		lab_live_stroke_ = ChalkStroke{};
-		lab_drawing_ = false;
+	LabOutcome outc = lab_.update(dt, in);
+	switch (outc) {
+	case LabOutcome::NONE: break;
+	case LabOutcome::USE:
+		startMatchWithCustomShape(lab_.local_shape(), lab_.color());
+		break;
+	case LabOutcome::BACK:
+		goToMainMenu();
+		break;
 	}
-	if (drawButton(btn_finalize)) finalizeLabBody();
-	if (drawButton(btn_back))     goToMonsterSelect();
-}
-
-void App::drawDrawLabParts(float) {
-	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
-
-	// Render smoothed body polygon as a chalk stroke ring.
-	std::vector<ChalkStroke> strokes;
-	{
-		ChalkStroke body;
-		body.color = lab_color_;
-		body.half_width = 3.5f;
-		for (auto& p : lab_smoothed_px_) body.points.push_back(p);
-		if (!body.points.empty()) body.points.push_back(body.points.front());
-		strokes.push_back(std::move(body));
-	}
-	// Core marker.
-	{
-		ChalkStroke c1, c2;
-		c1.color = {1.0f, 1.0f, 1.0f}; c1.half_width = 2.0f; c2 = c1;
-		c1.points = {{lab_core_px_.x - 8.0f, lab_core_px_.y}, {lab_core_px_.x + 8.0f, lab_core_px_.y}};
-		c2.points = {{lab_core_px_.x, lab_core_px_.y - 8.0f}, {lab_core_px_.x, lab_core_px_.y + 8.0f}};
-		strokes.push_back(std::move(c1));
-		strokes.push_back(std::move(c2));
-	}
-	// Existing parts (use part_render in pixel space — anchor_local is in sim units with y-up;
-	// convert to screen space via core + (+x, -y)).
-	auto local_to_screen = [this](glm::vec2 v) {
-		return glm::vec2(lab_core_px_.x + v.x, lab_core_px_.y - v.y);
-	};
-	appendPartStrokes(lab_parts_, lab_color_, local_to_screen, 1.0f,
-		(float)glfwGetTime(), strokes);
-
-	// Handle click-to-place or right-click to remove.
-	if (mouse_left_click_ && mouse_px_.x < (float)w * 0.7f && lab_part_select_ >= 0) {
-		// Place if inside polygon.
-		if (sim::point_in_polygon(mouse_px_, lab_smoothed_px_)
-		    || true /* allow on-boundary */) {
-			sim::PartType pt = (sim::PartType)lab_part_select_;
-			float cost = sim::part_cost(pt);
-			if (labPartsCost() + cost <= lab_biomass_budget_) {
-				sim::Part np;
-				np.type = pt;
-				np.anchor_local = glm::vec2(mouse_px_.x - lab_core_px_.x,
-				                            -(mouse_px_.y - lab_core_px_.y));
-				lab_parts_.push_back(np);
-			} else {
-				lab_status_ = "not enough biomass";
-				lab_status_color_ = glm::vec3(1.0f, 0.5f, 0.55f);
-			}
-		}
-	}
-	if (mouse_right_down_ && !lab_parts_.empty()) {
-		// Remove nearest within 24 px, once per click-like edge (simple: only remove when button latched this frame).
-		// We use mouse_right_down_ directly; to avoid removing many in one press, require the last frame to have been up.
-		static bool prev_r = false;
-		if (!prev_r) {
-			float best = 24.0f;
-			int best_i = -1;
-			for (size_t i = 0; i < lab_parts_.size(); ++i) {
-				glm::vec2 sp = local_to_screen(lab_parts_[i].anchor_local);
-				float d = glm::length(sp - mouse_px_);
-				if (d < best) { best = d; best_i = (int)i; }
-			}
-			if (best_i >= 0) lab_parts_.erase(lab_parts_.begin() + best_i);
-		}
-		prev_r = true;
-	} else {
-		static bool prev_r2 = false; (void)prev_r2;
-	}
-
-	if (!strokes.empty()) renderer_->drawStrokes(strokes, nullptr, w, h);
-
-	// --- Sidebar: part palette, stats, buttons.
-	float sx = 0.45f;
-	text_->drawText("PARTS", sx, 0.80f, 1.2f, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), 1.0f);
-
-	const sim::PartType types[5] = {
-		sim::PartType::SPIKE, sim::PartType::TEETH, sim::PartType::FLAGELLA,
-		sim::PartType::POISON, sim::PartType::ARMOR
-	};
-	for (int i = 0; i < 5; ++i) {
-		char lbl[48];
-		std::snprintf(lbl, sizeof(lbl), "%s  %.0fbm", sim::part_name(types[i]),
-			sim::part_cost(types[i]));
-		Button pb { sx, 0.70f - 0.09f * i, 0.45f, 0.08f, lbl };
-		bool picked = drawButton(pb);
-		if (lab_part_select_ == (int)types[i]) {
-			text_->drawRect(sx - 0.01f, 0.70f - 0.09f * i - 0.01f, 0.47f, 0.10f,
-				glm::vec4(0.5f, 0.8f, 0.3f, 0.18f));
-		}
-		if (picked) {
-			lab_part_select_ = (lab_part_select_ == (int)types[i]) ? -1 : (int)types[i];
-		}
-	}
-
-	// Budget + live stats.
-	float cost = labPartsCost();
-	char buf[96];
-	std::snprintf(buf, sizeof(buf), "BIOMASS  %.0f / %.0f", cost, lab_biomass_budget_);
-	text_->drawText(buf, sx, 0.17f, 0.9f,
-		glm::vec4(cost > lab_biomass_budget_ ? glm::vec3(1.0f, 0.4f, 0.4f) : glm::vec3(0.95f), 1.0f), 1.0f);
-
-	sim::Monster probe;
-	probe.shape = lab_validated_local_;
-	probe.biomass = 25.0f;
-	probe.parts = lab_parts_;
-	probe.refresh_stats();
-	std::snprintf(buf, sizeof(buf), "SPEED %.0f  HP %.0f  DMG x%.2f",
-		probe.move_speed, probe.hp_max, probe.part_effect.damage_mult);
-	text_->drawText(buf, sx, 0.10f, 0.8f, glm::vec4(0.9f, 0.9f, 0.9f, 1.0f), 1.0f);
-	text_->drawText(lab_status_, sx, 0.03f, 0.75f,
-		glm::vec4(lab_status_color_, 1.0f), 1.0f);
-	text_->drawText("LCLICK place   RCLICK remove", sx, -0.02f, 0.7f,
-		glm::vec4(0.7f, 0.7f, 0.7f, 1.0f), 1.0f);
-
-	Button btn_use  { sx, -0.12f, 0.45f, 0.08f, "USE" };
-	Button btn_body { sx, -0.22f, 0.45f, 0.08f, "BACK TO BODY" };
-	Button btn_menu { sx, -0.32f, 0.45f, 0.08f, "MENU" };
-	btn_use.enabled = lab_valid_ && cost <= lab_biomass_budget_;
-	if (drawButton(btn_use) && btn_use.enabled) {
-		startMatchWithCustomShape(lab_validated_local_, lab_color_);
-		return;
-	}
-	if (drawButton(btn_body)) {
-		lab_phase_ = LabPhase::BODY;
-		lab_valid_ = false;
-	}
-	if (drawButton(btn_menu)) goToMonsterSelect();
 }
 
 // ========================================================================

@@ -28,8 +28,10 @@ int main(int argc, char** argv) {
 			opts.menu_screenshot_path = argv[++i];
 		} else if (!std::strcmp(argv[i], "--select-screenshot") && i + 1 < argc) {
 			opts.select_screenshot_path = argv[++i];
-		} else if (!std::strcmp(argv[i], "--draw-lab-screenshot") && i + 1 < argc) {
-			opts.draw_lab_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--lab-screenshot") && i + 1 < argc) {
+			opts.lab_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--lab-assemble-screenshot") && i + 1 < argc) {
+			opts.lab_assemble_screenshot_path = argv[++i];
 		} else if (!std::strcmp(argv[i], "--shape-test")) {
 			opts.shape_test = true;
 		} else if (!std::strcmp(argv[i], "--help")) {

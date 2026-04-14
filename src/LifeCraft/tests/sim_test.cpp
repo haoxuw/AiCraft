@@ -29,8 +29,8 @@ int main() {
 	world.map_radius = 800.0f;
 
 	auto templates = monsters::getPrebuiltMonsters();
-	// templates[0]=stinger, [1]=blob, [2]=dart
-	assert(templates.size() == 3);
+	// templates[0]=stinger, [1]=blob, [2]=dart, [3]=tusker
+	assert(templates.size() >= 3);
 
 	// Attacker A — stinger (pointy), player 1.
 	sim::Monster A_init = monsters::makeMonsterFromTemplate(

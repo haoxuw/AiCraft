@@ -33,6 +33,7 @@ add_executable(lifecraft
 	${CMAKE_CURRENT_SOURCE_DIR}/client/app.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/game_log.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/part_render.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/lab_screen.cpp
 	${LIFECRAFT_PLATFORM_SOURCES}
 )
 target_include_directories(lifecraft PRIVATE ${LIFECRAFT_INCLUDE_DIRS})

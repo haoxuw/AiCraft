@@ -25,6 +25,7 @@ enum class EventKind {
 	DEATH,    // target died (no killer)
 	GROW,     // actor grew; amount = scale factor
 	POISON_HIT, // actor's poison ticked target for amount
+	VENOM_HIT,  // venom DoT ticked target for amount
 };
 
 struct Event {
@@ -53,6 +54,7 @@ private:
 	void pickup_food_();
 	void resolve_contacts_(float dt);
 	void apply_poison_auras_(float dt);
+	void apply_status_and_regen_(float dt);
 	void finalize_deaths_();
 
 	World* world_;
