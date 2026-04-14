@@ -15,7 +15,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers lifecraft-server-build lifecraft-server-game-build character_views item_views model-editor model-snap animation_sweep test_animation
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers lifecraft-server-build lifecraft-server-game-build character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft lifecraft
 
 # ── Native ─────────────────────────────────────────────────
 #
@@ -26,8 +26,10 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 # Override the game with GAME=lifecraft for LifeCraft targets.
 #
 # Quick reference:
-#   make game                 Singleplayer (CivCraft): new village, random port, skip menu
-#   make game GAME_PORT=7890  Same, but on a fixed port
+#   make civcraft             Singleplayer CivCraft (voxel sandbox)
+#   make lifecraft            Singleplayer LifeCraft (drawing game)
+#   make game                 Alias for `make civcraft` (legacy; GAME= still works)
+#   make game GAME_PORT=7890  CivCraft on a fixed port
 #   make server               Dedicated server (interactive world select)
 #   make server PORT=N        Dedicated server on port N
 #   make client               Open GUI → "Start game" or "Join a game" from menu
@@ -50,6 +52,16 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 # runs the `lifecraft` binary; `make lifecraft-godot` still launches the Godot
 # prototype in src/LifeCraft/godot/ for visual reference.
 LIFECRAFT_PORT := 7888
+
+# Explicit per-game entry points — `make game` alone is ambiguous since
+# this repo builds two games. These just re-invoke make with GAME set:
+#   make civcraft     → CivCraft voxel sandbox (same as `make game`)
+#   make lifecraft    → LifeCraft drawing game (same as `make game GAME=lifecraft`)
+civcraft:
+	$(MAKE) game GAME=civcraft
+lifecraft:
+	$(MAKE) game GAME=lifecraft
+
 ifeq ($(GAME),lifecraft)
 # M0 scope: single-binary drawing client. Server + agent processes come with
 # networking (M1+). Binary runs out of build/src/LifeCraft/ so its shaders/
@@ -299,3 +311,25 @@ web-configure:
 
 web-clean:
 	rm -rf $(BUILD_WEB)
+
+# ── Music library ─────────────────────────────────────────
+# `music/` holds ~2,100 royalty-free tracks (Incompetech + OpenGameArt)
+# used by LifeCraft. Tracks are gitignored; re-fetch with `make download_music`
+# (idempotent — skips files already on disk). `make jukebox` runs
+# download_music first, then opens the terminal curator (+ / - / ?).
+# See music/README.md for details.
+
+# Skip the download entirely when tracks/ already has files — both
+# harvesters still hit the network (catalog enumeration) even when every
+# file is on disk, so we short-circuit here. Force a refresh with
+# `make download_music FORCE=1`.
+download_music:
+	@count=$$(find music/tracks -type f \( -name '*.mp3' -o -name '*.ogg' -o -name '*.wav' -o -name '*.flac' \) 2>/dev/null | wc -l); \
+	if [ "$(FORCE)" != "1" ] && [ $$count -gt 0 ]; then \
+		echo "[download_music] $$count tracks already present in music/tracks/ — skipping. Re-fetch with FORCE=1."; \
+	else \
+		cd music && ./redownload.sh; \
+	fi
+
+jukebox: download_music
+	cd music && python3 jukebox.py

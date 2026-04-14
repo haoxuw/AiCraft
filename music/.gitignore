@@ -1,0 +1,5 @@
+# Music tracks are bulk binary assets — do not check in. ~12 GB total.
+# Re-download them with `make download_music` from the repo root (see redownload.sh).
+tracks/
+__pycache__/
+# ratings.tsv IS tracked — it's how you resume curation across machines.
