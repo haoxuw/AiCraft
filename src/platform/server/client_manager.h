@@ -113,6 +113,12 @@ struct ClientSession {
 	size_t requiredChunkCount     = 0;
 	size_t chunksCompletedForPrep = 0;
 	float  lastProgressSent       = -1.0f; // last pct emitted via S_PREPARING
+	// Watchdog: if chunksCompletedForPrep hasn't advanced for kPrepStallSec,
+	// tear the session down — otherwise a wedged worker would wait forever
+	// for the client's 5s heartbeat to notice the silent stall.
+	std::chrono::steady_clock::time_point lastPrepAdvanceAt
+		= std::chrono::steady_clock::now();
+	size_t lastPrepAdvanceValue = 0;
 
 	// Edge-trigger state for S_NPC_INTERRUPT. True if a player was within
 	// proximity radius of this NPC on the previous broadcast tick.
@@ -202,13 +208,17 @@ public:
 			if (c.sentChunks.count(r.pos)) continue; // dedup (shouldn't happen in prep)
 			c.transport.pendingChunks.push_back({r.pos, std::move(r.message)});
 			c.sentChunks.insert(r.pos);
-			if (c.phase == ClientPhase::Preparing)
-				c.chunksCompletedForPrep++;
+			// chunksCompletedForPrep is bumped in sendPendingChunks after the
+			// message is actually on the wire — so S_READY (which gates on
+			// chunksCompletedForPrep) can't fire while chunks are still queued.
 		}
 
 		// Pump progress + finalize. Collect cids first — finalizePreparing
 		// may mutate m_clients (it doesn't today but keep this safe).
 		std::vector<ClientId> toFinalize;
+		std::vector<ClientId> toStall;
+		auto now = std::chrono::steady_clock::now();
+		constexpr float kPrepStallSec = 30.0f;
 		for (auto& [cid, c] : m_clients) {
 			if (c.phase != ClientPhase::Preparing) continue;
 			float pct = c.requiredChunkCount == 0 ? 1.0f
@@ -221,8 +231,30 @@ public:
 				wb.writeF32(pct);
 				net::sendMessage(c.transport.fd, net::S_PREPARING, wb);
 			}
-			if (c.chunksCompletedForPrep >= c.requiredChunkCount)
+			if (c.chunksCompletedForPrep >= c.requiredChunkCount) {
 				toFinalize.push_back(cid);
+				continue;
+			}
+			// Watchdog — any forward motion resets the clock.
+			if (c.chunksCompletedForPrep != c.lastPrepAdvanceValue) {
+				c.lastPrepAdvanceValue = c.chunksCompletedForPrep;
+				c.lastPrepAdvanceAt = now;
+			} else {
+				float stalled = std::chrono::duration<float>(now - c.lastPrepAdvanceAt).count();
+				if (stalled > kPrepStallSec) toStall.push_back(cid);
+			}
+		}
+		for (auto cid : toStall) {
+			auto it = m_clients.find(cid);
+			if (it == m_clients.end()) continue;
+			printf("[Server] %s prep stalled >%.0fs at %zu/%zu chunks — disconnecting\n",
+				it->second.label().c_str(), kPrepStallSec,
+				it->second.chunksCompletedForPrep, it->second.requiredChunkCount);
+			net::WriteBuffer err;
+			err.writeU32(0);
+			err.writeString("prep stalled on server");
+			net::sendMessage(it->second.transport.fd, net::S_ERROR, err);
+			markDisconnect(cid, "prep stalled");
 		}
 		for (auto cid : toFinalize) {
 			auto it = m_clients.find(cid);
@@ -260,6 +292,8 @@ public:
 				}
 				client.transport.chunkSendErrors = 0; // reset on success
 				client.transport.pendingChunks.erase(client.transport.pendingChunks.begin());
+				if (client.phase == ClientPhase::Preparing)
+					client.chunksCompletedForPrep++;
 				sent++;
 			}
 		}
@@ -817,6 +851,33 @@ private:
 	// also spawns owned NPCs), restores saved inventory, and emits the
 	// S_WELCOME / S_INVENTORY / S_READY sequence the client is waiting for.
 	void finalizePreparing(ClientSession& client) {
+		try {
+			finalizePreparingImpl(client);
+		} catch (const std::exception& ex) {
+			// Entity spawn can throw via Python artifact errors. Without this
+			// the client just sees chunks finish + no S_READY → silent hang
+			// until the heartbeat trips. Surface it over S_ERROR instead so
+			// the loading screen gets a real reason string.
+			std::string reason = std::string("spawn failed: ") + ex.what();
+			printf("[Server] finalizePreparing threw: %s (%s)\n",
+				ex.what(), client.label().c_str());
+			net::WriteBuffer err;
+			err.writeU32(0);
+			err.writeString(reason);
+			net::sendMessage(client.transport.fd, net::S_ERROR, err);
+			markDisconnect(client.id, "spawn failed");
+		} catch (...) {
+			printf("[Server] finalizePreparing threw unknown exception (%s)\n",
+				client.label().c_str());
+			net::WriteBuffer err;
+			err.writeU32(0);
+			err.writeString("spawn failed: unknown error");
+			net::sendMessage(client.transport.fd, net::S_ERROR, err);
+			markDisconnect(client.id, "spawn failed (unknown)");
+		}
+	}
+
+	void finalizePreparingImpl(ClientSession& client) {
 		const std::string& creatureType = client.pendingCreatureType;
 
 #ifdef CIVCRAFT_PERF
@@ -929,6 +990,10 @@ private:
 			client.phase              = ClientPhase::Preparing;
 			client.pendingDisplayName = displayName;
 			client.pendingCreatureType = creatureType;
+			// Reset prep watchdog clock now — its default-initialized value
+			// was set at TCP accept, which can be up to ~10s before hello.
+			client.lastPrepAdvanceAt    = std::chrono::steady_clock::now();
+			client.lastPrepAdvanceValue = 0;
 
 			// Build the required chunk set around the spawn column:
 			// feet + feet-1 + (2R+1)² horizontal over dy=[-1..2]. Dedup via a

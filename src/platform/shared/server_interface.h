@@ -101,6 +101,14 @@ public:
 	// Default: assume ready (in-process TestServer etc).
 	virtual bool isServerReady() const { return true; }
 
+	// Last S_ERROR string received from the server (e.g. "spawn failed: …").
+	// Empty when no error has arrived. Surfaced on the loading/menu screen
+	// so the user sees a real reason instead of "connection lost".
+	virtual const std::string& lastError() const {
+		static const std::string empty;
+		return empty;
+	}
+
 	// Server-reported prep progress in [0..1], pushed via S_PREPARING while
 	// the server generates required chunks in the background. Returns -1
 	// when no S_PREPARING has been seen yet (e.g. in-process TestServer

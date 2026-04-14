@@ -64,6 +64,14 @@ private:
 
 	// Loading state — wait for feet chunk before gameplay
 	void updateLoading(float dt, float aspect);
+	void abortHandshake(const char* reason);
+
+	// Manual-reconnect modal — entered whenever TCP drops during LOADING
+	// or PLAYING. User must press Reconnect or Back to Menu; we never
+	// auto-retry (the previous best-effort loop hid real server bugs).
+	void enterDisconnected(const char* reason);
+	void updateDisconnected(float dt, float aspect);
+	std::string m_disconnectReason;
 
 	// Playing state
 	void updatePlaying(float dt, float aspect);
@@ -171,6 +179,21 @@ private:
 
 	float m_connectTimer = 0;  // timeout waiting for player entity / WebSocket welcome
 	GameState m_connectTargetState = GameState::PLAYING; // state to enter after connect
+
+	// Loading-screen milestone tracker. Per-milestone deadlines let the
+	// client detect server-side hangs (wedged worker, silent prep stall,
+	// post-prep spawn failure) without waiting for the coarse 5s heartbeat.
+	// On timeout we drop TCP and reuse the existing reconnect budget.
+	struct HandshakeProgress {
+		enum Milestone { HELLO_ACK, PREP, WELCOME, READY, DONE };
+		Milestone milestone     = HELLO_ACK;
+		float     inMilestoneT  = 0; // seconds in current milestone
+		float     sincePct      = 0; // sliding-deadline clock for PREP
+		float     lastPct       = -1.0f;
+		size_t    lastChunkCount = 0;
+		std::string lastReason;      // filled on abort — shown on retry/menu
+	};
+	HandshakeProgress m_handshake;
 
 	// Reconnect on mid-game disconnect
 	std::string m_reconnectHost;  // last connected host (empty = local server, no reconnect)

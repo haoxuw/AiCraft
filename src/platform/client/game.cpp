@@ -405,6 +405,10 @@ float Game::beginFrame() {
 void Game::handleGlobalInput() {
 	if (m_controls.pressed(Action::Screenshot))
 		saveScreenshot();
+	if (std::filesystem::exists("/tmp/civcraft_screenshot_request")) {
+		std::filesystem::remove("/tmp/civcraft_screenshot_request");
+		saveScreenshot();
+	}
 	if (m_controls.pressed(Action::ToggleDebug))
 		m_showDebug = !m_showDebug;
 
@@ -573,6 +577,9 @@ void Game::updateAndRender(float dt, float aspect) {
 	case GameState::LOADING:
 		updateLoading(dt, aspect);
 		break;
+	case GameState::DISCONNECTED:
+		updateDisconnected(dt, aspect);
+		break;
 	case GameState::ADMIN:
 	case GameState::PLAYING:
 		updatePlaying(dt, aspect);
@@ -711,6 +718,7 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 			m_connectTargetState = targetState;
 			m_state = targetState;     // LOADING — updateLoading() polls welcome
 			m_connectTimer = 0;
+			m_handshake = HandshakeProgress{}; // fresh milestone tracker per connect
 			return;
 		}
 #ifndef __EMSCRIPTEN__

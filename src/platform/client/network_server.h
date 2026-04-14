@@ -318,6 +318,7 @@ public:
 	void setControlledEntityId(EntityId eid) override { m_controlledEid = eid; }
 	bool isServerReady() const override { return m_serverReady; }
 	float preparingProgress() const override { return m_preparingPct; }
+	const std::string& lastError() const override { return m_lastError; }
 
 	// Latest server-authoritative position from the broadcast stream.
 	// Falls back to the last applied entity position if no interp target.
@@ -450,6 +451,14 @@ private:
 				}
 				continue;
 			}
+			if (hdr.type == net::S_ERROR) {
+				net::ReadBuffer rb(payload.data(), payload.size());
+				(void)rb.readU32(); // entityId, unused pre-welcome
+				m_lastError = rb.readString();
+				printf("[Net] Server error (pre-welcome): %s\n", m_lastError.c_str());
+				disconnect();
+				return false;
+			}
 			// Other messages (S_CHUNK, S_CHUNK_Z, …) arrive before welcome
 			// during prep — dispatch so the chunk cache is populated.
 			handleMessage(hdr.type, payload);
@@ -466,6 +475,13 @@ private:
 			// The loading screen waits on this before handing off to gameplay.
 			m_serverReady = true;
 			printf("[Net] Server ready.\n");
+			break;
+		}
+		case net::S_ERROR: {
+			(void)rb.readU32(); // entityId, unused for fatal errors
+			m_lastError = rb.readString();
+			printf("[Net] Server error: %s\n", m_lastError.c_str());
+			disconnect();
 			break;
 		}
 		case net::S_ENTITY: {
@@ -781,6 +797,7 @@ private:
 	float m_worldTime = 0.25f;
 	bool m_serverReady = false;
 	float m_preparingPct = -1.0f;  // -1 = no S_PREPARING seen; else [0..1]
+	std::string m_lastError;       // set on S_ERROR; surfaced to loading/menu UI
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;

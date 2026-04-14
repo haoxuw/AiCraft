@@ -48,35 +48,24 @@ void Game::takeControlOf(EntityId eid) {
 }
 
 // Returns true if the connection was lost and handled (caller should return).
+// Hands off to the DISCONNECTED modal; the user chooses Reconnect or Menu.
 bool Game::handleConnectionReconnect(float dt) {
-	auto handleDisconnect = [&]() {
-		m_server.reset(); // always close socket cleanly via RAII destructor
-		bool isNetworkGame = !m_reconnectHost.empty();
-		if (isNetworkGame && m_reconnectAttempt < kMaxReconnectAttempts) {
-			m_reconnectAttempt++;
-			printf("[Game] Connection lost — reconnecting (%d/%d) to %s:%d...\n",
-			       m_reconnectAttempt, kMaxReconnectAttempts,
-			       m_reconnectHost.c_str(), m_reconnectPort);
-			joinServer(m_reconnectHost, m_reconnectPort, GameState::LOADING);
-		} else {
-			if (isNetworkGame)
-				printf("[Game] Reconnect attempts exhausted, returning to menu\n");
-			m_reconnectAttempt = 0;
-			m_state = GameState::MENU;
-		}
+	auto drop = [&](const char* fallback) {
+		std::string reason = (m_server && !m_server->lastError().empty())
+			? m_server->lastError()
+			: fallback;
+		enterDisconnected(reason.c_str());
 	};
 
 	if (!m_server || !m_server->isConnected()) {
-		handleDisconnect();
+		drop("connection lost");
 		return true;
 	}
 
-	// Tick server (polls for entity updates from network)
 	m_server->tick(dt);
 
-	// Connection may have dropped during tick — handle immediately
 	if (!m_server->isConnected()) {
-		handleDisconnect();
+		drop("connection lost");
 		return true;
 	}
 
@@ -149,7 +138,7 @@ void Game::handleGameplayInput(float dt) {
 
 			// Reload combo when the held item changes
 			if (itemId != m_comboItemId) {
-				std::vector<std::string> combo = {"swing_right", "swing_left", "jab"};
+				std::vector<std::string> combo = {"swing_left", "swing_right", "cleave"};
 				if (!itemId.empty()) {
 					const ArtifactEntry* art = m_artifacts.findById(itemId);
 					if (art) {
@@ -498,9 +487,7 @@ void Game::updatePlaying(float dt, float aspect) {
 		m_connectTimer += dt;
 		if (m_connectTimer > 10.0f) {
 			printf("[Game] Timeout waiting for player entity\n");
-			// Trigger disconnect/reconnect
-			m_server.reset();
-			m_state = GameState::MENU;
+			enterDisconnected("timed out waiting for player entity");
 			return;
 		}
 		// Show loading message
@@ -608,6 +595,9 @@ void Game::updatePlaying(float dt, float aspect) {
 		cb.setPlayerWalk = [this](float phase, float speed) {
 			m_debugWalkPhase = phase;
 			m_debugWalkSpeed = speed;
+		};
+		cb.triggerAttackClip = [this](const std::string& clipId) {
+			m_attackAnim.triggerOnce(clipId);
 		};
 
 		m_debugCapture.tick(dt, pe, m_camera, cb);

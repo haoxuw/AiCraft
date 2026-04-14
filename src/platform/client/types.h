@@ -16,7 +16,8 @@ enum class GameState {
 	ENTITY_INSPECT,
 	CODE_EDITOR,
 	PAUSED,
-	CONNECTING    // web: waiting for WebSocket + S_WELCOME handshake
+	CONNECTING,   // web: waiting for WebSocket + S_WELCOME handshake
+	DISCONNECTED  // modal shown after TCP drop; user presses Reconnect or Back to Menu
 };
 
 constexpr int HOTBAR_SIZE = 10; // keys 1-9, 0
