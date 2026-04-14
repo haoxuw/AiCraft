@@ -32,6 +32,18 @@ int main(int argc, char** argv) {
 			if (std::sscanf(argv[++i], "%f,%f", &x, &y) == 2) {
 				opts.lab_cursor_px = glm::vec2(x, y);
 			}
+		} else if (!std::strcmp(argv[i], "--kid-starter-screenshot") && i + 1 < argc) {
+			opts.kid_starter_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--kid-lab-screenshot") && i + 1 < argc) {
+			opts.kid_lab_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--kid-celebrate-screenshot") && i + 1 < argc) {
+			opts.kid_celebrate_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--kid-play-screenshot") && i + 1 < argc) {
+			opts.kid_play_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--kid-autotest")) {
+			opts.kid_autotest = true;
+		} else if (!std::strcmp(argv[i], "--kid-nospeech")) {
+			opts.kid_no_speech = true;
 		} else if (!std::strcmp(argv[i], "--help")) {
 			std::printf("cellcraft options:\n"
 			            "  --autotest               accelerated headless match, logs to /tmp/cellcraft_autotest.log\n"

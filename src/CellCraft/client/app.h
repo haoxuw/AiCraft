@@ -12,12 +12,15 @@
 
 #include <glm/glm.hpp>
 
+#include "CellCraft/artifacts/monsters/base/kid_starters.h"
 #include "CellCraft/artifacts/monsters/base/prebuilt.h"
 #include "CellCraft/client/app_state.h"
 #include "CellCraft/client/chalk_renderer.h"
 #include "CellCraft/client/chalk_stroke.h"
 #include "CellCraft/client/game_log.h"
+#include "CellCraft/client/kid_lab.h"
 #include "CellCraft/client/lab_screen.h"
+#include "CellCraft/client/name_generator.h"
 #include "CellCraft/sim/action.h"
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/sim.h"
@@ -39,6 +42,13 @@ struct AppOptions {
 	std::string select_screenshot_path; // if set: render MONSTER_SELECT then snap PPM + exit
 	std::string lab_screenshot_path;    // unified creature lab seeded with sample parts
 	glm::vec2   lab_cursor_px = glm::vec2(-1.0f); // if valid: force cursor to this pixel for lab screenshot
+	// KID-MODE screenshot/test flags.
+	std::string kid_starter_screenshot_path;
+	std::string kid_lab_screenshot_path;
+	std::string kid_celebrate_screenshot_path;
+	std::string kid_play_screenshot_path;
+	bool        kid_autotest = false;
+	bool        kid_no_speech = false;
 };
 
 // Short-lived chalk-stroke particle for bites/kills/pickups.
@@ -80,8 +90,12 @@ private:
 	void goToMainMenu();
 	void goToMonsterSelect();
 	void goToDrawLab();
+	void goToKidStarter();
+	void goToKidLab(monsters::KidStarterKind kind);
+	void goToKidCelebrate();
 	void startMatchWithTemplate(const monsters::MonsterTemplate& t);
 	void startMatchFromLab();
+	void startMatchFromKidLab();
 	void goToEndScreen(bool won);
 
 	// ---- Menu background simulation (screensaver) -----------------------
@@ -93,6 +107,9 @@ private:
 	void drawMainMenu(float dt);
 	void drawMonsterSelect(float dt);
 	void drawDrawLab(float dt);
+	void drawKidStarter(float dt);
+	void drawKidLab(float dt);
+	void drawKidCelebrate(float dt);
 	void drawPlaying(float dt);
 	void drawEndScreen(float dt);
 
@@ -140,6 +157,14 @@ private:
 
 	// Creature Lab — delegated to LabScreen.
 	LabScreen lab_;
+
+	// Top-level mode toggle on the main menu (CLASSIC or KID).
+	GameMode mode_ = GameMode::KID;
+	// Kid lab + name + flag (set true when match started from kid mode).
+	KidLab   kid_lab_;
+	bool     from_kid_mode_ = false;
+	std::string kid_creature_name_; // last kid creature name (for end screen)
+	float    celebrate_t_ = 0.0f;
 
 	// playing
 	sim::World world_;
