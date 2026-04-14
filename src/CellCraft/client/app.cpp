@@ -290,6 +290,7 @@ void App::run() {
 			window_.pollEvents();
 			float dt = 1.0f / 60.0f;
 			state_time_ += dt; ui_frame_dt_ = dt;
+			ui_fx_.tick(dt);
 			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 			glViewport(0, 0, w, h);
 			ambient_.update(dt, w, h);
@@ -306,6 +307,7 @@ void App::run() {
 			default: break;
 			}
 			if (use_fx) post_fx_->render_to_default(w, h, (float)glfwGetTime());
+			ui_fx_.draw(text_.get());
 			mouse_left_click_ = false;
 			mouse_right_click_ = false;
 			keys_pressed_this_frame_.clear();
@@ -340,6 +342,7 @@ void App::run() {
 		prev = now;
 		state_time_ += dt;
 		ui_frame_dt_ = dt;
+		ui_fx_.tick(dt);
 
 		int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 		glViewport(0, 0, w, h);
@@ -378,6 +381,10 @@ void App::run() {
 
 		// Composite bloom + vignette + low-HP overlay to default FB.
 		if (use_fx) post_fx_->render_to_default(w, h, (float)now);
+
+		// UI particles: drawn AFTER composite so they always pop on top
+		// (bloom won't eat them, and they read as crisp click feedback).
+		ui_fx_.draw(text_.get());
 
 		// consume edge triggers at end of frame
 		mouse_left_click_ = false;
@@ -529,6 +536,14 @@ bool App::drawButton(const Button& b) {
 	pb.y += dy;
 
 	ui::drawPill(text_.get(), pb, window_.aspectRatio());
+
+	// Sparkle burst on click — centered on the button in the button's
+	// accent color.
+	if (clicked) {
+		glm::vec2 cen(b.x + b.w * 0.5f, b.y + b.h * 0.5f + a.idle_offset(bobble));
+		glm::vec3 spk(pb.top.r, pb.top.g, pb.top.b);
+		ui_fx_.sparkle(cen, spk, ai_rng_, 9);
+	}
 	return clicked;
 }
 
@@ -1285,6 +1300,10 @@ void App::drawPlaying(float dt) {
 void App::drawEndScreen(float dt) {
 	{
 		float aspect = window_.aspectRatio();
+		if (end_won_ && !end_confetti_spawned_) {
+			ui_fx_.confetti(ai_rng_, 100);
+			end_confetti_spawned_ = true;
+		}
 		// Warm cream overlay — bright, not dim.
 		text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.78f));
 		const char* banner = end_won_ ? "YOU WON!" : "SO CLOSE!";
@@ -1345,8 +1364,8 @@ void App::drawEndScreen(float dt) {
 		// Buttons
 		Button again { -0.32f, -0.55f, 0.30f, 0.12f, "PLAY AGAIN!" };
 		Button menu  {  0.02f, -0.55f, 0.30f, 0.12f, "MENU" };
-		if (drawButton(again)) { goToStarter(); return; }
-		if (drawButton(menu))  { goToMainMenu(); return; }
+		if (drawButton(again)) { end_confetti_spawned_ = false; ui_fx_.clear(); goToStarter(); return; }
+		if (drawButton(menu))  { end_confetti_spawned_ = false; ui_fx_.clear(); goToMainMenu(); return; }
 		return;
 	}
 }
@@ -1538,6 +1557,12 @@ void App::drawLab(float dt) {
 void App::drawCelebrate(float dt) {
 	celebrate_t_ += dt;
 	float aspect = window_.aspectRatio();
+
+	// Confetti: spawn once when entering the celebration screen.
+	if (!celebrate_confetti_spawned_) {
+		ui_fx_.confetti(ai_rng_, 80);
+		celebrate_confetti_spawned_ = true;
+	}
 	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
 
 	// Cream overlay (bright celebration), not dim-black.
@@ -1613,6 +1638,8 @@ void App::drawCelebrate(float dt) {
 	// Skip-on-click; auto-advance after 2s.
 	if (t >= 2.0f || mouse_left_click_) {
 		particles_.clear();
+		celebrate_confetti_spawned_ = false;
+		ui_fx_.clear();
 		startMatchFromLab();
 	}
 }

@@ -23,6 +23,7 @@
 #include "CellCraft/client/ambient_particles.h"
 #include "CellCraft/client/screen_shake.h"
 #include "CellCraft/client/ui_anim.h"
+#include "CellCraft/client/ui_particles.h"
 #include "CellCraft/sim/action.h"
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/sim.h"
@@ -133,7 +134,10 @@ private:
 	ScreenShake                    shake_;
 	GameLog log_;
 	ui::AnimMap                    ui_anim_;
+	ui::UIParticleSystem           ui_fx_;
 	float                          ui_frame_dt_ = 1.0f / 60.0f;
+	bool                           celebrate_confetti_spawned_ = false;
+	bool                           end_confetti_spawned_ = false;
 
 	AppState state_ = AppState::LOADING;
 	float state_time_ = 0.0f;
