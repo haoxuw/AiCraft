@@ -27,6 +27,7 @@
 
 #include "CellCraft/client/part_render.h"
 #include "CellCraft/client/ui_button.h"
+#include "CellCraft/client/ui_text.h"
 #include "CellCraft/client/ui_theme.h"
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/part_stats.h"
@@ -537,8 +538,8 @@ bool App::drawButton(const Button& b) {
 
 void App::drawLoading(float) {
 	glm::vec4 shadow = ui::ACCENT_PINK; shadow.a = 0.8f;
-	text_->drawTitle("CELLCRAFT", -0.26f + 0.010f, 0.05f - 0.012f, 3.0f, shadow, window_.aspectRatio());
-	text_->drawTitle("CELLCRAFT", -0.26f,          0.05f,          3.0f, ui::TEXT_DARK, window_.aspectRatio());
+	ui::drawOutlinedTitle(text_.get(), "CELLCRAFT", -0.26f, 0.05f, 3.0f,
+	                      ui::TEXT_DARK, shadow, window_.aspectRatio());
 
 	float total = 0.8f;
 	float frac = std::min(1.0f, state_time_ / total);
@@ -669,10 +670,10 @@ void App::drawMainMenu(float dt) {
 	text_->drawRect(px + pw + 0.01f - tk, py,           tk, tt, tkc);
 	text_->drawRect(px + pw + 0.01f - tt, py,           tt, tk, tkc);
 
-	// 4) Stenciled title — colored drop shadow + dark fill on cream.
-	glm::vec4 shadow = ui::ACCENT_PINK; shadow.a = 0.75f;
-	text_->drawTitle("CELLCRAFT", -0.26f + 0.010f, 0.30f - 0.012f, 3.0f, shadow, aspect);
-	text_->drawTitle("CELLCRAFT", -0.26f,          0.30f,          3.0f, ui::TEXT_DARK, aspect);
+	// 4) Bold outlined title — Fall-Guys-style charcoal halo + pink shadow.
+	glm::vec4 title_shadow = ui::ACCENT_PINK; title_shadow.a = 0.75f;
+	ui::drawOutlinedTitle(text_.get(), "CELLCRAFT", -0.26f, 0.30f, 3.0f,
+	                      ui::TEXT_DARK, title_shadow, aspect);
 	text_->drawText ("// SCRIBBLE SURVIVAL //", -0.23f, 0.18f, 1.0f,
 		ui::TEXT_MUTED, aspect);
 
@@ -1288,9 +1289,9 @@ void App::drawEndScreen(float dt) {
 		text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.78f));
 		const char* banner = end_won_ ? "YOU WON!" : "SO CLOSE!";
 		glm::vec4 banner_shadow = end_won_ ? ui::ACCENT_LIME : ui::ACCENT_ORANGE;
-		banner_shadow.a = 0.8f;
-		text_->drawTitle(banner, -0.30f + 0.010f, 0.45f - 0.012f, 2.8f, banner_shadow, aspect);
-		text_->drawTitle(banner, -0.30f,          0.45f,          2.8f, ui::TEXT_DARK, aspect);
+		banner_shadow.a = 0.85f;
+		ui::drawOutlinedTitle(text_.get(), banner, -0.30f, 0.45f, 2.8f,
+		                      ui::TEXT_DARK, banner_shadow, aspect);
 
 		// Creature wiggle / slump animation in center.
 		state_time_ += 0.0f; // already accumulated by main loop
@@ -1390,11 +1391,9 @@ void App::drawStarter(float dt) {
 	float aspect = window_.aspectRatio();
 	// Cream overlay so the starter picker reads bright and airy.
 	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.72f));
-	glm::vec4 title_shadow = ui::ACCENT_CYAN; title_shadow.a = 0.80f;
-	text_->drawTitle("WHAT DO YOU WANT TO BUILD?", -0.55f + 0.008f, 0.78f - 0.010f, 1.6f,
-		title_shadow, aspect);
-	text_->drawTitle("WHAT DO YOU WANT TO BUILD?", -0.55f, 0.78f, 1.6f,
-		ui::TEXT_DARK, aspect);
+	glm::vec4 ttl_shadow = ui::ACCENT_CYAN; ttl_shadow.a = 0.80f;
+	ui::drawOutlinedTitle(text_.get(), "WHAT DO YOU WANT TO BUILD?",
+	                      -0.55f, 0.78f, 1.6f, ui::TEXT_DARK, ttl_shadow, aspect);
 
 	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
 	const int n = 6;
@@ -1541,7 +1540,8 @@ void App::drawCelebrate(float dt) {
 	float aspect = window_.aspectRatio();
 	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
 
-	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.0f, 0.0f, 0.0f, 0.65f));
+	// Cream overlay (bright celebration), not dim-black.
+	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.55f));
 
 	float t = celebrate_t_;
 	// Animation: grow 1.0 → 1.4 over 0.5s, wobble ±20° next 0.5s, shrink to 1.0
@@ -1603,11 +1603,12 @@ void App::drawCelebrate(float dt) {
 
 	renderer_->drawStrokes(ss, nullptr, w_px, h_px);
 
-	// Banner
+	// Banner — outlined, gold-shadow on dark fill reads great on cream.
 	std::string banner = "MEET " + creature_name_ + "!";
 	float w_chars = (float)banner.size() * 0.018f * 2.4f;
-	text_->drawText(banner, -w_chars * 0.5f, 0.55f, 2.4f,
-		glm::vec4(1.0f, 0.95f, 0.55f, 1.0f), aspect);
+	glm::vec4 bshadow = ui::ACCENT_GOLD; bshadow.a = 0.85f;
+	ui::drawOutlinedText(text_.get(), banner, -w_chars * 0.5f, 0.55f, 2.4f,
+	                     ui::TEXT_DARK, bshadow, aspect);
 
 	// Skip-on-click; auto-advance after 2s.
 	if (t >= 2.0f || mouse_left_click_) {

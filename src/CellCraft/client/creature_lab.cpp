@@ -11,6 +11,7 @@
 
 #include "CellCraft/client/name_generator.h"
 #include "CellCraft/client/part_render.h"
+#include "CellCraft/client/ui_text.h"
 #include "CellCraft/client/ui_theme.h"
 #include "CellCraft/sim/monster.h"
 #include "CellCraft/sim/part_stats.h"
@@ -409,10 +410,10 @@ void CreatureLab::draw_top_bar_(const Layout& l, const LabInput& in) {
 	float nx = ((float)fw * 0.5f - (w_chars * fw * 0.5f)) ;
 	(void)nx;
 	float ndc_y = (1.0f - (l.top_bar_h * 0.30f / fh) * 2.0f);
-	// Colored shadow + dark fill title treatment.
-	glm::vec4 nshadow = ui::ACCENT_PINK; nshadow.a = 0.75f;
-	text_->drawText(name_, -w_chars * 0.5f + 0.005f, ndc_y - 0.05f - 0.007f, scale, nshadow, aspect);
-	text_->drawText(name_, -w_chars * 0.5f,          ndc_y - 0.05f,          scale, ui::TEXT_DARK, aspect);
+	// Outlined name title — charcoal halo + pink drop shadow on cream.
+	glm::vec4 nshadow = ui::ACCENT_PINK; nshadow.a = 0.80f;
+	ui::drawOutlinedText(text_, name_, -w_chars * 0.5f, ndc_y - 0.05f, scale,
+	                     ui::TEXT_DARK, nshadow, aspect);
 	// Pencil button (a small box right of the name)
 	float btn_w = l.top_bar_h * 0.6f;
 	float btn_h = l.top_bar_h * 0.6f;
