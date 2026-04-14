@@ -199,6 +199,30 @@ void venom_spike(const sim::Part& p, const glm::vec3& col,
 	(void)col;
 }
 
+void eyes(const sim::Part& p, const glm::vec3& col,
+          const std::function<glm::vec2(glm::vec2)>& xform,
+          std::vector<ChalkStroke>& out) {
+	// Small chalk dot with a curved arc above — eye outline.
+	glm::vec2 a = p.anchor_local;
+	ChalkStroke pupil;
+	pupil.color = lighten(col, 0.3f);
+	pupil.half_width = 2.4f;
+	// Tiny segment → dot.
+	pupil.points = { xform(a + glm::vec2(-0.4f, 0.0f)), xform(a + glm::vec2(0.4f, 0.0f)) };
+	out.push_back(std::move(pupil));
+	// Arc above — 5 samples across a shallow half-circle.
+	ChalkStroke arc;
+	arc.color = lighten(col, 0.25f);
+	arc.half_width = 1.4f;
+	const int N = 7;
+	for (int i = 0; i < N; ++i) {
+		float u = -1.0f + 2.0f * (float)i / (float)(N - 1);
+		float yy = 3.0f + (1.0f - u * u) * 2.2f; // hump above the dot
+		arc.points.push_back(xform(a + glm::vec2(u * 4.0f, yy)));
+	}
+	out.push_back(std::move(arc));
+}
+
 } // namespace
 
 void appendPartStrokes(const std::vector<sim::Part>& parts,
@@ -220,6 +244,7 @@ void appendPartStrokes(const std::vector<sim::Part>& parts,
 		case sim::PartType::REGEN:       regen(p, body_color, local_to_screen, out); break;
 		case sim::PartType::MOUTH:       mouth(p, body_color, local_to_screen, out); break;
 		case sim::PartType::VENOM_SPIKE: venom_spike(p, body_color, local_to_screen, out); break;
+		case sim::PartType::EYES:        eyes(p, body_color, local_to_screen, out); break;
 		case sim::PartType::PART_TYPE_COUNT: break;
 		}
 	}

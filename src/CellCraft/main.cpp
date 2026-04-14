@@ -5,6 +5,8 @@
 
 #include "CellCraft/client/app.h"
 #include "CellCraft/sim/shape_smooth.h"
+#include "CellCraft/sim/shape_validate.h"
+#include "CellCraft/sim/symmetric_body.h"
 
 #include <cmath>
 #include <cstdio>
@@ -34,6 +36,8 @@ int main(int argc, char** argv) {
 			opts.lab_assemble_screenshot_path = argv[++i];
 		} else if (!std::strcmp(argv[i], "--shape-test")) {
 			opts.shape_test = true;
+		} else if (!std::strcmp(argv[i], "--symmetry-test")) {
+			opts.symmetry_test = true;
 		} else if (!std::strcmp(argv[i], "--help")) {
 			std::printf("cellcraft options:\n"
 			            "  --autotest               accelerated headless match, logs to /tmp/cellcraft_autotest.log\n"
@@ -44,6 +48,53 @@ int main(int argc, char** argv) {
 			            "  --select-screenshot PATH render MONSTER_SELECT for 0.5s then dump PPM\n");
 			return 0;
 		}
+	}
+
+	if (opts.symmetry_test) {
+		// Synthetic half-stroke with one obvious corner at (50, 60).
+		// Start at axis (0,0), go up-right, sharp turn, come back to axis.
+		std::vector<glm::vec2> half;
+		// Bottom rise from (0,0) to (50,60) — corner here
+		for (int i = 0; i <= 12; ++i) {
+			float u = (float)i / 12.0f;
+			half.emplace_back(u * 50.0f, u * 60.0f);
+		}
+		// Sharp turn: descend back toward axis at (0, 90) — crosses ~90°.
+		for (int i = 1; i <= 12; ++i) {
+			float u = (float)i / 12.0f;
+			half.emplace_back(50.0f - u * 50.0f, 60.0f + u * 30.0f);
+		}
+		std::vector<std::vector<glm::vec2>> strokes = { half };
+		auto poly = civcraft::cellcraft::sim::buildSymmetricBody(strokes, 0.0f);
+		std::printf("SYMMETRY-TEST: half=%zu, polygon verts=%zu\n", half.size(), poly.size());
+		if (poly.size() < 16 || poly.size() > 120) {
+			std::fprintf(stderr, "  FAIL: vertex count out of range [16,120]\n");
+			return 2;
+		}
+		// Closed implicitly: first != last.
+		if (glm::length(poly.front() - poly.back()) < 1e-3f) {
+			std::fprintf(stderr, "  FAIL: polygon shouldn't repeat endpoint\n");
+			return 2;
+		}
+		// Corner preserved: find closest vertex to (50,60), must be <= 5px.
+		float best = 1e9f;
+		for (auto& v : poly) {
+			float d = glm::length(v - glm::vec2(50.0f, 60.0f));
+			if (d < best) best = d;
+		}
+		std::printf("  corner closest distance: %.2f\n", best);
+		if (best > 5.0f) {
+			std::fprintf(stderr, "  FAIL: corner not preserved within 5px\n");
+			return 2;
+		}
+		// Validate shape: pick a centroid inside.
+		glm::vec2 centroid(0.0f);
+		for (auto& v : poly) centroid += v;
+		centroid /= (float)poly.size();
+		auto res = civcraft::cellcraft::sim::validate_shape(poly, centroid);
+		std::printf("  validate: code=%d %s\n", (int)res.code, res.message.c_str());
+		std::printf("SYMMETRY-TEST: PASS\n");
+		return 0;
 	}
 
 	if (opts.shape_test) {

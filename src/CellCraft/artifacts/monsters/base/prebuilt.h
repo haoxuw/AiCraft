@@ -102,6 +102,8 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.parts.push_back({sim::PartType::FLAGELLA, {-50.0f, -4.0f}, 3.14159f});
 		m.parts.push_back({sim::PartType::CILIA,    {  0.0f,  9.0f}, 1.57f});
 		m.parts.push_back({sim::PartType::MOUTH,    { 52.0f,  0.0f}, 0.0f});
+		// Scout flavor: +1 EYES gives it wider perception for hunting/feeding.
+		m.parts.push_back({sim::PartType::EYES,     { 40.0f,  0.0f}, 0.0f});
 		out.push_back(m);
 
 		// ── tusker ────────────────────────────────────────────────────────

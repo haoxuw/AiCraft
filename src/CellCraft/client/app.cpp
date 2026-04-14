@@ -272,6 +272,24 @@ void App::run() {
 			// simplest route is to keep a private seed function; to avoid adding
 			// one, run a short simulated drag:
 			lab_.reset();
+			// Switch to FREEFORM (symmetric default would clamp the seeded
+			// full-ellipse stroke to the right half).
+			{
+				int wb, hb; glfwGetFramebufferSize(window_.handle(), &wb, &hb);
+				float bottom_bar = (float)hb * 0.10f;
+				float cw = (float)wb * 0.64f;
+				float canvas_cx_b = (float)wb * 0.18f + cw * 0.5f;
+				float bw_b = std::min(180.0f, cw * 0.18f);
+				float gap_b = 10.0f;
+				float total_b = bw_b * 4.0f + gap_b * 3.0f;
+				float bx0_b = canvas_cx_b - total_b * 0.5f;
+				float by_b = (float)hb - bottom_bar + 8.0f;
+				float bh_b = bottom_bar - 16.0f;
+				LabInput tog;
+				tog.mouse_px = { bx0_b + 0 * (bw_b + gap_b) + bw_b * 0.5f, by_b + bh_b * 0.5f };
+				tog.mouse_left_click = true;
+				lab_.update(1.0f / 60.0f, tog);
+			}
 			// Fake a drag: press, move through each point, release.
 			LabInput p = seed;
 			p.mouse_px = s1.points.front();
@@ -300,12 +318,13 @@ void App::run() {
 			float canvas_cx2 = (float)w2 * 0.18f + cw * 0.5f;
 			float bw = std::min(180.0f, cw * 0.18f);
 			float gap = 10.0f;
-			float total = bw * 3.0f + gap * 2.0f;
+			// DRAWING-mode button row is [SYMMETRIC, UNDO, CLEAR, FINALIZE].
+			float total = bw * 4.0f + gap * 3.0f;
 			float bx0 = canvas_cx2 - total * 0.5f;
 			float by = (float)h2 - bottom_bar + 8.0f;
 			float bh = bottom_bar - 16.0f;
-			// FINALIZE is index 2.
-			glm::vec2 click_pt(bx0 + 2 * (bw + gap) + bw * 0.5f, by + bh * 0.5f);
+			// FINALIZE is index 3.
+			glm::vec2 click_pt(bx0 + 3 * (bw + gap) + bw * 0.5f, by + bh * 0.5f);
 			LabInput p;
 			p.mouse_px = click_pt;
 			p.mouse_left_click = true;
@@ -873,6 +892,8 @@ void App::buildPlayerAction(std::unordered_map<uint32_t, sim::ActionProposal>& a
 
 	if (ai_plays_player_) {
 		// Autotest player: prefer food until well-fed, then hunt nearest.
+		// EYES widens the feed→hunt fallback threshold (perception_mult).
+		const float perc = p->part_effect.perception_mult;
 		glm::vec2 target = p->core_pos;
 		float best = 1e9f;
 		bool feeding = p->biomass < 50.0f;
@@ -882,7 +903,7 @@ void App::buildPlayerAction(std::unordered_map<uint32_t, sim::ActionProposal>& a
 				if (d < best) { best = d; target = f.pos; }
 			}
 		}
-		if (!feeding || best > 600.0f) {
+		if (!feeding || best > 600.0f * perc) {
 			best = 1e9f;
 			for (auto& [id, m] : world_.monsters) {
 				if (id == player_id_ || !m.alive) continue;
@@ -989,24 +1010,30 @@ void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& acti
 			glm::vec2 food_pos(0.0f);
 			bool have_food = false;
 
+			// EYES widens hunt/flee/feed search radii (perception_mult).
+			const float perc = m.part_effect.perception_mult;
+			const float threat_r = 250.0f * perc;
+			const float hunt_r   = 600.0f * perc;
+			const float food_r   = 300.0f * perc;
+
 			for (auto& [oid, om] : world_.monsters) {
 				if (oid == id || !om.alive) continue;
 				if (om.owner_id == m.owner_id) continue;
 				float d = glm::length(om.core_pos - m.core_pos);
 				float ratio = om.biomass / std::max(1.0f, m.biomass);
-				// Threat: > 1.3× our biomass within 250.
-				if (d < 250.0f && ratio > 1.3f && d < nearest_threat_d) {
+				// Threat: > 1.3× our biomass within threat_r.
+				if (d < threat_r && ratio > 1.3f && d < nearest_threat_d) {
 					nearest_threat_d = d; threat_pos = om.core_pos; have_threat = true;
 				}
-				// Prey: unless aggressive mode, ignore > 1.5× us.
+				// Prey: unless aggressive mode, ignore > 1.5× us. Gate by hunt_r.
 				bool can_target = (s.mode == 3) || (ratio <= 1.5f);
-				if (can_target && d < best_prey_d) {
+				if (can_target && d < hunt_r && d < best_prey_d) {
 					best_prey_d = d; prey_pos = om.core_pos; have_prey = true;
 				}
 			}
 			for (auto& f : world_.food) {
 				float d = glm::length(f.pos - m.core_pos);
-				if (d < best_food_d) { best_food_d = d; food_pos = f.pos; have_food = true; }
+				if (d < food_r && d < best_food_d) { best_food_d = d; food_pos = f.pos; have_food = true; }
 			}
 
 			// Priority: flee > feed(only feeder-leaning/no-threat) > hunt > wander.
@@ -1022,11 +1049,11 @@ void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& acti
 				target = m.core_pos + glm::normalize(away) * 300.0f;
 				thrust = 1.0f;
 				choice = 2;
-			} else if (s.mode == 2 && have_food && best_food_d < 300.0f) {
+			} else if (s.mode == 2 && have_food && best_food_d < food_r) {
 				target = food_pos;
 				thrust = 0.6f;
 				choice = 3;
-			} else if (have_prey && best_prey_d < 600.0f) {
+			} else if (have_prey && best_prey_d < hunt_r) {
 				target = prey_pos;
 				thrust = (best_prey_d < 80.0f) ? 1.0f
 				       : (best_prey_d < 220.0f) ? 0.7f : 0.9f;

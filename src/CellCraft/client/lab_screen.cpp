@@ -24,6 +24,7 @@
 #include "CellCraft/sim/polygon_util.h"
 #include "CellCraft/sim/shape_smooth.h"
 #include "CellCraft/sim/shape_validate.h"
+#include "CellCraft/sim/symmetric_body.h"
 #include "CellCraft/sim/tuning.h"
 #include "client/text.h"
 #include "client/window.h"
@@ -41,6 +42,7 @@ const sim::PartType kPaletteTypes[] = {
 	sim::PartType::ARMOR,       sim::PartType::CILIA,
 	sim::PartType::HORN,        sim::PartType::REGEN,
 	sim::PartType::MOUTH,       sim::PartType::VENOM_SPIKE,
+	sim::PartType::EYES,
 };
 constexpr int kPaletteCount = (int)(sizeof(kPaletteTypes) / sizeof(kPaletteTypes[0]));
 
@@ -72,6 +74,8 @@ void LabScreen::reset() {
 	highlight_type_ = -1;
 	highlight_t_ = 0.0f;
 	flashes_.clear();
+	symmetric_draw_ = true;
+	used_symmetric_ = false;
 	status_ = "Left-drag to draw your body. FINALIZE when done.";
 	status_color_ = glm::vec3(0.85f);
 	time_acc_ = 0.0f;
@@ -116,7 +120,15 @@ void LabScreen::finalize_body_() {
 		status_color_ = glm::vec3(1.0f, 0.5f, 0.55f);
 		return;
 	}
-	auto smoothed_px = sim::smooth_body(pool, 48);
+	std::vector<glm::vec2> smoothed_px;
+	if (symmetric_draw_) {
+		Layout ly = compute_layout_();
+		smoothed_px = sim::buildSymmetricBody(pool, ly.canvas_cx);
+		used_symmetric_ = true;
+	} else {
+		smoothed_px = sim::smooth_body(pool, 48);
+		used_symmetric_ = false;
+	}
 	if (smoothed_px.size() < 3) {
 		status_ = "strokes too small — try again";
 		status_color_ = glm::vec3(1.0f, 0.5f, 0.55f);
@@ -156,6 +168,7 @@ void LabScreen::finalize_body_() {
 	body_scale_ = std::max(body_scale_, 1.0f);
 
 	mode_ = Mode::ASSEMBLING;
+	if (used_symmetric_) mirror_mode_ = true;
 	status_ = "Pick a part (left rail), click on the body to place. R rotates, M mirrors.";
 	status_color_ = glm::vec3(0.85f);
 }
@@ -215,6 +228,7 @@ void LabScreen::try_place_part_(glm::vec2 mpx, const Layout& l) {
 		case sim::PartType::MOUTH:       return sim::PART_MOUTH_MAX_STACK;
 		case sim::PartType::HORN:        return sim::PART_HORN_MAX_STACK;
 		case sim::PartType::VENOM_SPIKE: return sim::PART_VENOM_MAX_STACK;
+		case sim::PartType::EYES:        return sim::PART_EYES_MAX_STACK;
 		default: return 99;
 		}
 	};
@@ -278,15 +292,17 @@ void LabScreen::draw_chalk_grid_(std::vector<ChalkStroke>& out, const Layout& l)
 }
 
 void LabScreen::draw_mirror_line_(std::vector<ChalkStroke>& out, const Layout& l) {
-	if (!mirror_mode_ || mode_ != Mode::ASSEMBLING) return;
-	ChalkStroke s;
-	s.color = glm::vec3(0.9f, 0.85f, 0.3f);
-	s.half_width = 1.2f;
-	// Dashed vertical line through centroid.
+	bool draw_mode_axis = (mode_ == Mode::DRAWING) && symmetric_draw_;
+	bool asm_mode_axis  = (mode_ == Mode::ASSEMBLING) && mirror_mode_;
+	if (!draw_mode_axis && !asm_mode_axis) return;
+	glm::vec3 col = draw_mode_axis
+		? glm::vec3(0.95f, 0.9f, 0.55f)
+		: glm::vec3(0.9f, 0.85f, 0.3f);
+	// Dashed vertical line through canvas center.
 	for (float y = (float)l.top_bar_h + 8.0f; y < (float)l.fh - l.bottom_bar_h - 8.0f; y += 16.0f) {
 		ChalkStroke seg;
-		seg.color = s.color;
-		seg.half_width = s.half_width;
+		seg.color = col;
+		seg.half_width = 1.2f;
 		seg.points = { {l.canvas_cx, y}, {l.canvas_cx, y + 8.0f} };
 		out.push_back(std::move(seg));
 	}
@@ -594,17 +610,27 @@ void LabScreen::draw_canvas_buttons_(const Layout& l, const LabInput& in, LabOut
 	float gap = 10.0f;
 
 	if (mode_ == Mode::DRAWING) {
-		float total = bw * 3.0f + gap * 2.0f;
+		float total = bw * 4.0f + gap * 3.0f;
 		float bx = l.canvas_cx - total * 0.5f;
-		if (pixel_button_(bx + 0 * (bw + gap), by, bw, bh, "UNDO", !strokes_.empty(), in)) {
+		const char* sym_lbl = symmetric_draw_ ? "SYMMETRIC [ON]" : "SYMMETRIC [OFF]";
+		if (pixel_button_(bx + 0 * (bw + gap), by, bw, bh, sym_lbl, true, in)) {
+			symmetric_draw_ = !symmetric_draw_;
+			// Changing mode invalidates existing freeform strokes if they
+			// violate the new constraint, but we keep them (user can CLEAR).
+			status_ = symmetric_draw_
+				? "SYMMETRIC: draw on the right half; body will mirror."
+				: "FREEFORM: draw anywhere.";
+			status_color_ = glm::vec3(0.85f);
+		}
+		if (pixel_button_(bx + 1 * (bw + gap), by, bw, bh, "UNDO", !strokes_.empty(), in)) {
 			if (!strokes_.empty()) strokes_.pop_back();
 		}
-		if (pixel_button_(bx + 1 * (bw + gap), by, bw, bh, "CLEAR", !strokes_.empty(), in)) {
+		if (pixel_button_(bx + 2 * (bw + gap), by, bw, bh, "CLEAR", !strokes_.empty(), in)) {
 			strokes_.clear();
 			live_stroke_ = ChalkStroke{};
 			drawing_ = false;
 		}
-		if (pixel_button_(bx + 2 * (bw + gap), by, bw, bh, "FINALIZE", !strokes_.empty(), in)) {
+		if (pixel_button_(bx + 3 * (bw + gap), by, bw, bh, "FINALIZE", !strokes_.empty(), in)) {
 			finalize_body_();
 		}
 	} else {
@@ -659,21 +685,36 @@ LabOutcome LabScreen::update(float dt, const LabInput& in) {
 	               && in.mouse_px.y <= (float)l.fh - l.bottom_bar_h);
 
 	if (mode_ == Mode::DRAWING) {
+		// In symmetric mode, clamp cursor to right half of canvas; snap points
+		// near the axis to the axis so endpoints lie exactly on it.
+		auto sample_px = [&](glm::vec2 mpx) {
+			if (symmetric_draw_) {
+				if (mpx.x < l.canvas_cx) mpx.x = l.canvas_cx;
+				if (mpx.x < l.canvas_cx + 6.0f) mpx.x = l.canvas_cx;
+			}
+			return mpx;
+		};
 		if (in.mouse_left_click && in_canvas) {
 			drawing_ = true;
 			live_stroke_ = ChalkStroke{};
 			live_stroke_.color = color_;
 			live_stroke_.half_width = 3.0f;
-			live_stroke_.points.push_back(in.mouse_px);
+			glm::vec2 p0 = sample_px(in.mouse_px);
+			if (symmetric_draw_) p0.x = l.canvas_cx; // start on axis
+			live_stroke_.points.push_back(p0);
 		}
 		if (drawing_ && in.mouse_left_down) {
+			glm::vec2 p = sample_px(in.mouse_px);
 			if (live_stroke_.points.empty()
-			    || glm::length(in.mouse_px - live_stroke_.points.back()) >= 2.0f) {
-				live_stroke_.points.push_back(in.mouse_px);
+			    || glm::length(p - live_stroke_.points.back()) >= 2.0f) {
+				live_stroke_.points.push_back(p);
 			}
 		}
 		if (!in.mouse_left_down && drawing_) {
 			drawing_ = false;
+			if (symmetric_draw_ && live_stroke_.points.size() >= 2) {
+				live_stroke_.points.back().x = l.canvas_cx; // end on axis
+			}
 			if (live_stroke_.points.size() >= 2) {
 				live_stroke_.simplify(1.5f);
 				strokes_.push_back(live_stroke_);

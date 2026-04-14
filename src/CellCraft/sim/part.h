@@ -25,6 +25,7 @@ enum class PartType : uint8_t {
 	REGEN       = 7,  // passive HP/sec (stacks ×3)
 	MOUTH       = 8,  // +food pickup radius (stacks ×2)
 	VENOM_SPIKE = 9,  // on bite apply poison DoT (stacks ×2)
+	EYES        = 10, // +perception radius for AI targeting (stacks ×2)
 	PART_TYPE_COUNT
 };
 
@@ -46,6 +47,7 @@ struct PartEffect {
 	float armor_dr     = 0.0f;  // global damage reduction 0..1
 	float regen_hps    = 0.0f;  // passive HP per second
 	float pickup_radius_mult = 1.0f; // MOUTH: widens food pickup AABB halo
+	float perception_mult  = 1.0f;   // EYES: widens AI target-search radius
 	int   venom_stacks = 0;     // number of VENOM_SPIKE parts applied on bite
 
 	// For per-contact bonuses we need location data too.

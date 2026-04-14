@@ -19,6 +19,7 @@ constexpr int   PART_REGEN_MAX_STACK    = 3;
 constexpr int   PART_MOUTH_MAX_STACK    = 2;
 constexpr int   PART_HORN_MAX_STACK     = 1;
 constexpr int   PART_VENOM_MAX_STACK    = 2;
+constexpr int   PART_EYES_MAX_STACK     = 2;
 
 constexpr float PART_FLAGELLA_SPEED_ADD = 0.15f;
 constexpr float PART_ARMOR_HP_ADD       = 0.50f;
@@ -35,6 +36,7 @@ constexpr float PART_REGEN_HPS          = 1.5f;
 constexpr float PART_MOUTH_RADIUS_ADD   = 0.50f; // +50% per mouth
 constexpr float PART_VENOM_DPS          = 2.0f;
 constexpr float PART_VENOM_DURATION     = 3.0f;
+constexpr float PART_EYES_PERCEPTION_ADD = 0.50f; // +50% per EYES stack
 
 // Biomass costs (match the prompt's table).
 constexpr float PART_COST_SPIKE       = 5.0f;
@@ -47,6 +49,7 @@ constexpr float PART_COST_HORN        = 10.0f;
 constexpr float PART_COST_REGEN       = 6.0f;
 constexpr float PART_COST_MOUTH       = 4.0f;
 constexpr float PART_COST_VENOM_SPIKE = 7.0f;
+constexpr float PART_COST_EYES        = 5.0f;
 
 inline float part_cost(PartType t) {
 	switch (t) {
@@ -60,6 +63,7 @@ inline float part_cost(PartType t) {
 	case PartType::REGEN:       return PART_COST_REGEN;
 	case PartType::MOUTH:       return PART_COST_MOUTH;
 	case PartType::VENOM_SPIKE: return PART_COST_VENOM_SPIKE;
+	case PartType::EYES:        return PART_COST_EYES;
 	case PartType::PART_TYPE_COUNT: break;
 	}
 	return 0.0f;
@@ -77,6 +81,7 @@ inline const char* part_name(PartType t) {
 	case PartType::REGEN:       return "REGEN";
 	case PartType::MOUTH:       return "MOUTH";
 	case PartType::VENOM_SPIKE: return "VENOM";
+	case PartType::EYES:        return "EYES";
 	case PartType::PART_TYPE_COUNT: break;
 	}
 	return "?";
@@ -94,6 +99,7 @@ inline const char* part_desc(PartType t) {
 	case PartType::REGEN:       return "+1.5 hp/s (x3)";
 	case PartType::MOUTH:       return "+50% pickup radius (x2)";
 	case PartType::VENOM_SPIKE: return "bite applies venom DoT";
+	case PartType::EYES:        return "+50% perception (x2)";
 	case PartType::PART_TYPE_COUNT: break;
 	}
 	return "";
@@ -101,7 +107,7 @@ inline const char* part_desc(PartType t) {
 
 inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 	PartEffect e;
-	int flagella = 0, armor = 0, cilia = 0, regen = 0, mouth = 0, venom = 0, horn = 0;
+	int flagella = 0, armor = 0, cilia = 0, regen = 0, mouth = 0, venom = 0, horn = 0, eyes = 0;
 	bool have_poison = false;
 	for (const auto& p : parts) {
 		switch (p.type) {
@@ -173,6 +179,13 @@ inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 			if (venom < PART_VENOM_MAX_STACK) {
 				++e.venom_stacks;
 				++venom;
+			}
+			break;
+		}
+		case PartType::EYES: {
+			if (eyes < PART_EYES_MAX_STACK) {
+				e.perception_mult += PART_EYES_PERCEPTION_ADD;
+				++eyes;
 			}
 			break;
 		}

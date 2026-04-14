@@ -40,6 +40,7 @@ struct AppOptions {
 	std::string lab_screenshot_path;      // DRAWING mode with preseeded squiggle
 	std::string lab_assemble_screenshot_path; // ASSEMBLING mode with preplaced parts + mirror on
 	bool shape_test = false;            // run smooth_body on synthetic input and print result
+	bool symmetry_test = false;         // run buildSymmetricBody on synthetic half-stroke
 };
 
 // Short-lived chalk-stroke particle for bites/kills/pickups.

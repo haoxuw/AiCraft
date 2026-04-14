@@ -117,6 +117,8 @@ private:
 	std::vector<ChalkStroke> strokes_;
 	ChalkStroke              live_stroke_;
 	bool                     drawing_ = false;
+	bool                     symmetric_draw_ = true;  // mirror axis on; draw on right half only
+	bool                     used_symmetric_ = false; // set by finalize_body_ if symmetric path used
 
 	// Validated body (set after finalize_body_).
 	std::vector<glm::vec2>   smoothed_local_;    // in monster-local space, core at origin
