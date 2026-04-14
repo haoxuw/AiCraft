@@ -19,7 +19,7 @@ endif()
 #
 #   src/platform/   Engine: shared types, server loop, agent runtime, renderer
 #   src/CivCraft/   Voxel sandbox game (chunks, blocks, structures)
-#   src/LifeCraft/   Spore-cell-stage game — C++ client on src/platform/
+#   src/CellCraft/   Spore-cell-stage game — C++ client on src/platform/
 #
 # Each game's executables run with CWD = $BUILD_DIR, so assets copied into
 # $BUILD_DIR by POST_BUILD are found via "shaders/...", "artifacts/...", etc.
@@ -288,7 +288,7 @@ else()
 	)
 
 	# === Model editor (standalone model viewer / snapshot tool) ===
-	# Shared by CivCraft + LifeCraft — renders any .py box model without
+	# Shared by CivCraft + CellCraft — renders any .py box model without
 	# launching a world, server, or full client. Snapshot mode writes
 	# 6-angle PPMs to disk (front/three_q/side/back/top/rts) and exits.
 	add_executable(model-editor
@@ -320,13 +320,13 @@ else()
 	)
 
 	# =================================================================
-	# LifeCraft — Spore cell stage game (C++ on platform/).
-	# M0: single `lifecraft` binary — chalkboard + mouse draws strokes.
+	# CellCraft — Spore cell stage game (C++ on platform/).
+	# M0: single `cellcraft` binary — chalkboard + mouse draws strokes.
 	# M1+: server/agent process split once networking lands.
-	# The legacy Godot prototype at src/LifeCraft/godot/ is retained as a
+	# The legacy Godot prototype at src/CellCraft/godot/ is retained as a
 	# visual reference only and is NOT built by CMake.
 	# =================================================================
-	if(EXISTS ${CMAKE_SOURCE_DIR}/src/LifeCraft/CMakeLists.txt)
-		add_subdirectory(src/LifeCraft)
+	if(EXISTS ${CMAKE_SOURCE_DIR}/src/CellCraft/CMakeLists.txt)
+		add_subdirectory(src/CellCraft)
 	endif()
 endif()

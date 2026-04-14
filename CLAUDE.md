@@ -9,7 +9,7 @@ This repo builds **two** games on top of a single C++ engine:
 ```
 src/platform/     C++ engine (headers + cpps) — no game content
 src/CivCraft/     Voxel sandbox game (chunks, blocks, structures)
-src/LifeCraft/    2D drawing Action RTS
+src/CellCraft/    2D drawing Action RTS
 ```
 
 Everything game-specific — artifacts, python, shaders, resources, config, docs,
@@ -18,8 +18,8 @@ generic shaders (crosshair, highlight, particle, shadow, text) live under
 `src/platform/`.
 
 **Dependency rule (enforced by CMake + convention):**
-- `platform/` must not reference `CivCraft/` or `LifeCraft/` identifiers.
-- `CivCraft/` must never `#include "LifeCraft/..."` and vice versa.
+- `platform/` must not reference `CivCraft/` or `CellCraft/` identifiers.
+- `CivCraft/` must never `#include "CellCraft/..."` and vice versa.
 - Shared code between the two games must be promoted into `platform/` first.
 
 **Read `src/CivCraft/src/CivCraft/docs/00_OVERVIEW.md` before making ANY gameplay changes.**
@@ -136,7 +136,7 @@ via localhost TCP. There is no `LocalServer` in-process shortcut. `TestServer`
 ## Build & Run
 
 The root `Makefile` is the one source of truth. Each game also has a wrapper
-`Makefile` (`src/CivCraft/Makefile`, `src/LifeCraft/Makefile`) that forwards
+`Makefile` (`src/CivCraft/Makefile`, `src/CellCraft/Makefile`) that forwards
 every target to the root with `GAME=` set, so you can `cd` into a game and
 use `make <target>` without passing `GAME=` each time.
 
@@ -149,18 +149,18 @@ All `cmake --build` invocations in this project should use `-j$(PAR)` (not
 ```bash
 # From repo root (explicit GAME):
 make game                     # CivCraft (default GAME=civcraft)
-make game GAME=lifecraft    # LifeCraft
+make game GAME=cellcraft    # CellCraft
 make server PORT=7777         # dedicated server (CivCraft)
 make client HOST=X PORT=N     # GUI client (CivCraft; pre-fills join tab)
 make stop                     # kill all CivCraft processes
 make test_e2e                 # CivCraft headless gameplay tests
-make test_e2e GAME=lifecraft # LifeCraft headless sim
+make test_e2e GAME=cellcraft # CellCraft headless sim
 make web                      # WASM build + serve on :8080 (needs emsdk at ~/emsdk)
 
 # From a game directory (no GAME= needed):
 cd src/CivCraft    && make game
-cd src/LifeCraft && make game
-cd src/LifeCraft && make test_e2e
+cd src/CellCraft && make game
+cd src/CellCraft && make test_e2e
 
 # Manual cmake (matches what `make build` does):
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
@@ -168,7 +168,7 @@ cmake --build build -j$(PAR)   # or just `make build`
 ```
 
 **Shared asset staging note:** both games stage shaders into `build/shaders/`.
-File basenames don't collide (civcraft has `terrain.*`, lifecraft has
+File basenames don't collide (civcraft has `terrain.*`, cellcraft has
 `pond.*/creature.*/food.*`) but CMake POST_BUILD rules must not `rm -rf` that
 directory — only copy into it. If a game fails with `Cannot open shader:
 shaders/X`, rebuild that game's target to re-stage (`touch
@@ -299,7 +299,7 @@ src/
     python/                 CivCraft-only python helpers (pathfind.py, local_world.py, …)
     shaders/  config/  resources/  docs/  tests/  tools/
 
-  LifeCraft/              ← Spore-cell-stage game (stub — see its README.md)
+  CellCraft/              ← Spore-cell-stage game (stub — see its README.md)
 ```
 
 ### Dependency Rules
@@ -307,10 +307,10 @@ src/
 - `platform/server/` → `shared/` (no OpenGL, no Python except via pybind)
 - `platform/agent/` → `shared/` + `server/behavior.h` + Python
 - `platform/client/` → `shared/` (no Python, no server ownership)
-- `CivCraft/` → `platform/` + its own files (**never** `LifeCraft/`)
-- `LifeCraft/` → `platform/` + its own files (**never** `CivCraft/`)
+- `CivCraft/` → `platform/` + its own files (**never** `CellCraft/`)
+- `CellCraft/` → `platform/` + its own files (**never** `CivCraft/`)
 
-Cross-game file references (e.g. `CivCraft/` code reaching into `LifeCraft/`
+Cross-game file references (e.g. `CivCraft/` code reaching into `CellCraft/`
 or vice versa) are design bugs. Shared code must be promoted to `platform/`
 first.
 

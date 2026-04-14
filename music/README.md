@@ -1,6 +1,6 @@
 # music/ — royalty-free music library
 
-Bulk royalty-free music for LifeCraft (and anything else in this repo).
+Bulk royalty-free music for CellCraft (and anything else in this repo).
 **Not checked in** — tracks (`~12 GB`, ~2,100 files) live under
 `music/tracks/`, which is gitignored. Manifests, harvesters, and the
 ratings file *are* checked in, so a fresh clone can re-download the full

@@ -15,19 +15,19 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers lifecraft-server-build lifecraft-server-game-build character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft lifecraft
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers cellcraft-server-build cellcraft-server-game-build character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft cellcraft
 
 # ── Native ─────────────────────────────────────────────────
 #
 # This repo builds two games from one C++ engine (src/platform):
 #   civcraft       voxel sandbox (default) — C++ server + C++/OpenGL client
-#   lifecraft       Spore cell stage       — C++ (single-binary M0; server+agent split lands M1)
+#   cellcraft       Spore cell stage       — C++ (single-binary M0; server+agent split lands M1)
 #
-# Override the game with GAME=lifecraft for LifeCraft targets.
+# Override the game with GAME=cellcraft for CellCraft targets.
 #
 # Quick reference:
 #   make civcraft             Singleplayer CivCraft (voxel sandbox)
-#   make lifecraft            Singleplayer LifeCraft (drawing game)
+#   make cellcraft            Singleplayer CellCraft (drawing game)
 #   make game                 Alias for `make civcraft` (legacy; GAME= still works)
 #   make game GAME_PORT=7890  CivCraft on a fixed port
 #   make server               Dedicated server (interactive world select)
@@ -48,26 +48,26 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 # so "shaders/", "artifacts/", "python/", "fonts/", "config/", "resources/"
 # resolve via CWD-relative paths at runtime.
 #
-# LifeCraft is a pure C++ game built on src/platform/. `make game GAME=lifecraft`
-# runs the `lifecraft` binary; `make lifecraft-godot` still launches the Godot
-# prototype in src/LifeCraft/godot/ for visual reference.
-LIFECRAFT_PORT := 7888
+# CellCraft is a pure C++ game built on src/platform/. `make game GAME=cellcraft`
+# runs the `cellcraft` binary; `make cellcraft-godot` still launches the Godot
+# prototype in src/CellCraft/godot/ for visual reference.
+CELLCRAFT_PORT := 7888
 
 # Explicit per-game entry points — `make game` alone is ambiguous since
 # this repo builds two games. These just re-invoke make with GAME set:
 #   make civcraft     → CivCraft voxel sandbox (same as `make game`)
-#   make lifecraft    → LifeCraft drawing game (same as `make game GAME=lifecraft`)
+#   make cellcraft    → CellCraft drawing game (same as `make game GAME=cellcraft`)
 civcraft:
 	$(MAKE) game GAME=civcraft
-lifecraft:
-	$(MAKE) game GAME=lifecraft
+cellcraft:
+	$(MAKE) game GAME=cellcraft
 
-ifeq ($(GAME),lifecraft)
+ifeq ($(GAME),cellcraft)
 # M0 scope: single-binary drawing client. Server + agent processes come with
-# networking (M1+). Binary runs out of build/src/LifeCraft/ so its shaders/
+# networking (M1+). Binary runs out of build/src/CellCraft/ so its shaders/
 # post-build copy resolves CWD-relative.
-game: lifecraft-build
-	cd $(BUILD_DIR)/src/LifeCraft && ./lifecraft $(if $(DEMO),--demo,)
+game: cellcraft-build
+	cd $(BUILD_DIR)/src/CellCraft && ./cellcraft $(if $(DEMO),--demo,)
 else
 # `make game` builds with CIVCRAFT_PERF=ON in a separate build dir so the
 # server emits frame/tick/handler timing logs (see [Perf] lines on stderr and
@@ -172,7 +172,7 @@ animation_sweep: build
 test_animation: animation_sweep
 
 # Standalone model viewer / snapshot tool (no world, no server, no full client).
-# Shared by CivCraft + LifeCraft.
+# Shared by CivCraft + CellCraft.
 #
 #   make model-editor MODEL=src/CivCraft/artifacts/models/base/cat.py
 #       Interactive window (drag to orbit, scroll to zoom, Esc to quit).
@@ -198,24 +198,24 @@ model-snap: model-editor-build
 	    --snapshot $(OUT) --size $(SIZE) $(if $(CLIP),--clip $(CLIP))
 
 # Dedicated server (interactive world select, or --world/--seed/--template flags)
-ifeq ($(GAME),lifecraft)
-# Server/client not yet split — M0 ships as the single `lifecraft` binary.
+ifeq ($(GAME),cellcraft)
+# Server/client not yet split — M0 ships as the single `cellcraft` binary.
 # Re-enable these once networking lands.
 server:
-	@echo "lifecraft server is not yet split from the client; see src/LifeCraft/docs/00_OVERVIEW.md M1" >&2
+	@echo "cellcraft server is not yet split from the client; see src/CellCraft/docs/00_OVERVIEW.md M1" >&2
 	@exit 1
 
-client: lifecraft-build
-	cd $(BUILD_DIR)/src/LifeCraft && ./lifecraft
+client: cellcraft-build
+	cd $(BUILD_DIR)/src/CellCraft && ./cellcraft
 
-lifecraft-build: configure
-	cmake --build $(BUILD_DIR) --target lifecraft -j$(PAR)
+cellcraft-build: configure
+	cmake --build $(BUILD_DIR) --target cellcraft -j$(PAR)
 
 # Godot prototype is retained as a visual reference — not the shipping client.
-lifecraft-godot:
-	godot4 --path $(CURDIR)/src/LifeCraft/godot
+cellcraft-godot:
+	godot4 --path $(CURDIR)/src/CellCraft/godot
 
-.PHONY: lifecraft-build lifecraft-godot
+.PHONY: cellcraft-build cellcraft-godot
 else
 server: build
 	cd $(BUILD_DIR) && ./$(GAME)-server --port $(PORT)
@@ -226,12 +226,12 @@ client: build
 endif
 
 stop:
-ifeq ($(GAME),lifecraft)
-	@-pkill -x lifecraft 2>/dev/null; \
-	  pkill -x lifecraft-server 2>/dev/null; \
-	  pkill -f "godot4.*src/LifeCraft/godot" 2>/dev/null; \
+ifeq ($(GAME),cellcraft)
+	@-pkill -x cellcraft 2>/dev/null; \
+	  pkill -x cellcraft-server 2>/dev/null; \
+	  pkill -f "godot4.*src/CellCraft/godot" 2>/dev/null; \
 	  sleep 0.5; true
-	@echo "All lifecraft processes stopped."
+	@echo "All cellcraft processes stopped."
 else
 	@-pkill -f "$(GAME)" 2>/dev/null; sleep 1
 	@echo "All $(GAME) processes stopped."
@@ -243,19 +243,19 @@ killservers:
 	@-pgrep -fa "$(GAME)".*--port" 2>/dev/null && pkill -f "$(GAME)".*--port" && echo "Killed port processes." || true
 
 # Headless E2E gameplay tests
-ifeq ($(GAME),lifecraft)
-# LifeCraft doesn't need the full civcraft build — only lifecraft-server.
-lifecraft-server-build: configure
-	cmake --build $(BUILD_DIR) --target lifecraft-server -j$(PAR)
+ifeq ($(GAME),cellcraft)
+# CellCraft doesn't need the full civcraft build — only cellcraft-server.
+cellcraft-server-build: configure
+	cmake --build $(BUILD_DIR) --target cellcraft-server -j$(PAR)
 
-test_e2e: lifecraft-server-build
-	@echo "[test_e2e] LifeCraft M1 — server tick broadcast handshake..."
-	@pkill -x lifecraft-server 2>/dev/null ; sleep 0.2 ; \
-	  $(CURDIR)/$(BUILD_DIR)/lifecraft-server --port $(LIFECRAFT_PORT) & \
+test_e2e: cellcraft-server-build
+	@echo "[test_e2e] CellCraft M1 — server tick broadcast handshake..."
+	@pkill -x cellcraft-server 2>/dev/null ; sleep 0.2 ; \
+	  $(CURDIR)/$(BUILD_DIR)/cellcraft-server --port $(CELLCRAFT_PORT) & \
 	  SERVER_PID=$$! ; \
 	  sleep 0.3 ; \
-	  godot4 --headless --path $(CURDIR)/src/LifeCraft/godot -- \
-	    --host 127.0.0.1 --port $(LIFECRAFT_PORT) --ticks 3 ; \
+	  godot4 --headless --path $(CURDIR)/src/CellCraft/godot -- \
+	    --host 127.0.0.1 --port $(CELLCRAFT_PORT) --ticks 3 ; \
 	  STATUS=$$? ; \
 	  kill $$SERVER_PID 2>/dev/null ; wait 2>/dev/null ; \
 	  exit $$STATUS
@@ -314,7 +314,7 @@ web-clean:
 
 # ── Music library ─────────────────────────────────────────
 # `music/` holds ~2,100 royalty-free tracks (Incompetech + OpenGameArt)
-# used by LifeCraft. Tracks are gitignored; re-fetch with `make download_music`
+# used by CellCraft. Tracks are gitignored; re-fetch with `make download_music`
 # (idempotent — skips files already on disk). `make jukebox` runs
 # download_music first, then opens the terminal curator (+ / - / ?).
 # See music/README.md for details.
