@@ -22,9 +22,7 @@
 #include "CellCraft/sim/monster.h"
 #include "CellCraft/sim/part_stats.h"
 #include "CellCraft/sim/polygon_util.h"
-#include "CellCraft/sim/shape_smooth.h"
 #include "CellCraft/sim/shape_validate.h"
-#include "CellCraft/sim/symmetric_body.h"
 #include "CellCraft/sim/tuning.h"
 #include "client/text.h"
 #include "client/window.h"
@@ -120,15 +118,14 @@ void LabScreen::finalize_body_() {
 		status_color_ = glm::vec3(1.0f, 0.5f, 0.55f);
 		return;
 	}
+	// Stroke-based smoothing has been purged. This stub concatenates the
+	// raw stroke points as a single closed polyline; the full sculpt-based
+	// rewrite lands in the follow-up commit.
 	std::vector<glm::vec2> smoothed_px;
-	if (symmetric_draw_) {
-		Layout ly = compute_layout_();
-		smoothed_px = sim::buildSymmetricBody(pool, ly.canvas_cx);
-		used_symmetric_ = true;
-	} else {
-		smoothed_px = sim::smooth_body(pool, 48);
-		used_symmetric_ = false;
+	for (const auto& s : pool) {
+		for (const auto& p : s) smoothed_px.push_back(p);
 	}
+	used_symmetric_ = false;
 	if (smoothed_px.size() < 3) {
 		status_ = "strokes too small — try again";
 		status_color_ = glm::vec3(1.0f, 0.5f, 0.55f);

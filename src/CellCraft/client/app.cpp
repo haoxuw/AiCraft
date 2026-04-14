@@ -27,7 +27,6 @@
 #include "CellCraft/client/part_render.h"
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/part_stats.h"
-#include "CellCraft/sim/shape_smooth.h"
 #include "CellCraft/sim/shape_validate.h"
 #include "CellCraft/sim/tuning.h"
 #include "client/gl.h"
@@ -112,8 +111,9 @@ bool App::init(const AppOptions& opts) {
 		state_ = AppState::MAIN_MENU;
 	} else if (!opts_.select_screenshot_path.empty()) {
 		state_ = AppState::MONSTER_SELECT;
-	} else if (!opts_.lab_screenshot_path.empty()
-	        || !opts_.lab_assemble_screenshot_path.empty()) {
+	} else if (!opts_.sculpt_screenshot_path.empty()
+	        || !opts_.plate_screenshot_path.empty()
+	        || !opts_.mods_screenshot_path.empty()) {
 		state_ = AppState::DRAW_LAB;
 	} else {
 		state_ = AppState::LOADING;
@@ -244,121 +244,17 @@ void App::run() {
 		return;
 	}
 
-	// --- lab screenshots: either DRAWING with preseeded strokes, or ASSEMBLING
-	// with a finalized body and preplaced parts + mirror on.
-	if (!opts_.lab_screenshot_path.empty() || !opts_.lab_assemble_screenshot_path.empty()) {
-		bool assemble = !opts_.lab_assemble_screenshot_path.empty();
-		const char* out_path = assemble ? opts_.lab_assemble_screenshot_path.c_str()
-		                                : opts_.lab_screenshot_path.c_str();
+	// --- lab screenshots: new sculpt/plate/mods modes (populated in Step 2).
+	if (!opts_.sculpt_screenshot_path.empty()
+	 || !opts_.plate_screenshot_path.empty()
+	 || !opts_.mods_screenshot_path.empty()) {
+		const char* out_path =
+			!opts_.sculpt_screenshot_path.empty() ? opts_.sculpt_screenshot_path.c_str()
+			: !opts_.plate_screenshot_path.empty() ? opts_.plate_screenshot_path.c_str()
+			: opts_.mods_screenshot_path.c_str();
 		state_ = AppState::DRAW_LAB;
-		int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
-		// Seed some squiggly strokes forming a blob in the canvas.
-		float cx = (float)fw * 0.50f;
-		float cy = (float)fh * 0.55f;
-		{
-			ChalkStroke s1;
-			s1.color = glm::vec3(0.95f, 0.95f, 0.92f);
-			s1.half_width = 3.0f;
-			for (int i = 0; i < 36; ++i) {
-				float a = 6.28318530718f * (float)i / 35.0f;
-				float r = 140.0f + 12.0f * std::cos(a * 4.0f);
-				s1.points.push_back({cx + std::cos(a) * r, cy + std::sin(a) * r * 0.75f});
-			}
-			LabInput seed;
-			// Feed one big stroke as a "finalized" stroke via update() is awkward;
-			// easier to poke lab_ internals through its public seed API. We use
-			// reset() + a small helper: simulate by doing dummy updates.
-			// Instead: we inject by calling update() with the seeded stroke — the
-			// simplest route is to keep a private seed function; to avoid adding
-			// one, run a short simulated drag:
-			lab_.reset();
-			// Switch to FREEFORM (symmetric default would clamp the seeded
-			// full-ellipse stroke to the right half).
-			{
-				int wb, hb; glfwGetFramebufferSize(window_.handle(), &wb, &hb);
-				float bottom_bar = (float)hb * 0.10f;
-				float cw = (float)wb * 0.64f;
-				float canvas_cx_b = (float)wb * 0.18f + cw * 0.5f;
-				float bw_b = std::min(180.0f, cw * 0.18f);
-				float gap_b = 10.0f;
-				float total_b = bw_b * 4.0f + gap_b * 3.0f;
-				float bx0_b = canvas_cx_b - total_b * 0.5f;
-				float by_b = (float)hb - bottom_bar + 8.0f;
-				float bh_b = bottom_bar - 16.0f;
-				LabInput tog;
-				tog.mouse_px = { bx0_b + 0 * (bw_b + gap_b) + bw_b * 0.5f, by_b + bh_b * 0.5f };
-				tog.mouse_left_click = true;
-				lab_.update(1.0f / 60.0f, tog);
-			}
-			// Fake a drag: press, move through each point, release.
-			LabInput p = seed;
-			p.mouse_px = s1.points.front();
-			p.mouse_left_down = true;
-			p.mouse_left_click = true;
-			lab_.update(1.0f / 60.0f, p);
-			p.mouse_left_click = false;
-			for (auto& pt : s1.points) {
-				p.mouse_px = pt;
-				lab_.update(1.0f / 60.0f, p);
-			}
-			// release
-			p.mouse_left_down = false;
-			lab_.update(1.0f / 60.0f, p);
-		}
-		if (assemble) {
-			// Finalize by synthesizing a click on FINALIZE — easier: call update
-			// enough times, and tell it "left-click at the finalize button"...
-			// Actually simplest: expose by adding a test-only helper. We do the
-			// minimum hack: render a frame first so buttons exist in-screen-space,
-			// then click at the approximate FINALIZE position. The button rect
-			// is centered at canvas_cx, bottom row.
-			int w2, h2; glfwGetFramebufferSize(window_.handle(), &w2, &h2);
-			float bottom_bar = (float)h2 * 0.10f;
-			float cw = (float)w2 * 0.64f;
-			float canvas_cx2 = (float)w2 * 0.18f + cw * 0.5f;
-			float bw = std::min(180.0f, cw * 0.18f);
-			float gap = 10.0f;
-			// DRAWING-mode button row is [SYMMETRIC, UNDO, CLEAR, FINALIZE].
-			float total = bw * 4.0f + gap * 3.0f;
-			float bx0 = canvas_cx2 - total * 0.5f;
-			float by = (float)h2 - bottom_bar + 8.0f;
-			float bh = bottom_bar - 16.0f;
-			// FINALIZE is index 3.
-			glm::vec2 click_pt(bx0 + 3 * (bw + gap) + bw * 0.5f, by + bh * 0.5f);
-			LabInput p;
-			p.mouse_px = click_pt;
-			p.mouse_left_click = true;
-			lab_.update(1.0f / 60.0f, p);
-			// Now place some parts by selecting the palette then clicking canvas.
-			p.mouse_left_click = false;
-			// Helper to click a pixel.
-			auto click = [&](glm::vec2 at) {
-				LabInput q; q.mouse_px = at; q.mouse_left_click = true;
-				lab_.update(1.0f / 60.0f, q);
-			};
-			// Mirror on.
-			{
-				LabInput q; q.mouse_px = click_pt; q.keys_pressed = { GLFW_KEY_M };
-				lab_.update(1.0f / 60.0f, q);
-			}
-			// Select SPIKE (first palette row).
-			float left_w = (float)w2 * 0.18f;
-			float y0 = (float)h2 * 0.08f + 120.0f;
-			float row_h = 50.0f;
-			auto select_row = [&](int idx) {
-				float rx = 6.0f + 0.5f * (left_w - 12.0f);
-				float ry = y0 + (float)idx * row_h + (row_h - 4.0f) * 0.5f;
-				click({rx, ry});
-			};
-			select_row(0); // SPIKE
-			click({canvas_cx2 + 60.0f, (float)h2 * 0.55f - 20.0f});
-			select_row(5); // CILIA
-			click({canvas_cx2 - 80.0f, (float)h2 * 0.55f});
-			select_row(6); // HORN
-			click({canvas_cx2 + 100.0f, (float)h2 * 0.55f + 30.0f});
-			select_row(7); // REGEN
-			click({canvas_cx2 - 40.0f, (float)h2 * 0.55f + 40.0f});
-		}
+		lab_.reset();
+		// (Screenshot seeders added with the sculpt/plate/mods rewrite.)
 		// Render a few frames.
 		double t0 = glfwGetTime();
 		while (!window_.shouldClose() && (glfwGetTime() - t0) < 0.5) {

@@ -37,10 +37,9 @@ struct AppOptions {
 	std::string play_screenshot_path;   // if set: run PLAYING for ~1s then snap PPM + exit
 	std::string menu_screenshot_path;   // if set: render MAIN_MENU then snap PPM + exit
 	std::string select_screenshot_path; // if set: render MONSTER_SELECT then snap PPM + exit
-	std::string lab_screenshot_path;      // DRAWING mode with preseeded squiggle
-	std::string lab_assemble_screenshot_path; // ASSEMBLING mode with preplaced parts + mirror on
-	bool shape_test = false;            // run smooth_body on synthetic input and print result
-	bool symmetry_test = false;         // run buildSymmetricBody on synthetic half-stroke
+	std::string sculpt_screenshot_path; // lab in SCULPT mode with a deformed cell
+	std::string plate_screenshot_path;  // lab in PLATE mode with 2 plates drawn
+	std::string mods_screenshot_path;   // lab in MODS mode with several mods placed
 };
 
 // Short-lived chalk-stroke particle for bites/kills/pickups.
