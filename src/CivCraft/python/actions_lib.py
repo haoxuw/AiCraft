@@ -41,13 +41,18 @@ class Wander(Action):
                       target block/annotation never appears.
     """
     def __init__(self, radius=8.0, target_block=None, search_radius=24.0,
-                 despawn_after=None, speed_mul=1.0, message="Wandering"):
+                 despawn_after=None, speed_mul=1.0, message="Wandering",
+                 plan_duration=3.0):
         self.radius = radius
         self.target_block = target_block
         self.search_radius = search_radius
         self.despawn_after = despawn_after
         self.speed_mul = speed_mul
         self.message = message
+        # How long (seconds) the picked wander leg stays committed before
+        # decide() picks a new one. Without this, decide fires every tick and
+        # the entity flickers between short flights + other rules.
+        self.plan_duration = plan_duration
         self._no_target_secs = 0.0
 
     def tick(self, dt):
@@ -93,7 +98,8 @@ class Wander(Action):
         d = random.uniform(self.radius * 0.3, self.radius)
         return (Move(cx + math.cos(angle) * d, e.y, cz + math.sin(angle) * d,
                      speed=e.walk_speed * self.speed_mul),
-                self.message)
+                self.message,
+                self.plan_duration)
 
 
 class Flee(Action):

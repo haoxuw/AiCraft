@@ -16,8 +16,12 @@ class BeeWanderBehavior(RulesBehavior):
         super().__init__()
         self.rules = [
             (Threatened(range=6), Flee()),
+            # Long legs (plan_duration=6s) and a wide search so bees commit to
+            # a flight across the meadow instead of redeciding every tick.
             (Always(),            Wander(target_block="flower_red",
-                                         search_radius=32.0,
-                                         despawn_after=120.0,
+                                         radius=12.0,
+                                         search_radius=64.0,
+                                         despawn_after=180.0,
+                                         plan_duration=6.0,
                                          message="Flying")),
         ]

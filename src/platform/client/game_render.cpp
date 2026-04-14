@@ -453,7 +453,7 @@ void Game::renderEntityEffects(float dt, float aspect) {
 
 		float entityTop = e.def().collision_box_max.y;
 
-		if (m_showGoalBubbles)
+		if (m_showDebug && m_showGoalBubbles)
 			m_lightbulbDrawer->draw(e, vp, m_globalTime, m_camera.lookYaw, aspect);
 
 		// Goal change detection — log to in-game overlay

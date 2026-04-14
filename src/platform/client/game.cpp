@@ -819,6 +819,12 @@ void Game::setupAfterConnect(GameState targetState) {
 		prev.swap(cur);
 	});
 
+	// Initial S_INVENTORY for the local player often arrives during
+	// pollWelcome() — BEFORE this callback is registered. Catch up by
+	// repopulating from whatever inventory the server has already sent.
+	if (Entity* me = m_server->getEntity(m_server->localPlayerId()))
+		if (me->inventory) m_hotbar.repopulateFrom(*me->inventory);
+
 	m_state = targetState;
 	glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	m_camera.mode = CameraMode::FirstPerson;

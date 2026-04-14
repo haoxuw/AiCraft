@@ -7,7 +7,7 @@ item = {
     # No equip_slot — held via hotbar selection (right hand)
     "stack_max": 1,
     "cooldown": 0.5,
-    "damage": 5,
+    "damage": 2,
     "range": 3.0,
 
     "on_use": None,           # right-click: no self-use
