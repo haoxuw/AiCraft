@@ -18,7 +18,7 @@ inline constexpr glm::vec4 PANEL_TINT  {0.94f, 0.90f, 0.98f, 0.88f}; // lavender
 inline constexpr glm::vec4 SHADOW      {0.10f, 0.08f, 0.14f, 0.35f};
 
 // ---- Accents / brand --------------------------------------------------
-inline constexpr glm::vec4 ACCENT_PINK    {1.00f, 0.31f, 0.55f, 1.00f}; // #FF4F8B
+inline constexpr glm::vec4 ACCENT_GOLD_WARM {1.00f, 0.722f, 0.271f, 1.00f}; // #FFB845 (UI primary; pink reserved for meat food)
 inline constexpr glm::vec4 ACCENT_CYAN    {0.31f, 0.76f, 1.00f, 1.00f}; // #4FC1FF
 inline constexpr glm::vec4 ACCENT_LIME    {0.50f, 0.83f, 0.31f, 1.00f}; // #7FD44F
 inline constexpr glm::vec4 ACCENT_GOLD    {1.00f, 0.76f, 0.31f, 1.00f}; // #FFC34F
@@ -32,8 +32,8 @@ inline constexpr glm::vec4 TEXT_MUTED {0.38f, 0.34f, 0.44f, 1.00f};
 inline constexpr glm::vec4 OUTLINE    {0.10f, 0.08f, 0.14f, 1.00f};
 
 // ---- Semantic roles ---------------------------------------------------
-inline constexpr glm::vec4 BTN_PRIMARY_TOP    {1.00f, 0.43f, 0.62f, 1.00f};
-inline constexpr glm::vec4 BTN_PRIMARY_BOTTOM {0.90f, 0.22f, 0.45f, 1.00f};
+inline constexpr glm::vec4 BTN_PRIMARY_TOP    {1.00f, 0.722f, 0.271f, 1.00f}; // #FFB845 warm gold
+inline constexpr glm::vec4 BTN_PRIMARY_BOTTOM {0.784f, 0.529f, 0.122f, 1.00f}; // #C8871F gold shadow
 inline constexpr glm::vec4 BTN_GO_TOP         {0.68f, 0.90f, 0.42f, 1.00f};
 inline constexpr glm::vec4 BTN_GO_BOTTOM      {0.42f, 0.72f, 0.24f, 1.00f};
 inline constexpr glm::vec4 BTN_NEUTRAL_TOP    {1.00f, 0.99f, 0.96f, 0.98f};
@@ -43,7 +43,7 @@ inline constexpr glm::vec4 BTN_DANGER_BOTTOM  {0.88f, 0.34f, 0.18f, 1.00f};
 
 // ---- Chalk-stroke creature colors (6 slots) ---------------------------
 inline constexpr glm::vec3 STROKE_PALETTE[6] = {
-	{1.00f, 0.31f, 0.55f},  // hot pink
+	{0.239f, 0.847f, 0.776f},  // saturated teal #3DD8C6 (was hot pink; pink reserved for meat food)
 	{0.31f, 0.76f, 1.00f},  // cyan
 	{0.50f, 0.83f, 0.31f},  // lime
 	{1.00f, 0.76f, 0.31f},  // gold

@@ -552,7 +552,7 @@ bool App::drawButton(const Button& b) {
 // ========================================================================
 
 void App::drawLoading(float) {
-	glm::vec4 shadow = ui::ACCENT_PINK; shadow.a = 0.8f;
+	glm::vec4 shadow = ui::ACCENT_GOLD_WARM; shadow.a = 0.8f;
 	ui::drawOutlinedTitle(text_.get(), "CELLCRAFT", -0.26f, 0.05f, 3.0f,
 	                      ui::TEXT_DARK, shadow, window_.aspectRatio());
 
@@ -561,7 +561,7 @@ void App::drawLoading(float) {
 	float bw = 0.5f, bh = 0.02f;
 	float bx = -bw * 0.5f, by = -0.12f;
 	text_->drawRect(bx, by, bw, bh, glm::vec4(0.85f, 0.82f, 0.76f, 0.9f));
-	text_->drawRect(bx, by, bw * frac, bh, ui::ACCENT_PINK);
+	text_->drawRect(bx, by, bw * frac, bh, ui::ACCENT_GOLD_WARM);
 	text_->drawText("LOADING...", -0.08f, -0.2f, 0.9f, ui::TEXT_MUTED, window_.aspectRatio());
 
 	if (state_time_ >= total) goToMainMenu();
@@ -672,7 +672,7 @@ void App::drawMainMenu(float dt) {
 	};
 	chalkBorder(px, py, pw, ph, 0.004f, ui::CARD_STROKE);
 	chalkBorder(px + 0.012f, py + 0.012f, pw - 0.024f, ph - 0.024f, 0.002f,
-		ui::ACCENT_PINK);
+		ui::ACCENT_GOLD_WARM);
 	// Corner tick marks — small L-brackets outside the outer border.
 	float tk = 0.03f, tt = 0.005f;
 	glm::vec4 tkc = ui::ACCENT_GOLD;
@@ -685,8 +685,8 @@ void App::drawMainMenu(float dt) {
 	text_->drawRect(px + pw + 0.01f - tk, py,           tk, tt, tkc);
 	text_->drawRect(px + pw + 0.01f - tt, py,           tt, tk, tkc);
 
-	// 4) Bold outlined title — Fall-Guys-style charcoal halo + pink shadow.
-	glm::vec4 title_shadow = ui::ACCENT_PINK; title_shadow.a = 0.75f;
+	// 4) Bold outlined title — Fall-Guys-style charcoal halo + gold shadow.
+	glm::vec4 title_shadow = ui::ACCENT_GOLD_WARM; title_shadow.a = 0.75f;
 	ui::drawOutlinedTitle(text_.get(), "CELLCRAFT", -0.26f, 0.30f, 3.0f,
 	                      ui::TEXT_DARK, title_shadow, aspect);
 	text_->drawText ("// SCRIBBLE SURVIVAL //", -0.23f, 0.18f, 1.0f,
@@ -1260,9 +1260,9 @@ void App::drawHUD() {
 	float mm_size_ndc = 0.2f;
 	float mm_x = 0.78f, mm_y = 0.68f;
 	text_->drawRect(mm_x, mm_y, mm_size_ndc, mm_size_ndc, ui::CARD_FILL);
-	// Minimap border — pink accent matches card style.
+	// Minimap border — gold accent matches card style.
 	{
-		glm::vec4 bc = ui::ACCENT_PINK;
+		glm::vec4 bc = ui::ACCENT_GOLD_WARM;
 		float t = 0.003f;
 		text_->drawRect(mm_x, mm_y, mm_size_ndc, t, bc);
 		text_->drawRect(mm_x, mm_y + mm_size_ndc - t, mm_size_ndc, t, bc);
@@ -1457,7 +1457,7 @@ void App::drawStarter(float dt) {
 		// Tile = card-button with gradient, shadow, outline, rounded corners.
 		// Tinted per tile with the accent color rotation.
 		glm::vec4 tints[6] = {
-			ui::ACCENT_PINK, ui::ACCENT_LIME, ui::ACCENT_CYAN,
+			ui::ACCENT_GOLD_WARM, ui::ACCENT_LIME, ui::ACCENT_CYAN,
 			ui::ACCENT_GOLD, ui::ACCENT_MAGENTA, ui::ACCENT_ORANGE,
 		};
 		glm::vec4 tile_top = glm::mix(ui::CARD_FILL, tints[i], 0.25f);

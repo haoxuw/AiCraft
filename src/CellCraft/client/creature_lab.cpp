@@ -39,7 +39,7 @@ constexpr int kPaletteCount = (int)(sizeof(kPaletteTypes) / sizeof(kPaletteTypes
 // Saturated modern kids-game palette (6 slots + warm white + charcoal).
 // Mirrors ui::STROKE_PALETTE with two neutrals for creature recoloring.
 const glm::vec3 kColorPalette[8] = {
-	{1.00f, 0.31f, 0.55f}, // hot pink  #FF4F8B
+	{0.239f, 0.847f, 0.776f}, // saturated teal #3DD8C6 (pink reserved for meat food)
 	{0.31f, 0.76f, 1.00f}, // cyan      #4FC1FF
 	{0.50f, 0.83f, 0.31f}, // lime      #7FD44F
 	{1.00f, 0.76f, 0.31f}, // gold      #FFC34F
@@ -91,7 +91,7 @@ void CreatureLab::reset() {
 	cell_.init_circle(40.0f);
 	parts_.clear();
 	rebuild_polygon_();
-	color_ = glm::vec3(0.95f, 0.65f, 0.85f);
+	color_ = glm::vec3(0.239f, 0.847f, 0.776f); // teal #3DD8C6 (palette[0]; pink reserved for meat food)
 	name_ = "Bloopy Blob";
 	drawer_ = Drawer::PARTS;
 	selected_part_idx_ = -1;
@@ -410,8 +410,8 @@ void CreatureLab::draw_top_bar_(const Layout& l, const LabInput& in) {
 	float nx = ((float)fw * 0.5f - (w_chars * fw * 0.5f)) ;
 	(void)nx;
 	float ndc_y = (1.0f - (l.top_bar_h * 0.30f / fh) * 2.0f);
-	// Outlined name title — charcoal halo + pink drop shadow on cream.
-	glm::vec4 nshadow = ui::ACCENT_PINK; nshadow.a = 0.80f;
+	// Outlined name title — charcoal halo + gold drop shadow on cream.
+	glm::vec4 nshadow = ui::ACCENT_GOLD_WARM; nshadow.a = 0.80f;
 	ui::drawOutlinedText(text_, name_, -w_chars * 0.5f, ndc_y - 0.05f, scale,
 	                     ui::TEXT_DARK, nshadow, aspect);
 	// Pencil button (a small box right of the name)
@@ -433,9 +433,9 @@ void CreatureLab::draw_left_rail_(const Layout& l, const LabInput& in) {
 	};
 	glm::vec2 a = px2ndc(0.0f, (float)fh);
 	glm::vec2 b = px2ndc(l.left_w, l.top_bar_h);
-	// Left rail — lavender-tinted card with pink stroke on the right edge.
+	// Left rail — lavender-tinted card with gold stroke on the right edge.
 	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::PANEL_TINT);
-	text_->drawRect(b.x - 0.004f, a.y, 0.004f, b.y - a.y, ui::ACCENT_PINK);
+	text_->drawRect(b.x - 0.004f, a.y, 0.004f, b.y - a.y, ui::ACCENT_GOLD_WARM);
 
 	const char* labels[3] = { "SHAPE", "PARTS", "COLOR" };
 	Drawer drawers[3] = { Drawer::SHAPE, Drawer::PARTS, Drawer::COLOR };
@@ -445,9 +445,10 @@ void CreatureLab::draw_left_rail_(const Layout& l, const LabInput& in) {
 	float by0 = l.top_bar_h + 12.0f;
 	for (int i = 0; i < 3; ++i) {
 		float by = by0 + i * (btn_h + 8.0f);
-		// Active drawer = hot pink; inactive = cream. Saturated, not drab.
+		// Active drawer = warm gold; inactive = cream. Saturated, not drab.
+		// Active drawer uses warm gold (primary UI accent); pink is reserved for meat food.
 		glm::vec3 fill = (drawer_ == drawers[i])
-			? glm::vec3(1.00f, 0.31f, 0.55f)
+			? glm::vec3(ui::ACCENT_GOLD_WARM)
 			: glm::vec3(1.00f, 0.99f, 0.96f);
 		if (pixel_button_(bx, by, btn_w, btn_h, labels[i], true, in, fill)) {
 			drawer_ = drawers[i];

@@ -20,8 +20,8 @@
 
 namespace civcraft::cellcraft::ui {
 
-// NDC-space button. Colors default to the primary pink gradient; callers
-// override `top`/`bottom` for gold/green/neutral variants.
+// NDC-space button. Colors default to the primary warm-gold gradient; callers
+// override `top`/`bottom` for green/neutral/danger variants.
 struct PillButton {
 	float x, y, w, h;
 	glm::vec4 top    = BTN_PRIMARY_TOP;

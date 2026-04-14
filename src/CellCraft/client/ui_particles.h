@@ -64,7 +64,7 @@ public:
 		std::uniform_real_distribution<float> yv(-0.45f, -0.15f);
 		std::uniform_real_distribution<float> xv(-0.25f, 0.25f);
 		glm::vec4 colors[6] = {
-			ACCENT_PINK, ACCENT_CYAN, ACCENT_LIME,
+			ACCENT_GOLD_WARM, ACCENT_CYAN, ACCENT_LIME,
 			ACCENT_GOLD, ACCENT_MAGENTA, ACCENT_ORANGE,
 		};
 		std::uniform_int_distribution<int> ci(0, 5);

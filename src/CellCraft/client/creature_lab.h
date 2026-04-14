@@ -116,7 +116,7 @@ private:
 	sim::RadialCell         cell_;
 	std::vector<glm::vec2>  local_poly_;
 	std::vector<sim::Part>  parts_;
-	glm::vec3               color_ = glm::vec3(0.95f, 0.65f, 0.85f);
+	glm::vec3               color_ = glm::vec3(0.239f, 0.847f, 0.776f); // teal #3DD8C6
 	std::string             name_  = "Bloopy Blob";
 
 	float stat_speed_ = 0.0f, stat_tough_ = 0.0f, stat_bite_ = 0.0f;
