@@ -80,6 +80,7 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.parts.push_back({sim::PartType::SPIKE,       {  8.0f,  58.0f}, PI * 0.5f, 1.3f});
 		m.parts.push_back({sim::PartType::SPIKE,       { -8.0f,  58.0f}, PI * 0.5f, 1.3f});
 		m.parts.push_back({sim::PartType::VENOM_SPIKE, {  0.0f,  64.0f}, PI * 0.5f, 1.0f});
+		m.parts.push_back({sim::PartType::MOUTH,       {  0.0f,  42.0f}, PI * 0.5f, 1.0f});
 		m.parts.push_back({sim::PartType::FLAGELLA,    {  0.0f, -60.0f}, -PI * 0.5f, 1.0f});
 		out.push_back(m);
 	}
@@ -96,6 +97,7 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.parts.push_back({sim::PartType::ARMOR,  { -15.0f,   0.0f}, PI,        1.5f});
 		m.parts.push_back({sim::PartType::REGEN,  {   0.0f,   0.0f}, 0.0f,      1.2f});
 		m.parts.push_back({sim::PartType::POISON, {   0.0f, -18.0f}, -PI * 0.5f, 1.3f});
+		m.parts.push_back({sim::PartType::MOUTH,  {   0.0f,  30.0f},  PI * 0.5f, 1.0f});
 		out.push_back(m);
 	}
 
@@ -111,6 +113,7 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.parts.push_back({sim::PartType::FLAGELLA, { -8.0f, -68.0f}, -PI * 0.5f});
 		m.parts.push_back({sim::PartType::TEETH,    {  0.0f,  70.0f},  PI * 0.5f});
 		m.parts.push_back({sim::PartType::EYES,     {  0.0f,  40.0f},  PI * 0.5f});
+		m.parts.push_back({sim::PartType::MOUTH,    {  0.0f,  55.0f},  PI * 0.5f, 1.0f});
 		out.push_back(m);
 	}
 
@@ -123,6 +126,7 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.initial_biomass = 32.0f;
 		m.cell = elongated(50.0f, 42.0f, 40.0f);
 		m.parts.push_back({sim::PartType::HORN,     {  0.0f,  40.0f},  PI * 0.5f, 1.6f});
+		m.parts.push_back({sim::PartType::MOUTH,    {  0.0f,  28.0f},  PI * 0.5f, 1.0f});
 		m.parts.push_back({sim::PartType::FLAGELLA, {  0.0f, -36.0f}, -PI * 0.5f, 1.0f});
 		m.parts.push_back({sim::PartType::ARMOR,    { 34.0f,   0.0f},  0.0f,      1.1f});
 		out.push_back(m);

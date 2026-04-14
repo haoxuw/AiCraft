@@ -74,6 +74,7 @@ inline MonsterTemplate makeStarter(StarterKind k, std::mt19937& rng) {
 		m.parts.push_back({sim::PartType::SPIKE,       {-18.0f,  20.0f},  PI-0.20f,1.0f});
 		m.parts.push_back({sim::PartType::VENOM_SPIKE, {  6.0f,  64.0f},  PI*0.5f, 1.0f});
 		m.parts.push_back({sim::PartType::VENOM_SPIKE, { -6.0f,  64.0f},  PI*0.5f, 1.0f});
+		m.parts.push_back({sim::PartType::MOUTH,       {  0.0f,  40.0f},  PI*0.5f, 1.0f});
 		break;
 	}
 	case StarterKind::SQUISHY: {
@@ -83,6 +84,7 @@ inline MonsterTemplate makeStarter(StarterKind k, std::mt19937& rng) {
 		m.parts.push_back({sim::PartType::POISON, {   0.0f,   0.0f}, 0.0f,    1.4f});
 		m.parts.push_back({sim::PartType::ARMOR,  {  28.0f,   0.0f}, 0.0f,    1.2f});
 		m.parts.push_back({sim::PartType::ARMOR,  { -28.0f,   0.0f}, PI,      1.2f});
+		m.parts.push_back({sim::PartType::MOUTH,  {   0.0f,  33.0f}, PI*0.5f, 1.0f});
 		break;
 	}
 	case StarterKind::ZOOMY: {
@@ -92,6 +94,7 @@ inline MonsterTemplate makeStarter(StarterKind k, std::mt19937& rng) {
 		m.parts.push_back({sim::PartType::FLAGELLA, { -8.0f, -65.0f}, -PI*0.5f, 1.1f});
 		m.parts.push_back({sim::PartType::CILIA,    { 20.0f, -20.0f},  0.0f,    1.0f});
 		m.parts.push_back({sim::PartType::CILIA,    {-20.0f, -20.0f},  PI,      1.0f});
+		m.parts.push_back({sim::PartType::MOUTH,    {  0.0f,  55.0f},  PI*0.5f, 1.0f});
 		break;
 	}
 	case StarterKind::TOUGH: {
@@ -103,11 +106,13 @@ inline MonsterTemplate makeStarter(StarterKind k, std::mt19937& rng) {
 		m.parts.push_back({sim::PartType::ARMOR, {  0.0f,  30.0f}, PI*0.5f, 1.1f});
 		m.parts.push_back({sim::PartType::REGEN, { 14.0f,  -8.0f}, 0.0f,    1.2f});
 		m.parts.push_back({sim::PartType::REGEN, {-14.0f,  -8.0f}, PI,      1.2f});
+		m.parts.push_back({sim::PartType::MOUTH, {  0.0f,  38.0f}, PI*0.5f, 1.0f});
 		break;
 	}
 	case StarterKind::PLAIN: {
 		m.color = glm::vec3(0.92f, 0.88f, 0.78f);
 		m.cell = wobble_circle(45.0f, 0.0f, 1);
+		m.parts.push_back({sim::PartType::MOUTH, {  0.0f,  27.0f}, PI*0.5f, 1.0f});
 		break;
 	}
 	case StarterKind::RANDOM: {
@@ -129,6 +134,8 @@ inline MonsterTemplate makeStarter(StarterKind k, std::mt19937& rng) {
 			m.parts.push_back({t, pos, std::atan2(pos.y, pos.x), sc_d(rng)});
 			m.parts.push_back({t, glm::vec2(-pos.x, pos.y), starter_detail::PI - std::atan2(pos.y, pos.x), sc_d(rng)});
 		}
+		// Guarantee a MOUTH so a random starter can always eat.
+		m.parts.push_back({sim::PartType::MOUTH, {0.0f, 30.0f}, starter_detail::PI * 0.5f, 1.0f});
 		break;
 	}
 	default: break;

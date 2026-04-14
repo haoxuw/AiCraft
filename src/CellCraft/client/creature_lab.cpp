@@ -183,6 +183,7 @@ void CreatureLab::refresh_stats_() {
 	for (auto& p : parts_) if (p.type == sim::PartType::SPIKE || p.type == sim::PartType::HORN) ++spike_count;
 	float bite = m.part_effect.damage_mult * (1.0f + spike_count * 0.1f);
 	stat_bite_  = std::clamp(bite / 2.0f, 0.0f, 1.0f);
+	stat_diet_  = m.part_effect.diet;
 }
 
 bool CreatureLab::tap_place_part_(sim::PartType t) {
@@ -499,6 +500,53 @@ void CreatureLab::draw_right_rail_(const Layout& l) {
 	float ndc_label_y = 1.0f - (jar_y + jar_h + 10.0f) / fh * 2.0f;
 	text_->drawText("FULLNESS", ja.x + 0.005f, ndc_label_y, 1.4f,
 		ui::TEXT_DARK, aspect);
+
+	// Diet badge — small glyph to the right of the fullness jar.
+	// CARNIVORE = pink meat blub, HERBIVORE = green leaf cluster,
+	// OMNIVORE = both at half size side-by-side. ~18px glyph total.
+	{
+		const glm::vec4 MEAT_PINK   {1.000f, 0.361f, 0.576f, 1.0f};
+		const glm::vec4 MEAT_MARBLE {0.784f, 0.227f, 0.431f, 1.0f};
+		const glm::vec4 PLANT_GREEN {0.420f, 0.796f, 0.310f, 1.0f};
+		const glm::vec4 PLANT_STEM  {0.659f, 0.910f, 0.478f, 1.0f};
+
+		auto draw_meat = [&](float cx, float cy, float r) {
+			// Lobed pink blub approximated as stacked rects (pixel chalk feel).
+			glm::vec2 a = px2ndc(cx - r,        cy + r);
+			glm::vec2 b = px2ndc(cx + r,        cy - r);
+			text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, MEAT_PINK);
+			// Dark marble dot in the middle.
+			glm::vec2 ma = px2ndc(cx - r * 0.35f, cy + r * 0.35f);
+			glm::vec2 mb = px2ndc(cx + r * 0.35f, cy - r * 0.35f);
+			text_->drawRect(ma.x, ma.y, mb.x - ma.x, mb.y - ma.y, MEAT_MARBLE);
+		};
+		auto draw_leaf = [&](float cx, float cy, float r) {
+			// Elongated green leaf (taller than wide) + light midrib.
+			glm::vec2 a = px2ndc(cx - r * 0.70f, cy + r);
+			glm::vec2 b = px2ndc(cx + r * 0.70f, cy - r);
+			text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, PLANT_GREEN);
+			glm::vec2 ra = px2ndc(cx - r * 0.10f, cy + r * 0.85f);
+			glm::vec2 rb = px2ndc(cx + r * 0.10f, cy - r * 0.85f);
+			text_->drawRect(ra.x, ra.y, rb.x - ra.x, rb.y - ra.y, PLANT_STEM);
+		};
+
+		// Anchor to right of FULLNESS label, roughly centered vertically on it.
+		float badge_cy = jar_y + jar_h + 20.0f;
+		float badge_cx = jar_x + jar_w - 20.0f;
+		const float R = 9.0f; // ~18px glyph
+		switch (stat_diet_) {
+		case sim::Diet::CARNIVORE:
+			draw_meat(badge_cx, badge_cy, R);
+			break;
+		case sim::Diet::HERBIVORE:
+			draw_leaf(badge_cx, badge_cy, R);
+			break;
+		case sim::Diet::OMNIVORE:
+			draw_meat(badge_cx - R * 0.55f, badge_cy, R * 0.55f);
+			draw_leaf(badge_cx + R * 0.55f, badge_cy, R * 0.55f);
+			break;
+		}
+	}
 
 	// 3 stat bars below.
 	float bar_x = jar_x;

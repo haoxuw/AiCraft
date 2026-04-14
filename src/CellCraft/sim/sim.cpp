@@ -157,6 +157,9 @@ void Sim::pickup_food_() {
 	auto& food = world_->food;
 	for (auto& [id, m] : world_->monsters) {
 		if (!m.alive) continue;
+		// Rule: no MOUTH part, no pickup. Monsters must equip a mouth to
+		// eat anything at all. Diet then governs yield efficiency.
+		if (!m.part_effect.has_mouth) continue;
 		auto world_poly = transform_to_world(m.shape, m.core_pos, m.heading);
 		// MOUTH widens the effective grab zone using a scaled bounding-circle
 		// check around the body — cheap and reads "mouth is bigger" visually.
@@ -171,10 +174,12 @@ void Sim::pickup_food_() {
 				if (d.x * d.x + d.y * d.y <= pickup_r2) hit = true;
 			}
 			if (hit) {
-				m.biomass += food[i].biomass;
+				float yield = yieldMultiplier(m.part_effect.diet, food[i].type);
+				float gained = food[i].biomass * yield;
+				m.biomass += gained;
 				m.hp_max = std::max(1.0f, m.biomass * HP_PER_BIOMASS);
-				m.hp = std::min(m.hp_max, m.hp + food[i].biomass * 0.25f);
-				Event e{EventKind::PICKUP, m.id, food[i].id, food[i].biomass, food[i].pos};
+				m.hp = std::min(m.hp_max, m.hp + gained * 0.25f);
+				Event e{EventKind::PICKUP, m.id, food[i].id, gained, food[i].pos};
 				events_.push_back(e);
 				food[i] = food.back();
 				food.pop_back();

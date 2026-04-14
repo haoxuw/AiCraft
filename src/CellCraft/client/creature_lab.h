@@ -120,6 +120,7 @@ private:
 	std::string             name_  = "Bloopy Blob";
 
 	float stat_speed_ = 0.0f, stat_tough_ = 0.0f, stat_bite_ = 0.0f;
+	sim::Diet stat_diet_ = sim::Diet::OMNIVORE;
 
 	Drawer drawer_ = Drawer::PARTS;
 	int    selected_part_idx_ = -1;

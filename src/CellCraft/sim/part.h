@@ -36,6 +36,10 @@ struct Part {
 	float     scale        = 1.0f; // uniform scale; cost = base × scale², effects × scale
 };
 
+// Diet classification derived from a monster's part loadout. Recomputed
+// every refresh_stats(); drives food yield and the lab diet badge.
+enum class Diet : uint8_t { CARNIVORE = 0, HERBIVORE = 1, OMNIVORE = 2 };
+
 // Aggregated stat block computed from a monster's parts. Cached on
 // refresh_stats(); re-read by sim.cpp each contact resolution.
 struct PartEffect {
@@ -50,6 +54,12 @@ struct PartEffect {
 	float pickup_radius_mult = 1.0f; // MOUTH: widens food pickup AABB halo
 	float perception_mult  = 1.0f;   // EYES: widens AI target-search radius
 	int   venom_stacks = 0;     // number of VENOM_SPIKE parts applied on bite
+
+	// Diet: signed sum of carnivore (+) vs herbivore (−) leaning parts,
+	// each scaled by its Part::scale. Classified into Diet enum via thresholds.
+	float diet_score = 0.0f;
+	Diet  diet       = Diet::OMNIVORE;
+	bool  has_mouth  = false;   // required to pick up any food at all
 
 	// For per-contact bonuses we need location data too.
 	std::vector<glm::vec2> spike_dirs;         // unit vectors in local space

@@ -113,6 +113,37 @@ inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 	bool have_poison = false;
 	float poison_scale_sum = 0.0f;
 	float poison_radius_max = 0.0f;
+
+	// Diet signal per part. Carnivore-leaning parts add +scale, herbivore
+	// -leaning subtract. MOUTH is neutral (every eater has one, so it
+	// must not bias the score). FLAGELLA/EYES are neutral. Final
+	// classification uses ±0.8 thresholds → CARNIVORE / HERBIVORE / OMNIVORE.
+	float diet_accum = 0.0f;
+	for (const auto& p : parts) {
+		const float s = std::max(0.1f, p.scale);
+		switch (p.type) {
+		case PartType::TEETH:
+		case PartType::SPIKE:
+		case PartType::VENOM_SPIKE:
+		case PartType::HORN:
+		case PartType::POISON:
+			diet_accum += s; break;
+		case PartType::REGEN:
+		case PartType::ARMOR:
+		case PartType::CILIA:
+			diet_accum -= s; break;
+		case PartType::MOUTH:
+		case PartType::FLAGELLA:
+		case PartType::EYES:
+		case PartType::PART_TYPE_COUNT:
+			break;
+		}
+	}
+	e.diet_score = diet_accum;
+	if      (diet_accum >  0.8f) e.diet = Diet::CARNIVORE;
+	else if (diet_accum < -0.8f) e.diet = Diet::HERBIVORE;
+	else                          e.diet = Diet::OMNIVORE;
+
 	for (const auto& p : parts) {
 		const float s = std::max(0.1f, p.scale);
 		switch (p.type) {
@@ -182,6 +213,7 @@ inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 			break;
 		}
 		case PartType::MOUTH: {
+			e.has_mouth = true;
 			if (mouth < PART_MOUTH_MAX_STACK) {
 				e.pickup_radius_mult += PART_MOUTH_RADIUS_ADD * s;
 				++mouth;

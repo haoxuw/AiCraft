@@ -22,6 +22,19 @@ enum class FoodType : uint8_t {
 	PLANT = 1,  // green leaf cluster, smaller biomass, more common
 };
 
+// Diet × FoodType biomass yield multiplier applied on pickup.
+// CARNIVORE thrives on MEAT (1.5×), struggles on PLANT (0.4×), and vice
+// versa for HERBIVORE. OMNIVORE gets a flat 1.0× either way — jack of all
+// diets, master of none.
+inline float yieldMultiplier(Diet diet, FoodType food) {
+	switch (diet) {
+	case Diet::CARNIVORE: return (food == FoodType::MEAT)  ? 1.5f : 0.4f;
+	case Diet::HERBIVORE: return (food == FoodType::PLANT) ? 1.5f : 0.4f;
+	case Diet::OMNIVORE:
+	default:              return 1.0f;
+	}
+}
+
 struct Food {
 	uint32_t  id      = 0;
 	glm::vec2 pos     = glm::vec2(0.0f);
