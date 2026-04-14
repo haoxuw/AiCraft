@@ -296,26 +296,43 @@ bool CreatureLab::pixel_button_(float x, float y, float w, float h, const char* 
 	float nx = a.x, ny = a.y, nw = b.x - a.x, nh = b.y - a.y;
 	bool hover = enabled && in.mouse_px.x >= x && in.mouse_px.x <= x + w
 	          && in.mouse_px.y >= y && in.mouse_px.y <= y + h;
-	glm::vec4 bg = enabled ? glm::vec4(fill * (hover ? 1.12f : 1.0f), 0.98f)
-	                       : glm::vec4(0.85f, 0.82f, 0.78f, 0.5f);
-	// Drop shadow under button (kids-game depth).
-	text_->drawRect(nx + 0.004f, ny - 0.008f, nw, nh, ui::SHADOW);
-	text_->drawRect(nx, ny, nw, nh, bg);
-	// Top-edge highlight for faux gradient.
-	text_->drawRect(nx, ny + nh - nh * 0.12f, nw, nh * 0.09f,
+	glm::vec3 fill_top = enabled ? (fill * (hover ? 1.14f : 1.0f)) : glm::vec3(0.78f, 0.75f, 0.72f);
+	glm::vec3 fill_bot = glm::max(fill_top * 0.82f, glm::vec3(0.0f));
+	float alpha = enabled ? 0.98f : 0.55f;
+
+	// Drop shadow.
+	text_->drawRect(nx + 0.004f, ny - 0.010f, nw, nh, ui::SHADOW);
+	// 8-stripe faux gradient (top→bottom).
+	for (int si = 0; si < 8; ++si) {
+		float t0 = (float)si / 8.0f, t1 = (float)(si + 1) / 8.0f;
+		glm::vec3 c = glm::mix(fill_top, fill_bot, 0.5f * (t0 + t1));
+		float sy = ny + nh * (1.0f - t1);
+		float sh = nh * (t1 - t0) + 0.0005f;
+		text_->drawRect(nx, sy, nw, sh, glm::vec4(c, alpha));
+	}
+	// Top highlight.
+	text_->drawRect(nx, ny + nh - nh * 0.14f, nw, nh * 0.09f,
 		glm::vec4(1.0f, 1.0f, 1.0f, 0.22f));
-	// Charcoal border.
+	// Charcoal outline.
 	glm::vec4 edge = ui::OUTLINE; if (!enabled) edge.a = 0.4f;
 	float t = 0.004f;
 	text_->drawRect(nx, ny,         nw, t, edge);
 	text_->drawRect(nx, ny + nh - t, nw, t, edge);
 	text_->drawRect(nx, ny,         t, nh, edge);
 	text_->drawRect(nx + nw - t, ny, t, nh, edge);
+	// Rounded corner cut-outs (use BG_CREAM so corners blend into the card).
+	{
+		float r = 0.006f;
+		glm::vec4 bgc = ui::BG_CREAM;
+		text_->drawRect(nx, ny + nh - r, r, r, bgc);
+		text_->drawRect(nx + nw - r, ny + nh - r, r, r, bgc);
+		text_->drawRect(nx, ny, r, r, bgc);
+		text_->drawRect(nx + nw - r, ny, r, r, bgc);
+	}
 	if (label && *label) {
 		float aspect = (float)fw / (float)fh;
 		float scale = h / 64.0f * 1.6f;
 		if (scale > 2.4f) scale = 2.4f;
-		// Shrink to fit width — each char ~ 0.018 NDC × scale wide.
 		float label_w = (float)std::strlen(label) * 0.018f * scale;
 		if (label_w > nw * 0.92f) {
 			scale *= (nw * 0.92f) / std::max(0.001f, label_w);
@@ -323,8 +340,13 @@ bool CreatureLab::pixel_button_(float x, float y, float w, float h, const char* 
 		}
 		float tx = nx + (nw - label_w) * 0.5f;
 		float ty = ny + (nh - 0.030f * scale) * 0.5f;
-		text_->drawText(label, tx, ty, scale,
-			glm::vec4(0.10f, 0.08f, 0.06f, 1.0f), aspect);
+		// Outlined label — dark shadow + light fill on colored buttons,
+		// or dark fill on cream buttons.
+		float lum = 0.299f*fill.r + 0.587f*fill.g + 0.114f*fill.b;
+		glm::vec4 lfill = (lum > 0.75f) ? ui::TEXT_DARK : ui::TEXT_LIGHT;
+		glm::vec4 lshadow = ui::OUTLINE; lshadow.a = enabled ? 0.85f : 0.4f;
+		text_->drawText(label, tx + 0.003f, ty - 0.004f, scale, lshadow, aspect);
+		text_->drawText(label, tx,          ty,          scale, lfill,   aspect);
 	}
 	return hover && in.mouse_left_click;
 }

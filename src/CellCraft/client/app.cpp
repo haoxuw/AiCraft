@@ -26,6 +26,7 @@
 #include <sstream>
 
 #include "CellCraft/client/part_render.h"
+#include "CellCraft/client/ui_button.h"
 #include "CellCraft/client/ui_theme.h"
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/part_stats.h"
@@ -495,56 +496,29 @@ bool App::drawButton(const Button& b) {
 	glm::vec2 m = pxToNDC(mouse_px_);
 	bool hover = pointInButton(m, b) && b.enabled;
 
-	// Pick gradient colors. PLAY/PLAY AGAIN/LET'S GO = primary pink;
-	// LET'S GO! always green; QUIT/MENU = neutral cream; else primary.
-	glm::vec4 top = ui::BTN_PRIMARY_TOP, bot = ui::BTN_PRIMARY_BOTTOM;
+	ui::PillButton pb;
+	pb.x = b.x; pb.y = b.y; pb.w = b.w; pb.h = b.h;
+	pb.label = b.label; pb.enabled = b.enabled; pb.hovered = hover;
+	pb.label_scale = 1.1f;
+
+	// Semantic role by label. PLAY/PLAY AGAIN = go-green; QUIT/MENU/BACK
+	// = neutral cream with dark text; everything else = primary pink.
 	if (b.label == "LET'S GO!" || b.label == "PLAY AGAIN!") {
-		top = ui::BTN_GO_TOP; bot = ui::BTN_GO_BOTTOM;
+		pb.top = ui::BTN_GO_TOP; pb.bottom = ui::BTN_GO_BOTTOM;
+		pb.label_fill = ui::TEXT_LIGHT;
 	} else if (b.label == "QUIT" || b.label == "MENU" || b.label == "BACK") {
-		top = ui::BTN_NEUTRAL_TOP; bot = ui::BTN_NEUTRAL_BOTTOM;
+		pb.top = ui::BTN_NEUTRAL_TOP; pb.bottom = ui::BTN_NEUTRAL_BOTTOM;
+		pb.label_fill = ui::TEXT_DARK;
+	} else {
+		pb.top = ui::BTN_PRIMARY_TOP; pb.bottom = ui::BTN_PRIMARY_BOTTOM;
+		pb.label_fill = ui::TEXT_LIGHT;
 	}
-	if (!b.enabled) { top.a = 0.5f; bot.a = 0.5f; }
-	if (hover) {
-		top += glm::vec4(0.06f, 0.06f, 0.06f, 0.0f);
-		bot += glm::vec4(0.06f, 0.06f, 0.06f, 0.0f);
-	}
 
-	// Drop shadow.
-	text_->drawRect(b.x + 0.006f, b.y - 0.012f, b.w, b.h, ui::SHADOW);
+	// Hover scale + press squish applied by ui_anim in Commit 3; for now
+	// just a subtle hover lift so Commit 2 already feels bouncier.
+	if (hover) pb.scale = 1.03f;
 
-	// Faux gradient: 8 horizontal stripes interpolating top → bottom.
-	const int STRIPES = 8;
-	for (int i = 0; i < STRIPES; ++i) {
-		float t0 = (float)i / (float)STRIPES;
-		float t1 = (float)(i + 1) / (float)STRIPES;
-		glm::vec4 c = glm::mix(top, bot, 0.5f * (t0 + t1));
-		float sy = b.y + b.h * (1.0f - t1);
-		float sh = b.h * (t1 - t0) + 0.0005f; // avoid hairline gaps
-		text_->drawRect(b.x, sy, b.w, sh, c);
-	}
-	// Top-edge highlight (5% tall, white-alpha).
-	text_->drawRect(b.x, b.y + b.h - b.h * 0.12f, b.w, b.h * 0.09f,
-		glm::vec4(1.0f, 1.0f, 1.0f, 0.22f));
-
-	// 3-4px charcoal outline.
-	glm::vec4 edge = ui::OUTLINE; if (!b.enabled) edge.a = 0.4f;
-	float t = 0.004f;
-	text_->drawRect(b.x, b.y, b.w, t, edge);
-	text_->drawRect(b.x, b.y + b.h - t, b.w, t, edge);
-	text_->drawRect(b.x, b.y, t, b.h, edge);
-	text_->drawRect(b.x + b.w - t, b.y, t, b.h, edge);
-
-	// Centered label with outline (drop shadow for depth).
-	float label_w = (float)b.label.size() * 0.018f * 1.1f;
-	float tx = b.x + (b.w - label_w) * 0.5f;
-	float ty = b.y + (b.h - 0.032f * 1.1f) * 0.5f;
-	glm::vec4 shadow = ui::OUTLINE; shadow.a = b.enabled ? 0.85f : 0.4f;
-	glm::vec4 fill   = (b.label == "QUIT" || b.label == "MENU" || b.label == "BACK")
-		? ui::TEXT_DARK
-		: ui::TEXT_LIGHT;
-	if (!b.enabled) fill = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f);
-	text_->drawText(b.label, tx + 0.003f, ty - 0.004f, 1.1f, shadow, window_.aspectRatio());
-	text_->drawText(b.label, tx,          ty,          1.1f, fill,   window_.aspectRatio());
+	ui::drawPill(text_.get(), pb, window_.aspectRatio());
 	return hover && mouse_left_click_;
 }
 
@@ -1439,16 +1413,47 @@ void App::drawStarter(float dt) {
 		              y0 + (1 - row) * (tile_h + pad_y),
 		              tile_w, tile_h, "" };
 		bool hover = pointInButton(pxToNDC(mouse_px_), tile);
-		glm::vec4 bg = hover ? glm::vec4(0.20f, 0.25f, 0.20f, 0.95f)
-		                     : glm::vec4(0.10f, 0.12f, 0.10f, 0.92f);
-		text_->drawRect(tile.x, tile.y, tile.w, tile.h, bg);
-		// Border
-		glm::vec4 edge(0.92f, 0.88f, 0.70f, 1.0f);
+		// Tile = card-button with gradient, shadow, outline, rounded corners.
+		// Tinted per tile with the accent color rotation.
+		glm::vec4 tints[6] = {
+			ui::ACCENT_PINK, ui::ACCENT_LIME, ui::ACCENT_CYAN,
+			ui::ACCENT_GOLD, ui::ACCENT_MAGENTA, ui::ACCENT_ORANGE,
+		};
+		glm::vec4 tile_top = glm::mix(ui::CARD_FILL, tints[i], 0.25f);
+		glm::vec4 tile_bot = glm::mix(ui::CARD_FILL, tints[i], 0.10f);
+		tile_top.a = 0.98f; tile_bot.a = 0.98f;
+		if (hover) { tile_top += glm::vec4(0.05f, 0.05f, 0.05f, 0.0f);
+		             tile_bot += glm::vec4(0.05f, 0.05f, 0.05f, 0.0f); }
+		// Shadow
+		text_->drawRect(tile.x + 0.008f, tile.y - 0.016f, tile.w, tile.h, ui::SHADOW);
+		// Gradient
+		const int TS = 8;
+		for (int si = 0; si < TS; ++si) {
+			float t0 = (float)si / TS, t1 = (float)(si + 1) / TS;
+			glm::vec4 c = glm::mix(tile_top, tile_bot, 0.5f * (t0 + t1));
+			text_->drawRect(tile.x, tile.y + tile.h * (1.0f - t1),
+			                tile.w, tile.h * (t1 - t0) + 0.0005f, c);
+		}
+		// Outline
+		glm::vec4 edge = ui::OUTLINE;
 		float t_w = 0.005f;
 		text_->drawRect(tile.x, tile.y, tile.w, t_w, edge);
 		text_->drawRect(tile.x, tile.y + tile.h - t_w, tile.w, t_w, edge);
 		text_->drawRect(tile.x, tile.y, t_w, tile.h, edge);
 		text_->drawRect(tile.x + tile.w - t_w, tile.y, t_w, tile.h, edge);
+		// Rounded corners
+		{
+			float r = 0.010f;
+			glm::vec4 bgc = ui::BG_CREAM;
+			text_->drawRect(tile.x, tile.y + tile.h - r, r, r, bgc);
+			text_->drawRect(tile.x + tile.w - r, tile.y + tile.h - r, r, r, bgc);
+			text_->drawRect(tile.x, tile.y, r, r, bgc);
+			text_->drawRect(tile.x + tile.w - r, tile.y, r, r, bgc);
+		}
+		// Title bar on top of tile (colored strip).
+		float bar_h = 0.07f;
+		text_->drawRect(tile.x, tile.y + tile.h - bar_h, tile.w, bar_h, tints[i]);
+		text_->drawRect(tile.x, tile.y + tile.h - bar_h, tile.w, 0.003f, edge);
 
 		// Render preview creature (chalk strokes).
 		auto tmpl = monsters::makeStarter(kinds[i], preview_rng);
@@ -1471,13 +1476,15 @@ void App::drawStarter(float dt) {
 		                  (float)glfwGetTime(), ps);
 		if (!ps.empty()) renderer_->drawStrokes(ps, nullptr, w_px, h_px);
 
-		// Title + tagline
+		// Title sits in the colored header strip: light text with dark shadow.
+		float title_y = tile.y + tile.h - 0.055f;
 		text_->drawText(monsters::starterName(kinds[i]),
-			tile.x + 0.02f, tile.y + 0.04f, 1.7f,
-			glm::vec4(tmpl.color.r, tmpl.color.g, tmpl.color.b, 1.0f), aspect);
+			tile.x + 0.023f, title_y - 0.004f, 1.7f, ui::OUTLINE, aspect);
+		text_->drawText(monsters::starterName(kinds[i]),
+			tile.x + 0.020f, title_y, 1.7f, ui::TEXT_LIGHT, aspect);
+		// Tagline below the creature preview, dark on cream.
 		text_->drawText(monsters::starterTagline(kinds[i]),
-			tile.x + 0.02f, tile.y + 0.005f, 0.9f,
-			glm::vec4(0.85f, 0.82f, 0.70f, 1.0f), aspect);
+			tile.x + 0.02f, tile.y + 0.018f, 0.9f, ui::TEXT_DARK, aspect);
 
 		if (hover && mouse_left_click_) {
 			goToLab(kinds[i]);
