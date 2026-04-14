@@ -21,7 +21,7 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 #
 # This repo builds two games from one C++ engine (src/platform):
 #   civcraft       voxel sandbox (default) — C++ server + C++/OpenGL client
-#   lifecraft       Spore cell stage       — C++ server + Godot 4 client
+#   lifecraft       Spore cell stage       — C++ (single-binary M0; server+agent split lands M1)
 #
 # Override the game with GAME=lifecraft for LifeCraft targets.
 #
@@ -46,22 +46,16 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 # so "shaders/", "artifacts/", "python/", "fonts/", "config/", "resources/"
 # resolve via CWD-relative paths at runtime.
 #
-# LifeCraft launches a C++ TCP server + a Godot 4 client talking to it over
-# localhost. The server is lifecraft-server (built by CMake); the client is
-# Godot project src/LifeCraft/godot/ launched via `godot4`.
+# LifeCraft is a pure C++ game built on src/platform/. `make game GAME=lifecraft`
+# runs the `lifecraft` binary; `make lifecraft-godot` still launches the Godot
+# prototype in src/LifeCraft/godot/ for visual reference.
 LIFECRAFT_PORT := 7888
 ifeq ($(GAME),lifecraft)
-lifecraft-server-game-build: game-configure
-	cmake --build $(GAME_BUILD_DIR) --target lifecraft-server -j$(PAR)
-
-game: lifecraft-server-game-build
-	@echo "[lifecraft] starting server on :$(LIFECRAFT_PORT), then Godot client..."
-	@pkill -x lifecraft-server 2>/dev/null ; sleep 0.2 ; \
-	  $(CURDIR)/$(GAME_BUILD_DIR)/lifecraft-server --port $(LIFECRAFT_PORT) & \
-	  SERVER_PID=$$! ; \
-	  sleep 0.3 ; \
-	  godot4 --path $(CURDIR)/src/LifeCraft/godot -- --host 127.0.0.1 --port $(LIFECRAFT_PORT) ; \
-	  kill $$SERVER_PID 2>/dev/null ; wait 2>/dev/null || true
+# M0 scope: single-binary drawing client. Server + agent processes come with
+# networking (M1+). Binary runs out of build/src/LifeCraft/ so its shaders/
+# post-build copy resolves CWD-relative.
+game: lifecraft-build
+	cd $(BUILD_DIR)/src/LifeCraft && ./lifecraft $(if $(DEMO),--demo,)
 else
 # `make game` builds with CIVCRAFT_PERF=ON in a separate build dir so the
 # server emits frame/tick/handler timing logs (see [Perf] lines on stderr and
@@ -137,12 +131,23 @@ model-snap: model-editor-build
 
 # Dedicated server (interactive world select, or --world/--seed/--template flags)
 ifeq ($(GAME),lifecraft)
-server: lifecraft-server-build
-	cd $(BUILD_DIR) && ./lifecraft-server --port $(if $(PORT),$(PORT),$(LIFECRAFT_PORT))
+# Server/client not yet split — M0 ships as the single `lifecraft` binary.
+# Re-enable these once networking lands.
+server:
+	@echo "lifecraft server is not yet split from the client; see src/LifeCraft/docs/00_OVERVIEW.md M1" >&2
+	@exit 1
 
-client:
-	godot4 --path $(CURDIR)/src/LifeCraft/godot -- \
-	  --host $(if $(HOST),$(HOST),127.0.0.1) --port $(if $(PORT),$(PORT),$(LIFECRAFT_PORT))
+client: lifecraft-build
+	cd $(BUILD_DIR)/src/LifeCraft && ./lifecraft
+
+lifecraft-build: configure
+	cmake --build $(BUILD_DIR) --target lifecraft -j$(PAR)
+
+# Godot prototype is retained as a visual reference — not the shipping client.
+lifecraft-godot:
+	godot4 --path $(CURDIR)/src/LifeCraft/godot
+
+.PHONY: lifecraft-build lifecraft-godot
 else
 server: build
 	cd $(BUILD_DIR) && ./$(GAME)-server --port $(PORT)
@@ -154,7 +159,8 @@ endif
 
 stop:
 ifeq ($(GAME),lifecraft)
-	@-pkill -x lifecraft-server 2>/dev/null; \
+	@-pkill -x lifecraft 2>/dev/null; \
+	  pkill -x lifecraft-server 2>/dev/null; \
 	  pkill -f "godot4.*src/LifeCraft/godot" 2>/dev/null; \
 	  sleep 0.5; true
 	@echo "All lifecraft processes stopped."

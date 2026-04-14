@@ -19,8 +19,7 @@ endif()
 #
 #   src/platform/   Engine: shared types, server loop, agent runtime, renderer
 #   src/CivCraft/   Voxel sandbox game (chunks, blocks, structures)
-#   src/LifeCraft/   Spore-cell-stage game — C++ server + Godot 4 client
-#                   (supersedes the retired src/LifeCraft/ OpenGL attempt)
+#   src/LifeCraft/   Spore-cell-stage game — C++ client on src/platform/
 #
 # Each game's executables run with CWD = $BUILD_DIR, so assets copied into
 # $BUILD_DIR by POST_BUILD are found via "shaders/...", "artifacts/...", etc.
@@ -321,11 +320,11 @@ else()
 	)
 
 	# =================================================================
-	# LifeCraft — Spore cell stage game (C++ server + Godot 4 client).
-	# The client is a standalone Godot project at src/LifeCraft/godot/ and is
-	# NOT built by CMake; see src/LifeCraft/docs/00_PLAN.md for the full plan.
-	# This target is the authoritative TCP server. M1 scope: accept
-	# connections and broadcast a 1Hz tick counter.
+	# LifeCraft — Spore cell stage game (C++ on platform/).
+	# M0: single `lifecraft` binary — chalkboard + mouse draws strokes.
+	# M1+: server/agent process split once networking lands.
+	# The legacy Godot prototype at src/LifeCraft/godot/ is retained as a
+	# visual reference only and is NOT built by CMake.
 	# =================================================================
 	if(EXISTS ${CMAKE_SOURCE_DIR}/src/LifeCraft/CMakeLists.txt)
 		add_subdirectory(src/LifeCraft)

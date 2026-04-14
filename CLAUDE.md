@@ -9,18 +9,13 @@ This repo builds **two** games on top of a single C++ engine:
 ```
 src/platform/     C++ engine (headers + cpps) — no game content
 src/CivCraft/     Voxel sandbox game (chunks, blocks, structures)
-src/LifeCraft/  2D drawing Action RTS
+src/LifeCraft/    2D drawing Action RTS
 ```
 
 Everything game-specific — artifacts, python, shaders, resources, config, docs,
 tests, tools — lives under the owning game directory. Shared UI fonts and
 generic shaders (crosshair, highlight, particle, shadow, text) live under
 `src/platform/`.
-
-All current gameplay rules in this file apply to **CivCraft**. LifeCraft
-will get its own CLAUDE.md when it has real code. For CivCraft-specific
-mechanics (chunks, inventory, structures, world gen), read
-`src/CivCraft/src/CivCraft/docs/00_OVERVIEW.md`.
 
 **Dependency rule (enforced by CMake + convention):**
 - `platform/` must not reference `CivCraft/` or `LifeCraft/` identifiers.

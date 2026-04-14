@@ -1,0 +1,37 @@
+# LifeCraft — Spore-cell-stage drawing game. See docs/00_OVERVIEW.md.
+#
+# M0 scope: one binary, `lifecraft`, that opens a window, renders a
+# chalkboard, and lets the mouse draw chalk strokes. No server split, no
+# Python, no physics yet — just the shader beachhead. Server/agent
+# binaries come in M1+.
+
+set(LIFECRAFT_INCLUDE_DIRS
+	${CMAKE_SOURCE_DIR}/src/platform
+	${CMAKE_SOURCE_DIR}/src
+)
+
+# Platform bits the client needs at the bare minimum: the GL window +
+# shader loader. Explicitly listed rather than pulled from FULL_CLIENT_SOURCES
+# so a misconfigured CivCraft build can't fail LifeCraft.
+set(LIFECRAFT_PLATFORM_SOURCES
+	${CMAKE_SOURCE_DIR}/src/platform/client/window.cpp
+	${CMAKE_SOURCE_DIR}/src/platform/client/shader.cpp
+)
+
+add_executable(lifecraft
+	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/chalk_renderer.cpp
+	${LIFECRAFT_PLATFORM_SOURCES}
+)
+target_include_directories(lifecraft PRIVATE ${LIFECRAFT_INCLUDE_DIRS})
+target_link_libraries(lifecraft PRIVATE
+	glfw glad_gl_core_41 glm::glm OpenGL::GL
+)
+
+# Stage shaders alongside the binary — code loads via `shaders/foo.vert`
+# relative to CWD (`build/`).
+add_custom_command(TARGET lifecraft POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:lifecraft>/shaders
+	COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_CURRENT_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:lifecraft>/shaders
+)
