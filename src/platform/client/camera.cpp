@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
-namespace modcraft {
+namespace civcraft {
 
 glm::vec3 Camera::front() const {
 	float y = glm::radians(lookYaw), p = glm::radians(lookPitch);
@@ -239,4 +239,4 @@ glm::vec3 Camera::godCameraRight() const {
 	return glm::normalize(glm::cross(godCameraForward(), glm::vec3(0, 1, 0)));
 }
 
-} // namespace modcraft
+} // namespace civcraft

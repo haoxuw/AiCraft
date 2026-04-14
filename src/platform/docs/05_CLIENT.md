@@ -1,4 +1,4 @@
-# ModCraft - Python Client
+# CivCraft - Python Client
 
 The client handles rendering, input, the in-game code editor, and local preview/testing. Written in Python for consistency with the scripting model -- players use the same language to play and create.
 
@@ -8,7 +8,7 @@ The client handles rendering, input, the in-game code editor, and local preview/
 
 ```
 +====================================================================+
-|                        ModCraft Python Client                        |
+|                        CivCraft Python Client                        |
 +====================================================================+
 |                                                                      |
 |  +------------------------+   +---------------------------+         |
@@ -178,18 +178,18 @@ Non-predicted (wait for server):
 
 ## 4. In-Game Code Editor
 
-The centerpiece of ModCraft -- players write Python inside the game.
+The centerpiece of CivCraft -- players write Python inside the game.
 
 ```
 +====================================================================+
-|  ModCraft Code Editor (in-game overlay)                              |
+|  CivCraft Code Editor (in-game overlay)                              |
 +====================================================================+
 |                                                                      |
 |  +----Tab Bar---------------------------------------------+         |
 |  | pig.py  |  fireball.py* |  magic_ore.py |  + New      |         |
 |  +---------------------------------------------------------+         |
 |  |                                                         |         |
-|  |  1  from modcraft.api import LivingObject, ObjectMeta    |         |
+|  |  1  from civcraft.api import LivingObject, ObjectMeta    |         |
 |  |  2                                                      |         |
 |  |  3  class FlyingPig(LivingObject):                      |         |
 |  |  4      """A pig that can fly!"""                        |         |
@@ -231,11 +231,11 @@ Editing:
   - Undo/redo (Ctrl+Z / Ctrl+Shift+Z)
   - Copy/paste (system clipboard)
   - Find/replace (Ctrl+F)
-  - Tab completion for modcraft.api members
+  - Tab completion for civcraft.api members
 
 Assistance:
   - Inline error markers (red squiggly)
-  - Type hints from modcraft.api stubs
+  - Type hints from civcraft.api stubs
   - Auto-complete for ObjectMeta/ActionMeta fields
   - Hover tooltips for API functions
   - Template gallery (start from examples)
@@ -260,7 +260,7 @@ Upload:
 
 ```python
 # Template: Basic Block
-from modcraft.api import PassiveObject, ObjectMeta
+from civcraft.api import PassiveObject, ObjectMeta
 
 class MyBlock(PassiveObject):
     meta = ObjectMeta(
@@ -274,7 +274,7 @@ class MyBlock(PassiveObject):
     )
 
 # Template: Basic Mob
-from modcraft.api import LivingObject, ObjectMeta
+from civcraft.api import LivingObject, ObjectMeta
 
 class MyMob(LivingObject):
     meta = ObjectMeta(
@@ -291,7 +291,7 @@ class MyMob(LivingObject):
         pass  # Add behavior here
 
 # Template: Basic Action
-from modcraft.api import Action, ActionMeta
+from civcraft.api import Action, ActionMeta
 
 @Action
 class MyAction:
@@ -348,7 +348,7 @@ Asset upload with code:
 ## 6. Client Directory Layout
 
 ```
-modcraft-client/
+civcraft-client/
   src/
     main.py                      # Entry point
     client.py                    # Client class, main loop

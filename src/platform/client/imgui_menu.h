@@ -5,7 +5,7 @@
  *
  * Layout:
  *   ┌─────────────────────────────────────────────┐
- *   │  modcraft                          v0.9.0    │  ← top bar
+ *   │  civcraft                          v0.9.0    │  ← top bar
  *   ├────────┬────────────────────────────────────┤
  *   │        │                                    │
  *   │  PLAY  │                                    │
@@ -41,7 +41,7 @@
 #include <filesystem>
 #include <fstream>
 
-namespace modcraft {
+namespace civcraft {
 
 class ImGuiMenu {
 public:
@@ -59,7 +59,7 @@ public:
 #ifndef __EMSCRIPTEN__
 		// Start listening for LAN broadcasts immediately so we don't miss
 		// announcements that arrive before the user opens the Join tab.
-		m_discoverySocket.open(MODCRAFT_DISCOVER_PORT);
+		m_discoverySocket.open(CIVCRAFT_DISCOVER_PORT);
 #endif
 	}
 
@@ -88,7 +88,7 @@ public:
 			ImGui::SetCursorPos(ImVec2(24, 10));
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.65f, 0.15f, 1.0f));
 			ImGui::SetWindowFontScale(1.8f);
-			ImGui::Text("MODCRAFT");
+			ImGui::Text("CIVCRAFT");
 			ImGui::SetWindowFontScale(1.0f);
 			ImGui::PopStyleColor();
 
@@ -323,7 +323,7 @@ private:
 
 		// (Re)open UDP discovery socket to receive LAN broadcasts
 		if (!m_discoverySocket.isOpen())
-			m_discoverySocket.open(MODCRAFT_DISCOVER_PORT);
+			m_discoverySocket.open(CIVCRAFT_DISCOVER_PORT);
 
 		// Quick TCP probe for localhost servers (same machine)
 		for (int port = 7777; port <= 7787; port++) {
@@ -349,7 +349,7 @@ private:
 		net::UdpSocket::Packet pkt;
 		while (m_discoverySocket.tryRecv(pkt)) {
 			int port = 0, players = 0;
-			if (sscanf(pkt.data.c_str(), "MODCRAFT %d %d", &port, &players) != 2) continue;
+			if (sscanf(pkt.data.c_str(), "CIVCRAFT %d %d", &port, &players) != 2) continue;
 			bool found = false;
 			for (auto& s : m_detectedServers) {
 				// Match exact IP, or absorb a localhost TCP-probe entry for the same port
@@ -602,7 +602,7 @@ private:
 				ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.60f, 1), "Creatures");
 				ImGui::TextDisabled("Terrain / village / tree params: edit artifacts/worlds/base/village.py");
 				for (auto& mob : m_worldGenConfig.mobs) {
-					// Strip "base:" prefix and capitalize for display
+					// Strip any namespace prefix and capitalize for display
 					std::string label = mob.typeId;
 					auto colon = label.find(':');
 					if (colon != std::string::npos) label = label.substr(colon + 1);
@@ -732,7 +732,7 @@ private:
 						ImGui::PopID();
 					}
 					if (ImGui::SmallButton("+ Add Item"))
-						be.sharedItems.push_back({"base:wheat", 5});
+						be.sharedItems.push_back({"wheat", 5});
 
 					if (!be.configs.empty()) {
 						ImGui::Spacing();
@@ -1238,4 +1238,4 @@ private:
 	}
 };
 
-} // namespace modcraft
+} // namespace civcraft

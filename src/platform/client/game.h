@@ -38,7 +38,7 @@
 #include <deque>
 #include <string>
 
-namespace modcraft {
+namespace civcraft {
 
 class Game {
 public:
@@ -79,6 +79,7 @@ private:
 	void renderWorld(float dt, float aspect);                    // chunk mesh, terrain, crosshair
 	void renderEntities(float dt, float aspect);                 // entity models, animations, damage flashes
 	void renderPickupAnimations();                               // flying item animations
+	void renderAnnotations(float aspect);                        // block decorations (flowers, moss)
 	void renderEntityEffects(float dt, float aspect);            // goal bubbles, HP bars, lightbulbs
 	void renderHUD(float dt, float aspect, bool skipImGui);      // hotbar, equipment, chest overlay, FPS
 
@@ -192,7 +193,7 @@ private:
 	bool m_logOnly  = false;   // --log-only: hidden window, event log to /tmp (forces --skip-menu)
 	int  m_skipMenuTemplate = 1;  // --template N with --skip-menu: world template index (default village)
 
-	// Screenshots (F2 manual, or external trigger via /tmp/modcraft_screenshot_request)
+	// Screenshots (F2 manual, or external trigger via /tmp/civcraft_screenshot_request)
 	int m_screenshotCounter = 0;
 
 	// Debug capture (--debug-scenario flag)
@@ -221,7 +222,7 @@ private:
 
 	// Process management (singleplayer: spawns server process)
 	AgentManager m_agentMgr;
-	std::string m_execDir;           // directory containing modcraft-* binaries
+	std::string m_execDir;           // directory containing civcraft-* binaries
 
 	// Audio
 	AudioManager m_audio;
@@ -308,4 +309,4 @@ private:
 	float m_cameraBodyYawOffset  = 0.0f; // smoothed body rotation toward camera look dir
 };
 
-} // namespace modcraft
+} // namespace civcraft

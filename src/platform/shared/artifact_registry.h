@@ -29,11 +29,12 @@
 #include <sstream>
 #include <cstdio>
 #include <random>
+#include <algorithm>
 
-namespace modcraft {
+namespace civcraft {
 
 struct ArtifactEntry {
-	std::string id;           // "base:pig"
+	std::string id;           // "pig"
 	std::string name;         // "Pig"
 	std::string category;     // "living", "item", "block", "behavior", "effect", ...
 	std::string subcategory;  // for living: "humanoid" | "animal". Items: "weapon", etc.
@@ -64,6 +65,7 @@ public:
 		loadCategory("effects", "effect");
 		loadCategory("resources", "resource");
 		loadCategory("worlds", "world");
+		loadCategory("annotations", "annotation");
 
 		printf("[ArtifactRegistry] Loaded %zu artifacts from %s\n",
 		       m_entries.size(), basePath.c_str());
@@ -73,7 +75,7 @@ public:
 		// back to the file stem (e.g. brave_chicken.py → "brave_chicken").
 		int warnings = 0;
 		for (auto& e : m_entries) {
-			if (e.category == "living" || e.category == "item") {
+			if (e.category == "living" || e.category == "item" || e.category == "annotation") {
 				std::string key;
 				auto mit = e.fields.find("model");
 				if (mit != e.fields.end() && !mit->second.empty()) {
@@ -268,7 +270,7 @@ private:
 
 				// Parse basic fields from Python source
 				artifact.name = entry.path().stem().string();
-				artifact.id = std::string(isBuiltin ? "base:" : "player:") + artifact.name;
+				artifact.id = isBuiltin ? artifact.name : (std::string("player:") + artifact.name);
 
 				// Try to extract name/description from Python dict
 				parseFields(artifact);
@@ -344,6 +346,21 @@ private:
 		std::string model = extract("model");
 		if (!model.empty()) e.fields["model"] = model;
 
+		// Annotation-specific fields
+		std::string slot = extract("slot");
+		if (!slot.empty()) e.fields["slot"] = slot;
+		std::string spawnChance = extract("spawn_chance");
+		if (!spawnChance.empty()) e.fields["spawn_chance"] = spawnChance;
+		auto spawnOn = extractList(e.source, "spawn_on");
+		if (!spawnOn.empty()) {
+			std::string joined;
+			for (size_t i = 0; i < spawnOn.size(); i++) {
+				if (i > 0) joined += ",";
+				joined += spawnOn[i];
+			}
+			e.fields["spawn_on"] = joined;
+		}
+
 		// Extract behavior reference
 		std::string behavior = extract("behavior");
 		if (!behavior.empty()) e.fields["behavior"] = behavior;
@@ -370,8 +387,17 @@ private:
 			if (!val.empty()) e.fields[key] = val;
 		}
 
-		// Parse list fields: "tags": ["humanoid", "hostile"]
+		// Parse list fields: "tags": ["hostile", ...]
 		e.tags = extractList(e.source, "tags");
+
+		// Auto-tag from category so "humanoid"/"animal" lives in one place:
+		// Python artifacts declare `category: "humanoid"` (or "animal") and we
+		// inject that into `tags` here. Avoids duplicating it as a feature tag.
+		if ((e.subcategory == "humanoid" || e.subcategory == "animal") &&
+		    std::find(e.tags.begin(), e.tags.end(), e.subcategory) == e.tags.end()) {
+			e.tags.push_back(e.subcategory);
+		}
+
 		if (!e.tags.empty()) {
 			std::string joined;
 			for (size_t i = 0; i < e.tags.size(); i++) {
@@ -415,4 +441,4 @@ private:
 	std::vector<ArtifactEntry> m_entries;
 };
 
-} // namespace modcraft
+} // namespace civcraft

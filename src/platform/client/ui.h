@@ -15,7 +15,7 @@
 
 #include <GLFW/glfw3.h>
 
-namespace modcraft {
+namespace civcraft {
 
 class UI {
 public:
@@ -39,4 +39,4 @@ public:
 	bool wantsMouse() const;
 };
 
-} // namespace modcraft
+} // namespace civcraft

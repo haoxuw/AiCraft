@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 // ── ClipKey ───────────────────────────────────────────────────────────────────
 // One keyframe in an attack animation. posOffset and rotEuler are DELTAS
@@ -328,4 +328,4 @@ private:
     static constexpr float kComboWindowFrac = 0.30f;
 };
 
-} // namespace modcraft
+} // namespace civcraft

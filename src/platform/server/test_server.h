@@ -12,7 +12,7 @@
 #include <vector>
 #include <functional>
 
-namespace modcraft {
+namespace civcraft {
 
 class TestServer {
 public:
@@ -74,4 +74,4 @@ private:
 	EntityId m_playerId = ENTITY_NONE;
 };
 
-} // namespace modcraft
+} // namespace civcraft

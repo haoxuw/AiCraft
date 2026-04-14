@@ -18,7 +18,7 @@
 #include <cstring>
 #include <cstdio>
 
-namespace modcraft::net {
+namespace civcraft::net {
 
 // Make a socket non-blocking
 inline void setNonBlocking(int fd) {
@@ -289,4 +289,4 @@ private:
 	int m_fd = -1;
 };
 
-} // namespace modcraft::net
+} // namespace civcraft::net

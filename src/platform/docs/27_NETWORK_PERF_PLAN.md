@@ -60,15 +60,15 @@ FetchContent_MakeAvailable(zstd)
 ```
 
 Then add `libzstd_static` to every target that touches network code.
-Find the `target_link_libraries(modcraft-server ...)` block and add it.
-Same for `modcraft` (player client), `modcraft-client`, and `modcraft-agent`.
+Find the `target_link_libraries(civcraft-server ...)` block and add it.
+Same for `civcraft` (player client), `civcraft-client`, and `civcraft-agent`.
 
 ```cmake
 # In each target_link_libraries:
-target_link_libraries(modcraft-server  PRIVATE ... libzstd_static)
-target_link_libraries(modcraft         PRIVATE ... libzstd_static)
-target_link_libraries(modcraft-client  PRIVATE ... libzstd_static)
-target_link_libraries(modcraft-agent   PRIVATE ... libzstd_static)
+target_link_libraries(civcraft-server  PRIVATE ... libzstd_static)
+target_link_libraries(civcraft         PRIVATE ... libzstd_static)
+target_link_libraries(civcraft-client  PRIVATE ... libzstd_static)
+target_link_libraries(civcraft-agent   PRIVATE ... libzstd_static)
 ```
 
 ### Step 2 — Protocol version handshake in `net_protocol.h`
@@ -647,7 +647,7 @@ make game
 
 ```bash
 # Walk 200 blocks, check memory via /proc
-grep VmRSS /proc/$(pgrep modcraft-server)/status
+grep VmRSS /proc/$(pgrep civcraft-server)/status
 # sentChunks should cap at ~(2*9+1)^2 * 2 = 722 entries per client
 # not grow to thousands
 ```

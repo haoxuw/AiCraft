@@ -3,7 +3,7 @@
  * CrashLog — dump a structured report + abort when the game hits an
  * unrecoverable state (e.g. a client/server snap-back deadlock).
  *
- * Output: /tmp/modcraft_crash.log (overwritten each crash). The report is
+ * Output: /tmp/civcraft_crash.log (overwritten each crash). The report is
  * also echoed to stderr and to the GameLogger so the in-memory ring
  * buffer preserves it up to the moment of abort.
  *
@@ -27,14 +27,14 @@
 #include <string>
 #include <vector>
 
-namespace modcraft {
+namespace civcraft {
 
 class CrashLog {
 public:
 	explicit CrashLog(const std::string& title)
 		: m_title(title) {
 		m_lines.reserve(32);
-		line("==== MODCRAFT CRASH ====");
+		line("==== CIVCRAFT CRASH ====");
 		line("title: %s", title.c_str());
 	}
 
@@ -67,10 +67,10 @@ public:
 		m_lines.emplace_back(row);
 	}
 
-	// Write to /tmp/modcraft_crash.log + stderr + GameLogger, then abort.
+	// Write to /tmp/civcraft_crash.log + stderr + GameLogger, then abort.
 	[[noreturn]] void abort() {
 		std::string path =
-			(std::filesystem::temp_directory_path() / "modcraft_crash.log").string();
+			(std::filesystem::temp_directory_path() / "civcraft_crash.log").string();
 		if (FILE* f = std::fopen(path.c_str(), "w")) {
 			for (auto& l : m_lines) {
 				std::fputs(l.c_str(), f);
@@ -94,7 +94,7 @@ public:
 	// Write the report without aborting — for soft-crash diagnostics.
 	void dump() {
 		std::string path =
-			(std::filesystem::temp_directory_path() / "modcraft_crash.log").string();
+			(std::filesystem::temp_directory_path() / "civcraft_crash.log").string();
 		if (FILE* f = std::fopen(path.c_str(), "w")) {
 			for (auto& l : m_lines) {
 				std::fputs(l.c_str(), f);
@@ -109,4 +109,4 @@ private:
 	std::vector<std::string> m_lines;
 };
 
-} // namespace modcraft
+} // namespace civcraft

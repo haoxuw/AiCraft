@@ -15,7 +15,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace modcraft {
+namespace civcraft {
 
 struct CharacterStats {
 	int strength = 3;     // 1-5 stars
@@ -66,7 +66,7 @@ struct ItemPiece {
 
 // A particle emitter definition (CLIENT-SIDE).
 // Fires when an entity property (trigger) is truthy.
-// Mirrors Python: modcraft.items.base.ParticleEmitter
+// Mirrors Python: civcraft.items.base.ParticleEmitter
 struct ParticleEmitterDef {
 	glm::vec3 offset = {0,0,0};       // relative to slot center
 	int rate = 4;                      // particles per frame
@@ -83,14 +83,14 @@ struct ParticleEmitterDef {
 };
 
 // Active effect: particle emitters triggered by an entity property.
-// Mirrors Python: modcraft.items.base.ActiveEffect
+// Mirrors Python: civcraft.items.base.ActiveEffect
 struct ActiveEffectDef {
 	std::string trigger;               // entity prop name, e.g. "jetpack_active"
 	std::vector<ParticleEmitterDef> emitters;
 };
 
 // Complete client-side visual for an equipped item.
-// Mirrors Python: modcraft.items.base.ItemVisual
+// Mirrors Python: civcraft.items.base.ItemVisual
 struct ItemVisual {
 	std::string itemId;
 	std::string slotName;              // "back", "head", "right_hand", etc.
@@ -205,4 +205,4 @@ private:
 	int m_selectedIndex = 0;
 };
 
-} // namespace modcraft
+} // namespace civcraft

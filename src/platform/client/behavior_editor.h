@@ -20,7 +20,7 @@
 #include <unordered_map>
 #include <algorithm>
 
-namespace modcraft {
+namespace civcraft {
 
 // ================================================================
 // BehaviorFunc — definition of one built-in function
@@ -144,7 +144,7 @@ class BehaviorCompiler {
 public:
 	static std::string compile(const BehaviorExpr& root) {
 		std::string code;
-		code += "from modcraft_engine import Idle, Wander, MoveTo, Follow, Flee, BreakBlock, DropItem\n";
+		code += "from civcraft_engine import Idle, Wander, MoveTo, Follow, Flee, BreakBlock, DropItem\n";
 		code += "import random as _rng\n\n";
 		code += "def decide(self, world):\n";
 		code += compileNode(root, 1);
@@ -196,21 +196,21 @@ private:
 		}
 		if (fn.id == "seek_roost") {
 			return p + "for b in world[\"blocks\"]:\n" +
-			       p + "    if b[\"type\"] in (\"base:wood\", \"base:fence\", \"base:planks\") and b[\"y\"] > self[\"y\"] + 1.5:\n" +
+			       p + "    if b[\"type\"] in (\"wood\", \"fence\", \"planks\") and b[\"y\"] > self[\"y\"] + 1.5:\n" +
 			       p + "        self[\"goal\"] = \"Seeking roost\"\n" +
 			       p + "        return MoveTo(b[\"x\"] + 0.5, b[\"y\"] + 1.0, b[\"z\"] + 0.5)\n" +
 			       p + "return Idle()\n";
 		}
 		if (fn.id == "seek_water") {
 			return p + "for b in world[\"blocks\"]:\n" +
-			       p + "    if b[\"type\"] == \"base:water\":\n" +
+			       p + "    if b[\"type\"] == \"water\":\n" +
 			       p + "        self[\"goal\"] = \"Heading to water\"\n" +
 			       p + "        return MoveTo(b[\"x\"] + 0.5, b[\"y\"] + 1, b[\"z\"] + 0.5)\n" +
 			       p + "return Wander()\n";
 		}
 		if (fn.id == "drop_item") {
 			std::string item = expr.param.empty() ? "egg" : expr.param;
-			return p + "return DropItem(\"base:" + item + "\", 1)\n";
+			return p + "return DropItem(\"" + item + "\", 1)\n";
 		}
 
 		// Entity-targeting actions: search nearby, act on closest
@@ -221,7 +221,7 @@ private:
 			else action = "Follow(e[\"id\"], speed=4.0)";
 
 			return p + "for e in world[\"nearby\"]:\n" +
-			       p + "    if e[\"type\"] == \"base:" + type + "\":\n" +
+			       p + "    if e[\"type\"] == \"" + type + "\":\n" +
 			       p + "        return " + action + "\n" +
 			       p + "return Wander()\n";
 		}
@@ -230,13 +230,13 @@ private:
 		std::string blockType = expr.param.empty() ? "wood" : expr.param;
 		if (fn.id == "find_block") {
 			return p + "for b in world[\"blocks\"]:\n" +
-			       p + "    if b[\"type\"] == \"base:" + blockType + "\":\n" +
+			       p + "    if b[\"type\"] == \"" + blockType + "\":\n" +
 			       p + "        return MoveTo(b[\"x\"], b[\"y\"], b[\"z\"])\n" +
 			       p + "return Wander()\n";
 		}
 		if (fn.id == "break_block") {
 			return p + "for b in world[\"blocks\"]:\n" +
-			       p + "    if b[\"type\"] == \"base:" + blockType + "\":\n" +
+			       p + "    if b[\"type\"] == \"" + blockType + "\":\n" +
 			       p + "        return BreakBlock(b[\"x\"], b[\"y\"], b[\"z\"])\n" +
 			       p + "return Idle()\n";
 		}
@@ -256,25 +256,25 @@ private:
 
 		// Threat / awareness
 		if (fn.id == "threatened")
-			return "any((e[\"category\"] == \"player\" or e[\"type\"] == \"base:cat\") and e[\"distance\"] < 5.0 for e in world[\"nearby\"])";
+			return "any((e[\"category\"] == \"player\" or e[\"type\"] == \"cat\") and e[\"distance\"] < 5.0 for e in world[\"nearby\"])";
 		if (fn.id == "startled")
-			return "any((e[\"category\"] == \"player\" or e[\"type\"] == \"base:cat\") and e[\"distance\"] < 4.0 for e in world[\"nearby\"])";
+			return "any((e[\"category\"] == \"player\" or e[\"type\"] == \"cat\") and e[\"distance\"] < 4.0 for e in world[\"nearby\"])";
 		if (fn.id == "hp_low")
 			return "self.get(\"hp\", 10) < self.get(\"max_hp\", 10) * 0.3";
 		if (fn.id == "see_entity") {
 			std::string type = expr.param.empty() ? "player" : expr.param;
-			return "any(e[\"type\"] == \"base:" + type + "\" for e in world[\"nearby\"])";
+			return "any(e[\"type\"] == \"" + type + "\" for e in world[\"nearby\"])";
 		}
 		if (fn.id == "near_block") {
 			std::string type = expr.param.empty() ? "wood" : expr.param;
-			return "any(b[\"type\"] == \"base:" + type + "\" for b in world[\"blocks\"])";
+			return "any(b[\"type\"] == \"" + type + "\" for b in world[\"blocks\"])";
 		}
 
 		// Social / spatial
 		if (fn.id == "far_from_flock")
 			return "all(e[\"distance\"] > 4 for e in world[\"nearby\"] if e[\"type\"] == self[\"type\"] and e[\"id\"] != self[\"id\"])";
 		if (fn.id == "near_water")
-			return "any(b[\"type\"] == \"base:water\" and b[\"distance\"] < 15 for b in world[\"blocks\"])";
+			return "any(b[\"type\"] == \"water\" and b[\"distance\"] < 15 for b in world[\"blocks\"])";
 
 		// Randomness
 		if (fn.id == "random_chance") {
@@ -480,7 +480,7 @@ private:
 			if (isDefault)
 				ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.78f, 1), "[default]");
 			else {
-				char badge[8]; snprintf(badge, sizeof(badge), "[P%d]", ++conditionalCount);
+				char badge[20]; snprintf(badge, sizeof(badge), "[P%d]", ++conditionalCount);
 				ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.25f, 1), "%s", badge);
 			}
 			ImGui::SameLine();
@@ -569,4 +569,4 @@ inline bool renderExprEditor(BehaviorExpr& expr, int depth, int& idCounter) {
 	return BehaviorExprEditor::render(expr, depth, idCounter);
 }
 
-} // namespace modcraft
+} // namespace civcraft

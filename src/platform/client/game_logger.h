@@ -1,7 +1,7 @@
 #pragma once
 // GameLogger — WoW-style event log.
 // Tees every event to:
-//   1. /tmp/modcraft_game.log (append, line-buffered; prior session → .log.prev)
+//   1. /tmp/civcraft_game.log (append, line-buffered; prior session → .log.prev)
 //   2. in-memory ring buffer (for the Main Menu → Game Log viewer)
 //   3. stdout when headless (--log-only)
 //
@@ -22,7 +22,7 @@
 #include <unistd.h>
 #endif
 
-namespace modcraft {
+namespace civcraft {
 
 class GameLogger {
 public:
@@ -38,8 +38,8 @@ public:
 		m_echoStdout = echoStdout;
 		namespace fs = std::filesystem;
 		fs::path tmp = fs::temp_directory_path();
-		m_path = (tmp / "modcraft_game.log").string();
-		fs::path prev = tmp / "modcraft_game.log.prev";
+		m_path = (tmp / "civcraft_game.log").string();
+		fs::path prev = tmp / "civcraft_game.log.prev";
 		std::error_code ec;
 		if (fs::exists(m_path, ec)) {
 			fs::remove(prev, ec);
@@ -50,7 +50,7 @@ public:
 		m_initialized = true;
 		// Header so readers know which process this belongs to
 		char hdr[128];
-		snprintf(hdr, sizeof(hdr), "=== modcraft session pid=%d ===", (int)getpid());
+		snprintf(hdr, sizeof(hdr), "=== civcraft session pid=%d ===", (int)getpid());
 		if (m_file) { std::fputs(hdr, m_file); std::fputc('\n', m_file); }
 		if (m_echoStdout) { std::fputs(hdr, stdout); std::fputc('\n', stdout); }
 	}
@@ -121,4 +121,4 @@ private:
 	std::deque<std::string> m_buf;
 };
 
-} // namespace modcraft
+} // namespace civcraft

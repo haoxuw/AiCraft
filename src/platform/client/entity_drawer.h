@@ -4,7 +4,7 @@
 #include "shared/entity.h"
 #include <glm/glm.hpp>
 
-namespace modcraft {
+namespace civcraft {
 
 // Draws a single non-player entity (creature / NPC) body with animation.
 //
@@ -28,4 +28,4 @@ private:
 	ModelRenderer& m_mr;
 };
 
-} // namespace modcraft
+} // namespace civcraft

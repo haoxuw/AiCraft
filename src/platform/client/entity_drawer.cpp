@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace modcraft {
+namespace civcraft {
 
 // Goal-keyword → animation-clip map. Modders can extend behaviors with
 // new goalText keywords; matching clip names must exist in the model's
@@ -15,6 +15,8 @@ static const char* pickClip(const std::string& goal) {
 	if (goal.find("Sleeping")   != std::string::npos) return "sleep";
 	if (goal.find("Depositing") != std::string::npos) return "wave";
 	if (goal.find("Dancing")    != std::string::npos) return "dance";
+	if (goal.find("Flying")     != std::string::npos) return "fly";
+	if (goal.find("Landing")    != std::string::npos) return "land";
 	return "";
 }
 
@@ -56,4 +58,4 @@ void EntityDrawer::draw(const Entity& e, const BoxModel& model,
 	m_mr.draw(model, viewProj, e.position, bodyYaw, anim, damageFlashTint);
 }
 
-} // namespace modcraft
+} // namespace civcraft

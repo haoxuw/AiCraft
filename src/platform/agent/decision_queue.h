@@ -18,7 +18,7 @@
 #include <utility>
 #include <unordered_map>
 
-namespace modcraft {
+namespace civcraft {
 
 // Why the previous plan ended. Handed to the next decide() call so Python
 // behaviors can branch on outcome rather than re-evaluating from scratch.
@@ -67,4 +67,4 @@ private:
 	std::unordered_map<EntityId, LastOutcome> m_ready;
 };
 
-} // namespace modcraft
+} // namespace civcraft

@@ -16,7 +16,7 @@
 #include <emscripten.h>
 #endif
 
-namespace modcraft {
+namespace civcraft {
 
 // ============================================================
 // Screenshot utility
@@ -37,7 +37,7 @@ static void writeScreenshot(int w, int h, const char* path) {
 // Init / Shutdown
 // ============================================================
 bool Game::init(int argc, char** argv) {
-	printf("=== ModCraft v0.9.0 ===\n");
+	printf("=== CivCraft v0.9.0 ===\n");
 
 	// Determine executable directory (for launching server/bot processes)
 	if (argc > 0) {
@@ -55,7 +55,7 @@ bool Game::init(int argc, char** argv) {
 		}
 	}
 
-	if (!m_window.init(1600, 900, "ModCraft", m_logOnly)) return false;
+	if (!m_window.init(1600, 900, "CivCraft", m_logOnly)) return false;
 	if (!m_renderer.init("shaders")) return false;
 	if (!m_text.init("shaders")) return false;
 	if (!m_particles.init("shaders")) return false;
@@ -203,7 +203,7 @@ bool Game::init(int argc, char** argv) {
 			if (e->subcategory == "humanoid") { pick = e; break; }
 		}
 		if (!pick && !living.empty()) pick = living[0];
-		m_selectedCreature = pick ? pick->id : "base:player";
+		m_selectedCreature = pick ? pick->id : "player";
 	}
 
 	// Register ALL models for Handbook 3D preview
@@ -505,7 +505,7 @@ void Game::saveScreenshot() {
 	fs::path tmp;
 	try { tmp = fs::temp_directory_path(); } catch (...) { tmp = "/tmp"; }
 	char name[64];
-	snprintf(name, sizeof(name), "modcraft_screenshot_%d.ppm", m_screenshotCounter++);
+	snprintf(name, sizeof(name), "civcraft_screenshot_%d.ppm", m_screenshotCounter++);
 	std::string path = (tmp / name).string();
 
 	writeScreenshot(m_window.width(), m_window.height(), path.c_str());
@@ -518,7 +518,7 @@ void Game::saveScreenshot() {
 	{
 		// macOS: convert PPM to TIFF via sips and set clipboard with osascript
 		char cmd[512];
-		std::string tiff = (tmp / "modcraft_ss_tmp.tiff").string();
+		std::string tiff = (tmp / "civcraft_ss_tmp.tiff").string();
 		snprintf(cmd, sizeof(cmd), "sips -s format tiff '%s' --out '%s' 2>/dev/null && "
 		         "osascript -e 'set the clipboard to (read file \"%s\" as TIFF picture)' 2>/dev/null",
 		         path.c_str(), tiff.c_str(), tiff.c_str());
@@ -732,7 +732,7 @@ void Game::enterGame(int templateIndex, GameState targetState, const WorldGenCon
 
 	int port = m_agentMgr.launchServer(cfg);
 	if (port < 0) {
-		fprintf(stderr, "[Game] Failed to launch modcraft-server — binary missing or no port available\n");
+		fprintf(stderr, "[Game] Failed to launch civcraft-server — binary missing or no port available\n");
 		// TODO: surface error in UI rather than silently returning to menu
 		return;
 	}
@@ -753,7 +753,6 @@ void Game::setupAfterConnect(GameState targetState) {
 		// onBlockBreakText: block break confirmed by server — show HUD text
 		[this](glm::vec3 pos, const std::string& blockName) {
 			std::string name = blockName;
-			if (name.size() > 5 && name.substr(0,5) == "base:") name = name.substr(5);
 			if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
 			for (auto& c : name) if (c == '_') c = ' ';
 			FloatTextEvent ft;
@@ -868,7 +867,7 @@ void Game::setupAfterConnect(GameState targetState) {
 }
 
 void Game::saveCurrentWorld() {
-	// The server process (modcraft-server) saves world data on shutdown.
+	// The server process (civcraft-server) saves world data on shutdown.
 	// stopAll() sends SIGTERM which triggers main_server.cpp's save handler.
 	// Nothing to do here on the client side.
 	if (!m_currentWorldPath.empty())
@@ -878,4 +877,4 @@ void Game::saveCurrentWorld() {
 // NOTE: updatePlaying, renderPlaying → game_playing.cpp / game_render.cpp
 // NOTE: updateEntityInspect, updateCodeEditor, updatePaused → game_ui.cpp
 
-} // namespace modcraft
+} // namespace civcraft

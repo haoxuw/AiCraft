@@ -5,7 +5,7 @@
 #include <unordered_set>
 #include <filesystem>
 
-namespace modcraft {
+namespace civcraft {
 
 // ============================================================
 // renderPlaying helpers
@@ -321,6 +321,9 @@ void Game::renderEntities(float dt, float aspect) {
 	});
 
 	renderPickupAnimations();
+
+	// Block decorations (flowers, moss, …) — sit on host blocks, no physics.
+	renderAnnotations(aspect);
 
 	// Selection circles under selected entities (RTS mode)
 	{
@@ -882,8 +885,8 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 		screenshotCheckTimer += dt;
 		if (screenshotCheckTimer > 0.5f) {
 			screenshotCheckTimer = 0;
-			if (std::filesystem::exists("/tmp/modcraft_screenshot_request")) {
-				std::filesystem::remove("/tmp/modcraft_screenshot_request");
+			if (std::filesystem::exists("/tmp/civcraft_screenshot_request")) {
+				std::filesystem::remove("/tmp/civcraft_screenshot_request");
 				saveScreenshot();
 			}
 		}
@@ -927,4 +930,51 @@ void Game::renderPlaying(float dt, float aspect, bool skipImGui) {
 	}
 }
 
-} // namespace modcraft
+void Game::renderAnnotations(float aspect) {
+	auto& srv = *m_server;
+	glm::mat4 vp = m_camera.projectionMatrix(aspect) * m_camera.viewMatrix();
+	auto& mr = m_renderer.modelRenderer();
+
+	// Iterate chunks within the render radius around the camera and draw each
+	// annotation with its model (same path dropped items use). Missing models
+	// are silently skipped — a missing decorator shouldn't crash the frame.
+	glm::vec3 camPos = m_camera.smoothedFeetPos();
+	auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+	int ccx = div((int)std::floor(camPos.x), CHUNK_SIZE);
+	int ccy = div((int)std::floor(camPos.y), CHUNK_SIZE);
+	int ccz = div((int)std::floor(camPos.z), CHUNK_SIZE);
+	int r = m_renderDistance;
+
+	for (int cx = ccx - r; cx <= ccx + r; cx++)
+	for (int cz = ccz - r; cz <= ccz + r; cz++)
+	for (int cy = ccy - 2; cy <= ccy + 2; cy++) {
+		ChunkPos cp = {cx, cy, cz};
+		const auto* list = srv.annotationsForChunk(cp);
+		if (!list) continue;
+		for (auto& [wpos, ann] : *list) {
+			auto mit = m_models.find(ann.typeId);
+			if (mit == m_models.end()) continue;
+
+			// Center on top/bottom/around of the host block.
+			glm::vec3 base(wpos.x + 0.5f, (float)wpos.y, wpos.z + 0.5f);
+			switch (ann.slot) {
+				case AnnotationSlot::Top:    base.y += 1.0f; break;
+				case AnnotationSlot::Bottom: base.y += 0.0f; break;
+				case AnnotationSlot::Around: base.y += 0.5f; break;
+			}
+
+			// Normalize height like dropped items so decorators don't tower.
+			BoxModel m = mit->second;
+			float targetH = 0.5f;
+			float modelH = std::max(m.totalHeight * m.modelScale, 0.1f);
+			float worldScale = targetH / modelH;
+			for (auto& part : m.parts) {
+				part.offset *= worldScale;
+				part.halfSize *= worldScale;
+			}
+			mr.draw(m, vp, base, 0.0f, {});
+		}
+	}
+}
+
+} // namespace civcraft

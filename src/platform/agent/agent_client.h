@@ -28,7 +28,7 @@
 #include <string>
 #include <random>
 
-namespace modcraft {
+namespace civcraft {
 
 // ================================================================
 // AgentClient
@@ -217,6 +217,9 @@ private:
 		for (auto& [eid, state] : m_agents) {
 			Entity* actor = m_server.getEntity(eid);
 			if (!actor || actor->removed || !actor->inventory) continue;
+			// Only humanoids auto-pickup. Animals ignore ground items so e.g.
+			// chickens don't instantly re-grab their own eggs.
+			if (!actor->def().hasTag("humanoid")) continue;
 			float cap = actor->def().inventory_capacity;
 			if (cap <= 0.0f) continue;
 			float range = actor->def().pickup_range > 0.0f
@@ -307,7 +310,7 @@ private:
 			auto& chunks = srv->chunks();
 			ChunkPos cp = worldToChunk(x, y, z);
 			auto* chunk = chunks.getChunkIfLoaded(cp);
-			if (!chunk) return "base:air";
+			if (!chunk) return "air";
 			int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 			int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 			int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
@@ -389,6 +392,48 @@ private:
 			});
 			std::sort(out.begin(), out.end(),
 			          [](const NearbyEntity& a, const NearbyEntity& b) {
+			              return a.distance < b.distance;
+			          });
+			if ((int)out.size() > maxResults) out.resize(maxResults);
+			return out;
+		};
+
+		// Scan block decorations (flowers, moss, …) by typeId. Implemented
+		// via ServerInterface::annotationsForChunk; iterates loaded chunks in
+		// a Chebyshev box around origin and filters by typeId + maxDist.
+		req.scanAnnotations = [srv](const std::string& typeId, glm::vec3 origin,
+		                            float maxDist, int maxResults)
+		    -> std::vector<BlockSample> {
+			std::vector<BlockSample> out;
+			float maxDist2 = maxDist * maxDist;
+			int cxMin = (int)std::floor((origin.x - maxDist) / (float)CHUNK_SIZE);
+			int cxMax = (int)std::floor((origin.x + maxDist) / (float)CHUNK_SIZE);
+			int czMin = (int)std::floor((origin.z - maxDist) / (float)CHUNK_SIZE);
+			int czMax = (int)std::floor((origin.z + maxDist) / (float)CHUNK_SIZE);
+			int cyMin = (int)std::floor((origin.y - maxDist) / (float)CHUNK_SIZE);
+			int cyMax = (int)std::floor((origin.y + maxDist) / (float)CHUNK_SIZE);
+			for (int cx = cxMin; cx <= cxMax; cx++)
+			for (int cz = czMin; cz <= czMax; cz++)
+			for (int cy = cyMin; cy <= cyMax; cy++) {
+				ChunkPos cp{cx, cy, cz};
+				const auto* list = srv->annotationsForChunk(cp);
+				if (!list) continue;
+				for (auto& [wpos, ann] : *list) {
+					if (ann.typeId != typeId) continue;
+					float dx = (wpos.x + 0.5f) - origin.x;
+					float dy = (wpos.y + 0.5f) - origin.y;
+					float dz = (wpos.z + 0.5f) - origin.z;
+					float d2 = dx*dx + dy*dy + dz*dz;
+					if (d2 > maxDist2) continue;
+					BlockSample s;
+					s.typeId = typeId;
+					s.x = wpos.x; s.y = wpos.y; s.z = wpos.z;
+					s.distance = std::sqrt(d2);
+					out.push_back(s);
+				}
+			}
+			std::sort(out.begin(), out.end(),
+			          [](const BlockSample& a, const BlockSample& b) {
 			              return a.distance < b.distance;
 			          });
 			if ((int)out.size() > maxResults) out.resize(maxResults);
@@ -612,7 +657,7 @@ private:
 		glm::ivec3 bp = glm::ivec3(glm::floor(step.targetPos));
 		BlockId bid = m_server.chunks().getBlock(bp.x, bp.y, bp.z);
 		const BlockDef& bd = m_server.blockRegistry().get(bid);
-		if (bd.string_id == "base:air") return StepOutcome::Success;
+		if (bd.string_id == "air") return StepOutcome::Success;
 
 		glm::vec3 delta = step.targetPos - entity.position;
 		delta.y = 0;
@@ -1061,4 +1106,4 @@ private:
 	std::unordered_map<EntityId, uint32_t> m_decideGen;
 };
 
-} // namespace modcraft
+} // namespace civcraft

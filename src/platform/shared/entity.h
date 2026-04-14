@@ -12,7 +12,7 @@
 #include <memory>
 #include <cstdint>
 
-namespace modcraft {
+namespace civcraft {
 
 // EntityKind, EntityId defined in constants.h
 
@@ -20,7 +20,7 @@ namespace modcraft {
 // Blueprint data lives in StructureBlueprintManager (server-side); this struct
 // only carries the per-instance fields needed at runtime.
 struct StructureComponent {
-	std::string blueprintId;       // "base:tree" — key into StructureBlueprintManager
+	std::string blueprintId;       // "tree" — key into StructureBlueprintManager
 	glm::ivec3  anchorPos = {0,0,0}; // absolute world position of the anchor block
 	float       regenTimer = 0.0f;   // counts toward blueprint.regen_interval_s
 };
@@ -37,7 +37,7 @@ using PropValue = std::variant<
 // Static definition of an entity type. Mirrors Python ObjectMeta for entities.
 struct EntityDef {
 	EntityKind kind = EntityKind::Living;
-	std::string string_id;      // "base:pig"
+	std::string string_id;      // "pig"
 	std::string display_name;
 
 	// Visual
@@ -212,4 +212,4 @@ private:
 	std::set<std::string> m_dirty;
 };
 
-} // namespace modcraft
+} // namespace civcraft

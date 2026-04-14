@@ -1,4 +1,4 @@
-# ModCraft - Networking
+# CivCraft - Networking
 
 How the C++ server and Python clients communicate. TCP-based with delta compression.
 
@@ -8,7 +8,7 @@ How the C++ server and Python clients communicate. TCP-based with delta compress
 
 ```
 Luanti uses custom reliable UDP (MTP).
-ModCraft uses TCP + custom binary framing.
+CivCraft uses TCP + custom binary framing.
 
 Why TCP instead of UDP:
   - Simpler implementation (reliability built-in)

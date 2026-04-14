@@ -24,8 +24,8 @@
 #include "server/structure_block_cacher.h"
 #include "shared/block_registry.h"
 // Owned-NPC persistence across client sessions. Included at namespace scope
-// (before the `namespace modcraft {` below) because its <string>/<vector>
-// system includes must not land inside the modcraft namespace.
+// (before the `namespace civcraft {` below) because its <string>/<vector>
+// system includes must not land inside the civcraft namespace.
 #include "server/owned_entity_store.h"
 #include <algorithm>
 #include <memory>
@@ -38,7 +38,7 @@
 #include <chrono>
 #include <mutex>
 
-namespace modcraft {
+namespace civcraft {
 
 // ClientId moved to shared/types.h so services like ChunkGenService can
 // reference it without pulling the server header.
@@ -180,7 +180,7 @@ public:
 
 		// Place chest blocks + matching Structure entities in all non-barn
 		// houses. Villager behaviors discover these dynamically via
-		// scan_entities("base:chest") — no per-villager chest wiring.
+		// scan_entities("chest") — no per-villager chest wiring.
 		auto houseChests = tmpl.houseChestPositions(m_world->seed());
 		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
 		int chestCount = 0;
@@ -370,9 +370,9 @@ public:
 				} else {
 					pe->inventory->add(BlockType::Stone, 10);
 					pe->inventory->add(BlockType::Wood, 10);
-					pe->inventory->add("base:sword", 1);
-					pe->inventory->add("base:shield", 1);
-					pe->inventory->add("base:potion", 3);
+					pe->inventory->add("sword", 1);
+					pe->inventory->add("shield", 1);
+					pe->inventory->add("potion", 3);
 				}
 			}
 		}
@@ -514,7 +514,7 @@ public:
 
 	// Main server tick
 	void tick(float dt) {
-#ifdef MODCRAFT_PERF
+#ifdef CIVCRAFT_PERF
 		using Clock = std::chrono::steady_clock;
 		auto phaseStart = Clock::now();
 		auto tickStart = phaseStart;
@@ -706,7 +706,7 @@ public:
 		}
 		markPhase(m_lastTickProfile.stuckDetectionMs);
 
-#ifdef MODCRAFT_PERF
+#ifdef CIVCRAFT_PERF
 		m_lastTickProfile.totalMs =
 			std::chrono::duration<double, std::milli>(Clock::now() - tickStart).count();
 #endif
@@ -811,4 +811,4 @@ private:
 	std::unordered_map<ClientId, ClientState> m_clients;
 };
 
-} // namespace modcraft
+} // namespace civcraft

@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace modcraft {
+namespace civcraft {
 
 struct MoveResult {
 	glm::vec3 position;
@@ -238,4 +238,4 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	return result;
 }
 
-} // namespace modcraft
+} // namespace civcraft

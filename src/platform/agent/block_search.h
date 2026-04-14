@@ -26,7 +26,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 
-namespace modcraft::block_search {
+namespace civcraft::block_search {
 
 // Per-chunk census: exact count per block type id in a chunk.
 // The real agent cache (AgentChunkInfo) and unit tests both satisfy this
@@ -58,7 +58,7 @@ inline std::vector<BlockSample> run(const Options& opt,
                                     const BlockRegistry& blocks,
                                     const EnsureLoadedFn& ensureChunkLoaded) {
 	BlockId targetBid = blocks.getId(opt.typeId);
-	if (targetBid == BLOCK_AIR && opt.typeId != "base:air") return {};
+	if (targetBid == BLOCK_AIR && opt.typeId != "air") return {};
 
 	// Step 1: pick candidate chunks from the census index.
 	struct Candidate { ChunkPos pos; float dist; int count; };
@@ -120,4 +120,4 @@ inline std::vector<BlockSample> run(const Options& opt,
 	return result;
 }
 
-} // namespace modcraft::block_search
+} // namespace civcraft::block_search

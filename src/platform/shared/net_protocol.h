@@ -25,15 +25,17 @@
  * S_WELCOME       0x1001  [u32 entityId][vec3 spawn]
  * S_ENTITY        0x1002  EntityState (see serializeEntityState)
  * S_CHUNK         0x1003  Uncompressed chunk [i32 cx][i32 cy][i32 cz][u32×4096]
+ *                          [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N
  * S_REMOVE        0x1004  [u32 entityId]
  * S_TIME          0x1005  [f32 worldTime]
  * S_BLOCK         0x1006  [i32 x][i32 y][i32 z][u32 blockId][u8 param2]
  * S_INVENTORY     0x1007  [u32 eid][u32 n][str×n id][i32×n count][u8 equipN][str×equipN slot][str×equipN id]
  * S_ERROR         0x100B  [u32 entityId][str message]
  * S_CHUNK_EVICT   0x100E  Discard chunk [i32 cx][i32 cy][i32 cz]  (v2)
- * S_CHUNK_Z       0x100F  zstd-compressed chunk (v2)
+ * S_CHUNK_Z       0x100F  zstd-compressed chunk (v2); decompressed payload == S_CHUNK
  * S_NPC_INTERRUPT 0x1010  [u32 eid][str reason]                  (v3, TODO(decide-loop))
  * S_WORLD_EVENT   0x1011  [str kind][str payload]                (v3, TODO(decide-loop))
+ * S_ANNOTATION_SET 0x1014 [i32 x][i32 y][i32 z][str typeId — empty = remove][u8 slot]
  */
 
 #include "shared/entity.h"
@@ -44,7 +46,7 @@
 #include <vector>
 #include <string>
 
-namespace modcraft::net {
+namespace civcraft::net {
 
 // Protocol version sent in C_HELLO. Server uses this to pick S_CHUNK vs S_CHUNK_Z.
 // Increment this whenever the wire format changes.
@@ -84,6 +86,11 @@ enum MsgType : uint32_t {
 	// wires them to AgentClient::onInterrupt / onWorldEvent.
 	S_NPC_INTERRUPT   = 0x1010,  // [u32 entityId][str reason]  ("proximity", ...)
 	S_WORLD_EVENT     = 0x1011,  // [str kind][str payload]     ("time_of_day", "day"|"night")
+
+	// Annotation (block decorator) streaming — single-cell updates; bulk
+	// annotations piggyback on S_CHUNK / S_CHUNK_Z after the block data.
+	S_ANNOTATION_SET  = 0x1014,  // [i32 x][i32 y][i32 z][str typeId][u8 slot]
+	                             //   typeId=="" means remove annotation at pos
 };
 
 // Message header (8 bytes)
@@ -262,7 +269,7 @@ struct EntityState {
 	float yaw;
 	bool onGround;
 	std::string goalText;
-	std::string characterSkin; // visual override (e.g., "base:knight")
+	std::string characterSkin; // visual override (e.g., "knight")
 	int hp;
 	int maxHp;
 	int owner = 0;  // EntityId of owning player (0 = unowned)
@@ -326,4 +333,4 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 
 // ChunkInfo wire protocol removed — agents share PlayerClient's chunk cache
 
-} // namespace modcraft::net
+} // namespace civcraft::net

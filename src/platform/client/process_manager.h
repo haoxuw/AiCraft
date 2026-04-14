@@ -4,7 +4,7 @@
  * AgentManager — spawns and manages the server process for singleplayer.
  *
  * Used by the GUI (player client) to orchestrate singleplayer:
- *   1. Spawn modcraft-server on a free port
+ *   1. Spawn civcraft-server on a free port
  *   2. Wait for server ready signal
  *   3. GUI connects to localhost as a regular player client
  *
@@ -24,7 +24,7 @@
 #include <netinet/in.h>
 #include <filesystem>
 
-namespace modcraft {
+namespace civcraft {
 
 class AgentManager {
 public:
@@ -33,7 +33,7 @@ public:
 		int templateIndex = 1;
 		int port = 0;            // 0 = auto-pick free port (7800-7899)
 		std::string worldPath;   // load saved world (empty = new world)
-		std::string execDir;     // directory containing modcraft-* binaries
+		std::string execDir;     // directory containing civcraft-* binaries
 	};
 
 	~AgentManager() { stopAll(); }
@@ -43,7 +43,7 @@ public:
 		m_port = (cfg.port > 0) ? cfg.port : findFreePort();
 		if (m_port < 0) return -1;
 
-		std::string serverBin = cfg.execDir + "/modcraft-server";
+		std::string serverBin = cfg.execDir + "/civcraft-server";
 		if (!std::filesystem::exists(serverBin)) {
 			printf("[AgentManager] Server binary not found: %s\n", serverBin.c_str());
 			return -1;
@@ -69,7 +69,7 @@ public:
 		}
 
 		char readyPath[64];
-		snprintf(readyPath, sizeof(readyPath), "/tmp/modcraft_ready_%d", m_port);
+		snprintf(readyPath, sizeof(readyPath), "/tmp/civcraft_ready_%d", m_port);
 		if (!waitForFile(readyPath, 5.0f)) {
 			printf("[AgentManager] Server failed to start (timeout)\n");
 			kill(m_serverPid, SIGKILL);
@@ -102,7 +102,7 @@ public:
 
 		if (m_port > 0) {
 			char readyPath[64];
-			snprintf(readyPath, sizeof(readyPath), "/tmp/modcraft_ready_%d", m_port);
+			snprintf(readyPath, sizeof(readyPath), "/tmp/civcraft_ready_%d", m_port);
 			std::remove(readyPath);
 		}
 
@@ -164,7 +164,7 @@ private:
 			if (free) {
 				// Remove any stale ready-file left from a previous crash
 				char stale[64];
-				snprintf(stale, sizeof(stale), "/tmp/modcraft_ready_%d", p);
+				snprintf(stale, sizeof(stale), "/tmp/civcraft_ready_%d", p);
 				std::remove(stale);
 				return p;
 			}
@@ -176,4 +176,4 @@ private:
 	pid_t m_serverPid = 0;
 };
 
-} // namespace modcraft
+} // namespace civcraft

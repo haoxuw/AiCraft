@@ -14,7 +14,7 @@
 #include <string>
 #include <functional>
 
-namespace modcraft {
+namespace civcraft {
 namespace development {
 
 // Callbacks injected by the game into the scenario.
@@ -36,7 +36,7 @@ struct ScenarioCallbacks {
 	const Hotbar*                                  hotbar = nullptr;
 
 	// Override the local player's rendered model (character_views scenario).
-	// Accepts "base:pig" or "pig"; resolves via the same character_skin prop
+	// Accepts "pig" or "pig"; resolves via the same character_skin prop
 	// path used by the normal render flow.
 	std::function<void(const std::string& skinId)> setCharacterSkin;
 	// Set player body yaw in degrees (facing direction).
@@ -94,4 +94,4 @@ protected:
 };
 
 } // namespace development
-} // namespace modcraft
+} // namespace civcraft

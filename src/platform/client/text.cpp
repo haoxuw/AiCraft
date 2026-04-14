@@ -4,7 +4,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace modcraft {
+namespace civcraft {
 
 // font8x8_basic - public domain 8x8 font, ASCII 32-127
 const unsigned char FONT_8X8[96][8] = {
@@ -314,4 +314,4 @@ void TextRenderer::drawArc(float cx, float cy, float r_inner, float r_outer,
 	uploadAndDraw(verts.data(), verts.size(), 1, color);
 }
 
-} // namespace modcraft
+} // namespace civcraft

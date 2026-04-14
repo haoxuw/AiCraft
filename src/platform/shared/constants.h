@@ -9,17 +9,17 @@
  *     Living  — moves, has HP, has inventory (players, NPCs, animals)
  *     Item    — on ground or in inventory
  *
- *   LivingName — string IDs for Living entities: "base:player", "base:chicken", etc.
- *   ItemName   — string IDs for Item entities: "base:egg", "base:apple", etc.
+ *   LivingName — string IDs for Living entities: "player", "chicken", etc.
+ *   ItemName   — string IDs for Item entities: "egg", "apple", etc.
  *   These are mutually exclusive: every entity is either Living or Item.
  *
- *   BlockType — string IDs for world blocks: "base:stone", "base:door", etc.
+ *   BlockType — string IDs for world blocks: "stone", "door", etc.
  *   Blocks are NOT entities. Mapped to BlockId (uint16) by BlockRegistry.
  */
 
 #include <cstdint>
 
-namespace modcraft {
+namespace civcraft {
 
 // ================================================================
 // EntityKind — the two kinds of entity
@@ -37,24 +37,23 @@ constexpr EntityId ENTITY_NONE = 0;
 // Living entity names (species/variant)
 // ================================================================
 namespace LivingName {
-	constexpr const char* Player       = "base:player";
-	constexpr const char* Pig          = "base:pig";
-	constexpr const char* Chicken      = "base:chicken";
-	constexpr const char* Dog          = "base:dog";
-	constexpr const char* Cat          = "base:cat";
-	constexpr const char* Villager     = "base:villager";
-	constexpr const char* Crewmate     = "base:crewmate";
-	constexpr const char* Knight       = "base:knight";
-	constexpr const char* Mage         = "base:mage";
-	constexpr const char* Skeleton     = "base:skeleton";
-	constexpr const char* Giant        = "base:giant";
-	constexpr const char* BraveChicken = "base:brave_chicken"; // todo: remove this, MOD from python side
-	constexpr const char* Squirrel     = "base:squirrel";
-	constexpr const char* Raccoon      = "base:raccoon";
-	constexpr const char* Beaver       = "base:beaver";
-	constexpr const char* Bee          = "base:bee";
-	constexpr const char* Owl          = "base:owl";
-	constexpr const char* Goose        = "base:goose";
+	constexpr const char* Player       = "player";
+	constexpr const char* Pig          = "pig";
+	constexpr const char* Chicken      = "chicken";
+	constexpr const char* Dog          = "dog";
+	constexpr const char* Cat          = "cat";
+	constexpr const char* Villager     = "villager";
+	constexpr const char* Crewmate     = "crewmate";
+	constexpr const char* Knight       = "knight";
+	constexpr const char* Mage         = "mage";
+	constexpr const char* Skeleton     = "skeleton";
+	constexpr const char* Giant        = "giant";
+	constexpr const char* BraveChicken = "brave_chicken"; // todo: remove this, MOD from python side
+	constexpr const char* Squirrel     = "squirrel";
+	constexpr const char* Raccoon      = "raccoon";
+	constexpr const char* Beaver       = "beaver";
+	constexpr const char* Bee          = "bee";
+	constexpr const char* Owl          = "owl";
 }
 
 // ================================================================
@@ -71,11 +70,11 @@ namespace FeatureTag {
 // Structure entity names (multi-block assemblages in the world)
 // ================================================================
 namespace StructureName {
-	constexpr const char* Chest   = "base:chest";    // single block; owns an inventory
-	constexpr const char* Bed     = "base:bed";      // two-block head + foot
-	constexpr const char* Tree    = "base:tree";     // trunk + leaf canopy
-	constexpr const char* House   = "base:house";    // walls + roof + floor
-	constexpr const char* Spawner = "base:spawner";  // spawner block structure
+	constexpr const char* Chest   = "chest";    // single block; owns an inventory
+	constexpr const char* Bed     = "bed";      // two-block head + foot
+	constexpr const char* Tree    = "tree";     // trunk + leaf canopy
+	constexpr const char* House   = "house";    // walls + roof + floor
+	constexpr const char* Spawner = "spawner";  // spawner block structure
 }
 
 // ================================================================
@@ -83,57 +82,57 @@ namespace StructureName {
 // ================================================================
 namespace ItemName {
 	// The item entity type (wrapper for any item on the ground)
-	constexpr const char* ItemEntity   = "base:item_entity";
+	constexpr const char* ItemEntity   = "item_entity";
 
 	// Equipment
-	constexpr const char* Jetpack      = "base:jetpack";
-	constexpr const char* Parachute    = "base:parachute";
+	constexpr const char* Jetpack      = "jetpack";
+	constexpr const char* Parachute    = "parachute";
 
 	// Tools
-	constexpr const char* WoodPickaxe  = "base:wood_pickaxe";
-	constexpr const char* StonePickaxe = "base:stone_pickaxe";
-	constexpr const char* WoodAxe      = "base:wood_axe";
-	constexpr const char* WoodShovel   = "base:wood_shovel";
+	constexpr const char* WoodPickaxe  = "wood_pickaxe";
+	constexpr const char* StonePickaxe = "stone_pickaxe";
+	constexpr const char* WoodAxe      = "wood_axe";
+	constexpr const char* WoodShovel   = "wood_shovel";
 
 	// Consumables
-	constexpr const char* Apple        = "base:apple";
-	constexpr const char* Bread        = "base:bread";
-	constexpr const char* Egg          = "base:egg";
+	constexpr const char* Apple        = "apple";
+	constexpr const char* Bread        = "bread";
+	constexpr const char* Egg          = "egg";
 }
 
 // ================================================================
 // Block Type IDs (world blocks in the chunk grid)
 // ================================================================
 namespace BlockType {
-	constexpr const char* Air          = "base:air";
-	constexpr const char* Stone        = "base:stone";
-	constexpr const char* Cobblestone  = "base:cobblestone";
-	constexpr const char* Dirt         = "base:dirt";
-	constexpr const char* Grass        = "base:grass";
-	constexpr const char* Sand         = "base:sand";
-	constexpr const char* Water        = "base:water";
-	constexpr const char* Wood         = "base:wood";
-	constexpr const char* Log          = "base:logs";
-	constexpr const char* Leaves       = "base:leaves";
-	constexpr const char* Snow         = "base:snow";
-	constexpr const char* TNT          = "base:tnt";
-	constexpr const char* Wheat        = "base:wheat";
-	constexpr const char* Wire         = "base:wire";
-	constexpr const char* NANDGate     = "base:nand_gate";
-	constexpr const char* WheatSeeds   = "base:wheat_seeds";
-	constexpr const char* Chest        = "base:chest";
-	constexpr const char* Planks       = "base:planks";
-	constexpr const char* Bed          = "base:bed";
-	constexpr const char* Fence        = "base:fence";
-	constexpr const char* Farmland     = "base:farmland";
-	constexpr const char* Stair        = "base:stair";
-	constexpr const char* Glass        = "base:glass";
-	constexpr const char* Door         = "base:door";
-	constexpr const char* DoorOpen     = "base:door_open";
-	constexpr const char* Portal       = "base:portal";
-	constexpr const char* ArcaneStone  = "base:arcane_stone";
-	constexpr const char* SpawnPoint   = "base:spawn_point";
-	constexpr const char* BeeNest      = "base:beenest";
+	constexpr const char* Air          = "air";
+	constexpr const char* Stone        = "stone";
+	constexpr const char* Cobblestone  = "cobblestone";
+	constexpr const char* Dirt         = "dirt";
+	constexpr const char* Grass        = "grass";
+	constexpr const char* Sand         = "sand";
+	constexpr const char* Water        = "water";
+	constexpr const char* Wood         = "wood";
+	constexpr const char* Log          = "logs";
+	constexpr const char* Leaves       = "leaves";
+	constexpr const char* Snow         = "snow";
+	constexpr const char* TNT          = "tnt";
+	constexpr const char* Wheat        = "wheat";
+	constexpr const char* Wire         = "wire";
+	constexpr const char* NANDGate     = "nand_gate";
+	constexpr const char* WheatSeeds   = "wheat_seeds";
+	constexpr const char* Chest        = "chest";
+	constexpr const char* Planks       = "planks";
+	constexpr const char* Bed          = "bed";
+	constexpr const char* Fence        = "fence";
+	constexpr const char* Farmland     = "farmland";
+	constexpr const char* Stair        = "stair";
+	constexpr const char* Glass        = "glass";
+	constexpr const char* Door         = "door";
+	constexpr const char* DoorOpen     = "door_open";
+	constexpr const char* Portal       = "portal";
+	constexpr const char* ArcaneStone  = "arcane_stone";
+	constexpr const char* SpawnPoint   = "spawn_point";
+	constexpr const char* BeeNest      = "beenest";
 }
 
 // ================================================================
@@ -185,6 +184,6 @@ namespace Sound {
 // ================================================================
 // Networking
 // ================================================================
-constexpr int MODCRAFT_DISCOVER_PORT = 7778;
+constexpr int CIVCRAFT_DISCOVER_PORT = 7778;
 
-} // namespace modcraft
+} // namespace civcraft

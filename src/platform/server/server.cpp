@@ -3,7 +3,7 @@
 #include "shared/move_stuck_log.h"
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 void GameServer::resolveActions(float dt) {
 	auto proposals = m_world->proposals.drain();
@@ -425,7 +425,7 @@ void GameServer::resolveActions(float dt) {
 							glm::vec3 lootPos = target->position + glm::vec3(0, 0.3f, 0);
 							glm::vec3 fwd = (dist > 0.1f) ? glm::normalize(diff) : glm::vec3(0, 0, 1);
 							EntityId lootId = m_world->entities.spawn(ItemName::ItemEntity, lootPos,
-								{{Prop::ItemType, std::string("base:meat")},
+								{{Prop::ItemType, std::string("meat")},
 								 {Prop::Count, count},
 								 {Prop::Age, 0.0f}});
 							Entity* le = m_world->entities.get(lootId);
@@ -648,4 +648,4 @@ void GameServer::resolveActions(float dt) {
 	} // for
 } // resolveActions
 
-} // namespace modcraft
+} // namespace civcraft

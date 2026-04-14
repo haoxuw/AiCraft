@@ -19,7 +19,7 @@
 #include <vector>
 #include <filesystem>
 
-namespace modcraft {
+namespace civcraft {
 
 namespace model_loader {
 
@@ -476,4 +476,4 @@ inline int countVariants(const std::unordered_map<std::string, BoxModel>& models
 }
 
 } // namespace model_loader
-} // namespace modcraft
+} // namespace civcraft

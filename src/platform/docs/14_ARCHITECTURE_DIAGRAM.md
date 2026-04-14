@@ -1,4 +1,4 @@
-# ModCraft - Architecture Diagram
+# CivCraft - Architecture Diagram
 
 Two process types: **WorldServer** and **Client** (PlayerClient + AgentClient in one binary).
 

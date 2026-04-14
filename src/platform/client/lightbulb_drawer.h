@@ -5,7 +5,7 @@
 #include "shared/entity.h"
 #include <glm/glm.hpp>
 
-namespace modcraft {
+namespace civcraft {
 
 // Draws the floating "goal lightbulb" indicator above a living entity's head,
 // plus the entity's goalText label next to it.
@@ -30,4 +30,4 @@ private:
 	TextRenderer&  m_tr;
 };
 
-} // namespace modcraft
+} // namespace civcraft

@@ -1,7 +1,7 @@
 #include "client/gameplay.h"
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 // ================================================================
 // update -- called each gameplay frame (CLIENT-SIDE ONLY)
@@ -119,4 +119,4 @@ void GameplayController::handleCameraInput(float dt, ControlManager& controls,
 	}
 }
 
-} // namespace modcraft
+} // namespace civcraft

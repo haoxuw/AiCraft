@@ -12,7 +12,7 @@
 #include <functional>
 #include <algorithm>
 
-namespace modcraft {
+namespace civcraft {
 
 class TextInput {
 public:
@@ -173,4 +173,4 @@ private:
 	int m_visibleLines = 20;
 };
 
-} // namespace modcraft
+} // namespace civcraft

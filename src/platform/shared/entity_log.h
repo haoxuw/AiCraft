@@ -1,6 +1,6 @@
 #pragma once
 
-// Per-entity rolling log at /tmp/modcraft_entity_<id>.log.
+// Per-entity rolling log at /tmp/civcraft_entity_<id>.log.
 //
 // Mirrors python/entity_log.py — one line per event, buffered by-line so
 // `tail -f` works in real time. Intended for per-entity diagnostics that
@@ -19,7 +19,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace modcraft {
+namespace civcraft {
 
 inline std::FILE* entityLogFile(EntityId eid) {
 	static std::mutex mu;
@@ -29,7 +29,7 @@ inline std::FILE* entityLogFile(EntityId eid) {
 	if (it != files.end()) return it->second;
 
 	char path[128];
-	std::snprintf(path, sizeof(path), "/tmp/modcraft_entity_%u.log", eid);
+	std::snprintf(path, sizeof(path), "/tmp/civcraft_entity_%u.log", eid);
 	std::FILE* f = std::fopen(path, "w");   // truncate on first open per process
 	if (!f) return nullptr;
 	std::setvbuf(f, nullptr, _IOLBF, 0);    // line-buffered so tail -f works
@@ -55,4 +55,4 @@ inline void entityLog(EntityId eid, const char* fmt, ...) {
 	std::fputc('\n', f);
 }
 
-} // namespace modcraft
+} // namespace civcraft

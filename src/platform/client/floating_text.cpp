@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace modcraft {
+namespace civcraft {
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Small helpers
@@ -336,4 +336,4 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 	}
 }
 
-} // namespace modcraft
+} // namespace civcraft

@@ -22,7 +22,7 @@
 #include <cstring>
 #include <algorithm>
 
-namespace modcraft {
+namespace civcraft {
 
 // Palette indices used in face grids.
 namespace FC {
@@ -159,4 +159,4 @@ private:
 	int m_selected = 0;
 };
 
-} // namespace modcraft
+} // namespace civcraft

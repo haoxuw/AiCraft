@@ -24,7 +24,7 @@
 #include <functional>
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 // Per-entity state for plan execution
 struct AgentEntityState {
@@ -101,4 +101,4 @@ inline std::vector<NearbyEntity> gatherNearby(
 	return result;
 }
 
-} // namespace modcraft
+} // namespace civcraft

@@ -1,7 +1,7 @@
 #include "client/model.h"
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 bool ModelRenderer::init(Shader* shader) {
 	m_shader = shader;
@@ -167,7 +167,8 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 		}
 
 		// Limb swing: clip override → walk cycle → player-melee override
-		if (swingAmp > 0.001f || swingBias != 0.0f) {
+		// abs() so negative amplitudes (direction-flipped swings) still fire.
+		if (std::abs(swingAmp) > 0.001f || swingBias != 0.0f) {
 			float angle = 0.0f;
 			bool  doSwing = false;
 
@@ -189,22 +190,24 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 			// Player melee attack override (keyframe-driven arm angles).
 			// ONLY fires when the local player's AttackAnimPlayer has populated
 			// armPitch/armYaw. Mob work-swings now go through clips instead of
-			// the old amplitude-sentinel heuristic. Right arm is identified via
-			// cos(swingPhase): phase=0 → right arm (+1), phase=π → left (-1).
+			// the old amplitude-sentinel heuristic. Right arm is identified by
+			// name so it works regardless of phase direction.
 			bool hasPlayerMeleeAngles =
 				(std::abs(anim.armPitch) > 0.1f || std::abs(anim.armYaw) > 0.1f);
-			if (!clipOv && anim.attackPhase > 0.001f && swingAmp >= 40.0f
-			    && hasPlayerMeleeAngles) {
-				float phaseSign  = std::cos(part.swingPhase);
-				bool  isRightArm = (phaseSign > 0.5f);
-				if (isRightArm) {
+			if (!clipOv && anim.attackPhase > 0.001f && hasPlayerMeleeAngles) {
+				if (part.name == "right_hand") {
 					partMat = glm::translate(partMat, part.pivot * s);
 					partMat = glm::rotate(partMat, glm::radians(anim.armPitch), part.swingAxis);
 					partMat = glm::rotate(partMat, glm::radians(anim.armYaw),   glm::vec3(0, 1, 0));
 					partMat = glm::translate(partMat, -part.pivot * s);
 					doSwing = false; // already applied
+				} else if (part.name == "left_hand"
+				           || part.name == "left_leg" || part.name == "right_leg") {
+					// Freeze non-swinging arm and both legs during an attack —
+					// otherwise the whole body bobs and looks silly while the
+					// sword swings. Torso/head keep their idle motion.
+					doSwing = false;
 				}
-				// Left arm / legs keep walking normally during player melee.
 			}
 
 			if (doSwing) {
@@ -281,7 +284,10 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 		root = glm::rotate(root, glm::radians(eqt.rotation.z), glm::vec3(0, 0, 1));
 		// equip.scale is the per-item "how big when held" multiplier.
 		// hi.scale is an extra runtime shrink (e.g. blocks shown small).
-		root = glm::scale(root, glm::vec3(eqt.scale * hi.scale * s));
+		// Intentionally NOT multiplied by parent `s`: held items should
+		// render at their intrinsic world size (same as on the ground),
+		// not get inflated by the character's modelScale.
+		root = glm::scale(root, glm::vec3(eqt.scale * hi.scale));
 
 		// Draw item parts using the item's own scale internally. We pass the
 		// pre-scaled root, but the per-part offsets still want to be in the
@@ -359,4 +365,4 @@ void ModelRenderer::drawStatic(const BoxModel& model, const glm::mat4& viewProj,
 	glUniform1i(useTexLoc, 0);
 }
 
-} // namespace modcraft
+} // namespace civcraft

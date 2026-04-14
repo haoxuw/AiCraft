@@ -20,6 +20,7 @@
 #ifndef __EMSCRIPTEN__
 #include <zstd.h>
 #endif
+#include "shared/annotation.h"
 #include "shared/block_registry.h"
 #include "shared/chunk.h"
 #include "server/entity_manager.h"
@@ -31,8 +32,11 @@
 #include <random>
 #include <thread>
 #include <chrono>
+#include <algorithm>
+#include <vector>
+#include <utility>
 
-namespace modcraft {
+namespace civcraft {
 
 class NetworkServer : public ServerInterface {
 public:
@@ -376,7 +380,47 @@ public:
 		return ok;
 	}
 
+	// Annotation accessor for the renderer. Returns null if the chunk has no
+	// cached annotations (or hasn't been received yet). Overrides
+	// ServerInterface so the renderer never touches NetworkServer directly.
+	const std::vector<std::pair<glm::ivec3, Annotation>>*
+	annotationsForChunk(ChunkPos cp) const override {
+		auto it = m_annotations.find(cp);
+		return it != m_annotations.end() ? &it->second : nullptr;
+	}
+
 private:
+	// Shared annotation tail-parsing for S_CHUNK and S_CHUNK_Z payloads.
+	// Reads [u32 count][{i32 dx, i32 dy, i32 dz, str typeId, u8 slot}×count]
+	// and stores annotations in world-space under chunk cp.
+	void readChunkAnnotations(net::ReadBuffer& rb, ChunkPos cp) {
+		if (!rb.hasMore()) {
+			m_annotations.erase(cp);
+			return;
+		}
+		uint32_t n = rb.readU32();
+		std::vector<std::pair<glm::ivec3, Annotation>> out;
+		out.reserve(n);
+		for (uint32_t i = 0; i < n; i++) {
+			int dx = rb.readI32();
+			int dy = rb.readI32();
+			int dz = rb.readI32();
+			std::string typeId = rb.readString();
+			uint8_t slot = rb.readU8();
+			Annotation a;
+			a.typeId = std::move(typeId);
+			a.slot = (AnnotationSlot)slot;
+			glm::ivec3 wpos(cp.x * CHUNK_SIZE + dx,
+			                cp.y * CHUNK_SIZE + dy,
+			                cp.z * CHUNK_SIZE + dz);
+			out.push_back({wpos, a});
+		}
+		if (out.empty()) m_annotations.erase(cp);
+		else m_annotations[cp] = std::move(out);
+	}
+
+	// Original private section below.
+
 	// Drain the receive buffer while waiting for S_WELCOME.
 	//
 	// The async Preparing phase streams S_PREPARING + chunk messages BEFORE
@@ -537,6 +581,7 @@ private:
 						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
 					}
 			m_chunkData[cp] = std::move(chunk);
+			readChunkAnnotations(rb, cp);
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
 		}
@@ -567,6 +612,7 @@ private:
 						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
 					}
 			m_chunkData[cp] = std::move(chunk);
+			readChunkAnnotations(zrb, cp);
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
 		}
@@ -574,7 +620,28 @@ private:
 		case net::S_CHUNK_EVICT: {
 			ChunkPos cp = {rb.readI32(), rb.readI32(), rb.readI32()};
 			m_chunkData.erase(cp);
+			m_annotations.erase(cp);
 			if (m_onChunkDirty) m_onChunkDirty(cp); // triggers mesh rebuild for that position
+			break;
+		}
+		case net::S_ANNOTATION_SET: {
+			int x = rb.readI32(), y = rb.readI32(), z = rb.readI32();
+			std::string typeId = rb.readString();
+			uint8_t slot = rb.readU8();
+			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+			ChunkPos cp = {div(x, CHUNK_SIZE), div(y, CHUNK_SIZE), div(z, CHUNK_SIZE)};
+			auto& vec = m_annotations[cp];
+			// Remove any existing annotation at this position.
+			vec.erase(std::remove_if(vec.begin(), vec.end(),
+				[&](const auto& p){ return p.first.x == x && p.first.y == y && p.first.z == z; }),
+				vec.end());
+			if (!typeId.empty()) {
+				Annotation a;
+				a.typeId = typeId;
+				a.slot = (AnnotationSlot)slot;
+				vec.push_back({glm::ivec3(x, y, z), a});
+			}
+			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
 		}
 		case net::S_REMOVE: {
@@ -615,7 +682,7 @@ private:
 					BlockId oldBid = it->second->get(lx, ly, lz);
 					if (oldBid != BLOCK_AIR) {
 						const BlockDef& bdef = m_blocks.get(oldBid);
-						if (bdef.string_id != "base:air" && !bdef.string_id.empty())
+						if (bdef.string_id != "air" && !bdef.string_id.empty())
 							m_onBlockBreakText(glm::vec3(bx, by, bz), bdef.display_name.empty() ? bdef.string_id : bdef.display_name);
 					}
 				}
@@ -713,6 +780,11 @@ private:
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;
+	// Block decorations (flowers, moss, …) keyed by chunk for cheap eviction.
+	// Each entry: world-space host-block pos + Annotation. Populated from
+	// S_CHUNK / S_CHUNK_Z tails and single-cell S_ANNOTATION_SET updates.
+	std::unordered_map<ChunkPos, std::vector<std::pair<glm::ivec3, Annotation>>,
+	                   ChunkPosHash> m_annotations;
 	NetChunkSource m_chunks{*this};
 
 	// Client-side smoothing + reconciliation for remote entities.
@@ -753,4 +825,4 @@ private:
 	std::function<void(const std::string&, const std::string&)> m_onWorldEvent;
 };
 
-} // namespace modcraft
+} // namespace civcraft

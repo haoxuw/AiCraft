@@ -26,7 +26,7 @@
 #include <imgui.h>
 #include <unordered_map>
 
-namespace modcraft {
+namespace civcraft {
 
 class HandbookUI {
 public:
@@ -374,4 +374,4 @@ private:
 	float m_forkedMsgTimer = 0;
 };
 
-} // namespace modcraft
+} // namespace civcraft

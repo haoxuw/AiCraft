@@ -41,7 +41,7 @@
 #include <set>
 #include <functional>
 
-namespace modcraft {
+namespace civcraft {
 
 class ChestUI {
 public:
@@ -333,7 +333,6 @@ private:
 
 		// Short name at bottom
 		std::string name = id;
-		if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
 		if (name.size() > 8) name = name.substr(0, 7) + "~";
 		ImVec2 textSize = ImGui::CalcTextSize(name.c_str());
 		float textX = pos.x + (cellSize - textSize.x) * 0.5f;
@@ -383,8 +382,6 @@ private:
 			ImGui::BeginTooltip();
 
 			std::string fullName = id;
-			if (fullName.size() > 5 && fullName.substr(0, 5) == "base:")
-				fullName = fullName.substr(5);
 			if (!fullName.empty()) fullName[0] = (char)toupper(fullName[0]);
 			ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.38f, 1), "%s", fullName.c_str());
 			if (count > 1) {
@@ -446,4 +443,4 @@ private:
 	}
 };
 
-} // namespace modcraft
+} // namespace civcraft

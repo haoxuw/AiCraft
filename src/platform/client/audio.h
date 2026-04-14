@@ -27,7 +27,7 @@
 // Forward-declare miniaudio types to avoid including the huge header here
 struct ma_engine;
 
-namespace modcraft {
+namespace civcraft {
 
 class AudioManager {
 public:
@@ -152,4 +152,4 @@ private:
 	void registerDefaultGroups(const std::string& basePath);
 };
 
-} // namespace modcraft
+} // namespace civcraft

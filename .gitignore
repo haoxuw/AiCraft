@@ -42,7 +42,7 @@ Thumbs.db
 resources/sounds/
 
 # Screenshots
-/tmp/modcraft_*.ppm
+/tmp/civcraft_*.ppm
 *.ppm
 
 # Stale directories

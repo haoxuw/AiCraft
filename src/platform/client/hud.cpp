@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 // ----------------------------------------------------------------
 // DST-style circular stat ring helper (HP / Hunger)
@@ -293,7 +293,6 @@ void HUD::renderInventoryPanel(const HUDContext& ctx, TextRenderer& text) {
 		              {sc.r, sc.g, sc.b, 0.90f});
 
 		std::string dn = id;
-		if (dn.size() > 5 && dn.substr(0,5) == "base:") dn = dn.substr(5);
 		if (!dn.empty()) dn[0] = (char)toupper((unsigned char)dn[0]);
 		for (auto& c : dn) if (c == '_') c = ' ';
 
@@ -416,7 +415,7 @@ void HUD::renderEntityTooltip(const HUDContext& ctx, TextRenderer& text) {
 	// Entity name
 	char label[128];
 	const char* rawId = eh.typeId.c_str();
-	const char* dispName = (strncmp(rawId, "base:", 5) == 0) ? rawId + 5 : rawId;
+	const char* dispName = rawId;
 	snprintf(label, sizeof(label), "%s", dispName);
 	if (label[0]) label[0] = (char)toupper((unsigned char)label[0]);
 	float nameY = hasGoal ? cy + 0.020f : cy - 0.008f;
@@ -447,4 +446,4 @@ void HUD::render(const HUDContext& ctx, TextRenderer& text, Shader& highlightSha
 	renderProfilerOverlay(ctx, text);
 }
 
-} // namespace modcraft
+} // namespace civcraft

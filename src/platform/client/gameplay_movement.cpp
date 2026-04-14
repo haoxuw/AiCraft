@@ -6,7 +6,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace modcraft {
+namespace civcraft {
 
 // ================================================================
 // processMovement -- WASD / Sprint / Jump / Click-to-move / RTS
@@ -326,4 +326,4 @@ void GameplayController::processMovement(float dt, GameState state,
 	server.sendAction(moveAction);
 }
 
-} // namespace modcraft
+} // namespace civcraft

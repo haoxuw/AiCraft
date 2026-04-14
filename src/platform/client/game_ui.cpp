@@ -3,7 +3,7 @@
 #include "imgui.h"
 #include <sstream>
 
-namespace modcraft {
+namespace civcraft {
 
 // ============================================================
 // Entity inspection overlay
@@ -586,4 +586,4 @@ void Game::updatePaused(float dt, float aspect) {
 	if (m_state != GameState::PAUSED) m_showGameLog = false; // close log when leaving pause
 }
 
-} // namespace modcraft
+} // namespace civcraft

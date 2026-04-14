@@ -30,7 +30,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace modcraft {
+namespace civcraft {
 
 class World;
 
@@ -43,7 +43,7 @@ public:
 	};
 
 	// numWorkers == 0 → auto (max(1, hardware_concurrency() - 1)).
-	// Env var MODCRAFT_CHUNK_WORKERS overrides the constructor arg.
+	// Env var CIVCRAFT_CHUNK_WORKERS overrides the constructor arg.
 	ChunkGenService(World& world, int numWorkers = 0);
 	~ChunkGenService();
 
@@ -92,4 +92,4 @@ private:
 	std::atomic<bool> m_stop{false};
 };
 
-} // namespace modcraft
+} // namespace civcraft

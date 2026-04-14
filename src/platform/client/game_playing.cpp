@@ -9,7 +9,7 @@
 #include <vector>
 #include <algorithm>
 
-namespace modcraft {
+namespace civcraft {
 
 // ============================================================
 // updatePlaying helpers
@@ -418,10 +418,10 @@ void Game::updateAudioAndDoors(float dt) {
 			float dist = glm::length(e.position - pe->position);
 			if (dist > 5.0f || dist < 0.3f) return;
 			const auto& tid = e.typeId();
-			if (tid == "base:pig")          candidates.push_back({"creature_pig", e.position, dist});
-			else if (tid == "base:chicken") candidates.push_back({"creature_chicken", e.position, dist});
-			else if (tid == "base:dog")     candidates.push_back({"creature_dog", e.position, dist});
-			else if (tid == "base:cat")     candidates.push_back({"creature_cat", e.position, dist});
+			if (tid == "pig")          candidates.push_back({"creature_pig", e.position, dist});
+			else if (tid == "chicken") candidates.push_back({"creature_chicken", e.position, dist});
+			else if (tid == "dog")     candidates.push_back({"creature_dog", e.position, dist});
+			else if (tid == "cat")     candidates.push_back({"creature_cat", e.position, dist});
 		});
 		if (!candidates.empty()) {
 			auto& c = candidates[rand() % candidates.size()];
@@ -800,4 +800,4 @@ void Game::updatePlaying(float dt, float aspect) {
 	}
 }
 
-} // namespace modcraft
+} // namespace civcraft

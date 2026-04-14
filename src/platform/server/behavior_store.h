@@ -16,7 +16,7 @@
 #include <filesystem>
 #include <cstdio>
 
-namespace modcraft {
+namespace civcraft {
 
 class BehaviorStore {
 public:
@@ -92,4 +92,4 @@ private:
 	std::string m_basePath;
 };
 
-} // namespace modcraft
+} // namespace civcraft

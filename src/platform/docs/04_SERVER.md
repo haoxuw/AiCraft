@@ -1,4 +1,4 @@
-# ModCraft - C++ Server
+# CivCraft - C++ Server
 
 The server is the single source of truth. It owns the World, runs the tick loop, embeds Python for hot-loading Objects and Actions, and synchronizes state to all clients.
 
@@ -8,7 +8,7 @@ The server is the single source of truth. It owns the World, runs the tick loop,
 
 ```
 +====================================================================+
-|                        ModCraft C++ Server                           |
+|                        CivCraft C++ Server                           |
 +====================================================================+
 |                                                                      |
 |  +--------------------+   +--------------------+   +--------------+ |
@@ -230,7 +230,7 @@ public:
 
 private:
     py::scoped_interpreter m_interpreter;
-    py::module_ m_modcraft_module;
+    py::module_ m_civcraft_module;
     std::unordered_map<std::string, py::object> m_object_types;
     std::unordered_map<std::string, py::object> m_action_types;
     SandboxValidator m_sandbox;
@@ -310,7 +310,7 @@ private:
   |    (AST analysis)         |
   |                           |
   |  ALLOW:                   |
-  |    - modcraft.api imports  |
+  |    - civcraft.api imports  |
   |    - math, random         |
   |    - typing, dataclasses  |
   |    - Pydantic             |
@@ -431,7 +431,7 @@ Layer 4: Process Isolation (future)
 # src/server/sandbox/validator.py (runs inside embedded Python)
 
 ALLOWED_IMPORTS = {
-    "modcraft.api",          # the game API
+    "civcraft.api",          # the game API
     "math",
     "random",
     "typing",
@@ -517,7 +517,7 @@ These systems run in optimized C++ for performance:
 # server.toml
 
 [server]
-name = "My ModCraft World"
+name = "My CivCraft World"
 port = 30000
 max_players = 32
 tick_rate = 20                    # Hz (ticks per second)
@@ -564,7 +564,7 @@ abm_time_budget = 0.2           # fraction of interval
 ## 9. Directory Layout
 
 ```
-modcraft-server/
+civcraft-server/
   src/
     server/
       main.cpp                   # Entry point
@@ -599,7 +599,7 @@ modcraft-server/
       constants.h                # MAP_BLOCKSIZE, DTIME_LIMIT, etc.
       chunk.h                    # Chunk data structure
   python/
-    modcraft/
+    civcraft/
       api/
         __init__.py              # Public API re-exports
         objects.py               # PassiveObject, ActiveObject, LivingObject, ...

@@ -32,7 +32,7 @@
 #include <thread>
 #include <vector>
 
-namespace modcraft {
+namespace civcraft {
 
 // ── Request (main → worker) ─────────────────────────────────────────────
 
@@ -45,9 +45,10 @@ struct DecideRequest {
 	float                           worldTime  = 0;
 	float                           dt         = 0;
 	LastOutcome                     lastOutcome;
-	PythonBridge::BlockQueryFn      blockQuery;
-	PythonBridge::ScanBlocksFn      scanBlocks;
-	PythonBridge::ScanEntitiesFn    scanEntities;
+	PythonBridge::BlockQueryFn        blockQuery;
+	PythonBridge::ScanBlocksFn        scanBlocks;
+	PythonBridge::ScanEntitiesFn      scanEntities;
+	PythonBridge::ScanAnnotationsFn   scanAnnotations;
 };
 
 // ── Result (worker → main) ──────────────────────────────────────────────
@@ -129,6 +130,7 @@ private:
 				req.worldTime, res.goalText, res.error,
 				std::move(req.blockQuery), std::move(req.scanBlocks),
 				std::move(req.scanEntities),
+				std::move(req.scanAnnotations),
 				outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason);
 
 			{
@@ -147,4 +149,4 @@ private:
 	std::deque<DecideResult>  m_results;
 };
 
-} // namespace modcraft
+} // namespace civcraft

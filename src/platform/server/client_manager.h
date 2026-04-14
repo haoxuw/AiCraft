@@ -25,7 +25,7 @@
 #include <unistd.h>
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 // Async-handshake phase. Clients start in Preparing (HELLO received, chunks
 // being generated in the background). They transition to Ready once all
@@ -159,7 +159,7 @@ public:
 
 	~ClientManager() = default;
 
-	// Set the directory containing modcraft-agent binary.
+	// Set the directory containing civcraft-agent binary.
 	// Set the server port (for LAN discovery announcements).
 	void setPort(int port) { m_port = port; }
 
@@ -301,11 +301,11 @@ public:
 			m_clients[h.cid] = std::move(it->second);
 			m_pendingClients.erase(it);
 			net::ReadBuffer rb(h.payload.data(), h.payload.size());
-#ifdef MODCRAFT_PERF
+#ifdef CIVCRAFT_PERF
 			auto t0 = std::chrono::steady_clock::now();
 #endif
 			handleMessage(h.cid, m_clients[h.cid], h.type, rb);
-#ifdef MODCRAFT_PERF
+#ifdef CIVCRAFT_PERF
 			double ms = std::chrono::duration<double, std::milli>(
 				std::chrono::steady_clock::now() - t0).count();
 			if (ms > 5.0)
@@ -329,11 +329,11 @@ public:
 				// purely a keepalive (no handler logic needed).
 				client.noteActivity();
 				net::ReadBuffer rb(payload.data(), payload.size());
-#ifdef MODCRAFT_PERF
+#ifdef CIVCRAFT_PERF
 				auto t0 = std::chrono::steady_clock::now();
 #endif
 				handleMessage(cid, client, hdr.type, rb);
-#ifdef MODCRAFT_PERF
+#ifdef CIVCRAFT_PERF
 				double ms = std::chrono::duration<double, std::milli>(
 					std::chrono::steady_clock::now() - t0).count();
 				if (ms > 5.0)
@@ -661,8 +661,8 @@ public:
 		int humans = (int)m_clients.size();
 
 		char msg[64];
-		snprintf(msg, sizeof(msg), "MODCRAFT %d %d", m_port, humans);
-		m_announceUdp.broadcast(msg, (int)strlen(msg), MODCRAFT_DISCOVER_PORT);
+		snprintf(msg, sizeof(msg), "CIVCRAFT %d %d", m_port, humans);
+		m_announceUdp.broadcast(msg, (int)strlen(msg), CIVCRAFT_DISCOVER_PORT);
 	}
 
 	// NOTE: Agent processes removed. AgentClient now runs inside PlayerClient.
@@ -724,6 +724,30 @@ public:
 			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
 			wb.writeU32(newBid); wb.writeU8(p2);
 			broadcastToAll(net::S_BLOCK, wb);
+		}
+
+		// Block break: if the host block had an annotation (flower on grass, …),
+		// drop the annotation as a ground item and purge it from the world.
+		if (newBid == BLOCK_AIR) {
+			auto* ann = m_server.world().getAnnotation(pos.x, pos.y, pos.z);
+			if (ann && !ann->empty()) {
+				std::string typeId = ann->typeId;
+				m_server.world().removeAnnotation(pos.x, pos.y, pos.z);
+
+				// Broadcast removal so clients purge their annotation cache.
+				{
+					net::WriteBuffer wb;
+					wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
+					wb.writeString(std::string()); // empty typeId = remove
+					wb.writeU8(0);
+					broadcastToAll(net::S_ANNOTATION_SET, wb);
+				}
+
+				// Drop as a ground item on top of the broken block.
+				glm::vec3 dropPos = glm::vec3(pos) + glm::vec3(0.5f, 0.2f, 0.5f);
+				m_server.world().entities.spawn(ItemName::ItemEntity, dropPos,
+					{{Prop::ItemType, typeId}, {Prop::Count, 1}, {Prop::Age, 0.0f}});
+			}
 		}
 
 		// Update ChunkInfo owned by World
@@ -795,11 +819,11 @@ private:
 	void finalizePreparing(ClientSession& client) {
 		const std::string& creatureType = client.pendingCreatureType;
 
-#ifdef MODCRAFT_PERF
+#ifdef CIVCRAFT_PERF
 		auto t_add0 = std::chrono::steady_clock::now();
 #endif
 		EntityId eid = m_server.addClient(client.id, creatureType);
-#ifdef MODCRAFT_PERF
+#ifdef CIVCRAFT_PERF
 		double add_ms = std::chrono::duration<double, std::milli>(
 			std::chrono::steady_clock::now() - t_add0).count();
 		if (add_ms > 5.0)
@@ -1063,10 +1087,23 @@ private:
 		if (!chunk) return;
 
 		// Build uncompressed payload: [i32 cx][i32 cy][i32 cz][u32×4096]
+		//                              [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N
 		net::WriteBuffer cb;
 		cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
 		for (int i = 0; i < CHUNK_VOLUME; i++)
 			cb.writeU32(((uint32_t)chunk->getRawParam2(i) << 16) | chunk->getRaw(i));
+
+		// Annotations piggyback on S_CHUNK so the client can render decorations
+		// (flowers, moss, …) the moment the chunk arrives — no extra message.
+		auto annots = m_server.world().annotationsInChunk(pos);
+		cb.writeU32((uint32_t)annots.size());
+		for (auto& [wpos, ann] : annots) {
+			cb.writeI32(wpos.x - pos.x * CHUNK_SIZE);
+			cb.writeI32(wpos.y - pos.y * CHUNK_SIZE);
+			cb.writeI32(wpos.z - pos.z * CHUNK_SIZE);
+			cb.writeString(ann.typeId);
+			cb.writeU8((uint8_t)ann.slot);
+		}
 
 		// Choose message type and payload
 		net::MsgType msgType = net::S_CHUNK;
@@ -1127,4 +1164,4 @@ private:
 	float m_announceTimer = 0.0f;
 };
 
-} // namespace modcraft
+} // namespace civcraft

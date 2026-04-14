@@ -18,7 +18,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
 
-namespace modcraft {
+namespace civcraft {
 
 class ModelPreview {
 public:
@@ -139,4 +139,4 @@ private:
 	float m_animTime = 0;
 };
 
-} // namespace modcraft
+} // namespace civcraft

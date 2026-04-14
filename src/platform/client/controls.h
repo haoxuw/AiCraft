@@ -7,7 +7,7 @@
 #include <vector>
 #include <memory>
 
-namespace modcraft {
+namespace civcraft {
 
 // Action name constants -- use these instead of raw strings.
 namespace Action {
@@ -91,4 +91,4 @@ private:
 	std::vector<std::unique_ptr<InputSource>> m_sources;
 };
 
-} // namespace modcraft
+} // namespace civcraft

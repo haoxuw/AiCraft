@@ -27,7 +27,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace modcraft {
+namespace civcraft {
 
 // A body part = a colored 3D box with optional animation.
 struct BodyPart {
@@ -144,4 +144,4 @@ struct AnimState {
 	std::string currentClip;
 };
 
-} // namespace modcraft
+} // namespace civcraft

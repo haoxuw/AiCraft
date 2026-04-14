@@ -1,4 +1,4 @@
-# ModCraft Build Log
+# CivCraft Build Log
 
 Visual progression of the engine, screenshot per version.
 

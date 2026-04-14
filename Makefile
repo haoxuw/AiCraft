@@ -8,25 +8,25 @@ PORT := 7777
 GAME_PORT :=
 WEB_PORT := 8080
 EMSDK := $(HOME)/emsdk
-GAME := modcraft
+GAME := civcraft
 
 # Parallelism for cmake --build. Defaults to HALF the core count so a build
 # doesn't pin the machine / trigger OOM on big templated sources. Override on
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers evocraft-server-build evocraft-server-game-build character_views item_views model-editor model-snap
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers lifecraft-server-build lifecraft-server-game-build character_views item_views model-editor model-snap
 
 # ── Native ─────────────────────────────────────────────────
 #
 # This repo builds two games from one C++ engine (src/platform):
-#   modcraft       voxel sandbox (default) — C++ server + C++/OpenGL client
-#   evocraft       Spore cell stage       — C++ server + Godot 4 client
+#   civcraft       voxel sandbox (default) — C++ server + C++/OpenGL client
+#   lifecraft       Spore cell stage       — C++ server + Godot 4 client
 #
-# Override the game with GAME=evocraft for EvoCraft targets.
+# Override the game with GAME=lifecraft for LifeCraft targets.
 #
 # Quick reference:
-#   make game                 Singleplayer (ModCraft): new village, random port, skip menu
+#   make game                 Singleplayer (CivCraft): new village, random port, skip menu
 #   make game GAME_PORT=7890  Same, but on a fixed port
 #   make server               Dedicated server (interactive world select)
 #   make server PORT=N        Dedicated server on port N
@@ -46,26 +46,26 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 # so "shaders/", "artifacts/", "python/", "fonts/", "config/", "resources/"
 # resolve via CWD-relative paths at runtime.
 #
-# EvoCraft launches a C++ TCP server + a Godot 4 client talking to it over
-# localhost. The server is evocraft-server (built by CMake); the client is
-# Godot project src/EvoCraft/godot/ launched via `godot4`.
-EVOCRAFT_PORT := 7888
-ifeq ($(GAME),evocraft)
-evocraft-server-game-build: game-configure
-	cmake --build $(GAME_BUILD_DIR) --target evocraft-server -j$(PAR)
+# LifeCraft launches a C++ TCP server + a Godot 4 client talking to it over
+# localhost. The server is lifecraft-server (built by CMake); the client is
+# Godot project src/LifeCraft/godot/ launched via `godot4`.
+LIFECRAFT_PORT := 7888
+ifeq ($(GAME),lifecraft)
+lifecraft-server-game-build: game-configure
+	cmake --build $(GAME_BUILD_DIR) --target lifecraft-server -j$(PAR)
 
-game: evocraft-server-game-build
-	@echo "[evocraft] starting server on :$(EVOCRAFT_PORT), then Godot client..."
-	@pkill -x evocraft-server 2>/dev/null ; sleep 0.2 ; \
-	  $(CURDIR)/$(GAME_BUILD_DIR)/evocraft-server --port $(EVOCRAFT_PORT) & \
+game: lifecraft-server-game-build
+	@echo "[lifecraft] starting server on :$(LIFECRAFT_PORT), then Godot client..."
+	@pkill -x lifecraft-server 2>/dev/null ; sleep 0.2 ; \
+	  $(CURDIR)/$(GAME_BUILD_DIR)/lifecraft-server --port $(LIFECRAFT_PORT) & \
 	  SERVER_PID=$$! ; \
 	  sleep 0.3 ; \
-	  godot4 --path $(CURDIR)/src/EvoCraft/godot -- --host 127.0.0.1 --port $(EVOCRAFT_PORT) ; \
+	  godot4 --path $(CURDIR)/src/LifeCraft/godot -- --host 127.0.0.1 --port $(LIFECRAFT_PORT) ; \
 	  kill $$SERVER_PID 2>/dev/null ; wait 2>/dev/null || true
 else
-# `make game` builds with MODCRAFT_PERF=ON in a separate build dir so the
+# `make game` builds with CIVCRAFT_PERF=ON in a separate build dir so the
 # server emits frame/tick/handler timing logs (see [Perf] lines on stderr and
-# /tmp/modcraft_log_*.log). Production targets (`make server`, `make client`)
+# /tmp/civcraft_log_*.log). Production targets (`make server`, `make client`)
 # use the default build dir without this flag — the instrumentation code is
 # not compiled in.
 game: game-build
@@ -110,12 +110,12 @@ item_views: build
 	    --debug-scenario item_views --debug-item $(ITEM)
 
 # Standalone model viewer / snapshot tool (no world, no server, no full client).
-# Shared by ModCraft + EvoCraft.
+# Shared by CivCraft + LifeCraft.
 #
-#   make model-editor MODEL=src/ModCraft/artifacts/models/base/cat.py
+#   make model-editor MODEL=src/CivCraft/artifacts/models/base/cat.py
 #       Interactive window (drag to orbit, scroll to zoom, Esc to quit).
 #
-#   make model-snap   MODEL=src/ModCraft/artifacts/models/base/cat.py OUT=/tmp/cat
+#   make model-snap   MODEL=src/CivCraft/artifacts/models/base/cat.py OUT=/tmp/cat
 #       Write 6 PPMs (front/three_q/side/back/top/rts) to OUT and exit.
 #       Optional: CLIP=dance, SIZE=512x512
 MODEL ?=
@@ -136,13 +136,13 @@ model-snap: model-editor-build
 	    --snapshot $(OUT) --size $(SIZE) $(if $(CLIP),--clip $(CLIP))
 
 # Dedicated server (interactive world select, or --world/--seed/--template flags)
-ifeq ($(GAME),evocraft)
-server: evocraft-server-build
-	cd $(BUILD_DIR) && ./evocraft-server --port $(if $(PORT),$(PORT),$(EVOCRAFT_PORT))
+ifeq ($(GAME),lifecraft)
+server: lifecraft-server-build
+	cd $(BUILD_DIR) && ./lifecraft-server --port $(if $(PORT),$(PORT),$(LIFECRAFT_PORT))
 
 client:
-	godot4 --path $(CURDIR)/src/EvoCraft/godot -- \
-	  --host $(if $(HOST),$(HOST),127.0.0.1) --port $(if $(PORT),$(PORT),$(EVOCRAFT_PORT))
+	godot4 --path $(CURDIR)/src/LifeCraft/godot -- \
+	  --host $(if $(HOST),$(HOST),127.0.0.1) --port $(if $(PORT),$(PORT),$(LIFECRAFT_PORT))
 else
 server: build
 	cd $(BUILD_DIR) && ./$(GAME)-server --port $(PORT)
@@ -153,11 +153,11 @@ client: build
 endif
 
 stop:
-ifeq ($(GAME),evocraft)
-	@-pkill -x evocraft-server 2>/dev/null; \
-	  pkill -f "godot4.*src/EvoCraft/godot" 2>/dev/null; \
+ifeq ($(GAME),lifecraft)
+	@-pkill -x lifecraft-server 2>/dev/null; \
+	  pkill -f "godot4.*src/LifeCraft/godot" 2>/dev/null; \
 	  sleep 0.5; true
-	@echo "All evocraft processes stopped."
+	@echo "All lifecraft processes stopped."
 else
 	@-pkill -f "$(GAME)" 2>/dev/null; sleep 1
 	@echo "All $(GAME) processes stopped."
@@ -169,19 +169,19 @@ killservers:
 	@-pgrep -fa "$(GAME)".*--port" 2>/dev/null && pkill -f "$(GAME)".*--port" && echo "Killed port processes." || true
 
 # Headless E2E gameplay tests
-ifeq ($(GAME),evocraft)
-# EvoCraft doesn't need the full modcraft build — only evocraft-server.
-evocraft-server-build: configure
-	cmake --build $(BUILD_DIR) --target evocraft-server -j$(PAR)
+ifeq ($(GAME),lifecraft)
+# LifeCraft doesn't need the full civcraft build — only lifecraft-server.
+lifecraft-server-build: configure
+	cmake --build $(BUILD_DIR) --target lifecraft-server -j$(PAR)
 
-test_e2e: evocraft-server-build
-	@echo "[test_e2e] EvoCraft M1 — server tick broadcast handshake..."
-	@pkill -x evocraft-server 2>/dev/null ; sleep 0.2 ; \
-	  $(CURDIR)/$(BUILD_DIR)/evocraft-server --port $(EVOCRAFT_PORT) & \
+test_e2e: lifecraft-server-build
+	@echo "[test_e2e] LifeCraft M1 — server tick broadcast handshake..."
+	@pkill -x lifecraft-server 2>/dev/null ; sleep 0.2 ; \
+	  $(CURDIR)/$(BUILD_DIR)/lifecraft-server --port $(LIFECRAFT_PORT) & \
 	  SERVER_PID=$$! ; \
 	  sleep 0.3 ; \
-	  godot4 --headless --path $(CURDIR)/src/EvoCraft/godot -- \
-	    --host 127.0.0.1 --port $(EVOCRAFT_PORT) --ticks 3 ; \
+	  godot4 --headless --path $(CURDIR)/src/LifeCraft/godot -- \
+	    --host 127.0.0.1 --port $(LIFECRAFT_PORT) --ticks 3 ; \
 	  STATUS=$$? ; \
 	  kill $$SERVER_PID 2>/dev/null ; wait 2>/dev/null ; \
 	  exit $$STATUS
@@ -209,7 +209,7 @@ game-build: game-configure
 
 game-configure:
 	@if [ ! -f $(GAME_BUILD_DIR)/CMakeCache.txt ]; then \
-		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DMODCRAFT_PERF=ON; \
+		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DCIVCRAFT_PERF=ON; \
 	fi
 
 clean:
@@ -218,7 +218,7 @@ clean:
 # Action proxy: HTTP → TCP bridge with Swagger UI
 PROXY_PORT := 8088
 proxy:
-	python3 src/ModCraft/tools/action_proxy.py --server-host 127.0.0.1 --server-port $(PORT) \
+	python3 src/CivCraft/tools/action_proxy.py --server-host 127.0.0.1 --server-port $(PORT) \
 	    --proxy-port $(PROXY_PORT) --auto-connect
 
 # ── Web (WASM + WebGL) ────────────────────────────────────

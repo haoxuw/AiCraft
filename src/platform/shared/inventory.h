@@ -3,11 +3,11 @@
 /**
  * Inventory: a Counter of items (item_id -> count).
  *
- * Unlike Minecraft's slot-based grid, ModCraft uses a simple
+ * Unlike Minecraft's slot-based grid, CivCraft uses a simple
  * counter. No stack limits, no slot management. Items are
  * displayed sorted by ID, skipping zero-count entries.
  *
- * Think Python: collections.Counter({"base:stone": 42, "base:jetpack": 1})
+ * Think Python: collections.Counter({"stone": 42, "jetpack": 1})
  */
 
 #include <string>
@@ -16,7 +16,7 @@
 
 #include "material_values.h"
 
-namespace modcraft {
+namespace civcraft {
 
 // Equipment slots — what a character can wear.
 // The main hand always shows the hotbar-selected item, so there is no
@@ -171,4 +171,4 @@ private:
 	bool m_offhandRight = false;
 };
 
-} // namespace modcraft
+} // namespace civcraft

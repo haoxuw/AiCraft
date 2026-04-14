@@ -21,7 +21,7 @@
 #include <vector>
 #include <mutex>
 
-namespace modcraft {
+namespace civcraft {
 
 // ================================================================
 // Container — identifies any storage that holds items.
@@ -151,4 +151,4 @@ private:
 	std::vector<ActionProposal> m_pending;
 };
 
-} // namespace modcraft
+} // namespace civcraft

@@ -3,7 +3,7 @@
 #include "shared/entity.h"
 #include "shared/physics.h"
 
-namespace modcraft {
+namespace civcraft {
 
 // Step one tick of physics for an Entity. The single entry point used by:
 //   - server/entity_manager.h  (authoritative NPC physics)
@@ -31,4 +31,4 @@ inline MoveResult stepEntityPhysics(Entity& e, glm::vec3 desiredVel,
 	                         e.getProp<bool>("fly_mode", false));
 }
 
-} // namespace modcraft
+} // namespace civcraft

@@ -1,7 +1,7 @@
 #include "client/window.h"
 #include <cstdio>
 
-namespace modcraft {
+namespace civcraft {
 
 bool Window::init(int width, int height, const std::string& title, bool hidden) {
 	if (!glfwInit()) {
@@ -102,4 +102,4 @@ void Window::framebufferCallback(GLFWwindow* w, int width, int height) {
 	glViewport(0, 0, width, height);
 }
 
-} // namespace modcraft
+} // namespace civcraft

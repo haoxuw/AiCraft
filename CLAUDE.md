@@ -2,14 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Two games, one engine
+## Two games, same engine
 
 This repo builds **two** games on top of a single C++ engine:
 
 ```
 src/platform/     C++ engine (headers + cpps) — no game content
-src/ModCraft/     Voxel sandbox game (chunks, blocks, structures)
-src/EvolveCraft/  Spore-like cell stage — stub; see src/EvolveCraft/README.md
+src/CivCraft/     Voxel sandbox game (chunks, blocks, structures)
+src/LifeCraft/  2D drawing Action RTS
 ```
 
 Everything game-specific — artifacts, python, shaders, resources, config, docs,
@@ -17,17 +17,17 @@ tests, tools — lives under the owning game directory. Shared UI fonts and
 generic shaders (crosshair, highlight, particle, shadow, text) live under
 `src/platform/`.
 
-All current gameplay rules in this file apply to **ModCraft**. EvolveCraft
-will get its own CLAUDE.md when it has real code. For ModCraft-specific
+All current gameplay rules in this file apply to **CivCraft**. LifeCraft
+will get its own CLAUDE.md when it has real code. For CivCraft-specific
 mechanics (chunks, inventory, structures, world gen), read
-`src/ModCraft/src/ModCraft/docs/00_OVERVIEW.md`.
+`src/CivCraft/src/CivCraft/docs/00_OVERVIEW.md`.
 
 **Dependency rule (enforced by CMake + convention):**
-- `platform/` must not reference `ModCraft/` or `EvolveCraft/` identifiers.
-- `ModCraft/` must never `#include "EvolveCraft/..."` and vice versa.
+- `platform/` must not reference `CivCraft/` or `LifeCraft/` identifiers.
+- `CivCraft/` must never `#include "LifeCraft/..."` and vice versa.
 - Shared code between the two games must be promoted into `platform/` first.
 
-**Read `src/ModCraft/src/ModCraft/docs/00_OVERVIEW.md` before making ANY gameplay changes.**
+**Read `src/CivCraft/src/CivCraft/docs/00_OVERVIEW.md` before making ANY gameplay changes.**
 
 ## Mandatory Design Rules
 
@@ -59,12 +59,12 @@ TYPE_INTERACT (3) — toggle interactive block state (door, button, TNT fuse)
 - The C++ bridge (`python_bridge.cpp`) must never resolve or interpret high-level
   action names — it only translates the 4 primitives into `ActionProposal`.
 
-See `src/ModCraft/docs/00_OVERVIEW.md` § Action Types and `src/ModCraft/docs/03_ACTIONS.md`.
+See `src/CivCraft/docs/00_OVERVIEW.md` § Action Types and `src/CivCraft/docs/03_ACTIONS.md`.
 
 ### Rule 1: Python Is the Game, C++ Is the Engine
 
 **All game content and gameplay rules are defined in Python. C++ only provides
-the engine (physics, networking, rendering).** See `src/ModCraft/docs/00_OVERVIEW.md`.
+the engine (physics, networking, rendering).** See `src/CivCraft/docs/00_OVERVIEW.md`.
 
 - Creature definitions, behaviors, items, blocks, effects, models → Python artifacts
 - **NEVER hardcode gameplay constants in C++.** Every magic number (distance,
@@ -102,7 +102,7 @@ the engine (physics, networking, rendering).** See `src/ModCraft/docs/00_OVERVIE
 
 **The server has ZERO intelligence.** All AI runs on agent client processes.
 
-- Each Creatures entity has its own `modcraft-agent` process running Python `decide()`
+- Each Creatures entity has its own `civcraft-agent` process running Python `decide()`
 - Server spawns/manages agent clients via `ClientManager`
 - Python behavior code NEVER runs on the server
 - **Player click-to-move navigation** is handled server-side (greedy local
@@ -130,69 +130,111 @@ Three process types — **always TCP**, same architecture for singleplayer and m
 
 | Process | Binary | What it does |
 |---------|--------|-------------|
-| Server | `modcraft-server` | Headless, owns world, NO Python/OpenGL |
-| Player Client | `modcraft` | GUI, renders world, NO Python |
-| Agent Client | `modcraft-agent` | Headless, runs Python AI, NO OpenGL |
+| Server | `civcraft-server` | Headless, owns world, NO Python/OpenGL |
+| Player Client | `civcraft` | GUI, renders world, NO Python |
+| Agent Client | `civcraft-agent` | Headless, runs Python AI, NO OpenGL |
 
-Singleplayer: `modcraft` spawns `modcraft-server` as a child process then connects
+Singleplayer: `civcraft` spawns `civcraft-server` as a child process then connects
 via localhost TCP. There is no `LocalServer` in-process shortcut. `TestServer`
 (`server/test_server.h`) exists only for headless unit tests.
 
 ## Build & Run
 
-```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j$(nproc)
+The root `Makefile` is the one source of truth. Each game also has a wrapper
+`Makefile` (`src/CivCraft/Makefile`, `src/LifeCraft/Makefile`) that forwards
+every target to the root with `GAME=` set, so you can `cd` into a game and
+use `make <target>` without passing `GAME=` each time.
 
-make game                  # singleplayer: skip menu, auto-launch server + agents
-make server PORT=7777      # dedicated server
-make client HOST=X PORT=N  # GUI client (pre-fills join tab)
-make stop                  # kill all modcraft processes
-make test_e2e              # headless gameplay tests (no OpenGL/network)
-make web                   # WASM build + serve on :8080 (needs emsdk at ~/emsdk)
+**Parallelism is capped at half the core count by default** (`PAR := nproc/2`
+in the root Makefile) so a build won't pin the machine or OOM. Override on the
+command line: `make build PAR=8` for more, `make build PAR=1` for minimum.
+All `cmake --build` invocations in this project should use `-j$(PAR)` (not
+`-j$(nproc)`).
+
+```bash
+# From repo root (explicit GAME):
+make game                     # CivCraft (default GAME=civcraft)
+make game GAME=lifecraft    # LifeCraft
+make server PORT=7777         # dedicated server (CivCraft)
+make client HOST=X PORT=N     # GUI client (CivCraft; pre-fills join tab)
+make stop                     # kill all CivCraft processes
+make test_e2e                 # CivCraft headless gameplay tests
+make test_e2e GAME=lifecraft # LifeCraft headless sim
+make web                      # WASM build + serve on :8080 (needs emsdk at ~/emsdk)
+
+# From a game directory (no GAME= needed):
+cd src/CivCraft    && make game
+cd src/LifeCraft && make game
+cd src/LifeCraft && make test_e2e
+
+# Manual cmake (matches what `make build` does):
+cmake -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j$(PAR)   # or just `make build`
 ```
+
+**Shared asset staging note:** both games stage shaders into `build/shaders/`.
+File basenames don't collide (civcraft has `terrain.*`, lifecraft has
+`pond.*/creature.*/food.*`) but CMake POST_BUILD rules must not `rm -rf` that
+directory — only copy into it. If a game fails with `Cannot open shader:
+shaders/X`, rebuild that game's target to re-stage (`touch
+src/<Game>/main.cpp` to force).
 
 Direct invocation:
 ```bash
-./build/modcraft --skip-menu                              # singleplayer
-./build/modcraft-server --port 7777                       # dedicated server
-./build/modcraft-client --host 127.0.0.1 --port 7777      # network client
-./build/modcraft-agent --host 127.0.0.1 --port 7777 --entity 5
+./build/civcraft --skip-menu                              # singleplayer
+./build/civcraft-server --port 7777                       # dedicated server
+./build/civcraft-client --host 127.0.0.1 --port 7777      # network client
+./build/civcraft-agent --host 127.0.0.1 --port 7777 --entity 5
 ```
 
 ## Iterative Development
 
 **Fast rebuild + screenshot loop:**
 ```bash
-cmake --build build -j$(nproc) && \
-  pkill -f "build/modcraft"; sleep 0.5 && \
-  DISPLAY=:1 ./build/modcraft --skip-menu &
-# Game auto-writes /tmp/modcraft_auto_screenshot.ppm after ~3s
+make build && \
+  for p in $(pgrep -x civcraft); do kill $p; done; sleep 0.5 && \
+  DISPLAY=:1 ./build/civcraft --skip-menu &
+# Game auto-writes /tmp/civcraft_auto_screenshot.ppm after ~3s
 ```
 
+> **Don't `pkill -f civcraft`** — it matches the shell's own command line (which
+> contains the word "civcraft") and SIGTERMs your own bash, silently skipping
+> the rest of the chained command. Use exact-name matching via
+> `pgrep -x civcraft | xargs kill` instead.
+
 **Screenshot triggers:**
-- `/tmp/modcraft_auto_screenshot.ppm` — written ~3s after entering a world
-- `touch /tmp/modcraft_screenshot_request` — immediate screenshot → `/tmp/modcraft_screenshot_N.ppm`
+- `/tmp/civcraft_auto_screenshot.ppm` — written ~3s after entering a world
+- `touch /tmp/civcraft_screenshot_request` — immediate screenshot → `/tmp/civcraft_screenshot_N.ppm`
 - **F2** in-game: manual screenshot
 
 **Visual QA without an interactive window:**
 ```bash
-./build/modcraft --skip-menu --debug-scenario item_views --debug-item base:sword
-# writes /tmp/debug_N_<suffix>.ppm per camera angle (FPS/TPS/RPG/RTS/ground)
+# Items: FPS/TPS/RPG/RTS + on-ground shots
+make item_views ITEM=base:sword
+# or: ./build/civcraft --skip-menu --debug-scenario item_views --debug-item base:sword
+
+# Characters: 6-angle orbit (front/three_q/side/back/top/rts)
+make character_views CHARACTER=base:pig
+# or: ./build/civcraft --skip-menu --debug-scenario character_views --debug-character base:pig
+
+# Both write /tmp/debug_N_<suffix>.ppm and auto-exit when done.
 ```
+
+See `.claude/skills/refine-model-and-animation/SKILL.md` for the full
+iteration loop (rubric, common issues, trick list).
 
 **Behavioral QA without a window (headless log mode):**
 
 Use this instead of screenshots when you need to verify *what creatures are deciding and doing*, not what the world looks like. The log is a WoW-style combat/event stream derived entirely from the TCP state stream (Rule 5 compliant — no server-side logging).
 
 ```bash
-./build/modcraft --skip-menu --log-only            # singleplayer, no GUI
-./build/modcraft --log-only --host H --port P      # attach to remote server
-# Streams events to stdout AND /tmp/modcraft_game.log (truncated on start;
-# prior session preserved as /tmp/modcraft_game.log.prev)
+./build/civcraft --skip-menu --log-only            # singleplayer, no GUI
+./build/civcraft --log-only --host H --port P      # attach to remote server
+# Streams events to stdout AND /tmp/civcraft_game.log (truncated on start;
+# prior session preserved as /tmp/civcraft_game.log.prev)
 ```
 
-In GUI mode the same log is also written to `/tmp/modcraft_game.log` and viewable from **Main Menu → Game Log** and the pause menu. One source of truth; Claude reads the file.
+In GUI mode the same log is also written to `/tmp/civcraft_game.log` and viewable from **Main Menu → Game Log** and the pause menu. One source of truth; Claude reads the file.
 
 **Log format** — `[HH:MM:SS] [CATEGORY] <actor> <event>`:
 | Category  | Source                                   | Example |
@@ -206,10 +248,10 @@ In GUI mode the same log is also written to `/tmp/modcraft_game.log` and viewabl
 
 **Verification recipe (replaces screenshot-driven loops for AI behavior work):**
 ```bash
-cmake --build build -j$(nproc) && pkill -f "build/modcraft"; sleep 0.5 && \
-  ./build/modcraft --skip-menu --log-only &
-sleep 10 && pkill -f "build/modcraft"
-# then Read /tmp/modcraft_game.log — grep for DECIDE/ACTION/COMBAT
+make build && for p in $(pgrep -x civcraft); do kill $p; done; sleep 0.5 && \
+  ./build/civcraft --skip-menu --log-only &
+sleep 10 && for p in $(pgrep -x civcraft); do kill $p; done
+# then Read /tmp/civcraft_game.log — grep for DECIDE/ACTION/COMBAT
 ```
 
 This is the preferred verification path for behavior/AI/pathfinding changes. Use screenshots only when the bug is visual (rendering, animation, UI).
@@ -247,7 +289,7 @@ src/
       process_manager.h       AgentManager: spawns the game server for singleplayer
     shaders/  fonts/  docs/ Platform-level assets + architecture docs
 
-  ModCraft/                 ← Voxel sandbox game
+  CivCraft/                 ← Voxel sandbox game
     main.cpp, main_server.cpp, main_client.cpp
     shared/                 chunk.h, block_registry.h, chunk_source.h
     server/                 world.h, world_template.h, noise.h, structure_blueprint.h, pathfind (voxel), …
@@ -259,10 +301,10 @@ src/
       items/  blocks/       Item + block definitions
       worlds/               World templates (flat, village)
       structures/ models/ effects/ actions/ resources/
-    python/                 ModCraft-only python helpers (pathfind.py, local_world.py, …)
+    python/                 CivCraft-only python helpers (pathfind.py, local_world.py, …)
     shaders/  config/  resources/  docs/  tests/  tools/
 
-  EvolveCraft/              ← Spore-cell-stage game (stub — see its README.md)
+  LifeCraft/              ← Spore-cell-stage game (stub — see its README.md)
 ```
 
 ### Dependency Rules
@@ -270,36 +312,36 @@ src/
 - `platform/server/` → `shared/` (no OpenGL, no Python except via pybind)
 - `platform/agent/` → `shared/` + `server/behavior.h` + Python
 - `platform/client/` → `shared/` (no Python, no server ownership)
-- `ModCraft/` → `platform/` + its own files (**never** `EvolveCraft/`)
-- `EvolveCraft/` → `platform/` + its own files (**never** `ModCraft/`)
+- `CivCraft/` → `platform/` + its own files (**never** `LifeCraft/`)
+- `LifeCraft/` → `platform/` + its own files (**never** `CivCraft/`)
 
-Cross-game file references (e.g. `ModCraft/` code reaching into `EvolveCraft/`
+Cross-game file references (e.g. `CivCraft/` code reaching into `LifeCraft/`
 or vice versa) are design bugs. Shared code must be promoted to `platform/`
 first.
 
 ## Code Style
 
 - Tabs for indentation in C++ and GLSL
-- `namespace modcraft { }` wraps all C++ code; `namespace modcraft::net { }` for protocol types
+- `namespace civcraft { }` wraps all C++ code; `namespace civcraft::net { }` for protocol types
 - String IDs: `"base:name"` format (namespace:identifier)
 - Header-only for small classes; `.h` + `.cpp` split for larger ones
 - When adding a new `BehaviorAction` type: decide if one-shot or continuous.
   One-shot (creates entities, modifies blocks, deals damage) → add to `extractOneShots()`
-  in `agent/behavior_executor.h`. See `src/ModCraft/docs/24_COMMON_PITFALLS.md` #1.
+  in `agent/behavior_executor.h`. See `src/CivCraft/docs/24_COMMON_PITFALLS.md` #1.
 - **Header-only changes don't trigger rebuild**: after editing a header-only content file
   (e.g. `content/entities_animals.h`), `touch` its including `.cpp` to force recompilation:
-  `touch src/ModCraft/content/builtin.cpp`
+  `touch src/CivCraft/content/builtin.cpp`
 
 ## Key Docs
 
-- `src/ModCraft/docs/00_OVERVIEW.md` — Full architecture, artifact system, TCP protocol
-- `src/ModCraft/docs/22_BEHAVIORS.md` — Entity AI: wander, peck, prowl, follow, woodcutter
-- `src/ModCraft/docs/24_COMMON_PITFALLS.md` — Known bugs to avoid (one-shot actions, ImGui frames, camera jumps)
-- `src/ModCraft/docs/DEBUGGING.md` — Dev iteration loop, screenshot pipeline
+- `src/CivCraft/docs/00_OVERVIEW.md` — Full architecture, artifact system, TCP protocol
+- `src/CivCraft/docs/22_BEHAVIORS.md` — Entity AI: wander, peck, prowl, follow, woodcutter
+- `src/CivCraft/docs/24_COMMON_PITFALLS.md` — Known bugs to avoid (one-shot actions, ImGui frames, camera jumps)
+- `src/CivCraft/docs/DEBUGGING.md` — Dev iteration loop, screenshot pipeline
 
 ## Game Identity
 
-**This game is called ModCraft.** The name reflects its core design goal:
+**This game is called CivCraft.** The name reflects its core design goal:
 players can mod ANYTHING and EVERYTHING. Every creature, behavior, item,
 block, world, and effect is defined in Python artifacts — fully replaceable,
 extendable, and shareable without touching C++. The C++ engine is a pure

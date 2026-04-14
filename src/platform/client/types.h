@@ -2,7 +2,7 @@
 #include <string>
 #include "server/world_gen_config.h"
 
-namespace modcraft {
+namespace civcraft {
 
 enum class GameState {
 	MENU,
@@ -44,4 +44,4 @@ struct MenuAction {
 	WorldGenConfig worldGenConfig;
 };
 
-} // namespace modcraft
+} // namespace civcraft

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace modcraft {
+namespace civcraft {
 
 // Stable, small type aliases shared across platform/ and game code.
 // Defined here (not in server.h) so non-server translation units — like
@@ -67,4 +67,4 @@ inline ChunkPos worldToChunk(int wx, int wy, int wz) {
 	};
 }
 
-} // namespace modcraft
+} // namespace civcraft

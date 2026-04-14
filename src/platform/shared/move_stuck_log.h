@@ -1,6 +1,6 @@
 #pragma once
 
-// MoveStuck logging — per-entity, written to /tmp/modcraft_entity_<id>.log.
+// MoveStuck logging — per-entity, written to /tmp/civcraft_entity_<id>.log.
 //
 // Many detection sites (server collision clamp, agent stuck, client/server
 // snap) can fire for the same entity within the same second. Routing each
@@ -19,7 +19,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace modcraft {
+namespace civcraft {
 
 // Per-entity cooldown. First call for an entity within the window logs;
 // subsequent calls are dropped. Cross-site: a Clamp log silences an
@@ -48,4 +48,4 @@ inline void logMoveStuck(EntityId eid, const char* tag,
 		tag, reason, detail ? detail : "");
 }
 
-} // namespace modcraft
+} // namespace civcraft

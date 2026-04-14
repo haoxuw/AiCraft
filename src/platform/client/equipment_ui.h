@@ -29,7 +29,7 @@
 #include <algorithm>
 #include <set>
 
-namespace modcraft {
+namespace civcraft {
 
 class EquipmentUI {
 public:
@@ -214,9 +214,9 @@ private:
 		btn("Grid",  SortMode::Grid);
 	}
 
-	// Strip "base:" prefix for sorting/display.
+	// No-op retained for call sites; ids are already bare.
 	static std::string stripPrefix(const std::string& s) {
-		return (s.size() > 5 && s.compare(0, 5, "base:") == 0) ? s.substr(5) : s;
+		return s;
 	}
 
 	// ── Sorted list view (Name or Value) ──
@@ -366,7 +366,6 @@ private:
 
 		// Item name (bottom, truncated)
 		std::string name = id;
-		if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
 		if (name.size() > 8) name = name.substr(0, 7) + "~";
 		ImVec2 textSize = ImGui::CalcTextSize(name.c_str());
 		float textX = pos.x + (cellSize - textSize.x) * 0.5f;
@@ -444,8 +443,6 @@ private:
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.88f, 0.82f, 0.68f, 1.0f));
 
 			std::string dispName = m_contextItem;
-			if (dispName.size() > 5 && dispName.substr(0, 5) == "base:")
-				dispName = dispName.substr(5);
 			ImGui::TextColored(ImVec4(0.90f, 0.78f, 0.35f, 1), "%s", dispName.c_str());
 			ImGui::Separator();
 
@@ -478,8 +475,6 @@ private:
 			ImGui::BeginTooltip();
 
 			std::string fullName = id;
-			if (fullName.size() > 5 && fullName.substr(0, 5) == "base:")
-				fullName = fullName.substr(5);
 			// Capitalize first letter
 			if (!fullName.empty()) fullName[0] = (char)toupper(fullName[0]);
 			ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.38f, 1), "%s", fullName.c_str());
@@ -539,8 +534,7 @@ private:
 
 			// Item name
 			std::string name = itemId;
-			if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
-			if (!name.empty()) name[0] = (char)toupper(name[0]);
+				if (!name.empty()) name[0] = (char)toupper(name[0]);
 			dl->AddText(ImGui::GetFont(), 14.0f, {pos.x + 52, pos.y + 12},
 				IM_COL32(200, 185, 140, 255), name.c_str());
 
@@ -595,8 +589,7 @@ private:
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 6));
 			ImGui::BeginTooltip();
 			std::string name = itemId;
-			if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
-			if (!name.empty()) name[0] = (char)toupper(name[0]);
+				if (!name.empty()) name[0] = (char)toupper(name[0]);
 			ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.38f, 1), "%s", name.c_str());
 			ImGui::TextColored(ImVec4(0.50f, 0.48f, 0.42f, 1), "Slot: %s", label);
 			ImGui::EndTooltip();
@@ -687,8 +680,7 @@ private:
 		if (isActive) {
 			drawItemIcon(dl, itemId, blocks, pos.x + 6, pos.y + 6, slotH - 12);
 			std::string name = itemId;
-			if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
-			if (!name.empty()) name[0] = (char)toupper(name[0]);
+				if (!name.empty()) name[0] = (char)toupper(name[0]);
 			dl->AddText(ImGui::GetFont(), 12.0f, {pos.x + slotH - 6, pos.y + 10},
 				IM_COL32(200, 185, 140, 255), name.c_str());
 			dl->AddText(ImGui::GetFont(), 10.0f, {pos.x + slotH - 6, pos.y + 26},
@@ -748,8 +740,7 @@ private:
 			ImGui::BeginTooltip();
 			if (isActive) {
 				std::string name = itemId;
-				if (name.size() > 5 && name.substr(0, 5) == "base:") name = name.substr(5);
-				if (!name.empty()) name[0] = (char)toupper(name[0]);
+						if (!name.empty()) name[0] = (char)toupper(name[0]);
 				ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.38f, 1), "%s", name.c_str());
 				ImGui::TextColored(ImVec4(0.50f, 0.48f, 0.42f, 1), "Slot: Offhand (%s)", label);
 				ImGui::TextColored(ImVec4(0.45f, 0.43f, 0.38f, 0.8f), "Click to unequip");
@@ -767,4 +758,4 @@ private:
 	}
 };
 
-} // namespace modcraft
+} // namespace civcraft

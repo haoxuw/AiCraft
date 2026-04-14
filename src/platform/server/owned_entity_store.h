@@ -11,7 +11,7 @@
  * fresh-spawn path. The on-disk persistence of these snapshots lives in
  * world_save.h; this class owns the in-memory side.
  *
- * Keyed by the player's `character_skin` prop (e.g. "base:knight") so the
+ * Keyed by the player's `character_skin` prop (e.g. "knight") so the
  * mapping survives server restarts where the ephemeral playerId changes.
  */
 
@@ -25,14 +25,14 @@
 #include <vector>
 #include <cstdio>
 
-namespace modcraft {
+namespace civcraft {
 
 // Snapshot of one owned NPC, taken at client disconnect so the same mob
 // can be re-spawned with its current state when the owner logs back in.
 // Server-side only — no AI runs on the server, so dead NPCs and unknown
 // types are dropped at snapshot time rather than restored.
 struct OwnedEntitySnapshot {
-	std::string typeId;            // e.g. "base:pig" — looked up via EntityManager on restore
+	std::string typeId;            // e.g. "pig" — looked up via EntityManager on restore
 	glm::vec3   position{0};
 	glm::vec3   velocity{0};
 	float       yaw = 0;
@@ -159,4 +159,4 @@ private:
 	Map m_snapshots;  // character_skin → owned NPCs awaiting owner's next login
 };
 
-} // namespace modcraft
+} // namespace civcraft

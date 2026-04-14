@@ -23,7 +23,7 @@
 #include <algorithm>
 #include <glm/trigonometric.hpp>
 
-namespace modcraft {
+namespace civcraft {
 
 class EntityManager {
 public:
@@ -195,4 +195,4 @@ private:
 	EntityId m_nextId = 1;
 };
 
-} // namespace modcraft
+} // namespace civcraft

@@ -9,7 +9,7 @@
 // Web build stub: Python bridge is server-only, not available in WASM.
 // All methods return safe defaults.
 // ================================================================
-namespace modcraft {
+namespace civcraft {
 bool PythonBridge::init(const std::string&) { return false; }
 void PythonBridge::shutdown() {}
 BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) {
@@ -29,7 +29,7 @@ bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
 bool loadStructureBlueprint(const std::string&, StructureBlueprint&) { return false; }
 std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 	const Entity&, const std::function<std::string(int,int,int)>&) const { return std::nullopt; }
-} // namespace modcraft
+} // namespace civcraft
 #else
 // ================================================================
 // Native build: full pybind11 implementation
@@ -40,7 +40,7 @@ std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 
 namespace py = pybind11;
 
-namespace modcraft {
+namespace civcraft {
 
 // ================================================================
 // pybind11 module: expose C++ types to Python behaviors
@@ -105,13 +105,18 @@ static ScanBlocksFn s_scanBlocksFn;
 using ScanEntitiesFn = std::function<std::vector<NearbyEntity>(const std::string&, glm::vec3, float, int)>;
 static ScanEntitiesFn s_scanEntitiesFn;
 
+// Annotation scan callback — lookup by typeId, same shape as scan_blocks
+// (positions + distance). See shared/annotation.h for the data model.
+using ScanAnnotationsFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
+static ScanAnnotationsFn s_scanAnnotationsFn;
+
 // Default search anchor when Python passes near=None: the entity's current
 // position. Set by callDecide() alongside s_scanBlocksFn so the binding
 // can substitute it without needing access to `self`.
 static glm::vec3 s_selfPos;
 
-PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
-	m.doc() = "ModCraft engine bridge — exposes world view to Python behaviors";
+PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
+	m.doc() = "CivCraft engine bridge — exposes world view to Python behaviors";
 
 	py::class_<PyEntityInfo>(m, "EntityInfo")
 		.def_readonly("id", &PyEntityInfo::id)
@@ -199,11 +204,11 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	}, py::arg("x"), py::arg("y"), py::arg("z"));
 
 	// get_block(x, y, z) → str — query block type from the agent's local chunk cache.
-	// Valid only inside decide(); returns "base:air" if called outside callDecide().
+	// Valid only inside decide(); returns "air" if called outside callDecide().
 	// Use this for pathfinding or any logic that needs to probe arbitrary world positions.
 	m.def("get_block", [](int x, int y, int z) -> std::string {
 		if (s_blockQueryFn) return s_blockQueryFn(x, y, z);
-		return "base:air";
+		return "air";
 	}, py::arg("x"), py::arg("y"), py::arg("z"),
 	   "Query block type string at world position (x,y,z). Call only inside decide().");
 
@@ -265,6 +270,33 @@ PYBIND11_EMBEDDED_MODULE(modcraft_engine, m) {
 	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find entities of a specific type near `near` (default: self position). "
 	   "Bypasses the per-agent nearby cache; scans the whole entity list.");
+
+	// scan_annotations(type, near=None, max_dist, max_results) — same output
+	// shape as scan_blocks; each hit is {type, x, y, z, distance} for a block
+	// decorator (flower, moss, …) matching `type`.
+	m.def("scan_annotations", [](const std::string& typeId, py::object near,
+	                             float maxDist, int maxResults) -> py::list {
+		py::list result;
+		if (!s_scanAnnotationsFn) return result;
+		glm::vec3 origin = s_selfPos;
+		if (!near.is_none()) {
+			auto t = near.cast<std::tuple<float, float, float>>();
+			origin = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+		}
+		auto hits = s_scanAnnotationsFn(typeId, origin, maxDist, maxResults);
+		for (auto& h : hits) {
+			py::dict d;
+			d["type"]     = h.typeId;
+			d["x"]        = h.x;
+			d["y"]        = h.y;
+			d["z"]        = h.z;
+			d["distance"] = h.distance;
+			result.append(d);
+		}
+		return result;
+	}, py::arg("type"), py::arg("near") = py::none(),
+	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
+	   "Find annotations (block decorators) of a specific type near `near`.");
 
 	// Expose C++ name constants as Python submodules so behaviors can use the
 	// same identifiers as C++ code (LivingName.Chicken, BlockType.Stone, etc.).
@@ -406,7 +438,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 		py::dict ns;
 
 		// Import engine actions + convenience wrappers + Behavior base class.
-		py::exec("from modcraft_engine import *", ns);
+		py::exec("from civcraft_engine import *", ns);
 		py::exec("from actions import *", ns);
 		py::exec("from behavior_base import Behavior", ns);
 
@@ -486,6 +518,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
                                BlockQueryFn blockQueryFn,
                                ScanBlocksFn scanBlocksFn,
                                ScanEntitiesFn scanEntitiesFn,
+                               ScanAnnotationsFn scanAnnotationsFn,
                                const std::string& lastOutcome,
                                const std::string& lastGoal,
                                const std::string& lastReason) {
@@ -495,15 +528,17 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 	// Set per-call block query callbacks (cleared on return). Serialized by
 	// the GIL: only one callDecide runs at a time, so the statics are safe.
 	s_blockQueryFn   = blockQueryFn ? std::move(blockQueryFn)
-	                                : [](int,int,int){ return std::string("base:air"); };
+	                                : [](int,int,int){ return std::string("air"); };
 	s_scanBlocksFn   = std::move(scanBlocksFn);
 	s_scanEntitiesFn = std::move(scanEntitiesFn);
+	s_scanAnnotationsFn = std::move(scanAnnotationsFn);
 	s_selfPos        = self.position;
 	struct Cleanup {
 		~Cleanup() {
 			s_blockQueryFn = nullptr;
 			s_scanBlocksFn = nullptr;
 			s_scanEntitiesFn = nullptr;
+			s_scanAnnotationsFn = nullptr;
 		}
 	} _cleanup;
 
@@ -771,7 +806,7 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 				for (auto& h : v["houses"].cast<py::list>()) {
 					WorldPyConfig::HouseLayout layout;
 					if (py::isinstance<py::dict>(h)) {
-						// Dict format: {"cx":0,"cz":0,"w":14,"d":14,"stories":2,"wall":"base:wood"}
+						// Dict format: {"cx":0,"cz":0,"w":14,"d":14,"stories":2,"wall":"wood"}
 						py::dict hd = h.cast<py::dict>();
 						layout.cx      = hd["cx"].cast<int>();
 						layout.cz      = hd["cz"].cast<int>();
@@ -870,7 +905,7 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 		// Anchor
 		if (bp.contains("anchor")) {
 			py::dict a = bp["anchor"].cast<py::dict>();
-			out.anchor.block_type = getStr(a, "block_type", "base:root");
+			out.anchor.block_type = getStr(a, "block_type", "root");
 			out.anchor.hardness   = getInt(a, "hardness", 3);
 			if (a.contains("offset")) {
 				py::list off = a["offset"].cast<py::list>();
@@ -927,5 +962,5 @@ std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 	return std::nullopt;
 }
 
-} // namespace modcraft
+} // namespace civcraft
 #endif // __EMSCRIPTEN__

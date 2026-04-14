@@ -29,7 +29,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace modcraft {
+namespace civcraft {
 
 // ============================================================
 // WorldPyConfig — world template parameters loaded from Python.
@@ -86,15 +86,15 @@ struct WorldPyConfig {
 	};
 	std::vector<HouseLayout> houses = {
 		{  0,   0, 14, 14, 2, "",          ""},
-		{ 26,  -8, 12, 10, 1, "base:wood", "base:wood"},
-		{-22,   9, 10, 12, 1, "base:wood", "base:wood"},
+		{ 26,  -8, 12, 10, 1, "wood", "wood"},
+		{-22,   9, 10, 12, 1, "wood", "wood"},
 		{  9,  28, 12, 10, 1, "",          ""},
 		{-20, -26, 12, 12, 2, "",          ""},
 	};
-	std::string wallBlock        = "base:cobblestone";
-	std::string roofBlock        = "base:wood";
-	std::string floorBlock       = "base:cobblestone";
-	std::string pathBlock        = "base:cobblestone";
+	std::string wallBlock        = "cobblestone";
+	std::string roofBlock        = "wood";
+	std::string floorBlock       = "cobblestone";
+	std::string pathBlock        = "cobblestone";
 	int   storyHeight            = 6;
 	int   doorHeight             = 5;
 	int   windowRow              = 2;
@@ -122,11 +122,11 @@ struct WorldPyConfig {
 		std::unordered_map<std::string, std::string> props;
 	};
 	std::vector<MobConfig> mobs = {
-		{"base:villager", 3, 6.0f,  "monument"},
-		{"base:pig",      4, 4.0f,  "barn"},
-		{"base:chicken",  3, 4.0f,  "barn"},
-		{"base:dog",      2, 4.0f,  "barn"},
-		{"base:cat",      2, 4.0f,  "barn"},
+		{"villager", 3, 6.0f,  "monument"},
+		{"pig",      4, 4.0f,  "barn"},
+		{"chicken",  3, 4.0f,  "barn"},
+		{"dog",      2, 4.0f,  "barn"},
+		{"cat",      2, 4.0f,  "barn"},
 	};
 };
 
@@ -183,9 +183,12 @@ public:
 	void unloadBehavior(BehaviorHandle handle);
 
 	// Block query function types — set per-call, protected by mutex
-	using BlockQueryFn   = std::function<std::string(int, int, int)>;
-	using ScanBlocksFn   = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
-	using ScanEntitiesFn = std::function<std::vector<NearbyEntity>(const std::string&, glm::vec3, float, int)>;
+	using BlockQueryFn      = std::function<std::string(int, int, int)>;
+	using ScanBlocksFn      = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
+	using ScanEntitiesFn    = std::function<std::vector<NearbyEntity>(const std::string&, glm::vec3, float, int)>;
+	// Annotations — same shape as blocks; caller treats hits as decorator
+	// positions (flowers, moss, …) matched by typeId.
+	using ScanAnnotationsFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 
 	// Call decide() on a loaded behavior.
 	// Returns a Plan (list of PlanSteps). Backward compatible: if the behavior
@@ -205,6 +208,7 @@ public:
 	                BlockQueryFn blockQueryFn = nullptr,
 	                ScanBlocksFn scanBlocksFn = nullptr,
 	                ScanEntitiesFn scanEntitiesFn = nullptr,
+	                ScanAnnotationsFn scanAnnotationsFn = nullptr,
 	                const std::string& lastOutcome = "none",
 	                const std::string& lastGoal    = "",
 	                const std::string& lastReason  = "");
@@ -235,4 +239,4 @@ private:
 // Global bridge instance
 PythonBridge& pythonBridge();
 
-} // namespace modcraft
+} // namespace civcraft

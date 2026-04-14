@@ -4,7 +4,7 @@
  * ServerInterface — abstract access to the game server.
  *
  * The only implementation is NetworkServer (TCP client). Singleplayer
- * spawns modcraft-server as a child process and connects via localhost TCP —
+ * spawns civcraft-server as a child process and connects via localhost TCP —
  * identical code path to multiplayer.
  *
  * Flow:
@@ -18,12 +18,16 @@
 #include "shared/chunk_source.h"
 #include "shared/entity.h"
 #include "shared/action.h"
+#include "shared/annotation.h"
 #include "server/world_gen_config.h"
 #include <string>
 #include <functional>
 #include <memory>
+#include <vector>
+#include <utility>
+#include <glm/vec3.hpp>
 
-namespace modcraft {
+namespace civcraft {
 
 class ServerInterface {
 public:
@@ -114,6 +118,11 @@ public:
 	// Block registry (for HUD, raycast)
 	virtual const BlockRegistry& blockRegistry() const = 0;
 
+	// Block decorations (flowers, moss, …) for the given chunk. Returns null
+	// if the chunk isn't cached or has no annotations. Default: no decorations.
+	virtual const std::vector<std::pair<glm::ivec3, Annotation>>*
+	annotationsForChunk(ChunkPos /*cp*/) const { return nullptr; }
+
 	// Proposal queue (for client input → server)
 	virtual ActionProposalQueue& proposalQueue() = 0;
 
@@ -131,4 +140,4 @@ public:
 	virtual void setInventoryCallback(std::function<void(EntityId)> /*onInventoryUpdate*/) {}
 };
 
-} // namespace modcraft
+} // namespace civcraft

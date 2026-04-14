@@ -20,7 +20,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace modcraft {
+namespace civcraft {
 
 // Assign formation-offset long-term goals for a group of entities.
 // Entities spread into a grid centered on goalPos.
@@ -152,4 +152,4 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 	});
 }
 
-} // namespace modcraft
+} // namespace civcraft

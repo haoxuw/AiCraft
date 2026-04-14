@@ -14,7 +14,7 @@
 #include "client/hotbar.h"
 #include "client/gl.h"
 
-namespace modcraft {
+namespace civcraft {
 
 struct HUDContext {
 	float aspect;
@@ -66,4 +66,4 @@ private:
 	void renderEntityTooltip(const HUDContext& ctx, TextRenderer& text);
 };
 
-} // namespace modcraft
+} // namespace civcraft

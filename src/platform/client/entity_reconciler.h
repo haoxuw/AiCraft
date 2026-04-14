@@ -7,7 +7,7 @@
 #include <memory>
 #include <unordered_map>
 
-namespace modcraft {
+namespace civcraft {
 
 // Owns client-side smoothing of remote entity movement between 20Hz server
 // broadcasts. Pulled out of NetworkServer so that file stays focused on
@@ -213,4 +213,4 @@ private:
 	std::unordered_map<EntityId, InterpTarget> m_targets;
 };
 
-} // namespace modcraft
+} // namespace civcraft

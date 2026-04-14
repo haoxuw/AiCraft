@@ -8,19 +8,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Perf instrumentation (frame/tick/handler timing in the dedicated server).
 # Enabled only by `make game` via a separate build dir; production builds
 # (`make server`, `make client`) leave this off so the code is not compiled in.
-option(MODCRAFT_PERF "Enable server perf instrumentation (frame/tick/handler timing)" OFF)
-if(MODCRAFT_PERF)
-	add_compile_definitions(MODCRAFT_PERF)
-	message(STATUS "MODCRAFT_PERF: enabled (perf instrumentation compiled in)")
+option(CIVCRAFT_PERF "Enable server perf instrumentation (frame/tick/handler timing)" OFF)
+if(CIVCRAFT_PERF)
+	add_compile_definitions(CIVCRAFT_PERF)
+	message(STATUS "CIVCRAFT_PERF: enabled (perf instrumentation compiled in)")
 endif()
 
 # Two games share one C++ engine (src/platform). Each game is a set of
 # executables under src/<Game>/, linking the platform's source tree.
 #
 #   src/platform/   Engine: shared types, server loop, agent runtime, renderer
-#   src/ModCraft/   Voxel sandbox game (chunks, blocks, structures)
-#   src/EvoCraft/   Spore-cell-stage game — C++ server + Godot 4 client
-#                   (supersedes the retired src/EvolveCraft/ OpenGL attempt)
+#   src/CivCraft/   Voxel sandbox game (chunks, blocks, structures)
+#   src/LifeCraft/   Spore-cell-stage game — C++ server + Godot 4 client
+#                   (supersedes the retired src/LifeCraft/ OpenGL attempt)
 #
 # Each game's executables run with CWD = $BUILD_DIR, so assets copied into
 # $BUILD_DIR by POST_BUILD are found via "shaders/...", "artifacts/...", etc.
@@ -162,52 +162,52 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/floating_text.cpp
 )
 
-# --- ModCraft game sources (src/ModCraft) ---
-set(MODCRAFT_CONTENT_SOURCES
-	src/ModCraft/content/builtin.h
-	src/ModCraft/content/builtin.cpp
+# --- CivCraft game sources (src/CivCraft) ---
+set(CIVCRAFT_CONTENT_SOURCES
+	src/CivCraft/content/builtin.h
+	src/CivCraft/content/builtin.cpp
 )
 
-set(MODCRAFT_CLIENT_SOURCES
-	src/ModCraft/client/chunk_mesher.h
-	src/ModCraft/client/chunk_mesher.cpp
-	src/ModCraft/client/renderer.h
-	src/ModCraft/client/renderer.cpp
-	src/ModCraft/client/gameplay_interaction.cpp
+set(CIVCRAFT_CLIENT_SOURCES
+	src/CivCraft/client/chunk_mesher.h
+	src/CivCraft/client/chunk_mesher.cpp
+	src/CivCraft/client/renderer.h
+	src/CivCraft/client/renderer.cpp
+	src/CivCraft/client/gameplay_interaction.cpp
 )
 
 # Include paths: both roots so existing "shared/foo.h" / "server/foo.h"
 # / "agent/foo.h" / "client/foo.h" includes resolve transparently.
-# File basenames are unique across the platform/ModCraft split.
-set(GAME_INCLUDE_DIRS src/platform src/ModCraft)
+# File basenames are unique across the platform/CivCraft split.
+set(GAME_INCLUDE_DIRS src/platform src/CivCraft)
 
-# Platform + ModCraft server-side sources (shared by all exes that run server logic)
+# Platform + CivCraft server-side sources (shared by all exes that run server logic)
 set(FULL_SIM_SOURCES
 	${PLATFORM_SERVER_SOURCES}
-	${MODCRAFT_CONTENT_SOURCES}
+	${CIVCRAFT_CONTENT_SOURCES}
 )
 
-# Platform + ModCraft client-side sources (shared by GUI exes)
+# Platform + CivCraft client-side sources (shared by GUI exes)
 set(FULL_CLIENT_SOURCES
 	${PLATFORM_CLIENT_SOURCES}
-	${MODCRAFT_CLIENT_SOURCES}
+	${CIVCRAFT_CLIENT_SOURCES}
 )
 
 if(EMSCRIPTEN)
 	# =================================================================
 	# Web build (WASM + WebGL 2) — client-only, connects to remote server
 	# =================================================================
-	add_executable(modcraft
-		src/ModCraft/main.cpp
+	add_executable(civcraft
+		src/CivCraft/main.cpp
 		${FULL_SIM_SOURCES}
 		${FULL_CLIENT_SOURCES}
 	)
-	target_include_directories(modcraft PRIVATE ${GAME_INCLUDE_DIRS})
-	target_link_libraries(modcraft PRIVATE glm::glm imgui_lib)
+	target_include_directories(civcraft PRIVATE ${GAME_INCLUDE_DIRS})
+	target_link_libraries(civcraft PRIVATE glm::glm imgui_lib)
 
 	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576 -sWEBSOCKET_SUBPROTOCOL=binary")
-	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/src/platform/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/ModCraft/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/ModCraft/config@config --preload-file ${CMAKE_SOURCE_DIR}/src/platform/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/src/ModCraft/artifacts@artifacts")
-	set_target_properties(modcraft PROPERTIES
+	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/src/platform/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/config@config --preload-file ${CMAKE_SOURCE_DIR}/src/platform/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts@artifacts")
+	set_target_properties(civcraft PROPERTIES
 		SUFFIX ".html"
 		COMPILE_FLAGS "${EM_FLAGS}"
 		LINK_FLAGS "${EM_FLAGS} ${EM_LINK}"
@@ -219,50 +219,50 @@ else()
 	# =================================================================
 
 	# === Singleplayer (server + client in one process) ===
-	add_executable(modcraft
-		src/ModCraft/main.cpp
+	add_executable(civcraft
+		src/CivCraft/main.cpp
 		${FULL_SIM_SOURCES}
 		${FULL_CLIENT_SOURCES}
 	)
-	target_include_directories(modcraft PRIVATE ${GAME_INCLUDE_DIRS})
-	target_link_libraries(modcraft PRIVATE
+	target_include_directories(civcraft PRIVATE ${GAME_INCLUDE_DIRS})
+	target_link_libraries(civcraft PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib libzstd_static
 	)
 
 	# === Dedicated server (headless, no OpenGL) ===
-	add_executable(modcraft-server
-		src/ModCraft/main_server.cpp
+	add_executable(civcraft-server
+		src/CivCraft/main_server.cpp
 		${FULL_SIM_SOURCES}
 	)
-	target_include_directories(modcraft-server PRIVATE ${GAME_INCLUDE_DIRS})
-	target_link_libraries(modcraft-server PRIVATE
+	target_include_directories(civcraft-server PRIVATE ${GAME_INCLUDE_DIRS})
+	target_link_libraries(civcraft-server PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 		libzstd_static
 	)
 
 	# === Network client (connects to remote server) ===
-	add_executable(modcraft-client
-		src/ModCraft/main_client.cpp
+	add_executable(civcraft-client
+		src/CivCraft/main_client.cpp
 		${FULL_SIM_SOURCES}
 		${FULL_CLIENT_SOURCES}
 	)
-	target_include_directories(modcraft-client PRIVATE ${GAME_INCLUDE_DIRS})
-	target_link_libraries(modcraft-client PRIVATE
+	target_include_directories(civcraft-client PRIVATE ${GAME_INCLUDE_DIRS})
+	target_link_libraries(civcraft-client PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib libzstd_static
 	)
 
 	# === Headless E2E test runner ===
-	add_executable(modcraft-test
-		src/ModCraft/test/test_e2e.cpp
+	add_executable(civcraft-test
+		src/CivCraft/test/test_e2e.cpp
 		${FULL_SIM_SOURCES}
 	)
-	target_include_directories(modcraft-test PRIVATE ${GAME_INCLUDE_DIRS})
-	target_link_libraries(modcraft-test PRIVATE
+	target_include_directories(civcraft-test PRIVATE ${GAME_INCLUDE_DIRS})
+	target_link_libraries(civcraft-test PRIVATE
 		glm::glm
 		Python3::Python pybind11::embed
 		libzstd_static
@@ -272,24 +272,24 @@ else()
 	# All executables run with CWD=$BUILD_DIR, so POST_BUILD copies assets
 	# from the per-game source tree into the build dir with the same
 	# "shaders/", "artifacts/", etc. names that the C++ code expects.
-	add_custom_command(TARGET modcraft POST_BUILD
+	add_custom_command(TARGET civcraft POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/platform/shaders $<TARGET_FILE_DIR:modcraft>/shaders
+			${CMAKE_SOURCE_DIR}/src/platform/shaders $<TARGET_FILE_DIR:civcraft>/shaders
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/ModCraft/shaders $<TARGET_FILE_DIR:modcraft>/shaders
+			${CMAKE_SOURCE_DIR}/src/CivCraft/shaders $<TARGET_FILE_DIR:civcraft>/shaders
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/ModCraft/config $<TARGET_FILE_DIR:modcraft>/config
+			${CMAKE_SOURCE_DIR}/src/CivCraft/config $<TARGET_FILE_DIR:civcraft>/config
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/ModCraft/python $<TARGET_FILE_DIR:modcraft>/python
+			${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/platform/fonts $<TARGET_FILE_DIR:modcraft>/fonts
+			${CMAKE_SOURCE_DIR}/src/platform/fonts $<TARGET_FILE_DIR:civcraft>/fonts
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/ModCraft/artifacts $<TARGET_FILE_DIR:modcraft>/artifacts
-		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/ModCraft/resources $<TARGET_FILE_DIR:modcraft>/
+			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft>/artifacts
+		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/CivCraft/resources $<TARGET_FILE_DIR:civcraft>/
 	)
 
 	# === Model editor (standalone model viewer / snapshot tool) ===
-	# Shared by ModCraft + EvoCraft — renders any .py box model without
+	# Shared by CivCraft + LifeCraft — renders any .py box model without
 	# launching a world, server, or full client. Snapshot mode writes
 	# 6-angle PPMs to disk (front/three_q/side/back/top/rts) and exits.
 	add_executable(model-editor
@@ -312,20 +312,22 @@ else()
 			$<TARGET_FILE_DIR:model-editor>/shaders/
 	)
 
-	# modcraft-test needs python/ + artifacts/ in its CWD to load behaviors.
-	add_custom_command(TARGET modcraft-test POST_BUILD
+	# civcraft-test needs python/ + artifacts/ in its CWD to load behaviors.
+	add_custom_command(TARGET civcraft-test POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/ModCraft/python $<TARGET_FILE_DIR:modcraft-test>/python
+			${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft-test>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/ModCraft/artifacts $<TARGET_FILE_DIR:modcraft-test>/artifacts
+			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-test>/artifacts
 	)
 
 	# =================================================================
-	# EvoCraft — Spore cell stage game (C++ server + Godot 4 client).
-	# The client is a standalone Godot project at src/EvoCraft/godot/ and is
-	# NOT built by CMake; see src/EvoCraft/docs/00_PLAN.md for the full plan.
+	# LifeCraft — Spore cell stage game (C++ server + Godot 4 client).
+	# The client is a standalone Godot project at src/LifeCraft/godot/ and is
+	# NOT built by CMake; see src/LifeCraft/docs/00_PLAN.md for the full plan.
 	# This target is the authoritative TCP server. M1 scope: accept
 	# connections and broadcast a 1Hz tick counter.
 	# =================================================================
-	add_subdirectory(src/EvoCraft)
+	if(EXISTS ${CMAKE_SOURCE_DIR}/src/LifeCraft/CMakeLists.txt)
+		add_subdirectory(src/LifeCraft)
+	endif()
 endif()

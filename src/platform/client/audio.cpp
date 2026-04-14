@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 AudioManager::~AudioManager() {
 	shutdown();
@@ -591,4 +591,4 @@ std::string AudioManager::currentTrackName() const {
 	return name;
 }
 
-} // namespace modcraft
+} // namespace civcraft

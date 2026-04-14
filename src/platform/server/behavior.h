@@ -22,7 +22,7 @@
 #include <vector>
 #include <string>
 
-namespace modcraft {
+namespace civcraft {
 
 // ================================================================
 // NearbyEntity -- info about an entity visible to a behavior
@@ -83,4 +83,4 @@ struct PlanStep {
 
 using Plan = std::vector<PlanStep>;
 
-} // namespace modcraft
+} // namespace civcraft

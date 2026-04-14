@@ -5,7 +5,7 @@
 #include <string>
 #include <cmath>
 
-namespace modcraft {
+namespace civcraft {
 
 namespace {
 constexpr glm::vec4 kHealthyTint = {1.0f, 0.92f, 0.3f, 0.9f};
@@ -68,4 +68,4 @@ void LightbulbDrawer::draw(const Entity& e, const glm::mat4& viewProj,
 	m_tr.drawText(e.goalText, textX, textY, scale, tint, aspect);
 }
 
-} // namespace modcraft
+} // namespace civcraft

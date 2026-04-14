@@ -11,12 +11,12 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace modcraft {
+namespace civcraft {
 
 ChunkGenService::ChunkGenService(World& world, int numWorkers) : m_world(world) {
 	// Priority: env var > arg > hardware_concurrency() - 1 (leave one for tick).
 	int n = numWorkers;
-	if (const char* env = std::getenv("MODCRAFT_CHUNK_WORKERS")) {
+	if (const char* env = std::getenv("CIVCRAFT_CHUNK_WORKERS")) {
 		int envN = std::atoi(env);
 		if (envN > 0) n = envN;
 	}
@@ -148,4 +148,4 @@ void ChunkGenService::buildMessage(const Chunk& chunk, ChunkPos pos, bool useZst
 	std::memcpy(out.data() + 8, payload.data(), payload.size());
 }
 
-} // namespace modcraft
+} // namespace civcraft

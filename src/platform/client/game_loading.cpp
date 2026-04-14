@@ -2,7 +2,7 @@
 #include "client/network_server.h"
 #include "imgui.h"
 
-namespace modcraft {
+namespace civcraft {
 
 // ============================================================
 // Loading screen — runs from right after C_HELLO through to
@@ -123,4 +123,4 @@ void Game::updateLoading(float dt, float aspect) {
 	m_ui.endFrame();
 }
 
-} // namespace modcraft
+} // namespace civcraft

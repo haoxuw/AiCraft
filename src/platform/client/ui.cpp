@@ -4,7 +4,7 @@
 #include "imgui_impl_opengl3.h"
 #include <cstdio>
 
-namespace modcraft {
+namespace civcraft {
 
 bool UI::init(GLFWwindow* window) {
 	IMGUI_CHECKVERSION();
@@ -135,4 +135,4 @@ bool UI::wantsMouse() const {
 	return ImGui::GetIO().WantCaptureMouse;
 }
 
-} // namespace modcraft
+} // namespace civcraft

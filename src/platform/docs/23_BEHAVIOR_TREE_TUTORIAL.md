@@ -3,7 +3,7 @@
 > **DESIGN SKETCH — NOT IMPLEMENTED.**
 > This document describes a planned visual behavior tree editor. The editor
 > does not currently exist. The compiled Python examples here also use a stale
-> dict-style API and import `Follow`/`Flee` from `modcraft_engine` — neither
+> dict-style API and import `Follow`/`Flee` from `civcraft_engine` — neither
 > is correct. See `docs/21_BEHAVIOR_API.md` for the actual behavior API.
 
 The behavior tree editor lets you define entity AI visually using
@@ -170,7 +170,7 @@ to follow the player, 70% wanders. Unpredictable mood.
 The visual tree compiles to Python code like:
 
 ```python
-from modcraft_engine import Idle, Wander, Follow, Flee, DropItem
+from civcraft_engine import Idle, Wander, Follow, Flee, DropItem
 import random as _rng
 
 def decide(self, world):

@@ -16,7 +16,7 @@
 #include <optional>
 #include <unordered_map>
 
-namespace modcraft {
+namespace civcraft {
 
 class AgentClient;
 
@@ -161,4 +161,4 @@ private:
 	bool m_hasMoveTarget = false;
 };
 
-} // namespace modcraft
+} // namespace civcraft

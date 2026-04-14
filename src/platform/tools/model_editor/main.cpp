@@ -12,8 +12,8 @@
 //   model-editor <model.py> --snapshot <outdir> [--size NxN] [--clip NAME]
 //       Write 6 PPMs (front/three_q/side/back/top/rts) to outdir and exit.
 //
-// Shared by ModCraft + EvoCraft: any .py file using the base BoxModel schema
-// will load — EvoCraft creature models included.
+// Shared by CivCraft + LifeCraft: any .py file using the base BoxModel schema
+// will load — LifeCraft creature models included.
 
 #include "client/box_model.h"
 #include "client/model.h"
@@ -35,10 +35,10 @@
 #include <cmath>
 
 namespace fs = std::filesystem;
-using modcraft::BoxModel;
-using modcraft::AnimState;
-using modcraft::ModelRenderer;
-using modcraft::Shader;
+using civcraft::BoxModel;
+using civcraft::AnimState;
+using civcraft::ModelRenderer;
+using civcraft::Shader;
 
 // ── Camera / framing ─────────────────────────────────────────────────────
 
@@ -130,7 +130,7 @@ static int runSnapshot(const std::string& modelPath, const std::string& outDir,
 	if (!gladLoadGL(glfwGetProcAddress)) { std::fprintf(stderr, "gladLoadGL failed\n"); return 1; }
 
 	BoxModel model;
-	if (!modcraft::model_loader::loadModelFile(modelPath, model)) {
+	if (!civcraft::model_loader::loadModelFile(modelPath, model)) {
 		std::fprintf(stderr, "failed to load model: %s\n", modelPath.c_str());
 		return 1;
 	}
@@ -259,7 +259,7 @@ static int runInteractive(const std::string& modelPath, int width, int height,
 	if (!gladLoadGL(glfwGetProcAddress)) { std::fprintf(stderr, "gladLoadGL failed\n"); return 1; }
 
 	BoxModel model;
-	if (!modcraft::model_loader::loadModelFile(modelPath, model)) {
+	if (!civcraft::model_loader::loadModelFile(modelPath, model)) {
 		std::fprintf(stderr, "failed to load model: %s\n", modelPath.c_str());
 		return 1;
 	}

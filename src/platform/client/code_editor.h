@@ -10,7 +10,7 @@
  *   - Error messages (if behavior code crashes)
  *   - [Apply] [Cancel] [Reset] buttons
  *
- * This is the core "learn to code" interface of ModCraft.
+ * This is the core "learn to code" interface of CivCraft.
  */
 
 #include "client/text_input.h"
@@ -19,7 +19,7 @@
 #include <string>
 #include <GLFW/glfw3.h>
 
-namespace modcraft {
+namespace civcraft {
 
 class CodeEditor {
 public:
@@ -72,4 +72,4 @@ private:
 	bool m_reset = false;
 };
 
-} // namespace modcraft
+} // namespace civcraft
