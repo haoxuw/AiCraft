@@ -1,0 +1,26 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.3",
+	"Category": "",
+	"Description": "Procedural creature editor — better-than-Spore",
+	"Modules": [
+		{
+			"Name": "CreatureForge",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine",
+				"GeometryFramework",
+				"GeometryCore",
+				"DynamicMesh",
+				"ControlRig"
+			]
+		}
+	],
+	"Plugins": [
+		{ "Name": "GeometryScripting",   "Enabled": true },
+		{ "Name": "ModelingToolsEditorMode", "Enabled": true },
+		{ "Name": "ControlRig",          "Enabled": true },
+		{ "Name": "ChaosVehiclesPlugin", "Enabled": false }
+	]
+}
