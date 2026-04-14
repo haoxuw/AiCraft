@@ -18,6 +18,14 @@ set(LIFECRAFT_PLATFORM_SOURCES
 	${CMAKE_SOURCE_DIR}/src/platform/client/shader.cpp
 )
 
+# Sim library — headless authoritative simulation. No GL, no Python.
+# Lives under src/LifeCraft/sim; see docs/00_OVERVIEW.md § Action types.
+add_library(lifecraft_sim STATIC
+	${CMAKE_CURRENT_SOURCE_DIR}/sim/sim.cpp
+)
+target_include_directories(lifecraft_sim PUBLIC ${LIFECRAFT_INCLUDE_DIRS})
+target_link_libraries(lifecraft_sim PUBLIC glm::glm)
+
 add_executable(lifecraft
 	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/chalk_renderer.cpp
@@ -25,8 +33,16 @@ add_executable(lifecraft
 )
 target_include_directories(lifecraft PRIVATE ${LIFECRAFT_INCLUDE_DIRS})
 target_link_libraries(lifecraft PRIVATE
+	lifecraft_sim
 	glfw glad_gl_core_41 glm::glm OpenGL::GL
 )
+
+# Headless smoke test for the sim. No GL, no window.
+add_executable(lifecraft-sim-test
+	${CMAKE_CURRENT_SOURCE_DIR}/tests/sim_test.cpp
+)
+target_include_directories(lifecraft-sim-test PRIVATE ${LIFECRAFT_INCLUDE_DIRS})
+target_link_libraries(lifecraft-sim-test PRIVATE lifecraft_sim glm::glm)
 
 # Stage shaders alongside the binary — code loads via `shaders/foo.vert`
 # relative to CWD (`build/`).
