@@ -33,6 +33,17 @@ struct AppOptions {
 	uint32_t seed = 0xC0FFEEu;
 	int   autotest_seconds = 30;
 	std::string play_screenshot_path;   // if set: run PLAYING for ~1s then snap PPM + exit
+	std::string menu_screenshot_path;   // if set: render MAIN_MENU then snap PPM + exit
+	std::string select_screenshot_path; // if set: render MONSTER_SELECT then snap PPM + exit
+};
+
+// Short-lived chalk-stroke particle for bites/kills/pickups.
+struct Particle {
+	glm::vec2 pos_a, pos_b;  // world-space stroke endpoints
+	glm::vec3 color;
+	float     half_width;
+	float     t_left;
+	float     t_max;
 };
 
 // Simple hit-tested button (NDC coordinates, anchored bottom-left).
@@ -148,8 +159,37 @@ private:
 	std::mt19937 ai_rng_{0x1234u};
 
 	// matches each AI to a fixed behavior choice made at spawn.
-	struct AIState { int mode; float wander_heading; float wander_t; };
+	// mode: 0 = wander, 1 = hunter, 2 = feeder, 3 = aggressive_hunter (ignores size)
+	struct AIState {
+		int   mode;
+		float wander_heading;
+		float wander_t;
+		float ai_timer;       // seconds until next decision refresh
+		int   last_choice;    // cached high-level branch: 0=wander 1=hunt 2=flee 3=feed
+		float last_heading;   // cached heading
+		float last_thrust;    // cached thrust
+		float split_cooldown; // seconds until next SPLIT allowed
+	};
 	std::unordered_map<uint32_t, AIState> ai_states_;
+
+	// Particles (screen effects only — not sim state).
+	std::vector<Particle> particles_;
+	void emitBiteParticles(glm::vec2 world_pos, glm::vec3 color);
+	void emitKillParticles(glm::vec2 world_pos, glm::vec3 color);
+	void emitPickupParticles(glm::vec2 world_pos, glm::vec3 color);
+	void updateAndDrawParticles(float dt);
+
+	// Match flow.
+	float pre_match_t_ = 0.0f;     // counts up 0→3 during countdown
+	bool  pre_match_active_ = false;
+
+	// Autotest extras.
+	int   autotest_shot_idx_ = 0;  // 0..2
+	float autotest_shot_times_[3] = {2.0f, 0.0f, 0.0f}; // [0] fixed, [1,2] set at match start
+	bool  autotest_shot_taken_[3] = {false, false, false};
+	int   autotest_bites_ = 0;
+	int   autotest_pickups_ = 0;
+	std::string autotest_prebuilt_id_;
 };
 
 } // namespace civcraft::lifecraft

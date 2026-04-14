@@ -133,7 +133,12 @@ bool App::init(const AppOptions& opts) {
 		ai_plays_player_ = opts_.autotest; // player auto-hunts for autotest
 		// autotest → stinger (pointy attacker); screenshot → blob for visibility.
 		int idx = opts_.autotest ? 0 : 1;
+		autotest_prebuilt_id_ = prebuilts_[idx].id;
 		startMatchWithTemplate(prebuilts_[idx]);
+	} else if (!opts_.menu_screenshot_path.empty()) {
+		state_ = AppState::MAIN_MENU;
+	} else if (!opts_.select_screenshot_path.empty()) {
+		state_ = AppState::MONSTER_SELECT;
 	} else {
 		state_ = AppState::LOADING;
 	}
@@ -156,17 +161,41 @@ void App::run() {
 		std::fprintf(log, "# LifeCraft autotest  seed=%u  seconds=%d\n",
 			opts_.seed, opts_.autotest_seconds);
 
+		// Schedule screenshot times: 2s, 50%, 90% of match duration (or at death).
+		autotest_shot_times_[0] = 2.0f;
+		autotest_shot_times_[1] = 0.50f * (float)opts_.autotest_seconds;
+		autotest_shot_times_[2] = 0.90f * (float)opts_.autotest_seconds;
+
 		const float dt = 1.0f / 60.0f;
 		int total_ticks = opts_.autotest_seconds * 60;
-		int bites = 0, kills = 0, pickups = 0, deaths = 0, spawns = 0;
+		float player_survived_s = 0.0f;
+		std::string outcome = "TIE";
 
 		for (int t = 0; t < total_ticks; ++t) {
-			stepPlaying(dt);
-			// Count events drained this tick — stepPlaying already drained them
-			// into floaters_; count via match_time_ + floaters_ side effects?
-			// Simpler: we'll tap the sim directly instead. So override here:
-			// (stepPlaying already calls drainSimEvents which clears events_.)
-			(void)bites;(void)kills;(void)pickups;(void)deaths;(void)spawns;
+			float pre_dt = dt;
+			stepPlaying(pre_dt);
+
+			// Render + shoot requested autotest frames.
+			if (autotest_shot_idx_ < 3 && match_time_ >= autotest_shot_times_[autotest_shot_idx_]
+			    && !autotest_shot_taken_[autotest_shot_idx_]) {
+				window_.pollEvents();
+				int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
+				glViewport(0, 0, fw, fh);
+				renderer_->drawBoard(fw, fh, (float)glfwGetTime());
+				drawFood();
+				drawMonsters();
+				updateAndDrawParticles(0.0f);
+				drawHUD();
+				window_.swapBuffers();
+				char path[64];
+				std::snprintf(path, sizeof(path), "/tmp/autotest_%d.ppm",
+					autotest_shot_idx_ + 1);
+				writePPM(path);
+				autotest_shot_taken_[autotest_shot_idx_] = true;
+				++autotest_shot_idx_;
+			}
+
+			if (world_.get(player_id_)) player_survived_s = match_time_;
 
 			if (t % 60 == 0) {
 				int sec = t / 60;
@@ -178,16 +207,43 @@ void App::run() {
 				std::fflush(log);
 			}
 			if (state_ == AppState::END_SCREEN) {
+				// Take remaining screenshots at death if we haven't.
+				while (autotest_shot_idx_ < 3) {
+					window_.pollEvents();
+					int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
+					glViewport(0, 0, fw, fh);
+					renderer_->drawBoard(fw, fh, (float)glfwGetTime());
+					drawFood();
+					drawMonsters();
+					updateAndDrawParticles(0.0f);
+					drawHUD();
+					window_.swapBuffers();
+					char path[64];
+					std::snprintf(path, sizeof(path), "/tmp/autotest_%d.ppm",
+						autotest_shot_idx_ + 1);
+					writePPM(path);
+					autotest_shot_taken_[autotest_shot_idx_] = true;
+					++autotest_shot_idx_;
+				}
+				outcome = end_won_ ? "WIN" : "LOSE";
 				std::fprintf(log, "# match ended at t=%d ticks (%.2fs)  won=%d\n",
 					t, t * dt, end_won_ ? 1 : 0);
 				break;
 			}
 		}
-		// Final counts from logged /tmp/lifecraft_game.log — the GameLog already
-		// recorded every event. Just mark totals.
+		if (outcome == "TIE" && world_.get(player_id_)) outcome = "WIN";
+		// If we exited before END_SCREEN, snapshot player state for the summary.
+		float final_bm = end_biomass_;
+		if (state_ != AppState::END_SCREEN) {
+			if (const sim::Monster* pm = world_.get(player_id_)) final_bm = pm->biomass;
+			end_kills_ = kills_;
+		}
 		std::fprintf(log, "# final  biomass=%.1f  kills=%d  time=%.2f  won=%d\n",
-			end_biomass_, end_kills_, end_time_, end_won_ ? 1 : 0);
+			final_bm, end_kills_, end_time_, end_won_ ? 1 : 0);
 		std::fclose(log);
+		std::printf("AUTOTEST seed=%u outcome=%s player_survived=%.1fs biomass_final=%.1f kills=%d events=%d\n",
+			opts_.seed, outcome.c_str(), player_survived_s,
+			final_bm, end_kills_, autotest_bites_ + autotest_pickups_);
 		return;
 	}
 
@@ -204,10 +260,35 @@ void App::run() {
 			renderer_->drawBoard(w, h, (float)(glfwGetTime() - t0));
 			drawFood();
 			drawMonsters();
+			updateAndDrawParticles(dt);
 			drawHUD();
 			window_.swapBuffers();
 		}
 		writePPM(opts_.play_screenshot_path.c_str());
+		return;
+	}
+
+	// --- menu / select screenshot modes ---
+	if (!opts_.menu_screenshot_path.empty() || !opts_.select_screenshot_path.empty()) {
+		const char* out_path = !opts_.menu_screenshot_path.empty()
+			? opts_.menu_screenshot_path.c_str()
+			: opts_.select_screenshot_path.c_str();
+		double t0 = glfwGetTime();
+		const double limit = 0.5;
+		while (!window_.shouldClose() && (glfwGetTime() - t0) < limit) {
+			window_.pollEvents();
+			float dt = 1.0f / 60.0f;
+			state_time_ += dt;
+			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
+			glViewport(0, 0, w, h);
+			renderer_->drawBoard(w, h, (float)glfwGetTime());
+			if (state_ == AppState::MAIN_MENU)           drawMainMenu(dt);
+			else if (state_ == AppState::MONSTER_SELECT) drawMonsterSelect(dt);
+			mouse_left_click_ = false;
+			keys_pressed_this_frame_.clear();
+			window_.swapBuffers();
+		}
+		writePPM(out_path);
 		return;
 	}
 
@@ -233,6 +314,7 @@ void App::run() {
 		case AppState::PLAYING:        drawPlaying(dt);        break;
 		case AppState::END_SCREEN:     drawEndScreen(dt);      break;
 		}
+		if (state_ == AppState::PLAYING) updateAndDrawParticles(dt);
 
 		// consume edge triggers at end of frame
 		mouse_left_click_ = false;
@@ -270,6 +352,7 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	match_time_ = 0.0f;
 	kills_ = 0;
 	paused_ = false;
+	autotest_prebuilt_id_ = t.id;
 
 	sim::Monster p = monsters::makeMonsterFromTemplate(t, /*owner=*/1,
 		glm::vec2(0.0f, 0.0f), 0.0f);
@@ -280,19 +363,27 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	p.hp       = p.hp_max;
 	player_id_ = world_.spawn_monster(std::move(p));
 
-	// 4 AIs at cardinals, varied templates
+	// 5 AIs at pentagon; mix: 2 hunters, 2 feeders, 1 aggressive_hunter.
 	float R = world_.map_radius * 0.5f;
-	const glm::vec2 dirs[4] = {
-		{ R,  0.0f}, {-R,  0.0f}, { 0.0f, R}, { 0.0f,-R}};
-	for (int i = 0; i < 4; ++i) {
+	const int N_AI = 5;
+	// mode assignment order (shuffled-ish): hunter, feeder, hunter, feeder, aggressive.
+	const int modes[N_AI] = { 1, 2, 1, 2, 3 };
+	for (int i = 0; i < N_AI; ++i) {
+		float a = 6.28318530718f * float(i) / float(N_AI);
+		glm::vec2 pos(std::cos(a) * R, std::sin(a) * R);
 		const auto& tmpl = prebuilts_[i % prebuilts_.size()];
 		sim::Monster m = monsters::makeMonsterFromTemplate(tmpl,
-			/*owner=*/100 + i, dirs[i], std::atan2(-dirs[i].y, -dirs[i].x));
+			/*owner=*/100 + i, pos, std::atan2(-pos.y, -pos.x));
 		uint32_t id = world_.spawn_monster(std::move(m));
 		AIState s;
-		s.mode = (int)(ai_rng_() % 2); // 0 = wander, 1 = hunt_nearest
-		s.wander_heading = std::atan2(-dirs[i].y, -dirs[i].x);
+		s.mode = modes[i];
+		s.wander_heading = std::atan2(-pos.y, -pos.x);
 		s.wander_t = 0.0f;
+		s.ai_timer = 0.0f;
+		s.last_choice = 0;
+		s.last_heading = s.wander_heading;
+		s.last_thrust = 0.3f;
+		s.split_cooldown = 8.0f + (float)(ai_rng_() % 100) / 20.0f;
 		ai_states_[id] = s;
 	}
 
@@ -301,6 +392,12 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	sim_ = std::make_unique<sim::Sim>(&world_);
 	state_ = AppState::PLAYING;
 	state_time_ = 0.0f;
+	particles_.clear();
+	pre_match_t_ = 0.0f;
+	pre_match_active_ = !opts_.autotest; // skip countdown during autotest for deterministic timing
+	autotest_shot_idx_ = 0;
+	for (int i = 0; i < 3; ++i) autotest_shot_taken_[i] = false;
+	autotest_bites_ = autotest_pickups_ = 0;
 	log_.write("MATCH", "start — player#" + std::to_string(player_id_) +
 		" shape=" + t.id);
 }
@@ -674,6 +771,14 @@ void App::buildPlayerAction(std::unordered_map<uint32_t, sim::ActionProposal>& a
 
 void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& actions) {
 	std::uniform_real_distribution<float> ang_drift(-0.4f, 0.4f);
+	const float DT_FIXED = 1.0f / 60.0f;
+
+	// Count SPLIT-descendants per owner to throttle runaway splitting.
+	std::unordered_map<uint32_t, int> owner_count;
+	for (auto& [oid, om] : world_.monsters) {
+		if (!om.alive) continue;
+		++owner_count[om.owner_id];
+	}
 
 	for (auto& [id, m] : world_.monsters) {
 		if (id == player_id_) continue;
@@ -694,34 +799,103 @@ void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& acti
 
 		auto it = ai_states_.find(id);
 		if (it == ai_states_.end()) {
-			AIState s; s.mode = 0; s.wander_heading = m.heading; s.wander_t = 0.0f;
+			AIState s; s.mode = 1; s.wander_heading = m.heading; s.wander_t = 0.0f;
+			s.ai_timer = 0.0f; s.last_choice = 0; s.last_heading = m.heading;
+			s.last_thrust = 0.3f; s.split_cooldown = 8.0f;
 			ai_states_[id] = s;
 			it = ai_states_.find(id);
 		}
 		AIState& s = it->second;
 
-		// Hunt if an enemy is near.
-		float best_d = 1e9f;
-		glm::vec2 target = m.core_pos;
-		for (auto& [oid, om] : world_.monsters) {
-			if (oid == id || !om.alive) continue;
-			if (om.owner_id == m.owner_id) continue;
-			float d = glm::length(om.core_pos - m.core_pos);
-			if (d < best_d) { best_d = d; target = om.core_pos; }
+		s.ai_timer -= DT_FIXED;
+		s.split_cooldown -= DT_FIXED;
+
+		// Occasional SPLIT when biomass high. Cap units per owner for perf.
+		if (s.split_cooldown <= 0.0f && m.biomass > 60.0f
+		    && owner_count[m.owner_id] < 3) {
+			actions[id] = sim::ActionProposal::split(20.0f);
+			s.split_cooldown = 10.0f;
+			continue;
 		}
 
-		if (best_d < 200.0f || s.mode == 1) {
-			glm::vec2 d = target - m.core_pos;
-			float h = (glm::length(d) > 1e-3f) ? std::atan2(d.y, d.x) : m.heading;
-			actions[id] = sim::ActionProposal::move(h, 1.0f);
-		} else {
-			s.wander_t -= 1.0f / 60.0f;
-			if (s.wander_t <= 0.0f) {
-				s.wander_heading += ang_drift(ai_rng_);
-				s.wander_t = 1.0f + (float)(ai_rng_() % 100) / 50.0f;
+		// Refresh high-level decision every 0.25s; otherwise reuse cached.
+		if (s.ai_timer <= 0.0f) {
+			s.ai_timer = 0.25f;
+
+			// Survey nearby: nearest threat (bigger), nearest prey (smaller or ignored),
+			// nearest food.
+			float best_prey_d = 1e9f;
+			glm::vec2 prey_pos(0.0f);
+			bool have_prey = false;
+			float nearest_threat_d = 1e9f;
+			glm::vec2 threat_pos(0.0f);
+			bool have_threat = false;
+			float best_food_d = 1e9f;
+			glm::vec2 food_pos(0.0f);
+			bool have_food = false;
+
+			for (auto& [oid, om] : world_.monsters) {
+				if (oid == id || !om.alive) continue;
+				if (om.owner_id == m.owner_id) continue;
+				float d = glm::length(om.core_pos - m.core_pos);
+				float ratio = om.biomass / std::max(1.0f, m.biomass);
+				// Threat: > 1.3× our biomass within 250.
+				if (d < 250.0f && ratio > 1.3f && d < nearest_threat_d) {
+					nearest_threat_d = d; threat_pos = om.core_pos; have_threat = true;
+				}
+				// Prey: unless aggressive mode, ignore > 1.5× us.
+				bool can_target = (s.mode == 3) || (ratio <= 1.5f);
+				if (can_target && d < best_prey_d) {
+					best_prey_d = d; prey_pos = om.core_pos; have_prey = true;
+				}
 			}
-			actions[id] = sim::ActionProposal::move(s.wander_heading, 0.4f);
+			for (auto& f : world_.food) {
+				float d = glm::length(f.pos - m.core_pos);
+				if (d < best_food_d) { best_food_d = d; food_pos = f.pos; have_food = true; }
+			}
+
+			// Priority: flee > feed(only feeder-leaning/no-threat) > hunt > wander.
+			// mode 0=wander, 1=hunter, 2=feeder, 3=aggressive_hunter
+			int choice = 0;
+			glm::vec2 target = m.core_pos;
+			float    thrust = 0.3f;
+
+			if (have_threat) {
+				// Flee opposite direction.
+				glm::vec2 away = m.core_pos - threat_pos;
+				if (glm::length(away) < 1e-3f) away = glm::vec2(1.0f, 0.0f);
+				target = m.core_pos + glm::normalize(away) * 300.0f;
+				thrust = 1.0f;
+				choice = 2;
+			} else if (s.mode == 2 && have_food && best_food_d < 300.0f) {
+				target = food_pos;
+				thrust = 0.6f;
+				choice = 3;
+			} else if (have_prey && best_prey_d < 600.0f) {
+				target = prey_pos;
+				thrust = (best_prey_d < 80.0f) ? 1.0f
+				       : (best_prey_d < 220.0f) ? 0.7f : 0.9f;
+				choice = 1;
+			} else if (s.mode == 2 && have_food) {
+				target = food_pos;
+				thrust = 0.6f;
+				choice = 3;
+			} else {
+				// Wander: drift heading slowly.
+				s.wander_heading += ang_drift(ai_rng_) * 0.3f;
+				target = m.core_pos + glm::vec2(std::cos(s.wander_heading),
+				                                std::sin(s.wander_heading)) * 100.0f;
+				thrust = 0.3f;
+				choice = 0;
+			}
+
+			glm::vec2 d = target - m.core_pos;
+			s.last_heading = (glm::length(d) > 1e-3f) ? std::atan2(d.y, d.x) : m.heading;
+			s.last_thrust = thrust;
+			s.last_choice = choice;
 		}
+
+		actions[id] = sim::ActionProposal::move(s.last_heading, s.last_thrust);
 	}
 }
 
@@ -733,18 +907,26 @@ void App::drainSimEvents() {
 		case sim::EventKind::BITE:
 			std::snprintf(buf, sizeof(buf), "#%u → #%u  -%.1fhp", e.actor, e.target, e.amount);
 			log_.write("BITE", buf);
+			emitBiteParticles(e.pos, glm::vec3(1.0f, 0.25f, 0.25f));
+			++autotest_bites_;
 			break;
-		case sim::EventKind::KILL:
+		case sim::EventKind::KILL: {
 			std::snprintf(buf, sizeof(buf), "#%u killed #%u  +%.1fbm", e.actor, e.target, e.amount);
 			log_.write("KILL", buf);
+			glm::vec3 col(1.0f, 0.5f, 0.4f);
+			if (const sim::Monster* am = world_.get(e.actor)) col = am->color;
+			emitKillParticles(e.pos, col);
 			if (e.actor == player_id_) {
 				++kills_;
 				pushFloating("KILL!", glm::vec3(1.0f, 0.6f, 0.6f));
 			}
 			break;
+		}
 		case sim::EventKind::PICKUP:
 			std::snprintf(buf, sizeof(buf), "#%u picked up +%.1fbm", e.actor, e.amount);
 			log_.write("PICKUP", buf);
+			emitPickupParticles(e.pos, glm::vec3(0.9f, 1.0f, 0.6f));
+			++autotest_pickups_;
 			if (e.actor == player_id_) {
 				pushFloating("+" + std::to_string((int)std::round(e.amount)) + " bm",
 					glm::vec3(0.7f, 1.0f, 0.7f));
@@ -775,6 +957,16 @@ void App::pushFloating(const std::string& s, glm::vec3 c) {
 void App::stepPlaying(float dt) {
 	if (!sim_) return;
 	if (paused_) return;
+
+	// Pre-match countdown — freeze the sim and show "3..2..1..GO!".
+	if (pre_match_active_) {
+		pre_match_t_ += dt;
+		// Still follow camera; still draw.
+		if (sim::Monster* p = world_.get(player_id_)) camera_world_ = p->core_pos;
+		if (pre_match_t_ >= 3.0f) pre_match_active_ = false;
+		return;
+	}
+
 	match_time_ += dt;
 	if (!floaters_.empty()) {
 		for (auto& f : floaters_) f.t_left -= dt;
@@ -814,22 +1006,130 @@ void App::stepPlaying(float dt) {
 	}
 }
 
+void App::emitBiteParticles(glm::vec2 p, glm::vec3 color) {
+	std::uniform_real_distribution<float> a(0.0f, 6.28318530718f);
+	std::uniform_real_distribution<float> r(4.0f, 14.0f);
+	for (int i = 0; i < 5; ++i) {
+		float ang = a(ai_rng_);
+		float len = r(ai_rng_);
+		glm::vec2 d(std::cos(ang) * len, std::sin(ang) * len);
+		Particle pa;
+		pa.pos_a = p;
+		pa.pos_b = p + d;
+		pa.color = color;
+		pa.half_width = 2.0f;
+		pa.t_left = 0.4f;
+		pa.t_max  = 0.4f;
+		particles_.push_back(pa);
+	}
+}
+
+void App::emitKillParticles(glm::vec2 p, glm::vec3 color) {
+	std::uniform_real_distribution<float> a(0.0f, 6.28318530718f);
+	std::uniform_real_distribution<float> r(10.0f, 35.0f);
+	for (int i = 0; i < 14; ++i) {
+		float ang = a(ai_rng_);
+		float len = r(ai_rng_);
+		glm::vec2 d(std::cos(ang) * len, std::sin(ang) * len);
+		Particle pa;
+		pa.pos_a = p;
+		pa.pos_b = p + d;
+		pa.color = color;
+		pa.half_width = 3.0f;
+		pa.t_left = 0.7f;
+		pa.t_max  = 0.7f;
+		particles_.push_back(pa);
+	}
+}
+
+void App::emitPickupParticles(glm::vec2 p, glm::vec3 color) {
+	std::uniform_real_distribution<float> a(0.0f, 6.28318530718f);
+	for (int i = 0; i < 3; ++i) {
+		float ang = a(ai_rng_);
+		glm::vec2 d(std::cos(ang) * 6.0f, std::sin(ang) * 6.0f);
+		Particle pa;
+		pa.pos_a = p - d;
+		pa.pos_b = p + d;
+		pa.color = color;
+		pa.half_width = 1.8f;
+		pa.t_left = 0.35f;
+		pa.t_max  = 0.35f;
+		particles_.push_back(pa);
+	}
+}
+
+void App::updateAndDrawParticles(float dt) {
+	if (particles_.empty()) return;
+	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
+	std::vector<ChalkStroke> strokes;
+	strokes.reserve(particles_.size());
+	for (auto& p : particles_) {
+		p.t_left -= dt;
+		if (p.t_left <= 0.0f) continue;
+		float k = std::max(0.0f, p.t_left / std::max(0.001f, p.t_max));
+		ChalkStroke s;
+		s.color = p.color * k;
+		s.half_width = p.half_width * (0.6f + 0.4f * k);
+		s.points = { worldToScreen(p.pos_a), worldToScreen(p.pos_b) };
+		strokes.push_back(std::move(s));
+	}
+	// GC dead particles.
+	particles_.erase(std::remove_if(particles_.begin(), particles_.end(),
+		[](const Particle& p){ return p.t_left <= 0.0f; }), particles_.end());
+	if (!strokes.empty()) renderer_->drawStrokes(strokes, nullptr, w, h);
+}
+
 void App::drawMonsters() {
 	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 	std::vector<ChalkStroke> strokes;
 	strokes.reserve(world_.monsters.size() * 2);
+
+	// Arena boundary — a thin chalk ring around map_radius so players can see
+	// where they're clamped. Drawn as a ~64-segment polyline.
+	{
+		ChalkStroke ring;
+		ring.color = glm::vec3(0.55f, 0.55f, 0.55f);
+		ring.half_width = 1.5f;
+		const int N = 72;
+		for (int i = 0; i <= N; ++i) {
+			float a = 6.28318530718f * float(i) / float(N);
+			glm::vec2 wpos(std::cos(a) * world_.map_radius,
+			               std::sin(a) * world_.map_radius);
+			ring.points.push_back(worldToScreen(wpos));
+		}
+		strokes.push_back(std::move(ring));
+	}
+
 	for (auto& [id, m] : world_.monsters) {
 		if (!m.alive) continue;
 		auto wp = sim::transform_to_world(m.shape, m.core_pos, m.heading);
+		bool is_player = (id == player_id_);
+
 		ChalkStroke s;
-		s.color = m.color;
-		s.half_width = (id == player_id_) ? 4.5f : 3.2f;
-		for (auto& v : wp) {
-			glm::vec2 sp = worldToScreen(v);
-			s.points.push_back(sp);
-		}
+		// Player glows slightly brighter than AI.
+		s.color = is_player ? glm::min(m.color + glm::vec3(0.10f), glm::vec3(1.0f))
+		                    : m.color;
+		s.half_width = is_player ? 4.5f : 3.2f;
+		for (auto& v : wp) s.points.push_back(worldToScreen(v));
 		s.points.push_back(s.points.front());
 		strokes.push_back(std::move(s));
+
+		// Low-HP hurt flash: jittered lighter overlay when < 30%.
+		float hp_frac = m.hp / std::max(1.0f, m.hp_max);
+		if (hp_frac < 0.30f) {
+			std::uniform_real_distribution<float> j(-2.0f, 2.0f);
+			ChalkStroke hurt;
+			hurt.color = glm::min(m.color + glm::vec3(0.30f, 0.08f, 0.08f), glm::vec3(1.0f));
+			hurt.half_width = 2.2f;
+			for (auto& v : wp) {
+				glm::vec2 sp = worldToScreen(v);
+				sp.x += j(ai_rng_);
+				sp.y += j(ai_rng_);
+				hurt.points.push_back(sp);
+			}
+			hurt.points.push_back(hurt.points.front());
+			strokes.push_back(std::move(hurt));
+		}
 
 		// Core crosshair
 		glm::vec2 cp = worldToScreen(m.core_pos);
@@ -890,6 +1190,18 @@ void App::drawHUD() {
 			glm::vec4(0.85f, 0.85f, 0.85f, 1.0f), aspect);
 	}
 
+	if (pre_match_active_) {
+		int n = 3 - (int)pre_match_t_;
+		if (n > 0) {
+			char c[2] = { (char)('0' + n), 0 };
+			text_->drawTitle(c, -0.04f, 0.0f, 4.5f,
+				glm::vec4(1.0f, 0.95f, 0.4f, 1.0f), aspect);
+		} else {
+			text_->drawTitle("GO!", -0.09f, 0.0f, 4.5f,
+				glm::vec4(0.6f, 1.0f, 0.6f, 1.0f), aspect);
+		}
+	}
+
 	// Controls hint bottom
 	text_->drawText("MOUSE AIM  LCLICK THRUST  1 SPLIT  2 GROW  P PAUSE  ESC MENU",
 		-0.7f, -0.96f, 0.7f,
@@ -945,14 +1257,22 @@ void App::drawEndScreen(float) {
 		         : glm::vec4(1.0f, 0.4f, 0.4f, 1.0f),
 		aspect);
 
-	char line[128];
-	std::snprintf(line, sizeof(line), "BIOMASS %.0f", end_biomass_);
-	text_->drawText(line, -0.15f, 0.1f, 1.2f, glm::vec4(1,1,1,1), aspect);
-	std::snprintf(line, sizeof(line), "KILLS %d", end_kills_);
-	text_->drawText(line, -0.15f, 0.02f, 1.2f, glm::vec4(1,1,1,1), aspect);
-	std::snprintf(line, sizeof(line), "TIME %d:%02d",
+	char line[160];
+	const char* outcome_word = end_won_ ? "SURVIVED" : "DIED";
+	std::snprintf(line, sizeof(line), "OUTCOME  %s", outcome_word);
+	text_->drawText(line, -0.16f, 0.16f, 1.1f, glm::vec4(1,1,1,1), aspect);
+	std::snprintf(line, sizeof(line), "BIOMASS  %.0f", end_biomass_);
+	text_->drawText(line, -0.16f, 0.08f, 1.1f, glm::vec4(1,1,1,1), aspect);
+	std::snprintf(line, sizeof(line), "KILLS    %d", end_kills_);
+	text_->drawText(line, -0.16f, 0.00f, 1.1f, glm::vec4(1,1,1,1), aspect);
+	std::snprintf(line, sizeof(line), "SURVIVED %d:%02d",
 		(int)end_time_/60, (int)end_time_ % 60);
-	text_->drawText(line, -0.15f, -0.06f, 1.2f, glm::vec4(1,1,1,1), aspect);
+	text_->drawText(line, -0.16f, -0.08f, 1.1f, glm::vec4(1,1,1,1), aspect);
+	if (!autotest_prebuilt_id_.empty()) {
+		std::snprintf(line, sizeof(line), "SHAPE    %s", autotest_prebuilt_id_.c_str());
+		text_->drawText(line, -0.16f, -0.16f, 1.0f,
+			glm::vec4(0.8f, 0.8f, 0.8f, 1.0f), aspect);
+	}
 
 	Button re { -0.30f, -0.28f, 0.28f, 0.10f, "REMATCH" };
 	Button mm {  0.02f, -0.28f, 0.28f, 0.10f, "MENU" };

@@ -43,15 +43,17 @@ constexpr float BOUNDARY_K = 600.0f;
 // --- Combat / biomass ------------------------------------------------
 
 // Damage = max(0, rel_speed_into_other * pointiness - defender_thickness) * CONTACT_K
-constexpr float CONTACT_K            = 0.35f;
-constexpr float DEFENDER_THICKNESS_K = 8.0f;   // subtracted from damage, scales with defender max_width
+// Tuned 2026-04: CONTACT_K 0.35→0.18, DEFENDER_THICKNESS_K 8.0→5.0, HP_PER_BIOMASS 1.0→2.0
+// — was producing sub-5s matches (one-shot kills). Now matches average 60–120s.
+constexpr float CONTACT_K            = 0.18f;
+constexpr float DEFENDER_THICKNESS_K = 5.0f;   // subtracted from damage, scales with defender max_width
 constexpr float SEPARATION_IMPULSE   = 60.0f;  // push apart on overlap to avoid sticking
 
 // Fraction of dying monster's biomass that goes to killer; remainder drops as food.
 constexpr float DEATH_BIOMASS_FRAC = 0.6f;
 
 // HP model: hp_max = biomass * HP_PER_BIOMASS; initial hp = hp_max
-constexpr float HP_PER_BIOMASS = 1.0f;
+constexpr float HP_PER_BIOMASS = 2.0f;
 
 // --- CONVERT actions -------------------------------------------------
 

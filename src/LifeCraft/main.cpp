@@ -21,12 +21,18 @@ int main(int argc, char** argv) {
 			opts.autotest_seconds = std::atoi(argv[++i]);
 		} else if (!std::strcmp(argv[i], "--play-screenshot") && i + 1 < argc) {
 			opts.play_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--menu-screenshot") && i + 1 < argc) {
+			opts.menu_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--select-screenshot") && i + 1 < argc) {
+			opts.select_screenshot_path = argv[++i];
 		} else if (!std::strcmp(argv[i], "--help")) {
 			std::printf("lifecraft options:\n"
-			            "  --autotest             accelerated headless match, logs to /tmp/lifecraft_autotest.log\n"
-			            "  --seed N               RNG seed\n"
-			            "  --autotest-seconds N   autotest duration (default 30)\n"
-			            "  --play-screenshot PATH render PLAYING for ~1s then dump PPM\n");
+			            "  --autotest               accelerated headless match, logs to /tmp/lifecraft_autotest.log\n"
+			            "  --seed N                 RNG seed\n"
+			            "  --autotest-seconds N     autotest duration (default 30)\n"
+			            "  --play-screenshot PATH   render PLAYING for ~1s then dump PPM\n"
+			            "  --menu-screenshot PATH   render MAIN_MENU for 0.5s then dump PPM\n"
+			            "  --select-screenshot PATH render MONSTER_SELECT for 0.5s then dump PPM\n");
 			return 0;
 		}
 	}
