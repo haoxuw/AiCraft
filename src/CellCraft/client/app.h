@@ -1,7 +1,6 @@
 // CellCraft — top-level application: window, state machine, per-state
-// render + input, autotest harness. Keeps menu screens, draw lab, playing
-// HUD, and endscreen in one file to avoid ping-pong cross-includes. The
-// sim lives in src/CellCraft/sim — we only CALL it here.
+// render + input, autotest harness. The sim lives in src/CellCraft/sim —
+// we only CALL it here.
 #pragma once
 
 #include <memory>
@@ -12,14 +11,13 @@
 
 #include <glm/glm.hpp>
 
-#include "CellCraft/artifacts/monsters/base/kid_starters.h"
 #include "CellCraft/artifacts/monsters/base/prebuilt.h"
+#include "CellCraft/artifacts/monsters/base/starters.h"
 #include "CellCraft/client/app_state.h"
 #include "CellCraft/client/chalk_renderer.h"
 #include "CellCraft/client/chalk_stroke.h"
+#include "CellCraft/client/creature_lab.h"
 #include "CellCraft/client/game_log.h"
-#include "CellCraft/client/kid_lab.h"
-#include "CellCraft/client/lab_screen.h"
 #include "CellCraft/client/name_generator.h"
 #include "CellCraft/sim/action.h"
 #include "CellCraft/sim/part.h"
@@ -34,26 +32,20 @@ namespace civcraft::cellcraft {
 
 // Autotest / debug config — set once on startup from argv.
 struct AppOptions {
-	bool  autotest = false;             // headless-ish accelerated match, writes /tmp/cellcraft_autotest.log
+	bool  autotest = false;             // headless accelerated match
 	uint32_t seed = 0xC0FFEEu;
 	int   autotest_seconds = 30;
-	std::string play_screenshot_path;   // if set: run PLAYING for ~1s then snap PPM + exit
-	std::string menu_screenshot_path;   // if set: render MAIN_MENU then snap PPM + exit
-	std::string select_screenshot_path; // if set: render MONSTER_SELECT then snap PPM + exit
-	std::string lab_screenshot_path;    // unified creature lab seeded with sample parts
-	glm::vec2   lab_cursor_px = glm::vec2(-1.0f); // if valid: force cursor to this pixel for lab screenshot
-	// KID-MODE screenshot/test flags.
-	std::string kid_starter_screenshot_path;
-	std::string kid_lab_screenshot_path;
-	std::string kid_celebrate_screenshot_path;
-	std::string kid_play_screenshot_path;
-	bool        kid_autotest = false;
-	bool        kid_no_speech = false;
+	std::string play_screenshot_path;
+	std::string menu_screenshot_path;
+	std::string starter_screenshot_path;
+	std::string lab_screenshot_path;
+	std::string celebrate_screenshot_path;
+	bool        no_speech = false;
 };
 
 // Short-lived chalk-stroke particle for bites/kills/pickups.
 struct Particle {
-	glm::vec2 pos_a, pos_b;  // world-space stroke endpoints
+	glm::vec2 pos_a, pos_b;
 	glm::vec3 color;
 	float     half_width;
 	float     t_left;
@@ -71,7 +63,7 @@ struct Button {
 struct FloatingEvent {
 	std::string text;
 	glm::vec3   color;
-	float       t_left;  // seconds remaining
+	float       t_left;
 };
 
 class App {
@@ -88,14 +80,11 @@ public:
 private:
 	// ---- State transitions ---------------------------------------------
 	void goToMainMenu();
-	void goToMonsterSelect();
-	void goToDrawLab();
-	void goToKidStarter();
-	void goToKidLab(monsters::KidStarterKind kind);
-	void goToKidCelebrate();
+	void goToStarter();
+	void goToLab(monsters::StarterKind kind);
+	void goToCelebrate();
 	void startMatchWithTemplate(const monsters::MonsterTemplate& t);
 	void startMatchFromLab();
-	void startMatchFromKidLab();
 	void goToEndScreen(bool won);
 
 	// ---- Menu background simulation (screensaver) -----------------------
@@ -105,11 +94,9 @@ private:
 	// ---- Per-state drawing ----------------------------------------------
 	void drawLoading(float dt);
 	void drawMainMenu(float dt);
-	void drawMonsterSelect(float dt);
-	void drawDrawLab(float dt);
-	void drawKidStarter(float dt);
-	void drawKidLab(float dt);
-	void drawKidCelebrate(float dt);
+	void drawStarter(float dt);
+	void drawLab(float dt);
+	void drawCelebrate(float dt);
 	void drawPlaying(float dt);
 	void drawEndScreen(float dt);
 
@@ -124,11 +111,10 @@ private:
 	void pushFloating(const std::string& s, glm::vec3 color);
 
 	// ---- Utility ---------------------------------------------------------
-	// NDC helpers: screen pixel (x,y top-left origin) → NDC (-1..1, y up).
 	glm::vec2 pxToNDC(glm::vec2 px) const;
 	glm::vec2 worldToScreen(glm::vec2 w) const;
 
-	bool drawButton(const Button& b);                           // returns true if clicked this frame
+	bool drawButton(const Button& b);
 	bool pointInButton(glm::vec2 mouse_ndc, const Button& b) const;
 
 	void writePPM(const char* path);
@@ -147,23 +133,16 @@ private:
 	glm::vec2 mouse_px_ = glm::vec2(-1.0f);
 	bool      mouse_left_down_  = false;
 	bool      mouse_right_down_ = false;
-	bool      mouse_left_click_ = false;   // one-frame edge trigger
-	bool      mouse_right_click_ = false;  // one-frame edge trigger
-	std::vector<int> keys_pressed_this_frame_; // GLFW_KEY_* pressed since last consume
+	bool      mouse_left_click_ = false;
+	bool      mouse_right_click_ = false;
+	std::vector<int> keys_pressed_this_frame_;
 
-	// monster select
+	// prebuilt monsters (for AI opponents in matches).
 	std::vector<monsters::MonsterTemplate> prebuilts_;
-	int hovered_tile_ = -1;
 
-	// Creature Lab — delegated to LabScreen.
-	LabScreen lab_;
-
-	// Top-level mode toggle on the main menu (CLASSIC or KID).
-	GameMode mode_ = GameMode::KID;
-	// Kid lab + name + flag (set true when match started from kid mode).
-	KidLab   kid_lab_;
-	bool     from_kid_mode_ = false;
-	std::string kid_creature_name_; // last kid creature name (for end screen)
+	// The creature lab + the name chosen for the current creature.
+	CreatureLab lab_;
+	std::string creature_name_;
 	float    celebrate_t_ = 0.0f;
 
 	// playing
@@ -179,24 +158,21 @@ private:
 	float end_biomass_ = 0.0f;
 	float end_time_ = 0.0f;
 	int   end_kills_ = 0;
-	bool ai_plays_player_ = false; // autotest: have the "player" slot hunt too
+	bool ai_plays_player_ = false;
 	std::mt19937 ai_rng_{0x1234u};
 
-	// matches each AI to a fixed behavior choice made at spawn.
-	// mode: 0 = wander, 1 = hunter, 2 = feeder, 3 = aggressive_hunter (ignores size)
 	struct AIState {
 		int   mode;
 		float wander_heading;
 		float wander_t;
-		float ai_timer;       // seconds until next decision refresh
-		int   last_choice;    // cached high-level branch: 0=wander 1=hunt 2=flee 3=feed
-		float last_heading;   // cached heading
-		float last_thrust;    // cached thrust
-		float split_cooldown; // seconds until next SPLIT allowed
+		float ai_timer;
+		int   last_choice;
+		float last_heading;
+		float last_thrust;
+		float split_cooldown;
 	};
 	std::unordered_map<uint32_t, AIState> ai_states_;
 
-	// Particles (screen effects only — not sim state).
 	std::vector<Particle> particles_;
 	void emitBiteParticles(glm::vec2 world_pos, glm::vec3 color);
 	void emitKillParticles(glm::vec2 world_pos, glm::vec3 color);
@@ -204,12 +180,12 @@ private:
 	void updateAndDrawParticles(float dt);
 
 	// Match flow.
-	float pre_match_t_ = 0.0f;     // counts up 0→3 during countdown
+	float pre_match_t_ = 0.0f;
 	bool  pre_match_active_ = false;
 
 	// Autotest extras.
-	int   autotest_shot_idx_ = 0;  // 0..2
-	float autotest_shot_times_[3] = {2.0f, 0.0f, 0.0f}; // [0] fixed, [1,2] set at match start
+	int   autotest_shot_idx_ = 0;
+	float autotest_shot_times_[3] = {2.0f, 0.0f, 0.0f};
 	bool  autotest_shot_taken_[3] = {false, false, false};
 	int   autotest_bites_ = 0;
 	int   autotest_pickups_ = 0;

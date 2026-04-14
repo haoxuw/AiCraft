@@ -11,7 +11,7 @@
 //        live inside sim via scale_shape().
 //      * Multi-unit command: V1 only controls player_id_. SPLIT spawns
 //        are owned by the player but run AI. TODO real RTS selection.
-//      * If core isn't placed in DRAW_LAB, USE auto-places it at centroid.
+//      * If core isn't placed in LAB, USE auto-places it at centroid.
 //      * Custom monster is session-memory only; no disk persistence.
 
 #include "CellCraft/client/app.h"
@@ -97,49 +97,33 @@ bool App::init(const AppOptions& opts) {
 	log_.open();
 	prebuilts_ = monsters::getPrebuiltMonsters();
 	lab_.init(&window_, renderer_.get(), text_.get());
-	kid_lab_.init(&window_, renderer_.get(), text_.get());
-	kid_lab_.set_speech_enabled(!opts_.kid_no_speech);
+	lab_.set_speech_enabled(!opts_.no_speech);
 
 	if (opts_.autotest || !opts_.play_screenshot_path.empty()) {
-		// jump straight into PLAYING with stinger vs 4 AIs, seeded.
 		world_.rng.seed(opts_.seed);
 		ai_rng_.seed(opts_.seed + 1);
 		state_ = AppState::MAIN_MENU;  // temporary — startMatchWithTemplate will change it
-		ai_plays_player_ = opts_.autotest; // player auto-hunts for autotest
-		// autotest → stinger (pointy attacker); screenshot → blob for visibility.
+		ai_plays_player_ = opts_.autotest;
 		int idx = opts_.autotest ? 0 : 1;
 		autotest_prebuilt_id_ = prebuilts_[idx].id;
 		startMatchWithTemplate(prebuilts_[idx]);
 	} else if (!opts_.menu_screenshot_path.empty()) {
 		state_ = AppState::MAIN_MENU;
-	} else if (!opts_.select_screenshot_path.empty()) {
-		state_ = AppState::MONSTER_SELECT;
+	} else if (!opts_.starter_screenshot_path.empty()) {
+		state_ = AppState::STARTER;
 	} else if (!opts_.lab_screenshot_path.empty()) {
-		state_ = AppState::DRAW_LAB;
-	} else if (!opts_.kid_starter_screenshot_path.empty()) {
-		state_ = AppState::KID_STARTER;
-	} else if (!opts_.kid_lab_screenshot_path.empty()) {
-		// Preload SPIKY starter and go to kid lab.
 		std::mt19937 rng(opts_.seed);
-		auto t = monsters::makeKidStarter(monsters::KidStarterKind::SPIKY, rng);
-		kid_creature_name_ = generateName(rng);
-		kid_lab_.load_starter(t.cell, t.parts, t.color, kid_creature_name_);
-		state_ = AppState::KID_LAB;
-	} else if (!opts_.kid_celebrate_screenshot_path.empty()) {
+		auto t = monsters::makeStarter(monsters::StarterKind::SPIKY, rng);
+		creature_name_ = generateName(rng);
+		lab_.load_starter(t.cell, t.parts, t.color, creature_name_);
+		state_ = AppState::LAB;
+	} else if (!opts_.celebrate_screenshot_path.empty()) {
 		std::mt19937 rng(opts_.seed);
-		auto t = monsters::makeKidStarter(monsters::KidStarterKind::SPIKY, rng);
-		kid_creature_name_ = generateName(rng);
-		kid_lab_.load_starter(t.cell, t.parts, t.color, kid_creature_name_);
-		state_ = AppState::KID_CELEBRATE;
-		celebrate_t_ = 0.6f; // mid-animation
-	} else if (!opts_.kid_play_screenshot_path.empty() || opts_.kid_autotest) {
-		std::mt19937 rng(opts_.seed);
-		auto t = monsters::makeKidStarter(monsters::KidStarterKind::SPIKY, rng);
-		kid_creature_name_ = generateName(rng);
-		kid_lab_.load_starter(t.cell, t.parts, t.color, kid_creature_name_);
-		from_kid_mode_ = true;
-		ai_plays_player_ = opts_.kid_autotest;
-		startMatchFromKidLab();
+		auto t = monsters::makeStarter(monsters::StarterKind::SPIKY, rng);
+		creature_name_ = generateName(rng);
+		lab_.load_starter(t.cell, t.parts, t.color, creature_name_);
+		state_ = AppState::CELEBRATE;
+		celebrate_t_ = 0.6f;
 	} else {
 		state_ = AppState::LOADING;
 	}
@@ -269,20 +253,22 @@ void App::run() {
 		return;
 	}
 
-	// --- kid screenshot helpers: render the requested kid screen for ~0.5s.
-	auto run_kid_screenshot = [&](const std::string& out, AppState st, float dur) {
+	// --- one-shot screenshot modes: render a state for ~0.5s then dump PPM.
+	auto run_one_shot = [&](const std::string& out, AppState st, float dur) {
 		state_ = st;
 		double t0 = glfwGetTime();
 		while (!window_.shouldClose() && (glfwGetTime() - t0) < dur) {
 			window_.pollEvents();
 			float dt = 1.0f / 60.0f;
+			state_time_ += dt;
 			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 			glViewport(0, 0, w, h);
 			renderer_->drawBoard(w, h, (float)glfwGetTime());
 			switch (st) {
-			case AppState::KID_STARTER:   drawKidStarter(dt); break;
-			case AppState::KID_LAB:       drawKidLab(dt);     break;
-			case AppState::KID_CELEBRATE: drawKidCelebrate(dt); break;
+			case AppState::MAIN_MENU: drawMainMenu(dt); break;
+			case AppState::STARTER:   drawStarter(dt);  break;
+			case AppState::LAB:       drawLab(dt);      break;
+			case AppState::CELEBRATE: drawCelebrate(dt); break;
 			default: break;
 			}
 			mouse_left_click_ = false;
@@ -292,99 +278,20 @@ void App::run() {
 		}
 		writePPM(out.c_str());
 	};
-	if (!opts_.kid_starter_screenshot_path.empty()) {
-		run_kid_screenshot(opts_.kid_starter_screenshot_path, AppState::KID_STARTER, 0.5);
+	if (!opts_.starter_screenshot_path.empty()) {
+		run_one_shot(opts_.starter_screenshot_path, AppState::STARTER, 0.5);
 		return;
 	}
-	if (!opts_.kid_lab_screenshot_path.empty()) {
-		run_kid_screenshot(opts_.kid_lab_screenshot_path, AppState::KID_LAB, 0.5);
-		return;
-	}
-	if (!opts_.kid_celebrate_screenshot_path.empty()) {
-		run_kid_screenshot(opts_.kid_celebrate_screenshot_path, AppState::KID_CELEBRATE, 0.5);
-		return;
-	}
-	if (!opts_.kid_play_screenshot_path.empty()) {
-		double t0 = glfwGetTime();
-		const double limit = 1.2;
-		while (!window_.shouldClose() && (glfwGetTime() - t0) < limit) {
-			window_.pollEvents();
-			float dt = 1.0f / 60.0f;
-			stepPlaying(dt);
-			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
-			glViewport(0, 0, w, h);
-			renderer_->drawBoard(w, h, (float)(glfwGetTime() - t0));
-			drawFood();
-			drawMonsters();
-			updateAndDrawParticles(dt);
-			drawHUD();
-			window_.swapBuffers();
-		}
-		writePPM(opts_.kid_play_screenshot_path.c_str());
-		return;
-	}
-	if (opts_.kid_autotest) {
-		// Simple autotest: just run the match loop until end_screen or 60s.
-		const float dt = 1.0f / 60.0f;
-		int max_ticks = 60 * 60;
-		for (int t = 0; t < max_ticks; ++t) {
-			stepPlaying(dt);
-			if (state_ == AppState::END_SCREEN) break;
-		}
-		std::printf("KID_AUTOTEST seed=%u outcome=%s\n",
-			opts_.seed,
-			(state_ == AppState::END_SCREEN ? (end_won_ ? "WIN" : "LOSE") : "TIMEOUT"));
-		return;
-	}
-
-	// --- lab screenshot: unified lab seeded with deformed cell + parts.
 	if (!opts_.lab_screenshot_path.empty()) {
-		const char* out_path = opts_.lab_screenshot_path.c_str();
-		state_ = AppState::DRAW_LAB;
-		lab_.reset();
-		lab_.seed_lab_for_screenshot();
-		// Render a few frames.
-		double t0 = glfwGetTime();
-		while (!window_.shouldClose() && (glfwGetTime() - t0) < 0.5) {
-			window_.pollEvents();
-			float dt = 1.0f / 60.0f;
-			if (opts_.lab_cursor_px.x >= 0.0f) {
-				mouse_px_ = opts_.lab_cursor_px;
-			}
-			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
-			glViewport(0, 0, w, h);
-			renderer_->drawBoard(w, h, (float)glfwGetTime());
-			drawDrawLab(dt);
-			mouse_left_click_ = false;
-			mouse_right_click_ = false;
-			keys_pressed_this_frame_.clear();
-			window_.swapBuffers();
-		}
-		writePPM(out_path);
+		run_one_shot(opts_.lab_screenshot_path, AppState::LAB, 0.5);
 		return;
 	}
-
-	// --- menu / select screenshot modes ---
-	if (!opts_.menu_screenshot_path.empty() || !opts_.select_screenshot_path.empty()) {
-		const char* out_path = !opts_.menu_screenshot_path.empty()
-			? opts_.menu_screenshot_path.c_str()
-			: opts_.select_screenshot_path.c_str();
-		double t0 = glfwGetTime();
-		const double limit = 0.5;
-		while (!window_.shouldClose() && (glfwGetTime() - t0) < limit) {
-			window_.pollEvents();
-			float dt = 1.0f / 60.0f;
-			state_time_ += dt;
-			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
-			glViewport(0, 0, w, h);
-			renderer_->drawBoard(w, h, (float)glfwGetTime());
-			if (state_ == AppState::MAIN_MENU)           drawMainMenu(dt);
-			else if (state_ == AppState::MONSTER_SELECT) drawMonsterSelect(dt);
-			mouse_left_click_ = false;
-			keys_pressed_this_frame_.clear();
-			window_.swapBuffers();
-		}
-		writePPM(out_path);
+	if (!opts_.celebrate_screenshot_path.empty()) {
+		run_one_shot(opts_.celebrate_screenshot_path, AppState::CELEBRATE, 0.5);
+		return;
+	}
+	if (!opts_.menu_screenshot_path.empty()) {
+		run_one_shot(opts_.menu_screenshot_path, AppState::MAIN_MENU, 0.5);
 		return;
 	}
 
@@ -403,15 +310,13 @@ void App::run() {
 		renderer_->drawBoard(w, h, (float)now);
 
 		switch (state_) {
-		case AppState::LOADING:        drawLoading(dt);        break;
-		case AppState::MAIN_MENU:      drawMainMenu(dt);       break;
-		case AppState::MONSTER_SELECT: drawMonsterSelect(dt);  break;
-		case AppState::DRAW_LAB:       drawDrawLab(dt);        break;
-		case AppState::KID_STARTER:    drawKidStarter(dt);     break;
-		case AppState::KID_LAB:        drawKidLab(dt);         break;
-		case AppState::KID_CELEBRATE:  drawKidCelebrate(dt);   break;
-		case AppState::PLAYING:        drawPlaying(dt);        break;
-		case AppState::END_SCREEN:     drawEndScreen(dt);      break;
+		case AppState::LOADING:    drawLoading(dt);   break;
+		case AppState::MAIN_MENU:  drawMainMenu(dt);  break;
+		case AppState::STARTER:    drawStarter(dt);   break;
+		case AppState::LAB:        drawLab(dt);       break;
+		case AppState::CELEBRATE:  drawCelebrate(dt); break;
+		case AppState::PLAYING:    drawPlaying(dt);   break;
+		case AppState::END_SCREEN: drawEndScreen(dt); break;
 		}
 		if (state_ == AppState::PLAYING) updateAndDrawParticles(dt);
 
@@ -433,13 +338,6 @@ void App::goToMainMenu() {
 	state_time_ = 0.0f;
 	initMenuSim();
 }
-void App::goToMonsterSelect()  { state_ = AppState::MONSTER_SELECT; state_time_ = 0.0f; }
-void App::goToDrawLab() {
-	state_ = AppState::DRAW_LAB;
-	state_time_ = 0.0f;
-	lab_.reset();
-}
-
 void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	world_ = sim::World{};
 	world_.rng.seed(opts_.seed);
@@ -497,19 +395,6 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	autotest_bites_ = autotest_pickups_ = 0;
 	log_.write("MATCH", "start — player#" + std::to_string(player_id_) +
 		" shape=" + t.id);
-}
-
-void App::startMatchFromLab() {
-	// Build a one-off template pre-populated with the lab's cell, plates,
-	// and parts so the regular match setup path works unchanged.
-	monsters::MonsterTemplate t;
-	t.id = "custom:lab";
-	t.name = "Custom";
-	t.cell = lab_.cell();
-	t.parts = lab_.parts();
-	t.color = lab_.color();
-	t.initial_biomass = 25.0f;
-	startMatchWithTemplate(t);
 }
 
 void App::goToEndScreen(bool won) {
@@ -716,32 +601,11 @@ void App::drawMainMenu(float dt) {
 	text_->drawText ("// CHALKBOARD SURVIVAL //", -0.24f, 0.18f, 1.0f,
 		glm::vec4(0.85f, 0.82f, 0.70f, 0.95f), aspect);
 
-	// 5) Buttons (inside panel).
-	// Mode toggle row (CLASSIC / KID).
-	text_->drawText("MODE:", -0.20f, 0.10f, 1.0f,
-		glm::vec4(0.85f, 0.82f, 0.70f, 1.0f), aspect);
-	Button mode_classic { -0.06f, 0.085f, 0.12f, 0.05f, "CLASSIC" };
-	Button mode_kid     {  0.07f, 0.085f, 0.12f, 0.05f, "KID" };
-	// Highlight active by drawing a colored backdrop strip.
-	text_->drawRect(mode_ == GameMode::CLASSIC ? mode_classic.x : mode_kid.x,
-		mode_ == GameMode::CLASSIC ? mode_classic.y : mode_kid.y,
-		mode_classic.w, mode_classic.h,
-		glm::vec4(0.45f, 0.65f, 0.30f, 0.5f));
-	if (drawButton(mode_classic)) mode_ = GameMode::CLASSIC;
-	if (drawButton(mode_kid))     mode_ = GameMode::KID;
+	// 5) Buttons (inside panel). Single unified flow: PLAY → starter picker.
+	Button play { -0.22f,  0.05f, 0.44f, 0.08f, "PLAY" };
+	Button quit { -0.22f, -0.08f, 0.44f, 0.08f, "QUIT" };
 
-	Button play { -0.22f,  0.02f, 0.44f, 0.07f, "PLAY" };
-	Button lab  { -0.22f, -0.07f, 0.44f, 0.07f, "LAB" };
-	Button quit { -0.22f, -0.16f, 0.44f, 0.07f, "QUIT" };
-
-	if (drawButton(play)) {
-		if (mode_ == GameMode::KID) goToKidStarter();
-		else                        goToMonsterSelect();
-	}
-	if (drawButton(lab)) {
-		if (mode_ == GameMode::KID) goToKidStarter();
-		else                        goToDrawLab();
-	}
+	if (drawButton(play)) goToStarter();
 	if (drawButton(quit)) glfwSetWindowShouldClose(window_.handle(), 1);
 
 	// 6) Hint line at panel bottom.
@@ -750,147 +614,6 @@ void App::drawMainMenu(float dt) {
 		glm::vec4(0.7f, 0.7f, 0.6f, 0.8f), aspect);
 }
 
-// ========================================================================
-// MONSTER_SELECT
-// ========================================================================
-
-static void drawStatBar(TextRenderer& text, float x, float y, float w,
-                        const char* label, float frac, glm::vec4 col) {
-	text.drawText(label, x, y, 0.7f, glm::vec4(0.8f, 0.8f, 0.8f, 1.0f), 1.0f);
-	float bar_y = y - 0.012f;
-	text.drawRect(x, bar_y, w, 0.008f, glm::vec4(0.15f, 0.15f, 0.15f, 0.8f));
-	text.drawRect(x, bar_y, w * std::max(0.0f, std::min(1.0f, frac)), 0.008f, col);
-}
-
-// Normalize a stat value in [min,max] to [0,1] for a meter bar.
-static float norm01(float v, float lo, float hi) {
-	return std::max(0.0f, std::min(1.0f, (v - lo) / std::max(1e-3f, (hi - lo))));
-}
-
-void App::drawMonsterSelect(float dt) {
-	// Keep the screensaver sim running behind this screen too. If the user
-	// reached MONSTER_SELECT directly (e.g. --select-screenshot) the sim
-	// may not be initialized yet.
-	if (!sim_ || world_.monsters.empty()) initMenuSim();
-	stepMenuSim(dt);
-	drawFood();
-	drawMonsters();
-	// Stronger dim here — the selection tiles need high contrast.
-	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.0f, 0.0f, 0.0f, 0.6f));
-
-	text_->drawTitle("SELECT MONSTER", -0.3f, 0.72f, 1.8f,
-		glm::vec4(1.0f, 1.0f, 0.95f, 1.0f), window_.aspectRatio());
-
-	int n = (int)prebuilts_.size();
-	float tile_w = 0.36f, tile_h = 0.8f;
-	float total_w = tile_w * n + 0.04f * (n - 1);
-	float x0 = -total_w * 0.5f;
-	float y0 = -0.30f;
-
-	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
-
-	for (int i = 0; i < n; ++i) {
-		Button tile { x0 + i * (tile_w + 0.04f), y0, tile_w, tile_h, "" };
-		bool hover = pointInButton(pxToNDC(mouse_px_), tile);
-		glm::vec4 bg = hover ? glm::vec4(0.18f, 0.18f, 0.22f, 0.9f)
-		                     : glm::vec4(0.08f, 0.08f, 0.10f, 0.8f);
-		text_->drawRect(tile.x, tile.y, tile.w, tile.h, bg);
-
-		const auto& m = prebuilts_[i];
-		// Title
-		text_->drawText(m.name, tile.x + 0.03f, tile.y + tile.h - 0.08f, 1.3f,
-			glm::vec4(m.color.r, m.color.g, m.color.b, 1.0f),
-			window_.aspectRatio());
-
-		// Shape preview — render as chalk strokes in screen-space (pixel coords
-		// relative to the tile center). Convert tile NDC to pixels.
-		float cx = (tile.x + tile.w * 0.5f + 1.0f) * 0.5f * (float)w_px;
-		float cy = (1.0f - (tile.y + tile.h * 0.55f + 1.0f) * 0.5f) * (float)h_px;
-		ChalkStroke outline;
-		outline.color = m.color;
-		outline.half_width = 3.5f;
-		// Scale shape so its max radius fills ~80px.
-		auto preview_shape = m.shape();
-		float max_r = 0.0f;
-		for (auto& v : preview_shape) max_r = std::max(max_r, glm::length(v));
-		float k = (max_r > 0.0f) ? (80.0f / max_r) : 1.0f;
-		for (auto& v : preview_shape) outline.points.push_back({cx + v.x * k, cy - v.y * k});
-		outline.points.push_back(outline.points.front());
-		// Draw preview stroke. We need to switch rendering modes within the
-		// same frame; just call drawStrokes with a one-off vector.
-		std::vector<ChalkStroke> tmp{outline};
-		renderer_->drawStrokes(tmp, nullptr, w_px, h_px);
-
-		// Core marker
-		ChalkStroke cross1, cross2;
-		cross1.color = {1.0f, 1.0f, 1.0f}; cross1.half_width = 2.0f;
-		cross2 = cross1;
-		cross1.points = {{cx - 5.0f, cy}, {cx + 5.0f, cy}};
-		cross2.points = {{cx, cy - 5.0f}, {cx, cy + 5.0f}};
-		std::vector<ChalkStroke> cx_strokes{cross1, cross2};
-		renderer_->drawStrokes(cx_strokes, nullptr, w_px, h_px);
-
-		// Parts preview.
-		if (!m.parts.empty()) {
-			auto local_to_screen = [&](glm::vec2 v) {
-				return glm::vec2(cx + v.x * k, cy - v.y * k);
-			};
-			std::vector<ChalkStroke> part_strokes;
-			appendPartStrokes(m.parts, m.color, local_to_screen, k,
-				(float)glfwGetTime(), part_strokes);
-			if (!part_strokes.empty())
-				renderer_->drawStrokes(part_strokes, nullptr, w_px, h_px);
-		}
-		// Stats — compute via a throwaway Monster.
-		sim::Monster probe = monsters::makeMonsterFromTemplate(m, 0, glm::vec2(0.0f), 0.0f);
-		float sx = tile.x + 0.03f;
-		float sy = tile.y + 0.16f;
-		drawStatBar(*text_, sx, sy,        tile.w - 0.06f, "SPEED",
-			norm01(probe.move_speed, sim::MOVE_MIN, sim::MOVE_MAX),
-			glm::vec4(0.55f, 0.82f, 1.0f, 1.0f));
-		drawStatBar(*text_, sx, sy - 0.05f, tile.w - 0.06f, "TURN",
-			norm01(probe.turn_speed, sim::TURN_MIN, sim::TURN_MAX),
-			glm::vec4(0.55f, 1.0f, 0.65f, 1.0f));
-		drawStatBar(*text_, sx, sy - 0.10f, tile.w - 0.06f, "MASS",
-			norm01(probe.mass, 0.0f, 200.0f),
-			glm::vec4(1.0f, 0.72f, 0.45f, 1.0f));
-
-		if (hover && mouse_left_click_) {
-			startMatchWithTemplate(m);
-			return;
-		}
-	}
-
-	Button custom { -0.22f, -0.78f, 0.44f, 0.10f, "DRAW YOUR OWN" };
-	if (drawButton(custom)) goToDrawLab();
-	Button back   {  0.60f, -0.90f, 0.35f, 0.08f, "BACK" };
-	if (drawButton(back))   goToMainMenu();
-}
-
-// ========================================================================
-// DRAW_LAB — delegated to LabScreen.
-// ========================================================================
-
-void App::drawDrawLab(float dt) {
-	LabInput in;
-	in.mouse_px         = mouse_px_;
-	in.mouse_left_down  = mouse_left_down_;
-	in.mouse_right_down = mouse_right_down_;
-	in.mouse_left_click  = mouse_left_click_;
-	in.mouse_right_click = mouse_right_click_;
-	in.keys_pressed = keys_pressed_this_frame_;
-
-	LabOutcome outc = lab_.update(dt, in);
-	switch (outc) {
-	case LabOutcome::NONE: break;
-	case LabOutcome::USE:
-		startMatchFromLab();
-		break;
-	case LabOutcome::BACK:
-		goToMainMenu();
-		break;
-	}
-}
 
 // ========================================================================
 // PLAYING
@@ -1470,8 +1193,7 @@ void App::drawPlaying(float dt) {
 // ========================================================================
 
 void App::drawEndScreen(float dt) {
-	// Kid-mode end screen: gentler, no scores, big PLAY AGAIN button.
-	if (from_kid_mode_) {
+	{
 		float aspect = window_.aspectRatio();
 		text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.04f, 0.04f, 0.06f, 0.92f));
 		const char* banner = end_won_ ? "YOU WON!" : "SO CLOSE!";
@@ -1492,10 +1214,10 @@ void App::drawEndScreen(float dt) {
 			scale = 1.0f - 0.05f;
 			rot   = -8.0f * 3.14159f / 180.0f;
 		}
-		auto poly = sim::cellToPolygon(kid_lab_.cell(), 1);
+		auto poly = sim::cellToPolygon(lab_.cell(), 1);
 		float cx = w_px * 0.5f, cy = h_px * 0.55f;
 		float pxu = 2.4f * scale;
-		ChalkStroke outline; outline.color = kid_lab_.color(); outline.half_width = 5.0f;
+		ChalkStroke outline; outline.color = lab_.color(); outline.half_width = 5.0f;
 		float c = std::cos(rot), si = std::sin(rot);
 		for (auto& v : poly) {
 			glm::vec2 r(c * v.x - si * v.y, si * v.x + c * v.y);
@@ -1507,7 +1229,7 @@ void App::drawEndScreen(float dt) {
 			glm::vec2 r(c * v.x - si * v.y, si * v.x + c * v.y);
 			return glm::vec2(cx + r.x * pxu, cy - r.y * pxu);
 		};
-		appendPartStrokes(kid_lab_.parts(), kid_lab_.color(), local_to_screen, pxu,
+		appendPartStrokes(lab_.parts(), lab_.color(), local_to_screen, pxu,
 		                  (float)glfwGetTime(), ss);
 		renderer_->drawStrokes(ss, nullptr, w_px, h_px);
 
@@ -1520,7 +1242,7 @@ void App::drawEndScreen(float dt) {
 				Particle pa;
 				pa.pos_a = glm::vec2(std::cos(ang), std::sin(ang)) * len;
 				pa.pos_b = pa.pos_a + glm::vec2(std::cos(ang), std::sin(ang)) * 14.0f;
-				pa.color = kid_lab_.color();
+				pa.color = lab_.color();
 				pa.half_width = 3.0f;
 				pa.t_left = 2.0f; pa.t_max = 2.0f;
 				particles_.push_back(pa);
@@ -1532,99 +1254,48 @@ void App::drawEndScreen(float dt) {
 		// Buttons
 		Button again { -0.32f, -0.55f, 0.30f, 0.12f, "PLAY AGAIN!" };
 		Button menu  {  0.02f, -0.55f, 0.30f, 0.12f, "MENU" };
-		if (drawButton(again)) { from_kid_mode_ = true; goToKidStarter(); return; }
-		if (drawButton(menu))  { from_kid_mode_ = false; goToMainMenu(); return; }
+		if (drawButton(again)) { goToStarter(); return; }
+		if (drawButton(menu))  { goToMainMenu(); return; }
 		return;
 	}
-
-	// Keep the ended-match world visible but frozen-in-slowmo behind the
-	// stats panel — the corpse and survivors drift quietly.
-	stepMenuSim(dt);
-	drawFood();
-	drawMonsters();
-
-	float aspect = window_.aspectRatio();
-	// Dim overlay + centered panel, same look as main menu.
-	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.0f, 0.0f, 0.0f, 0.55f));
-	float px = -0.40f, py = -0.40f, pw = 0.80f, ph = 0.85f;
-	text_->drawRect(px, py, pw, ph, glm::vec4(0.04f, 0.05f, 0.06f, 0.88f));
-	auto border = [&](float x, float y, float w, float h, float t, glm::vec4 c) {
-		text_->drawRect(x, y, w, t, c);
-		text_->drawRect(x, y + h - t, w, t, c);
-		text_->drawRect(x, y, t, h, c);
-		text_->drawRect(x + w - t, y, t, h, c);
-	};
-	border(px, py, pw, ph, 0.004f, glm::vec4(0.92f, 0.90f, 0.78f, 0.95f));
-	border(px + 0.012f, py + 0.012f, pw - 0.024f, ph - 0.024f, 0.002f,
-		glm::vec4(0.70f, 0.68f, 0.58f, 0.8f));
-
-	text_->drawTitle(end_won_ ? "YOU SURVIVED" : "ELIMINATED",
-		end_won_ ? -0.28f : -0.22f, 0.3f, 2.2f,
-		end_won_ ? glm::vec4(0.5f, 1.0f, 0.5f, 1.0f)
-		         : glm::vec4(1.0f, 0.4f, 0.4f, 1.0f),
-		aspect);
-
-	char line[160];
-	const char* outcome_word = end_won_ ? "SURVIVED" : "DIED";
-	std::snprintf(line, sizeof(line), "OUTCOME  %s", outcome_word);
-	text_->drawText(line, -0.16f, 0.16f, 1.1f, glm::vec4(1,1,1,1), aspect);
-	std::snprintf(line, sizeof(line), "BIOMASS  %.0f", end_biomass_);
-	text_->drawText(line, -0.16f, 0.08f, 1.1f, glm::vec4(1,1,1,1), aspect);
-	std::snprintf(line, sizeof(line), "KILLS    %d", end_kills_);
-	text_->drawText(line, -0.16f, 0.00f, 1.1f, glm::vec4(1,1,1,1), aspect);
-	std::snprintf(line, sizeof(line), "SURVIVED %d:%02d",
-		(int)end_time_/60, (int)end_time_ % 60);
-	text_->drawText(line, -0.16f, -0.08f, 1.1f, glm::vec4(1,1,1,1), aspect);
-	if (!autotest_prebuilt_id_.empty()) {
-		std::snprintf(line, sizeof(line), "SHAPE    %s", autotest_prebuilt_id_.c_str());
-		text_->drawText(line, -0.16f, -0.16f, 1.0f,
-			glm::vec4(0.8f, 0.8f, 0.8f, 1.0f), aspect);
-	}
-
-	Button re { -0.30f, -0.28f, 0.28f, 0.10f, "REMATCH" };
-	Button mm {  0.02f, -0.28f, 0.28f, 0.10f, "MENU" };
-	if (drawButton(re)) goToMonsterSelect();
-	if (drawButton(mm)) goToMainMenu();
 }
 
 // ========================================================================
 // KID MODE — starter picker, kid lab, celebration
 // ========================================================================
 
-void App::goToKidStarter() {
-	state_ = AppState::KID_STARTER;
+void App::goToStarter() {
+	state_ = AppState::STARTER;
 	state_time_ = 0.0f;
-	from_kid_mode_ = true;
 }
 
-void App::goToKidLab(monsters::KidStarterKind kind) {
+void App::goToLab(monsters::StarterKind kind) {
 	std::mt19937 rng((uint32_t)(opts_.seed ^ (uint32_t)std::time(nullptr)));
-	auto t = monsters::makeKidStarter(kind, rng);
-	kid_creature_name_ = generateName(rng);
-	kid_lab_.load_starter(t.cell, t.parts, t.color, kid_creature_name_);
-	state_ = AppState::KID_LAB;
+	auto t = monsters::makeStarter(kind, rng);
+	creature_name_ = generateName(rng);
+	lab_.load_starter(t.cell, t.parts, t.color, creature_name_);
+	state_ = AppState::LAB;
 	state_time_ = 0.0f;
 }
 
-void App::goToKidCelebrate() {
-	state_ = AppState::KID_CELEBRATE;
+void App::goToCelebrate() {
+	state_ = AppState::CELEBRATE;
 	state_time_ = 0.0f;
 	celebrate_t_ = 0.0f;
 }
 
-void App::startMatchFromKidLab() {
+void App::startMatchFromLab() {
 	monsters::MonsterTemplate t;
-	t.id    = "kid:custom";
-	t.name  = kid_lab_.name();
-	t.cell  = kid_lab_.cell();
-	t.parts = kid_lab_.parts();
-	t.color = kid_lab_.color();
+	t.id    = "custom:lab";
+	t.name  = lab_.name();
+	t.cell  = lab_.cell();
+	t.parts = lab_.parts();
+	t.color = lab_.color();
 	t.initial_biomass = 28.0f;
-	from_kid_mode_ = true;
 	startMatchWithTemplate(t);
 }
 
-void App::drawKidStarter(float dt) {
+void App::drawStarter(float dt) {
 	(void)dt;
 	float aspect = window_.aspectRatio();
 	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.04f, 0.04f, 0.06f, 1.0f));
@@ -1633,13 +1304,13 @@ void App::drawKidStarter(float dt) {
 
 	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
 	const int n = 6;
-	const monsters::KidStarterKind kinds[6] = {
-		monsters::KidStarterKind::SPIKY,
-		monsters::KidStarterKind::SQUISHY,
-		monsters::KidStarterKind::ZOOMY,
-		monsters::KidStarterKind::TOUGH,
-		monsters::KidStarterKind::RANDOM,
-		monsters::KidStarterKind::PLAIN,
+	const monsters::StarterKind kinds[6] = {
+		monsters::StarterKind::SPIKY,
+		monsters::StarterKind::SQUISHY,
+		monsters::StarterKind::ZOOMY,
+		monsters::StarterKind::TOUGH,
+		monsters::StarterKind::RANDOM,
+		monsters::StarterKind::PLAIN,
 	};
 
 	float tile_w = 0.30f, tile_h = 0.50f;
@@ -1669,7 +1340,7 @@ void App::drawKidStarter(float dt) {
 		text_->drawRect(tile.x + tile.w - t_w, tile.y, t_w, tile.h, edge);
 
 		// Render preview creature (chalk strokes).
-		auto tmpl = monsters::makeKidStarter(kinds[i], preview_rng);
+		auto tmpl = monsters::makeStarter(kinds[i], preview_rng);
 		float cx = (tile.x + tile.w * 0.5f + 1.0f) * 0.5f * (float)w_px;
 		float cy = (1.0f - (tile.y + tile.h * 0.55f + 1.0f) * 0.5f) * (float)h_px;
 		auto preview_shape = tmpl.shape();
@@ -1690,15 +1361,15 @@ void App::drawKidStarter(float dt) {
 		if (!ps.empty()) renderer_->drawStrokes(ps, nullptr, w_px, h_px);
 
 		// Title + tagline
-		text_->drawText(monsters::kidStarterName(kinds[i]),
+		text_->drawText(monsters::starterName(kinds[i]),
 			tile.x + 0.02f, tile.y + 0.04f, 1.7f,
 			glm::vec4(tmpl.color.r, tmpl.color.g, tmpl.color.b, 1.0f), aspect);
-		text_->drawText(monsters::kidStarterTagline(kinds[i]),
+		text_->drawText(monsters::starterTagline(kinds[i]),
 			tile.x + 0.02f, tile.y + 0.005f, 0.9f,
 			glm::vec4(0.85f, 0.82f, 0.70f, 1.0f), aspect);
 
 		if (hover && mouse_left_click_) {
-			goToKidLab(kinds[i]);
+			goToLab(kinds[i]);
 			return;
 		}
 	}
@@ -1707,7 +1378,7 @@ void App::drawKidStarter(float dt) {
 	if (drawButton(back)) goToMainMenu();
 }
 
-void App::drawKidLab(float dt) {
+void App::drawLab(float dt) {
 	LabInput in;
 	in.mouse_px = mouse_px_;
 	in.mouse_left_down  = mouse_left_down_;
@@ -1715,16 +1386,16 @@ void App::drawKidLab(float dt) {
 	in.mouse_left_click  = mouse_left_click_;
 	in.mouse_right_click = mouse_right_click_;
 	in.keys_pressed = keys_pressed_this_frame_;
-	LabOutcome outc = kid_lab_.update(dt, in);
+	LabOutcome outc = lab_.update(dt, in);
 	if (outc == LabOutcome::USE) {
-		kid_creature_name_ = kid_lab_.name();
-		goToKidCelebrate();
+		creature_name_ = lab_.name();
+		goToCelebrate();
 	} else if (outc == LabOutcome::BACK) {
 		goToMainMenu();
 	}
 }
 
-void App::drawKidCelebrate(float dt) {
+void App::drawCelebrate(float dt) {
 	celebrate_t_ += dt;
 	float aspect = window_.aspectRatio();
 	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
@@ -1748,11 +1419,11 @@ void App::drawKidCelebrate(float dt) {
 	}
 
 	// Render creature in center.
-	auto poly = sim::cellToPolygon(kid_lab_.cell(), 1);
+	auto poly = sim::cellToPolygon(lab_.cell(), 1);
 	float cx = w_px * 0.5f, cy = h_px * 0.5f;
 	float pxu = 3.0f * scale;
 	ChalkStroke outline;
-	outline.color = kid_lab_.color();
+	outline.color = lab_.color();
 	outline.half_width = 5.5f;
 	float c = std::cos(rot), si = std::sin(rot);
 	for (auto& v : poly) {
@@ -1765,7 +1436,7 @@ void App::drawKidCelebrate(float dt) {
 		glm::vec2 r(c * v.x - si * v.y, si * v.x + c * v.y);
 		return glm::vec2(cx + r.x * pxu, cy - r.y * pxu);
 	};
-	appendPartStrokes(kid_lab_.parts(), kid_lab_.color(), local_to_screen, pxu,
+	appendPartStrokes(lab_.parts(), lab_.color(), local_to_screen, pxu,
 	                  (float)glfwGetTime(), ss);
 
 	// Confetti particles around the creature.
@@ -1778,7 +1449,7 @@ void App::drawKidCelebrate(float dt) {
 			Particle pa;
 			pa.pos_a = wp + glm::vec2(std::cos(ang), std::sin(ang)) * len;
 			pa.pos_b = pa.pos_a + glm::vec2(std::cos(ang), std::sin(ang)) * 12.0f;
-			pa.color = kid_lab_.color();
+			pa.color = lab_.color();
 			pa.half_width = 3.0f;
 			pa.t_left = 1.4f;
 			pa.t_max  = 1.4f;
@@ -1792,7 +1463,7 @@ void App::drawKidCelebrate(float dt) {
 	renderer_->drawStrokes(ss, nullptr, w_px, h_px);
 
 	// Banner
-	std::string banner = "MEET " + kid_creature_name_ + "!";
+	std::string banner = "MEET " + creature_name_ + "!";
 	float w_chars = (float)banner.size() * 0.018f * 2.4f;
 	text_->drawText(banner, -w_chars * 0.5f, 0.55f, 2.4f,
 		glm::vec4(1.0f, 0.95f, 0.55f, 1.0f), aspect);
@@ -1800,7 +1471,7 @@ void App::drawKidCelebrate(float dt) {
 	// Skip-on-click; auto-advance after 2s.
 	if (t >= 2.0f || mouse_left_click_) {
 		particles_.clear();
-		startMatchFromKidLab();
+		startMatchFromLab();
 	}
 }
 

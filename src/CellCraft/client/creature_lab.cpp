@@ -1,6 +1,6 @@
-// CellCraft — KID MODE creature lab. See kid_lab.h.
+// CellCraft — creature lab. See creature_lab.h.
 
-#include "CellCraft/client/kid_lab.h"
+#include "CellCraft/client/creature_lab.h"
 
 #include <GLFW/glfw3.h>
 
@@ -79,12 +79,12 @@ bool point_in_rect(glm::vec2 p, float x, float y, float w, float h) {
 
 } // namespace
 
-void KidLab::init(Window* w, ChalkRenderer* r, TextRenderer* t) {
+void CreatureLab::init(Window* w, ChalkRenderer* r, TextRenderer* t) {
 	window_ = w; renderer_ = r; text_ = t;
 	reset();
 }
 
-void KidLab::reset() {
+void CreatureLab::reset() {
 	cell_.init_circle(40.0f);
 	parts_.clear();
 	rebuild_polygon_();
@@ -103,7 +103,7 @@ void KidLab::reset() {
 	refresh_stats_();
 }
 
-void KidLab::load_starter(const sim::RadialCell& c, const std::vector<sim::Part>& p,
+void CreatureLab::load_starter(const sim::RadialCell& c, const std::vector<sim::Part>& p,
                           glm::vec3 col, const std::string& nm) {
 	reset();
 	cell_ = c;
@@ -115,17 +115,17 @@ void KidLab::load_starter(const sim::RadialCell& c, const std::vector<sim::Part>
 	refresh_stats_();
 }
 
-void KidLab::rebuild_polygon_() {
+void CreatureLab::rebuild_polygon_() {
 	local_poly_ = sim::cellToPolygon(cell_, 1);
 }
 
-void KidLab::push_undo_() {
+void CreatureLab::push_undo_() {
 	UndoEntry e; e.cell = cell_; e.parts = parts_; e.color = color_;
 	undo_.push_back(std::move(e));
 	if (undo_.size() > 32) undo_.erase(undo_.begin());
 }
 
-KidLab::Layout KidLab::compute_layout_() const {
+CreatureLab::Layout CreatureLab::compute_layout_() const {
 	Layout l;
 	glfwGetFramebufferSize(window_->handle(), &l.fw, &l.fh);
 	l.left_w = (float)l.fw * 0.16f;
@@ -144,30 +144,30 @@ KidLab::Layout KidLab::compute_layout_() const {
 	return l;
 }
 
-glm::vec2 KidLab::local_to_canvas_px_(glm::vec2 v, const Layout& l) const {
+glm::vec2 CreatureLab::local_to_canvas_px_(glm::vec2 v, const Layout& l) const {
 	return glm::vec2(l.canvas_cx + v.x * PX_PER_UNIT,
 	                 l.canvas_cy - v.y * PX_PER_UNIT);
 }
-glm::vec2 KidLab::canvas_px_to_local_(glm::vec2 px, const Layout& l) const {
+glm::vec2 CreatureLab::canvas_px_to_local_(glm::vec2 px, const Layout& l) const {
 	return glm::vec2((px.x - l.canvas_cx) / PX_PER_UNIT,
 	                 -(px.y - l.canvas_cy) / PX_PER_UNIT);
 }
 
-float KidLab::total_cost_() const {
+float CreatureLab::total_cost_() const {
 	float perim = sim::cellPerimeter(cell_);
 	float c = perim * sim::BODY_COST_PER_PX;
 	for (auto& p : parts_) c += sim::part_cost(p.type) * p.scale * p.scale;
 	return c;
 }
-float KidLab::budget_() const { return sim::BODY_BUDGET_BIOMASS; }
-float KidLab::fullness_frac_() const {
+float CreatureLab::budget_() const { return sim::BODY_BUDGET_BIOMASS; }
+float CreatureLab::fullness_frac_() const {
 	float b = budget_();
 	if (b <= 0.0f) return 0.0f;
 	float f = total_cost_() / b;
 	return std::clamp(f, 0.0f, 1.0f);
 }
 
-void KidLab::refresh_stats_() {
+void CreatureLab::refresh_stats_() {
 	// Build a probe Monster to derive numbers consistently with sim.
 	sim::Monster m;
 	m.shape = local_poly_;
@@ -182,7 +182,7 @@ void KidLab::refresh_stats_() {
 	stat_bite_  = std::clamp(bite / 2.0f, 0.0f, 1.0f);
 }
 
-bool KidLab::tap_place_part_(sim::PartType t) {
+bool CreatureLab::tap_place_part_(sim::PartType t) {
 	int cap = part_stack_cap(t);
 	if (part_stack_count(parts_, t) + 2 > cap) {
 		// Stacks paired (mirror), two slots needed. Boing.
@@ -270,11 +270,11 @@ bool KidLab::tap_place_part_(sim::PartType t) {
 	return true;
 }
 
-void KidLab::clamp_part_to_canvas_() {
+void CreatureLab::clamp_part_to_canvas_() {
 	// Nothing strict — parts can sit just outside the cell (spikes!).
 }
 
-int KidLab::placed_part_hit_(glm::vec2 px, const Layout& l) const {
+int CreatureLab::placed_part_hit_(glm::vec2 px, const Layout& l) const {
 	float best_d = 1e9f; int best = -1;
 	for (size_t i = 0; i < parts_.size(); ++i) {
 		glm::vec2 sp = local_to_canvas_px_(parts_[i].anchor_local, l);
@@ -285,7 +285,7 @@ int KidLab::placed_part_hit_(glm::vec2 px, const Layout& l) const {
 	return best;
 }
 
-bool KidLab::pixel_button_(float x, float y, float w, float h, const char* label,
+bool CreatureLab::pixel_button_(float x, float y, float w, float h, const char* label,
                            bool enabled, const LabInput& in, glm::vec3 fill) {
 	int fw, fh; glfwGetFramebufferSize(window_->handle(), &fw, &fh);
 	auto px2ndc = [&](glm::vec2 p) { return glm::vec2(p.x / fw * 2.0f - 1.0f, 1.0f - p.y / fh * 2.0f); };
@@ -322,7 +322,7 @@ bool KidLab::pixel_button_(float x, float y, float w, float h, const char* label
 	return hover && in.mouse_left_click;
 }
 
-LabOutcome KidLab::update(float dt, const LabInput& in) {
+LabOutcome CreatureLab::update(float dt, const LabInput& in) {
 	time_acc_ += dt;
 	wobble_phase_ += dt;
 	jar_shake_t_  = std::max(0.0f, jar_shake_t_ - dt);
@@ -362,7 +362,7 @@ LabOutcome KidLab::update(float dt, const LabInput& in) {
 	return outc;
 }
 
-void KidLab::draw_top_bar_(const Layout& l, const LabInput& in) {
+void CreatureLab::draw_top_bar_(const Layout& l, const LabInput& in) {
 	int fw = l.fw, fh = l.fh;
 	float aspect = (float)fw / (float)fh;
 	auto px2ndc = [&](float x, float y) {
@@ -393,7 +393,7 @@ void KidLab::draw_top_bar_(const Layout& l, const LabInput& in) {
 	}
 }
 
-void KidLab::draw_left_rail_(const Layout& l, const LabInput& in) {
+void CreatureLab::draw_left_rail_(const Layout& l, const LabInput& in) {
 	int fw = l.fw, fh = l.fh;
 	auto px2ndc = [&](float x, float y) {
 		return glm::vec2(x / fw * 2.0f - 1.0f, 1.0f - y / fh * 2.0f);
@@ -420,7 +420,7 @@ void KidLab::draw_left_rail_(const Layout& l, const LabInput& in) {
 	}
 }
 
-void KidLab::draw_right_rail_(const Layout& l) {
+void CreatureLab::draw_right_rail_(const Layout& l) {
 	int fw = l.fw, fh = l.fh;
 	float aspect = (float)fw / (float)fh;
 	auto px2ndc = [&](float x, float y) {
@@ -494,7 +494,7 @@ void KidLab::draw_right_rail_(const Layout& l) {
 	}
 }
 
-void KidLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
+void CreatureLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 	(void)dt;
 	int fw = l.fw, fh = l.fh;
 	auto px2ndc = [&](float x, float y) {
@@ -714,7 +714,7 @@ void KidLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 	}
 }
 
-void KidLab::draw_drawer_(const Layout& l, const LabInput& in) {
+void CreatureLab::draw_drawer_(const Layout& l, const LabInput& in) {
 	int fw = l.fw, fh = l.fh;
 	float aspect = (float)fw / (float)fh;
 	auto px2ndc = [&](float x, float y) {
@@ -781,7 +781,7 @@ void KidLab::draw_drawer_(const Layout& l, const LabInput& in) {
 	}
 }
 
-void KidLab::draw_bottom_bar_(const Layout& l, const LabInput& in, LabOutcome& outc) {
+void CreatureLab::draw_bottom_bar_(const Layout& l, const LabInput& in, LabOutcome& outc) {
 	int fw = l.fw, fh = l.fh;
 	auto px2ndc = [&](float x, float y) {
 		return glm::vec2(x / fw * 2.0f - 1.0f, 1.0f - y / fh * 2.0f);

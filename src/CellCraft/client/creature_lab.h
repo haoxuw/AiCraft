@@ -1,12 +1,9 @@
-// CellCraft — KID MODE creature lab.
+// CellCraft — creature lab.
 //
 // Single screen, BIG controls, no drag-drop. Sculpt is always-on (left
 // drag bends the body). Tap a part icon → it auto-anchors to a sensible
 // slot. Tap a placed part → 4 floating buttons (BIGGER/SMALLER/SPIN/REMOVE).
 // Right rail shows fullness jar + SPEED/TOUGH/BITE bars. Bottom: LET'S GO.
-//
-// Parallel to the classic LabScreen — they don't share state. KidLab owns
-// its own RadialCell + parts vector.
 
 #pragma once
 
@@ -18,7 +15,6 @@
 
 #include "CellCraft/client/chalk_renderer.h"
 #include "CellCraft/client/chalk_stroke.h"
-#include "CellCraft/client/lab_screen.h"   // reuse LabInput + LabOutcome
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/radial_cell.h"
 
@@ -26,7 +22,27 @@ namespace civcraft { class Window; class TextRenderer; }
 
 namespace civcraft::cellcraft {
 
-class KidLab {
+using civcraft::Window;
+using civcraft::TextRenderer;
+
+enum class LabOutcome {
+	NONE,
+	USE,   // LET'S GO clicked — read cell/parts
+	BACK,  // BACK clicked — go back
+};
+
+// Per-frame input snapshot built by App.
+struct LabInput {
+	glm::vec2 mouse_px       = glm::vec2(-1.0f);
+	bool      mouse_left_down  = false;
+	bool      mouse_right_down = false;
+	bool      mouse_left_click  = false;
+	bool      mouse_right_click = false;
+	float     scroll_y = 0.0f;
+	std::vector<int> keys_pressed;
+};
+
+class CreatureLab {
 public:
 	void init(Window* window, ChalkRenderer* renderer, TextRenderer* text);
 	void reset();
@@ -80,15 +96,11 @@ private:
 	                   const char* label, bool enabled,
 	                   const LabInput& in, glm::vec3 fill);
 
-	// Coord conversions for canvas (cx,cy at canvas_cx, canvas_cy; px_per_unit constant).
 	glm::vec2 local_to_canvas_px_(glm::vec2 local, const Layout& l) const;
 	glm::vec2 canvas_px_to_local_(glm::vec2 px, const Layout& l) const;
 
-	// Place a (mirrored) part pair at a sensible anchor for the type.
-	// Returns true if placed; false if over budget / over stack cap (boing).
 	bool tap_place_part_(sim::PartType t);
 
-	// Hit-test placed parts; returns index in parts_ or -1.
 	int placed_part_hit_(glm::vec2 canvas_px, const Layout& l) const;
 	void clamp_part_to_canvas_();
 
@@ -107,39 +119,31 @@ private:
 	glm::vec3               color_ = glm::vec3(0.95f, 0.65f, 0.85f);
 	std::string             name_  = "Bloopy Blob";
 
-	// Cached gameplay stats (for SPEED/TOUGH/BITE bars).
 	float stat_speed_ = 0.0f, stat_tough_ = 0.0f, stat_bite_ = 0.0f;
 
 	Drawer drawer_ = Drawer::PARTS;
 	int    selected_part_idx_ = -1;
-	float  selected_buttons_t_ = 0.0f; // for bounce animation
+	float  selected_buttons_t_ = 0.0f;
 
-	// Sculpt state.
 	bool   sculpting_ = false;
 	double sculpt_last_t_ = 0.0;
 
-	// Undo stack (cell + parts + color); reset clears it.
 	std::vector<UndoEntry> undo_;
 
-	// Speech bubble.
 	bool        speech_enabled_ = true;
-	float       speech_t_left_  = 0.0f; // current bubble life
-	float       speech_t_next_  = 8.0f; // until next bubble
+	float       speech_t_left_  = 0.0f;
+	float       speech_t_next_  = 8.0f;
 	std::string speech_text_;
 
-	// Name editing (very simple inline).
 	bool name_editing_ = false;
 
-	// Jar shake animation (when overflow rejected).
 	float jar_shake_t_ = 0.0f;
 
-	// Boing visual: brief red flash on the offending part icon.
 	int   boing_part_idx_ = -1;
 	float boing_t_left_   = 0.0f;
 
 	float time_acc_ = 0.0f;
 
-	// Wobble (visual breathing).
 	float wobble_phase_ = 0.0f;
 };
 

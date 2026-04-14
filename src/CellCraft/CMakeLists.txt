@@ -33,9 +33,7 @@ add_executable(cellcraft
 	${CMAKE_CURRENT_SOURCE_DIR}/client/app.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/game_log.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/part_render.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/client/lab_screen.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/client/lab_gizmo.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/client/kid_lab.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/creature_lab.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/name_generator.cpp
 	${CELLCRAFT_PLATFORM_SOURCES}
 )
