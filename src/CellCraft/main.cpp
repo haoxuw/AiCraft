@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <glm/glm.hpp>
+
 int main(int argc, char** argv) {
 	civcraft::cellcraft::AppOptions opts;
 
@@ -25,6 +27,11 @@ int main(int argc, char** argv) {
 			opts.select_screenshot_path = argv[++i];
 		} else if (!std::strcmp(argv[i], "--lab-screenshot") && i + 1 < argc) {
 			opts.lab_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--lab-cursor") && i + 1 < argc) {
+			float x = 0.0f, y = 0.0f;
+			if (std::sscanf(argv[++i], "%f,%f", &x, &y) == 2) {
+				opts.lab_cursor_px = glm::vec2(x, y);
+			}
 		} else if (!std::strcmp(argv[i], "--help")) {
 			std::printf("cellcraft options:\n"
 			            "  --autotest               accelerated headless match, logs to /tmp/cellcraft_autotest.log\n"
@@ -33,7 +40,8 @@ int main(int argc, char** argv) {
 			            "  --play-screenshot PATH   render PLAYING for ~1s then dump PPM\n"
 			            "  --menu-screenshot PATH   render MAIN_MENU then dump PPM\n"
 			            "  --select-screenshot PATH render MONSTER_SELECT then dump PPM\n"
-			            "  --lab-screenshot    PATH render creature lab then dump PPM\n");
+			            "  --lab-screenshot    PATH render creature lab then dump PPM\n"
+			            "  --lab-cursor    X,Y  force cursor to pixel (X,Y) for lab screenshot\n");
 			return 0;
 		}
 	}

@@ -34,6 +34,7 @@ add_executable(cellcraft
 	${CMAKE_CURRENT_SOURCE_DIR}/client/game_log.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/part_render.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/lab_screen.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/lab_gizmo.cpp
 	${CELLCRAFT_PLATFORM_SOURCES}
 )
 target_include_directories(cellcraft PRIVATE ${CELLCRAFT_INCLUDE_DIRS})

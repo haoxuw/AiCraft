@@ -253,6 +253,9 @@ void App::run() {
 		while (!window_.shouldClose() && (glfwGetTime() - t0) < 0.5) {
 			window_.pollEvents();
 			float dt = 1.0f / 60.0f;
+			if (opts_.lab_cursor_px.x >= 0.0f) {
+				mouse_px_ = opts_.lab_cursor_px;
+			}
 			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 			glViewport(0, 0, w, h);
 			renderer_->drawBoard(w, h, (float)glfwGetTime());

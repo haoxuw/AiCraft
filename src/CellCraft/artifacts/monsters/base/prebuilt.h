@@ -77,10 +77,10 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.initial_biomass = 18.0f;
 		m.cell = elongated(70.0f, 70.0f, 18.0f);
 		// SPIKES at top (head +y); VENOM also at top; FLAGELLA at bottom.
-		m.parts.push_back({sim::PartType::SPIKE,       {  8.0f,  58.0f}, PI * 0.5f});
-		m.parts.push_back({sim::PartType::SPIKE,       { -8.0f,  58.0f}, PI * 0.5f});
-		m.parts.push_back({sim::PartType::VENOM_SPIKE, {  0.0f,  64.0f}, PI * 0.5f});
-		m.parts.push_back({sim::PartType::FLAGELLA,    {  0.0f, -60.0f}, -PI * 0.5f});
+		m.parts.push_back({sim::PartType::SPIKE,       {  8.0f,  58.0f}, PI * 0.5f, 1.3f});
+		m.parts.push_back({sim::PartType::SPIKE,       { -8.0f,  58.0f}, PI * 0.5f, 1.3f});
+		m.parts.push_back({sim::PartType::VENOM_SPIKE, {  0.0f,  64.0f}, PI * 0.5f, 1.0f});
+		m.parts.push_back({sim::PartType::FLAGELLA,    {  0.0f, -60.0f}, -PI * 0.5f, 1.0f});
 		out.push_back(m);
 	}
 
@@ -92,10 +92,10 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.color = glm::vec3(0.45f, 0.80f, 0.55f);
 		m.initial_biomass = 40.0f;
 		m.cell = wobble_circle(50.0f, 0.04f, 3);
-		m.parts.push_back({sim::PartType::ARMOR,  {  15.0f,   0.0f}, 0.0f});
-		m.parts.push_back({sim::PartType::ARMOR,  { -15.0f,   0.0f}, PI});
-		m.parts.push_back({sim::PartType::REGEN,  {   0.0f,   0.0f}, 0.0f});
-		m.parts.push_back({sim::PartType::POISON, {   0.0f, -18.0f}, -PI * 0.5f});
+		m.parts.push_back({sim::PartType::ARMOR,  {  15.0f,   0.0f}, 0.0f,      1.5f});
+		m.parts.push_back({sim::PartType::ARMOR,  { -15.0f,   0.0f}, PI,        1.5f});
+		m.parts.push_back({sim::PartType::REGEN,  {   0.0f,   0.0f}, 0.0f,      1.2f});
+		m.parts.push_back({sim::PartType::POISON, {   0.0f, -18.0f}, -PI * 0.5f, 1.3f});
 		out.push_back(m);
 	}
 
@@ -122,9 +122,9 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.color = glm::vec3(0.85f, 0.65f, 0.35f);
 		m.initial_biomass = 32.0f;
 		m.cell = elongated(50.0f, 42.0f, 40.0f);
-		m.parts.push_back({sim::PartType::HORN,     {  0.0f,  40.0f},  PI * 0.5f});
-		m.parts.push_back({sim::PartType::FLAGELLA, {  0.0f, -36.0f}, -PI * 0.5f});
-		m.parts.push_back({sim::PartType::ARMOR,    { 34.0f,   0.0f},  0.0f});
+		m.parts.push_back({sim::PartType::HORN,     {  0.0f,  40.0f},  PI * 0.5f, 1.6f});
+		m.parts.push_back({sim::PartType::FLAGELLA, {  0.0f, -36.0f}, -PI * 0.5f, 1.0f});
+		m.parts.push_back({sim::PartType::ARMOR,    { 34.0f,   0.0f},  0.0f,      1.1f});
 		out.push_back(m);
 	}
 

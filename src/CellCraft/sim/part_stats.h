@@ -105,23 +105,28 @@ inline const char* part_desc(PartType t) {
 	return "";
 }
 
+// Effects scale with Part::scale per the prompt's design. Stack caps
+// still apply; a scaled part still only counts as one stack.
 inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 	PartEffect e;
 	int flagella = 0, armor = 0, cilia = 0, regen = 0, mouth = 0, venom = 0, horn = 0, eyes = 0;
 	bool have_poison = false;
+	float poison_scale_sum = 0.0f;
+	float poison_radius_max = 0.0f;
 	for (const auto& p : parts) {
+		const float s = std::max(0.1f, p.scale);
 		switch (p.type) {
 		case PartType::FLAGELLA: {
 			if (flagella < PART_FLAGELLA_MAX_STACK) {
-				e.speed_mult += PART_FLAGELLA_SPEED_ADD;
+				e.speed_mult += PART_FLAGELLA_SPEED_ADD * s;
 				++flagella;
 			}
 			break;
 		}
 		case PartType::ARMOR: {
 			if (armor < PART_ARMOR_MAX_STACK) {
-				e.hp_mult += PART_ARMOR_HP_ADD;
-				e.armor_dr = std::min(0.6f, e.armor_dr + PART_ARMOR_DR_PER);
+				e.hp_mult += PART_ARMOR_HP_ADD * s;
+				e.armor_dr = std::min(0.8f, e.armor_dr + PART_ARMOR_DR_PER * s);
 				++armor;
 			}
 			e.armor_anchors_local.push_back(p.anchor_local);
@@ -132,20 +137,25 @@ inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 			float len = std::sqrt(d.x * d.x + d.y * d.y);
 			if (len > 1e-3f) d /= len;
 			else             d = glm::vec2(std::cos(p.orientation), std::sin(p.orientation));
+			// scale bakes into damage_mult here; sim.cpp reads spike_dirs for cone.
+			e.damage_mult += (PART_SPIKE_DMG_ADD * s - PART_SPIKE_DMG_ADD);
 			e.spike_dirs.push_back(d);
 			break;
 		}
 		case PartType::TEETH: {
+			e.damage_mult += PART_TEETH_DMG_ADD * (s - 1.0f);
 			e.teeth_anchors_local.push_back(p.anchor_local);
 			break;
 		}
 		case PartType::POISON: {
 			have_poison = true;
+			poison_scale_sum += s;
+			poison_radius_max = std::max(poison_radius_max, PART_POISON_RADIUS * s);
 			break;
 		}
 		case PartType::CILIA: {
 			if (cilia < PART_CILIA_MAX_STACK) {
-				e.turn_mult += PART_CILIA_TURN_ADD;
+				e.turn_mult += PART_CILIA_TURN_ADD * s;
 				++cilia;
 			}
 			break;
@@ -156,6 +166,9 @@ inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 				float len = std::sqrt(d.x * d.x + d.y * d.y);
 				if (len > 1e-3f) d /= len;
 				else             d = glm::vec2(1.0f, 0.0f);
+				// horn damage scaling: sim.cpp uses PART_HORN_DMG_MULT directly;
+				// keep parity by boosting damage_mult proportional to scale.
+				e.damage_mult += (PART_HORN_DMG_MULT * 0.25f) * (s - 1.0f);
 				e.horn_dirs.push_back(d);
 				++horn;
 			}
@@ -163,14 +176,14 @@ inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 		}
 		case PartType::REGEN: {
 			if (regen < PART_REGEN_MAX_STACK) {
-				e.regen_hps += PART_REGEN_HPS;
+				e.regen_hps += PART_REGEN_HPS * s;
 				++regen;
 			}
 			break;
 		}
 		case PartType::MOUTH: {
 			if (mouth < PART_MOUTH_MAX_STACK) {
-				e.pickup_radius_mult += PART_MOUTH_RADIUS_ADD;
+				e.pickup_radius_mult += PART_MOUTH_RADIUS_ADD * s;
 				++mouth;
 			}
 			break;
@@ -184,7 +197,7 @@ inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 		}
 		case PartType::EYES: {
 			if (eyes < PART_EYES_MAX_STACK) {
-				e.perception_mult += PART_EYES_PERCEPTION_ADD;
+				e.perception_mult += PART_EYES_PERCEPTION_ADD * s;
 				++eyes;
 			}
 			break;
@@ -193,10 +206,8 @@ inline PartEffect computePartEffects(const std::vector<Part>& parts) {
 		}
 	}
 	if (have_poison) {
-		int poison_count = 0;
-		for (const auto& p : parts) if (p.type == PartType::POISON) ++poison_count;
-		e.poison_dps = PART_POISON_DPS * (float)poison_count;
-		e.poison_radius = PART_POISON_RADIUS;
+		e.poison_dps = PART_POISON_DPS * poison_scale_sum;
+		e.poison_radius = poison_radius_max;
 	}
 	return e;
 }

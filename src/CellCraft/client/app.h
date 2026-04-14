@@ -38,6 +38,7 @@ struct AppOptions {
 	std::string menu_screenshot_path;   // if set: render MAIN_MENU then snap PPM + exit
 	std::string select_screenshot_path; // if set: render MONSTER_SELECT then snap PPM + exit
 	std::string lab_screenshot_path;    // unified creature lab seeded with sample parts
+	glm::vec2   lab_cursor_px = glm::vec2(-1.0f); // if valid: force cursor to this pixel for lab screenshot
 };
 
 // Short-lived chalk-stroke particle for bites/kills/pickups.
