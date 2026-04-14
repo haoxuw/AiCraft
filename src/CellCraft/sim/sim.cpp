@@ -232,72 +232,75 @@ void Sim::resolve_contacts_(float dt) {
 			if (dir_len < 1e-4f) dir_ab = glm::vec2(1.0f, 0.0f);
 			else                 dir_ab /= dir_len;
 
-			float a_into_b = glm::dot(rel_v,  dir_ab);  // positive = A pushing into B
-			float b_into_a = glm::dot(-rel_v, -dir_ab); // == a_into_b actually; keep explicit
+			float rel_speed = glm::length(rel_v);
 
-			float a_point = a_has ? vertex_pointiness(A->shape, a_vert) : 0.2f;
-			float b_point = b_has ? vertex_pointiness(B->shape, b_vert) : 0.2f;
-
-			float a_thick = B->max_width / DEFENDER_THICKNESS_K; // defender B's thickness vs A's attack
-			float b_thick = A->max_width / DEFENDER_THICKNESS_K;
-
-			float dmg_to_b = std::max(0.0f, a_into_b * a_point - a_thick) * CONTACT_K;
-			float dmg_to_a = std::max(0.0f, b_into_a * b_point - b_thick) * CONTACT_K;
-
-			// Baseline nibble so perfectly-matched shapes still exchange damage
-			// over time — prevents deadlocks when attacker pointiness is low.
-			if (dmg_to_b == 0.0f && dmg_to_a == 0.0f) {
-				dmg_to_b = 0.5f * CONTACT_K;
-				dmg_to_a = 0.5f * CONTACT_K;
-			}
-
-			// Part modifiers.
-			// Base damage multiplier from TEETH is already baked via damage_mult;
-			// we fold in SPIKE direction-bonus per attacker.
-			auto apply_parts_attacker = [](const Monster& atk, glm::vec2 dir_world_into_def,
-			                               float& dmg) {
-				float mult = 1.0f;
-				if (!atk.part_effect.teeth_anchors_local.empty()) mult += PART_TEETH_DMG_ADD;
-				float cos30 = 0.8660254f;
-				for (const auto& sdir_local : atk.part_effect.spike_dirs) {
-					float c = std::cos(atk.heading);
-					float s = std::sin(atk.heading);
-					glm::vec2 wdir(c * sdir_local.x - s * sdir_local.y,
-					               s * sdir_local.x + c * sdir_local.y);
-					if (glm::dot(wdir, dir_world_into_def) >= cos30) {
-						mult += PART_SPIKE_DMG_ADD;
-						break;
-					}
+			// ---- Part-gated damage (Spore rule) -------------------------
+			// Damage requires a damaging part on the attacker whose world-
+			// space anchor lies within the contact region. No damaging part
+			// within range → zero damage (attacker just bumps the defender).
+			auto is_damaging = [](PartType t) {
+				return t == PartType::SPIKE || t == PartType::TEETH
+				    || t == PartType::HORN  || t == PartType::VENOM_SPIKE;
+			};
+			auto part_base_dmg = [](PartType t) -> float {
+				switch (t) {
+				case PartType::SPIKE:       return PART_DMG_BASE_SPIKE;
+				case PartType::TEETH:       return PART_DMG_BASE_TEETH;
+				case PartType::HORN:        return PART_DMG_BASE_HORN;
+				case PartType::VENOM_SPIKE: return PART_DMG_BASE_VENOM_SPIKE;
+				default: return 0.0f;
 				}
-				// HORN: massive damage only when the horn's world direction is within
-				// ±15° of the bite direction. Outside that narrow cone, only a small
-				// side contribution — horns are committed frontal weapons.
-				if (!atk.part_effect.horn_dirs.empty()) {
-					float c = std::cos(atk.heading);
-					float s = std::sin(atk.heading);
-					float best = -1.0f;
-					for (const auto& hdl : atk.part_effect.horn_dirs) {
-						glm::vec2 wdir(c * hdl.x - s * hdl.y, s * hdl.x + c * hdl.y);
+			};
+			auto has_damaging_part = [&](const Monster& m) {
+				for (const auto& p : m.parts) if (is_damaging(p.type)) return true;
+				return false;
+			};
+
+			// Compute damage that `atk` deals to `def` through parts that
+			// connect with the contact region. Returns (damage, venom_connected).
+			auto compute_part_damage = [&](const Monster& atk, const Monster& def,
+			                               glm::vec2 dir_world_into_def,
+			                               bool& venom_connected) -> float {
+				venom_connected = false;
+				if (!has_damaging_part(atk)) return 0.0f;
+				const float c = std::cos(atk.heading);
+				const float s = std::sin(atk.heading);
+				const float speed_mag = std::max(rel_speed * PART_DMG_K_SPEED, PART_DMG_K_MIN);
+				float total = 0.0f;
+				for (const auto& p : atk.parts) {
+					if (!is_damaging(p.type)) continue;
+					// World-space anchor = atk.core_pos + R(heading) * p.anchor_local
+					glm::vec2 wpos(atk.core_pos.x + c * p.anchor_local.x - s * p.anchor_local.y,
+					               atk.core_pos.y + s * p.anchor_local.x + c * p.anchor_local.y);
+					float reach = PART_CONTACT_RADIUS_K * std::max(0.1f, p.scale);
+					glm::vec2 dp = wpos - contact;
+					if (dp.x * dp.x + dp.y * dp.y > reach * reach) continue;
+					float dmg = part_base_dmg(p.type) * std::max(0.1f, p.scale) * speed_mag;
+					// HORN ±15° forward-cone bonus (keeps existing behavior).
+					if (p.type == PartType::HORN) {
+						glm::vec2 horn_dir_local = p.anchor_local;
+						float hl = std::sqrt(horn_dir_local.x * horn_dir_local.x
+						                   + horn_dir_local.y * horn_dir_local.y);
+						if (hl > 1e-3f) horn_dir_local /= hl;
+						else            horn_dir_local = glm::vec2(1.0f, 0.0f);
+						glm::vec2 wdir(c * horn_dir_local.x - s * horn_dir_local.y,
+						               s * horn_dir_local.x + c * horn_dir_local.y);
 						float cd = glm::dot(wdir, dir_world_into_def);
-						if (cd > best) best = cd;
+						if (cd >= PART_HORN_CONE_COS) dmg *= (1.0f + PART_HORN_DMG_MULT);
+						else                          dmg *= (1.0f + PART_HORN_DMG_SIDE);
 					}
-					if (best >= PART_HORN_CONE_COS) mult += PART_HORN_DMG_MULT;
-					else                            mult += PART_HORN_DMG_SIDE;
+					if (p.type == PartType::VENOM_SPIKE) venom_connected = true;
+					total += dmg;
 				}
-				dmg *= mult * atk.part_effect.damage_mult;
+				// Defender ARMOR: flat DR.
+				total *= (1.0f - def.part_effect.armor_dr);
+				if (total < 0.0f) total = 0.0f;
+				return total;
 			};
-			auto apply_parts_defender = [](const Monster& def, glm::vec2 hit_dir_world, float& dmg) {
-				// ARMOR part: flat DR.
-				dmg *= (1.0f - def.part_effect.armor_dr);
-				(void)hit_dir_world;
-				if (dmg < 0.0f) dmg = 0.0f;
-			};
-			apply_parts_attacker(*A, dir_ab, dmg_to_b);
-			// Defender is hit from direction -dir_ab (A pushes toward B, so
-			// B's boundary gets struck from the side pointing toward A).
-			apply_parts_defender(*B, -dir_ab, dmg_to_b);
-			apply_parts_attacker(*B, -dir_ab, dmg_to_a);
-			apply_parts_defender(*A,  dir_ab, dmg_to_a);
+
+			bool venom_a_connected = false, venom_b_connected = false;
+			float dmg_to_b = compute_part_damage(*A, *B,  dir_ab, venom_a_connected);
+			float dmg_to_a = compute_part_damage(*B, *A, -dir_ab, venom_b_connected);
 
 			auto apply_venom_on_bite = [](Monster* attacker, Monster* victim) {
 				int n = attacker->part_effect.venom_stacks;
@@ -315,20 +318,64 @@ void Sim::resolve_contacts_(float dt) {
 				last_damager_[B->id] = A->id;
 				Event e{EventKind::BITE, A->id, B->id, dmg_to_b, contact};
 				events_.push_back(e);
-				apply_venom_on_bite(A, B);
+				if (venom_a_connected) apply_venom_on_bite(A, B);
 			}
 			if (dmg_to_a > 0.0f) {
 				A->hp -= dmg_to_a;
 				last_damager_[A->id] = B->id;
 				Event e{EventKind::BITE, B->id, A->id, dmg_to_a, contact};
 				events_.push_back(e);
-				apply_venom_on_bite(B, A);
+				if (venom_b_connected) apply_venom_on_bite(B, A);
 			}
 
-			// Separating impulse — push both apart along dir_ab.
+			// Soft separating impulse — push both apart along dir_ab.
 			glm::vec2 push = dir_ab * SEPARATION_IMPULSE;
 			A->velocity -= push;
 			B->velocity += push;
+
+			// ---- Hard overlap resolution ------------------------------
+			// Push the pair apart so their polygons no longer overlap.
+			// Penetration depth is the worst interpenetration of vertices
+			// projected along dir_ab: for A's vertices inside B, how far
+			// past B's near edge (along dir_ab) they sit, and vice versa.
+			// This is cheap (reuses the world polys we already built) and
+			// avoids the overestimate of using sum-of-max-radii.
+			// SAT-style penetration along dir_ab: how far A's leading edge
+			// projects past B's trailing edge along the push axis.
+			float a_max = -1e30f, b_min = 1e30f;
+			for (const auto& v : pa) {
+				float d = glm::dot(v, dir_ab);
+				if (d > a_max) a_max = d;
+			}
+			for (const auto& v : pb) {
+				float d = glm::dot(v, dir_ab);
+				if (d < b_min) b_min = d;
+			}
+			float penetration = a_max - b_min;
+			if (penetration <= 0.0f) penetration = OVERLAP_PUSH_PAD;
+			{
+				float push_mag = std::min(penetration + OVERLAP_PUSH_PAD, OVERLAP_MAX_PUSH);
+				float ma = std::max(A->mass, 1e-3f);
+				float mb = std::max(B->mass, 1e-3f);
+				float total_m = ma + mb;
+				float a_share = mb / total_m; // A moves proportional to B's mass
+				float b_share = ma / total_m;
+				A->core_pos -= dir_ab * (push_mag * a_share);
+				B->core_pos += dir_ab * (push_mag * b_share);
+				// Clamp both back inside the arena.
+				auto clamp_inside = [&](Monster* m) {
+					float r = glm::length(m->core_pos);
+					if (r > world_->map_radius && r > 1e-3f) {
+						m->core_pos = (m->core_pos / r) * world_->map_radius;
+					}
+				};
+				clamp_inside(A);
+				clamp_inside(B);
+				// Refresh A/B's world polygons since positions moved —
+				// prevents the next pair-iteration from using stale data.
+				world_polys[ids[i]] = transform_to_world(A->shape, A->core_pos, A->heading);
+				world_polys[ids[j]] = transform_to_world(B->shape, B->core_pos, B->heading);
+			}
 		}
 	}
 }

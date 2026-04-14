@@ -32,9 +32,26 @@ int main() {
 	// templates[0]=stinger, [1]=blob, [2]=dart, [3]=tusker
 	assert(templates.size() >= 3);
 
-	// Attacker A — stinger (pointy), player 1.
+	// Attacker A — custom spiky monster with SPIKES on its forward (+x
+	// local) face so they connect when A charges B along +x. The stock
+	// Stinger template authors spikes at local +y which doesn't align
+	// with the movement-direction convention used by Sim::apply_move
+	// (heading=0 → velocity +x). Part-gated damage (commit 4) requires
+	// the damaging part's world position to be inside the contact region.
+	monsters::MonsterTemplate spiky;
+	spiky.id = "test:spiky";
+	spiky.name = "SpikyRammer";
+	spiky.initial_biomass = 22.0f;
+	spiky.color = glm::vec3(0.95f, 0.35f, 0.40f);
+	spiky.cell = monsters::detail::elongated(70.0f, 70.0f, 22.0f);
+	// Anchor spikes at the body's +x surface (side_r ≈ 22) so that when
+	// A rams along +x, the spike anchors land inside the contact region.
+	spiky.parts.push_back({sim::PartType::SPIKE,       { 20.0f,  6.0f}, 0.0f, 1.4f});
+	spiky.parts.push_back({sim::PartType::SPIKE,       { 20.0f, -6.0f}, 0.0f, 1.4f});
+	spiky.parts.push_back({sim::PartType::VENOM_SPIKE, { 22.0f,  0.0f}, 0.0f, 1.2f});
+	spiky.parts.push_back({sim::PartType::MOUTH,       { 15.0f,  0.0f}, 0.0f, 1.0f});
 	sim::Monster A_init = monsters::makeMonsterFromTemplate(
-		templates[0], /*owner=*/1, /*pos=*/{-200.0f, 0.0f}, /*heading=*/0.0f);
+		spiky, /*owner=*/1, /*pos=*/{-200.0f, 0.0f}, /*heading=*/0.0f);
 	uint32_t A_id = world.spawn_monster(A_init);
 
 	// Defender B — blob (tanky), player 2, placed ahead so A will ram.
@@ -151,5 +168,82 @@ int main() {
 	            bite_count, kill_count, pickup_count,
 	            A_start_biomass, A_after->biomass, biomass_to_killer,
 	            world.food.size());
+
+	// --- Behavior autotest A: two PLAIN monsters collide, deal zero damage
+	// and never overlap. Verifies the part-gated damage rule + hard
+	// overlap resolution added in commit 4.
+	{
+		sim::World w2;
+		w2.map_radius = 800.0f;
+
+		// Build a PLAIN template inline: circle body + MOUTH only, no
+		// damaging parts. Avoids pulling in the RNG-based starter maker.
+		monsters::MonsterTemplate plain;
+		plain.id = "test:plain";
+		plain.name = "PLAIN";
+		plain.initial_biomass = 25.0f;
+		plain.color = glm::vec3(0.9f, 0.9f, 0.8f);
+		plain.cell = monsters::detail::wobble_circle(45.0f, 0.0f, 1);
+		plain.parts.push_back({sim::PartType::MOUTH, {0.0f, 27.0f}, 1.5707963f, 1.0f});
+
+		sim::Monster P1 = monsters::makeMonsterFromTemplate(plain, 1, {-80.0f, 0.0f}, 0.0f);
+		sim::Monster P2 = monsters::makeMonsterFromTemplate(plain, 2, { 80.0f, 0.0f}, 3.14159f);
+		uint32_t P1_id = w2.spawn_monster(P1);
+		uint32_t P2_id = w2.spawn_monster(P2);
+
+		float P1_start_hp = w2.get(P1_id)->hp;
+		float P2_start_hp = w2.get(P2_id)->hp;
+
+		sim::Sim sim2(&w2);
+		int plain_bites = 0;
+		int overlap_ticks = 0;
+		const int N_TICKS = 180; // 3s
+		for (int t = 0; t < N_TICKS; ++t) {
+			std::unordered_map<uint32_t, sim::ActionProposal> acts;
+			// Both ram toward each other at full thrust.
+			sim::Monster* p1 = w2.get(P1_id);
+			sim::Monster* p2 = w2.get(P2_id);
+			if (p1 && p2) {
+				glm::vec2 d12 = p2->core_pos - p1->core_pos;
+				glm::vec2 d21 = p1->core_pos - p2->core_pos;
+				acts[P1_id] = sim::ActionProposal::move(std::atan2(d12.y, d12.x), 1.0f);
+				acts[P2_id] = sim::ActionProposal::move(std::atan2(d21.y, d21.x), 1.0f);
+			}
+			sim2.tick(dt, acts);
+			for (const auto& e : sim2.drain_events()) {
+				if (e.kind == sim::EventKind::BITE) ++plain_bites;
+			}
+			// Overlap check: polygons should not intersect after hard resolution.
+			sim::Monster* q1 = w2.get(P1_id);
+			sim::Monster* q2 = w2.get(P2_id);
+			if (q1 && q2) {
+				auto pa = sim::transform_to_world(q1->shape, q1->core_pos, q1->heading);
+				auto pb = sim::transform_to_world(q2->shape, q2->core_pos, q2->heading);
+				if (sim::polygons_overlap(pa, pb)) ++overlap_ticks;
+			}
+		}
+		sim::Monster* p1e = w2.get(P1_id);
+		sim::Monster* p2e = w2.get(P2_id);
+		if (!p1e || !p2e) fail("autotest A: a plain monster disappeared");
+		if (plain_bites != 0) {
+			std::fprintf(stderr, "autotest A: plain_bites=%d (expected 0)\n", plain_bites);
+			fail("autotest A: plain monsters bit each other (damage was not part-gated)");
+		}
+		if (std::fabs(p1e->hp - P1_start_hp) > 0.01f ||
+		    std::fabs(p2e->hp - P2_start_hp) > 0.01f) {
+			std::fprintf(stderr, "autotest A: hp drift P1 %.2f→%.2f  P2 %.2f→%.2f\n",
+			             P1_start_hp, p1e->hp, P2_start_hp, p2e->hp);
+			fail("autotest A: plain monsters took damage despite no damaging parts");
+		}
+		// Allow a very small number of overlap ticks while the resolver
+		// settles on the first frame of deep contact; should be ~0.
+		if (overlap_ticks > 4) {
+			std::fprintf(stderr, "autotest A: overlap_ticks=%d (expected <=4)\n", overlap_ticks);
+			fail("autotest A: plain monsters interpenetrated (hard resolution failed)");
+		}
+		std::printf("cellcraft-sim-test A PASS  plain_bites=%d  overlap_ticks=%d\n",
+		            plain_bites, overlap_ticks);
+	}
+
 	return 0;
 }

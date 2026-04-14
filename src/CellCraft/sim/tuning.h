@@ -51,6 +51,29 @@ constexpr float CONTACT_K            = 0.18f;
 constexpr float DEFENDER_THICKNESS_K = 5.0f;   // subtracted from damage, scales with defender max_width
 constexpr float SEPARATION_IMPULSE   = 60.0f;  // push apart on overlap to avoid sticking
 
+// --- Part-gated damage (Spore rule: no damaging part → no damage) ----
+// Damage only applies if a damaging part (SPIKE/TEETH/HORN/VENOM_SPIKE)
+// on the attacker sits within PART_CONTACT_RADIUS_K * part.scale world
+// units of the contact point. Base damage per connecting part type:
+constexpr float PART_DMG_BASE_SPIKE       = 4.0f;
+constexpr float PART_DMG_BASE_TEETH       = 3.0f;
+constexpr float PART_DMG_BASE_HORN        = 6.0f;
+constexpr float PART_DMG_BASE_VENOM_SPIKE = 5.0f;
+// Radius (world units per unit part scale) around the part anchor in which
+// a contact point counts as "connected".
+constexpr float PART_CONTACT_RADIUS_K = 12.0f;
+// Damage = base * part.scale * max(rel_speed * K_SPEED, K_MIN)
+constexpr float PART_DMG_K_SPEED = 0.02f;
+constexpr float PART_DMG_K_MIN   = 0.35f;
+
+// --- Hard overlap resolution ----------------------------------------
+// After the soft contact spring, cells are pushed apart along the contact
+// normal so their polygons no longer overlap. Mass-proportional split.
+// Overlap magnitude is approximated from interpenetration of bounding
+// radii when polygons overlap (cheap, stable, no SAT needed).
+constexpr float OVERLAP_PUSH_PAD   = 1.0f;  // extra world units past zero-overlap
+constexpr float OVERLAP_MAX_PUSH   = 40.0f; // cap per-tick per-cell displacement
+
 // Fraction of dying monster's biomass that goes to killer; remainder drops as food.
 constexpr float DEATH_BIOMASS_FRAC = 0.6f;
 
