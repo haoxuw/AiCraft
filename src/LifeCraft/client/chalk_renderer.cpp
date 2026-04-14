@@ -33,6 +33,7 @@ void ChalkRenderer::shutdown() {
 
 void ChalkRenderer::drawBoard(int w, int h, float t) {
 	glDisable(GL_BLEND);
+	glDisable(GL_DEPTH_TEST);
 	m_board.use();
 	m_board.setVec2("u_resolution", glm::vec2((float)w, (float)h));
 	m_board.setFloat("u_time", t);
@@ -60,6 +61,7 @@ void ChalkRenderer::drawOne(const ChalkStroke& s, int w, int h) {
 void ChalkRenderer::drawStrokes(const std::vector<ChalkStroke>& done,
                                 const ChalkStroke* live,
                                 int w, int h) {
+	glDisable(GL_DEPTH_TEST);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	m_chalk.use();

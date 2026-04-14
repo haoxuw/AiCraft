@@ -16,6 +16,7 @@ set(LIFECRAFT_INCLUDE_DIRS
 set(LIFECRAFT_PLATFORM_SOURCES
 	${CMAKE_SOURCE_DIR}/src/platform/client/window.cpp
 	${CMAKE_SOURCE_DIR}/src/platform/client/shader.cpp
+	${CMAKE_SOURCE_DIR}/src/platform/client/text.cpp
 )
 
 # Sim library — headless authoritative simulation. No GL, no Python.
@@ -29,6 +30,8 @@ target_link_libraries(lifecraft_sim PUBLIC glm::glm)
 add_executable(lifecraft
 	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/chalk_renderer.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/app.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/game_log.cpp
 	${LIFECRAFT_PLATFORM_SOURCES}
 )
 target_include_directories(lifecraft PRIVATE ${LIFECRAFT_INCLUDE_DIRS})
@@ -50,4 +53,7 @@ add_custom_command(TARGET lifecraft POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:lifecraft>/shaders
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
 		${CMAKE_CURRENT_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:lifecraft>/shaders
+	# Also stage shared platform shaders (text.* needed by platform TextRenderer).
+	COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_SOURCE_DIR}/src/platform/shaders $<TARGET_FILE_DIR:lifecraft>/shaders
 )
