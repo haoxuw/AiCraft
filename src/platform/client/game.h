@@ -301,6 +301,12 @@ private:
 	// character_views to sample a clip at specific phases.
 	float m_debugAnimTime = -1.0f;
 
+	// Debug: scenario-driven override for the walk cycle. Negative walk
+	// phase = no override (use m_playerWalkDist). When set, overrides both
+	// walkDistance (as phase / model.walkCycleSpeed-ish) and speed.
+	float m_debugWalkPhase  = -1.0f;
+	float m_debugWalkSpeed  = 0.0f;
+
 	// Head/body target tracking: when attacking or mining, the model
 	// looks at the target.  In TPS/RPG/RTS, the head also tracks the
 	// camera yaw with a ±45° neck limit; excess rotates the body.

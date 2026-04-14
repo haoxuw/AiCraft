@@ -37,6 +37,7 @@ public:
 		std::string targetItem;         // e.g. "sword"
 		std::string targetCharacter;    // e.g. "pig" (character_views only)
 		std::string targetClip;         // e.g. "chop" (character_views only, optional)
+		std::string handItem;           // e.g. "sword" — equip in hand for clip shots
 		std::string outputDir   = "/tmp";
 	};
 
@@ -51,7 +52,7 @@ public:
 			m_scenario = std::make_unique<AnimationScenario>(cfg.targetItem);
 		} else if (cfg.scenario == "character_views") {
 			m_scenario = std::make_unique<CharacterViewsScenario>(
-				cfg.targetCharacter, cfg.targetClip);
+				cfg.targetCharacter, cfg.targetClip, 0.6f, cfg.handItem);
 		} else {
 			fprintf(stderr, "[DebugCapture] Unknown scenario '%s'\n",
 			        cfg.scenario.c_str());

@@ -15,7 +15,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers lifecraft-server-build lifecraft-server-game-build character_views item_views model-editor model-snap
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers lifecraft-server-build lifecraft-server-game-build character_views item_views model-editor model-snap animation_sweep test_animation
 
 # ── Native ─────────────────────────────────────────────────
 #
@@ -102,6 +102,62 @@ character_views: build
 item_views: build
 	cd $(BUILD_DIR) && ./$(GAME) --skip-menu \
 	    --debug-scenario item_views --debug-item $(ITEM)
+
+# animation_sweep: shoot every (character × clip) combination and sort the
+# output into /tmp/anim_review/<character>/<clip>_p{0..3}.png. Clips probed:
+# walk (pseudo, drives walk cycle) + the six named clips defined in models
+# (attack/chop/mine/wave/dance/sleep/fly/land). Missing clips produce a
+# still pose — easy to skip during review. Takes ~25s per char × clip.
+#
+#   make animation_sweep                 # all characters × {walk,attack,chop,mine,wave,dance}
+#   make animation_sweep CHARS="player knight mage"
+#   make animation_sweep CLIPS="walk attack"
+CHARS := player knight mage villager skeleton giant owl pig cat chicken dog beaver bee squirrel raccoon
+CLIPS := walk attack chop mine wave dance fly land sleep
+# Per-clip held item: shows held-weapon wiring alongside the clip arc.
+# attack/chop/mine → sword, walk → shield (idle guard pose), others bare.
+HAND_attack := sword
+HAND_chop   := sword
+HAND_mine   := sword
+HAND_walk   := shield
+HAND_wave   := sword
+HAND_dance  :=
+HAND_fly    :=
+HAND_land   :=
+HAND_sleep  :=
+
+animation_sweep: build
+	@rm -rf /tmp/anim_review
+	@mkdir -p /tmp/anim_review
+	@pgrep -x $(GAME)-server 2>/dev/null | xargs -r kill -9 ; true
+	@for char in $(CHARS); do \
+	  for clip in $(CLIPS); do \
+	    hand_var=HAND_$$clip; \
+	    hand=$$(eval echo \$$$$hand_var); \
+	    echo "=== $$char / $$clip$${hand:+ +$$hand} ==="; \
+	    pgrep -x $(GAME)-server 2>/dev/null | xargs -r kill -9 ; \
+	    rm -f /tmp/debug_*.ppm; \
+	    ( cd $(BUILD_DIR) && timeout 30 ./$(GAME) --skip-menu \
+	      --debug-scenario character_views --debug-character base:$$char \
+	      --debug-clip $$clip \
+	      $${hand:+--debug-hand-item $$hand} ) >/dev/null 2>&1 || true; \
+	    mkdir -p /tmp/anim_review/$$char; \
+	    for p in /tmp/debug_*.ppm; do \
+	      [ -e "$$p" ] || continue; \
+	      suf=$$(basename $$p .ppm | sed 's/^debug_[0-9]*_//'); \
+	      python3 -c "from PIL import Image; Image.open('$$p').save('/tmp/anim_review/$$char/$$suf.png')"; \
+	    done; \
+	  done; \
+	done
+	@echo "Done. Shots in /tmp/anim_review/<char>/<clip>_p{0..3}.png"
+
+# Alias: `make test_animation` is the canonical name for regression-finding
+# runs. Each (character × clip × held-item) combo writes 4 phase shots
+# (sin() quarters) so max-swing frames surface axis/pivot bugs quickly.
+# Works for a subset to keep runtime reasonable; override CHARS/CLIPS on
+# the command line to narrow further:
+#   make test_animation CHARS="knight" CLIPS="attack wave"
+test_animation: animation_sweep
 
 # Standalone model viewer / snapshot tool (no world, no server, no full client).
 # Shared by CivCraft + LifeCraft.

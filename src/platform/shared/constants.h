@@ -43,7 +43,6 @@ namespace LivingName {
 	constexpr const char* Dog          = "dog";
 	constexpr const char* Cat          = "cat";
 	constexpr const char* Villager     = "villager";
-	constexpr const char* Crewmate     = "crewmate";
 	constexpr const char* Knight       = "knight";
 	constexpr const char* Mage         = "mage";
 	constexpr const char* Skeleton     = "skeleton";

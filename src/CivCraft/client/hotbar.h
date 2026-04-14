@@ -27,10 +27,30 @@ public:
 	// inventory's stable iteration order. Clears any slots beyond the item
 	// count. Call this after any S_INVENTORY that replaces the full map.
 	void repopulateFrom(const Inventory& inv) {
+		// Preferred hotbar layout: sword first, then shield, tools, blocks,
+		// then everything else in inventory order. Keeps the most useful
+		// items on the leftmost keys (1,2,3...) regardless of item-id
+		// alphabetical ordering in std::map.
+		static const char* kPriority[] = {
+			"sword", "shield",
+			"wood_axe", "stone_pickaxe", "shovel",
+			"base:stone", "base:wood", "base:dirt",
+			"potion",
+		};
 		int slot = 0;
+		std::array<bool, SLOTS> used{};
+		(void)used;
+		auto seen = [&](const std::string& id) {
+			for (int i = 0; i < slot; i++) if (m_slots[i] == id) return true;
+			return false;
+		};
+		for (const char* id : kPriority) {
+			if (slot >= SLOTS) break;
+			if (inv.count(id) > 0 && !seen(id)) m_slots[slot++] = id;
+		}
 		for (const auto& [id, cnt] : inv.items()) {
 			if (slot >= SLOTS) break;
-			if (cnt > 0) m_slots[slot++] = id;
+			if (cnt > 0 && !seen(id)) m_slots[slot++] = id;
 		}
 		for (; slot < SLOTS; slot++) m_slots[slot].clear();
 	}

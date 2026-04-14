@@ -62,7 +62,6 @@ inline float getMaterialValue(const std::string& typeId) {
 		{"pig",           10.0f},
 		{"chicken",        5.0f},
 		{"brave_chicken",  8.0f},
-		{"crewmate",      20.0f},
 		{"giant",         80.0f},
 		{"knight",        40.0f},
 		{"mage",          18.0f},

@@ -517,17 +517,21 @@ private:
 					ent->setProp(Prop::HP, es.hp);
 				if (es.owner != 0)
 					ent->setProp(Prop::Owner, es.owner);
-				// Apply any inventory that arrived before this entity
+				// Apply any inventory that arrived before this entity.
+				// Must move ent into m_entities BEFORE firing the callback
+				// so that getEntity(eid) inside the callback returns non-null.
 				auto pit = m_pendingInventory.find(es.id);
+				bool hadPendingInv = false;
 				if (pit != m_pendingInventory.end() && ent->inventory) {
 					auto& inv = *ent->inventory;
 					inv.clear();
 					for (auto& [iid, amt] : pit->second.items)
 						inv.add(iid, amt);
 					m_pendingInventory.erase(pit);
-					if (m_onInventoryUpdate) m_onInventoryUpdate(es.id);
+					hadPendingInv = true;
 				}
 				m_entities[es.id] = std::move(ent);
+				if (hadPendingInv && m_onInventoryUpdate) m_onInventoryUpdate(es.id);
 				m_reconciler.onEntityCreate(es.id, es.position, es.velocity, es.yaw,
 				                            es.moveTarget, es.moveSpeed);
 			} else {

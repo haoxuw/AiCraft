@@ -70,7 +70,11 @@ model = {
     # Standard humanoid clip vocabulary. Same shape as villager.py / knight.py.
     "clips": {
         "attack": {
-            "right_hand": {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
+            # Overhead chop: arm swings through a wide arc from raised-back
+            # (-30°) down past horizontal to down-forward (+150°), so the
+            # sword tip actually arcs DOWN toward the target on the downswing
+            # rather than sticking out sideways as a thrust.
+            "right_hand": {"axis": [1, 0, 0], "amp": 90, "bias":  60, "speed": 3.0, "phase": 0},
         },
         "chop": {
             "right_hand": {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},

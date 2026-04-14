@@ -605,6 +605,10 @@ void Game::updatePlaying(float dt, float aspect) {
 		cb.setPlayerAnimTime = [this](float t) {
 			m_debugAnimTime = t;
 		};
+		cb.setPlayerWalk = [this](float phase, float speed) {
+			m_debugWalkPhase = phase;
+			m_debugWalkSpeed = speed;
+		};
 
 		m_debugCapture.tick(dt, pe, m_camera, cb);
 		if (m_debugCapture.done()) {

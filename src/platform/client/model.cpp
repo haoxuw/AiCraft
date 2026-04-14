@@ -132,7 +132,6 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 		auto it = model.clips.find(anim.currentClip);
 		if (it != model.clips.end()) activeClip = &it->second;
 	}
-
 	// Captured hand frames — set when we encounter the named "right_hand" /
 	// "left_hand" parts in the loop. Used to anchor held items after the
 	// loop completes, so the items inherit the same swing/clip/melee
@@ -284,10 +283,22 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 		root = glm::rotate(root, glm::radians(eqt.rotation.z), glm::vec3(0, 0, 1));
 		// equip.scale is the per-item "how big when held" multiplier.
 		// hi.scale is an extra runtime shrink (e.g. blocks shown small).
+		// Items without an explicit equip transform (notably blocks — their
+		// BoxModel is a 1m cube) get auto-shrunk to ~0.35m so they fit the
+		// hand instead of engulfing the holder. Mirrors the FPS HUD heuristic
+		// in game_render.cpp.
+		float es = eqt.scale;
+		bool hasEquip = (eqt.rotation != glm::vec3(0)
+		                 || eqt.offset   != glm::vec3(0)
+		                 || eqt.scale    != 1.0f);
+		if (!hasEquip) {
+			float mh = std::max(itemModel.totalHeight * itemModel.modelScale, 0.1f);
+			es = std::min(0.35f / mh, 0.5f);
+		}
 		// Intentionally NOT multiplied by parent `s`: held items should
 		// render at their intrinsic world size (same as on the ground),
 		// not get inflated by the character's modelScale.
-		root = glm::scale(root, glm::vec3(eqt.scale * hi.scale));
+		root = glm::scale(root, glm::vec3(es * hi.scale));
 
 		// Draw item parts using the item's own scale internally. We pass the
 		// pre-scaled root, but the per-part offsets still want to be in the

@@ -1,11 +1,8 @@
 #version 410 core
 
-// Chalkboard background — layered procedural noise, no texture asset.
-//
-// Look target: modern, crisp, high-definition chalkboard. High-freq
-// detail visible at pixel scale, broad cloud layers drifting overhead
-// at different rates for parallax depth. The rule: every octave should
-// *add* detail, never just wash out what's underneath.
+// Black board with subtle drifting cloud currents. Domain-warped FBM
+// produces slow rolling shapes, but amplitude is kept low so the board
+// reads as near-black — clouds are a hint, not a feature.
 
 in vec2 v_uv;
 out vec4 f_color;
@@ -30,71 +27,40 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// 7-octave FBM — broad shape down to ~2px detail. Each octave doubles
-// freq, amplitude falls off so the finest octaves are a thin crisp
-// overlay rather than washing out the broad shapes.
 float fbm(vec2 p) {
 	float v = 0.0;
 	float amp = 0.5;
-	for (int i = 0; i < 7; ++i) {
+	for (int i = 0; i < 5; ++i) {
 		v += amp * vnoise(p);
-		p *= 2.11;
+		p = p * 2.07 + vec2(11.3, 7.1);
 		amp *= 0.55;
 	}
 	return v;
 }
 
-// Contrast sharpen around 0.5 — pushes light peaks lighter and dark
-// troughs darker so cloud fronts read as distinct, not uniform haze.
-float sharpen(float v, float k) {
-	float c = (v - 0.5) * k;
-	return 0.5 + 0.5 * c / (1.0 + abs(c));
-}
-
 void main() {
 	vec2 pix = gl_FragCoord.xy;
+	vec2 uv  = pix / u_resolution.y;
 
-	// ---- base slate ---------------------------------------------------
-	vec3 base = vec3(0.095, 0.150, 0.130);
+	// Domain warp: two slow-drifting FBM fields, second one warps the
+	// first. Creates the looped "rolling clouds" look without hard edges.
+	vec2 q = vec2(
+		fbm(uv * 1.4 + vec2( u_time * 0.04,  u_time * 0.02)),
+		fbm(uv * 1.4 + vec2(-u_time * 0.03,  u_time * 0.05) + 5.2)
+	);
+	float f = fbm(uv * 2.0 + 3.5 * q + vec2(u_time * 0.06, 0.0));
 
-	// ---- large parallax cloud (slow, big) -----------------------------
-	// Huge features covering a substantial fraction of the screen.
-	// Low frequency, slow drift — feels like atmosphere in the background.
-	vec2  cloudA_uv = pix * 0.0009 + vec2(-u_time * 0.09, u_time * 0.04);
-	float cloudA    = sharpen(fbm(cloudA_uv), 2.0);
-	base += (cloudA - 0.5) * 0.13;
+	// Near-black base with a whisper of cool tint so it doesn't look dead.
+	vec3 base = vec3(0.015, 0.020, 0.025);
 
-	// ---- main cloud layer (medium scale, faster) ---------------------
-	// This is the "weather" — distinct brighter/darker fronts that
-	// visibly drift. Sharpened so the fronts are crisp, not smeared.
-	vec2  cloudB_uv = pix * 0.0026 + vec2(u_time * 0.32, u_time * 0.11);
-	float cloudB    = sharpen(fbm(cloudB_uv), 2.6);
-	base += (cloudB - 0.5) * 0.22;
+	// Cloud lift: very small amplitude, centered so f≈0.5 is neutral.
+	// 0.06 max lift means the brightest wisps only reach ~vec3(0.07).
+	base += vec3(0.05, 0.06, 0.07) * (f - 0.5) * 1.2;
 
-	// ---- mid-freq grain (drifting counter to cloudB) ------------------
-	vec2  grain_uv = pix * 0.028 + vec2(-u_time * 0.45, u_time * 0.22);
-	float grain    = fbm(grain_uv);
-	base += (grain - 0.5) * 0.09;
+	// Fine pixel tooth — keeps the board from looking flat/gradient-y
+	// at monitor resolution without reading as "chalkboard texture".
+	float tooth = hash12(floor(pix));
+	base += (tooth - 0.5) * 0.010;
 
-	// ---- fine pixel-scale tooth --------------------------------------
-	// The stuff that makes the board LOOK high-resolution: small, sharp,
-	// slightly random per-pixel variation. No interpolation — one hash
-	// sample per ~2px. This is the crisp detail you notice as "this
-	// isn't an upscaled image".
-	float tooth   = hash12(floor(pix * 0.5));
-	float tooth2  = hash12(floor(pix * 1.0) + 17.0);
-	base += (tooth  - 0.5) * 0.025;
-	base += (tooth2 - 0.5) * 0.018;
-
-	// ---- eraser streaks (broad bright horizontal sweeps) -------------
-	vec2  streak_uv = vec2(pix.x * 0.0025 - u_time * 0.45, pix.y * 0.016);
-	float streak    = fbm(streak_uv);
-	base += smoothstep(0.54, 0.82, streak) * 0.11;
-
-	// ---- vignette ----------------------------------------------------
-	vec2 nd = (pix / u_resolution) * 2.0 - 1.0;
-	float vig = 1.0 - dot(nd, nd) * 0.20;
-	base *= clamp(vig, 0.0, 1.0);
-
-	f_color = vec4(base, 1.0);
+	f_color = vec4(max(base, vec3(0.0)), 1.0);
 }

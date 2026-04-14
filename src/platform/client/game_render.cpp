@@ -77,8 +77,8 @@ void Game::renderEntities(float dt, float aspect) {
 	if (playerSpeed > 0.5f) m_playerClip.clear();
 
 	AnimState playerAnim = {};
-	playerAnim.walkDistance = m_playerWalkDist;
-	playerAnim.speed        = playerSpeed;
+	playerAnim.walkDistance = (m_debugWalkPhase >= 0) ? m_debugWalkPhase : m_playerWalkDist;
+	playerAnim.speed        = (m_debugWalkPhase >= 0) ? m_debugWalkSpeed : playerSpeed;
 	playerAnim.time         = (m_debugAnimTime >= 0) ? m_debugAnimTime : m_globalTime;
 	playerAnim.attackPhase  = m_attackAnim.phase();
 	playerAnim.armPitch     = armPitch;

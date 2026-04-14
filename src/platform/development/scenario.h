@@ -58,6 +58,10 @@ struct ScenarioCallbacks {
 	// sample different swing phases deterministically. Negative = reset to
 	// real time.
 	std::function<void(float t)>                   setPlayerAnimTime;
+	// Drive the distance-based walk cycle. `phase` is radians (sin(phase)
+	// oscillates limbs); `speed` feeds smoothSpeed gating so the walk swing
+	// actually fires (needs > ~0.1 blocks/s to unlock in model.cpp).
+	std::function<void(float phase, float speed)>  setPlayerWalk;
 };
 
 // Abstract base for all debug scenarios.

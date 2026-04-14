@@ -128,6 +128,9 @@ bool Game::init(int argc, char** argv) {
 			else if (strcmp(argv[i], "--debug-clip") == 0 && i + 1 < argc) {
 				dbgCfg.targetClip = argv[++i];
 			}
+			else if (strcmp(argv[i], "--debug-hand-item") == 0 && i + 1 < argc) {
+				dbgCfg.handItem = argv[++i];
+			}
 			else if (strcmp(argv[i], "--log-only") == 0) {
 				/* handled above */
 			}

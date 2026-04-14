@@ -11,9 +11,13 @@ model = {
     "id": "sword",
     "height": 1.4,
     "equip": {
-        # Blade points up and slightly forward from the grip (Minecraft-style).
-        # Z tilt kept at 0 so the blade doesn't lie sideways across the body.
-        "rotation": [-10, 0, 0],
+        # Blade perpendicular to the forearm, pointing FORWARD from the fist
+        # (not parallel to the arm — otherwise when the arm hangs down the
+        # blade would stab the holder's own face). X=-90° takes the sword's
+        # local +Y (grip→tip) and maps it to the character's -Z (forward), so
+        # at rest the blade sticks out in front of the hand like a proper
+        # Minecraft sword grip.
+        "rotation": [0, -90, 90],
         "offset": [0.0, 0.0, -0.02],
         "scale": 0.65,
     },

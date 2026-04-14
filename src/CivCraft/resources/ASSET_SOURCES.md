@@ -98,7 +98,6 @@ All packs listed are free. CC0 preferred; CC-BY-SA noted where unavoidable.
 | `base:knight` | KayKit Adventurers | Knight/Warrior | Heavy armor character |
 | `base:mage` | KayKit Adventurers | Mage | Robed character |
 | `base:skeleton` | KayKit Skeletons | Skeleton Warrior | Undead + weapons |
-| `base:crewmate` | Kenney Blocky Characters | Astronaut-style | Closest match |
 | `base:giant` | Quaternius + scale up | Large humanoid | Scale 2-3x |
 | `base:villager` | Kenney Blocky Characters | Villager/Creatures | Civilian clothing |
 
@@ -198,7 +197,7 @@ Get these first — they cover the most built-in content per download:
 1. **Pixel Perfection** — all block textures in one clone (CC-BY-SA-4.0)
 2. **Quaternius Ultimate Animated Animals** — pig, chicken, dog, cat (CC0)
 3. **KayKit Adventurers + Skeletons** — knight, mage, skeleton + weapons (CC0)
-4. **Kenney Blocky Characters** — crewmate, villager, giant base (CC0)
+4. **Kenney Blocky Characters** — villager, giant base (CC0)
 5. **Quaternius Medieval Weapons** — sword, shield, melee items (CC0)
 6. **KayKit Dungeon Remastered** — torch, bucket, potion props (CC0)
 7. **rubberduck SFX bundle** (all 7 packs) — 575 sounds covering everything (CC0)

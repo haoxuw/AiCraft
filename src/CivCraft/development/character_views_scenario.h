@@ -43,10 +43,12 @@ public:
 	// For large humanoids pass ~1.2 via a future flag.
 	explicit CharacterViewsScenario(std::string characterId,
 	                                std::string clipName = {},
-	                                float aimHeight = 0.6f)
+	                                float aimHeight = 0.6f,
+	                                std::string handItem = {})
 		: m_characterId(std::move(characterId))
 		, m_clipName(std::move(clipName))
-		, m_aimHeight(aimHeight) {}
+		, m_aimHeight(aimHeight)
+		, m_handItem(std::move(handItem)) {}
 
 	const char* name() const override { return "character_views"; }
 
@@ -68,6 +70,10 @@ public:
 			// point toward +X, so the orbit yaws below work the same for animals
 			// and humanoids. See model definitions: heads/snouts sit at z<0.
 			if (cb.setPlayerYaw) cb.setPlayerYaw(-90.0f);
+			if (!m_handItem.empty()) {
+				int slot = findHotbarSlot(cb, m_handItem);
+				if (slot >= 0) cb.selectSlot(slot);
+			}
 			nextStep();
 			break;
 
@@ -105,6 +111,7 @@ private:
 	std::string m_characterId;
 	std::string m_clipName;     // empty = standard 6-angle views
 	float       m_aimHeight = 0.6f;
+	std::string m_handItem;     // empty = bare hands
 	int         m_step  = 0;
 	float       m_timer = 0;
 
@@ -123,6 +130,17 @@ private:
 	// 0.5, 0.75}. This is only approximate for fast clips, but covers the
 	// visual question "does the arm swing forward or backward?".
 	bool tickClip(Camera& camera, const ScenarioCallbacks& cb) {
+		// Re-apply framing every tick so godDistance lerp + player physics
+		// can't drift the camera between phase captures. "walk" is a pseudo
+		// clip: it drives walkDistance + speed instead of anim.time so the
+		// default distance-based walk cycle plays.
+		const bool isWalk = (m_clipName == "walk");
+		if (m_step > 0) {
+			if (cb.setPlayerYaw) cb.setPlayerYaw(-90.0f);
+			if (cb.setCameraAimHeight) cb.setCameraAimHeight(m_aimHeight);
+			orbit(cb, 45.0f, 15.0f, 3.5f);
+		}
+
 		switch (m_step) {
 		case 0:
 			if (m_timer < kSettle) return false;
@@ -134,26 +152,41 @@ private:
 			// model's face + swung arm live). Arm-forward is "toward camera
 			// face-side" after the yaw fix-up.
 			orbit(cb, 45.0f, 15.0f, 3.5f);
-			if (cb.setPlayerClip) cb.setPlayerClip(m_clipName);
+			if (cb.setPlayerClip) cb.setPlayerClip(isWalk ? "" : m_clipName);
+			if (!m_handItem.empty()) {
+				int slot = findHotbarSlot(cb, m_handItem);
+				if (slot >= 0) cb.selectSlot(slot);
+			}
 			nextStep();
 			break;
 
-		case 1: if (cb.setPlayerAnimTime) cb.setPlayerAnimTime(0.00f); nextStep(); break;
+		case 1: applyPhase(cb, isWalk, 0.00f);  nextStep(); break;
 		case 2: if (m_timer < kShot) return false; cb.save((m_clipName + "_p0").c_str());  nextStep(); break;
 
-		case 3: if (cb.setPlayerAnimTime) cb.setPlayerAnimTime(0.125f); nextStep(); break;
+		case 3: applyPhase(cb, isWalk, 0.125f); nextStep(); break;
 		case 4: if (m_timer < kShot) return false; cb.save((m_clipName + "_p1").c_str()); nextStep(); break;
 
-		case 5: if (cb.setPlayerAnimTime) cb.setPlayerAnimTime(0.25f); nextStep(); break;
+		case 5: applyPhase(cb, isWalk, 0.25f);  nextStep(); break;
 		case 6: if (m_timer < kShot) return false; cb.save((m_clipName + "_p2").c_str()); nextStep(); break;
 
-		case 7: if (cb.setPlayerAnimTime) cb.setPlayerAnimTime(0.375f); nextStep(); break;
+		case 7: applyPhase(cb, isWalk, 0.375f); nextStep(); break;
 		case 8: if (m_timer < kShot) return false; cb.save((m_clipName + "_p3").c_str()); nextStep(); break;
 
 		default:
 			return true;
 		}
 		return false;
+	}
+
+	// Drive anim.time for named clips; drive walkDistance+speed for "walk".
+	// Phases 0.0/0.125/0.25/0.375 map walk-cycle quarter turns (walkPhase in
+	// model.cpp uses walkDistance × walkCycleSpeed with default 1.0).
+	static void applyPhase(const ScenarioCallbacks& cb, bool isWalk, float t) {
+		if (isWalk) {
+			if (cb.setPlayerWalk) cb.setPlayerWalk(t * 6.2831853f, 3.0f);
+		} else {
+			if (cb.setPlayerAnimTime) cb.setPlayerAnimTime(t);
+		}
 	}
 };
 
