@@ -425,7 +425,8 @@ void Sim::finalize_deaths_() {
 			for (int p = 0; p < pellets; ++p) {
 				float angle = TWO_PI * float(p) / float(pellets);
 				glm::vec2 off(std::cos(angle) * 6.0f, std::sin(angle) * 6.0f);
-				world_->add_food(victim->core_pos + off, each);
+				// Corpse chunks are meat.
+				world_->add_food(victim->core_pos + off, each, FoodType::MEAT);
 			}
 		}
 		world_->remove_monster(vid);

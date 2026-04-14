@@ -68,8 +68,20 @@ constexpr float GROW_MAX_SCALE   = 3.0f;
 
 // --- Food -----------------------------------------------------------
 
+// Legacy generic range — kept for any remaining callers; scatter_food now
+// picks per-type from the plant/meat ranges below.
 constexpr float FOOD_BIOMASS_MIN = 4.0f;
 constexpr float FOOD_BIOMASS_MAX = 12.0f;
+
+// Plant: common, small. Meat: rarer, chunkier (justifies risk/reward
+// once carnivore diet lands in commit 3).
+constexpr float FOOD_PLANT_BIOMASS_MIN = 4.0f;
+constexpr float FOOD_PLANT_BIOMASS_MAX = 9.0f;
+constexpr float FOOD_MEAT_BIOMASS_MIN  = 8.0f;
+constexpr float FOOD_MEAT_BIOMASS_MAX  = 15.0f;
+
+// Fraction of scattered food that is plant (remainder is meat).
+constexpr float FOOD_PLANT_FRACTION = 0.60f;
 
 // --- Creature-lab material budget -----------------------------------
 

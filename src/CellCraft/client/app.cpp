@@ -1186,17 +1186,171 @@ void App::drawMonsters() {
 void App::drawFood() {
 	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 	std::vector<ChalkStroke> strokes;
-	strokes.reserve(world_.food.size());
+	strokes.reserve(world_.food.size() * 4);
+
+	const float TWO_PI = 6.28318530718f;
+	const float t = (float)glfwGetTime();
+
+	// Chalk palette — bold pigment on cream. Values here match the design
+	// spec (#FF5C93 pink / #C83A6E marble; #6BCB4F leaf / #A8E87A stem).
+	const glm::vec3 MEAT_PINK   = {1.000f, 0.361f, 0.576f};
+	const glm::vec3 MEAT_MARBLE = {0.784f, 0.227f, 0.431f};
+	const glm::vec3 PLANT_GREEN = {0.420f, 0.796f, 0.310f};
+	const glm::vec3 PLANT_STEM  = {0.659f, 0.910f, 0.478f};
+
+	// Cheap per-food hash → [0,1). Stable across frames for wobble uniqueness.
+	auto hash01 = [](uint32_t s) {
+		s ^= s >> 16; s *= 0x7feb352dU;
+		s ^= s >> 15; s *= 0x846ca68bU;
+		s ^= s >> 16;
+		return float(s & 0xFFFFFF) / float(0x1000000);
+	};
+
 	for (auto& f : world_.food) {
 		glm::vec2 sp = worldToScreen(f.pos);
-		if (sp.x < -50.0f || sp.x > w + 50.0f) continue;
-		if (sp.y < -50.0f || sp.y > h + 50.0f) continue;
-		ChalkStroke s;
-		s.color = {0.9f, 1.0f, 0.6f};
-		s.half_width = 2.2f;
-		// A short 2-point stroke (dot-ish).
-		s.points = {{sp.x - 1.0f, sp.y}, {sp.x + 1.0f, sp.y}};
-		strokes.push_back(std::move(s));
+		if (sp.x < -60.0f || sp.x > w + 60.0f) continue;
+		if (sp.y < -60.0f || sp.y > h + 60.0f) continue;
+
+		// VISUAL radius decoupled from collision/pickup radius.
+		// Pickup stays driven by f.biomass on the sim side; render is much
+		// larger so meat/plant read as shapes at a glance (~14..22 world u).
+		float bm = std::max(0.0f, f.biomass);
+		// biomass typically 4..15 → map to [14, 22].
+		float bm_t  = std::min(1.0f, std::max(0.0f, (bm - 4.0f) / 11.0f));
+		float base_r = 14.0f + bm_t * 8.0f;
+		float phase  = hash01(f.seed) * TWO_PI;
+
+		// Extra brown stem color for PLANT.
+		const glm::vec3 PLANT_BROWN = {0.396f, 0.263f, 0.129f};
+
+		if (f.type == sim::FoodType::MEAT) {
+			// ---- MEAT BLUB: irregular lobed blob, pink, with marbling ----
+			// Pulse ±5% over 1.5s.
+			float pulse = 1.0f + 0.05f * std::sin(t * (TWO_PI / 1.5f) + phase);
+			float r = base_r * pulse;
+
+			// 5–7 lobes (deterministic per-food).
+			int lobes = 5 + int(hash01(f.seed ^ 0x9E3779B9u) * 3.0f); // 5..7
+			const int N = 40;
+			ChalkStroke body;
+			body.color = MEAT_PINK;
+			body.half_width = 3.2f;  // THICK stroke — reads like a crayon outline
+			body.points.reserve(N + 1);
+			for (int i = 0; i <= N; ++i) {
+				float a = TWO_PI * float(i) / float(N);
+				// Pronounced lobed silhouette — 25% wobble.
+				float wob = 1.0f + 0.25f * std::sin(a * float(lobes) + phase)
+				                 + 0.06f * std::sin(a * 2.0f - phase);
+				body.points.push_back({sp.x + std::cos(a) * r * wob,
+				                       sp.y + std::sin(a) * r * wob});
+			}
+			strokes.push_back(std::move(body));
+
+			// Inner fill ring — slightly smaller concentric blob for body mass.
+			{
+				ChalkStroke fill;
+				fill.color = MEAT_PINK;
+				fill.half_width = r * 0.55f;
+				fill.points.reserve(20 + 1);
+				for (int i = 0; i <= 20; ++i) {
+					float a = TWO_PI * float(i) / 20.0f;
+					float wob = 1.0f + 0.18f * std::sin(a * float(lobes) + phase);
+					float rr = r * 0.55f * wob;
+					fill.points.push_back({sp.x + std::cos(a) * rr,
+					                       sp.y + std::sin(a) * rr});
+				}
+				strokes.push_back(std::move(fill));
+			}
+
+			// 3 dark-pink marbling curves inside, each ~40% r in length.
+			const int marbles = 3;
+			for (int k = 0; k < marbles; ++k) {
+				float ma = phase + float(k) * (TWO_PI / float(marbles)) + 0.8f;
+				glm::vec2 c(sp.x + std::cos(ma) * r * 0.15f,
+				            sp.y + std::sin(ma) * r * 0.15f);
+				glm::vec2 dir(std::cos(ma + 1.2f), std::sin(ma + 1.2f));
+				glm::vec2 n(-dir.y, dir.x);
+				ChalkStroke m;
+				m.color = MEAT_MARBLE;
+				m.half_width = 2.6f;
+				float len = r * 0.40f;  // spec: ~40% of radius
+				for (int i = 0; i <= 8; ++i) {
+					float u = float(i) / 8.0f - 0.5f;  // -0.5..+0.5
+					float off = 0.20f * r * std::sin(u * 3.14159f * 2.0f);
+					m.points.push_back({c.x + dir.x * u * len + n.x * off,
+					                    c.y + dir.y * u * len + n.y * off});
+				}
+				strokes.push_back(std::move(m));
+			}
+		} else {
+			// ---- PLANT BLUB: 3 overlapping leaf ellipses + stem dot --------
+			// Gentle sway ±4° over 2s.
+			float sway = (3.14159f / 180.0f) * 4.0f
+			             * std::sin(t * (TWO_PI / 2.0f) + phase);
+			float r = base_r;
+
+			// 3 overlapping leaf ellipses, each 0.7× radius, offset 0/120/240°.
+			const float leaf_size = r * 0.70f;
+			const float leaf_center_off = r * 0.45f;  // how far leaves fan out
+			for (int L = 0; L < 3; ++L) {
+				float dir_ang = float(L) * (TWO_PI / 3.0f) - 1.5708f + sway; // 0,120,240 from top
+				float ca = std::cos(dir_ang), sa = std::sin(dir_ang);
+				glm::vec2 lc(sp.x + ca * leaf_center_off,
+				             sp.y + sa * leaf_center_off);
+
+				float rx = leaf_size * 0.45f;
+				float ry = leaf_size;      // leaf tip points outward (+y local)
+				const int N = 24;
+				ChalkStroke leaf;
+				leaf.color = PLANT_GREEN;
+				leaf.half_width = 3.0f;    // THICK outline stroke
+				leaf.points.reserve(N + 1);
+				for (int i = 0; i <= N; ++i) {
+					float a = TWO_PI * float(i) / float(N);
+					float x = std::cos(a) * rx;
+					float y = std::sin(a) * ry;
+					// Pinch the outward end into a leaf tip.
+					if (std::sin(a) > 0.6f) { x *= 0.45f; }
+					// Rotate local (x,y) so +y aligns with dir_ang.
+					// dir is at angle dir_ang from +x; leaf's long axis → dir.
+					float lx =  ca * (-y) - sa * x;  // rotate so local +y → dir
+					float ly =  sa * (-y) + ca * x;
+					leaf.points.push_back({lc.x + lx, lc.y - ly});
+				}
+				strokes.push_back(std::move(leaf));
+
+				// Light-green highlight curve inside each leaf (midrib arc).
+				ChalkStroke rib;
+				rib.color = PLANT_STEM;
+				rib.half_width = 2.2f;
+				const int M = 6;
+				for (int i = 0; i <= M; ++i) {
+					float u = float(i) / float(M);  // 0..1 along leaf
+					float v = 0.08f * std::sin(u * 3.14159f);  // slight arc
+					float ly = -ry * (0.85f * u - 0.1f);
+					float lx = v * rx;
+					// same rotation as leaf (local +y → outward).
+					float rxw =  ca * (-ly) - sa * lx;
+					float ryw =  sa * (-ly) + ca * lx;
+					rib.points.push_back({lc.x + rxw, lc.y - ryw});
+				}
+				strokes.push_back(std::move(rib));
+			}
+
+			// Tiny brown stem dot at top.
+			{
+				ChalkStroke stem;
+				stem.color = PLANT_BROWN;
+				stem.half_width = 2.0f;  // ~2 units
+				float sx = sp.x + std::sin(sway) * 2.0f;
+				float sy = sp.y - (r * 0.10f);
+				stem.points = {
+					{sx - 0.5f, sy - 1.5f},
+					{sx + 0.5f, sy + 1.5f},
+				};
+				strokes.push_back(std::move(stem));
+			}
+		}
 	}
 	renderer_->drawStrokes(strokes, nullptr, w, h);
 }
