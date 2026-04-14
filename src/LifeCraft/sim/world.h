@@ -39,8 +39,7 @@ struct World {
 
 	uint32_t spawn_monster(Monster m) {
 		m.id = next_id++;
-		m.refresh_stats();
-		m.hp_max = m.biomass * HP_PER_BIOMASS;
+		m.refresh_stats(); // sets hp_max taking parts into account
 		if (m.hp <= 0.0f || m.hp > m.hp_max) m.hp = m.hp_max;
 		uint32_t id = m.id;
 		monsters.emplace(id, std::move(m));

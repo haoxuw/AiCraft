@@ -15,6 +15,8 @@
 
 #include <glm/glm.hpp>
 
+#include "LifeCraft/sim/part.h"
+#include "LifeCraft/sim/part_stats.h"
 #include "LifeCraft/sim/polygon_util.h"
 #include "LifeCraft/sim/tuning.h"
 
@@ -45,6 +47,10 @@ struct Monster {
 
 	bool alive = true;
 
+	// Modular parts + cached aggregate effect.
+	std::vector<Part> parts;
+	PartEffect        part_effect;
+
 	void refresh_stats() {
 		max_core_radius = polygon_max_radius_from_origin(shape);
 		glm::vec2 half = polygon_local_halfextents(shape);
@@ -56,7 +62,12 @@ struct Monster {
 		float w = std::max(max_width, 1e-3f);
 
 		turn_speed = std::clamp(TURN_K / r, TURN_MIN, TURN_MAX);
-		move_speed = std::clamp(MOVE_K / w, MOVE_MIN, MOVE_MAX);
+		float base_move = std::clamp(MOVE_K / w, MOVE_MIN, MOVE_MAX);
+
+		part_effect = computePartEffects(parts);
+		move_speed  = base_move * part_effect.speed_mult;
+		hp_max      = std::max(1.0f, biomass * HP_PER_BIOMASS * part_effect.hp_mult);
+		if (hp > hp_max) hp = hp_max;
 	}
 
 	// Scale shape in place; biomass/hp are caller's business.

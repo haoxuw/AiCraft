@@ -8,6 +8,7 @@
 #include <cmath>
 #include <utility>
 
+#include "LifeCraft/sim/part_stats.h"
 #include "LifeCraft/sim/polygon_util.h"
 #include "LifeCraft/sim/tuning.h"
 
@@ -70,7 +71,10 @@ void Sim::tick(float dt, const std::unordered_map<uint32_t, ActionProposal>& act
 	// 4) Monster-monster contact: damage, impulse, bite events.
 	resolve_contacts_(dt);
 
-	// 5) Kill book-keeping.
+	// 5) Passive poison auras.
+	apply_poison_auras_(dt);
+
+	// 6) Kill book-keeping.
 	finalize_deaths_();
 }
 
@@ -228,6 +232,39 @@ void Sim::resolve_contacts_(float dt) {
 				dmg_to_a = 0.5f * CONTACT_K;
 			}
 
+			// Part modifiers.
+			// Base damage multiplier from TEETH is already baked via damage_mult;
+			// we fold in SPIKE direction-bonus per attacker.
+			auto apply_parts_attacker = [](const Monster& atk, glm::vec2 dir_world_into_def,
+			                               float& dmg) {
+				float mult = 1.0f;
+				// TEETH: +50% damage on contact (flat).
+				if (!atk.part_effect.teeth_anchors_local.empty()) mult += PART_TEETH_DMG_ADD;
+				// SPIKE: if attack direction lines up with any spike (in world) within ±30°,
+				// apply PART_SPIKE_DMG_ADD.
+				float cos30 = 0.8660254f;
+				for (const auto& sdir_local : atk.part_effect.spike_dirs) {
+					float c = std::cos(atk.heading);
+					float s = std::sin(atk.heading);
+					glm::vec2 wdir(c * sdir_local.x - s * sdir_local.y,
+					               s * sdir_local.x + c * sdir_local.y);
+					if (glm::dot(wdir, dir_world_into_def) >= cos30) {
+						mult += PART_SPIKE_DMG_ADD;
+						break;
+					}
+				}
+				dmg *= mult * atk.part_effect.damage_mult;
+			};
+			auto apply_parts_defender = [](const Monster& def, float& dmg) {
+				// ARMOR: flat DR.
+				dmg *= (1.0f - def.part_effect.armor_dr);
+				if (dmg < 0.0f) dmg = 0.0f;
+			};
+			apply_parts_attacker(*A, dir_ab, dmg_to_b);
+			apply_parts_defender(*B, dmg_to_b);
+			apply_parts_attacker(*B, -dir_ab, dmg_to_a);
+			apply_parts_defender(*A, dmg_to_a);
+
 			if (dmg_to_b > 0.0f) {
 				B->hp -= dmg_to_b;
 				last_damager_[B->id] = A->id;
@@ -245,6 +282,34 @@ void Sim::resolve_contacts_(float dt) {
 			glm::vec2 push = dir_ab * SEPARATION_IMPULSE;
 			A->velocity -= push;
 			B->velocity += push;
+		}
+	}
+}
+
+void Sim::apply_poison_auras_(float dt) {
+	// Emitters = monsters with POISON parts. Snapshot first to avoid
+	// mid-loop mutation surprises.
+	struct Emitter { uint32_t id; glm::vec2 pos; uint32_t owner; float dps; float r2; };
+	std::vector<Emitter> emitters;
+	for (auto& [id, m] : world_->monsters) {
+		if (!m.alive) continue;
+		if (m.part_effect.poison_dps <= 0.0f) continue;
+		emitters.push_back({id, m.core_pos, m.owner_id, m.part_effect.poison_dps,
+			m.part_effect.poison_radius * m.part_effect.poison_radius});
+	}
+	if (emitters.empty()) return;
+	for (auto& [id, m] : world_->monsters) {
+		if (!m.alive) continue;
+		for (const auto& e : emitters) {
+			if (e.id == id) continue;
+			if (e.owner == m.owner_id) continue; // friendly
+			glm::vec2 d = m.core_pos - e.pos;
+			if (d.x * d.x + d.y * d.y > e.r2) continue;
+			float amt = e.dps * dt * (1.0f - m.part_effect.armor_dr);
+			if (amt <= 0.0f) continue;
+			m.hp -= amt;
+			last_damager_[id] = e.id;
+			events_.push_back({EventKind::POISON_HIT, e.id, id, amt, m.core_pos});
 		}
 	}
 }

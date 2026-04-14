@@ -19,9 +19,11 @@ constexpr float TURN_MIN = 0.4f;
 constexpr float TURN_MAX = 6.0f;
 
 // move_speed (world units/s) = MOVE_K / max_width, clamped
-constexpr float MOVE_K   = 4000.0f;
-constexpr float MOVE_MIN = 20.0f;
-constexpr float MOVE_MAX = 400.0f;
+// Tuned 2026-04: MOVE_K 4000→14000 (3.5×) — prior feel was sluggish.
+// MOVE_MAX/MIN bumped so small shapes can actually hit the new ceiling.
+constexpr float MOVE_K   = 14000.0f;
+constexpr float MOVE_MIN = 60.0f;
+constexpr float MOVE_MAX = 1100.0f;
 
 // mass = area * DENSITY (world units² × kg/unit²)
 constexpr float DENSITY  = 0.02f;

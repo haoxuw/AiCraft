@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 
 #include "LifeCraft/sim/monster.h"
+#include "LifeCraft/sim/part.h"
 
 namespace civcraft::lifecraft::monsters {
 
@@ -22,6 +23,7 @@ struct MonsterTemplate {
 	std::vector<glm::vec2> shape;     // local space, core at origin
 	glm::vec3 color = glm::vec3(1.0f);
 	float     initial_biomass = 20.0f;
+	std::vector<sim::Part> parts;
 };
 
 inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
@@ -47,6 +49,10 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 			{  5.0f,-10.0f},
 			{ 30.0f, -6.0f},
 		};
+		// 2 spikes at the pointy end + 1 flagella at the tail.
+		m.parts.push_back({sim::PartType::SPIKE,    { 58.0f,  4.0f}, 0.0f});
+		m.parts.push_back({sim::PartType::SPIKE,    { 58.0f, -4.0f}, 0.0f});
+		m.parts.push_back({sim::PartType::FLAGELLA, {-24.0f,  0.0f}, 3.14159f});
 		out.push_back(m);
 	}
 
@@ -66,6 +72,11 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 			float r = R * (0.92f + 0.08f * std::cos(a * 3.0f));
 			m.shape.emplace_back(std::cos(a) * r, std::sin(a) * r);
 		}
+		// 3 armor plates + 1 poison core.
+		m.parts.push_back({sim::PartType::ARMOR,  { 20.0f,   0.0f}, 0.0f});
+		m.parts.push_back({sim::PartType::ARMOR,  {-10.0f,  17.0f}, 2.094f});
+		m.parts.push_back({sim::PartType::ARMOR,  {-10.0f, -17.0f}, -2.094f});
+		m.parts.push_back({sim::PartType::POISON, {  0.0f,   0.0f}, 0.0f});
 		out.push_back(m);
 	}
 
@@ -85,6 +96,10 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 			float t = 6.28318530718f * float(i) / float(N);
 			m.shape.emplace_back(std::cos(t) * A, std::sin(t) * B);
 		}
+		// 2 flagella at rear + 1 teeth at front.
+		m.parts.push_back({sim::PartType::FLAGELLA, {-50.0f,  4.0f}, 3.14159f});
+		m.parts.push_back({sim::PartType::FLAGELLA, {-50.0f, -4.0f}, 3.14159f});
+		m.parts.push_back({sim::PartType::TEETH,    { 52.0f,  0.0f}, 0.0f});
 		out.push_back(m);
 	}
 
@@ -103,9 +118,9 @@ inline sim::Monster makeMonsterFromTemplate(const MonsterTemplate& t,
 	m.shape    = t.shape;
 	m.color    = t.color;
 	m.biomass  = t.initial_biomass;
-	m.hp_max   = t.initial_biomass * sim::HP_PER_BIOMASS;
+	m.parts    = t.parts;
+	m.refresh_stats(); // sets hp_max from biomass + parts
 	m.hp       = m.hp_max;
-	m.refresh_stats();
 	return m;
 }
 
