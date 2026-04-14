@@ -153,17 +153,40 @@ int main(int argc, char** argv) {
 	const char* screenshot_path = nullptr;
 	bool  demo       = false;
 	float time_offset = 0.0f;  // --time seeds glfwGetTime() offset for QA
+	int   req_w      = 0, req_h = 0;  // 0 = auto-size to monitor
 	for (int i = 1; i < argc; ++i) {
 		if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) {
 			screenshot_path = argv[++i]; demo = true;
 		} else if (!strcmp(argv[i], "--demo")) demo = true;
 		else if (!strcmp(argv[i], "--time") && i + 1 < argc) time_offset = (float)atof(argv[++i]);
+		else if (!strcmp(argv[i], "--size") && i + 1 < argc) {
+			sscanf(argv[++i], "%dx%d", &req_w, &req_h);
+		}
+	}
+
+	// Auto-size to 90% of the primary monitor so we don't ship a tiny
+	// window on ultrawide / 4K displays. GLFW has to be initialized
+	// before we can ask about monitors, so this runs a bare glfwInit
+	// first (the Window::init call below is idempotent w.r.t. glfwInit).
+	if (req_w == 0 || req_h == 0) {
+		if (glfwInit()) {
+			GLFWmonitor* m = glfwGetPrimaryMonitor();
+			if (m) {
+				const GLFWvidmode* vm = glfwGetVideoMode(m);
+				if (vm) {
+					req_w = (int)(vm->width  * 0.90f);
+					req_h = (int)(vm->height * 0.90f);
+				}
+			}
+		}
+		if (req_w == 0 || req_h == 0) { req_w = 1920; req_h = 1080; }
 	}
 
 	App app;
 	g_app = &app;
 
-	if (!app.window.init(1600, 900, "LifeCraft — draw")) return 1;
+	if (!app.window.init(req_w, req_h, "LifeCraft — draw")) return 1;
+	printf("window %dx%d\n", app.window.width(), app.window.height());
 
 	// Platform Window disables the cursor by default (FPS-style capture).
 	// LifeCraft is a 2D drawing game — we need the OS cursor visible.
@@ -185,7 +208,10 @@ int main(int argc, char** argv) {
 	double t0 = glfwGetTime();
 	while (!app.window.shouldClose()) {
 		app.window.pollEvents();
-		int w = app.window.width(), h = app.window.height();
+		// Use the framebuffer size (actual pixels) instead of window size
+		// (logical units). On HiDPI displays these can differ 2:1.
+		int w, h;
+		glfwGetFramebufferSize(app.window.handle(), &w, &h);
 		float t = time_offset + (float)(glfwGetTime() - t0);
 		glViewport(0, 0, w, h);
 		app.renderer->drawBoard(w, h, t);
