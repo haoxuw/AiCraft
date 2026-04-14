@@ -1,0 +1,37 @@
+[remap]
+
+importer="texture"
+type="CompressedTexture2D"
+uid="uid://31t2j14pn468"
+path="res://.godot/imported/GooglyEyeCell_cell body.png-6fe638b833953f6a316e6d6b7cd51e29.ctex"
+metadata={
+"vram_texture": false
+}
+generator_parameters={
+"md5": "600c7cd73bac71a1106470843f07735d"
+}
+
+[deps]
+
+source_file="res://assets/vendor/thrive/organelles/GooglyEyeCell_cell body.png"
+dest_files=["res://.godot/imported/GooglyEyeCell_cell body.png-6fe638b833953f6a316e6d6b7cd51e29.ctex"]
+
+[params]
+
+compress/mode=0
+compress/high_quality=false
+compress/lossy_quality=0.7
+compress/hdr_compression=1
+compress/normal_map=0
+compress/channel_pack=0
+mipmaps/generate=true
+mipmaps/limit=-1
+roughness/mode=0
+roughness/src_normal=""
+process/fix_alpha_border=true
+process/premult_alpha=false
+process/normal_map_invert_y=false
+process/hdr_as_srgb=false
+process/hdr_clamp_exposure=false
+process/size_limit=0
+detect_3d/compress_to=1
