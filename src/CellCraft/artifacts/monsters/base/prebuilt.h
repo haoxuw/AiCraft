@@ -1,11 +1,11 @@
 // CellCraft — prebuilt monster templates.
 //
-// Authored as RadialCell + plates + parts (the same representation the
-// Creature Lab produces). `makeMonsterFromTemplate` materializes a
-// sim::Monster ready to spawn.
+// Authored as RadialCell + parts (the same representation the Creature
+// Lab produces). `makeMonsterFromTemplate` materializes a sim::Monster
+// ready to spawn.
 //
-// Convention: head is at local +y (θ = π/2), tail at −y. Parts and
-// plates are stored in the monster's local angle space.
+// Convention: head is at local +y (θ = π/2), tail at −y. Parts are
+// stored in the monster's local angle space.
 
 #pragma once
 
@@ -16,7 +16,6 @@
 
 #include "CellCraft/sim/monster.h"
 #include "CellCraft/sim/part.h"
-#include "CellCraft/sim/plate.h"
 #include "CellCraft/sim/radial_cell.h"
 
 namespace civcraft::cellcraft::monsters {
@@ -25,7 +24,6 @@ struct MonsterTemplate {
 	std::string id;
 	std::string name;
 	sim::RadialCell cell;              // playdough shape
-	std::vector<sim::Plate> plates;    // armored arcs
 	std::vector<sim::Part>  parts;     // mods
 	glm::vec3 color = glm::vec3(1.0f);
 	float     initial_biomass = 20.0f;
@@ -63,14 +61,6 @@ inline sim::RadialCell wobble_circle(float R, float amp, int freq) {
 	return c;
 }
 
-// Add a plate on the right half and auto-mirror to the left half.
-inline void add_plate_mirrored(std::vector<sim::Plate>& plates,
-                               float start, float end) {
-	sim::Plate p; p.theta_start = start; p.theta_end = end; p.thickness = 4.0f;
-	plates.push_back(p);
-	plates.push_back(sim::mirrored_plate(p));
-}
-
 } // namespace detail
 
 inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
@@ -94,7 +84,7 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		out.push_back(m);
 	}
 
-	// ── Blob ─ nearly-circular, 2 ARMOR + REGEN + POISON + 2 demo plates.
+	// ── Blob ─ nearly-circular, 2 ARMOR + REGEN + POISON.
 	{
 		MonsterTemplate m;
 		m.id    = "base:blob";
@@ -106,9 +96,6 @@ inline std::vector<MonsterTemplate> getPrebuiltMonsters() {
 		m.parts.push_back({sim::PartType::ARMOR,  { -15.0f,   0.0f}, PI});
 		m.parts.push_back({sim::PartType::REGEN,  {   0.0f,   0.0f}, 0.0f});
 		m.parts.push_back({sim::PartType::POISON, {   0.0f, -18.0f}, -PI * 0.5f});
-		// Two demo plates on the right half (auto-mirror to the left).
-		add_plate_mirrored(m.plates, -PI * 0.10f,  PI * 0.10f); // east cap
-		add_plate_mirrored(m.plates,  PI * 0.30f,  PI * 0.45f); // upper-right arc
 		out.push_back(m);
 	}
 
@@ -157,7 +144,6 @@ inline sim::Monster makeMonsterFromTemplate(const MonsterTemplate& t,
 	m.color    = t.color;
 	m.biomass  = t.initial_biomass;
 	m.parts    = t.parts;
-	m.plates   = t.plates;
 	m.refresh_stats();
 	m.hp = m.hp_max;
 	return m;

@@ -23,12 +23,8 @@ int main(int argc, char** argv) {
 			opts.menu_screenshot_path = argv[++i];
 		} else if (!std::strcmp(argv[i], "--select-screenshot") && i + 1 < argc) {
 			opts.select_screenshot_path = argv[++i];
-		} else if (!std::strcmp(argv[i], "--sculpt-screenshot") && i + 1 < argc) {
-			opts.sculpt_screenshot_path = argv[++i];
-		} else if (!std::strcmp(argv[i], "--plate-screenshot") && i + 1 < argc) {
-			opts.plate_screenshot_path = argv[++i];
-		} else if (!std::strcmp(argv[i], "--mods-screenshot") && i + 1 < argc) {
-			opts.mods_screenshot_path = argv[++i];
+		} else if (!std::strcmp(argv[i], "--lab-screenshot") && i + 1 < argc) {
+			opts.lab_screenshot_path = argv[++i];
 		} else if (!std::strcmp(argv[i], "--help")) {
 			std::printf("cellcraft options:\n"
 			            "  --autotest               accelerated headless match, logs to /tmp/cellcraft_autotest.log\n"
@@ -37,9 +33,7 @@ int main(int argc, char** argv) {
 			            "  --play-screenshot PATH   render PLAYING for ~1s then dump PPM\n"
 			            "  --menu-screenshot PATH   render MAIN_MENU then dump PPM\n"
 			            "  --select-screenshot PATH render MONSTER_SELECT then dump PPM\n"
-			            "  --sculpt-screenshot PATH render lab SCULPT mode then dump PPM\n"
-			            "  --plate-screenshot  PATH render lab PLATE mode then dump PPM\n"
-			            "  --mods-screenshot   PATH render lab MODS mode then dump PPM\n");
+			            "  --lab-screenshot    PATH render creature lab then dump PPM\n");
 			return 0;
 		}
 	}

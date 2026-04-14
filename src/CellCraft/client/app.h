@@ -37,9 +37,7 @@ struct AppOptions {
 	std::string play_screenshot_path;   // if set: run PLAYING for ~1s then snap PPM + exit
 	std::string menu_screenshot_path;   // if set: render MAIN_MENU then snap PPM + exit
 	std::string select_screenshot_path; // if set: render MONSTER_SELECT then snap PPM + exit
-	std::string sculpt_screenshot_path; // lab in SCULPT mode with a deformed cell
-	std::string plate_screenshot_path;  // lab in PLATE mode with 2 plates drawn
-	std::string mods_screenshot_path;   // lab in MODS mode with several mods placed
+	std::string lab_screenshot_path;    // unified creature lab seeded with sample parts
 };
 
 // Short-lived chalk-stroke particle for bites/kills/pickups.

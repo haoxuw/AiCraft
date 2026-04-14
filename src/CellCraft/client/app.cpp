@@ -111,9 +111,7 @@ bool App::init(const AppOptions& opts) {
 		state_ = AppState::MAIN_MENU;
 	} else if (!opts_.select_screenshot_path.empty()) {
 		state_ = AppState::MONSTER_SELECT;
-	} else if (!opts_.sculpt_screenshot_path.empty()
-	        || !opts_.plate_screenshot_path.empty()
-	        || !opts_.mods_screenshot_path.empty()) {
+	} else if (!opts_.lab_screenshot_path.empty()) {
 		state_ = AppState::DRAW_LAB;
 	} else {
 		state_ = AppState::LOADING;
@@ -244,19 +242,12 @@ void App::run() {
 		return;
 	}
 
-	// --- lab screenshots: new sculpt/plate/mods modes (populated in Step 2).
-	if (!opts_.sculpt_screenshot_path.empty()
-	 || !opts_.plate_screenshot_path.empty()
-	 || !opts_.mods_screenshot_path.empty()) {
-		const char* out_path =
-			!opts_.sculpt_screenshot_path.empty() ? opts_.sculpt_screenshot_path.c_str()
-			: !opts_.plate_screenshot_path.empty() ? opts_.plate_screenshot_path.c_str()
-			: opts_.mods_screenshot_path.c_str();
+	// --- lab screenshot: unified lab seeded with deformed cell + parts.
+	if (!opts_.lab_screenshot_path.empty()) {
+		const char* out_path = opts_.lab_screenshot_path.c_str();
 		state_ = AppState::DRAW_LAB;
 		lab_.reset();
-		if (!opts_.sculpt_screenshot_path.empty())      lab_.seed_sculpt_for_screenshot();
-		else if (!opts_.plate_screenshot_path.empty())  lab_.seed_plate_for_screenshot();
-		else if (!opts_.mods_screenshot_path.empty())   lab_.seed_mods_for_screenshot();
+		lab_.seed_lab_for_screenshot();
 		// Render a few frames.
 		double t0 = glfwGetTime();
 		while (!window_.shouldClose() && (glfwGetTime() - t0) < 0.5) {
@@ -414,7 +405,6 @@ void App::startMatchFromLab() {
 	t.id = "custom:lab";
 	t.name = "Custom";
 	t.cell = lab_.cell();
-	t.plates = lab_.plates();
 	t.parts = lab_.parts();
 	t.color = lab_.color();
 	t.initial_biomass = 25.0f;
@@ -731,42 +721,6 @@ void App::drawMonsterSelect(float dt) {
 			if (!part_strokes.empty())
 				renderer_->drawStrokes(part_strokes, nullptr, w_px, h_px);
 		}
-		// Plate preview.
-		if (!m.plates.empty()) {
-			std::vector<ChalkStroke> plate_strokes;
-			for (const auto& plate : m.plates) {
-				ChalkStroke pb;
-				pb.color = glm::vec3(0.80f, 0.80f, 0.78f);
-				pb.half_width = 3.0f;
-				const int N = 14;
-				float a0 = plate.theta_start;
-				float a1 = plate.theta_end;
-				if (a1 < a0) a1 += 6.28318530718f;
-				auto radius_at = [&](float ang) {
-					float best_dot = -2.0f;
-					float best_r = 1.0f;
-					for (auto& v : preview_shape) {
-						float r = glm::length(v);
-						if (r < 1e-3f) continue;
-						float va = std::atan2(v.y, v.x);
-						float d = std::cos(va - ang);
-						if (d > best_dot) { best_dot = d; best_r = r; }
-					}
-					return best_r;
-				};
-				for (int i = 0; i <= N; ++i) {
-					float t = (float)i / (float)N;
-					float a = a0 + (a1 - a0) * t;
-					float r = radius_at(a);
-					pb.points.push_back({cx + std::cos(a) * r * k,
-					                     cy - std::sin(a) * r * k});
-				}
-				plate_strokes.push_back(std::move(pb));
-			}
-			if (!plate_strokes.empty())
-				renderer_->drawStrokes(plate_strokes, nullptr, w_px, h_px);
-		}
-
 		// Stats — compute via a throwaway Monster.
 		sim::Monster probe = monsters::makeMonsterFromTemplate(m, 0, glm::vec2(0.0f), 0.0f);
 		float sx = tile.x + 0.03f;
@@ -1269,44 +1223,6 @@ void App::drawMonsters() {
 			appendPartStrokes(m.parts, m.color, local_to_screen, 1.0f,
 				(float)glfwGetTime(), strokes);
 			(void)core_screen;
-		}
-
-		// Armor plates — thicker chalk ribbons along the boundary. Sampled
-		// densely along the plate's angular arc and mapped through the local
-		// polygon's radius at that angle for a clean boundary hug.
-		if (!m.plates.empty() && !m.shape.empty()) {
-			float ch = std::cos(m.heading), sh = std::sin(m.heading);
-			auto radius_at = [&](float ang) {
-				// Nearest-sample lookup from the local polygon.
-				float best_dot = -2.0f;
-				float best_r = 1.0f;
-				for (auto& v : m.shape) {
-					float r = glm::length(v);
-					if (r < 1e-3f) continue;
-					float va = std::atan2(v.y, v.x);
-					float d = std::cos(va - ang);
-					if (d > best_dot) { best_dot = d; best_r = r; }
-				}
-				return best_r;
-			};
-			for (const auto& plate : m.plates) {
-				ChalkStroke pb;
-				pb.color = glm::vec3(0.80f, 0.80f, 0.78f);
-				pb.half_width = plate.thickness;
-				const int N = 18;
-				float a0 = plate.theta_start;
-				float a1 = plate.theta_end;
-				if (a1 < a0) a1 += 6.28318530718f;
-				for (int i = 0; i <= N; ++i) {
-					float t = (float)i / (float)N;
-					float a = a0 + (a1 - a0) * t;
-					float r = radius_at(a);
-					glm::vec2 lv(std::cos(a) * r, std::sin(a) * r);
-					glm::vec2 wv(ch * lv.x - sh * lv.y, sh * lv.x + ch * lv.y);
-					pb.points.push_back(worldToScreen(m.core_pos + wv));
-				}
-				strokes.push_back(std::move(pb));
-			}
 		}
 
 		// Poison radius faint ring.

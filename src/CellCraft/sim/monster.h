@@ -17,7 +17,6 @@
 
 #include "CellCraft/sim/part.h"
 #include "CellCraft/sim/part_stats.h"
-#include "CellCraft/sim/plate.h"
 #include "CellCraft/sim/polygon_util.h"
 #include "CellCraft/sim/tuning.h"
 
@@ -51,9 +50,6 @@ struct Monster {
 	// Modular parts + cached aggregate effect.
 	std::vector<Part>  parts;
 	PartEffect         part_effect;
-
-	// Painted armor plates (angular arcs on the cell boundary).
-	std::vector<Plate> plates;
 
 	// Active status effects (venom DoT, etc). Simple vector — short-lived,
 	// typically 0–4 entries per monster.

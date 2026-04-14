@@ -33,6 +33,7 @@ struct Part {
 	PartType  type = PartType::SPIKE;
 	glm::vec2 anchor_local = glm::vec2(0.0f);
 	float     orientation  = 0.0f; // radians, for visual rotation (outward direction)
+	float     scale        = 1.0f; // uniform scale; cost = base × scale², effects × scale
 };
 
 // Aggregated stat block computed from a monster's parts. Cached on

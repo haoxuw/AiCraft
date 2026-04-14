@@ -78,10 +78,4 @@ constexpr float BODY_BUDGET_BIOMASS = 80.0f;
 // Cost per pixel of cell boundary perimeter.
 constexpr float BODY_COST_PER_PX    = 0.01f;
 
-// --- Plates ---------------------------------------------------------
-
-// Plate damage reduction multiplier applied on contact inside an
-// armored angular arc. 0.5 = halve incoming damage.
-constexpr float PLATE_DR_MULT       = 0.5f;
-
 } // namespace civcraft::cellcraft::sim

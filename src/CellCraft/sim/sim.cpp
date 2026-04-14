@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "CellCraft/sim/part_stats.h"
-#include "CellCraft/sim/plate.h"
 #include "CellCraft/sim/polygon_util.h"
 #include "CellCraft/sim/tuning.h"
 
@@ -285,16 +284,7 @@ void Sim::resolve_contacts_(float dt) {
 			auto apply_parts_defender = [](const Monster& def, glm::vec2 hit_dir_world, float& dmg) {
 				// ARMOR part: flat DR.
 				dmg *= (1.0f - def.part_effect.armor_dr);
-				// Plates: if contact angle (in defender local space) falls
-				// inside any plate's arc, halve the incoming damage.
-				if (!def.plates.empty()) {
-					float c = std::cos(-def.heading);
-					float s = std::sin(-def.heading);
-					glm::vec2 local(c * hit_dir_world.x - s * hit_dir_world.y,
-					                s * hit_dir_world.x + c * hit_dir_world.y);
-					float angle = std::atan2(local.y, local.x);
-					if (any_plate_covers(def.plates, angle)) dmg *= PLATE_DR_MULT;
-				}
+				(void)hit_dir_world;
 				if (dmg < 0.0f) dmg = 0.0f;
 			};
 			apply_parts_attacker(*A, dir_ab, dmg_to_b);
