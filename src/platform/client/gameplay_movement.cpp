@@ -45,9 +45,18 @@ void GameplayController::processMovement(float dt, GameState state,
 			m_rtsSelect.dragging = true;
 			m_rtsSelect.start = {ndcX, ndcY};
 			m_rtsSelect.end = {ndcX, ndcY};
+			m_rtsLongPress.active    = true;
+			m_rtsLongPress.startTime = glfwGetTime();
+			m_rtsLongPress.startNdc  = {ndcX, ndcY};
 		}
 		if (m_rtsSelect.dragging && lmb) {
 			m_rtsSelect.end = {ndcX, ndcY};
+			// Moved too far → cancel long-press intent (this is a drag / select).
+			if (m_rtsLongPress.active) {
+				float dx = ndcX - m_rtsLongPress.startNdc.x;
+				float dy = ndcY - m_rtsLongPress.startNdc.y;
+				if (dx * dx + dy * dy > 0.0004f) m_rtsLongPress.active = false;
+			}
 		}
 		if (m_rtsSelect.dragging && !lmb) {
 			m_rtsSelect.dragging = false;
@@ -57,6 +66,11 @@ void GameplayController::processMovement(float dt, GameState state,
 			float y1 = std::max(m_rtsSelect.start.y, m_rtsSelect.end.y);
 			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
 
+			double holdSec = glfwGetTime() - m_rtsLongPress.startTime;
+			bool isBuildCmd = m_rtsLongPress.active && isClick
+			                  && holdSec >= GameplayController::kBuildHoldSec;
+			m_rtsLongPress.active = false;
+
 			if (isClick && !m_rtsSelect.selected.empty() && m_hit) {
 				// Click with units selected → plan on the client (no server goal).
 				// The server is intentionally unaware of the route — we drive
@@ -64,8 +78,11 @@ void GameplayController::processMovement(float dt, GameState state,
 				glm::vec3 center = glm::vec3(m_hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
 				auto& bl = server.blockRegistry();
 				if (bl.get(server.chunks().getBlock(m_hit->blockPos.x, m_hit->blockPos.y, m_hit->blockPos.z)).solid) {
-					printf("[RTS] Move order: %d entities → center (%.1f,%.1f,%.1f)\n",
-						(int)m_rtsSelect.selected.size(), center.x, center.y, center.z);
+					CommandKind kind = isBuildCmd ? CommandKind::Build : CommandKind::Walk;
+					printf("[RTS] %s order: %d entities → center (%.1f,%.1f,%.1f) hold=%.2fs\n",
+						kind == CommandKind::Build ? "BUILD" : "Move",
+						(int)m_rtsSelect.selected.size(), center.x, center.y, center.z,
+						holdSec);
 
 					// Build the batch-plan inputs: per-entity start cell.
 					std::vector<EntityId>   eids;
@@ -85,14 +102,16 @@ void GameplayController::processMovement(float dt, GameState state,
 					              (int)std::floor(center.y),
 					              (int)std::floor(center.z)};
 					m_rtsExec.planGroup(eids, starts, gi,
-					                    server.chunks(), server.blockRegistry());
+					                    server.chunks(), server.blockRegistry(),
+					                    kind);
 
 					for (auto eid : m_rtsSelect.selected) {
 						m_moveOrders[eid] = {center, true};
 						if (m_agentClient) m_agentClient->onOverride(eid, center);
 					}
-					m_moveTargetPos = center;
-					m_hasMoveTarget = true;
+					m_moveTargetPos  = center;
+					m_hasMoveTarget  = true;
+					m_moveTargetKind = kind;
 				}
 			} else if (!isClick) {
 				// Drag → box select

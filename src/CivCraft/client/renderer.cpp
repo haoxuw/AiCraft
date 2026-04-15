@@ -924,4 +924,56 @@ void Renderer::renderPlanPath(const Camera& cam, float aspect,
 	glBindVertexArray(0);
 }
 
+void Renderer::renderMoveTargetSpinner(const Camera& cam, float aspect,
+                                       glm::vec3 pos, int sides,
+                                       glm::vec4 color, float spinRad) {
+	if (sides < 3) sides = 3;
+
+	// Build two concentric line-loops (outer + inner) as GL_LINES pairs,
+	// spun around Y. Floats hover just above the block center.
+	const float hover    = 0.9f;
+	const float rOuter   = 0.55f;
+	const float rInner   = 0.30f;
+	std::vector<float> verts;
+	verts.reserve(sides * 2 * 3 * 2);
+
+	auto emitLoop = [&](float r, float phaseOffset) {
+		for (int i = 0; i < sides; i++) {
+			float a0 = spinRad + phaseOffset + (float)i     / sides * 2.0f * PI;
+			float a1 = spinRad + phaseOffset + (float)(i+1) / sides * 2.0f * PI;
+			glm::vec3 p0 = pos + glm::vec3(std::cos(a0) * r, hover, std::sin(a0) * r);
+			glm::vec3 p1 = pos + glm::vec3(std::cos(a1) * r, hover, std::sin(a1) * r);
+			verts.push_back(p0.x); verts.push_back(p0.y); verts.push_back(p0.z);
+			verts.push_back(p1.x); verts.push_back(p1.y); verts.push_back(p1.z);
+		}
+	};
+	emitLoop(rOuter, 0.0f);
+	emitLoop(rInner, PI / sides); // counter-rotated phase for parallax look
+
+	glBindVertexArray(m_pathVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, m_pathVBO);
+	glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float),
+	             verts.data(), GL_DYNAMIC_DRAW);
+
+	glm::mat4 mvp = cam.projectionMatrix(aspect) * cam.viewMatrix();
+	m_highlightShader.use();
+	m_highlightShader.setMat4("uMVP", mvp);
+	m_highlightShader.setMat4("uModel", glm::mat4(1.0f));
+	m_highlightShader.setVec3("uSunDir", glm::vec3(0, 1, 0));
+	glVertexAttrib3f(1, 0.0f, 1.0f, 0.0f);
+	glUniform1f(glGetUniformLocation(m_highlightShader.id(), "uTintStrength"), 0.0f);
+	glUniform1i(glGetUniformLocation(m_highlightShader.id(), "uUseTexture"), 0);
+	GLint loc = glGetUniformLocation(m_highlightShader.id(), "uColor");
+	glUniform4f(loc, color.r, color.g, color.b, color.a);
+
+	glDisable(GL_DEPTH_TEST);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glLineWidth(3.5f);
+	glDrawArrays(GL_LINES, 0, (GLsizei)(verts.size() / 3));
+	glEnable(GL_DEPTH_TEST);
+	glDisable(GL_BLEND);
+	glBindVertexArray(0);
+}
+
 } // namespace civcraft

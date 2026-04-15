@@ -41,6 +41,7 @@ public:
 	// Move orders (RPG click-to-move + RTS unit movement)
 	bool hasMoveTarget() const { return m_hasMoveTarget; }
 	glm::vec3 moveTarget() const { return m_moveTargetPos; }
+	CommandKind moveTargetKind() const { return m_moveTargetKind; }
 
 	bool isBoxDragging() const { return m_rtsSelect.dragging; }
 	glm::vec2 boxStart() const { return m_rtsSelect.start; }
@@ -158,8 +159,19 @@ private:
 	std::unordered_map<EntityId, MoveOrder> m_moveOrders;
 
 	// Render target highlight
-	glm::vec3 m_moveTargetPos = {0, 0, 0};
-	bool m_hasMoveTarget = false;
+	glm::vec3   m_moveTargetPos  = {0, 0, 0};
+	bool        m_hasMoveTarget  = false;
+	CommandKind m_moveTargetKind = CommandKind::Walk;
+
+	// Long-press tracking for RTS move commands. Press-and-hold ≥1s on an
+	// empty spot issues a Build command instead of Walk (unreachable goals
+	// fall back to experimental path-builder mode).
+	struct LongPress {
+		bool   active    = false;
+		double startTime = 0.0;
+		glm::vec2 startNdc{0, 0};
+	} m_rtsLongPress;
+	static constexpr float kBuildHoldSec = 1.0f;
 
 	// Client-side RTS pathfinding. Owns per-entity waypoint paths; drives
 	// owned commanded units via ActionProposal::Move each tick. The server

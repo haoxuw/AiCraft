@@ -41,6 +41,14 @@ public:
 	void tick(float dt) { m_time += dt; m_hitmarkerTimer = std::max(0.0f, m_hitmarkerTimer - dt); }
 	void triggerHitmarker(bool isKill = false) { m_hitmarkerTimer = 0.18f; m_hitmarkerKill = isKill; }
 	void renderMoveTarget(const Camera& cam, float aspect, glm::ivec3 pos);
+
+	// Spinning polygon marker hovering above a destination block. Used by
+	// the RTS move-target indicator: `sides=3` = triangle (Walk command),
+	// `sides=6` = hexagon (Build command). `spinRad` is the current rotation
+	// around the Y axis (caller advances with elapsed time).
+	void renderMoveTargetSpinner(const Camera& cam, float aspect,
+	                             glm::vec3 pos, int sides, glm::vec4 color,
+	                             float spinRad);
 	void renderBreakProgress(const Camera& cam, float aspect, glm::ivec3 pos, float progress);
 	void renderDoorAnims(const Camera& cam, float aspect,
 	                     const std::vector<DoorAnim>& anims);

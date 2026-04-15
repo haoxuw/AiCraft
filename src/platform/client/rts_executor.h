@@ -33,6 +33,7 @@
 #include <glm/glm.hpp>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <future>
@@ -55,8 +56,27 @@ struct ClientChunkWorldView : public WorldView {
 	}
 };
 
+// Two flavors of click-to-move:
+//   Walk  — short click. If the flow field can't reach the goal, we cancel
+//           the command (don't wander into walls).
+//   Build — long-press click (≥1s). If unreachable, units enter EXPERIMENTAL
+//           builder mode: they try to make a path (Phase 1: jump-climb;
+//           later phases: gather dirt + stack blocks to bridge gaps).
+enum class CommandKind { Walk, Build };
+
 class RtsExecutor {
 public:
+	// Experimental path-builder config. Flipping kExperimentalPathBuilder to
+	// false disables Build-mode entirely (Build falls back to Walk behavior).
+	// Phase 1 implements jump-climb only; block-placing stages 2/3 are TODO.
+	static constexpr bool kExperimentalPathBuilder = true;
+	struct BuilderConfig {
+		int   maxClimbBlocks   = 8;    // how far up to try to reach (sealed ≥ abort)
+		int   maxPlacedBlocks  = 50;   // per-command cap, Phase 2+
+		float maxDurationSec   = 60.f; // per-command cap, Phase 2+
+		int   stuckTicksThresh = 6;    // tick with no progress before acting
+	} m_builderCfg;
+
 	// Replace any previous command with a fresh flow-field sweep to `goal`.
 	// Every unit will navigate the same field; distinct arrival cells come
 	// from per-unit formation slots around the click point.
@@ -65,10 +85,14 @@ public:
 	// naively (straight toward their slot) the same frame as the click.
 	// The heavy Dijkstra runs on a detached worker; when it completes,
 	// poll() installs the field and units switch to field-following.
+	//
+	// `kind` selects fallback behavior when no path is found: Walk cancels,
+	// Build enters the experimental builder mode (Phase 1: jump-climb).
 	void planGroup(const std::vector<EntityId>& entityIds,
 	               const std::vector<glm::ivec3>& starts,
 	               glm::ivec3 goal,
-	               ChunkSource& chunks, const BlockRegistry& blocks) {
+	               ChunkSource& chunks, const BlockRegistry& blocks,
+	               CommandKind kind = CommandKind::Walk) {
 		if (entityIds.empty()) return;
 		using clk = std::chrono::steady_clock;
 		auto t0 = clk::now();
@@ -85,6 +109,9 @@ public:
 			m_arrived[entityIds[i]]   = false;
 		}
 		m_flow.reset();   // drop any prior field; naive mode until async lands
+		m_kind = kind;
+		m_builderMode = false;
+		m_builder.clear();
 
 		// Launch async flow-field plan. Uses packaged_task + detached thread
 		// so ~future() does NOT block if the user issues a new command before
@@ -95,6 +122,7 @@ public:
 		state->entityCount = entityIds.size();
 		state->t0          = t0;
 		state->setupMs     = std::chrono::duration<double, std::milli>(t1 - t0).count();
+		state->kind        = kind;
 
 		std::packaged_task<FlowField()> task(
 			[&chunks, &blocks, goal, starts]() {
@@ -107,11 +135,15 @@ public:
 
 		m_pending = std::move(state);
 
-		printf("[RTS-CLIENT] plan-kickoff N=%zu goal=(%d,%d,%d) "
+		printf("[RTS-CLIENT] plan-kickoff N=%zu goal=(%d,%d,%d) kind=%s "
 		       "setup=%.2fms (flow field running async)\n",
 		       entityIds.size(), goal.x, goal.y, goal.z,
+		       kind == CommandKind::Build ? "BUILD" : "walk",
 		       m_pending->setupMs);
 	}
+
+	CommandKind currentKind() const { return m_kind; }
+	bool        inBuilderMode() const { return m_builderMode; }
 
 	// Poll the pending async plan. Called from driveRemote() each tick.
 	// When the flow field is ready, installs it and logs timing. If the
@@ -131,10 +163,22 @@ public:
 			if (field.step.count(s)) reachable++;
 
 		if (reachable == 0) {
+			bool enterBuilder = kExperimentalPathBuilder
+			                    && m_pending->kind == CommandKind::Build;
 			printf("[RTS-CLIENT] NO PATH to (%d,%d,%d) — %zu units unreachable "
-			       "(field=%zu cells, async=%.2fms)\n",
+			       "(field=%zu cells, async=%.2fms) → %s\n",
 			       m_pending->goal.x, m_pending->goal.y, m_pending->goal.z,
-			       m_pending->entityCount, field.size(), totalMs);
+			       m_pending->entityCount, field.size(), totalMs,
+			       enterBuilder ? "BUILDER MODE" : "cancel");
+			if (enterBuilder) {
+				// Keep formation slots as goals; leave m_flow null so
+				// steerTargetFor stays in naive straight-line mode. The
+				// stuck-analysis in driveRemote will kick in when a unit
+				// can't make progress toward its slot.
+				m_builderMode = true;
+				m_pending.reset();
+				return;
+			}
 			cancelAll();
 			return;
 		}
@@ -201,10 +245,17 @@ public:
 	// `excludedId` (typically the possessed player, driven via the gameplay
 	// virtual-joystick). Units whose steer target resolves to nullopt are
 	// considered done and dropped from the command.
+	//
+	// When builder mode is active (Build-kind command with no path found),
+	// each unit additionally runs stuck-analysis using the blocks around it
+	// and may inject a vertical jump velocity to climb a 1-block ledge.
+	// Block-placing (Phase 2+) logs a TODO for now.
 	void driveRemote(ServerInterface& server, EntityId excludedId,
-	                 float walkSpeedFallback = 2.0f) {
+	                 float walkSpeedFallback = 2.0f,
+	                 float jumpVelocity      = 8.3f) {
 		poll();   // pick up any async flow field that just finished
 
+		ClientChunkWorldView view(server.chunks(), server.blockRegistry());
 		std::vector<EntityId> done;
 		for (auto& [eid, slot] : m_formation) {
 			if (eid == excludedId) continue;
@@ -222,6 +273,11 @@ public:
 			if (len < 0.001f) continue;
 			d /= len;
 
+			bool wantsJump = false;
+			if (m_builderMode) {
+				wantsJump = builderTickFor(eid, e->position, d, view);
+			}
+
 			ActionProposal move;
 			move.type         = ActionProposal::Move;
 			move.actorId      = eid;
@@ -229,6 +285,8 @@ public:
 			move.hasClientPos = false;
 			move.lookPitch    = e->lookPitch;
 			move.lookYaw      = e->lookYaw;
+			move.jump         = wantsJump;
+			move.jumpVelocity = jumpVelocity;
 			server.sendAction(move);
 		}
 		for (auto eid : done) cancel(eid);
@@ -237,17 +295,21 @@ public:
 	void cancel(EntityId eid) {
 		m_formation.erase(eid);
 		m_arrived.erase(eid);
+		m_builder.erase(eid);
 		if (m_formation.empty()) {
 			m_flow.reset();       // free the big map
 			m_pending.reset();    // drop pending async result (detached thread finishes, result discarded)
+			m_builderMode = false;
 		}
 	}
 
 	void cancelAll() {
 		m_formation.clear();
 		m_arrived.clear();
+		m_builder.clear();
 		m_flow.reset();
 		m_pending.reset();
+		m_builderMode = false;
 	}
 
 	bool has(EntityId eid) const { return m_formation.count(eid) > 0; }
@@ -294,12 +356,83 @@ private:
 		size_t                                    entityCount = 0;
 		std::chrono::steady_clock::time_point     t0;
 		double                                    setupMs = 0.0;
+		CommandKind                               kind = CommandKind::Walk;
 	};
 
 	std::shared_ptr<FlowField>                m_flow;
 	std::shared_ptr<PendingState>             m_pending;
 	std::unordered_map<EntityId, glm::ivec3>  m_formation;
 	std::unordered_map<EntityId, bool>        m_arrived;
+
+	CommandKind                               m_kind        = CommandKind::Walk;
+	bool                                      m_builderMode = false;
+
+	// Per-unit builder state (populated lazily on first tick in builder mode).
+	struct BuilderUnitState {
+		glm::ivec3 lastCell{INT_MIN, INT_MIN, INT_MIN};
+		int        stuckTicks = 0;
+		bool       phase2Logged = false; // rate-limit "not yet implemented" logs
+	};
+	std::unordered_map<EntityId, BuilderUnitState> m_builder;
+
+	// Phase 1 stuck analysis. Given a unit's position and desired XZ
+	// direction toward its goal, decide whether the unit should jump this
+	// tick to climb a 1-block ledge. Returns true if the ActionProposal
+	// should set `jump=true` (server applies jumpVelocity when onGround).
+	// Also logs a TODO for Phase 2+ cases (ledge too tall / gap ahead).
+	bool builderTickFor(EntityId eid, glm::vec3 pos, glm::vec3 dirXZ,
+	                    const WorldView& view) {
+		auto& bs = m_builder[eid];
+
+		glm::ivec3 cell{
+			(int)std::floor(pos.x),
+			(int)std::floor(pos.y),
+			(int)std::floor(pos.z)};
+		if (cell == bs.lastCell) bs.stuckTicks++;
+		else { bs.stuckTicks = 0; bs.lastCell = cell; }
+
+		// Pick the horizontal neighbor we'd step into: whichever of X/Z
+		// dominates the steer direction, plus its sign.
+		glm::ivec3 step{0, 0, 0};
+		if (std::abs(dirXZ.x) >= std::abs(dirXZ.z))
+			step.x = dirXZ.x > 0 ? 1 : -1;
+		else
+			step.z = dirXZ.z > 0 ? 1 : -1;
+		glm::ivec3 ahead       = cell + step;
+		glm::ivec3 aheadHead   = ahead + glm::ivec3(0, 1, 0);
+		glm::ivec3 aheadHead2  = ahead + glm::ivec3(0, 2, 0);
+
+		bool ahead_solid      = view.isSolid(ahead);
+		bool aheadHead_solid  = view.isSolid(aheadHead);
+		bool aheadHead2_solid = view.isSolid(aheadHead2);
+
+		// 1-block ledge: foot-cell solid, head+1 and head+2 clear → jumpable.
+		bool jumpable = ahead_solid && !aheadHead_solid && !aheadHead2_solid;
+
+		// Stuck classifier: ahead blocked (at head height), not yet arrived.
+		bool blocked = ahead_solid || aheadHead_solid;
+		if (!blocked) return false;
+
+		if (jumpable) {
+			// Throttle log at ~1 Hz so the console isn't flooded.
+			if (bs.stuckTicks % 10 == 1) {
+				printf("[RTS-BUILDER] eid=%llu jump at (%d,%d,%d) → (%d,%d,%d)\n",
+				       (unsigned long long)eid, cell.x, cell.y, cell.z,
+				       ahead.x, ahead.y, ahead.z);
+			}
+			return true;
+		}
+
+		// Phase 2+ territory: ledge too tall (aheadHead solid) or gap ahead.
+		// Log once per unit until we wire up block-stacking.
+		if (bs.stuckTicks >= m_builderCfg.stuckTicksThresh && !bs.phase2Logged) {
+			printf("[RTS-BUILDER] eid=%llu STUCK at (%d,%d,%d) — "
+			       "Phase 2 (gather+stack) not yet implemented\n",
+			       (unsigned long long)eid, cell.x, cell.y, cell.z);
+			bs.phase2Logged = true;
+		}
+		return false;
+	}
 
 	// Spread N units into a cols×rows grid centered on `clicked`. Each cell
 	// is snapped to the nearest standable Y (search ±4) so slopes don't
