@@ -25,6 +25,7 @@
 #include "client/model_icon_cache.h"
 #include "client/floating_text.h"
 #include "client/attack_anim.h"
+#include "client/combat_fx/combat_fx_controller.h"
 #include "client/hotbar.h"
 #include "client/ui.h"
 #include "client/audio.h"
@@ -270,6 +271,8 @@ private:
 
 	// Attack animation — combo sequencer + FPS viewmodel keyframes
 	AttackAnimPlayer m_attackAnim;
+	// Combat FX (shockwave, future: blade trail, hit-stop, shake, body posture)
+	CombatFxController m_combatFx;
 	std::string      m_comboItemId;  // tracks held item to reload combo on change
 	float m_dropCooldown = 0;        // prevents auto-pickup right after dropping
 	float m_useCooldown  = 0;        // per-item consume cooldown (read from artifact "cooldown")

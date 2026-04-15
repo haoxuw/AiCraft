@@ -121,17 +121,8 @@ void Game::handleGameplayInput(float dt) {
 		m_gameplay.clearSwing();
 	}
 	m_attackAnim.update(dt);
-	// Swing peak → shockwave FX in front of the player at chest height.
-	// The ring lives in the horizontal plane (normal = +Y) so the visible
-	// arc reads as a ground-level sweep; the attacker's yaw centres the
-	// 180° spread so the wave expands forward, not behind the body.
-	if (m_attackAnim.consumePeakEvent()) {
-		float yawRad = glm::radians(pe->yaw);
-		glm::vec3 fwd(std::cos(yawRad), 0.0f, std::sin(yawRad));
-		glm::vec3 center = pe->position + glm::vec3(0, 1.1f, 0) + fwd * 0.8f;
-		m_particles.emitSwingShockwave(center, glm::vec3(0, 1, 0), yawRad,
-		                               glm::vec3(0.85f, 0.92f, 1.0f), 24);
-	}
+	// All combat FX (shockwave today, + future tiers) live in CombatFxController.
+	m_combatFx.update(dt, m_attackAnim, m_particles, *pe);
 	if (!m_attackAnim.active() && !m_gameplay.isBreaking())
 		m_lastAttackTargetId = ENTITY_NONE;
 

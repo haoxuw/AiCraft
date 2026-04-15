@@ -1,0 +1,50 @@
+#pragma once
+
+// CombatFxController — single owner for all combat feedback effects.
+//
+// Tiers plug in here as separate modules so each can be removed by
+// commenting out its call site (or its member) without touching the
+// rest of the system:
+//
+//   Tier 0 — wrist roll           (lives in AttackAnimPlayer, data-only)
+//   Tier 2a — BladeTrail          (ribbon behind sword tip)         TODO
+//   Tier 2b — HitStop             (freeze-frame on impact)          TODO
+//   Tier 2c — CameraShake         (small camera kick on peak)       TODO
+//   Tier 1  — BodyAnimator        (torso/hip/head/left-arm)         TODO
+//
+// Currently hosts the swing-peak shockwave: AttackAnimPlayer raises a
+// one-shot peak event at kPeakFrac; we emit a horizontal shockwave in
+// front of the attacker. Before this refactor the same block lived
+// inline in game_playing.cpp.
+
+#include "client/attack_anim.h"
+#include "client/particles.h"
+#include "shared/entity.h"
+#include <glm/glm.hpp>
+
+namespace civcraft {
+
+class CombatFxController {
+public:
+	// Called once per frame after AttackAnimPlayer::update(dt).
+	// `player` is the locally-controlled entity (position + yaw drive FX).
+	void update(float /*dt*/, AttackAnimPlayer& attack,
+	            ParticleSystem& particles, const Entity& player) {
+		if (attack.consumePeakEvent())
+			emitShockwave(particles, player);
+	}
+
+private:
+	// Chest-height ring ~0.8m in front of the attacker. Normal = +Y so
+	// the visible arc reads as a ground-level sweep; facing yaw centres
+	// the 180° spread forward.
+	static void emitShockwave(ParticleSystem& particles, const Entity& player) {
+		float yawRad = glm::radians(player.yaw);
+		glm::vec3 fwd(std::cos(yawRad), 0.0f, std::sin(yawRad));
+		glm::vec3 center = player.position + glm::vec3(0, 1.1f, 0) + fwd * 0.8f;
+		particles.emitSwingShockwave(center, glm::vec3(0, 1, 0), yawRad,
+		                             glm::vec3(0.85f, 0.92f, 1.0f), 24);
+	}
+};
+
+} // namespace civcraft

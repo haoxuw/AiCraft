@@ -148,6 +148,7 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/game.cpp
 	src/platform/client/game_loading.cpp
 	src/platform/client/game_playing.cpp
+	src/platform/client/combat_fx/combat_fx_controller.h
 	src/platform/client/game_render.cpp
 	src/platform/client/game_ui.cpp
 	src/platform/client/gameplay.h
