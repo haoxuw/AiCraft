@@ -139,6 +139,75 @@ function buildOuterWorld(seed: number, scale: number = 2.0): World {
   return w;
 }
 
+// Build a fresh inner world for a tier-up migration. The player is
+// carried over with its current biomass/parts/color but re-placed at
+// the center; four fresh AI opponents spawn at ring positions.
+function buildMigratedInner(
+  _starter: MatchStarter,
+  carry: Monster,
+  seed: number
+): { world: World; player: Monster } {
+  const world = makeWorld();
+  scatterFood(world, 20);
+  // Re-spawn the player with carried parts/color but fresh shape at the
+  // starter baseRadius — refreshStats() then re-derives stats, and we
+  // restore biomass/tier/lifetime_biomass so the tier carries over.
+  const player = spawnMonster(world, {
+    pos: [0, 0],
+    baseRadius: 46,
+    color: carry.color,
+    isPlayer: true,
+    seed,
+    parts: carry.parts
+  });
+  player.biomass = carry.biomass;
+  player.lifetime_biomass = carry.lifetime_biomass;
+  player.tier = carry.tier;
+  player.body_scale = carry.body_scale;
+  // Apply the tier's body scale to the new shape so the player visibly
+  // owns the new arena.
+  if (carry.body_scale !== 1.0) {
+    for (const v of player.shape) {
+      v[0] *= carry.body_scale;
+      v[1] *= carry.body_scale;
+    }
+  }
+  // refreshStats happens inside spawnMonster via the shape area; after
+  // manual edits above, re-derive hp_max for the new biomass.
+  player.hp_max = Math.max(1, player.biomass * 2 * player.part_effect.hp_mult);
+  player.hp = player.hp_max;
+
+  const r = 520;
+  const aiConfigs: Array<{ pos: [number, number]; color: [number, number, number]; seed: number; parts: Part[] }> = [
+    { pos: [r, 0], color: [0.86, 0.4, 0.42], seed: seed + 11, parts: [
+      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
+      { kind: PartKind.SPIKE, anchor: [38, 8], scale: 1.2 }
+    ] },
+    { pos: [-r, 0], color: [0.55, 0.65, 0.9], seed: seed + 12, parts: [
+      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
+      { kind: PartKind.ARMOR, anchor: [-24, 0], scale: 1.0 }
+    ] },
+    { pos: [0, r], color: [0.92, 0.78, 0.42], seed: seed + 13, parts: [
+      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
+      { kind: PartKind.TEETH, anchor: [36, 6], scale: 1.0 }
+    ] },
+    { pos: [0, -r], color: [0.7, 0.5, 0.85], seed: seed + 14, parts: [
+      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
+      { kind: PartKind.FLAGELLA, anchor: [-28, 0], scale: 1.2 }
+    ] }
+  ];
+  for (const c of aiConfigs) {
+    spawnMonster(world, {
+      pos: c.pos,
+      baseRadius: 38 + (c.seed % 7),
+      color: c.color,
+      seed: c.seed,
+      parts: c.parts
+    });
+  }
+  return { world, player };
+}
+
 export function makeMatchScene(opts: MatchOpts): Scene {
   // Sim state.
   let world: World;
@@ -341,10 +410,35 @@ export function makeMatchScene(opts: MatchOpts): Scene {
             ctx.renderer.hudScene.add(tierUp.group);
           }
           if (e.tier >= TIER_COUNT) {
-            // Victory — transition after a short celebration.
+            // APEX: drop the outer world entirely — the background is
+            // now just the chalky ocean signifying "you are the biggest
+            // thing in the sea." Victory transition still fires after
+            // the celebration plays.
+            outerWorld = null;
+            ctx.renderer.setOcean(true);
             setTimeout(() => {
               ctx.requestGoto(() => makeEndScene({ outcome: 'victory', stats: currentStats(ctx) }), { fade: true });
             }, 2500);
+          } else {
+            // Intermediate tier-up: migrate. The current inner world
+            // becomes the new outer ("background"); a fresh inner arena
+            // spawns with the tiered-up player at its center. Strictly
+            // two layers, always, until APEX.
+            const oldInner = world;
+            // Stop the previous outer — player has outgrown it.
+            outerWorld = oldInner;
+            outerAI = innerAI;          // reuse inner AI state as outer
+            innerAI.clear();            // fresh map for the new inner
+            const migrated = buildMigratedInner(
+              opts.starter,
+              player,
+              opts.starter.seed ^ (0xA11E + e.tier)
+            );
+            world = migrated.world;
+            player = migrated.player;
+            // Ensure the new inner isn't marked as dead on first tick
+            // because of goTo leftovers.
+            goTo = null;
           }
         } else if (e.type === 'DEATH' && player && e.victim === player.id) {
           const snap = currentStats(ctx);
@@ -365,6 +459,7 @@ export function makeMatchScene(opts: MatchOpts): Scene {
       player = built.player;
       outerWorld = buildOuterWorld(opts.starter.seed);
       outerAI = makeAIStateMap();
+      ctx.renderer.setOcean(false);
       initialBiomass.v = player.lifetime_biomass;
 
       // HUD build.
@@ -436,6 +531,7 @@ export function makeMatchScene(opts: MatchOpts): Scene {
       dangerText = null;
       pauseBtns = [];
       ctx.renderer.setLowHp(0);
+      ctx.renderer.setOcean(false);
     },
 
     update(dtReal, ctx) {

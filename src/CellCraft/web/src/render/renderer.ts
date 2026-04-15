@@ -5,6 +5,7 @@ import { Food, FoodKind, World } from '../sim/world';
 import { createBoardMaterial } from './board_material';
 import { createChalkMaterial } from './chalk_material';
 import { createCellFillMaterial } from './cell_fill_material';
+import { createOceanMaterial } from './ocean_material';
 import { createPostFX, PostFX } from './post_fx';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SceneFader } from './transitions';
@@ -65,6 +66,8 @@ export class Renderer {
 
   private boardMat = createBoardMaterial();
   private boardMesh: THREE.Mesh;
+  private oceanMat = createOceanMaterial();
+  private oceanMesh: THREE.Mesh;
   private dynamicGroup = new THREE.Group();
   // Outer (background) world group — rendered beneath the foreground
   // dynamicGroup with zoom + parallax + cream-mix/dim shading, matching
@@ -93,6 +96,14 @@ export class Renderer {
     // Board renders in its own pass (we draw it first, ignoring the main camera).
     const boardScene = new THREE.Scene();
     boardScene.add(this.boardMesh);
+    // Ocean is a separate fullscreen quad that, when active, is drawn on
+    // TOP of the board in the same pass — fully opaque so it replaces
+    // the paper with a chalky animated sea. Used at APEX tier.
+    this.oceanMesh = new THREE.Mesh(boardGeom.clone(), this.oceanMat);
+    this.oceanMesh.frustumCulled = false;
+    this.oceanMesh.renderOrder = -999;
+    this.oceanMesh.visible = false;
+    boardScene.add(this.oceanMesh);
     this.boardScene = boardScene;
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
@@ -126,6 +137,12 @@ export class Renderer {
     this.postFX.setLowHp(v);
   }
 
+  // Enable the chalky ocean background (replaces the paper board). Used
+  // at APEX tier when there is no outer world anymore.
+  setOcean(on: boolean): void {
+    this.oceanMesh.visible = on;
+  }
+
   private boardScene: THREE.Scene;
 
   dispose(): void {
@@ -138,6 +155,7 @@ export class Renderer {
     const h = this.canvas.clientHeight || window.innerHeight;
     this.gl.setSize(w, h, false);
     this.boardMat.uniforms.u_resolution.value.set(w, h);
+    this.oceanMat.uniforms.u_resolution.value.set(w, h);
     if (this.postFX) {
       this.postFX.setSize(w, h, this.gl.getPixelRatio());
     }
@@ -248,6 +266,7 @@ export class Renderer {
 
   private finishFrame(time: number): void {
     // Post-FX: board pass (clear) → main scene → bloom → vignette → low-HP.
+    this.oceanMat.uniforms.u_time.value = time;
     this.postFX.setTime(time);
     this.postFX.render();
 
