@@ -37,6 +37,10 @@ export class Renderer {
   private dynamicGroup = new THREE.Group();
   private postFX: PostFX;
   private boardPass: RenderPass;
+  // HUD is drawn in screen-space ON TOP of the composer output so text
+  // stays pixel-sharp and not affected by bloom/vignette.
+  readonly hudScene = new THREE.Scene();
+  readonly hudCamera: THREE.OrthographicCamera;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
@@ -56,6 +60,11 @@ export class Renderer {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
     this.camera.position.set(0, 0, 10);
     this.camera.lookAt(0, 0, 0);
+
+    // HUD camera: units = pixels, origin at screen center, +y up.
+    this.hudCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
+    this.hudCamera.position.set(0, 0, 10);
+    this.hudCamera.lookAt(0, 0, 0);
 
     this.scene.add(this.dynamicGroup);
 
@@ -110,6 +119,13 @@ export class Renderer {
     this.camera.top = halfH;
     this.camera.bottom = -halfH;
     this.camera.updateProjectionMatrix();
+
+    // HUD: 1 world unit = 1 screen pixel, origin at center.
+    this.hudCamera.left = -w / 2;
+    this.hudCamera.right = w / 2;
+    this.hudCamera.top = h / 2;
+    this.hudCamera.bottom = -h / 2;
+    this.hudCamera.updateProjectionMatrix();
   };
 
   // Screen (client) coords → world XY.
@@ -135,6 +151,13 @@ export class Renderer {
     // Post-FX: board pass (clear) → main scene → bloom → vignette → low-HP.
     this.postFX.setTime(time);
     this.postFX.render();
+
+    // HUD overlay renders after all FX so it stays crisp.
+    if (this.hudScene.children.length > 0) {
+      this.gl.autoClear = false;
+      this.gl.clearDepth();
+      this.gl.render(this.hudScene, this.hudCamera);
+    }
   }
 
   // ----- drawing helpers ---------------------------------------------

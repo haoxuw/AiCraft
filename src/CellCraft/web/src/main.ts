@@ -1,6 +1,7 @@
 import { decideAll, resetAI } from './ai/simple_ai';
 import { Input } from './input/input';
 import { Renderer } from './render/renderer';
+import { DemoHudHandle, makeDemoHud } from './render/ui';
 import { Action, ActionType } from './sim/action';
 import { Monster } from './sim/monster';
 import { Part, PartKind } from './sim/part';
@@ -18,6 +19,7 @@ interface Game {
   goTo: [number, number] | null;
   acc: number;
   lastT: number;
+  hud: DemoHudHandle | null;
 }
 
 function buildWorld(): { world: World; player: Monster } {
@@ -150,6 +152,16 @@ function frame(g: Game, tMs: number): void {
   const lowHp = hpFrac < 0.35 ? 1.0 - hpFrac / 0.35 : 0.0;
   g.renderer.setLowHp(lowHp);
 
+  if (g.hud) {
+    g.hud.setHp(hpFrac);
+    // Demo XP: sinusoidal so we can see the ring animate.
+    g.hud.setXp(0.5 + 0.5 * Math.sin(t * 0.6));
+    g.hud.setTime(t);
+    // Anchor HUD at bottom-center of screen.
+    const h = window.innerHeight;
+    g.hud.group.position.set(0, -h / 2 + 60, 0);
+  }
+
   g.renderer.render(g.world, t);
   requestAnimationFrame((tt) => frame(g, tt));
 }
@@ -162,6 +174,15 @@ function main(): void {
   });
 
   const { world, player } = buildWorld();
+
+  // Dev flag: ?hud=1 attaches the demo HUD (HP bar + tier pill + XP ring).
+  const params = new URLSearchParams(window.location.search);
+  let hud: DemoHudHandle | null = null;
+  if (params.get('hud') === '1') {
+    hud = makeDemoHud();
+    renderer.hudScene.add(hud.group);
+  }
+
   const g: Game = {
     world,
     player,
@@ -169,7 +190,8 @@ function main(): void {
     input,
     goTo: null,
     acc: 0,
-    lastT: performance.now() / 1000
+    lastT: performance.now() / 1000,
+    hud
   };
 
   requestAnimationFrame((t) => frame(g, t));
