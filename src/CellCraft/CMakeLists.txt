@@ -37,6 +37,7 @@ add_executable(cellcraft
 	${CMAKE_CURRENT_SOURCE_DIR}/client/name_generator.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/post_fx.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/ambient_particles.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/background_layer.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/screen_shake.cpp
 	${CELLCRAFT_PLATFORM_SOURCES}
 )

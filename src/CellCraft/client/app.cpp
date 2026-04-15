@@ -102,6 +102,7 @@ bool App::init(const AppOptions& opts) {
 		post_fx_.reset();
 	}
 	ambient_.init(opts_.seed);
+	bg_layer_.init(opts_.seed ^ 0xB6E7u);
 
 	log_.open();
 	prebuilts_ = monsters::getPrebuiltMonsters();
@@ -182,6 +183,11 @@ void App::run() {
 				glViewport(0, 0, fw, fh);
 				renderer_->drawBoard(fw, fh, (float)glfwGetTime());
 				ambient_.draw(renderer_.get(), fw, fh);
+				{ int pt = 1; if (const sim::Monster* pm = world_.get(player_id_)) pt = pm->tier;
+					bg_layer_.setPlayerTier(pt, world_.map_radius);
+					bg_layer_.update(0.0f, world_.map_radius);
+					bg_layer_.draw(renderer_.get(), fw, fh,
+						[this](glm::vec2 wp){ return worldToScreen(wp); }, (float)glfwGetTime()); }
 				drawFood();
 				drawMonsters();
 				updateAndDrawParticles(0.0f);
@@ -219,6 +225,11 @@ void App::run() {
 					glViewport(0, 0, fw, fh);
 					renderer_->drawBoard(fw, fh, (float)glfwGetTime());
 					ambient_.draw(renderer_.get(), fw, fh);
+					{ int pt = 1; if (const sim::Monster* pm = world_.get(player_id_)) pt = pm->tier;
+						bg_layer_.setPlayerTier(pt, world_.map_radius);
+						bg_layer_.update(0.0f, world_.map_radius);
+						bg_layer_.draw(renderer_.get(), fw, fh,
+							[this](glm::vec2 wp){ return worldToScreen(wp); }, (float)glfwGetTime()); }
 					drawFood();
 					drawMonsters();
 					updateAndDrawParticles(0.0f);
@@ -271,6 +282,11 @@ void App::run() {
 			glViewport(0, 0, w, h);
 			renderer_->drawBoard(w, h, (float)(glfwGetTime() - t0));
 			ambient_.draw(renderer_.get(), w, h);
+			{ int pt = 1; if (const sim::Monster* pm = world_.get(player_id_)) pt = pm->tier;
+				bg_layer_.setPlayerTier(pt, world_.map_radius);
+				bg_layer_.update(dt, world_.map_radius);
+				bg_layer_.draw(renderer_.get(), w, h,
+					[this](glm::vec2 wp){ return worldToScreen(wp); }, (float)glfwGetTime()); }
 			drawFood();
 			drawMonsters();
 			updateAndDrawParticles(dt);
@@ -420,6 +436,19 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	// Give the player a modest starting biomass bonus so they aren't one-shot
 	// by the first AI they bump — tuning choice for early-game feel.
 	p.biomass *= 2.0f;
+	// Optional: force a starting Tier so QA can screenshot the APEX background
+	// without grinding. We bump lifetime_biomass past the requested tier's
+	// threshold and scale the body by the matching size multiplier — same
+	// path Sim takes on natural tier-ups.
+	if (opts_.autotest_tier >= 1 && opts_.autotest_tier <= sim::TIER_COUNT) {
+		int tt = opts_.autotest_tier;
+		p.lifetime_biomass = sim::TIER_THRESHOLDS[tt] + 1.0f;
+		p.tier             = tt;
+		if (tt > 1) {
+			p.scale_shape(sim::TIER_SIZE_MULTS[tt] / sim::TIER_SIZE_MULTS[1]);
+			p.biomass = std::max(p.biomass, sim::TIER_THRESHOLDS[tt] + 1.0f);
+		}
+	}
 	p.hp_max   = p.biomass * sim::HP_PER_BIOMASS;
 	p.hp       = p.hp_max;
 	player_id_ = world_.spawn_monster(std::move(p));
@@ -1462,6 +1491,17 @@ void App::drawHUD() {
 void App::drawPlaying(float dt) {
 	stepPlaying(dt);
 	if (state_ != AppState::PLAYING) return; // stepPlaying may have transitioned
+	// Background silhouettes — draw between board (already painted by main
+	// loop) and gameplay. Reads player Tier so the "looming" set scales with
+	// progression: bigger cells at low tiers, fish/turtles/jellies at APEX.
+	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
+	int player_tier = 1;
+	if (const sim::Monster* pm = world_.get(player_id_)) player_tier = pm->tier;
+	bg_layer_.setPlayerTier(player_tier, world_.map_radius);
+	bg_layer_.update(dt, world_.map_radius);
+	bg_layer_.draw(renderer_.get(), w, h,
+		[this](glm::vec2 wp){ return worldToScreen(wp); },
+		(float)glfwGetTime());
 	drawFood();
 	drawMonsters();
 	drawHUD();

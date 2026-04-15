@@ -21,6 +21,7 @@
 #include "CellCraft/client/name_generator.h"
 #include "CellCraft/client/post_fx.h"
 #include "CellCraft/client/ambient_particles.h"
+#include "CellCraft/client/background_layer.h"
 #include "CellCraft/client/screen_shake.h"
 #include "CellCraft/client/ui_anim.h"
 #include "CellCraft/client/ui_particles.h"
@@ -46,6 +47,10 @@ struct AppOptions {
 	std::string lab_screenshot_path;
 	std::string celebrate_screenshot_path;
 	bool        no_speech = false;
+	// Seed the player's lifetime biomass so they spawn at a specific Tier
+	// (1-5). Used by --autotest-tier for background-layer QA of the APEX
+	// animal-silhouette set without grinding biomass manually.
+	int         autotest_tier = 0;
 };
 
 // Short-lived chalk-stroke particle for bites/kills/pickups.
@@ -131,6 +136,7 @@ private:
 	std::unique_ptr<TextRenderer>  text_;
 	std::unique_ptr<PostFX>        post_fx_;
 	AmbientParticles               ambient_;
+	BackgroundLayer                bg_layer_;
 	ScreenShake                    shake_;
 	GameLog log_;
 	ui::AnimMap                    ui_anim_;
