@@ -64,11 +64,16 @@ void Camera::processMouse(GLFWwindow* window) {
 		godAngle = std::clamp(godAngle, -60.0f, 85.0f);
 		break;
 	case CameraMode::RTS:
-		// Only orbit when right mouse held (same controls as RPG)
+		// WoW-style: while right-mouse is held, mouse delta rotates the
+		// camera around `rtsCenter`. Purely delta-based — where the click
+		// landed doesn't matter. Slightly amplified vs other modes so
+		// mid-range drags cover the full yaw/pitch range comfortably.
 		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-			rtsOrbitYaw += dx;
-			rtsAngle += dy;
-			rtsAngle = std::clamp(rtsAngle, 15.0f, 80.0f);
+			rtsOrbitYaw += dx * 2.5f;
+			// Mouse up → dy positive → rtsAngle increases → more top-down.
+			// Mouse down → sinks the camera to a flatter, horizon-level shot.
+			rtsAngle += dy * 2.0f;
+			rtsAngle = std::clamp(rtsAngle, 10.0f, 85.0f);
 		}
 		break;
 	}
