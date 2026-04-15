@@ -97,6 +97,9 @@ bool App::init(const AppOptions& opts) {
 	if (!renderer_->init()) return false;
 	text_ = std::make_unique<TextRenderer>();
 	if (!text_->init("shaders")) return false;
+	// Load TTF SDF fonts for modern UI (Inter + Audiowide). Failure is
+	// non-fatal — ui_modern falls back to the bitmap renderer.
+	ui::modern::initFonts("fonts", "shaders");
 	post_fx_ = std::make_unique<PostFX>();
 	if (!post_fx_->init()) {
 		std::fprintf(stderr, "PostFX init failed — continuing without post-fx\n");
@@ -154,6 +157,7 @@ bool App::init(const AppOptions& opts) {
 
 void App::shutdown() {
 	log_.close();
+	ui::modern::shutdownFonts();
 	if (post_fx_)  { post_fx_->shutdown();  post_fx_.reset(); }
 	if (text_)     { text_->shutdown();     text_.reset(); }
 	if (renderer_) { renderer_->shutdown(); renderer_.reset(); }
@@ -1828,12 +1832,12 @@ void App::drawEndScreen(float dt) {
 	// Dark scrim.
 	m::drawScrim(0, 0, W, H, m::SURFACE_BG_TOP, m::SURFACE_BG_BOTTOM);
 
-	// Big title — red for death, amber for apex.
+	// Big title — red for death, amber for apex. Real Audiowide + neon glow.
 	{
 		const char* title = end_won_ ? "APEX REACHED" : "YOU DIED";
 		glm::vec4 col = end_won_ ? m::ACCENT_AMBER : m::ACCENT_DANGER;
-		int tw = m::measureTextPx(title, m::TYPE_DISPLAY);
-		m::drawTextDisplay((W - tw) / 2, 80, title, col);
+		m::drawTextRole(W / 2, 80, title, m::Role::HERO_NEON, col,
+			m::Align::CENTER);
 	}
 
 	// Center card with the 4 stat rings.
@@ -2207,8 +2211,11 @@ void App::drawCelebrate(float dt) {
 		}
 	}
 
-	// Center card: 600×400, glass panel with shadow.
-	const int CARD_W = 600, CARD_H = 420;
+	// Center card: 720×490, glass panel with shadow. Widened from 600 so
+	// the PARTS/BIOMASS/TIER metric row has breathing room with real fonts.
+	// Height grown from 420 to fit a distinct pills row between the creature
+	// preview bezel and the metrics row.
+	const int CARD_W = 720, CARD_H = 490;
 	int card_x = (W - CARD_W) / 2;
 	int card_y = (H - CARD_H) / 2;
 	m::drawSoftShadow(card_x, card_y + 10, CARD_W, CARD_H, m::RADIUS_LG, 28, 0.45f);
@@ -2258,13 +2265,21 @@ void App::drawCelebrate(float dt) {
 	                  (float)glfwGetTime(), ss);
 	renderer_->drawStrokes(ss, nullptr, W, H);
 
-	// Diet + tier pill badges below the creature.
+	// Diet + tier pill badges below the creature, centered as a pair.
+	// Sit on their own row between the preview bezel and the metric row.
 	{
-		int pill_y = prev_y + PREVIEW_SZ + 12;
-		int diet_x = card_x + 100;
-		m::drawPillBadge(diet_x, pill_y, "OMNIVORE",
+		int pill_y = prev_y + PREVIEW_SZ + 20;
+		const char* diet = "OMNIVORE";
+		const char* tier_s = "TIER 1 - SPECK";
+		// Width of pills: text_w + 2 * SPACE_MD (from drawPillBadge).
+		int dw = m::measureTextPx(diet,   m::TYPE_BODY) + m::SPACE_MD * 2;
+		int tw = m::measureTextPx(tier_s, m::TYPE_BODY) + m::SPACE_MD * 2;
+		int gap = 16;
+		int total = dw + gap + tw;
+		int x0 = card_x + (CARD_W - total) / 2;
+		m::drawPillBadge(x0, pill_y, diet,
 			m::TEXT_PRIMARY, m::SURFACE_PANEL_HI, m::ACCENT_CYAN);
-		m::drawPillBadge(diet_x + 160, pill_y, "TIER 1 - SPECK",
+		m::drawPillBadge(x0 + dw + gap, pill_y, tier_s,
 			m::TEXT_PRIMARY, m::SURFACE_PANEL_HI, m::ACCENT_AMBER);
 	}
 
@@ -2280,11 +2295,12 @@ void App::drawCelebrate(float dt) {
 		const char* vals[3] = { val0, val1, val2 };
 		for (int i = 0; i < 3; ++i) {
 			int col_cx = card_x + COL_W * i + COL_W / 2;
-			int lw = m::measureTextPx(labels[i], m::TYPE_LABEL);
-			m::drawTextLabel(col_cx - lw / 2, MROW_Y, labels[i], m::TEXT_SECONDARY);
-			int vw = m::measureTextPx(vals[i], m::TYPE_TITLE_SM);
-			m::drawTextModern(col_cx - vw / 2, MROW_Y + 22, vals[i],
-				m::TYPE_TITLE_SM, m::TEXT_PRIMARY);
+			// Real-font tracked label width.
+			m::drawTextRole(col_cx, MROW_Y, labels[i], m::Role::LABEL,
+				m::TEXT_SECONDARY, m::Align::CENTER);
+			// Inter-Bold value centered under caption.
+			m::drawTextRole(col_cx, MROW_Y + 22, vals[i], m::Role::TITLE_SM,
+				m::TEXT_PRIMARY, m::Align::CENTER);
 		}
 	}
 

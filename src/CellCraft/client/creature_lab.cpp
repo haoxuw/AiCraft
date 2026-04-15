@@ -144,7 +144,7 @@ CreatureLab::Layout CreatureLab::compute_layout_() const {
 
 	const float margin = 32.0f;
 	const float left_w = 260.0f;
-	const float right_w = 260.0f;
+	const float right_w = 300.0f;
 	const float bottom_h = 120.0f; // reserve for bottom button row
 
 	l.left_x = margin;
@@ -460,7 +460,9 @@ void CreatureLab::draw_top_bar_(const Layout& l, const LabInput& in) {
 	// selected — since those float over the cream bezel in modern style.
 	namespace m = ui::modern;
 	const int close_size = 40;
-	int cx = l.fw - close_size - 32;
+	// Sit just outside the right panel's top-left corner so the X no longer
+	// overlaps the CREATURE STATS header. right panel starts at l.right_x.
+	int cx = (int)l.right_x - close_size - 8;
 	int cy = 32;
 	bool ch = point_in_rect(in.mouse_px, (float)cx, (float)cy,
 	                        (float)close_size, (float)close_size);
@@ -711,24 +713,24 @@ void CreatureLab::draw_right_rail_(const Layout& l) {
 	               m::DividerAxis::HORIZONTAL);
 	y += m::SPACE_MD;
 
-	// Metadata.
+	// Metadata — right-aligned numerics with 12px inner padding so long
+	// numbers (e.g. "19.5 / 100") don't clip the panel edge.
 	{
+		const int pad_r = 12;
 		char buf[32];
 		std::snprintf(buf, sizeof(buf), "%.1f / %.0f",
 		              total_cost_(), budget_());
 		m::drawTextLabel(px + m::SPACE_LG, y, "BIOMASS COST", m::TEXT_SECONDARY);
-		int tw = m::measureTextPx(buf, m::TYPE_CAPTION);
-		m::drawTextModern(px + pw - m::SPACE_LG - tw, y, buf,
-		                  m::TYPE_CAPTION, m::TEXT_PRIMARY);
+		m::drawTextRole(px + pw - pad_r, y - 1, buf, m::Role::BODY,
+		                m::TEXT_PRIMARY, m::Align::RIGHT);
 		y += m::TYPE_LABEL + m::SPACE_SM;
 		float body_r = 0.0f;
 		for (int i = 0; i < sim::RadialCell::N; ++i) body_r += cell_.r[i];
 		body_r /= sim::RadialCell::N;
 		std::snprintf(buf, sizeof(buf), "%.1f", body_r);
 		m::drawTextLabel(px + m::SPACE_LG, y, "BODY RADIUS", m::TEXT_SECONDARY);
-		int tw2 = m::measureTextPx(buf, m::TYPE_CAPTION);
-		m::drawTextModern(px + pw - m::SPACE_LG - tw2, y, buf,
-		                  m::TYPE_CAPTION, m::TEXT_PRIMARY);
+		m::drawTextRole(px + pw - pad_r, y - 1, buf, m::Role::BODY,
+		                m::TEXT_PRIMARY, m::Align::RIGHT);
 	}
 }
 

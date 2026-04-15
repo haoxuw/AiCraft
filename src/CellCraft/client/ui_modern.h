@@ -19,6 +19,8 @@
 #include <glm/glm.hpp>
 #include <string>
 
+namespace civcraft::cellcraft { class SdfFont; }
+
 namespace civcraft::cellcraft::ui::modern {
 
 // ---------------------------------------------------------------- Tokens
@@ -73,6 +75,25 @@ inline constexpr int TYPE_TITLE_LG = 40;
 inline constexpr int TYPE_DISPLAY  = 72;
 
 enum class Align { LEFT, CENTER, RIGHT };
+
+// ----------------------------------------------------------------- Fonts
+// Call once at app init (after GL context + shader dir resolved). Loads
+// Inter Regular/Bold and Audiowide-Regular from `fonts/` (staged next to
+// the binary). Returns true if all three loaded; false still leaves the
+// UI usable (falls back to the platform bitmap renderer).
+bool initFonts(const std::string& fontDir, const std::string& shaderDir);
+void shutdownFonts();
+
+// Text role — drives font family, weight, and default glow.
+enum class Role {
+	BODY,        // Inter-Regular, no glow
+	LABEL,       // Inter-Bold uppercase tracked, no glow
+	TITLE_SM,    // Inter-Bold
+	TITLE_MD,    // Inter-Bold
+	TITLE_LG,    // Inter-Bold, subtle glow
+	DISPLAY,     // Audiowide, subtle glow
+	HERO_NEON,   // Audiowide, strong arcade glow (red/amber caller-chosen)
+};
 
 // ----------------------------------------------------------------- Frame
 // Call once per frame before any modern primitives. Stashes the renderer
@@ -129,9 +150,17 @@ void drawTextLabel (int x, int y, const std::string& text,
 void drawTextDisplay(int x, int y, const std::string& text,
                      const glm::vec4& rgba, Align align = Align::LEFT);
 
-// Measure rendered width in pixels for a given size — uses the platform
-// font's 8x8 cell metric × scale. Useful for alignment math.
+// Measure rendered width in pixels for a given size — uses the real SDF
+// font metrics when loaded, falling back to the 8×8 cell metric × scale.
 int  measureTextPx(const std::string& text, int size_px);
+
+// Role-based variants. If SDF fonts failed to load, these fall back to
+// drawTextModern / measureTextPx.
+int  measureTextRole(const std::string& text, Role role);
+void drawTextRole(int x, int y, const std::string& text, Role role,
+                  const glm::vec4& rgba, Align align = Align::LEFT,
+                  // Optional arcade-neon halo; ignored for BODY/LABEL.
+                  const glm::vec4& glow_override = glm::vec4(0.0f));
 
 // ------------------------------------------------------------- Stat bar
 // Row layout: small uppercase LABEL (left), numeric (right), 6px rounded

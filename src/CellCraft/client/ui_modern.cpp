@@ -8,9 +8,12 @@
 // progress).
 
 #include "CellCraft/client/ui_modern.h"
+#include "CellCraft/client/sdf_font.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <memory>
 
 namespace civcraft::cellcraft::ui::modern {
 
@@ -18,6 +21,63 @@ namespace {
 ::civcraft::TextRenderer* g_text = nullptr;
 int g_screen_w = 1280;
 int g_screen_h = 800;
+
+// SDF fonts — owned here, initialized once at app boot.
+std::unique_ptr<::civcraft::cellcraft::SdfFont> g_font_body;    // Inter-Regular
+std::unique_ptr<::civcraft::cellcraft::SdfFont> g_font_bold;    // Inter-Bold
+std::unique_ptr<::civcraft::cellcraft::SdfFont> g_font_display; // Audiowide
+bool g_fonts_ready = false;
+
+struct RoleSpec {
+	::civcraft::cellcraft::SdfFont* font;
+	int   pxSize;
+	bool  uppercase;
+	float tracking_px;
+	glm::vec4 defaultFill;
+	glm::vec4 defaultGlow;
+	float glowRadiusPx;
+	float glowIntensity;
+};
+
+RoleSpec specFor(Role r) {
+	using F = ::civcraft::cellcraft::SdfFont*;
+	F body = g_font_body.get();
+	F bold = g_font_bold.get();
+	F disp = g_font_display.get();
+	const glm::vec4 NONE(0.0f);
+	switch (r) {
+	case Role::BODY:
+		return { body, TYPE_BODY,     false, 0.0f, TEXT_PRIMARY, NONE, 0.f, 0.f };
+	case Role::LABEL:
+		return { bold, TYPE_LABEL,    true,  1.2f, TEXT_SECONDARY, NONE, 0.f, 0.f };
+	case Role::TITLE_SM:
+		return { bold, TYPE_TITLE_SM, false, 0.0f, TEXT_PRIMARY, NONE, 0.f, 0.f };
+	case Role::TITLE_MD:
+		return { bold, TYPE_TITLE_MD, false, 0.0f, TEXT_PRIMARY, NONE, 0.f, 0.f };
+	case Role::TITLE_LG:
+		return { bold, TYPE_TITLE_LG, false, 0.0f, TEXT_PRIMARY,
+		         glm::vec4(ACCENT_CYAN_GLOW.r, ACCENT_CYAN_GLOW.g, ACCENT_CYAN_GLOW.b, 0.5f),
+		         4.0f, 0.8f };
+	case Role::DISPLAY:
+		return { disp, TYPE_DISPLAY,  false, 0.0f, TEXT_PRIMARY,
+		         glm::vec4(ACCENT_CYAN_GLOW.r, ACCENT_CYAN_GLOW.g, ACCENT_CYAN_GLOW.b, 0.55f),
+		         8.0f, 1.0f };
+	case Role::HERO_NEON:
+		// Caller chooses color via drawTextRole's rgba; glow mirrors it unless
+		// glow_override is provided.
+		return { disp, TYPE_DISPLAY,  false, 0.0f, TEXT_PRIMARY,
+		         glm::vec4(1.0f, 0.3f, 0.3f, 0.85f), 14.0f, 1.4f };
+	}
+	return { body, TYPE_BODY, false, 0.0f, TEXT_PRIMARY, NONE, 0.f, 0.f };
+}
+
+// Apply uppercase if needed.
+std::string maybeUpper(const std::string& s, bool upper) {
+	if (!upper) return s;
+	std::string r; r.reserve(s.size());
+	for (char c : s) r.push_back((c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c);
+	return r;
+}
 
 // Pixel → NDC. Origin top-left, y-down → NDC origin center, y-up.
 inline float px_x(int x) { return (float)x * 2.0f / (float)g_screen_w - 1.0f; }
@@ -106,6 +166,33 @@ void beginFrame(::civcraft::TextRenderer* text, int sw, int sh) {
 	g_screen_h = sh > 0 ? sh : 1;
 }
 
+bool initFonts(const std::string& fontDir, const std::string& shaderDir) {
+	using F = ::civcraft::cellcraft::SdfFont;
+	g_font_body    = std::make_unique<F>();
+	g_font_bold    = std::make_unique<F>();
+	g_font_display = std::make_unique<F>();
+	bool ok = true;
+	ok &= g_font_body->init(fontDir + "/Inter-Regular.ttf", shaderDir, 64.0f);
+	ok &= g_font_bold->init(fontDir + "/Inter-Bold.ttf",    shaderDir, 64.0f);
+	// Audiowide is naturally wide — bake larger so TYPE_DISPLAY is crisp.
+	ok &= g_font_display->init(fontDir + "/Audiowide-Regular.ttf", shaderDir, 96.0f);
+	g_fonts_ready = ok;
+	if (!ok) {
+		std::fprintf(stderr, "[ui_modern] SDF font init failed — falling back to bitmap font\n");
+	}
+	return ok;
+}
+
+void shutdownFonts() {
+	if (g_font_body)    g_font_body->shutdown();
+	if (g_font_bold)    g_font_bold->shutdown();
+	if (g_font_display) g_font_display->shutdown();
+	g_font_body.reset();
+	g_font_bold.reset();
+	g_font_display.reset();
+	g_fonts_ready = false;
+}
+
 // ---- Surfaces -------------------------------------------------------
 
 void drawScrim(int x, int y, int w, int h,
@@ -186,46 +273,124 @@ void drawInnerGlow(int x, int y, int w, int h, int radius,
 
 // ---- Text -----------------------------------------------------------
 
+// Map a raw pixel size to a reasonable role. Used by measureTextPx /
+// drawTextModern so legacy call sites still benefit from real fonts.
+static Role roleForPxSize(int size_px) {
+	if (size_px <= TYPE_CAPTION + 1) return Role::BODY;
+	if (size_px <= TYPE_BODY + 1)    return Role::BODY;
+	if (size_px <= TYPE_LABEL + 1)   return Role::BODY; // caller picks LABEL explicitly
+	if (size_px <= TYPE_TITLE_SM + 2) return Role::TITLE_SM;
+	if (size_px <= TYPE_TITLE_MD + 2) return Role::TITLE_MD;
+	if (size_px <= TYPE_TITLE_LG + 2) return Role::TITLE_LG;
+	return Role::DISPLAY;
+}
+
 int measureTextPx(const std::string& s, int size_px) {
+	if (g_fonts_ready) {
+		// Special-case TYPE_LABEL — all LABEL renders go through Role::LABEL
+		// (uppercase + tracking). Measuring with Role::BODY would under-
+		// estimate width and cause centering drift. Check size first.
+		if (size_px == TYPE_LABEL) {
+			RoleSpec sp = specFor(Role::LABEL);
+			if (sp.font && sp.font->ready()) {
+				std::string up = maybeUpper(s, sp.uppercase);
+				return (int)std::round(sp.font->measureWidth(up, (float)sp.pxSize, sp.tracking_px));
+			}
+		}
+		RoleSpec sp = specFor(roleForPxSize(size_px));
+		if (sp.font && sp.font->ready()) {
+			return (int)std::round(sp.font->measureWidth(s, (float)size_px, 0.0f));
+		}
+	}
 	float scale = text_scale_for(size_px);
 	float ndc = scale * 0.018f * (float)s.size();
 	return (int)std::round(ndc * 0.5f * (float)g_screen_w);
 }
 
+int measureTextRole(const std::string& s, Role role) {
+	if (g_fonts_ready) {
+		RoleSpec sp = specFor(role);
+		if (sp.font && sp.font->ready()) {
+			std::string t = maybeUpper(s, sp.uppercase);
+			return (int)std::round(sp.font->measureWidth(t, (float)sp.pxSize, sp.tracking_px));
+		}
+	}
+	// Fallback — approximate tracking with inserted spaces for LABEL.
+	if (role == Role::LABEL) {
+		return measureTextPx(maybeUpper(s, true), TYPE_LABEL) + TYPE_LABEL / 2 * ((int)s.size() - 1);
+	}
+	RoleSpec sp = specFor(role);
+	return measureTextPx(s, sp.pxSize);
+}
+
+void drawTextRole(int x, int y, const std::string& text, Role role,
+                  const glm::vec4& rgba, Align align,
+                  const glm::vec4& glow_override) {
+	if (text.empty() || rgba.a <= 0.0f) return;
+	RoleSpec sp = specFor(role);
+	std::string s = maybeUpper(text, sp.uppercase);
+
+	if (g_fonts_ready && sp.font && sp.font->ready()) {
+		float w = sp.font->measureWidth(s, (float)sp.pxSize, sp.tracking_px);
+		int draw_x = x;
+		if (align == Align::CENTER) draw_x = x - (int)(w * 0.5f);
+		else if (align == Align::RIGHT) draw_x = x - (int)w;
+		// y param is top-of-caps; convert to baseline via ascent.
+		float baselineY = (float)y + sp.font->ascent((float)sp.pxSize);
+		glm::vec4 glow = (glow_override.a > 0.0f) ? glow_override : sp.defaultGlow;
+		if (role == Role::HERO_NEON && glow_override.a <= 0.0f) {
+			// Tint glow to match fill.
+			glow = glm::vec4(rgba.r, rgba.g, rgba.b, 0.85f);
+		}
+		sp.font->draw(s, (float)draw_x, baselineY, (float)sp.pxSize,
+			rgba, glow, sp.glowRadiusPx, sp.glowIntensity, sp.tracking_px,
+			g_screen_w, g_screen_h);
+		return;
+	}
+	// Fallback to platform bitmap font.
+	drawTextModern(x, y, s, sp.pxSize, rgba, align);
+}
+
 void drawTextModern(int x, int y, const std::string& text, int size_px,
                     const glm::vec4& rgba, Align align) {
-	if (!g_text || text.empty() || rgba.a <= 0.0f) return;
+	if (text.empty() || rgba.a <= 0.0f) return;
+
+	// Route through SDF font when available.
+	if (g_fonts_ready) {
+		Role r = roleForPxSize(size_px);
+		RoleSpec sp = specFor(r);
+		if (sp.font && sp.font->ready()) {
+			float w = sp.font->measureWidth(text, (float)size_px, 0.0f);
+			int draw_x = x;
+			if (align == Align::CENTER) draw_x = x - (int)(w * 0.5f);
+			else if (align == Align::RIGHT) draw_x = x - (int)w;
+			float baselineY = (float)y + sp.font->ascent((float)size_px);
+			sp.font->draw(text, (float)draw_x, baselineY, (float)size_px,
+				rgba, sp.defaultGlow, sp.glowRadiusPx, sp.glowIntensity,
+				0.0f, g_screen_w, g_screen_h);
+			return;
+		}
+	}
+
+	if (!g_text) return;
 	float scale = text_scale_for(size_px);
 	int   tw    = measureTextPx(text, size_px);
 	int   draw_x = x;
 	if (align == Align::CENTER) draw_x = x - tw / 2;
 	else if (align == Align::RIGHT) draw_x = x - tw;
-	// y is the visual baseline-ish top in pixels. drawText's (x,y) is the
-	// glyph's bottom-left in NDC, growing up. Convert top-of-glyph to
-	// bottom-of-glyph by adding size_px.
 	float ndc_x = px_x(draw_x);
 	float ndc_y = px_y(y + size_px);
 	g_text->drawText(text, ndc_x, ndc_y, scale, rgba, 1.0f);
 }
 
 void drawTextLabel(int x, int y, const std::string& s, const glm::vec4& rgba) {
-	// Uppercase + add a single space between letters to fake wider tracking
-	// (the bitmap font has fixed advance — true tracking would need shader
-	// changes; spaced uppercase reads like a tracked label at small sizes).
-	std::string up;
-	up.reserve(s.size() * 2);
-	for (size_t i = 0; i < s.size(); ++i) {
-		char c = s[i];
-		if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-		up.push_back(c);
-		if (i + 1 < s.size()) up.push_back(' ');
-	}
-	drawTextModern(x, y, up, TYPE_LABEL, rgba);
+	// Modern path: real tracking via SdfFont. No more inserted-space hack.
+	drawTextRole(x, y, s, Role::LABEL, rgba);
 }
 
 void drawTextDisplay(int x, int y, const std::string& s,
                      const glm::vec4& rgba, Align align) {
-	drawTextModern(x, y, s, TYPE_DISPLAY, rgba, align);
+	drawTextRole(x, y, s, Role::DISPLAY, rgba, align);
 }
 
 // ---- Buttons --------------------------------------------------------

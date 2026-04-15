@@ -40,6 +40,7 @@ add_executable(cellcraft
 	${CMAKE_CURRENT_SOURCE_DIR}/client/background_layer.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/screen_shake.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/ui_modern.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/sdf_font.cpp
 	${CELLCRAFT_PLATFORM_SOURCES}
 )
 target_include_directories(cellcraft PRIVATE ${CELLCRAFT_INCLUDE_DIRS})
@@ -64,4 +65,8 @@ add_custom_command(TARGET cellcraft POST_BUILD
 	# Also stage shared platform shaders (text.* needed by platform TextRenderer).
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
 		${CMAKE_SOURCE_DIR}/src/platform/shaders $<TARGET_FILE_DIR:cellcraft>/shaders
+	# Stage TTF fonts for the modern SDF text renderer (Inter + Audiowide).
+	COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:cellcraft>/fonts
+	COMMAND ${CMAKE_COMMAND} -E copy_directory
+		${CMAKE_CURRENT_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:cellcraft>/fonts
 )
