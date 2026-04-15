@@ -198,6 +198,14 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 					partMat = glm::translate(partMat, part.pivot * s);
 					partMat = glm::rotate(partMat, glm::radians(anim.armPitch), part.swingAxis);
 					partMat = glm::rotate(partMat, glm::radians(anim.armYaw),   glm::vec3(0, 1, 0));
+					// Wrist roll (Tier-0): rotation around the rest-pose
+					// forearm axis (-Y in local). Equivalent to rolling
+					// around the post-pitch/yaw arm axis — see invariant
+					// proof in tools/modelcrafter.
+					if (std::abs(anim.armRoll) > 0.01f) {
+						partMat = glm::rotate(partMat, glm::radians(anim.armRoll),
+						                      glm::vec3(0, -1, 0));
+					}
 					partMat = glm::translate(partMat, -part.pivot * s);
 					doSwing = false; // already applied
 				} else if (part.name == "left_hand"

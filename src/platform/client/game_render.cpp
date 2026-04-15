@@ -66,8 +66,8 @@ void Game::renderEntities(float dt, float aspect) {
 	float playerSpeed = glm::length(glm::vec2(pe->velocity.x, pe->velocity.z));
 	float prevWalkDist = m_playerWalkDist;
 	m_playerWalkDist += playerSpeed * dt;
-	float armPitch = 0.f, armYaw = 0.f;
-	m_attackAnim.currentArmAngles(armPitch, armYaw);
+	float armPitch = 0.f, armYaw = 0.f, armRoll = 0.f;
+	m_attackAnim.currentArmAngles(armPitch, armYaw, armRoll);
 
 	// Clip toggles: C = dance. Pressing again cancels. Walking cancels too
 	// so the clip doesn't override the walk cycle while moving.
@@ -83,6 +83,7 @@ void Game::renderEntities(float dt, float aspect) {
 	playerAnim.attackPhase  = m_attackAnim.phase();
 	playerAnim.armPitch     = armPitch;
 	playerAnim.armYaw       = armYaw;
+	playerAnim.armRoll      = armRoll;
 	playerAnim.currentClip  = m_playerClip;
 	// Head/body look tracking.
 	// Priority: action target (attack/mine) > camera look direction.

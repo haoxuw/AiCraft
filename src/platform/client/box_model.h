@@ -130,8 +130,12 @@ struct AnimState {
 	// Clip-specific right-arm angles (degrees). Populated from AttackAnimPlayer.
 	// pitch: forward/back rotation (negative = arm swings forward toward target).
 	// yaw  : lateral rotation      (positive = right-to-left sweep, negative = L-to-R).
+	// roll : wrist roll around rest-pose forearm axis (Tier-0 wrist-roll port).
+	//        Held items stay perpendicular to the arm; roll re-orients the
+	//        blade edge during lateral cuts.
 	float armPitch = 0.0f;
 	float armYaw   = 0.0f;
+	float armRoll  = 0.0f;
 
 	// Head tracking (radians). Head-tagged parts rotate by these around headPivot.
 	// Clamped externally (e.g. ±45° from body yaw) before being passed in.

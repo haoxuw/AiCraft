@@ -23,10 +23,15 @@ struct ClipKey {
 // One keyframe for the 3rd-person right-arm joint.
 // pitch: forward/back rotation in degrees (negative = arm swings forward).
 // yaw  : lateral rotation in degrees (positive = arm swings left / R-to-L sweep).
+// roll : wrist roll around the rest-pose forearm axis, in degrees. Used to keep
+//        a held sword's edge facing the direction of motion during a lateral
+//        slash (otherwise the blade lies flat mid-swing). Gated globally by
+//        AttackAnimPlayer::kEnableWristRoll — flip off to disable the feature.
 struct ArmKey {
     float t;
     float pitch;
     float yaw;
+    float roll = 0.0f;
 };
 
 // ── AttackClip ────────────────────────────────────────────────────────────────
@@ -77,12 +82,14 @@ public:
                 {0.50f, { 0.06f, -0.02f,  0.00f}, {-10.f,  40.f,  45.f}},  // peak slash right
                 {1.00f, { 0.02f, -0.01f,  0.00f}, { -5.f,  15.f,  15.f}},
             },
-            // 3rd-person right-arm keyframes (pitch = fwd/back, yaw = lateral)
+            // 3rd-person right-arm keyframes (pitch = fwd/back, yaw = lateral, roll = wrist).
+            // Roll values mirror tools/attack_clips.py — keep blade edge in
+            // the vertical plane during the lateral sweep.
             {
-                {0.00f,   0.f,   0.f},
-                {0.15f, -10.f, -90.f},  // wind-up: arm drawn across to left
-                {0.50f, -15.f,  60.f},  // peak: level sweep to right + forward
-                {1.00f, -10.f,  30.f},  // follow-through
+                {0.00f,   0.f,   0.f,   0.f},
+                {0.15f, -10.f, -90.f, -36.f},  // wind-up: arm drawn across to left
+                {0.50f, -15.f,  60.f,  -5.f},  // peak: level sweep to right + forward
+                {1.00f, -10.f,  30.f, -25.f},  // follow-through
             },
             0.18f, 0.65f });
 
@@ -95,10 +102,10 @@ public:
                 {1.00f, {-0.02f, -0.01f,  0.00f}, { -8.f, -12.f, -15.f}},
             },
             {
-                {0.00f, -10.f,  30.f},
-                {0.15f, -10.f,  90.f},  // wind-up: arm cocked back to right
-                {0.50f, -15.f, -60.f},  // peak: level sweep to left + forward
-                {1.00f, -10.f, -30.f},
+                {0.00f, -10.f,  30.f, -25.f},
+                {0.15f, -10.f,  90.f, -36.f},  // wind-up: arm cocked back to right
+                {0.50f, -15.f, -60.f,  -5.f},  // peak: level sweep to left + forward
+                {1.00f, -10.f, -30.f, -25.f},
             },
             0.18f, 0.65f });
 
@@ -302,9 +309,12 @@ public:
     // Interpolated 3rd-person right-arm angles for the current frame (degrees).
     // outPitch: forward/back (negative = arm swings forward).
     // outYaw:   lateral      (positive = right-to-left sweep).
-    void currentArmAngles(float& outPitch, float& outYaw) const {
+    // outRoll:  wrist roll around forearm axis. Always 0 when
+    //           kEnableWristRoll is false (Tier-0 toggle).
+    void currentArmAngles(float& outPitch, float& outYaw, float& outRoll) const {
         outPitch = 0.f;
         outYaw   = 0.f;
+        outRoll  = 0.f;
         if (!m_active) return;
         const AttackClip* cur = currentClip();
         if (!cur || cur->armKeys.empty()) return;
@@ -312,21 +322,36 @@ public:
         float t = std::clamp(phase(), 0.f, 1.f);
         const auto& keys = cur->armKeys;
 
-        if (keys.size() == 1 || t <= keys.front().t) {
-            outPitch = keys.front().pitch; outYaw = keys.front().yaw; return;
-        }
-        if (t >= keys.back().t) {
-            outPitch = keys.back().pitch;  outYaw = keys.back().yaw;  return;
-        }
+        auto pickFront = [&]() {
+            outPitch = keys.front().pitch;
+            outYaw   = keys.front().yaw;
+            outRoll  = kEnableWristRoll ? keys.front().roll : 0.f;
+        };
+        auto pickBack = [&]() {
+            outPitch = keys.back().pitch;
+            outYaw   = keys.back().yaw;
+            outRoll  = kEnableWristRoll ? keys.back().roll : 0.f;
+        };
+
+        if (keys.size() == 1 || t <= keys.front().t) { pickFront(); return; }
+        if (t >= keys.back().t)                       { pickBack();  return; }
         for (int i = 0; i + 1 < (int)keys.size(); ++i) {
             if (t >= keys[i].t && t <= keys[i + 1].t) {
                 float span = keys[i + 1].t - keys[i].t;
                 float frac = (span > 0.f) ? (t - keys[i].t) / span : 0.f;
                 outPitch = keys[i].pitch + (keys[i+1].pitch - keys[i].pitch) * frac;
                 outYaw   = keys[i].yaw   + (keys[i+1].yaw   - keys[i].yaw)   * frac;
+                if (kEnableWristRoll)
+                    outRoll = keys[i].roll + (keys[i+1].roll - keys[i].roll) * frac;
                 return;
             }
         }
+    }
+
+    // Backward-compat wrapper for callers that only want pitch/yaw.
+    void currentArmAngles(float& outPitch, float& outYaw) const {
+        float roll = 0.f;
+        currentArmAngles(outPitch, outYaw, roll);
     }
 
     // Interpolated viewmodel delta for the current frame.
@@ -380,6 +405,13 @@ private:
     // Keeping this a single constant (rather than per-clip) matches the
     // keyframe layout in attack_anim.h.
     static constexpr float kPeakFrac = 0.50f;
+public:
+    // ── Tier-0 wrist-roll toggle ──────────────────────────────────────────────
+    // Master switch for the wrist-roll term added to ArmKey. When false,
+    // currentArmAngles() always reports roll=0, effectively reverting to
+    // the pre-Tier-0 (pitch+yaw only) behavior. Useful for A/B compares
+    // and quick rollback if the in-game roll proves too aggressive.
+    static constexpr bool kEnableWristRoll = true;
 };
 
 } // namespace civcraft
