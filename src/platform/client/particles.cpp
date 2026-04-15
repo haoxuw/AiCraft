@@ -184,4 +184,54 @@ void ParticleSystem::emitDeathPuff(glm::vec3 pos, glm::vec3 bodyColor, float ent
 	}
 }
 
+void ParticleSystem::emitSwingShockwave(glm::vec3 center, glm::vec3 normal,
+                                        float facingYawRad, glm::vec3 color, int count) {
+	// Build an orthonormal frame with `normal` as the ring's axis. The ring
+	// lives in the plane spanned by `tangent` and `bitangent`; we only emit
+	// into the front 180° (centred on the attacker's facing) so the shockwave
+	// reads as sweeping OUT from the swing, not a full disc behind the body.
+	glm::vec3 n = glm::length(normal) > 1e-4f ? glm::normalize(normal)
+	                                          : glm::vec3(0, 1, 0);
+	// Pick a helper not parallel to n
+	glm::vec3 helper = (std::abs(n.y) < 0.9f) ? glm::vec3(0, 1, 0)
+	                                          : glm::vec3(1, 0, 0);
+	glm::vec3 tangent   = glm::normalize(glm::cross(helper, n));
+	glm::vec3 bitangent = glm::cross(n, tangent);
+
+	int seed = (int)(center.x * 911 + center.y * 419 + center.z * 277
+	                + facingYawRad * 1000.0f);
+
+	for (int i = 0; i < count; i++) {
+		Particle p;
+		// Angle spread: front 180° cone centred on facing yaw (around +Z/-Z
+		// plane projected onto the tangent frame). We use i to bias across
+		// the cone and add small jitter.
+		float t = (float)i / (float)std::max(1, count - 1);
+		float angle = facingYawRad + (t - 0.5f) * 3.14159f
+		            + (prand(seed + i * 5) - 0.5f) * 0.25f;
+
+		// Direction in world space within the ring plane
+		glm::vec3 dir = std::cos(angle) * tangent + std::sin(angle) * bitangent;
+
+		float speed  = 4.0f + prand(seed + i * 7) * 1.5f;
+		// Gravity is 12 m/s² in update(); counter it with an upward bias so
+		// the ring stays roughly horizontal for its short life.
+		p.vel        = dir * speed + glm::vec3(0, 3.0f, 0);
+		// Start slightly off-centre so the ring has thickness
+		p.pos        = center + dir * 0.15f
+		             + glm::vec3(0, (prand(seed + i * 11) - 0.5f) * 0.05f, 0);
+
+		float cv = (prand(seed + i * 13) - 0.5f) * 0.10f;
+		p.color = glm::vec4(
+			std::clamp(color.r + cv, 0.0f, 1.0f),
+			std::clamp(color.g + cv, 0.0f, 1.0f),
+			std::clamp(color.b + cv, 0.0f, 1.0f),
+			0.9f);
+		p.life    = 0.22f + prand(seed + i * 17) * 0.08f;
+		p.maxLife = p.life;
+		p.size    = 0.08f + prand(seed + i * 19) * 0.04f;
+		m_particles.push_back(p);
+	}
+}
+
 } // namespace civcraft

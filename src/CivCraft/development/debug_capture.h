@@ -22,6 +22,8 @@
 #include "development/item_views_scenario.h"
 #include "development/animation_scenario.h"
 #include "development/character_views_scenario.h"
+#include "development/combo_views_scenario.h"
+#include <sstream>
 #include <memory>
 #include <string>
 #include <cstdio>
@@ -53,6 +55,16 @@ public:
 		} else if (cfg.scenario == "character_views") {
 			m_scenario = std::make_unique<CharacterViewsScenario>(
 				cfg.targetCharacter, cfg.targetClip, 0.6f, cfg.handItem);
+		} else if (cfg.scenario == "combo_views") {
+			// Clips come in via --debug-clip as a space-separated list.
+			// Default: the built-in sword combo.
+			std::vector<std::string> clips;
+			std::istringstream ss(cfg.targetClip);
+			std::string c;
+			while (ss >> c) clips.push_back(c);
+			if (clips.empty()) clips = {"swing_left", "swing_right", "cleave"};
+			std::string hand = cfg.handItem.empty() ? "sword" : cfg.handItem;
+			m_scenario = std::make_unique<ComboViewsScenario>(clips, hand);
 		} else {
 			fprintf(stderr, "[DebugCapture] Unknown scenario '%s'\n",
 			        cfg.scenario.c_str());

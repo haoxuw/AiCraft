@@ -62,6 +62,10 @@ struct ScenarioCallbacks {
 	// oscillates limbs); `speed` feeds smoothSpeed gating so the walk swing
 	// actually fires (needs > ~0.1 blocks/s to unlock in model.cpp).
 	std::function<void(float phase, float speed)>  setPlayerWalk;
+	// Trigger an attack clip by name via the keyframe-driven attack player
+	// (swing_left / swing_right / cleave / slam / stab / swipe / jab).
+	// Only path to exercise the combo system without clicking in-game.
+	std::function<void(const std::string& clipId)> triggerAttackClip;
 };
 
 // Abstract base for all debug scenarios.

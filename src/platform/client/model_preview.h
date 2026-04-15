@@ -57,6 +57,10 @@ public:
 
 	// Render a model and display as ImGui image widget.
 	// Returns true if the widget was hovered/interacted with.
+	// Set the named clip to play in the preview ("" = default walk cycle).
+	void setClip(const std::string& name) { m_clip = name; }
+	const std::string& clip() const { return m_clip; }
+
 	bool render(ModelRenderer& renderer, const BoxModel& model,
 	            float dt, float displaySize = 200) {
 		if (!m_fbo || !m_shader) return false;
@@ -99,8 +103,12 @@ public:
 		);
 		glm::mat4 vp = proj * view;
 
-		// Draw model with gentle animation
-		AnimState anim = {m_animTime, 1.5f, m_animTime};
+		// Draw model with gentle animation. If a named clip is selected,
+		// play it in place (speed=0) so only the clip drives motion — the
+		// walk cycle otherwise competes and masks the clip's intent.
+		float previewSpeed = m_clip.empty() ? 1.5f : 0.0f;
+		AnimState anim = {m_animTime, previewSpeed, m_animTime};
+		anim.currentClip = m_clip;
 		m_animTime += dt;
 
 		renderer.draw(model, vp, glm::vec3(0, 0, 0), m_rotY, anim);
@@ -137,6 +145,7 @@ private:
 	float m_rotX = 0;      // vertical tilt
 	bool m_dragging = false;
 	float m_animTime = 0;
+	std::string m_clip;    // named clip to play ("" = idle walk cycle)
 };
 
 } // namespace civcraft

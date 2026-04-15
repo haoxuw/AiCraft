@@ -13,11 +13,13 @@ model = {
     "equip": {
         # Blade perpendicular to the forearm, pointing FORWARD from the fist
         # (not parallel to the arm — otherwise when the arm hangs down the
-        # blade would stab the holder's own face). X=-90° takes the sword's
-        # local +Y (grip→tip) and maps it to the character's -Z (forward), so
-        # at rest the blade sticks out in front of the hand like a proper
-        # Minecraft sword grip.
-        "rotation": [0, -90, 90],
+        # blade would stab the holder's own face). Y=-90° + Z=80.3° takes
+        # the sword's local +Y (grip→tip) to a direction perpendicular to
+        # the actual rest-arm vector (hand_r - pivot_r, which is not pure
+        # -Y because the hand rests slightly forward and outboard of the
+        # shoulder). The 9.7° tilt off -Z is what keeps blade ⟂ arm at rest
+        # — verified by tools/modelcrafter's invariant check.
+        "rotation": [0, -90, 80.3],
         "offset": [0.0, 0.0, -0.02],
         "scale": 0.65,
     },

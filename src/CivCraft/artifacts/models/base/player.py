@@ -98,5 +98,30 @@ model = {
             "left_hand":  {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
             "torso":      {"axis": [1, 0, 0], "amp": 2, "bias": 0, "speed": 0.5, "phase": 0},
         },
+        # Crouched / kneeling-sit: legs bent ~45° forward (knees-up look),
+        # torso leans well forward, hands rest low on thighs. We can't
+        # translate the body (clips are rotation-only), so a hard 90° leg
+        # fold makes the character float above an invisible chair —
+        # knees-up reads better as a crouched sit on the ground.
+        "sit": {
+            "left_leg":   {"axis": [1, 0, 0], "amp": 0, "bias":  55, "speed": 0.6, "phase": 0},
+            "right_leg":  {"axis": [1, 0, 0], "amp": 0, "bias":  55, "speed": 0.6, "phase": 0},
+            "left_hand":  {"axis": [1, 0, 0], "amp": 1, "bias":  35, "speed": 0.6, "phase": 0},
+            "right_hand": {"axis": [1, 0, 0], "amp": 1, "bias":  35, "speed": 0.6, "phase": 0},
+            "torso":      {"axis": [1, 0, 0], "amp": 1, "bias": -25, "speed": 0.6, "phase": 0},
+            "head":       {"axis": [1, 0, 0], "amp": 1, "bias": -15, "speed": 0.6, "phase": 0},
+        },
+        # Hurt flinch: sharp torso recoil + head snap back. Speed bumped to
+        # 8.0 so the peak (sin~1) falls at ~0.03s — inside the ~0.2s damage
+        # window, the recoil is clearly read mid-animation instead of
+        # cancelling itself out by t=0.12s like at speed=4.
+        # Phase shifted −π/2 so sin starts at −1 (fully recoiled at t=0)
+        # instead of 0 — matches how onEntityDamage fires instantaneously.
+        "hurt": {
+            "torso":      {"axis": [1, 0, 0], "amp": 15, "bias":   0, "speed": 8.0, "phase": -1.5708},
+            "head":       {"axis": [1, 0, 0], "amp": 18, "bias":   0, "speed": 8.0, "phase": -1.5708},
+            "right_hand": {"axis": [1, 0, 0], "amp": 10, "bias":  15, "speed": 8.0, "phase": -1.5708},
+            "left_hand":  {"axis": [1, 0, 0], "amp": 10, "bias":  15, "speed": 8.0, "phase": -1.5708},
+        },
     },
 }

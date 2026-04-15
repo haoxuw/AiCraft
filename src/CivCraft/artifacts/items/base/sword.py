@@ -14,6 +14,11 @@ item = {
     "on_equip": None,         # not equippable — use hotbar
     "on_interact": "attack",  # left-click on entity: attack
 
+    # 3-hit combo: left slash → right return → overhead cleave. Clips are
+    # registered in platform/client/attack_anim.h. Each chains if the next
+    # click lands in the last 30% of the current clip (combo window).
+    "attack_animations": "swing_left swing_right cleave",
+
     "model": "sword",
     "color": [0.7, 0.7, 0.75],
 }

@@ -170,6 +170,44 @@ private:
 				ImGui::Spacing();
 				float dt = ImGui::GetIO().DeltaTime;
 				m_preview->render(*m_renderer, modelIt->second, dt, 180);
+
+				// Clip selector — lets players preview each named animation
+				// (attack, chop, mine, wave, dance, sleep, sit, fly, …) right
+				// in the handbook, so new clips are discoverable without
+				// firing up a scenario.
+				const auto& clips = modelIt->second.clips;
+				if (!clips.empty()) {
+					// Reset picker when the selected entry changes so we
+					// don't carry a stale clip across unrelated models.
+					if (m_clipOwnerId != entry->id) {
+						m_clipOwnerId = entry->id;
+						m_preview->setClip("");
+					}
+					ImGui::SameLine();
+					ImGui::BeginGroup();
+					ImGui::TextColored(ImVec4(0.50f, 0.52f, 0.56f, 1), "Clip");
+					std::string cur = m_preview->clip();
+					const char* curLabel = cur.empty() ? "idle" : cur.c_str();
+					ImGui::SetNextItemWidth(140);
+					if (ImGui::BeginCombo("##clip", curLabel)) {
+						if (ImGui::Selectable("idle", cur.empty())) {
+							if (m_audio) m_audio->playBlip(1.0f, 0.4f);
+							m_preview->setClip("");
+						}
+						for (auto& [name, _] : clips) {
+							bool sel = (cur == name);
+							if (ImGui::Selectable(name.c_str(), sel)) {
+								if (m_audio) m_audio->playBlip(1.1f, 0.4f);
+								m_preview->setClip(name);
+							}
+						}
+						ImGui::EndCombo();
+					}
+					ImGui::EndGroup();
+				} else if (m_clipOwnerId != entry->id) {
+					m_clipOwnerId = entry->id;
+					m_preview->setClip("");
+				}
 				ImGui::Spacing();
 			}
 		}
@@ -365,6 +403,7 @@ private:
 
 	std::string m_selectedId;
 	std::string m_lastTab;
+	std::string m_clipOwnerId;   // which entry's clip is currently in m_preview
 	std::unordered_map<std::string, BoxModel> m_models;
 	ModelPreview* m_preview = nullptr;
 	ModelRenderer* m_renderer = nullptr;
