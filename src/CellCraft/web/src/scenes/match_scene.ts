@@ -12,10 +12,13 @@ import {
   StatBarHandle,
   UI_PALETTE
 } from '../render/ui';
+import { NetClient } from '../net/client';
+import { EntitySnap, FoodSnap, S_STATE, S_WELCOME } from '../net/protocol';
 import { Action, ActionType } from '../sim/action';
-import { Monster } from '../sim/monster';
+import { makeMonster, Monster, refreshStats } from '../sim/monster';
 import { Part } from '../sim/part';
 import { tick } from '../sim/sim';
+import { FoodKind } from '../sim/world';
 import { TIER_COUNT, TIER_SIZE_MULTS, TIER_THRESHOLDS } from '../sim/tuning';
 import { configureWorld, makeWorld, scatterFood, spawnMonster, World } from '../sim/world';
 import { buttonHit, makeMenuButton, MenuButtonHandle, pointerToHud } from './menu_widgets';
@@ -37,6 +40,9 @@ export interface MatchStarter {
 
 export interface MatchOpts {
   starter: MatchStarter;
+  // When set, connect to the given WebSocket URL and drive the match
+  // from server state. Omit (or pass undefined) for fully-offline SP.
+  mpUrl?: string;
 }
 
 export interface MatchStats {
@@ -209,6 +215,104 @@ export function makeMatchScene(opts: MatchOpts): Scene {
   // Tier-up celebrate overlay (attached to hudScene when active).
   let tierUp: TierUpOverlay | null = null;
 
+  // --- Multiplayer state ---
+  const isMP = !!opts.mpUrl;
+  let net: NetClient | null = null;
+  let mpPlayerId: number = 0;       // server-assigned entity id
+  let mpJoined = false;             // sent C_JOIN
+  let mpWelcomed = false;           // got S_WELCOME
+  // Latest server snapshot (for interpolation / override).
+  const mpAppearance = new Map<number, {
+    color: [number, number, number];
+    parts: Part[];
+    seed: number;
+    isPlayer: boolean;
+  }>();
+
+  // Apply an EntitySnap to the local world, creating the Monster if new.
+  function applyEntitySnap(s: EntitySnap): void {
+    // Remember appearance if the server sent it.
+    if (s.color && s.parts && typeof s.seed === 'number') {
+      mpAppearance.set(s.id, {
+        color: s.color,
+        parts: s.parts as Part[],
+        seed: s.seed,
+        isPlayer: !!s.isPlayer
+      });
+    }
+    let m = world.monsters.get(s.id);
+    if (!m) {
+      const ap = mpAppearance.get(s.id);
+      if (!ap) return; // haven't seen appearance yet — skip for now
+      m = makeMonster({
+        id: s.id,
+        pos: [s.pos[0], s.pos[1]],
+        baseRadius: 46,
+        color: ap.color,
+        parts: ap.parts,
+        seed: ap.seed,
+        isPlayer: ap.isPlayer
+      });
+      refreshStats(m);
+      world.monsters.set(s.id, m);
+      if (s.id === mpPlayerId) player = m;
+    }
+    // For non-player entities, snap to server state each tick. For the
+    // player, Commit C adds reconciliation; for now we also snap.
+    m.core_pos = [s.pos[0], s.pos[1]];
+    m.vel = [s.vel[0], s.vel[1]];
+    m.heading = s.heading;
+    m.hp = s.hp;
+    m.hp_max = s.hp_max;
+    m.biomass = s.biomass;
+    m.tier = s.tier;
+    m.body_scale = s.body_scale;
+    m.alive = s.alive;
+  }
+
+  function applyFoodSnaps(snaps: FoodSnap[]): void {
+    world.food.length = 0;
+    for (const f of snaps) {
+      world.food.push({
+        id: f.id,
+        kind: f.kind === 'PLANT' ? FoodKind.PLANT : FoodKind.MEAT,
+        pos: [f.pos[0], f.pos[1]],
+        biomass: f.biomass,
+        radius: f.radius,
+        seed: f.seed
+      });
+    }
+  }
+
+  function onWelcome(w: S_WELCOME): void {
+    mpPlayerId = w.playerId;
+    world.map_radius = w.mapRadius;
+    mpWelcomed = true;
+  }
+
+  function onServerState(s: S_STATE): void {
+    if (!mpWelcomed) return;
+    for (const es of s.entities) applyEntitySnap(es);
+    for (const rid of s.removed) {
+      world.monsters.delete(rid);
+      mpAppearance.delete(rid);
+      if (rid === mpPlayerId) {
+        // player died
+      }
+    }
+    applyFoodSnaps(s.food);
+    if (net) net.ackUpTo(s.ackSeq);
+    // Surface simple events for HUD counters.
+    for (const ev of s.events) {
+      if (ev.type === 'PICKUP' && ev.monster === mpPlayerId) {
+        biomassCollected += (ev.gained as number) || 0;
+      } else if (ev.type === 'KILL' && ev.killer === mpPlayerId) {
+        kills += 1;
+        biomassCollected += (ev.biomass as number) || 0;
+      }
+    }
+  }
+
   // Tracks which monster IDs existed last tick so we can detect "player died".
   let onResize: (() => void) | null = null;
 
@@ -344,6 +448,43 @@ export function makeMatchScene(opts: MatchOpts): Scene {
         }
       }
 
+      // --- Multiplayer branch ---
+      if (isMP) {
+        // Forward player-authored MOVE actions to the server. Other
+        // action types (RELOCATE/CONVERT/INTERACT) also pass through.
+        if (net && net.getStatus() === 'open' && mpWelcomed) {
+          for (const a of actions) {
+            if (a.monster_id === mpPlayerId) {
+              const pos: [number, number] = player
+                ? [player.core_pos[0], player.core_pos[1]]
+                : [0, 0];
+              net.sendAction(a, pos);
+            }
+          }
+          // Drain inbound messages each tick.
+          for (const m of net.drain()) {
+            if (m.type === 'S_WELCOME') onWelcome(m);
+            else if (m.type === 'S_STATE') onServerState(m);
+            else if (m.type === 'S_REJECT') {
+              // Commit D will surface; drop from pending.
+              net.pending.delete(m.seq);
+            }
+          }
+          // Send C_JOIN once the socket is open.
+          if (!mpJoined) {
+            mpJoined = net.sendJoin({
+              name: opts.starter.name,
+              starter_id: opts.starter.id,
+              color: opts.starter.color,
+              parts: opts.starter.parts,
+              seed: opts.starter.seed
+            });
+          }
+        }
+        acc -= FIXED_DT;
+        continue;
+      }
+
       actions.push(...decideAll(world, FIXED_DT, innerAI));
       const events = tick(world, actions, FIXED_DT);
 
@@ -419,13 +560,32 @@ export function makeMatchScene(opts: MatchOpts): Scene {
     enter(ctx) {
       enteredAt = ctx.now;
       resetAI();
-      const built = buildWorld(opts.starter);
-      world = built.world;
-      player = built.player;
-      outerWorld = buildOuterWorld(opts.starter.seed);
-      outerAI = makeAIStateMap();
+      if (isMP) {
+        // Empty local world — populated from server snapshots.
+        world = makeWorld();
+        // Placeholder player until S_WELCOME + S_STATE arrive. A dummy
+        // monster keeps HUD safe from nulls; it gets replaced when the
+        // real snap comes in.
+        player = spawnMonster(world, {
+          pos: [0, 0],
+          baseRadius: 46,
+          color: opts.starter.color,
+          isPlayer: true,
+          seed: opts.starter.seed,
+          parts: opts.starter.parts
+        });
+        outerWorld = null;
+        initialBiomass.v = 0;
+        net = new NetClient({ url: opts.mpUrl!, autoReconnect: true });
+      } else {
+        const built = buildWorld(opts.starter);
+        world = built.world;
+        player = built.player;
+        outerWorld = buildOuterWorld(opts.starter.seed);
+        outerAI = makeAIStateMap();
+        initialBiomass.v = player.lifetime_biomass;
+      }
       ctx.renderer.setOcean(false);
-      initialBiomass.v = player.lifetime_biomass;
 
       // HUD build.
       hpBar = makeStatBar(280, 22, { color: UI_PALETTE.hpRed });
@@ -475,6 +635,10 @@ export function makeMatchScene(opts: MatchOpts): Scene {
     },
 
     exit(ctx) {
+      if (net) {
+        net.close();
+        net = null;
+      }
       if (onResize) window.removeEventListener('resize', onResize);
       onResize = null;
 

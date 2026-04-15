@@ -79,7 +79,9 @@ export function makeStarterSelectScene(): Scene {
 
   function pickStarter(i: number, ctx: Parameters<Scene['enter']>[0]): void {
     const s = STARTERS[i];
-    ctx.requestGoto(() => makeMatchScene({ starter: s }), { fade: true });
+    // Multiplayer opt-in via ?mp=ws://host:port query param.
+    const mpUrl = new URLSearchParams(window.location.search).get('mp') || undefined;
+    ctx.requestGoto(() => makeMatchScene({ starter: s, mpUrl }), { fade: true });
   }
 
   return {
