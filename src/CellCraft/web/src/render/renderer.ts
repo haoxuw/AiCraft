@@ -44,6 +44,8 @@ export class Renderer {
   readonly hudCamera: THREE.OrthographicCamera;
   readonly fader = new SceneFader();
 
+  get domElement(): HTMLCanvasElement { return this.canvas; }
+
   constructor(private canvas: HTMLCanvasElement) {
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.gl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -151,6 +153,19 @@ export class Renderer {
     for (const food of world.food) this.drawFood(food, time);
     for (const m of world.monsters.values()) this.drawMonster(m, time);
 
+    this.finishFrame(time);
+  }
+
+  // Renders just the board + HUD + fader (no world content). Scenes
+  // that don't own a World (main menu, starter select, end screen)
+  // call this each frame.
+  renderEmpty(time: number): void {
+    this.boardMat.uniforms.u_time.value = time;
+    this.clearGroup(this.dynamicGroup);
+    this.finishFrame(time);
+  }
+
+  private finishFrame(time: number): void {
     // Post-FX: board pass (clear) → main scene → bloom → vignette → low-HP.
     this.postFX.setTime(time);
     this.postFX.render();
@@ -165,6 +180,39 @@ export class Renderer {
     // Scene fader always last so it overlays everything.
     this.fader.tick(time);
     this.fader.render(this.gl);
+  }
+
+  // Build meshes for a Monster positioned at its core_pos/heading.
+  // Caller owns the returned group and MUST dispose via disposeGroup()
+  // when done. Used by preview scenes (starter select, end screen).
+  buildMonsterPreview(m: Monster, time: number): THREE.Group {
+    const group = new THREE.Group();
+
+    const fill = buildCellFill(m);
+    const fillMat = createCellFillMaterial({
+      baseColor: new THREE.Color(m.color[0], m.color[1], m.color[2]),
+      dietColor: DIET_COLOR[m.part_effect.diet],
+      noiseSeed: m.noise_seed * 10
+    });
+    fillMat.uniforms.u_time.value = time;
+    group.add(new THREE.Mesh(fill, fillMat));
+
+    const worldPoly = shapeInWorld(m);
+    const outline = buildClosedRibbon(worldPoly, 6.0);
+    const outlineMat = createChalkMaterial(CHALK_INK);
+    group.add(new THREE.Mesh(outline, outlineMat));
+
+    for (const p of m.parts) {
+      if (p.kind !== PartKind.MOUTH) continue;
+      const cosH = Math.cos(m.heading);
+      const sinH = Math.sin(m.heading);
+      const wx = m.core_pos[0] + p.anchor[0] * cosH - p.anchor[1] * sinH;
+      const wy = m.core_pos[1] + p.anchor[0] * sinH + p.anchor[1] * cosH;
+      const arc = buildArc([wx, wy], 14 * p.scale, m.heading - 0.9, m.heading + 0.9, 12, 5.0);
+      const arcMat = createChalkMaterial(CHALK_INK);
+      group.add(new THREE.Mesh(arc, arcMat));
+    }
+    return group;
   }
 
   // ----- drawing helpers ---------------------------------------------
