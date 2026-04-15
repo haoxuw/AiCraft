@@ -15,6 +15,10 @@ import * as perf from '../perf';
 // 1. The orthographic camera is sized to cover the arena with padding.
 
 const CHALK_INK = new THREE.Color(0x2b2b2b);
+// Player gets a slightly darker ink so their outline reads as "mine" even
+// from a glance. Paired with a thicker outline ribbon + chevron + ground
+// pulse — see drawMonster's player branch.
+const PLAYER_INK = new THREE.Color(0x1a1a1a);
 const ARENA_RING = new THREE.Color(0x3b4a52);
 
 // Dual-sim background tunables — match native app.cpp exactly.
@@ -69,8 +73,31 @@ interface MonsterCacheEntry {
   fillMesh: THREE.Mesh;
   outlineMesh: THREE.Mesh;
   partMeshes: THREE.Mesh[];
+  // Dynamic parts whose geometry rebuilds per-frame (e.g. flagella wavy
+  // lines). Kept separate from static partMeshes so the body cache still
+  // only rebuilds on shape changes.
+  dynamicParts: DynamicPart[];
+  // Player-only accents: chevron + ground pulse ring. Null for NPCs.
+  playerChevron: THREE.Mesh | null;
+  playerPulse: THREE.Mesh | null;
+  isPlayer: boolean;
+  // Cached body length used for placing nose/tail parts.
+  bodyFrontX: number;
+  bodyTailX: number;
+  bodySideY: number;
   shapeKey: string;   // re-rebuild geometry when this changes
   lastFrame: number;  // prune when stale
+}
+
+// Per-monster animated parts that need a new ribbon every frame. Currently
+// flagella only — tail wavy lines that sway with sin(time). We keep the
+// mesh and material cached; only the geometry is rebuilt in place.
+interface DynamicPart {
+  kind: 'FLAGELLA';
+  mesh: THREE.Mesh;
+  origin: Vec2; // local-space attach point
+  phase: number;
+  length: number;
 }
 
 interface FoodCacheEntry {
@@ -324,11 +351,35 @@ export class Renderer {
         this.rebuildMonsterGeometry(e, m);
         e.shapeKey = key;
       }
-      // Cheap per-frame: transform + time uniform.
+      // Cheap per-frame: transform + time uniform. Derive a gentle wobble
+      // on top of the sim heading — purely cosmetic. See monster.ts for
+      // the visual_heading field contract.
+      const wobble = 0.04 * Math.sin(time * 2.0 + m.id * 0.5);
+      m.visual_heading = m.heading + wobble;
       e.root.position.set(m.core_pos[0], m.core_pos[1], 0);
-      e.root.rotation.z = m.heading;
+      e.root.rotation.z = m.visual_heading;
       const fillMat = e.fillMesh.material as THREE.ShaderMaterial;
       fillMat.uniforms.u_time.value = time;
+      // Animate flagella (tail wavy lines). Cheap per-frame geometry
+      // rebuild: 2–3 tiny ribbons per creature. Body mesh is untouched.
+      if (e.dynamicParts.length > 0) {
+        for (const dp of e.dynamicParts) {
+          const pts = buildFlagellumPoints(dp.origin, dp.length, time, dp.phase);
+          dp.mesh.geometry.dispose();
+          dp.mesh.geometry = buildOpenRibbon(pts, 2.2);
+        }
+      }
+      // Player accents: pulse ring alpha + chevron scale.
+      if (e.isPlayer) {
+        if (e.playerPulse) {
+          const pulseMat = e.playerPulse.material as THREE.ShaderMaterial;
+          pulseMat.uniforms.u_alpha.value = 0.15 + 0.08 * Math.sin(time * 2.0);
+        }
+        if (e.playerChevron) {
+          const sc = 1.0 + 0.06 * Math.sin(time * 2.0);
+          e.playerChevron.scale.set(sc, sc, 1);
+        }
+      }
       e.lastFrame = this.frameNum;
     }
     // Prune monsters that weren't seen this frame.
@@ -492,9 +543,9 @@ export class Renderer {
       this.gl.render(this.hudScene, this.hudCamera);
     }
 
-    // Scene fader always last so it overlays everything.
-    this.fader.tick(time);
-    this.fader.render(this.gl);
+    // SceneFader is retained but no longer composited — scenes handle
+    // their own per-scene fade/slide in enter()/update() for a less jarring
+    // transition. See scene_manager.ts.
   }
 
   // Build meshes for a Monster positioned at its core_pos/heading.
@@ -521,12 +572,10 @@ export class Renderer {
     const outlineMat = createChalkMaterial(CHALK_INK);
     group.add(new THREE.Mesh(outline, outlineMat));
 
-    for (const p of m.parts) {
-      if (p.kind !== PartKind.MOUTH) continue;
-      const arc = buildArc([p.anchor[0], p.anchor[1]], 14 * p.scale, -0.9, 0.9, 12, 5.0);
-      const arcMat = createChalkMaterial(CHALK_INK);
-      group.add(new THREE.Mesh(arc, arcMat));
-    }
+    const ex = shapeExtents(m.shape);
+    const partMeshes: THREE.Mesh[] = [];
+    const dyn: DynamicPart[] = [];
+    this.attachParts(m, group, partMeshes, dyn, CHALK_INK.clone(), 1.0, ex);
     return group;
   }
 
@@ -536,6 +585,13 @@ export class Renderer {
     const root = new THREE.Group();
     const baseCol = shadeColor(new THREE.Color(m.color[0], m.color[1], m.color[2]), shade);
     const dietCol = shadeColor(DIET_COLOR[m.part_effect.diet].clone(), shade);
+    const isPlayer = m.is_player;
+    // Player-only slightly darker outline to aid "that's me" recognition
+    // without a HUD label. Keeps the diegetic chalk style intact.
+    const outlineInk = shadeColor(
+      (isPlayer ? PLAYER_INK : CHALK_INK).clone(),
+      shade
+    );
     const inkCol = shadeColor(CHALK_INK.clone(), shade);
 
     const fillMat = createCellFillMaterial({
@@ -548,22 +604,46 @@ export class Renderer {
     fillMesh.renderOrder = 0;
     root.add(fillMesh);
 
-    const outlineMat = createChalkMaterial(inkCol);
+    const outlineHalfWidth = isPlayer ? 10.0 : 6.0;
+    const outlineMat = createChalkMaterial(outlineInk);
     outlineMat.uniforms.u_alpha.value = shade.alphaScale;
-    const outlineMesh = new THREE.Mesh(buildClosedRibbon(shapeLocal(m), 6.0), outlineMat);
+    const outlineMesh = new THREE.Mesh(
+      buildClosedRibbon(shapeLocal(m), outlineHalfWidth),
+      outlineMat
+    );
     outlineMesh.renderOrder = 5;
     root.add(outlineMesh);
 
+    const ex = shapeExtents(m.shape);
     const partMeshes: THREE.Mesh[] = [];
-    for (const p of m.parts) {
-      if (p.kind !== PartKind.MOUTH) continue;
-      const arc = buildArc([p.anchor[0], p.anchor[1]], 14 * p.scale, -0.9, 0.9, 12, 5.0);
-      const arcMat = createChalkMaterial(inkCol);
-      arcMat.uniforms.u_alpha.value = shade.alphaScale;
-      const arcMesh = new THREE.Mesh(arc, arcMat);
-      arcMesh.renderOrder = 6;
-      root.add(arcMesh);
-      partMeshes.push(arcMesh);
+    const dynamicParts: DynamicPart[] = [];
+
+    this.attachParts(m, root, partMeshes, dynamicParts, inkCol, shade.alphaScale, ex);
+
+    // Player accents: pulse ring + chevron.
+    let playerPulse: THREE.Mesh | null = null;
+    let playerChevron: THREE.Mesh | null = null;
+    if (isPlayer) {
+      const rRing = Math.max(m.max_core_radius, ex.frontX) * 1.5;
+      const ringGeom = buildRingRibbon(rRing, 48, 2.2);
+      const ringMat = createChalkMaterial(PLAYER_INK.clone());
+      ringMat.uniforms.u_alpha.value = 0.2;
+      playerPulse = new THREE.Mesh(ringGeom, ringMat);
+      playerPulse.renderOrder = -1;
+      root.add(playerPulse);
+
+      const ctip: Vec2 = [ex.frontX + 18, 0];
+      const cbackL: Vec2 = [ex.frontX + 6, 6];
+      const cbackR: Vec2 = [ex.frontX + 6, -6];
+      const chevGeom = mergeBufferGeometries([
+        buildOpenRibbon([cbackL, ctip], 1.8),
+        buildOpenRibbon([cbackR, ctip], 1.8)
+      ]);
+      const chevMat = createChalkMaterial(PLAYER_INK.clone());
+      chevMat.uniforms.u_alpha.value = 0.75;
+      playerChevron = new THREE.Mesh(chevGeom, chevMat);
+      playerChevron.renderOrder = 7;
+      root.add(playerChevron);
     }
 
     return {
@@ -571,33 +651,168 @@ export class Renderer {
       fillMesh,
       outlineMesh,
       partMeshes,
+      dynamicParts,
+      playerChevron,
+      playerPulse,
+      isPlayer,
+      bodyFrontX: ex.frontX,
+      bodyTailX: ex.tailX,
+      bodySideY: ex.sideY,
       shapeKey: monsterShapeKey(m),
       lastFrame: this.frameNum
     };
   }
 
+  // Build static + dynamic chalk parts (mouth, eyes, spikes, flagella…)
+  // and append them to `root`. Used by both initial entry creation and
+  // the tier-up rebuild path.
+  private attachParts(
+    m: Monster,
+    root: THREE.Group,
+    partMeshes: THREE.Mesh[],
+    dynamicParts: DynamicPart[],
+    inkCol: THREE.Color,
+    alphaScale: number,
+    ex: { frontX: number; tailX: number; sideY: number }
+  ): void {
+    for (const p of m.parts) {
+      const s = Math.max(0.1, p.scale);
+      switch (p.kind) {
+        case PartKind.MOUTH: {
+          // Render the mouth at the nose tip, regardless of the sim anchor.
+          // Every cell reads as a fish/spaceship with a clear front.
+          const nose: Vec2 = [ex.frontX * 0.92, 0];
+          const arc = buildArc(nose, 14 * s, -0.9, 0.9, 12, 5.0);
+          const arcMat = createChalkMaterial(inkCol);
+          arcMat.uniforms.u_alpha.value = alphaScale;
+          const arcMesh = new THREE.Mesh(arc, arcMat);
+          arcMesh.renderOrder = 6;
+          root.add(arcMesh);
+          partMeshes.push(arcMesh);
+          break;
+        }
+        case PartKind.EYES: {
+          for (const sign of [-1, 1]) {
+            const dot = buildDiscGeometry(
+              [ex.frontX * 0.55, sign * ex.sideY * 0.35],
+              2.8 * s, 10
+            );
+            const dotMat = createChalkMaterial(inkCol);
+            dotMat.uniforms.u_alpha.value = alphaScale;
+            const dotMesh = new THREE.Mesh(dot, dotMat);
+            dotMesh.renderOrder = 7;
+            root.add(dotMesh);
+            partMeshes.push(dotMesh);
+          }
+          break;
+        }
+        case PartKind.SPIKE:
+        case PartKind.HORN:
+        case PartKind.VENOM_SPIKE: {
+          const aLen = Math.hypot(p.anchor[0], p.anchor[1]);
+          const dx = aLen > 1e-3 ? p.anchor[0] / aLen : 1;
+          const dy = aLen > 1e-3 ? p.anchor[1] / aLen : 0;
+          const base: Vec2 = [p.anchor[0], p.anchor[1]];
+          const tipLen = 16 * s;
+          const tip: Vec2 = [base[0] + dx * tipLen, base[1] + dy * tipLen];
+          const tri = buildOpenRibbon([base, tip], 2.6);
+          const triMat = createChalkMaterial(inkCol);
+          triMat.uniforms.u_alpha.value = alphaScale;
+          const triMesh = new THREE.Mesh(tri, triMat);
+          triMesh.renderOrder = 6;
+          root.add(triMesh);
+          partMeshes.push(triMesh);
+          break;
+        }
+        case PartKind.FLAGELLA:
+        case PartKind.CILIA: {
+          const count = p.kind === PartKind.FLAGELLA ? 3 : 2;
+          for (let i = 0; i < count; ++i) {
+            const origin: Vec2 = [
+              ex.tailX + 2.0,
+              (i - (count - 1) * 0.5) * ex.sideY * 0.35
+            ];
+            const length = (p.kind === PartKind.FLAGELLA ? 28 : 18) * s;
+            const phase = i * 1.1 + m.noise_seed * 6.0;
+            const pts = buildFlagellumPoints(origin, length, 0, phase);
+            const ribbon = buildOpenRibbon(pts, 2.2);
+            const mat = createChalkMaterial(inkCol);
+            mat.uniforms.u_alpha.value = alphaScale * 0.9;
+            const mesh = new THREE.Mesh(ribbon, mat);
+            mesh.renderOrder = 4;
+            root.add(mesh);
+            dynamicParts.push({ kind: 'FLAGELLA', mesh, origin, phase, length });
+          }
+          break;
+        }
+        default:
+          // TEETH, ARMOR, REGEN, POISON intentionally not drawn yet.
+          break;
+      }
+    }
+  }
+
   private rebuildMonsterGeometry(e: MonsterCacheEntry, m: Monster): void {
     e.fillMesh.geometry.dispose();
     e.fillMesh.geometry = buildCellFillLocal(m);
+    const outlineHalfWidth = e.isPlayer ? 10.0 : 6.0;
     e.outlineMesh.geometry.dispose();
-    e.outlineMesh.geometry = buildClosedRibbon(shapeLocal(m), 6.0);
-    // Rebuild mouth arc geometries to match new scales/anchors. Simple:
-    // dispose existing part meshes, re-add.
+    e.outlineMesh.geometry = buildClosedRibbon(shapeLocal(m), outlineHalfWidth);
+    // Full part rebuild (static + dynamic + player accents).
     for (const pm of e.partMeshes) {
       e.root.remove(pm);
       pm.geometry.dispose();
       (pm.material as THREE.Material).dispose();
     }
     e.partMeshes.length = 0;
+    for (const dp of e.dynamicParts) {
+      e.root.remove(dp.mesh);
+      dp.mesh.geometry.dispose();
+      (dp.mesh.material as THREE.Material).dispose();
+    }
+    e.dynamicParts.length = 0;
+    if (e.playerPulse) {
+      e.root.remove(e.playerPulse);
+      e.playerPulse.geometry.dispose();
+      (e.playerPulse.material as THREE.Material).dispose();
+      e.playerPulse = null;
+    }
+    if (e.playerChevron) {
+      e.root.remove(e.playerChevron);
+      e.playerChevron.geometry.dispose();
+      (e.playerChevron.material as THREE.Material).dispose();
+      e.playerChevron = null;
+    }
+
+    const ex = shapeExtents(m.shape);
+    e.bodyFrontX = ex.frontX;
+    e.bodyTailX = ex.tailX;
+    e.bodySideY = ex.sideY;
+
     const inkCol = CHALK_INK.clone();
-    for (const p of m.parts) {
-      if (p.kind !== PartKind.MOUTH) continue;
-      const arc = buildArc([p.anchor[0], p.anchor[1]], 14 * p.scale, -0.9, 0.9, 12, 5.0);
-      const arcMat = createChalkMaterial(inkCol);
-      const arcMesh = new THREE.Mesh(arc, arcMat);
-      arcMesh.renderOrder = 6;
-      e.root.add(arcMesh);
-      e.partMeshes.push(arcMesh);
+    this.attachParts(m, e.root, e.partMeshes, e.dynamicParts, inkCol, 1.0, ex);
+
+    if (e.isPlayer) {
+      const rRing = Math.max(m.max_core_radius, ex.frontX) * 1.5;
+      const ringGeom = buildRingRibbon(rRing, 48, 2.2);
+      const ringMat = createChalkMaterial(PLAYER_INK.clone());
+      ringMat.uniforms.u_alpha.value = 0.2;
+      e.playerPulse = new THREE.Mesh(ringGeom, ringMat);
+      e.playerPulse.renderOrder = -1;
+      e.root.add(e.playerPulse);
+
+      const ctip: Vec2 = [ex.frontX + 18, 0];
+      const cbackL: Vec2 = [ex.frontX + 6, 6];
+      const cbackR: Vec2 = [ex.frontX + 6, -6];
+      const chevGeom = mergeBufferGeometries([
+        buildOpenRibbon([cbackL, ctip], 1.8),
+        buildOpenRibbon([cbackR, ctip], 1.8)
+      ]);
+      const chevMat = createChalkMaterial(PLAYER_INK.clone());
+      chevMat.uniforms.u_alpha.value = 0.75;
+      e.playerChevron = new THREE.Mesh(chevGeom, chevMat);
+      e.playerChevron.renderOrder = 7;
+      e.root.add(e.playerChevron);
     }
   }
 
@@ -844,6 +1059,54 @@ function buildFoodGeometry(radius: number): THREE.BufferGeometry {
     }
   }
   return mergeBufferGeometries(geoms);
+}
+
+// Axis extents of a local-space shape. +x is forward (nose), -x is tail.
+// Used by part placement (mouth at nose, flagella at tail).
+function shapeExtents(shape: Vec2[]): { frontX: number; tailX: number; sideY: number } {
+  let fx = 0, tx = 0, sy = 0;
+  for (const [x, y] of shape) {
+    if (x > fx) fx = x;
+    if (x < tx) tx = x;
+    if (Math.abs(y) > sy) sy = Math.abs(y);
+  }
+  return { frontX: fx, tailX: tx, sideY: sy };
+}
+
+// Small filled disc triangle-fan in local coords. Used for eyes.
+function buildDiscGeometry(center: Vec2, radius: number, samples: number): THREE.BufferGeometry {
+  const verts: number[] = [center[0], center[1], 0];
+  const across: number[] = [0];
+  const along: number[] = [0];
+  const indices: number[] = [];
+  for (let i = 0; i <= samples; ++i) {
+    const a = (i / samples) * Math.PI * 2;
+    verts.push(center[0] + Math.cos(a) * radius, center[1] + Math.sin(a) * radius, 0);
+    across.push(0);
+    along.push(0);
+  }
+  for (let i = 1; i <= samples; ++i) indices.push(0, i, i + 1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setAttribute('a_across', new THREE.Float32BufferAttribute(across, 1));
+  g.setAttribute('a_along', new THREE.Float32BufferAttribute(along, 1));
+  g.setIndex(indices);
+  return g;
+}
+
+// Points along a wavy flagellum trailing in -x from `origin`. The
+// renderer rebuilds this each frame per flagellum — cheap, ~6 points.
+function buildFlagellumPoints(origin: Vec2, length: number, time: number, phase: number): Vec2[] {
+  const segs = 6;
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= segs; ++i) {
+    const t = i / segs;
+    const x = origin[0] - t * length;
+    const amp = 4.0 * t; // wave grows toward the tip
+    const y = origin[1] + Math.sin(time * 6.0 + phase + t * 3.5) * amp;
+    pts.push([x, y]);
+  }
+  return pts;
 }
 
 // Minimal merge — concat position/a_across/a_along/index across inputs.

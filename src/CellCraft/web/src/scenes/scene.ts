@@ -39,6 +39,48 @@ export interface Scene {
 
 export type SceneFactory = () => Scene;
 
+// Per-scene slide+fade in. Replaces the old fullscreen SceneFader —
+// instead of washing the screen with cream between scenes, each scene
+// lightly animates its own top-level UI group. Keeps transitions snappy
+// and less jarring on a chalkboard.
+//
+// Usage: keep a number `enterT` initialized to 0 in your scene closure;
+// call tickEnter(dt, state) every update(); then lerp the group position
+// and a shared opacity from enterT.
+export const ENTER_DURATION_S = 0.18;
+
+// Advance a scene's enter cursor from 0→1 over ENTER_DURATION_S.
+export function advanceEnter(prev: number, dt: number): number {
+  return Math.min(1, prev + dt / ENTER_DURATION_S);
+}
+
+// Walk a group and set opacity on any transparent material we find.
+// Opaque materials (e.g. the chalkboard) are left alone.
+export function applyEnterOpacity(group: THREE.Object3D, t: number): void {
+  group.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+    if (!mat) return;
+    const apply = (mm: THREE.Material): void => {
+      if (!mm.transparent) return;
+      const anyMat = mm as unknown as { _enterBaseAlpha?: number };
+      const uni = (mm as THREE.ShaderMaterial).uniforms;
+      if (uni && uni.u_alpha) {
+        if (anyMat._enterBaseAlpha === undefined) {
+          anyMat._enterBaseAlpha = uni.u_alpha.value as number;
+        }
+        uni.u_alpha.value = (anyMat._enterBaseAlpha as number) * t;
+      } else if ('opacity' in mm) {
+        if (anyMat._enterBaseAlpha === undefined) {
+          anyMat._enterBaseAlpha = (mm as THREE.MeshBasicMaterial).opacity;
+        }
+        (mm as THREE.MeshBasicMaterial).opacity = (anyMat._enterBaseAlpha as number) * t;
+      }
+    };
+    if (Array.isArray(mat)) mat.forEach(apply); else apply(mat);
+  });
+}
+
 // Utility: dispose every Mesh under a group (geometry + materials) and
 // clear it. Scenes use this in exit() to avoid GPU leaks.
 export function disposeGroup(group: THREE.Object3D): void {

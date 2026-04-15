@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { makeText, UI_PALETTE } from '../render/ui';
 import { buttonHit, makeMenuButton, MenuButtonHandle, pointerToHud } from './menu_widgets';
-import { Scene, SceneCtx, disposeGroup } from './scene';
+import { Scene, SceneCtx, disposeGroup, advanceEnter, applyEnterOpacity } from './scene';
 import { makeStarterSelectScene } from './starter_select_scene';
 
 // Main menu: title + [Play, Lab, Quit]. Keyboard up/down/enter or mouse.
@@ -23,6 +23,11 @@ export function makeMainMenuScene(): Scene {
 
   let onResize: (() => void) | null = null;
   let sceneCtxRef: SceneCtx | null = null;
+  let enterT = 0;
+
+  function tickEnter(dt: number): void {
+    enterT = advanceEnter(enterT, dt);
+  }
 
   const layout = (_w: number, h: number): void => {
     // Title: upper third of screen.
@@ -104,7 +109,13 @@ export function makeMainMenuScene(): Scene {
       subtitleObj = null;
       sceneCtxRef = null;
     },
-    update(_dt, ctx) {
+    update(dt, ctx) {
+      // Tiny per-scene enter anim: panels slide up 20px + fade in over
+      // ~180ms. Replaces the old fullscreen fader.
+      tickEnter(dt);
+      hudGroup.position.y = (1 - enterT) * -20;
+      applyEnterOpacity(hudGroup, enterT);
+
       // Title breathing glow — subtle size pulse via scale.
       if (titleObj) {
         const t = ctx.now - enteredAt;

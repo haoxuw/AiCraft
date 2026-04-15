@@ -3,7 +3,7 @@ import { makeGlassPanel, makeText, UI_PALETTE } from '../render/ui';
 import { buttonHit, makeMenuButton, MenuButtonHandle, pointerToHud } from './menu_widgets';
 import { makeMainMenuScene } from './main_menu_scene';
 import { makeStarterSelectScene } from './starter_select_scene';
-import { Scene, SceneCtx, disposeGroup } from './scene';
+import { Scene, SceneCtx, disposeGroup, advanceEnter, applyEnterOpacity } from './scene';
 import { MatchStats } from './match_scene';
 
 export interface EndOpts {
@@ -28,6 +28,7 @@ export function makeEndScene(opts: EndOpts): Scene {
   let selected = 0;
   let onResize: (() => void) | null = null;
   let enteredAt = 0;
+  let enterT = 0;
 
   const victory = opts.outcome === 'victory';
   const titleText = victory ? 'APEX' : 'CONSUMED';
@@ -127,7 +128,10 @@ export function makeEndScene(opts: EndOpts): Scene {
       menuBtn = null;
     },
 
-    update(_dt, ctx) {
+    update(dt, ctx) {
+      enterT = advanceEnter(enterT, dt);
+      hudGroup.position.y = (1 - enterT) * -20;
+      applyEnterOpacity(hudGroup, enterT);
       if (titleObj) {
         const t = ctx.now - enteredAt;
         titleObj.scale.setScalar(1 + Math.sin(t * 1.2) * 0.02);

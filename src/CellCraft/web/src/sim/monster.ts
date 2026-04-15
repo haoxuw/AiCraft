@@ -53,6 +53,9 @@ export interface Monster {
   noise_seed: number;
   is_player: boolean;
   material_banked: number; // unused for now; reserved for split/grow costs
+  // Per-frame visual heading — = heading + small wobble. Purely cosmetic;
+  // sim logic only reads `heading`. Updated by the renderer each frame.
+  visual_heading: number;
 
   // Optional behavior artifact id (e.g. "base:hunt"). Pure AI metadata —
   // engine never reads this; the client-side AI dispatcher resolves it
@@ -62,7 +65,8 @@ export interface Monster {
 
 // --- Shape helpers --------------------------------------------------
 
-// Lobed circle with N samples — matches RadialCell auto-mirrored half-body.
+// Lobed circle with N samples — legacy helper (kept for tests / previews
+// that want a round shape). Most callers should use makeTeardropShape.
 export function makeLobedShape(
   baseRadius: number,
   samples: number,
@@ -82,6 +86,54 @@ export function makeLobedShape(
     const jitter = 1 + (rand() - 0.5) * 0.05;
     const r = baseRadius * lobe * jitter;
     out.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  return out;
+}
+
+// Directional teardrop / ovoid. +x is forward (nose tip), -x is tail.
+// Front/back ratio ~1.5:1. The tail has a shallow concave notch where
+// flagella attach. Kept in local coords; heading rotation happens in
+// worldPolygon()/shapeInWorld().
+export function makeTeardropShape(
+  baseRadius: number,
+  samples: number,
+  seed: number
+): Shape {
+  const out: Shape = [];
+  let s = seed | 0;
+  const rand = (): number => {
+    s = (s * 1664525 + 1013904223) | 0;
+    return ((s >>> 0) & 0xffff) / 0xffff;
+  };
+  const frontR = baseRadius * 1.15; // reach in +x
+  const tailR = baseRadius * 0.75;  // reach in -x
+  const sideR = baseRadius * 0.85;
+  for (let i = 0; i < samples; ++i) {
+    const a = (i / samples) * Math.PI * 2;
+    const cx = Math.cos(a);
+    const sy = Math.sin(a);
+    // Blend front/back radii along +x/-x; side radius on |y|.
+    // Use a smooth ellipse with a tail-pinch: narrow more as we approach
+    // the extreme -x, and add a tiny concave notch right at a==π.
+    const lenR = cx >= 0 ? frontR : tailR;
+    // Teardrop: forward half rounds fat, back half narrows toward tail.
+    // Compute an ellipse (cx*lenR, sy*sideR) then pinch the tail by scaling
+    // y toward zero as cx -> -1.
+    let x = cx * lenR;
+    let y = sy * sideR;
+    if (cx < 0) {
+      // narrow the back half: scale y by how close we are to the tail tip.
+      const tailT = -cx; // 0 at equator, 1 at tail tip
+      y *= 1.0 - 0.55 * tailT * tailT;
+      // Pull the tail tip in further for a pointier rear.
+      x *= 1.0 - 0.12 * tailT;
+    }
+    // Shallow concave notch at the very back for flagella attachment.
+    const notch = Math.exp(-Math.pow((a - Math.PI) * 3.5, 2)) * baseRadius * 0.10;
+    x += notch;
+    // Small deterministic jitter for chalky feel.
+    const jitter = 1 + (rand() - 0.5) * 0.04;
+    out.push([x * jitter, y * jitter]);
   }
   return out;
 }
@@ -182,7 +234,12 @@ export interface MonsterOptions {
 }
 
 export function makeMonster(opts: MonsterOptions): Monster {
-  const shape = makeLobedShape(opts.baseRadius, 64, opts.seed);
+  // Teardrop body: +x = forward (nose), -x = tail. 18 samples around the
+  // perimeter is enough for a smooth chalk silhouette and keeps the SAT
+  // contact test cheap. The old 64-sample lobed circle was symmetrical,
+  // which made cells visually "spin" rather than "swim" when the heading
+  // changed.
+  const shape = makeTeardropShape(opts.baseRadius, 18, opts.seed);
   const tier = opts.tier ?? 1;
   const area = shapeArea(shape);
   const biomass = Math.max(1, area * DENSITY);
@@ -213,6 +270,7 @@ export function makeMonster(opts: MonsterOptions): Monster {
     noise_seed: (opts.seed % 997) / 997.0,
     is_player: opts.isPlayer === true,
     material_banked: 0,
+    visual_heading: 0,
     behavior_id: opts.behaviorId
   };
   refreshStats(m);

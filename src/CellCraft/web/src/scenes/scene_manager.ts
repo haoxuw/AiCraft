@@ -2,19 +2,14 @@ import { Input } from '../input/input';
 import { Renderer } from '../render/renderer';
 import { Scene, SceneCtx, SceneFactory } from './scene';
 
-// Owns the active scene and sequences transitions through SceneFader.
-// Only the manager calls enter/exit; scenes request transitions via
-// ctx.requestGoto() and the manager serializes them.
+// Owns the active scene and sequences scene swaps. Swaps are INSTANT —
+// scenes do their own ~180ms slide+fade on the UI group in enter()/update().
+// The old fullscreen cream SceneFader is retained as a class (transitions.ts)
+// but no longer used here; it felt jarring between chalkboard scenes.
 
 export class SceneManager {
   private current: Scene | null = null;
-  private transitioning = false;
-  private pending: {
-    factory: SceneFactory;
-    fade: boolean;
-    fadeOutMs: number;
-    fadeInMs: number;
-  } | null = null;
+  private pending: { factory: SceneFactory } | null = null;
 
   constructor(
     private renderer: Renderer,
@@ -27,13 +22,8 @@ export class SceneManager {
       renderer: this.renderer,
       input: this.input,
       now: this.nowSec(),
-      requestGoto: (factory, opts) => {
-        this.pending = {
-          factory,
-          fade: opts?.fade ?? true,
-          fadeOutMs: opts?.fadeOutMs ?? 450,
-          fadeInMs: opts?.fadeInMs ?? 550
-        };
+      requestGoto: (factory, _opts) => {
+        this.pending = { factory };
       }
     };
   }
@@ -50,7 +40,7 @@ export class SceneManager {
   }
 
   isTransitioning(): boolean {
-    return this.transitioning;
+    return false;
   }
 
   // Per-frame tick: runs update + flushes any pending transition.
@@ -58,43 +48,24 @@ export class SceneManager {
     const ctx = this.makeCtx();
     if (this.current) this.current.update(dt, ctx);
 
-    if (this.pending && !this.transitioning) {
+    if (this.pending) {
       const p = this.pending;
       this.pending = null;
-      this.transitioning = true;
-      void this.runTransition(p.factory, p.fade, p.fadeOutMs, p.fadeInMs);
+      // Instant swap: exit old, enter new. Per-scene enter animation
+      // handles the visual transition.
+      const ctxOut = this.makeCtx();
+      if (this.current) this.current.exit(ctxOut);
+      this.current = p.factory();
+      const ctxIn = this.makeCtx();
+      this.current.enter(ctxIn);
     }
   }
 
-  private async runTransition(
-    factory: SceneFactory,
-    fade: boolean,
-    fadeOutMs: number,
-    fadeInMs: number
-  ): Promise<void> {
-    const fader = this.renderer.fader;
-    if (fade) await fader.fadeOut(fadeOutMs, this.nowSec());
-
-    // Exit old.
-    const ctxOut = this.makeCtx();
-    if (this.current) this.current.exit(ctxOut);
-
-    // Enter new.
-    this.current = factory();
-    const ctxIn = this.makeCtx();
-    this.current.enter(ctxIn);
-
-    if (fade) await fader.fadeIn(fadeInMs, this.nowSec());
-    this.transitioning = false;
-  }
-
   onKey(e: KeyboardEvent): void {
-    if (this.transitioning) return;
     const ctx = this.makeCtx();
     this.current?.onKey?.(e, ctx);
   }
   onPointer(e: PointerEvent): void {
-    if (this.transitioning) return;
     const ctx = this.makeCtx();
     this.current?.onPointer?.(e, ctx);
   }

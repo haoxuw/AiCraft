@@ -7,7 +7,7 @@ import { Part } from '../sim/part';
 import { buttonHit, makeMenuButton, MenuButtonHandle, pointerToHud } from './menu_widgets';
 import { makeMatchScene } from './match_scene';
 import { makeMainMenuScene } from './main_menu_scene';
-import { Scene, disposeGroup } from './scene';
+import { Scene, disposeGroup, advanceEnter, applyEnterOpacity } from './scene';
 
 // Starter select: three cells on pedestals, slowly spinning. Pick one
 // to start a match. Back button returns to main menu.
@@ -50,6 +50,7 @@ export function makeStarterSelectScene(): Scene {
   let backBtn: MenuButtonHandle | null = null;
   let onResize: (() => void) | null = null;
   let enteredAt = 0;
+  let enterT = 0;
 
   const PEDESTAL_Y = 20;
   const BACK_Y_FROM_BOTTOM = 60;
@@ -169,6 +170,9 @@ export function makeStarterSelectScene(): Scene {
     },
 
     update(dt, ctx) {
+      enterT = advanceEnter(enterT, dt);
+      hudGroup.position.y = (1 - enterT) * -20;
+      applyEnterOpacity(hudGroup, enterT);
       const t = ctx.now - enteredAt;
       for (let i = 0; i < STARTERS.length; ++i) {
         const ped = pedestals[i];

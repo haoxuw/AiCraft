@@ -161,15 +161,27 @@ export function tick(world: World, actions: Action[], dt: number): SimEvent[] {
       if (dmag > 1e-4) {
         const s = Math.min(dmag, m.move_speed);
         m.vel = [(desired[0] / dmag) * s, (desired[1] / dmag) * s];
-        const targetHeading = Math.atan2(desired[1], desired[0]);
-        const diff = wrapAngleDiff(m.heading, targetHeading);
-        const maxStep = m.turn_speed * dt;
-        m.heading += clamp(diff, -maxStep, maxStep);
       } else {
         m.vel = [m.vel[0] * 0.9, m.vel[1] * 0.9];
       }
     } else {
       m.vel = [m.vel[0] * 0.9, m.vel[1] * 0.9];
+    }
+
+    // Heading slew: turn toward velocity direction at a bounded rate so
+    // cells *swim* rather than snapping. If the cell is effectively idle
+    // (|v| below a small threshold), keep the last heading — no more
+    // spin-in-place when there's no input.
+    const vmag = Math.hypot(m.vel[0], m.vel[1]);
+    const IDLE_V = 5.0;
+    if (vmag > IDLE_V) {
+      const targetHeading = Math.atan2(m.vel[1], m.vel[0]);
+      const diff = wrapAngleDiff(m.heading, targetHeading);
+      // turn_speed comes from refreshStats(); clamp floor so large cells
+      // still turn visibly. 8 rad/s is the Spore-ish ceiling.
+      const rate = Math.min(Math.max(m.turn_speed, 3.0), 8.0);
+      const maxStep = rate * dt;
+      m.heading += clamp(diff, -maxStep, maxStep);
     }
 
     // Integrate.
