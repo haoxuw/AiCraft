@@ -48,29 +48,46 @@ BgCreature BackgroundLayer::spawn_(SilhouetteType t, float map_radius,
 
 void BackgroundLayer::repopulate_(int tier, float map_radius) {
 	pool_.clear();
-	// Restrict spawn range to a viewport-ish radius. With only 5-7 creatures,
-	// uniform over the full 1500-unit map_radius leaves most off-screen.
-	// They'll still drift + wrap through the full map over time.
+	// Restrict spawn range to a viewport-ish radius. With only a handful of
+	// creatures, uniform over the full 1500-unit map_radius leaves most
+	// off-screen. They'll still drift + wrap through the full map over time.
 	(void)map_radius;
 	const float SPAWN_R = 900.0f;
 
+	// Depth-layer preset: three planes of depth with parallax, stroke width,
+	// and cream-tint mix tuned so that NEAR creatures read as crisp, MID
+	// recedes a step, and FAR feels like looming shadow behind a frosted
+	// pane. Fake-blur (stacked ribbons + wide half-width) replaces a real
+	// FBO blur pass. Keyed by layer index 0/1/2.
+	struct LayerStyle {
+		float parallax;
+		float stroke_width;
+		float tint_mix;
+	};
+	static const LayerStyle STYLE[3] = {
+		{1.00f,  4.0f, 0.00f},  // 0 NEAR:  world-locked, crisp tan outline
+		{0.65f,  9.0f, 0.30f},  // 1 MID:   2/3 parallax, softer + paler
+		{0.35f, 16.0f, 0.55f},  // 2 FAR:   looming, heavily blurred-out
+	};
+	auto push = [&](SilhouetteType t, float scale, int layer) {
+		BgCreature c = spawn_(t, SPAWN_R, scale, layer);
+		c.parallax     = STYLE[layer].parallax;
+		c.stroke_width = STYLE[layer].stroke_width;
+		c.tint_mix     = STYLE[layer].tint_mix;
+		pool_.push_back(c);
+	};
+
 	if (tier <= 4) {
-		// CELL silhouettes. Scale = 4× * 2^(tier-1): 4, 8, 16, 32.
-		// Keep count modest so the board still breathes — 7 cells.
-		const int TOTAL = 7;
+		// CELL silhouettes in three depth planes.
+		// NEAR: next-tier creatures (base = 4× * 2^(tier-1)).
+		// MID:  two-tiers-ahead (2× base).
+		// FAR:  "way later" loom — fixed 32× regardless of player tier so
+		//       every player from the start can sense a macro-world beyond.
 		float base = 4.0f * std::pow(2.0f, float(std::max(1, tier) - 1));
-		for (int i = 0; i < TOTAL; ++i) {
-			// For tiers 2+, split into a near-common and far-rare layer.
-			int layer = 0;
-			float scale = base;
-			if (tier >= 2) {
-				bool far_layer = (i % 3 == 0);  // 1/3 far, 2/3 near
-				layer = far_layer ? 1 : 0;
-				scale = far_layer ? base * 1.5f : base * 0.9f;
-			}
-			pool_.push_back(spawn_(SilhouetteType::CELL_GENERIC, SPAWN_R,
-				scale, layer));
-		}
+		// 2 near, 2 mid, 1 far — sparse so the arena reads as the hero layer.
+		for (int i = 0; i < 2; ++i) push(SilhouetteType::CELL_GENERIC, base,        0);
+		for (int i = 0; i < 2; ++i) push(SilhouetteType::CELL_GENERIC, base * 2.0f, 1);
+		for (int i = 0; i < 1; ++i) push(SilhouetteType::CELL_GENERIC, 32.0f,       2);
 	} else {
 		// APEX (tier 5): sparse animal menagerie — like real fauna in an
 		// enormous aquarium, they should feel rare and looming, not crowded.
@@ -83,14 +100,22 @@ void BackgroundLayer::repopulate_(int tier, float map_radius) {
 		// wider than the window — only edge-fragments were visible, reading
 		// as abstract scribbles. 6× → ~500px silhouettes, looming but whole.
 		struct Spawn { SilhouetteType t; glm::vec2 pos; int layer; float s; };
-		const Spawn spawns[3] = {
-			{SilhouetteType::FISH,   glm::vec2(-300.0f,  120.0f), 0, 6.0f},
-			{SilhouetteType::TURTLE, glm::vec2( 520.0f, -320.0f), 1, 7.2f},
-			{SilhouetteType::JELLY,  glm::vec2( 200.0f,  380.0f), 0, 6.0f},
+		const Spawn spawns[5] = {
+			{SilhouetteType::FISH,   glm::vec2(-300.0f,  120.0f), 0,  6.0f},
+			{SilhouetteType::TURTLE, glm::vec2( 520.0f, -320.0f), 1,  9.0f},
+			{SilhouetteType::JELLY,  glm::vec2( 200.0f,  380.0f), 0,  6.0f},
+			// Looming macro layer — a distant whale-shark and jelly swarm
+			// at ~32× baseline. Heavy blur + low parallax reads as "layer
+			// of the world you haven't grown into yet".
+			{SilhouetteType::FISH,   glm::vec2(-800.0f, -550.0f), 2, 28.0f},
+			{SilhouetteType::JELLY,  glm::vec2( 700.0f,  600.0f), 2, 26.0f},
 		};
 		for (const auto& s : spawns) {
 			BgCreature c = spawn_(s.t, SPAWN_R, s.s, s.layer);
 			c.pos = s.pos;  // override random position
+			c.parallax     = STYLE[s.layer].parallax;
+			c.stroke_width = STYLE[s.layer].stroke_width;
+			c.tint_mix     = STYLE[s.layer].tint_mix;
 			// Gentle, readable orientations: fish roughly horizontal,
 			// turtle slightly tilted, jelly upright (rot=0, top-up).
 			if (s.t == SilhouetteType::FISH)   c.rot = frand(rng_, -0.3f, 0.3f);

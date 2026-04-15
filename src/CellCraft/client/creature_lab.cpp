@@ -83,8 +83,8 @@ bool point_in_rect(glm::vec2 p, float x, float y, float w, float h) {
 
 } // namespace
 
-void CreatureLab::init(Window* w, ChalkRenderer* r, TextRenderer* t) {
-	window_ = w; renderer_ = r; text_ = t;
+void CreatureLab::init(Window* w, ChalkRenderer* r, CellFillRenderer* fr, TextRenderer* t) {
+	window_ = w; renderer_ = r; fill_renderer_ = fr; text_ = t;
 	reset();
 }
 
@@ -983,6 +983,28 @@ void CreatureLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 	// Wobble: slight rotation oscillation.
 	float wob = std::sin(wobble_phase_ * TWO_PI * 0.5f) * (5.0f * PI / 180.0f);
 	float breathing = 1.0f + 0.02f * std::sin(wobble_phase_ * TWO_PI * 0.5f);
+
+	// Phase 1.1: body fill before outline.
+	if (fill_renderer_) {
+		std::vector<glm::vec2> poly_px;
+		poly_px.reserve(local_poly_.size());
+		float c = std::cos(wob), si = std::sin(wob);
+		for (auto& v : local_poly_) {
+			glm::vec2 vv(v.x * breathing, v.y * breathing);
+			glm::vec2 r(c * vv.x - si * vv.y, si * vv.x + c * vv.y);
+			poly_px.push_back(local_to_canvas_px_(r, l));
+		}
+		sim::PartEffect pe = sim::computePartEffects(parts_);
+		// Flush any queued strokes first (draw order: strokes→fill→outline
+		// would blow away the fill) — here we have no queued strokes yet,
+		// so just drop the fill onto the framebuffer directly.
+		if (!strokes.empty()) {
+			renderer_->drawStrokes(strokes, nullptr, l.fw, l.fh);
+			strokes.clear();
+		}
+		fill_renderer_->drawFill(poly_px, color_, pe.diet, 777.0f,
+			(float)glfwGetTime(), l.fw, l.fh);
+	}
 
 	// Creature outline
 	{

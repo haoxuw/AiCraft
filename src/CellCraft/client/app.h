@@ -14,6 +14,7 @@
 #include "CellCraft/artifacts/monsters/base/prebuilt.h"
 #include "CellCraft/artifacts/monsters/base/starters.h"
 #include "CellCraft/client/app_state.h"
+#include "CellCraft/client/cell_fill_renderer.h"
 #include "CellCraft/client/chalk_renderer.h"
 #include "CellCraft/client/chalk_stroke.h"
 #include "CellCraft/client/creature_lab.h"
@@ -138,6 +139,7 @@ private:
 	AppOptions opts_;
 	Window window_;
 	std::unique_ptr<ChalkRenderer> renderer_;
+	std::unique_ptr<CellFillRenderer> fill_renderer_;
 	std::unique_ptr<TextRenderer>  text_;
 	std::unique_ptr<PostFX>        post_fx_;
 	AmbientParticles               ambient_;

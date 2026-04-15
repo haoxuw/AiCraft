@@ -95,6 +95,8 @@ bool App::init(const AppOptions& opts) {
 
 	renderer_ = std::make_unique<ChalkRenderer>();
 	if (!renderer_->init()) return false;
+	fill_renderer_ = std::make_unique<CellFillRenderer>();
+	if (!fill_renderer_->init()) return false;
 	text_ = std::make_unique<TextRenderer>();
 	if (!text_->init("shaders")) return false;
 	// Load TTF SDF fonts for modern UI (Inter + Audiowide). Failure is
@@ -110,7 +112,7 @@ bool App::init(const AppOptions& opts) {
 
 	log_.open();
 	prebuilts_ = monsters::getPrebuiltMonsters();
-	lab_.init(&window_, renderer_.get(), text_.get());
+	lab_.init(&window_, renderer_.get(), fill_renderer_.get(), text_.get());
 	lab_.set_speech_enabled(!opts_.no_speech);
 
 	if (opts_.autotest || !opts_.play_screenshot_path.empty()) {
@@ -160,6 +162,7 @@ void App::shutdown() {
 	ui::modern::shutdownFonts();
 	if (post_fx_)  { post_fx_->shutdown();  post_fx_.reset(); }
 	if (text_)     { text_->shutdown();     text_.reset(); }
+	if (fill_renderer_) { fill_renderer_->shutdown(); fill_renderer_.reset(); }
 	if (renderer_) { renderer_->shutdown(); renderer_.reset(); }
 	window_.shutdown();
 	g_app = nullptr;
@@ -220,7 +223,7 @@ void App::run() {
 					bg_layer_.setPlayerTier(pt, world_.map_radius);
 					bg_layer_.update(0.0f, world_.map_radius);
 					bg_layer_.draw(renderer_.get(), fw, fh,
-						[this](glm::vec2 wp){ return worldToScreen(wp); }, (float)glfwGetTime()); }
+						[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime()); }
 				drawFood();
 				drawMonsters();
 				updateAndDrawParticles(0.0f);
@@ -262,7 +265,7 @@ void App::run() {
 						bg_layer_.setPlayerTier(pt, world_.map_radius);
 						bg_layer_.update(0.0f, world_.map_radius);
 						bg_layer_.draw(renderer_.get(), fw, fh,
-							[this](glm::vec2 wp){ return worldToScreen(wp); }, (float)glfwGetTime()); }
+							[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime()); }
 					drawFood();
 					drawMonsters();
 					updateAndDrawParticles(0.0f);
@@ -319,7 +322,7 @@ void App::run() {
 				bg_layer_.setPlayerTier(pt, world_.map_radius);
 				bg_layer_.update(dt, world_.map_radius);
 				bg_layer_.draw(renderer_.get(), w, h,
-					[this](glm::vec2 wp){ return worldToScreen(wp); }, (float)glfwGetTime()); }
+					[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime()); }
 			drawFood();
 			drawMonsters();
 			updateAndDrawParticles(dt);
@@ -560,7 +563,7 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 		ai_states_[id] = s;
 	}
 
-	world_.scatter_food(30);
+	world_.scatter_food(16);
 
 	sim_ = std::make_unique<sim::Sim>(&world_);
 	state_ = AppState::PLAYING;
@@ -1330,6 +1333,23 @@ void App::drawMonsters() {
 		strokes.push_back(std::move(ring));
 	}
 
+	// Phase 1.1: organic body fill pass — runs BEFORE the chalk outline so
+	// the hand-drawn edge draws cleanly on top. Each cell is fan-triangulated
+	// from its centroid with a membrane→cytoplasm radial gradient.
+	{
+		std::vector<glm::vec2> poly_px;
+		float t_now = (float)glfwGetTime();
+		for (auto& [id, m] : world_.monsters) {
+			if (!m.alive) continue;
+			auto wp = sim::transform_to_world(m.shape, m.core_pos, m.heading);
+			poly_px.clear();
+			poly_px.reserve(wp.size());
+			for (auto& v : wp) poly_px.push_back(worldToScreen(v));
+			fill_renderer_->drawFill(poly_px, m.color, m.part_effect.diet,
+				static_cast<float>(id), t_now, w, h);
+		}
+	}
+
 	for (auto& [id, m] : world_.monsters) {
 		if (!m.alive) continue;
 		auto wp = sim::transform_to_world(m.shape, m.core_pos, m.heading);
@@ -1404,19 +1424,16 @@ void App::drawMonsters() {
 void App::drawFood() {
 	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 	std::vector<ChalkStroke> strokes;
-	strokes.reserve(world_.food.size() * 4);
+	strokes.reserve(world_.food.size() * 220);
 
 	const float TWO_PI = 6.28318530718f;
 	const float t = (float)glfwGetTime();
 
-	// Chalk palette — bold pigment on cream. Values here match the design
-	// spec (#FF5C93 pink / #C83A6E marble; #6BCB4F leaf / #A8E87A stem).
-	const glm::vec3 MEAT_PINK   = {1.000f, 0.361f, 0.576f};
-	const glm::vec3 MEAT_MARBLE = {0.784f, 0.227f, 0.431f};
-	const glm::vec3 PLANT_GREEN = {0.420f, 0.796f, 0.310f};
-	const glm::vec3 PLANT_STEM  = {0.659f, 0.910f, 0.478f};
+	// Green palette: two shades in the same family so MEAT vs PLANT still
+	// reads at a glance, but the board no longer has competing hues.
+	const glm::vec3 PLANT_GREEN = {0.420f, 0.796f, 0.310f};  // bright chartreuse
+	const glm::vec3 MEAT_GREEN  = {0.180f, 0.560f, 0.270f};  // deeper forest green
 
-	// Cheap per-food hash → [0,1). Stable across frames for wobble uniqueness.
 	auto hash01 = [](uint32_t s) {
 		s ^= s >> 16; s *= 0x7feb352dU;
 		s ^= s >> 15; s *= 0x846ca68bU;
@@ -1424,150 +1441,271 @@ void App::drawFood() {
 		return float(s & 0xFFFFFF) / float(0x1000000);
 	};
 
+	// Bevel colors — darker shadow + primary body + bright highlight gives a
+	// chunky "extruded glass" read without needing a real 3D shader. Each arm
+	// is drawn three times (shadow offset, body, highlight offset).
+	const glm::vec3 PLANT_SHADOW   = {0.180f, 0.420f, 0.140f};
+	const glm::vec3 PLANT_HIGHLITE = {0.780f, 0.960f, 0.650f};
+	const glm::vec3 MEAT_SHADOW    = {0.070f, 0.280f, 0.130f};
+	const glm::vec3 MEAT_HIGHLITE  = {0.560f, 0.870f, 0.520f};
+	// Pure white specular so the "glass" reads as catching light.
+	const glm::vec3 SPECULAR       = {0.98f, 1.00f, 0.92f};
+
 	for (auto& f : world_.food) {
 		glm::vec2 sp = worldToScreen(f.pos);
-		if (sp.x < -60.0f || sp.x > w + 60.0f) continue;
-		if (sp.y < -60.0f || sp.y > h + 60.0f) continue;
+		if (sp.x < -80.0f || sp.x > w + 80.0f) continue;
+		if (sp.y < -80.0f || sp.y > h + 80.0f) continue;
 
-		// VISUAL radius decoupled from collision/pickup radius.
-		// Pickup stays driven by f.biomass on the sim side; render is much
-		// larger so meat/plant read as shapes at a glance (~14..22 world u).
 		float bm = std::max(0.0f, f.biomass);
-		// biomass typically 4..15 → map to [14, 22].
 		float bm_t  = std::min(1.0f, std::max(0.0f, (bm - 4.0f) / 11.0f));
-		float base_r = 14.0f + bm_t * 8.0f;
+		// 2.2× larger overall → flakes are a real focal point.
+		float base_r = 30.0f + bm_t * 16.0f;
 		float phase  = hash01(f.seed) * TWO_PI;
 
-		// Extra brown stem color for PLANT.
-		const glm::vec3 PLANT_BROWN = {0.396f, 0.263f, 0.129f};
+		float spin_sign = (hash01(f.seed ^ 0x13572468u) < 0.5f) ? -1.0f : 1.0f;
+		float spin = spin_sign * t * 0.35f + phase;
 
-		if (f.type == sim::FoodType::MEAT) {
-			// ---- MEAT BLUB: irregular lobed blob, pink, with marbling ----
-			// Pulse ±5% over 1.5s.
-			float pulse = 1.0f + 0.05f * std::sin(t * (TWO_PI / 1.5f) + phase);
-			float r = base_r * pulse;
+		const bool is_meat = (f.type == sim::FoodType::MEAT);
+		const glm::vec3 col_body = is_meat ? MEAT_GREEN     : PLANT_GREEN;
+		const glm::vec3 col_shad = is_meat ? MEAT_SHADOW    : PLANT_SHADOW;
+		const glm::vec3 col_high = is_meat ? MEAT_HIGHLITE  : PLANT_HIGHLITE;
+		// Thick body; shadow wider underneath; highlight thin on top.
+		const float hw_body = is_meat ? 4.2f : 3.6f;
+		const float hw_shad = hw_body * 1.55f;
+		const float hw_high = hw_body * 0.50f;
+		const int   arms    = 6;
 
-			// 5–7 lobes (deterministic per-food).
-			int lobes = 5 + int(hash01(f.seed ^ 0x9E3779B9u) * 3.0f); // 5..7
-			const int N = 40;
-			ChalkStroke body;
-			body.color = MEAT_PINK;
-			body.half_width = 3.2f;  // THICK stroke — reads like a crayon outline
-			body.points.reserve(N + 1);
-			for (int i = 0; i <= N; ++i) {
-				float a = TWO_PI * float(i) / float(N);
-				// Pronounced lobed silhouette — 25% wobble.
-				float wob = 1.0f + 0.25f * std::sin(a * float(lobes) + phase)
-				                 + 0.06f * std::sin(a * 2.0f - phase);
-				body.points.push_back({sp.x + std::cos(a) * r * wob,
-				                       sp.y + std::sin(a) * r * wob});
-			}
-			strokes.push_back(std::move(body));
+		// Light from upper-left: shadow falls down-right, highlight up-left.
+		// Offsets scale with flake size so bevel depth stays proportional.
+		const float bevel = base_r * 0.10f;
+		const glm::vec2 shad_off( bevel,  bevel);
+		const glm::vec2 high_off(-bevel * 0.55f, -bevel * 0.55f);
 
-			// Inner fill ring — slightly smaller concentric blob for body mass.
+		auto rot = [&](float lx, float ly, glm::vec2 off = glm::vec2(0.0f)) {
+			float c = std::cos(spin), s = std::sin(spin);
+			return glm::vec2(sp.x + off.x + c * lx - s * ly,
+			                 sp.y + off.y + s * lx + c * ly);
+		};
+
+		// Build a pass of strokes at a given offset, color, and width.
+		// Three passes = shadow (behind), body, highlight (on top).
+		// Geometry: filled hexagonal core + 6 radial arms, each with primary
+		// V-branch, secondary V-branch, trident tip, and chevrons along the
+		// shaft. Inner "star of David" overlay connects alternating arms.
+		auto buildFlake = [&](glm::vec2 off, glm::vec3 col, float hw, float scale) {
+			// --- Filled hexagonal core (disc + outline). The disc is a
+			// wide-ribbon short segment; fully opaque from the chalk pipeline's
+			// perspective. Outline is drawn on top for a crisp edge.
 			{
+				float hr = base_r * 0.38f * scale;
+				// Filled disk: a 2-point segment with huge half-width renders as
+				// a solid cap-to-cap capsule. Make it essentially a point.
 				ChalkStroke fill;
-				fill.color = MEAT_PINK;
-				fill.half_width = r * 0.55f;
-				fill.points.reserve(20 + 1);
-				for (int i = 0; i <= 20; ++i) {
-					float a = TWO_PI * float(i) / 20.0f;
-					float wob = 1.0f + 0.18f * std::sin(a * float(lobes) + phase);
-					float rr = r * 0.55f * wob;
-					fill.points.push_back({sp.x + std::cos(a) * rr,
-					                       sp.y + std::sin(a) * rr});
-				}
+				fill.color = col;
+				fill.half_width = hr * 1.05f;
+				glm::vec2 c = rot(0.0f, 0.0f, off);
+				fill.points = { {c.x - 0.5f, c.y - 0.5f}, {c.x + 0.5f, c.y + 0.5f} };
 				strokes.push_back(std::move(fill));
+
+				// Crisp hex outline.
+				ChalkStroke hex;
+				hex.color = col;
+				hex.half_width = hw;
+				hex.points.reserve(arms + 1);
+				for (int i = 0; i <= arms; ++i) {
+					float a = TWO_PI * float(i) / float(arms);
+					hex.points.push_back(rot(std::cos(a) * hr, std::sin(a) * hr, off));
+				}
+				strokes.push_back(std::move(hex));
 			}
 
-			// 3 dark-pink marbling curves inside, each ~40% r in length.
-			const int marbles = 3;
-			for (int k = 0; k < marbles; ++k) {
-				float ma = phase + float(k) * (TWO_PI / float(marbles)) + 0.8f;
-				glm::vec2 c(sp.x + std::cos(ma) * r * 0.15f,
-				            sp.y + std::sin(ma) * r * 0.15f);
-				glm::vec2 dir(std::cos(ma + 1.2f), std::sin(ma + 1.2f));
-				glm::vec2 n(-dir.y, dir.x);
-				ChalkStroke m;
-				m.color = MEAT_MARBLE;
-				m.half_width = 2.6f;
-				float len = r * 0.40f;  // spec: ~40% of radius
-				for (int i = 0; i <= 8; ++i) {
-					float u = float(i) / 8.0f - 0.5f;  // -0.5..+0.5
-					float off = 0.20f * r * std::sin(u * 3.14159f * 2.0f);
-					m.points.push_back({c.x + dir.x * u * len + n.x * off,
-					                    c.y + dir.y * u * len + n.y * off});
-				}
-				strokes.push_back(std::move(m));
-			}
-		} else {
-			// ---- PLANT BLUB: 3 overlapping leaf ellipses + stem dot --------
-			// Gentle sway ±4° over 2s.
-			float sway = (3.14159f / 180.0f) * 4.0f
-			             * std::sin(t * (TWO_PI / 2.0f) + phase);
-			float r = base_r;
-
-			// 3 overlapping leaf ellipses, each 0.7× radius, offset 0/120/240°.
-			const float leaf_size = r * 0.70f;
-			const float leaf_center_off = r * 0.45f;  // how far leaves fan out
-			for (int L = 0; L < 3; ++L) {
-				float dir_ang = float(L) * (TWO_PI / 3.0f) - 1.5708f + sway; // 0,120,240 from top
-				float ca = std::cos(dir_ang), sa = std::sin(dir_ang);
-				glm::vec2 lc(sp.x + ca * leaf_center_off,
-				             sp.y + sa * leaf_center_off);
-
-				float rx = leaf_size * 0.45f;
-				float ry = leaf_size;      // leaf tip points outward (+y local)
-				const int N = 24;
-				ChalkStroke leaf;
-				leaf.color = PLANT_GREEN;
-				leaf.half_width = 3.0f;    // THICK outline stroke
-				leaf.points.reserve(N + 1);
-				for (int i = 0; i <= N; ++i) {
-					float a = TWO_PI * float(i) / float(N);
-					float x = std::cos(a) * rx;
-					float y = std::sin(a) * ry;
-					// Pinch the outward end into a leaf tip.
-					if (std::sin(a) > 0.6f) { x *= 0.45f; }
-					// Rotate local (x,y) so +y aligns with dir_ang.
-					// dir is at angle dir_ang from +x; leaf's long axis → dir.
-					float lx =  ca * (-y) - sa * x;  // rotate so local +y → dir
-					float ly =  sa * (-y) + ca * x;
-					leaf.points.push_back({lc.x + lx, lc.y - ly});
-				}
-				strokes.push_back(std::move(leaf));
-
-				// Light-green highlight curve inside each leaf (midrib arc).
-				ChalkStroke rib;
-				rib.color = PLANT_STEM;
-				rib.half_width = 2.2f;
-				const int M = 6;
-				for (int i = 0; i <= M; ++i) {
-					float u = float(i) / float(M);  // 0..1 along leaf
-					float v = 0.08f * std::sin(u * 3.14159f);  // slight arc
-					float ly = -ry * (0.85f * u - 0.1f);
-					float lx = v * rx;
-					// same rotation as leaf (local +y → outward).
-					float rxw =  ca * (-ly) - sa * lx;
-					float ryw =  sa * (-ly) + ca * lx;
-					rib.points.push_back({lc.x + rxw, lc.y - ryw});
-				}
-				strokes.push_back(std::move(rib));
-			}
-
-			// Tiny brown stem dot at top.
+			// --- Star of David (two overlapping triangles) at mid radius.
+			// Adds the recognizable "dense snowflake core" look.
 			{
-				ChalkStroke stem;
-				stem.color = PLANT_BROWN;
-				stem.half_width = 2.0f;  // ~2 units
-				float sx = sp.x + std::sin(sway) * 2.0f;
-				float sy = sp.y - (r * 0.10f);
-				stem.points = {
-					{sx - 0.5f, sy - 1.5f},
-					{sx + 0.5f, sy + 1.5f},
-				};
-				strokes.push_back(std::move(stem));
+				const float sr = base_r * 0.58f * scale;
+				for (int pass = 0; pass < 2; ++pass) {
+					ChalkStroke tri;
+					tri.color = col;
+					tri.half_width = hw * 0.85f;
+					float a0 = (pass == 0) ? 0.0f : (TWO_PI / 6.0f);
+					tri.points.reserve(4);
+					for (int i = 0; i <= 3; ++i) {
+						float a = a0 + TWO_PI * float(i % 3) / 3.0f;
+						tri.points.push_back(rot(std::cos(a) * sr, std::sin(a) * sr, off));
+					}
+					strokes.push_back(std::move(tri));
+				}
 			}
+
+			const float arm_len  = base_r * scale;
+			const float branch_r = base_r * 0.36f * scale;
+			for (int i = 0; i < arms; ++i) {
+				float a = TWO_PI * float(i) / float(arms);
+				float cx = std::cos(a), cy = std::sin(a);
+				float nx = -cy, ny = cx;
+
+				// Main arm — thicker than before for a heavier body.
+				ChalkStroke arm;
+				arm.color = col;
+				arm.half_width = hw * 1.15f;
+				arm.points.push_back(rot(0.0f, 0.0f, off));
+				arm.points.push_back(rot(cx * arm_len, cy * arm_len, off));
+				strokes.push_back(std::move(arm));
+
+				// Primary V-branch at 40% along the arm.
+				{
+					float u = 0.40f;
+					float bx = cx * arm_len * u;
+					float by = cy * arm_len * u;
+					for (int s = -1; s <= 1; s += 2) {
+						ChalkStroke br;
+						br.color = col;
+						br.half_width = hw * 0.95f;
+						br.points.push_back(rot(bx, by, off));
+						br.points.push_back(rot(
+							bx + (cx * 0.55f + nx * 0.95f * s) * branch_r,
+							by + (cy * 0.55f + ny * 0.95f * s) * branch_r, off));
+						strokes.push_back(std::move(br));
+					}
+				}
+
+				// Secondary V-branch at 65% — longer, heavier, signature detail.
+				{
+					float u = 0.65f;
+					float bx = cx * arm_len * u;
+					float by = cy * arm_len * u;
+					float br_len = branch_r * 1.15f;
+					for (int s = -1; s <= 1; s += 2) {
+						ChalkStroke br;
+						br.color = col;
+						br.half_width = hw * 1.0f;
+						glm::vec2 p0 = rot(bx, by, off);
+						glm::vec2 p1 = rot(bx + (cx * 0.45f + nx * 1.0f * s) * br_len,
+						                   by + (cy * 0.45f + ny * 1.0f * s) * br_len, off);
+						br.points = {p0, p1};
+						strokes.push_back(std::move(br));
+
+						// Tertiary mini-fork on the secondary branch.
+						glm::vec2 mid = (p0 + p1) * 0.5f;
+						glm::vec2 tip = p1;
+						glm::vec2 dir = tip - mid;
+						glm::vec2 perp(-dir.y, dir.x);
+						float tl = 0.55f;
+						ChalkStroke t1, t2;
+						t1.color = t2.color = col;
+						t1.half_width = t2.half_width = hw * 0.75f;
+						t1.points = { tip, tip + dir * 0.0f + perp * tl - dir * 0.25f };
+						t2.points = { tip, tip + dir * 0.0f - perp * tl - dir * 0.25f };
+						strokes.push_back(std::move(t1));
+						strokes.push_back(std::move(t2));
+					}
+				}
+
+				// Chevron along the shaft — small perpendicular ticks at 25% / 55%.
+				for (float u : {0.25f, 0.55f}) {
+					float bx = cx * arm_len * u;
+					float by = cy * arm_len * u;
+					ChalkStroke ch;
+					ch.color = col;
+					ch.half_width = hw * 0.65f;
+					float tl = base_r * 0.09f * scale;
+					ch.points = {
+						rot(bx + nx * tl, by + ny * tl, off),
+						rot(bx - nx * tl, by - ny * tl, off),
+					};
+					strokes.push_back(std::move(ch));
+				}
+
+				// Trident tip — center point + two splayed points at 45°.
+				{
+					glm::vec2 tip  = rot(cx * arm_len,        cy * arm_len,        off);
+					glm::vec2 mid1 = rot(cx * arm_len * 0.78f + nx * base_r * 0.22f * scale,
+					                     cy * arm_len * 0.78f + ny * base_r * 0.22f * scale, off);
+					glm::vec2 mid2 = rot(cx * arm_len * 0.78f - nx * base_r * 0.22f * scale,
+					                     cy * arm_len * 0.78f - ny * base_r * 0.22f * scale, off);
+					glm::vec2 base = rot(cx * arm_len * 0.60f,
+					                     cy * arm_len * 0.60f, off);
+					ChalkStroke dia;
+					dia.color = col;
+					dia.half_width = hw * 0.95f;
+					dia.points = {base, mid1, tip, mid2, base};
+					strokes.push_back(std::move(dia));
+
+					// Filled wedge at the very tip for a beefier termination.
+					ChalkStroke cap;
+					cap.color = col;
+					cap.half_width = base_r * 0.08f * scale;
+					glm::vec2 tip_in = rot(cx * arm_len * 0.92f, cy * arm_len * 0.92f, off);
+					cap.points = {tip_in, tip};
+					strokes.push_back(std::move(cap));
+				}
+			}
+
+			// Rotated inner ring of shorter arms (30° offset) — now always on,
+			// not just for MEAT, so PLANT also reads as a complex flake.
+			{
+				const float inner_len = base_r * 0.50f * scale;
+				for (int i = 0; i < arms; ++i) {
+					float a = TWO_PI * (float(i) + 0.5f) / float(arms);
+					float cx = std::cos(a), cy = std::sin(a);
+					float nx = -cy, ny = cx;
+					ChalkStroke arm;
+					arm.color = col;
+					arm.half_width = hw * 0.85f;
+					arm.points.push_back(rot(0.0f, 0.0f, off));
+					arm.points.push_back(rot(cx * inner_len, cy * inner_len, off));
+					strokes.push_back(std::move(arm));
+
+					// Tiny cross-tick on each inner arm.
+					float tl = base_r * 0.08f * scale;
+					ChalkStroke cross;
+					cross.color = col;
+					cross.half_width = hw * 0.55f;
+					float u = 0.75f;
+					float bx = cx * inner_len * u;
+					float by = cy * inner_len * u;
+					cross.points = {
+						rot(bx + nx * tl, by + ny * tl, off),
+						rot(bx - nx * tl, by - ny * tl, off),
+					};
+					strokes.push_back(std::move(cross));
+				}
+			}
+
+			// MEAT: extra outer dodecagonal ring connecting arm tips for a
+			// heavier, "crystallized" look.
+			if (is_meat) {
+				ChalkStroke ring;
+				ring.color = col;
+				ring.half_width = hw * 0.70f;
+				const int K = 12;
+				float rr = base_r * 0.88f * scale;
+				ring.points.reserve(K + 1);
+				for (int i = 0; i <= K; ++i) {
+					float a = TWO_PI * float(i) / float(K);
+					ring.points.push_back(rot(std::cos(a) * rr, std::sin(a) * rr, off));
+				}
+				strokes.push_back(std::move(ring));
+			}
+		};
+
+		// 1) Shadow pass: thick, dark, offset down-right.
+		buildFlake(shad_off, col_shad, hw_shad, 1.0f);
+		// 2) Body pass: primary color at normal width.
+		buildFlake(glm::vec2(0.0f), col_body, hw_body, 1.0f);
+		// 3) Highlight pass: thin bright line, offset up-left, slightly shorter
+		//    so it sits just inside the body edge → reads as lit top surface.
+		buildFlake(high_off, col_high, hw_high, 0.92f);
+
+		// 4) Specular "sparkle" dot near the upper-left, just off center, to
+		//    sell the "glass caught the light" look.
+		{
+			ChalkStroke sp_dot;
+			sp_dot.color = SPECULAR;
+			sp_dot.half_width = base_r * 0.14f;
+			glm::vec2 c = rot(-base_r * 0.16f, -base_r * 0.16f);
+			sp_dot.points = { {c.x - 0.4f, c.y - 0.4f}, {c.x + 0.4f, c.y + 0.4f} };
+			strokes.push_back(std::move(sp_dot));
 		}
 	}
 	renderer_->drawStrokes(strokes, nullptr, w, h);
@@ -1813,7 +1951,7 @@ void App::drawPlaying(float dt) {
 	bg_layer_.update(dt, world_.map_radius);
 	bg_layer_.draw(renderer_.get(), w, h,
 		[this](glm::vec2 wp){ return worldToScreen(wp); },
-		(float)glfwGetTime());
+		camera_world_, (float)glfwGetTime());
 	drawFood();
 	drawMonsters();
 	drawHUD();
@@ -2247,10 +2385,24 @@ void App::drawCelebrate(float dt) {
 	float cx = (float)(prev_x + PREVIEW_SZ / 2);
 	float cy = (float)(prev_y + PREVIEW_SZ / 2);
 	float pxu = 1.8f * scale;
+	float c = std::cos(rot), si = std::sin(rot);
+
+	// Phase 1.1: body fill first.
+	{
+		sim::PartEffect pe = sim::computePartEffects(lab_.parts());
+		std::vector<glm::vec2> poly_px;
+		poly_px.reserve(poly.size());
+		for (auto& v : poly) {
+			glm::vec2 r(c * v.x - si * v.y, si * v.x + c * v.y);
+			poly_px.push_back({cx + r.x * pxu, cy - r.y * pxu});
+		}
+		fill_renderer_->drawFill(poly_px, lab_.color(), pe.diet,
+			123.0f, (float)glfwGetTime(), W, H);
+	}
+
 	ChalkStroke outline;
 	outline.color = lab_.color();
 	outline.half_width = 4.5f;
-	float c = std::cos(rot), si = std::sin(rot);
 	for (auto& v : poly) {
 		glm::vec2 r(c * v.x - si * v.y, si * v.x + c * v.y);
 		outline.points.push_back({cx + r.x * pxu, cy - r.y * pxu});

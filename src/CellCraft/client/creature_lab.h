@@ -13,6 +13,7 @@
 
 #include <glm/glm.hpp>
 
+#include "CellCraft/client/cell_fill_renderer.h"
 #include "CellCraft/client/chalk_renderer.h"
 #include "CellCraft/client/chalk_stroke.h"
 #include "CellCraft/sim/part.h"
@@ -44,7 +45,8 @@ struct LabInput {
 
 class CreatureLab {
 public:
-	void init(Window* window, ChalkRenderer* renderer, TextRenderer* text);
+	void init(Window* window, ChalkRenderer* renderer,
+	          CellFillRenderer* fill_renderer, TextRenderer* text);
 	void reset();
 
 	// Load a starter (cell + parts + color + initial name from generator).
@@ -117,6 +119,7 @@ private:
 
 	Window*        window_   = nullptr;
 	ChalkRenderer* renderer_ = nullptr;
+	CellFillRenderer* fill_renderer_ = nullptr;
 	TextRenderer*  text_     = nullptr;
 
 	sim::RadialCell         cell_;

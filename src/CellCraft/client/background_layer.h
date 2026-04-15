@@ -41,9 +41,19 @@ struct BgCreature {
 	float          scale     = 1.0f;              // relative to baseline silhouette size
 	float          rot       = 0.0f;              // radians
 	float          rot_vel   = 0.0f;
-	int            layer     = 0;                 // 0=near, 1=far (more blurred/faded)
+	int            layer     = 0;                 // 0=near, 1=mid, 2=far
 	SilhouetteType type      = SilhouetteType::CELL_GENERIC;
 	float          wobble_ph = 0.0f;              // phase for lobed-blob jiggle
+
+	// Depth-of-field knobs. parallax = how much the camera move shifts this
+	// creature: 1.0 = fully world-locked (near), 0.3 = mostly screen-locked
+	// (far, looks distant). stroke_width = ribbon half-width; larger values
+	// on far layers + board-cream tint mix fake a gaussian blur without
+	// needing an FBO pass. tint_mix blends the stroke color toward the
+	// board color (0 = full tint, 1 = invisible).
+	float          parallax     = 1.0f;
+	float          stroke_width = 4.0f;
+	float          tint_mix     = 0.0f;
 };
 
 class BackgroundLayer {
@@ -58,10 +68,13 @@ public:
 	void setPlayerTier(int player_tier, float map_radius);
 
 	// Draw silhouettes. world_to_screen is a functor: glm::vec2 w -> glm::vec2 px.
-	// Tinted toward `board_cream` to recede visually.
+	// cam_world is the camera center in world space — needed for parallax so
+	// far-layer creatures move slower than near-layer ones when the camera
+	// pans. Tinted toward `board_cream` (far layers blend further toward it)
+	// so they recede visually.
 	template<typename ToScreen>
 	void draw(ChalkRenderer* r, int screen_w, int screen_h,
-	          ToScreen world_to_screen, float time_seconds);
+	          ToScreen world_to_screen, glm::vec2 cam_world, float time_seconds);
 
 private:
 	void repopulate_(int tier, float map_radius);
@@ -102,6 +115,33 @@ inline void appendOutline(std::vector<ChalkStroke>& out,
 	out.push_back(std::move(s));
 }
 
+// Cheap fake-blur: emit the same outline N times at jittered radial offsets
+// around the centroid, each with heavier feather (higher half_width) and the
+// tint already biased toward cream. For near layers N=1 and this is a plain
+// ribbon — the blur passes cost nothing.
+inline void appendBlurredOutline(std::vector<ChalkStroke>& out,
+                                 const std::vector<glm::vec2>& pts_px,
+                                 glm::vec3 tint, bool closed,
+                                 float half_width, int blur_passes,
+                                 float blur_radius_px) {
+	if (pts_px.empty()) return;
+	appendOutline(out, pts_px, tint, closed, half_width);
+	if (blur_passes <= 0) return;
+	// Centroid — used to pick jitter directions that don't all bunch one way.
+	glm::vec2 centroid(0.0f);
+	for (const auto& p : pts_px) centroid += p;
+	centroid /= float(pts_px.size());
+	for (int k = 0; k < blur_passes; ++k) {
+		float ang = 6.28318530718f * (float(k) + 0.5f) / float(blur_passes);
+		glm::vec2 off(std::cos(ang) * blur_radius_px,
+		              std::sin(ang) * blur_radius_px);
+		std::vector<glm::vec2> shifted;
+		shifted.reserve(pts_px.size());
+		for (const auto& p : pts_px) shifted.push_back(p + off);
+		appendOutline(out, shifted, tint, closed, half_width * 1.3f);
+	}
+}
+
 inline void appendEllipseOutline(std::vector<ChalkStroke>& out,
                                  glm::vec2 center_px, float rx_px, float ry_px,
                                  float rot, glm::vec3 tint,
@@ -123,19 +163,28 @@ inline void appendEllipseOutline(std::vector<ChalkStroke>& out,
 
 template<typename ToScreen>
 void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
-                           ToScreen world_to_screen, float t_sec) {
+                           ToScreen world_to_screen, glm::vec2 cam_world,
+                           float t_sec) {
 	if (!r || pool_.empty()) return;
 	scratch_.clear();
 
-	// Board cream is ~(0.97, 0.95, 0.88). Silhouettes drawn as single-pass
-	// outlines in warm tan — darkened from the previous values so the shape
-	// actually reads against cream instead of blending in.
-	const glm::vec3 TINT_NEAR = glm::vec3(0.50f, 0.42f, 0.32f);
-	const glm::vec3 TINT_FAR  = glm::vec3(0.62f, 0.55f, 0.45f);
+	// Board cream is ~(0.97, 0.95, 0.88). Silhouettes drawn in warm tan;
+	// far layers blend toward cream per-creature via c.tint_mix, so the
+	// "layered world" visibly recedes with depth.
+	const glm::vec3 TINT_BASE = glm::vec3(0.45f, 0.38f, 0.28f);
+	const glm::vec3 BOARD_CREAM = glm::vec3(0.97f, 0.95f, 0.88f);
 
 	for (const auto& c : pool_) {
-		glm::vec3 tint = (c.layer == 0) ? TINT_NEAR : TINT_FAR;
-		glm::vec2 center = world_to_screen(c.pos);
+		// Parallax: effective world pos lerps between camera center (far)
+		// and true world pos (near). p=1 → full parallax, p=0 → sticks to
+		// screen. Far layers use p≈0.3 so panning reveals them slowly.
+		glm::vec2 effective_pos = cam_world + (c.pos - cam_world) * c.parallax;
+		glm::vec3 tint = glm::mix(TINT_BASE, BOARD_CREAM,
+		                          glm::clamp(c.tint_mix, 0.0f, 0.95f));
+		float hw = c.stroke_width;
+		int   blur_n = (c.layer >= 2) ? 4 : (c.layer == 1 ? 2 : 0);
+		float blur_r = c.stroke_width * 0.9f;
+		glm::vec2 center = world_to_screen(effective_pos);
 
 		float cr = std::cos(c.rot), sr = std::sin(c.rot);
 		auto rot_add = [&](glm::vec2 v){
@@ -157,7 +206,8 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 				                  std::sin(a + c.rot) * rr);
 				pts.push_back(center + p_local);
 			}
-			bg_detail::appendOutline(scratch_, pts, tint, /*closed=*/true, 4.0f);
+			bg_detail::appendBlurredOutline(scratch_, pts, tint, /*closed=*/true,
+				hw, blur_n, blur_r);
 			break;
 		}
 		case SilhouetteType::FISH: {
@@ -178,7 +228,8 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 			pts.push_back(rot_add({-rx * 0.70f, -ry * 0.55f}));     // pre-tail lower
 			pts.push_back(rot_add({-rx * 0.10f, -ry * 1.00f}));     // belly
 			pts.push_back(rot_add({ rx * 0.55f, -ry * 0.95f}));     // lower front
-			bg_detail::appendOutline(scratch_, pts, tint, /*closed=*/true, 4.0f);
+			bg_detail::appendBlurredOutline(scratch_, pts, tint, /*closed=*/true,
+				hw, blur_n, blur_r);
 			break;
 		}
 		case SilhouetteType::TURTLE: {
@@ -186,12 +237,12 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 			float sx = 38.0f * c.scale;
 			float sy = 26.0f * c.scale;
 			bg_detail::appendEllipseOutline(scratch_, center, sx, sy, c.rot,
-				tint, /*samples=*/12, /*half_width=*/4.0f);
+				tint, /*samples=*/12, hw);
 			// Head: small disc forward of shell.
 			float hr = 9.0f * c.scale;
 			glm::vec2 head = rot_add({sx * 1.05f, 0.0f});
 			bg_detail::appendEllipseOutline(scratch_, head, hr, hr, 0.0f,
-				tint, /*samples=*/10, /*half_width=*/4.0f);
+				tint, /*samples=*/10, hw);
 			// 4 leg bumps on shell perimeter (diagonal).
 			float lr = 7.0f * c.scale;
 			glm::vec2 leg_off[4] = {
@@ -203,7 +254,7 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 			for (int i = 0; i < 4; ++i) {
 				glm::vec2 lp = rot_add(leg_off[i]);
 				bg_detail::appendEllipseOutline(scratch_, lp, lr, lr * 0.75f,
-					c.rot, tint, /*samples=*/8, /*half_width=*/4.0f);
+					c.rot, tint, /*samples=*/8, hw);
 			}
 			break;
 		}
@@ -228,7 +279,8 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 				float wave = std::sin(t * 6.28318f + c.wobble_ph + t_sec * 1.2f) * (dy * 0.18f);
 				pts.push_back(rot_add({lx, wave}));
 			}
-			bg_detail::appendOutline(scratch_, pts, tint, /*closed=*/true, 4.0f);
+			bg_detail::appendBlurredOutline(scratch_, pts, tint, /*closed=*/true,
+				hw, blur_n, blur_r);
 			// 3 trailing tentacles curving downward.
 			for (int i = 0; i < 3; ++i) {
 				float ox = (-1.0f + float(i)) * dx * 0.55f;
@@ -239,7 +291,8 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 					float wx = std::sin(t_sec * 1.3f + c.wobble_ph + k * 0.55f + i * 1.1f) * (dx * 0.12f);
 					tent.push_back(rot_add({ox + wx, yy + dy * 0.05f}));
 				}
-				bg_detail::appendOutline(scratch_, tent, tint, /*closed=*/false, 3.0f);
+				bg_detail::appendOutline(scratch_, tent, tint, /*closed=*/false,
+					std::max(3.0f, hw * 0.75f));
 			}
 			break;
 		}

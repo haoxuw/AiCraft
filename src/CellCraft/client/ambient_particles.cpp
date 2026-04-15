@@ -6,7 +6,7 @@
 
 namespace civcraft::cellcraft {
 
-static constexpr int TARGET_MOTES = 80;
+static constexpr int TARGET_MOTES = 24;
 
 float AmbientParticles::rand01_() {
 	// xorshift32 → float in [0,1).

@@ -30,6 +30,7 @@ target_link_libraries(cellcraft_sim PUBLIC glm::glm)
 add_executable(cellcraft
 	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/chalk_renderer.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/cell_fill_renderer.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/app.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/game_log.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/part_render.cpp
