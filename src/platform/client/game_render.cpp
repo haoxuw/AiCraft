@@ -84,6 +84,11 @@ void Game::renderEntities(float dt, float aspect) {
 	playerAnim.armPitch     = armPitch;
 	playerAnim.armYaw       = armYaw;
 	playerAnim.armRoll      = armRoll;
+	// Tier-1 BodyAnimator: derive torso twist + left-arm counter-swing.
+	BodyAnimator::derive(armPitch, armYaw,
+	                     playerAnim.torsoYaw,
+	                     playerAnim.leftArmPitch,
+	                     playerAnim.leftArmYaw);
 	playerAnim.currentClip  = m_playerClip;
 	// Head/body look tracking.
 	// Priority: action target (attack/mine) > camera look direction.

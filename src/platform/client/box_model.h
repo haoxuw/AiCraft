@@ -137,6 +137,12 @@ struct AnimState {
 	float armYaw   = 0.0f;
 	float armRoll  = 0.0f;
 
+	// Tier-1 BodyAnimator outputs — derived from arm angles. Drive whole-body
+	// posture during an attack so the swing reads as a full-body motion.
+	float torsoYaw     = 0.0f;  // applied to "torso" part around Y at its pivot
+	float leftArmPitch = 0.0f;  // applied to "left_hand" part around its swing axis
+	float leftArmYaw   = 0.0f;  // applied to "left_hand" part around Y
+
 	// Head tracking (radians). Head-tagged parts rotate by these around headPivot.
 	// Clamped externally (e.g. ±45° from body yaw) before being passed in.
 	float lookYaw   = 0.0f;

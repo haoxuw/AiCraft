@@ -19,6 +19,7 @@
 
 #include "client/attack_anim.h"
 #include "client/combat_fx/blade_trail.h"
+#include "client/combat_fx/body_animator.h"
 #include "client/combat_fx/camera_shake.h"
 #include "client/combat_fx/hit_stop.h"
 #include "client/particles.h"

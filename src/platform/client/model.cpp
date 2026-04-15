@@ -208,11 +208,26 @@ void ModelRenderer::draw(const BoxModel& model, const glm::mat4& viewProj,
 					}
 					partMat = glm::translate(partMat, -part.pivot * s);
 					doSwing = false; // already applied
-				} else if (part.name == "left_hand"
-				           || part.name == "left_leg" || part.name == "right_leg") {
-					// Freeze non-swinging arm and both legs during an attack —
-					// otherwise the whole body bobs and looks silly while the
-					// sword swings. Torso/head keep their idle motion.
+				} else if (part.name == "left_hand") {
+					// Tier-1 BodyAnimator: counter-swing the left arm.
+					// Replaces the pre-Tier-1 freeze.
+					partMat = glm::translate(partMat, part.pivot * s);
+					partMat = glm::rotate(partMat, glm::radians(anim.leftArmPitch),
+					                      part.swingAxis);
+					partMat = glm::rotate(partMat, glm::radians(anim.leftArmYaw),
+					                      glm::vec3(0, 1, 0));
+					partMat = glm::translate(partMat, -part.pivot * s);
+					doSwing = false;
+				} else if (part.name == "torso") {
+					// Tier-1 BodyAnimator: twist torso with the swing.
+					// Stacks with whatever idle/walk swing was computed above.
+					partMat = glm::translate(partMat, part.pivot * s);
+					partMat = glm::rotate(partMat, glm::radians(anim.torsoYaw),
+					                      glm::vec3(0, 1, 0));
+					partMat = glm::translate(partMat, -part.pivot * s);
+				} else if (part.name == "left_leg" || part.name == "right_leg") {
+					// Freeze legs during an attack — otherwise the whole body
+					// bobs and looks silly while the sword swings.
 					doSwing = false;
 				}
 			}
