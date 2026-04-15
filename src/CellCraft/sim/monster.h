@@ -37,6 +37,13 @@ struct Monster {
 	float hp_max   = 1.0f;
 	float biomass  = 0.0f;
 
+	// Lifetime cumulative biomass ever gained (pickups, kill transfers).
+	// Never decreases — drives Tier progression. Kept separate from
+	// current biomass so damage/split don't undo the player's growth.
+	float lifetime_biomass = 0.0f;
+	// 1..5. Set at spawn time by World/App; Sim mutates on tier-ups.
+	int   tier             = 1;
+
 	// Derived stats (recomputed via refresh_stats()).
 	float max_core_radius = 0.0f;
 	float max_width       = 0.0f;   // AABB half-extent proxy (max of x/y)
@@ -81,5 +88,55 @@ struct Monster {
 		refresh_stats();
 	}
 };
+
+// --- Tier helpers ---------------------------------------------------
+// Map lifetime biomass → tier index in [1, TIER_COUNT].
+inline int computeTier(float lifetime_biomass) {
+	int t = 1;
+	for (int i = 2; i <= TIER_COUNT; ++i) {
+		if (lifetime_biomass >= TIER_THRESHOLDS[i]) t = i;
+		else break;
+	}
+	return t;
+}
+
+inline float tierSizeMult(int tier) {
+	if (tier < 1) tier = 1;
+	if (tier > TIER_COUNT) tier = TIER_COUNT;
+	return TIER_SIZE_MULTS[tier];
+}
+
+inline const char* tierName(int tier) {
+	switch (tier) {
+	case 1: return "SPECK";
+	case 2: return "NIBBLER";
+	case 3: return "HUNTER";
+	case 4: return "PREDATOR";
+	case 5: return "APEX";
+	default: return "?";
+	}
+}
+
+// Part unlock gate. Starter-kit parts (MOUTH/FLAGELLA/EYES) are available
+// from tier 1; heavier/rarer parts gate behind higher tiers. Keeps the
+// lab picker honest about what the player can currently build.
+inline bool isPartUnlocked(PartType t, int tier) {
+	int req = 1;
+	switch (t) {
+	case PartType::MOUTH:
+	case PartType::FLAGELLA:
+	case PartType::EYES:        req = 1; break;
+	case PartType::SPIKE:
+	case PartType::CILIA:       req = 2; break;
+	case PartType::TEETH:
+	case PartType::ARMOR:
+	case PartType::REGEN:       req = 3; break;
+	case PartType::HORN:
+	case PartType::POISON:      req = 4; break;
+	case PartType::VENOM_SPIKE: req = 5; break;
+	default: req = 1; break;
+	}
+	return tier >= req;
+}
 
 } // namespace civcraft::cellcraft::sim

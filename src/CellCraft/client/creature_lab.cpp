@@ -103,6 +103,7 @@ void CreatureLab::reset() {
 	boing_part_idx_ = -1; boing_t_left_ = 0.0f;
 	time_acc_ = 0.0f;
 	wobble_phase_ = 0.0f;
+	current_tier_ = 1;
 	refresh_stats_();
 }
 
@@ -187,6 +188,12 @@ void CreatureLab::refresh_stats_() {
 }
 
 bool CreatureLab::tap_place_part_(sim::PartType t) {
+	if (!sim::isPartUnlocked(t, current_tier_)) {
+		// Tier-gated: this part is not yet available. Shake the jar as a
+		// generic "nope" signal; caller handles per-button boing anim.
+		jar_shake_t_ = 0.4f;
+		return false;
+	}
 	int cap = part_stack_cap(t);
 	if (part_stack_count(parts_, t) + 2 > cap) {
 		// Stacks paired (mirror), two slots needed. Boing.
@@ -424,6 +431,19 @@ void CreatureLab::draw_top_bar_(const Layout& l, const LabInput& in) {
 	                  true, in, glm::vec3(0.30f, 0.40f, 0.55f))) {
 		std::mt19937 rng((uint32_t)(time_acc_ * 1000.0f + 7));
 		name_ = generateName(rng);
+	}
+
+	// Tier badge — small gold pill to the left of the name, e.g. "T1 SPECK".
+	{
+		char tier_buf[32];
+		std::snprintf(tier_buf, sizeof(tier_buf), "T%d %s",
+			current_tier_, sim::tierName(current_tier_));
+		float tier_scale = scale * 0.60f;
+		float tier_w = (float)std::strlen(tier_buf) * 0.018f * tier_scale;
+		float tier_x = -w_chars * 0.5f - tier_w - 0.03f;
+		glm::vec4 tshadow = ui::OUTLINE; tshadow.a = 0.65f;
+		ui::drawOutlinedText(text_, tier_buf, tier_x, ndc_y - 0.05f,
+			tier_scale, ui::ACCENT_GOLD_WARM, tshadow, aspect);
 	}
 }
 
@@ -836,11 +856,21 @@ void CreatureLab::draw_drawer_(const Layout& l, const LabInput& in) {
 			int cur = part_stack_count(parts_, t);
 			int cap = part_stack_cap(t);
 			bool can = cur + 2 <= cap;
-			glm::vec3 fill = (boing_part_idx_ == i)
-				? glm::vec3(0.85f, 0.30f, 0.30f)
-				: (can ? glm::vec3(0.18f, 0.30f, 0.40f)
-				       : glm::vec3(0.20f, 0.20f, 0.22f));
-			if (pixel_button_(bx, by, cell_w, cell_h, sim::part_name(t), true, in, fill)) {
+			bool unlocked = sim::isPartUnlocked(t, current_tier_);
+			glm::vec3 fill;
+			if (!unlocked) {
+				// Locked: desaturated slate so it reads clearly "not yet".
+				fill = glm::vec3(0.35f, 0.35f, 0.38f);
+			} else if (boing_part_idx_ == i) {
+				fill = glm::vec3(0.85f, 0.30f, 0.30f);
+			} else if (can) {
+				fill = glm::vec3(0.18f, 0.30f, 0.40f);
+			} else {
+				fill = glm::vec3(0.20f, 0.20f, 0.22f);
+			}
+			// Locked parts render via enabled=false (50% alpha in pixel_button_);
+			// clicks get swallowed entirely — simplest "nope".
+			if (pixel_button_(bx, by, cell_w, cell_h, sim::part_name(t), unlocked, in, fill)) {
 				if (fullness_frac_() >= 1.0f) {
 					jar_shake_t_ = 0.4f;
 					boing_part_idx_ = i; boing_t_left_ = 0.4f;

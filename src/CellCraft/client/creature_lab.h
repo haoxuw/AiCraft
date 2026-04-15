@@ -54,6 +54,12 @@ public:
 	                  const std::string& name);
 	void set_speech_enabled(bool e) { speech_enabled_ = e; }
 
+	// Tier gates which parts can be placed. Defaults to 1 (only starter
+	// parts unlocked). Call after load_starter() if the player has
+	// already progressed.
+	void set_tier(int tier) { current_tier_ = tier; }
+	int  tier() const { return current_tier_; }
+
 	LabOutcome update(float dt, const LabInput& in);
 
 	const sim::RadialCell&         cell()  const { return cell_; }
@@ -146,6 +152,9 @@ private:
 	float time_acc_ = 0.0f;
 
 	float wobble_phase_ = 0.0f;
+
+	// Current growth tier (1..5). Gates which palette parts are placeable.
+	int current_tier_ = 1;
 };
 
 } // namespace civcraft::cellcraft

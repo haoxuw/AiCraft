@@ -956,6 +956,24 @@ void App::drainSimEvents() {
 			std::snprintf(buf, sizeof(buf), "#%u grew x%.2f", e.actor, e.amount);
 			log_.write("GROW", buf);
 			break;
+		case sim::EventKind::TIER_UP: {
+			int nt = (int)e.amount;
+			std::snprintf(buf, sizeof(buf), "#%u → tier %d (%s)",
+				e.actor, nt, sim::tierName(nt));
+			log_.write("TIER_UP", buf);
+			// Sparkle ring at the creature's position for a silent celebration.
+			glm::vec3 col(1.0f, 0.9f, 0.4f);
+			if (const sim::Monster* am = world_.get(e.actor)) col = am->color;
+			emitKillParticles(e.pos, col);
+			if (e.actor == player_id_) {
+				pushFloating(std::string("TIER ") + std::to_string(nt) + "!",
+					glm::vec3(1.0f, 0.9f, 0.3f));
+			}
+			break;
+		}
+		case sim::EventKind::POISON_HIT:
+		case sim::EventKind::VENOM_HIT:
+			break;
 		}
 	}
 }
@@ -1369,10 +1387,12 @@ void App::drawHUD() {
 			glm::vec4(0.9f, 0.4f, 0.4f, 1.0f));
 	}
 
-	// Biomass / kills / time
-	char line[128];
-	std::snprintf(line, sizeof(line), "BIOMASS %.0f   KILLS %d   TIME %d:%02d",
-		p ? p->biomass : 0.0f, kills_,
+	// Biomass / tier / kills / time
+	char line[160];
+	std::snprintf(line, sizeof(line), "BIOMASS %.0f   T%d %s   KILLS %d   TIME %d:%02d",
+		p ? p->biomass : 0.0f,
+		p ? p->tier : 1, sim::tierName(p ? p->tier : 1),
+		kills_,
 		(int)match_time_ / 60, (int)match_time_ % 60);
 	text_->drawText(line, -0.5f, 0.85f, 0.9f,
 		glm::vec4(1.0f, 1.0f, 0.95f, 1.0f), aspect);

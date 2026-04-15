@@ -177,10 +177,12 @@ void Sim::pickup_food_() {
 				float yield = yieldMultiplier(m.part_effect.diet, food[i].type);
 				float gained = food[i].biomass * yield;
 				m.biomass += gained;
+				m.lifetime_biomass += std::max(0.0f, gained);
 				m.hp_max = std::max(1.0f, m.biomass * HP_PER_BIOMASS);
 				m.hp = std::min(m.hp_max, m.hp + gained * 0.25f);
 				Event e{EventKind::PICKUP, m.id, food[i].id, gained, food[i].pos};
 				events_.push_back(e);
+				maybe_tier_up_(m);
 				food[i] = food.back();
 				food.pop_back();
 			} else {
@@ -455,10 +457,12 @@ void Sim::finalize_deaths_() {
 			if (k && k->alive) {
 				float to_killer = total * DEATH_BIOMASS_FRAC;
 				k->biomass += to_killer;
+				k->lifetime_biomass += std::max(0.0f, to_killer);
 				k->hp_max = std::max(1.0f, k->biomass * HP_PER_BIOMASS);
 				k->hp = std::min(k->hp_max, k->hp + to_killer * 0.5f);
 				Event e{EventKind::KILL, killer, vid, to_killer, victim->core_pos};
 				events_.push_back(e);
+				maybe_tier_up_(*k);
 				total -= to_killer;
 			} else {
 				killer = 0; // killer is gone — drop everything as food
@@ -483,6 +487,21 @@ void Sim::finalize_deaths_() {
 		}
 		world_->remove_monster(vid);
 	}
+}
+
+void Sim::maybe_tier_up_(Monster& m) {
+	int new_tier = computeTier(m.lifetime_biomass);
+	if (new_tier <= m.tier) return;
+	int old_tier = m.tier;
+	float ratio = tierSizeMult(new_tier) / tierSizeMult(old_tier);
+	m.tier = new_tier;
+	if (ratio > 1.0f && ratio < 100.0f) {
+		m.scale_shape(ratio); // also calls refresh_stats()
+	} else {
+		m.refresh_stats();
+	}
+	Event e{EventKind::TIER_UP, m.id, 0, (float)new_tier, m.core_pos};
+	events_.push_back(e);
 }
 
 std::vector<Event> Sim::drain_events() {

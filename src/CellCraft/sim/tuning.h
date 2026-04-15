@@ -113,4 +113,14 @@ constexpr float BODY_BUDGET_BIOMASS = 80.0f;
 // Cost per pixel of cell boundary perimeter.
 constexpr float BODY_COST_PER_PX    = 0.01f;
 
+// --- Growth tiers (commit 5) ----------------------------------------
+// Tiers are gated on *lifetime* biomass gained (monotonic, never decreases
+// on damage/split), not current biomass. Each tier-up scales the body by
+// the ratio of size multipliers and unlocks a new set of parts in the lab.
+//
+// Order matches Tier enum (1-indexed — index 0 sentinel unused).
+constexpr int   TIER_COUNT             = 5;
+constexpr float TIER_THRESHOLDS[6]     = { 0.0f, 0.0f, 40.0f, 120.0f, 300.0f, 700.0f };
+constexpr float TIER_SIZE_MULTS[6]     = { 1.0f, 1.0f, 1.25f, 1.5f,   1.8f,   2.2f  };
+
 } // namespace civcraft::cellcraft::sim

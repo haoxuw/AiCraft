@@ -26,6 +26,7 @@ enum class EventKind {
 	GROW,     // actor grew; amount = scale factor
 	POISON_HIT, // actor's poison ticked target for amount
 	VENOM_HIT,  // venom DoT ticked target for amount
+	TIER_UP,    // actor reached a new growth tier; amount = new tier (as float)
 };
 
 struct Event {
@@ -56,6 +57,10 @@ private:
 	void apply_poison_auras_(float dt);
 	void apply_status_and_regen_(float dt);
 	void finalize_deaths_();
+	// Check lifetime_biomass against tier thresholds. On tier-up, scales
+	// the monster's shape by the size-mult ratio, refreshes derived
+	// stats, and emits a TIER_UP event. No-op if tier unchanged.
+	void maybe_tier_up_(Monster& m);
 
 	World* world_;
 	std::vector<Event> events_;

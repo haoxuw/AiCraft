@@ -147,7 +147,16 @@ inline sim::Monster makeMonsterFromTemplate(const MonsterTemplate& t,
 	m.shape    = t.shape();
 	m.color    = t.color;
 	m.biomass  = t.initial_biomass;
+	// Lifetime biomass seeded from the starter budget so an already-
+	// chunky prebuilt enters the match at the right tier (and its body
+	// is pre-scaled to match).
+	m.lifetime_biomass = t.initial_biomass;
+	m.tier     = sim::computeTier(m.lifetime_biomass);
 	m.parts    = t.parts;
+	if (m.tier > 1) {
+		float s = sim::tierSizeMult(m.tier);
+		for (auto& v : m.shape) v *= s;
+	}
 	m.refresh_stats();
 	m.hp = m.hp_max;
 	return m;
