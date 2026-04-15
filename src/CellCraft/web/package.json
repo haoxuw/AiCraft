@@ -1,0 +1,23 @@
+{
+  "name": "cellcraft-web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "CellCraft web client — Three.js + TypeScript port of the chalk-on-cream-paper cell arena.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:sim": "vitest run src/sim"
+  },
+  "devDependencies": {
+    "@types/three": "^0.168.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8",
+    "vitest": "^4.1.4"
+  },
+  "dependencies": {
+    "three": "^0.168.0"
+  }
+}
