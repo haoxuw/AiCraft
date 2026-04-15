@@ -43,6 +43,10 @@ int main(int argc, char** argv) {
 		else if (match(a, "--celebrate-screenshot", "--kid-celebrate-screenshot") && i + 1 < argc) {
 			opts.celebrate_screenshot_path = argv[++i];
 		}
+		// End-screen screenshot (forces END_SCREEN with fake metrics).
+		else if (!std::strcmp(a, "--end-screenshot") && i + 1 < argc) {
+			opts.end_screenshot_path = argv[++i];
+		}
 		else if (!std::strcmp(a, "--nospeech") || !std::strcmp(a, "--kid-nospeech")) {
 			opts.no_speech = true;
 		}
@@ -62,6 +66,7 @@ int main(int argc, char** argv) {
 			            "  --starter-screenshot PATH   render STARTER picker (alias: --select-screenshot)\n"
 			            "  --lab-screenshot PATH       render creature lab then dump PPM\n"
 			            "  --celebrate-screenshot PATH render celebration then dump PPM\n"
+		            "  --end-screenshot PATH       render end screen with fake metrics then dump PPM\n"
 			            "  --nospeech                  disable speech bubbles in lab\n"
 			            "  --autotest-tier N           seed player at Tier N (1-5) for bg QA\n"
 		            "  --ui-kitchen-sink           render modern UI primitives demo → /tmp/cc_ui_kitchen.ppm\n");

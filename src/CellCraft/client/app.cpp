@@ -135,6 +135,17 @@ bool App::init(const AppOptions& opts) {
 		lab_.load_starter(t.cell, t.parts, t.color, creature_name_);
 		state_ = AppState::CELEBRATE;
 		celebrate_t_ = 0.6f;
+	} else if (!opts_.end_screenshot_path.empty()) {
+		std::mt19937 rng(opts_.seed);
+		auto t = monsters::makeStarter(monsters::StarterKind::SPIKY, rng);
+		creature_name_ = generateName(rng);
+		lab_.load_starter(t.cell, t.parts, t.color, creature_name_);
+		// Fake metrics for the end-screen screenshot.
+		end_kills_   = 3;
+		end_biomass_ = 142.0f;
+		end_time_    = 87.0f;
+		end_won_     = false;  // "YOU DIED" path — more common outcome
+		state_ = AppState::END_SCREEN;
 	} else {
 		state_ = AppState::LOADING;
 	}
@@ -338,6 +349,7 @@ void App::run() {
 			case AppState::STARTER:   drawStarter(dt);  break;
 			case AppState::LAB:       drawLab(dt);      break;
 			case AppState::CELEBRATE: drawCelebrate(dt); break;
+			case AppState::END_SCREEN: drawEndScreen(dt); break;
 			default: break;
 			}
 			if (use_fx) post_fx_->render_to_default(w, h, (float)glfwGetTime());
@@ -365,6 +377,10 @@ void App::run() {
 		run_one_shot(opts_.menu_screenshot_path, AppState::MAIN_MENU, 0.5);
 		return;
 	}
+	if (!opts_.end_screenshot_path.empty()) {
+		run_one_shot(opts_.end_screenshot_path, AppState::END_SCREEN, 0.5);
+		return;
+	}
 
 	// --- normal interactive loop ---
 	double prev = glfwGetTime();
@@ -377,6 +393,15 @@ void App::run() {
 		state_time_ += dt;
 		ui_frame_dt_ = dt;
 		ui_fx_.tick(dt);
+		updateTransition(dt);
+		// Input blocked during the dark portion of the crossfade so you can't
+		// click through a scene that's about to disappear.
+		const bool input_blocked = scene_transition_alpha_ > 0.85f;
+		if (input_blocked) {
+			mouse_left_click_ = false;
+			mouse_right_click_ = false;
+			keys_pressed_this_frame_.clear();
+		}
 
 		int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 		glViewport(0, 0, w, h);
@@ -420,6 +445,10 @@ void App::run() {
 		// (bloom won't eat them, and they read as crisp click feedback).
 		ui_fx_.draw(text_.get());
 
+		// Scene-transition fade overlay — drawn last so nothing else shines
+		// through the black wash.
+		drawTransitionOverlay();
+
 		// consume edge triggers at end of frame
 		mouse_left_click_ = false;
 		mouse_right_click_ = false;
@@ -433,10 +462,41 @@ void App::run() {
 // State transitions
 // ========================================================================
 
+// ---- Scene transitions -------------------------------------------------
+// Simple fade-from-black reveal: on state change, snap alpha to 1.0; the
+// next 400ms the overlay fades 1→0 via smoothstep. Input is suppressed
+// while alpha is high enough to obscure the scene (>0.85).
+void App::beginTransition(AppState target) {
+	transition_target_ = target;
+	transitioning_ = true;
+	transition_t_ = 0.0f;
+	scene_transition_alpha_ = 1.0f;
+}
+
+void App::updateTransition(float dt) {
+	if (!transitioning_) return;
+	const float DUR = 0.40f;
+	transition_t_ += dt;
+	float u = std::min(1.0f, transition_t_ / DUR);
+	float s = u * u * (3.0f - 2.0f * u);  // smoothstep
+	scene_transition_alpha_ = 1.0f - s;
+	if (transition_t_ >= DUR) {
+		scene_transition_alpha_ = 0.0f;
+		transitioning_ = false;
+	}
+}
+
+void App::drawTransitionOverlay() {
+	if (scene_transition_alpha_ <= 0.001f) return;
+	float a = std::min(1.0f, scene_transition_alpha_);
+	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(0.0f, 0.0f, 0.0f, a));
+}
+
 void App::goToMainMenu() {
 	state_ = AppState::MAIN_MENU;
 	state_time_ = 0.0f;
 	initMenuSim();
+	beginTransition(AppState::MAIN_MENU);
 }
 void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	world_ = sim::World{};
@@ -500,6 +560,7 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 
 	sim_ = std::make_unique<sim::Sim>(&world_);
 	state_ = AppState::PLAYING;
+	beginTransition(AppState::PLAYING);
 	state_time_ = 0.0f;
 	particles_.clear();
 	pre_match_t_ = 0.0f;
@@ -518,6 +579,7 @@ void App::goToEndScreen(bool won) {
 	const sim::Monster* pm = world_.get(player_id_);
 	end_biomass_ = pm ? pm->biomass : 0.0f;
 	state_ = AppState::END_SCREEN;
+	beginTransition(AppState::END_SCREEN);
 	state_time_ = 0.0f;
 	log_.write("MATCH", won ? "ended: WON" : "ended: ELIMINATED");
 }
@@ -1758,75 +1820,105 @@ void App::drawPlaying(float dt) {
 // ========================================================================
 
 void App::drawEndScreen(float dt) {
+	(void)dt;
+	namespace m = ui::modern;
+	int W, H; glfwGetFramebufferSize(window_.handle(), &W, &H);
+	m::beginFrame(text_.get(), W, H);
+
+	// Dark scrim.
+	m::drawScrim(0, 0, W, H, m::SURFACE_BG_TOP, m::SURFACE_BG_BOTTOM);
+
+	// Big title — red for death, amber for apex.
 	{
-		float aspect = window_.aspectRatio();
-		if (end_won_ && !end_confetti_spawned_) {
-			ui_fx_.confetti(ai_rng_, 100);
-			end_confetti_spawned_ = true;
-		}
-		// Warm cream overlay — bright, not dim.
-		text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.78f));
-		const char* banner = end_won_ ? "YOU WON!" : "SO CLOSE!";
-		glm::vec4 banner_shadow = end_won_ ? ui::ACCENT_LIME : ui::ACCENT_ORANGE;
-		banner_shadow.a = 0.85f;
-		ui::drawOutlinedTitle(text_.get(), banner, -0.30f, 0.45f, 2.8f,
-		                      ui::TEXT_DARK, banner_shadow, aspect);
+		const char* title = end_won_ ? "APEX REACHED" : "YOU DIED";
+		glm::vec4 col = end_won_ ? m::ACCENT_AMBER : m::ACCENT_DANGER;
+		int tw = m::measureTextPx(title, m::TYPE_DISPLAY);
+		m::drawTextDisplay((W - tw) / 2, 80, title, col);
+	}
 
-		// Creature wiggle / slump animation in center.
-		state_time_ += 0.0f; // already accumulated by main loop
-		int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
-		float t = state_time_;
-		float scale = 1.0f, rot = 0.0f;
-		if (end_won_) {
-			scale = 1.0f + 0.10f * std::sin(t * 6.0f);
-			rot   = std::sin(t * 5.0f) * (20.0f * 3.14159f / 180.0f);
-		} else {
-			scale = 1.0f - 0.05f;
-			rot   = -8.0f * 3.14159f / 180.0f;
-		}
-		auto poly = sim::cellToPolygon(lab_.cell(), 1);
-		float cx = w_px * 0.5f, cy = h_px * 0.55f;
-		float pxu = 2.4f * scale;
-		ChalkStroke outline; outline.color = lab_.color(); outline.half_width = 5.0f;
-		float c = std::cos(rot), si = std::sin(rot);
-		for (auto& v : poly) {
-			glm::vec2 r(c * v.x - si * v.y, si * v.x + c * v.y);
-			outline.points.push_back({cx + r.x * pxu, cy - r.y * pxu});
-		}
-		outline.points.push_back(outline.points.front());
-		std::vector<ChalkStroke> ss{outline};
-		auto local_to_screen = [&](glm::vec2 v) {
-			glm::vec2 r(c * v.x - si * v.y, si * v.x + c * v.y);
-			return glm::vec2(cx + r.x * pxu, cy - r.y * pxu);
-		};
-		appendPartStrokes(lab_.parts(), lab_.color(), local_to_screen, pxu,
-		                  (float)glfwGetTime(), ss);
-		renderer_->drawStrokes(ss, nullptr, w_px, h_px);
+	// Center card with the 4 stat rings.
+	const int CARD_W = 760, CARD_H = 320;
+	int card_x = (W - CARD_W) / 2;
+	int card_y = (H - CARD_H) / 2 + 20;
+	m::drawSoftShadow(card_x, card_y + 10, CARD_W, CARD_H, m::RADIUS_LG, 28, 0.45f);
+	m::drawGlassPanel(card_x, card_y, CARD_W, CARD_H, m::RADIUS_LG);
 
-		// Confetti (win only).
-		if (end_won_ && particles_.empty() && t < 0.05f) {
-			std::uniform_real_distribution<float> a(0.0f, 6.28318530718f);
-			std::uniform_real_distribution<float> r(40.0f, 250.0f);
-			for (int i = 0; i < 60; ++i) {
-				float ang = a(ai_rng_), len = r(ai_rng_);
-				Particle pa;
-				pa.pos_a = glm::vec2(std::cos(ang), std::sin(ang)) * len;
-				pa.pos_b = pa.pos_a + glm::vec2(std::cos(ang), std::sin(ang)) * 14.0f;
-				pa.color = lab_.color();
-				pa.half_width = 3.0f;
-				pa.t_left = 2.0f; pa.t_max = 2.0f;
-				particles_.push_back(pa);
-			}
-		}
-		camera_world_ = glm::vec2(0.0f);
-		updateAndDrawParticles(dt);
+	// 4 ring-style stat slots.
+	const char* labels[4] = { "KILLS", "BIOMASS", "TIER", "TIME" };
+	char v0[16], v1[16], v2[16], v3[16];
+	std::snprintf(v0, sizeof(v0), "%d", end_kills_);
+	std::snprintf(v1, sizeof(v1), "%.0f", end_biomass_);
+	// Tier is roughly log-ish of biomass; show a 1-5 bucket for the screenshot.
+	int tier_shown = 1;
+	if (end_biomass_ >   50.0f) tier_shown = 2;
+	if (end_biomass_ >  150.0f) tier_shown = 3;
+	if (end_biomass_ >  400.0f) tier_shown = 4;
+	if (end_biomass_ > 1000.0f) tier_shown = 5;
+	std::snprintf(v2, sizeof(v2), "%d", tier_shown);
+	int ts = (int)end_time_;
+	std::snprintf(v3, sizeof(v3), "%d:%02d", ts / 60, ts % 60);
+	const char* vals[4] = { v0, v1, v2, v3 };
+	// Ring fill fractions — dramatic but derived from the raw numbers.
+	float frac[4] = {
+		std::min(1.0f, end_kills_ / 10.0f),
+		std::min(1.0f, end_biomass_ / 500.0f),
+		(float)tier_shown / 5.0f,
+		std::min(1.0f, end_time_ / 300.0f),
+	};
+	glm::vec4 ring_colors[4] = {
+		m::ACCENT_DANGER, m::ACCENT_CYAN, m::ACCENT_AMBER, m::ACCENT_SUCCESS
+	};
 
-		// Buttons
-		Button again { -0.32f, -0.55f, 0.30f, 0.12f, "PLAY AGAIN!" };
-		Button menu  {  0.02f, -0.55f, 0.30f, 0.12f, "MENU" };
-		if (drawButton(again)) { end_confetti_spawned_ = false; ui_fx_.clear(); goToStarter(); return; }
-		if (drawButton(menu))  { end_confetti_spawned_ = false; ui_fx_.clear(); goToMainMenu(); return; }
-		return;
+	const int SLOT_W = CARD_W / 4;
+	int slot_y = card_y + 40;
+	for (int i = 0; i < 4; ++i) {
+		int cx = card_x + SLOT_W * i + SLOT_W / 2;
+		int ring_cy = slot_y + 80;
+		int radius = 56, thickness = 10;
+		m::drawRingProgress(cx, ring_cy, radius, thickness,
+			frac[i], ring_colors[i]);
+		// Numeric readout centered in the ring.
+		int vw = m::measureTextPx(vals[i], m::TYPE_TITLE_MD);
+		m::drawTextModern(cx - vw / 2, ring_cy - m::TYPE_TITLE_MD / 2 - 2,
+			vals[i], m::TYPE_TITLE_MD, m::TEXT_PRIMARY);
+		// Label below.
+		int lw = m::measureTextPx(labels[i], m::TYPE_LABEL);
+		m::drawTextLabel(cx - lw / 2, ring_cy + radius + 18,
+			labels[i], m::TEXT_SECONDARY);
+	}
+
+	// Buttons: PLAY AGAIN (primary) + MAIN MENU (ghost).
+	const int BTN_W_LG = 240, BTN_W_SM = 180, BTN_H = 52;
+	int btn_total = BTN_W_LG + 16 + BTN_W_SM;
+	int btn_x0 = (W - btn_total) / 2;
+	int btn_y = card_y + CARD_H + 36;
+
+	glm::vec2 mouse_fb = mouse_px_;
+	{
+		int ww, wh; glfwGetWindowSize(window_.handle(), &ww, &wh);
+		if (ww > 0 && wh > 0) {
+			mouse_fb.x = mouse_px_.x * (float)W / (float)ww;
+			mouse_fb.y = mouse_px_.y * (float)H / (float)wh;
+		}
+	}
+	auto in_rect = [&](int x, int y, int w, int h) {
+		return mouse_fb.x >= x && mouse_fb.x <= x + w
+		    && mouse_fb.y >= y && mouse_fb.y <= y + h;
+	};
+	{
+		bool hov = in_rect(btn_x0, btn_y, BTN_W_LG, BTN_H);
+		bool prs = hov && mouse_left_down_;
+		bool clk = hov && mouse_left_click_;
+		m::buttonPrimary(btn_x0, btn_y, BTN_W_LG, BTN_H, "PLAY AGAIN", hov, prs);
+		if (clk) { end_confetti_spawned_ = false; ui_fx_.clear(); goToStarter(); return; }
+	}
+	{
+		int x = btn_x0 + BTN_W_LG + 16;
+		bool hov = in_rect(x, btn_y, BTN_W_SM, BTN_H);
+		bool prs = hov && mouse_left_down_;
+		bool clk = hov && mouse_left_click_;
+		m::buttonGhost(x, btn_y, BTN_W_SM, BTN_H, "MAIN MENU", hov, prs);
+		if (clk) { end_confetti_spawned_ = false; ui_fx_.clear(); goToMainMenu(); return; }
 	}
 }
 
@@ -1837,6 +1929,7 @@ void App::drawEndScreen(float dt) {
 void App::goToStarter() {
 	state_ = AppState::STARTER;
 	state_time_ = 0.0f;
+	beginTransition(AppState::STARTER);
 }
 
 void App::goToLab(monsters::StarterKind kind) {
@@ -1846,12 +1939,14 @@ void App::goToLab(monsters::StarterKind kind) {
 	lab_.load_starter(t.cell, t.parts, t.color, creature_name_);
 	state_ = AppState::LAB;
 	state_time_ = 0.0f;
+	beginTransition(AppState::LAB);
 }
 
 void App::goToCelebrate() {
 	state_ = AppState::CELEBRATE;
 	state_time_ = 0.0f;
 	celebrate_t_ = 0.0f;
+	beginTransition(AppState::CELEBRATE);
 }
 
 void App::startMatchFromLab() {
@@ -1867,15 +1962,39 @@ void App::startMatchFromLab() {
 
 void App::drawStarter(float dt) {
 	(void)dt;
-	float aspect = window_.aspectRatio();
-	// Cream overlay so the starter picker reads bright and airy.
-	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.72f));
-	glm::vec4 ttl_shadow = ui::ACCENT_CYAN; ttl_shadow.a = 0.80f;
-	ui::drawOutlinedTitle(text_.get(), "WHAT DO YOU WANT TO BUILD?",
-	                      -0.55f, 0.78f, 1.6f, ui::TEXT_DARK, ttl_shadow, aspect);
+	namespace m = ui::modern;
+	int W, H; glfwGetFramebufferSize(window_.handle(), &W, &H);
+	m::beginFrame(text_.get(), W, H);
 
-	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
-	const int n = 6;
+	// Dark charcoal scrim.
+	m::drawScrim(0, 0, W, H, m::SURFACE_BG_TOP, m::SURFACE_BG_BOTTOM);
+
+	// Mouse in framebuffer pixel space for hit-tests.
+	glm::vec2 mouse_fb = mouse_px_;
+	{
+		int ww, wh; glfwGetWindowSize(window_.handle(), &ww, &wh);
+		if (ww > 0 && wh > 0) {
+			mouse_fb.x = mouse_px_.x * (float)W / (float)ww;
+			mouse_fb.y = mouse_px_.y * (float)H / (float)wh;
+		}
+	}
+	auto in_rect = [&](int x, int y, int w, int h) {
+		return mouse_fb.x >= x && mouse_fb.x <= x + w
+		    && mouse_fb.y >= y && mouse_fb.y <= y + h;
+	};
+
+	// Heading.
+	{
+		const std::string title = "CHOOSE YOUR STARTER";
+		int tw = m::measureTextPx(title, m::TYPE_DISPLAY);
+		m::drawTextDisplay((W - tw) / 2, 40, title, m::TEXT_PRIMARY);
+		const std::string sub = "BUILD FROM A PREBUILT OR START FRESH";
+		int sw = m::measureTextPx(sub, m::TYPE_LABEL);
+		m::drawTextLabel((W - sw) / 2, 40 + m::TYPE_DISPLAY + 12,
+			sub, m::TEXT_SECONDARY);
+	}
+
+	// Grid: 3 cols × 2 rows, 240×280 cards, 24px gap, centered horizontally.
 	const monsters::StarterKind kinds[6] = {
 		monsters::StarterKind::SPIKY,
 		monsters::StarterKind::SQUISHY,
@@ -1884,117 +2003,146 @@ void App::drawStarter(float dt) {
 		monsters::StarterKind::RANDOM,
 		monsters::StarterKind::PLAIN,
 	};
+	const int COLS = 3, ROWS = 2;
+	const int CARD_W = 240, CARD_H = 280;
+	const int GAP = 24;
+	const int GRID_W = COLS * CARD_W + (COLS - 1) * GAP;
+	const int GRID_H = ROWS * CARD_H + (ROWS - 1) * GAP;
+	const int grid_x = (W - GRID_W) / 2;
+	const int grid_y = 200;
 
-	float tile_w = 0.30f, tile_h = 0.50f;
-	float pad_x = 0.05f, pad_y = 0.08f;
-	float total_w = tile_w * 3 + pad_x * 2;
-	float total_h = tile_h * 2 + pad_y;
-	float x0 = -total_w * 0.5f;
-	float y0 = -total_h * 0.5f - 0.10f;
+	std::mt19937 preview_rng(0xBEEFu);
+	static int selected_idx = -1;
 
-	std::mt19937 preview_rng(0xBEEF);
+	int picked = -1;
+	for (int i = 0; i < 6; ++i) {
+		int col = i % COLS, row = i / COLS;
+		int cx = grid_x + col * (CARD_W + GAP);
+		int cy = grid_y + row * (CARD_H + GAP);
+		bool hover = in_rect(cx, cy, CARD_W, CARD_H);
 
-	for (int i = 0; i < n; ++i) {
-		int col = i % 3, row = i / 3;
-		Button tile { x0 + col * (tile_w + pad_x),
-		              y0 + (1 - row) * (tile_h + pad_y),
-		              tile_w, tile_h, "" };
-		bool hover = pointInButton(pxToNDC(mouse_px_), tile);
-		bool clicked = hover && mouse_left_click_;
-		char tkey[32]; std::snprintf(tkey, sizeof(tkey), "tile:%d", i);
-		ui::AnimState& ta = ui_anim_.get(tkey);
-		ta.tick(ui_frame_dt_, hover, clicked);
-		float tscale = ta.scale(true);
-		float tdy = ta.idle_offset(true);
-		// Apply scale about tile center + idle bobble.
-		{
-			float cx = tile.x + tile.w * 0.5f, cy = tile.y + tile.h * 0.5f;
-			float nw = tile.w * tscale, nh = tile.h * tscale;
-			tile.x = cx - nw * 0.5f;
-			tile.y = cy - nh * 0.5f + tdy;
-			tile.w = nw; tile.h = nh;
+		// Hover scale 1.02 about card center (visual cue — just expand bounds).
+		int draw_x = cx, draw_y = cy, draw_w = CARD_W, draw_h = CARD_H;
+		if (hover) {
+			int dw = (int)(CARD_W * 0.02f), dh = (int)(CARD_H * 0.02f);
+			draw_x -= dw / 2; draw_y -= dh / 2;
+			draw_w += dw; draw_h += dh;
 		}
-		// Tile = card-button with gradient, shadow, outline, rounded corners.
-		// Tinted per tile with the accent color rotation.
-		glm::vec4 tints[6] = {
-			ui::ACCENT_GOLD_WARM, ui::ACCENT_LIME, ui::ACCENT_CYAN,
-			ui::ACCENT_GOLD, ui::ACCENT_MAGENTA, ui::ACCENT_ORANGE,
-		};
-		glm::vec4 tile_top = glm::mix(ui::CARD_FILL, tints[i], 0.25f);
-		glm::vec4 tile_bot = glm::mix(ui::CARD_FILL, tints[i], 0.10f);
-		tile_top.a = 0.98f; tile_bot.a = 0.98f;
-		if (hover) { tile_top += glm::vec4(0.05f, 0.05f, 0.05f, 0.0f);
-		             tile_bot += glm::vec4(0.05f, 0.05f, 0.05f, 0.0f); }
-		// Shadow
-		text_->drawRect(tile.x + 0.008f, tile.y - 0.016f, tile.w, tile.h, ui::SHADOW);
-		// Gradient
-		const int TS = 8;
-		for (int si = 0; si < TS; ++si) {
-			float t0 = (float)si / TS, t1 = (float)(si + 1) / TS;
-			glm::vec4 c = glm::mix(tile_top, tile_bot, 0.5f * (t0 + t1));
-			text_->drawRect(tile.x, tile.y + tile.h * (1.0f - t1),
-			                tile.w, tile.h * (t1 - t0) + 0.0005f, c);
-		}
-		// Outline
-		glm::vec4 edge = ui::OUTLINE;
-		float t_w = 0.005f;
-		text_->drawRect(tile.x, tile.y, tile.w, t_w, edge);
-		text_->drawRect(tile.x, tile.y + tile.h - t_w, tile.w, t_w, edge);
-		text_->drawRect(tile.x, tile.y, t_w, tile.h, edge);
-		text_->drawRect(tile.x + tile.w - t_w, tile.y, t_w, tile.h, edge);
-		// Rounded corners
-		{
-			float r = 0.010f;
-			glm::vec4 bgc = ui::BG_CREAM;
-			text_->drawRect(tile.x, tile.y + tile.h - r, r, r, bgc);
-			text_->drawRect(tile.x + tile.w - r, tile.y + tile.h - r, r, r, bgc);
-			text_->drawRect(tile.x, tile.y, r, r, bgc);
-			text_->drawRect(tile.x + tile.w - r, tile.y, r, r, bgc);
-		}
-		// Title bar on top of tile (colored strip).
-		float bar_h = 0.07f;
-		text_->drawRect(tile.x, tile.y + tile.h - bar_h, tile.w, bar_h, tints[i]);
-		text_->drawRect(tile.x, tile.y + tile.h - bar_h, tile.w, 0.003f, edge);
 
-		// Render preview creature (chalk strokes).
+		// Shadow + glass panel.
+		m::drawSoftShadow(draw_x, draw_y + 6, draw_w, draw_h, m::RADIUS_LG, 18, 0.35f);
+		m::drawGlassPanel(draw_x, draw_y, draw_w, draw_h, m::RADIUS_LG);
+
+		// Selected: cyan border + fill tint.
+		if (selected_idx == i) {
+			glm::vec4 tint = m::ACCENT_CYAN; tint.a = 0.10f;
+			m::drawRoundedRect(draw_x, draw_y, draw_w, draw_h, m::RADIUS_LG,
+				tint, m::ACCENT_CYAN, 2);
+		} else if (hover) {
+			m::drawInnerGlow(draw_x, draw_y, draw_w, draw_h, m::RADIUS_LG,
+				m::ACCENT_CYAN_GLOW, 6);
+		}
+
+		// Chalk creature preview on a cream bezel inside the top 70%.
+		int preview_h = (int)(draw_h * 0.60f);
+		int preview_y = draw_y + 18;
+		int preview_w = draw_w - 32;
+		int preview_x = draw_x + 16;
+		m::drawRoundedRect(preview_x, preview_y, preview_w, preview_h, m::RADIUS_MD,
+			glm::vec4(0.96f, 0.95f, 0.89f, 1.0f), m::STROKE_SUBTLE, 1);
+
 		auto tmpl = monsters::makeStarter(kinds[i], preview_rng);
-		float cx = (tile.x + tile.w * 0.5f + 1.0f) * 0.5f * (float)w_px;
-		float cy = (1.0f - (tile.y + tile.h * 0.55f + 1.0f) * 0.5f) * (float)h_px;
+		float ccx = (float)(preview_x + preview_w / 2);
+		float ccy = (float)(preview_y + preview_h / 2);
 		auto preview_shape = tmpl.shape();
 		float max_r = 0.0f;
 		for (auto& v : preview_shape) max_r = std::max(max_r, glm::length(v));
-		float k = (max_r > 0.0f) ? (90.0f / max_r) : 1.0f;
+		float k = (max_r > 0.0f) ? ((preview_h * 0.40f) / max_r) : 1.0f;
 		ChalkStroke outline;
 		outline.color = tmpl.color;
 		outline.half_width = 4.0f;
-		for (auto& v : preview_shape) outline.points.push_back({cx + v.x * k, cy - v.y * k});
+		for (auto& v : preview_shape) outline.points.push_back({ccx + v.x * k, ccy - v.y * k});
 		outline.points.push_back(outline.points.front());
 		std::vector<ChalkStroke> tmp{outline};
-		renderer_->drawStrokes(tmp, nullptr, w_px, h_px);
-		auto local_to_screen = [&](glm::vec2 v) { return glm::vec2(cx + v.x * k, cy - v.y * k); };
+		renderer_->drawStrokes(tmp, nullptr, W, H);
+		auto local_to_screen = [&](glm::vec2 v) { return glm::vec2(ccx + v.x * k, ccy - v.y * k); };
 		std::vector<ChalkStroke> ps;
 		appendPartStrokes(tmpl.parts, tmpl.color, local_to_screen, k,
 		                  (float)glfwGetTime(), ps);
-		if (!ps.empty()) renderer_->drawStrokes(ps, nullptr, w_px, h_px);
+		if (!ps.empty()) renderer_->drawStrokes(ps, nullptr, W, H);
 
-		// Title sits in the colored header strip: light text with dark shadow.
-		float title_y = tile.y + tile.h - 0.055f;
-		text_->drawText(monsters::starterName(kinds[i]),
-			tile.x + 0.023f, title_y - 0.004f, 1.7f, ui::OUTLINE, aspect);
-		text_->drawText(monsters::starterName(kinds[i]),
-			tile.x + 0.020f, title_y, 1.7f, ui::TEXT_LIGHT, aspect);
-		// Tagline below the creature preview, dark on cream.
-		text_->drawText(monsters::starterTagline(kinds[i]),
-			tile.x + 0.02f, tile.y + 0.018f, 0.9f, ui::TEXT_DARK, aspect);
+		// Name.
+		int name_y = preview_y + preview_h + 18;
+		std::string name = monsters::starterName(kinds[i]);
+		int nw = m::measureTextPx(name, m::TYPE_TITLE_SM);
+		m::drawTextModern(draw_x + (draw_w - nw) / 2, name_y, name,
+			m::TYPE_TITLE_SM, m::TEXT_PRIMARY);
+
+		// 3 stat pips (SPEED / TOUGH / BITE) — tiny 36×4 bars with label above.
+		// Values derived approximately from the starter kind for visual variety.
+		float speed = 0.5f, tough = 0.5f, bite = 0.5f;
+		switch (kinds[i]) {
+			case monsters::StarterKind::SPIKY:   bite = 0.9f; tough = 0.4f; speed = 0.5f; break;
+			case monsters::StarterKind::SQUISHY: bite = 0.6f; tough = 0.3f; speed = 0.6f; break;
+			case monsters::StarterKind::ZOOMY:   speed = 0.95f; bite = 0.5f; tough = 0.35f; break;
+			case monsters::StarterKind::TOUGH:   tough = 0.95f; bite = 0.45f; speed = 0.35f; break;
+			case monsters::StarterKind::RANDOM:  speed = 0.55f; bite = 0.55f; tough = 0.55f; break;
+			case monsters::StarterKind::PLAIN:   speed = 0.4f;  bite = 0.4f;  tough = 0.4f;  break;
+		}
+		const int PIP_W = 46, PIP_H = 4;
+		const int PIP_GAP = 12;
+		int pip_total = PIP_W * 3 + PIP_GAP * 2;
+		int pip_x = draw_x + (draw_w - pip_total) / 2;
+		int pip_y = name_y + 18;
+		auto pip = [&](int x, const char* lbl, float v, glm::vec4 col) {
+			int lw = m::measureTextPx(lbl, m::TYPE_CAPTION);
+			m::drawTextModern(x + (PIP_W - lw) / 2, pip_y, lbl,
+				m::TYPE_CAPTION, m::TEXT_MUTED);
+			m::drawRoundedRect(x, pip_y + 14, PIP_W, PIP_H, 2, m::TRACK_BG);
+			int fw = (int)(PIP_W * std::max(0.0f, std::min(1.0f, v)));
+			if (fw > 0) m::drawRoundedRect(x, pip_y + 14, fw, PIP_H, 2, col);
+		};
+		pip(pip_x,                        "SPD", speed, m::ACCENT_CYAN);
+		pip(pip_x + PIP_W + PIP_GAP,      "TGH", tough, m::ACCENT_AMBER);
+		pip(pip_x + (PIP_W + PIP_GAP)*2,  "BTE", bite,  m::ACCENT_DANGER);
 
 		if (hover && mouse_left_click_) {
-			goToLab(kinds[i]);
+			selected_idx = i;
+			picked = i;
+		}
+	}
+
+	// Bottom buttons: START (primary, requires selection), BACK (ghost).
+	const int BTN_W_LG = 220, BTN_W_SM = 140, BTN_H = 52;
+	int btn_y = grid_y + GRID_H + 32;
+	int total_btn_w = BTN_W_SM + 16 + BTN_W_LG;
+	int btn_x0 = (W - total_btn_w) / 2;
+	{
+		bool hov = in_rect(btn_x0, btn_y, BTN_W_SM, BTN_H);
+		bool prs = hov && mouse_left_down_;
+		bool clk = hov && mouse_left_click_;
+		m::buttonGhost(btn_x0, btn_y, BTN_W_SM, BTN_H, "BACK", hov, prs);
+		if (clk) { goToMainMenu(); return; }
+	}
+	{
+		int x = btn_x0 + BTN_W_SM + 16;
+		bool hov = in_rect(x, btn_y, BTN_W_LG, BTN_H);
+		bool prs = hov && mouse_left_down_;
+		bool clk = hov && mouse_left_click_;
+		m::buttonPrimary(x, btn_y, BTN_W_LG, BTN_H, "START", hov, prs);
+		if (clk && selected_idx >= 0) {
+			int idx = selected_idx;
+			selected_idx = -1;
+			goToLab(kinds[idx]);
 			return;
 		}
 	}
 
-	Button back { -0.10f, -0.92f, 0.20f, 0.07f, "MENU" };
-	if (drawButton(back)) goToMainMenu();
+	// If the user double-clicks a card, jump straight in (legacy behavior).
+	if (picked >= 0 && mouse_left_click_) {
+		// only when clicked on an already-selected card this same frame? keep
+		// the "one-click-select, then START" contract. Nothing to do here.
+	}
 }
 
 void App::drawLab(float dt) {
@@ -2016,41 +2164,85 @@ void App::drawLab(float dt) {
 
 void App::drawCelebrate(float dt) {
 	celebrate_t_ += dt;
-	float aspect = window_.aspectRatio();
+	namespace m = ui::modern;
+	int W, H; glfwGetFramebufferSize(window_.handle(), &W, &H);
+	m::beginFrame(text_.get(), W, H);
 
-	// Confetti: spawn once when entering the celebration screen.
-	if (!celebrate_confetti_spawned_) {
-		ui_fx_.confetti(ai_rng_, 80);
-		celebrate_confetti_spawned_ = true;
+	// Dark scrim with a subtle vignette (darker bottom).
+	glm::vec4 top_c = m::SURFACE_BG_TOP;
+	glm::vec4 bot_c = m::SURFACE_BG_BOTTOM; bot_c.r *= 0.6f; bot_c.g *= 0.6f; bot_c.b *= 0.6f;
+	m::drawScrim(0, 0, W, H, top_c, bot_c);
+
+	// Slow, subtle cyan/amber mote swarm (replaces rainbow confetti).
+	{
+		static unsigned rs = 0xC11EBEEFu;
+		static float motes[50][2];
+		static float mvel[50][2];
+		static unsigned char mcol[50];
+		static bool seeded = false;
+		auto r01 = [&]() { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5;
+			return (rs & 0xFFFFFF) / float(0x1000000); };
+		if (!seeded) {
+			for (int i = 0; i < 50; ++i) {
+				motes[i][0] = r01() * W;
+				motes[i][1] = r01() * H;
+				float ang = r01() * 6.28318f;
+				float sp = 4.0f + r01() * 6.0f;
+				mvel[i][0] = std::cos(ang) * sp;
+				mvel[i][1] = std::sin(ang) * sp;
+				mcol[i] = (r01() < 0.5f) ? 0 : 1;
+			}
+			seeded = true;
+		}
+		for (int i = 0; i < 50; ++i) {
+			motes[i][0] += mvel[i][0] * dt;
+			motes[i][1] += mvel[i][1] * dt;
+			if (motes[i][0] < -4)   motes[i][0] = (float)W + 4;
+			if (motes[i][0] > W+4)  motes[i][0] = -4;
+			if (motes[i][1] < -4)   motes[i][1] = (float)H + 4;
+			if (motes[i][1] > H+4)  motes[i][1] = -4;
+			glm::vec4 col = (mcol[i] == 0) ? m::ACCENT_CYAN : m::ACCENT_AMBER;
+			col.a = 0.45f;
+			m::drawRoundedRect((int)motes[i][0], (int)motes[i][1], 3, 3, 1, col);
+		}
 	}
-	int w_px, h_px; glfwGetFramebufferSize(window_.handle(), &w_px, &h_px);
 
-	// Cream overlay (bright celebration), not dim-black.
-	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.55f));
+	// Center card: 600×400, glass panel with shadow.
+	const int CARD_W = 600, CARD_H = 420;
+	int card_x = (W - CARD_W) / 2;
+	int card_y = (H - CARD_H) / 2;
+	m::drawSoftShadow(card_x, card_y + 10, CARD_W, CARD_H, m::RADIUS_LG, 28, 0.45f);
+	m::drawGlassPanel(card_x, card_y, CARD_W, CARD_H, m::RADIUS_LG);
+
+	// Heading.
+	{
+		std::string title = "MEET " + creature_name_;
+		int tw = m::measureTextPx(title, m::TYPE_TITLE_MD);
+		m::drawTextModern(card_x + (CARD_W - tw) / 2, card_y + 28,
+			title, m::TYPE_TITLE_MD, m::TEXT_PRIMARY);
+	}
+
+	// Chalk creature preview on its own cream bezel (200×200).
+	const int PREVIEW_SZ = 200;
+	int prev_x = card_x + (CARD_W - PREVIEW_SZ) / 2;
+	int prev_y = card_y + 80;
+	m::drawRoundedRect(prev_x, prev_y, PREVIEW_SZ, PREVIEW_SZ, m::RADIUS_MD,
+		glm::vec4(0.96f, 0.95f, 0.89f, 1.0f), m::STROKE_SUBTLE, 1);
 
 	float t = celebrate_t_;
-	// Animation: grow 1.0 → 1.4 over 0.5s, wobble ±20° next 0.5s, shrink to 1.0
 	float scale = 1.0f, rot = 0.0f;
-	if (t < 0.5f) {
-		float k = t / 0.5f;
-		scale = 1.0f + 0.4f * k;
-	} else if (t < 1.0f) {
-		scale = 1.4f;
-		rot = std::sin((t - 0.5f) * 25.0f) * (20.0f * 3.14159f / 180.0f);
-	} else if (t < 1.6f) {
-		float k = (t - 1.0f) / 0.6f;
-		scale = 1.4f - 0.4f * k;
-	} else {
-		scale = 1.0f;
-	}
+	if (t < 0.5f) { scale = 1.0f + 0.4f * (t / 0.5f); }
+	else if (t < 1.0f) { scale = 1.4f; rot = std::sin((t - 0.5f) * 25.0f) * (20.0f * 3.14159f / 180.0f); }
+	else if (t < 1.6f) { scale = 1.4f - 0.4f * ((t - 1.0f) / 0.6f); }
+	else { scale = 1.0f + 0.04f * std::sin(t * 2.5f); }
 
-	// Render creature in center.
 	auto poly = sim::cellToPolygon(lab_.cell(), 1);
-	float cx = w_px * 0.5f, cy = h_px * 0.5f;
-	float pxu = 3.0f * scale;
+	float cx = (float)(prev_x + PREVIEW_SZ / 2);
+	float cy = (float)(prev_y + PREVIEW_SZ / 2);
+	float pxu = 1.8f * scale;
 	ChalkStroke outline;
 	outline.color = lab_.color();
-	outline.half_width = 5.5f;
+	outline.half_width = 4.5f;
 	float c = std::cos(rot), si = std::sin(rot);
 	for (auto& v : poly) {
 		glm::vec2 r(c * v.x - si * v.y, si * v.x + c * v.y);
@@ -2064,40 +2256,58 @@ void App::drawCelebrate(float dt) {
 	};
 	appendPartStrokes(lab_.parts(), lab_.color(), local_to_screen, pxu,
 	                  (float)glfwGetTime(), ss);
+	renderer_->drawStrokes(ss, nullptr, W, H);
 
-	// Confetti particles around the creature.
-	if (particles_.empty() && t < 0.05f) {
-		std::uniform_real_distribution<float> a(0.0f, 6.28318530718f);
-		std::uniform_real_distribution<float> r(40.0f, 220.0f);
-		glm::vec2 wp(0.0f);
-		for (int i = 0; i < 40; ++i) {
-			float ang = a(ai_rng_), len = r(ai_rng_);
-			Particle pa;
-			pa.pos_a = wp + glm::vec2(std::cos(ang), std::sin(ang)) * len;
-			pa.pos_b = pa.pos_a + glm::vec2(std::cos(ang), std::sin(ang)) * 12.0f;
-			pa.color = lab_.color();
-			pa.half_width = 3.0f;
-			pa.t_left = 1.4f;
-			pa.t_max  = 1.4f;
-			particles_.push_back(pa);
+	// Diet + tier pill badges below the creature.
+	{
+		int pill_y = prev_y + PREVIEW_SZ + 12;
+		int diet_x = card_x + 100;
+		m::drawPillBadge(diet_x, pill_y, "OMNIVORE",
+			m::TEXT_PRIMARY, m::SURFACE_PANEL_HI, m::ACCENT_CYAN);
+		m::drawPillBadge(diet_x + 160, pill_y, "TIER 1 - SPECK",
+			m::TEXT_PRIMARY, m::SURFACE_PANEL_HI, m::ACCENT_AMBER);
+	}
+
+	// 3-column metric row: PARTS / BIOMASS / TIER.
+	{
+		const int MROW_Y = card_y + CARD_H - 120;
+		const int COL_W = CARD_W / 3;
+		const char* labels[3] = { "PARTS", "BIOMASS", "TIER" };
+		char val0[16], val1[16], val2[16];
+		std::snprintf(val0, sizeof(val0), "%d", (int)lab_.parts().size());
+		std::snprintf(val1, sizeof(val1), "%.0f", 28.0f);
+		std::snprintf(val2, sizeof(val2), "1");
+		const char* vals[3] = { val0, val1, val2 };
+		for (int i = 0; i < 3; ++i) {
+			int col_cx = card_x + COL_W * i + COL_W / 2;
+			int lw = m::measureTextPx(labels[i], m::TYPE_LABEL);
+			m::drawTextLabel(col_cx - lw / 2, MROW_Y, labels[i], m::TEXT_SECONDARY);
+			int vw = m::measureTextPx(vals[i], m::TYPE_TITLE_SM);
+			m::drawTextModern(col_cx - vw / 2, MROW_Y + 22, vals[i],
+				m::TYPE_TITLE_SM, m::TEXT_PRIMARY);
 		}
 	}
-	// Render particles relative to screen-center (treat as world=screen here).
-	camera_world_ = glm::vec2(0.0f);
-	updateAndDrawParticles(dt);
 
-	renderer_->drawStrokes(ss, nullptr, w_px, h_px);
+	// ENTER ARENA button.
+	int btn_w = 240, btn_h = 48;
+	int btn_x = card_x + (CARD_W - btn_w) / 2;
+	int btn_y = card_y + CARD_H - 60;
+	glm::vec2 mouse_fb = mouse_px_;
+	{
+		int ww, wh; glfwGetWindowSize(window_.handle(), &ww, &wh);
+		if (ww > 0 && wh > 0) {
+			mouse_fb.x = mouse_px_.x * (float)W / (float)ww;
+			mouse_fb.y = mouse_px_.y * (float)H / (float)wh;
+		}
+	}
+	bool hov = mouse_fb.x >= btn_x && mouse_fb.x <= btn_x + btn_w
+	        && mouse_fb.y >= btn_y && mouse_fb.y <= btn_y + btn_h;
+	bool prs = hov && mouse_left_down_;
+	bool clk = hov && mouse_left_click_;
+	m::buttonPrimary(btn_x, btn_y, btn_w, btn_h, "ENTER ARENA >", hov, prs);
 
-	// Banner — outlined, gold-shadow on dark fill reads great on cream.
-	std::string banner = "MEET " + creature_name_ + "!";
-	float w_chars = (float)banner.size() * 0.018f * 2.4f;
-	glm::vec4 bshadow = ui::ACCENT_GOLD; bshadow.a = 0.85f;
-	ui::drawOutlinedText(text_.get(), banner, -w_chars * 0.5f, 0.55f, 2.4f,
-	                     ui::TEXT_DARK, bshadow, aspect);
-
-	// Skip-on-click; auto-advance after 2s.
-	if (t >= 2.0f || mouse_left_click_) {
-		particles_.clear();
+	// Auto-advance after 4s or on button click.
+	if (t >= 4.0f || clk) {
 		celebrate_confetti_spawned_ = false;
 		ui_fx_.clear();
 		startMatchFromLab();

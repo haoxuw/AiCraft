@@ -46,6 +46,7 @@ struct AppOptions {
 	std::string starter_screenshot_path;
 	std::string lab_screenshot_path;
 	std::string celebrate_screenshot_path;
+	std::string end_screenshot_path;
 	bool        no_speech = false;
 	// Seed the player's lifetime biomass so they spawn at a specific Tier
 	// (1-5). Used by --autotest-tier for background-layer QA of the APEX
@@ -151,6 +152,19 @@ private:
 
 	AppState state_ = AppState::LOADING;
 	float state_time_ = 0.0f;
+
+	// Scene-transition crossfade. When a goToX() is called, we set
+	// transition_target_ + transitioning_=true and animate alpha 0→1 over
+	// 200ms (darken), swap state_, then alpha 1→0 over 200ms (reveal).
+	// Input is suppressed while transitioning_.
+	bool      transitioning_       = false;
+	AppState  transition_target_   = AppState::LOADING;
+	float     transition_t_        = 0.0f;   // 0..0.4s
+	float     scene_transition_alpha_ = 0.0f;
+	// Helper: drives the state swap mid-transition.
+	void beginTransition(AppState target);
+	void updateTransition(float dt);
+	void drawTransitionOverlay();
 
 	// shared input state
 	glm::vec2 mouse_px_ = glm::vec2(-1.0f);
