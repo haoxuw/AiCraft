@@ -118,6 +118,8 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/server/python_bridge.cpp
 	src/platform/server/server_tuning.h
 	src/platform/server/test_server.h
+	src/platform/agent/pathfind.h
+	src/platform/agent/pathfind.cpp
 )
 
 set(PLATFORM_CLIENT_SOURCES
@@ -149,6 +151,7 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/game_loading.cpp
 	src/platform/client/game_playing.cpp
 	src/platform/client/combat_fx/combat_fx_controller.h
+	src/platform/client/combat_fx/blade_trail.h
 	src/platform/client/game_render.cpp
 	src/platform/client/game_ui.cpp
 	src/platform/client/gameplay.h
@@ -318,6 +321,20 @@ else()
 			${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft-test>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-test>/artifacts
+	)
+
+	# === Pathfinding regression tests ===
+	# Same FULL_SIM_SOURCES as civcraft-test; separate binary so the pathfinding
+	# suite can run (and fail) independently of gameplay e2e.
+	add_executable(civcraft-test-pathfinding
+		src/CivCraft/test/test_pathfinding.cpp
+		${FULL_SIM_SOURCES}
+	)
+	target_include_directories(civcraft-test-pathfinding PRIVATE ${GAME_INCLUDE_DIRS})
+	target_link_libraries(civcraft-test-pathfinding PRIVATE
+		glm::glm
+		Python3::Python pybind11::embed
+		libzstd_static
 	)
 
 	# =================================================================

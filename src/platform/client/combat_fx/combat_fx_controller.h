@@ -18,6 +18,7 @@
 // inline in game_playing.cpp.
 
 #include "client/attack_anim.h"
+#include "client/combat_fx/blade_trail.h"
 #include "client/particles.h"
 #include "shared/entity.h"
 #include <glm/glm.hpp>
@@ -28,13 +29,18 @@ class CombatFxController {
 public:
 	// Called once per frame after AttackAnimPlayer::update(dt).
 	// `player` is the locally-controlled entity (position + yaw drive FX).
-	void update(float /*dt*/, AttackAnimPlayer& attack,
+	void update(float dt, AttackAnimPlayer& attack,
 	            ParticleSystem& particles, const Entity& player) {
+		// Tier 2a — ribbon trail follows the swinging blade tip.
+		m_bladeTrail.update(dt, attack, particles, player);
+		// Tier 0-shockwave: one-shot ring at swing peak.
 		if (attack.consumePeakEvent())
 			emitShockwave(particles, player);
 	}
 
 private:
+	BladeTrail m_bladeTrail;
+
 	// Chest-height ring ~0.8m in front of the attacker. Normal = +Y so
 	// the visible arc reads as a ground-level sweep; facing yaw centres
 	// the 180° spread forward.
