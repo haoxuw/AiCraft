@@ -97,6 +97,7 @@ export interface SpawnOptions {
   isPlayer?: boolean;
   seed?: number;
   owner?: number;
+  behaviorId?: string;
 }
 
 export function spawnMonster(w: World, opts: SpawnOptions): Monster {
@@ -111,7 +112,8 @@ export function spawnMonster(w: World, opts: SpawnOptions): Monster {
     parts,
     seed: opts.seed ?? Math.floor(Math.random() * 1e6),
     isPlayer: opts.isPlayer,
-    owner: opts.owner
+    owner: opts.owner,
+    behaviorId: opts.behaviorId
   });
   w.monsters.set(id, m);
   refreshStats(m);

@@ -8,6 +8,27 @@
 // `register(reg: RegistryAPI)` function — loadAllArtifacts() calls it
 // automatically if present. Id convention: "<namespace>:<name>", e.g.
 // "mymod:bloodfang".
+//
+// Example — `src/artifacts/monsters/mymod.ts`:
+//
+//   import { PartKind } from '../../sim/part';
+//   import type { ModRegister } from '../types';
+//
+//   export const register: ModRegister = (reg) => {
+//     reg.registerMonster({
+//       id: 'mymod:bloodfang',
+//       name: 'BLOODFANG',
+//       color: [0.9, 0.2, 0.2],
+//       seed: 42,
+//       behavior: 'base:hunt',
+//       parts: [
+//         { kind: PartKind.MOUTH, anchor: [34, 0] },
+//         { kind: PartKind.TEETH, anchor: [38, 0], scale: 1.4 }
+//       ]
+//     });
+//   };
+//
+// Behaviors follow the same pattern with reg.registerBehavior().
 
 import { registry } from './registry';
 import type { ModRegister } from './types';

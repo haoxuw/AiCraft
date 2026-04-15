@@ -53,6 +53,11 @@ export interface Monster {
   noise_seed: number;
   is_player: boolean;
   material_banked: number; // unused for now; reserved for split/grow costs
+
+  // Optional behavior artifact id (e.g. "base:hunt"). Pure AI metadata —
+  // engine never reads this; the client-side AI dispatcher resolves it
+  // to a BehaviorDef.
+  behavior_id?: string;
 }
 
 // --- Shape helpers --------------------------------------------------
@@ -173,6 +178,7 @@ export interface MonsterOptions {
   isPlayer?: boolean;
   owner?: number;
   tier?: number;
+  behaviorId?: string;
 }
 
 export function makeMonster(opts: MonsterOptions): Monster {
@@ -206,7 +212,8 @@ export function makeMonster(opts: MonsterOptions): Monster {
     turn_speed: 0,
     noise_seed: (opts.seed % 997) / 997.0,
     is_player: opts.isPlayer === true,
-    material_banked: 0
+    material_banked: 0,
+    behavior_id: opts.behaviorId
   };
   refreshStats(m);
   m.hp = m.hp_max;

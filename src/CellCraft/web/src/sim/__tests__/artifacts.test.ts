@@ -1,8 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
+  allBehaviors,
   allMonsters,
   allParts,
   allStarters,
+  getBehavior,
   getMonster,
   getPart,
   loadAllArtifacts
@@ -87,5 +89,13 @@ describe('artifacts registry', () => {
   it('returns undefined for unknown ids', () => {
     expect(getPart('base:nope')).toBeUndefined();
     expect(getMonster('base:nope')).toBeUndefined();
+    expect(getBehavior('base:nope')).toBeUndefined();
+  });
+
+  it('registers the base behaviors', () => {
+    const ids = allBehaviors().map((b) => b.id).sort();
+    for (const expected of ['base:feeder', 'base:flee', 'base:hunt', 'base:mixed', 'base:wander']) {
+      expect(ids).toContain(expected);
+    }
   });
 });

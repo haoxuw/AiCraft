@@ -75,7 +75,8 @@ function buildWorld(starter: MatchStarter): { world: World; player: Monster } {
       baseRadius: 38 + (def.seed % 7),
       color: def.color,
       seed: def.seed,
-      parts: partsFromSpec(def.parts)
+      parts: partsFromSpec(def.parts),
+      behaviorId: def.behavior
     });
   }
 
@@ -104,7 +105,8 @@ function buildOuterWorld(seed: number, scale: number = 2.0): World {
       baseRadius: (38 + i) * tierMult,
       color: defs[i].color,
       parts: partsFromSpec(defs[i].parts),
-      seed: seed ^ (0xD1A11E5 + i)
+      seed: seed ^ (0xD1A11E5 + i),
+      behaviorId: defs[i].behavior
     });
   }
   scatterFood(w, 16);
@@ -164,7 +166,8 @@ function buildMigratedInner(
       baseRadius: 38 + ((seed + c.seedOff) % 7),
       color: def.color,
       seed: seed + c.seedOff,
-      parts: partsFromSpec(def.parts)
+      parts: partsFromSpec(def.parts),
+      behaviorId: def.behavior
     });
   }
   return { world, player };
