@@ -84,6 +84,43 @@ struct Path {
 	bool  partial = false;   // budget ran out before reaching goal
 };
 
+// Hash + eq for glm::ivec3 keys in FlowField. Named FlowCell* to avoid
+// colliding with IVec3Hash/IVec3Eq defined elsewhere in the project.
+struct FlowCellHash {
+	size_t operator()(glm::ivec3 p) const noexcept {
+		size_t h = std::hash<int>()(p.x);
+		h ^= std::hash<int>()(p.y) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<int>()(p.z) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		return h;
+	}
+};
+struct FlowCellEq {
+	bool operator()(glm::ivec3 a, glm::ivec3 b) const noexcept {
+		return a.x == b.x && a.y == b.y && a.z == b.z;
+	}
+};
+
+// ════════════════════════════════════════════════════════════════════════
+// FlowField — shared reverse-Dijkstra result. [SupCom2 2007] / Planetary
+// Annihilation / Factorio. One Dijkstra sweep outward from the goal;
+// every visited cell stores the next-step direction toward the goal.
+// Units read `step[myCell]` each tick — O(1) per unit, regardless of
+// how many units share the field.
+// ════════════════════════════════════════════════════════════════════════
+struct FlowField {
+	struct Entry {
+		glm::ivec3 next;              // cell to step into next
+		MoveKind   kind = MoveKind::Walk;
+		float      g    = 0.0f;       // accumulated cost from cell to goal
+	};
+	glm::ivec3 goal{};
+	std::unordered_map<glm::ivec3, Entry, FlowCellHash, FlowCellEq> step;
+
+	bool   empty() const { return step.empty(); }
+	size_t size()  const { return step.size(); }
+	bool   reaches(glm::ivec3 c) const { return step.count(c) > 0; }
+};
+
 // ════════════════════════════════════════════════════════════════════════
 // GridPlanner — A* over movement primitives. [Baritone]-style.
 // ════════════════════════════════════════════════════════════════════════
@@ -202,6 +239,20 @@ public:
 	//   return out
 	std::vector<Path> planBatch(const std::vector<glm::ivec3>& starts,
 	                            glm::ivec3 goal);
+
+	// ────────────────────────────────────────────────────────────────
+	// Flow field: one reverse-Dijkstra sweep, no per-unit path
+	// reconstruction. The returned FlowField is shared across all
+	// units commanded to `goal` — each unit just looks up
+	// `field.step[floor(pos)]` every tick. [SupCom2 2007]
+	//
+	// `startsHint` is an optional early-termination set: once every
+	// hint cell has been settled, the sweep stops. Pass the group's
+	// start cells for big perf wins on large maps; pass {} for an
+	// unrestricted sweep (useful if new units may join mid-command).
+	// ────────────────────────────────────────────────────────────────
+	FlowField planFlowField(glm::ivec3 goal,
+	                        const std::vector<glm::ivec3>& startsHint = {});
 
 	// ────────────────────────────────────────────────────────────────
 	// Corridor invalidation. [Baritone] `PathExecutor#onTick` does the

@@ -311,6 +311,90 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// planFlowField() — reverse Dijkstra from goal, shared across all units.
+// Same sweep as planBatch() but keeps the cameFrom map alive instead of
+// reconstructing per-unit paths. At 1000 units this avoids 1000 vector
+// allocations and 1000 chain walks — the field itself is built in one
+// pass regardless of unit count. [SupCom2 GDC 2011, Factorio, PA]
+// ═════════════════════════════════════════════════════════════════════════
+FlowField GridPlanner::planFlowField(glm::ivec3 goal,
+                                     const std::vector<glm::ivec3>& startsHint) {
+	FlowField field;
+	field.goal = goal;
+
+	auto standable = [&](glm::ivec3 p) {
+		if (!m_world.isSolid({p.x, p.y - 1, p.z})) return false;
+		if ( m_world.isSolid(p))                   return false;
+		if ( m_world.isSolid({p.x, p.y + 1, p.z})) return false;
+		return true;
+	};
+
+	static const glm::ivec3 DIRS[4] = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1}};
+
+	std::priority_queue<OpenEntry>     open;
+	std::unordered_map<int64_t, float> gScore;
+
+	const int64_t kGoal = encode(goal);
+	gScore[kGoal] = 0.0f;
+	open.push({0.0f, 0.0f, kGoal});
+	// The goal itself has no "next" — mark it with next=goal so lookups
+	// near the goal can detect they've arrived.
+	field.step[goal] = {goal, MoveKind::Walk, 0.0f};
+
+	std::unordered_map<int64_t, size_t> pendingStarts;
+	for (size_t i = 0; i < startsHint.size(); i++)
+		pendingStarts.emplace(encode(startsHint[i]), i);
+
+	// Budget scales with hint size (like planBatch). If no hints, use a
+	// generous default that covers a ~50-block radius on flat ground.
+	const int totalBudget = m_cfg.maxNodes * std::max((int)startsHint.size(), 4);
+	int expanded = 0;
+	const bool earlyExit = !startsHint.empty();
+
+	while (!open.empty() && expanded < totalBudget) {
+		if (earlyExit && pendingStarts.empty()) break;
+		OpenEntry cur = open.top();
+		open.pop();
+		auto itG = gScore.find(cur.key);
+		if (itG == gScore.end() || cur.g > itG->second + 1e-6f) continue;
+		expanded++;
+
+		pendingStarts.erase(cur.key);
+
+		glm::ivec3 c    = decode(cur.key);
+		float      gCur = itG->second;
+
+		auto relax = [&](glm::ivec3 pred, MoveKind fwdKind, float fwdCost) {
+			if (!standable(pred)) return;
+			const int64_t kP = encode(pred);
+			float tentative = gCur + fwdCost;
+			auto it = gScore.find(kP);
+			if (it == gScore.end() || tentative < it->second - 1e-6f) {
+				gScore[kP]  = tentative;
+				// Flow-field entry: from `pred`, next step is `c` via `fwdKind`.
+				field.step[pred] = {c, fwdKind, tentative};
+				open.push({tentative, tentative, kP});
+			}
+		};
+
+		float walkPenalty = 0.0f;
+		if (m_cfg.wallClearancePenalty > 0) {
+			int walls = 0;
+			for (auto nd : DIRS) if (m_world.isSolid(c + nd)) walls++;
+			walkPenalty = m_cfg.wallClearancePenalty * (float)walls;
+		}
+
+		for (auto d : DIRS) {
+			relax(c - d,                            MoveKind::Walk,    1.0f + walkPenalty);
+			relax(c - d - glm::ivec3(0, 1, 0),      MoveKind::Jump,    m_cfg.jumpCost);
+			relax(c - d + glm::ivec3(0, 1, 0),      MoveKind::Descend, m_cfg.descendCost);
+		}
+	}
+
+	return field;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // pathInvalidatedBy() — [Baritone] PathExecutor#onTick: any block change
 // within the planned corridor invalidates the plan. Chebyshev distance
 // (L∞) is the right metric for a voxel grid with 4-cardinal moves plus

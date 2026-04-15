@@ -404,23 +404,27 @@ void Game::renderEntityEffects(float dt, float aspect) {
 
 		float flowTime = m_renderer.time();
 
-		// ── RTS click-to-move paths (client-side RtsExecutor) ──
+		// ── RTS click-to-move paths (flow field viz) ──
+		// Walk the shared flow field forward from each commanded unit's
+		// current cell to produce a polyline for display.
 		{
 			const RtsExecutor& rts = m_gameplay.rtsExecutor();
-			m_server->forEachEntity([&](Entity& ent) {
-				const Path* p = rts.pathFor(ent.id());
-				if (!p || p->steps.empty()) return;
-				int cursor = rts.cursorFor(ent.id());
-				if (cursor >= (int)p->steps.size()) return;
-				std::vector<glm::vec3> path;
-				path.push_back(ent.position);
-				for (int i = cursor; i < (int)p->steps.size(); i++) {
-					auto& wp = p->steps[i].pos;
-					path.push_back({wp.x + 0.5f, (float)wp.y, wp.z + 0.5f});
-				}
-				m_renderer.renderPlanPath(m_camera, aspect, path,
-					{0.4f, 1.0f, 0.6f, 0.9f}, 0.8f, flowTime);
-			});
+			if (rts.field()) {
+				m_server->forEachEntity([&](Entity& ent) {
+					if (!rts.has(ent.id())) return;
+					glm::ivec3 cell{
+						(int)std::floor(ent.position.x),
+						(int)std::floor(ent.position.y),
+						(int)std::floor(ent.position.z)};
+					auto trace = rts.traceFlow(cell, 64);
+					if (trace.empty()) return;
+					std::vector<glm::vec3> path;
+					path.push_back(ent.position);
+					for (auto& p : trace) path.push_back(p);
+					m_renderer.renderPlanPath(m_camera, aspect, path,
+						{0.4f, 1.0f, 0.6f, 0.9f}, 0.8f, flowTime);
+				});
+			}
 		}
 
 		m_agentClient->forEachAgent([&](EntityId eid, const AgentClient::PlanViz& viz) {

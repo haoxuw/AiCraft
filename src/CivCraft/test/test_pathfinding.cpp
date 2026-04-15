@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cmath>
+#include <chrono>
 #include <string>
 #include <functional>
 #include <vector>
@@ -952,6 +953,72 @@ static std::string p10_narrow_tunnel_still_passes() {
 	return "";
 }
 
+// P11 — perf scaling. Measures how long planGroup takes at increasing unit
+// counts (1, 10, 100, 1000) using both per-unit plan() (current code path)
+// and planBatch() (shared reverse-Dijkstra). Reports ms and per-unit cost
+// so we can see when RTS commands start to hitch.
+static std::string p11_perf_scaling() {
+	auto srv = makeTestArena();
+	EntityId pid = srv->localPlayerId();
+	Entity* e = srv->getEntity(pid);
+	if (!e) return "player missing";
+
+	int sx = (int)std::floor(e->position.x);
+	int sy = (int)std::floor(e->position.y);
+	int sz = (int)std::floor(e->position.z);
+
+	BlockId stone = srv->blockRegistry().getId(BlockType::Stone);
+
+	// Flatten a 40×40 plaza so terrain doesn't dominate timing.
+	for (int dx = -20; dx <= 20; dx++) {
+		for (int dz = -20; dz <= 20; dz++) {
+			placeBlock(*srv, sx + dx, sy,     sz + dz, BLOCK_AIR);
+			placeBlock(*srv, sx + dx, sy + 1, sz + dz, BLOCK_AIR);
+			placeBlock(*srv, sx + dx, sy - 1, sz + dz, stone);
+		}
+	}
+
+	ServerWorldView view(*srv);
+
+	auto timeMs = [](auto fn) {
+		auto t0 = std::chrono::steady_clock::now();
+		fn();
+		auto t1 = std::chrono::steady_clock::now();
+		return std::chrono::duration<double, std::milli>(t1 - t0).count();
+	};
+
+	printf("\n    N        plan() ms   planBatch ms   planFlow ms   flow/unit us\n");
+	for (int n : {1, 10, 100, 1000}) {
+		std::vector<glm::ivec3> starts;
+		starts.reserve(n);
+		for (int i = 0; i < n; i++) {
+			int r = 3 + (i / 40);
+			int a = i % 40;
+			int dx = (int)(std::cos(a * 0.157) * r);
+			int dz = (int)(std::sin(a * 0.157) * r);
+			starts.push_back({sx + dx - 15, sy, sz + dz});
+		}
+		glm::ivec3 goal{sx + 15, sy, sz};
+
+		double msPer = timeMs([&]{
+			GridPlanner planner(view);
+			for (auto& s : starts) (void)planner.plan(s, goal);
+		});
+		double msBatch = timeMs([&]{
+			GridPlanner planner(view);
+			(void)planner.planBatch(starts, goal);
+		});
+		double msFlow = timeMs([&]{
+			GridPlanner planner(view);
+			(void)planner.planFlowField(goal, starts);
+		});
+
+		printf("    %-8d %10.2f   %12.2f   %11.2f   %12.1f\n",
+		       n, msPer, msBatch, msFlow, msFlow * 1000.0 / n);
+	}
+	return "";
+}
+
 } // namespace civcraft::test
 
 int main() {
@@ -988,6 +1055,9 @@ int main() {
 	printf("\n--- RTS integration (real click-to-move code path) ---\n");
 	run("P09: plan + drive past wall                   ", p09_plan_drive_past_wall);
 	run("P10: narrow ] [ tunnel (penalty>0)            ", p10_narrow_tunnel_still_passes);
+
+	printf("\n--- Perf scaling (N=1..1000) ---\n");
+	run("P11: planGroup time at scale                 ", p11_perf_scaling);
 
 	int failed = 0;
 	for (auto& r : g_results) if (!r.passed) failed++;
