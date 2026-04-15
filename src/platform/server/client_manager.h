@@ -232,6 +232,9 @@ public:
 				net::sendMessage(c.transport.fd, net::S_PREPARING, wb);
 			}
 			if (c.chunksCompletedForPrep >= c.requiredChunkCount) {
+				printf("[Server] %s: prep complete (%zu/%zu chunks delivered) — finalizing handshake\n",
+					c.label().c_str(), c.chunksCompletedForPrep, c.requiredChunkCount);
+				fflush(stdout);
 				toFinalize.push_back(cid);
 				continue;
 			}
@@ -970,8 +973,9 @@ private:
 			net::sendMessage(client.transport.fd, net::S_READY, wb);
 		}
 
-		printf("[Server] %s: ready (player eid=%u, %zu chunks queued)\n",
+		printf("[Server] %s: S_READY sent — handshake complete (player eid=%u, %zu chunks still queued)\n",
 			client.label().c_str(), eid, client.transport.pendingChunks.size());
+		fflush(stdout);
 	}
 
 	void handleMessage(ClientId cid, ClientSession& client, uint32_t type, net::ReadBuffer& rb) {

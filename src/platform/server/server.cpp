@@ -269,8 +269,7 @@ void GameServer::resolveActions(float dt) {
 					actor->inventory->clear();
 				}
 
-				printf("[Server] Relocate/store: entity %u deposited %d items into entity %u\n",
-					actor->id(), totalTransferred, target->id());
+				(void)totalTransferred;
 
 				if (m_callbacks.onInventoryChange) {
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
@@ -388,9 +387,11 @@ void GameServer::resolveActions(float dt) {
 
 			// Nudge: re-send current inventory so client corrects any optimistic state.
 			// Deduplicated per tick — at most one resend per entity regardless of spam.
-			auto nudge = [&](ActionRejectCode code) {
-				printf("[Server] Convert rejected entity=%u from=%s to=%s code=%u\n",
-				       p.actorId, p.fromItem.c_str(), p.toItem.c_str(), (uint32_t)code);
+			auto nudge = [&](ActionRejectCode code, const std::string& why) {
+				char detail[256];
+				std::snprintf(detail, sizeof(detail), "from=%s to=%s: %s",
+				              p.fromItem.c_str(), p.toItem.c_str(), why.c_str());
+				logActionReject("Convert", p.actorId, rejectCodeName(code), detail);
 				if (nudgedThisTick.count(p.actorId)) return;
 				nudgedThisTick.insert(p.actorId);
 				if (actor->inventory && m_callbacks.onInventoryChange)
@@ -444,7 +445,11 @@ void GameServer::resolveActions(float dt) {
 			float inVal  = getMaterialValue(p.fromItem) * (float)p.fromCount;
 			float outVal = getMaterialValue(p.toItem)   * (float)p.toCount;
 			if (outVal > inVal + 0.001f) {
-				nudge(ActionRejectCode::ValueConservationViolated);
+				char buf[128];
+				std::snprintf(buf, sizeof(buf),
+					"output value %.2f (×%d) exceeds input %.2f (×%d)",
+					outVal, p.toCount, inVal, p.fromCount);
+				nudge(ActionRejectCode::ValueConservationViolated, buf);
 				break;
 			}
 
@@ -454,9 +459,20 @@ void GameServer::resolveActions(float dt) {
 			// Pre-validate placement target BEFORE consuming source (prevents item loss on race)
 			if (intoBlock) {
 				auto& pp = p.convertInto.pos;
-				if (m_world->getBlock(pp.x, pp.y, pp.z) != BLOCK_AIR)  { nudge(ActionRejectCode::PlacementTargetOccupied); break; }
-				if (!m_world->blocks.find(p.toItem))                    { nudge(ActionRejectCode::UnknownBlockType);        break; }
-				if (!m_world->getChunk(worldToChunk(pp.x, pp.y, pp.z))){ nudge(ActionRejectCode::ChunkNotLoaded);          break; }
+				if (m_world->getBlock(pp.x, pp.y, pp.z) != BLOCK_AIR) {
+					char buf[96]; std::snprintf(buf, sizeof(buf),
+						"placement target (%d,%d,%d) is not air", pp.x, pp.y, pp.z);
+					nudge(ActionRejectCode::PlacementTargetOccupied, buf); break;
+				}
+				if (!m_world->blocks.find(p.toItem)) {
+					nudge(ActionRejectCode::UnknownBlockType,
+						"toItem '" + p.toItem + "' is not a registered block"); break;
+				}
+				if (!m_world->getChunk(worldToChunk(pp.x, pp.y, pp.z))) {
+					char buf[96]; std::snprintf(buf, sizeof(buf),
+						"placement target chunk for (%d,%d,%d) not loaded", pp.x, pp.y, pp.z);
+					nudge(ActionRejectCode::ChunkNotLoaded, buf); break;
+				}
 			}
 
 			// Consume source
@@ -464,10 +480,19 @@ void GameServer::resolveActions(float dt) {
 				// Source is a world block
 				auto& bp = p.convertFrom.pos;
 				BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
-				if (bid == BLOCK_AIR) { nudge(ActionRejectCode::SourceBlockGone); break; }
+				if (bid == BLOCK_AIR) {
+					char buf[96]; std::snprintf(buf, sizeof(buf),
+						"source block at (%d,%d,%d) is already air", bp.x, bp.y, bp.z);
+					nudge(ActionRejectCode::SourceBlockGone, buf); break;
+				}
 				const BlockDef& bdef = m_world->blocks.get(bid);
 				// Anti-cheat: client must send matching fromItem
-				if (!p.fromItem.empty() && bdef.string_id != p.fromItem) { nudge(ActionRejectCode::SourceBlockTypeMismatch); break; }
+				if (!p.fromItem.empty() && bdef.string_id != p.fromItem) {
+					char buf[160]; std::snprintf(buf, sizeof(buf),
+						"source block at (%d,%d,%d) is '%s', action claims '%s'",
+						bp.x, bp.y, bp.z, bdef.string_id.c_str(), p.fromItem.c_str());
+					nudge(ActionRejectCode::SourceBlockTypeMismatch, buf); break;
+				}
 
 				m_world->removeBlockState(bp.x, bp.y, bp.z);
 				ChunkPos cp = worldToChunk(bp.x, bp.y, bp.z);
@@ -499,7 +524,11 @@ void GameServer::resolveActions(float dt) {
 			} else {
 				// Consume from actor's inventory (Self)
 				if (!actor->inventory) break;
-				if (!actor->inventory->has(p.fromItem)) { nudge(ActionRejectCode::ItemNotInInventory); break; }
+				if (!actor->inventory->has(p.fromItem)) {
+					char buf[160]; std::snprintf(buf, sizeof(buf),
+						"actor has 0× '%s' (need %d)", p.fromItem.c_str(), p.fromCount);
+					nudge(ActionRejectCode::ItemNotInInventory, buf); break;
+				}
 				actor->inventory->remove(p.fromItem, p.fromCount);
 			}
 

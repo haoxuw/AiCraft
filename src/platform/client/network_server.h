@@ -470,6 +470,18 @@ private:
 		net::ReadBuffer rb(payload.data(), payload.size());
 
 		switch (type) {
+		case net::S_WELCOME: {
+			// Race: if S_WELCOME lands between updateLoading()'s pollWelcome()
+			// and its tick(dt), tick drains it here — without this case it was
+			// silently dropped and m_localPlayerId stayed ENTITY_NONE.
+			if (m_localPlayerId == ENTITY_NONE) {
+				m_localPlayerId = rb.readU32();
+				m_spawnPos = rb.readVec3();
+				printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f) [via tick]\n",
+					m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+			}
+			break;
+		}
 		case net::S_READY: {
 			// Server finished per-client setup (mobs spawned, welcome done).
 			// The loading screen waits on this before handing off to gameplay.
