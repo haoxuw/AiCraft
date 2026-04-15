@@ -1,327 +1,326 @@
 # CellCraft — Design Overview
 
-> **Spore's cell stage, but multiplayer, and every behavior is Python you can
-> edit mid-match. Rendered in chalk.**
+> **Spore's cell stage, multiplayer, every behavior moddable in Python.
+> The gameplay is chalk on paper; the UI around it is a sleek modern app.**
 
 ## Elevator pitch
 
-You are a **core** on a shared chalkboard. You sketch a shape around your
-core — that shape becomes the body of your species. Your breed spawns,
-eats, reproduces, and fights other players' breeds on the same board.
-Every unit's AI is a Python `decide()` function you can rewrite while
-the game is running.
+You are a **cell** on a shared cream-paper arena. You sculpt your body
+(start from a circle, push/pull with a playdough brush, enforce
+vertical-axis symmetry), then drag-and-drop **parts** — MOUTH, SPIKE,
+TEETH, FLAGELLA, HORN, EYES, REGEN, ARMOR, CILIA, POISON, VENOM_SPIKE
+— onto the body. The lab is a creature editor; the arena is where
+your creature lives, eats, grows, and fights.
 
-Visual language: chalk strokes on a dark slate board, heavily inspired by
-the *Chalk* (Bit Egg) aesthetic and the stroke-rendering trick from
-*NumptyPhysics* (triangle strip with alpha gradient at the edges).
+Every tick you must decide: do I chase food, stab a rival, flee the
+larger shape looming in the background? Every match you accumulate
+**biomass** and climb **5 tiers** (SPECK → NIBBLER → HUNTER → PREDATOR
+→ APEX). Each tier unlocks more parts, scales your body up, and
+changes what lives in the background layer — from giant cells, to
+fish, to turtles. At APEX you have graduated out of the cell world.
 
-## Why this game exists
+Every behavior (AI `decide()`, part effect, tier table, food yield,
+diet rule) is a Python artifact. Nothing except the physics + the four
+server action types is hard-coded in C++.
 
-CivCraft proved one thesis: **Python is the game, C++ is the engine, and
-players mod everything.** CellCraft is the same thesis in a smaller,
-faster, 2D shape:
+## The five design rules (non-negotiable)
 
-- One match lasts minutes, not hours.
-- The moddable surface (a shape + a `decide()` function) is small enough
-  that a new player can author a working breed in 5 minutes.
-- Multiplayer is the point. You're not modding in isolation — you're
-  testing your breed against someone else's right now.
-- Roguelike runs wrap matches: win → earn Mods/Buffs that unlock new
-  cellular parts, stroke primitives, and Python helpers for the next run.
+### Rule 1 — Damage requires damaging parts
+A plain cell bumping another plain cell does **zero damage**. Damage
+is only dealt when a SPIKE, TEETH, HORN, or VENOM_SPIKE part's
+world-space anchor is within contact distance of the collision point.
+This makes part placement a combat decision, not just aesthetics.
 
-## The core loop
+Poison (POISON part) is an area aura; it does not need contact.
 
-1. **Core.** Each player starts with one glowing core on the board. The
-   core carries your identity: breed ID, unlocked mods, Python behavior.
-2. **Draw a body.** Player sketches a chalk shape on the board. That
-   shape becomes the **breed template** — the body every unit of yours
-   will have.
-3. **Spawn units.** The core produces units of the breed by consuming
-   resources (chalk energy) scattered on the board. Each spawn copies
-   the breed template.
-4. **Physics from geometry.** Shape and enclosed volume drive physics:
-   mass ∝ volume, moment of inertia from shape, drag from perimeter.
-   Long and thin is fast and fragile; round and big is slow and tanky.
-5. **Length budget.** Total alive chalk-length of your breed is capped.
-   A longer body means fewer simultaneous units. Swarm vs. titan is a
-   real strategic choice, not a numeric knob.
-6. **Python brains.** Every unit runs your breed's `decide(self, world)`
-   at ~4 Hz on its own agent process. Hunt, flock, flee, feed — whatever
-   you code. You can hot-reload the Python mid-match.
-7. **Domination.** Eat resources, eat rival units, protect your core.
-   Cores are destructible; lose your core and you're out of the match.
-8. **Roguelike meta.** Winning a match awards **Mods** (new stroke types,
-   new Python helpers, new parts) and **Buffs** (per-run modifiers) for
-   your next run.
+### Rule 2 — Solid bodies
+Cells never overlap or tunnel. After the soft-spring collision
+response, any residual polygon-polygon penetration is resolved by SAT
+push along the contact normal, split mass-proportional between the
+two cells, and clamped inside the arena radius.
 
-## Conservation of mass (inherited from CivCraft)
+### Rule 3 — MOUTH is required to eat
+No MOUTH part → no food pickup, ever. Eating is gated by mouth just
+like damage is gated by damaging parts.
 
-Same invariant as CivCraft: **nothing is created from nothing.** Every
-chalk stroke, every unit, every core has a `value`. The server enforces
-that no action increases the board's total value.
+### Rule 4 — Diet is derived, not chosen
+Carnivore/Herbivore/Omnivore is computed from the creature's other
+parts. The player does not pick a diet; they build a body, and the
+diet falls out. Yield multiplier applies on pickup:
 
-- Drawing a shape consumes chalk energy equal to its length.
-- **Spawning a unit costs material proportional to its mass.**
-  Mass ∝ enclosed area (see § Shape → physics mapping), so a big
-  tanky body costs far more to spawn than a small one.
-- **Killing an enemy unit gives you its biomass** — the victim's mass
-  value converts into material in your pool. Predation is the primary
-  economy; drawing is just how you shape what that material becomes.
-- When a unit dies with no killer (starvation, terrain), its mass
-  returns to the board as neutral chalk dust anyone can harvest.
-- Resources regenerate slowly from board edges (the "ecosystem" term).
+- Matching diet + food type → ×1.5
+- Opposing → ×0.4
+- Omnivore → ×1.0 (both types)
 
-### Grow bigger vs. grow more — the evolution choice
+### Rule 5 — Conservation of mass (inherited from CivCraft)
+**Nothing is created from nothing.** Every plant/meat blub carries a
+biomass value. Every kill transfers `DEATH_BIOMASS_FRAC × victim.mass`
+to the killer; the rest drops as MEAT pellets. The server enforces
+that no ActionProposal increases the board's total biomass.
 
-Material in your pool is fungible. At any moment you can spend it two
-ways, and that choice *is* the strategy:
+## Part catalog
 
-- **Grow bigger.** Redraw a bigger breed template (or trigger a
-  mutation that enlarges it). Each unit is tankier, deals more damage,
-  but costs more material to spawn and counts more against the
-  length-budget cap.
-- **Grow more.** Keep the breed small and spawn additional units.
-  Numerical superiority, map coverage, distributed risk.
+All parts are Python artifacts (`src/CellCraft/artifacts/parts/base/*.py`).
+C++ knows only their enum IDs and queries the cached `PartEffect` struct.
 
-This mirrors how real species diverge — K-strategists (few big
-offspring) vs. r-strategists (many small). Both are viable; which
-wins depends on the board, the opponent's choice, and your Python
-behavior.
+| Part         | Unlock tier | Diet pull | Effect |
+|--------------|-------------|-----------|--------|
+| MOUTH        | 1 SPECK     | neutral   | Enables food pickup |
+| FLAGELLA     | 1 SPECK     | neutral   | Speed multiplier |
+| EYES         | 1 SPECK     | neutral   | Perception radius |
+| SPIKE        | 2 NIBBLER   | carnivore | Contact damage at spike location |
+| CILIA        | 2 NIBBLER   | herbivore | Turn rate |
+| TEETH        | 3 HUNTER    | carnivore | Contact damage, short range |
+| ARMOR        | 3 HUNTER    | herbivore | Local damage reduction at armor location |
+| REGEN        | 3 HUNTER    | herbivore | HP regeneration per second |
+| HORN         | 4 PREDATOR  | carnivore | Damage + ±15° forward-cone bonus |
+| POISON       | 4 PREDATOR  | carnivore | Aura DoT around the cell |
+| VENOM_SPIKE  | 5 APEX      | carnivore | SPIKE + venom stacks on target |
 
-This is what keeps the game honest in the presence of arbitrary Python
-mods: no matter how clever your `decide()` is, you cannot make matter.
+Part **contribution to diet score = ±scale** per part (MOUTH, FLAGELLA,
+EYES contribute 0). Thresholds: `> +0.8` carnivore, `< -0.8` herbivore,
+else omnivore.
 
-## Camera and world
+## The five tiers
 
-- **World is a large 2D board**, much bigger than the screen. Multiple
-  players and hundreds of units share it.
-- **Top-down view.** No gravity — movement is free in X/Y.
-- **Camera is locked to the player's core/unit.** The shape the player is
-  controlling stays at screen center; the board scrolls underneath.
-  Agar.io / Spore cell-stage style.
-- Zoom may scale with the player's total breed mass (later — not MVP).
+Tiers are gated by **lifetime biomass** (monotonic, not current). On
+tier-up: body scales, stats refresh, TIER_UP event fires, sparkle burst
+renders, next-tier parts unlock in the lab.
 
-## Shape deformation — bodies are squishy, not rigid
+| Tier | Name      | Threshold | Body scale | Parts unlocked here              |
+|------|-----------|-----------|------------|-----------------------------------|
+| 1    | SPECK     | 0         | 1.0×       | MOUTH, FLAGELLA, EYES             |
+| 2    | NIBBLER   | 40        | 1.25×      | + SPIKE, CILIA                    |
+| 3    | HUNTER    | 120       | 1.5×       | + TEETH, ARMOR, REGEN             |
+| 4    | PREDATOR  | 300       | 1.8×       | + HORN, POISON                    |
+| 5    | APEX      | 700       | 2.2×       | + VENOM_SPIKE                     |
 
-Shapes are **not rigid bodies**. A unit's chalk outline deforms as it
-moves and acts. This is what makes it possible to *bite*, *stab*,
-*pulse*, *squeeze through gaps*:
+## The evolution economy *(design direction — not yet built)*
 
-- **Locomotion deformation.** A moving cell wobbles; a spiked shape
-  pulses with each stroke; a long flagellum curls. The deformation is
-  driven by the unit's velocity and an internal phase clock.
-- **Combat deformation.** Attacking is a *shape distortion event* —
-  extending a point outward along a chosen direction = a stab; rapidly
-  closing two adjacent edges = a bite. Damage is dealt where the
-  distorted edge overlaps an enemy's body.
-- **Physical constraint.** Deformations are bounded: the deformed
-  shape's length and area stay within epsilon of the breed template,
-  so players can't cheese by "drawing" a tiny shape and then
-  distorting it into a spear.
-- **Implementation sketch.** Each shape vertex has a rest position (from
-  the breed template) plus a displacement driven by a per-shape set of
-  "muscles" (Python-controllable oscillators). Soft-body spring model,
-  not Box2D rigid polygons.
+Biomass from food only feeds survival (HP, fullness). To **grow** (bigger
+tier OR more parts) you spend **material** — a second resource gained
+specifically by killing other cells.
 
-This makes shape design expressive: *where* you put length on the
-template determines *where* the creature can attack from.
+| Action              | Biomass change      | Material change |
+|---------------------|---------------------|-----------------|
+| Eat plant/meat blub | `+yield × food.bm`  | 0 — survival only |
+| Kill another cell   | `+DEATH_BIOMASS_FRAC × victim.mass` | `+victim.material_banked` |
+| Respawn / starve    | bm→0                | material persists in bank |
 
-## Shape → physics mapping
+At any time (between matches, or via a "mutate" button in the lab)
+the player spends material two ways:
 
-The **core** is the origin of the shape's local frame — every physics
-value is derived relative to it.
+- **Grow bigger.** Cross the next tier threshold early by buying it
+  with material. Bigger = tankier + unlocks higher-tier parts, but
+  bigger cells also cost more material to maintain per second (Rule 5
+  — mass conservation — larger bodies draw a passive tax from the
+  material bank, simulating metabolism).
+- **Grow more parts / shapes.** Unlock an extra part slot, or an
+  extra "sculpt surface" to add more complex silhouettes. This is how
+  specialization emerges: an r-strategist stays small with many parts
+  clustered tightly; a K-strategist spends the same material on size.
 
-| Physics stat | Default formula (from shape + core) |
-|---|---|
-| **Turn speed** | `∝ 1 / max(distance from core to any vertex)` — the "reach radius." A long spike out from the core turns slowly, a tight blob turns fast. |
-| **Movement speed** | `∝ 1 / max_width_perpendicular_to_heading` — the widest section perpendicular to the travel direction. Wide frontal area = slow forward; streamlined needle = fast. |
-| **Mass** | `∝ enclosed area` (closed shapes) |
-| **Drag** | `∝ perimeter` |
-| **Budget cost** | `= perimeter` (total chalk length; see § Length budget) |
-| **Damage surface** | per-edge property; spiky/distorted edges deal damage on contact |
+This mirrors real evolutionary pressure: a species with more
+phenotypes can exploit more niches; a species with larger bodies wins
+fights but burns more energy. Neither strategy dominates — the
+roguelike meta rewards both.
 
-Closed shapes become **creatures** (a shape with a core socket).
-Open strokes become **terrain/structures** (static after a grace
-period, no core, no AI).
+**Status:** material bank is specified here; sim/tuning changes to
+track it + a lab UI to spend it are roadmap items (commit 7+).
 
-### Formulas are moddable
+## Food
 
-These are defaults. The **formulas themselves live in Python**, in a
-`physics/` artifact category, so Mods can rewrite how shape maps to
-stats. A Mod could e.g. make turn speed depend on the *narrowest*
-radius instead of the widest, creating a strategically different
-breed archetype. The server still enforces conservation invariants
-on the *output* values regardless of formula.
+Two food types, rendered as distinct chalk blubs:
 
-```python
-# artifacts/physics/base/default.py  (sketch)
-def compute_stats(shape, core):
-    reach  = max(dist(core, v) for v in shape.vertices)
-    width  = max_width_perpendicular(shape, axis=shape.heading)
-    area   = polygon_area(shape.vertices)
-    return {
-        "turn_speed":  BASE_TURN  / reach,
-        "move_speed":  BASE_SPEED / width,
-        "mass":        DENSITY    * area,
-        "drag":        DRAG_COEF  * shape.perimeter,
-    }
-```
+- **PLANT** (green 3-leaf cluster with brown stem): biomass 4–9,
+  plentiful (60% of scatter).
+- **MEAT** (pink lobed blob with darker marbling): biomass 8–15,
+  rarer (40% of scatter). Also drops from kills.
 
-Python-derived stats are recomputed when the breed template changes
-(redraw between lives, mutation event), not per-frame.
+Visual radius is decoupled from biomass so food reads at a glance
+regardless of value.
+
+## Parallax background — the food chain is visible
+
+Behind the play surface, large desaturated silhouettes drift slowly.
+Their shape depends on **player tier**:
+
+| Player tier | Background silhouettes | Role |
+|-------------|------------------------|------|
+| 1 SPECK     | 4× cells               | Big cells loom overhead |
+| 2 NIBBLER   | 8× cells               | Bigger cells now |
+| 3 HUNTER    | 16× cells              | Giant cells, edge of animal-scale |
+| 4 PREDATOR  | 32× cells              | Titanic cells — almost animals |
+| 5 APEX      | Fish + Turtle + Jelly  | **Animal world.** You graduated. |
+
+Silhouettes are pure visual — no collision, no logic. Warm tan tint,
+thin single-pass outline, slow drift + wrap. Counts: 7 at T1–4, 3 at T5
+(sparse so shapes read).
+
+## Creature rendering direction *(roadmap — not yet built)*
+
+**Current:** cells render as chalk-outline polygons. Reads well on the
+cream paper but makes them feel "schematic" instead of alive.
+
+**Target:** add a fragment shader that fills the polygon with an
+organic-looking material. Inspiration: watercolor wash with uneven
+saturation, subtle internal veins/texture, a darker "membrane" ring
+near the silhouette edge. The cell should look like a **living
+translucent thing**, not a line drawing. Parts remain chalk strokes
+over the fill.
+
+This also makes the background parallax creatures read better: a fish
+filled with a gradient body + fin shading is instantly a fish, whereas
+a pure-outline fish at 32× scale can look like abstract scribble
+(documented issue in the tier-5 screenshots).
+
+Shader sketch:
+- Input: polygon fill (premultiplied), cell's **diet color** (cyan for
+  herbivore, red for carnivore, purple for omnivore) + per-creature
+  noise seed.
+- Fragment: distance-to-nearest-edge (approximated from a SDF of the
+  polygon baked per frame, or from barycentric interpolation of
+  per-vertex inset distance) drives a radial gradient: darker membrane
+  near the edge, lighter cytoplasm in the middle.
+- Layer 2: low-freq value-noise on diet color, gives the "cell looks
+  organic" wash.
+- Layer 3: thin darker outline along the polygon edge for definition.
+- Background silhouettes use the same shader at lower detail + heavy
+  desaturation toward the cream paper tone.
+
+This ships as commit 7 (planned).
+
+## UI — chalk for the art, modern for the app
+
+**The arena is chalk on cream paper.** Cells, parts, food, and
+background silhouettes all draw in the chalk ribbon pipeline
+(`src/CellCraft/shaders/chalk.frag`).
+
+**Everything around the arena is modern.** Glass panels, charcoal
+scrim backgrounds, cyan and amber accents, Inter sans-serif UI text,
+Audiowide arcade-neon display titles with SDF-driven glow halos.
+
+| Surface          | Palette                   | Typography      |
+|------------------|---------------------------|-----------------|
+| Arena (in-game)  | Cream paper + saturated chalk pigment | Chalk (creature names only) |
+| Main menu        | Charcoal scrim, cyan ambient motes    | Chalk CELLCRAFT logotype + Inter |
+| Creature lab     | Dark chrome glass panels framing cream bezel | Inter labels, Inter-Bold stats |
+| Match HUD        | Glass bars floating over arena | Inter numerics, tracked labels |
+| End screen       | Charcoal scrim + metric rings | Audiowide hero ("YOU DIED", "APEX REACHED") |
+
+Primary accent `#22D3EE` (cyan), progression accent `#F59E0B` (amber),
+danger `#EF4444` (red). Pink is reserved for meat; never UI chrome.
+
+Modern UI primitives live in `src/CellCraft/client/ui_modern.{h,cpp}`
+with tokens (colors, spacing, radii, type sizes) and primitives
+(scrim, rounded rect, glass panel, soft shadow, inner glow, buttons,
+stat bar, pill badge, ring progress, divider). The SDF font stack is
+`src/CellCraft/client/sdf_font.{h,cpp}` + `shaders/text_modern.*` with
+stb_truetype and bundled Inter + Audiowide TTFs.
 
 ## Action types — same four as CivCraft
 
-The server validates exactly four `ActionProposal` types. Everything a
-core, a unit, or a player can do compiles to one of these.
+The server validates exactly four `ActionProposal` types. Every action
+a cell can take compiles to one of these.
 
 | # | Type | CellCraft meaning |
 |---|------|-------------------|
-| 0 | `TYPE_MOVE` | Set a unit's 2D velocity (Python emits this from `decide()`) |
-| 1 | `TYPE_RELOCATE` | Pick up / drop a resource pellet; move a chalk object |
-| 2 | `TYPE_CONVERT` | Draw stroke (chalk budget → stroke), spawn unit (resources → unit), kill unit (unit → dust), erase (stroke → nothing) |
-| 3 | `TYPE_INTERACT` | Toggle drawn switches/gates (later-game content) |
+| 0 | `TYPE_MOVE`     | Set a cell's 2D velocity (Python `decide()` emits this) |
+| 1 | `TYPE_RELOCATE` | Pick up a food blub; transfer biomass on kill |
+| 2 | `TYPE_CONVERT`  | Apply damage (HP→nothing), regenerate HP (material→HP), tier up (biomass→size), apply venom (HP→status) |
+| 3 | `TYPE_INTERACT` | Reserved for future interactive world objects |
 
-No new action types. The 2D nature of the game is entirely contained in
-the *payload* of these primitives, never in new server opcodes.
+No new action types. Anything a modder builds must compile to these.
 
-## Architecture — mirrors CivCraft exactly
+## Architecture — mirrors CivCraft
 
-Three process types. Always TCP. Identical in singleplayer (localhost)
+Three process types. Always TCP. Identical for singleplayer (localhost)
 and multiplayer (remote server).
 
-| Process | Binary | Responsibility |
-|---|---|---|
-| Server | `cellcraft-server` | Headless. Owns board, runs 2D physics, validates actions. **No Python, no OpenGL.** |
-| Player client | `cellcraft` | 2D chalk rendering, mouse-drawing input, draw-board UI. **OpenGL, no Python.** |
-| Agent client | `cellcraft-agent` | One process per unit. Runs Python `decide()`. **Python + pybind11, no OpenGL.** |
+| Process           | Binary             | Responsibility |
+|-------------------|--------------------|----|
+| Server            | `cellcraft-server` | Headless. Owns arena, runs 2D physics + collision + damage, validates actions. **No Python, no OpenGL.** |
+| Player client     | `cellcraft`        | Chalk rendering, modern UI chrome, mouse sculpt + drag input, lab editor. **OpenGL, no Python.** |
+| Agent client      | `cellcraft-agent`  | One process per cell. Runs Python `decide()`. **Python + pybind11, no OpenGL.** |
 
 Dependency rules match CivCraft:
-
-- `platform/` — game-agnostic engine (already shared with CivCraft)
+- `platform/` — game-agnostic engine (shared with CivCraft)
 - `CellCraft/` — must never `#include "CivCraft/..."` and vice versa
 - Shared code gets promoted to `platform/` first
 
-## Artifact system — same layout as CivCraft
+**Status:** currently shipping as a single `cellcraft` binary with a
+C++ fallback AI (priority stack: flee > feed > hunt > wander). Server
+split + Python agent path is M1 work, mirroring CivCraft's M1.
 
-Python artifacts are hot-reloadable, namespaced, shareable.
+## Source layout
 
 ```
-src/CellCraft/artifacts/
-  breeds/       base/cell.py, base/spike.py, ...     (shape template + stats)
-  behaviors/    base/wander.py, base/hunter.py, ...  (decide() functions)
-  mods/         base/speedboost.py, base/spikes.py, ...
-  buffs/        base/regeneration.py, ...            (roguelike run modifiers)
-  resources/    base/chalk_pellet.py, ...
-  boards/       base/arena.py, base/maze.py, ...     (match layout + spawn rules)
+src/CellCraft/
+  sim/             RadialCell, Part, Monster, World, Sim — headless sim
+    tuning.h         all tunable constants (thresholds, multipliers)
+    part_stats.h     computePartEffects — diet, damage, stat multipliers
+    sim.cpp          tick loop, collisions, pickup, kill, tier-up
+  artifacts/
+    monsters/base/   prebuilt.h (Stinger/Blob/Dart/Tusker) + starters.h
+    parts/base/      part definitions (Python target; currently C++)
+  client/
+    app.{h,cpp}      state machine + scene rendering
+    creature_lab.*   sculpt editor + drawer panels
+    chalk_renderer.* ribbon primitive + cell/part draw
+    background_layer.* parallax silhouettes (cells / fish / turtle / jelly)
+    ui_modern.*      modern UI tokens + primitives
+    ui_button/text/particles/anim/… (reused where modern not yet wired)
+    sdf_font.*       stb_truetype atlas + per-role rendering
+    post_fx.*        HDR + bloom + vignette + low-HP pulse
+  shaders/
+    chalk.{vert,frag}       chalk pigment ribbon on cream
+    board.frag              cream paper with drifting noise
+    text_modern.{vert,frag} SDF text with 13-tap isotropic glow
+    bloom_*.frag            post-fx chain
+  vendor/          stb_truetype.h
+  fonts/           Inter-{Regular,Bold}.ttf, Audiowide-Regular.ttf
+  docs/            you are here
 ```
-
-Forking and sharing works identically to CivCraft: fork `base/cell.py`
-→ `player/my_cell.py`, namespace is rewritten automatically, upload to
-share. See `CivCraft/docs/00_OVERVIEW.md` § Artifact System.
-
-### Breed artifact (sketch)
-
-```python
-breed = {
-    "id": "base:cell",
-    "name": "Basic cell",
-    "behavior": "wander",
-    "shape": {
-        "points": [(0,0), (1,0), (1,1), (0,1)],  # polyline, will be
-        "closed": True,                           # simplified by server
-    },
-    "base_hp": 10,
-    "eat_range": 0.5,
-}
-```
-
-### Behavior artifact (sketch)
-
-```python
-def decide(self, world):
-    prey = world.nearest(kind="resource", radius=20)
-    if prey:
-        return MoveTo(prey.x, prey.y)
-    return Wander()
-```
-
-## Roguelike meta — Mods and Buffs
-
-Between matches the game is a roguelike run. Winning a match (or
-meeting a match objective) awards one of:
-
-- **Mods** — permanent additions to the breed design palette: new
-  stroke types (jagged, curved, dashed), new body parts (flagellum,
-  eye, spike), new Python helpers (`Flock()`, `Ambush()`).
-- **Buffs** — per-run modifiers applied to your core: faster resource
-  pickup, larger length budget, cheaper respawns. Buffs stack within
-  a run and reset at run end.
-
-Mods persist across runs (the meta-progression); Buffs are the
-run-local risk/reward layer. Dying in PvP ends the run — you return
-to the lobby with your Mods but none of the Buffs.
-
-This makes the PvP session double as a roguelike, hence *"rogue life."*
-
-## No difficulty selection — same design as CivCraft
-
-Start is casual: a practice board, no opponents, just you drawing and
-watching your breed work. Threats and stakes come only when you *choose*
-to queue into a ranked match or accept an invitation. Matches the
-CivCraft "no forced pressure" principle.
-
-## Open design questions (to be resolved in later docs)
-
-1. **One shape per breed per match, or redrawable?** Leaning redrawable
-   between lives but not during a life; maybe "mutation" events that
-   force a redraw with length budget changes.
-2. **Core count per player.** One core (single point of failure) vs
-   hive (cores are spawnable and cheap). First match type ships with
-   single-core to keep stakes legible.
-3. **Length-budget formulation.** Global simultaneous cap
-   (`Σ length_alive ≤ cap`) is the shipping default — matches the
-   "more line = fewer units" wording directly.
-4. **Deformation authoring.** Two options: (a) a fixed set of built-in
-   locomotion styles (wobble, pulse, crawl) selected by the breed, or
-   (b) Python-authored per-breed deformation functions. (b) is far more
-   expressive and matches the "mod everything" principle — likely the
-   long-term target with (a) as a library of defaults.
-5. **Soft-body simulation budget.** Deformable shapes are much more
-   expensive than rigid Box2D polygons. With hundreds of units on a
-   board, a cheap spring-mesh approximation is the likely path rather
-   than a full FEM. Benchmark once MVP physics is in.
 
 ## Implementation status
 
-**M0 (shipped)** — single `cellcraft` binary. Opens a window, renders a
-procedural chalkboard background (shader, no texture asset), and turns
-mouse drag gestures into feathered chalk strokes with Douglas-Peucker
-simplification and along-length grit noise. No server split, no
-physics, no Python yet. Build with `make game GAME=cellcraft`.
+### Shipped
 
-**M1 (next)** — split into `cellcraft-server` + `cellcraft` (GUI) + a
-stub `cellcraft-agent`. TCP protocol mirrors CivCraft's. Stroke
-uploads go through `C_ACTION TYPE_CONVERT`; server stores and
-broadcasts `S_STROKE`. Clear is a second CONVERT.
+- Single `cellcraft` binary. Main menu → starter → lab → celebrate →
+  playing → end screen, all with modern UI chrome.
+- **Gameplay sim:** RadialCell sculpt body, 11 part types, collision
+  with hard overlap resolution, part-gated damage (+ HORN cone, ARMOR
+  local DR, VENOM stacks), diet-gated yield, MOUTH-gated pickup, 5
+  growth tiers with lifetime-biomass thresholds and body scaling,
+  TIER_UP events.
+- **Food:** MEAT + PLANT types, distinct blub visuals, corpse drops.
+- **Parallax background:** tier-scaled silhouettes, T5 is fish/turtle/jelly.
+- **UI:** modern design system (charcoal + cyan + amber), SDF TTF
+  fonts (Inter + Audiowide) with neon glow shader, glass panels,
+  rounded-rect primitives, stat bars, ring progress, pill badges,
+  scene fade transitions.
+- **QA & tooling:** CLI flags `--autotest --seed N`, `--menu-screenshot`,
+  `--lab-screenshot`, `--starter-screenshot`, `--celebrate-screenshot`,
+  `--play-screenshot`, `--end-screenshot`, `--autotest-tier N`,
+  `--ui-kitchen-sink`. Headless log at `/tmp/cellcraft_game.log`.
 
-**M2+** — shape → physics body (mass / turn / move stats from
-geometry), cores, breed templates, spawn loop, Python `decide()`, and
-the conservation-of-mass economy.
+### Next (roadmap)
 
-The legacy `src/CellCraft/godot/` prototype is retained as a **visual
-reference** only — it pioneered the feathered-ribbon chalk look we
-subsequently reimplemented in C++ shaders. The Godot project is not
-built or launched by `make game GAME=cellcraft`; use
-`make cellcraft-godot` if you want to compare the two renders.
-
-## Research references
-
-- `docs/REFERENCES.md` (later) — notes on *Chalk* (Bit Egg) aesthetic and
-  numptyphysics (GPL-3, cloned at `/tmp/research/numptyphysics/` for
-  study; key file `platform/gl/GLRenderer.cpp:792-835` — the 10-vertex
-  per-segment feathered-ribbon technique. Our implementation is a fresh
-  write with the same idea moved into a fragment shader.).
+1. **Cell fill shader** — make cells look like living organisms, not
+   line drawings. Watercolor-wash material with diet-tinted gradient,
+   darker membrane ring, subtle internal noise. Applies to in-arena
+   cells AND background silhouettes.
+2. **Material economy** — second resource gained on kills only; spent
+   on size-up (early tier purchase) or slot-up (extra part capacity).
+   Lab gets a "MUTATE" panel for spending material.
+3. **Server split** — `cellcraft-server` + `cellcraft-agent` processes,
+   TCP protocol, authoritative sim. Matches CivCraft's M1.
+4. **Python agent** — `decide()` in artifacts/behaviors; hot-reload.
+5. **Multiplayer** — 2–8 player arenas with tier-mixed matchmaking
+   (players see bigger tiers' actual creatures in their background
+   layer, not synthetic silhouettes).
+6. **Roguelike meta** — persistent mod unlocks (new parts, new stroke
+   types, new Python helpers) between matches.
 
 ## Relationship to CivCraft
 
