@@ -49,9 +49,9 @@ struct ClientChunkWorldView : public WorldView {
 
 class RtsExecutor {
 public:
-	// Replace any previous plan for these entities with a fresh batch-A* to
-	// goalPos. `starts` and `entityIds` are parallel vectors — one waypoint
-	// list is stored per entityId.
+	// Replace any previous plan for these entities with a fresh per-unit A*.
+	// Each unit gets a *distinct* formation cell around `goal` so they don't
+	// all pile on the same block. `starts` and `entityIds` are parallel.
 	void planGroup(const std::vector<EntityId>& entityIds,
 	               const std::vector<glm::ivec3>& starts,
 	               glm::ivec3 goal,
@@ -59,13 +59,19 @@ public:
 		if (entityIds.empty()) return;
 		ClientChunkWorldView view(chunks, blocks);
 		GridPlanner planner(view);
-		auto paths = planner.planBatch(starts, goal);
+
+		auto formationGoals = buildFormationGoals(goal, (int)entityIds.size(), view);
+
 		for (size_t i = 0; i < entityIds.size(); i++) {
-			EntityId eid = entityIds[i];
-			m_plans[eid]   = std::move(paths[i]);
+			EntityId eid  = entityIds[i];
+			glm::ivec3 gg = formationGoals[i];
+			Path p        = planner.plan(starts[i], gg);
+			m_plans[eid]   = std::move(p);
 			m_cursors[eid] = 0;
-			printf("[RTS-CLIENT] plan entity=%u steps=%zu cost=%.2f partial=%d\n",
-			       (unsigned)eid, m_plans[eid].steps.size(),
+			m_goals[eid]   = gg;
+			printf("[RTS-CLIENT] plan entity=%u goal=(%d,%d,%d) steps=%zu cost=%.2f partial=%d\n",
+			       (unsigned)eid, gg.x, gg.y, gg.z,
+			       m_plans[eid].steps.size(),
 			       m_plans[eid].cost, m_plans[eid].partial ? 1 : 0);
 		}
 	}
@@ -128,11 +134,13 @@ public:
 	void cancel(EntityId eid) {
 		m_plans.erase(eid);
 		m_cursors.erase(eid);
+		m_goals.erase(eid);
 	}
 
 	void cancelAll() {
 		m_plans.clear();
 		m_cursors.clear();
+		m_goals.clear();
 	}
 
 	bool has(EntityId eid) const { return m_plans.count(eid) > 0; }
@@ -148,8 +156,49 @@ public:
 	}
 
 private:
-	std::unordered_map<EntityId, Path> m_plans;
-	std::unordered_map<EntityId, int>  m_cursors;
+	std::unordered_map<EntityId, Path>       m_plans;
+	std::unordered_map<EntityId, int>        m_cursors;
+	std::unordered_map<EntityId, glm::ivec3> m_goals;
+
+	// Spread N units into a cols×rows grid centered on `clicked`. Each cell
+	// is snapped to the nearest standable Y (search ±4) so slopes don't
+	// produce unreachable goals. If a slot is unreachable even then, fall
+	// back to the clicked cell.
+	static std::vector<glm::ivec3> buildFormationGoals(
+			glm::ivec3 clicked, int n, const WorldView& view) {
+		std::vector<glm::ivec3> out;
+		out.reserve(n);
+		if (n == 1) { out.push_back(clicked); return out; }
+
+		int cols = (int)std::ceil(std::sqrt((float)n));
+		int rows = (n + cols - 1) / cols;
+		const int spacing = 2;                 // blocks between slots
+		int offX = (cols - 1) * spacing / 2;
+		int offZ = (rows - 1) * spacing / 2;
+
+		auto standable = [&](glm::ivec3 p) {
+			if (!view.isSolid({p.x, p.y - 1, p.z})) return false;
+			if ( view.isSolid(p))                   return false;
+			if ( view.isSolid({p.x, p.y + 1, p.z})) return false;
+			return true;
+		};
+		auto snapY = [&](glm::ivec3 p) -> glm::ivec3 {
+			for (int dy = 0; dy <= 4; dy++) {
+				glm::ivec3 up{p.x, p.y + dy, p.z};
+				if (standable(up)) return up;
+				glm::ivec3 dn{p.x, p.y - dy, p.z};
+				if (standable(dn)) return dn;
+			}
+			return p;
+		};
+
+		for (int i = 0; i < n; i++) {
+			int gx = clicked.x + (i % cols) * spacing - offX;
+			int gz = clicked.z + (i / cols) * spacing - offZ;
+			out.push_back(snapY({gx, clicked.y, gz}));
+		}
+		return out;
+	}
 };
 
 } // namespace civcraft

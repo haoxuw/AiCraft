@@ -843,7 +843,11 @@ static std::string p09_plan_drive_past_wall() {
 	glm::ivec3 goalCell {sx + 6, sy, sz};
 
 	ServerWorldView view(*srv);
-	GridPlanner     planner(view);
+	// Disable wall-clearance penalty in this test so baseline drive is
+	// measured against straight-line geometry, not softened detours.
+	GridPlanner::Config cfg;
+	cfg.wallClearancePenalty = 0.0f;
+	GridPlanner     planner(view, cfg);
 	Path            path = planner.plan(startCell, goalCell);
 	if (path.partial || path.steps.empty()) {
 		char b[200];
@@ -891,6 +895,63 @@ static std::string p09_plan_drive_past_wall() {
 	return "";
 }
 
+// P10 — a 1-wide tunnel "] [" with walls on both sides forces the planner
+// through a narrow passage even with wallClearancePenalty > 0. Verifies
+// clearance is a *preference*, not a hard constraint.
+static std::string p10_narrow_tunnel_still_passes() {
+	auto srv = makeTestArena();
+	EntityId pid = srv->localPlayerId();
+	Entity* e = srv->getEntity(pid);
+	if (!e) return "player missing";
+
+	int sx = (int)std::floor(e->position.x);
+	int sy = (int)std::floor(e->position.y);
+	int sz = (int)std::floor(e->position.z);
+
+	BlockId stone = srv->blockRegistry().getId(BlockType::Stone);
+	if (stone == BLOCK_AIR) return "no stone in registry";
+
+	// Flatten an open region; then build a vertical barrier at x=sx+3 spanning
+	// z=sz-5..sz+5 with a single 1-wide gap at z=sz — that's the tunnel.
+	for (int dx = -2; dx <= 8; dx++) {
+		for (int dz = -6; dz <= 6; dz++) {
+			placeBlock(*srv, sx + dx, sy,     sz + dz, BLOCK_AIR);
+			placeBlock(*srv, sx + dx, sy + 1, sz + dz, BLOCK_AIR);
+			placeBlock(*srv, sx + dx, sy - 1, sz + dz, stone);
+		}
+	}
+	for (int dz = -5; dz <= 5; dz++) {
+		if (dz == 0) continue;  // gap
+		placeWallColumn(*srv, sx + 3, sy, sz + dz, stone);
+	}
+
+	glm::ivec3 startCell{sx,     sy, sz};
+	glm::ivec3 goalCell {sx + 6, sy, sz};
+
+	ServerWorldView view(*srv);
+	// Use the production default (0.25) — this is the whole point of P10.
+	GridPlanner     planner(view);
+	Path            path = planner.plan(startCell, goalCell);
+	if (path.partial || path.steps.empty()) {
+		char b[200];
+		snprintf(b, sizeof(b),
+			"planner failed to thread narrow tunnel — partial=%d steps=%zu penalty=%.2f",
+			(int)path.partial, path.steps.size(), planner.config().wallClearancePenalty);
+		return b;
+	}
+
+	// Must pass through the gap cell (sx+3, sy, sz) — no other way across.
+	bool threadedGap = false;
+	for (auto& wp : path.steps) {
+		if (wp.pos.x == sx + 3 && wp.pos.z == sz) { threadedGap = true; break; }
+	}
+	if (!threadedGap) return "path found, but did not traverse the 1-wide gap";
+
+	printf("\n    tunnel path steps=%zu cost=%.2f (penalty=%.2f)\n",
+	       path.steps.size(), path.cost, planner.config().wallClearancePenalty);
+	return "";
+}
+
 } // namespace civcraft::test
 
 int main() {
@@ -926,6 +987,7 @@ int main() {
 
 	printf("\n--- RTS integration (real click-to-move code path) ---\n");
 	run("P09: plan + drive past wall                   ", p09_plan_drive_past_wall);
+	run("P10: narrow ] [ tunnel (penalty>0)            ", p10_narrow_tunnel_still_passes);
 
 	int failed = 0;
 	for (auto& r : g_results) if (!r.passed) failed++;

@@ -137,10 +137,21 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 		// [Baritone] MovementTraverse × 4 cardinals (Walk).
 		// [Baritone] MovementAscend           (Jump: +1 Y, requires takeoff headroom).
 		// [Baritone] MovementDescend          (Descend: -1 Y, requires safe landing).
+		// Wall-clearance penalty: count solid horizontal neighbours at the
+		// destination's feet level. Cells that graze walls get a small cost
+		// bump so A* prefers routes with breathing room, but still takes
+		// tight passages when they're the only option.
+		auto wallPenalty = [&](glm::ivec3 c) {
+			if (m_cfg.wallClearancePenalty <= 0) return 0.0f;
+			int walls = 0;
+			for (auto nd : DIRS) if (m_world.isSolid(c + nd)) walls++;
+			return m_cfg.wallClearancePenalty * (float)walls;
+		};
+
 		const bool headroom = !m_world.isSolid({p.x, p.y + 2, p.z});
 		for (auto d : DIRS) {
 			glm::ivec3 w = p + d;
-			if (standable(w)) relax(w, MoveKind::Walk, 1.0f);
+			if (standable(w)) relax(w, MoveKind::Walk, 1.0f + wallPenalty(w));
 
 			if (headroom) {
 				glm::ivec3 j = p + d + glm::ivec3(0, 1, 0);
@@ -250,6 +261,15 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 			}
 		};
 
+		// Wall-clearance penalty on the forward Walk cost — applied to the
+		// *destination* (c), matching plan()'s forward-direction behaviour.
+		float walkPenalty = 0.0f;
+		if (m_cfg.wallClearancePenalty > 0) {
+			int walls = 0;
+			for (auto nd : DIRS) if (m_world.isSolid(c + nd)) walls++;
+			walkPenalty = m_cfg.wallClearancePenalty * (float)walls;
+		}
+
 		// Enumerate every forward move whose endpoint is `c`.
 		// Walk: predecessor = c - d (same Y).
 		// Jump: fwd is p+d+up = c → p = c - d - up; cost = cfg.jumpCost.
@@ -257,7 +277,7 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 		//   which is already implied by standable(c) (head clearance above c).
 		// Descend: fwd is p+d-up = c → p = c - d + up; cost = cfg.descendCost.
 		for (auto d : DIRS) {
-			relax(c - d,                            MoveKind::Walk,    1.0f);
+			relax(c - d,                            MoveKind::Walk,    1.0f + walkPenalty);
 			relax(c - d - glm::ivec3(0, 1, 0),      MoveKind::Jump,    m_cfg.jumpCost);
 			relax(c - d + glm::ivec3(0, 1, 0),      MoveKind::Descend, m_cfg.descendCost);
 		}

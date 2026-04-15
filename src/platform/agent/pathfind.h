@@ -94,6 +94,13 @@ public:
 		float jumpCost       = 1.4f;   // [Baritone: ASCEND_COST ≈ sqrt(2)]
 		float descendCost    = 1.1f;   // [Baritone: DESCEND_COST slightly > walk]
 		int   corridorRadius = 4;      // block-change within N of path → invalidate
+		// Per-wall-neighbor penalty added to Walk step cost. Counts how many
+		// of the 4 horizontal neighbours at the destination cell's feet level
+		// are solid, multiplied by this. 0 = hug walls tightly (old A*);
+		// 0.15 = slight clearance preference; 0.3+ = strong detour toward
+		// open ground. Only applied to Walk (not Jump/Descend — those have
+		// physical Y constraints, not cosmetic spacing).
+		float wallClearancePenalty = 0.25f;
 	};
 
 	explicit GridPlanner(const WorldView& world) : m_world(world) {}
