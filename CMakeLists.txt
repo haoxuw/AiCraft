@@ -166,6 +166,8 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/code_editor.cpp
 	src/platform/client/floating_text.h
 	src/platform/client/floating_text.cpp
+	src/platform/client/model_writer.h
+	src/platform/client/model_editor_ui.h
 )
 
 # --- CivCraft game sources (src/CivCraft) ---

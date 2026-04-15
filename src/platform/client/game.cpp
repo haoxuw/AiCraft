@@ -6,6 +6,7 @@
 #include "shared/physics.h"
 #include "client/network_server.h"
 #include "imgui.h"
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -219,6 +220,41 @@ bool Game::init(int argc, char** argv) {
 	for (auto& [key, mdl] : m_models)
 		hb.registerModel(key, mdl);
 
+	// Register source-tree paths so the in-game editor can save back to
+	// the .py the build was staged from. Walk up from CWD (build/) looking
+	// for a sibling src/<game>/artifacts/models/{base,player}/<name>.py;
+	// this keeps edits from being clobbered by the next CMake POST_BUILD.
+	// Game-agnostic — we just look at every src/* subdir.
+	{
+		namespace fs = std::filesystem;
+		std::vector<fs::path> srcRoots;
+		fs::path probe = fs::current_path();
+		for (int i = 0; i < 4; i++) {
+			if (fs::is_directory(probe / "src")) {
+				for (auto& e : fs::directory_iterator(probe / "src"))
+					if (e.is_directory()) srcRoots.push_back(e.path());
+				break;
+			}
+			probe = probe.parent_path();
+		}
+		// Strip variant suffix ("#0") since multiple bakes share one .py.
+		auto baseName = [](std::string n) {
+			auto h = n.find('#'); if (h != std::string::npos) n.resize(h); return n;
+		};
+		for (auto& [key, _] : m_models) {
+			std::string name = baseName(key);
+			std::string found;
+			for (auto& root : srcRoots) {
+				for (auto* sub : {"player", "base"}) {
+					auto p = root / "artifacts" / "models" / sub / (name + ".py");
+					if (fs::exists(p)) { found = p.string(); break; }
+				}
+				if (!found.empty()) break;
+			}
+			if (!found.empty()) hb.registerModelPath(key, found);
+		}
+	}
+
 	// Scroll callback — reads selected slot from player entity
 	struct ScrollData { Game* game; Camera* cam; };
 	static ScrollData sd = {this, &m_camera};
@@ -244,7 +280,13 @@ bool Game::init(int argc, char** argv) {
 		} else if (d->cam->mode == CameraMode::RPG) {
 			d->cam->godDistanceTarget = std::clamp(d->cam->godDistanceTarget - (float)y * 2, 3.0f, 50.0f);
 		} else if (d->cam->mode == CameraMode::RTS) {
-			d->cam->rtsHeightTarget = std::clamp(d->cam->rtsHeightTarget - (float)y * 3, 15.0f, 80.0f);
+			// Multiplicative zoom (WoW-style): each wheel tick scales the
+			// camera height by ~15%, so close zooms feel fine-grained and
+			// far zooms move fast. Height drives both altitude and horizontal
+			// distance in updateRTS, giving a true dolly along the view ray.
+			float factor = std::pow(0.85f, (float)y);
+			d->cam->rtsHeightTarget = std::clamp(
+				d->cam->rtsHeightTarget * factor, 5.0f, 120.0f);
 		}
 	});
 

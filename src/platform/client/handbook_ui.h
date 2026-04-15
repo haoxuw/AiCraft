@@ -22,6 +22,7 @@
 #include "client/box_model.h"
 #include "client/model_preview.h"
 #include "client/model.h"
+#include "client/model_editor_ui.h"
 #include "client/audio.h"
 #include <imgui.h>
 #include <unordered_map>
@@ -35,6 +36,11 @@ public:
 		m_models[name] = model;
 	}
 
+	// Optional: associate a source .py path so the editor knows where to save.
+	void registerModelPath(const std::string& name, const std::string& path) {
+		m_modelPaths[name] = path;
+	}
+
 	// Programmatically select an entry (for demo/testing)
 	void selectEntry(const std::string& id) { m_selectedId = id; }
 
@@ -42,6 +48,7 @@ public:
 	void setPreview(ModelPreview* preview, ModelRenderer* renderer) {
 		m_preview = preview;
 		m_renderer = renderer;
+		m_editor.setPreview(preview, renderer);
 	}
 
 	// Set registry for fork operations
@@ -142,6 +149,14 @@ private:
 	}
 
 	void renderDetail(const ArtifactEntry* entry) {
+		// If the model editor is open for this entry, render it in place
+		// of the standard detail view — full-bleed editor takes the whole
+		// right pane.
+		if (m_editor.isOpen()) {
+			m_editor.render();
+			return;
+		}
+
 		// Title
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
 		ImGui::SetWindowFontScale(1.3f);
@@ -207,6 +222,17 @@ private:
 				} else if (m_clipOwnerId != entry->id) {
 					m_clipOwnerId = entry->id;
 					m_preview->setClip("");
+				}
+
+				// Edit button — opens the in-game model editor on this model.
+				// Only available when we know the source .py path.
+				auto pathIt = m_modelPaths.find(modelIt->first);
+				if (pathIt != m_modelPaths.end()) {
+					ImGui::Spacing();
+					if (ImGui::SmallButton("Edit model")) {
+						if (m_audio) m_audio->playBlip(0.8f, 0.4f);
+						m_editor.open(modelIt->first, modelIt->second, pathIt->second);
+					}
 				}
 				ImGui::Spacing();
 			}
@@ -405,6 +431,8 @@ private:
 	std::string m_lastTab;
 	std::string m_clipOwnerId;   // which entry's clip is currently in m_preview
 	std::unordered_map<std::string, BoxModel> m_models;
+	std::unordered_map<std::string, std::string> m_modelPaths;
+	ModelEditorUI m_editor;
 	ModelPreview* m_preview = nullptr;
 	ModelRenderer* m_renderer = nullptr;
 	ArtifactRegistry* m_registry = nullptr;
