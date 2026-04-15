@@ -299,7 +299,23 @@ src/
     python/                 CivCraft-only python helpers (pathfind.py, local_world.py, …)
     shaders/  config/  resources/  docs/  tests/  tools/
 
-  CellCraft/              ← Spore-cell-stage game (stub — see its README.md)
+  CellCraft/              ← Spore cell-stage game. PRIMARY implementation is
+                            the Three.js + TypeScript web client at
+                            `src/CellCraft/web/`. The native C++ client
+                            (`client/`, `shaders/`, `main.cpp`) is LEGACY /
+                            FROZEN — kept buildable for reference but no
+                            longer the active dev target.
+    web/                    ← Primary CellCraft implementation (Three.js + TS)
+      src/
+        sim/                Sim: tuning, parts, monsters, world, tick
+        render/             Three.js scene, materials, post-FX, SDF text, UI
+        scenes/             menu / lab / starter / match / tier-up / end
+        artifacts/          JS mods: parts, monsters, behaviors
+        net/                WebSocket client (multiplayer)
+        input/  ai/  main.ts
+      server/               Node WebSocket server (shared world + tick)
+    client/ shaders/ main.cpp  ← LEGACY native C++ client (frozen)
+    artifacts/ sim/ docs/ godot/  ← legacy + shared design docs
 ```
 
 ### Dependency Rules

@@ -1,5 +1,15 @@
 # CellCraft — Design Overview
 
+> **NOTE:** This doc describes the LEGACY native C++ client (Python mod
+> layer, four-action-type server, etc.). The current CellCraft
+> implementation is the Three.js + TypeScript web client at
+> `src/CellCraft/web/`, with a Node WebSocket server at
+> `src/CellCraft/web/server/` and JS artifacts (parts / monsters /
+> behaviors) in `web/src/artifacts/`. The design vision below (cells,
+> parts, tiers, diets, moddable behaviors) still applies; the
+> implementation details referring to C++ / Python / pybind are
+> historical.
+
 > **Spore's cell stage, multiplayer, every behavior moddable in Python.
 > The gameplay is chalk on paper; the UI around it is a sleek modern app.**
 

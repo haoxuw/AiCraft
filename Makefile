@@ -15,7 +15,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers cellcraft-server-build cellcraft-server-game-build character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft cellcraft
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers cellcraft-server-build cellcraft-server-game-build character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft cellcraft crafter bbmodel
 
 # ── Native ─────────────────────────────────────────────────
 #
@@ -48,9 +48,16 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 # so "shaders/", "artifacts/", "python/", "fonts/", "config/", "resources/"
 # resolve via CWD-relative paths at runtime.
 #
-# CellCraft is a pure C++ game built on src/platform/. `make game GAME=cellcraft`
-# runs the `cellcraft` binary; `make cellcraft-godot` still launches the Godot
-# prototype in src/CellCraft/godot/ for visual reference.
+# NOTE: the native CellCraft C++ target below is LEGACY / FROZEN. The primary
+# CellCraft implementation is the Three.js + TypeScript web client at
+# src/CellCraft/web/ — run it with `cd src/CellCraft/web && npm run dev`, or
+# `cd src/CellCraft && make web`. The native target is retained so the old
+# binary still builds for reference; it is no longer the active dev target.
+#
+# CellCraft (native, legacy) is a pure C++ game built on src/platform/.
+# `make game GAME=cellcraft` runs the `cellcraft` binary;
+# `make cellcraft-godot` still launches the Godot prototype in
+# src/CellCraft/godot/ for visual reference.
 CELLCRAFT_PORT := 7888
 
 # Explicit per-game entry points — `make game` alone is ambiguous since
@@ -192,6 +199,36 @@ model-editor: model-editor-build
 	@[ -n "$(MODEL)" ] || (echo "usage: make model-editor MODEL=path/to/model.py" >&2 && exit 1)
 	cd $(BUILD_DIR) && ./model-editor $(CURDIR)/$(MODEL) --size $(SIZE) $(if $(CLIP),--clip $(CLIP))
 
+# ModelCrafter: pure-Python animation debugger (tools/modelcrafter.py). No
+# build, no game — imports a model .py directly and runs the same clip math
+# as src/platform/client/model.cpp in a matplotlib 3D window.
+#
+#   make crafter                              # default model: player
+#   make crafter MODEL=src/CivCraft/artifacts/models/base/knight.py
+#   make crafter CLIP=sit                     # start with a named clip selected
+crafter:
+	@model="$(MODEL)"; \
+	  [ -n "$$model" ] || model="src/CivCraft/artifacts/models/base/player.py"; \
+	  python3 tools/modelcrafter.py $$model $(if $(CLIP),--clip $(CLIP))
+
+# Round-trip a model through Blockbench: export .py → .bbmodel, open
+# Blockbench (blocks until you close it), then import the edited
+# .bbmodel back over the original .py — preserving colors, swing
+# params, clips, and hand/pivot points via name-match merge against
+# the original. Requires `blockbench` on PATH.
+#
+#   make bbmodel MODEL=src/CivCraft/artifacts/models/base/player.py
+BB := /tmp/$(notdir $(basename $(MODEL))).bbmodel
+bbmodel:
+	@[ -n "$(MODEL)" ] || (echo "usage: make bbmodel MODEL=path/to/model.py" >&2 && exit 1)
+	@[ -f "$(MODEL)" ] || (echo "$(MODEL): not a file" >&2 && exit 1)
+	@command -v blockbench >/dev/null || (echo "blockbench not on PATH — install from https://www.blockbench.net/" >&2 && exit 1)
+	python3 tools/bbmodel_export.py $(MODEL) $(BB)
+	@echo "[bbmodel] opening $(BB) in Blockbench — save (Ctrl+S) then close to import back."
+	blockbench $(BB)
+	python3 tools/bbmodel_import.py $(BB) $(MODEL) --base $(MODEL)
+	@echo "[bbmodel] imported back into $(MODEL). Run 'make build' then 'make character_views CHARACTER=...' to verify."
+
 model-snap: model-editor-build
 	@[ -n "$(MODEL)" ] || (echo "usage: make model-snap MODEL=path/to/model.py [OUT=dir]" >&2 && exit 1)
 	cd $(BUILD_DIR) && ./model-editor $(CURDIR)/$(MODEL) \
@@ -261,7 +298,12 @@ test_e2e: cellcraft-server-build
 	  exit $$STATUS
 	@echo "[test_e2e] Done."
 else
-test_e2e: build
+pathfinding_test: build
+	@echo "[pathfinding_test] Running headless pathfinding tests..."
+	cd $(BUILD_DIR) && ./$(GAME)-test-pathfinding
+	@echo "[pathfinding_test] Done."
+
+test_e2e: build pathfinding_test
 	@echo "[test_e2e] Running headless gameplay tests..."
 	cd $(BUILD_DIR) && ./$(GAME)-test
 	@echo "[test_e2e] Done."
