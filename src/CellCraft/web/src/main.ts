@@ -145,6 +145,11 @@ function frame(g: Game, tMs: number): void {
     g.acc -= FIXED_DT;
   }
 
+  // Low-HP red pulse: ramps in as hp drops below 35%, full at 0%.
+  const hpFrac = Math.max(0, Math.min(1, g.player.hp / Math.max(1e-6, g.player.hp_max)));
+  const lowHp = hpFrac < 0.35 ? 1.0 - hpFrac / 0.35 : 0.0;
+  g.renderer.setLowHp(lowHp);
+
   g.renderer.render(g.world, t);
   requestAnimationFrame((tt) => frame(g, tt));
 }

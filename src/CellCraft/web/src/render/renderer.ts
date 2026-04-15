@@ -5,6 +5,8 @@ import { Food, FoodKind, World } from '../sim/world';
 import { createBoardMaterial } from './board_material';
 import { createChalkMaterial } from './chalk_material';
 import { createCellFillMaterial } from './cell_fill_material';
+import { createPostFX, PostFX } from './post_fx';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 
 // Rendering lives on a plain XY plane. World units = screen pixels at zoom
 // 1. The orthographic camera is sized to cover the arena with padding.
@@ -33,6 +35,8 @@ export class Renderer {
   private boardMat = createBoardMaterial();
   private boardMesh: THREE.Mesh;
   private dynamicGroup = new THREE.Group();
+  private postFX: PostFX;
+  private boardPass: RenderPass;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
@@ -54,8 +58,24 @@ export class Renderer {
     this.camera.lookAt(0, 0, 0);
 
     this.scene.add(this.dynamicGroup);
+
+    // Post-FX chain. The main render pass (scene+camera) is attached by
+    // createPostFX; we prepend a board pass that clears first, so the
+    // board acts as the background.
+    this.postFX = createPostFX(this.gl, this.scene, this.camera);
+    this.boardPass = new RenderPass(this.boardScene, this.camera);
+    this.boardPass.clear = true;
+    // Insert board pass at index 0, ahead of the main render pass.
+    this.postFX.composer.insertPass(this.boardPass, 0);
+    // Main render pass must not clear (it would wipe the board).
+    this.postFX.renderPass.clear = false;
+
     this.resize();
     window.addEventListener('resize', this.resize);
+  }
+
+  setLowHp(v: number): void {
+    this.postFX.setLowHp(v);
   }
 
   private boardScene: THREE.Scene;
@@ -70,6 +90,9 @@ export class Renderer {
     const h = this.canvas.clientHeight || window.innerHeight;
     this.gl.setSize(w, h, false);
     this.boardMat.uniforms.u_resolution.value.set(w, h);
+    if (this.postFX) {
+      this.postFX.setSize(w, h, this.gl.getPixelRatio());
+    }
 
     // Fit arena radius * 1.1 into the shorter axis.
     const arena = 1500 * 1.1;
@@ -109,11 +132,9 @@ export class Renderer {
     for (const food of world.food) this.drawFood(food, time);
     for (const m of world.monsters.values()) this.drawMonster(m, time);
 
-    // Draw board first (bypass camera), then the main scene.
-    this.gl.autoClear = true;
-    this.gl.render(this.boardScene, this.camera);
-    this.gl.autoClear = false;
-    this.gl.render(this.scene, this.camera);
+    // Post-FX: board pass (clear) → main scene → bloom → vignette → low-HP.
+    this.postFX.setTime(time);
+    this.postFX.render();
   }
 
   // ----- drawing helpers ---------------------------------------------
