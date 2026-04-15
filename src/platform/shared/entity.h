@@ -191,7 +191,9 @@ public:
 		float dodgeTimer = 0.0f;   // time remaining on current dodge
 		int   dodgeSign  = 0;      // -1=left, +1=right, 0=straight
 
-		void clear() { active = false; dodgeTimer = 0; dodgeSign = 0; stuckTimer = 0; }
+		void clear() {
+			active = false; dodgeTimer = 0; dodgeSign = 0; stuckTimer = 0;
+		}
 		void setGoal(glm::vec3 g) {
 			active = true; longGoal = g; shortGoal = g;
 			dodgeTimer = 0; dodgeSign = 0; stuckTimer = 0;

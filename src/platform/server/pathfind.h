@@ -8,6 +8,12 @@
  * or right and keep walking. Entities never stop — they always keep pushing
  * toward the goal until they arrive or the player cancels.
  *
+ * RTS click-to-move pathfinding is now handled on the client
+ * (src/platform/client/rts_executor.h) — the client plans with GridPlanner,
+ * stores waypoints, and drives each owned unit via per-tick Move proposals.
+ * This file is what runs for any remaining *server-issued* nav goal, e.g.
+ * scripted NPC movement that still uses C_SET_GOAL.
+ *
  * Two functions:
  *   planGroupFormation() — assign formation-offset goals for a group of entities
  *   updateNavigation()   — called each server tick, sets entity velocities
@@ -15,6 +21,7 @@
 
 #include "server/server_tuning.h"
 #include "shared/entity.h"
+#include "shared/physics.h"
 #include <glm/glm.hpp>
 #include <vector>
 #include <cmath>
@@ -47,8 +54,6 @@ inline void planGroupFormation(glm::vec3 goalPos, std::vector<Entity*>& entities
 
 // Update navigation for all entities with active nav goals.
 // Called once per server tick. Sets entity velocity toward their goal.
-// solidFn is not currently used (stuck detection is position-based),
-// but kept in the signature for future obstacle probing.
 inline void updateNavigation(float dt, EntityManager& entities) {
 	entities.forEach([&](Entity& e) {
 		if (!e.nav.active) return;
@@ -89,15 +94,12 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 			if (moved < ServerTuning::navStuckMinMove) {
 				// Stuck! Start or flip dodge
 				if (e.nav.dodgeSign == 0) {
-					// Pick random direction
 					e.nav.dodgeSign = (std::rand() % 2 == 0) ? 1 : -1;
 				} else {
-					// Already dodging — try the other side
 					e.nav.dodgeSign = -e.nav.dodgeSign;
 				}
 				e.nav.dodgeTimer = ServerTuning::navDodgeDuration;
 			} else {
-				// Making progress — clear dodge
 				if (e.nav.dodgeTimer <= 0) {
 					e.nav.dodgeSign = 0;
 				}
@@ -106,29 +108,21 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 			e.nav.stuckTimer = 0;
 		}
 
-		// Initialize stuck check position on first tick
 		if (e.nav.stuckCheckPos.x == 0 && e.nav.stuckCheckPos.y == 0 && e.nav.stuckCheckPos.z == 0
 			&& (pos.x != 0 || pos.y != 0 || pos.z != 0)) {
 			e.nav.stuckCheckPos = pos;
 		}
 
-		// --- Compute steering direction ---
-		// Base direction: toward long-term goal
 		float dirX = goal.x - pos.x;
 		float dirZ = goal.z - pos.z;
 		float len = std::sqrt(dirX * dirX + dirZ * dirZ);
-		if (len > 0.001f) {
-			dirX /= len;
-			dirZ /= len;
-		}
+		if (len > 0.001f) { dirX /= len; dirZ /= len; }
 
-		// When close to goal, cancel dodge and go straight to converge
 		if (distXZ < ServerTuning::navArriveDistance * 3.0f) {
 			e.nav.dodgeTimer = 0;
 			e.nav.dodgeSign = 0;
 		}
 
-		// Apply dodge rotation if active
 		if (e.nav.dodgeTimer > 0) {
 			float angle = ServerTuning::navDodgeAngle * e.nav.dodgeSign;
 			float cosA = std::cos(angle);
@@ -140,15 +134,11 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 			e.nav.dodgeTimer -= dt;
 		}
 
-		// --- Set velocity (always — never stop walking) ---
 		e.velocity.x = dirX * walkSpeed;
 		e.velocity.z = dirZ * walkSpeed;
 
-		// Broadcast move destination for client-side prediction
 		e.moveTarget = goal;
 		e.moveSpeed = walkSpeed;
-
-		// yaw is smoothed per-tick in GameServer::tick from velocity.
 	});
 }
 

@@ -13,6 +13,7 @@
 #include "client/entity_raycast.h"
 #include "client/window.h"
 #include "client/hotbar.h"
+#include "client/rts_executor.h"
 #include <optional>
 #include <unordered_map>
 
@@ -159,6 +160,14 @@ private:
 	// Render target highlight
 	glm::vec3 m_moveTargetPos = {0, 0, 0};
 	bool m_hasMoveTarget = false;
+
+	// Client-side RTS pathfinding. Owns per-entity waypoint paths; drives
+	// owned commanded units via ActionProposal::Move each tick. The server
+	// stays unaware of the path — it only sees incremental Move proposals.
+public:
+	const RtsExecutor& rtsExecutor() const { return m_rtsExec; }
+private:
+	RtsExecutor m_rtsExec;
 };
 
 } // namespace civcraft

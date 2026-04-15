@@ -58,14 +58,35 @@ void GameplayController::processMovement(float dt, GameState state,
 			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
 
 			if (isClick && !m_rtsSelect.selected.empty() && m_hit) {
-				// Click with units selected → send group goal (server computes formation)
+				// Click with units selected → plan on the client (no server goal).
+				// The server is intentionally unaware of the route — we drive
+				// each owned unit via incremental Move proposals below.
 				glm::vec3 center = glm::vec3(m_hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
 				auto& bl = server.blockRegistry();
 				if (bl.get(server.chunks().getBlock(m_hit->blockPos.x, m_hit->blockPos.y, m_hit->blockPos.z)).solid) {
 					printf("[RTS] Move order: %d entities → center (%.1f,%.1f,%.1f)\n",
 						(int)m_rtsSelect.selected.size(), center.x, center.y, center.z);
-					server.sendSetGoalGroup(center, m_rtsSelect.selected);
-					// Store local move orders for visual target rendering
+
+					// Build the batch-plan inputs: per-entity start cell.
+					std::vector<EntityId>   eids;
+					std::vector<glm::ivec3> starts;
+					eids.reserve(m_rtsSelect.selected.size());
+					starts.reserve(m_rtsSelect.selected.size());
+					for (auto eid : m_rtsSelect.selected) {
+						Entity* e = server.getEntity(eid);
+						if (!e) continue;
+						eids.push_back(eid);
+						starts.push_back(glm::ivec3(
+							(int)std::floor(e->position.x),
+							(int)std::floor(e->position.y),
+							(int)std::floor(e->position.z)));
+					}
+					glm::ivec3 gi{(int)std::floor(center.x),
+					              (int)std::floor(center.y),
+					              (int)std::floor(center.z)};
+					m_rtsExec.planGroup(eids, starts, gi,
+					                    server.chunks(), server.blockRegistry());
+
 					for (auto eid : m_rtsSelect.selected) {
 						m_moveOrders[eid] = {center, true};
 						if (m_agentClient) m_agentClient->onOverride(eid, center);
@@ -98,31 +119,36 @@ void GameplayController::processMovement(float dt, GameState state,
 			}
 		}
 
-		// RTS: local player uses virtual joystick toward its move target
-		// (same as RPG click-to-move). Server handles OTHER entities via nav.
+		// RTS: local player uses virtual joystick toward the next waypoint
+		// in its client-side plan (falling back to the raw goal if no plan).
+		// Other owned units are driven below via ActionProposal::Move.
 		{
 			auto pit = m_moveOrders.find(player.id());
 			if (pit != m_moveOrders.end() && pit->second.active) {
-				glm::vec3 toTarget = pit->second.target - player.position;
+				auto wp = m_rtsExec.steerTargetFor(player.id(), player.position);
+				glm::vec3 steer = wp ? *wp : pit->second.target;
+				glm::vec3 toTarget = steer - player.position;
 				toTarget.y = 0;
 				float dist = glm::length(toTarget);
-				if (dist < 1.0f) {
+				float finalDist = glm::length(glm::vec3(pit->second.target.x - player.position.x,
+				                                        0,
+				                                        pit->second.target.z - player.position.z));
+				if (finalDist < 1.0f) {
 					m_moveOrders.erase(pit);
-				} else {
+					m_rtsExec.cancel(player.id());
+				} else if (dist > 0.01f) {
 					move = glm::normalize(toTarget);
 				}
 			}
-			// Clean up move orders for other entities that arrived
+			// Drive every *other* owned commanded entity via Move proposals.
+			// Server sees these as ordinary per-tick Moves — it does no nav
+			// planning itself.
+			m_rtsExec.driveRemote(server, player.id());
+			// Clean up stale move-order entries for removed entities.
 			std::vector<EntityId> arrived;
 			for (auto& [eid, order] : m_moveOrders) {
-				if (eid == player.id()) continue; // handled above
-				if (!order.active) { arrived.push_back(eid); continue; }
-				Entity* e = server.getEntity(eid);
-				if (!e) { arrived.push_back(eid); continue; }
-				float hSpeed = std::sqrt(e->velocity.x * e->velocity.x + e->velocity.z * e->velocity.z);
-				glm::vec3 toTgt = order.target - e->position;
-				toTgt.y = 0;
-				if (glm::length(toTgt) < 2.0f || hSpeed < 0.1f)
+				if (eid == player.id()) continue;
+				if (!order.active || !server.getEntity(eid) || !m_rtsExec.has(eid))
 					arrived.push_back(eid);
 			}
 			for (auto eid : arrived) m_moveOrders.erase(eid);
@@ -131,12 +157,13 @@ void GameplayController::processMovement(float dt, GameState state,
 		// Fall through to WASD/physics below — local player gets local moveAndCollide
 	}
 
-	// WASD/jump cancels any active move order for the local player
+	// WASD/jump cancels any active move order for the local player.
+	// No server message needed — the plan lives only on the client.
 	bool wantsJump = controls.held(Action::Jump);
 	if ((hasWASD || wantsJump) && m_moveOrders.count(player.id())) {
 		m_moveOrders.erase(player.id());
+		m_rtsExec.cancel(player.id());
 		m_hasMoveTarget = false;
-		server.sendCancelGoal(player.id());
 	}
 
 	if (camera.mode == CameraMode::RPG) {

@@ -270,6 +270,20 @@ public:
 			}
 		};
 
+		// Check the chosen cell has 2-block air column (feet + head) so the
+		// entity doesn't spawn inside tree canopy or other solid geometry.
+		// actualSurfaceY() stops at the first air gap, which can be INSIDE
+		// a tree's leaf cluster — hence this verification + retry pass.
+		auto hasHeadroom = [&](float x, float y, float z) -> bool {
+			int bx = (int)std::floor(x), bz = (int)std::floor(z);
+			int by = (int)std::floor(y);
+			for (int dy = 0; dy <= 1; dy++) {
+				const auto& def = m_world->blocks.get(m_world->getBlock(bx, by + dy, bz));
+				if (def.solid) return false;
+			}
+			return true;
+		};
+
 		auto spawnOne = [&](const MobSpawn& ms, float x, float z, float fixedY,
 		                    std::unordered_map<std::string, PropValue> extraProps) {
 			for (auto& [k, v] : ms.props) extraProps[k] = v;
@@ -281,6 +295,26 @@ public:
 			extraProps[Prop::Owner] = (int)ownerId;
 			float y = (fixedY >= 0.0f) ? fixedY : safeSpawnHeight(x, z);
 			y += ms.yOffset;
+
+			// If the chosen cell is blocked (e.g. inside tree canopy), spiral
+			// outward in 1-block steps until we find a clear standable cell.
+			// 16 attempts is enough to clear any single tree; after that we
+			// accept the original position to preserve prior behaviour.
+			if (!hasHeadroom(x, y, z)) {
+				static const float kSpiral[16][2] = {
+					{ 1, 0},{ 0, 1},{-1, 0},{ 0,-1},
+					{ 2, 0},{ 0, 2},{-2, 0},{ 0,-2},
+					{ 2, 2},{-2, 2},{-2,-2},{ 2,-2},
+					{ 3, 0},{ 0, 3},{-3, 0},{ 0,-3},
+				};
+				for (auto& off : kSpiral) {
+					float nx = x + off[0], nz = z + off[1];
+					float ny = (fixedY >= 0.0f) ? fixedY : safeSpawnHeight(nx, nz);
+					ny += ms.yOffset;
+					if (hasHeadroom(nx, ny, nz)) { x = nx; z = nz; y = ny; break; }
+				}
+			}
+
 			EntityId eid = m_world->entities.spawn(ms.typeId, {x, y, z}, extraProps);
 			auto iIt = wgc.startingItems.find(ms.typeId);
 			if (iIt != wgc.startingItems.end()) {
