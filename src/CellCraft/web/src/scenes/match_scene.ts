@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { AIStateMap, decideAll, makeAIStateMap, resetAI } from '../ai/simple_ai';
+import { getMonster } from '../artifacts';
+import { partsFromSpec } from '../artifacts/spawn';
 import {
   makeGlassPanel,
   makePillBadge,
@@ -12,7 +14,7 @@ import {
 } from '../render/ui';
 import { Action, ActionType } from '../sim/action';
 import { Monster } from '../sim/monster';
-import { Part, PartKind } from '../sim/part';
+import { Part } from '../sim/part';
 import { tick } from '../sim/sim';
 import { TIER_COUNT, TIER_SIZE_MULTS, TIER_THRESHOLDS } from '../sim/tuning';
 import { configureWorld, makeWorld, scatterFood, spawnMonster, World } from '../sim/world';
@@ -59,35 +61,21 @@ function buildWorld(starter: MatchStarter): { world: World; player: Monster } {
   });
 
   const r = 520;
-  const aiConfigs: Array<{ pos: [number, number]; color: [number, number, number]; seed: number; parts: Part[] }> = [
-    { pos: [r, 0], color: [0.86, 0.4, 0.42], seed: 3001, parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.SPIKE, anchor: [38, 8], scale: 1.2 },
-      { kind: PartKind.SPIKE, anchor: [38, -8], scale: 1.2 }
-    ] },
-    { pos: [-r, 0], color: [0.55, 0.65, 0.9], seed: 3002, parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.REGEN, anchor: [-20, 12], scale: 1.0 },
-      { kind: PartKind.ARMOR, anchor: [-24, 0], scale: 1.0 }
-    ] },
-    { pos: [0, r], color: [0.92, 0.78, 0.42], seed: 3003, parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.TEETH, anchor: [36, 6], scale: 1.0 },
-      { kind: PartKind.REGEN, anchor: [-20, 0], scale: 0.8 }
-    ] },
-    { pos: [0, -r], color: [0.7, 0.5, 0.85], seed: 3004, parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.EYES, anchor: [28, 14], scale: 1.0 },
-      { kind: PartKind.FLAGELLA, anchor: [-28, 0], scale: 1.2 }
-    ] }
+  const ringIds: Array<{ pos: [number, number]; id: string }> = [
+    { pos: [r, 0], id: 'base:pricklet' },
+    { pos: [-r, 0], id: 'base:shelly' },
+    { pos: [0, r], id: 'base:fang' },
+    { pos: [0, -r], id: 'base:zip' }
   ];
-  for (const c of aiConfigs) {
+  for (const c of ringIds) {
+    const def = getMonster(c.id);
+    if (!def) continue;
     spawnMonster(world, {
       pos: c.pos,
-      baseRadius: 38 + (c.seed % 7),
-      color: c.color,
-      seed: c.seed,
-      parts: c.parts
+      baseRadius: 38 + (def.seed % 7),
+      color: def.color,
+      seed: def.seed,
+      parts: partsFromSpec(def.parts)
     });
   }
 
@@ -103,25 +91,9 @@ function buildOuterWorld(seed: number, scale: number = 2.0): World {
   const w = makeWorld();
   w.next_id = OUTER_ID_BASE;
   configureWorld(w, scale);
-  const palette: Array<{ color: [number, number, number]; parts: Part[] }> = [
-    { color: [0.86, 0.4, 0.42], parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.SPIKE, anchor: [38, 8], scale: 1.2 }
-    ] },
-    { color: [0.55, 0.65, 0.9], parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.ARMOR, anchor: [-24, 0], scale: 1.0 }
-    ] },
-    { color: [0.92, 0.78, 0.42], parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.TEETH, anchor: [36, 6], scale: 1.0 }
-    ] },
-    { color: [0.7, 0.5, 0.85], parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.FLAGELLA, anchor: [-28, 0], scale: 1.2 }
-    ] }
-  ];
-  const N = palette.length;
+  const ids = ['base:pricklet', 'base:shelly', 'base:fang', 'base:zip', 'base:thorn', 'base:drip'];
+  const defs = ids.map((id) => getMonster(id)).filter((d): d is NonNullable<typeof d> => !!d);
+  const N = defs.length;
   const r = w.map_radius * 0.5;
   for (let i = 0; i < N; ++i) {
     const a = (2 * Math.PI * i) / N;
@@ -130,8 +102,8 @@ function buildOuterWorld(seed: number, scale: number = 2.0): World {
     spawnMonster(w, {
       pos,
       baseRadius: (38 + i) * tierMult,
-      color: palette[i].color,
-      parts: palette[i].parts,
+      color: defs[i].color,
+      parts: partsFromSpec(defs[i].parts),
       seed: seed ^ (0xD1A11E5 + i)
     });
   }
@@ -178,31 +150,21 @@ function buildMigratedInner(
   player.hp = player.hp_max;
 
   const r = 520;
-  const aiConfigs: Array<{ pos: [number, number]; color: [number, number, number]; seed: number; parts: Part[] }> = [
-    { pos: [r, 0], color: [0.86, 0.4, 0.42], seed: seed + 11, parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.SPIKE, anchor: [38, 8], scale: 1.2 }
-    ] },
-    { pos: [-r, 0], color: [0.55, 0.65, 0.9], seed: seed + 12, parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.ARMOR, anchor: [-24, 0], scale: 1.0 }
-    ] },
-    { pos: [0, r], color: [0.92, 0.78, 0.42], seed: seed + 13, parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.TEETH, anchor: [36, 6], scale: 1.0 }
-    ] },
-    { pos: [0, -r], color: [0.7, 0.5, 0.85], seed: seed + 14, parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.FLAGELLA, anchor: [-28, 0], scale: 1.2 }
-    ] }
+  const migrants: Array<{ pos: [number, number]; id: string; seedOff: number }> = [
+    { pos: [r, 0], id: 'base:pricklet', seedOff: 11 },
+    { pos: [-r, 0], id: 'base:shelly', seedOff: 12 },
+    { pos: [0, r], id: 'base:fang', seedOff: 13 },
+    { pos: [0, -r], id: 'base:zip', seedOff: 14 }
   ];
-  for (const c of aiConfigs) {
+  for (const c of migrants) {
+    const def = getMonster(c.id);
+    if (!def) continue;
     spawnMonster(world, {
       pos: c.pos,
-      baseRadius: 38 + (c.seed % 7),
-      color: c.color,
-      seed: c.seed,
-      parts: c.parts
+      baseRadius: 38 + ((seed + c.seedOff) % 7),
+      color: def.color,
+      seed: seed + c.seedOff,
+      parts: partsFromSpec(def.parts)
     });
   }
   return { world, player };

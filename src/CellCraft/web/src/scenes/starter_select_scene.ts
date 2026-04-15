@@ -1,7 +1,9 @@
 import * as THREE from 'three';
+import { allStarters } from '../artifacts';
+import { defToStarter } from '../artifacts/spawn';
 import { makeText, UI_PALETTE } from '../render/ui';
 import { makeMonster } from '../sim/monster';
-import { Part, PartKind } from '../sim/part';
+import { Part } from '../sim/part';
 import { buttonHit, makeMenuButton, MenuButtonHandle, pointerToHud } from './menu_widgets';
 import { makeMatchScene } from './match_scene';
 import { makeMainMenuScene } from './main_menu_scene';
@@ -23,47 +25,12 @@ export interface Starter {
   seed: number;
 }
 
-const STARTERS: Starter[] = [
-  {
-    id: 'carn',
-    name: 'SHARD',
-    blurb: 'carnivore — spike + mouth',
-    color: [0.86, 0.4, 0.42],
-    seed: 2001,
-    parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.SPIKE, anchor: [38, 8], scale: 1.2 },
-      { kind: PartKind.SPIKE, anchor: [38, -8], scale: 1.2 }
-    ]
-  },
-  {
-    id: 'herb',
-    name: 'MOSS',
-    blurb: 'herbivore — regen + armor',
-    color: [0.55, 0.75, 0.55],
-    seed: 2002,
-    parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.REGEN, anchor: [-20, 12], scale: 1.0 },
-      { kind: PartKind.ARMOR, anchor: [-24, 0], scale: 1.0 }
-    ]
-  },
-  {
-    id: 'scout',
-    name: 'DARTER',
-    blurb: 'scout — eyes + flagella',
-    color: [0.7, 0.5, 0.85],
-    seed: 2004,
-    parts: [
-      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
-      { kind: PartKind.EYES, anchor: [28, 14], scale: 1.0 },
-      { kind: PartKind.EYES, anchor: [28, -14], scale: 1.0 },
-      { kind: PartKind.FLAGELLA, anchor: [-28, 0], scale: 1.2 }
-    ]
-  }
-];
+function buildStarterList(): Starter[] {
+  return allStarters().map(defToStarter);
+}
 
 export function makeStarterSelectScene(): Scene {
+  const STARTERS: Starter[] = buildStarterList();
   const hudGroup = new THREE.Group();
   // One pedestal group per starter. We swap the preview mesh inside
   // each frame to animate the heading (cheap rebuild).

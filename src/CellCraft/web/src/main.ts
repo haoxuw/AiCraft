@@ -1,9 +1,12 @@
+import { loadAllArtifacts } from './artifacts';
 import { Input } from './input/input';
 import { Renderer } from './render/renderer';
 import { makeMainMenuScene } from './scenes/main_menu_scene';
 import { SceneManager } from './scenes/scene_manager';
 
 function main(): void {
+  // Must run before any scene that resolves starters or behaviors.
+  loadAllArtifacts();
   const canvas = document.getElementById('canvas') as HTMLCanvasElement;
   const renderer = new Renderer(canvas);
   const input = new Input({
