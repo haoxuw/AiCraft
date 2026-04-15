@@ -11,6 +11,7 @@
 
 #include "CellCraft/client/name_generator.h"
 #include "CellCraft/client/part_render.h"
+#include "CellCraft/client/ui_modern.h"
 #include "CellCraft/client/ui_text.h"
 #include "CellCraft/client/ui_theme.h"
 #include "CellCraft/sim/monster.h"
@@ -130,21 +131,46 @@ void CreatureLab::push_undo_() {
 }
 
 CreatureLab::Layout CreatureLab::compute_layout_() const {
+	// Modern layout. Field mapping:
+	//   left_x/left_w   → left drawer panel rect (x, width)
+	//   right_x/right_w → right stats panel rect
+	//   canvas_x/canvas_w → cream sculpt bezel rect (x, width)
+	//   canvas_cx/canvas_cy → bezel center (creature origin)
+	//   top_bar_h       → bezel top y (reused slot)
+	//   bottom_bar_h    → bezel height (reused slot)
+	//   drawer_y/drawer_h → drawer content region y,height inside left panel
 	Layout l;
 	glfwGetFramebufferSize(window_->handle(), &l.fw, &l.fh);
-	l.left_w = (float)l.fw * 0.16f;
-	l.right_w = (float)l.fw * 0.20f;
-	l.left_x = 0.0f;
-	l.right_x = (float)l.fw - l.right_w;
-	l.canvas_x = l.left_w;
-	l.canvas_w = (float)l.fw - l.left_w - l.right_w;
-	l.top_bar_h = (float)l.fh * 0.10f;
-	l.bottom_bar_h = (float)l.fh * 0.13f;
-	l.canvas_cx = l.canvas_x + l.canvas_w * 0.5f;
-	l.canvas_cy = l.top_bar_h + ((float)l.fh - l.top_bar_h - l.bottom_bar_h) * 0.5f;
-	// Drawer occupies the lower half of the left rail.
-	l.drawer_y = l.top_bar_h + 3.0f * 96.0f + 30.0f;
-	l.drawer_h = (float)l.fh - l.bottom_bar_h - l.drawer_y - 10.0f;
+
+	const float margin = 32.0f;
+	const float left_w = 260.0f;
+	const float right_w = 260.0f;
+	const float bottom_h = 120.0f; // reserve for bottom button row
+
+	l.left_x = margin;
+	l.left_w = left_w;
+	l.right_w = right_w;
+	l.right_x = (float)l.fw - right_w - margin;
+
+	// Bezel rect: centered in the middle column, offset slightly right.
+	float mid_x0 = l.left_x + left_w + margin;
+	float mid_x1 = l.right_x - margin;
+	float mid_w  = mid_x1 - mid_x0;
+	float mid_h  = (float)l.fh - margin * 2.0f - bottom_h - margin;
+	// Target ~960x820 but adapt if smaller screen.
+	float bezel_w = std::min(960.0f, mid_w);
+	float bezel_h = std::min(820.0f, mid_h);
+	l.canvas_w   = bezel_w;
+	l.canvas_x   = mid_x0 + (mid_w - bezel_w) * 0.5f + 16.0f; // nudge right
+	if (l.canvas_x + bezel_w > mid_x1) l.canvas_x = mid_x1 - bezel_w;
+	l.top_bar_h    = margin + (mid_h - bezel_h) * 0.5f; // bezel y
+	l.bottom_bar_h = bezel_h;                            // bezel h
+	l.canvas_cx = l.canvas_x + bezel_w * 0.5f;
+	l.canvas_cy = l.top_bar_h + bezel_h * 0.5f;
+
+	// Drawer content (inside left panel) starts after header+tier+name+tabs.
+	l.drawer_y = margin + 320.0f;
+	l.drawer_h = (float)l.fh - bottom_h - margin - l.drawer_y;
 	return l;
 }
 
@@ -390,100 +416,324 @@ LabOutcome CreatureLab::update(float dt, const LabInput& in) {
 		if (k == GLFW_KEY_ESCAPE) outc = LabOutcome::BACK;
 	}
 
-	draw_top_bar_(l, in);
+	namespace m = ui::modern;
+	m::beginFrame(text_, l.fw, l.fh);
+
+	// 1) Outer dark charcoal gradient background.
+	m::drawScrim(0, 0, l.fw, l.fh, m::SURFACE_BG_TOP, m::SURFACE_BG_BOTTOM);
+
+	// 2) Canvas bezel — soft shadow + cream rounded rect with subtle stroke.
+	{
+		int bx = (int)l.canvas_x;
+		int by = (int)l.top_bar_h;
+		int bw = (int)l.canvas_w;
+		int bh = (int)l.bottom_bar_h;
+		m::drawSoftShadow(bx, by, bw, bh, m::RADIUS_LG, 24, 0.45f);
+		const glm::vec4 CREAM{0.961f, 0.937f, 0.886f, 1.0f}; // #F5EFE2
+		m::drawRoundedRect(bx, by, bw, bh, m::RADIUS_LG, CREAM,
+		                   m::STROKE_SUBTLE, 1);
+		// SCULPT tag just above the bezel (top-left corner).
+		m::drawTextLabel(bx + 8, by - m::TYPE_LABEL - 6,
+		                 "SCULPT", m::TEXT_SECONDARY);
+	}
+
+	// 3) Chalk content inside the bezel (creature polygon + parts + cursor).
+	draw_canvas_(l, in, dt);
+
+	// 4) Modern side panels + bottom bar.
 	draw_left_rail_(l, in);
 	draw_right_rail_(l);
-	draw_canvas_(l, in, dt);
-	draw_drawer_(l, in);
 	draw_bottom_bar_(l, in, outc);
+	draw_top_bar_(l, in); // top-right close button + floating part action buttons
 
+	if (outc == LabOutcome::NONE && pending_outcome_ != LabOutcome::NONE) {
+		outc = pending_outcome_;
+		pending_outcome_ = LabOutcome::NONE;
+	}
 	return outc;
 }
 
 void CreatureLab::draw_top_bar_(const Layout& l, const LabInput& in) {
-	int fw = l.fw, fh = l.fh;
-	float aspect = (float)fw / (float)fh;
-	auto px2ndc = [&](float x, float y) {
-		return glm::vec2(x / fw * 2.0f - 1.0f, 1.0f - y / fh * 2.0f);
-	};
-	glm::vec2 a = px2ndc(0.0f, l.top_bar_h);
-	glm::vec2 b = px2ndc((float)fw, 0.0f);
-	// Top bar — cream card with charcoal underline.
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::CARD_FILL);
-	text_->drawRect(a.x, a.y, b.x - a.x, 0.004f, ui::CARD_STROKE);
-	// Centered name + pencil
-	float scale = l.top_bar_h / 32.0f;
-	if (scale > 3.5f) scale = 3.5f;
-	float w_chars = (float)name_.size() * 0.018f * scale;
-	float nx = ((float)fw * 0.5f - (w_chars * fw * 0.5f)) ;
-	(void)nx;
-	float ndc_y = (1.0f - (l.top_bar_h * 0.30f / fh) * 2.0f);
-	// Outlined name title — charcoal halo + gold drop shadow on cream.
-	glm::vec4 nshadow = ui::ACCENT_GOLD_WARM; nshadow.a = 0.80f;
-	ui::drawOutlinedText(text_, name_, -w_chars * 0.5f, ndc_y - 0.05f, scale,
-	                     ui::TEXT_DARK, nshadow, aspect);
-	// Pencil button (a small box right of the name)
-	float btn_w = l.top_bar_h * 0.6f;
-	float btn_h = l.top_bar_h * 0.6f;
-	float btn_x = (float)fw * 0.5f + (w_chars * fw * 0.5f) + 16.0f;
-	float btn_y = l.top_bar_h * 0.20f;
-	if (pixel_button_(btn_x, btn_y, btn_w, btn_h, "EDIT",
-	                  true, in, glm::vec3(0.30f, 0.40f, 0.55f))) {
-		std::mt19937 rng((uint32_t)(time_acc_ * 1000.0f + 7));
-		name_ = generateName(rng);
-	}
-
-	// Tier badge — small gold pill to the left of the name, e.g. "T1 SPECK".
-	{
-		char tier_buf[32];
-		std::snprintf(tier_buf, sizeof(tier_buf), "T%d %s",
-			current_tier_, sim::tierName(current_tier_));
-		float tier_scale = scale * 0.60f;
-		float tier_w = (float)std::strlen(tier_buf) * 0.018f * tier_scale;
-		float tier_x = -w_chars * 0.5f - tier_w - 0.03f;
-		glm::vec4 tshadow = ui::OUTLINE; tshadow.a = 0.65f;
-		ui::drawOutlinedText(text_, tier_buf, tier_x, ndc_y - 0.05f,
-			tier_scale, ui::ACCENT_GOLD_WARM, tshadow, aspect);
+	// In the modern layout, the top bar is gone. We use this hook for the
+	// top-right "close" (back to menu) icon button, and for rendering the
+	// floating per-part action buttons (+, -, ROT, DEL) when a part is
+	// selected — since those float over the cream bezel in modern style.
+	namespace m = ui::modern;
+	const int close_size = 40;
+	int cx = l.fw - close_size - 32;
+	int cy = 32;
+	bool ch = point_in_rect(in.mouse_px, (float)cx, (float)cy,
+	                        (float)close_size, (float)close_size);
+	bool cp = ch && in.mouse_left_down;
+	m::buttonIcon(cx, cy, close_size, "X", "Menu", ch, cp);
+	if (ch && in.mouse_left_click) {
+		pending_outcome_ = LabOutcome::BACK;
 	}
 }
 
 void CreatureLab::draw_left_rail_(const Layout& l, const LabInput& in) {
-	int fw = l.fw, fh = l.fh;
-	auto px2ndc = [&](float x, float y) {
-		return glm::vec2(x / fw * 2.0f - 1.0f, 1.0f - y / fh * 2.0f);
-	};
-	glm::vec2 a = px2ndc(0.0f, (float)fh);
-	glm::vec2 b = px2ndc(l.left_w, l.top_bar_h);
-	// Left rail — lavender-tinted card with gold stroke on the right edge.
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::PANEL_TINT);
-	text_->drawRect(b.x - 0.004f, a.y, 0.004f, b.y - a.y, ui::ACCENT_GOLD_WARM);
+	namespace m = ui::modern;
+	const int margin = 32;
+	const int px = (int)l.left_x;
+	const int py = margin;
+	const int pw = (int)l.left_w;
+	const int ph = l.fh - margin * 2;
 
-	const char* labels[3] = { "SHAPE", "PARTS", "COLOR" };
-	Drawer drawers[3] = { Drawer::SHAPE, Drawer::PARTS, Drawer::COLOR };
-	float btn_h = 96.0f;
-	float btn_w = l.left_w - 24.0f;
-	float bx = 12.0f;
-	float by0 = l.top_bar_h + 12.0f;
-	for (int i = 0; i < 3; ++i) {
-		float by = by0 + i * (btn_h + 8.0f);
-		// Active drawer = warm gold; inactive = cream. Saturated, not drab.
-		// Active drawer uses warm gold (primary UI accent); pink is reserved for meat food.
-		glm::vec3 fill = (drawer_ == drawers[i])
-			? glm::vec3(ui::ACCENT_GOLD_WARM)
-			: glm::vec3(1.00f, 0.99f, 0.96f);
-		if (pixel_button_(bx, by, btn_w, btn_h, labels[i], true, in, fill)) {
-			drawer_ = drawers[i];
+	// Glass panel for the left drawer.
+	m::drawGlassPanel(px, py, pw, ph, m::RADIUS_LG);
+
+	int y = py + m::SPACE_LG;
+
+	// Header.
+	{
+		int tw = m::measureTextPx("CREATURE LAB", m::TYPE_TITLE_SM);
+		m::drawTextModern(px + (pw - tw) / 2, y,
+		                  "CREATURE LAB", m::TYPE_TITLE_SM, m::TEXT_PRIMARY);
+	}
+	y += m::TYPE_TITLE_SM + m::SPACE_MD;
+
+	// Tier badge.
+	{
+		char tier_buf[32];
+		std::snprintf(tier_buf, sizeof(tier_buf), "T%d  %s",
+		              current_tier_, sim::tierName(current_tier_));
+		int tw = m::measureTextPx(tier_buf, m::TYPE_LABEL) + m::SPACE_MD * 2;
+		glm::vec4 accent = (current_tier_ >= 3) ? m::ACCENT_AMBER : m::ACCENT_CYAN;
+		m::drawPillBadge(px + (pw - tw) / 2, y, tier_buf,
+		                 m::TEXT_PRIMARY, m::SURFACE_PANEL_HI, accent);
+		y += m::TYPE_LABEL + m::SPACE_MD * 2 + m::SPACE_LG;
+	}
+
+	// Editable name input.
+	{
+		const int input_h = 44;
+		const int input_x = px + m::SPACE_LG;
+		const int input_y = y;
+		const int input_w = pw - m::SPACE_LG * 2;
+		bool hovered = point_in_rect(in.mouse_px, (float)input_x, (float)input_y,
+		                             (float)input_w, (float)input_h);
+		m::drawRoundedRect(input_x, input_y, input_w, input_h, m::RADIUS_MD,
+		                   m::SURFACE_PANEL_HI,
+		                   hovered ? m::ACCENT_CYAN : m::STROKE_SUBTLE, 1);
+		int tw = m::measureTextPx(name_, m::TYPE_BODY);
+		m::drawTextModern(input_x + (input_w - tw) / 2,
+		                  input_y + (input_h - m::TYPE_BODY) / 2,
+		                  name_, m::TYPE_BODY, m::TEXT_PRIMARY);
+		// Click to re-roll name (preserves existing click-to-edit behaviour).
+		if (hovered && in.mouse_left_click) {
+			std::mt19937 rng((uint32_t)(time_acc_ * 1000.0f + 7));
+			name_ = generateName(rng);
+		}
+		y += input_h + m::SPACE_LG;
+	}
+
+	// Divider.
+	m::drawDivider(px + m::SPACE_LG, y, pw - m::SPACE_LG * 2,
+	               m::DividerAxis::HORIZONTAL);
+	y += m::SPACE_LG;
+
+	// Segmented control (SHAPE / PARTS / COLOR).
+	{
+		const char* labels[3] = { "SHAPE", "PARTS", "COLOR" };
+		Drawer drawers[3] = { Drawer::SHAPE, Drawer::PARTS, Drawer::COLOR };
+		const int seg_h = 40;
+		const int cells = 3;
+		const int seg_w = pw - m::SPACE_LG * 2;
+		const int cell_w = seg_w / cells;
+		for (int i = 0; i < cells; ++i) {
+			int bx = px + m::SPACE_LG + i * cell_w;
+			int bw = cell_w;
+			bool active = (drawer_ == drawers[i]);
+			bool hov = point_in_rect(in.mouse_px, (float)bx, (float)y,
+			                         (float)bw, (float)seg_h);
+			bool pr = hov && in.mouse_left_down;
+			if (active) {
+				m::drawRoundedRect(bx, y, bw, seg_h, m::RADIUS_MD,
+				                   m::ACCENT_CYAN, glm::vec4(0.0f), 0);
+				int tw = m::measureTextPx(labels[i], m::TYPE_LABEL);
+				m::drawTextModern(bx + (bw - tw) / 2,
+				                  y + (seg_h - m::TYPE_LABEL) / 2,
+				                  labels[i], m::TYPE_LABEL, m::TEXT_ON_ACCENT);
+			} else {
+				m::drawRoundedRect(bx, y, bw, seg_h, m::RADIUS_MD,
+				                   hov ? glm::vec4(m::ACCENT_CYAN.r, m::ACCENT_CYAN.g,
+				                                   m::ACCENT_CYAN.b, 0.08f)
+				                       : glm::vec4(0.0f),
+				                   m::ACCENT_CYAN, 1);
+				int tw = m::measureTextPx(labels[i], m::TYPE_LABEL);
+				m::drawTextModern(bx + (bw - tw) / 2,
+				                  y + (seg_h - m::TYPE_LABEL) / 2,
+				                  labels[i], m::TYPE_LABEL, m::ACCENT_CYAN);
+			}
+			if (hov && in.mouse_left_click) drawer_ = drawers[i];
+			(void)pr;
+		}
+		y += seg_h + m::SPACE_LG;
+	}
+
+	// Drawer content region.
+	l.drawer_y;
+	{
+		// Use the space between `y` and the bottom buttons area.
+		Layout& lref = const_cast<Layout&>(l);
+		lref.drawer_y = (float)y;
+		lref.drawer_h = (float)(py + ph - y - (44 + m::SPACE_LG * 2));
+	}
+	draw_drawer_(l, in);
+
+	// Bottom of drawer: UNDO + RESET ghost buttons side-by-side.
+	{
+		const int bh = 44;
+		const int by = py + ph - bh - m::SPACE_LG;
+		const int gap = m::SPACE_SM;
+		const int bw = (pw - m::SPACE_LG * 2 - gap) / 2;
+		const int ux = px + m::SPACE_LG;
+		const int rx = ux + bw + gap;
+		bool uh = !undo_.empty() && point_in_rect(in.mouse_px,
+		                                          (float)ux, (float)by,
+		                                          (float)bw, (float)bh);
+		bool up = uh && in.mouse_left_down;
+		if (m::buttonGhost(ux, by, bw, bh, "UNDO", uh, up) ||
+		    (uh && in.mouse_left_click)) {
+			if (!undo_.empty()) {
+				auto& e = undo_.back();
+				cell_ = e.cell; parts_ = e.parts; color_ = e.color;
+				rebuild_polygon_();
+				refresh_stats_();
+				undo_.pop_back();
+			}
+		}
+		bool rh = point_in_rect(in.mouse_px, (float)rx, (float)by,
+		                        (float)bw, (float)bh);
+		bool rp = rh && in.mouse_left_down;
+		if (m::buttonGhost(rx, by, bw, bh, "RESET", rh, rp) ||
+		    (rh && in.mouse_left_click)) {
+			push_undo_();
+			cell_.init_circle(40.0f);
+			parts_.clear();
+			rebuild_polygon_();
+			refresh_stats_();
 		}
 	}
 }
 
 void CreatureLab::draw_right_rail_(const Layout& l) {
-	int fw = l.fw, fh = l.fh;
-	float aspect = (float)fw / (float)fh;
-	auto px2ndc = [&](float x, float y) {
-		return glm::vec2(x / fw * 2.0f - 1.0f, 1.0f - y / fh * 2.0f);
-	};
-	glm::vec2 a = px2ndc(l.right_x, (float)fh);
+	namespace m = ui::modern;
+	const int margin = 32;
+	const int px = (int)l.right_x;
+	const int py = margin;
+	const int pw = (int)l.right_w;
+	const int ph = l.fh - margin * 2;
+	m::drawGlassPanel(px, py, pw, ph, m::RADIUS_LG);
+
+	int y = py + m::SPACE_LG;
+
+	// Header.
+	{
+		const char* hdr = "CREATURE STATS";
+		int tw = m::measureTextPx(hdr, m::TYPE_LABEL);
+		m::drawTextLabel(px + (pw - tw) / 2, y, hdr, m::TEXT_SECONDARY);
+		y += m::TYPE_LABEL + m::SPACE_LG;
+	}
+
+	// FULLNESS ring.
+	{
+		int radius = 60;
+		int cx = px + pw / 2;
+		int cy = y + radius;
+		float frac = fullness_frac_();
+		glm::vec4 ring = (frac > 0.85f) ? m::ACCENT_DANGER
+		               : (frac > 0.60f) ? m::ACCENT_AMBER
+		               :                  m::ACCENT_CYAN;
+		m::drawRingProgress(cx, cy, radius, 10, frac, ring);
+		// Center percent label.
+		char pct[16]; std::snprintf(pct, sizeof(pct), "%d%%", (int)std::round(frac * 100.0f));
+		int tw = m::measureTextPx(pct, m::TYPE_TITLE_SM);
+		m::drawTextModern(cx - tw / 2, cy - m::TYPE_TITLE_SM / 2,
+		                  pct, m::TYPE_TITLE_SM, m::TEXT_PRIMARY);
+		int lw = m::measureTextPx("FULLNESS", m::TYPE_CAPTION);
+		m::drawTextModern(cx - lw / 2, cy + m::TYPE_TITLE_SM / 2 + 4,
+		                  "FULLNESS", m::TYPE_CAPTION, m::TEXT_SECONDARY);
+		y = cy + radius + m::SPACE_MD;
+	}
+
+	// Diet badge.
+	{
+		const char* diet_txt = "OMNIVORE";
+		glm::vec4 accent = m::ACCENT_CYAN;
+		switch (stat_diet_) {
+		case sim::Diet::CARNIVORE: diet_txt = "CARNIVORE"; accent = m::ACCENT_DANGER; break;
+		case sim::Diet::HERBIVORE: diet_txt = "HERBIVORE"; accent = m::ACCENT_SUCCESS; break;
+		case sim::Diet::OMNIVORE:  diet_txt = "OMNIVORE";  accent = m::ACCENT_AMBER;  break;
+		}
+		int tw = m::measureTextPx(diet_txt, m::TYPE_LABEL) + m::SPACE_MD * 2;
+		m::drawPillBadge(px + (pw - tw) / 2, y, diet_txt,
+		                 m::TEXT_PRIMARY, m::SURFACE_PANEL_HI, accent);
+		y += m::TYPE_LABEL + m::SPACE_MD * 2 + m::SPACE_LG;
+	}
+
+	// Divider.
+	m::drawDivider(px + m::SPACE_LG, y, pw - m::SPACE_LG * 2,
+	               m::DividerAxis::HORIZONTAL);
+	y += m::SPACE_LG;
+
+	// 4 stat bars: SPEED, TOUGH, BITE, REACH.
+	{
+		const int bx = px + m::SPACE_LG;
+		const int bw = pw - m::SPACE_LG * 2;
+		// Build a probe monster (like refresh_stats_) to read raw numbers.
+		sim::Monster mm;
+		mm.shape = local_poly_;
+		mm.parts = parts_;
+		mm.biomass = 30.0f;
+		mm.refresh_stats();
+		int spike_count = 0;
+		for (auto& p : parts_) if (p.type == sim::PartType::SPIKE || p.type == sim::PartType::HORN) ++spike_count;
+		float reach = mm.part_effect.pickup_radius_mult;
+		char buf[16];
+		std::snprintf(buf, sizeof(buf), "%d", (int)std::round(mm.move_speed));
+		m::drawStatBar(bx, y, bw, "SPEED", stat_speed_, buf, m::ACCENT_CYAN);
+		y += 32;
+		std::snprintf(buf, sizeof(buf), "%d", (int)std::round(mm.hp_max));
+		m::drawStatBar(bx, y, bw, "TOUGH", stat_tough_, buf, m::ACCENT_AMBER);
+		y += 32;
+		std::snprintf(buf, sizeof(buf), "%.1f", mm.part_effect.damage_mult * (1.0f + spike_count * 0.1f));
+		m::drawStatBar(bx, y, bw, "BITE", stat_bite_, buf, m::ACCENT_DANGER);
+		y += 32;
+		std::snprintf(buf, sizeof(buf), "%.1f", reach);
+		float reach_norm = std::clamp((reach - 0.8f) / 1.2f, 0.0f, 1.0f);
+		m::drawStatBar(bx, y, bw, "REACH", reach_norm, buf, m::ACCENT_SUCCESS);
+		y += 32 + m::SPACE_LG;
+	}
+
+	// Divider.
+	m::drawDivider(px + m::SPACE_LG, y, pw - m::SPACE_LG * 2,
+	               m::DividerAxis::HORIZONTAL);
+	y += m::SPACE_MD;
+
+	// Metadata.
+	{
+		char buf[32];
+		std::snprintf(buf, sizeof(buf), "%.1f / %.0f",
+		              total_cost_(), budget_());
+		m::drawTextLabel(px + m::SPACE_LG, y, "BIOMASS COST", m::TEXT_SECONDARY);
+		int tw = m::measureTextPx(buf, m::TYPE_CAPTION);
+		m::drawTextModern(px + pw - m::SPACE_LG - tw, y, buf,
+		                  m::TYPE_CAPTION, m::TEXT_PRIMARY);
+		y += m::TYPE_LABEL + m::SPACE_SM;
+		float body_r = 0.0f;
+		for (int i = 0; i < sim::RadialCell::N; ++i) body_r += cell_.r[i];
+		body_r /= sim::RadialCell::N;
+		std::snprintf(buf, sizeof(buf), "%.1f", body_r);
+		m::drawTextLabel(px + m::SPACE_LG, y, "BODY RADIUS", m::TEXT_SECONDARY);
+		int tw2 = m::measureTextPx(buf, m::TYPE_CAPTION);
+		m::drawTextModern(px + pw - m::SPACE_LG - tw2, y, buf,
+		                  m::TYPE_CAPTION, m::TEXT_PRIMARY);
+	}
+}
+
+#if 0 // ---- Legacy right-rail renderer (dead code kept for reference) ----
+	glm::vec2 a(0.0f);
 	glm::vec2 b = px2ndc((float)fw, l.top_bar_h);
 	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::PANEL_TINT);
 	text_->drawRect(a.x, a.y, 0.004f, b.y - a.y, ui::ACCENT_CYAN);
@@ -596,7 +846,7 @@ void CreatureLab::draw_right_rail_(const Layout& l) {
 		glm::vec2 fb2 = px2ndc(bar_x + 3.0f + (bar_w - 6.0f) * fracs[i], by + 3.0f);
 		text_->drawRect(fa2.x, fa2.y, fb2.x - fa2.x, fb2.y - fa2.y, cols[i]);
 	}
-}
+#endif
 
 void CreatureLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 	(void)dt;
@@ -606,11 +856,12 @@ void CreatureLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 	};
 	float aspect = (float)fw / (float)fh;
 
-	// Click handling — has priority over sculpt.
+	// Click handling — has priority over sculpt. Canvas now = cream bezel
+	// rect (top_bar_h/bottom_bar_h fields are reused as bezel y/h).
 	bool over_canvas = in.mouse_px.x >= l.canvas_x
 	                && in.mouse_px.x <= l.canvas_x + l.canvas_w
 	                && in.mouse_px.y >= l.top_bar_h
-	                && in.mouse_px.y <= (float)l.fh - l.bottom_bar_h;
+	                && in.mouse_px.y <= l.top_bar_h + l.bottom_bar_h;
 
 	// Selected-part action buttons (drawn below) — handle hits first.
 	bool consumed_click = false;
@@ -692,24 +943,14 @@ void CreatureLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 		sculpting_ = false;
 	}
 
-	// ---- Render canvas border + creature.
+	// ---- Render creature inside the cream bezel (drawn by update()).
 	std::vector<ChalkStroke> strokes;
-
-	// Canvas backdrop subtle
-	{
-		glm::vec2 a = px2ndc(l.canvas_x, (float)l.fh - l.bottom_bar_h);
-		glm::vec2 b = px2ndc(l.canvas_x + l.canvas_w, l.top_bar_h);
-		// Canvas backdrop — cream card so the creature pops against a
-		// bright surface rather than a dark slate.
-		text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y,
-			glm::vec4(1.0f, 0.99f, 0.95f, 0.65f));
-	}
 
 	// Mirror axis dashed
 	{
 		ChalkStroke s; s.color = glm::vec3(0.55f, 0.55f, 0.50f); s.half_width = 1.2f;
 		float top_y = l.top_bar_h + 20.0f;
-		float bot_y = (float)l.fh - l.bottom_bar_h - 20.0f;
+		float bot_y = l.top_bar_h + l.bottom_bar_h - 20.0f;
 		for (float y = top_y; y < bot_y; y += 16.0f) {
 			s.points.clear();
 			s.points.push_back({l.canvas_cx, y});
@@ -728,7 +969,7 @@ void CreatureLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 			{l.canvas_cx + 8.0f, top_y + 8.0f},
 		};
 		strokes.push_back(s);
-		float by = (float)l.fh - l.bottom_bar_h - 16.0f;
+		float by = l.top_bar_h + l.bottom_bar_h - 16.0f;
 		s.points = {
 			{l.canvas_cx, by - 24.0f}, {l.canvas_cx, by},
 			{l.canvas_cx - 8.0f, by - 8.0f}, {l.canvas_cx, by},
@@ -821,56 +1062,75 @@ void CreatureLab::draw_canvas_(const Layout& l, const LabInput& in, float dt) {
 }
 
 void CreatureLab::draw_drawer_(const Layout& l, const LabInput& in) {
-	int fw = l.fw, fh = l.fh;
-	float aspect = (float)fw / (float)fh;
-	auto px2ndc = [&](float x, float y) {
-		return glm::vec2(x / fw * 2.0f - 1.0f, 1.0f - y / fh * 2.0f);
-	};
-
-	// Drawer panel sits at the bottom of the left rail.
-	float dx = 12.0f;
-	float dy = l.drawer_y;
-	float dw = l.left_w - 24.0f;
-	float dh = l.drawer_h;
-	if (dh < 60.0f) return;
-	glm::vec2 a = px2ndc(dx, dy + dh);
-	glm::vec2 b = px2ndc(dx + dw, dy);
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::CARD_FILL);
+	namespace m = ui::modern;
+	const int dx = (int)l.left_x + m::SPACE_LG;
+	const int dy = (int)l.drawer_y;
+	const int dw = (int)l.left_w - m::SPACE_LG * 2;
+	const int dh = (int)l.drawer_h;
+	if (dh < 60) return;
 
 	if (drawer_ == Drawer::SHAPE) {
-		float ndc_y = 1.0f - (dy + 16.0f) / fh * 2.0f;
-		text_->drawText("DRAG THE CREATURE", a.x + 0.01f, ndc_y, 1.0f,
-			ui::TEXT_DARK, aspect);
-		text_->drawText("TO BEND IT!", a.x + 0.01f, ndc_y - 0.05f, 1.0f,
-			ui::TEXT_DARK, aspect);
+		m::drawTextLabel(dx, dy, "BRUSH", m::TEXT_SECONDARY);
+		int ly = dy + m::TYPE_LABEL + m::SPACE_SM;
+		// Placeholder brush size slider (static — brush size not wired to state).
+		m::drawRoundedRect(dx, ly + 10, dw, 6, 3, m::TRACK_BG);
+		m::drawRoundedRect(dx, ly + 10, dw / 2, 6, 3, m::ACCENT_CYAN);
+		m::drawTextModern(dx, ly + 28,
+		                  "Drag on the canvas to bend the body.",
+		                  m::TYPE_CAPTION, m::TEXT_SECONDARY);
 	} else if (drawer_ == Drawer::PARTS) {
-		// Grid 2 columns × 6 rows.
-		float pad = 8.0f;
-		float cell_w = (dw - pad * 3.0f) * 0.5f;
-		float cell_h = std::min(96.0f, (dh - pad * 7.0f) / 6.0f);
+		// 3 columns × ceil(N/3) rows, 72×72 tiles.
+		const int cols = 3;
+		const int pad = m::SPACE_SM;
+		int tile_w = (dw - pad * (cols - 1)) / cols;
+		int tile_h = tile_w;
+		if (tile_h > 78) tile_h = 78;
 		for (int i = 0; i < kPaletteCount; ++i) {
-			int col = i % 2, row = i / 2;
-			float bx = dx + pad + col * (cell_w + pad);
-			float by = dy + pad + row * (cell_h + pad);
+			int col = i % cols, row = i / cols;
+			int bx = dx + col * (tile_w + pad);
+			int by = dy + row * (tile_h + pad + 14); // extra for caption
+			if (by + tile_h > dy + dh) break;
 			sim::PartType t = kPaletteTypes[i];
 			int cur = part_stack_count(parts_, t);
 			int cap = part_stack_cap(t);
 			bool can = cur + 2 <= cap;
 			bool unlocked = sim::isPartUnlocked(t, current_tier_);
-			glm::vec3 fill;
-			if (!unlocked) {
-				// Locked: desaturated slate so it reads clearly "not yet".
-				fill = glm::vec3(0.35f, 0.35f, 0.38f);
-			} else if (boing_part_idx_ == i) {
-				fill = glm::vec3(0.85f, 0.30f, 0.30f);
-			} else if (can) {
-				fill = glm::vec3(0.18f, 0.30f, 0.40f);
-			} else {
-				fill = glm::vec3(0.20f, 0.20f, 0.22f);
+			bool hov = unlocked && point_in_rect(in.mouse_px, (float)bx, (float)by,
+			                                    (float)tile_w, (float)tile_h);
+			m::drawGlassPanel(bx, by, tile_w, tile_h, m::RADIUS_MD);
+			if (hov) {
+				m::drawInnerGlow(bx, by, tile_w, tile_h, m::RADIUS_MD,
+				                 m::ACCENT_CYAN_GLOW, 6);
 			}
-			// Locked parts render via enabled=false (50% alpha in pixel_button_);
-			// clicks get swallowed entirely — simplest "nope".
-			if (pixel_button_(bx, by, cell_w, cell_h, sim::part_name(t), unlocked, in, fill)) {
+			if (!unlocked) {
+				// Desaturated veil + lock glyph.
+				m::drawRoundedRect(bx, by, tile_w, tile_h, m::RADIUS_MD,
+				                   glm::vec4(0.0f, 0.0f, 0.0f, 0.45f));
+				int gs = m::TYPE_TITLE_SM;
+				int tw = m::measureTextPx("?", gs);
+				m::drawTextModern(bx + (tile_w - tw) / 2,
+				                  by + (tile_h - gs) / 2,
+				                  "?", gs, m::TEXT_MUTED);
+			} else {
+				// Part glyph — first char of part name, big.
+				const char* nm = sim::part_name(t);
+				std::string glyph(1, nm[0]);
+				int gs = m::TYPE_TITLE_MD;
+				int tw = m::measureTextPx(glyph, gs);
+				glm::vec4 gc = can ? m::ACCENT_CYAN : m::TEXT_MUTED;
+				if (boing_part_idx_ == i) gc = m::ACCENT_DANGER;
+				m::drawTextModern(bx + (tile_w - tw) / 2,
+				                  by + (tile_h - gs) / 2,
+				                  glyph, gs, gc);
+			}
+			// Caption: part name.
+			const char* pname = sim::part_name(t);
+			int cw = m::measureTextPx(pname, m::TYPE_CAPTION);
+			if (cw > tile_w) cw = tile_w;
+			m::drawTextModern(bx + (tile_w - cw) / 2, by + tile_h + 2,
+			                  pname, m::TYPE_CAPTION,
+			                  unlocked ? m::TEXT_SECONDARY : m::TEXT_MUTED);
+			if (hov && in.mouse_left_click) {
 				if (fullness_frac_() >= 1.0f) {
 					jar_shake_t_ = 0.4f;
 					boing_part_idx_ = i; boing_t_left_ = 0.4f;
@@ -880,15 +1140,33 @@ void CreatureLab::draw_drawer_(const Layout& l, const LabInput& in) {
 			}
 		}
 	} else if (drawer_ == Drawer::COLOR) {
-		// 8 circles in 4×2 grid.
-		float pad = 10.0f;
-		float cell_w = (dw - pad * 5.0f) / 4.0f;
-		float cell_h = std::min(64.0f, cell_w);
+		// 4×2 grid of 40×40 rounded swatches.
+		const int cols = 4;
+		const int pad = m::SPACE_MD;
+		int sw = std::min(40, (dw - pad * (cols - 1)) / cols);
 		for (int i = 0; i < kColorPaletteCount; ++i) {
-			int col = i % 4, row = i / 4;
-			float bx = dx + pad + col * (cell_w + pad);
-			float by = dy + pad + row * (cell_h + pad);
-			if (pixel_button_(bx, by, cell_w, cell_h, "", true, in, kColorPalette[i])) {
+			int col = i % cols, row = i / cols;
+			int bx = dx + col * (sw + pad);
+			int by = dy + row * (sw + pad);
+			glm::vec4 fill(kColorPalette[i], 1.0f);
+			bool selected = glm::distance(color_, kColorPalette[i]) < 0.01f;
+			bool hov = point_in_rect(in.mouse_px, (float)bx, (float)by,
+			                         (float)sw, (float)sw);
+			m::drawRoundedRect(bx, by, sw, sw, m::RADIUS_MD, fill,
+			                   selected ? m::ACCENT_CYAN : m::STROKE_SUBTLE,
+			                   selected ? 2 : 1);
+			if (selected) {
+				// Check mark (fallback).
+				int tw = m::measureTextPx("v", m::TYPE_LABEL);
+				m::drawTextModern(bx + (sw - tw) / 2,
+				                  by + (sw - m::TYPE_LABEL) / 2,
+				                  "v", m::TYPE_LABEL, m::TEXT_ON_ACCENT);
+			}
+			if (hov && !selected) {
+				m::drawInnerGlow(bx, by, sw, sw, m::RADIUS_MD,
+				                 m::ACCENT_CYAN_GLOW, 4);
+			}
+			if (hov && in.mouse_left_click) {
 				push_undo_();
 				color_ = kColorPalette[i];
 			}
@@ -897,50 +1175,32 @@ void CreatureLab::draw_drawer_(const Layout& l, const LabInput& in) {
 }
 
 void CreatureLab::draw_bottom_bar_(const Layout& l, const LabInput& in, LabOutcome& outc) {
-	int fw = l.fw, fh = l.fh;
-	auto px2ndc = [&](float x, float y) {
-		return glm::vec2(x / fw * 2.0f - 1.0f, 1.0f - y / fh * 2.0f);
-	};
-	glm::vec2 a = px2ndc(0.0f, (float)fh);
-	glm::vec2 b = px2ndc((float)fw, (float)fh - l.bottom_bar_h);
-	text_->drawRect(a.x, a.y, b.x - a.x, b.y - a.y, ui::CARD_FILL);
-	text_->drawRect(a.x, b.y - 0.004f, b.x - a.x, 0.004f, ui::CARD_STROKE);
+	namespace m = ui::modern;
 
-	float by = (float)fh - l.bottom_bar_h + 14.0f;
-	float bh = l.bottom_bar_h - 28.0f;
+	// LET'S GO button: centered horizontally under the bezel.
+	const int go_w = 240, go_h = 64;
+	int go_x = (int)(l.canvas_x + (l.canvas_w - go_w) / 2.0f);
+	int go_y = (int)(l.top_bar_h + l.bottom_bar_h) + 32;
+	if (go_y + go_h + 8 > l.fh) go_y = l.fh - go_h - 16;
+	bool gh = point_in_rect(in.mouse_px, (float)go_x, (float)go_y,
+	                        (float)go_w, (float)go_h);
+	bool gp = gh && in.mouse_left_down;
+	m::buttonPrimary(go_x, go_y, go_w, go_h, "LET'S GO! >", gh, gp);
+	if (gh && in.mouse_left_click) outc = LabOutcome::USE;
 
-	// UNDO
-	if (pixel_button_(20.0f, by, 96.0f, bh, "UNDO", !undo_.empty(), in,
-	                  glm::vec3(0.25f, 0.30f, 0.35f))) {
-		if (!undo_.empty()) {
-			auto& e = undo_.back();
-			cell_ = e.cell; parts_ = e.parts; color_ = e.color;
-			rebuild_polygon_();
-			refresh_stats_();
-			undo_.pop_back();
-		}
+	// MENU ghost button: right of LET'S GO.
+	const int menu_w = 120, menu_h = 48;
+	int menu_x = go_x + go_w + m::SPACE_LG;
+	int menu_y = go_y + (go_h - menu_h) / 2;
+	if (menu_x + menu_w > l.fw - 32) {
+		menu_x = (int)(l.canvas_x + l.canvas_w) - menu_w;
+		menu_y = go_y - menu_h - 8;
 	}
-	// RESET
-	if (pixel_button_(124.0f, by, 96.0f, bh, "RESET", true, in,
-	                  glm::vec3(0.45f, 0.30f, 0.30f))) {
-		push_undo_();
-		cell_.init_circle(40.0f);
-		parts_.clear();
-		rebuild_polygon_();
-		refresh_stats_();
-	}
-	// LET'S GO!
-	float go_w = 256.0f, go_h = bh;
-	float go_x = (float)fw * 0.5f - go_w * 0.5f;
-	if (pixel_button_(go_x, by, go_w, go_h, "LET'S GO!", true, in,
-	                  glm::vec3(0.40f, 0.70f, 0.30f))) {
-		outc = LabOutcome::USE;
-	}
-	// BACK
-	if (pixel_button_((float)fw - 130.0f, by, 110.0f, bh, "MENU", true, in,
-	                  glm::vec3(0.30f, 0.30f, 0.30f))) {
-		outc = LabOutcome::BACK;
-	}
+	bool mh = point_in_rect(in.mouse_px, (float)menu_x, (float)menu_y,
+	                        (float)menu_w, (float)menu_h);
+	bool mp = mh && in.mouse_left_down;
+	m::buttonGhost(menu_x, menu_y, menu_w, menu_h, "MENU", mh, mp);
+	if (mh && in.mouse_left_click) outc = LabOutcome::BACK;
 }
 
 } // namespace civcraft::cellcraft

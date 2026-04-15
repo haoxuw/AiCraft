@@ -155,6 +155,9 @@ private:
 
 	// Current growth tier (1..5). Gates which palette parts are placeable.
 	int current_tier_ = 1;
+
+	// Pending outcome raised by modern-panel side hits (e.g. top-right X).
+	LabOutcome pending_outcome_ = LabOutcome::NONE;
 };
 
 } // namespace civcraft::cellcraft
