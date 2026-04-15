@@ -221,6 +221,8 @@ export function makeMatchScene(opts: MatchOpts): Scene {
   let mpPlayerId: number = 0;       // server-assigned entity id
   let mpJoined = false;             // sent C_JOIN
   let mpWelcomed = false;           // got S_WELCOME
+  const MP_SNAP_TOLERANCE = 8;      // world units — below this, accept local prediction
+  const MP_INTERP_DELAY_MS = 100;   // render non-player entities this far in the past
   // Latest server snapshot (for interpolation / override).
   const mpAppearance = new Map<number, {
     color: [number, number, number];
@@ -228,10 +230,23 @@ export function makeMatchScene(opts: MatchOpts): Scene {
     seed: number;
     isPlayer: boolean;
   }>();
+  // Ring buffer of predicted player positions keyed by seq.
+  const mpPredicted = new Map<number, [number, number]>();
+  // Two-snapshot interpolation buffer per non-player entity id.
+  interface InterpSlot {
+    t0: number; p0: [number, number]; h0: number;
+    t1: number; p1: [number, number]; h1: number;
+  }
+  const mpInterp = new Map<number, InterpSlot>();
+  // Estimated server→client clock offset: client_t - server_t (ms).
+  let mpServerClockOffset = 0;
 
   // Apply an EntitySnap to the local world, creating the Monster if new.
-  function applyEntitySnap(s: EntitySnap): void {
-    // Remember appearance if the server sent it.
+  // For the local player, runs reconciliation — snapping back + replay
+  // only when prediction has drifted past MP_SNAP_TOLERANCE. For others,
+  // pushes into the interpolation buffer and leaves the render position
+  // to be eased each frame.
+  function applyEntitySnap(s: EntitySnap, serverTime: number, ackSeq: number): void {
     if (s.color && s.parts && typeof s.seed === 'number') {
       mpAppearance.set(s.id, {
         color: s.color,
@@ -243,7 +258,7 @@ export function makeMatchScene(opts: MatchOpts): Scene {
     let m = world.monsters.get(s.id);
     if (!m) {
       const ap = mpAppearance.get(s.id);
-      if (!ap) return; // haven't seen appearance yet — skip for now
+      if (!ap) return;
       m = makeMonster({
         id: s.id,
         pos: [s.pos[0], s.pos[1]],
@@ -257,17 +272,87 @@ export function makeMatchScene(opts: MatchOpts): Scene {
       world.monsters.set(s.id, m);
       if (s.id === mpPlayerId) player = m;
     }
-    // For non-player entities, snap to server state each tick. For the
-    // player, Commit C adds reconciliation; for now we also snap.
-    m.core_pos = [s.pos[0], s.pos[1]];
     m.vel = [s.vel[0], s.vel[1]];
-    m.heading = s.heading;
     m.hp = s.hp;
     m.hp_max = s.hp_max;
     m.biomass = s.biomass;
     m.tier = s.tier;
     m.body_scale = s.body_scale;
     m.alive = s.alive;
+
+    if (s.id === mpPlayerId) {
+      // Reconciliation: compare server pos at ackSeq to the prediction
+      // we had at that seq. If drift > tolerance, snap and replay.
+      const pred = mpPredicted.get(ackSeq);
+      const sp: [number, number] = [s.pos[0], s.pos[1]];
+      let drift = Infinity;
+      if (pred) {
+        drift = Math.hypot(pred[0] - sp[0], pred[1] - sp[1]);
+      }
+      if (!pred || drift > MP_SNAP_TOLERANCE) {
+        m.core_pos = sp;
+        m.heading = s.heading;
+        // Replay all pending predicted inputs > ackSeq by re-integrating.
+        // We grab them from net.pending in seq order.
+        if (net) {
+          const replays = Array.from(net.pending.values())
+            .filter((p) => p.seq > ackSeq)
+            .sort((a, b) => a.seq - b.seq);
+          for (const r of replays) {
+            if (r.msg.action.type === ActionType.MOVE) {
+              tick(world, [r.msg.action], FIXED_DT);
+            }
+          }
+        }
+      }
+      // Prune prediction buffer for acked seqs.
+      for (const seq of mpPredicted.keys()) {
+        if (seq <= ackSeq) mpPredicted.delete(seq);
+      }
+    } else {
+      // Non-player: push into interp buffer. Hold last two snapshots.
+      const prev = mpInterp.get(s.id);
+      if (!prev) {
+        mpInterp.set(s.id, {
+          t0: serverTime, p0: [s.pos[0], s.pos[1]], h0: s.heading,
+          t1: serverTime, p1: [s.pos[0], s.pos[1]], h1: s.heading
+        });
+        m.core_pos = [s.pos[0], s.pos[1]];
+        m.heading = s.heading;
+      } else {
+        prev.t0 = prev.t1;
+        prev.p0 = prev.p1;
+        prev.h0 = prev.h1;
+        prev.t1 = serverTime;
+        prev.p1 = [s.pos[0], s.pos[1]];
+        prev.h1 = s.heading;
+      }
+    }
+  }
+
+  // Ease non-player entities toward their interpolated position.
+  function updateMPInterp(): void {
+    if (!isMP) return;
+    // Target wall-clock (client time) we want to render at.
+    const renderServerT = Date.now() - mpServerClockOffset - MP_INTERP_DELAY_MS;
+    for (const [id, slot] of mpInterp) {
+      const m = world.monsters.get(id);
+      if (!m) continue;
+      const span = Math.max(1, slot.t1 - slot.t0);
+      let t = (renderServerT - slot.t0) / span;
+      if (!isFinite(t)) t = 1;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      m.core_pos = [
+        slot.p0[0] + (slot.p1[0] - slot.p0[0]) * t,
+        slot.p0[1] + (slot.p1[1] - slot.p0[1]) * t
+      ];
+      // Heading: shortest-arc lerp.
+      let dh = slot.h1 - slot.h0;
+      while (dh > Math.PI) dh -= 2 * Math.PI;
+      while (dh < -Math.PI) dh += 2 * Math.PI;
+      m.heading = slot.h0 + dh * t;
+    }
   }
 
   function applyFoodSnaps(snaps: FoodSnap[]): void {
@@ -287,18 +372,25 @@ export function makeMatchScene(opts: MatchOpts): Scene {
   function onWelcome(w: S_WELCOME): void {
     mpPlayerId = w.playerId;
     world.map_radius = w.mapRadius;
+    // Re-id the placeholder player to the server-assigned id so local
+    // prediction ticks (which target mpPlayerId) affect our monster.
+    if (player && player.id !== w.playerId) {
+      world.monsters.delete(player.id);
+      player.id = w.playerId;
+      world.monsters.set(player.id, player);
+    }
     mpWelcomed = true;
   }
 
   function onServerState(s: S_STATE): void {
     if (!mpWelcomed) return;
-    for (const es of s.entities) applyEntitySnap(es);
+    // Update clock-offset estimate (client clock - server clock).
+    mpServerClockOffset = Date.now() - s.serverTime;
+    for (const es of s.entities) applyEntitySnap(es, s.serverTime, s.ackSeq);
     for (const rid of s.removed) {
       world.monsters.delete(rid);
       mpAppearance.delete(rid);
-      if (rid === mpPlayerId) {
-        // player died
-      }
+      mpInterp.delete(rid);
     }
     applyFoodSnaps(s.food);
     if (net) net.ackUpTo(s.ackSeq);
@@ -450,28 +542,14 @@ export function makeMatchScene(opts: MatchOpts): Scene {
 
       // --- Multiplayer branch ---
       if (isMP) {
-        // Forward player-authored MOVE actions to the server. Other
-        // action types (RELOCATE/CONVERT/INTERACT) also pass through.
-        if (net && net.getStatus() === 'open' && mpWelcomed) {
-          for (const a of actions) {
-            if (a.monster_id === mpPlayerId) {
-              const pos: [number, number] = player
-                ? [player.core_pos[0], player.core_pos[1]]
-                : [0, 0];
-              net.sendAction(a, pos);
-            }
-          }
-          // Drain inbound messages each tick.
+        if (net) {
+          // Drain inbound first so reconciliation uses fresh ack.
           for (const m of net.drain()) {
             if (m.type === 'S_WELCOME') onWelcome(m);
             else if (m.type === 'S_STATE') onServerState(m);
-            else if (m.type === 'S_REJECT') {
-              // Commit D will surface; drop from pending.
-              net.pending.delete(m.seq);
-            }
+            else if (m.type === 'S_REJECT') net.pending.delete(m.seq);
           }
-          // Send C_JOIN once the socket is open.
-          if (!mpJoined) {
+          if (net.getStatus() === 'open' && !mpJoined) {
             mpJoined = net.sendJoin({
               name: opts.starter.name,
               starter_id: opts.starter.id,
@@ -479,6 +557,27 @@ export function makeMatchScene(opts: MatchOpts): Scene {
               parts: opts.starter.parts,
               seed: opts.starter.seed
             });
+          }
+          if (mpWelcomed) {
+            // Re-point actions at the server-assigned player id, then
+            // send + locally predict.
+            for (const a of actions) {
+              if (a.monster_id !== player.id) continue;
+              a.monster_id = mpPlayerId;
+              const seq = net.sendAction(a, [player.core_pos[0], player.core_pos[1]]);
+              // Local prediction: run the sim forward one tick with
+              // only this MOVE action. Non-player entities are also
+              // advanced (via tick) but their positions get overwritten
+              // by updateMPInterp() each frame, so that's fine.
+              tick(world, [a], FIXED_DT);
+              if (a.type === ActionType.MOVE && player) {
+                mpPredicted.set(seq, [player.core_pos[0], player.core_pos[1]]);
+              }
+            }
+            if (actions.length === 0) {
+              // No input this tick: still integrate the damping / coast.
+              tick(world, [], FIXED_DT);
+            }
           }
         }
         acc -= FIXED_DT;
@@ -702,6 +801,10 @@ export function makeMatchScene(opts: MatchOpts): Scene {
           }
         }
       }
+
+      // Interpolate non-player MP entities toward their buffered server
+      // snapshots before handing the world to the renderer.
+      updateMPInterp();
 
       // Render world (or paused: freeze at current time).
       const cam: [number, number] = player
