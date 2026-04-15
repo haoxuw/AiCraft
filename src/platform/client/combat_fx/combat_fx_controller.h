@@ -19,6 +19,7 @@
 
 #include "client/attack_anim.h"
 #include "client/combat_fx/blade_trail.h"
+#include "client/combat_fx/camera_shake.h"
 #include "client/combat_fx/hit_stop.h"
 #include "client/particles.h"
 #include "shared/entity.h"
@@ -32,8 +33,9 @@ public:
 	// `player` is the locally-controlled entity (position + yaw drive FX).
 	void update(float dt, AttackAnimPlayer& attack,
 	            ParticleSystem& particles, const Entity& player) {
-		// Tier 2b — drain the hit-stop countdown each frame.
+		// Tier 2b/2c — drain hit-stop + camera-shake countdowns each frame.
 		m_hitStop.update(dt);
+		m_cameraShake.update(dt);
 		// Tier 2a — ribbon trail follows the swinging blade tip.
 		m_bladeTrail.update(dt, attack, particles, player);
 		// Tier 0-shockwave: one-shot ring at swing peak.
@@ -43,15 +45,23 @@ public:
 
 	// Call from the gameplay layer the moment a player attack lands a valid
 	// hit (HP-deduction action is sent). Kicks off the hit-stop freeze.
-	void notifyHit() { m_hitStop.notifyHit(); }
+	void notifyHit() {
+		m_hitStop.notifyHit();
+		m_cameraShake.notifyHit();
+	}
 
 	// Multiplier the call site applies to the dt it passes to
 	// AttackAnimPlayer::update. 1.0 normally; ≪1 during hit-stop.
 	float attackDtScale() const { return m_hitStop.attackDtScale(); }
 
+	// Position offset to add to camera.position for the current frame.
+	// Caller adds it after camera update and before render reads position.
+	glm::vec3 cameraShakeOffset() const { return m_cameraShake.offset(); }
+
 private:
-	BladeTrail m_bladeTrail;
-	HitStop    m_hitStop;
+	BladeTrail  m_bladeTrail;
+	HitStop     m_hitStop;
+	CameraShake m_cameraShake;
 
 	// Chest-height ring ~0.8m in front of the attacker. Normal = +Y so
 	// the visible arc reads as a ground-level sweep; facing yaw centres

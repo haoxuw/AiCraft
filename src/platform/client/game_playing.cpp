@@ -124,6 +124,9 @@ void Game::handleGameplayInput(float dt) {
 	m_attackAnim.update(dt * m_combatFx.attackDtScale());
 	// All combat FX (shockwave, blade trail, hit-stop, …) live in CombatFxController.
 	m_combatFx.update(dt, m_attackAnim, m_particles, *pe);
+	// Tier 2c: camera shake offset is applied after the camera is positioned
+	// for the frame; cleared on next frame's camera update.
+	m_camera.position += m_combatFx.cameraShakeOffset();
 	if (!m_attackAnim.active() && !m_gameplay.isBreaking())
 		m_lastAttackTargetId = ENTITY_NONE;
 

@@ -153,6 +153,7 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/combat_fx/combat_fx_controller.h
 	src/platform/client/combat_fx/blade_trail.h
 	src/platform/client/combat_fx/hit_stop.h
+	src/platform/client/combat_fx/camera_shake.h
 	src/platform/client/game_render.cpp
 	src/platform/client/game_ui.cpp
 	src/platform/client/gameplay.h
