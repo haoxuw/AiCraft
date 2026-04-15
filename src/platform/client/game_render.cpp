@@ -413,55 +413,58 @@ void Game::renderEntityEffects(float dt, float aspect) {
 
 		float flowTime = m_renderer.time();
 
-		// ── RTS click-to-move paths (flow field viz) ──
-		// Walk the shared flow field forward from each commanded unit's
-		// current cell to produce a polyline for display.
-		{
-			const RtsExecutor& rts = m_gameplay.rtsExecutor();
-			if (rts.field()) {
-				m_server->forEachEntity([&](Entity& ent) {
-					if (!rts.has(ent.id())) return;
-					glm::ivec3 cell{
-						(int)std::floor(ent.position.x),
-						(int)std::floor(ent.position.y),
-						(int)std::floor(ent.position.z)};
-					auto trace = rts.traceFlow(cell, 64);
-					if (trace.empty()) return;
-					std::vector<glm::vec3> path;
-					path.push_back(ent.position);
-					for (auto& p : trace) path.push_back(p);
-					m_renderer.renderPlanPath(m_camera, aspect, path,
-						{0.4f, 1.0f, 0.6f, 0.9f}, 0.8f, flowTime);
-				});
-			}
-		}
-
-		m_agentClient->forEachAgent([&](EntityId eid, const AgentClient::PlanViz& viz) {
-			if (viz.waypoints.empty()) return;
-			Entity* agent = m_server->getEntity(eid);
-			if (!agent) return;
-
-			// Build full path from entity → waypoints
-			std::vector<glm::vec3> path;
-			path.push_back(agent->position);
-			for (auto& wp : viz.waypoints)
-				path.push_back(wp);
-
-			// Draw flowing green dashed line (bright, visible through terrain)
+		// Single helper: dashed green trail + pulsing destination diamond.
+		// Used for both RTS flow-field paths and autonomous agent plans.
+		auto drawPlanViz = [&](const std::vector<glm::vec3>& path,
+		                       glm::vec3 dest) {
+			if (path.size() < 2) return;
 			m_renderer.renderPlanPath(m_camera, aspect, path,
-				{0.4f, 1.0f, 0.6f, 0.9f},  // bright green, high alpha
-				0.8f,                         // dash length
-				flowTime);
-
-			// Draw pulsing destination marker at final waypoint
-			glm::vec3 dest = viz.waypoints.back();
+				{0.4f, 1.0f, 0.6f, 0.9f}, 0.8f, flowTime);
 			float pulse = 0.85f + 0.15f * std::sin(flowTime * 3.0f);
 			BoxModel pulseDest = destMarker;
 			for (auto& p : pulseDest.parts) {
 				p.halfSize *= pulse;
-				p.color.a = pulse;
+				p.color.a  = pulse;
 			}
-			mr.draw(pulseDest, vp, dest, flowTime * 45.0f, {}); // slowly spinning
+			mr.draw(pulseDest, vp, dest, flowTime * 45.0f, {});
+		};
+
+		// RTS-commanded units: trace the shared flow field forward from each
+		// unit's current cell; endpoint is the unit's formation slot.
+		std::unordered_set<EntityId> rtsDrawn;
+		const RtsExecutor& rts = m_gameplay.rtsExecutor();
+		if (rts.field()) {
+			m_server->forEachEntity([&](Entity& ent) {
+				if (!rts.has(ent.id())) return;
+				glm::ivec3 cell{
+					(int)std::floor(ent.position.x),
+					(int)std::floor(ent.position.y),
+					(int)std::floor(ent.position.z)};
+				auto trace = rts.traceFlow(cell, 64);
+				if (trace.empty()) return;
+				std::vector<glm::vec3> path;
+				path.push_back(ent.position);
+				for (auto& p : trace) path.push_back(p);
+				auto slot = rts.formationSlot(ent.id());
+				glm::vec3 dest = slot
+					? glm::vec3{slot->x + 0.5f, (float)slot->y + 0.3f, slot->z + 0.5f}
+					: trace.back();
+				drawPlanViz(path, dest);
+				rtsDrawn.insert(ent.id());
+			});
+		}
+
+		// Autonomous agents: show their Python plan waypoints — but skip any
+		// unit already drawn by the RTS path above to avoid dual lines.
+		m_agentClient->forEachAgent([&](EntityId eid, const AgentClient::PlanViz& viz) {
+			if (viz.waypoints.empty()) return;
+			if (rtsDrawn.count(eid)) return;
+			Entity* agent = m_server->getEntity(eid);
+			if (!agent) return;
+			std::vector<glm::vec3> path;
+			path.push_back(agent->position);
+			for (auto& wp : viz.waypoints) path.push_back(wp);
+			drawPlanViz(path, viz.waypoints.back());
 		});
 	}
 

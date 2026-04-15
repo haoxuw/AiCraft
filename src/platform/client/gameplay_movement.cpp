@@ -107,7 +107,10 @@ void GameplayController::processMovement(float dt, GameState state,
 
 					for (auto eid : m_rtsSelect.selected) {
 						m_moveOrders[eid] = {center, true};
-						if (m_agentClient) m_agentClient->onOverride(eid, center);
+						// Silence the agent's own decide() loop so rts_executor
+						// is the sole source of Move proposals for this unit.
+						if (m_agentClient && eid != player.id())
+							m_agentClient->pauseAgent(eid);
 					}
 					m_moveTargetPos  = center;
 					m_hasMoveTarget  = true;
@@ -170,7 +173,11 @@ void GameplayController::processMovement(float dt, GameState state,
 				if (!order.active || !server.getEntity(eid) || !m_rtsExec.has(eid))
 					arrived.push_back(eid);
 			}
-			for (auto eid : arrived) m_moveOrders.erase(eid);
+			for (auto eid : arrived) {
+				m_moveOrders.erase(eid);
+				if (m_agentClient && eid != player.id())
+					m_agentClient->resumeAgent(eid);
+			}
 			if (m_moveOrders.empty()) m_hasMoveTarget = false;
 		}
 		// Fall through to WASD/physics below — local player gets local moveAndCollide
