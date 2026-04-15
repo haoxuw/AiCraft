@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { decideAll, resetAI } from '../ai/simple_ai';
+import { AIStateMap, decideAll, makeAIStateMap, resetAI } from '../ai/simple_ai';
 import {
   makeGlassPanel,
   makePillBadge,
@@ -14,8 +14,8 @@ import { Action, ActionType } from '../sim/action';
 import { Monster } from '../sim/monster';
 import { Part, PartKind } from '../sim/part';
 import { tick } from '../sim/sim';
-import { TIER_COUNT, TIER_THRESHOLDS } from '../sim/tuning';
-import { makeWorld, scatterFood, spawnMonster, World } from '../sim/world';
+import { TIER_COUNT, TIER_SIZE_MULTS, TIER_THRESHOLDS } from '../sim/tuning';
+import { configureWorld, makeWorld, scatterFood, spawnMonster, World } from '../sim/world';
 import { buttonHit, makeMenuButton, MenuButtonHandle, pointerToHud } from './menu_widgets';
 import { makeEndScene } from './end_scene';
 import { makeMainMenuScene } from './main_menu_scene';
@@ -94,10 +94,58 @@ function buildWorld(starter: MatchStarter): { world: World; player: Monster } {
   return { world, player };
 }
 
+// Build the outer ("background") world — 2× map radius, 4 AI-only
+// creatures, no player. Mirrors App::enterMatch() in native app.cpp.
+// IDs start at OUTER_ID_BASE so they never collide with inner-world IDs
+// in the shared AI state / events.
+const OUTER_ID_BASE = 100000;
+function buildOuterWorld(seed: number, scale: number = 2.0): World {
+  const w = makeWorld();
+  w.next_id = OUTER_ID_BASE;
+  configureWorld(w, scale);
+  const palette: Array<{ color: [number, number, number]; parts: Part[] }> = [
+    { color: [0.86, 0.4, 0.42], parts: [
+      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
+      { kind: PartKind.SPIKE, anchor: [38, 8], scale: 1.2 }
+    ] },
+    { color: [0.55, 0.65, 0.9], parts: [
+      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
+      { kind: PartKind.ARMOR, anchor: [-24, 0], scale: 1.0 }
+    ] },
+    { color: [0.92, 0.78, 0.42], parts: [
+      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
+      { kind: PartKind.TEETH, anchor: [36, 6], scale: 1.0 }
+    ] },
+    { color: [0.7, 0.5, 0.85], parts: [
+      { kind: PartKind.MOUTH, anchor: [34, 0], scale: 1.0 },
+      { kind: PartKind.FLAGELLA, anchor: [-28, 0], scale: 1.2 }
+    ] }
+  ];
+  const N = palette.length;
+  const r = w.map_radius * 0.5;
+  for (let i = 0; i < N; ++i) {
+    const a = (2 * Math.PI * i) / N;
+    const pos: [number, number] = [Math.cos(a) * r, Math.sin(a) * r];
+    const tierMult = TIER_SIZE_MULTS[2] / TIER_SIZE_MULTS[1];
+    spawnMonster(w, {
+      pos,
+      baseRadius: (38 + i) * tierMult,
+      color: palette[i].color,
+      parts: palette[i].parts,
+      seed: seed ^ (0xD1A11E5 + i)
+    });
+  }
+  scatterFood(w, 16);
+  return w;
+}
+
 export function makeMatchScene(opts: MatchOpts): Scene {
   // Sim state.
   let world: World;
   let player: Monster;
+  let outerWorld: World | null = null;
+  const innerAI: AIStateMap = makeAIStateMap();
+  let outerAI: AIStateMap = makeAIStateMap();
   let goTo: [number, number] | null = null;
   let acc = 0;
   let enteredAt = 0;
@@ -262,8 +310,15 @@ export function makeMatchScene(opts: MatchOpts): Scene {
         }
       }
 
-      actions.push(...decideAll(world, FIXED_DT));
+      actions.push(...decideAll(world, FIXED_DT, innerAI));
       const events = tick(world, actions, FIXED_DT);
+
+      // Outer (background) sim — AI-only, no player. Events intentionally
+      // discarded; HUD only surfaces inner-world combat.
+      if (outerWorld) {
+        const outerActions = decideAll(outerWorld, FIXED_DT, outerAI);
+        tick(outerWorld, outerActions, FIXED_DT);
+      }
 
       for (const e of events) {
         if (e.type === 'PICKUP' && player && e.monster === player.id) {
@@ -308,6 +363,8 @@ export function makeMatchScene(opts: MatchOpts): Scene {
       const built = buildWorld(opts.starter);
       world = built.world;
       player = built.player;
+      outerWorld = buildOuterWorld(opts.starter.seed);
+      outerAI = makeAIStateMap();
       initialBiomass.v = player.lifetime_biomass;
 
       // HUD build.
@@ -422,7 +479,10 @@ export function makeMatchScene(opts: MatchOpts): Scene {
       }
 
       // Render world (or paused: freeze at current time).
-      ctx.renderer.render(world, ctx.now);
+      const cam: [number, number] = player
+        ? [player.core_pos[0], player.core_pos[1]]
+        : [0, 0];
+      ctx.renderer.renderDual(world, outerWorld, cam, ctx.now);
     },
 
     onKey(e, ctx) {

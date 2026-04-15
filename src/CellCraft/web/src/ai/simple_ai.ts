@@ -15,7 +15,12 @@ interface AIState {
   timer: number;
 }
 
-const state = new Map<number, AIState>();
+export type AIStateMap = Map<number, AIState>;
+
+// Default state map for the primary (inner) world. External callers
+// (e.g. the outer/background world) can pass their own map so state
+// is per-world and doesn't collide across ID spaces.
+const defaultState: AIStateMap = new Map<number, AIState>();
 
 function pickMode(m: Monster): AIMode {
   if (m.part_effect.diet === Diet.CARNIVORE) return 'hunter';
@@ -23,7 +28,7 @@ function pickMode(m: Monster): AIMode {
   return 'feeder';
 }
 
-function ensure(m: Monster): AIState {
+function ensure(m: Monster, state: AIStateMap): AIState {
   let st = state.get(m.id);
   if (!st) {
     st = { mode: pickMode(m), dir: Math.random() * Math.PI * 2, timer: 0 };
@@ -32,17 +37,21 @@ function ensure(m: Monster): AIState {
   return st;
 }
 
-export function decideAll(world: World, dt: number): Action[] {
+export function makeAIStateMap(): AIStateMap {
+  return new Map<number, AIState>();
+}
+
+export function decideAll(world: World, dt: number, state: AIStateMap = defaultState): Action[] {
   const out: Action[] = [];
   for (const m of world.monsters.values()) {
     if (m.is_player || !m.alive) continue;
-    out.push(decideOne(world, m, dt));
+    out.push(decideOne(world, m, dt, state));
   }
   return out;
 }
 
-function decideOne(world: World, m: Monster, dt: number): Action {
-  const st = ensure(m);
+function decideOne(world: World, m: Monster, dt: number, state: AIStateMap): Action {
+  const st = ensure(m, state);
   const perception = 900 * m.part_effect.perception_mult;
 
   if (st.mode === 'hunter') {
@@ -94,5 +103,5 @@ function decideOne(world: World, m: Monster, dt: number): Action {
 }
 
 export function resetAI(): void {
-  state.clear();
+  defaultState.clear();
 }

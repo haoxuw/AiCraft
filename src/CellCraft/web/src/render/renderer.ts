@@ -15,6 +15,36 @@ import { SceneFader } from './transitions';
 const CHALK_INK = new THREE.Color(0x2b2b2b);
 const ARENA_RING = new THREE.Color(0x3b4a52);
 
+// Dual-sim background tunables — match native app.cpp exactly.
+export const BG_ZOOM = 0.32;
+export const BG_PARALLAX = 0.12;
+export const BG_DIM = 0.42;
+export const BG_CREAM_MIX = 0.40;
+const BG_CREAM = new THREE.Color(0.97, 0.95, 0.88);
+
+export interface DualRenderOpts {
+  zoom?: number;
+  parallax?: number;
+  dim?: number;
+  creamMix?: number;
+  alphaScale?: number;
+}
+
+interface ShadeOpts {
+  dim: number;      // 1.0 = no dim
+  creamMix: number; // 0 = no cream blend
+  alphaScale: number;
+  noRing: boolean;
+  noPlayerEmphasis: boolean;
+}
+const NO_SHADE: ShadeOpts = { dim: 1.0, creamMix: 0.0, alphaScale: 1.0, noRing: false, noPlayerEmphasis: false };
+
+function shadeColor(c: THREE.Color, shade: ShadeOpts): THREE.Color {
+  if (shade.dim === 1.0 && shade.creamMix === 0.0) return c;
+  const out = c.clone().multiplyScalar(shade.dim);
+  return out.lerp(BG_CREAM, shade.creamMix);
+}
+
 const DIET_COLOR: Record<Diet, THREE.Color> = {
   [Diet.CARNIVORE]: new THREE.Color(0xef5a6f),
   [Diet.HERBIVORE]: new THREE.Color(0x70c96f),
@@ -36,6 +66,10 @@ export class Renderer {
   private boardMat = createBoardMaterial();
   private boardMesh: THREE.Mesh;
   private dynamicGroup = new THREE.Group();
+  // Outer (background) world group — rendered beneath the foreground
+  // dynamicGroup with zoom + parallax + cream-mix/dim shading, matching
+  // the native dual-sim look. Empty unless a scene calls renderDual().
+  private backgroundGroup = new THREE.Group();
   private postFX: PostFX;
   private boardPass: RenderPass;
   // HUD is drawn in screen-space ON TOP of the composer output so text
@@ -70,6 +104,7 @@ export class Renderer {
     this.hudCamera.position.set(0, 0, 10);
     this.hudCamera.lookAt(0, 0, 0);
 
+    this.scene.add(this.backgroundGroup);
     this.scene.add(this.dynamicGroup);
 
     // Post-FX chain. The main render pass (scene+camera) is attached by
@@ -149,11 +184,57 @@ export class Renderer {
     // Rebuild dynamic geometry each frame. Cheap at our scale (~20 cells
     // × 32 verts); if it ever matters we can cache per-monster meshes.
     this.clearGroup(this.dynamicGroup);
-    this.drawArenaRing(world.map_radius);
-    for (const food of world.food) this.drawFood(food, time);
-    for (const m of world.monsters.values()) this.drawMonster(m, time);
+    this.clearGroup(this.backgroundGroup);
+    this.backgroundGroup.visible = false;
+    this.drawWorld(world, time, this.dynamicGroup, NO_SHADE);
 
     this.finishFrame(time);
+  }
+
+  // Dual-world render: inner (foreground, normal shading) + outer
+  // (background, zoomed + parallax + dimmed + cream-mixed). Matches the
+  // native client's dual-sim layout (src/CellCraft/client/app.cpp).
+  renderDual(
+    inner: World,
+    outer: World | null,
+    cameraWorld: [number, number],
+    time: number,
+    opts: DualRenderOpts = {}
+  ): void {
+    const zoom = opts.zoom ?? BG_ZOOM;
+    const parallax = opts.parallax ?? BG_PARALLAX;
+    const dim = opts.dim ?? BG_DIM;
+    const creamMix = opts.creamMix ?? BG_CREAM_MIX;
+    const alphaScale = opts.alphaScale ?? 0.35;
+
+    this.boardMat.uniforms.u_time.value = time;
+    this.clearGroup(this.dynamicGroup);
+    this.clearGroup(this.backgroundGroup);
+
+    if (outer) {
+      // Transform the whole background group: scale by zoom, translate by
+      // parallax offset — outer creatures drift slowly as the camera moves.
+      this.backgroundGroup.scale.set(zoom, zoom, 1);
+      this.backgroundGroup.position.set(
+        -cameraWorld[0] * parallax,
+        -cameraWorld[1] * parallax,
+        0
+      );
+      this.backgroundGroup.visible = true;
+      const shade: ShadeOpts = { dim, creamMix, alphaScale, noRing: true, noPlayerEmphasis: true };
+      this.drawWorld(outer, time, this.backgroundGroup, shade);
+    } else {
+      this.backgroundGroup.visible = false;
+    }
+
+    this.drawWorld(inner, time, this.dynamicGroup, NO_SHADE);
+    this.finishFrame(time);
+  }
+
+  private drawWorld(world: World, time: number, group: THREE.Group, shade: ShadeOpts): void {
+    if (!shade.noRing) this.drawArenaRing(world.map_radius, group);
+    for (const food of world.food) this.drawFood(food, time, group, shade);
+    for (const m of world.monsters.values()) this.drawMonster(m, time, group, shade);
   }
 
   // Renders just the board + HUD + fader (no world content). Scenes
@@ -228,35 +309,40 @@ export class Renderer {
     }
   }
 
-  private drawArenaRing(radius: number): void {
+  private drawArenaRing(radius: number, group: THREE.Group): void {
     const ribbon = buildRingRibbon(radius, 128, 4.0);
     const mat = createChalkMaterial(ARENA_RING);
     mat.uniforms.u_alpha.value = 0.6;
     const mesh = new THREE.Mesh(ribbon, mat);
     mesh.renderOrder = -10;
-    this.dynamicGroup.add(mesh);
+    group.add(mesh);
   }
 
-  private drawMonster(m: Monster, time: number): void {
+  private drawMonster(m: Monster, time: number, group: THREE.Group, shade: ShadeOpts): void {
+    const baseCol = shadeColor(new THREE.Color(m.color[0], m.color[1], m.color[2]), shade);
+    const dietCol = shadeColor(DIET_COLOR[m.part_effect.diet].clone(), shade);
+    const inkCol = shadeColor(CHALK_INK.clone(), shade);
     // 1. Fill pass (under the chalk outline).
     const fill = buildCellFill(m);
     const fillMat = createCellFillMaterial({
-      baseColor: new THREE.Color(m.color[0], m.color[1], m.color[2]),
-      dietColor: DIET_COLOR[m.part_effect.diet],
-      noiseSeed: m.noise_seed * 10
+      baseColor: baseCol,
+      dietColor: dietCol,
+      noiseSeed: m.noise_seed * 10,
+      alphaScale: shade.alphaScale
     });
     fillMat.uniforms.u_time.value = time;
     const fillMesh = new THREE.Mesh(fill, fillMat);
     fillMesh.renderOrder = 0;
-    this.dynamicGroup.add(fillMesh);
+    group.add(fillMesh);
 
     // 2. Chalk outline ribbon — closed polygon in world space.
     const worldPoly = shapeInWorld(m);
     const outline = buildClosedRibbon(worldPoly, 6.0);
-    const outlineMat = createChalkMaterial(CHALK_INK);
+    const outlineMat = createChalkMaterial(inkCol);
+    outlineMat.uniforms.u_alpha.value = shade.alphaScale;
     const outlineMesh = new THREE.Mesh(outline, outlineMat);
     outlineMesh.renderOrder = 5;
-    this.dynamicGroup.add(outlineMesh);
+    group.add(outlineMesh);
 
     // 3. Parts — just render MOUTH as a small chalk arc for v1.
     for (const p of m.parts) {
@@ -266,14 +352,15 @@ export class Renderer {
       const wx = m.core_pos[0] + p.anchor[0] * cosH - p.anchor[1] * sinH;
       const wy = m.core_pos[1] + p.anchor[0] * sinH + p.anchor[1] * cosH;
       const arc = buildArc([wx, wy], 14 * p.scale, m.heading - 0.9, m.heading + 0.9, 12, 5.0);
-      const arcMat = createChalkMaterial(CHALK_INK);
+      const arcMat = createChalkMaterial(inkCol);
+      arcMat.uniforms.u_alpha.value = shade.alphaScale;
       const arcMesh = new THREE.Mesh(arc, arcMat);
       arcMesh.renderOrder = 6;
-      this.dynamicGroup.add(arcMesh);
+      group.add(arcMesh);
     }
   }
 
-  private drawFood(f: Food, _time: number): void {
+  private drawFood(f: Food, _time: number, group: THREE.Group, shade: ShadeOpts): void {
     // Snowflake glyph: six V-branches with trident tips + hex core.
     // Three color passes: shadow (offset), body, highlight (top).
     const body = f.kind === FoodKind.PLANT ? PLANT_GREEN_BODY : MEAT_GREEN_BODY;
@@ -290,11 +377,11 @@ export class Renderer {
       const strokes = buildSnowflakeStrokes(f.pos, f.radius, pass.offset);
       for (const seg of strokes) {
         const geom = buildOpenRibbon(seg, 3.0);
-        const mat = createChalkMaterial(pass.color);
-        mat.uniforms.u_alpha.value = pass.alpha;
+        const mat = createChalkMaterial(shadeColor(pass.color.clone(), shade));
+        mat.uniforms.u_alpha.value = pass.alpha * shade.alphaScale;
         const mesh = new THREE.Mesh(geom, mat);
         mesh.renderOrder = -2;
-        this.dynamicGroup.add(mesh);
+        group.add(mesh);
       }
     }
   }
