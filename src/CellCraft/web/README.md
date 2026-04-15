@@ -44,6 +44,26 @@ src/
 - **Click** — order player cell to steer toward that world point
 - **R** — restart scene
 
+## Multiplayer
+
+The `server/` subdirectory holds a standalone Node WebSocket server
+(`ws` + TypeScript) that owns a shared World and ticks the sim. Run it
+alongside the Vite dev server:
+
+```bash
+cd src/CellCraft/web/server
+npm install
+npm run dev              # listens on ws://0.0.0.0:7781
+```
+
+Then connect a client by adding `?mp=ws://localhost:7781` to the game
+URL (e.g. `http://localhost:5173/?mp=ws://localhost:7781`). Without
+`?mp=...` the client runs the existing fully-offline single-player
+match unchanged.
+
+The server runs NO AI (per CLAUDE.md Rule 4) — it's currently a
+human-vs-human arena. AI opponents remain client-side in single-player.
+
 ## Status
 
 v1 scaffold: player cell + 4 AI cells + 16 food blubs on the cream

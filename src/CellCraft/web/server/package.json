@@ -1,0 +1,21 @@
+{
+  "name": "cellcraft-web-server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "CellCraft multiplayer WebSocket server — owns the World, ticks the sim, broadcasts state.",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4"
+  }
+}
