@@ -47,8 +47,19 @@ struct World {
 	std::unordered_map<uint32_t, Monster> monsters;
 	std::vector<Food>                     food;
 	float                                 map_radius = DEFAULT_MAP_RADIUS;
+	// Informational scale for a World. Physics is already scale-invariant in
+	// world units; `scale` drives map_radius sizing via configure() and lets
+	// higher layers (e.g. dual-sim background) reason about relative size.
+	float                                 scale      = 1.0f;
 	uint32_t                              next_id    = 1;
 	std::mt19937                          rng{0xC0FFEEu};
+
+	// Resize the world for a given scale tier. 1.0f = baseline arena,
+	// 2.0f = one tier above, etc.
+	void configure(float s) {
+		scale      = s;
+		map_radius = DEFAULT_MAP_RADIUS * s;
+	}
 
 	Monster* get(uint32_t id) {
 		auto it = monsters.find(id);

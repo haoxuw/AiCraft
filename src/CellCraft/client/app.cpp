@@ -219,13 +219,17 @@ void App::run() {
 				glViewport(0, 0, fw, fh);
 				renderer_->drawBoard(fw, fh, (float)glfwGetTime());
 				ambient_.draw(renderer_.get(), fw, fh);
-				{ int pt = 1; if (const sim::Monster* pm = world_.get(player_id_)) pt = pm->tier;
-					bg_layer_.setPlayerTier(pt, world_.map_radius);
-					bg_layer_.update(0.0f, world_.map_radius);
-					bg_layer_.draw(renderer_.get(), fw, fh,
-						[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime(), fill_renderer_.get()); }
-				drawFood();
-				drawMonsters();
+				{
+					auto otc = [this](glm::vec2 wp) {
+						glm::vec2 rel = wp * 0.5f - camera_world_ * 0.1f;
+						int ww, hh; glfwGetFramebufferSize(window_.handle(), &ww, &hh);
+						return glm::vec2(rel.x + ww * 0.5f, -rel.y + hh * 0.5f);
+					};
+					drawFood    (outer_world_, otc, /*is_background=*/true);
+					drawMonsters(outer_world_, otc, /*is_background=*/true);
+				}
+				drawFood(world_, [this](glm::vec2 wp){ return worldToScreen(wp); }, false);
+				drawMonsters(world_, [this](glm::vec2 wp){ return worldToScreen(wp); }, false);
 				updateAndDrawParticles(0.0f);
 				drawHUD();
 				if (use_fx) post_fx_->render_to_default(fw, fh, (float)glfwGetTime());
@@ -261,13 +265,17 @@ void App::run() {
 					glViewport(0, 0, fw, fh);
 					renderer_->drawBoard(fw, fh, (float)glfwGetTime());
 					ambient_.draw(renderer_.get(), fw, fh);
-					{ int pt = 1; if (const sim::Monster* pm = world_.get(player_id_)) pt = pm->tier;
-						bg_layer_.setPlayerTier(pt, world_.map_radius);
-						bg_layer_.update(0.0f, world_.map_radius);
-						bg_layer_.draw(renderer_.get(), fw, fh,
-							[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime(), fill_renderer_.get()); }
-					drawFood();
-					drawMonsters();
+					{
+						auto otc = [this](glm::vec2 wp) {
+							glm::vec2 rel = wp * 0.5f - camera_world_ * 0.1f;
+							int ww, hh; glfwGetFramebufferSize(window_.handle(), &ww, &hh);
+							return glm::vec2(rel.x + ww * 0.5f, -rel.y + hh * 0.5f);
+						};
+						drawFood    (outer_world_, otc, /*is_background=*/true);
+						drawMonsters(outer_world_, otc, /*is_background=*/true);
+					}
+					drawFood(world_, [this](glm::vec2 wp){ return worldToScreen(wp); }, false);
+					drawMonsters(world_, [this](glm::vec2 wp){ return worldToScreen(wp); }, false);
 					updateAndDrawParticles(0.0f);
 					drawHUD();
 					if (use_fx2) post_fx_->render_to_default(fw, fh, (float)glfwGetTime());
@@ -318,13 +326,17 @@ void App::run() {
 			glViewport(0, 0, w, h);
 			renderer_->drawBoard(w, h, (float)(glfwGetTime() - t0));
 			ambient_.draw(renderer_.get(), w, h);
-			{ int pt = 1; if (const sim::Monster* pm = world_.get(player_id_)) pt = pm->tier;
-				bg_layer_.setPlayerTier(pt, world_.map_radius);
-				bg_layer_.update(dt, world_.map_radius);
-				bg_layer_.draw(renderer_.get(), w, h,
-					[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime(), fill_renderer_.get()); }
-			drawFood();
-			drawMonsters();
+			{
+				auto otc = [this](glm::vec2 wp) {
+					glm::vec2 rel = wp * 0.5f - camera_world_ * 0.1f;
+					int ww, hh; glfwGetFramebufferSize(window_.handle(), &ww, &hh);
+					return glm::vec2(rel.x + ww * 0.5f, -rel.y + hh * 0.5f);
+				};
+				drawFood    (outer_world_, otc, /*is_background=*/true);
+				drawMonsters(outer_world_, otc, /*is_background=*/true);
+			}
+			drawFood(world_, [this](glm::vec2 wp){ return worldToScreen(wp); }, false);
+			drawMonsters(world_, [this](glm::vec2 wp){ return worldToScreen(wp); }, false);
 			updateAndDrawParticles(dt);
 			drawHUD();
 			if (use_fx) post_fx_->render_to_default(w, h, (float)(glfwGetTime() - t0));
@@ -566,6 +578,41 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	world_.scatter_food(16);
 
 	sim_ = std::make_unique<sim::Sim>(&world_);
+
+	// ---- Outer ("background") sim: tier+1 world 2× as big, seeded with
+	// 4 creatures at tier+1 body scale + 8 food blubs. Physics is identical
+	// (same Sim class) — only the scale + rendering transform differ.
+	outer_world_ = sim::World{};
+	outer_world_.rng.seed(opts_.seed ^ 0xD1A11E5u);
+	outer_world_.configure(2.0f);
+	outer_ai_states_.clear();
+	{
+		float oR = outer_world_.map_radius * 0.5f;
+		const int N_OUT = 4;
+		for (int i = 0; i < N_OUT; ++i) {
+			float a = 6.28318530718f * float(i) / float(N_OUT);
+			glm::vec2 pos(std::cos(a) * oR, std::sin(a) * oR);
+			const auto& tmpl = prebuilts_[i % prebuilts_.size()];
+			sim::Monster om = monsters::makeMonsterFromTemplate(tmpl,
+				/*owner=*/500 + i, pos, std::atan2(-pos.y, -pos.x));
+			// Bump body to "tier+1" size so outer creatures visibly loom.
+			om.scale_shape(sim::TIER_SIZE_MULTS[2] / sim::TIER_SIZE_MULTS[1]);
+			om.biomass = std::max(om.biomass, sim::TIER_THRESHOLDS[2] + 1.0f);
+			uint32_t id = outer_world_.spawn_monster(std::move(om));
+			AIState s;
+			s.mode = (i % 2 == 0) ? 0 : 2;  // half wander, half feeder
+			s.wander_heading = std::atan2(-pos.y, -pos.x);
+			s.wander_t = 0.0f;
+			s.ai_timer = 0.0f;
+			s.last_choice = 0;
+			s.last_heading = s.wander_heading;
+			s.last_thrust = 0.2f;
+			s.split_cooldown = 1e9f;  // no splits in background sim
+			outer_ai_states_[id] = s;
+		}
+		outer_world_.scatter_food(8);
+	}
+	outer_sim_ = std::make_unique<sim::Sim>(&outer_world_);
 	state_ = AppState::PLAYING;
 	beginTransition(AppState::PLAYING);
 	state_time_ = 0.0f;
@@ -973,23 +1020,30 @@ void App::buildPlayerAction(std::unordered_map<uint32_t, sim::ActionProposal>& a
 }
 
 void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& actions) {
+	buildAIActions(actions, world_, ai_states_, /*has_player=*/true);
+}
+
+void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& actions,
+                         sim::World& w_ref,
+                         std::unordered_map<uint32_t, AIState>& states,
+                         bool has_player) {
 	std::uniform_real_distribution<float> ang_drift(-0.4f, 0.4f);
 	const float DT_FIXED = 1.0f / 60.0f;
 
 	// Count SPLIT-descendants per owner to throttle runaway splitting.
 	std::unordered_map<uint32_t, int> owner_count;
-	for (auto& [oid, om] : world_.monsters) {
+	for (auto& [oid, om] : w_ref.monsters) {
 		if (!om.alive) continue;
 		++owner_count[om.owner_id];
 	}
 
-	for (auto& [id, m] : world_.monsters) {
-		if (id == player_id_) continue;
+	for (auto& [id, m] : w_ref.monsters) {
+		if (has_player && id == player_id_) continue;
 		if (!m.alive) continue;
 
 		// Player-owned spawned units (from SPLIT): simple flocking — head toward player.
-		if (m.owner_id == 1) {
-			sim::Monster* p = world_.get(player_id_);
+		if (has_player && m.owner_id == 1) {
+			sim::Monster* p = w_ref.get(player_id_);
 			if (p) {
 				glm::vec2 d = p->core_pos - m.core_pos;
 				float h = (glm::length(d) > 1e-3f) ? std::atan2(d.y, d.x) : m.heading;
@@ -1000,13 +1054,13 @@ void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& acti
 			continue;
 		}
 
-		auto it = ai_states_.find(id);
-		if (it == ai_states_.end()) {
-			AIState s; s.mode = 1; s.wander_heading = m.heading; s.wander_t = 0.0f;
+		auto it = states.find(id);
+		if (it == states.end()) {
+			AIState s; s.mode = has_player ? 1 : 0; s.wander_heading = m.heading; s.wander_t = 0.0f;
 			s.ai_timer = 0.0f; s.last_choice = 0; s.last_heading = m.heading;
-			s.last_thrust = 0.3f; s.split_cooldown = 8.0f;
-			ai_states_[id] = s;
-			it = ai_states_.find(id);
+			s.last_thrust = 0.3f; s.split_cooldown = has_player ? 8.0f : 1e9f;
+			states[id] = s;
+			it = states.find(id);
 		}
 		AIState& s = it->second;
 
@@ -1043,7 +1097,7 @@ void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& acti
 			const float hunt_r   = 600.0f * perc;
 			const float food_r   = 300.0f * perc;
 
-			for (auto& [oid, om] : world_.monsters) {
+			for (auto& [oid, om] : w_ref.monsters) {
 				if (oid == id || !om.alive) continue;
 				if (om.owner_id == m.owner_id) continue;
 				float d = glm::length(om.core_pos - m.core_pos);
@@ -1058,7 +1112,7 @@ void App::buildAIActions(std::unordered_map<uint32_t, sim::ActionProposal>& acti
 					best_prey_d = d; prey_pos = om.core_pos; have_prey = true;
 				}
 			}
-			for (auto& f : world_.food) {
+			for (auto& f : w_ref.food) {
 				float d = glm::length(f.pos - m.core_pos);
 				if (d < food_r && d < best_food_d) { best_food_d = d; food_pos = f.pos; have_food = true; }
 			}
@@ -1214,6 +1268,15 @@ void App::stepPlaying(float dt) {
 	sim_->tick(dt, actions);
 	drainSimEvents();
 
+	// Tick the outer ("background") sim with its own AI pass. Events are
+	// intentionally dropped — we don't surface outer-sim combat to the HUD.
+	if (outer_sim_) {
+		std::unordered_map<uint32_t, sim::ActionProposal> outer_actions;
+		buildAIActions(outer_actions, outer_world_, outer_ai_states_, /*has_player=*/false);
+		outer_sim_->tick(dt, outer_actions);
+		outer_sim_->drain_events();
+	}
+
 	// Camera follows player (or stays where it was if dead).
 	if (sim::Monster* p = world_.get(player_id_)) {
 		camera_world_ = p->core_pos;
@@ -1312,23 +1375,37 @@ void App::updateAndDrawParticles(float dt) {
 	if (!strokes.empty()) renderer_->drawStrokes(strokes, nullptr, w, h);
 }
 
-void App::drawMonsters() {
+void App::drawMonsters(const sim::World& w_ref,
+                       std::function<glm::vec2(glm::vec2)> toScreen,
+                       bool is_background) {
 	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 	std::vector<ChalkStroke> strokes;
-	strokes.reserve(world_.monsters.size() * 2);
+	strokes.reserve(w_ref.monsters.size() * 2);
+
+	// Background-layer color adjustment: dim + blend toward cream to fake
+	// atmospheric recession. Alpha-dim factor also drives cell fill alpha.
+	const float BG_DIM   = 0.55f;
+	const glm::vec3 BG_CREAM(0.97f, 0.95f, 0.88f);
+	const float BG_CREAM_MIX = 0.25f;
+	auto shade = [&](glm::vec3 c) -> glm::vec3 {
+		if (!is_background) return c;
+		c = c * BG_DIM;
+		c = glm::mix(c, BG_CREAM, BG_CREAM_MIX);
+		return c;
+	};
 
 	// Arena boundary — a thin chalk ring around map_radius so players can see
 	// where they're clamped. Drawn as a ~64-segment polyline.
 	{
 		ChalkStroke ring;
-		ring.color = glm::vec3(0.55f, 0.55f, 0.55f);
+		ring.color = shade(glm::vec3(0.55f, 0.55f, 0.55f));
 		ring.half_width = 1.5f;
 		const int N = 72;
 		for (int i = 0; i <= N; ++i) {
 			float a = 6.28318530718f * float(i) / float(N);
-			glm::vec2 wpos(std::cos(a) * world_.map_radius,
-			               std::sin(a) * world_.map_radius);
-			ring.points.push_back(worldToScreen(wpos));
+			glm::vec2 wpos(std::cos(a) * w_ref.map_radius,
+			               std::sin(a) * w_ref.map_radius);
+			ring.points.push_back(toScreen(wpos));
 		}
 		strokes.push_back(std::move(ring));
 	}
@@ -1339,72 +1416,83 @@ void App::drawMonsters() {
 	{
 		std::vector<glm::vec2> poly_px;
 		float t_now = (float)glfwGetTime();
-		for (auto& [id, m] : world_.monsters) {
+		const float fill_alpha = is_background ? BG_DIM : 1.0f;
+		for (auto& [id, m] : w_ref.monsters) {
 			if (!m.alive) continue;
 			auto wp = sim::transform_to_world(m.shape, m.core_pos, m.heading);
 			poly_px.clear();
 			poly_px.reserve(wp.size());
-			for (auto& v : wp) poly_px.push_back(worldToScreen(v));
-			fill_renderer_->drawFill(poly_px, m.color, m.part_effect.diet,
-				static_cast<float>(id), t_now, w, h);
+			for (auto& v : wp) poly_px.push_back(toScreen(v));
+			glm::vec3 fill_col = shade(m.color);
+			fill_renderer_->drawFill(poly_px, fill_col, m.part_effect.diet,
+				static_cast<float>(id), t_now, w, h, 0.7f, fill_alpha);
 		}
 	}
 
-	for (auto& [id, m] : world_.monsters) {
+	for (auto& [id, m] : w_ref.monsters) {
 		if (!m.alive) continue;
 		auto wp = sim::transform_to_world(m.shape, m.core_pos, m.heading);
-		bool is_player = (id == player_id_);
+		bool is_player = (!is_background) && (id == player_id_);
 
 		ChalkStroke s;
-		// Player glows slightly brighter than AI.
-		s.color = is_player ? glm::min(m.color + glm::vec3(0.10f), glm::vec3(1.0f))
-		                    : m.color;
+		// Player glows slightly brighter than AI. No glow for background sim.
+		glm::vec3 body_col = is_player
+			? glm::min(m.color + glm::vec3(0.10f), glm::vec3(1.0f))
+			: m.color;
+		s.color = shade(body_col);
 		s.half_width = is_player ? 4.5f : 3.2f;
-		for (auto& v : wp) s.points.push_back(worldToScreen(v));
+		for (auto& v : wp) s.points.push_back(toScreen(v));
 		s.points.push_back(s.points.front());
 		strokes.push_back(std::move(s));
 
 		// Low-HP hurt flash: jittered lighter overlay when < 30%.
-		float hp_frac = m.hp / std::max(1.0f, m.hp_max);
-		if (hp_frac < 0.30f) {
-			std::uniform_real_distribution<float> j(-2.0f, 2.0f);
-			ChalkStroke hurt;
-			hurt.color = glm::min(m.color + glm::vec3(0.30f, 0.08f, 0.08f), glm::vec3(1.0f));
-			hurt.half_width = 2.2f;
-			for (auto& v : wp) {
-				glm::vec2 sp = worldToScreen(v);
-				sp.x += j(ai_rng_);
-				sp.y += j(ai_rng_);
-				hurt.points.push_back(sp);
+		// Skipped for background sim — we don't care about their HP state.
+		if (!is_background) {
+			float hp_frac = m.hp / std::max(1.0f, m.hp_max);
+			if (hp_frac < 0.30f) {
+				std::uniform_real_distribution<float> j(-2.0f, 2.0f);
+				ChalkStroke hurt;
+				hurt.color = glm::min(m.color + glm::vec3(0.30f, 0.08f, 0.08f), glm::vec3(1.0f));
+				hurt.half_width = 2.2f;
+				for (auto& v : wp) {
+					glm::vec2 sp = toScreen(v);
+					sp.x += j(ai_rng_);
+					sp.y += j(ai_rng_);
+					hurt.points.push_back(sp);
+				}
+				hurt.points.push_back(hurt.points.front());
+				strokes.push_back(std::move(hurt));
 			}
-			hurt.points.push_back(hurt.points.front());
-			strokes.push_back(std::move(hurt));
 		}
 
-		// Core crosshair
-		glm::vec2 cp = worldToScreen(m.core_pos);
-		ChalkStroke c1, c2;
-		c1.color = {1.0f, 1.0f, 1.0f}; c1.half_width = 1.8f; c2 = c1;
-		c1.points = {{cp.x - 4.0f, cp.y}, {cp.x + 4.0f, cp.y}};
-		c2.points = {{cp.x, cp.y - 4.0f}, {cp.x, cp.y + 4.0f}};
-		strokes.push_back(std::move(c1));
-		strokes.push_back(std::move(c2));
+		// Core crosshair — foreground only.
+		if (!is_background) {
+			glm::vec2 cp = toScreen(m.core_pos);
+			ChalkStroke c1, c2;
+			c1.color = {1.0f, 1.0f, 1.0f}; c1.half_width = 1.8f; c2 = c1;
+			c1.points = {{cp.x - 4.0f, cp.y}, {cp.x + 4.0f, cp.y}};
+			c2.points = {{cp.x, cp.y - 4.0f}, {cp.x, cp.y + 4.0f}};
+			strokes.push_back(std::move(c1));
+			strokes.push_back(std::move(c2));
+		}
 
 		// Parts on top — world-space transform.
 		if (!m.parts.empty()) {
 			float ch = std::cos(m.heading), sh = std::sin(m.heading);
-			glm::vec2 core_screen = worldToScreen(m.core_pos);
+			glm::vec2 core_screen = toScreen(m.core_pos);
 			auto local_to_screen = [&](glm::vec2 v) {
 				glm::vec2 wv(ch * v.x - sh * v.y, sh * v.x + ch * v.y);
-				return worldToScreen(m.core_pos + wv);
+				return toScreen(m.core_pos + wv);
 			};
-			appendPartStrokes(m.parts, m.color, local_to_screen, 1.0f,
-				(float)glfwGetTime(), strokes);
+			std::vector<ChalkStroke> part_strokes;
+			appendPartStrokes(m.parts, shade(m.color), local_to_screen, 1.0f,
+				(float)glfwGetTime(), part_strokes);
+			for (auto& ps : part_strokes) strokes.push_back(std::move(ps));
 			(void)core_screen;
 		}
 
-		// Poison radius faint ring.
-		if (m.part_effect.poison_dps > 0.0f) {
+		// Poison radius faint ring — foreground only.
+		if (!is_background && m.part_effect.poison_dps > 0.0f) {
 			ChalkStroke ring;
 			ring.color = glm::vec3(0.4f, 0.9f, 0.4f);
 			ring.half_width = 1.2f;
@@ -1413,7 +1501,7 @@ void App::drawMonsters() {
 				float a = 6.28318530718f * float(i) / float(N);
 				glm::vec2 wp(m.core_pos.x + std::cos(a) * m.part_effect.poison_radius,
 				             m.core_pos.y + std::sin(a) * m.part_effect.poison_radius);
-				ring.points.push_back(worldToScreen(wp));
+				ring.points.push_back(toScreen(wp));
 			}
 			strokes.push_back(std::move(ring));
 		}
@@ -1421,10 +1509,23 @@ void App::drawMonsters() {
 	renderer_->drawStrokes(strokes, nullptr, w, h);
 }
 
-void App::drawFood() {
+void App::drawFood(const sim::World& w_ref,
+                   std::function<glm::vec2(glm::vec2)> toScreen,
+                   bool is_background) {
 	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 	std::vector<ChalkStroke> strokes;
-	strokes.reserve(world_.food.size() * 220);
+	strokes.reserve(w_ref.food.size() * 220);
+
+	// Background alpha-dim: multiply all chalk colors by 0.55 and blend toward
+	// cream. Shadow is dimmed LESS harshly so the flake still reads.
+	const float BG_DIM = 0.55f;
+	const glm::vec3 BG_CREAM(0.97f, 0.95f, 0.88f);
+	auto shade = [&](glm::vec3 c, float cream_mix = 0.25f) -> glm::vec3 {
+		if (!is_background) return c;
+		c = c * BG_DIM;
+		c = glm::mix(c, BG_CREAM, cream_mix);
+		return c;
+	};
 
 	const float TWO_PI = 6.28318530718f;
 	const float t = (float)glfwGetTime();
@@ -1451,8 +1552,8 @@ void App::drawFood() {
 	// Pure white specular so the "glass" reads as catching light.
 	const glm::vec3 SPECULAR       = {0.98f, 1.00f, 0.92f};
 
-	for (auto& f : world_.food) {
-		glm::vec2 sp = worldToScreen(f.pos);
+	for (auto& f : w_ref.food) {
+		glm::vec2 sp = toScreen(f.pos);
 		if (sp.x < -80.0f || sp.x > w + 80.0f) continue;
 		if (sp.y < -80.0f || sp.y > h + 80.0f) continue;
 
@@ -1466,9 +1567,10 @@ void App::drawFood() {
 		float spin = spin_sign * t * 0.35f + phase;
 
 		const bool is_meat = (f.type == sim::FoodType::MEAT);
-		const glm::vec3 col_body = is_meat ? MEAT_GREEN     : PLANT_GREEN;
-		const glm::vec3 col_shad = is_meat ? MEAT_SHADOW    : PLANT_SHADOW;
-		const glm::vec3 col_high = is_meat ? MEAT_HIGHLITE  : PLANT_HIGHLITE;
+		const glm::vec3 col_body = shade(is_meat ? MEAT_GREEN     : PLANT_GREEN);
+		// Shadow: less cream mix so shadow is still darker than body.
+		const glm::vec3 col_shad = shade(is_meat ? MEAT_SHADOW    : PLANT_SHADOW, 0.10f);
+		const glm::vec3 col_high = shade(is_meat ? MEAT_HIGHLITE  : PLANT_HIGHLITE);
 		// Thick body; shadow wider underneath; highlight thin on top.
 		const float hw_body = is_meat ? 4.2f : 3.6f;
 		const float hw_shad = hw_body * 1.55f;
@@ -1701,7 +1803,7 @@ void App::drawFood() {
 		//    sell the "glass caught the light" look.
 		{
 			ChalkStroke sp_dot;
-			sp_dot.color = SPECULAR;
+			sp_dot.color = shade(SPECULAR);
 			sp_dot.half_width = base_r * 0.14f;
 			glm::vec2 c = rot(-base_r * 0.16f, -base_r * 0.16f);
 			sp_dot.points = { {c.x - 0.4f, c.y - 0.4f}, {c.x + 0.4f, c.y + 0.4f} };
@@ -1941,19 +2043,22 @@ void App::drawHUD() {
 void App::drawPlaying(float dt) {
 	stepPlaying(dt);
 	if (state_ != AppState::PLAYING) return; // stepPlaying may have transitioned
-	// Background silhouettes — draw between board (already painted by main
-	// loop) and gameplay. Reads player Tier so the "looming" set scales with
-	// progression: bigger cells at low tiers, fish/turtles/jellies at APEX.
-	int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
-	int player_tier = 1;
-	if (const sim::Monster* pm = world_.get(player_id_)) player_tier = pm->tier;
-	bg_layer_.setPlayerTier(player_tier, world_.map_radius);
-	bg_layer_.update(dt, world_.map_radius);
-	bg_layer_.draw(renderer_.get(), w, h,
-		[this](glm::vec2 wp){ return worldToScreen(wp); },
-		camera_world_, (float)glfwGetTime(), fill_renderer_.get());
-	drawFood();
-	drawMonsters();
+	// Dual-sim: the outer sim (tier+1 world) is rendered as our "background"
+	// — real creatures drifting in their own Sim instead of the faked
+	// BackgroundLayer silhouettes.
+	// TODO: bg_layer_ is intentionally no longer drawn here; the member is
+	// kept alive in case we want to add a far-away ambient fog behind the
+	// outer sim later. See A1–A3 of the dual-sim plan.
+	(void)dt;
+	auto outerToScreen = [this](glm::vec2 wp) {
+		glm::vec2 rel = wp * 0.5f - camera_world_ * 0.1f;  // 0.1 parallax
+		int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
+		return glm::vec2(rel.x + w * 0.5f, -rel.y + h * 0.5f);
+	};
+	drawFood    (outer_world_, outerToScreen, /*is_background=*/true);
+	drawMonsters(outer_world_, outerToScreen, /*is_background=*/true);
+	drawFood    (world_, [this](glm::vec2 wp){ return worldToScreen(wp); }, false);
+	drawMonsters(world_, [this](glm::vec2 wp){ return worldToScreen(wp); }, false);
 	drawHUD();
 }
 

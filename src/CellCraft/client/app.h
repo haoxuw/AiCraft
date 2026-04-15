@@ -3,6 +3,7 @@
 // we only CALL it here.
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
@@ -93,6 +94,19 @@ public:
 	void onKey(int key, int action);
 
 private:
+	// Per-creature AI scratch state. Declared early so method signatures
+	// below can reference it (e.g. the dual-sim buildAIActions overload).
+	struct AIState {
+		int   mode;
+		float wander_heading;
+		float wander_t;
+		float ai_timer;
+		int   last_choice;
+		float last_heading;
+		float last_thrust;
+		float split_cooldown;
+	};
+
 	// ---- State transitions ---------------------------------------------
 	void goToMainMenu();
 	void goToStarter();
@@ -120,9 +134,20 @@ private:
 	void stepPlaying(float dt);
 	void buildPlayerAction(std::unordered_map<uint32_t, sim::ActionProposal>& actions);
 	void buildAIActions   (std::unordered_map<uint32_t, sim::ActionProposal>& actions);
+	// Generalized overload: runs AI against a given World + AIState map.
+	// `has_player`=false short-circuits player-targeted logic so outer-sim
+	// creatures wander/feed without a player reference.
+	void buildAIActions   (std::unordered_map<uint32_t, sim::ActionProposal>& actions,
+	                       sim::World& w,
+	                       std::unordered_map<uint32_t, AIState>& states,
+	                       bool has_player);
 	void drainSimEvents();
-	void drawMonsters();
-	void drawFood();
+	void drawMonsters(const sim::World& w,
+	                  std::function<glm::vec2(glm::vec2)> toScreen,
+	                  bool is_background);
+	void drawFood   (const sim::World& w,
+	                 std::function<glm::vec2(glm::vec2)> toScreen,
+	                 bool is_background);
 	void drawHUD();
 	void pushFloating(const std::string& s, glm::vec3 color);
 
@@ -201,17 +226,14 @@ private:
 	bool ai_plays_player_ = false;
 	std::mt19937 ai_rng_{0x1234u};
 
-	struct AIState {
-		int   mode;
-		float wander_heading;
-		float wander_t;
-		float ai_timer;
-		int   last_choice;
-		float last_heading;
-		float last_thrust;
-		float split_cooldown;
-	};
 	std::unordered_map<uint32_t, AIState> ai_states_;
+
+	// Dual-sim: a second, larger World running one tier above the player's
+	// arena. Rendered faded behind the foreground board to replace the
+	// (now stubbed) BackgroundLayer silhouettes with real creatures.
+	sim::World                            outer_world_;
+	std::unique_ptr<sim::Sim>             outer_sim_;
+	std::unordered_map<uint32_t, AIState> outer_ai_states_;
 
 	std::vector<Particle> particles_;
 	void emitBiteParticles(glm::vec2 world_pos, glm::vec3 color);
