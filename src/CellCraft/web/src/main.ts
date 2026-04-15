@@ -194,6 +194,17 @@ function main(): void {
     hud
   };
 
+  // Demo transition: press T to fade-out → fade-in.
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key !== 't' && ev.key !== 'T') return;
+    if (g.renderer.fader.isAnimating()) return;
+    const nowSec = () => performance.now() / 1000;
+    void (async () => {
+      await g.renderer.fader.fadeOut(450, nowSec());
+      await g.renderer.fader.fadeIn(550, nowSec());
+    })();
+  });
+
   requestAnimationFrame((t) => frame(g, t));
 }
 

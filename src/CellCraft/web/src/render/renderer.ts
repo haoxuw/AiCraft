@@ -7,6 +7,7 @@ import { createChalkMaterial } from './chalk_material';
 import { createCellFillMaterial } from './cell_fill_material';
 import { createPostFX, PostFX } from './post_fx';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { SceneFader } from './transitions';
 
 // Rendering lives on a plain XY plane. World units = screen pixels at zoom
 // 1. The orthographic camera is sized to cover the arena with padding.
@@ -41,6 +42,7 @@ export class Renderer {
   // stays pixel-sharp and not affected by bloom/vignette.
   readonly hudScene = new THREE.Scene();
   readonly hudCamera: THREE.OrthographicCamera;
+  readonly fader = new SceneFader();
 
   constructor(private canvas: HTMLCanvasElement) {
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
@@ -102,6 +104,7 @@ export class Renderer {
     if (this.postFX) {
       this.postFX.setSize(w, h, this.gl.getPixelRatio());
     }
+    this.fader.setResolution(w, h);
 
     // Fit arena radius * 1.1 into the shorter axis.
     const arena = 1500 * 1.1;
@@ -158,6 +161,10 @@ export class Renderer {
       this.gl.clearDepth();
       this.gl.render(this.hudScene, this.hudCamera);
     }
+
+    // Scene fader always last so it overlays everything.
+    this.fader.tick(time);
+    this.fader.render(this.gl);
   }
 
   // ----- drawing helpers ---------------------------------------------
