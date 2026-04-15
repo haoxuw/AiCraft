@@ -39,6 +39,7 @@ add_executable(cellcraft
 	${CMAKE_CURRENT_SOURCE_DIR}/client/ambient_particles.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/background_layer.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/client/screen_shake.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/client/ui_modern.cpp
 	${CELLCRAFT_PLATFORM_SOURCES}
 )
 target_include_directories(cellcraft PRIVATE ${CELLCRAFT_INCLUDE_DIRS})

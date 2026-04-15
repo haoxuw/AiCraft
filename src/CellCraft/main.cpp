@@ -49,6 +49,9 @@ int main(int argc, char** argv) {
 		else if (!std::strcmp(a, "--autotest-tier") && i + 1 < argc) {
 			opts.autotest_tier = std::atoi(argv[++i]);
 		}
+		else if (!std::strcmp(a, "--ui-kitchen-sink")) {
+			opts.ui_kitchen_sink = true;
+		}
 		else if (!std::strcmp(a, "--help")) {
 			std::printf("cellcraft options:\n"
 			            "  --autotest                  accelerated headless match → /tmp/cellcraft_autotest.log\n"
@@ -60,7 +63,8 @@ int main(int argc, char** argv) {
 			            "  --lab-screenshot PATH       render creature lab then dump PPM\n"
 			            "  --celebrate-screenshot PATH render celebration then dump PPM\n"
 			            "  --nospeech                  disable speech bubbles in lab\n"
-			            "  --autotest-tier N           seed player at Tier N (1-5) for bg QA\n");
+			            "  --autotest-tier N           seed player at Tier N (1-5) for bg QA\n"
+		            "  --ui-kitchen-sink           render modern UI primitives demo → /tmp/cc_ui_kitchen.ppm\n");
 			return 0;
 		}
 	}

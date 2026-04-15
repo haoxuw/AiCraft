@@ -27,6 +27,7 @@
 
 #include "CellCraft/client/part_render.h"
 #include "CellCraft/client/ui_button.h"
+#include "CellCraft/client/ui_modern.h"
 #include "CellCraft/client/ui_text.h"
 #include "CellCraft/client/ui_theme.h"
 #include "CellCraft/sim/part.h"
@@ -150,6 +151,23 @@ void App::shutdown() {
 }
 
 void App::run() {
+	// --- ui kitchen sink: skip all menus, render design-system demo, dump PPM, exit ---
+	if (opts_.ui_kitchen_sink) {
+		// Render a few frames so any post-fx settles, then snapshot.
+		for (int frame = 0; frame < 3; ++frame) {
+			window_.pollEvents();
+			int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
+			glViewport(0, 0, w, h);
+			// Don't draw the chalk board — the demo paints its own scrim.
+			glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			drawUiKitchenSink();
+			window_.swapBuffers();
+		}
+		writePPM("/tmp/cc_ui_kitchen.ppm");
+		return;
+	}
+
 	// --- autotest loop: accelerated headless-style run ---
 	if (opts_.autotest) {
 		FILE* log = std::fopen("/tmp/cellcraft_autotest.log", "w");
@@ -1872,6 +1890,85 @@ void App::writePPM(const char* path) {
 	for (int y = h - 1; y >= 0; --y) std::fwrite(buf.data() + y * w * 3, 1, w * 3, f);
 	std::fclose(f);
 	std::printf("wrote %s (%dx%d)\n", path, w, h);
+}
+
+// ========================================================================
+// UI kitchen sink — exercises every modern primitive in one screen.
+// ========================================================================
+
+void App::drawUiKitchenSink() {
+	namespace m = ui::modern;
+	int W, H; glfwGetFramebufferSize(window_.handle(), &W, &H);
+	m::beginFrame(text_.get(), W, H);
+
+	// Charcoal gradient background.
+	m::drawScrim(0, 0, W, H, m::SURFACE_BG_TOP, m::SURFACE_BG_BOTTOM);
+
+	// Page title + caption.
+	m::drawTextDisplay(W / 2, 24, "UI KITCHEN SINK",
+		m::TEXT_PRIMARY, m::Align::CENTER);
+	m::drawTextModern(W / 2, 24 + m::TYPE_DISPLAY + 8,
+		"CellCraft modern design system", m::TYPE_BODY,
+		m::TEXT_SECONDARY, m::Align::CENTER);
+
+	// Glass panel hosting buttons, stats, badge, ring.
+	int panel_x = 64, panel_y = 180;
+	int panel_w = W - 128, panel_h = H - 320;
+	m::drawSoftShadow(panel_x, panel_y, panel_w, panel_h, m::RADIUS_LG, 24, 0.45f);
+	m::drawGlassPanel(panel_x, panel_y, panel_w, panel_h, m::RADIUS_LG);
+
+	// Section label.
+	int col_x = panel_x + m::SPACE_2XL;
+	int col_y = panel_y + m::SPACE_2XL;
+	m::drawTextLabel(col_x, col_y, "BUTTONS", m::TEXT_SECONDARY);
+	col_y += m::SPACE_LG + m::TYPE_LABEL;
+
+	// Three buttons in a row.
+	int btn_w = 180, btn_h = 44;
+	m::buttonPrimary(col_x,                         col_y, btn_w, btn_h, "PLAY", false, false);
+	m::buttonGhost  (col_x + btn_w + m::SPACE_LG,   col_y, btn_w, btn_h, "OPTIONS", true, false);
+	m::buttonIcon   (col_x + (btn_w + m::SPACE_LG)*2, col_y, btn_h, "?", "Help", true, false);
+
+	// Divider.
+	int div_y = col_y + btn_h + m::SPACE_XL;
+	m::drawDivider(col_x, div_y, panel_w - m::SPACE_2XL * 2,
+		m::DividerAxis::HORIZONTAL, m::STROKE_SUBTLE);
+
+	// Stat bars.
+	int stats_y = div_y + m::SPACE_XL;
+	m::drawTextLabel(col_x, stats_y, "STATS", m::TEXT_SECONDARY);
+	stats_y += m::SPACE_LG + m::TYPE_LABEL;
+	int bar_w = 320;
+	m::drawStatBar(col_x, stats_y,                    bar_w, "SPEED",    0.72f, "72/100", m::ACCENT_CYAN);
+	m::drawStatBar(col_x, stats_y + 40,               bar_w, "FULLNESS", 0.34f, "34%",    m::ACCENT_AMBER);
+	m::drawStatBar(col_x, stats_y + 80,               bar_w, "HEALTH",   0.91f, "91/100", m::ACCENT_SUCCESS);
+
+	// Pill badge + ring progress (right column).
+	int rcol_x = col_x + bar_w + m::SPACE_3XL;
+	m::drawTextLabel(rcol_x, stats_y, "BADGE", m::TEXT_SECONDARY);
+	m::drawPillBadge(rcol_x, stats_y + m::SPACE_LG + m::TYPE_LABEL,
+		"T1 - SPECK", m::TEXT_PRIMARY, m::SURFACE_PANEL_HI, m::ACCENT_CYAN);
+
+	m::drawTextLabel(rcol_x, stats_y + 60, "RING", m::TEXT_SECONDARY);
+	m::drawRingProgress(rcol_x + 50, stats_y + 60 + 70, 36, 8,
+		0.66f, m::ACCENT_CYAN);
+
+	// Type sample row at the bottom.
+	int type_y = panel_y + panel_h - 220;
+	m::drawDivider(col_x, type_y - m::SPACE_LG, panel_w - m::SPACE_2XL * 2,
+		m::DividerAxis::HORIZONTAL, m::STROKE_SUBTLE);
+	m::drawTextLabel(col_x, type_y, "TYPE SAMPLES", m::TEXT_SECONDARY);
+	int ty = type_y + m::SPACE_LG + m::TYPE_LABEL;
+	m::drawTextModern(col_x, ty,                                "Display 72 - Hello",  m::TYPE_DISPLAY,  m::TEXT_PRIMARY);
+	ty += m::TYPE_DISPLAY + m::SPACE_SM;
+	m::drawTextModern(col_x, ty,                                "Title LG 40",         m::TYPE_TITLE_LG, m::TEXT_PRIMARY);
+	int tx2 = col_x + 360;
+	m::drawTextModern(tx2,   ty,                                "Title MD 28",         m::TYPE_TITLE_MD, m::TEXT_SECONDARY);
+	int tx3 = col_x + 600;
+	m::drawTextModern(tx3,   ty,                                "Title SM 20",         m::TYPE_TITLE_SM, m::TEXT_SECONDARY);
+	ty += m::TYPE_TITLE_LG + m::SPACE_SM;
+	m::drawTextModern(col_x, ty,                                "Body 14: the quick brown fox jumps", m::TYPE_BODY, m::TEXT_PRIMARY);
+	m::drawTextModern(col_x + 420, ty,                          "Caption 11 muted",    m::TYPE_CAPTION,  m::TEXT_MUTED);
 }
 
 } // namespace civcraft::cellcraft

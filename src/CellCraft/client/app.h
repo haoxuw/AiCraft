@@ -51,6 +51,9 @@ struct AppOptions {
 	// (1-5). Used by --autotest-tier for background-layer QA of the APEX
 	// animal-silhouette set without grinding biomass manually.
 	int         autotest_tier = 0;
+	// UI design-system kitchen sink: skip menus, render demo screen, dump
+	// PPM to /tmp/cc_ui_kitchen.ppm, then exit. See main.cpp + app.cpp.
+	bool        ui_kitchen_sink = false;
 };
 
 // Short-lived chalk-stroke particle for bites/kills/pickups.
@@ -109,6 +112,7 @@ private:
 	void drawCelebrate(float dt);
 	void drawPlaying(float dt);
 	void drawEndScreen(float dt);
+	void drawUiKitchenSink();
 
 	// ---- Playing helpers -------------------------------------------------
 	void stepPlaying(float dt);
