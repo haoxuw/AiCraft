@@ -221,7 +221,7 @@ void App::run() {
 				ambient_.draw(renderer_.get(), fw, fh);
 				{
 					auto otc = [this](glm::vec2 wp) {
-						glm::vec2 rel = wp * 0.5f - camera_world_ * 0.1f;
+						glm::vec2 rel = wp * 0.32f - camera_world_ * 0.12f;
 						int ww, hh; glfwGetFramebufferSize(window_.handle(), &ww, &hh);
 						return glm::vec2(rel.x + ww * 0.5f, -rel.y + hh * 0.5f);
 					};
@@ -267,7 +267,7 @@ void App::run() {
 					ambient_.draw(renderer_.get(), fw, fh);
 					{
 						auto otc = [this](glm::vec2 wp) {
-							glm::vec2 rel = wp * 0.5f - camera_world_ * 0.1f;
+							glm::vec2 rel = wp * 0.32f - camera_world_ * 0.12f;
 							int ww, hh; glfwGetFramebufferSize(window_.handle(), &ww, &hh);
 							return glm::vec2(rel.x + ww * 0.5f, -rel.y + hh * 0.5f);
 						};
@@ -328,7 +328,7 @@ void App::run() {
 			ambient_.draw(renderer_.get(), w, h);
 			{
 				auto otc = [this](glm::vec2 wp) {
-					glm::vec2 rel = wp * 0.5f - camera_world_ * 0.1f;
+					glm::vec2 rel = wp * 0.32f - camera_world_ * 0.12f;
 					int ww, hh; glfwGetFramebufferSize(window_.handle(), &ww, &hh);
 					return glm::vec2(rel.x + ww * 0.5f, -rel.y + hh * 0.5f);
 				};
@@ -1384,9 +1384,11 @@ void App::drawMonsters(const sim::World& w_ref,
 
 	// Background-layer color adjustment: dim + blend toward cream to fake
 	// atmospheric recession. Alpha-dim factor also drives cell fill alpha.
-	const float BG_DIM   = 0.55f;
+	// Tuned for clear "further away" read — strongly desaturated so the
+	// outer sim never competes with the foreground for attention.
+	const float BG_DIM   = 0.42f;
 	const glm::vec3 BG_CREAM(0.97f, 0.95f, 0.88f);
-	const float BG_CREAM_MIX = 0.25f;
+	const float BG_CREAM_MIX = 0.40f;
 	auto shade = [&](glm::vec3 c) -> glm::vec3 {
 		if (!is_background) return c;
 		c = c * BG_DIM;
@@ -1395,10 +1397,11 @@ void App::drawMonsters(const sim::World& w_ref,
 	};
 
 	// Arena boundary — a thin chalk ring around map_radius so players can see
-	// where they're clamped. Drawn as a ~64-segment polyline.
-	{
+	// where they're clamped. Skipped for background layer (there is no
+	// "boundary" metaphor for scenery behind you).
+	if (!is_background) {
 		ChalkStroke ring;
-		ring.color = shade(glm::vec3(0.55f, 0.55f, 0.55f));
+		ring.color = glm::vec3(0.55f, 0.55f, 0.55f);
 		ring.half_width = 1.5f;
 		const int N = 72;
 		for (int i = 0; i <= N; ++i) {
@@ -1416,7 +1419,7 @@ void App::drawMonsters(const sim::World& w_ref,
 	{
 		std::vector<glm::vec2> poly_px;
 		float t_now = (float)glfwGetTime();
-		const float fill_alpha = is_background ? BG_DIM : 1.0f;
+		const float fill_alpha = is_background ? 0.35f : 1.0f;
 		for (auto& [id, m] : w_ref.monsters) {
 			if (!m.alive) continue;
 			auto wp = sim::transform_to_world(m.shape, m.core_pos, m.heading);
@@ -2051,7 +2054,7 @@ void App::drawPlaying(float dt) {
 	// outer sim later. See A1–A3 of the dual-sim plan.
 	(void)dt;
 	auto outerToScreen = [this](glm::vec2 wp) {
-		glm::vec2 rel = wp * 0.5f - camera_world_ * 0.1f;  // 0.1 parallax
+		glm::vec2 rel = wp * 0.32f - camera_world_ * 0.12f;  // outer zoom + parallax
 		int w, h; glfwGetFramebufferSize(window_.handle(), &w, &h);
 		return glm::vec2(rel.x + w * 0.5f, -rel.y + h * 0.5f);
 	};
