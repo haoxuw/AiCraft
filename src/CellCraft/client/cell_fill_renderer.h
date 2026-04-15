@@ -53,7 +53,9 @@ public:
 	              sim::Diet diet,
 	              float noise_seed,
 	              float time_seconds,
-	              int screen_w, int screen_h);
+	              int screen_w, int screen_h,
+	              float diet_mix = 0.7f,
+	              float alpha_scale = 1.0f);
 
 private:
 	struct Vertex {

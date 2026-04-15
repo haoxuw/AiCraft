@@ -223,7 +223,7 @@ void App::run() {
 					bg_layer_.setPlayerTier(pt, world_.map_radius);
 					bg_layer_.update(0.0f, world_.map_radius);
 					bg_layer_.draw(renderer_.get(), fw, fh,
-						[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime()); }
+						[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime(), fill_renderer_.get()); }
 				drawFood();
 				drawMonsters();
 				updateAndDrawParticles(0.0f);
@@ -265,7 +265,7 @@ void App::run() {
 						bg_layer_.setPlayerTier(pt, world_.map_radius);
 						bg_layer_.update(0.0f, world_.map_radius);
 						bg_layer_.draw(renderer_.get(), fw, fh,
-							[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime()); }
+							[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime(), fill_renderer_.get()); }
 					drawFood();
 					drawMonsters();
 					updateAndDrawParticles(0.0f);
@@ -322,7 +322,7 @@ void App::run() {
 				bg_layer_.setPlayerTier(pt, world_.map_radius);
 				bg_layer_.update(dt, world_.map_radius);
 				bg_layer_.draw(renderer_.get(), w, h,
-					[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime()); }
+					[this](glm::vec2 wp){ return worldToScreen(wp); }, camera_world_, (float)glfwGetTime(), fill_renderer_.get()); }
 			drawFood();
 			drawMonsters();
 			updateAndDrawParticles(dt);
@@ -1951,7 +1951,7 @@ void App::drawPlaying(float dt) {
 	bg_layer_.update(dt, world_.map_radius);
 	bg_layer_.draw(renderer_.get(), w, h,
 		[this](glm::vec2 wp){ return worldToScreen(wp); },
-		camera_world_, (float)glfwGetTime());
+		camera_world_, (float)glfwGetTime(), fill_renderer_.get());
 	drawFood();
 	drawMonsters();
 	drawHUD();

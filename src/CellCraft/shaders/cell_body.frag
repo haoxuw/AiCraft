@@ -12,6 +12,8 @@ uniform vec3  u_base_color;   // cell palette color
 uniform vec3  u_diet_color;   // carnivore red / herbivore green / omnivore purple
 uniform float u_noise_seed;   // per-monster, stable across frames
 uniform float u_time;         // seconds, for shimmer
+uniform float u_diet_mix;     // 0.7 default; background silhouettes pass 0.0
+uniform float u_alpha_scale;  // 1.0 default; far layers pass <1.0 for recession
 
 float hash21(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -28,8 +30,9 @@ float valueNoise(vec2 p) {
 }
 
 void main() {
-	// Tint: mostly diet color, accent with the palette color.
-	vec3 organism = mix(u_base_color, u_diet_color, 0.7);
+	// Tint: blend palette color with diet color. BG silhouettes pass
+	// u_diet_mix=0 so the base_color alone controls hue.
+	vec3 organism = mix(u_base_color, u_diet_color, u_diet_mix);
 
 	// Membrane (darker edge) vs cytoplasm (lighter center).
 	vec3 cytoplasm = organism * 1.15;
@@ -50,6 +53,6 @@ void main() {
 	color += vec3(shimmer) * w;
 
 	// Slight alpha falloff at the edge so the chalk outline on top reads clean.
-	float alpha = smoothstep(0.0, 0.1, t) * 0.92;
+	float alpha = smoothstep(0.0, 0.1, t) * 0.92 * u_alpha_scale;
 	f_color = vec4(color, alpha);
 }

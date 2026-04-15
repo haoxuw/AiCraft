@@ -37,7 +37,9 @@ void CellFillRenderer::drawFill(const std::vector<glm::vec2>& poly,
                                 sim::Diet diet,
                                 float noise_seed,
                                 float time_seconds,
-                                int screen_w, int screen_h) {
+                                int screen_w, int screen_h,
+                                float diet_mix,
+                                float alpha_scale) {
 	const size_t n = poly.size();
 	if (n < 3) return;
 
@@ -86,6 +88,8 @@ void CellFillRenderer::drawFill(const std::vector<glm::vec2>& poly,
 	m_shader.setVec3("u_diet_color", dietColor(diet));
 	m_shader.setFloat("u_noise_seed", noise_seed);
 	m_shader.setFloat("u_time", time_seconds);
+	m_shader.setFloat("u_diet_mix", diet_mix);
+	m_shader.setFloat("u_alpha_scale", alpha_scale);
 
 	glBindVertexArray(m_vao);
 	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);

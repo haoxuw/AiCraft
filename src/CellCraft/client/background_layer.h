@@ -24,6 +24,7 @@
 #include <glm/glm.hpp>
 
 #include "CellCraft/client/chalk_renderer.h"
+#include "CellCraft/client/cell_fill_renderer.h"
 #include "CellCraft/client/chalk_stroke.h"
 
 namespace civcraft::cellcraft {
@@ -72,9 +73,14 @@ public:
 	// far-layer creatures move slower than near-layer ones when the camera
 	// pans. Tinted toward `board_cream` (far layers blend further toward it)
 	// so they recede visually.
+	//
+	// If fill is non-null, each creature also gets a body-fill pass using the
+	// cell_body shader — same material as arena cells — with per-layer alpha
+	// so far layers look atmospheric. Outlines draw on top of all fills.
 	template<typename ToScreen>
 	void draw(ChalkRenderer* r, int screen_w, int screen_h,
-	          ToScreen world_to_screen, glm::vec2 cam_world, float time_seconds);
+	          ToScreen world_to_screen, glm::vec2 cam_world, float time_seconds,
+	          CellFillRenderer* fill = nullptr);
 
 private:
 	void repopulate_(int tier, float map_radius);
@@ -164,7 +170,7 @@ inline void appendEllipseOutline(std::vector<ChalkStroke>& out,
 template<typename ToScreen>
 void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
                            ToScreen world_to_screen, glm::vec2 cam_world,
-                           float t_sec) {
+                           float t_sec, CellFillRenderer* fill) {
 	if (!r || pool_.empty()) return;
 	scratch_.clear();
 
@@ -173,6 +179,11 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 	// "layered world" visibly recedes with depth.
 	const glm::vec3 TINT_BASE = glm::vec3(0.45f, 0.38f, 0.28f);
 	const glm::vec3 BOARD_CREAM = glm::vec3(0.97f, 0.95f, 0.88f);
+	// Fill base palettes — warmer than the outline tint so fills read as
+	// muted organic bodies rather than pure shadow. Per-layer alpha fakes
+	// atmospheric perspective.
+	const glm::vec3 FILL_BASE   = glm::vec3(0.78f, 0.66f, 0.48f);   // warm tan
+	const float     FILL_ALPHA[3] = { 0.55f, 0.32f, 0.18f };        // near→far
 
 	for (const auto& c : pool_) {
 		// Parallax: effective world pos lerps between camera center (far)
@@ -191,6 +202,21 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 			return center + glm::vec2(cr*v.x - sr*v.y, sr*v.x + cr*v.y);
 		};
 
+		// Per-creature fill helper: tint blends toward cream with tint_mix so
+		// the fill recedes the same way the outline does. Uses diet_mix=0 so
+		// no red/green/purple tint leaks into background scenery.
+		int layer_idx = glm::clamp(c.layer, 0, 2);
+		float fill_alpha = FILL_ALPHA[layer_idx];
+		glm::vec3 fill_base = glm::mix(FILL_BASE, BOARD_CREAM,
+			glm::clamp(c.tint_mix * 0.6f, 0.0f, 0.9f));
+		float fill_seed = c.wobble_ph * 0.27f + float(layer_idx) * 1.3f;
+		auto do_fill = [&](const std::vector<glm::vec2>& poly) {
+			if (!fill) return;
+			fill->drawFill(poly, fill_base, sim::Diet::OMNIVORE,
+			               fill_seed, t_sec, screen_w, screen_h,
+			               /*diet_mix=*/0.0f, fill_alpha);
+		};
+
 		switch (c.type) {
 		case SilhouetteType::CELL_GENERIC: {
 			// Lobed blob: closed polyline with sinusoidal radius jiggle.
@@ -206,6 +232,7 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 				                  std::sin(a + c.rot) * rr);
 				pts.push_back(center + p_local);
 			}
+			do_fill(pts);
 			bg_detail::appendBlurredOutline(scratch_, pts, tint, /*closed=*/true,
 				hw, blur_n, blur_r);
 			break;
@@ -228,6 +255,7 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 			pts.push_back(rot_add({-rx * 0.70f, -ry * 0.55f}));     // pre-tail lower
 			pts.push_back(rot_add({-rx * 0.10f, -ry * 1.00f}));     // belly
 			pts.push_back(rot_add({ rx * 0.55f, -ry * 0.95f}));     // lower front
+			do_fill(pts);
 			bg_detail::appendBlurredOutline(scratch_, pts, tint, /*closed=*/true,
 				hw, blur_n, blur_r);
 			break;
@@ -236,6 +264,18 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 			// Oval shell (12 samples) + small head disc forward + 4 leg bumps.
 			float sx = 38.0f * c.scale;
 			float sy = 26.0f * c.scale;
+			// Fill just the shell (the dominant body mass).
+			if (fill) {
+				std::vector<glm::vec2> shell;
+				shell.reserve(12);
+				float cc = std::cos(c.rot), ss = std::sin(c.rot);
+				for (int i = 0; i < 12; ++i) {
+					float a = 6.28318530718f * float(i) / 12.0f;
+					float lx = std::cos(a) * sx, ly = std::sin(a) * sy;
+					shell.push_back(center + glm::vec2(cc*lx - ss*ly, ss*lx + cc*ly));
+				}
+				do_fill(shell);
+			}
 			bg_detail::appendEllipseOutline(scratch_, center, sx, sy, c.rot,
 				tint, /*samples=*/12, hw);
 			// Head: small disc forward of shell.
@@ -279,6 +319,7 @@ void BackgroundLayer::draw(ChalkRenderer* r, int screen_w, int screen_h,
 				float wave = std::sin(t * 6.28318f + c.wobble_ph + t_sec * 1.2f) * (dy * 0.18f);
 				pts.push_back(rot_add({lx, wave}));
 			}
+			do_fill(pts);
 			bg_detail::appendBlurredOutline(scratch_, pts, tint, /*closed=*/true,
 				hw, blur_n, blur_r);
 			// 3 trailing tentacles curving downward.
