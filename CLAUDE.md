@@ -2,27 +2,27 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Two games, same engine
+## Repo layout
 
-This repo builds **two** games on top of a single C++ engine:
+This repo contains two independent games that share nothing at the code
+level:
 
 ```
-src/platform/     C++ engine (headers + cpps) — no game content
-src/CivCraft/     Voxel sandbox game (chunks, blocks, structures)
-src/CellCraft/    2D drawing Action RTS
+src/platform/      C++ engine (headers + cpps) — used by CivCraft only
+src/CivCraft/      Voxel sandbox game built on platform/ (native C++)
+src/CellCraft/web/ Standalone Three.js + TypeScript web game (no native code)
 ```
 
-Everything game-specific — artifacts, python, shaders, resources, config, docs,
-tests, tools — lives under the owning game directory. Shared UI fonts and
-generic shaders (crosshair, highlight, particle, shadow, text) live under
-`src/platform/`.
+CivCraft is the native C++ voxel sandbox — see its Mandatory Design Rules
+below. CellCraft is an independent browser game under `src/CellCraft/web/`;
+it shares no code with `platform/` or CivCraft. Run it with
+`cd src/CellCraft/web && npm run dev`. See the CellCraft section at the
+bottom of this file.
 
-**Dependency rule (enforced by CMake + convention):**
-- `platform/` must not reference `CivCraft/` or `CellCraft/` identifiers.
-- `CivCraft/` must never `#include "CellCraft/..."` and vice versa.
-- Shared code between the two games must be promoted into `platform/` first.
+**Rules 0–5 below apply to CivCraft only.** CellCraft is a different
+codebase with its own (much simpler) architecture.
 
-**Read `src/CivCraft/src/CivCraft/docs/00_OVERVIEW.md` before making ANY gameplay changes.**
+**Read `src/CivCraft/src/CivCraft/docs/00_OVERVIEW.md` before making ANY CivCraft gameplay changes.**
 
 ## Mandatory Design Rules
 
@@ -364,4 +364,34 @@ If not, it needs to move to an artifact.
 ## Commit Guidelines
 
 - Present tense, capital first letter, under 70 chars
-- Area prefix: `server:`, `client:`, `shared:`, `agent:`, `content:`, `artifacts:`, etc.
+- Area prefix: `server:`, `client:`, `shared:`, `agent:`, `content:`, `artifacts:`, `cellcraft:`, etc.
+
+## CellCraft (web)
+
+CellCraft lives entirely under `src/CellCraft/web/` and is completely
+independent of the C++ engine. It is a Three.js + TypeScript Spore-cell-stage
+Action RTS that runs in the browser (Vite dev server). There is no native
+CellCraft build; the previous C++/Godot prototypes have been retired.
+
+```bash
+cd src/CellCraft/web && npm install     # first time
+cd src/CellCraft/web && npm run dev     # dev server (Vite, :5173)
+cd src/CellCraft/web && npm run build   # production build
+cd src/CellCraft/web && npm test        # vitest (sim + artifacts)
+```
+
+Structure:
+```
+src/CellCraft/web/src/
+  sim/         Pure TS simulation (tick, monsters, food, world) — vitest-covered
+  ai/          Creature behaviors
+  artifacts/   Monster/part/behavior definitions (TS)
+  render/      Three.js renderer, post-FX, chalk materials
+  scenes/      Main menu, starter select, match, tier-up, end
+  net/         WebSocket protocol (multiplayer)
+  input/       Keyboard + pointer
+  perf.ts      Per-frame timing buckets (opt-in overlay via ?fps=1)
+```
+
+Do not reach into `src/platform/` or CivCraft from CellCraft code, or vice
+versa — they are separate games in the same repo.

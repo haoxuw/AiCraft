@@ -9,6 +9,7 @@ import { createOceanMaterial } from './ocean_material';
 import { createPostFX, PostFX } from './post_fx';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SceneFader } from './transitions';
+import * as perf from '../perf';
 
 // Rendering lives on a plain XY plane. World units = screen pixels at zoom
 // 1. The orthographic camera is sized to cover the arena with padding.
@@ -52,12 +53,40 @@ const DIET_COLOR: Record<Diet, THREE.Color> = {
   [Diet.OMNIVORE]: new THREE.Color(0xb876e8)
 };
 
+// Food passes were previously drawn as three tinted strokes (shadow /
+// body / highlight). After merging all strokes per food into a single
+// mesh we keep only the body tint — the shadow/highlight offsets are
+// still visible inside buildFoodGeometry() as positional passes.
 const PLANT_GREEN_BODY = new THREE.Color(0x3a8f3a);
-const PLANT_GREEN_HI = new THREE.Color(0x7dd67d);
-const PLANT_GREEN_SHADOW = new THREE.Color(0x25601f);
 const MEAT_GREEN_BODY = new THREE.Color(0x1e6f2e);
-const MEAT_GREEN_HI = new THREE.Color(0x4fa55a);
-const MEAT_GREEN_SHADOW = new THREE.Color(0x0f4019);
+
+// -----------------------------------------------------------------
+// Cached mesh pool — monsters and food meshes persist across frames.
+// Only rebuilt when shape signature changes (body_scale / parts / tier).
+// -----------------------------------------------------------------
+interface MonsterCacheEntry {
+  root: THREE.Group;
+  fillMesh: THREE.Mesh;
+  outlineMesh: THREE.Mesh;
+  partMeshes: THREE.Mesh[];
+  shapeKey: string;   // re-rebuild geometry when this changes
+  lastFrame: number;  // prune when stale
+}
+
+interface FoodCacheEntry {
+  mesh: THREE.Mesh;         // single merged geometry for all strokes
+  radiusKey: number;        // bucketed radius — rebuild on change
+  lastFrame: number;
+}
+
+function monsterShapeKey(m: Monster): string {
+  // Geometry depends on shape array (body scale, tier size) and mouth part
+  // positions. The shape array is deterministic per (tier, parts). We
+  // capture a cheap digest: shape.length, body_scale, part kinds+scales.
+  let k = `${m.shape.length}|${m.body_scale.toFixed(3)}`;
+  for (const p of m.parts) k += `|${p.kind}:${p.scale.toFixed(2)}:${p.anchor[0].toFixed(1)},${p.anchor[1].toFixed(1)}`;
+  return k;
+}
 
 export class Renderer {
   readonly scene = new THREE.Scene();
@@ -81,11 +110,23 @@ export class Renderer {
   readonly hudCamera: THREE.OrthographicCamera;
   readonly fader = new SceneFader();
 
+  // Per-world caches (inner, outer).
+  private innerMonsterCache = new Map<number, MonsterCacheEntry>();
+  private innerFoodCache = new Map<number, FoodCacheEntry>();
+  private arenaRingMesh: THREE.Mesh | null = null;
+  // Outer world: cheap silhouette layer. One InstancedMesh of unit circles.
+  private outerSilhouetteMat: THREE.ShaderMaterial | null = null;
+  private outerSilhouette: THREE.InstancedMesh | null = null;
+  private outerCapacity = 0;
+  private frameNum = 0;
+
   get domElement(): HTMLCanvasElement { return this.canvas; }
 
   constructor(private canvas: HTMLCanvasElement) {
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-    this.gl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap pixel ratio at 1.5 — at 2x on hi-dpi displays postfx fill rate
+    // dominates frame time with marginal visual gain on chalk art.
+    this.gl.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.gl.setClearColor(0xf7f2de, 1);
 
     // Fullscreen board quad (NDC, driven by the material).
@@ -198,14 +239,9 @@ export class Renderer {
 
   render(world: World, time: number): void {
     this.boardMat.uniforms.u_time.value = time;
-
-    // Rebuild dynamic geometry each frame. Cheap at our scale (~20 cells
-    // × 32 verts); if it ever matters we can cache per-monster meshes.
-    this.clearGroup(this.dynamicGroup);
-    this.clearGroup(this.backgroundGroup);
+    this.frameNum++;
     this.backgroundGroup.visible = false;
-    this.drawWorld(world, time, this.dynamicGroup, NO_SHADE);
-
+    this.syncInnerWorld(world, time, NO_SHADE);
     this.finishFrame(time);
   }
 
@@ -226,12 +262,9 @@ export class Renderer {
     const alphaScale = opts.alphaScale ?? 0.35;
 
     this.boardMat.uniforms.u_time.value = time;
-    this.clearGroup(this.dynamicGroup);
-    this.clearGroup(this.backgroundGroup);
+    this.frameNum++;
 
     if (outer) {
-      // Transform the whole background group: scale by zoom, translate by
-      // parallax offset — outer creatures drift slowly as the camera moves.
       this.backgroundGroup.scale.set(zoom, zoom, 1);
       this.backgroundGroup.position.set(
         -cameraWorld[0] * parallax,
@@ -239,36 +272,218 @@ export class Renderer {
         0
       );
       this.backgroundGroup.visible = true;
-      const shade: ShadeOpts = { dim, creamMix, alphaScale, noRing: true, noPlayerEmphasis: true };
-      this.drawWorld(outer, time, this.backgroundGroup, shade);
+      const tOuter = perf.start('r.outer');
+      this.syncOuterSilhouette(outer, time, { dim, creamMix, alphaScale });
+      perf.end('r.outer', tOuter);
     } else {
       this.backgroundGroup.visible = false;
     }
 
-    this.drawWorld(inner, time, this.dynamicGroup, NO_SHADE);
+    const tInner = perf.start('r.inner');
+    this.syncInnerWorld(inner, time, NO_SHADE);
+    perf.end('r.inner', tInner);
     this.finishFrame(time);
   }
 
-  private drawWorld(world: World, time: number, group: THREE.Group, shade: ShadeOpts): void {
-    if (!shade.noRing) this.drawArenaRing(world.map_radius, group);
-    for (const food of world.food) this.drawFood(food, time, group, shade);
-    for (const m of world.monsters.values()) this.drawMonster(m, time, group, shade);
+  // Sync the inner (foreground) world into the cached dynamicGroup.
+  // Adds missing monsters/food, updates transforms/uniforms, rebuilds
+  // geometry only on shape changes, removes entries no longer present.
+  private syncInnerWorld(world: World, time: number, shade: ShadeOpts): void {
+    // Arena ring (radius is stable per-tier; rebuild only if missing).
+    if (!shade.noRing) {
+      const needed = world.map_radius;
+      if (!this.arenaRingMesh) {
+        const ribbon = buildRingRibbon(needed, 128, 4.0);
+        const mat = createChalkMaterial(ARENA_RING);
+        mat.uniforms.u_alpha.value = 0.6;
+        this.arenaRingMesh = new THREE.Mesh(ribbon, mat);
+        this.arenaRingMesh.renderOrder = -10;
+        this.arenaRingMesh.userData.ringRadius = needed;
+        this.dynamicGroup.add(this.arenaRingMesh);
+      } else if (this.arenaRingMesh.userData.ringRadius !== needed) {
+        this.arenaRingMesh.geometry.dispose();
+        this.arenaRingMesh.geometry = buildRingRibbon(needed, 128, 4.0);
+        this.arenaRingMesh.userData.ringRadius = needed;
+      }
+    } else if (this.arenaRingMesh) {
+      this.dynamicGroup.remove(this.arenaRingMesh);
+      this.arenaRingMesh.geometry.dispose();
+      (this.arenaRingMesh.material as THREE.Material).dispose();
+      this.arenaRingMesh = null;
+    }
+
+    // Monsters.
+    for (const m of world.monsters.values()) {
+      let e = this.innerMonsterCache.get(m.id);
+      const key = monsterShapeKey(m);
+      if (!e) {
+        e = this.makeMonsterCacheEntry(m, shade);
+        this.innerMonsterCache.set(m.id, e);
+        this.dynamicGroup.add(e.root);
+      } else if (e.shapeKey !== key) {
+        this.rebuildMonsterGeometry(e, m);
+        e.shapeKey = key;
+      }
+      // Cheap per-frame: transform + time uniform.
+      e.root.position.set(m.core_pos[0], m.core_pos[1], 0);
+      e.root.rotation.z = m.heading;
+      const fillMat = e.fillMesh.material as THREE.ShaderMaterial;
+      fillMat.uniforms.u_time.value = time;
+      e.lastFrame = this.frameNum;
+    }
+    // Prune monsters that weren't seen this frame.
+    for (const [id, e] of this.innerMonsterCache) {
+      if (e.lastFrame !== this.frameNum) {
+        this.dynamicGroup.remove(e.root);
+        disposeGroupDeep(e.root);
+        this.innerMonsterCache.delete(id);
+      }
+    }
+
+    // Food.
+    for (const f of world.food) {
+      let fe = this.innerFoodCache.get(f.id);
+      if (!fe) {
+        fe = this.makeFoodCacheEntry(f, shade);
+        this.innerFoodCache.set(f.id, fe);
+        this.dynamicGroup.add(fe.mesh);
+      } else if (fe.radiusKey !== Math.round(f.radius)) {
+        fe.mesh.geometry.dispose();
+        fe.mesh.geometry = buildFoodGeometry(f.radius);
+        fe.radiusKey = Math.round(f.radius);
+      }
+      fe.mesh.position.set(f.pos[0], f.pos[1], 0);
+      fe.lastFrame = this.frameNum;
+    }
+    for (const [id, fe] of this.innerFoodCache) {
+      if (fe.lastFrame !== this.frameNum) {
+        this.dynamicGroup.remove(fe.mesh);
+        fe.mesh.geometry.dispose();
+        (fe.mesh.material as THREE.Material).dispose();
+        this.innerFoodCache.delete(id);
+      }
+    }
+    perf.countMesh(this.dynamicGroup.children.length);
+  }
+
+  // Cheap outer-world silhouette: each monster drawn as a single dim
+  // circular blob via InstancedMesh. Food is dropped entirely — the
+  // outer world reads as ambient "other cells drifting in the distance."
+  private syncOuterSilhouette(
+    outer: World,
+    _time: number,
+    shade: { dim: number; creamMix: number; alphaScale: number }
+  ): void {
+    const monsters = Array.from(outer.monsters.values()).filter((m) => m.alive);
+    const count = monsters.length;
+
+    if (!this.outerSilhouetteMat) {
+      this.outerSilhouetteMat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        uniforms: {
+          u_tint: { value: new THREE.Color(0.6, 0.6, 0.55) },
+          u_alpha: { value: 0.55 }
+        },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          precision mediump float;
+          varying vec2 vUv;
+          uniform vec3 u_tint;
+          uniform float u_alpha;
+          void main() {
+            vec2 p = vUv - 0.5;
+            float r = length(p) * 2.0;
+            // Soft blob — fade edges to transparent.
+            float a = smoothstep(1.0, 0.4, r) * u_alpha;
+            if (a < 0.01) discard;
+            gl_FragColor = vec4(u_tint, a);
+          }
+        `
+      });
+    }
+    // Update tint / alpha per shade.
+    const tinted = shadeColor(new THREE.Color(0xb0aa96), {
+      dim: shade.dim,
+      creamMix: shade.creamMix,
+      alphaScale: shade.alphaScale,
+      noRing: true,
+      noPlayerEmphasis: true
+    });
+    (this.outerSilhouetteMat.uniforms.u_tint.value as THREE.Color).copy(tinted);
+    this.outerSilhouetteMat.uniforms.u_alpha.value = 0.55 * shade.alphaScale;
+
+    if (!this.outerSilhouette || count > this.outerCapacity) {
+      if (this.outerSilhouette) {
+        this.backgroundGroup.remove(this.outerSilhouette);
+        this.outerSilhouette.geometry.dispose();
+      }
+      // Unit quad (2×2 centered) — instance matrix scales to radius.
+      const geom = new THREE.PlaneGeometry(2, 2);
+      this.outerCapacity = Math.max(16, count * 2);
+      this.outerSilhouette = new THREE.InstancedMesh(geom, this.outerSilhouetteMat, this.outerCapacity);
+      this.outerSilhouette.frustumCulled = false;
+      this.outerSilhouette.renderOrder = -50;
+      this.backgroundGroup.add(this.outerSilhouette);
+    }
+
+    const tmp = new THREE.Matrix4();
+    for (let i = 0; i < count; ++i) {
+      const m = monsters[i];
+      const r = Math.max(20, m.body_scale * 46);
+      tmp.makeScale(r, r, 1);
+      tmp.setPosition(m.core_pos[0], m.core_pos[1], 0);
+      this.outerSilhouette!.setMatrixAt(i, tmp);
+    }
+    this.outerSilhouette!.count = count;
+    this.outerSilhouette!.instanceMatrix.needsUpdate = true;
   }
 
   // Renders just the board + HUD + fader (no world content). Scenes
   // that don't own a World (main menu, starter select, end screen)
-  // call this each frame.
+  // call this each frame. Flushes any stale cache so next world build
+  // starts clean.
   renderEmpty(time: number): void {
     this.boardMat.uniforms.u_time.value = time;
-    this.clearGroup(this.dynamicGroup);
+    this.frameNum++;
+    this.flushWorldCaches();
+    this.backgroundGroup.visible = false;
     this.finishFrame(time);
   }
 
+  private flushWorldCaches(): void {
+    for (const e of this.innerMonsterCache.values()) {
+      this.dynamicGroup.remove(e.root);
+      disposeGroupDeep(e.root);
+    }
+    this.innerMonsterCache.clear();
+    for (const fe of this.innerFoodCache.values()) {
+      this.dynamicGroup.remove(fe.mesh);
+      fe.mesh.geometry.dispose();
+      (fe.mesh.material as THREE.Material).dispose();
+    }
+    this.innerFoodCache.clear();
+    if (this.arenaRingMesh) {
+      this.dynamicGroup.remove(this.arenaRingMesh);
+      this.arenaRingMesh.geometry.dispose();
+      (this.arenaRingMesh.material as THREE.Material).dispose();
+      this.arenaRingMesh = null;
+    }
+  }
+
   private finishFrame(time: number): void {
-    // Post-FX: board pass (clear) → main scene → bloom → vignette → low-HP.
+    // Post-FX: board pass (clear) → main scene → bloom → vignette + low-HP.
     this.oceanMat.uniforms.u_time.value = time;
     this.postFX.setTime(time);
+    const tFx = perf.start('r.postfx');
     this.postFX.render();
+    perf.end('r.postfx', tFx);
 
     // HUD overlay renders after all FX so it stays crisp.
     if (this.hudScene.children.length > 0) {
@@ -288,159 +503,165 @@ export class Renderer {
   buildMonsterPreview(m: Monster, time: number): THREE.Group {
     const group = new THREE.Group();
 
-    const fill = buildCellFill(m);
+    const fill = buildCellFillLocal(m);
     const fillMat = createCellFillMaterial({
       baseColor: new THREE.Color(m.color[0], m.color[1], m.color[2]),
       dietColor: DIET_COLOR[m.part_effect.diet],
       noiseSeed: m.noise_seed * 10
     });
     fillMat.uniforms.u_time.value = time;
-    group.add(new THREE.Mesh(fill, fillMat));
+    const fillMesh = new THREE.Mesh(fill, fillMat);
+    // Preview is used standalone (starter select pedestal). Geometry is
+    // already in the monster's local frame; the caller drives heading
+    // by setting group.rotation.z before parenting.
+    group.add(fillMesh);
+    group.rotation.z = m.heading;
 
-    const worldPoly = shapeInWorld(m);
-    const outline = buildClosedRibbon(worldPoly, 6.0);
+    const outline = buildClosedRibbon(shapeLocal(m), 6.0);
     const outlineMat = createChalkMaterial(CHALK_INK);
     group.add(new THREE.Mesh(outline, outlineMat));
 
     for (const p of m.parts) {
       if (p.kind !== PartKind.MOUTH) continue;
-      const cosH = Math.cos(m.heading);
-      const sinH = Math.sin(m.heading);
-      const wx = m.core_pos[0] + p.anchor[0] * cosH - p.anchor[1] * sinH;
-      const wy = m.core_pos[1] + p.anchor[0] * sinH + p.anchor[1] * cosH;
-      const arc = buildArc([wx, wy], 14 * p.scale, m.heading - 0.9, m.heading + 0.9, 12, 5.0);
+      const arc = buildArc([p.anchor[0], p.anchor[1]], 14 * p.scale, -0.9, 0.9, 12, 5.0);
       const arcMat = createChalkMaterial(CHALK_INK);
       group.add(new THREE.Mesh(arc, arcMat));
     }
     return group;
   }
 
-  // ----- drawing helpers ---------------------------------------------
+  // ----- cache builders ----------------------------------------------
 
-  private clearGroup(g: THREE.Group): void {
-    while (g.children.length) {
-      const c = g.children.pop()!;
-      // Dispose geometry/material so we don't leak per-frame.
-      if ((c as THREE.Mesh).geometry) (c as THREE.Mesh).geometry.dispose();
-      const mat = (c as THREE.Mesh).material as THREE.Material | THREE.Material[];
-      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-      else if (mat) mat.dispose();
-    }
-  }
-
-  private drawArenaRing(radius: number, group: THREE.Group): void {
-    const ribbon = buildRingRibbon(radius, 128, 4.0);
-    const mat = createChalkMaterial(ARENA_RING);
-    mat.uniforms.u_alpha.value = 0.6;
-    const mesh = new THREE.Mesh(ribbon, mat);
-    mesh.renderOrder = -10;
-    group.add(mesh);
-  }
-
-  private drawMonster(m: Monster, time: number, group: THREE.Group, shade: ShadeOpts): void {
+  private makeMonsterCacheEntry(m: Monster, shade: ShadeOpts): MonsterCacheEntry {
+    const root = new THREE.Group();
     const baseCol = shadeColor(new THREE.Color(m.color[0], m.color[1], m.color[2]), shade);
     const dietCol = shadeColor(DIET_COLOR[m.part_effect.diet].clone(), shade);
     const inkCol = shadeColor(CHALK_INK.clone(), shade);
-    // 1. Fill pass (under the chalk outline).
-    const fill = buildCellFill(m);
+
     const fillMat = createCellFillMaterial({
       baseColor: baseCol,
       dietColor: dietCol,
       noiseSeed: m.noise_seed * 10,
       alphaScale: shade.alphaScale
     });
-    fillMat.uniforms.u_time.value = time;
-    const fillMesh = new THREE.Mesh(fill, fillMat);
+    const fillMesh = new THREE.Mesh(buildCellFillLocal(m), fillMat);
     fillMesh.renderOrder = 0;
-    group.add(fillMesh);
+    root.add(fillMesh);
 
-    // 2. Chalk outline ribbon — closed polygon in world space.
-    const worldPoly = shapeInWorld(m);
-    const outline = buildClosedRibbon(worldPoly, 6.0);
     const outlineMat = createChalkMaterial(inkCol);
     outlineMat.uniforms.u_alpha.value = shade.alphaScale;
-    const outlineMesh = new THREE.Mesh(outline, outlineMat);
+    const outlineMesh = new THREE.Mesh(buildClosedRibbon(shapeLocal(m), 6.0), outlineMat);
     outlineMesh.renderOrder = 5;
-    group.add(outlineMesh);
+    root.add(outlineMesh);
 
-    // 3. Parts — just render MOUTH as a small chalk arc for v1.
+    const partMeshes: THREE.Mesh[] = [];
     for (const p of m.parts) {
       if (p.kind !== PartKind.MOUTH) continue;
-      const cosH = Math.cos(m.heading);
-      const sinH = Math.sin(m.heading);
-      const wx = m.core_pos[0] + p.anchor[0] * cosH - p.anchor[1] * sinH;
-      const wy = m.core_pos[1] + p.anchor[0] * sinH + p.anchor[1] * cosH;
-      const arc = buildArc([wx, wy], 14 * p.scale, m.heading - 0.9, m.heading + 0.9, 12, 5.0);
+      const arc = buildArc([p.anchor[0], p.anchor[1]], 14 * p.scale, -0.9, 0.9, 12, 5.0);
       const arcMat = createChalkMaterial(inkCol);
       arcMat.uniforms.u_alpha.value = shade.alphaScale;
       const arcMesh = new THREE.Mesh(arc, arcMat);
       arcMesh.renderOrder = 6;
-      group.add(arcMesh);
+      root.add(arcMesh);
+      partMeshes.push(arcMesh);
+    }
+
+    return {
+      root,
+      fillMesh,
+      outlineMesh,
+      partMeshes,
+      shapeKey: monsterShapeKey(m),
+      lastFrame: this.frameNum
+    };
+  }
+
+  private rebuildMonsterGeometry(e: MonsterCacheEntry, m: Monster): void {
+    e.fillMesh.geometry.dispose();
+    e.fillMesh.geometry = buildCellFillLocal(m);
+    e.outlineMesh.geometry.dispose();
+    e.outlineMesh.geometry = buildClosedRibbon(shapeLocal(m), 6.0);
+    // Rebuild mouth arc geometries to match new scales/anchors. Simple:
+    // dispose existing part meshes, re-add.
+    for (const pm of e.partMeshes) {
+      e.root.remove(pm);
+      pm.geometry.dispose();
+      (pm.material as THREE.Material).dispose();
+    }
+    e.partMeshes.length = 0;
+    const inkCol = CHALK_INK.clone();
+    for (const p of m.parts) {
+      if (p.kind !== PartKind.MOUTH) continue;
+      const arc = buildArc([p.anchor[0], p.anchor[1]], 14 * p.scale, -0.9, 0.9, 12, 5.0);
+      const arcMat = createChalkMaterial(inkCol);
+      const arcMesh = new THREE.Mesh(arc, arcMat);
+      arcMesh.renderOrder = 6;
+      e.root.add(arcMesh);
+      e.partMeshes.push(arcMesh);
     }
   }
 
-  private drawFood(f: Food, _time: number, group: THREE.Group, shade: ShadeOpts): void {
-    // Snowflake glyph: six V-branches with trident tips + hex core.
-    // Three color passes: shadow (offset), body, highlight (top).
+  private makeFoodCacheEntry(f: Food, shade: ShadeOpts): FoodCacheEntry {
     const body = f.kind === FoodKind.PLANT ? PLANT_GREEN_BODY : MEAT_GREEN_BODY;
-    const hi = f.kind === FoodKind.PLANT ? PLANT_GREEN_HI : MEAT_GREEN_HI;
-    const sh = f.kind === FoodKind.PLANT ? PLANT_GREEN_SHADOW : MEAT_GREEN_SHADOW;
-
-    const passes: Array<{ color: THREE.Color; offset: [number, number]; alpha: number }> = [
-      { color: sh, offset: [1.2, -1.2], alpha: 0.85 },
-      { color: body, offset: [0, 0], alpha: 1.0 },
-      { color: hi, offset: [-0.8, 0.8], alpha: 0.7 }
-    ];
-
-    for (const pass of passes) {
-      const strokes = buildSnowflakeStrokes(f.pos, f.radius, pass.offset);
-      for (const seg of strokes) {
-        const geom = buildOpenRibbon(seg, 3.0);
-        const mat = createChalkMaterial(shadeColor(pass.color.clone(), shade));
-        mat.uniforms.u_alpha.value = pass.alpha * shade.alphaScale;
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.renderOrder = -2;
-        group.add(mesh);
-      }
-    }
+    // One merged geometry per food — every stroke of all three color
+    // passes folded into a single BufferGeometry. Per-vertex color
+    // attribute drives the final tint (+ alpha attribute for pass
+    // contrast). This collapses ~66 meshes/food to exactly 1.
+    const geom = buildFoodGeometry(f.radius);
+    const mat = createChalkMaterial(shadeColor(body.clone(), shade));
+    mat.uniforms.u_alpha.value = 0.9 * shade.alphaScale;
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.renderOrder = -2;
+    mesh.position.set(f.pos[0], f.pos[1], 0);
+    return {
+      mesh,
+      radiusKey: Math.round(f.radius),
+      lastFrame: this.frameNum
+    };
   }
+}
+
+// Free a cached Three.Group and all child geometries/materials.
+function disposeGroupDeep(g: THREE.Group): void {
+  g.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.geometry) m.geometry.dispose();
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());
+    else if (mat) mat.dispose();
+  });
 }
 
 // ----- geometry builders -----------------------------------------------
 
-// Convert a monster's local shape + pose into world-space polygon.
-function shapeInWorld(m: Monster): Vec2[] {
-  const cosH = Math.cos(m.heading);
-  const sinH = Math.sin(m.heading);
+// Monster shape in local space (heading=0, origin=core_pos). The root
+// group transform handles position + rotation per frame.
+function shapeLocal(m: Monster): Vec2[] {
   const out: Vec2[] = [];
-  for (const [x, y] of m.shape) {
-    out.push([m.core_pos[0] + x * cosH - y * sinH, m.core_pos[1] + x * sinH + y * cosH]);
-  }
+  for (const [x, y] of m.shape) out.push([x, y]);
   return out;
 }
 
 // Fan-triangulation of the shape + per-vertex inset (0 at rim, 1 at
-// centroid). Feeds cell_body.frag.
-function buildCellFill(m: Monster): THREE.BufferGeometry {
-  const world = shapeInWorld(m);
-  const n = world.length;
+// centroid). Feeds cell_body.frag. Coords are local (un-rotated).
+function buildCellFillLocal(m: Monster): THREE.BufferGeometry {
+  const shape = m.shape;
+  const n = shape.length;
 
-  // Centroid.
   let cx = 0;
   let cy = 0;
-  for (const [x, y] of world) {
+  for (const [x, y] of shape) {
     cx += x;
     cy += y;
   }
   cx /= n;
   cy /= n;
 
-  // bbox for uv.
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
     maxY = -Infinity;
-  for (const [x, y] of world) {
+  for (const [x, y] of shape) {
     if (x < minX) minX = x;
     if (y < minY) minY = y;
     if (x > maxX) maxX = x;
@@ -453,14 +674,12 @@ function buildCellFill(m: Monster): THREE.BufferGeometry {
   const insets: number[] = [];
   const uvs: number[] = [];
 
-  // Vertex 0 = centroid, inset=1.
   verts.push(cx, cy, 0);
   insets.push(1);
   uvs.push((cx - minX) / w, (cy - minY) / h);
 
-  // Rim verts 1..n, inset=0.
   for (let i = 0; i < n; ++i) {
-    const [x, y] = world[i];
+    const [x, y] = shape[i];
     verts.push(x, y, 0);
     insets.push(0);
     uvs.push((x - minX) / w, (y - minY) / h);
@@ -495,7 +714,6 @@ function buildRibbon(points: Vec2[], halfWidth: number, closed: boolean): THREE.
   const along: number[] = [];
   const indices: number[] = [];
 
-  // Precompute segment normals and cumulative along-length.
   const alongAt: number[] = new Array(n).fill(0);
   for (let i = 1; i < n; ++i) {
     const dx = points[i][0] - points[i - 1][0];
@@ -504,26 +722,22 @@ function buildRibbon(points: Vec2[], halfWidth: number, closed: boolean): THREE.
   }
 
   function tangent(i: number): [number, number] {
-    let ax: number, ay: number;
     const prev = closed ? (i - 1 + n) % n : Math.max(0, i - 1);
     const next = closed ? (i + 1) % n : Math.min(n - 1, i + 1);
-    ax = points[next][0] - points[prev][0];
-    ay = points[next][1] - points[prev][1];
+    const ax = points[next][0] - points[prev][0];
+    const ay = points[next][1] - points[prev][1];
     const L = Math.hypot(ax, ay) || 1;
     return [ax / L, ay / L];
   }
 
   for (let i = 0; i < n; ++i) {
     const [tx, ty] = tangent(i);
-    // Perpendicular (rotated +90°).
     const nx = -ty;
     const ny = tx;
     const [px, py] = points[i];
-    // +width side
     verts.push(px + nx * halfWidth, py + ny * halfWidth, 0);
     across.push(+1);
     along.push(alongAt[i]);
-    // -width side
     verts.push(px - nx * halfWidth, py - ny * halfWidth, 0);
     across.push(-1);
     along.push(alongAt[i]);
@@ -573,13 +787,13 @@ function buildArc(
   return buildOpenRibbon(pts, halfWidth);
 }
 
-// Emit polyline segments for a 6-fold snowflake glyph.
-// Simplified version of native drawFood(): hex core + 6 trident branches.
-function buildSnowflakeStrokes(center: Vec2, radius: number, offset: [number, number]): Vec2[][] {
+// Emit polyline segments for a 6-fold snowflake glyph at the origin.
+// Local-space (the mesh position places it in the world). Simplified
+// from native drawFood(): hex core + 6 trident branches.
+function buildSnowflakeStrokes(radius: number, offset: [number, number]): Vec2[][] {
   const strokes: Vec2[][] = [];
-  const [cx, cy] = [center[0] + offset[0], center[1] + offset[1]];
+  const [cx, cy] = [offset[0], offset[1]];
 
-  // Hex core (small closed hex as a polyline).
   const hex: Vec2[] = [];
   const coreR = radius * 0.28;
   for (let i = 0; i <= 6; ++i) {
@@ -588,7 +802,6 @@ function buildSnowflakeStrokes(center: Vec2, radius: number, offset: [number, nu
   }
   strokes.push(hex);
 
-  // Six main branches with V-fork midway and trident tip.
   for (let k = 0; k < 6; ++k) {
     const a = (k / 6) * Math.PI * 2;
     const dx = Math.cos(a);
@@ -600,19 +813,77 @@ function buildSnowflakeStrokes(center: Vec2, radius: number, offset: [number, nu
     const tip: Vec2 = [cx + dx * radius, cy + dy * radius];
     strokes.push([base, tip]);
 
-    // Mid V-fork.
     const midT = 0.55;
     const mid: Vec2 = [base[0] + (tip[0] - base[0]) * midT, base[1] + (tip[1] - base[1]) * midT];
     const fork = radius * 0.25;
     strokes.push([mid, [mid[0] + dx * fork * 0.4 + px * fork, mid[1] + dy * fork * 0.4 + py * fork]]);
     strokes.push([mid, [mid[0] + dx * fork * 0.4 - px * fork, mid[1] + dy * fork * 0.4 - py * fork]]);
 
-    // Trident tip (three short prongs at the end).
     const prong = radius * 0.22;
     strokes.push([tip, [tip[0] + dx * prong, tip[1] + dy * prong]]);
     strokes.push([tip, [tip[0] + dx * prong * 0.4 + px * prong, tip[1] + dy * prong * 0.4 + py * prong]]);
     strokes.push([tip, [tip[0] + dx * prong * 0.4 - px * prong, tip[1] + dy * prong * 0.4 - py * prong]]);
   }
-
   return strokes;
+}
+
+// Merge all three color-pass ribbons of a snowflake into a single
+// BufferGeometry (no vertex-color variation — the fragment shader uses
+// a single tint, we accept a minor visual simplification for ~66×
+// draw-call reduction). Drawn at local origin; mesh position places it.
+function buildFoodGeometry(radius: number): THREE.BufferGeometry {
+  const passes: Array<[number, number]> = [
+    [1.2, -1.2],
+    [0, 0],
+    [-0.8, 0.8]
+  ];
+  const geoms: THREE.BufferGeometry[] = [];
+  for (const off of passes) {
+    for (const seg of buildSnowflakeStrokes(radius, off)) {
+      geoms.push(buildOpenRibbon(seg, 3.0));
+    }
+  }
+  return mergeBufferGeometries(geoms);
+}
+
+// Minimal merge — concat position/a_across/a_along/index across inputs.
+// Sufficient for our chalk ribbons; avoids pulling in three's
+// BufferGeometryUtils (which has a runtime mismatch API surface we
+// don't want to depend on).
+function mergeBufferGeometries(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  let posTotal = 0;
+  let idxTotal = 0;
+  for (const g of geoms) {
+    posTotal += g.getAttribute('position').count;
+    const idx = g.getIndex();
+    idxTotal += idx ? idx.count : g.getAttribute('position').count;
+  }
+  const pos = new Float32Array(posTotal * 3);
+  const across = new Float32Array(posTotal);
+  const along = new Float32Array(posTotal);
+  const indices = new Uint32Array(idxTotal);
+  let posOff = 0;   // element count (verts)
+  let idxOff = 0;   // index count
+  for (const g of geoms) {
+    const p = g.getAttribute('position') as THREE.BufferAttribute;
+    const a = g.getAttribute('a_across') as THREE.BufferAttribute;
+    const l = g.getAttribute('a_along') as THREE.BufferAttribute;
+    pos.set(p.array as Float32Array, posOff * 3);
+    across.set(a.array as Float32Array, posOff);
+    along.set(l.array as Float32Array, posOff);
+    const idx = g.getIndex();
+    if (idx) {
+      const src = idx.array as ArrayLike<number>;
+      for (let i = 0; i < src.length; ++i) indices[idxOff + i] = src[i] + posOff;
+      idxOff += src.length;
+    }
+    posOff += p.count;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('a_across', new THREE.BufferAttribute(across, 1));
+  out.setAttribute('a_along', new THREE.BufferAttribute(along, 1));
+  out.setIndex(new THREE.BufferAttribute(indices, 1));
+  return out;
 }

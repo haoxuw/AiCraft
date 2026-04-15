@@ -18,6 +18,7 @@ import { Action, ActionType } from '../sim/action';
 import { makeMonster, Monster, refreshStats } from '../sim/monster';
 import { Part } from '../sim/part';
 import { tick } from '../sim/sim';
+import * as perf from '../perf';
 import { FoodKind } from '../sim/world';
 import { TIER_COUNT, TIER_SIZE_MULTS, TIER_THRESHOLDS } from '../sim/tuning';
 import { configureWorld, makeWorld, scatterFood, spawnMonster, World } from '../sim/world';
@@ -27,7 +28,11 @@ import { makeMainMenuScene } from './main_menu_scene';
 import { Scene, SceneCtx, disposeGroup } from './scene';
 import { makeTierUpOverlay, TierUpOverlay } from './tier_up_scene';
 
-const FIXED_DT = 1 / 60;
+// Sim ticks at a fixed 30 Hz (inner) / 15 Hz (outer) regardless of render
+// rate. The renderer interpolates monster positions between the two most
+// recent sim snapshots so motion stays smooth at high FPS.
+const FIXED_DT = 1 / 30;
+const OUTER_FIXED_DT = 1 / 15;
 const BASE_SPEED = 360;
 
 export interface MatchStarter {
@@ -56,7 +61,7 @@ export interface MatchStats {
 
 function buildWorld(starter: MatchStarter): { world: World; player: Monster } {
   const world = makeWorld();
-  scatterFood(world, 20);
+  scatterFood(world, 12);
   const player = spawnMonster(world, {
     pos: [0, 0],
     baseRadius: 46,
@@ -98,7 +103,9 @@ function buildOuterWorld(seed: number, scale: number = 2.0): World {
   const w = makeWorld();
   w.next_id = OUTER_ID_BASE;
   configureWorld(w, scale);
-  const ids = ['base:pricklet', 'base:shelly', 'base:fang', 'base:zip', 'base:thorn', 'base:drip'];
+  // Outer world is decorative — a cheap silhouette layer. Two creatures
+  // are plenty to imply "other cells out there" without sim/render cost.
+  const ids = ['base:pricklet', 'base:fang'];
   const defs = ids.map((id) => getMonster(id)).filter((d): d is NonNullable<typeof d> => !!d);
   const N = defs.length;
   const r = w.map_radius * 0.5;
@@ -115,7 +122,8 @@ function buildOuterWorld(seed: number, scale: number = 2.0): World {
       behaviorId: defs[i].behavior
     });
   }
-  scatterFood(w, 16);
+  // Outer world food is not rendered (silhouette layer only) — skip
+  // scattering it to keep outer sim cost minimal.
   return w;
 }
 
@@ -128,7 +136,7 @@ function buildMigratedInner(
   seed: number
 ): { world: World; player: Monster } {
   const world = makeWorld();
-  scatterFood(world, 20);
+  scatterFood(world, 12);
   // Re-spawn the player with carried parts/color but fresh shape at the
   // starter baseRadius — refreshStats() then re-derives stats, and we
   // restore biomass/tier/lifetime_biomass so the tier carries over.
@@ -188,7 +196,65 @@ export function makeMatchScene(opts: MatchOpts): Scene {
   let outerAI: AIStateMap = makeAIStateMap();
   let goTo: [number, number] | null = null;
   let acc = 0;
+  let outerAcc = 0;
   let enteredAt = 0;
+
+  // Interpolation snapshots: position/heading at the previous and current
+  // sim tick boundaries, per monster id. Render reads `lerp(prev, cur,
+  // alpha)` with alpha = acc / FIXED_DT, then restores authoritative
+  // values so the next sim tick reads untouched state.
+  interface InterpSnap { prev: [number, number]; cur: [number, number]; prevH: number; curH: number; }
+  const innerSnaps = new Map<number, InterpSnap>();
+  const outerSnaps = new Map<number, InterpSnap>();
+  // Authoritative (un-interpolated) state stashed across render.
+  const authStash: Array<{ m: Monster; pos: [number, number]; h: number }> = [];
+
+  function captureSnap(w: World, snaps: Map<number, InterpSnap>): void {
+    for (const m of w.monsters.values()) {
+      const s = snaps.get(m.id);
+      if (s) {
+        s.prev = s.cur;
+        s.prevH = s.curH;
+        s.cur = [m.core_pos[0], m.core_pos[1]];
+        s.curH = m.heading;
+      } else {
+        snaps.set(m.id, {
+          prev: [m.core_pos[0], m.core_pos[1]],
+          cur: [m.core_pos[0], m.core_pos[1]],
+          prevH: m.heading,
+          curH: m.heading
+        });
+      }
+    }
+    // Drop stale entries for monsters that no longer exist.
+    for (const id of snaps.keys()) {
+      if (!w.monsters.has(id)) snaps.delete(id);
+    }
+  }
+
+  function applyInterp(w: World, snaps: Map<number, InterpSnap>, alpha: number): void {
+    for (const m of w.monsters.values()) {
+      const s = snaps.get(m.id);
+      if (!s) continue;
+      authStash.push({ m, pos: [m.core_pos[0], m.core_pos[1]], h: m.heading });
+      m.core_pos = [
+        s.prev[0] + (s.cur[0] - s.prev[0]) * alpha,
+        s.prev[1] + (s.cur[1] - s.prev[1]) * alpha
+      ];
+      let dh = s.curH - s.prevH;
+      while (dh > Math.PI) dh -= 2 * Math.PI;
+      while (dh < -Math.PI) dh += 2 * Math.PI;
+      m.heading = s.prevH + dh * alpha;
+    }
+  }
+
+  function restoreInterp(): void {
+    for (const e of authStash) {
+      e.m.core_pos = e.pos;
+      e.m.heading = e.h;
+    }
+    authStash.length = 0;
+  }
 
   // Stats.
   let kills = 0;
@@ -593,15 +659,13 @@ export function makeMatchScene(opts: MatchOpts): Scene {
         continue;
       }
 
+      const tAi = perf.start('sim.ai.inner');
       actions.push(...decideAll(world, FIXED_DT, innerAI));
+      perf.end('sim.ai.inner', tAi);
+      const tInner = perf.start('sim.tick.inner');
       const events = tick(world, actions, FIXED_DT);
-
-      // Outer (background) sim — AI-only, no player. Events intentionally
-      // discarded; HUD only surfaces inner-world combat.
-      if (outerWorld) {
-        const outerActions = decideAll(outerWorld, FIXED_DT, outerAI);
-        tick(outerWorld, outerActions, FIXED_DT);
-      }
+      perf.end('sim.tick.inner', tInner);
+      captureSnap(world, innerSnaps);
 
       for (const e of events) {
         if (e.type === 'PICKUP' && player && e.monster === player.id) {
@@ -661,6 +725,25 @@ export function makeMatchScene(opts: MatchOpts): Scene {
       }
 
       acc -= FIXED_DT;
+    }
+
+    // Outer (background) sim — runs at 15 Hz, independent of inner rate.
+    // AI-only, no player. Events intentionally discarded; HUD only
+    // surfaces inner-world combat.
+    if (outerWorld) {
+      outerAcc += dtReal;
+      // Cap to avoid spiral-of-death after a long stall.
+      if (outerAcc > OUTER_FIXED_DT * 4) outerAcc = OUTER_FIXED_DT * 4;
+      while (outerAcc >= OUTER_FIXED_DT) {
+        const tAiO = perf.start('sim.ai.outer');
+        const outerActions = decideAll(outerWorld, OUTER_FIXED_DT, outerAI);
+        perf.end('sim.ai.outer', tAiO);
+        const tO = perf.start('sim.tick.outer');
+        tick(outerWorld, outerActions, OUTER_FIXED_DT);
+        perf.end('sim.tick.outer', tO);
+        captureSnap(outerWorld, outerSnaps);
+        outerAcc -= OUTER_FIXED_DT;
+      }
     }
   }
 
@@ -879,11 +962,18 @@ export function makeMatchScene(opts: MatchOpts): Scene {
         }
       }
 
-      // Render world (or paused: freeze at current time).
+      // Render world (or paused: freeze at current time). Apply sim-tick
+      // interpolation so high-Hz frames look smooth despite the 30 Hz
+      // inner / 15 Hz outer tick rates.
+      const innerAlpha = Math.max(0, Math.min(1, acc / FIXED_DT));
+      const outerAlpha = Math.max(0, Math.min(1, outerAcc / OUTER_FIXED_DT));
+      applyInterp(world, innerSnaps, innerAlpha);
+      if (outerWorld) applyInterp(outerWorld, outerSnaps, outerAlpha);
       const cam: [number, number] = player
         ? [player.core_pos[0], player.core_pos[1]]
         : [0, 0];
       ctx.renderer.renderDual(world, outerWorld, cam, ctx.now);
+      restoreInterp();
     },
 
     onKey(e, ctx) {

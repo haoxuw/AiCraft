@@ -14,14 +14,15 @@ if(CIVCRAFT_PERF)
 	message(STATUS "CIVCRAFT_PERF: enabled (perf instrumentation compiled in)")
 endif()
 
-# Two games share one C++ engine (src/platform). Each game is a set of
-# executables under src/<Game>/, linking the platform's source tree.
+# CivCraft is a native C++ voxel sandbox built on the src/platform/ engine.
+# CellCraft is NOT built here — it lives entirely at src/CellCraft/web/ as a
+# standalone Three.js + TypeScript client (run with `cd src/CellCraft/web &&
+# npm run dev`). Nothing under src/CellCraft/ is compiled by CMake.
 #
 #   src/platform/   Engine: shared types, server loop, agent runtime, renderer
 #   src/CivCraft/   Voxel sandbox game (chunks, blocks, structures)
-#   src/CellCraft/   Spore-cell-stage game — C++ client on src/platform/
 #
-# Each game's executables run with CWD = $BUILD_DIR, so assets copied into
+# Each executable runs with CWD = $BUILD_DIR, so assets copied into
 # $BUILD_DIR by POST_BUILD are found via "shaders/...", "artifacts/...", etc.
 # at runtime.
 
@@ -350,14 +351,7 @@ else()
 			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-test-pathfinding>/artifacts
 	)
 
-	# =================================================================
-	# CellCraft — Spore cell stage game (C++ on platform/).
-	# M0: single `cellcraft` binary — chalkboard + mouse draws strokes.
-	# M1+: server/agent process split once networking lands.
-	# The legacy Godot prototype at src/CellCraft/godot/ is retained as a
-	# visual reference only and is NOT built by CMake.
-	# =================================================================
-	if(EXISTS ${CMAKE_SOURCE_DIR}/src/CellCraft/CMakeLists.txt)
-		add_subdirectory(src/CellCraft)
-	endif()
+	# CellCraft is intentionally not built here — it is a standalone web
+	# client under src/CellCraft/web/ (Three.js + TypeScript), run via
+	# `cd src/CellCraft/web && npm run dev`.
 endif()
