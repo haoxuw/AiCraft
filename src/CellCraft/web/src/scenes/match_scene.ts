@@ -241,6 +241,12 @@ export function makeMatchScene(opts: MatchOpts): Scene {
   // Estimated server→client clock offset: client_t - server_t (ms).
   let mpServerClockOffset = 0;
 
+  // MP HUD extras.
+  let pingText: THREE.Object3D | null = null;
+  let connGroup: THREE.Group | null = null;    // "Reconnecting…" overlay
+  let connText: THREE.Object3D | null = null;
+  let mpStatus: 'connecting' | 'open' | 'closed' | 'reconnecting' = 'connecting';
+
   // Apply an EntitySnap to the local world, creating the Monster if new.
   // For the local player, runs reconciliation — snapping back + replay
   // only when prediction has drifted past MP_SNAP_TOLERANCE. For others,
@@ -423,6 +429,9 @@ export function makeMatchScene(opts: MatchOpts): Scene {
 
     // Danger pulse label anchored just above the HP bar.
     if (dangerText) dangerText.position.set(0, cy + 44, 0);
+
+    // MP ping indicator: top-right.
+    if (pingText) pingText.position.set(w / 2 - 20, h / 2 - 28, 0);
   }
 
   function buildTierPill(tier: number): THREE.Group {
@@ -675,7 +684,14 @@ export function makeMatchScene(opts: MatchOpts): Scene {
         });
         outerWorld = null;
         initialBiomass.v = 0;
-        net = new NetClient({ url: opts.mpUrl!, autoReconnect: true });
+        net = new NetClient({
+          url: opts.mpUrl!,
+          autoReconnect: true,
+          onStatus: (s) => {
+            mpStatus = s;
+            if (s !== 'open' && s !== 'closed') mpJoined = false;
+          }
+        });
       } else {
         const built = buildWorld(opts.starter);
         world = built.world;
@@ -726,6 +742,35 @@ export function makeMatchScene(opts: MatchOpts): Scene {
 
       ctx.renderer.hudScene.add(hudGroup);
 
+      if (isMP) {
+        pingText = makeText('— ms', {
+          size: 14,
+          color: UI_PALETTE.chalkSoft,
+          anchorX: 'right',
+          anchorY: 'top'
+        });
+        hudGroup.add(pingText);
+
+        // Full-screen "Reconnecting…" overlay, hidden until status != open.
+        connGroup = new THREE.Group();
+        const panel = makeGlassPanel(360, 120, {
+          radius: 20,
+          tint: 0x0c1014,
+          alpha: 0.9,
+          borderColor: UI_PALETTE.neonAmber
+        });
+        connGroup.add(panel);
+        connText = makeText('Connecting…', {
+          size: 22,
+          color: UI_PALETTE.paper,
+          glow: UI_PALETTE.neonAmber,
+          weight: 'bold'
+        });
+        connGroup.add(connText);
+        connGroup.visible = false;
+        ctx.renderer.hudScene.add(connGroup);
+      }
+
       buildPauseOverlay();
 
       layoutHud(window.innerWidth, window.innerHeight);
@@ -758,6 +803,13 @@ export function makeMatchScene(opts: MatchOpts): Scene {
       hintText = null;
       dangerText = null;
       pauseBtns = [];
+      if (connGroup) {
+        ctx.renderer.hudScene.remove(connGroup);
+        disposeGroup(connGroup);
+        connGroup = null;
+      }
+      connText = null;
+      pingText = null;
       ctx.renderer.setLowHp(0);
       ctx.renderer.setOcean(false);
     },
@@ -805,6 +857,27 @@ export function makeMatchScene(opts: MatchOpts): Scene {
       // Interpolate non-player MP entities toward their buffered server
       // snapshots before handing the world to the renderer.
       updateMPInterp();
+
+      // MP HUD refresh.
+      if (isMP) {
+        if (pingText && net) {
+          const txt = pingText as unknown as { text: string; sync(): void };
+          const label = net.pingMs > 0 ? `${Math.round(net.pingMs)} ms` : '— ms';
+          if (txt.text !== label) { txt.text = label; txt.sync(); }
+        }
+        if (connGroup && connText) {
+          const needOverlay = mpStatus !== 'open';
+          connGroup.visible = needOverlay;
+          if (needOverlay) {
+            const lbl =
+              mpStatus === 'reconnecting' ? 'Reconnecting…' :
+              mpStatus === 'closed' ? 'Disconnected' :
+              'Connecting…';
+            const t = connText as unknown as { text: string; sync(): void };
+            if (t.text !== lbl) { t.text = lbl; t.sync(); }
+          }
+        }
+      }
 
       // Render world (or paused: freeze at current time).
       const cam: [number, number] = player
