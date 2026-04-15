@@ -693,63 +693,149 @@ void App::drawMainMenu(float dt) {
 	// (e.g. --menu-screenshot path).
 	if (!sim_ || world_.monsters.empty()) initMenuSim();
 
-	// 1) Live screensaver behind everything.
+	// Keep the screensaver sim ticking so returning to gameplay feels alive,
+	// but DON'T draw the cream creatures — the modern menu is a dark canvas.
 	stepMenuSim(dt);
-	drawFood();
-	drawMonsters();
-	updateAndDrawParticles(dt);
 
 	float aspect = window_.aspectRatio();
+	namespace m = ui::modern;
+	int W, H; glfwGetFramebufferSize(window_.handle(), &W, &H);
+	m::beginFrame(text_.get(), W, H);
 
-	// 2) Soft cream overlay so menu text reads against busy sim — but keep
-	//    the background airy. (theme: low-opacity cream, not dim black.)
-	text_->drawRect(-1.0f, -1.0f, 2.0f, 2.0f, glm::vec4(1.0f, 0.99f, 0.95f, 0.35f));
+	// 1) Dark charcoal gradient scrim — wipes out the chalkboard + cream
+	//    ambient motes that the outer loop already drew.
+	m::drawScrim(0, 0, W, H, m::SURFACE_BG_TOP, m::SURFACE_BG_BOTTOM);
 
-	// 3) Centered card: cream fill, charcoal outline, drop shadow.
-	float px = -0.34f, py = -0.48f, pw = 0.68f, ph = 0.96f;
-	// Drop shadow (offset down-right).
-	text_->drawRect(px + 0.012f, py - 0.018f, pw, ph, ui::SHADOW);
-	// Card fill.
-	text_->drawRect(px, py, pw, ph, ui::CARD_FILL);
-	auto chalkBorder = [&](float x, float y, float w, float h, float t, glm::vec4 c) {
-		text_->drawRect(x, y,         w, t, c);
-		text_->drawRect(x, y + h - t, w, t, c);
-		text_->drawRect(x, y,         t, h, c);
-		text_->drawRect(x + w - t, y, t, h, c);
+	// 2) Subtle cyan-tinted ambient dots drifting across the dark canvas.
+	//    Deterministic per-frame via a menu-local RNG so the build is cheap
+	//    without touching the shared AmbientParticles.
+	{
+		static unsigned rs = 0xCAFEC01Du;
+		static float motes[60][2];   // x, y in pixels
+		static float mvel[60][2];
+		static bool  seeded = false;
+		auto r01 = [&]() {
+			rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5;
+			return (rs & 0xFFFFFF) / float(0x1000000);
+		};
+		if (!seeded) {
+			for (int i = 0; i < 60; ++i) {
+				motes[i][0] = r01() * W;
+				motes[i][1] = r01() * H;
+				float a = r01() * 6.28318f;
+				float sp = 6.0f + r01() * 10.0f;
+				mvel[i][0] = std::cos(a) * sp;
+				mvel[i][1] = std::sin(a) * sp;
+			}
+			seeded = true;
+		}
+		glm::vec4 dot = m::ACCENT_CYAN; dot.a = 0.30f;
+		for (int i = 0; i < 60; ++i) {
+			motes[i][0] += mvel[i][0] * dt;
+			motes[i][1] += mvel[i][1] * dt;
+			if (motes[i][0] < -4)  motes[i][0] = (float)W + 4;
+			if (motes[i][0] > W+4) motes[i][0] = -4;
+			if (motes[i][1] < -4)  motes[i][1] = (float)H + 4;
+			if (motes[i][1] > H+4) motes[i][1] = -4;
+			int x = (int)motes[i][0], y = (int)motes[i][1];
+			m::drawRoundedRect(x, y, 2, 2, 1, dot);
+		}
+	}
+
+	// 3) Centered content column, ~560px wide.
+	const int COL_W = 560;
+	int col_x = (W - COL_W) / 2;
+	// Rough block height for vertical centering: title(~150) + divider gap
+	// + tagline(~28) + gap + 3 buttons * 60 + 2 gaps * 12 = ~420.
+	const int BLOCK_H = 420;
+	int col_y = (H - BLOCK_H) / 2;
+
+	// Title row — keep the chalk identity. Rendered via drawOutlinedTitle in
+	// NDC space. Original menu used (-0.26, 0.30, scale=3.0); those numbers
+	// produce a visually-centered "CELLCRAFT" so we reuse them but with a
+	// cyan-glow shadow instead of gold to sit on the dark scrim.
+	{
+		float title_scale = 3.0f;
+		float tx = -0.26f;
+		// Title baseline in NDC — place it above the button block.
+		// Buttons sit at col_y + 210px; we want the title centered roughly
+		// 120 px above, converted to NDC offset.
+		int title_py = col_y + 20;
+		// drawOutlinedTitle expects a baseline-ish y in NDC (y-up). Convert
+		// pixel-top + a font-cap offset.
+		float ty = 1.0f - (float)(title_py + 60) * 2.0f / (float)H;
+		glm::vec4 shadow = m::ACCENT_CYAN_DEEP; shadow.a = 0.70f;
+		ui::drawOutlinedTitle(text_.get(), "CELLCRAFT", tx, ty, title_scale,
+			glm::vec4(0.96f, 0.98f, 1.0f, 1.0f), shadow, aspect);
+	}
+
+	// Thin cyan divider under the title.
+	int div_y = col_y + 175;
+	m::drawDivider(col_x + COL_W / 2 - 80, div_y, 160,
+		m::DividerAxis::HORIZONTAL, m::ACCENT_CYAN);
+
+	// Tagline in modern label style.
+	{
+		int tag_y = div_y + m::SPACE_MD;
+		int tw = m::measureTextPx("SCRIBBLE SURVIVAL", m::TYPE_LABEL);
+		m::drawTextLabel(col_x + (COL_W - tw) / 2, tag_y,
+			"SCRIBBLE SURVIVAL", m::TEXT_SECONDARY);
+	}
+
+	// Buttons stack.
+	glm::vec2 mouse_fb = mouse_px_;
+	{
+		int ww, wh; glfwGetWindowSize(window_.handle(), &ww, &wh);
+		if (ww > 0 && wh > 0) {
+			mouse_fb.x = mouse_px_.x * (float)W / (float)ww;
+			mouse_fb.y = mouse_px_.y * (float)H / (float)wh;
+		}
+	}
+	auto in_rect = [&](int x, int y, int w, int h) {
+		return mouse_fb.x >= x && mouse_fb.x <= x + w
+		    && mouse_fb.y >= y && mouse_fb.y <= y + h;
 	};
-	chalkBorder(px, py, pw, ph, 0.004f, ui::CARD_STROKE);
-	chalkBorder(px + 0.012f, py + 0.012f, pw - 0.024f, ph - 0.024f, 0.002f,
-		ui::ACCENT_GOLD_WARM);
-	// Corner tick marks — small L-brackets outside the outer border.
-	float tk = 0.03f, tt = 0.005f;
-	glm::vec4 tkc = ui::ACCENT_GOLD;
-	text_->drawRect(px - 0.01f,       py + ph - tt,     tk, tt, tkc);
-	text_->drawRect(px - 0.01f,       py + ph - tk,     tt, tk, tkc);
-	text_->drawRect(px + pw + 0.01f - tk, py + ph - tt, tk, tt, tkc);
-	text_->drawRect(px + pw + 0.01f - tt, py + ph - tk, tt, tk, tkc);
-	text_->drawRect(px - 0.01f,       py,               tk, tt, tkc);
-	text_->drawRect(px - 0.01f,       py,               tt, tk, tkc);
-	text_->drawRect(px + pw + 0.01f - tk, py,           tk, tt, tkc);
-	text_->drawRect(px + pw + 0.01f - tt, py,           tt, tk, tkc);
 
-	// 4) Bold outlined title — Fall-Guys-style charcoal halo + gold shadow.
-	glm::vec4 title_shadow = ui::ACCENT_GOLD_WARM; title_shadow.a = 0.75f;
-	ui::drawOutlinedTitle(text_.get(), "CELLCRAFT", -0.26f, 0.30f, 3.0f,
-	                      ui::TEXT_DARK, title_shadow, aspect);
-	text_->drawText ("// SCRIBBLE SURVIVAL //", -0.23f, 0.18f, 1.0f,
-		ui::TEXT_MUTED, aspect);
+	int btn_y  = col_y + 210;
+	const int BTN_H_LG  = 60;
+	const int BTN_H_SM  = 48;
+	const int GAP       = 12;
 
-	// 5) Buttons (inside panel). Single unified flow: PLAY → starter picker.
-	Button play { -0.22f,  0.05f, 0.44f, 0.08f, "PLAY" };
-	Button quit { -0.22f, -0.08f, 0.44f, 0.08f, "QUIT" };
+	// PLAY (primary)
+	{
+		bool hov = in_rect(col_x, btn_y, COL_W, BTN_H_LG);
+		bool prs = hov && mouse_left_down_;
+		bool clk = hov && mouse_left_click_;
+		m::buttonPrimary(col_x, btn_y, COL_W, BTN_H_LG, "PLAY", hov, prs);
+		if (clk) goToStarter();
+	}
+	btn_y += BTN_H_LG + GAP;
 
-	if (drawButton(play)) goToStarter();
-	if (drawButton(quit)) glfwSetWindowShouldClose(window_.handle(), 1);
+	// OPTIONS (ghost, disabled-ish — no-op for now but visually present)
+	{
+		bool hov = in_rect(col_x, btn_y, COL_W, BTN_H_SM);
+		bool prs = hov && mouse_left_down_;
+		m::buttonGhost(col_x, btn_y, COL_W, BTN_H_SM, "OPTIONS", hov, prs);
+		// No action wired yet — commit 2 is visual reskin only.
+	}
+	btn_y += BTN_H_SM + GAP;
 
-	// 6) Hint line at panel bottom.
-	text_->drawText("v0.1  //  CLICK OR ESC",
-		-0.14f, -0.43f, 0.7f,
-		ui::TEXT_MUTED, aspect);
+	// QUIT (ghost)
+	{
+		bool hov = in_rect(col_x, btn_y, COL_W, BTN_H_SM);
+		bool prs = hov && mouse_left_down_;
+		bool clk = hov && mouse_left_click_;
+		m::buttonGhost(col_x, btn_y, COL_W, BTN_H_SM, "QUIT", hov, prs);
+		if (clk) glfwSetWindowShouldClose(window_.handle(), 1);
+	}
+
+	// Footer version string, bottom-center.
+	{
+		const std::string v = "v0.1  \xB7  CHALK ON INK";
+		int tw = m::measureTextPx(v, m::TYPE_CAPTION);
+		m::drawTextModern((W - tw) / 2, H - 28, v, m::TYPE_CAPTION,
+			m::TEXT_MUTED);
+	}
 }
 
 
