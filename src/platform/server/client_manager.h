@@ -425,6 +425,73 @@ public:
 	// NOTE: Behavior reload forwarding removed. AgentClient runs in-process
 	// with PlayerClient and can reload behaviors directly.
 
+	// Serialize one entity's full state and ship it as S_ENTITY to this client.
+	//
+	// Shared by two call sites:
+	//  1. broadcastState() — the 20 Hz perception-scoped loop for every entity
+	//     visible to the client.
+	//  2. finalizePreparingImpl() — one eager push of the player's own entity
+	//     before S_READY, so the client never enters PLAYING without finding
+	//     itself (avoids the 10s "waiting for player entity" timeout).
+	//
+	// Keeping the serialization in one place guarantees the eager push and the
+	// steady broadcast produce byte-identical wire payloads — otherwise the
+	// client could observe the player entity with missing props on the first
+	// frame and then have them snap in a tick later.
+	void sendEntityState(ClientSession& client, Entity& e) {
+		net::EntityState es;
+		es.id = e.id(); es.typeId = e.typeId();
+		es.position = e.position; es.velocity = e.velocity;
+		es.yaw = e.yaw; es.onGround = e.onGround;
+		es.goalText = e.goalText;
+		es.characterSkin = e.getProp<std::string>("character_skin", "");
+		es.hp = e.hp(); es.maxHp = e.def().max_hp;
+		es.owner = e.getProp<int>(Prop::Owner, 0);
+		es.moveTarget = e.moveTarget;
+		es.moveSpeed = e.moveSpeed;
+		// Player-controlled entities broadcast camera look (for remote head
+		// tracking). AI creatures don't set lookYaw/Pitch (defaults to 0 =
+		// world +X), so fall back to body yaw → head faces forward.
+		bool hasOwner = es.owner != 0;
+		es.lookYaw   = hasOwner ? e.lookYaw   : e.yaw;
+		es.lookPitch = hasOwner ? e.lookPitch : 0.0f;
+
+		// Skip props that are (a) already encoded in EntityState fields,
+		// (b) internal AI bookkeeping, or (c) private (Hunger → owner only).
+		bool isOwnEntity = (e.id() == client.playerId);
+		auto isPrivateProp = [&](const std::string& k) {
+			if (k == Prop::HP) return true;          // already in es.hp
+			if (k == Prop::Owner) return true;       // already in es.owner
+			if (k == Prop::Goal) return true;        // already in es.goalText
+			if (k == "character_skin") return true;  // already in es.characterSkin
+			if (k == Prop::WanderTimer) return true; // internal AI state
+			if (k == Prop::WanderYaw) return true;   // internal AI state
+			if (k == Prop::Age) return true;         // internal bookkeeping
+			if (k == Prop::Hunger) return !isOwnEntity; // HUD: owner only
+			return false;
+		};
+		for (auto& [key, val] : e.props()) {
+			if (isPrivateProp(key)) continue;
+			std::string sv;
+			if (auto* s = std::get_if<std::string>(&val)) sv = *s;
+			else if (auto* f = std::get_if<float>(&val)) sv = std::to_string(*f);
+			else if (auto* i = std::get_if<int>(&val)) sv = std::to_string(*i);
+			else if (auto* b = std::get_if<bool>(&val)) sv = *b ? "true" : "false";
+			else if (auto* v = std::get_if<glm::vec3>(&val))
+				sv = std::to_string(v->x) + "," + std::to_string(v->y) + "," + std::to_string(v->z);
+			if (!sv.empty()) es.props.push_back({key, sv});
+		}
+
+		net::WriteBuffer wb;
+		net::serializeEntityState(wb, es);
+		if (!net::sendMessage(client.transport.fd, net::S_ENTITY, wb)) {
+			fprintf(stderr, "[ClientMgr] sendEntityState FAILED: client=%s eid=%u type=%s (peer likely gone)\n",
+				client.label().c_str(), (unsigned)e.id(), e.typeId().c_str());
+			return;
+		}
+		m_broadcastStats.sEntity++;
+	}
+
 	// Broadcast entity state with perception scoping + stream chunks.
 	void broadcastState(float dt) {
 		m_broadcastTimer += dt;
@@ -471,56 +538,7 @@ public:
 			m_server.world().entities.forEach([&](Entity& e) {
 				if (!shouldBroadcastEntityToClient(e, client.playerId, viewPoints, PERCEPTION_R2))
 					return;
-
-				net::EntityState es;
-				es.id = e.id(); es.typeId = e.typeId();
-				es.position = e.position; es.velocity = e.velocity;
-				es.yaw = e.yaw; es.onGround = e.onGround;
-				es.goalText = e.goalText;
-				es.characterSkin = e.getProp<std::string>("character_skin", "");
-				es.hp = e.hp(); es.maxHp = e.def().max_hp;
-			es.owner = e.getProp<int>(Prop::Owner, 0);
-				es.moveTarget = e.moveTarget;
-				es.moveSpeed = e.moveSpeed;
-				// Player-controlled entities broadcast their camera look direction
-				// for remote head tracking.  AI creatures don't set lookYaw/Pitch
-				// (defaults to 0 = world +X), so use body yaw → head faces forward.
-				bool hasOwner = e.getProp<int>(Prop::Owner, 0) != 0;
-				es.lookYaw   = hasOwner ? e.lookYaw   : e.yaw;
-				es.lookPitch = hasOwner ? e.lookPitch  : 0.0f;
-				// Serialize entity props that other clients/agents need.
-				// Skip props that are: (a) UI-only state, (b) duplicates of
-				// EntityState fields, or (c) internal Creatures bookkeeping.
-				// Skip props that duplicate EntityState fields or are internal Creatures AI state.
-				// Hunger is only sent to the owning player (their HUD), not others.
-				bool isOwnEntity = (e.id() == client.playerId);
-				auto isPrivateProp = [&](const std::string& k) {
-					if (k == Prop::HP) return true;          // already in es.hp
-					if (k == Prop::Owner) return true;       // already in es.owner
-					if (k == Prop::Goal) return true;        // already in es.goalText
-					if (k == "character_skin") return true;  // already in es.characterSkin
-					if (k == Prop::WanderTimer) return true; // internal Creatures AI state
-					if (k == Prop::WanderYaw) return true;   // internal Creatures AI state
-					if (k == Prop::Age) return true;         // internal Creatures bookkeeping
-					if (k == Prop::Hunger) return !isOwnEntity; // HUD: owner only
-					return false;
-				};
-				for (auto& [key, val] : e.props()) {
-					if (isPrivateProp(key)) continue;
-					std::string sv;
-					if (auto* s = std::get_if<std::string>(&val)) sv = *s;
-					else if (auto* f = std::get_if<float>(&val)) sv = std::to_string(*f);
-					else if (auto* i = std::get_if<int>(&val)) sv = std::to_string(*i);
-					else if (auto* b = std::get_if<bool>(&val)) sv = *b ? "true" : "false";
-					else if (auto* v = std::get_if<glm::vec3>(&val))
-						sv = std::to_string(v->x) + "," + std::to_string(v->y) + "," + std::to_string(v->z);
-					if (!sv.empty()) es.props.push_back({key, sv});
-				}
-
-				net::WriteBuffer wb;
-				net::serializeEntityState(wb, es);
-				net::sendMessage(client.transport.fd, net::S_ENTITY, wb);
-				m_broadcastStats.sEntity++;
+				sendEntityState(client, e);
 			});
 
 			net::WriteBuffer tb;
@@ -923,6 +941,29 @@ private:
 		}
 
 		client.phase = ClientPhase::Ready;
+
+		// Eager player-entity push — MUST happen before S_READY.
+		//
+		// Why: the normal path would ship the player's S_ENTITY via the
+		// next broadcastState() tick (20 Hz). But after S_READY, the
+		// client transitions LOADING → PLAYING and starts a 10s deadline
+		// waiting for its own entity to appear. If pendingChunks still
+		// has a backlog (common after heavy preparing — we've seen 2,000+
+		// chunks queued at this point), the S_ENTITY bytes sit behind
+		// ~30 MB of chunk data in the kernel send buffer and arrive too
+		// late, tripping the disconnect modal.
+		//
+		// Doing it eagerly here guarantees S_ENTITY(player) is on the wire
+		// before S_READY, so the client's PLAYING-state loop finds
+		// playerEntity() non-null on its very first frame.
+		if (pe) {
+			fprintf(stderr, "[ClientMgr] %s: eager-push S_ENTITY(player) eid=%u before S_READY\n",
+				client.label().c_str(), (unsigned)eid);
+			sendEntityState(client, *pe);
+		} else {
+			fprintf(stderr, "[ClientMgr] %s: pe==null, cannot eager-push player entity (eid=%u)\n",
+				client.label().c_str(), (unsigned)eid);
+		}
 
 		{
 			net::WriteBuffer wb;

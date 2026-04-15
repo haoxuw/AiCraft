@@ -33,23 +33,55 @@ inline void setNoDelay(int fd) {
 	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 }
 
-// Send a complete message (header + payload)
+// Send a complete message (header + payload).
+//
+// Stream integrity rule: once the 8-byte header is on the wire, the exact
+// `hdr.length` payload bytes MUST follow — the peer reads a framed stream.
+// A short write that gets abandoned half-way leaves the peer reading random
+// bytes as the next header, which corrupts the stream permanently.
+//
+// On a non-blocking socket `send()` returns -1 / EAGAIN whenever the kernel
+// TCP send buffer is full (common during the preparing-phase chunk flood:
+// 10 chunks/tick × 60 tps × ~16KB = ~9.4 MB/s, which fills the default
+// 4MB send buffer quickly). The previous impl treated EAGAIN as a hard
+// failure and returned false — dropping e.g. the player's S_ENTITY and
+// sometimes leaving the header half-written, which then desynced the
+// framing on the receive side.
+//
+// Fix: retry EAGAIN until the kernel accepts the bytes. Real errors (peer
+// reset, bad fd) still return false. Spin is OK here because the caller
+// already rate-limits chunk writes — EAGAIN windows are short (µs–ms).
+// Higher-level back-pressure (e.g. pendingChunks queue in client_manager)
+// lives above this layer and bounds total in-flight bytes per tick.
 inline bool sendMessage(int fd, MsgType type, const WriteBuffer& payload) {
 	MsgHeader hdr;
 	hdr.type = type;
 	hdr.length = (uint32_t)payload.size();
 
-	// Send header
-	if (send(fd, &hdr, sizeof(hdr), MSG_NOSIGNAL) != sizeof(hdr)) return false;
-	// Send payload
-	if (payload.size() > 0) {
+	auto sendAll = [fd, type](const void* buf, size_t n) -> bool {
+		const uint8_t* p = (const uint8_t*)buf;
 		size_t sent = 0;
-		while (sent < payload.size()) {
-			ssize_t n = send(fd, payload.data().data() + sent, payload.size() - sent, MSG_NOSIGNAL);
-			if (n <= 0) return false;
-			sent += n;
+		int spins = 0;
+		while (sent < n) {
+			ssize_t w = send(fd, p + sent, n - sent, MSG_NOSIGNAL);
+			if (w > 0) { sent += (size_t)w; continue; }
+			if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+				// Back-pressure: surface if we spin unreasonably long so a
+				// genuine livelock doesn't silently stall the tick loop.
+				if (++spins == 10000)
+					fprintf(stderr, "[net] sendMessage fd=%d type=%u EAGAIN spin=%d (%zu/%zu bytes)\n",
+						fd, (unsigned)type, spins, sent, n);
+				continue;
+			}
+			fprintf(stderr, "[net] sendMessage fd=%d type=%u send() failed: errno=%d (%s) after %zu/%zu bytes\n",
+				fd, (unsigned)type, errno, strerror(errno), sent, n);
+			return false;
 		}
-	}
+		return true;
+	};
+
+	if (!sendAll(&hdr, sizeof(hdr))) return false;
+	if (payload.size() > 0 && !sendAll(payload.data().data(), payload.size())) return false;
 	return true;
 }
 
