@@ -445,6 +445,7 @@ void App::startMatchWithTemplate(const monsters::MonsterTemplate& t) {
 	ai_states_.clear();
 	floaters_.clear();
 	match_time_ = 0.0f;
+	match_start_time_ = (float)glfwGetTime();
 	kills_ = 0;
 	paused_ = false;
 	autotest_prebuilt_id_ = t.id;
@@ -1510,26 +1511,171 @@ void App::drawHUD() {
 	float aspect = window_.aspectRatio();
 	sim::Monster* p = world_.get(player_id_);
 
-	// HP bar top-center
-	float hw = 0.5f, hh = 0.02f;
-	float hx = -hw * 0.5f, hy = 0.92f;
-	text_->drawRect(hx, hy, hw, hh, glm::vec4(0.1f, 0.1f, 0.1f, 0.8f));
-	if (p) {
-		float frac = p->hp / std::max(1.0f, p->hp_max);
-		text_->drawRect(hx, hy, hw * frac, hh,
-			glm::vec4(0.9f, 0.4f, 0.4f, 1.0f));
+	// ================================================================
+	// Modern HUD — glass overlays over the chalk playfield.
+	// Keep countdown/paused/floaters as chalk-era titles (diegetic),
+	// but reskin the data readouts with ui_modern primitives.
+	// ================================================================
+	namespace m = ui::modern;
+	int W, H; glfwGetFramebufferSize(window_.handle(), &W, &H);
+	m::beginFrame(text_.get(), W, H);
+
+	const int pad = m::SPACE_XL;           // 24 px
+	const int tier = p ? p->tier : 1;
+	const float biomass       = p ? p->biomass : 0.0f;
+	const float lifetime_bm   = p ? p->lifetime_biomass : 0.0f;
+	const float hp_frac       = p ? (p->hp / std::max(1.0f, p->hp_max)) : 0.0f;
+	const bool  low_hp        = p && hp_frac < 0.30f;
+
+	// Tier accent: cyan for low tiers, amber for mid, amber+glow for APEX.
+	glm::vec4 tier_accent = (tier >= 3) ? m::ACCENT_AMBER : m::ACCENT_CYAN;
+
+	// -------------------------- Top-left glass bar -------------------
+	{
+		const int bx = pad, by = pad;
+		const int bw = 360, bh = 64;
+		m::drawSoftShadow(bx, by, bw, bh, m::RADIUS_LG, 16, 0.30f);
+		m::drawGlassPanel(bx, by, bw, bh, m::RADIUS_LG);
+
+		int cx = bx + m::SPACE_LG;
+		int cy_mid = by + bh / 2;
+
+		// Tier pill badge — pulse red at low HP as a warning.
+		char tier_label[48];
+		std::snprintf(tier_label, sizeof(tier_label), "T%d - %s",
+			tier, sim::tierName(tier));
+		glm::vec4 pill_accent = tier_accent;
+		glm::vec4 pill_bg     = m::SURFACE_PANEL_HI;
+		glm::vec4 pill_fg     = m::TEXT_PRIMARY;
+		if (low_hp) {
+			float pulse = 0.5f + 0.5f * std::sin((float)glfwGetTime() * 6.0f);
+			pill_accent = m::ACCENT_DANGER;
+			pill_bg     = glm::vec4(0.30f + 0.10f * pulse, 0.08f, 0.08f, 0.85f);
+		}
+		m::drawPillBadge(cx, cy_mid - (m::TYPE_LABEL + 12) / 2,
+			tier_label, pill_fg, pill_bg, pill_accent);
+		// Advance cx by a stable width so layout doesn't shift with text.
+		int pill_w = m::measureTextPx(tier_label, m::TYPE_LABEL) + m::SPACE_LG * 2;
+		cx += pill_w + m::SPACE_LG;
+
+		// Divider.
+		m::drawDivider(cx, by + m::SPACE_SM, bh - m::SPACE_SM * 2,
+			m::DividerAxis::VERTICAL, m::STROKE_SUBTLE);
+		cx += m::SPACE_LG;
+
+		// Biomass block: icon + big number + label.
+		m::drawTextModern(cx, by + 10, "o", m::TYPE_TITLE_SM,
+			m::ACCENT_SUCCESS, m::Align::LEFT);
+		char bm_num[24]; std::snprintf(bm_num, sizeof(bm_num), "%.0f", biomass);
+		m::drawTextModern(cx + 18, by + 10, bm_num, m::TYPE_TITLE_SM,
+			m::TEXT_PRIMARY, m::Align::LEFT);
+		m::drawTextLabel (cx, by + bh - m::TYPE_LABEL - 8,
+			"BIOMASS", m::TEXT_SECONDARY);
+		cx += 110;
+
+		m::drawDivider(cx, by + m::SPACE_SM, bh - m::SPACE_SM * 2,
+			m::DividerAxis::VERTICAL, m::STROKE_SUBTLE);
+		cx += m::SPACE_LG;
+
+		// Match timer: "()" clock fallback + MM:SS.
+		m::drawTextModern(cx, by + 10, "()", m::TYPE_TITLE_SM,
+			m::ACCENT_CYAN_GLOW, m::Align::LEFT);
+		char t_num[16];
+		int secs = (int)match_time_;
+		std::snprintf(t_num, sizeof(t_num), "%d:%02d", secs / 60, secs % 60);
+		m::drawTextModern(cx + 28, by + 10, t_num, m::TYPE_TITLE_SM,
+			m::TEXT_PRIMARY, m::Align::LEFT);
+		m::drawTextLabel (cx, by + bh - m::TYPE_LABEL - 8,
+			"TIME", m::TEXT_SECONDARY);
 	}
 
-	// Biomass / tier / kills / time
-	char line[160];
-	std::snprintf(line, sizeof(line), "BIOMASS %.0f   T%d %s   KILLS %d   TIME %d:%02d",
-		p ? p->biomass : 0.0f,
-		p ? p->tier : 1, sim::tierName(p ? p->tier : 1),
-		kills_,
-		(int)match_time_ / 60, (int)match_time_ % 60);
-	text_->drawText(line, -0.5f, 0.85f, 0.9f,
-		glm::vec4(1.0f, 1.0f, 0.95f, 1.0f), aspect);
+	// -------------------------- Top-right glass card -----------------
+	{
+		const int cw = 280, ch = 96;
+		const int cx = W - pad - cw, cy = pad;
+		m::drawSoftShadow(cx, cy, cw, ch, m::RADIUS_LG, 16, 0.30f);
+		m::drawGlassPanel(cx, cy, cw, ch, m::RADIUS_LG);
 
+		const bool at_apex = tier >= sim::TIER_COUNT;
+		const int ring_cx = cx + 8 + 36;
+		const int ring_cy = cy + ch / 2;
+		if (at_apex) {
+			// Amber "APEX" pill replaces the ring.
+			m::drawPillBadge(cx + 16, cy + ch / 2 - 10,
+				"APEX", m::TEXT_ON_ACCENT, m::ACCENT_AMBER, m::ACCENT_AMBER_DEEP);
+			m::drawTextLabel(cx + 110, cy + 18,
+				"MAX TIER REACHED", m::TEXT_SECONDARY);
+			m::drawTextModern(cx + 110, cy + 36, "FULL GROWN",
+				m::TYPE_BODY, m::TEXT_PRIMARY);
+		} else {
+			const float next_thresh = sim::TIER_THRESHOLDS[tier + 1];
+			const float prev_thresh = sim::TIER_THRESHOLDS[tier];
+			float frac = (lifetime_bm - prev_thresh)
+				/ std::max(1.0f, next_thresh - prev_thresh);
+			if (frac < 0.0f) frac = 0.0f;
+			if (frac > 1.0f) frac = 1.0f;
+			m::drawRingProgress(ring_cx, ring_cy, 32, 6, frac,
+				tier_accent, m::TRACK_BG);
+			char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%",
+				(int)(frac * 100.0f + 0.5f));
+			m::drawTextModern(ring_cx, ring_cy - m::TYPE_TITLE_SM / 2 + 2,
+				pct, m::TYPE_TITLE_SM, m::TEXT_PRIMARY, m::Align::CENTER);
+
+			int tx = cx + 90;
+			m::drawTextLabel(tx, cy + 14, "TO NEXT TIER", m::TEXT_SECONDARY);
+			m::drawTextModern(tx, cy + 14 + m::TYPE_LABEL + 6,
+				sim::tierName(tier + 1), m::TYPE_BODY, m::TEXT_PRIMARY);
+			char rem[32];
+			float left = std::max(0.0f, next_thresh - lifetime_bm);
+			std::snprintf(rem, sizeof(rem), "%.0f left", left);
+			m::drawTextModern(tx, cy + 14 + m::TYPE_LABEL + 6 + m::TYPE_BODY + 4,
+				rem, m::TYPE_CAPTION, m::TEXT_SECONDARY);
+		}
+	}
+
+	// -------------------------- Bottom-center hint -------------------
+	{
+		const bool apex_full = (tier >= sim::TIER_COUNT)
+			&& biomass >= sim::TIER_THRESHOLDS[sim::TIER_COUNT];
+		if (!apex_full) {
+			const char* hint = "WASD MOVE  -  EAT FOOD  -  GROW";
+			glm::vec4 hint_bg = m::SURFACE_PANEL;
+			glm::vec4 hint_fg = m::TEXT_SECONDARY;
+			glm::vec4 hint_accent = glm::vec4(0.0f);
+			if (low_hp) {
+				hint = "HP LOW - FIND FOOD";
+				hint_fg = m::TEXT_PRIMARY;
+				hint_accent = m::ACCENT_DANGER;
+			}
+			int tw = m::measureTextPx(hint, m::TYPE_LABEL);
+			int pw = tw + m::SPACE_LG * 2;
+			int ph = 28;
+			int px = W / 2 - pw / 2;
+			int py = H - pad - ph;
+			m::drawRoundedRect(px, py, pw, ph, m::RADIUS_PILL,
+				hint_bg, m::STROKE_SUBTLE, 1);
+			m::drawTextLabel(W / 2 - tw / 2, py + (ph - m::TYPE_LABEL) / 2 + 2,
+				hint, hint_fg);
+			if (hint_accent.a > 0.0f) {
+				m::drawRoundedRect(px, py + ph - 3, pw, 2, m::RADIUS_PILL,
+					hint_accent);
+			}
+		}
+	}
+
+	// -------------------------- Bottom-right icon stack --------------
+	{
+		const int bsz = 40;
+		int bx = W - pad - bsz;
+		int by = H - pad - bsz;
+		m::buttonIcon(bx, by, bsz, "F2", "Screenshot", false, false);
+		by -= bsz + m::SPACE_SM;
+		m::buttonIcon(bx, by, bsz, "M", "Mute", false, false);
+		by -= bsz + m::SPACE_SM;
+		m::buttonIcon(bx, by, bsz, "II", "Pause", false, false);
+	}
+
+	// -------------------------- Countdown + paused (diegetic) --------
 	if (paused_) {
 		text_->drawTitle("PAUSED", -0.15f, 0.0f, 2.5f,
 			glm::vec4(1.0f, 1.0f, 0.7f, 1.0f), aspect);
@@ -1549,12 +1695,8 @@ void App::drawHUD() {
 		}
 	}
 
-	// Controls hint bottom
-	text_->drawText("MOUSE AIM  LCLICK THRUST  1 SPLIT  2 GROW  P PAUSE  ESC MENU",
-		-0.7f, -0.96f, 0.7f,
-		glm::vec4(0.7f, 0.7f, 0.7f, 0.7f), aspect);
-
-	// Floating events bottom-left
+	// Floating events bottom-left (kept in the chalk style — they're
+	// transient combat flavour and read better as chalk text).
 	for (size_t i = 0; i < floaters_.size(); ++i) {
 		auto& f = floaters_[i];
 		float alpha = std::min(1.0f, f.t_left / 2.0f);

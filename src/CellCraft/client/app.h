@@ -174,6 +174,7 @@ private:
 	uint32_t player_id_ = 0;
 	glm::vec2 camera_world_ = glm::vec2(0.0f);
 	float match_time_ = 0.0f;
+	float match_start_time_ = 0.0f;
 	int kills_ = 0;
 	bool paused_ = false;
 	std::vector<FloatingEvent> floaters_;
