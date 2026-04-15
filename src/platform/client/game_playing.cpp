@@ -120,8 +120,9 @@ void Game::handleGameplayInput(float dt) {
 		m_attackAnim.triggerOnce("swing_right");
 		m_gameplay.clearSwing();
 	}
-	m_attackAnim.update(dt);
-	// All combat FX (shockwave today, + future tiers) live in CombatFxController.
+	// Tier 2b: hit-stop freezes the swing animation briefly on impact.
+	m_attackAnim.update(dt * m_combatFx.attackDtScale());
+	// All combat FX (shockwave, blade trail, hit-stop, …) live in CombatFxController.
 	m_combatFx.update(dt, m_attackAnim, m_particles, *pe);
 	if (!m_attackAnim.active() && !m_gameplay.isBreaking())
 		m_lastAttackTargetId = ENTITY_NONE;
@@ -209,6 +210,7 @@ void Game::handleGameplayInput(float dt) {
 						p.toItem      = "";  // destroy HP
 						m_server->sendAction(p);
 						m_renderer.triggerHitmarker(false);
+						m_combatFx.notifyHit();
 					}
 				}
 			}

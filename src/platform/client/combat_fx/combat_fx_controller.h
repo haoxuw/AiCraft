@@ -19,6 +19,7 @@
 
 #include "client/attack_anim.h"
 #include "client/combat_fx/blade_trail.h"
+#include "client/combat_fx/hit_stop.h"
 #include "client/particles.h"
 #include "shared/entity.h"
 #include <glm/glm.hpp>
@@ -31,6 +32,8 @@ public:
 	// `player` is the locally-controlled entity (position + yaw drive FX).
 	void update(float dt, AttackAnimPlayer& attack,
 	            ParticleSystem& particles, const Entity& player) {
+		// Tier 2b — drain the hit-stop countdown each frame.
+		m_hitStop.update(dt);
 		// Tier 2a — ribbon trail follows the swinging blade tip.
 		m_bladeTrail.update(dt, attack, particles, player);
 		// Tier 0-shockwave: one-shot ring at swing peak.
@@ -38,8 +41,17 @@ public:
 			emitShockwave(particles, player);
 	}
 
+	// Call from the gameplay layer the moment a player attack lands a valid
+	// hit (HP-deduction action is sent). Kicks off the hit-stop freeze.
+	void notifyHit() { m_hitStop.notifyHit(); }
+
+	// Multiplier the call site applies to the dt it passes to
+	// AttackAnimPlayer::update. 1.0 normally; ≪1 during hit-stop.
+	float attackDtScale() const { return m_hitStop.attackDtScale(); }
+
 private:
 	BladeTrail m_bladeTrail;
+	HitStop    m_hitStop;
 
 	// Chest-height ring ~0.8m in front of the attacker. Normal = +Y so
 	// the visible arc reads as a ground-level sweep; facing yaw centres

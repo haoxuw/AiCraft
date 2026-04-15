@@ -152,6 +152,7 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/game_playing.cpp
 	src/platform/client/combat_fx/combat_fx_controller.h
 	src/platform/client/combat_fx/blade_trail.h
+	src/platform/client/combat_fx/hit_stop.h
 	src/platform/client/game_render.cpp
 	src/platform/client/game_ui.cpp
 	src/platform/client/gameplay.h
@@ -335,6 +336,14 @@ else()
 		glm::glm
 		Python3::Python pybind11::embed
 		libzstd_static
+	)
+
+	# civcraft-test-pathfinding needs python/ + artifacts/ alongside the binary.
+	add_custom_command(TARGET civcraft-test-pathfinding POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+			${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft-test-pathfinding>/python
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-test-pathfinding>/artifacts
 	)
 
 	# =================================================================
