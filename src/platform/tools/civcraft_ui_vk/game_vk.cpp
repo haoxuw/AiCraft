@@ -259,6 +259,78 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	m_worldMesh = m_rhi->createVoxelMesh(m_world.instances(), m_world.instanceCount());
 	std::printf("[vk-game] world mesh: %u voxels uploaded (handle=%llu)\n",
 		m_world.instanceCount(), (unsigned long long)m_worldMesh);
+
+	// Stone obelisk built in the 13-float chunk-mesh format. Demonstrates
+	// the new rich-vertex pipeline (per-vertex normal/AO/shade/glow) live
+	// alongside the voxel-instance pipeline; drop-in for the Phase 3 port
+	// of CivCraft's chunk_mesher into the RHI.
+	{
+		std::vector<float> v;   // verts: 13 floats each
+		v.reserve(13 * 6 * 6 * 8);  // 6 faces * 6 verts * 8 blocks
+		// Match BLOCK_FACE_SHADE in CivCraft/shared/block_registry.h
+		const float SHADE[6] = {0.80f, 0.80f, 1.00f, 0.50f, 0.90f, 0.90f};
+		const float NRM[6][3] = {
+			{ 1, 0, 0}, {-1, 0, 0}, { 0, 1, 0},
+			{ 0,-1, 0}, { 0, 0, 1}, { 0, 0,-1}
+		};
+		auto emitBox = [&](float x0, float y0, float z0,
+		                   float x1, float y1, float z1,
+		                   float r, float g, float b, float glow) {
+			float vs[6][4][3] = {
+				{{x1,y0,z0},{x1,y1,z0},{x1,y1,z1},{x1,y0,z1}}, // +X
+				{{x0,y0,z1},{x0,y1,z1},{x0,y1,z0},{x0,y0,z0}}, // -X
+				{{x0,y1,z0},{x0,y1,z1},{x1,y1,z1},{x1,y1,z0}}, // +Y
+				{{x0,y0,z1},{x0,y0,z0},{x1,y0,z0},{x1,y0,z1}}, // -Y
+				{{x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x0,y0,z1}}, // +Z
+				{{x0,y0,z0},{x0,y1,z0},{x1,y1,z0},{x1,y0,z0}}, // -Z
+			};
+			auto pushV = [&](int f, int i, float ao) {
+				const float* p = vs[f][i];
+				v.push_back(p[0]); v.push_back(p[1]); v.push_back(p[2]);
+				v.push_back(r); v.push_back(g); v.push_back(b);
+				v.push_back(NRM[f][0]); v.push_back(NRM[f][1]); v.push_back(NRM[f][2]);
+				v.push_back(ao);
+				v.push_back(SHADE[f]);
+				v.push_back(1.0f);     // alpha
+				v.push_back(glow);
+			};
+			for (int f = 0; f < 6; f++) {
+				// Slight AO darkening on the bottom verts of each side face so
+				// the obelisk reads as grounded rather than floating-flat.
+				float ao0 = (f >= 4 || f < 2) ? 0.7f : 1.0f;  // sides only
+				float aoT = 1.0f;
+				if (f == 2) { ao0 = aoT = 1.0f; }              // top: bright
+				if (f == 3) { ao0 = aoT = 0.65f; }             // bottom: dim
+				// 0 and 3 are the y0 (lower) verts in each side-face quad
+				pushV(f, 0, (f >= 4 || f < 2) ? ao0 : aoT);
+				pushV(f, 1, aoT);
+				pushV(f, 2, aoT);
+				pushV(f, 0, (f >= 4 || f < 2) ? ao0 : aoT);
+				pushV(f, 2, aoT);
+				pushV(f, 3, (f >= 4 || f < 2) ? ao0 : aoT);
+			}
+		};
+		// Place the obelisk in the camera's default view so it's visible at
+		// spawn. Camera looks roughly down -Z from behind the player; -6 puts
+		// it dead-ahead. (Pre-Phase-3, this is just a rendering-pipeline demo
+		// — the real chunk_mesher port will replace this with proper chunked
+		// world geometry.)
+		const float bx = -0.5f, bz = -6.0f;
+		float baseY = m_world.terrainTop(bx + 0.5f, bz + 0.5f);
+		// 4 stone blocks stacked, narrowing at the top.
+		float stone_r = 0.55f, stone_g = 0.55f, stone_b = 0.58f;
+		emitBox(bx,        baseY,        bz,        bx+1.0f, baseY+1.0f, bz+1.0f, stone_r, stone_g, stone_b, 0.0f);
+		emitBox(bx+0.10f,  baseY+1.0f,   bz+0.10f,  bx+0.90f, baseY+2.0f, bz+0.90f, stone_r-0.05f, stone_g-0.05f, stone_b-0.05f, 0.0f);
+		emitBox(bx+0.20f,  baseY+2.0f,   bz+0.20f,  bx+0.80f, baseY+3.0f, bz+0.80f, stone_r-0.05f, stone_g-0.05f, stone_b-0.05f, 0.0f);
+		emitBox(bx+0.30f,  baseY+3.0f,   bz+0.30f,  bx+0.70f, baseY+4.0f, bz+0.70f, stone_r-0.10f, stone_g-0.10f, stone_b-0.10f, 0.0f);
+		// A glowing crystal on top — exercises the vGlow channel.
+		emitBox(bx+0.35f,  baseY+4.0f,   bz+0.35f,  bx+0.65f, baseY+4.6f, bz+0.65f, 0.5f, 0.2f, 0.8f, 1.0f);
+		uint32_t vc = (uint32_t)(v.size() / 13);
+		m_chunkDemoMesh = m_rhi->createChunkMesh(v.data(), vc);
+		std::printf("[vk-game] chunk-mesh demo: obelisk (%u verts) at (%.1f, %.1f, %.1f) handle=%llu\n",
+			vc, bx, baseY, bz, (unsigned long long)m_chunkDemoMesh);
+	}
+
 	enterMenu();
 	return true;
 }
@@ -267,6 +339,10 @@ void Game::shutdown() {
 	if (m_rhi && m_worldMesh != rhi::IRhi::kInvalidMesh) {
 		m_rhi->destroyMesh(m_worldMesh);
 		m_worldMesh = rhi::IRhi::kInvalidMesh;
+	}
+	if (m_rhi && m_chunkDemoMesh != rhi::IRhi::kInvalidMesh) {
+		m_rhi->destroyMesh(m_chunkDemoMesh);
+		m_chunkDemoMesh = rhi::IRhi::kInvalidMesh;
 	}
 }
 
@@ -842,6 +918,14 @@ void Game::renderWorld(float wallTime) {
 	scene.sunDir[0] = sunDir.x; scene.sunDir[1] = sunDir.y; scene.sunDir[2] = sunDir.z;
 	scene.sunStr = sunStr;
 	m_rhi->drawVoxelsMesh(scene, m_worldMesh);
+
+	// Chunk-mesh pipeline demo (rich-vertex format). Same fog as the rest of
+	// the world for now — when chunk_mesher proper lands, fog will come from
+	// the world settings.
+	if (m_chunkDemoMesh != rhi::IRhi::kInvalidMesh) {
+		float fogColor[3] = { 0.55f, 0.65f, 0.78f };
+		m_rhi->drawChunkMeshOpaque(scene, fogColor, 80.0f, 160.0f, m_chunkDemoMesh);
+	}
 
 	// Entities
 	m_rhi->drawBoxModel(scene, charBoxes.data(), charBoxCount);

@@ -231,6 +231,10 @@ private:
 	// init() and reused every frame by drawVoxelsMesh / renderShadowsMesh
 	// so the per-frame loop stops re-streaming ~6k floats it never changes.
 	rhi::IRhi::MeshHandle m_worldMesh = rhi::IRhi::kInvalidMesh;
+	// Demonstration of the rich-vertex chunk-mesh pipeline (Phase 3 prep
+	// for porting CivCraft's chunk_mesher). A small stone obelisk built
+	// out of cube faces in the 13-float-per-vertex format, uploaded once.
+	rhi::IRhi::MeshHandle m_chunkDemoMesh = rhi::IRhi::kInvalidMesh;
 	Player       m_player;
 	std::vector<Npc> m_npcs;
 	std::vector<FloatText> m_floaters;

@@ -271,6 +271,16 @@ public:
 	void       drawVoxelsMesh(const SceneParams&, MeshHandle) override {}
 	void       renderShadowsMesh(const float[16], MeshHandle) override {}
 
+	// Chunk meshes — GL backend stub for now. Native GL game still routes
+	// terrain through Renderer + ChunkMesh's own VAOs; once the GL chunk-mesh
+	// pipeline is wired up here, ChunkMesh can drop its raw GL handles.
+	MeshHandle createChunkMesh(const float*, uint32_t) override { return kInvalidMesh; }
+	void       updateChunkMesh(MeshHandle, const float*, uint32_t) override {}
+	void       drawChunkMeshOpaque(const SceneParams&, const float[3], float, float,
+	                                MeshHandle) override {}
+	void       drawChunkMeshTransparent(const SceneParams&, const float[3], float, float,
+	                                     MeshHandle) override {}
+
 	void drawUi2D(const float* verts, uint32_t vertCount,
 	              int mode, const float rgba[4]) override {
 		if (!verts || vertCount == 0 || !m_uiProgram || !m_uiVao) return;

@@ -97,6 +97,44 @@ public:
 	virtual void       renderShadowsMesh(const float sunVP[16],
 	                                     MeshHandle mesh) = 0;
 
+	// ── Chunk meshes (rich per-vertex format) ────────────────────────────
+	// CivCraft's chunk_mesher emits per-vertex tessellated triangles with AO,
+	// face shade, alpha, and a per-vertex glow flag — much richer than the
+	// per-instance voxel format above. One chunk produces two meshes (one for
+	// the opaque pass, one for transparent blocks like glass/water); the
+	// caller is responsible for that split and for back-to-front sorting of
+	// transparent meshes before drawing. destroyMesh() handles cleanup for
+	// both mesh types.
+	//
+	// Vertex layout — 13 floats per vertex, no instancing:
+	//   [0..2]  position (xyz, world space)
+	//   [3..5]  color (rgb)
+	//   [6..8]  normal (xyz, axis-aligned)
+	//   [9]     ao            (0..1, computed from neighborhood)
+	//   [10]    shade         (0..1, per-face directional bias)
+	//   [11]    alpha         (1.0 opaque, <1.0 transparent — selects pass)
+	//   [12]    glow          (0.0 normal, 1.0 arcane animation)
+	//
+	// Pass state (set internally by the backend per draw):
+	//   Opaque       — depth test+write, no blend, cull back.
+	//   Transparent  — depth test, no depth write, alpha blend, no cull.
+	//
+	// fogColor/fogStart/fogEnd are uploaded as part of the per-draw uniform
+	// block so chunk meshes can match the sky's horizon color seamlessly.
+	virtual MeshHandle createChunkMesh(const float* verts,
+	                                   uint32_t vertexCount) = 0;
+	virtual void       updateChunkMesh(MeshHandle mesh,
+	                                   const float* verts,
+	                                   uint32_t vertexCount) = 0;
+	virtual void       drawChunkMeshOpaque(const SceneParams& scene,
+	                                       const float fogColor[3],
+	                                       float fogStart, float fogEnd,
+	                                       MeshHandle mesh) = 0;
+	virtual void       drawChunkMeshTransparent(const SceneParams& scene,
+	                                            const float fogColor[3],
+	                                            float fogStart, float fogEnd,
+	                                            MeshHandle mesh) = 0;
+
 	// Box-model rendering. `boxes` packs {worldPosX, worldPosY, worldPosZ,
 	// sizeX, sizeY, sizeZ, r, g, b} per box (9 floats). Designed for entity
 	// meshes: each box is an axis-aligned box in world space. Shares lighting

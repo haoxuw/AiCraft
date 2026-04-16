@@ -388,6 +388,8 @@ else()
 			${VK_SHADER_SRC_DIR}/ribbon.frag
 			${VK_SHADER_SRC_DIR}/text2d.vert
 			${VK_SHADER_SRC_DIR}/text2d.frag
+			${VK_SHADER_SRC_DIR}/chunk_terrain.vert
+			${VK_SHADER_SRC_DIR}/chunk_terrain.frag
 		)
 		set(VK_SPV_OUTPUTS "")
 		foreach(SHADER ${VK_SHADER_SOURCES})

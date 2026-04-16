@@ -72,6 +72,7 @@ bool VkRhi::init(const InitInfo& info) {
 	if (!createBoxShadowPipeline()) return false;
 	if (!createVoxelPipeline()) return false;
 	if (!createBoxModelPipeline()) return false;
+	if (!createChunkPipelines()) return false;
 	if (!createSkyPipeline()) return false;
 	if (!createParticlePipeline()) return false;
 	if (!createRibbonPipeline()) return false;
@@ -1577,14 +1578,23 @@ void VkRhi::updateVoxelMesh(MeshHandle mesh, const float* instances, uint32_t co
 }
 
 void VkRhi::destroyMesh(MeshHandle mesh) {
-	auto it = m_meshes.find(mesh);
-	if (it == m_meshes.end()) return;
 	// Defer the actual VkBuffer / VkDeviceMemory release: this frame's
 	// command buffer (or the previous frame's, still in flight) may still
-	// reference it. beginFrame drains m_meshPending[m_frame] after the fence
-	// wait, where the GPU is guaranteed to be done with that frame index.
-	m_meshPending[m_frame].push_back(it->second);
-	m_meshes.erase(it);
+	// reference it. beginFrame drains m_{,chunk}MeshPending[m_frame] after
+	// the fence wait, where the GPU is guaranteed to be done with that
+	// frame index. Handles share an ID space — try voxel meshes first, then
+	// chunk meshes; one map will own the entry.
+	auto it = m_meshes.find(mesh);
+	if (it != m_meshes.end()) {
+		m_meshPending[m_frame].push_back(it->second);
+		m_meshes.erase(it);
+		return;
+	}
+	auto cit = m_chunkMeshes.find(mesh);
+	if (cit != m_chunkMeshes.end()) {
+		m_chunkMeshPending[m_frame].push_back(cit->second);
+		m_chunkMeshes.erase(cit);
+	}
 }
 
 void VkRhi::drawVoxelsMesh(const SceneParams& scene, MeshHandle mesh) {
@@ -1650,6 +1660,328 @@ void VkRhi::renderShadowsMesh(const float sunVP[16], MeshHandle mesh) {
 	vkCmdPushConstants(cb, m_shadowLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
 		sizeof(float) * 16, sunVP);
 	vkCmdDraw(cb, m_cubeVertCount, m.instCount, 0, 0);
+}
+
+// ── Chunk meshes (per-vertex 13-float format) ─────────────────────────────
+// Persistent buffers + dual pipeline (opaque + transparent) backing the
+// chunk_mesh API. Same defer-destroy pattern as voxel meshes — destroyMesh
+// checks m_chunkMeshes if the handle isn't in m_meshes.
+
+static constexpr uint32_t kChunkVertStride = sizeof(float) * 13;
+
+bool VkRhi::createChunkPipelines() {
+	auto vsCode = readFile("shaders/vk/chunk_terrain.vert.spv");
+	auto fsCode = readFile("shaders/vk/chunk_terrain.frag.spv");
+	if (vsCode.empty() || fsCode.empty()) return false;
+	VkShaderModule vs = makeModule(m_device, vsCode);
+	VkShaderModule fs = makeModule(m_device, fsCode);
+
+	VkPipelineShaderStageCreateInfo stages[2]{};
+	stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	stages[0].module = vs; stages[0].pName = "main";
+	stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	stages[1].module = fs; stages[1].pName = "main";
+
+	// Single per-vertex binding, 13 floats: pos[3] color[3] normal[3] ao shade alpha glow.
+	VkVertexInputBindingDescription bind{};
+	bind.binding = 0; bind.stride = kChunkVertStride; bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+	VkVertexInputAttributeDescription attrs[7]{};
+	attrs[0].location = 0; attrs[0].binding = 0; attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[0].offset = sizeof(float)*0;
+	attrs[1].location = 1; attrs[1].binding = 0; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = sizeof(float)*3;
+	attrs[2].location = 2; attrs[2].binding = 0; attrs[2].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[2].offset = sizeof(float)*6;
+	attrs[3].location = 3; attrs[3].binding = 0; attrs[3].format = VK_FORMAT_R32_SFLOAT;       attrs[3].offset = sizeof(float)*9;
+	attrs[4].location = 4; attrs[4].binding = 0; attrs[4].format = VK_FORMAT_R32_SFLOAT;       attrs[4].offset = sizeof(float)*10;
+	attrs[5].location = 5; attrs[5].binding = 0; attrs[5].format = VK_FORMAT_R32_SFLOAT;       attrs[5].offset = sizeof(float)*11;
+	attrs[6].location = 6; attrs[6].binding = 0; attrs[6].format = VK_FORMAT_R32_SFLOAT;       attrs[6].offset = sizeof(float)*12;
+
+	VkPipelineVertexInputStateCreateInfo vi{};
+	vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &bind;
+	vi.vertexAttributeDescriptionCount = 7; vi.pVertexAttributeDescriptions = attrs;
+
+	VkPipelineInputAssemblyStateCreateInfo ia{};
+	ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+	ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+	VkPipelineViewportStateCreateInfo vp{};
+	vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+	vp.viewportCount = 1; vp.scissorCount = 1;
+
+	// Opaque rasterizer: cull back. chunk_mesher emits CCW triangles in world
+	// space; we run with FRONT_FACE_CLOCKWISE because Vulkan's flipped Y in
+	// the projection matrix inverts winding (matches what voxel + sky use).
+	VkPipelineRasterizationStateCreateInfo rsOpaque{};
+	rsOpaque.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+	rsOpaque.polygonMode = VK_POLYGON_MODE_FILL;
+	rsOpaque.cullMode = VK_CULL_MODE_BACK_BIT;
+	rsOpaque.frontFace = VK_FRONT_FACE_CLOCKWISE;
+	rsOpaque.lineWidth = 1.0f;
+
+	// Transparent rasterizer: no cull (thin glass / portal panes).
+	VkPipelineRasterizationStateCreateInfo rsTrans = rsOpaque;
+	rsTrans.cullMode = VK_CULL_MODE_NONE;
+
+	VkPipelineMultisampleStateCreateInfo ms{};
+	ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+	ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	VkPipelineDepthStencilStateCreateInfo dsOpaque{};
+	dsOpaque.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+	dsOpaque.depthTestEnable = VK_TRUE; dsOpaque.depthWriteEnable = VK_TRUE;
+	dsOpaque.depthCompareOp = VK_COMPARE_OP_LESS;
+
+	// Transparent: depth test on, depth write off (so multiple transparent
+	// layers cleanly compose without occluding each other from later draws).
+	VkPipelineDepthStencilStateCreateInfo dsTrans = dsOpaque;
+	dsTrans.depthWriteEnable = VK_FALSE;
+
+	VkPipelineColorBlendAttachmentState cbaOpaque{};
+	cbaOpaque.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+	                         | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	VkPipelineColorBlendStateCreateInfo cbOpaque{};
+	cbOpaque.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+	cbOpaque.attachmentCount = 1; cbOpaque.pAttachments = &cbaOpaque;
+
+	// Transparent: standard alpha blend.
+	VkPipelineColorBlendAttachmentState cbaTrans = cbaOpaque;
+	cbaTrans.blendEnable = VK_TRUE;
+	cbaTrans.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+	cbaTrans.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+	cbaTrans.colorBlendOp = VK_BLEND_OP_ADD;
+	cbaTrans.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+	cbaTrans.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+	cbaTrans.alphaBlendOp = VK_BLEND_OP_ADD;
+	VkPipelineColorBlendStateCreateInfo cbTrans = cbOpaque;
+	cbTrans.pAttachments = &cbaTrans;
+
+	VkDynamicState dyn[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkPipelineDynamicStateCreateInfo dynState{};
+	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
+
+	// 128-byte push constant: SceneParams (96) + fog (16) + fogExtra (16).
+	VkPushConstantRange pcr{};
+	pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+	pcr.size = 128;
+	VkPipelineLayoutCreateInfo plci{};
+	plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	plci.pushConstantRangeCount = 1; plci.pPushConstantRanges = &pcr;
+	if (vkCreatePipelineLayout(m_device, &plci, nullptr, &m_chunkLayout) != VK_SUCCESS) {
+		vkDestroyShaderModule(m_device, vs, nullptr);
+		vkDestroyShaderModule(m_device, fs, nullptr);
+		return false;
+	}
+
+	auto buildPipeline = [&](VkPipelineRasterizationStateCreateInfo& rs,
+	                         VkPipelineDepthStencilStateCreateInfo& ds,
+	                         VkPipelineColorBlendStateCreateInfo& cb,
+	                         VkPipeline& outPipeline) -> bool {
+		VkGraphicsPipelineCreateInfo gpci{};
+		gpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		gpci.stageCount = 2; gpci.pStages = stages;
+		gpci.pVertexInputState = &vi;
+		gpci.pInputAssemblyState = &ia;
+		gpci.pViewportState = &vp;
+		gpci.pRasterizationState = &rs;
+		gpci.pMultisampleState = &ms;
+		gpci.pDepthStencilState = &ds;
+		gpci.pColorBlendState = &cb;
+		gpci.pDynamicState = &dynState;
+		gpci.layout = m_chunkLayout;
+		gpci.renderPass = m_renderPass;  // shares the same offscreen-compatible pass as voxel/box-model
+		return vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gpci, nullptr, &outPipeline) == VK_SUCCESS;
+	};
+
+	bool ok = buildPipeline(rsOpaque, dsOpaque, cbOpaque, m_chunkPipelineOpaque)
+	       && buildPipeline(rsTrans,  dsTrans,  cbTrans,  m_chunkPipelineTransparent);
+	vkDestroyShaderModule(m_device, vs, nullptr);
+	vkDestroyShaderModule(m_device, fs, nullptr);
+	return ok;
+}
+
+IRhi::MeshHandle VkRhi::createChunkMesh(const float* verts, uint32_t vertexCount) {
+	if (!m_device || vertexCount == 0 || !verts) return kInvalidMesh;
+
+	PersistentMesh mesh{};
+	mesh.instCount = vertexCount;  // semantic: vertex count
+	VkDeviceSize bytes = (VkDeviceSize)vertexCount * kChunkVertStride;
+
+	VkBufferCreateInfo bci{};
+	bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bci.size = bytes;
+	bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	if (vkCreateBuffer(m_device, &bci, nullptr, &mesh.buf) != VK_SUCCESS) return kInvalidMesh;
+
+	VkMemoryRequirements mr;
+	vkGetBufferMemoryRequirements(m_device, mesh.buf, &mr);
+	VkMemoryAllocateInfo mai{};
+	mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	mai.allocationSize = mr.size;
+	mai.memoryTypeIndex = findMemType(mr.memoryTypeBits,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	if (vkAllocateMemory(m_device, &mai, nullptr, &mesh.mem) != VK_SUCCESS) {
+		vkDestroyBuffer(m_device, mesh.buf, nullptr);
+		return kInvalidMesh;
+	}
+	vkBindBufferMemory(m_device, mesh.buf, mesh.mem, 0);
+
+	void* mapped = nullptr;
+	vkMapMemory(m_device, mesh.mem, 0, bytes, 0, &mapped);
+	memcpy(mapped, verts, (size_t)bytes);
+	vkUnmapMemory(m_device, mesh.mem);
+	mesh.capBytes = bytes;
+
+	uint64_t id = m_nextMeshId++;
+	m_chunkMeshes[id] = mesh;
+	return id;
+}
+
+void VkRhi::updateChunkMesh(MeshHandle mesh, const float* verts, uint32_t vertexCount) {
+	auto it = m_chunkMeshes.find(mesh);
+	if (it == m_chunkMeshes.end() || !verts) return;
+	PersistentMesh& m = it->second;
+
+	VkDeviceSize bytes = (VkDeviceSize)vertexCount * kChunkVertStride;
+	if (bytes <= m.capBytes) {
+		if (vertexCount > 0) {
+			void* mapped = nullptr;
+			vkMapMemory(m_device, m.mem, 0, bytes, 0, &mapped);
+			memcpy(mapped, verts, (size_t)bytes);
+			vkUnmapMemory(m_device, m.mem);
+		}
+		m.instCount = vertexCount;
+		return;
+	}
+
+	VkDeviceSize newCap = m.capBytes ? m.capBytes : bytes;
+	while (newCap < bytes) newCap *= 2;
+
+	VkBuffer newBuf = VK_NULL_HANDLE;
+	VkDeviceMemory newMem = VK_NULL_HANDLE;
+	VkBufferCreateInfo bci{};
+	bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bci.size = newCap;
+	bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	if (vkCreateBuffer(m_device, &bci, nullptr, &newBuf) != VK_SUCCESS) return;
+
+	VkMemoryRequirements mr;
+	vkGetBufferMemoryRequirements(m_device, newBuf, &mr);
+	VkMemoryAllocateInfo mai{};
+	mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	mai.allocationSize = mr.size;
+	mai.memoryTypeIndex = findMemType(mr.memoryTypeBits,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	if (vkAllocateMemory(m_device, &mai, nullptr, &newMem) != VK_SUCCESS) {
+		vkDestroyBuffer(m_device, newBuf, nullptr);
+		return;
+	}
+	vkBindBufferMemory(m_device, newBuf, newMem, 0);
+
+	void* mapped = nullptr;
+	vkMapMemory(m_device, newMem, 0, bytes, 0, &mapped);
+	memcpy(mapped, verts, (size_t)bytes);
+	vkUnmapMemory(m_device, newMem);
+
+	m_chunkMeshPending[m_frame].push_back(PersistentMesh{ m.buf, m.mem, m.instCount, m.capBytes });
+	m.buf = newBuf; m.mem = newMem;
+	m.capBytes = newCap;
+	m.instCount = vertexCount;
+}
+
+namespace {
+struct ChunkPC {
+	float viewProj[16];
+	float camPos[4];   // xyz + time
+	float sunDir[4];   // xyz + sunStrength
+	float fog[4];      // rgb + fogStart
+	float fogExtra[4]; // x = fogEnd
+};
+static_assert(sizeof(ChunkPC) == 128, "Chunk push constant must be 128 bytes");
+}  // namespace
+
+static void packChunkPC(ChunkPC& pc, const IRhi::SceneParams& scene,
+                         const float fogColor[3], float fogStart, float fogEnd) {
+	memcpy(pc.viewProj, scene.viewProj, sizeof(float) * 16);
+	pc.camPos[0] = scene.camPos[0]; pc.camPos[1] = scene.camPos[1];
+	pc.camPos[2] = scene.camPos[2]; pc.camPos[3] = scene.time;
+	pc.sunDir[0] = scene.sunDir[0]; pc.sunDir[1] = scene.sunDir[1];
+	pc.sunDir[2] = scene.sunDir[2]; pc.sunDir[3] = scene.sunStr;
+	pc.fog[0] = fogColor[0]; pc.fog[1] = fogColor[1]; pc.fog[2] = fogColor[2];
+	pc.fog[3] = fogStart;
+	pc.fogExtra[0] = fogEnd;
+	pc.fogExtra[1] = pc.fogExtra[2] = pc.fogExtra[3] = 0.0f;
+}
+
+void VkRhi::drawChunkMeshOpaque(const SceneParams& scene, const float fogColor[3],
+                                 float fogStart, float fogEnd, MeshHandle mesh) {
+	if (!m_frameActive || !m_chunkPipelineOpaque) return;
+	auto it = m_chunkMeshes.find(mesh);
+	if (it == m_chunkMeshes.end() || it->second.instCount == 0) return;
+	const PersistentMesh& m = it->second;
+
+	ensureMainPass();
+
+	VkCommandBuffer cb = m_cmdBufs[m_frame];
+	VkViewport vp{};
+	vp.width = (float)m_swapExtent.width;
+	vp.height = (float)m_swapExtent.height;
+	vp.minDepth = 0.0f; vp.maxDepth = 1.0f;
+	VkRect2D sc{{0,0}, m_swapExtent};
+	vkCmdSetViewport(cb, 0, 1, &vp);
+	vkCmdSetScissor(cb, 0, 1, &sc);
+
+	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipelineOpaque);
+	VkDeviceSize off = 0;
+	vkCmdBindVertexBuffers(cb, 0, 1, &m.buf, &off);
+
+	ChunkPC pc;
+	packChunkPC(pc, scene, fogColor, fogStart, fogEnd);
+	vkCmdPushConstants(cb, m_chunkLayout,
+		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		0, sizeof(pc), &pc);
+	vkCmdDraw(cb, m.instCount, 1, 0, 0);
+
+	// Stash viewProj for the composite pass — same as drawVoxels{,Mesh}.
+	glm::mat4 vpMat;
+	memcpy(&vpMat[0][0], scene.viewProj, sizeof(float) * 16);
+	glm::mat4 invVP = glm::inverse(vpMat);
+	memcpy(m_compPC.invVP, &invVP[0][0], sizeof(float) * 16);
+	memcpy(m_compPC.vp, scene.viewProj, sizeof(float) * 16);
+}
+
+void VkRhi::drawChunkMeshTransparent(const SceneParams& scene, const float fogColor[3],
+                                      float fogStart, float fogEnd, MeshHandle mesh) {
+	if (!m_frameActive || !m_chunkPipelineTransparent) return;
+	auto it = m_chunkMeshes.find(mesh);
+	if (it == m_chunkMeshes.end() || it->second.instCount == 0) return;
+	const PersistentMesh& m = it->second;
+
+	ensureMainPass();
+
+	VkCommandBuffer cb = m_cmdBufs[m_frame];
+	VkViewport vp{};
+	vp.width = (float)m_swapExtent.width;
+	vp.height = (float)m_swapExtent.height;
+	vp.minDepth = 0.0f; vp.maxDepth = 1.0f;
+	VkRect2D sc{{0,0}, m_swapExtent};
+	vkCmdSetViewport(cb, 0, 1, &vp);
+	vkCmdSetScissor(cb, 0, 1, &sc);
+
+	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipelineTransparent);
+	VkDeviceSize off = 0;
+	vkCmdBindVertexBuffers(cb, 0, 1, &m.buf, &off);
+
+	ChunkPC pc;
+	packChunkPC(pc, scene, fogColor, fogStart, fogEnd);
+	vkCmdPushConstants(cb, m_chunkLayout,
+		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		0, sizeof(pc), &pc);
+	vkCmdDraw(cb, m.instCount, 1, 0, 0);
 }
 
 void VkRhi::drawBoxModel(const SceneParams& scene, const float* boxes, uint32_t count) {
@@ -3143,6 +3475,11 @@ bool VkRhi::beginFrame() {
 		if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
 	}
 	m_meshPending[m_frame].clear();
+	for (auto& p : m_chunkMeshPending[m_frame]) {
+		if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
+		if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
+	}
+	m_chunkMeshPending[m_frame].clear();
 
 	VkResult r = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
 		m_imgAvail[m_frame], VK_NULL_HANDLE, &m_imageIndex);
@@ -3379,6 +3716,11 @@ void VkRhi::shutdown() {
 			if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
 		}
 		m_meshPending[f].clear();
+		for (auto& p : m_chunkMeshPending[f]) {
+			if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
+			if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
+		}
+		m_chunkMeshPending[f].clear();
 	}
 	// Anything still alive in m_meshes (caller forgot to destroyMesh) — release
 	// it directly. Safe because shutdown is called after vkDeviceWaitIdle.
@@ -3387,6 +3729,14 @@ void VkRhi::shutdown() {
 		if (kv.second.mem) vkFreeMemory(m_device, kv.second.mem, nullptr);
 	}
 	m_meshes.clear();
+	for (auto& kv : m_chunkMeshes) {
+		if (kv.second.buf) vkDestroyBuffer(m_device, kv.second.buf, nullptr);
+		if (kv.second.mem) vkFreeMemory(m_device, kv.second.mem, nullptr);
+	}
+	m_chunkMeshes.clear();
+	if (m_chunkPipelineOpaque) vkDestroyPipeline(m_device, m_chunkPipelineOpaque, nullptr);
+	if (m_chunkPipelineTransparent) vkDestroyPipeline(m_device, m_chunkPipelineTransparent, nullptr);
+	if (m_chunkLayout) vkDestroyPipelineLayout(m_device, m_chunkLayout, nullptr);
 	if (m_voxelPipeline) vkDestroyPipeline(m_device, m_voxelPipeline, nullptr);
 	if (m_voxelLayout) vkDestroyPipelineLayout(m_device, m_voxelLayout, nullptr);
 	// Shadow resources depend on m_voxelSetLayout / descriptor pool, which

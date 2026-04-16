@@ -59,6 +59,20 @@ public:
 	void       drawVoxelsMesh(const SceneParams& scene, MeshHandle mesh) override;
 	void       renderShadowsMesh(const float sunVP[16], MeshHandle mesh) override;
 
+	MeshHandle createChunkMesh(const float* verts,
+	                           uint32_t vertexCount) override;
+	void       updateChunkMesh(MeshHandle mesh,
+	                           const float* verts,
+	                           uint32_t vertexCount) override;
+	void       drawChunkMeshOpaque(const SceneParams& scene,
+	                                const float fogColor[3],
+	                                float fogStart, float fogEnd,
+	                                MeshHandle mesh) override;
+	void       drawChunkMeshTransparent(const SceneParams& scene,
+	                                     const float fogColor[3],
+	                                     float fogStart, float fogEnd,
+	                                     MeshHandle mesh) override;
+
 private:
 	bool createInstance(const char* appName);
 	bool pickPhysicalDevice();
@@ -75,6 +89,7 @@ private:
 	bool createVoxelPipeline();
 	bool createSkyPipeline();
 	bool createBoxModelPipeline();
+	bool createChunkPipelines();
 	bool ensureInstanceCapacity(VkDeviceSize bytes);
 	bool ensureBoxInstanceCapacity(int frame, VkDeviceSize bytes);
 	uint32_t findMemType(uint32_t typeBits, VkMemoryPropertyFlags props);
@@ -319,6 +334,18 @@ private:
 	// destroyMesh moves entries here, drained per-frame in beginFrame after
 	// the fence wait so the buffer is guaranteed idle on the GPU.
 	std::vector<PersistentMesh> m_meshPending[kFramesInFlight];
+
+	// Chunk meshes (rich per-vertex 13-float format, no instancing). Separate
+	// map from m_meshes because the stride differs (52 vs 24 bytes), so the
+	// two pipelines must not see each other's buffers. Same defer-destroy
+	// pattern. Handles share the kInvalidMesh sentinel + uint64 ID space —
+	// destroyMesh checks both maps. PersistentMesh is reused: `instCount`
+	// here means "vertexCount", `capBytes` is buffer capacity in bytes.
+	VkPipelineLayout m_chunkLayout = VK_NULL_HANDLE;
+	VkPipeline m_chunkPipelineOpaque = VK_NULL_HANDLE;
+	VkPipeline m_chunkPipelineTransparent = VK_NULL_HANDLE;
+	std::unordered_map<uint64_t, PersistentMesh> m_chunkMeshes;
+	std::vector<PersistentMesh> m_chunkMeshPending[kFramesInFlight];
 
 	// ImGui
 	VkDescriptorPool m_imguiPool = VK_NULL_HANDLE;
