@@ -218,6 +218,10 @@ private:
 	std::string  m_lastDeathReason;
 
 	World        m_world;
+	// One-shot upload of the static village voxels into the RHI. Built in
+	// init() and reused every frame by drawVoxelsMesh / renderShadowsMesh
+	// so the per-frame loop stops re-streaming ~6k floats it never changes.
+	rhi::IRhi::MeshHandle m_worldMesh = rhi::IRhi::kInvalidMesh;
 	Player       m_player;
 	std::vector<Npc> m_npcs;
 	std::vector<FloatText> m_floaters;

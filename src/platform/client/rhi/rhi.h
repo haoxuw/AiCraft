@@ -68,6 +68,26 @@ public:
 	                        const float* instances,
 	                        uint32_t instanceCount) = 0;
 
+	// ── Persistent voxel meshes ───────────────────────────────────────────
+	// Static terrain (the playable slice's village, future chunked terrain
+	// from chunk_mesher) doesn't change per-frame. createVoxelMesh uploads
+	// the instance buffer once; drawVoxelsMesh / renderShadowsMesh bind it
+	// without re-uploading. Caller owns the handle's lifetime.
+	//
+	// Format matches drawVoxels: 6 floats per instance {posX,posY,posZ,r,g,b}.
+	// Returns kInvalidMesh on failure (out of memory). destroyMesh defers
+	// the GPU buffer release until any in-flight frame using it has retired.
+	using MeshHandle = uint64_t;
+	static constexpr MeshHandle kInvalidMesh = 0;
+
+	virtual MeshHandle createVoxelMesh(const float* instances,
+	                                   uint32_t instanceCount) = 0;
+	virtual void       destroyMesh(MeshHandle mesh) = 0;
+	virtual void       drawVoxelsMesh(const SceneParams& scene,
+	                                  MeshHandle mesh) = 0;
+	virtual void       renderShadowsMesh(const float sunVP[16],
+	                                     MeshHandle mesh) = 0;
+
 	// Box-model rendering. `boxes` packs {worldPosX, worldPosY, worldPosZ,
 	// sizeX, sizeY, sizeZ, r, g, b} per box (9 floats). Designed for entity
 	// meshes: each box is an axis-aligned box in world space. Shares lighting

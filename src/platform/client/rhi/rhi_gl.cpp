@@ -262,6 +262,14 @@ public:
 	void drawParticles(const SceneParams&, const float*, uint32_t) override {}
 	void drawRibbon(const SceneParams&, const float*, uint32_t) override {}
 
+	// Persistent voxel meshes — GL backend stub. The legacy GL game uses its
+	// own VBO path (Renderer + ChunkMesher) and bypasses the RHI for terrain;
+	// these are here only so the interface stays uniform across backends.
+	MeshHandle createVoxelMesh(const float*, uint32_t) override { return kInvalidMesh; }
+	void       destroyMesh(MeshHandle) override {}
+	void       drawVoxelsMesh(const SceneParams&, MeshHandle) override {}
+	void       renderShadowsMesh(const float[16], MeshHandle) override {}
+
 	void drawUi2D(const float* verts, uint32_t vertCount,
 	              int mode, const float rgba[4]) override {
 		if (!verts || vertCount == 0 || !m_uiProgram || !m_uiVao) return;

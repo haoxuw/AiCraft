@@ -493,6 +493,14 @@ The bulk of the work:
 - `chunk_mesher.cpp` — VBO uploads → staging buffer + transfer queue. Add
   per-chunk deletion queue keyed by frame index so GPU-side buffers aren't
   freed while still in flight.
+
+  **Foundation landed:** the RHI now exposes
+  `createVoxelMesh / drawVoxelsMesh / renderShadowsMesh / destroyMesh` with
+  a per-frame deferred-destroy queue. The playable slice's static village
+  uploads its 58k voxels once at init and reuses the handle every frame
+  instead of streaming them through the dynamic `drawVoxels` path. Chunk
+  meshes will go through the same surface — one handle per chunk, dropped
+  via `destroyMesh` when the chunk unloads.
 - `renderer.cpp` — ~207 call sites. Port pipeline-by-pipeline:
   - Terrain pipeline: vertex/index buffers, UBO for view/proj, push
     constants for per-chunk offset.

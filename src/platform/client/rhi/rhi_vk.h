@@ -7,6 +7,7 @@
 #endif
 #include <GLFW/glfw3.h>
 
+#include <unordered_map>
 #include <vector>
 
 namespace civcraft::rhi {
@@ -48,6 +49,12 @@ public:
 	              uint32_t vertCount,
 	              int mode,
 	              const float rgba[4]) override;
+
+	MeshHandle createVoxelMesh(const float* instances,
+	                           uint32_t instanceCount) override;
+	void       destroyMesh(MeshHandle mesh) override;
+	void       drawVoxelsMesh(const SceneParams& scene, MeshHandle mesh) override;
+	void       renderShadowsMesh(const float sunVP[16], MeshHandle mesh) override;
 
 private:
 	bool createInstance(const char* appName);
@@ -289,6 +296,22 @@ private:
 	VkPipeline m_compPipeline = VK_NULL_HANDLE;
 	struct CompPC { float invVP[16]; float vp[16]; };
 	CompPC m_compPC{};
+
+	// Persistent voxel meshes (createVoxelMesh / drawVoxelsMesh /
+	// renderShadowsMesh). The static playable-slice village uploads once
+	// here instead of re-streaming 6 floats per voxel every frame; future
+	// chunked terrain (chunk_mesher port) uses the same path. Keyed by
+	// monotonic id so handles can outlive map rehashes.
+	struct PersistentMesh {
+		VkBuffer       buf      = VK_NULL_HANDLE;
+		VkDeviceMemory mem      = VK_NULL_HANDLE;
+		uint32_t       instCount = 0;
+	};
+	std::unordered_map<uint64_t, PersistentMesh> m_meshes;
+	uint64_t m_nextMeshId = 1;
+	// destroyMesh moves entries here, drained per-frame in beginFrame after
+	// the fence wait so the buffer is guaranteed idle on the GPU.
+	std::vector<PersistentMesh> m_meshPending[kFramesInFlight];
 
 	// ImGui
 	VkDescriptorPool m_imguiPool = VK_NULL_HANDLE;

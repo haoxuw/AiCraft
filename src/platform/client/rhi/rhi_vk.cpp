@@ -1459,6 +1459,132 @@ void VkRhi::drawVoxels(const SceneParams& scene, const float* instances, uint32_
 	memcpy(m_compPC.vp, scene.viewProj, sizeof(float) * 16);
 }
 
+// ── Persistent voxel meshes ──────────────────────────────────────────────
+//
+// Static terrain (the playable slice's village; future chunked terrain from
+// chunk_mesher) doesn't change every frame — uploading the same instances
+// over and over is pure waste. createVoxelMesh stamps the data into its own
+// device-visible buffer once; drawVoxelsMesh / renderShadowsMesh bind that
+// buffer instead of re-streaming through the shared m_instBuf.
+//
+// The format is identical to drawVoxels (6 floats per instance: pos.xyz +
+// color.rgb), so the same vertex pipelines bind cleanly — only the second
+// vertex buffer slot changes.
+
+IRhi::MeshHandle VkRhi::createVoxelMesh(const float* instances, uint32_t count) {
+	if (!m_device || count == 0 || !instances) return kInvalidMesh;
+
+	PersistentMesh mesh{};
+	mesh.instCount = count;
+	VkDeviceSize bytes = (VkDeviceSize)count * sizeof(float) * 6;
+
+	VkBufferCreateInfo bci{};
+	bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bci.size = bytes;
+	bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	if (vkCreateBuffer(m_device, &bci, nullptr, &mesh.buf) != VK_SUCCESS)
+		return kInvalidMesh;
+
+	VkMemoryRequirements mr;
+	vkGetBufferMemoryRequirements(m_device, mesh.buf, &mr);
+	VkMemoryAllocateInfo mai{};
+	mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	mai.allocationSize = mr.size;
+	mai.memoryTypeIndex = findMemType(mr.memoryTypeBits,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	if (vkAllocateMemory(m_device, &mai, nullptr, &mesh.mem) != VK_SUCCESS) {
+		vkDestroyBuffer(m_device, mesh.buf, nullptr);
+		return kInvalidMesh;
+	}
+	vkBindBufferMemory(m_device, mesh.buf, mesh.mem, 0);
+
+	void* mapped = nullptr;
+	vkMapMemory(m_device, mesh.mem, 0, bytes, 0, &mapped);
+	memcpy(mapped, instances, (size_t)bytes);
+	vkUnmapMemory(m_device, mesh.mem);
+
+	uint64_t id = m_nextMeshId++;
+	m_meshes[id] = mesh;
+	return id;
+}
+
+void VkRhi::destroyMesh(MeshHandle mesh) {
+	auto it = m_meshes.find(mesh);
+	if (it == m_meshes.end()) return;
+	// Defer the actual VkBuffer / VkDeviceMemory release: this frame's
+	// command buffer (or the previous frame's, still in flight) may still
+	// reference it. beginFrame drains m_meshPending[m_frame] after the fence
+	// wait, where the GPU is guaranteed to be done with that frame index.
+	m_meshPending[m_frame].push_back(it->second);
+	m_meshes.erase(it);
+}
+
+void VkRhi::drawVoxelsMesh(const SceneParams& scene, MeshHandle mesh) {
+	if (!m_frameActive || !m_voxelPipeline) return;
+	auto it = m_meshes.find(mesh);
+	if (it == m_meshes.end() || it->second.instCount == 0) return;
+	const PersistentMesh& m = it->second;
+
+	ensureMainPass();
+
+	VkCommandBuffer cb = m_cmdBufs[m_frame];
+	VkViewport vp{};
+	vp.width = (float)m_swapExtent.width;
+	vp.height = (float)m_swapExtent.height;
+	vp.minDepth = 0.0f; vp.maxDepth = 1.0f;
+	VkRect2D sc{{0,0}, m_swapExtent};
+	vkCmdSetViewport(cb, 0, 1, &vp);
+	vkCmdSetScissor(cb, 0, 1, &sc);
+
+	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_voxelPipeline);
+	vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		m_voxelLayout, 0, 1, &m_voxelDescSet[m_frame], 0, nullptr);
+	VkBuffer bufs[2] = { m_cubeVbo, m.buf };
+	VkDeviceSize offs[2] = { 0, 0 };
+	vkCmdBindVertexBuffers(cb, 0, 2, bufs, offs);
+	vkCmdPushConstants(cb, m_voxelLayout,
+		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		0, sizeof(SceneParams), &scene);
+	vkCmdDraw(cb, m_cubeVertCount, m.instCount, 0, 0);
+
+	// Stash viewProj + invViewProj for the composite pass — same as drawVoxels.
+	glm::mat4 vpMat;
+	memcpy(&vpMat[0][0], scene.viewProj, sizeof(float) * 16);
+	glm::mat4 invVP = glm::inverse(vpMat);
+	memcpy(m_compPC.invVP, &invVP[0][0], sizeof(float) * 16);
+	memcpy(m_compPC.vp, scene.viewProj, sizeof(float) * 16);
+}
+
+void VkRhi::renderShadowsMesh(const float sunVP[16], MeshHandle mesh) {
+	if (!m_frameActive || !m_shadowPipeline) return;
+	auto it = m_meshes.find(mesh);
+	if (it == m_meshes.end() || it->second.instCount == 0) return;
+	const PersistentMesh& m = it->second;
+
+	// Same shadow UBO update as renderShadows — voxel.frag reads this every
+	// lit draw, so it needs to land before drawVoxelsMesh runs.
+	struct ShadowUBO { float shadowVP[16]; float shadowParams[4]; };
+	ShadowUBO ubo{};
+	memcpy(ubo.shadowVP, sunVP, sizeof(float) * 16);
+	ubo.shadowParams[0] = 1.0f / (float)kShadowRes;
+	ubo.shadowParams[1] = 0.0008f;
+	ubo.shadowParams[2] = 0.0f;
+	ubo.shadowParams[3] = 0.0f;
+	memcpy(m_shadowUboMapped[m_frame], &ubo, sizeof(ubo));
+
+	ensureShadowPass();
+
+	VkCommandBuffer cb = m_cmdBufs[m_frame];
+	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
+	VkBuffer bufs[2] = { m_cubeVbo, m.buf };
+	VkDeviceSize offs[2] = { 0, 0 };
+	vkCmdBindVertexBuffers(cb, 0, 2, bufs, offs);
+	vkCmdPushConstants(cb, m_shadowLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+		sizeof(float) * 16, sunVP);
+	vkCmdDraw(cb, m_cubeVertCount, m.instCount, 0, 0);
+}
+
 void VkRhi::drawBoxModel(const SceneParams& scene, const float* boxes, uint32_t count) {
 	if (!m_frameActive || !m_boxModelPipeline || count == 0) return;
 	ensureMainPass();
@@ -2943,6 +3069,13 @@ bool VkRhi::beginFrame() {
 		if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
 	}
 	m_uiVtxPending[m_frame].clear();
+	// Persistent meshes destroyed last time this frame index ran are now
+	// safe to release for the same fence-signalled reason.
+	for (auto& p : m_meshPending[m_frame]) {
+		if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
+		if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
+	}
+	m_meshPending[m_frame].clear();
 
 	VkResult r = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
 		m_imgAvail[m_frame], VK_NULL_HANDLE, &m_imageIndex);
@@ -3173,7 +3306,20 @@ void VkRhi::shutdown() {
 			if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
 		}
 		m_uiVtxPending[f].clear();
+		// Persistent meshes deferred for this frame index — flush.
+		for (auto& p : m_meshPending[f]) {
+			if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
+			if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
+		}
+		m_meshPending[f].clear();
 	}
+	// Anything still alive in m_meshes (caller forgot to destroyMesh) — release
+	// it directly. Safe because shutdown is called after vkDeviceWaitIdle.
+	for (auto& kv : m_meshes) {
+		if (kv.second.buf) vkDestroyBuffer(m_device, kv.second.buf, nullptr);
+		if (kv.second.mem) vkFreeMemory(m_device, kv.second.mem, nullptr);
+	}
+	m_meshes.clear();
 	if (m_voxelPipeline) vkDestroyPipeline(m_device, m_voxelPipeline, nullptr);
 	if (m_voxelLayout) vkDestroyPipelineLayout(m_device, m_voxelLayout, nullptr);
 	// Shadow resources depend on m_voxelSetLayout / descriptor pool, which

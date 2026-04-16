@@ -217,11 +217,21 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	m_rhi = rhi;
 	m_window = window;
 	m_world.generate();
+	// Upload the static village once. drawVoxelsMesh / renderShadowsMesh
+	// bind this every frame instead of streaming the same instances over.
+	m_worldMesh = m_rhi->createVoxelMesh(m_world.instances(), m_world.instanceCount());
+	std::printf("[vk-game] world mesh: %u voxels uploaded (handle=%llu)\n",
+		m_world.instanceCount(), (unsigned long long)m_worldMesh);
 	enterMenu();
 	return true;
 }
 
-void Game::shutdown() {}
+void Game::shutdown() {
+	if (m_rhi && m_worldMesh != rhi::IRhi::kInvalidMesh) {
+		m_rhi->destroyMesh(m_worldMesh);
+		m_worldMesh = rhi::IRhi::kInvalidMesh;
+	}
+}
 
 void Game::enterMenu() {
 	m_state = GameState::Menu;
@@ -732,7 +742,7 @@ void Game::renderWorld(float wallTime) {
 	}
 	uint32_t charBoxCount = (uint32_t)(charBoxes.size() / 9);
 
-	m_rhi->renderShadows(&shadowVP[0][0], m_world.instances(), m_world.instanceCount());
+	m_rhi->renderShadowsMesh(&shadowVP[0][0], m_worldMesh);
 	m_rhi->renderBoxShadows(&shadowVP[0][0], charBoxes.data(), charBoxCount);
 
 	// Sky
@@ -748,7 +758,7 @@ void Game::renderWorld(float wallTime) {
 	scene.time = wallTime;
 	scene.sunDir[0] = sunDir.x; scene.sunDir[1] = sunDir.y; scene.sunDir[2] = sunDir.z;
 	scene.sunStr = sunStr;
-	m_rhi->drawVoxels(scene, m_world.instances(), m_world.instanceCount());
+	m_rhi->drawVoxelsMesh(scene, m_worldMesh);
 
 	// Entities
 	m_rhi->drawBoxModel(scene, charBoxes.data(), charBoxCount);
