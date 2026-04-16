@@ -90,6 +90,12 @@ public:
 	// and NPC feet to the ground.
 	float terrainTop(float x, float z) const;
 
+	// Remove the voxel at integer world coords. Returns true if a voxel was
+	// found and removed. Updates m_heightMap so subsequent terrainTop()s
+	// reflect the new surface. Caller is expected to follow up with
+	// IRhi::updateVoxelMesh to push the new geometry to the GPU.
+	bool digAt(int wx, int wy, int wz);
+
 private:
 	std::vector<float>        m_instances;       // 6 floats each
 	std::vector<int>          m_heightMap;       // size (2R)*(2R)
@@ -201,6 +207,9 @@ private:
 	glm::mat4 viewMatrix() const;
 	glm::vec3 cameraEye() const;
 
+	// World mutation (right-click + headless file trigger).
+	void digInFront();
+
 	// NPC helpers
 	void spawnNpcs();
 	Npc* nearestNpcInCone(const glm::vec3& from, const glm::vec3& fwd,
@@ -242,6 +251,7 @@ private:
 	bool         m_firstMouse    = true;
 	double       m_lastMouseX    = 0, m_lastMouseY = 0;
 	bool         m_lmbLast       = false;
+	bool         m_rmbLast       = false;
 	bool         m_spaceLast     = false;
 	bool         m_escLast       = false;
 

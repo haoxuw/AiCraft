@@ -495,12 +495,19 @@ The bulk of the work:
   freed while still in flight.
 
   **Foundation landed:** the RHI now exposes
-  `createVoxelMesh / drawVoxelsMesh / renderShadowsMesh / destroyMesh` with
-  a per-frame deferred-destroy queue. The playable slice's static village
-  uploads its 58k voxels once at init and reuses the handle every frame
-  instead of streaming them through the dynamic `drawVoxels` path. Chunk
-  meshes will go through the same surface — one handle per chunk, dropped
-  via `destroyMesh` when the chunk unloads.
+  `createVoxelMesh / updateVoxelMesh / drawVoxelsMesh / renderShadowsMesh /
+  destroyMesh` with a per-frame deferred-destroy queue. The playable slice's
+  static village uploads its 58k voxels once at init and reuses the handle
+  every frame instead of streaming them through the dynamic `drawVoxels`
+  path. `updateVoxelMesh` keeps the handle stable: fast-path memcpy when
+  the new instance count fits in the existing buffer, grow-path 2× realloc
+  with defer-destroy of the old buffer when it doesn't — so chunk meshers
+  can call it on every block break/place without churning handles.
+  Demonstrated by a right-click "dig" mechanic in `civcraft-ui-vk` that
+  carves voxels out of the village and re-uploads via `updateVoxelMesh`
+  per click. Chunk meshes will go through the same surface — one handle
+  per chunk, updated on remesh, dropped via `destroyMesh` when the chunk
+  unloads.
 - `renderer.cpp` — ~207 call sites. Port pipeline-by-pipeline:
   - Terrain pipeline: vertex/index buffers, UBO for view/proj, push
     constants for per-chunk offset.

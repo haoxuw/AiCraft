@@ -166,6 +166,43 @@ void World::generate(int /*seed*/) {
 	m_count = (uint32_t)(m_instances.size() / 6);
 }
 
+bool World::digAt(int wx, int wy, int wz) {
+	// Linear scan for the matching voxel in our flat instance stream.
+	// m_count is ~20k for the village, so this is microseconds at the
+	// per-click rate this gets called at.
+	for (size_t i = 0; i + 6 <= m_instances.size(); i += 6) {
+		if ((int)m_instances[i+0] == wx &&
+		    (int)m_instances[i+1] == wy &&
+		    (int)m_instances[i+2] == wz) {
+			// Swap-remove: copy last 6 floats over this slot, shrink.
+			size_t last = m_instances.size() - 6;
+			if (i != last) {
+				for (int k = 0; k < 6; k++) m_instances[i+k] = m_instances[last+k];
+			}
+			m_instances.resize(last);
+			m_count--;
+
+			// Update heightmap if this was the column's top block.
+			int W = m_R * 2;
+			int hx = wx + m_R, hz = wz + m_R;
+			if (hx >= 0 && hx < W && hz >= 0 && hz < W &&
+			    m_heightMap[hz * W + hx] == wy) {
+				int newTop = -1;
+				for (size_t j = 0; j + 6 <= m_instances.size(); j += 6) {
+					if ((int)m_instances[j+0] == wx &&
+					    (int)m_instances[j+2] == wz) {
+						int y = (int)m_instances[j+1];
+						if (y > newTop) newTop = y;
+					}
+				}
+				m_heightMap[hz * W + hx] = std::max(newTop, 0);
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
 float World::terrainTop(float x, float z) const {
 	int ix = (int)std::floor(x);
 	int iz = (int)std::floor(z);
@@ -467,6 +504,52 @@ void Game::tickPlayer(float dt) {
 		}
 	}
 	m_lmbLast = lmbNow;
+
+	// Right-click dig — handled centrally in runOneFrame so the file trigger
+	// works in Menu/Dead states too (used by the headless updateVoxelMesh
+	// proof). Mouse-button gating still happens here.
+	int rmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT);
+	bool rmbNow = (rmb == GLFW_PRESS);
+	if (rmbNow && !m_rmbLast && m_mouseCaptured) {
+		digInFront();
+	}
+	m_rmbLast = rmbNow;
+}
+
+void Game::digInFront() {
+	if (!m_rhi || m_worldMesh == rhi::IRhi::kInvalidMesh) return;
+	glm::vec3 from = m_player.pos + glm::vec3(0, kTune.playerHeight * 0.6f, 0);
+	// Camera's full look direction (yaw + pitch); m_player.forward() is
+	// horizontal-only and would skim village rooftops forever.
+	glm::vec3 dir(
+		std::cos(m_camPitch) * std::cos(m_camYaw),
+		std::sin(m_camPitch),
+		std::cos(m_camPitch) * std::sin(m_camYaw));
+	const float step = 0.12f;
+	const float maxRange = 16.0f;
+	for (float t = 0.4f; t <= maxRange; t += step) {
+		glm::vec3 p = from + dir * t;
+		float top = m_world.terrainTop(p.x, p.z);
+		if (p.y < top) {
+			int wx = (int)std::floor(p.x);
+			int wz = (int)std::floor(p.z);
+			int wy = (int)std::floor(top - 1.0f);
+			if (m_world.digAt(wx, wy, wz)) {
+				m_rhi->updateVoxelMesh(m_worldMesh,
+					m_world.instances(), m_world.instanceCount());
+				std::printf("[vk-game] dug voxel (%d,%d,%d) — world now %u voxels\n",
+					wx, wy, wz, m_world.instanceCount());
+				FloatText ft;
+				ft.worldPos = glm::vec3((float)wx + 0.5f, (float)wy + 1.4f, (float)wz + 0.5f);
+				ft.color = glm::vec3(0.85f, 0.75f, 0.55f);
+				ft.text = "DIG";
+				ft.lifetime = 0.8f;
+				ft.rise = 0.8f;
+				m_floaters.push_back(ft);
+				return;
+			}
+		}
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1155,6 +1238,13 @@ void Game::runOneFrame(float dt, float wallTime) {
 			if (fileTrigger) std::remove("/tmp/civcraft_respawn_request");
 			respawn();
 		}
+	}
+
+	// Headless dig trigger (state-agnostic so a test can drive it from Menu
+	// or Dead too — exercises updateVoxelMesh without needing a live mouse).
+	if (access("/tmp/civcraft_vk_dig_request", F_OK) == 0) {
+		std::remove("/tmp/civcraft_vk_dig_request");
+		digInFront();
 	}
 
 	// ── Render ─────────────────────────────────────────────────────────

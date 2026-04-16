@@ -266,6 +266,7 @@ public:
 	// own VBO path (Renderer + ChunkMesher) and bypasses the RHI for terrain;
 	// these are here only so the interface stays uniform across backends.
 	MeshHandle createVoxelMesh(const float*, uint32_t) override { return kInvalidMesh; }
+	void       updateVoxelMesh(MeshHandle, const float*, uint32_t) override {}
 	void       destroyMesh(MeshHandle) override {}
 	void       drawVoxelsMesh(const SceneParams&, MeshHandle) override {}
 	void       renderShadowsMesh(const float[16], MeshHandle) override {}

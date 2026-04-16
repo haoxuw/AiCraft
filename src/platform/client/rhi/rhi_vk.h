@@ -52,6 +52,9 @@ public:
 
 	MeshHandle createVoxelMesh(const float* instances,
 	                           uint32_t instanceCount) override;
+	void       updateVoxelMesh(MeshHandle mesh,
+	                           const float* instances,
+	                           uint32_t instanceCount) override;
 	void       destroyMesh(MeshHandle mesh) override;
 	void       drawVoxelsMesh(const SceneParams& scene, MeshHandle mesh) override;
 	void       renderShadowsMesh(const float sunVP[16], MeshHandle mesh) override;
@@ -306,6 +309,10 @@ private:
 		VkBuffer       buf      = VK_NULL_HANDLE;
 		VkDeviceMemory mem      = VK_NULL_HANDLE;
 		uint32_t       instCount = 0;
+		// Allocated capacity in bytes. Lets updateVoxelMesh skip the realloc
+		// path when the new data still fits — chunk re-meshes are common
+		// and most shrink-or-stay-same; only growth needs a new buffer.
+		VkDeviceSize   capBytes  = 0;
 	};
 	std::unordered_map<uint64_t, PersistentMesh> m_meshes;
 	uint64_t m_nextMeshId = 1;

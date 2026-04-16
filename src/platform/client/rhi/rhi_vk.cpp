@@ -1503,10 +1503,77 @@ IRhi::MeshHandle VkRhi::createVoxelMesh(const float* instances, uint32_t count) 
 	vkMapMemory(m_device, mesh.mem, 0, bytes, 0, &mapped);
 	memcpy(mapped, instances, (size_t)bytes);
 	vkUnmapMemory(m_device, mesh.mem);
+	mesh.capBytes = bytes;
 
 	uint64_t id = m_nextMeshId++;
 	m_meshes[id] = mesh;
 	return id;
+}
+
+void VkRhi::updateVoxelMesh(MeshHandle mesh, const float* instances, uint32_t count) {
+	auto it = m_meshes.find(mesh);
+	if (it == m_meshes.end() || !instances) return;
+	PersistentMesh& m = it->second;
+
+	VkDeviceSize bytes = (VkDeviceSize)count * sizeof(float) * 6;
+
+	// Fast path: the new payload fits in the buffer we already have. Just
+	// memcpy and update the instance count — no GPU sync, no allocation.
+	// Note: the GPU may currently be reading the old contents from a frame
+	// in flight. host-coherent + a same-frame overwrite is safe here only
+	// because we don't expect callers to update a mesh that's already been
+	// drawn earlier in the same frame (chunk re-meshes happen between frames).
+	if (bytes <= m.capBytes) {
+		if (count > 0) {
+			void* mapped = nullptr;
+			vkMapMemory(m_device, m.mem, 0, bytes, 0, &mapped);
+			memcpy(mapped, instances, (size_t)bytes);
+			vkUnmapMemory(m_device, m.mem);
+		}
+		m.instCount = count;
+		return;
+	}
+
+	// Grow path: allocate a buffer at least 2x larger so consecutive growths
+	// don't churn. The old buffer/memory go on the deferred-destroy queue —
+	// any in-flight frame still referencing them gets to finish first.
+	VkDeviceSize newCap = m.capBytes ? m.capBytes : bytes;
+	while (newCap < bytes) newCap *= 2;
+
+	VkBuffer newBuf = VK_NULL_HANDLE;
+	VkDeviceMemory newMem = VK_NULL_HANDLE;
+	VkBufferCreateInfo bci{};
+	bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bci.size = newCap;
+	bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	if (vkCreateBuffer(m_device, &bci, nullptr, &newBuf) != VK_SUCCESS) return;
+
+	VkMemoryRequirements mr;
+	vkGetBufferMemoryRequirements(m_device, newBuf, &mr);
+	VkMemoryAllocateInfo mai{};
+	mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	mai.allocationSize = mr.size;
+	mai.memoryTypeIndex = findMemType(mr.memoryTypeBits,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	if (vkAllocateMemory(m_device, &mai, nullptr, &newMem) != VK_SUCCESS) {
+		vkDestroyBuffer(m_device, newBuf, nullptr);
+		return;
+	}
+	vkBindBufferMemory(m_device, newBuf, newMem, 0);
+
+	void* mapped = nullptr;
+	vkMapMemory(m_device, newMem, 0, bytes, 0, &mapped);
+	memcpy(mapped, instances, (size_t)bytes);
+	vkUnmapMemory(m_device, newMem);
+
+	// Hand the old buffer to the deferred-destroy queue keyed by m_frame —
+	// the same fence-driven drain that destroyMesh uses.
+	m_meshPending[m_frame].push_back(PersistentMesh{ m.buf, m.mem, m.instCount, m.capBytes });
+	m.buf       = newBuf;
+	m.mem       = newMem;
+	m.capBytes  = newCap;
+	m.instCount = count;
 }
 
 void VkRhi::destroyMesh(MeshHandle mesh) {

@@ -82,6 +82,15 @@ public:
 
 	virtual MeshHandle createVoxelMesh(const float* instances,
 	                                   uint32_t instanceCount) = 0;
+	// Re-stamp a mesh's contents in place. If the new instance count fits in
+	// the buffer the backend already allocated, this is just a memcpy. If it
+	// doesn't, the backend defer-destroys the old buffer (so an in-flight
+	// frame can finish reading it) and allocates a larger one. The handle
+	// stays valid either way — chunk meshers can call this on every block
+	// break/place without churning handles.
+	virtual void       updateVoxelMesh(MeshHandle mesh,
+	                                   const float* instances,
+	                                   uint32_t instanceCount) = 0;
 	virtual void       destroyMesh(MeshHandle mesh) = 0;
 	virtual void       drawVoxelsMesh(const SceneParams& scene,
 	                                  MeshHandle mesh) = 0;
