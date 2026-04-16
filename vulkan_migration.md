@@ -530,11 +530,12 @@ The bulk of the work:
 - `src/platform/tools/model_editor/main.cpp` — port to RHI. Small, isolated,
   good proof that the abstraction holds outside the main client.
 
-### Phase 5 — Cutover + Cleanup (DEFERRED, separate later commit)
+### Phase 5 — Cutover (DEFERRED, separate later commit)
 
-**Phase 5 does not happen as part of this migration.** Parallel binaries
-ship and coexist. Phase 5 is executed only after a full release cycle on
-`civcraft-ui-vk` with no regressions reported against `civcraft-ui`.
+**Decision (2026-04-16): both backends stay permanently.** GL is no
+longer a transitional backend — it's the official web/WASM target.
+Vulkan is the official native target. Phase 5 is therefore a
+*role-relabel*, not a deletion.
 
 Gate to begin Phase 5: every visual QA path — `make item_views`,
 `make character_views`, `make test_e2e`, F2 in-game, scenario
@@ -543,24 +544,31 @@ pixel-for-pixel (or has documented, accepted differences), **and** one
 release cycle has passed with no user-visible regression.
 
 Step 1 — **Cutover** (one commit, reversible):
-- Rename binary `civcraft-ui` → `civcraft-ui-gl` (keep building).
-- Rename binary `civcraft-ui-vk` → `civcraft-ui` (new primary).
+- Rename binary `civcraft-ui` → `civcraft-ui-gl` (kept building, used
+  for native dev only when comparing — web build still uses this code).
+- Rename binary `civcraft-ui-vk` → `civcraft-ui` (new native default).
 - `make game` now launches the Vulkan binary.
-- `make game-gl` is added as an escape hatch to run the GL binary.
+- `make game-gl` is added as a native escape hatch.
+- `make web` continues to use the GL backend (no change).
 
-Step 2 — **Cleanup** (separate commit, after one more quiet cycle):
-- Delete `src/platform/client/rhi/rhi_gl.cpp` (native only — web keeps
-  GLES3 backend).
-- Delete `civcraft-ui-gl` target from `CMakeLists.txt`.
-- Remove `FetchContent_Declare(glad …)` and `glad_add_library(…)` from
-  `CMakeLists.txt` native path.
-- Remove `OpenGL::GL` from native `target_link_libraries`.
-- Delete the runtime GLSL compile code path in `shader.cpp`. Native ships
-  only SPIR-V; web continues to compile GLSL at runtime.
-- Delete `imgui_impl_opengl3` from `imgui_lib` on native (keep for web).
-- Delete any GL-specific debug hooks (`GL_DEBUG_OUTPUT`, etc.).
+Step 2 — **Light cleanup** (separate commit, after one more quiet cycle):
+- Audit native `target_link_libraries` to ensure GL is only linked into
+  `civcraft-ui-gl` and the WASM target — not into the new default
+  `civcraft-ui` (Vulkan-only).
 - Update `src/CivCraft/docs/DEBUGGING.md`, `18_WEB_CLIENT.md`, and
-  `00_OVERVIEW.md` to describe the Vulkan native / GLES3 web split.
+  `00_OVERVIEW.md` to describe the Vulkan native / GLES3 web split as
+  the permanent architecture (not a transition).
+- **Do NOT delete** `rhi_gl.cpp`, the GLAD setup, the GLSL runtime
+  compile path, or `imgui_impl_opengl3` — the web build needs them all.
+
+### Phase 6 — VK menu redesign (DEFERRED, separate later phase)
+
+**Out of scope for the migration.** After Phase 5 lands, the menu
+system on the Vulkan native build will be completely redesigned
+(separate from the web/GL build, which keeps the current ImGui menu).
+The 3-button starter menu in `civcraft-ui-vk` is a sketch, not the
+target. Don't invest in cross-backend menu parity during the migration —
+the VK menu will be replaced wholesale anyway.
 
 ### File change summary
 
