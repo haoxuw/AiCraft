@@ -1,5 +1,4 @@
 #include "client/floating_text.h"
-#include "client/text.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cstdio>
@@ -210,8 +209,12 @@ void FloatingTextManager::update(float dt, CameraMode mode) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mode,
-                                 TextRenderer& text,
+                                 rhi::IRhi& rhi,
                                  const std::vector<EntityId>& selectedEntities) {
+	// aspect isn't consumed by drawText2D (glyph cell is already NDC-normalised
+	// in rhi_ui.cpp); it stays in the signature so callers keep the same arg
+	// list they had with TextRenderer.
+	(void)aspect;
 
 	auto fadeAlpha = [](float ttl, float maxTtl, float fadeOutSec, float a) -> float {
 		float fadeIn  = std::min((maxTtl - ttl) / kPopInTime, 1.0f);
@@ -310,7 +313,7 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 	// Draw Counter entries
 	for (auto& se : anchored) {
 		glm::vec4 col = se.entry->color; col.a = se.alpha;
-		text.drawText(se.entry->text, se.pos.x, se.pos.y, se.scale, col, aspect);
+		rhi.drawText2D(se.entry->text.c_str(), se.pos.x, se.pos.y, se.scale, &col.x);
 	}
 
 	// ── Splash entries (per-hit flashes) ─────────────────────────────────────
@@ -323,15 +326,15 @@ void FloatingTextManager::render(const Camera& cam, float aspect, CameraMode mod
 
 		if (mode == CameraMode::FirstPerson) {
 			if (s.source == FloatSource::DamageTaken) {
-				text.drawText(s.text, s.horizJitter, kFpsSplashDmgY - s.screenDrift.y, sc, col, aspect);
+				rhi.drawText2D(s.text.c_str(), s.horizJitter, kFpsSplashDmgY - s.screenDrift.y, sc, &col.x);
 			} else {
-				text.drawText(s.text, s.horizJitter, kFpsSplashHitY + s.screenDrift.y, sc, col, aspect);
+				rhi.drawText2D(s.text.c_str(), s.horizJitter, kFpsSplashHitY + s.screenDrift.y, sc, &col.x);
 			}
 		} else {
 			glm::vec3 wp = s.anchorWorld + glm::vec3(0, kAnchorLiftY, 0);
 			glm::vec2 ndc;
 			if (!worldToNDC(cam, aspect, wp, ndc)) continue;
-			text.drawText(s.text, ndc.x + s.horizJitter, ndc.y + s.screenDrift.y, sc, col, aspect);
+			rhi.drawText2D(s.text.c_str(), ndc.x + s.horizJitter, ndc.y + s.screenDrift.y, sc, &col.x);
 		}
 	}
 }

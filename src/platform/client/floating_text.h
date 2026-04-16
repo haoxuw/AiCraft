@@ -1,7 +1,8 @@
 #pragma once
 
-#include "client/gl.h"
+#include "client/gfx.h"
 #include "client/camera.h"
+#include "client/rhi/rhi.h"
 #include "shared/entity.h"
 #include <glm/glm.hpp>
 #include <string>
@@ -9,8 +10,6 @@
 #include <vector>
 
 namespace civcraft {
-
-class TextRenderer;
 
 // ── Scale constants — all floating text uses these, never raw floats ─────────
 constexpr float kFTScaleWorld  = 1.80f;  // world-projected: damage, heal, pickup, break
@@ -69,9 +68,11 @@ public:
 	// free-float from their last known position instead of snapping to origin
 	void onEntityRemoved(EntityId id);
 
-	// Render everything
+	// Render everything. Routes all text through the RHI's drawText2D so the
+	// GL and Vulkan backends produce pixel-identical output from the same
+	// SDF atlas.
 	void render(const Camera& cam, float aspect, CameraMode mode,
-	            TextRenderer& text,
+	            rhi::IRhi& rhi,
 	            const std::vector<EntityId>& selectedEntities);
 
 private:

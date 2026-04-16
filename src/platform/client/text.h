@@ -1,6 +1,6 @@
 #pragma once
 
-#include "client/gl.h"
+#include "client/gfx.h"
 #include <glm/glm.hpp>
 #include <string>
 #include "client/shader.h"
@@ -43,8 +43,5 @@ private:
 	GLuint m_fontTexture = 0;
 	GLuint m_vao = 0, m_vbo = 0;
 };
-
-// Classic 8x8 bitmap font (public domain font8x8_basic)
-extern const unsigned char FONT_8X8[96][8];
 
 } // namespace civcraft

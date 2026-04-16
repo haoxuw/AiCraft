@@ -12,7 +12,7 @@
 #include "server/world.h"
 #include "shared/inventory.h"
 #include "client/hotbar.h"
-#include "client/gl.h"
+#include "client/gfx.h"
 
 namespace civcraft {
 

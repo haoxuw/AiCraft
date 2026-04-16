@@ -19,7 +19,7 @@
 #include "client/model.h"
 #include "client/model_loader.h"
 #include "client/shader.h"
-#include "client/gl.h"
+#include "client/gfx.h"
 
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>

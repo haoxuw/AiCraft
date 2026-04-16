@@ -1,6 +1,6 @@
 #pragma once
 
-#include "client/gl.h"
+#include "client/gfx.h"
 #include <glm/glm.hpp>
 #include <string>
 

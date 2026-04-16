@@ -21,6 +21,7 @@
 #include "client/model.h"
 #include "client/entity_drawer.h"
 #include "client/lightbulb_drawer.h"
+#include "client/rhi/rhi.h"
 #include "client/model_preview.h"
 #include "client/model_icon_cache.h"
 #include "client/floating_text.h"
@@ -106,6 +107,11 @@ private:
 
 	// Subsystems
 	Window          m_window;
+	// RHI: Render Hardware Interface. GL backend on this binary, Vulkan on
+	// civcraft-ui-vk. Drives text/rect UI (drawText2D, drawRect2D) and,
+	// eventually, the rest of the renderer. The legacy TextRenderer below
+	// still serves hud / code_editor until they migrate through the RHI.
+	std::unique_ptr<rhi::IRhi> m_rhi;
 	Renderer        m_renderer;
 	TextRenderer    m_text;
 	ParticleSystem  m_particles;

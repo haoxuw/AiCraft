@@ -4,7 +4,7 @@
 #include "shared/server_interface.h"
 #include "shared/entity.h"
 #include "shared/constants.h"
-#include "client/gl.h"
+#include "client/gfx.h"
 #include "client/camera.h"
 #include "client/renderer.h"
 #include "client/controls.h"

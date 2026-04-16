@@ -915,7 +915,7 @@ void Game::renderHUD(float dt, float aspect, bool skipImGui) {
 	}
 
 	// Floating text notifications (damage, pickups, heals)
-	m_floatText.render(m_camera, aspect, m_camera.mode, m_text,
+	m_floatText.render(m_camera, aspect, m_camera.mode, *m_rhi,
 	                   m_gameplay.selectedEntities());
 
 	m_ui.endFrame();

@@ -13,7 +13,7 @@
 #include "shared/types.h"
 #include "shared/chunk_source.h"
 #include "client/camera.h"
-#include "client/gl.h"
+#include "client/gfx.h"
 #include <unordered_set>
 
 namespace civcraft {

@@ -100,6 +100,25 @@ endif()
 
 if(NOT EMSCRIPTEN)
 	find_package(OpenGL REQUIRED)
+	# Vulkan is optional — only needed for the parallel civcraft-ui-vk binary.
+	# The GL build (`civcraft-ui`) does not depend on it.
+	find_package(Vulkan QUIET)
+endif()
+
+# Vulkan-specific ImGui backend lib — separate from imgui_lib so the GL
+# build is unaffected. Built only when Vulkan is found.
+if(NOT EMSCRIPTEN AND Vulkan_FOUND)
+	add_library(imgui_lib_vk STATIC
+		${imgui_SOURCE_DIR}/imgui.cpp
+		${imgui_SOURCE_DIR}/imgui_demo.cpp
+		${imgui_SOURCE_DIR}/imgui_draw.cpp
+		${imgui_SOURCE_DIR}/imgui_tables.cpp
+		${imgui_SOURCE_DIR}/imgui_widgets.cpp
+		${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+		${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
+	)
+	target_include_directories(imgui_lib_vk PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+	target_link_libraries(imgui_lib_vk PRIVATE glfw Vulkan::Vulkan)
 endif()
 
 # --- Platform engine (src/platform) ---
@@ -206,17 +225,17 @@ if(EMSCRIPTEN)
 	# =================================================================
 	# Web build (WASM + WebGL 2) — client-only, connects to remote server
 	# =================================================================
-	add_executable(civcraft
+	add_executable(civcraft-ui
 		src/CivCraft/main.cpp
 		${FULL_SIM_SOURCES}
 		${FULL_CLIENT_SOURCES}
 	)
-	target_include_directories(civcraft PRIVATE ${GAME_INCLUDE_DIRS})
-	target_link_libraries(civcraft PRIVATE glm::glm imgui_lib)
+	target_include_directories(civcraft-ui PRIVATE ${GAME_INCLUDE_DIRS})
+	target_link_libraries(civcraft-ui PRIVATE glm::glm imgui_lib)
 
 	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576 -sWEBSOCKET_SUBPROTOCOL=binary")
 	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/src/platform/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/config@config --preload-file ${CMAKE_SOURCE_DIR}/src/platform/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts@artifacts")
-	set_target_properties(civcraft PROPERTIES
+	set_target_properties(civcraft-ui PROPERTIES
 		SUFFIX ".html"
 		COMPILE_FLAGS "${EM_FLAGS}"
 		LINK_FLAGS "${EM_FLAGS} ${EM_LINK}"
@@ -227,14 +246,20 @@ else()
 	# Native builds (Linux / Mac / Windows)
 	# =================================================================
 
-	# === Singleplayer (server + client in one process) ===
-	add_executable(civcraft
+	# === GUI client (singleplayer + network) ===
+	# Replaces the old `civcraft` and `civcraft-client` binaries.
+	# --host/--port → joins remote; otherwise spawns a local civcraft-server.
+	add_executable(civcraft-ui
 		src/CivCraft/main.cpp
 		${FULL_SIM_SOURCES}
 		${FULL_CLIENT_SOURCES}
+		src/platform/client/rhi/rhi.h
+		src/platform/client/rhi/rhi_gl.cpp
+		src/platform/client/rhi/rhi_ui.cpp
 	)
-	target_include_directories(civcraft PRIVATE ${GAME_INCLUDE_DIRS})
-	target_link_libraries(civcraft PRIVATE
+	target_include_directories(civcraft-ui PRIVATE ${GAME_INCLUDE_DIRS})
+	target_compile_definitions(civcraft-ui PRIVATE AICRAFT_RHI_GL)
+	target_link_libraries(civcraft-ui PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
 		imgui_lib libzstd_static
@@ -250,19 +275,6 @@ else()
 		glm::glm
 		Python3::Python pybind11::embed
 		libzstd_static
-	)
-
-	# === Network client (connects to remote server) ===
-	add_executable(civcraft-client
-		src/CivCraft/main_client.cpp
-		${FULL_SIM_SOURCES}
-		${FULL_CLIENT_SOURCES}
-	)
-	target_include_directories(civcraft-client PRIVATE ${GAME_INCLUDE_DIRS})
-	target_link_libraries(civcraft-client PRIVATE
-		glfw glad_gl_core_41 glm::glm OpenGL::GL
-		Python3::Python pybind11::embed
-		imgui_lib libzstd_static
 	)
 
 	# === Headless E2E test runner ===
@@ -281,20 +293,20 @@ else()
 	# All executables run with CWD=$BUILD_DIR, so POST_BUILD copies assets
 	# from the per-game source tree into the build dir with the same
 	# "shaders/", "artifacts/", etc. names that the C++ code expects.
-	add_custom_command(TARGET civcraft POST_BUILD
+	add_custom_command(TARGET civcraft-ui POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/platform/shaders $<TARGET_FILE_DIR:civcraft>/shaders
+			${CMAKE_SOURCE_DIR}/src/platform/shaders $<TARGET_FILE_DIR:civcraft-ui>/shaders
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/CivCraft/shaders $<TARGET_FILE_DIR:civcraft>/shaders
+			${CMAKE_SOURCE_DIR}/src/CivCraft/shaders $<TARGET_FILE_DIR:civcraft-ui>/shaders
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/CivCraft/config $<TARGET_FILE_DIR:civcraft>/config
+			${CMAKE_SOURCE_DIR}/src/CivCraft/config $<TARGET_FILE_DIR:civcraft-ui>/config
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft>/python
+			${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft-ui>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/platform/fonts $<TARGET_FILE_DIR:civcraft>/fonts
+			${CMAKE_SOURCE_DIR}/src/platform/fonts $<TARGET_FILE_DIR:civcraft-ui>/fonts
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft>/artifacts
-		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/CivCraft/resources $<TARGET_FILE_DIR:civcraft>/
+			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-ui>/artifacts
+		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/CivCraft/resources $<TARGET_FILE_DIR:civcraft-ui>/
 	)
 
 	# === Model editor (standalone model viewer / snapshot tool) ===
@@ -354,4 +366,81 @@ else()
 	# CellCraft is intentionally not built here — it is a standalone web
 	# client under src/CellCraft/web/ (Three.js + TypeScript), run via
 	# `cd src/CellCraft/web && npm run dev`.
+
+	# === SPIR-V shader compilation (Vulkan) ===
+	# Compiles src/platform/shaders/vk/*.{vert,frag} via glslangValidator and
+	# stages the .spv into $BUILD_DIR/shaders/vk/. A custom target gates the
+	# Vulkan exe build on the SPIR-V output.
+	if(Vulkan_FOUND)
+		find_program(GLSLANG glslangValidator REQUIRED)
+		set(VK_SHADER_SRC_DIR ${CMAKE_SOURCE_DIR}/src/platform/shaders/vk)
+		set(VK_SHADER_OUT_DIR ${CMAKE_BINARY_DIR}/shaders/vk)
+		file(MAKE_DIRECTORY ${VK_SHADER_OUT_DIR})
+		set(VK_SHADER_SOURCES
+			${VK_SHADER_SRC_DIR}/cube.vert
+			${VK_SHADER_SRC_DIR}/cube.frag
+			${VK_SHADER_SRC_DIR}/voxel.vert
+			${VK_SHADER_SRC_DIR}/voxel.frag
+			${VK_SHADER_SRC_DIR}/sky.vert
+			${VK_SHADER_SRC_DIR}/sky.frag
+			${VK_SHADER_SRC_DIR}/composite.vert
+			${VK_SHADER_SRC_DIR}/composite.frag
+			${VK_SHADER_SRC_DIR}/shadow.vert
+			${VK_SHADER_SRC_DIR}/shadow.frag
+			${VK_SHADER_SRC_DIR}/boxmodel.vert
+			${VK_SHADER_SRC_DIR}/boxshadow.vert
+			${VK_SHADER_SRC_DIR}/particle.vert
+			${VK_SHADER_SRC_DIR}/particle.frag
+			${VK_SHADER_SRC_DIR}/ribbon.vert
+			${VK_SHADER_SRC_DIR}/ribbon.frag
+			${VK_SHADER_SRC_DIR}/text2d.vert
+			${VK_SHADER_SRC_DIR}/text2d.frag
+		)
+		set(VK_SPV_OUTPUTS "")
+		foreach(SHADER ${VK_SHADER_SOURCES})
+			get_filename_component(FNAME ${SHADER} NAME)
+			set(SPV ${VK_SHADER_OUT_DIR}/${FNAME}.spv)
+			add_custom_command(
+				OUTPUT ${SPV}
+				COMMAND ${GLSLANG} -V ${SHADER} -o ${SPV}
+				DEPENDS ${SHADER}
+				COMMENT "SPIR-V: ${FNAME}"
+				VERBATIM
+			)
+			list(APPEND VK_SPV_OUTPUTS ${SPV})
+		endforeach()
+		add_custom_target(vk_shaders DEPENDS ${VK_SPV_OUTPUTS})
+	endif()
+
+	# === civcraft-ui-vk (parallel Vulkan binary) ===
+	# A Vulkan-native playable slice: menu → walk → combat → HUD → death →
+	# respawn. Built on top of the RHI — lives alongside the full GL build
+	# (`civcraft`) and acts as the "game-complete" reference surface for the
+	# RHI abstraction while Phase 3 (porting renderer.cpp) stays deferred.
+	if(Vulkan_FOUND)
+		add_executable(civcraft-ui-vk
+			src/platform/tools/civcraft_ui_vk/main.cpp
+			src/platform/tools/civcraft_ui_vk/game_vk.h
+			src/platform/tools/civcraft_ui_vk/game_vk.cpp
+			src/platform/client/rhi/rhi.h
+			src/platform/client/rhi/rhi_vk.h
+			src/platform/client/rhi/rhi_vk.cpp
+			src/platform/client/rhi/rhi_ui.cpp
+		)
+		target_include_directories(civcraft-ui-vk PRIVATE src/platform)
+		target_compile_definitions(civcraft-ui-vk PRIVATE AICRAFT_RHI_VK)
+		target_link_libraries(civcraft-ui-vk PRIVATE
+			glfw glm::glm Vulkan::Vulkan imgui_lib_vk
+		)
+		add_dependencies(civcraft-ui-vk vk_shaders)
+		# Stage SPIR-V shaders next to the binary so it finds them at runtime
+		# regardless of CWD (same pattern as the GL build's asset staging).
+		add_custom_command(TARGET civcraft-ui-vk POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_directory
+				${VK_SHADER_OUT_DIR} $<TARGET_FILE_DIR:civcraft-ui-vk>/shaders/vk
+		)
+		message(STATUS "civcraft-ui-vk: enabled (Vulkan ${Vulkan_VERSION})")
+	else()
+		message(STATUS "civcraft-ui-vk: SKIPPED (Vulkan SDK not found)")
+	endif()
 endif()

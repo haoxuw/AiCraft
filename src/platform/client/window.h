@@ -1,6 +1,6 @@
 #pragma once
 
-#include "client/gl.h"
+#include "client/gfx.h"
 #include <GLFW/glfw3.h>
 #include <string>
 

@@ -57,12 +57,30 @@ bool Game::init(int argc, char** argv) {
 	}
 
 	if (!m_window.init(1600, 900, "CivCraft", m_logOnly)) return false;
+
+	// Stand up the RHI immediately after the GL context is ready. The GL
+	// backend owns the UI (drawText2D / drawRect2D) pipeline and the shared
+	// SDF font atlas; FloatingTextManager + LightbulbDrawer route through
+	// it so both GL and Vulkan binaries render text from the same source.
+	m_rhi.reset(rhi::createRhi());
+	{
+		rhi::InitInfo info;
+		info.window = m_window.handle();
+		info.width  = m_window.width();
+		info.height = m_window.height();
+		info.appName = "CivCraft";
+		if (!m_rhi->init(info)) {
+			fprintf(stderr, "[game] rhi->init failed\n");
+			return false;
+		}
+	}
+
 	if (!m_renderer.init("shaders")) return false;
 	if (!m_text.init("shaders")) return false;
 	if (!m_particles.init("shaders")) return false;
 
 	m_entityDrawer    = std::make_unique<EntityDrawer>(m_renderer.modelRenderer());
-	m_lightbulbDrawer = std::make_unique<LightbulbDrawer>(m_renderer.modelRenderer(), m_text);
+	m_lightbulbDrawer = std::make_unique<LightbulbDrawer>(*m_rhi);
 
 	m_controls.load("config/controls.yaml");
 	m_ui.init(m_window.handle());
@@ -231,9 +249,18 @@ bool Game::init(int argc, char** argv) {
 		fs::path probe = fs::current_path();
 		for (int i = 0; i < 4; i++) {
 			if (fs::is_directory(probe / "src")) {
-				for (auto& e : fs::directory_iterator(probe / "src"))
-					if (e.is_directory()) srcRoots.push_back(e.path());
-				break;
+				// Only accept a src/ that has at least one game with
+				// artifacts/models/ — skips CMake build subdirs like
+				// build-perf/src/ that just hold object files.
+				std::vector<fs::path> candidates;
+				bool hasAny = false;
+				for (auto& e : fs::directory_iterator(probe / "src")) {
+					if (!e.is_directory()) continue;
+					candidates.push_back(e.path());
+					if (fs::is_directory(e.path() / "artifacts" / "models"))
+						hasAny = true;
+				}
+				if (hasAny) { srcRoots = std::move(candidates); break; }
 			}
 			probe = probe.parent_path();
 		}
@@ -241,6 +268,7 @@ bool Game::init(int argc, char** argv) {
 		auto baseName = [](std::string n) {
 			auto h = n.find('#'); if (h != std::string::npos) n.resize(h); return n;
 		};
+		int matched = 0;
 		for (auto& [key, _] : m_models) {
 			std::string name = baseName(key);
 			std::string found;
@@ -251,8 +279,14 @@ bool Game::init(int argc, char** argv) {
 				}
 				if (!found.empty()) break;
 			}
-			if (!found.empty()) hb.registerModelPath(key, found);
+			if (!found.empty()) {
+				hb.registerModelPath(key, found);
+				matched++;
+			}
 		}
+		printf("[ModelEditor] CWD=%s found %zu src roots, mapped %d/%zu models\n",
+			fs::current_path().string().c_str(), srcRoots.size(),
+			matched, m_models.size());
 	}
 
 	// Scroll callback — reads selected slot from player entity
@@ -280,13 +314,11 @@ bool Game::init(int argc, char** argv) {
 		} else if (d->cam->mode == CameraMode::RPG) {
 			d->cam->godDistanceTarget = std::clamp(d->cam->godDistanceTarget - (float)y * 2, 3.0f, 50.0f);
 		} else if (d->cam->mode == CameraMode::RTS) {
-			// Multiplicative zoom (WoW-style): each wheel tick scales the
-			// camera height by ~15%, so close zooms feel fine-grained and
-			// far zooms move fast. Height drives both altitude and horizontal
-			// distance in updateRTS, giving a true dolly along the view ray.
-			float factor = std::pow(0.85f, (float)y);
-			d->cam->rtsHeightTarget = std::clamp(
-				d->cam->rtsHeightTarget * factor, 5.0f, 120.0f);
+			// Scroll controls pitch: each wheel tick tilts ~6°, so full sweep
+			// top-down (90°) ↔ horizon (0°) is a dozen clicks. Zoom lives on
+			// the right-drag vertical axis instead.
+			d->cam->rtsAngle = std::clamp(
+				d->cam->rtsAngle + (float)y * 6.0f, 0.0f, 90.0f);
 		}
 	});
 
@@ -338,6 +370,7 @@ m_audio.shutdown();
 	m_particles.shutdown();
 	m_text.shutdown();
 	m_renderer.shutdown();
+	if (m_rhi) { m_rhi->shutdown(); m_rhi.reset(); }
 	m_window.shutdown();
 }
 
