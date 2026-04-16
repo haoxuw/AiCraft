@@ -1,3 +1,5 @@
+*.tsv
+
 # Build
 saves/
 build/

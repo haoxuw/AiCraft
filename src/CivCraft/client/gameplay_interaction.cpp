@@ -175,8 +175,12 @@ void GameplayController::processBlockInteraction(float dt, GameState state,
 		// Right-click: interact with block or place block (no entity closer)
 		bool entityCloser = m_entityHit && m_entityHit->distance < m_hit->distance;
 		if (controls.pressed(Action::PlaceBlock) && !entityCloser && m_breakCD <= 0) {
-			auto& bp = m_hit->blockPos;
-			BlockId bid = chunks.getBlock(bp.x, bp.y, bp.z);
+			// Prefer the open-door cell the ray passed through (if any) over
+			// the pass-through solid hit — right-click on an open door still
+			// closes it, even though break/place target the block behind.
+			glm::ivec3 bp   = m_hit->hasInteract ? m_hit->interactPos : m_hit->blockPos;
+			BlockId    bid  = m_hit->hasInteract ? m_hit->interactBlockId
+			                                     : chunks.getBlock(bp.x, bp.y, bp.z);
 			const std::string& blockStr = blocks.get(bid).string_id;
 
 			if (blockStr == BlockType::Door || blockStr == BlockType::DoorOpen) {

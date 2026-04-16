@@ -56,8 +56,8 @@ public:
 	glm::vec3 rtsCenter = {0, 0, 0};  // camera looks at this point
 	float rtsHeight = 40.0f;
 	float rtsHeightTarget = 40.0f;
-	float rtsAngle = 50.0f;           // elevation above horizontal (deg). 90°=top-down,
-	                                  // 0°=flat. ~45–55° gives a clear "diorama" look
+	float rtsAngle = 30.0f;           // elevation above horizontal (deg). 90°=top-down,
+	                                  // 0°=horizon. 30° default = clear side view
 	                                  // where unit silhouettes (hats, capes) read.
 	float rtsOrbitYaw = -90.0f;       // same orbit as RPG (looking south)
 	float rtsPanSpeed = 30.0f;

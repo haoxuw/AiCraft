@@ -345,6 +345,8 @@ static std::string t10_break_block_removes_block() {
 	return "";
 }
 
+static void placeBlockDirect(TestServer& srv, int x, int y, int z, const std::string& typeId);  // defined below
+
 static std::string t11_break_block_survival_item_spawns() {
 	auto srv = makeFlatServer();
 	EntityId pid = srv->localPlayerId();
@@ -355,12 +357,15 @@ static std::string t11_break_block_survival_item_spawns() {
 	glm::vec3 pos = p->position;
 
 	// Break a block 4 units north — well outside attract radius (2.5) so
-	// the item entity persists for at least one tick before pickup.
+	// the item entity persists for at least one tick before pickup. Place
+	// the target block explicitly so the test doesn't depend on whether
+	// village-gen carved that cell to air.
 	glm::ivec3 blockPos = {(int)std::floor(pos.x), (int)std::floor(pos.y) - 1,
 	                       (int)std::floor(pos.z) - 4};
+	placeBlockDirect(*srv, blockPos.x, blockPos.y, blockPos.z, BlockType::Stone);
 
 	BlockId bid = srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z);
-	if (bid == BLOCK_AIR) return "no surface block 4 units north of spawn";
+	if (bid == BLOCK_AIR) return "failed to place target block";
 
 	int itemsBefore = countByType(*srv, ItemName::ItemEntity);
 	breakAndTick(*srv, pid, blockPos);
@@ -1752,14 +1757,27 @@ static std::string w4_mob_spawn_anchors() {
 
     // Monument ring: villagers should land within ~12 blocks of the village
     // center (village.py sets radius=10; allow jitter for gravity-settle).
+    // Portal ring: non-barn animals (squirrel, raccoon, beaver, bee) spawn
+    // around the portal at radius 4–8 per village.py — allow 16 for slack.
     constexpr float kMonumentRadius = 12.0f;
+    constexpr float kPortalRadius   = 16.0f;
+
+    // Index each mob type → its declared spawn_at anchor from the template.
+    std::unordered_map<std::string, std::string> anchorOf;
+    for (const auto& mc : tmpl.pyConfig().mobs) anchorOf[mc.type] = mc.spawnAt;
+
+    auto portalSpawn = tmpl.preferredSpawn(seed);
 
     int villagerCount = 0, animalCount = 0;
     srv->forEachEntity([&](Entity& e) {
         if (!e.def().isLiving() || e.removed) return;
         const std::string& tid = e.typeId();
         if (tid == "player") return;
-        if (tid == "villager") {
+
+        std::string anchor = anchorOf.count(tid) ? anchorOf[tid] : "";
+        if (tid == "villager") anchor = "monument";   // safety default
+
+        if (anchor == "monument") {
             villagerCount++;
             float dx = e.position.x - (float)vc.x;
             float dz = e.position.z - (float)vc.y;
@@ -1767,22 +1785,37 @@ static std::string w4_mob_spawn_anchors() {
             if (d > kMonumentRadius) {
                 char buf[160];
                 std::snprintf(buf, sizeof(buf),
-                    "villager id=%u at (%.1f,%.1f,%.1f) is %.1fm from monument — want <%.1f",
-                    e.id(), e.position.x, e.position.y, e.position.z, d, kMonumentRadius);
+                    "%s id=%u at (%.1f,%.1f,%.1f) is %.1fm from monument — want <%.1f",
+                    tid.c_str(), e.id(), e.position.x, e.position.y, e.position.z, d, kMonumentRadius);
                 throw std::runtime_error(buf);
             }
-        } else {
+        } else if (anchor == "barn") {
             animalCount++;
+            // XZ must be inside the barn footprint. Y is allowed anywhere
+            // (owl roosts on the roof above the walls).
             if (e.position.x < (float)barnMin.x || e.position.x >= (float)barnMax.x ||
                 e.position.z < (float)barnMin.y || e.position.z >= (float)barnMax.y) {
                 char buf[192];
                 std::snprintf(buf, sizeof(buf),
-                    "%s id=%u at (%.1f,_,%.1f) is outside barn footprint [%d..%d) x [%d..%d)",
-                    tid.c_str(), e.id(), e.position.x, e.position.z,
+                    "%s id=%u at (%.1f,%.1f,%.1f) is outside barn footprint [%d..%d) x [%d..%d)",
+                    tid.c_str(), e.id(), e.position.x, e.position.y, e.position.z,
                     barnMin.x, barnMax.x, barnMin.y, barnMax.y);
                 throw std::runtime_error(buf);
             }
+        } else if (anchor == "portal") {
+            animalCount++;
+            float dx = e.position.x - portalSpawn.x;
+            float dz = e.position.z - portalSpawn.z;
+            float d = std::sqrt(dx*dx + dz*dz);
+            if (d > kPortalRadius) {
+                char buf[192];
+                std::snprintf(buf, sizeof(buf),
+                    "%s id=%u at (%.1f,_,%.1f) is %.1fm from portal — want <%.1f",
+                    tid.c_str(), e.id(), e.position.x, e.position.z, d, kPortalRadius);
+                throw std::runtime_error(buf);
+            }
         }
+        // Unknown anchor (e.g. empty string — village ring): don't assert.
     });
 
     if (villagerCount == 0) return "no villagers spawned";
@@ -2175,7 +2208,10 @@ static std::string nav5_step_up_climbing() {
 }
 
 // ================================================================
-// NAV6: Entity stops at 2+ block wall (can't climb)
+// NAV6: Entity routes around a 2-block wall (can't climb, must detour).
+// Post-GridPlanner: we assert the entity goes AROUND and reaches the
+// goal — the planner's `standable()` check prevents any illegal climb
+// (head space blocked), so the only valid path is a lateral detour.
 // ================================================================
 static std::string nav6_blocked_by_tall_wall() {
 	auto srv = makeFlatServer();
@@ -2190,7 +2226,9 @@ static std::string nav6_blocked_by_tall_wall() {
 	p->position = {-20.0f, 9.0f, 0.0f};
 	tickN(*srv, 60);
 
-	// Place a 2-block wall 4 blocks east
+	// Place a single 2-block-tall column 4 blocks east. The planner must
+	// route around (N or S) — it can never climb, because a 2-block column
+	// leaves no head clearance for MovementAscend.
 	BlockId stone = world.blocks.getId("stone");
 	int wallX = (int)std::floor(p->position.x) + 4;
 	int baseY = (int)std::floor(p->position.y);
@@ -2206,19 +2244,20 @@ static std::string nav6_blocked_by_tall_wall() {
 		}
 	}
 
-	// Set goal 8 blocks east (past the wall)
-	p->nav.setGoal(p->position + glm::vec3(8.0f, 0, 0));
-	tickN(*srv, 60 * 4); // 4 seconds
+	glm::vec3 goalPos = p->position + glm::vec3(8.0f, 0, 0);
+	p->nav.setGoal(goalPos);
+	tickN(*srv, 60 * 6); // 6 seconds: ~12 blocks of travel budget
 
-	// Entity should NOT have crossed the wall (wall face is at wallX)
-	float xProgress = p->position.x;
-	if (xProgress > (float)wallX + 0.5f)
-		return "entity passed through 2-block wall: x=" + std::to_string(xProgress) +
-		       " wall at x=" + std::to_string(wallX);
-
-	// Entity should still be actively navigating (never gives up)
-	if (!p->nav.active)
-		return "entity gave up at 2-block wall";
+	// Entity should have reached the goal via detour — not phased through
+	// the wall at y=baseY (would mean a fractional XZ that sits inside the
+	// wall's block). Final XZ distance to goal must be small.
+	float dx = p->position.x - goalPos.x;
+	float dz = p->position.z - goalPos.z;
+	float dist = std::sqrt(dx*dx + dz*dz);
+	if (dist > 2.0f)
+		return "entity did not reach goal: dist=" + std::to_string(dist) +
+		       " pos=(" + std::to_string(p->position.x) + "," +
+		       std::to_string(p->position.z) + ")";
 
 	return "";
 }

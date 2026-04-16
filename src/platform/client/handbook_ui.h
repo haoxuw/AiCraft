@@ -117,17 +117,22 @@ private:
 			return;
 		}
 
-		// Left panel: list of entries
+		// Left panel: list of entries.
+		// Push entry id so two entries sharing a `name` (e.g. base "Pig"
+		// and a fork called "Pig") don't collide on ImGui's label-derived
+		// widget id.
 		ImGui::BeginChild("EntryList", ImVec2(200, 0), true);
 		for (size_t i = 0; i < entries.size(); i++) {
 			auto* e = entries[i];
 			bool selected = (m_selectedId == e->id);
+			ImGui::PushID(e->id.c_str());
 			if (ImGui::Selectable(e->name.c_str(), selected)) {
 				if (m_selectedId != e->id && m_audio) {
 					m_audio->playBlip(1.2f, 0.4f);  // slightly higher pitch on select
 				}
 				m_selectedId = e->id;
 			}
+			ImGui::PopID();
 		}
 		ImGui::EndChild();
 
@@ -224,16 +229,6 @@ private:
 					m_preview->setClip("");
 				}
 
-				// Edit button — opens the in-game model editor on this model.
-				// Only available when we know the source .py path.
-				auto pathIt = m_modelPaths.find(modelIt->first);
-				if (pathIt != m_modelPaths.end()) {
-					ImGui::Spacing();
-					if (ImGui::SmallButton("Edit model")) {
-						if (m_audio) m_audio->playBlip(0.8f, 0.4f);
-						m_editor.open(modelIt->first, modelIt->second, pathIt->second);
-					}
-				}
 				ImGui::Spacing();
 			}
 		}
@@ -241,6 +236,29 @@ private:
 		if (!entry->description.empty()) {
 			ImGui::TextWrapped("%s", entry->description.c_str());
 			ImGui::Spacing();
+		}
+
+		// "Edit model" — sits between description and Properties so it's
+		// the obvious next action after reading what the entry is.
+		if (m_preview && m_renderer) {
+			std::string modelName;
+			auto mit = entry->fields.find("model");
+			if (mit != entry->fields.end()) modelName = mit->second;
+			if (modelName.empty()) modelName = entry->name;
+			std::string lower = modelName;
+			for (auto& c : lower) c = std::tolower(c);
+			auto modelIt = m_models.find(lower);
+			if (modelIt == m_models.end()) modelIt = m_models.find(modelName);
+			if (modelIt != m_models.end()) {
+				auto pathIt = m_modelPaths.find(modelIt->first);
+				if (pathIt != m_modelPaths.end()) {
+					if (ImGui::Button("Edit model")) {
+						if (m_audio) m_audio->playBlip(0.8f, 0.4f);
+						m_editor.open(modelIt->first, modelIt->second, pathIt->second);
+					}
+					ImGui::Spacing();
+				}
+			}
 		}
 
 		// Properties table — show user-meaningful fields only

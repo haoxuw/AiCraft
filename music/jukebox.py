@@ -1,21 +1,30 @@
 """Terminal music curator.
 
-Walks every track under music/tracks/ and lets you rate each one while it
-plays. Keys:
-    .   next — skip to the next undecided track (auto-queue)
-    ,   back — previous track in history (lets you change a past rating)
-    +   like current, advance
-    -   dislike current, advance
+Walks every track under music/tracks/ and lets you sort each one into a
+category while it plays. Every track starts as `new`; once assigned a
+category, `.` will skip past it.
+
+Keys:
+    1 fight        5 peace
+    2 tension      6 emotion
+    3 boss         7 inspire
+    4 menu         8 discarded
+    .   next — advance to the next `new` (uncategorized) track
+    ,   back — previous track in history (lets you change a past category)
     space  pause/resume
     q   quit
 
 Ratings persist to music/ratings.tsv — one line per track:
-    +<TAB>filename      liked
-    -<TAB>filename      disliked
-    ?<TAB>filename      undecided (default for unheard tracks)
+    <category>\t<filename>
+where <category> is one of: new, fight, tension, boss, menu, peace,
+emotion, inspire, discarded. The file is readable and safe to edit by
+hand — the jukebox reloads it at startup.
 
-Re-running the jukebox reloads ratings.tsv and resumes from the first
-undecided track.
+On assignment, the audio file is moved into music/tracks/<category>/ so
+the filesystem mirrors the tsv. `new` (uncategorized) tracks live at
+music/tracks/ root. Track discovery is recursive so previously-sorted
+files are still picked up. At startup, any file whose on-disk location
+disagrees with ratings.tsv is relocated to the correct folder.
 """
 from __future__ import annotations
 import os, sys, termios, tty, select, subprocess, signal, time
@@ -26,12 +35,45 @@ RATINGS = os.path.join(ROOT, "ratings.tsv")
 EXTS    = (".mp3", ".ogg", ".wav", ".flac")
 PLAYER  = ["gst-play-1.0", "--quiet"]
 
+# Order matters: the digit key = index into this list (1-based, digit 0 unused).
+CATEGORIES = ["new", "fight", "tension", "boss", "menu", "peace", "emotion", "inspire", "discarded"]
+DEFAULT    = "new"
+KEY_TO_CAT = {str(i): CATEGORIES[i] for i in range(1, len(CATEGORIES))}  # "1"→fight … "8"→discarded
+
 
 def discover_tracks():
-    return sorted(
-        f for f in os.listdir(TRACKS)
-        if f.lower().endswith(EXTS) and os.path.isfile(os.path.join(TRACKS, f))
-    )
+    # Recursive: files may live at TRACKS/ (new) or TRACKS/<category>/.
+    # Filenames are assumed unique across subfolders.
+    out = []
+    for dirpath, _, files in os.walk(TRACKS):
+        for f in files:
+            if f.lower().endswith(EXTS):
+                out.append(f)
+    return sorted(out)
+
+
+def find_track(name):
+    """Return absolute path for `name` wherever it currently lives under TRACKS."""
+    root = os.path.join(TRACKS, name)
+    if os.path.isfile(root):
+        return root
+    for c in CATEGORIES:
+        p = os.path.join(TRACKS, c, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def move_to_category(name, cat):
+    """Relocate `name` into TRACKS/<cat>/ (or TRACKS/ when cat == DEFAULT)."""
+    src = find_track(name)
+    if src is None:
+        return
+    dst_dir = TRACKS if cat == DEFAULT else os.path.join(TRACKS, cat)
+    os.makedirs(dst_dir, exist_ok=True)
+    dst = os.path.join(dst_dir, name)
+    if os.path.abspath(src) != os.path.abspath(dst):
+        os.replace(src, dst)
 
 
 def load_ratings():
@@ -40,25 +82,30 @@ def load_ratings():
         with open(RATINGS) as f:
             for line in f:
                 line = line.rstrip("\n")
-                if not line or "\t" not in line: continue
-                tag, name = line.split("\t", 1)
-                if tag in ("+", "-", "?"): r[name] = tag
+                if not line or line.startswith("#") or "\t" not in line: continue
+                cat, name = line.split("\t", 1)
+                cat = cat.strip()
+                if cat in CATEGORIES: r[name] = cat
     return r
 
 
 def save_ratings(ratings, all_tracks):
-    liked    = sum(1 for n in all_tracks if ratings.get(n) == "+")
-    disliked = sum(1 for n in all_tracks if ratings.get(n) == "-")
-    undecided = len(all_tracks) - liked - disliked
+    counts = {c: 0 for c in CATEGORIES}
+    for n in all_tracks:
+        counts[ratings.get(n, DEFAULT)] += 1
     header = (
-        f"# music ratings — {liked} liked / {disliked} disliked / "
-        f"{undecided} undecided / {len(all_tracks)} total\n"
-        f"# format: <rating>\\t<filename>   rating is +, -, or ?\n"
+        "# music ratings — "
+        + " / ".join(f"{counts[c]} {c}" for c in CATEGORIES)
+        + f" / {len(all_tracks)} total\n"
+        + "# format: <category>\\t<filename>\n"
+        + "# categories: " + ", ".join(CATEGORIES) + "\n"
     )
-    with open(RATINGS, "w") as f:
+    tmp = RATINGS + ".tmp"
+    with open(tmp, "w") as f:
         f.write(header)
         for n in all_tracks:
-            f.write(f"{ratings.get(n, '?')}\t{n}\n")
+            f.write(f"{ratings.get(n, DEFAULT)}\t{n}\n")
+    os.replace(tmp, RATINGS)  # atomic
 
 
 class Player:
@@ -118,121 +165,117 @@ def readkey(fd, timeout=0.2):
     return None
 
 
-def next_undecided(tracks, ratings, from_idx):
+def next_new(tracks, ratings, from_idx):
     n = len(tracks)
     for step in range(1, n + 1):
         j = (from_idx + step) % n
-        if ratings.get(tracks[j], "?") == "?":
+        if ratings.get(tracks[j], DEFAULT) == DEFAULT:
             return j
     return -1
 
 
-def status_line(tracks, ratings, idx, paused):
+def render(tracks, ratings, idx, paused):
     name = tracks[idx]
-    rating = ratings.get(name, "?")
-    liked    = sum(1 for n in tracks if ratings.get(n) == "+")
-    disliked = sum(1 for n in tracks if ratings.get(n) == "-")
-    undecided = len(tracks) - liked - disliked
+    cur  = ratings.get(name, DEFAULT)
+    counts = {c: 0 for c in CATEGORIES}
+    for n in tracks: counts[ratings.get(n, DEFAULT)] += 1
+    display = name if len(name) <= 72 else name[:69] + "..."
     flag = "[PAUSED] " if paused else ""
-    display = name if len(name) <= 78 else name[:75] + "..."
-    return (
-        f"\r\x1b[K{flag}[{idx+1}/{len(tracks)}] {rating}  {display}\n"
-        f"\x1b[K  +{liked} / -{disliked} / ?{undecided}   "
-        f"keys: . next  , back  + like  - dislike  space pause  q quit\n\x1b[2A"
-    )
+
+    # Menu: two rows of four categories each (digits 1-8).
+    menu_line_1 = "  " + "  ".join(f"{i+1}){CATEGORIES[i+1]:<9}" for i in range(0, 4))
+    menu_line_2 = "  " + "  ".join(f"{i+1}){CATEGORIES[i+1]:<9}" for i in range(4, 8))
+    totals = "  ".join(f"{counts[c]} {c}" for c in CATEGORIES)
+
+    return "\r\x1b[K\x1b[6A\x1b[J" + "\n".join([
+        f"{flag}[{idx+1}/{len(tracks)}] {cur:<9}  {display}",
+        menu_line_1,
+        menu_line_2,
+        f"  {totals}",
+        "  keys: 1-8 assign category   . next-new   , back   space pause   q quit",
+        "",
+    ])
 
 
 def main():
     if not os.path.isdir(TRACKS):
-        print(f"error: {TRACKS} does not exist. Run `make music` first.")
+        print(f"error: {TRACKS} does not exist. Run `make download_music` first.")
         sys.exit(1)
     tracks = discover_tracks()
     if not tracks:
-        print(f"error: no audio files in {TRACKS}. Run `make music` first.")
+        print(f"error: no audio files in {TRACKS}.")
         sys.exit(1)
 
     ratings = load_ratings()
-    # Start at first undecided track, or index 0.
-    start = next((i for i, t in enumerate(tracks) if ratings.get(t, "?") == "?"), 0)
-    if start < 0: start = 0
+    # Reconcile on-disk layout with ratings.tsv (retroactive relocation for
+    # tracks categorized before per-category subfolders existed).
+    for name in tracks:
+        move_to_category(name, ratings.get(name, DEFAULT))
+    start = next((i for i, t in enumerate(tracks) if ratings.get(t, DEFAULT) == DEFAULT), 0)
     idx = start
     history = [idx]
     player = Player()
-    player.play(os.path.join(TRACKS, tracks[idx]))
+    player.play(find_track(tracks[idx]))
 
     fd = sys.stdin.fileno()
-    last_render = ""
     try:
         with raw_mode(fd):
-            sys.stdout.write("\n\n")  # reserve two lines
+            sys.stdout.write("\n\n\n\n\n\n")  # reserve render area
             while True:
-                line = status_line(tracks, ratings, idx, player.paused)
-                if line != last_render:
-                    sys.stdout.write(line); sys.stdout.flush()
-                    last_render = line
+                sys.stdout.write(render(tracks, ratings, idx, player.paused))
+                sys.stdout.flush()
 
                 k = readkey(fd, 0.2)
 
-                # auto-advance on track finish
                 if k is None and player.finished():
-                    nxt = next_undecided(tracks, ratings, idx)
+                    nxt = next_new(tracks, ratings, idx)
                     if nxt < 0:
-                        sys.stdout.write("\n\nAll tracks rated.\n")
+                        sys.stdout.write("\n\nAll tracks categorized.\n")
                         break
                     idx = nxt; history.append(idx)
-                    player.play(os.path.join(TRACKS, tracks[idx]))
-                    last_render = ""
+                    player.play(find_track(tracks[idx]))
                     continue
-
                 if k is None: continue
 
-                if k == "q" or k == "\x03":  # q or Ctrl+C
+                if k == "q" or k == "\x03":
                     break
                 elif k == ".":
-                    nxt = next_undecided(tracks, ratings, idx)
+                    nxt = next_new(tracks, ratings, idx)
                     if nxt < 0:
-                        sys.stdout.write("\n\nAll tracks rated.\n")
+                        sys.stdout.write("\n\nAll tracks categorized.\n")
                         break
                     idx = nxt; history.append(idx)
-                    player.play(os.path.join(TRACKS, tracks[idx]))
-                    last_render = ""
+                    player.play(find_track(tracks[idx]))
                 elif k == ",":
                     if len(history) > 1:
                         history.pop()
                         idx = history[-1]
-                        player.play(os.path.join(TRACKS, tracks[idx]))
-                        last_render = ""
-                elif k == "+" or k == "=":
-                    ratings[tracks[idx]] = "+"
+                        player.play(find_track(tracks[idx]))
+                elif k in KEY_TO_CAT:
+                    cat = KEY_TO_CAT[k]
+                    ratings[tracks[idx]] = cat
+                    # Stop playback before moving so we don't yank the file
+                    # out from under gstreamer (inode survives on Linux, but
+                    # this is cleaner and matches the existing play-next flow).
+                    player.stop()
+                    move_to_category(tracks[idx], cat)
                     save_ratings(ratings, tracks)
-                    nxt = next_undecided(tracks, ratings, idx)
+                    nxt = next_new(tracks, ratings, idx)
                     if nxt < 0:
-                        sys.stdout.write("\n\nAll tracks rated.\n")
+                        sys.stdout.write("\n\nAll tracks categorized.\n")
                         break
                     idx = nxt; history.append(idx)
-                    player.play(os.path.join(TRACKS, tracks[idx]))
-                    last_render = ""
-                elif k == "-" or k == "_":
-                    ratings[tracks[idx]] = "-"
-                    save_ratings(ratings, tracks)
-                    nxt = next_undecided(tracks, ratings, idx)
-                    if nxt < 0:
-                        sys.stdout.write("\n\nAll tracks rated.\n")
-                        break
-                    idx = nxt; history.append(idx)
-                    player.play(os.path.join(TRACKS, tracks[idx]))
-                    last_render = ""
+                    player.play(find_track(tracks[idx]))
                 elif k == " ":
                     player.toggle_pause()
-                    last_render = ""
     finally:
         player.stop()
         save_ratings(ratings, tracks)
         sys.stdout.write("\n\n")
-        liked    = sum(1 for n in tracks if ratings.get(n) == "+")
-        disliked = sum(1 for n in tracks if ratings.get(n) == "-")
+        counts = {c: 0 for c in CATEGORIES}
+        for n in tracks: counts[ratings.get(n, DEFAULT)] += 1
         print(f"Saved ratings to {RATINGS}")
-        print(f"  +{liked} liked  -{disliked} disliked  ?{len(tracks)-liked-disliked} undecided")
+        print("  " + "  ".join(f"{counts[c]} {c}" for c in CATEGORIES))
 
 
 if __name__ == "__main__":

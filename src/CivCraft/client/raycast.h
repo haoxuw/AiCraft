@@ -8,11 +8,16 @@
 namespace civcraft {
 
 struct RayHit {
-	glm::ivec3 blockPos;
+	glm::ivec3 blockPos;   // first solid block (pass-through open doors)
 	glm::ivec3 placePos;
 	glm::vec3  normal;
 	float      distance;
 	BlockId    blockId;
+	// If the ray passed through any open-door cell before reaching blockPos,
+	// this captures that cell so right-click interact can still close it.
+	bool       hasInteract = false;
+	glm::ivec3 interactPos = {0, 0, 0};
+	BlockId    interactBlockId = 0;
 };
 
 inline std::optional<RayHit> raycastBlocks(ChunkSource& world, glm::vec3 origin,
@@ -31,14 +36,25 @@ inline std::optional<RayHit> raycastBlocks(ChunkSource& world, glm::vec3 origin,
 
 	glm::ivec3 prevPos = pos;
 	float dist = 0.0f;
+	bool       haveInteract = false;
+	glm::ivec3 interactPos{0, 0, 0};
+	BlockId    interactBid = 0;
 
 	for (int i = 0; i < (int)(maxDist * 3); i++) {
 		BlockId block = world.getBlock(pos.x, pos.y, pos.z);
 		const auto& bdef = world.blockRegistry().get(block);
-		// Hit solid blocks and open doors (DoorOpen is non-solid but still interactable)
-		if (bdef.solid || bdef.mesh_type == MeshType::DoorOpen) {
+		// Record the first open-door cell the ray passes through. The ray
+		// itself continues — open doors are click-through for break/place.
+		if (!haveInteract && bdef.mesh_type == MeshType::DoorOpen) {
+			haveInteract = true;
+			interactPos  = pos;
+			interactBid  = block;
+		}
+		if (bdef.solid) {
 			glm::ivec3 normal = prevPos - pos;
-			return RayHit{pos, prevPos, glm::vec3(normal), dist, block};
+			RayHit h{pos, prevPos, glm::vec3(normal), dist, block,
+			         haveInteract, interactPos, interactBid};
+			return h;
 		}
 		prevPos = pos;
 		if (tMax.x < tMax.y && tMax.x < tMax.z) {
@@ -49,6 +65,14 @@ inline std::optional<RayHit> raycastBlocks(ChunkSource& world, glm::vec3 origin,
 			dist = tMax.z; pos.z += step.z; tMax.z += tDelta.z;
 		}
 		if (dist > maxDist) break;
+	}
+	// Ray exited without hitting any solid block. If it grazed an open door,
+	// return that as the hit so the player can still close it by clicking
+	// through the frame into empty space.
+	if (haveInteract) {
+		return RayHit{interactPos, interactPos, glm::vec3(0, 1, 0),
+		              0.0f, interactBid,
+		              true, interactPos, interactBid};
 	}
 	return std::nullopt;
 }

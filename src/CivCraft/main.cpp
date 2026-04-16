@@ -6,20 +6,48 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#else
+#include <csignal>
+#include <execinfo.h>
+
+static void crashHandler(int sig) {
+	fprintf(stderr, "\n[CRASH] Signal %d (%s)\n", sig, strsignal(sig));
+	void* frames[32];
+	int n = backtrace(frames, 32);
+	backtrace_symbols_fd(frames, n, 2);
+	FILE* f = fopen("/tmp/civcraft_crash.log", "w");
+	if (f) {
+		fprintf(f, "Signal %d (%s)\n", sig, strsignal(sig));
+		char** syms = backtrace_symbols(frames, n);
+		if (syms) {
+			for (int i = 0; i < n; i++) fprintf(f, "  %s\n", syms[i]);
+			free(syms);
+		}
+		fclose(f);
+		fprintf(stderr, "[CRASH] Backtrace written to /tmp/civcraft_crash.log\n");
+	}
+	_exit(1);
+}
 #endif
 
 int main(int argc, char** argv) {
 	setvbuf(stdout, nullptr, _IONBF, 0); // unbuffered stdout
+	setvbuf(stderr, nullptr, _IONBF, 0);
+
+#ifndef __EMSCRIPTEN__
+	signal(SIGSEGV, crashHandler);
+	signal(SIGABRT, crashHandler);
+#endif
 
 	bool logOnly = false;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("CivCraft — voxel game (singleplayer)\n\n"
+			printf("CivCraft — voxel game\n\n"
 			       "Usage: %s [options]\n"
 			       "  --skip-menu       Start game directly (skip menu)\n"
 			       "  --log-only        Headless: no window, stream WoW-style events\n"
 			       "                    to stdout and /tmp/civcraft_game.log\n"
-			       "  --host HOST       Connect to server instead of local\n"
+			       "  --host HOST       Connect to remote server\n"
 			       "  --port PORT       Server port (default 7777)\n"
 			       "  --help, -h        Show this help\n", argv[0]);
 			return 0;

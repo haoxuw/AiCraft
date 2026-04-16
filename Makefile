@@ -15,7 +15,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft cellcraft crafter bbmodel
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft cellcraft crafter bbmodel gl vk
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -49,23 +49,30 @@ civcraft:
 cellcraft:
 	$(MAKE) -C src/CellCraft
 
+gl: build
+	cd $(BUILD_DIR) && ./civcraft-ui --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
+
+vk: configure
+	cmake --build $(BUILD_DIR) --target civcraft-ui-vk -j$(PAR)
+	cd $(BUILD_DIR) && ./civcraft-ui-vk
+
 # `make game` builds with CIVCRAFT_PERF=ON in a separate build dir so the
 # server emits frame/tick/handler timing logs (see [Perf] lines on stderr and
 # /tmp/civcraft_log_*.log). Production targets (`make server`, `make client`)
 # use the default build dir without this flag — the instrumentation code is
 # not compiled in.
 game: game-build
-	cd $(GAME_BUILD_DIR) && ./$(GAME) --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
+	cd $(GAME_BUILD_DIR) && ./$(GAME)-ui --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
 
 profiler: game-build
-	cd $(GAME_BUILD_DIR) && ./$(GAME) --skip-menu --profiler$(if $(GAME_PORT), --port $(GAME_PORT),)
+	cd $(GAME_BUILD_DIR) && ./$(GAME)-ui --skip-menu --profiler$(if $(GAME_PORT), --port $(GAME_PORT),)
 
 # Minimal isolation worlds for focused behavior testing.
 test-dog: game-build
-	cd $(GAME_BUILD_DIR) && ./$(GAME) --skip-menu --template 3
+	cd $(GAME_BUILD_DIR) && ./$(GAME)-ui --skip-menu --template 3
 
 test-villager: game-build
-	cd $(GAME_BUILD_DIR) && ./$(GAME) --skip-menu --template 4
+	cd $(GAME_BUILD_DIR) && ./$(GAME)-ui --skip-menu --template 4
 
 # ── Visual QA scenarios ─────────────────────────────────────
 #
@@ -86,12 +93,12 @@ ITEM      := base:sword
 CLIP      :=
 
 character_views: build
-	cd $(BUILD_DIR) && ./$(GAME) --skip-menu \
+	cd $(BUILD_DIR) && ./$(GAME)-ui --skip-menu \
 	    --debug-scenario character_views --debug-character $(CHARACTER) \
 	    $(if $(CLIP),--debug-clip $(CLIP))
 
 item_views: build
-	cd $(BUILD_DIR) && ./$(GAME) --skip-menu \
+	cd $(BUILD_DIR) && ./$(GAME)-ui --skip-menu \
 	    --debug-scenario item_views --debug-item $(ITEM)
 
 # animation_sweep: shoot every (character × clip) combination and sort the
@@ -128,7 +135,7 @@ animation_sweep: build
 	    echo "=== $$char / $$clip$${hand:+ +$$hand} ==="; \
 	    pgrep -x $(GAME)-server 2>/dev/null | xargs -r kill -9 ; \
 	    rm -f /tmp/debug_*.ppm; \
-	    ( cd $(BUILD_DIR) && timeout 30 ./$(GAME) --skip-menu \
+	    ( cd $(BUILD_DIR) && timeout 30 ./$(GAME)-ui --skip-menu \
 	      --debug-scenario character_views --debug-character base:$$char \
 	      --debug-clip $$clip \
 	      $${hand:+--debug-hand-item $$hand} ) >/dev/null 2>&1 || true; \
@@ -212,7 +219,7 @@ server: build
 
 # GUI client: shows menu with "Start game" and "Join a game" tabs
 client: build
-	cd $(BUILD_DIR) && ./$(GAME)$(if $(HOST), --host $(HOST) --port $(PORT),)
+	cd $(BUILD_DIR) && ./$(GAME)-ui$(if $(HOST), --host $(HOST) --port $(PORT),)
 
 stop:
 	@-pkill -f "$(GAME)" 2>/dev/null; sleep 1

@@ -132,6 +132,10 @@ world = {
         {"type": "beaver",   "count": 1, "radius": 8, "spawn_at": "portal"},
         # Flyers — hover at their spawn Y (gravity_scale=0 in C++)
         {"type": "bee",      "count": 3, "radius": 4, "spawn_at": "portal", "y_offset": 1},
-        {"type": "owl",      "count": 1, "radius": 6, "spawn_at": "portal", "y_offset": 3},
+        # Owl roosts on top of the barn. spawn_at=barn anchors XZ inside the
+        # footprint; y_offset=11 clears the 9-high walls + roof. Radius is
+        # small so the inside-grid slot lands near barn center, well within
+        # the roof extent rather than on a wall edge.
+        {"type": "owl",      "count": 1, "radius": 2, "spawn_at": "barn", "y_offset": 11},
     ],
 }

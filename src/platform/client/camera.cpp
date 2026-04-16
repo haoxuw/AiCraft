@@ -70,10 +70,13 @@ void Camera::processMouse(GLFWwindow* window) {
 		// mid-range drags cover the full yaw/pitch range comfortably.
 		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
 			rtsOrbitYaw += dx * 2.5f;
-			// Mouse up → dy positive → rtsAngle increases → more top-down.
-			// Mouse down → sinks the camera to a flatter, horizon-level shot.
-			rtsAngle += dy * 2.0f;
-			rtsAngle = std::clamp(rtsAngle, 10.0f, 85.0f);
+			// Mouse up → dy positive → zoom in (camera height shrinks
+			// multiplicatively). Mouse down → zoom out. Pitch is controlled
+			// by the scroll wheel, not the drag.
+			if (std::abs(dy) > 0.0f) {
+				float factor = std::pow(0.985f, dy);
+				rtsHeightTarget = std::clamp(rtsHeightTarget * factor, 5.0f, 120.0f);
+			}
 		}
 		break;
 	}
