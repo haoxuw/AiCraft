@@ -117,7 +117,7 @@ larger changes that follow.
 
 ### Current state
 
-- 54 models under `src/CivCraft/artifacts/models/base/*.py`.
+- 54 models under `src/artifacts/models/base/*.py`.
 - Each file defines a single `model = { … }` dict with keys:
   `id, height, scale, walk_speed, idle_bob, walk_bob, hand_r/l, pivot_r/l,
   head_pivot, equip, parts`.
@@ -140,7 +140,7 @@ Per model:
   walk/idle bob, walk_speed.
 
 Both files sit side-by-side in
-`src/CivCraft/artifacts/models/base/<name>.geo.json` /
+`src/artifacts/models/base/<name>.geo.json` /
 `<name>.meta.json`. Blockbench users edit `.geo.json` visually; tuning
 constants live in `.meta.json` as readable JSON.
 
@@ -218,7 +218,7 @@ asserts the indices match on load.
   - The in-game model editor (`model_editor_ui.h`, `behavior_editor.h`)
     writes Blockbench-compatible files, so in-game edits and Blockbench
     edits round-trip.
-- `src/CivCraft/artifacts/models/base/*.py` → converted to
+- `src/artifacts/models/base/*.py` → converted to
   `*.geo.json` + `*.meta.json`, then deleted.
 
 **Delete (cleanup pass)**

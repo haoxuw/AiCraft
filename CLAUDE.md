@@ -258,18 +258,22 @@ src/
       process_manager.h       AgentManager: spawns the game server for singleplayer
     shaders/  fonts/  docs/ Platform-level assets + architecture docs
 
-  CivCraft/                 ← Voxel sandbox game
+  CivCraft/                 ← Voxel sandbox game (C++)
     main.cpp, main_server.cpp, main_client.cpp
     shared/                 chunk.h, block_registry.h, chunk_source.h
     server/                 world.h, world_template.h, noise.h, structure_blueprint.h, pathfind (voxel), …
     client/                 chunk_mesher, renderer, raycast, fog_of_war, hotbar, inventory_visuals, gameplay_interaction
     content/                C++ fallback block + entity registrations (builtin.cpp)
-    artifacts/              Python game content — hot-loadable, no rebuild needed
-      behaviors/            Creature AI: decide() functions
-      living/               EntityDef: stats, model, behavior
-      items/  blocks/       Item + block definitions
-      worlds/               World templates (flat, village)
-      structures/ models/ effects/ actions/ resources/
+
+  artifacts/                ← Python game content (top-level — most-modded surface)
+                              hot-loadable, no rebuild needed
+    behaviors/              Creature AI: decide() functions
+    living/                 EntityDef: stats, model, behavior
+    items/  blocks/         Item + block definitions
+    worlds/                 World templates (flat, village)
+    structures/ models/ effects/ actions/ resources/
+
+  model_editor/             ← (placeholder) standalone 3D model editor — TBD
     python/                 CivCraft-only python helpers (pathfind.py, local_world.py, …)
     shaders/  config/  resources/  docs/  tests/  tools/
 ```

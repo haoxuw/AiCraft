@@ -13,7 +13,7 @@ attachment points, head flag) are preserved elsewhere:
     can merge by name.
 
 Usage:
-    tools/bbmodel_export.py src/CivCraft/artifacts/models/base/player.py
+    tools/bbmodel_export.py src/artifacts/models/base/player.py
     tools/bbmodel_export.py <model.py> <out.bbmodel>
 """
 

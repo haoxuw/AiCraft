@@ -231,7 +231,7 @@ if(EMSCRIPTEN)
 	target_link_libraries(civcraft-ui PRIVATE glm::glm imgui_lib)
 
 	set(EM_FLAGS "-sUSE_GLFW=3 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576 -sWEBSOCKET_SUBPROTOCOL=binary")
-	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/src/platform/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/config@config --preload-file ${CMAKE_SOURCE_DIR}/src/platform/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts@artifacts")
+	set(EM_LINK "--preload-file ${CMAKE_SOURCE_DIR}/src/platform/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/shaders@shaders --preload-file ${CMAKE_SOURCE_DIR}/src/CivCraft/config@config --preload-file ${CMAKE_SOURCE_DIR}/src/platform/fonts@fonts --preload-file ${CMAKE_SOURCE_DIR}/src/artifacts@artifacts")
 	set_target_properties(civcraft-ui PROPERTIES
 		SUFFIX ".html"
 		COMPILE_FLAGS "${EM_FLAGS}"
@@ -302,7 +302,7 @@ else()
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_SOURCE_DIR}/src/platform/fonts $<TARGET_FILE_DIR:civcraft-ui>/fonts
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-ui>/artifacts
+			${CMAKE_SOURCE_DIR}/src/artifacts $<TARGET_FILE_DIR:civcraft-ui>/artifacts
 		COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/CivCraft/resources $<TARGET_FILE_DIR:civcraft-ui>/
 	)
 
@@ -335,7 +335,7 @@ else()
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft-test>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-test>/artifacts
+			${CMAKE_SOURCE_DIR}/src/artifacts $<TARGET_FILE_DIR:civcraft-test>/artifacts
 	)
 
 	# === Pathfinding regression tests ===
@@ -357,7 +357,7 @@ else()
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft-test-pathfinding>/python
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
-			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-test-pathfinding>/artifacts
+			${CMAKE_SOURCE_DIR}/src/artifacts $<TARGET_FILE_DIR:civcraft-test-pathfinding>/artifacts
 	)
 
 	# === SPIR-V shader compilation (Vulkan) ===

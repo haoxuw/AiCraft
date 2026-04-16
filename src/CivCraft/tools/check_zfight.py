@@ -9,7 +9,7 @@ along the shared axis.
 
 Usage:
     python3 src/CivCraft/tools/check_zfight.py
-    python3 src/CivCraft/tools/check_zfight.py src/CivCraft/artifacts/models/base/pig.py
+    python3 src/CivCraft/tools/check_zfight.py src/artifacts/models/base/pig.py
     python3 src/CivCraft/tools/check_zfight.py --tolerance 0.01
 
 Exit status is the number of warnings (0 = clean).

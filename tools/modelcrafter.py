@@ -6,7 +6,7 @@ src/platform/client/model.cpp, and renders boxes in matplotlib 3D.
 
 Usage:
   # Interactive — time scrubs automatically, hit clip buttons to switch:
-  python3 tools/ModelCrafter src/CivCraft/artifacts/models/base/player.py
+  python3 tools/ModelCrafter src/artifacts/models/base/player.py
 
   # Force a single clip:
   python3 tools/ModelCrafter <model.py> --clip attack
@@ -54,13 +54,15 @@ sample_arm   = _combo_mod.sample_arm
 # ── Model discovery ────────────────────────────────────────────────────────
 
 MODEL_GLOBS = (
+    "src/artifacts/models/**/*.py",
+    "src/artifacts/models/*.py",
+    # Legacy per-game layout (kept so checkouts mid-migration still work).
     "src/*/artifacts/models/**/*.py",
-    "src/*/artifacts/models/*.py",
 )
 
 
 def discover_models(repo_root: Path) -> list[Path]:
-    """Every model .py under any game's artifacts/models/, sorted by id."""
+    """Every model .py under src/artifacts/models/ (or legacy per-game), sorted by id."""
     seen: set[Path] = set()
     out: list[Path] = []
     for pat in MODEL_GLOBS:

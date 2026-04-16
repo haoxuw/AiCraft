@@ -151,10 +151,10 @@ test_animation: animation_sweep
 
 # Standalone model viewer / snapshot tool (no world, no server, no full client).
 #
-#   make model-editor MODEL=src/CivCraft/artifacts/models/base/cat.py
+#   make model-editor MODEL=src/artifacts/models/base/cat.py
 #       Interactive window (drag to orbit, scroll to zoom, Esc to quit).
 #
-#   make model-snap   MODEL=src/CivCraft/artifacts/models/base/cat.py OUT=/tmp/cat
+#   make model-snap   MODEL=src/artifacts/models/base/cat.py OUT=/tmp/cat
 #       Write 6 PPMs (front/three_q/side/back/top/rts) to OUT and exit.
 #       Optional: CLIP=dance, SIZE=512x512
 MODEL ?=
@@ -174,11 +174,11 @@ model-editor: model-editor-build
 # as src/platform/client/model.cpp in a matplotlib 3D window.
 #
 #   make crafter                              # default model: player
-#   make crafter MODEL=src/CivCraft/artifacts/models/base/knight.py
+#   make crafter MODEL=src/artifacts/models/base/knight.py
 #   make crafter CLIP=sit                     # start with a named clip selected
 crafter:
 	@model="$(MODEL)"; \
-	  [ -n "$$model" ] || model="src/CivCraft/artifacts/models/base/player.py"; \
+	  [ -n "$$model" ] || model="src/artifacts/models/base/player.py"; \
 	  python3 tools/modelcrafter.py $$model $(if $(CLIP),--clip $(CLIP))
 
 # Round-trip a model through Blockbench: export .py → .bbmodel, open
@@ -187,7 +187,7 @@ crafter:
 # params, clips, and hand/pivot points via name-match merge against
 # the original. Requires `blockbench` on PATH.
 #
-#   make bbmodel MODEL=src/CivCraft/artifacts/models/base/player.py
+#   make bbmodel MODEL=src/artifacts/models/base/player.py
 BB := /tmp/$(notdir $(basename $(MODEL))).bbmodel
 bbmodel:
 	@[ -n "$(MODEL)" ] || (echo "usage: make bbmodel MODEL=path/to/model.py" >&2 && exit 1)
