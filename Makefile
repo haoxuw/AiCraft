@@ -15,18 +15,14 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft cellcraft crafter bbmodel gl vk
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel gl vk
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
-# CivCraft is a native C++ voxel sandbox built on src/platform/. CellCraft
-# is a separate Three.js/TypeScript web client under src/CellCraft/web/ —
-# it is NOT built by this Makefile. Run CellCraft with
-# `cd src/CellCraft/web && npm run dev` or `cd src/CellCraft && make`.
+# CivCraft is a native C++ voxel sandbox built on src/platform/.
 #
 # Quick reference:
 #   make civcraft             Singleplayer CivCraft (voxel sandbox)
-#   make cellcraft            CellCraft web dev server (delegates to web/)
 #   make game                 Alias for `make civcraft`
 #   make game GAME_PORT=7890  CivCraft on a fixed port
 #   make server               Dedicated server (interactive world select)
@@ -44,10 +40,6 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
 civcraft:
 	$(MAKE) game GAME=civcraft
-
-# CellCraft is a web client — delegate to its own Makefile.
-cellcraft:
-	$(MAKE) -C src/CellCraft
 
 gl: build
 	cd $(BUILD_DIR) && ./civcraft-ui --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
@@ -158,7 +150,6 @@ animation_sweep: build
 test_animation: animation_sweep
 
 # Standalone model viewer / snapshot tool (no world, no server, no full client).
-# Shared by CivCraft + CellCraft.
 #
 #   make model-editor MODEL=src/CivCraft/artifacts/models/base/cat.py
 #       Interactive window (drag to orbit, scroll to zoom, Esc to quit).
@@ -287,11 +278,10 @@ web-clean:
 	rm -rf $(BUILD_WEB)
 
 # ── Music library ─────────────────────────────────────────
-# `music/` holds ~2,100 royalty-free tracks (Incompetech + OpenGameArt)
-# used by CellCraft. Tracks are gitignored; re-fetch with `make download_music`
-# (idempotent — skips files already on disk). `make jukebox` runs
-# download_music first, then opens the terminal curator (+ / - / ?).
-# See music/README.md for details.
+# `music/` holds ~2,100 royalty-free tracks (Incompetech + OpenGameArt).
+# Tracks are gitignored; re-fetch with `make download_music` (idempotent —
+# skips files already on disk). `make jukebox` runs download_music first,
+# then opens the terminal curator. See music/README.md for details.
 
 # Skip the download entirely when tracks/ already has files — both
 # harvesters still hit the network (catalog enumeration) even when every

@@ -4,23 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repo layout
 
-This repo contains two independent games that share nothing at the code
-level:
-
 ```
-src/platform/      C++ engine (headers + cpps) — used by CivCraft only
+src/platform/      C++ engine (headers + cpps)
 src/CivCraft/      Voxel sandbox game built on platform/ (native C++)
-src/CellCraft/web/ Standalone Three.js + TypeScript web game (no native code)
 ```
 
 CivCraft is the native C++ voxel sandbox — see its Mandatory Design Rules
-below. CellCraft is an independent browser game under `src/CellCraft/web/`;
-it shares no code with `platform/` or CivCraft. Run it with
-`cd src/CellCraft/web && npm run dev`. See the CellCraft section at the
-bottom of this file.
-
-**Rules 0–5 below apply to CivCraft only.** CellCraft is a different
-codebase with its own (much simpler) architecture.
+below.
 
 **Read `src/CivCraft/src/CivCraft/docs/00_OVERVIEW.md` before making ANY CivCraft gameplay changes.**
 
@@ -135,10 +125,9 @@ via localhost TCP. There is no `LocalServer` in-process shortcut. `TestServer`
 
 ## Build & Run
 
-The root `Makefile` is the one source of truth. Each game also has a wrapper
-`Makefile` (`src/CivCraft/Makefile`, `src/CellCraft/Makefile`) that forwards
-every target to the root with `GAME=` set, so you can `cd` into a game and
-use `make <target>` without passing `GAME=` each time.
+The root `Makefile` is the one source of truth. `src/CivCraft/Makefile`
+forwards every target to the root so you can `cd src/CivCraft` and use
+`make <target>` directly.
 
 **Parallelism is capped at half the core count by default** (`PAR := nproc/2`
 in the root Makefile) so a build won't pin the machine or OOM. Override on the
@@ -147,32 +136,17 @@ All `cmake --build` invocations in this project should use `-j$(PAR)` (not
 `-j$(nproc)`).
 
 ```bash
-# From repo root (explicit GAME):
-make game                     # CivCraft (default GAME=civcraft)
-make game GAME=cellcraft    # CellCraft
-make server PORT=7777         # dedicated server (CivCraft)
-make client HOST=X PORT=N     # GUI client (CivCraft; pre-fills join tab)
+make game                     # CivCraft singleplayer
+make server PORT=7777         # dedicated server
+make client HOST=X PORT=N     # GUI client (pre-fills join tab)
 make stop                     # kill all CivCraft processes
-make test_e2e                 # CivCraft headless gameplay tests
-make test_e2e GAME=cellcraft # CellCraft headless sim
+make test_e2e                 # headless gameplay tests
 make web                      # WASM build + serve on :8080 (needs emsdk at ~/emsdk)
-
-# From a game directory (no GAME= needed):
-cd src/CivCraft    && make game
-cd src/CellCraft && make game
-cd src/CellCraft && make test_e2e
 
 # Manual cmake (matches what `make build` does):
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j$(PAR)   # or just `make build`
 ```
-
-**Shared asset staging note:** both games stage shaders into `build/shaders/`.
-File basenames don't collide (civcraft has `terrain.*`, cellcraft has
-`pond.*/creature.*/food.*`) but CMake POST_BUILD rules must not `rm -rf` that
-directory — only copy into it. If a game fails with `Cannot open shader:
-shaders/X`, rebuild that game's target to re-stage (`touch
-src/<Game>/main.cpp` to force).
 
 Direct invocation:
 ```bash
@@ -298,24 +272,6 @@ src/
       structures/ models/ effects/ actions/ resources/
     python/                 CivCraft-only python helpers (pathfind.py, local_world.py, …)
     shaders/  config/  resources/  docs/  tests/  tools/
-
-  CellCraft/              ← Spore cell-stage game. PRIMARY implementation is
-                            the Three.js + TypeScript web client at
-                            `src/CellCraft/web/`. The native C++ client
-                            (`client/`, `shaders/`, `main.cpp`) is LEGACY /
-                            FROZEN — kept buildable for reference but no
-                            longer the active dev target.
-    web/                    ← Primary CellCraft implementation (Three.js + TS)
-      src/
-        sim/                Sim: tuning, parts, monsters, world, tick
-        render/             Three.js scene, materials, post-FX, SDF text, UI
-        scenes/             menu / lab / starter / match / tier-up / end
-        artifacts/          JS mods: parts, monsters, behaviors
-        net/                WebSocket client (multiplayer)
-        input/  ai/  main.ts
-      server/               Node WebSocket server (shared world + tick)
-    client/ shaders/ main.cpp  ← LEGACY native C++ client (frozen)
-    artifacts/ sim/ docs/ godot/  ← legacy + shared design docs
 ```
 
 ### Dependency Rules
@@ -323,12 +279,7 @@ src/
 - `platform/server/` → `shared/` (no OpenGL, no Python except via pybind)
 - `platform/agent/` → `shared/` + `server/behavior.h` + Python
 - `platform/client/` → `shared/` (no Python, no server ownership)
-- `CivCraft/` → `platform/` + its own files (**never** `CellCraft/`)
-- `CellCraft/` → `platform/` + its own files (**never** `CivCraft/`)
-
-Cross-game file references (e.g. `CivCraft/` code reaching into `CellCraft/`
-or vice versa) are design bugs. Shared code must be promoted to `platform/`
-first.
+- `CivCraft/` → `platform/` + its own files
 
 ## Code Style
 
@@ -364,34 +315,4 @@ If not, it needs to move to an artifact.
 ## Commit Guidelines
 
 - Present tense, capital first letter, under 70 chars
-- Area prefix: `server:`, `client:`, `shared:`, `agent:`, `content:`, `artifacts:`, `cellcraft:`, etc.
-
-## CellCraft (web)
-
-CellCraft lives entirely under `src/CellCraft/web/` and is completely
-independent of the C++ engine. It is a Three.js + TypeScript Spore-cell-stage
-Action RTS that runs in the browser (Vite dev server). There is no native
-CellCraft build; the previous C++/Godot prototypes have been retired.
-
-```bash
-cd src/CellCraft/web && npm install     # first time
-cd src/CellCraft/web && npm run dev     # dev server (Vite, :5173)
-cd src/CellCraft/web && npm run build   # production build
-cd src/CellCraft/web && npm test        # vitest (sim + artifacts)
-```
-
-Structure:
-```
-src/CellCraft/web/src/
-  sim/         Pure TS simulation (tick, monsters, food, world) — vitest-covered
-  ai/          Creature behaviors
-  artifacts/   Monster/part/behavior definitions (TS)
-  render/      Three.js renderer, post-FX, chalk materials
-  scenes/      Main menu, starter select, match, tier-up, end
-  net/         WebSocket protocol (multiplayer)
-  input/       Keyboard + pointer
-  perf.ts      Per-frame timing buckets (opt-in overlay via ?fps=1)
-```
-
-Do not reach into `src/platform/` or CivCraft from CellCraft code, or vice
-versa — they are separate games in the same repo.
+- Area prefix: `server:`, `client:`, `shared:`, `agent:`, `content:`, `artifacts:`, etc.

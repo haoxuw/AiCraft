@@ -61,7 +61,7 @@ drift waiting to happen.
   - `stop`: replace `pgrep -x civcraft` with `pgrep -x civcraft-ui` (and keep
     the `civcraft-server`, `civcraft-agent` entries).
   - Any `cmake --build build --target civcraft` → `--target civcraft-ui`.
-- `src/CivCraft/Makefile`, `src/CellCraft/Makefile`
+- `src/CivCraft/Makefile`
   - Same forward-to-root edits; keep `GAME=` semantics intact.
 
 **Runtime**
@@ -273,8 +273,6 @@ asserts the indices match on load.
   browser; `WebGPU` is a separate future project, out of scope).
 - Only `src/platform/client/*` and `src/CivCraft/client/*` + shaders + CMake
   touched. Server, agent, shared, Python, protocol, all unchanged.
-- CellCraft unchanged (web-primary; native C++ frozen per
-  `39ae5ee cellcraft: mark native client as legacy`).
 
 ### Strategy: ship a parallel binary, don't replace the old one
 

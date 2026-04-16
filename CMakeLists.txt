@@ -15,9 +15,6 @@ if(CIVCRAFT_PERF)
 endif()
 
 # CivCraft is a native C++ voxel sandbox built on the src/platform/ engine.
-# CellCraft is NOT built here — it lives entirely at src/CellCraft/web/ as a
-# standalone Three.js + TypeScript client (run with `cd src/CellCraft/web &&
-# npm run dev`). Nothing under src/CellCraft/ is compiled by CMake.
 #
 #   src/platform/   Engine: shared types, server loop, agent runtime, renderer
 #   src/CivCraft/   Voxel sandbox game (chunks, blocks, structures)
@@ -310,9 +307,9 @@ else()
 	)
 
 	# === Model editor (standalone model viewer / snapshot tool) ===
-	# Shared by CivCraft + CellCraft — renders any .py box model without
-	# launching a world, server, or full client. Snapshot mode writes
-	# 6-angle PPMs to disk (front/three_q/side/back/top/rts) and exits.
+	# Renders any .py box model without launching a world, server, or full
+	# client. Snapshot mode writes 6-angle PPMs to disk
+	# (front/three_q/side/back/top/rts) and exits.
 	add_executable(model-editor
 		src/platform/tools/model_editor/main.cpp
 		src/platform/client/shader.h
@@ -362,10 +359,6 @@ else()
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_SOURCE_DIR}/src/CivCraft/artifacts $<TARGET_FILE_DIR:civcraft-test-pathfinding>/artifacts
 	)
-
-	# CellCraft is intentionally not built here — it is a standalone web
-	# client under src/CellCraft/web/ (Three.js + TypeScript), run via
-	# `cd src/CellCraft/web && npm run dev`.
 
 	# === SPIR-V shader compilation (Vulkan) ===
 	# Compiles src/platform/shaders/vk/*.{vert,frag} via glslangValidator and

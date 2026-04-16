@@ -11,9 +11,6 @@
 //
 //   model-editor <model.py> --snapshot <outdir> [--size NxN] [--clip NAME]
 //       Write 6 PPMs (front/three_q/side/back/top/rts) to outdir and exit.
-//
-// Shared by CivCraft + CellCraft: any .py file using the base BoxModel schema
-// will load — CellCraft creature models included.
 
 #include "client/box_model.h"
 #include "client/model.h"
