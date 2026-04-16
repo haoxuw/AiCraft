@@ -1,15 +1,24 @@
 #pragma once
 
+// Chunk meshing — converts a 16³ block volume (plus 1-block neighbor border)
+// into a per-vertex stream ready for the GPU.
+//
+// This header is graphics-backend agnostic: it produces std::vector<ChunkVertex>
+// and never touches GL or Vulkan. The GL upload + draw container lives in
+// chunk_mesh_gl.h; the Vulkan backend uploads the same vertex stream through
+// IRhi::createChunkMesh.
+
 #include "shared/types.h"
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
 #include "shared/chunk_source.h"
-#include "client/gfx.h"
 #include <vector>
 #include <array>
 
 namespace civcraft {
 
+// 13 floats / 52 bytes — same layout the VK chunk-mesh pipeline declares
+// in src/platform/shaders/vk/chunk_terrain.vert (locations 0..6).
 struct ChunkVertex {
 	glm::vec3 position;
 	glm::vec3 color;
@@ -18,20 +27,6 @@ struct ChunkVertex {
 	float shade;
 	float alpha;
 	float glow;   // 1.0 = magical surface animation, 0.0 = normal
-};
-
-struct ChunkMesh {
-	GLuint vao = 0, vbo = 0;
-	int vertexCount = 0;
-	GLuint tVao = 0, tVbo = 0;
-	int tVertexCount = 0;
-	ChunkPos pos;
-
-	void upload(const std::vector<ChunkVertex>& opaque,
-	            const std::vector<ChunkVertex>& transparent);
-	void draw() const;
-	void drawTransparent() const;
-	void destroy();
 };
 
 class ChunkMesher {

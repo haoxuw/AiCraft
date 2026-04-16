@@ -196,6 +196,8 @@ set(CIVCRAFT_CONTENT_SOURCES
 set(CIVCRAFT_CLIENT_SOURCES
 	src/CivCraft/client/chunk_mesher.h
 	src/CivCraft/client/chunk_mesher.cpp
+	src/CivCraft/client/chunk_mesh_gl.h
+	src/CivCraft/client/chunk_mesh_gl.cpp
 	src/CivCraft/client/renderer.h
 	src/CivCraft/client/renderer.cpp
 	src/CivCraft/client/gameplay_interaction.cpp
@@ -421,8 +423,13 @@ else()
 			src/platform/client/rhi/rhi_vk.h
 			src/platform/client/rhi/rhi_vk.cpp
 			src/platform/client/rhi/rhi_ui.cpp
+			# CivCraft chunk_mesher — backend-agnostic now that the GL upload
+			# code is split into chunk_mesh_gl.cpp. Pulled in so the VK slice
+			# can mesh real CivCraft Chunks through the new chunk-mesh pipeline.
+			src/CivCraft/client/chunk_mesher.h
+			src/CivCraft/client/chunk_mesher.cpp
 		)
-		target_include_directories(civcraft-ui-vk PRIVATE src/platform)
+		target_include_directories(civcraft-ui-vk PRIVATE src/platform src/CivCraft)
 		target_compile_definitions(civcraft-ui-vk PRIVATE AICRAFT_RHI_VK)
 		target_link_libraries(civcraft-ui-vk PRIVATE
 			glfw glm::glm Vulkan::Vulkan imgui_lib_vk

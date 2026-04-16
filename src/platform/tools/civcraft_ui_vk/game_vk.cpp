@@ -7,8 +7,17 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <random>
 #include <unistd.h>     // access() for screenshot trigger file
+
+// CivCraft chunk + mesher — used by the chunk-mesh demo to feed the new
+// rich-vertex pipeline with real chunk_mesher output (vs. a hand-built
+// vertex buffer). Headers only — compiled via CMakeLists.
+#include "shared/chunk.h"
+#include "shared/block_registry.h"
+#include "shared/chunk_source.h"
+#include "client/chunk_mesher.h"
 
 namespace civcraft::vk {
 
@@ -260,75 +269,110 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	std::printf("[vk-game] world mesh: %u voxels uploaded (handle=%llu)\n",
 		m_world.instanceCount(), (unsigned long long)m_worldMesh);
 
-	// Stone obelisk built in the 13-float chunk-mesh format. Demonstrates
-	// the new rich-vertex pipeline (per-vertex normal/AO/shade/glow) live
-	// alongside the voxel-instance pipeline; drop-in for the Phase 3 port
-	// of CivCraft's chunk_mesher into the RHI.
+	// Real-chunk_mesher demo: build a tiny CivCraft Chunk, run the actual
+	// ChunkMesher on it, and upload the resulting opaque vertex stream
+	// through the new RHI chunk-mesh pipeline. This validates that the VK
+	// pipeline is byte-compatible with chunk_mesher's output (same 13-float
+	// stride, same shading rules) — making the eventual full Phase 3 port
+	// (renderer.cpp's terrain path → RHI) a mechanical lift instead of a
+	// re-format.
 	{
-		std::vector<float> v;   // verts: 13 floats each
-		v.reserve(13 * 6 * 6 * 8);  // 6 faces * 6 verts * 8 blocks
-		// Match BLOCK_FACE_SHADE in CivCraft/shared/block_registry.h
-		const float SHADE[6] = {0.80f, 0.80f, 1.00f, 0.50f, 0.90f, 0.90f};
-		const float NRM[6][3] = {
-			{ 1, 0, 0}, {-1, 0, 0}, { 0, 1, 0},
-			{ 0,-1, 0}, { 0, 0, 1}, { 0, 0,-1}
-		};
-		auto emitBox = [&](float x0, float y0, float z0,
-		                   float x1, float y1, float z1,
-		                   float r, float g, float b, float glow) {
-			float vs[6][4][3] = {
-				{{x1,y0,z0},{x1,y1,z0},{x1,y1,z1},{x1,y0,z1}}, // +X
-				{{x0,y0,z1},{x0,y1,z1},{x0,y1,z0},{x0,y0,z0}}, // -X
-				{{x0,y1,z0},{x0,y1,z1},{x1,y1,z1},{x1,y1,z0}}, // +Y
-				{{x0,y0,z1},{x0,y0,z0},{x1,y0,z0},{x1,y0,z1}}, // -Y
-				{{x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x0,y0,z1}}, // +Z
-				{{x0,y0,z0},{x0,y1,z0},{x1,y1,z0},{x1,y0,z0}}, // -Z
-			};
-			auto pushV = [&](int f, int i, float ao) {
-				const float* p = vs[f][i];
-				v.push_back(p[0]); v.push_back(p[1]); v.push_back(p[2]);
-				v.push_back(r); v.push_back(g); v.push_back(b);
-				v.push_back(NRM[f][0]); v.push_back(NRM[f][1]); v.push_back(NRM[f][2]);
-				v.push_back(ao);
-				v.push_back(SHADE[f]);
-				v.push_back(1.0f);     // alpha
-				v.push_back(glow);
-			};
-			for (int f = 0; f < 6; f++) {
-				// Slight AO darkening on the bottom verts of each side face so
-				// the obelisk reads as grounded rather than floating-flat.
-				float ao0 = (f >= 4 || f < 2) ? 0.7f : 1.0f;  // sides only
-				float aoT = 1.0f;
-				if (f == 2) { ao0 = aoT = 1.0f; }              // top: bright
-				if (f == 3) { ao0 = aoT = 0.65f; }             // bottom: dim
-				// 0 and 3 are the y0 (lower) verts in each side-face quad
-				pushV(f, 0, (f >= 4 || f < 2) ? ao0 : aoT);
-				pushV(f, 1, aoT);
-				pushV(f, 2, aoT);
-				pushV(f, 0, (f >= 4 || f < 2) ? ao0 : aoT);
-				pushV(f, 2, aoT);
-				pushV(f, 3, (f >= 4 || f < 2) ? ao0 : aoT);
+		// Tiny block registry: AIR + stone + grass + a glow crystal.
+		civcraft::BlockRegistry reg;
+		civcraft::BlockDef air;        air.string_id="air";   air.solid=false;
+		reg.registerBlock(air);
+		civcraft::BlockDef stone;      stone.string_id="stone";
+		stone.color_top    = {0.62f, 0.60f, 0.58f};
+		stone.color_side   = {0.55f, 0.55f, 0.55f};
+		stone.color_bottom = {0.45f, 0.45f, 0.45f};
+		civcraft::BlockId STONE = reg.registerBlock(stone);
+		civcraft::BlockDef grass;      grass.string_id="grass";
+		grass.color_top    = {0.30f, 0.65f, 0.25f};
+		grass.color_side   = {0.42f, 0.32f, 0.20f};
+		grass.color_bottom = {0.42f, 0.32f, 0.20f};
+		civcraft::BlockId GRASS = reg.registerBlock(grass);
+		civcraft::BlockDef crystal;    crystal.string_id="crystal";
+		crystal.color_top    = {0.38f, 0.18f, 0.62f};
+		crystal.color_side   = {0.30f, 0.10f, 0.55f};
+		crystal.color_bottom = {0.20f, 0.05f, 0.40f};
+		crystal.surface_glow = true;
+		civcraft::BlockId CRYSTAL = reg.registerBlock(crystal);
+
+		// Single-chunk world: the chunk lives at chunk-coords (0,0,0); the
+		// mesher will place its blocks at world (0..15, 0..15, 0..15).
+		auto chunk = std::make_unique<civcraft::Chunk>();
+
+		// Build a stepped obelisk inside the chunk. Local coords here go
+		// straight to world coords because chunk origin = (0,0,0).
+		// (cx, cz) is the obelisk footprint center.
+		const int cx = 8, cz = 8;
+		// A 1-block grass platform under the obelisk so it reads as grounded.
+		for (int dz = -2; dz <= 2; dz++)
+			for (int dx = -2; dx <= 2; dx++)
+				chunk->set(cx + dx, 0, cz + dz, GRASS);
+		// 4-stone column (pyramid-ish footprint), capped with a glow crystal.
+		chunk->set(cx,   1, cz,   STONE);
+		chunk->set(cx+1, 1, cz,   STONE); chunk->set(cx-1, 1, cz, STONE);
+		chunk->set(cx,   1, cz+1, STONE); chunk->set(cx,   1, cz-1, STONE);
+		chunk->set(cx,   2, cz,   STONE);
+		chunk->set(cx+1, 2, cz,   STONE); chunk->set(cx-1, 2, cz, STONE);
+		chunk->set(cx,   3, cz,   STONE);
+		chunk->set(cx,   4, cz,   STONE);
+		chunk->set(cx,   5, cz,   CRYSTAL);
+
+		// Minimal ChunkSource adapter — single chunk, no neighbors. The
+		// mesher's getChunkNeighborhood will return 26 nullptrs around the
+		// center, which is fine: missing neighbors mesh as exposed faces.
+		struct OneChunkSource : public civcraft::ChunkSource {
+			civcraft::Chunk* m_chunk;
+			const civcraft::BlockRegistry* m_reg;
+			civcraft::ChunkPos m_pos;
+			OneChunkSource(civcraft::Chunk* c, const civcraft::BlockRegistry* r,
+			               civcraft::ChunkPos p) : m_chunk(c), m_reg(r), m_pos(p) {}
+			civcraft::Chunk* getChunk(civcraft::ChunkPos p) override {
+				return (p == m_pos) ? m_chunk : nullptr;
+			}
+			civcraft::Chunk* getChunkIfLoaded(civcraft::ChunkPos p) override {
+				return (p == m_pos) ? m_chunk : nullptr;
+			}
+			civcraft::BlockId getBlock(int x, int y, int z) override {
+				return m_chunk->get(x, y, z);
+			}
+			const civcraft::BlockRegistry& blockRegistry() const override {
+				return *m_reg;
 			}
 		};
-		// Place the obelisk in the camera's default view so it's visible at
-		// spawn. Camera looks roughly down -Z from behind the player; -6 puts
-		// it dead-ahead. (Pre-Phase-3, this is just a rendering-pipeline demo
-		// — the real chunk_mesher port will replace this with proper chunked
-		// world geometry.)
-		const float bx = -0.5f, bz = -6.0f;
-		float baseY = m_world.terrainTop(bx + 0.5f, bz + 0.5f);
-		// 4 stone blocks stacked, narrowing at the top.
-		float stone_r = 0.55f, stone_g = 0.55f, stone_b = 0.58f;
-		emitBox(bx,        baseY,        bz,        bx+1.0f, baseY+1.0f, bz+1.0f, stone_r, stone_g, stone_b, 0.0f);
-		emitBox(bx+0.10f,  baseY+1.0f,   bz+0.10f,  bx+0.90f, baseY+2.0f, bz+0.90f, stone_r-0.05f, stone_g-0.05f, stone_b-0.05f, 0.0f);
-		emitBox(bx+0.20f,  baseY+2.0f,   bz+0.20f,  bx+0.80f, baseY+3.0f, bz+0.80f, stone_r-0.05f, stone_g-0.05f, stone_b-0.05f, 0.0f);
-		emitBox(bx+0.30f,  baseY+3.0f,   bz+0.30f,  bx+0.70f, baseY+4.0f, bz+0.70f, stone_r-0.10f, stone_g-0.10f, stone_b-0.10f, 0.0f);
-		// A glowing crystal on top — exercises the vGlow channel.
-		emitBox(bx+0.35f,  baseY+4.0f,   bz+0.35f,  bx+0.65f, baseY+4.6f, bz+0.65f, 0.5f, 0.2f, 0.8f, 1.0f);
-		uint32_t vc = (uint32_t)(v.size() / 13);
-		m_chunkDemoMesh = m_rhi->createChunkMesh(v.data(), vc);
-		std::printf("[vk-game] chunk-mesh demo: obelisk (%u verts) at (%.1f, %.1f, %.1f) handle=%llu\n",
-			vc, bx, baseY, bz, (unsigned long long)m_chunkDemoMesh);
+		OneChunkSource src(chunk.get(), &reg, {0, 0, 0});
+
+		civcraft::ChunkMesher mesher;
+		auto [opaque, transparent] = mesher.buildMesh(src, {0, 0, 0});
+
+		// ChunkVertex is layout-compatible with the 13-float vertex stream
+		// the VK pipeline expects — see chunk_mesher.h. Translate the
+		// chunk-local positions to world space so the obelisk lands in a
+		// visible spot near spawn (camera looks ~ -Z from behind the player).
+		const float wx_off = -0.5f - (float)cx;       // shift so cx → x ≈ -0.5
+		const float wz_off = -16.0f - (float)cz;      // shift so cz → z ≈ -16
+		// Sit grass platform on top of village terrain so the obelisk isn't
+		// buried. Grass is at chunk-local y=0; we want it at world y ≈ ground.
+		const float wy_off = m_world.terrainTop(-0.5f, -16.0f) + 0.01f;
+		std::vector<float> verts;
+		verts.reserve(opaque.size() * 13);
+		for (const auto& v : opaque) {
+			verts.push_back(v.position.x + wx_off);
+			verts.push_back(v.position.y + wy_off);
+			verts.push_back(v.position.z + wz_off);
+			verts.push_back(v.color.x); verts.push_back(v.color.y); verts.push_back(v.color.z);
+			verts.push_back(v.normal.x); verts.push_back(v.normal.y); verts.push_back(v.normal.z);
+			verts.push_back(v.ao);
+			verts.push_back(v.shade);
+			verts.push_back(v.alpha);
+			verts.push_back(v.glow);
+		}
+		uint32_t vc = (uint32_t)(verts.size() / 13);
+		m_chunkDemoMesh = m_rhi->createChunkMesh(verts.data(), vc);
+		std::printf("[vk-game] chunk-mesh demo: chunk_mesher built %zu opaque + %zu transparent verts (uploaded %u, handle=%llu)\n",
+			opaque.size(), transparent.size(), vc, (unsigned long long)m_chunkDemoMesh);
 	}
 
 	enterMenu();

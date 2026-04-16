@@ -6,6 +6,7 @@
 #include "client/fog_of_war.h"
 #include "client/camera.h"
 #include "client/chunk_mesher.h"
+#include "client/chunk_mesh_gl.h"
 #include "client/model.h"
 #include <unordered_map>
 #include <unordered_set>
