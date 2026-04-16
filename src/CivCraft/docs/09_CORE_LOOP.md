@@ -267,85 +267,73 @@ step(dt):
 
 ---
 
-## 5. ActiveObject.decide() vs step()
+## 5. decide() — pure read, returns ActionProposals
 
-Previous docs used `step()`. We're refining this to `decide()`:
-
-```
-OLD (mixed concerns):                 NEW (pure separation):
-
-  def step(self, dt, world):            def decide(self, view) -> [Action]:
-      self.hunger -= dt * 0.01              actions = []
-      block = world.get_block(...)          if self.hunger < 0.3:
-      block.grass_level -= 0.5                  grass = view.find_nearest(
-      self.hunger += 0.3                            self.pos, "base:dirt",
-                                                    filter=lambda b: b.grass_level > 0.3)
-  Problems:                                     if grass:
-  - Directly mutates world                          actions.append(EatGrass(
-  - Directly mutates self                               eater=self.id,
-  - No validation                                       block_pos=grass.pos))
-  - Not auditable                               return actions
-  - Order-dependent
-                                            Improvements:
-                                            - ONLY reads, never writes
-                                            - Returns Actions (proposals)
-                                            - Actions validated & executed
-                                              in Phase 1 of NEXT step
-                                            - Fully auditable
-                                            - Order-independent
-```
-
-### But What About Self-Mutations?
-
-Objects need to update their own attributes (hunger decreasing over time, timers ticking). Two approaches:
+`decide()` is the single entry point for behavior code. It reads the world through
+a `view` and returns a list of `ActionProposal`s. It never writes.
 
 ```
-Approach A: Self-actions
-  # decide() emits an action that modifies self
-  def decide(self, view):
-      return [
-          ModifySelf(target=self.id, hunger=self.hunger - 0.01 * dt),
-          EatGrass(eater=self.id, block_pos=...)
-      ]
+  def decide(self, view) -> [ActionProposal]:
+      actions = []
+      if self.hunger < 0.3:
+          grass = view.find_nearest(
+              self.pos, "base:dirt",
+              filter=lambda b: b.grass_level > 0.3)
+          if grass:
+              # "Eat grass" = CONVERT the grass block to dirt;
+              # hunger restoration is a separate CONVERT on the pig.
+              actions.append(Convert(
+                  from_pos=grass.pos, to_block="base:dirt"))
+      return actions
 
-  Pro: everything goes through Actions. Complete audit trail.
-  Con: verbose for trivial state changes.
-
-Approach B: Tick attributes (engine-managed)
-  # Declare attributes that auto-change per tick
-  hunger: float = Attribute(default=1.0, tick_delta=-0.01)
-  # Engine decrements hunger by 0.01/s automatically.
-  # No Action needed. Not auditable but much simpler.
-
-  decide() only emits Actions for WORLD-affecting behavior.
-
-Recommendation: Approach B for internal state, Approach A for anything
-that touches the World. Hybrid is cleanest.
+  Properties:
+  - Pure read: never mutates world or self directly
+  - Returns ActionProposals (intents only)
+  - Server validates & executes in Phase 1 of NEXT step
+  - Fully auditable; order-independent
 ```
+
+### The four action types — the ONLY thing the server accepts
+
+Every behavior decision compiles down to one of these four proposals
+(see `03_ACTIONS.md` and Rule 0 in CLAUDE.md):
+
+| Type | Purpose |
+|------|---------|
+| `TYPE_MOVE`     | Set entity velocity/direction. Wander, follow, flee — all Python helpers that return a MoveTo target. |
+| `TYPE_RELOCATE` | Move an Object between containers (inventory ↔ ground ↔ entity). Value is conserved. |
+| `TYPE_CONVERT`  | Transform an Object from one type to another (value must not increase). Consuming, casting, block breaking, damage — all CONVERT. |
+| `TYPE_INTERACT` | Toggle interactive block state (door, button, TNT fuse). |
+
+There is no `WanderTo`, no `EatGrass`, no `Place`, no `Attack` at the protocol
+level. Those are Python-side names for helpers that build one of the four
+proposals above.
+
+### Self-state changes (hunger, timers)
+
+Attributes that change on every tick (hunger decay, age) don't need to go
+through ActionProposals — the agent client updates them locally between
+`decide()` calls. Only state that affects the shared world requires a
+proposal (which the server validates).
 
 ```python
-class Pig(LivingObject):
-    # --- Auto-ticked attributes (engine handles these) ---
-    hunger: float = Attribute(default=1.0, tick_rate=-0.01)  # -0.01/s
-    age: float = Attribute(default=0.0, tick_rate=1.0)       # +1.0/s
+class Pig:
+    hunger: float = 1.0          # local state, ticked by the agent client
+    age: float = 0.0
 
-    # --- Decisions (produce Actions) ---
-    def decide(self, view: WorldView) -> list[Action]:
-        actions = []
-
+    def decide(self, view) -> list[ActionProposal]:
+        # Hunger decay happens outside decide() — just READ it here.
         if self.hunger < 0.3:
             grass = view.find_nearest_block(
                 self.pos, radius=8,
-                filter=lambda b: hasattr(b, 'grass_level') and b.grass_level > 0.3
-            )
+                filter=lambda b: hasattr(b, 'grass_level') and b.grass_level > 0.3)
             if grass:
-                actions.append(EatGrass(eater=self.id, block_pos=grass.pos))
-            else:
-                actions.append(WanderTo(entity=self.id, target=random_nearby(self.pos, 8)))
-        else:
-            actions.append(WanderTo(entity=self.id, target=random_nearby(self.pos, 8)))
-
-        return actions
+                # CONVERT the grass block; agent client restores hunger locally
+                # once the server broadcasts the block change.
+                return [Convert(from_pos=grass.pos, to_block="base:dirt")]
+            # No grass found → MOVE toward a random nearby spot.
+            return [MoveTo(target=wander_target(self.pos, radius=8))]
+        return [MoveTo(target=wander_target(self.pos, radius=8))]
 ```
 
 ---
@@ -355,53 +343,46 @@ class Pig(LivingObject):
 A Player is just an ActiveObject whose `decide()` is driven by human input instead of AI:
 
 ```
-                ActiveObject
+                Living entity
                     |
         +-----------+-----------+
         |                       |
     AI-driven               Human-driven
-    (Mob, Creatures)              (Player)
+    (pig, wolf, villager)   (player = Living with playable=true)
         |                       |
-   decide() uses            decide() uses
-   AI logic to              keyboard/mouse
-   choose Actions           to choose Actions
-        |                       |
+   agent client            GUI client sends
+   runs decide()           raw input; server's
+   every tick              player-controller
+        |                   maps it to proposals
         v                       v
-   [EatGrass,               [Mine(pos),
-    WanderTo,                Place(pos, block),
-    FleeFrom]               Attack(target)]
+     ActionProposals         ActionProposals
+     (MOVE/CONVERT/…)        (MOVE/CONVERT/…)
 ```
 
 ```python
-class Player(ActiveObject):
-    def decide(self, view: WorldView) -> list[Action]:
-        # This is NOT called like a normal ActiveObject.
-        # Instead, the server reads the player's input buffer
-        # (received via network) and maps it to Actions.
-        #
-        # The "decide" for a player happens on the CLIENT side
-        # (keyboard -> action type) and is sent to the server
-        # as TOSERVER_PLAYER_ACTION packets.
-        #
-        # The server then constructs the Action objects and
-        # puts them in the action queue for Phase 1.
-        pass  # handled by server infrastructure, not this method
+# Player has NO decide() in Python — the GUI client sends input directly.
+# The server's player controller translates WASD/clicks/right-click into
+# the same four ActionProposals any creature would produce.
 
-class Creatures(ActiveObject):
-    def decide(self, view: WorldView) -> list[Action]:
-        # Real AI decision making
-        if self.has_customer_nearby(view):
-            return [Trade(npc=self.id, customer=customer.id)]
-        return [Idle(entity=self.id)]
+class Pig:
+    hunger: float = 1.0
 
-class Pig(ActiveObject):
-    def decide(self, view: WorldView) -> list[Action]:
-        # Animal AI
+    def decide(self, view) -> list[ActionProposal]:
         if self.is_threatened:
-            return [FleeFrom(entity=self.id, threat=self.threat_pos)]
-        if self.hunger < 0.3:
-            return [EatGrass(eater=self.id, ...)]
-        return [WanderTo(entity=self.id, ...)]
+            # "Flee" = MOVE away from threat; flee_target is a Python helper.
+            return [MoveTo(target=flee_target(self.pos, self.threat_pos))]
+        if self.hunger < 0.3 and (grass := view.find_grass(self.pos)):
+            return [Convert(from_pos=grass.pos, to_block="base:dirt")]
+        return [MoveTo(target=wander_target(self.pos, radius=8))]
+
+class Villager:
+    def decide(self, view) -> list[ActionProposal]:
+        if customer := view.nearest_customer():
+            # "Trade" = RELOCATE items between inventories.
+            return [Relocate(
+                from_inv=self.id, to_inv=customer.id,
+                item="base:bread", count=1)]
+        return [MoveTo(target=wander_target(self.pos, radius=4))]
 ```
 
 ---

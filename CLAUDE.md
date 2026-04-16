@@ -150,9 +150,9 @@ cmake --build build -j$(PAR)   # or just `make build`
 
 Direct invocation:
 ```bash
-./build/civcraft --skip-menu                              # singleplayer
+./build/civcraft-ui --skip-menu                           # singleplayer
 ./build/civcraft-server --port 7777                       # dedicated server
-./build/civcraft-client --host 127.0.0.1 --port 7777      # network client
+./build/civcraft-ui --host 127.0.0.1 --port 7777          # network client
 ./build/civcraft-agent --host 127.0.0.1 --port 7777 --entity 5
 ```
 
@@ -161,15 +161,15 @@ Direct invocation:
 **Fast rebuild + screenshot loop:**
 ```bash
 make build && \
-  for p in $(pgrep -x civcraft); do kill $p; done; sleep 0.5 && \
-  DISPLAY=:1 ./build/civcraft --skip-menu &
+  for p in $(pgrep -x civcraft-ui); do kill $p; done; sleep 0.5 && \
+  DISPLAY=:1 ./build/civcraft-ui --skip-menu &
 # Game auto-writes /tmp/civcraft_auto_screenshot.ppm after ~3s
 ```
 
 > **Don't `pkill -f civcraft`** — it matches the shell's own command line (which
 > contains the word "civcraft") and SIGTERMs your own bash, silently skipping
 > the rest of the chained command. Use exact-name matching via
-> `pgrep -x civcraft | xargs kill` instead.
+> `pgrep -x civcraft-ui | xargs kill` instead.
 
 **Screenshot triggers:**
 - `/tmp/civcraft_auto_screenshot.ppm` — written ~3s after entering a world
@@ -180,11 +180,11 @@ make build && \
 ```bash
 # Items: FPS/TPS/RPG/RTS + on-ground shots
 make item_views ITEM=base:sword
-# or: ./build/civcraft --skip-menu --debug-scenario item_views --debug-item base:sword
+# or: ./build/civcraft-ui --skip-menu --debug-scenario item_views --debug-item base:sword
 
 # Characters: 6-angle orbit (front/three_q/side/back/top/rts)
 make character_views CHARACTER=base:pig
-# or: ./build/civcraft --skip-menu --debug-scenario character_views --debug-character base:pig
+# or: ./build/civcraft-ui --skip-menu --debug-scenario character_views --debug-character base:pig
 
 # Both write /tmp/debug_N_<suffix>.ppm and auto-exit when done.
 ```
@@ -197,8 +197,8 @@ iteration loop (rubric, common issues, trick list).
 Use this instead of screenshots when you need to verify *what creatures are deciding and doing*, not what the world looks like. The log is a WoW-style combat/event stream derived entirely from the TCP state stream (Rule 5 compliant — no server-side logging).
 
 ```bash
-./build/civcraft --skip-menu --log-only            # singleplayer, no GUI
-./build/civcraft --log-only --host H --port P      # attach to remote server
+./build/civcraft-ui --skip-menu --log-only         # singleplayer, no GUI
+./build/civcraft-ui --log-only --host H --port P   # attach to remote server
 # Streams events to stdout AND /tmp/civcraft_game.log (truncated on start;
 # prior session preserved as /tmp/civcraft_game.log.prev)
 ```
@@ -217,9 +217,9 @@ In GUI mode the same log is also written to `/tmp/civcraft_game.log` and viewabl
 
 **Verification recipe (replaces screenshot-driven loops for AI behavior work):**
 ```bash
-make build && for p in $(pgrep -x civcraft); do kill $p; done; sleep 0.5 && \
-  ./build/civcraft --skip-menu --log-only &
-sleep 10 && for p in $(pgrep -x civcraft); do kill $p; done
+make build && for p in $(pgrep -x civcraft-ui); do kill $p; done; sleep 0.5 && \
+  ./build/civcraft-ui --skip-menu --log-only &
+sleep 10 && for p in $(pgrep -x civcraft-ui); do kill $p; done
 # then Read /tmp/civcraft_game.log — grep for DECIDE/ACTION/COMBAT
 ```
 

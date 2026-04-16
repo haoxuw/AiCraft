@@ -7,13 +7,13 @@ going through the menu each time.
 
 ```bash
 # Singleplayer, survival, skips main menu entirely
-./build/civcraft --skip-menu
+./build/civcraft-ui --skip-menu
 
 # Singleplayer, with F3 debug overlay on by default (press F3 in-game)
-./build/civcraft --skip-menu
+./build/civcraft-ui --skip-menu
 
 # Network client (also skips menu — auto-joins server directly)
-./build/civcraft-client --host 127.0.0.1 --port 7777
+./build/civcraft-ui --host 127.0.0.1 --port 7777
 
 # Dedicated server + client in one step (from Makefile)
 make game                    # server on random port + client auto-joins, skips menu
@@ -45,8 +45,8 @@ ls /tmp/civcraft_screenshot_*.ppm
 ```bash
 # Edit hud.cpp (or any source file)
 cmake --build build -j$(nproc) && \
-  pkill -f "build/civcraft" ; sleep 0.5 && \
-  ./build/civcraft --skip-menu &
+  pkill -f "build/civcraft-ui" ; sleep 0.5 && \
+  ./build/civcraft-ui --skip-menu &
 sleep 4
 python3 -c "
 from PIL import Image
@@ -57,8 +57,8 @@ Image.open('/tmp/civcraft_auto_screenshot.ppm').save('/tmp/shot.png')
 
 Or one-liner restart loop:
 ```bash
-pkill -f "build/civcraft"; cmake --build build -j$(nproc) && \
-  DISPLAY=:1 ./build/civcraft --skip-menu &
+pkill -f "build/civcraft-ui"; cmake --build build -j$(nproc) && \
+  DISPLAY=:1 ./build/civcraft-ui --skip-menu &
 ```
 
 ## In-game shortcuts
@@ -94,11 +94,11 @@ import subprocess, time
 subprocess.run(["cmake", "--build", "build", "-j4"], cwd="/home/haoxuw/workspace/CivCraft")
 
 # Kill old + launch new (headless-friendly)
-subprocess.Popen(["pkill", "-f", "build/civcraft"])
+subprocess.Popen(["pkill", "-f", "build/civcraft-ui"])
 time.sleep(0.5)
 import os
 env = {**os.environ, "DISPLAY": ":1"}
-subprocess.Popen(["./build/civcraft", "--skip-menu"], env=env,
+subprocess.Popen(["./build/civcraft-ui", "--skip-menu"], env=env,
                  cwd="/home/haoxuw/workspace/CivCraft")
 
 # Wait for auto-screenshot

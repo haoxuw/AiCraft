@@ -277,49 +277,53 @@ The `Behavior` base class provides a `wander_target(entity, radius)` helper.
 
 ## How Everything Connects
 
-**Key principle: ALL intelligence runs on the client. The server is a dumb validator.**
+**Key principle: ALL intelligence runs on agent clients. The server is a dumb validator.**
 
 A single server may host hundreds of players and NPCs. AI behaviors, pathfinding,
 and decision-making are computationally expensive. If the server ran AI for every
-Creatures, it would become the bottleneck. Instead, each client runs behaviors for the
-entities it controls, and the server only validates the resulting intents.
+creature, it would become the bottleneck. Instead, each NPC gets its own headless
+`civcraft-agent` process that runs Python `decide()`, and the server only validates
+the resulting intents. The GUI client (`civcraft-ui`) does NOT run Python — it only
+renders and forwards player input.
 
 ```
 ┌──────────────────────────────────────────┐
 │  ARTIFACT STORE (Python files)           │
 │                                          │
-│  creatures/base/pig.py  → behavior ref   │
+│  living/base/pig.py     → behavior ref   │
 │  behaviors/base/wander.py → decide()     │
 │  items/base/sword.py    → on_use action  │
 │  blocks/base/dirt.py    → solid, hardness│
 └──────────┬───────────────────────────────┘
-           │ loaded by client
+           │ loaded by each agent client
            ▼
-┌──────────────────────────────────────────┐
-│  CLIENT (Python + C++ renderer)          │
-│                                          │
-│  Runs behavior decide() for its entities │
-│  Scans local chunk cache for pathfinding │
-│  Sends ActionProposals: "move to (x,y,z)"│
-│  Sends ActionProposals: "break (x,y,z)" │
-│  Renders world from server state         │
-│  In-game editor: view/edit any Python    │
-└──────────┬───────────────────────────────┘
-           │ ActionProposals (intents only)
-           ▼
-┌──────────────────────────────────────────┐
-│  SERVER (C++ engine — NO AI)             │
-│                                          │
-│  Receives intents from all clients       │
-│  Validates: in range? path clear?        │
-│  Executes: physics, chunk mutation       │
-│  Broadcasts state updates to all clients │
-│  NEVER runs Python behavior code         │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────┐   ┌──────────────────────────────┐
+│  AGENT CLIENT (civcraft-agent)           │   │  GUI CLIENT (civcraft-ui)    │
+│  one process per NPC — headless, Python  │   │  C++ + renderer, NO Python   │
+│                                          │   │                              │
+│  Runs behavior decide() for its entity   │   │  Renders world from server   │
+│  Scans local chunk cache for pathfinding │   │  state. Sends player input   │
+│  Sends ActionProposals (4 types only:    │   │  (WASD / clicks) as action   │
+│    MOVE / RELOCATE / CONVERT / INTERACT) │   │  proposals. Click-to-move    │
+│                                          │   │  navigation is handled       │
+│                                          │   │  server-side (greedy steer). │
+└──────────┬───────────────────────────────┘   └──────────────┬───────────────┘
+           │ ActionProposals                                  │ ActionProposals
+           ▼                                                  ▼
+          ┌─────────────────────────────────────────────────────┐
+          │  SERVER (C++ engine — NO AI, NO Python)             │
+          │                                                      │
+          │  Receives intents from all clients                   │
+          │  Validates: in range? path clear? value conserved?   │
+          │  Executes: physics, chunk mutation                   │
+          │  Broadcasts state updates to all clients             │
+          │  NEVER runs Python behavior code                     │
+          └─────────────────────────────────────────────────────┘
 ```
 
-**Scaling:** Adding 100 NPCs = adding headless AI clients that run behaviors
-and send ActionProposals. The server CPU stays constant — it only validates.
+**Scaling:** Adding 100 NPCs = spawning 100 headless agent processes. The server
+CPU stays constant — it only validates. See `00_OVERVIEW.md` for the full
+process-model rationale.
 
 ---
 
