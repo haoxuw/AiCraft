@@ -21,26 +21,6 @@ layout(set = 0, binding = 1) uniform ShadowUBO {
 
 layout(location = 0) out vec4 outColor;
 
-// ── Noise ──
-float hash(vec3 p) {
-	p = fract(p * vec3(443.8975, 397.2973, 491.1871));
-	p += dot(p, p.yzx + 19.19);
-	return fract((p.x + p.y) * p.z);
-}
-
-float noise3D(vec3 p) {
-	vec3 i = floor(p);
-	vec3 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f);
-	return mix(
-		mix(mix(hash(i),              hash(i + vec3(1,0,0)), f.x),
-		    mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-		mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
-		    mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
-		f.z
-	);
-}
-
 // Slope-scaled PCF shadow sampling. Returns 1.0 (fully lit) down to 0.0
 // (fully in shadow) based on 3×3 taps around the projected shadow texel.
 float sampleShadow(vec3 worldPos, vec3 n, vec3 sun) {
@@ -76,34 +56,7 @@ void main() {
 	vec3 sun = normalize(pc.sunDir.xyz);
 	float sunStr = pc.sunDir.w;
 
-	vec3 blockPos = floor(vWorldPos + 0.001);
-	vec3 localPos = fract(vWorldPos + 0.001);
-
-	// ── Per-block color variation (strong, Dungeons-style distinct blocks) ──
-	float blockHash = hash(blockPos);
-	float colorVar = (blockHash - 0.5) * 0.16;
-
-	// ── Material grain (heavier texture for stone/wood feel) ──
-	float grain;
-	if (abs(n.y) > 0.5) {
-		grain = noise3D(vWorldPos * 3.5) * 0.07
-		      + noise3D(vWorldPos * 9.0) * 0.04
-		      + noise3D(vWorldPos * 22.0) * 0.02;
-	} else {
-		grain = noise3D(vWorldPos * vec3(3.0, 10.0, 3.0)) * 0.07
-		      + noise3D(vWorldPos * vec3(7.0, 22.0, 7.0)) * 0.03;
-	}
-
-	// ── Edge darkening (crisp block grid — Dungeons has very visible edges) ──
-	vec3 edgeDist = min(localPos, 1.0 - localPos);
-	float edgeFactor;
-	if (abs(n.y) > 0.5)      edgeFactor = smoothstep(0.0, 0.08, min(edgeDist.x, edgeDist.z));
-	else if (abs(n.x) > 0.5) edgeFactor = smoothstep(0.0, 0.08, min(edgeDist.y, edgeDist.z));
-	else                      edgeFactor = smoothstep(0.0, 0.08, min(edgeDist.x, edgeDist.y));
-	edgeFactor = mix(0.72, 1.0, edgeFactor);
-
-	vec3 baseColor = clamp(vColor + colorVar + grain, 0.0, 1.0);
-	baseColor *= edgeFactor;
+	vec3 baseColor = vColor;
 
 	// Neutral lighting: shadow map + sun dot for direction, grey ambient so
 	// hue comes from the material only. Any global grading/saturation/warmth
