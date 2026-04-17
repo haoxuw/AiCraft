@@ -347,8 +347,8 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		}
 	});
 	m_debugTriggers.addTrigger("/tmp/civcraft_vk_pause_request", [this] {
-		if (m_state == GameState::Playing) enterPaused();
-		else if (m_state == GameState::Paused) resumeFromPause();
+		if (m_state == GameState::Playing) openGameMenu();
+		else if (m_state == GameState::GameMenu) closeGameMenu();
 	});
 	m_debugTriggers.addTrigger("/tmp/civcraft_vk_inventory_request", [this] {
 		if (m_state != GameState::Playing) return;
@@ -378,6 +378,21 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		if (m_flyMode && me) {
 			me->position.y += 5.0f;
 			std::printf("[vk-game] [trigger] ascend +5 → y=%.1f\n", me->position.y);
+		}
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_handbook_request", [this] {
+		m_handbookOpen = !m_handbookOpen;
+		std::printf("[vk-game] [trigger] handbook %s\n", m_handbookOpen ? "OPEN" : "CLOSED");
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_tuning_request", [this] {
+		m_showTuning = !m_showTuning;
+		std::printf("[vk-game] [trigger] tuning %s\n", m_showTuning ? "OPEN" : "CLOSED");
+	});
+	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_inspect_request", [this](const std::string& line) {
+		int eid = 0;
+		if (sscanf(line.c_str(), "%d", &eid) == 1 && eid > 0) {
+			m_inspectedEntity = (civcraft::EntityId)eid;
+			std::printf("[vk-game] [trigger] inspect entity #%d\n", eid);
 		}
 	});
 	m_artifactRegistry.loadAll("artifacts");
@@ -535,6 +550,7 @@ void Game::pushNotification(const std::string& text, glm::vec3 color, float life
 
 void Game::enterMenu() {
 	m_state = GameState::Menu;
+	m_menuScreen = MenuScreen::Main;
 	// Release mouse so the menu can be clicked with ImGui.
 	if (m_window) {
 		glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -595,22 +611,23 @@ void Game::enterPlaying() {
 		glm::vec3(0.75f, 0.82f, 0.92f), 4.0f);
 }
 
-void Game::enterPaused() {
+void Game::openGameMenu() {
 	if (m_state != GameState::Playing) return;
-	m_state = GameState::Paused;
-	// Release mouse so the pause overlay can be clicked.
+	m_state = GameState::GameMenu;
+	// Release mouse so the menu overlay can be clicked.
 	if (m_window) {
 		glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 	}
 	m_mouseCaptured = false;
-	// Reset camera smoothing so the view doesn't lurch when gameplay resumes
-	// (orbit angles don't drift during pause, but the mouse-delta tracker
-	// would otherwise emit a big jump on the first post-pause frame).
+	// Reset camera smoothing so the view doesn't lurch when the player resumes
+	// control (orbit angles don't drift while the menu is up, but the
+	// mouse-delta tracker would otherwise emit a big jump on the first frame
+	// after close).
 	m_cam.resetMouseTracking();
 }
 
-void Game::resumeFromPause() {
-	if (m_state != GameState::Paused) return;
+void Game::closeGameMenu() {
+	if (m_state != GameState::GameMenu) return;
 	m_state = GameState::Playing;
 	if (m_window) {
 		bool needCapture = (m_cam.mode == civcraft::CameraMode::FirstPerson ||
@@ -636,7 +653,7 @@ void Game::respawn() { enterPlaying(); }
 void Game::onWindowFocus(bool focused) {
 	m_windowFocused = focused;
 	if (!focused && m_state == GameState::Playing && !std::getenv("CIVCRAFT_NO_FOCUS_PAUSE"))
-		enterPaused();
+		openGameMenu();
 }
 
 void Game::onScroll(double xoff, double yoff) {
@@ -822,14 +839,14 @@ void Game::runOneFrame(float dt, float wallTime) {
 		if (m_handbookOpen) renderHandbook();
 		renderRTSSelect();
 		m_rhi->imguiRender();
-	} else if (m_state == GameState::Paused) {
+	} else if (m_state == GameState::GameMenu) {
 		renderWorld(wallTime);
 		renderEntities(wallTime);
 		renderEffects(wallTime);
 		renderHotbarItems3D();
 		m_rhi->imguiNewFrame();
-		renderHUD();       // world state frozen underneath
-		renderPaused();
+		renderHUD();       // world keeps ticking underneath
+		renderGameMenu();
 		if (m_showTuning) renderTuningPanel();
 		m_rhi->imguiRender();
 	} else {  // Dead

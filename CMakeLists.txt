@@ -109,6 +109,11 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/camera.cpp
 	src/platform/client/chunk_mesher.h
 	src/platform/client/chunk_mesher.cpp
+	src/platform/client/ui/ui_theme.h
+	src/platform/client/ui/ui_theme.cpp
+	src/platform/client/ui/ui_widgets.h
+	src/platform/client/ui/ui_widgets.cpp
+	src/platform/client/ui/ui_screen.h
 )
 
 set(GAME_INCLUDE_DIRS src/platform)

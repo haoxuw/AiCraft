@@ -58,7 +58,7 @@ void Game::clampCameraCollision() {
 void Game::processInput(float dt) {
 	if (!m_window) return;
 
-	// ESC: Playing↔Paused. Menu/Dead handle Esc in their own code.
+	// ESC: Playing↔GameMenu. Menu/Dead handle Esc in their own code.
 	bool esc = glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
 	if (esc && !m_escLast) {
 		if (m_inspectedEntity != 0) {
@@ -69,8 +69,8 @@ void Game::processInput(float dt) {
 			m_handbookOpen = false;
 		} else if (m_invOpen) {
 			m_invOpen = false;
-		} else if (m_state == GameState::Playing) enterPaused();
-		else if (m_state == GameState::Paused) resumeFromPause();
+		} else if (m_state == GameState::Playing) openGameMenu();
+		else if (m_state == GameState::GameMenu) closeGameMenu();
 	}
 	m_escLast = esc;
 

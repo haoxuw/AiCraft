@@ -108,7 +108,13 @@ struct FloatText {
 };
 
 // ── Game ──────────────────────────────────────────────────────────────────
-enum class GameState { Menu, Playing, Paused, Dead };
+enum class GameState { Menu, Loading, Playing, GameMenu, Dead };
+
+// Sub-screens within the Menu state. Main → Singleplayer/Multiplayer/Settings.
+// Stage C will flesh out Singleplayer (world list + create-world) and
+// Multiplayer (LAN/Saved/Direct-Connect tabs); today they're placeholders
+// that delegate to the existing auto-spawn-and-join flow.
+enum class MenuScreen : uint8_t { Main, Singleplayer, Multiplayer, Settings };
 
 class Game {
 public:
@@ -136,7 +142,7 @@ public:
 	// Check if we should quit (menu → Quit, or window close).
 	bool shouldQuit() const { return m_shouldQuit; }
 
-	// Window focus notification — auto-pauses gameplay on focus loss.
+	// Window focus notification — opens the in-game menu on focus loss.
 	void onWindowFocus(bool focused);
 
 	// Mouse-wheel routed from the platform shell. ImGui consumes first; if the
@@ -148,8 +154,8 @@ private:
 	// ── Scene transitions ─────────────────────────────────────────────────
 	void enterMenu();
 	void enterPlaying();
-	void enterPaused();
-	void resumeFromPause();
+	void openGameMenu();
+	void closeGameMenu();
 	void enterDead(const char* cause);
 	void respawn();
 
@@ -169,7 +175,7 @@ private:
 	void renderHotbarItems3D();                 // held-item models in hotbar slots
 	void renderHUD();                           // lightbulbs, HP bars, hotbar
 	void renderMenu();                          // main menu (ImGui + RHI UI)
-	void renderPaused();                        // in-game pause overlay
+	void renderGameMenu();                      // in-game menu overlay
 	void renderDeath();                         // death overlay + respawn btn
 	void renderDebugOverlay();                  // F3 debug stats
 	void renderTuningPanel();                   // F6 render-tuning sliders
@@ -243,6 +249,7 @@ private:
 	// Menu
 	float        m_menuTitleT = 0.0f;
 	std::string  m_lastDeathReason;
+	MenuScreen   m_menuScreen = MenuScreen::Main;
 
 	// One persistent chunk-mesh handle per loaded chunk. ChunkMesher emits
 	// world-space vertices, so each handle just needs drawChunkMeshOpaque +
@@ -418,9 +425,8 @@ private:
 	bool         m_showDebug = false;
 
 	// F6 render-tuning panel — drives the composite GradingParams UBO.
-	// Defaults are all zero (no post FX); user drags sliders to tune.
 	bool                    m_showTuning = false;  // toggled by F6
-	rhi::IRhi::GradingParams m_grading{};
+	rhi::IRhi::GradingParams m_grading = rhi::IRhi::GradingParams::Vivid();
 
 	// H handbook panel
 	bool         m_handbookOpen = false;

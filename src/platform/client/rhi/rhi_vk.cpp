@@ -1,5 +1,6 @@
 #include "rhi_vk.h"
 #include "ui_font_8x8.h"
+#include "client/ui/ui_theme.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -2471,9 +2472,8 @@ bool VkRhi::createCompositeResources() {
 		if (vkAllocateMemory(m_device, &mai, nullptr, &m_gradUboMem[f]) != VK_SUCCESS) return false;
 		vkBindBufferMemory(m_device, m_gradUbo[f], m_gradUboMem[f], 0);
 		vkMapMemory(m_device, m_gradUboMem[f], 0, mr.size, 0, &m_gradUboMapped[f]);
-		// Zero = clean render, no post FX.
-		GradingParams defaults{};
-		memcpy(m_gradUboMapped[f], &defaults, sizeof(defaults));
+		GradingParams initial = GradingParams::Vivid();
+		memcpy(m_gradUboMapped[f], &initial, sizeof(initial));
 	}
 
 	VkDescriptorSetLayout layouts[kFramesInFlight];
@@ -3629,7 +3629,8 @@ bool VkRhi::initImGui() {
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
-	ImGui::StyleColorsDark();
+	civcraft::ui::applyTheme(ImGui::GetStyle());
+	civcraft::ui::loadFonts(ImGui::GetIO());
 	ImGui_ImplGlfw_InitForVulkan(m_window, true);
 
 	ImGui_ImplVulkan_InitInfo ii{};

@@ -50,19 +50,30 @@ public:
 	};
 
 	// std140, 16B alignment — groups of 4 floats mirror GLSL exactly.
-	// Defaults: "Vivid" look (ACES + SSAO + bloom + saturation). F6 resets.
+	// Field defaults are neutral (no stylization). Named presets below are
+	// the source of truth for styled looks — `Vivid()` is the shipped default.
 	struct GradingParams {
 		// vec4 #0 — post-process amounts, 0 = disabled.
-		float ssao     = 0.55f;  // AO darken (0..1)
-		float bloom    = 0.45f;  // bloom add (0..1)
-		float vignette = 0.35f;  // edge darken (0..0.5)
-		float aces     = 1.0f;   // ACES tonemap (0=skip, 1=apply)
+		float ssao     = 0.0f;  // AO darken (0..1)
+		float bloom    = 0.0f;  // bloom add (0..1)
+		float vignette = 0.0f;  // edge darken (0..0.5)
+		float aces     = 0.0f;  // ACES tonemap (0=skip, 1=apply)
 
 		// vec4 #1 — baseline saturation boost.
-		float exposure    = 1.05f;  // pre-ACES (0.3..1.5, 1=neutral)
-		float warmTint    = 0.30f;  // warm WB (0..1)
-		float sCurve      = 0.03f;  // black-crush (0..0.2)
-		float saturation  = 0.45f;  // delta (-1..+1, 0=neutral)
+		float exposure    = 1.0f;  // pre-ACES (0.3..1.5, 1=neutral)
+		float warmTint    = 0.0f;  // warm WB (0..1)
+		float sCurve      = 0.0f;  // black-crush (0..0.2)
+		float saturation  = 0.0f;  // delta (-1..+1, 0=neutral)
+
+		// Named presets — the single source of truth for styled looks.
+		static constexpr GradingParams Vivid() {
+			return { .ssao = 0.60f, .bloom = 0.50f, .vignette = 0.40f, .aces = 0.40f,
+			         .exposure = 0.45f, .warmTint = 0.30f, .sCurve = 0.18f, .saturation = 0.35f };
+		}
+		static constexpr GradingParams Dungeons() {
+			return { .ssao = 1.00f, .bloom = 1.00f, .vignette = 1.00f, .aces = 0.10f,
+			         .exposure = 0.35f, .warmTint = 1.00f, .sCurve = 0.18f, .saturation = 0.06f };
+		}
 	};
 	static_assert(sizeof(GradingParams) == 32, "GradingParams must be 32 bytes");
 

@@ -14,6 +14,9 @@
 #include "client/model_loader.h"
 #include "client/network_server.h"
 #include "client/raycast.h"
+#include "client/ui/ui_screen.h"
+#include "client/ui/ui_theme.h"
+#include "client/ui/ui_widgets.h"
 #include "net/server_interface.h"
 #include "logic/action.h"
 #include "logic/inventory.h"
@@ -1843,153 +1846,167 @@ void Game::renderHUD() {
 	}
 }
 
+// ── Menu screens ─────────────────────────────────────────────────────
+// All menu/pause/death screens compose from the UI kit (ui_screen +
+// ui_widgets). No per-screen palette pushes — theme + fonts come from
+// ui_theme globally.
+
+static void menuControlsBlock() {
+	ui::SectionHeader("Controls");
+	ui::KeyValue("Move",           "WASD");
+	ui::KeyValue("Jump",           "Space");
+	ui::KeyValue("Sprint",         "Shift");
+	ui::KeyValue("Look",           "Mouse");
+	ui::KeyValue("Attack / Place", "LMB  /  RMB");
+	ui::KeyValue("Drop",           "Q");
+	ui::KeyValue("Inventory",      "Tab");
+	ui::KeyValue("Handbook",       "H");
+	ui::KeyValue("Camera",         "V");
+	ui::KeyValue("Pause",          "Esc");
+	ui::KeyValue("Debug / Tuning", "F3  /  F6");
+	ui::KeyValue("Screenshot",     "F2");
+}
+
 void Game::renderMenu() {
-	// Semi-opaque dusk scrim — lets the sky + rotating world preview bleed
-	// through behind the menu so the screen isn't a flat black box.
-	const float bg[4] = { 0.02f, 0.03f, 0.06f, 0.55f };
-	m_rhi->drawRect2D(-1.2f, -1.2f, 2.4f, 2.4f, bg);
+	// Centered brass title over rotating-world backdrop.
+	ui::ScreenTitle(m_rhi, "CIVCRAFT", 0.48f, 3.6f, m_menuTitleT);
 
-	// Decorative header band
-	float pulse = 0.85f + 0.15f * std::sin(m_menuTitleT * 1.8f);
-	float gold[4] = { 1.0f * pulse, 0.72f * pulse, 0.25f * pulse, 1.0f };
-	m_rhi->drawTitle2D("CIVCRAFT  VULKAN", -0.42f, 0.55f, 2.8f, gold);
-
-	const float tag[4] = {0.85f, 0.80f, 0.70f, 0.90f};
-	m_rhi->drawText2D("A Vulkan-native playable slice.", -0.26f, 0.44f, 1.0f, tag);
-
-	// ImGui button panel — centered. We use raw ImGui here because ImGui
-	// already ships with both backends and handles hit-testing for free.
-	ImGuiIO& io = ImGui::GetIO();
-	ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.55f);
-	ImGui::SetNextWindowPos(ImVec2(center.x - 160, center.y), ImGuiCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(320, 240), ImGuiCond_Always);
-	ImGui::Begin("##menu", nullptr,
-		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-		ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
-		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground);
-	ImGui::Spacing();
-	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.18f, 0.28f, 0.95f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.28f, 0.40f, 0.95f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.35f, 0.50f, 1.00f));
-	// Also accept ENTER as "press PLAY" for keyboard-only / headless flows.
-	bool enterPressed = (ImGui::IsKeyPressed(ImGuiKey_Enter, false)
-	                  || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
-	if (ImGui::Button("  PLAY  ", ImVec2(280, 52)) || enterPressed) enterPlaying();
-	ImGui::Spacing();
-	if (ImGui::Button("  HOW TO PLAY  ", ImVec2(280, 38))) {
-		// Toggle help overlay via ImGui tooltip in-place.
-		ImGui::OpenPopup("help");
+	// ESC in a sub-screen returns to Main (same gesture as closing a popup).
+	bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+	if (escPressed && m_menuScreen != MenuScreen::Main) {
+		m_menuScreen = MenuScreen::Main;
 	}
-	if (ImGui::BeginPopup("help")) {
-		ImGui::Text("Move      WASD");
-		ImGui::Text("Jump      Space");
-		ImGui::Text("Look      Mouse");
-		ImGui::Text("Attack    Left Click");
-		ImGui::Text("Sprint    Shift");
-		ImGui::Text("Menu      Esc");
-		if (ImGui::Button("OK", ImVec2(120, 28))) ImGui::CloseCurrentPopup();
-		ImGui::EndPopup();
-	}
-	ImGui::Spacing();
-	if (ImGui::Button("  QUIT  ", ImVec2(280, 38))) m_shouldQuit = true;
-	ImGui::PopStyleColor(3);
-	ImGui::PopStyleVar();
-	ImGui::End();
 
-	if (!m_lastDeathReason.empty()) {
-		const float red[4] = {1.0f, 0.45f, 0.35f, 1.0f};
-		m_rhi->drawText2D(m_lastDeathReason.c_str(), -0.25f, -0.55f, 1.0f, red);
+	ui::ScreenOpts opts;
+	opts.panelW  = 380.0f;
+	opts.anchorY = 0.34f;
+
+	switch (m_menuScreen) {
+	case MenuScreen::Main: {
+		if (ui::BeginScreen("##menu_main", m_rhi, opts)) {
+			// ImGui's keyboard Nav already activates the focused button on
+			// ENTER/SPACE — don't add a second handler or it double-fires on
+			// Nav-auto-focus (jumps past the main menu on first frame).
+			if (ui::PrimaryButton("SINGLEPLAYER")) m_menuScreen = MenuScreen::Singleplayer;
+			if (ui::SecondaryButton("MULTIPLAYER")) m_menuScreen = MenuScreen::Multiplayer;
+			if (ui::SecondaryButton("SETTINGS"))    m_menuScreen = MenuScreen::Settings;
+			ui::VerticalSpace();
+			if (ui::GhostButton("QUIT")) m_shouldQuit = true;
+
+			if (!m_lastDeathReason.empty()) {
+				ui::VerticalSpace();
+				ui::Divider();
+				ui::ColoredText(ui::kBad, "%s", m_lastDeathReason.c_str());
+			}
+		}
+		ui::EndScreen();
+		break;
+	}
+	case MenuScreen::Singleplayer: {
+		opts.panelW = 440.0f;
+		if (ui::BeginScreen("##menu_sp", m_rhi, opts)) {
+			ui::SectionHeader("Your Worlds");
+			ui::Hint("World list, thumbnails, and create-world arrive in Stage C.");
+			ui::VerticalSpace();
+			if (ui::PrimaryButton("START  VILLAGE  WORLD")) enterPlaying();
+			ui::VerticalSpace();
+			if (ui::GhostButton("Back")) m_menuScreen = MenuScreen::Main;
+		}
+		ui::EndScreen();
+		break;
+	}
+	case MenuScreen::Multiplayer: {
+		opts.panelW = 440.0f;
+		if (ui::BeginScreen("##menu_mp", m_rhi, opts)) {
+			ui::SectionHeader("Multiplayer");
+			ui::Hint("LAN discovery, saved servers, and direct connect arrive in Stage C.");
+			ui::VerticalSpace();
+			ui::Hint("For now, launch with:  civcraft-ui-vk --host HOST --port PORT");
+			ui::VerticalSpace();
+			if (ui::GhostButton("Back")) m_menuScreen = MenuScreen::Main;
+		}
+		ui::EndScreen();
+		break;
+	}
+	case MenuScreen::Settings: {
+		opts.panelW = 440.0f;
+		if (ui::BeginScreen("##menu_settings", m_rhi, opts)) {
+			menuControlsBlock();
+			ui::VerticalSpace();
+			ui::Hint("Render tuning is still on F6 in-game — it'll move here in Stage B4.");
+			ui::VerticalSpace();
+			if (ui::GhostButton("Back")) m_menuScreen = MenuScreen::Main;
+		}
+		ui::EndScreen();
+		break;
+	}
 	}
 }
 
-void Game::renderPaused() {
-	// Dim the world behind, then a centered ImGui window with Resume / Menu /
-	// Quit. Esc also toggles back to Playing (handled in processInput).
-	const float veil[4] = {0.0f, 0.0f, 0.0f, 0.55f};
-	m_rhi->drawRect2D(-1.2f, -1.2f, 2.4f, 2.4f, veil);
-	const float gold[4] = {1.0f, 0.82f, 0.35f, 1.0f};
-	m_rhi->drawTitle2D("PAUSED", -0.17f, 0.20f, 3.0f, gold);
+void Game::renderGameMenu() {
+	ui::ScreenTitle(m_rhi, "Game Is Not Paused", 0.28f, 3.0f, m_menuTitleT);
 
-	ImGuiIO& io = ImGui::GetIO();
-	ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.55f);
-	ImGui::SetNextWindowPos(ImVec2(center.x - 140, center.y), ImGuiCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(280, 210), ImGuiCond_Always);
-	ImGui::Begin("##paused", nullptr,
-		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-		ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
-		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground);
-	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-	if (ImGui::Button("  RESUME  ", ImVec2(240, 40))) resumeFromPause();
-	ImGui::Spacing();
+	ui::ScreenOpts opts;
+	opts.panelW  = 340.0f;
+	opts.anchorY = 0.48f;
+	opts.scrimColor = ImVec4(0.0f, 0.0f, 0.0f, 0.55f);
+
 	static bool showLog = false;
-	if (ImGui::Button("  GAME LOG  ", ImVec2(240, 34))) showLog = !showLog;
-	ImGui::Spacing();
-	if (ImGui::Button("  MAIN MENU  ", ImVec2(240, 34))) enterMenu();
-	ImGui::Spacing();
-	if (ImGui::Button("  QUIT  ", ImVec2(240, 34))) m_shouldQuit = true;
-	ImGui::PopStyleVar();
-	ImGui::End();
+
+	if (ui::BeginScreen("##gamemenu", m_rhi, opts)) {
+		if (ui::PrimaryButton("RESUME")) closeGameMenu();
+		if (ui::SecondaryButton(showLog ? "HIDE GAME LOG" : "GAME LOG")) showLog = !showLog;
+		if (ui::SecondaryButton("MAIN MENU")) enterMenu();
+		ui::VerticalSpace();
+		if (ui::DangerButton("QUIT")) m_shouldQuit = true;
+	}
+	ui::EndScreen();
 
 	if (showLog) {
 		auto lines = civcraft::GameLogger::instance().snapshot();
-		ImGui::SetNextWindowSize(ImVec2(700, 400), ImGuiCond_FirstUseEver);
+		ImGuiIO& io = ImGui::GetIO();
+		ImGui::SetNextWindowSize(ImVec2(760, 440), ImGuiCond_FirstUseEver);
 		ImGui::SetNextWindowPos(
 			ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
 			ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.03f, 0.03f, 0.05f, 0.95f));
 		if (ImGui::Begin("Game Log", &showLog)) {
+			if (auto* f = ui::mono()) ImGui::PushFont(f);
 			for (auto& line : lines) {
-				ImVec4 col(0.75f, 0.73f, 0.70f, 1.0f);
-				if (line.find("[DECIDE]") != std::string::npos)
-					col = ImVec4(0.55f, 0.80f, 0.55f, 1.0f);
-				else if (line.find("[COMBAT]") != std::string::npos)
-					col = ImVec4(0.90f, 0.40f, 0.35f, 1.0f);
-				else if (line.find("[DEATH]") != std::string::npos)
-					col = ImVec4(0.95f, 0.25f, 0.25f, 1.0f);
-				else if (line.find("[ACTION]") != std::string::npos)
-					col = ImVec4(0.55f, 0.65f, 0.90f, 1.0f);
-				else if (line.find("[INV]") != std::string::npos)
-					col = ImVec4(0.90f, 0.75f, 0.35f, 1.0f);
+				ImVec4 col = ui::kText;
+				if      (line.find("[DECIDE]") != std::string::npos) col = ui::kOk;
+				else if (line.find("[COMBAT]") != std::string::npos) col = ui::kBad;
+				else if (line.find("[DEATH]")  != std::string::npos) col = ImVec4(0.95f, 0.25f, 0.25f, 1.0f);
+				else if (line.find("[ACTION]") != std::string::npos) col = ImVec4(0.55f, 0.75f, 0.95f, 1.0f);
+				else if (line.find("[INV]")    != std::string::npos) col = ui::kAccent;
 				ImGui::TextColored(col, "%s", line.c_str());
 			}
+			if (ui::mono()) ImGui::PopFont();
 			if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
 				ImGui::SetScrollHereY(1.0f);
 		}
 		ImGui::End();
-		ImGui::PopStyleColor();
 	}
 }
 
 void Game::renderDeath() {
-	const float veil[4] = {0.0f, 0.0f, 0.0f, 0.65f};
-	m_rhi->drawRect2D(-1.2f, -1.2f, 2.4f, 2.4f, veil);
-	const float red[4] = { 0.95f, 0.25f, 0.20f, 1.0f };
-	m_rhi->drawTitle2D("YOU DIED", -0.25f, 0.15f, 3.0f, red);
-	const float hint[4] = { 0.85f, 0.85f, 0.90f, 0.95f };
-	m_rhi->drawText2D("Press  R  (or click Respawn)   |   Esc  for menu",
-		-0.32f, -0.05f, 1.1f, hint);
+	ui::ScreenTitleRed(m_rhi, "YOU DIED", 0.22f, 3.0f);
 
-	// Clickable Respawn / Menu buttons so the mouse-free flow works without
-	// the keyboard. Mirrors the main-menu ImGui window.
-	ImGuiIO& io = ImGui::GetIO();
-	ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.60f);
-	ImGui::SetNextWindowPos(ImVec2(center.x - 140, center.y), ImGuiCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(280, 120), ImGuiCond_Always);
-	ImGui::Begin("##dead", nullptr,
-		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-		ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
-		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground);
-	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 0.95f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.25f, 0.25f, 0.95f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.35f, 0.35f, 1.00f));
-	if (ImGui::Button("  RESPAWN  ", ImVec2(240, 44))) respawn();
-	ImGui::Spacing();
-	if (ImGui::Button("  MAIN MENU  ", ImVec2(240, 34))) enterMenu();
-	ImGui::PopStyleColor(3);
-	ImGui::PopStyleVar();
-	ImGui::End();
+	ui::ScreenOpts opts;
+	opts.panelW  = 360.0f;
+	opts.anchorY = 0.48f;
+	opts.scrimColor = ImVec4(0.0f, 0.0f, 0.0f, 0.65f);
+
+	if (ui::BeginScreen("##dead", m_rhi, opts)) {
+		if (!m_lastDeathReason.empty()) {
+			ui::ColoredText(ui::kBad, "%s", m_lastDeathReason.c_str());
+			ui::VerticalSpace();
+		}
+		ui::Hint("Press R to respawn, Esc for main menu.");
+		ui::VerticalSpace();
+		if (ui::PrimaryButton("RESPAWN")) respawn();
+		if (ui::GhostButton("MAIN MENU")) enterMenu();
+	}
+	ui::EndScreen();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -2077,54 +2094,33 @@ void Game::renderDebugOverlay() {
 // ══════════════════════════════════════════════════════════════════
 
 void Game::renderTuningPanel() {
-	ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowPos(ImVec2(20, 120), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin("Render Tuning (F6)", &m_showTuning)) {
-		ImGui::TextWrapped("All effects start at 0 (off). Drag to add. "
-		                   "Click \"Reset\" to clear, \"Preset: Dungeons\" "
-		                   "to load the old baked-in look.");
-		ImGui::Separator();
+		ui::Hint("Scene starts on the Vivid preset. Drag to tweak or pick another.");
+		ui::VerticalSpace();
 
-		ImGui::TextDisabled("Post Process");
+		ui::SectionHeader("Post Process");
 		ImGui::SliderFloat("SSAO",      &m_grading.ssao,     0.0f, 1.0f, "%.2f");
 		ImGui::SliderFloat("Bloom",     &m_grading.bloom,    0.0f, 1.0f, "%.2f");
 		ImGui::SliderFloat("Vignette",  &m_grading.vignette, 0.0f, 1.0f, "%.2f");
 		ImGui::SliderFloat("ACES Tone", &m_grading.aces,     0.0f, 1.0f, "%.2f");
 
-		ImGui::Separator();
-		ImGui::TextDisabled("Color Grade");
+		ui::VerticalSpace();
+		ui::SectionHeader("Color Grade");
 		ImGui::SliderFloat("Exposure",  &m_grading.exposure,   0.3f, 1.5f, "%.2f");
 		ImGui::SliderFloat("Warm Tint", &m_grading.warmTint,   0.0f, 1.0f, "%.2f");
 		ImGui::SliderFloat("S-Curve",   &m_grading.sCurve,     0.0f, 0.2f, "%.3f");
 		ImGui::SliderFloat("Saturation",&m_grading.saturation,-1.0f, 1.0f, "%+0.2f");
 
-		ImGui::Separator();
-		if (ImGui::Button("Reset (clean)")) {
-			m_grading = rhi::IRhi::GradingParams{};
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Preset: Dungeons")) {
-			// Reproduces the previously hardcoded composite stack.
-			m_grading.ssao       = 1.00f;
-			m_grading.bloom      = 1.00f;
-			m_grading.vignette   = 1.00f;
-			m_grading.aces       = 1.00f;
-			m_grading.exposure   = 0.95f;
-			m_grading.warmTint   = 1.00f;
-			m_grading.sCurve     = 0.04f;
-			m_grading.saturation = 0.06f;
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Preset: Vivid")) {
-			m_grading.ssao       = 0.60f;
-			m_grading.bloom      = 0.50f;
-			m_grading.vignette   = 0.40f;
-			m_grading.aces       = 1.00f;
-			m_grading.exposure   = 1.00f;
-			m_grading.warmTint   = 0.30f;
-			m_grading.sCurve     = 0.02f;
-			m_grading.saturation = 0.35f;
-		}
+		ui::VerticalSpace();
+		ui::SectionHeader("Presets");
+		float half = (ImGui::GetContentRegionAvail().x - 8.0f) * 0.5f;
+		if (ui::SecondaryButton("Vivid", half))
+			m_grading = rhi::IRhi::GradingParams::Vivid();
+		ImGui::SameLine(0, 8.0f);
+		if (ui::SecondaryButton("Dungeons", half))
+			m_grading = rhi::IRhi::GradingParams::Dungeons();
 	}
 	ImGui::End();
 }
@@ -2133,20 +2129,7 @@ void Game::renderTuningPanel() {
 // Handbook — ImGui artifact browser (H key)
 // ─────────────────────────────────────────────────────────────────────────
 void Game::renderHandbook() {
-	ImGui::PushStyleColor(ImGuiCol_WindowBg,       ImVec4(0.05f, 0.04f, 0.03f, 0.96f));
-	ImGui::PushStyleColor(ImGuiCol_Border,         ImVec4(0.40f, 0.30f, 0.12f, 0.70f));
-	ImGui::PushStyleColor(ImGuiCol_TitleBg,        ImVec4(0.08f, 0.06f, 0.04f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_TitleBgActive,  ImVec4(0.12f, 0.09f, 0.05f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_Tab,            ImVec4(0.10f, 0.08f, 0.06f, 0.90f));
-	ImGui::PushStyleColor(ImGuiCol_TabSelected,    ImVec4(0.20f, 0.15f, 0.08f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_TabHovered,     ImVec4(0.30f, 0.22f, 0.10f, 0.90f));
-	ImGui::PushStyleColor(ImGuiCol_Header,         ImVec4(0.15f, 0.12f, 0.06f, 0.70f));
-	ImGui::PushStyleColor(ImGuiCol_HeaderHovered,  ImVec4(0.25f, 0.20f, 0.08f, 0.80f));
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 8));
-
-	ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(780, 540), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowPos(
 		ImVec2(m_fbW * 0.5f, m_fbH * 0.5f), ImGuiCond_FirstUseEver,
 		ImVec2(0.5f, 0.5f));
@@ -2164,7 +2147,7 @@ void Game::renderHandbook() {
 					label.c_str(), entries.size());
 				if (ImGui::BeginTabItem(tabLabel)) {
 					// Left panel: entry list
-					ImGui::BeginChild("EntryList", ImVec2(180, 0), true);
+					ImGui::BeginChild("EntryList", ImVec2(200, 0), true);
 					static std::string selectedId;
 					for (auto* e : entries) {
 						bool sel = (selectedId == e->id);
@@ -2184,98 +2167,70 @@ void Game::renderHandbook() {
 						if (e->id == selectedId) { selected = e; break; }
 
 					if (selected) {
-						ImGui::SetWindowFontScale(1.2f);
-						ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
-							"%s", selected->name.c_str());
-						ImGui::SetWindowFontScale(1.0f);
-						ImGui::TextColored(ImVec4(0.50f, 0.48f, 0.42f, 1.0f),
-							"%s", selected->id.c_str());
-						ImGui::Separator();
+						if (auto* f = ui::header()) ImGui::PushFont(f);
+						ui::ColoredText(ui::kAccent, "%s", selected->name.c_str());
+						if (ui::header()) ImGui::PopFont();
+						ui::Hint("%s", selected->id.c_str());
+						ui::Divider();
 
 						if (!selected->description.empty()) {
-							ImGui::Spacing();
 							ImGui::TextWrapped("%s", selected->description.c_str());
-							ImGui::Spacing();
+							ui::VerticalSpace();
 						}
 
 						// Properties
-						std::vector<std::pair<std::string, std::string>> props;
+						ui::SectionHeader("Properties");
 						float matVal = civcraft::getMaterialValue(selected->id);
-						char mvBuf[32]; snprintf(mvBuf, sizeof(mvBuf), "%g", matVal);
-						props.push_back({"Material value", mvBuf});
+						ui::KeyValue("Material value", "%g", matVal);
 						for (auto& [key, val] : selected->fields) {
 							if (key == "name" || key == "id" || key == "description"
 							    || key == "subcategory") continue;
 							std::string label2 = key;
 							for (auto& c : label2) if (c == '_') c = ' ';
 							if (!label2.empty()) label2[0] = toupper(label2[0]);
-							props.push_back({label2, val});
-						}
-						if (ImGui::CollapsingHeader("Properties",
-						    ImGuiTreeNodeFlags_DefaultOpen)) {
-							if (ImGui::BeginTable("Props", 2,
-							    ImGuiTableFlags_RowBg |
-							    ImGuiTableFlags_BordersInnerH)) {
-								ImGui::TableSetupColumn("Property",
-									ImGuiTableColumnFlags_WidthFixed, 130);
-								ImGui::TableSetupColumn("Value");
-								for (auto& [k, v] : props) {
-									ImGui::TableNextRow();
-									ImGui::TableNextColumn();
-									ImGui::TextColored(
-										ImVec4(0.55f, 0.50f, 0.42f, 1.0f),
-										"%s", k.c_str());
-									ImGui::TableNextColumn();
-									ImGui::TextUnformatted(v.c_str());
-								}
-								ImGui::EndTable();
-							}
+							ui::KeyValue(label2.c_str(), "%s", val.c_str());
 						}
 
 						// Source code (Python syntax highlighting)
-						if (!selected->source.empty() &&
-						    ImGui::CollapsingHeader("Source")) {
-							ImGui::PushStyleColor(ImGuiCol_ChildBg,
-								ImVec4(0.02f, 0.02f, 0.02f, 0.95f));
-							ImGui::BeginChild("SourceCode",
-								ImVec2(0, 250), true);
-							for (auto& line : [&]{
-								std::vector<std::string> lines;
+						if (!selected->source.empty()) {
+							ui::VerticalSpace();
+							if (ImGui::CollapsingHeader("Source")) {
+								ImGui::PushStyleColor(ImGuiCol_ChildBg,
+									ImVec4(0.02f, 0.02f, 0.02f, 0.95f));
+								ImGui::BeginChild("SourceCode",
+									ImVec2(0, 280), true);
+								if (auto* f = ui::mono()) ImGui::PushFont(f);
 								std::istringstream ss(selected->source);
-								std::string l;
-								while (std::getline(ss, l)) lines.push_back(l);
-								return lines;
-							}()) {
-								std::string_view sv(line);
-								auto trimmed = sv;
-								while (!trimmed.empty() && trimmed[0] == ' ')
-									trimmed.remove_prefix(1);
-								ImVec4 color(0.82f, 0.80f, 0.75f, 1.0f);
-								if (trimmed.substr(0, 1) == "#")
-									color = ImVec4(0.40f, 0.70f, 0.40f, 1.0f);
-								else if (trimmed.substr(0, 3) == "def" ||
-								         trimmed.substr(0, 5) == "class")
-									color = ImVec4(0.45f, 0.55f, 0.90f, 1.0f);
-								else if (trimmed.substr(0, 6) == "return" ||
-								         trimmed.substr(0, 6) == "import")
-									color = ImVec4(0.70f, 0.45f, 0.80f, 1.0f);
-								ImGui::TextColored(color, "%s", line.c_str());
+								std::string line;
+								while (std::getline(ss, line)) {
+									std::string_view sv(line);
+									auto trimmed = sv;
+									while (!trimmed.empty() && trimmed[0] == ' ')
+										trimmed.remove_prefix(1);
+									ImVec4 color = ui::kText;
+									if (trimmed.substr(0, 1) == "#")
+										color = ui::kOk;
+									else if (trimmed.substr(0, 3) == "def" ||
+									         trimmed.substr(0, 5) == "class")
+										color = ui::kAccent;
+									else if (trimmed.substr(0, 6) == "return" ||
+									         trimmed.substr(0, 6) == "import")
+										color = ui::kAccentGlow;
+									ImGui::TextColored(color, "%s", line.c_str());
+								}
+								if (ui::mono()) ImGui::PopFont();
+								ImGui::EndChild();
+								ImGui::PopStyleColor();
 							}
-							ImGui::EndChild();
-							ImGui::PopStyleColor();
 						}
 
 						// File path
 						if (!selected->filePath.empty()) {
-							ImGui::Spacing();
-							ImGui::TextColored(
-								ImVec4(0.40f, 0.38f, 0.35f, 0.70f),
-								"%s", selected->filePath.c_str());
+							ui::VerticalSpace();
+							ui::Hint("%s", selected->filePath.c_str());
 						}
 					} else {
-						ImGui::TextColored(
-							ImVec4(0.50f, 0.48f, 0.42f, 1.0f),
-							"Select an entry from the list.");
+						ui::Hint("Select an entry from the list.");
 					}
 					ImGui::EndChild();
 
@@ -2286,8 +2241,6 @@ void Game::renderHandbook() {
 		}
 	}
 	ImGui::End();
-	ImGui::PopStyleVar(3);
-	ImGui::PopStyleColor(9);
 
 	if (!m_handbookOpen) {
 		glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -2302,14 +2255,10 @@ void Game::renderEntityInspect() {
 	civcraft::Entity* e = m_server->getEntity(m_inspectedEntity);
 	if (!e) { m_inspectedEntity = 0; return; }
 
-	ImGui::SetNextWindowSize(ImVec2(520, 580), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowPos(
 		ImVec2(m_fbW * 0.5f, m_fbH * 0.5f), ImGuiCond_FirstUseEver,
 		ImVec2(0.5f, 0.5f));
-
-	ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.10f, 0.94f));
-	ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.10f, 0.12f, 0.20f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.15f, 0.20f, 0.35f, 1.0f));
 
 	std::string displayName = e->def().display_name;
 	if (displayName.empty()) {
@@ -2324,159 +2273,129 @@ void Game::renderEntityInspect() {
 	bool open = true;
 	if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse)) {
 
-		// ── Live stats ────────────────────────────────────────────────
+		// ── Vitals ────────────────────────────────────────────────────
 		int curHP = e->hp();
 		int maxHP = e->def().max_hp;
-		ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1), "HP: %d / %d", curHP, maxHP);
+		ui::SectionHeader("Vitals");
 		if (maxHP > 0) {
 			float frac = (float)curHP / (float)maxHP;
-			ImVec4 barCol = frac > 0.5f ? ImVec4(0.2f, 0.8f, 0.2f, 1)
-			              : frac > 0.25f ? ImVec4(0.9f, 0.7f, 0.1f, 1)
-			                             : ImVec4(0.9f, 0.2f, 0.2f, 1);
-			ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barCol);
-			ImGui::ProgressBar(frac, ImVec2(-1, 6));
-			ImGui::PopStyleColor();
-		}
-
-		ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "Position: (%.1f, %.1f, %.1f)",
-			e->position.x, e->position.y, e->position.z);
-		ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1), "Entity ID: %u",
-			(unsigned)e->id());
-		ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.70f, 1), "Type: %s",
-			e->typeId().c_str());
-
-		if (!e->goalText.empty()) {
-			ImVec4 goalCol = e->hasError ? ImVec4(1.0f, 0.3f, 0.3f, 1)
-			                             : ImVec4(0.5f, 1.0f, 0.8f, 1);
-			ImGui::TextColored(goalCol, "Goal: %s", e->goalText.c_str());
+			ui::KeyValue("HP", "%d / %d", curHP, maxHP);
+			ui::Meter(frac);
 		} else {
-			ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "Goal: (pending)");
+			ui::KeyValue("HP", "%d", curHP);
+		}
+		ui::KeyValue("Position", "%.1f, %.1f, %.1f",
+			e->position.x, e->position.y, e->position.z);
+		ui::KeyValue("Entity ID", "%u", (unsigned)e->id());
+		ui::KeyValue("Type", "%s", e->typeId().c_str());
+		if (!e->goalText.empty()) {
+			ImVec4 goalCol = e->hasError ? ui::kBad : ui::kOk;
+			ImGui::PushStyleColor(ImGuiCol_Text, goalCol);
+			ui::KeyValue("Goal", "%s", e->goalText.c_str());
+			ImGui::PopStyleColor();
+		} else {
+			ImGui::PushStyleColor(ImGuiCol_Text, ui::kTextOff);
+			ui::KeyValue("Goal", "(pending)");
+			ImGui::PopStyleColor();
 		}
 
 		if (e->hasError && !e->errorText.empty()) {
-			ImGui::Spacing();
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1));
-			ImGui::TextWrapped("Error: %s", e->errorText.c_str());
-			ImGui::PopStyleColor();
+			ui::VerticalSpace(4.0f);
+			ui::ColoredText(ui::kBad, "Error: %s", e->errorText.c_str());
 		}
 
-		ImGui::Separator();
-
 		// ── Agent (plan + decide state) ───────────────────────────────
-		// Only owned NPCs have a local AgentClient entry; others are driven
-		// by remote clients and we only see the goalText echoed above.
-		// goalText/behaviorId come straight from the Entity; plan step + action
-		// come from AgentClient (PlanProgress + PlanViz).
 		if (m_agentClient) {
 			auto pp = m_agentClient->getPlanProgress(e->id());
 			if (pp.registered) {
-				if (ImGui::CollapsingHeader("Agent", ImGuiTreeNodeFlags_DefaultOpen)) {
-					auto kv = [](const char* k, const char* fmt, auto... args) {
-						ImGui::TextColored(ImVec4(0.72f, 0.74f, 0.80f, 1), "%s", k);
-						ImGui::SameLine(140);
-						ImGui::Text(fmt, args...);
-					};
-					std::string bid = e->getProp<std::string>(civcraft::Prop::BehaviorId, "");
-					kv("behavior", "%s", bid.empty() ? "(none)" : bid.c_str());
-					kv("goal", "%s", e->goalText.empty() ? "(pending)" : e->goalText.c_str());
-					kv("plan", "step %d / %d", pp.stepIndex + 1, pp.totalSteps);
-					if (auto* viz = m_agentClient->getPlanViz(e->id())) {
-						if (viz->hasAction) {
-							const char* t = "Move";
-							switch (viz->actionType) {
-								case civcraft::PlanStep::Move:     t = "Move"; break;
-								case civcraft::PlanStep::Harvest:  t = "Harvest"; break;
-								case civcraft::PlanStep::Attack:   t = "Attack"; break;
-								case civcraft::PlanStep::Relocate: t = "Relocate"; break;
-							}
-							kv("action", "%s @ (%.1f, %.1f, %.1f)",
-								t, viz->actionPos.x, viz->actionPos.y, viz->actionPos.z);
+				ui::VerticalSpace();
+				ui::SectionHeader("Agent");
+				std::string bid = e->getProp<std::string>(civcraft::Prop::BehaviorId, "");
+				ui::KeyValue("behavior", "%s", bid.empty() ? "(none)" : bid.c_str());
+				ui::KeyValue("plan", "step %d / %d", pp.stepIndex + 1, pp.totalSteps);
+				if (auto* viz = m_agentClient->getPlanViz(e->id())) {
+					if (viz->hasAction) {
+						const char* t = "Move";
+						switch (viz->actionType) {
+							case civcraft::PlanStep::Move:     t = "Move"; break;
+							case civcraft::PlanStep::Harvest:  t = "Harvest"; break;
+							case civcraft::PlanStep::Attack:   t = "Attack"; break;
+							case civcraft::PlanStep::Relocate: t = "Relocate"; break;
 						}
-						kv("waypoints", "%zu", viz->waypoints.size());
+						ui::KeyValue("action", "%s @ %.1f, %.1f, %.1f",
+							t, viz->actionPos.x, viz->actionPos.y, viz->actionPos.z);
 					}
-					kv("since decide", "%.1fs", pp.timeSinceDecide);
-					if (pp.stuckAccum > 0.1f)
-						ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1),
-							"stuck: %.1fs", pp.stuckAccum);
-					if (pp.overridePauseTimer > 0.01f)
-						ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.3f, 1),
-							"player override: %.1fs left", pp.overridePauseTimer);
+					ui::KeyValue("waypoints", "%zu", viz->waypoints.size());
 				}
-				ImGui::Separator();
+				ui::KeyValue("since decide", "%.1fs", pp.timeSinceDecide);
+				if (pp.stuckAccum > 0.1f)
+					ui::ColoredText(ui::kWarn, "stuck: %.1fs", pp.stuckAccum);
+				if (pp.overridePauseTimer > 0.01f)
+					ui::ColoredText(ui::kWarn, "player override: %.1fs left", pp.overridePauseTimer);
 			}
 		}
 
 		// ── Ownership ─────────────────────────────────────────────────
+		ui::VerticalSpace();
 		int owner = e->getProp<int>(civcraft::Prop::Owner, 0);
 		civcraft::EntityId myId = m_server->localPlayerId();
 		if (owner == (int)myId)
-			ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1), "Owner: you");
+			ui::ColoredText(ui::kOk, "Owner: you");
 		else if (owner != 0)
-			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "Owner: player #%d", owner);
+			ui::ColoredText(ui::kText, "Owner: player #%d", owner);
 		else
-			ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "Owner: world");
+			ui::ColoredText(ui::kTextDim, "Owner: world");
 
-		ImGui::Separator();
-
-		// ── Properties ────────────────────────────────────────────────
-		if (ImGui::CollapsingHeader("Properties")) {
-			const auto& def = e->def();
-			if (ImGui::BeginTable("props", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
-				ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140);
-				ImGui::TableSetupColumn("Value");
-				auto row = [](const char* label, const char* fmt, auto... args) {
-					ImGui::TableNextRow();
-					ImGui::TableSetColumnIndex(0);
-					ImGui::TextColored(ImVec4(0.72f, 0.74f, 0.80f, 1), "%s", label);
-					ImGui::TableSetColumnIndex(1);
-					ImGui::Text(fmt, args...);
-				};
-				row("walk_speed", "%.1f", def.walk_speed);
-				row("run_speed", "%.1f", def.run_speed);
-				row("max_hp", "%d", def.max_hp);
-				std::string bid = e->getProp<std::string>(civcraft::Prop::BehaviorId, "");
-				if (!bid.empty()) row("behavior_id", "%s", bid.c_str());
-				row("gravity_scale", "%.2f", def.gravity_scale);
-				row("collision", "(%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)",
-					def.collision_box_min.x, def.collision_box_min.y, def.collision_box_min.z,
-					def.collision_box_max.x, def.collision_box_max.y, def.collision_box_max.z);
-				ImGui::EndTable();
-			}
-		}
+		// ── Definition ────────────────────────────────────────────────
+		ui::VerticalSpace();
+		ui::SectionHeader("Definition");
+		const auto& def = e->def();
+		ui::KeyValue("walk_speed", "%.1f", def.walk_speed);
+		ui::KeyValue("run_speed", "%.1f", def.run_speed);
+		ui::KeyValue("max_hp", "%d", def.max_hp);
+		std::string bidDef = e->getProp<std::string>(civcraft::Prop::BehaviorId, "");
+		if (!bidDef.empty()) ui::KeyValue("behavior_id", "%s", bidDef.c_str());
+		ui::KeyValue("gravity_scale", "%.2f", def.gravity_scale);
+		ui::KeyValue("collision",
+			"(%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)",
+			def.collision_box_min.x, def.collision_box_min.y, def.collision_box_min.z,
+			def.collision_box_max.x, def.collision_box_max.y, def.collision_box_max.z);
 
 		// ── Inventory ─────────────────────────────────────────────────
 		if (e->inventory && !e->inventory->items().empty()) {
+			ui::VerticalSpace();
 			int itemCount = 0;
 			for (auto& [iid, cnt] : e->inventory->items()) itemCount += cnt;
 			char hdr[64];
-			snprintf(hdr, sizeof(hdr), "Inventory (%d items)###inv", itemCount);
-			if (ImGui::CollapsingHeader(hdr, ImGuiTreeNodeFlags_DefaultOpen)) {
-				for (auto& [itemId, count] : e->inventory->items()) {
-					if (count <= 0) continue;
-					std::string name = itemId;
-					auto col = name.find(':');
-					if (col != std::string::npos) name = name.substr(col + 1);
-					for (auto& c : name) if (c == '_') c = ' ';
-					if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
-					ImGui::BulletText("%s x%d", name.c_str(), count);
-				}
+			snprintf(hdr, sizeof(hdr), "Inventory (%d)", itemCount);
+			ui::SectionHeader(hdr);
+			for (auto& [itemId, count] : e->inventory->items()) {
+				if (count <= 0) continue;
+				std::string name = itemId;
+				auto col = name.find(':');
+				if (col != std::string::npos) name = name.substr(col + 1);
+				for (auto& c : name) if (c == '_') c = ' ';
+				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
+				ui::KeyValue(name.c_str(), "x%d", count);
 			}
 		}
 
-		// ── All properties (advanced, collapsed by default) ───────────
+		// ── All properties (raw) ──────────────────────────────────────
+		ui::VerticalSpace();
 		if (ImGui::CollapsingHeader("All Properties (Raw)")) {
+			if (auto* f = ui::mono()) ImGui::PushFont(f);
 			for (auto& [key, val] : e->props()) {
 				if (auto* iv = std::get_if<int>(&val))
-					ImGui::Text("  %s = %d", key.c_str(), *iv);
+					ImGui::Text("%s = %d", key.c_str(), *iv);
 				else if (auto* fv = std::get_if<float>(&val))
-					ImGui::Text("  %s = %.3f", key.c_str(), *fv);
+					ImGui::Text("%s = %.3f", key.c_str(), *fv);
 				else if (auto* sv = std::get_if<std::string>(&val))
-					ImGui::Text("  %s = \"%s\"", key.c_str(), sv->c_str());
+					ImGui::Text("%s = \"%s\"", key.c_str(), sv->c_str());
 			}
+			if (ui::mono()) ImGui::PopFont();
 		}
 	}
 	ImGui::End();
-	ImGui::PopStyleColor(3);
 	if (!open) m_inspectedEntity = 0;
 }
 
