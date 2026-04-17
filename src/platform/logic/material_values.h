@@ -42,7 +42,7 @@ inline float getMaterialValue(const std::string& typeId) {
 		{"cape",       8.0f},
 		{"potion",     5.0f},
 		// Living: value = inventory capacity AND max HP. Keep in sync with artifacts/living/*.py.
-		{"player",       128.0f},
+		// No "player" entry: any playable creature is a valid player character.
 		{"villager",      20.0f},
 		{"dog",           15.0f},
 		{"cat",            8.0f},

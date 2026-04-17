@@ -117,6 +117,11 @@ public:
 		m_world->entities.mergeArtifactTags(tagsByType);
 	}
 
+	template <class Stats>
+	void applyLivingStats(const std::vector<Stats>& stats) {
+		m_world->entities.applyLivingStats(stats);
+	}
+
 	// World only (no entities) — used by loadWorld.
 	void initWorld(const ServerConfig& config,
 	               const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
@@ -335,9 +340,39 @@ public:
 		printf("[Server] Spawned %d mobs for owner=%u\n", spawned, ownerId);
 	}
 
-	// Returns player's EntityId. characterSkin is visual-only.
-	EntityId addClient(ClientId clientId, const std::string& characterSkin = "") {
-		EntityId eid = m_world->entities.spawn(LivingName::Player, m_spawnPos);
+	// Returns player's EntityId. `creatureType` must name a registered Living
+	// with EntityDef.playable=true; falls back to the first playable type if
+	// missing / unknown / non-playable.
+	EntityId addClient(ClientId clientId, const std::string& creatureType = "") {
+		std::string chosenType = creatureType;
+		auto isPlayable = [&](const std::string& t) {
+			if (t.empty()) return false;
+			const EntityDef* d = m_world->entities.getTypeDef(t);
+			return d && d->isLiving() && d->playable;
+		};
+		if (!isPlayable(chosenType)) {
+			if (!chosenType.empty())
+				printf("[Server] '%s' is not a playable living — falling back to default.\n",
+				       chosenType.c_str());
+			chosenType.clear();
+			// Prefer "knight" as the stable default, else the alphabetically
+			// first playable (deterministic across unordered_map orderings).
+			if (isPlayable(LivingName::Knight)) {
+				chosenType = LivingName::Knight;
+			} else {
+				std::vector<std::string> playables;
+				m_world->entities.forEachDef([&](const std::string& id, const EntityDef& d) {
+					if (d.isLiving() && d.playable) playables.push_back(id);
+				});
+				std::sort(playables.begin(), playables.end());
+				if (!playables.empty()) chosenType = playables.front();
+			}
+			if (chosenType.empty()) {
+				printf("[Server] No playable creature registered; cannot spawn client.\n");
+				return ENTITY_NONE;
+			}
+		}
+		EntityId eid = m_world->entities.spawn(chosenType, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
 		if (pe) {
 			pe->yaw = 90.0f;  // +Z toward stairs
@@ -353,17 +388,18 @@ public:
 		}
 		// Self-owned so server click-to-move can drive the player.
 		if (pe) pe->setProp(Prop::Owner, (int)eid);
-		if (pe && !characterSkin.empty())
-			pe->setProp("character_skin", characterSkin);
+		// character_skin is the per-player save-key; we store the chosen
+		// creature type so per-character inventories/owned-NPCs stay separate.
+		if (pe) pe->setProp("character_skin", chosenType);
 		if (pe && pe->inventory) {
-			std::string skin = characterSkin.empty() ? "default" : characterSkin;
+			std::string skin = chosenType;
 			auto savedIt = m_savedInventories.find(skin);
 			if (savedIt != m_savedInventories.end()) {
 				*pe->inventory = savedIt->second;
 				printf("[Server] Restored saved inventory for '%s'\n", skin.c_str());
 			} else {
 				// First-time starter kit.
-				auto sit = m_wgc.startingItems.find(LivingName::Player);
+				auto sit = m_wgc.startingItems.find(chosenType);
 				if (sit != m_wgc.startingItems.end()) {
 					for (auto& [item, count] : sit->second)
 						pe->inventory->add(item, count);
@@ -377,11 +413,11 @@ public:
 			}
 		}
 		m_clients[clientId] = {eid};
-		printf("[Server] Client %u joined. Player entity: %u\n", clientId, eid);
+		printf("[Server] Client %u joined as '%s'. Player entity: %u\n",
+		       clientId, chosenType.c_str(), eid);
 
-		// Per-skin snapshot restore so owned NPCs keep their last position.
-		std::string skin = characterSkin.empty() ? "default" : characterSkin;
-		if (!m_ownedEntities.restore(m_world->entities, eid, skin))
+		// Per-character snapshot restore so owned NPCs keep their last position.
+		if (!m_ownedEntities.restore(m_world->entities, eid, chosenType))
 			spawnMobsForClient(eid);
 
 		return eid;

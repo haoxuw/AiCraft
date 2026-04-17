@@ -115,6 +115,53 @@ public:
 		return result;
 	}
 
+	// Per-living numeric overrides from Python. Fields left unset (NaN / empty)
+	// mean "keep whatever registerAllBuiltins installed". Consumed by
+	// EntityManager::applyLivingStats to keep C++ defaults data-driven.
+	struct LivingStats {
+		std::string id;
+		float walk_speed = std::nanf("");
+		float run_speed  = std::nanf("");
+		float eye_height = std::nanf("");
+		float gravity    = std::nanf("");
+		bool  has_box = false;
+		float box_min_x = 0, box_min_y = 0, box_min_z = 0;
+		float box_max_x = 0, box_max_y = 0, box_max_z = 0;
+	};
+	std::vector<LivingStats> livingStats() const {
+		std::vector<LivingStats> result;
+		for (auto& e : m_entries) {
+			if (e.category != "living") continue;
+			LivingStats s;
+			s.id = e.id;
+			auto asFloat = [&](const char* key, float& out) {
+				auto it = e.fields.find(key);
+				if (it != e.fields.end()) {
+					try { out = std::stof(it->second); } catch (...) {}
+				}
+			};
+			asFloat("walk_speed", s.walk_speed);
+			asFloat("run_speed",  s.run_speed);
+			asFloat("eye_height", s.eye_height);
+			asFloat("gravity",    s.gravity);
+			auto mnX = e.fields.find("collision_min_x");
+			auto mxX = e.fields.find("collision_max_x");
+			if (mnX != e.fields.end() && mxX != e.fields.end()) {
+				try {
+					s.box_min_x = std::stof(mnX->second);
+					s.box_min_y = std::stof(e.fields.at("collision_min_y"));
+					s.box_min_z = std::stof(e.fields.at("collision_min_z"));
+					s.box_max_x = std::stof(mxX->second);
+					s.box_max_y = std::stof(e.fields.at("collision_max_y"));
+					s.box_max_z = std::stof(e.fields.at("collision_max_z"));
+					s.has_box = true;
+				} catch (...) {}
+			}
+			result.push_back(std::move(s));
+		}
+		return result;
+	}
+
 	size_t count() const { return m_entries.size(); }
 	size_t countByCategory(const std::string& cat) const {
 		size_t n = 0;
@@ -290,9 +337,29 @@ private:
 		if (!desc.empty()) e.fields["description"] = desc;
 		if (!subcat.empty()) e.fields["subcategory"] = subcat;
 
-		for (auto& key : {"walk_speed", "damage", "range", "cooldown", "hardness"}) {
+		for (auto& key : {"walk_speed", "run_speed", "eye_height",
+		                   "gravity", "jump_velocity",
+		                   "damage", "range", "cooldown", "hardness"}) {
 			std::string val = extract(key);
 			if (!val.empty()) e.fields[key] = val;
+		}
+
+		// Living: "playable": True marks a character the user can join as.
+		std::string playable = extract("playable");
+		if (!playable.empty()) e.fields["playable"] = playable;
+
+		// "collision": {"min": [x,y,z], "max": [x,y,z]}
+		// Split into collision_min_[xyz], collision_max_[xyz] for simple consumption.
+		auto minVals = extractNestedFloatList(e.source, "collision", "min");
+		auto maxVals = extractNestedFloatList(e.source, "collision", "max");
+		if (minVals.size() == 3 && maxVals.size() == 3) {
+			char buf[32];
+			snprintf(buf, sizeof(buf), "%g", minVals[0]); e.fields["collision_min_x"] = buf;
+			snprintf(buf, sizeof(buf), "%g", minVals[1]); e.fields["collision_min_y"] = buf;
+			snprintf(buf, sizeof(buf), "%g", minVals[2]); e.fields["collision_min_z"] = buf;
+			snprintf(buf, sizeof(buf), "%g", maxVals[0]); e.fields["collision_max_x"] = buf;
+			snprintf(buf, sizeof(buf), "%g", maxVals[1]); e.fields["collision_max_y"] = buf;
+			snprintf(buf, sizeof(buf), "%g", maxVals[2]); e.fields["collision_max_z"] = buf;
 		}
 
 		std::string model = extract("model");
@@ -364,6 +431,31 @@ private:
 			}
 			e.fields["tags"] = joined;
 		}
+	}
+
+	// "outer": { ..., "inner": [x, y, z], ... } — find the inner list after a
+	// nested key. Scoped to the outer key's { ... } block so we don't pick up
+	// a same-named list from a sibling section.
+	static std::vector<float> extractNestedFloatList(const std::string& source,
+	                                                 const std::string& outerKey,
+	                                                 const std::string& innerKey) {
+		std::string outerPat = "\"" + outerKey + "\"";
+		auto pos = source.find(outerPat);
+		if (pos == std::string::npos) return {};
+		auto openBrace = source.find('{', pos + outerPat.size());
+		if (openBrace == std::string::npos) return {};
+		// Match the closing brace (flat — no deeper nesting expected here).
+		int depth = 1;
+		size_t scan = openBrace + 1;
+		while (scan < source.size() && depth > 0) {
+			if (source[scan] == '{') depth++;
+			else if (source[scan] == '}') depth--;
+			if (depth == 0) break;
+			scan++;
+		}
+		if (scan >= source.size()) return {};
+		std::string sub = source.substr(openBrace, scan - openBrace);
+		return extractFloatList(sub, innerKey);
 	}
 
 	// "key": [0.5, 1.0, ...] — int/float literals between [ and ].

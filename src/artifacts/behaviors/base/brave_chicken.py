@@ -13,7 +13,7 @@ Priority:
 """
 from rules import RulesBehavior
 from conditions_lib import (Threatened, IsEveningOrNight, FarFromHome,
-                             FarFromFlock, NearType, Always)
+                             FarFromFlock, NearPlayer, Always)
 from actions_lib import Flee, GoHome, Rest, Rejoin, Wander, Follow, LayEgg
 
 
@@ -25,9 +25,9 @@ class BraveChickenBehavior(RulesBehavior):
                                                                     message="EEK! Dog!")),
             (IsEveningOrNight() & FarFromHome(radius=3),      GoHome(message="Heading home to roost...")),
             (IsEveningOrNight(),                              Rest(message="Roosting zzz")),
-            (NearType("player", range=3),                LayEgg(chance=0.15, cooldown=8.0,
+            (NearPlayer(range=3),                        LayEgg(chance=0.15, cooldown=8.0,
                                                                       message="*happy cluck* Laid an egg!")),
-            (NearType("player", range=20),               Follow(target_type="player",
+            (NearPlayer(range=20),                       Follow(target_tag="playable",
                                                                       close_dist=3,
                                                                       at_target_msg="Sitting by player",
                                                                       following_msg="Following player")),

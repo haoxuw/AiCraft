@@ -30,6 +30,42 @@ public:
 		return it != m_typeDefs.end() ? &it->second : nullptr;
 	}
 
+	template <class Fn>
+	void forEachDef(Fn&& fn) const {
+		for (auto& [id, def] : m_typeDefs) fn(id, def);
+	}
+
+	// Overlay Python-sourced stats on top of C++-registered EntityDefs.
+	// Duck-typed: Stats must expose `id`, `walk_speed`, `run_speed`, `eye_height`,
+	// `gravity`, `has_box`, `box_min_{x,y,z}`, `box_max_{x,y,z}`.
+	// NaN scalars mean "keep builtin default". Avoids coupling this header to
+	// ArtifactRegistry (which lives in logic/).
+	template <class Stats>
+	void applyLivingStats(const std::vector<Stats>& stats) {
+		int overridden = 0;
+		for (auto& s : stats) {
+			auto it = m_typeDefs.find(s.id);
+			if (it == m_typeDefs.end()) continue;
+			EntityDef& d = it->second;
+			bool any = false;
+			auto setIfFinite = [&](float v, float& dst) {
+				if (std::isfinite(v)) { dst = v; any = true; }
+			};
+			setIfFinite(s.walk_speed, d.walk_speed);
+			setIfFinite(s.run_speed,  d.run_speed);
+			setIfFinite(s.eye_height, d.eye_height);
+			setIfFinite(s.gravity,    d.gravity_scale);
+			if (s.has_box) {
+				d.collision_box_min = {s.box_min_x, s.box_min_y, s.box_min_z};
+				d.collision_box_max = {s.box_max_x, s.box_max_y, s.box_max_z};
+				any = true;
+			}
+			if (any) overridden++;
+		}
+		if (overridden > 0)
+			printf("[EntityManager] Applied Python stats to %d entity types\n", overridden);
+	}
+
 	// Call after registerAllBuiltins() + ArtifactRegistry::loadAll().
 	void mergeArtifactTags(const std::vector<std::pair<std::string, std::vector<std::string>>>& tagsByType) {
 		int merged = 0;
@@ -38,6 +74,15 @@ public:
 			if (it != m_typeDefs.end()) {
 				it->second.tags = tags;
 				merged++;
+			}
+		}
+		// Auto-tag every playable living with "playable" so AI behaviors can
+		// target "any character a user might be controlling" without hardcoding
+		// a "player" type id (which no longer exists).
+		for (auto& [id, def] : m_typeDefs) {
+			if (def.isLiving() && def.playable &&
+			    std::find(def.tags.begin(), def.tags.end(), "playable") == def.tags.end()) {
+				def.tags.push_back("playable");
 			}
 		}
 		if (merged > 0)

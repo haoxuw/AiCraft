@@ -538,7 +538,10 @@ void Game::renderEffects(float wallTime) {
 	scene.camPos[0] = eye.x; scene.camPos[1] = eye.y; scene.camPos[2] = eye.z;
 	scene.time = wallTime;
 
-	// Torch flames, embers, fireflies
+	// Particle buffer. Weather (rain/snow/leaves) and entity-owned FX (e.g.
+	// Monument flame ribbon) push into this below. The world has NO ambient
+	// flames, fireflies, or dust motes — those belong to specific entities
+	// that emit them, not to the scene at large.
 	auto& particles = m_scratch.particles;
 	particles.clear();
 	auto pushP = [&](glm::vec3 p, float size, glm::vec3 rgb, float a) {
@@ -547,87 +550,6 @@ void Game::renderEffects(float wallTime) {
 		particles.push_back(rgb.x); particles.push_back(rgb.y); particles.push_back(rgb.z);
 		particles.push_back(a);
 	};
-	auto fract = [](float x) { return x - std::floor(x); };
-
-	int torchIdx = 0;
-	for (int tz = -18; tz <= 18; tz += 6) {
-		for (int tx = -18; tx <= 18; tx += 6) {
-			if (tx == 0 && tz == 0) continue;
-			bool onPath = (std::abs(tx) <= 1 || std::abs(tz) <= 1
-			            || std::abs(tx - tz) <= 1 || std::abs(tx + tz) <= 1);
-			if (!onPath) continue;
-			glm::vec3 torch((float)tx, 10.4f, (float)tz);
-			for (int k = 0; k < 4; k++) {
-				float ph = wallTime * 4.0f + (float)(torchIdx + k * 7) * 0.5f;
-				float pulse = 0.75f + 0.35f * std::sin(ph) + 0.15f * std::sin(ph * 2.3f);
-				glm::vec3 p = torch + glm::vec3(
-					0.08f * std::sin(ph * 1.3f + k),
-					0.15f * std::sin(ph * 0.7f) + 0.14f * k,
-					0.08f * std::cos(ph * 1.7f + k));
-				pushP(p, 0.55f * pulse,
-					glm::vec3(4.5f, 2.0f + k*0.2f, 0.35f), 1.0f);
-			}
-			{
-				float ph = wallTime * 5.0f + (float)torchIdx * 0.3f;
-				float pulse = 0.8f + 0.2f * std::sin(ph * 1.7f);
-				pushP(torch + glm::vec3(0, 0.05f * std::sin(ph), 0),
-					0.30f * pulse, glm::vec3(5.0f, 4.2f, 1.5f), 1.0f);
-			}
-			for (int k = 0; k < 6; k++) {
-				float seed = (float)(torchIdx * 6 + k);
-				float life = fract(wallTime * 0.5f + seed * 0.173f);
-				float driftX = std::sin(seed * 17.1f + wallTime * 0.8f) * 0.45f;
-				float driftZ = std::cos(seed * 13.7f + wallTime * 0.9f) * 0.45f;
-				glm::vec3 p = torch + glm::vec3(
-					driftX * life, 0.25f + life * 3.5f, driftZ * life);
-				float fade = life < 0.3f ? (life / 0.3f) : (1.0f - (life - 0.3f) / 0.7f);
-				float size = 0.18f + life * 0.15f;
-				float cool = life;
-				pushP(p, size,
-					glm::vec3(3.5f - cool*0.8f, 1.4f - cool*1.0f, 0.15f), fade);
-			}
-			torchIdx++;
-		}
-	}
-
-	// Firefly sparks — warm gold + cool cyan-white
-	for (int k = 0; k < 80; k++) {
-		float seed = (float)k;
-		float bx = std::sin(seed * 17.3f) * 12.0f;
-		float bz = std::cos(seed * 23.1f) * 12.0f;
-		float ph = wallTime * (0.25f + 0.12f * fract(seed * 0.137f)) + seed;
-		float rad = 0.5f + 0.6f * fract(seed * 0.091f);
-		glm::vec3 p(
-			bx + std::sin(ph) * rad,
-			9.0f + 2.2f * std::sin(seed * 11.5f + wallTime * 0.4f)
-			     + 0.9f * std::cos(ph * 0.7f),
-			bz + std::cos(ph * 1.1f) * rad);
-		float twinkle = 0.3f + 0.7f * std::fabs(std::sin(wallTime * 2.2f + seed * 3.3f));
-		glm::vec3 col = ((int)k & 1) == 0
-			? glm::vec3(3.0f, 3.2f, 1.8f)
-			: glm::vec3(1.4f, 2.6f, 3.5f);
-		pushP(p, 0.32f, col, 0.80f * twinkle);
-	}
-
-	// Ambient dust motes on a cylinder around the camera.
-	{
-		glm::vec3 eyeP = m_cam.position;
-		float windX = std::sin(wallTime * 0.10f) * 0.06f * wallTime;
-		float windZ = std::cos(wallTime * 0.08f) * 0.05f * wallTime;
-		for (int k = 0; k < 40; k++) {
-			float seed = (float)k;
-			float ang  = seed * 0.5234f + wallTime * 0.05f;
-			float rad  = 6.0f + 10.0f * std::fmod(seed * 0.137f, 1.0f);
-			float bob  = std::sin(wallTime * 0.8f + seed * 1.7f) * 0.4f;
-			glm::vec3 p = eyeP + glm::vec3(
-				std::cos(ang) * rad + windX,
-				1.5f + 4.0f * std::fmod(seed * 0.091f, 1.0f) + bob,
-				std::sin(ang) * rad + windZ);
-			float twinkle = 0.30f + 0.20f * std::sin(wallTime * 1.5f + seed * 3.1f);
-			pushP(p, 0.04f, glm::vec3(1.40f, 1.30f, 1.05f), twinkle);
-		}
-	}
-
 	// ── Weather particles ─────────────────────────────────────────────
 	// Rain streaks / snowflakes / drifting leaves, sampled in a cylinder
 	// around the camera so they move with the player and only live near
@@ -1908,9 +1830,56 @@ void Game::renderMenu() {
 			ui::SectionHeader("Your Worlds");
 			ui::Hint("World list, thumbnails, and create-world arrive in Stage C.");
 			ui::VerticalSpace();
-			if (ui::PrimaryButton("START  VILLAGE  WORLD")) enterPlaying();
+			if (ui::PrimaryButton("START  VILLAGE  WORLD")) {
+				m_connectError.clear();
+				m_menuScreen = MenuScreen::CharacterSelect;
+			}
 			ui::VerticalSpace();
 			if (ui::GhostButton("Back")) m_menuScreen = MenuScreen::Main;
+		}
+		ui::EndScreen();
+		break;
+	}
+	case MenuScreen::CharacterSelect: {
+		opts.panelW = 520.0f;
+		if (ui::BeginScreen("##menu_charpick", m_rhi, opts)) {
+			ui::SectionHeader("Choose Your Character");
+			ui::Hint("Any living with \"playable\": True in its artifact can be played.");
+			ui::VerticalSpace();
+
+			// Collect playable livings from the artifact registry (data-driven —
+			// add a new entry in artifacts/living/*.py and it shows up here).
+			struct PlayableItem { std::string id, name, desc; };
+			std::vector<PlayableItem> playables;
+			for (auto* e : m_artifactRegistry.byCategory("living")) {
+				auto it = e->fields.find("playable");
+				if (it == e->fields.end()) continue;
+				// Python's True; parser strips surrounding whitespace.
+				if (it->second != "True" && it->second != "true") continue;
+				playables.push_back({e->id, e->name, e->description});
+			}
+			std::sort(playables.begin(), playables.end(),
+				[](const PlayableItem& a, const PlayableItem& b) { return a.name < b.name; });
+
+			if (playables.empty()) {
+				ui::ColoredText(ui::kBad, "No playable livings registered.");
+			} else {
+				for (auto& p : playables) {
+					if (ui::SecondaryButton(p.name.c_str())) {
+						if (connectAs(p.id)) enterPlaying();
+					}
+					if (!p.desc.empty()) ui::Hint("%s", p.desc.c_str());
+					ui::VerticalSpace(4.0f);
+				}
+			}
+
+			if (!m_connectError.empty()) {
+				ui::VerticalSpace();
+				ui::ColoredText(ui::kBad, "%s", m_connectError.c_str());
+			}
+
+			ui::VerticalSpace();
+			if (ui::GhostButton("Back")) m_menuScreen = MenuScreen::Singleplayer;
 		}
 		ui::EndScreen();
 		break;

@@ -54,10 +54,27 @@ class NearType(Condition):
         return w.get(self.type_id, max_dist=self.range) is not None
 
 
-class NearPlayer(Condition):
-    def __init__(self, range=10.0): self.range = range
+class NearTag(Condition):
+    """True if any entity carrying `tag` is within `range`.
+    Preferred over NearType when the target is a group (e.g. "playable")
+    rather than a specific creature id."""
+    def __init__(self, tag, range=20.0):
+        self.tag = tag
+        self.range = range
     def check(self, e, w, c):
-        return w.get("player", max_dist=self.range) is not None
+        for x in w.entities:
+            if x.distance > self.range or x.id == e.id:
+                continue
+            if x.has_tag(self.tag):
+                return True
+        return False
+
+
+class NearPlayer(NearTag):
+    """True if any playable character is within `range`. Works for any
+    creature type with "playable": True in its artifact — no hardcoded id."""
+    def __init__(self, range=10.0):
+        super().__init__("playable", range=range)
 
 
 class Threatened(Condition):

@@ -1772,7 +1772,7 @@ static std::string w4_mob_spawn_anchors() {
     srv->forEachEntity([&](Entity& e) {
         if (!e.def().isLiving() || e.removed) return;
         const std::string& tid = e.typeId();
-        if (tid == "player") return;
+        if (e.def().playable) return;
 
         std::string anchor = anchorOf.count(tid) ? anchorOf[tid] : "";
         if (tid == "villager") anchor = "monument";   // safety default
@@ -2001,8 +2001,8 @@ static std::string nav2_group_formation() {
 	p->position = {0, 9.0f, -30.0f};
 
 	// Spawn 2 more entities nearby in the clear area
-	EntityId e2 = gs->world().entities.spawn("player", p->position + glm::vec3(2, 0, 0));
-	EntityId e3 = gs->world().entities.spawn("player", p->position + glm::vec3(-2, 0, 0));
+	EntityId e2 = gs->world().entities.spawn("knight", p->position + glm::vec3(2, 0, 0));
+	EntityId e3 = gs->world().entities.spawn("knight", p->position + glm::vec3(-2, 0, 0));
 	Entity* ent2 = gs->world().entities.get(e2);
 	Entity* ent3 = gs->world().entities.get(e3);
 	if (!ent2 || !ent3) return "failed to spawn test entities";

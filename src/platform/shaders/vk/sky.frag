@@ -1,9 +1,10 @@
 #version 450
 
-// Procedural sky: zenith/horizon gradient, sun corona, sunrise/sunset bleed,
-// stars (at night), moon (opposite the sun), and wind-driven cloud band.
-// Driven entirely by sunDir + sunStrength + a time phase — server owns the
-// time, client owns the visuals (CivCraft Rule 3 + Rule 5).
+// Procedural sky. Two cloud decks on a flat projection (Minecraft/Valheim-style
+// layering, not sphere-sampled puffs), a dome gradient, soft aerosol haze at
+// the horizon, sun/moon disc + corona, stars, magic-hour rim on the sunward
+// side of the lower deck. Driven entirely by sunDir + sunStrength + a time
+// phase — server owns the time, client owns the visuals (Rule 3 + Rule 5).
 
 layout(location = 0) in vec3 vRayDir;
 
@@ -15,13 +16,10 @@ layout(push_constant) uniform PC {
 
 layout(location = 0) out vec4 outColor;
 
-// 3D hash in the [0..1)³ range — used to tile the starfield.
 float hash3(vec3 p) {
 	return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
 }
 
-// 2D gradient noise for the cloud layer. Hashes two corners, mixes with a
-// smoothstep curve — cheap, seamless, and not tied to any texture.
 vec2 hash2(vec2 p) {
 	p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
 	return fract(sin(p) * 43758.5453) * 2.0 - 1.0;
@@ -37,7 +35,6 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.5 + 0.5;
 }
 
-// 5-octave fBm for cumulus-looking clumps.
 float fbm(vec2 p) {
 	float v = 0.0, amp = 0.5;
 	for (int i = 0; i < 5; i++) {
@@ -56,44 +53,43 @@ void main() {
 
 	// ── Palette LUT ────────────────────────────────────────────────────
 	// Four anchors: deep night, twilight, dawn/dusk bleed, full day.
-	// Blended by sunStr so the gradient tracks server worldTime exactly.
-	// Day anchors tuned to Mojang canonical sky #7BA4FF (0.482, 0.643, 1.000).
-	// Zenith is a punchier blue to read clearly against terrain; horizon sits
-	// at the canonical value so the sky fades toward what MC players expect.
-	vec3 zenithNight   = vec3(0.004, 0.008, 0.038);   // near-black indigo
-	vec3 horizonNight  = vec3(0.018, 0.028, 0.078);   // muted navy
-	vec3 zenithDawn    = vec3(0.090, 0.120, 0.300);   // cool pre-dawn
-	vec3 horizonDawn   = vec3(0.880, 0.430, 0.260);   // warm peach band
-	vec3 zenithDay     = vec3(0.180, 0.400, 0.860);   // saturated noon blue (above MC canonical)
-	vec3 horizonDay    = vec3(0.482, 0.643, 1.000);   // Mojang canonical sky #7BA4FF
+	// Day horizon sits at Mojang canonical #7BA4FF so the fade matches MC
+	// reference; zenith is a punchier blue so sky reads against terrain.
+	vec3 zenithNight   = vec3(0.004, 0.008, 0.038);
+	vec3 horizonNight  = vec3(0.018, 0.028, 0.078);
+	vec3 zenithDawn    = vec3(0.080, 0.110, 0.280);
+	vec3 horizonDawn   = vec3(0.880, 0.430, 0.260);
+	vec3 zenithDay     = vec3(0.180, 0.400, 0.860);
+	vec3 horizonDay    = vec3(0.482, 0.643, 1.000);
 
-	// sunStr drives two stages: night→dawn up to ~0.25, dawn→day up to ~0.75.
-	// The "dawnBlend" hump gives the peach horizon at low-sun angles.
-	float dayBlend  = smoothstep(0.20, 0.75, sunStr);
-	float dawnBlend = smoothstep(0.00, 0.35, sunStr) * (1.0 - dayBlend);
+	float dayBlend   = smoothstep(0.20, 0.75, sunStr);
+	float dawnBlend  = smoothstep(0.00, 0.35, sunStr) * (1.0 - dayBlend);
 	float nightBlend = 1.0 - smoothstep(0.00, 0.30, sunStr);
 
-	vec3 zenith  = zenithNight  * nightBlend
-	             + zenithDawn   * dawnBlend
-	             + zenithDay    * dayBlend;
-	vec3 horizon = horizonNight * nightBlend
-	             + horizonDawn  * dawnBlend
-	             + horizonDay   * dayBlend;
+	vec3 zenith  = zenithNight  * nightBlend + zenithDawn  * dawnBlend + zenithDay  * dayBlend;
+	vec3 horizon = horizonNight * nightBlend + horizonDawn * dawnBlend + horizonDay * dayBlend;
 
 	// ── Gradient ───────────────────────────────────────────────────────
-	float t   = pow(max(dir.y, 0.0), 0.35);
+	// pow 0.50 gives a rounder dome than 0.35; the horizon band compresses
+	// less and the zenith blue reaches farther down, closer to real skies.
+	float t   = pow(max(dir.y, 0.0), 0.50);
 	vec3  sky = mix(horizon, zenith, t);
 
-	// Below-horizon: darken to a ground tint (prevents a hard seam with
-	// the distance fog when looking down).
+	// Below-horizon: darken to a ground tint.
 	if (dir.y < 0.0) {
 		vec3 ground = horizon * vec3(0.45, 0.45, 0.42);
 		sky = mix(horizon, ground, min(-dir.y * 5.0, 1.0));
 	}
 
+	// ── Aerosol haze band ──────────────────────────────────────────────
+	// Narrow bright band hugging the horizon — the dusty/hazy layer real
+	// atmospheres get near the ground. Brightens very low dir.y toward a
+	// warmer version of the horizon color.
+	float hazeBand = smoothstep(0.00, 0.12, dir.y) * (1.0 - smoothstep(0.12, 0.35, dir.y));
+	vec3  hazeTint = mix(horizon * 1.15, vec3(1.00, 0.95, 0.85), 0.15) * (0.55 + 0.45 * sunStr);
+	sky = mix(sky, hazeTint, hazeBand * 0.35);
+
 	// ── Sunrise / sunset horizon bleed ─────────────────────────────────
-	// When sun is low (|sunDir.y| small) but present (sunStr > 0), paint a
-	// warm band across the horizon where ray and sun share azimuth.
 	float horizProximity = 1.0 - smoothstep(0.0, 0.30, abs(sun.y));
 	vec2 sunXZ = normalize(vec2(sun.x, sun.z) + 1e-4);
 	vec2 dirXZ = normalize(vec2(dir.x, dir.z) + 1e-4);
@@ -111,83 +107,98 @@ void main() {
 	sky += vec3(1.00, 0.98, 0.88) * pow(sunDot, 512.0) * 6.0 * sunStr;
 
 	// ── Moon disc + soft halo (opposite hemisphere of the sun) ─────────
-	// Positioned at −sun so it rises as the sun sets.
 	vec3 moon     = -sun;
 	float moonDot = max(dot(dir, moon), 0.0);
-	float moonVis = 1.0 - dayBlend;  // fade out as the sun climbs
-	// Cold white disc + subtle halo.
+	float moonVis = 1.0 - dayBlend;
 	vec3 moonColor = vec3(0.90, 0.92, 1.00);
-	sky += moonColor * pow(moonDot, 128.0) * 3.2 * moonVis;    // disc
-	sky += moonColor * pow(moonDot,  12.0) * 0.14 * moonVis;   // halo
+	sky += moonColor * pow(moonDot, 128.0) * 3.2 * moonVis;
+	sky += moonColor * pow(moonDot,  12.0) * 0.14 * moonVis;
 
 	// ── Stars ──────────────────────────────────────────────────────────
-	// Quantize the ray to a tight grid; spawn a star only where the hash
-	// spikes past a threshold. Twinkle via a slow sin on the grid cell.
 	if (dir.y > -0.05) {
 		vec3 sgrid = dir * 220.0;
 		vec3 ic    = floor(sgrid);
 		float h    = hash3(ic);
 		float starField = smoothstep(0.996, 1.000, h);
 		float twinkle   = 0.6 + 0.4 * sin(time * 2.0 + h * 47.0);
-		// Stars fade out at dawn and below the horizon.
 		float starVis = smoothstep(0.0, 0.40, -sunStr + 0.40) * clamp(dir.y + 0.05, 0.0, 1.0);
 		sky += vec3(0.95, 0.95, 1.00) * starField * twinkle * starVis * 1.6;
 	}
 
-	// ── Cumulus cloud layer ────────────────────────────────────────────
-	// Project the view ray onto a virtual cloud plane at altitude 1 and
-	// sample fBm there. Domain-warping the sample point gives ragged puff
-	// shapes instead of smooth blobs. Coverage/softness thresholds carve
-	// out clear sky between the clouds (no continuous "flame" veil).
-	if (dir.y > 0.02) {
-		// Sample noise on the view-direction sphere, not a projected plane —
-		// plane projection explodes near the horizon (dir.y → 0) and kills
-		// spatial coherence. Dir.xz ∈ [-1,1] scaled to a few features.
-		vec2 cp      = vec2(dir.x, dir.z) * 5.0;
-		float wind   = time * 0.015;
-		vec2 warp    = vec2(
-			fbm(cp * 0.6 + vec2(wind, wind * 0.3)),
-			fbm(cp * 0.6 + vec2(-wind * 0.5, wind))) - 0.5;
-		float n      = fbm(cp + warp * 1.4 + vec2(wind * 0.7, wind * 0.3));
+	// ── Cloud decks (low cumulus + high cirrus) ────────────────────────
+	// Both layers use true plane projection — the ray is intersected with a
+	// flat plane at a fixed altitude, so clouds compress naturally toward
+	// the horizon. This is the recognizable Minecraft/Valheim cloud-deck
+	// look: low cumulus drift, high cirrus streaks far above.
+	if (dir.y > 0.01) {
+		vec2  sunAz    = length(sun.xz) > 0.001 ? normalize(vec2(sun.x, sun.z)) : vec2(1, 0);
+		vec2  dirAz    = length(dir.xz) > 0.001 ? normalize(vec2(dir.x, dir.z)) : vec2(0);
+		float sunAlign = dot(dirAz, sunAz) * 0.5 + 0.5;
+		float sunLow   = 1.0 - smoothstep(0.0, 0.45, abs(sun.y));
 
-		// Coverage carves puffs out of the noise field (lower = more sky).
-		float coverage = 0.48;
-		float softness = 0.14;
-		float cloud    = smoothstep(coverage, coverage + softness, n);
-
-		// Thin out near the horizon (atmospheric perspective).
-		cloud *= smoothstep(0.05, 0.30, dir.y);
-
-		// Base brightness: silver at night, bright white at noon. Ramps up
-		// fast so morning/evening clouds still read clearly.
 		float brightRamp = smoothstep(-0.10, 0.60, sunStr);
-		vec3  cloudBase  = mix(vec3(0.28, 0.32, 0.42),
-		                       vec3(1.00, 0.99, 0.96),
-		                       brightRamp);
+		vec3  cloudLit   = mix(vec3(0.28, 0.32, 0.42),
+		                       vec3(1.00, 0.99, 0.96), brightRamp);
 
-		// Sunrise/sunset pink: when the sun sits low, the whole cloud layer
-		// catches warm light — grazing rays redden every underside. The
-		// cloud on the sunward azimuth gets hotter coral; the anti-sun
-		// side leans cooler mauve. Works in any camera direction.
-		vec2  dirAz  = length(dir.xz) > 0.001 ? normalize(vec2(dir.x, dir.z)) : vec2(0);
-		vec2  sunAz  = length(sun.xz) > 0.001 ? normalize(vec2(sun.x, sun.z)) : vec2(1, 0);
-		float sunAlign = dot(dirAz, sunAz) * 0.5 + 0.5;                 // [0..1]
-		// Keep the pink alive through a meaningful part of morning/evening.
-		float sunLowness = 1.0 - smoothstep(0.0, 0.45, abs(sun.y));
-		// Saturated coral on the sun side, mauve/violet on the opposite —
-		// matches real magic-hour clouds, clearly reads as "pink sunrise".
-		vec3  coralSide = vec3(1.50, 0.45, 0.38);
-		vec3  mauveSide = vec3(0.70, 0.55, 0.95);
+		// Magic-hour tint — clamped so HDR values can't spike into neon.
+		vec3  coralSide = vec3(1.25, 0.55, 0.42);
+		vec3  mauveSide = vec3(0.75, 0.55, 0.90);
 		vec3  magicHour = mix(mauveSide, coralSide, sunAlign);
-		float magicStr  = sunLowness * smoothstep(0.02, 0.40, sunStr);
-		cloudBase = mix(cloudBase, cloudBase * magicHour, clamp(magicStr, 0.0, 1.0));
+		float magicStr  = sunLow * smoothstep(0.02, 0.40, sunStr) * 0.85;
 
-		// Depth shade: thick puff cores slightly darker/cooler than edges.
-		float depthShade = mix(0.78, 1.00, smoothstep(0.30, 1.00, n));
-		vec3  cloudColor = cloudBase * depthShade;
+		// ── Layer 1: low cumulus deck, plane at y=200. Thick, wind-driven.
+		{
+			float altitude = 200.0;
+			float tRay     = altitude / max(dir.y, 0.001);
+			vec2  cp       = vec2(dir.x, dir.z) * tRay * 0.0055;
+			float wind     = time * 0.020;
+			vec2  warp     = vec2(
+				fbm(cp * 0.6 + vec2(wind,         wind * 0.3)),
+				fbm(cp * 0.6 + vec2(-wind * 0.5,  wind      ))) - 0.5;
+			float n        = fbm(cp + warp * 1.4 + vec2(wind * 0.7, wind * 0.3));
 
-		sky = mix(sky, cloudColor, cloud);
+			float coverage = 0.50;
+			float softness = 0.16;
+			float cloud    = smoothstep(coverage, coverage + softness, n);
+			// Horizon fade — keeps the deck from piling into an ugly edge.
+			cloud *= smoothstep(0.02, 0.25, dir.y) * (1.0 - smoothstep(0.85, 1.00, dir.y));
+
+			// Depth shade: thick puff cores slightly darker than edges.
+			float depth     = mix(0.75, 1.00, smoothstep(0.30, 1.00, n));
+			// Silver-lining rim: sample coverage gradient against the sun
+			// azimuth to brighten sunward edges. Cheap approximation of
+			// volumetric light leakage — gives clouds a glow outline.
+			float rim       = smoothstep(coverage + softness * 0.4,
+			                             coverage + softness * 1.1, n) - cloud;
+			rim             = max(rim, 0.0) * (0.4 + 0.6 * sunAlign) * sunStr;
+			vec3  cloudCol  = cloudLit * depth;
+			cloudCol        = mix(cloudCol, cloudCol * magicHour, clamp(magicStr, 0.0, 1.0));
+			cloudCol       += vec3(1.00, 0.88, 0.65) * rim * 0.55;
+
+			sky = mix(sky, cloudCol, cloud);
+		}
+
+		// ── Layer 2: high cirrus streaks, plane at y=500. Anisotropic so
+		// puffs stretch into wind-combed ribbons instead of puffs.
+		{
+			float altitude = 500.0;
+			float tRay     = altitude / max(dir.y, 0.001);
+			// Elongate along X so cirrus reads as streaks not pillows.
+			vec2  cp       = vec2(dir.x * 0.35, dir.z) * tRay * 0.0020;
+			float wind     = time * 0.008;
+			float n        = fbm(cp + vec2(wind, 0.0));
+
+			float coverage = 0.56;
+			float softness = 0.22;
+			float cirrus   = smoothstep(coverage, coverage + softness, n);
+			cirrus        *= smoothstep(0.05, 0.30, dir.y);
+			cirrus        *= 0.55; // thinner than cumulus
+
+			vec3 cirrusCol = mix(vec3(0.92, 0.94, 1.00),
+			                     vec3(1.00, 0.80, 0.55), magicStr * 0.6);
+			sky = mix(sky, cirrusCol, cirrus);
+		}
 	}
 
-	outColor = vec4(sky, 1.0);
+	outColor = vec4(max(sky, 0.0), 1.0);
 }

@@ -284,7 +284,7 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 				break;
 			}
 
-			float alpha = bdef.transparent ? 0.20f : 1.0f;
+			float alpha = bdef.transparent ? 0.42f : 1.0f;
 			float glow  = bdef.surface_glow ? 1.0f : 0.0f;
 			auto& dst = bdef.transparent ? tVerts : verts;
 			auto emit = [&](int i) { dst.push_back({v[i], color, normal, ao[i], shade, alpha, glow}); };

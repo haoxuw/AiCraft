@@ -114,7 +114,7 @@ enum class GameState { Menu, Loading, Playing, GameMenu, Dead };
 // Stage C will flesh out Singleplayer (world list + create-world) and
 // Multiplayer (LAN/Saved/Direct-Connect tabs); today they're placeholders
 // that delegate to the existing auto-spawn-and-join flow.
-enum class MenuScreen : uint8_t { Main, Singleplayer, Multiplayer, Settings };
+enum class MenuScreen : uint8_t { Main, Singleplayer, CharacterSelect, Multiplayer, Settings };
 
 class Game {
 public:
@@ -132,9 +132,20 @@ public:
 	// Non-owning — caller keeps the server alive. Must be called before init().
 	void setServer(civcraft::ServerInterface* s) { m_server = s; }
 
+	// Remember which world to connect to; actual handshake is deferred
+	// until the user picks a character (or skipMenu fires).
+	void setPendingConnect(int seed, int templateIndex) {
+		m_pendingSeed = seed; m_pendingTemplate = templateIndex;
+	}
+
+	// Send C_HELLO with the chosen creatureType (empty ⇒ server-default).
+	// Transitions the state machine into Playing on success.
+	bool connectAs(const std::string& creatureType);
+
 	// Skip the main menu and drop straight into gameplay. Used by
-	// `--skip-menu` for headless/CI flows.
-	void skipMenu() { enterPlaying(); }
+	// `--skip-menu` for headless/CI flows. Connects as the server's default
+	// playable (empty creatureType).
+	void skipMenu() { if (connectAs("")) enterPlaying(); }
 
 	// Poll input, step sim, render one frame.
 	void runOneFrame(float dt, float wallTime);
@@ -250,6 +261,13 @@ private:
 	float        m_menuTitleT = 0.0f;
 	std::string  m_lastDeathReason;
 	MenuScreen   m_menuScreen = MenuScreen::Main;
+
+	// World to request on the pending C_HELLO handshake. main.cpp fills these
+	// before init(); CharacterSelect passes them into createGame().
+	int          m_pendingSeed      = 42;
+	int          m_pendingTemplate  = 1;
+	std::string  m_connectError;        // last handshake error, displayed on CharacterSelect
+	bool         m_connecting = false;  // true while awaiting S_WELCOME
 
 	// One persistent chunk-mesh handle per loaded chunk. ChunkMesher emits
 	// world-space vertices, so each handle just needs drawChunkMeshOpaque +

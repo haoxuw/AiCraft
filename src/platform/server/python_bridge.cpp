@@ -265,13 +265,19 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 
 	// Expose C++ name constants so behaviors use identical identifiers.
 	auto living = m.def_submodule("LivingName", "Living entity type IDs");
-	living.attr("Player")       = LivingName::Player;
+	// No "Player" binding: any Living with playable=true can be a player
+	// character. Behaviors that need "is this a playable creature?" should
+	// check EntityDef.playable via the entity bindings.
 	living.attr("Pig")          = LivingName::Pig;
 	living.attr("Chicken")      = LivingName::Chicken;
 	living.attr("Dog")          = LivingName::Dog;
 	living.attr("Villager")     = LivingName::Villager;
 	living.attr("Cat")          = LivingName::Cat;
 	living.attr("BraveChicken") = LivingName::BraveChicken;
+	living.attr("Knight")       = LivingName::Knight;
+	living.attr("Mage")         = LivingName::Mage;
+	living.attr("Skeleton")     = LivingName::Skeleton;
+	living.attr("Giant")        = LivingName::Giant;
 
 	auto item = m.def_submodule("ItemName", "Item type IDs");
 	item.attr("ItemEntity")  = ItemName::ItemEntity;

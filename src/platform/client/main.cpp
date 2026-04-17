@@ -126,6 +126,7 @@ int main(int argc, char** argv) {
 		civcraft::ArtifactRegistry artifacts;
 		artifacts.loadAll("artifacts");
 		localWorld.entityDefs().mergeArtifactTags(artifacts.livingTags());
+		localWorld.entityDefs().applyLivingStats(artifacts.livingStats());
 	}
 	std::unique_ptr<civcraft::NetworkServer> net;
 	{
@@ -142,17 +143,17 @@ int main(int argc, char** argv) {
 			}
 		}
 		net = std::make_unique<civcraft::NetworkServer>(host, connectPort, localWorld);
-		if (!net->createGame(42, 1)) {
-			fprintf(stderr, "[vk] handshake failed (%s:%d)\n",
-			        host.c_str(), connectPort);
-			return 1;
-		}
-		printf("[vk] connected to civcraft-server %s:%d (player eid=%d)\n",
-		       host.c_str(), connectPort, (int)net->localPlayerId());
+		// Handshake (C_HELLO) is deferred until the menu's character-select
+		// completes — we need the chosen creatureType before sending HELLO.
+		// --skip-menu calls Game::skipMenu() which connects immediately as
+		// the server-default playable.
+		printf("[vk] civcraft-server ready at %s:%d (awaiting character pick)\n",
+		       host.c_str(), connectPort);
 	}
 
 	civcraft::vk::Game game;
 	game.setServer(net.get());  // must precede init()
+	game.setPendingConnect(42, 1);  // village world; seed+template used on character-select confirm
 	if (!game.init(rhi.get(), win)) {
 		fprintf(stderr, "game.init failed\n");
 		return 1;

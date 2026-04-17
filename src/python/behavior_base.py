@@ -80,7 +80,8 @@ class Behavior:
             Spatial snapshot of what this agent can currently perceive.
             local_world.get("logs")
             local_world.all("logs", max_dist=40)
-            local_world.nearest("player")
+            # "Any playable character" — filter by tag, not a hardcoded id:
+            [x for x in local_world.entities if x.has_tag("playable")]
             local_world.time
             local_world.dt
 

@@ -17,7 +17,8 @@ using EntityId = uint32_t;
 constexpr EntityId ENTITY_NONE = 0;
 
 namespace LivingName {
-	constexpr const char* Player       = "player";
+	// No "player" entry: any living with EntityDef.playable=true is a valid
+	// player character. Client picks at join and the server spawns that type.
 	constexpr const char* Pig          = "pig";
 	constexpr const char* Chicken      = "chicken";
 	constexpr const char* Dog          = "dog";

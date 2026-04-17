@@ -548,6 +548,22 @@ void Game::pushNotification(const std::string& text, glm::vec3 color, float life
 	m_notifs.push_back({text, color, 0.0f, lifetime});
 }
 
+bool Game::connectAs(const std::string& creatureType) {
+	if (!m_server) { m_connectError = "no server"; return false; }
+	if (m_server->isConnected()) return true;  // already connected (skipMenu re-entry)
+	m_connecting = true;
+	m_connectError.clear();
+	m_server->setCreatureType(creatureType);
+	bool ok = m_server->createGame(m_pendingSeed, m_pendingTemplate);
+	m_connecting = false;
+	if (!ok) {
+		const std::string& err = m_server->lastError();
+		m_connectError = err.empty() ? "failed to join server" : err;
+		return false;
+	}
+	return true;
+}
+
 void Game::enterMenu() {
 	m_state = GameState::Menu;
 	m_menuScreen = MenuScreen::Main;

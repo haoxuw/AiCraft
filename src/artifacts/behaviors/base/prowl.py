@@ -173,9 +173,17 @@ class ProwlBehavior(Behavior):
         # ── MOOD: Curious ─────────────────────────────────────────────────────
         if self._mood == MOOD_CURIOUS:
             if self._curiosity_target is None:
-                player = local_world.nearest("player")
-                if player:
-                    self._curiosity_target = player.id
+                # No hardcoded "player" type — any entity tagged "playable"
+                # (set automatically for livings with playable=True in their
+                # artifact) is a valid curiosity target.
+                best = None
+                for x in local_world.entities:
+                    if not x.has_tag("playable") or x.id == entity.id:
+                        continue
+                    if best is None or x.distance < best.distance:
+                        best = x
+                if best is not None:
+                    self._curiosity_target = best.id
 
             if self._curiosity_target is not None:
                 # Re-query to get current position

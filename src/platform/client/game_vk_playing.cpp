@@ -896,10 +896,35 @@ void Game::tickPlayer(float dt) {
 			}
 		}
 
-		// Place/interact if no entity inspect.
+		// Interact-first: doors, TNT, buttons. If the hit block isn't
+		// interactive, fall through to placeBlock(). An open door grazed
+		// along the ray counts as the interact target so you can click-close
+		// a door you're standing in front of.
 		if (!inspectTriggered) {
-			placeBlock();
-			m_placeCD = kTune.placeCD;
+			bool didInteract = false;
+			auto bHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+			if (bHit) {
+				glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
+				BlockId bid = bHit->hasInteract ? bHit->interactBlockId : bHit->blockId;
+				const auto& bdef = m_server->blockRegistry().get(bid);
+				bool interactive = (bdef.mesh_type == civcraft::MeshType::Door
+				                 || bdef.mesh_type == civcraft::MeshType::DoorOpen
+				                 || bdef.string_id == civcraft::BlockType::TNT);
+				if (interactive) {
+					civcraft::ActionProposal p;
+					p.type     = civcraft::ActionProposal::Interact;
+					p.actorId  = m_server->localPlayerId();
+					p.blockPos = bp;
+					m_server->sendAction(p);
+					civcraft::GameLogger::instance().emit("ACTION",
+						"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
+					didInteract = true;
+				}
+			}
+			if (!didInteract) {
+				placeBlock();
+				m_placeCD = kTune.placeCD;
+			}
 		}
 	}
 

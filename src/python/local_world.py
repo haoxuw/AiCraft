@@ -210,8 +210,10 @@ class LocalWorld(BaseModel):
         world.get("spider")                # nearest spider Entity, or None
         world.all("logs")                 # [BlockView, …] nearest-first
         world.all("logs", max_dist=40)    # filtered by distance
-        world.nearest("player")                 # nearest player EntityView
-        world.nearest("animal", max_dist=12)    # with distance cap
+        world.nearest("pig")                    # nearest pig EntityView
+        world.nearest("chicken", max_dist=12)   # with distance cap
+        # For "any playable character", filter by tag (no hardcoded type id):
+        #   [x for x in world.entities if x.has_tag("playable")]
         world.time                              # 0.0–1.0 day fraction
         world.dt                                # frame delta seconds
     """

@@ -29,6 +29,11 @@ public:
 	virtual void disconnect() = 0;
 	virtual bool isConnected() const = 0;
 
+	// Chosen playable creature type (sent in C_HELLO, so call BEFORE
+	// createGame). Empty ⇒ server picks its default playable. No-op for
+	// in-process server implementations that don't use the handshake.
+	virtual void setCreatureType(const std::string& /*type*/) {}
+
 	// Per-frame
 	virtual void tick(float dt) = 0;
 	virtual void sendAction(const ActionProposal& action) = 0;

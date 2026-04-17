@@ -184,6 +184,7 @@ int main(int argc, char** argv) {
 		civcraft::ArtifactRegistry artifacts;
 		artifacts.loadAll("artifacts");
 		server.mergeArtifactTags(artifacts.livingTags());
+		server.applyLivingStats(artifacts.livingStats());
 
 		// Annotations (flowers etc.) fed to chunk gen.
 		for (auto* e : artifacts.byCategory("annotation")) {

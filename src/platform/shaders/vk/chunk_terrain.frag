@@ -120,11 +120,19 @@ void main() {
 
 	float alpha = vAlpha;
 	if (vAlpha < 0.5) {
+		// Glass: Fresnel rim + a narrow specular glint so the pane reads as
+		// a real surface rather than a tint overlay. Keep it subtle — the
+		// world behind must stay readable.
 		vec3 viewDir = normalize(camPos - vWorldPos);
-		float cosTheta = abs(dot(vNormal, viewDir));
-		float fresnel = pow(1.0 - cosTheta, 2.5);
-		lit = mix(lit, vec3(0.9, 0.97, 1.0), fresnel * 0.6);
-		alpha = mix(vAlpha, 0.85, fresnel * 0.7);
+		float cosTheta = clamp(abs(dot(vNormal, viewDir)), 0.0, 1.0);
+		float fresnel  = pow(1.0 - cosTheta, 2.2);
+		vec3 halfDir   = normalize(viewDir + sunDir);
+		float specDot  = max(dot(vNormal, halfDir), 0.0);
+		float glint    = pow(specDot, 64.0) * sunStrength;
+		vec3 sheen     = vec3(0.92, 0.97, 1.00);
+		lit   = mix(lit, sheen, fresnel * 0.35);
+		lit  += sheen * glint * 0.6;
+		alpha = clamp(vAlpha + fresnel * 0.45 + glint * 0.35, 0.0, 0.95);
 	}
 
 	fragColor = vec4(lit, alpha);

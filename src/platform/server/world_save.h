@@ -81,7 +81,8 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		net::WriteBuffer wb;
 		int entityCount = 0;
 		world.entities.forEach([&](Entity& e) {
-			if (e.typeId() == LivingName::Player) return;
+			// Playable creatures re-spawn on connect; skip so we don't persist them twice.
+			if (e.def().playable) return;
 
 			wb.writeString(e.typeId());
 			wb.writeVec3(e.position);
@@ -164,7 +165,7 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		net::WriteBuffer wb;
 		uint32_t count = 0;
 		world.entities.forEach([&](Entity& e) {
-			if (e.typeId() != LivingName::Player) return;
+			if (!e.def().playable) return;
 			if (!e.inventory) return;
 			std::string skin = e.getProp<std::string>("character_skin", "default");
 			wb.writeString(skin);
@@ -192,7 +193,7 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		for (auto& [skin, inv] : server.savedInventories()) {
 			bool online = false;
 			world.entities.forEach([&](Entity& e) {
-				if (e.typeId() == LivingName::Player &&
+				if (e.def().playable &&
 				    e.getProp<std::string>("character_skin", "default") == skin)
 					online = true;
 			});

@@ -335,7 +335,7 @@ public:
 
 	const std::string& clientUUID() const { return m_clientUUID; }
 	void setDisplayName(const std::string& name) { m_displayName = name; }
-	void setCreatureType(const std::string& type) { m_creatureType = type; }
+	void setCreatureType(const std::string& type) override { m_creatureType = type; }
 
 	static bool canConnect(const char* host, int port) {
 		net::TcpClient probe;

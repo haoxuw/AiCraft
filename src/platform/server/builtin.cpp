@@ -51,31 +51,40 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 
 	// Entities
 
-	// Player
-	{
+	// No hardcoded "player" type: any Living with playable=true can be spawned
+	// as a player character. Client sends its chosen type in C_HELLO; server
+	// validates it against EntityDef.playable.
+
+	// Playable humanoids — only the identity + hunger/HP/inventory slots come
+	// from C++. Physics (walk/run speed, collision box, eye height, gravity)
+	// are filled in by EntityManager::applyLivingStats() from Python artifacts,
+	// so `artifacts/living/base/knight.py` is the single source of truth.
+	// If applyLivingStats isn't called (headless tools), these fall back to
+	// the EntityDef struct defaults in logic/entity.h.
+	auto humanoid = [&](const char* id, const char* name, const char* model,
+	                     glm::vec3 color) {
 		EntityDef def;
-		def.string_id = LivingName::Player;
-		def.display_name = "Player";
+		def.string_id = id;
+		def.display_name = name;
 		def.kind = EntityKind::Living;
-		def.model = "player";
-		def.texture = "player.png";
-		def.color = {1, 1, 1};
-		def.collision_box_min = {-0.375f, 0.0f, -0.375f};
-		def.collision_box_max = { 0.375f, 2.5f,  0.375f};
-		def.gravity_scale = 1.0f;
-		def.walk_speed = 8.0f;
-		def.run_speed = 20.0f;
-		def.max_hp = (int)getMaterialValue(def.string_id);
-		def.eye_height = 1.9f;
+		def.model = model;
+		def.color = color;
+		def.max_hp = (int)getMaterialValue(id);
 		def.playable = true;
 		def.pickup_range = 1.5f;
-		def.inventory_capacity = getMaterialValue(def.string_id);
+		def.inventory_capacity = getMaterialValue(id);
 		def.default_props = {
 			{PR::HP, def.max_hp}, {PR::Hunger, 20.0f},
 			{PR::Age, 0.0f}, {PR::WalkDistance, 0.0f},
 		};
 		entities.registerType(def);
-	}
+	};
+
+	humanoid(LivingName::Knight,   "Knight",   "knight",   {0.85f,0.70f,0.55f});
+	humanoid(LivingName::Villager, "Villager", "villager", {0.85f,0.75f,0.60f});
+	humanoid(LivingName::Mage,     "Mage",     "mage",     {0.85f,0.70f,0.55f});
+	humanoid(LivingName::Skeleton, "Skeleton", "skeleton", {0.90f,0.88f,0.80f});
+	humanoid(LivingName::Giant,    "Giant",    "giant",    {0.80f,0.70f,0.55f});
 
 	// Animals — all Living. Flyers pass gravityScale=0 to hover at spawn Y.
 	auto animal = [&](const char* id, const char* name, const char* model,
@@ -129,9 +138,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		{-0.3f,0,-0.3f},{0.3f,0.7f,0.3f}, 4.0f,8.0f, "follow",
 		"creature_dog", "", 0.15f);
 
-	animal(LivingName::Villager, "Villager", "villager", {0.85f,0.75f,0.60f},
-		{-0.3f,0,-0.3f},{0.3f,1.8f,0.3f}, 2.5f,5.0f, "woodcutter",
-		"creature_villager", "", 0.12f);
+	// Villager is registered above via humanoid() (it's playable); no animal() here.
 
 	// Altar animals — wander placeholder; real behaviors later.
 	animal(LivingName::Squirrel, "Squirrel", "squirrel", {0.55f,0.32f,0.15f},
