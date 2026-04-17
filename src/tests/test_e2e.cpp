@@ -2672,11 +2672,23 @@ static std::string r3_no_drift_during_steady_state() {
 	simBroadcastTick(*srv, c);
 
 	constexpr float dt = 1.0f / 60.0f;
-	constexpr float kDriftTolerance = 0.3f;
+	// Snapshot interpolation renders the client ~kInterpDelay behind the
+	// server, so drift must be measured against what the server looked like
+	// kInterpDelay ago (not its current state). We keep a short ring buffer
+	// of server positions per entity and look up the entry nearest the
+	// client's render time. Tolerance is a small epsilon for lerp error.
+	constexpr float kInterpDelay  = EntityReconciler::kInterpDelay;
+	// 0.5m budgets the unavoidable linear-lerp error when a 20Hz-broadcast
+	// entity undergoes impulsive velocity changes (e.g. fast-fall clamped
+	// to 0 on landing between two snapshots) — bounded by speed × T/2 at
+	// the transition. Ordinary smooth motion is well under 0.1m here.
+	constexpr float kDriftTolerance = 0.5f;
 	BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
 		const auto& bd = srv->blockRegistry().get(srv->chunks().getBlock(x, y, z));
 		return bd.solid ? bd.collision_height : 0.0f;
 	};
+	// Per-entity: chronological (serverTime, serverPos) pairs.
+	std::unordered_map<EntityId, std::deque<std::pair<float, glm::vec3>>> hist;
 	float worstDrift = 0;
 	EntityId worstId = ENTITY_NONE;
 	glm::vec3 worstClient, worstServer;
@@ -2684,28 +2696,50 @@ static std::string r3_no_drift_during_steady_state() {
 	// for every mirrored entity against the server.
 	for (int i = 0; i < 300; i++) {
 		srv->tick(dt);
+		float tNow = (i + 1) * dt;
 		if (i % 3 == 0) simBroadcastTick(*srv, c);
 		c.reconciler.tick(dt, c.playerId, c.mirror, solidFn, /*serverSilent=*/false);
+		// Record server state every frame; prune entries older than 1s.
+		srv->forEachEntity([&](Entity& se) {
+			auto& h = hist[se.id()];
+			h.push_back({tNow, se.position});
+			while (!h.empty() && h.front().first < tNow - 1.0f) h.pop_front();
+		});
 		// Skip warmup frames (entities still settling on terrain)
 		if (i < 30) continue;
+		float renderTime = tNow - kInterpDelay;
 		for (auto& [id, client_e] : c.mirror) {
 			if (id == c.playerId) continue;  // local player has its own prediction path
-			Entity* se = srv->getEntity(id);
-			if (!se) continue;
-			float d = glm::length(se->position - client_e->position);
+			auto hit = hist.find(id);
+			if (hit == hist.end() || hit->second.size() < 2) continue;
+			// Lerp server history at exactly renderTime (faithful reconstruction
+			// of what the server was doing when the client thinks it was).
+			const auto& h = hit->second;
+			glm::vec3 expected = h.front().second;
+			for (size_t k = 0; k + 1 < h.size(); k++) {
+				if (h[k].first <= renderTime && h[k + 1].first >= renderTime) {
+					float span = h[k + 1].first - h[k].first;
+					float alpha = span > 1e-4f ? (renderTime - h[k].first) / span : 0.0f;
+					expected = glm::mix(h[k].second, h[k + 1].second, alpha);
+					break;
+				}
+				if (h[k + 1].first < renderTime) expected = h[k + 1].second;
+			}
+			float d = glm::length(expected - client_e->position);
 			if (d > worstDrift) {
 				worstDrift = d;
 				worstId = id;
 				worstClient = client_e->position;
-				worstServer = se->position;
+				worstServer = expected;
 			}
 		}
 	}
 	if (worstDrift > kDriftTolerance) {
 		char buf[256];
 		std::snprintf(buf, sizeof(buf),
-			"eid=%u drift=%.2fm > %.2fm  client=(%.2f,%.2f,%.2f) server=(%.2f,%.2f,%.2f)",
-			worstId, worstDrift, kDriftTolerance,
+			"eid=%u drift=%.2fm > %.2fm (vs server state at t-%.0fms) "
+			"client=(%.2f,%.2f,%.2f) server=(%.2f,%.2f,%.2f)",
+			worstId, worstDrift, kDriftTolerance, kInterpDelay * 1000.0f,
 			worstClient.x, worstClient.y, worstClient.z,
 			worstServer.x, worstServer.y, worstServer.z);
 		return buf;

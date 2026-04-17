@@ -330,6 +330,18 @@ int main(int argc, char** argv) {
 		// Simulation time only — this is what the tick budget applies to.
 		[[maybe_unused]] auto tickStart = std::chrono::steady_clock::now();
 		int ticksThisFrame = 0;
+		// Spiral-of-death guard: if a tick stalls (GC pause, long IO, OS
+		// schedule hiccup) the accumulator balloons and the inner loop tries
+		// to "catch up" by running dozens of ticks back-to-back, which
+		// stalls harder and never recovers. Cap at 5 ticks of backlog;
+		// anything beyond is simulation-time we willfully drop.
+		const float kMaxBacklog = TICK_RATE * 5.0f;
+		if (accumulator > kMaxBacklog) {
+			fprintf(stdout, "[Server] accumulator %.3fs > %.3fs — dropping %.0f tick(s) of backlog\n",
+			        accumulator, kMaxBacklog, (accumulator - kMaxBacklog) / TICK_RATE);
+			fflush(stdout);
+			accumulator = kMaxBacklog;
+		}
 		while (accumulator >= TICK_RATE) {
 			// Log + advance on exception so one bad tick doesn't silently
 			// kill the server or hot-spin on a permanently broken tick.
