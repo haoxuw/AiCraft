@@ -281,14 +281,6 @@ src/
     net/                    Networking — net_protocol.h, server_interface.h, net_socket.h
     debug/                  Diagnostics — crash_log.h, move_stuck_log.h, entity_log.h
     shaders/  fonts/  docs/ Platform-level assets + architecture docs
-    tools/                  Thin entry points (civcraft_ui_vk/main.cpp)
-
-  CivCraft/                 ← Voxel sandbox game (C++)
-    main.cpp, main_server.cpp, main_client.cpp
-    shared/                 chunk.h, block_registry.h, chunk_source.h
-    server/                 world.h, world_template.h, noise.h, structure_blueprint.h, pathfind (voxel), …
-    client/                 chunk_mesher, renderer, raycast, fog_of_war, hotbar, inventory_visuals, gameplay_interaction
-    content/                C++ fallback block + entity registrations (builtin.cpp)
 
   tests/                    ← E2E and regression tests
     test_e2e.cpp              Headless gameplay tests (uses TestServer)
@@ -302,9 +294,12 @@ src/
     worlds/                 World templates (flat, village)
     structures/ models/ effects/ actions/ resources/
 
-  model_editor/             ← (placeholder) standalone 3D model editor — TBD
-    python/                 CivCraft-only python helpers (pathfind.py, local_world.py, …)
-    shaders/  config/  resources/  docs/  tests/  tools/
+  model_editor/             ← Model-authoring tooling (Python, not shipped w/ game)
+                              modelcrafter.py       3D clip debugger (matplotlib)
+                              bbmodel_export.py     .py model → Blockbench .bbmodel
+                              bbmodel_import.py     Blockbench .bbmodel → .py model
+                              attack_clips.py       combo-swing keyframes (used by modelcrafter)
+                              capture_samples.sh    drive civcraft-ui-vk through game states, snap PPM/PNG
 ```
 
 ### Dependency Rules

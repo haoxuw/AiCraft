@@ -18,7 +18,7 @@ model = {
         # the actual rest-arm vector (hand_r - pivot_r, which is not pure
         # -Y because the hand rests slightly forward and outboard of the
         # shoulder). The 9.7° tilt off -Z is what keeps blade ⟂ arm at rest
-        # — verified by tools/modelcrafter's invariant check.
+        # — verified by src/model_editor/modelcrafter's invariant check.
         "rotation": [0, -90, 80.3],
         "offset": [0.0, 0.0, -0.02],
         "scale": 0.65,

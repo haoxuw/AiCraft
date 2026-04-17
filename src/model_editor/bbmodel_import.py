@@ -22,8 +22,8 @@ editing order) — which is also the draw order in-game. Modders who
 reorder in Blockbench will see that reorder reflected.
 
 Usage:
-    tools/bbmodel_import.py <in.bbmodel> <out.py>
-    tools/bbmodel_import.py <in.bbmodel> <out.py> --base <original.py>
+    src/model_editor/bbmodel_import.py <in.bbmodel> <out.py>
+    src/model_editor/bbmodel_import.py <in.bbmodel> <out.py> --base <original.py>
 
 If --base is omitted, the importer looks for a .py at the path recorded
 in the bbmodel's civcraft.source_file field.
@@ -136,7 +136,7 @@ def emit_part(part: dict) -> str:
 def emit_model(model: dict) -> str:
     """Serialize the assembled model dict as a .py file."""
     lines = [
-        '"""Auto-generated from .bbmodel via tools/bbmodel_import.py.',
+        '"""Auto-generated from .bbmodel via src/model_editor/bbmodel_import.py.',
         "",
         "Edit geometry in Blockbench; run bbmodel_import.py to sync back.",
         "Non-geometry fields (clips, hand/pivot, swing params) are preserved",

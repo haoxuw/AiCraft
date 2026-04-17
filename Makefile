@@ -67,7 +67,7 @@ item_views: build
 
 SAMPLE_DIR := /tmp/civcraft_samples
 sample: build
-	@tools/capture_samples.sh $(BUILD_DIR) $(SAMPLE_DIR)
+	@src/model_editor/capture_samples.sh $(BUILD_DIR) $(SAMPLE_DIR)
 
 CHARS := player knight mage villager skeleton giant owl pig cat chicken dog beaver bee squirrel raccoon
 CLIPS := walk attack chop mine wave dance fly land sleep
@@ -117,17 +117,17 @@ SIZE  ?= 512x512
 crafter:
 	@model="$(MODEL)"; \
 	  [ -n "$$model" ] || model="src/artifacts/models/base/player.py"; \
-	  python3 tools/modelcrafter.py $$model $(if $(CLIP),--clip $(CLIP))
+	  python3 src/model_editor/modelcrafter.py $$model $(if $(CLIP),--clip $(CLIP))
 
 BB := /tmp/$(notdir $(basename $(MODEL))).bbmodel
 bbmodel:
 	@[ -n "$(MODEL)" ] || (echo "usage: make bbmodel MODEL=path/to/model.py" >&2 && exit 1)
 	@[ -f "$(MODEL)" ] || (echo "$(MODEL): not a file" >&2 && exit 1)
 	@command -v blockbench >/dev/null || (echo "blockbench not on PATH — install from https://www.blockbench.net/" >&2 && exit 1)
-	python3 tools/bbmodel_export.py $(MODEL) $(BB)
+	python3 src/model_editor/bbmodel_export.py $(MODEL) $(BB)
 	@echo "[bbmodel] opening $(BB) in Blockbench — save (Ctrl+S) then close to import back."
 	blockbench $(BB)
-	python3 tools/bbmodel_import.py $(BB) $(MODEL) --base $(MODEL)
+	python3 src/model_editor/bbmodel_import.py $(BB) $(MODEL) --base $(MODEL)
 	@echo "[bbmodel] imported back into $(MODEL). Run 'make build' then 'make character_views CHARACTER=...' to verify."
 
 # Dedicated server (interactive world select, or --world/--seed/--template flags)

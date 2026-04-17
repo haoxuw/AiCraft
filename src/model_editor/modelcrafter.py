@@ -6,13 +6,13 @@ src/platform/client/model.cpp, and renders boxes in matplotlib 3D.
 
 Usage:
   # Interactive — time scrubs automatically, hit clip buttons to switch:
-  python3 tools/ModelCrafter src/artifacts/models/base/player.py
+  python3 src/model_editor/modelcrafter.py src/artifacts/models/base/player.py
 
   # Force a single clip:
-  python3 tools/ModelCrafter <model.py> --clip attack
+  python3 src/model_editor/modelcrafter.py <model.py> --clip attack
 
   # Headless snapshot at a specific time (useful for /tmp sweeps):
-  python3 tools/ModelCrafter <model.py> --clip sit --snapshot /tmp/sit.png \\
+  python3 src/model_editor/modelcrafter.py <model.py> --clip sit --snapshot /tmp/sit.png \\
       --time 0.5
 
 Clip evaluation (mirrors model.cpp):

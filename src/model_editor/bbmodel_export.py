@@ -13,8 +13,8 @@ attachment points, head flag) are preserved elsewhere:
     can merge by name.
 
 Usage:
-    tools/bbmodel_export.py src/artifacts/models/base/player.py
-    tools/bbmodel_export.py <model.py> <out.bbmodel>
+    src/model_editor/bbmodel_export.py src/artifacts/models/base/player.py
+    src/model_editor/bbmodel_export.py <model.py> <out.bbmodel>
 """
 
 from __future__ import annotations

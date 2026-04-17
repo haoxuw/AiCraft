@@ -33,7 +33,7 @@ ATTACK_CLIPS = {
     # blade carves a vertical plane across the target instead of lying flat.
     # Wrist roll chosen to keep the blade in the vertical plane during the
     # lateral sweep (|Y|-maximising around the forearm axis at each keyframe,
-    # see tools/modelcrafter search). Blade-down at the peak reads as a
+    # see src/model_editor/modelcrafter search). Blade-down at the peak reads as a
     # natural low-guard slash instead of the broom-held-flat look we had
     # before.
     # Horizontal side cuts — pitch stays near shoulder level (~-15°) the
