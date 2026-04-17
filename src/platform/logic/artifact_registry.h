@@ -120,6 +120,7 @@ public:
 	// EntityManager::applyLivingStats to keep C++ defaults data-driven.
 	struct LivingStats {
 		std::string id;
+		std::string behavior;       // Python behavior module id (e.g. "wander", "woodcutter")
 		float walk_speed = std::nanf("");
 		float run_speed  = std::nanf("");
 		float eye_height = std::nanf("");
@@ -134,6 +135,8 @@ public:
 			if (e.category != "living") continue;
 			LivingStats s;
 			s.id = e.id;
+			auto bIt = e.fields.find("behavior");
+			if (bIt != e.fields.end()) s.behavior = bIt->second;
 			auto asFloat = [&](const char* key, float& out) {
 				auto it = e.fields.find(key);
 				if (it != e.fields.end()) {

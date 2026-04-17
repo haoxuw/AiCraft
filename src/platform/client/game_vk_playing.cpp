@@ -91,13 +91,13 @@ void Game::processInput(float dt) {
 	}
 
 	// V: cycle camera mode (FPS → TPS → RPG → RTS)
+	// Selection persists across camera modes — only RMB-in-empty-space or an
+	// explicit new drag-select clears it. That way a user can box-select in
+	// RTS, switch to TPS to watch the action, and still own those units.
 	bool v = glfwGetKey(m_window, GLFW_KEY_V) == GLFW_PRESS;
 	if (v && !m_vLast) {
 		m_cam.cycleMode();
-		if (m_cam.mode != civcraft::CameraMode::RTS) {
-			m_rtsSelect.selected.clear();
-			m_rtsSelect.dragging = false;
-		}
+		m_rtsSelect.dragging = false;
 		m_cam.resetMouseTracking();
 		const char* names[] = {"FPS", "TPS", "RPG", "RTS"};
 		const char* name = names[(int)m_cam.mode];
@@ -849,6 +849,23 @@ void Game::tickPlayer(float dt) {
 			rmbPressed   = rmbEdge;
 		}
 		m_rmbLast = rmbNow;
+	}
+	// RMB first takes precedence to release RTS-selected units back to their
+	// default behavior (works in any camera mode — you can box-select in RTS,
+	// switch to TPS, and still drop the group). Skips place/inspect when it fires.
+	if (rmbPressed && !m_rtsSelect.selected.empty()) {
+		for (auto eid : m_rtsSelect.selected) {
+			m_server->sendCancelGoal(eid);
+			if (m_agentClient && eid != m_server->localPlayerId())
+				m_agentClient->resumeAgent(eid);
+			m_moveOrders.erase(eid);
+		}
+		std::printf("[vk-rts] RMB released %zu unit%s → default behavior\n",
+			m_rtsSelect.selected.size(),
+			m_rtsSelect.selected.size() == 1 ? "" : "s");
+		m_rtsSelect.selected.clear();
+		rmbPressed = false;
+		rmbIsHeld  = false;
 	}
 	// Held-place fires every kTune.placeCD s while RMB held in FPS/TPS.
 	if (!rmbPressed && rmbIsHeld && m_placeCD <= 0) {

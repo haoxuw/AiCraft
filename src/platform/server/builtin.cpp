@@ -57,10 +57,10 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 
 	// Playable humanoids — only the identity + hunger/HP/inventory slots come
 	// from C++. Physics (walk/run speed, collision box, eye height, gravity)
-	// are filled in by EntityManager::applyLivingStats() from Python artifacts,
-	// so `artifacts/living/base/knight.py` is the single source of truth.
-	// If applyLivingStats isn't called (headless tools), these fall back to
-	// the EntityDef struct defaults in logic/entity.h.
+	// AND default behavior are filled in by EntityManager::applyLivingStats()
+	// from Python artifacts, so `artifacts/living/base/knight.py` is the single
+	// source of truth. The "wander" bootstrap below guarantees headless tools
+	// (no artifact merge) still produce livings with a decide() loop.
 	auto humanoid = [&](const char* id, const char* name, const char* model,
 	                     glm::vec3 color) {
 		EntityDef def;
@@ -76,6 +76,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		def.default_props = {
 			{PR::HP, def.max_hp}, {PR::Hunger, 20.0f},
 			{PR::Age, 0.0f}, {PR::WalkDistance, 0.0f},
+			{PR::BehaviorId, std::string("wander")},
 		};
 		entities.registerType(def);
 	};

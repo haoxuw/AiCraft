@@ -13,7 +13,7 @@ living = {
     "playable": True,
 
     "model": "owl",
-    "behavior": "wander",
+    "behavior": "flyer_wander",
 
     "collision": {"min": [-0.2, 0, -0.2], "max": [0.2, 0.8, 0.2]},
     "walk_speed": 3.0,

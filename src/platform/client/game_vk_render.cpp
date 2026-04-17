@@ -2257,6 +2257,20 @@ void Game::renderEntityInspect() {
 			e->position.x, e->position.y, e->position.z);
 		ui::KeyValue("Entity ID", "%u", (unsigned)e->id());
 		ui::KeyValue("Type", "%s", e->typeId().c_str());
+
+		// Behavior + Goal are shown together so it's obvious every living has
+		// both — the behavior module that's deciding, and the human-readable
+		// goal it most recently emitted. Red goal = decide() raised.
+		if (e->def().isLiving()) {
+			std::string bid = e->getProp<std::string>(civcraft::Prop::BehaviorId, "");
+			if (bid.empty()) {
+				ImGui::PushStyleColor(ImGuiCol_Text, ui::kBad);
+				ui::KeyValue("Behavior", "(none — missing in artifact)");
+				ImGui::PopStyleColor();
+			} else {
+				ui::KeyValue("Behavior", "%s", bid.c_str());
+			}
+		}
 		if (!e->goalText.empty()) {
 			ImVec4 goalCol = e->hasError ? ui::kBad : ui::kOk;
 			ImGui::PushStyleColor(ImGuiCol_Text, goalCol);
@@ -2322,8 +2336,6 @@ void Game::renderEntityInspect() {
 		ui::KeyValue("walk_speed", "%.1f", def.walk_speed);
 		ui::KeyValue("run_speed", "%.1f", def.run_speed);
 		ui::KeyValue("max_hp", "%d", def.max_hp);
-		std::string bidDef = e->getProp<std::string>(civcraft::Prop::BehaviorId, "");
-		if (!bidDef.empty()) ui::KeyValue("behavior_id", "%s", bidDef.c_str());
 		ui::KeyValue("gravity_scale", "%.2f", def.gravity_scale);
 		ui::KeyValue("collision",
 			"(%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)",

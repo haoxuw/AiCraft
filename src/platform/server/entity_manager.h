@@ -60,6 +60,12 @@ public:
 				d.collision_box_max = {s.box_max_x, s.box_max_y, s.box_max_z};
 				any = true;
 			}
+			// Data-driven behavior: Python artifact's "behavior" field wins over
+			// any C++ bootstrap value, so every Living gets a decide() loop.
+			if (!s.behavior.empty()) {
+				d.default_props[Prop::BehaviorId] = s.behavior;
+				any = true;
+			}
 			if (any) overridden++;
 		}
 		if (overridden > 0)
@@ -95,6 +101,19 @@ public:
 		EntityId id = m_nextId++;
 		auto entity = std::make_unique<Entity>(id, typeId, *def);
 		entity->position = pos;
+		// Rule: every Living must have a default behavior so an agent client
+		// runs decide() for it. Loud warning next to the spawn is easier to
+		// catch than a silent "never ran AI" failure upstream.
+		if (def->isLiving()) {
+			auto it = def->default_props.find(Prop::BehaviorId);
+			bool hasBid = it != def->default_props.end() &&
+			              std::holds_alternative<std::string>(it->second) &&
+			              !std::get<std::string>(it->second).empty();
+			if (!hasBid)
+				printf("[EntityManager] WARN: spawned living '%s' #%u with no BehaviorId "
+				       "(agent will skip it — add \"behavior\": \"...\" to artifact)\n",
+				       typeId.c_str(), (unsigned)id);
+		}
 		m_entities[id] = std::move(entity);
 		return id;
 	}
