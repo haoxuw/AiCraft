@@ -184,6 +184,12 @@ add_executable(civcraft-ui-vk
 	src/platform/client/game_vk.cpp
 	src/platform/client/game_vk_playing.cpp
 	src/platform/client/game_vk_render.cpp
+	src/platform/client/game_vk_renderers.h
+	src/platform/client/game_vk_renderer_world.cpp
+	src/platform/client/game_vk_renderer_hud.cpp
+	src/platform/client/game_vk_renderer_menu.cpp
+	src/platform/client/game_vk_renderer_panel.cpp
+	src/platform/client/game_vk_renderer_entity_ui.cpp
 	src/platform/client/rhi/rhi.h
 	src/platform/client/rhi/rhi_vk.h
 	src/platform/client/rhi/rhi_vk.cpp

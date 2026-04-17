@@ -34,11 +34,14 @@
 #include "client/hotbar.h"
 #include "client/box_model.h"
 #include "client/equipment_ui.h"
+#include "client/game_vk_renderers.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -180,20 +183,20 @@ private:
 	void updatePickups(float dt);
 
 	// ── Render phases ─────────────────────────────────────────────────────
-	void renderWorld(float wallTime);           // sky + shadows + voxels
-	void renderEntities(float wallTime);        // player + NPCs as box-models
-	void renderEffects(float wallTime);         // particles + slash ribbons
-	void renderHotbarItems3D();                 // held-item models in hotbar slots
-	void renderHUD();                           // lightbulbs, HP bars, hotbar
-	void renderMenu();                          // main menu (ImGui + RHI UI)
-	void renderGameMenu();                      // in-game menu overlay
-	void renderDeath();                         // death overlay + respawn btn
-	void renderDebugOverlay();                  // F3 debug stats
-	void renderTuningPanel();                   // F6 render-tuning sliders
-	void renderHandbook();                      // H handbook browser
-	void renderRTSSelect();                     // box selection rectangle
-	void renderChestUI();                       // chest inventory transfer
-	void renderEntityInspect();                 // entity inspection overlay
+	// Presentation is decomposed into five friend renderer classes that hold
+	// only a `Game&` back-reference — see game_vk_renderers.h. The state
+	// (camera, server, m_rhi, inventories, …) lives here; the pixel-pushing
+	// code lives there.
+	friend class WorldRenderer;
+	friend class HudRenderer;
+	friend class MenuRenderer;
+	friend class PanelRenderer;
+	friend class EntityUiRenderer;
+	WorldRenderer     m_worldRenderer    { *this };
+	HudRenderer       m_hudRenderer      { *this };
+	MenuRenderer      m_menuRenderer     { *this };
+	PanelRenderer     m_panelRenderer    { *this };
+	EntityUiRenderer  m_entityUiRenderer { *this };
 
 	// Projects a world-space anchor to NDC. Returns false if behind camera
 	// or clipped. `out` receives {ndcX, ndcY, depthLinear}.
@@ -439,8 +442,34 @@ private:
 		civcraft::EntityId chestEid = 0;
 	} m_chestUI;
 
-	// F3 debug overlay
-	bool         m_showDebug = false;
+	// F3 debug overlay. Env-var init lets headless screenshots boot with F3 on.
+	bool         m_showDebug = []{
+		const char* v = std::getenv("CIVCRAFT_DEBUG_F3");
+		return v && std::atoi(v) != 0;
+	}();
+
+	// Per-frame section timings — rolls up every 2s as [perf] and fires
+	// [perf-spike] for any frame that busts the threshold.
+	struct FrameProbe {
+		using clock = std::chrono::steady_clock;
+		clock::time_point frameStart;
+		clock::time_point last;
+		std::vector<std::pair<const char*, double>> sections;
+		std::unordered_map<std::string, double> accum;
+		int    frames      = 0;
+		double windowStart = 0.0;
+		double windowMaxMs = 0.0;
+		const double spikeMs = 40.0;
+		const double windowS = 2.0;
+		void begin() { frameStart = clock::now(); last = frameStart; sections.clear(); }
+		void mark(const char* name) {
+			auto now = clock::now();
+			double ms = std::chrono::duration<double, std::milli>(now - last).count();
+			sections.push_back({name, ms});
+			accum[name] += ms;
+			last = now;
+		}
+	} m_frameProbe;
 
 	// F6 render-tuning panel — drives the composite GradingParams UBO.
 	bool                    m_showTuning = false;  // toggled by F6

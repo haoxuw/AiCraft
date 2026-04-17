@@ -707,6 +707,7 @@ void Game::onScroll(double xoff, double yoff) {
 void Game::runOneFrame(float dt, float wallTime) {
 	m_wallTime = wallTime;
 	m_menuTitleT += dt;
+	m_frameProbe.begin();
 
 	int w = 0, h = 0;
 	glfwGetFramebufferSize(m_window, &w, &h);
@@ -715,9 +716,12 @@ void Game::runOneFrame(float dt, float wallTime) {
 
 	// Pump the network connection, stream chunks, run AI.
 	m_server->tick(dt);
+	m_frameProbe.mark("net");
 	streamServerChunks();
+	m_frameProbe.mark("chunks");
 	if (m_agentClient && m_state == GameState::Playing)
 		m_agentClient->tick(dt);
+	m_frameProbe.mark("agent");
 
 	// Event detection — derive DECIDE / COMBAT / DEATH from entity deltas.
 	{
@@ -788,6 +792,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		for (auto it = m_prevInv.begin(); it != m_prevInv.end(); )
 			it = seen.count(it->first) ? std::next(it) : m_prevInv.erase(it);
 	}
+	m_frameProbe.mark("events");
 
 	// ── Sim ────────────────────────────────────────────────────────────
 	processInput(dt);
@@ -814,9 +819,11 @@ void Game::runOneFrame(float dt, float wallTime) {
 
 	// File-based debug triggers (compiled out in Release via NDEBUG).
 	m_debugTriggers.poll();
+	m_frameProbe.mark("sim");
 
 	// ── Render ─────────────────────────────────────────────────────────
-	if (!m_rhi->beginFrame()) return;
+	bool rendered = m_rhi->beginFrame();
+	if (rendered) {
 
 	if (m_state == GameState::Menu) {
 		// Render a calm ambient backdrop so the menu isn't just a
@@ -836,41 +843,55 @@ void Game::runOneFrame(float dt, float wallTime) {
 		glm::vec3 look = glm::normalize(head - m_cam.position);
 		m_cam.lookYaw   = glm::degrees(std::atan2(look.z, look.x));
 		m_cam.lookPitch = glm::degrees(std::asin(look.y));
-		renderWorld(wallTime);
-		renderEffects(wallTime);
+		m_worldRenderer.renderWorld(wallTime);
+		m_worldRenderer.renderEffects(wallTime);
 		m_rhi->imguiNewFrame();
-		renderMenu();
+		m_menuRenderer.renderMenu();
 		m_rhi->imguiRender();
 	} else if (m_state == GameState::Playing) {
-		renderWorld(wallTime);
-		renderEntities(wallTime);
-		renderEffects(wallTime);
-		renderHotbarItems3D();  // 3D inventory icons — must precede HUD 2D
+		m_worldRenderer.renderWorld(wallTime);
+		m_frameProbe.mark("world");
+		m_worldRenderer.renderEntities(wallTime);
+		m_frameProbe.mark("ents");
+		m_worldRenderer.renderEffects(wallTime);
+		m_hudRenderer.renderHotbarItems3D();  // 3D inventory icons — must precede HUD 2D
+		m_frameProbe.mark("fx3d");
 		m_rhi->imguiNewFrame();
-		renderHUD();
-		if (m_chestUI.open) renderChestUI();
-		if (m_inspectedEntity != 0) renderEntityInspect();
-		if (m_showDebug) renderDebugOverlay();
-		if (m_showTuning) renderTuningPanel();
-		if (m_handbookOpen) renderHandbook();
-		renderRTSSelect();
+		m_frameProbe.mark("imNew");
+		m_hudRenderer.renderHUD();
+		m_frameProbe.mark("hud");
+		if (m_chestUI.open) m_entityUiRenderer.renderChestUI();
+		if (m_inspectedEntity != 0) m_entityUiRenderer.renderEntityInspect();
+		if (m_showDebug) m_panelRenderer.renderDebugOverlay();
+		if (m_showTuning) m_panelRenderer.renderTuningPanel();
+		if (m_handbookOpen) m_panelRenderer.renderHandbook();
+		m_entityUiRenderer.renderRTSSelect();
+		m_frameProbe.mark("panels");
 		m_rhi->imguiRender();
+		m_frameProbe.mark("imDraw");
 	} else if (m_state == GameState::GameMenu) {
-		renderWorld(wallTime);
-		renderEntities(wallTime);
-		renderEffects(wallTime);
-		renderHotbarItems3D();
+		m_worldRenderer.renderWorld(wallTime);
+		m_frameProbe.mark("world");
+		m_worldRenderer.renderEntities(wallTime);
+		m_frameProbe.mark("ents");
+		m_worldRenderer.renderEffects(wallTime);
+		m_hudRenderer.renderHotbarItems3D();
+		m_frameProbe.mark("fx3d");
 		m_rhi->imguiNewFrame();
-		renderHUD();       // world keeps ticking underneath
-		renderGameMenu();
-		if (m_showTuning) renderTuningPanel();
+		m_frameProbe.mark("imNew");
+		m_hudRenderer.renderHUD();       // world keeps ticking underneath
+		m_frameProbe.mark("hud");
+		m_menuRenderer.renderGameMenu();
+		if (m_showTuning) m_panelRenderer.renderTuningPanel();
+		m_frameProbe.mark("panels");
 		m_rhi->imguiRender();
+		m_frameProbe.mark("imDraw");
 	} else {  // Dead
-		renderWorld(wallTime);
-		renderEffects(wallTime);
+		m_worldRenderer.renderWorld(wallTime);
+		m_worldRenderer.renderEffects(wallTime);
 		m_rhi->imguiNewFrame();
-		renderHUD();       // still show world state behind the veil
-		renderDeath();
+		m_hudRenderer.renderHUD();       // still show world state behind the veil
+		m_menuRenderer.renderDeath();
 		m_rhi->imguiRender();
 	}
 
@@ -896,6 +917,70 @@ void Game::runOneFrame(float dt, float wallTime) {
 	}
 
 	m_rhi->endFrame();
+	m_frameProbe.mark("present");
+	} // end if (rendered)
+	if (!rendered) m_frameProbe.mark("skip");
+
+	// ── Perf rollup ────────────────────────────────────────────────────
+	// One line every windowS seconds, plus an immediate dump for any
+	// frame that exceeds spikeMs.
+	{
+		double totalMs = std::chrono::duration<double, std::milli>(
+			m_frameProbe.last - m_frameProbe.frameStart).count();
+		m_frameProbe.frames++;
+		m_frameProbe.windowMaxMs = std::max(m_frameProbe.windowMaxMs, totalMs);
+		if (totalMs > m_frameProbe.spikeMs && !m_frameProbe.sections.empty()) {
+			char line[512]; int n = 0;
+			n += std::snprintf(line + n, sizeof(line) - n, "[perf-spike] %.1fms", totalMs);
+			for (auto& [name, ms] : m_frameProbe.sections)
+				n += std::snprintf(line + n, sizeof(line) - n, " %s=%.1f", name, ms);
+			std::fprintf(stderr, "%s\n", line);
+		}
+		double now = std::chrono::duration<double>(
+			m_frameProbe.last.time_since_epoch()).count();
+		if (m_frameProbe.windowStart == 0.0) m_frameProbe.windowStart = now;
+		double elapsed = now - m_frameProbe.windowStart;
+		if (elapsed >= m_frameProbe.windowS && m_frameProbe.frames > 0) {
+			double frames = (double)m_frameProbe.frames;
+			double fps    = frames / elapsed;
+			double avgMs  = 1000.0 / std::max(1.0, fps);
+			// Render-only slice: what the GPU/CPU render path costs per frame,
+			// excluding the serial tick work (net/chunks/agent/events/sim).
+			// Gives the visual-ceiling FPS — i.e. what we'd see if the tick
+			// stages moved off the main thread.
+			static const char* kRenderKeys[] = {
+				"world", "ents", "fx3d", "imNew", "hud",
+				"panels", "imDraw", "present"
+			};
+			double renderMs = 0.0;
+			for (auto* k : kRenderKeys) {
+				auto it = m_frameProbe.accum.find(k);
+				if (it != m_frameProbe.accum.end()) renderMs += it->second / frames;
+			}
+			double renderFps = renderMs > 0.01 ? 1000.0 / renderMs : 0.0;
+			char line[512]; int n = 0;
+			n += std::snprintf(line + n, sizeof(line) - n,
+				"[perf] %.0ffps avg=%.1fms peak=%.1fms render=%.1fms(%.0ffps)",
+				fps, avgMs, m_frameProbe.windowMaxMs, renderMs, renderFps);
+			static const char* kOrder[] = {
+				"net", "chunks", "agent", "events", "sim",
+				"world", "ents", "fx3d",
+				"imNew", "hud", "panels", "imDraw",
+				"present", "skip"
+			};
+			for (auto* k : kOrder) {
+				auto it = m_frameProbe.accum.find(k);
+				if (it == m_frameProbe.accum.end()) continue;
+				n += std::snprintf(line + n, sizeof(line) - n,
+					" %s=%.2f", k, it->second / frames);
+			}
+			std::fprintf(stderr, "%s\n", line);
+			m_frameProbe.accum.clear();
+			m_frameProbe.frames = 0;
+			m_frameProbe.windowStart = now;
+			m_frameProbe.windowMaxMs = 0.0;
+		}
+	}
 }
 
 } // namespace civcraft::vk
