@@ -27,6 +27,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace civcraft::rhi {
@@ -203,6 +205,19 @@ public:
 		if (m_fontTex) glDeleteTextures(1, &m_fontTex);
 		if (m_uiProgram) glDeleteProgram(m_uiProgram);
 		m_uiVao = m_uiVbo = m_fontTex = m_uiProgram = 0;
+
+		if (m_skyVao) glDeleteVertexArrays(1, &m_skyVao);
+		if (m_skyVbo) glDeleteBuffers(1, &m_skyVbo);
+		if (m_skyProgram) glDeleteProgram(m_skyProgram);
+		m_skyVao = m_skyVbo = m_skyProgram = 0;
+
+		for (auto& [_, m] : m_chunkMeshes) {
+			if (m.vbo) glDeleteBuffers(1, &m.vbo);
+			if (m.vao) glDeleteVertexArrays(1, &m.vao);
+		}
+		m_chunkMeshes.clear();
+		if (m_chunkProgram) glDeleteProgram(m_chunkProgram);
+		m_chunkProgram = 0;
 	}
 
 	void onResize(int width, int height) override {
@@ -254,7 +269,38 @@ public:
 	// ── Phase 0 stubs for draw methods (GL game renders directly) ──
 
 	void drawCube(const float[16]) override {}
-	void drawSky(const float[16], const float[3], float) override {}
+
+	void drawSky(const float invVP[16],
+	             const float skyColor[3],
+	             const float horizonColor[3],
+	             const float sunDir[3],
+	             float sunStrength,
+	             float time) override {
+		if (!m_skyProgram && !createSkyResources()) return;
+
+		// Sky pass disables depth-test (full-screen quad at z=0.999) and
+		// re-enables on exit so subsequent draws aren't broken.
+		GLboolean prevDepth = glIsEnabled(GL_DEPTH_TEST);
+		GLboolean prevCull  = glIsEnabled(GL_CULL_FACE);
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_CULL_FACE);
+
+		glUseProgram(m_skyProgram);
+		glUniformMatrix4fv(m_skyUInvVP, 1, GL_FALSE, invVP);
+		glUniform3fv(m_skyUSky,     1, skyColor);
+		glUniform3fv(m_skyUHorizon, 1, horizonColor);
+		glUniform3fv(m_skyUSunDir,  1, sunDir);
+		glUniform1f(m_skyUSunStr,   sunStrength);
+		glUniform1f(m_skyUTime,     time);
+
+		glBindVertexArray(m_skyVao);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		if (prevDepth) glEnable(GL_DEPTH_TEST);
+		if (prevCull)  glEnable(GL_CULL_FACE);
+	}
+
 	void drawVoxels(const SceneParams&, const float*, uint32_t) override {}
 	void drawBoxModel(const SceneParams&, const float*, uint32_t) override {}
 	void renderShadows(const float[16], const float*, uint32_t) override {}
@@ -267,19 +313,68 @@ public:
 	// these are here only so the interface stays uniform across backends.
 	MeshHandle createVoxelMesh(const float*, uint32_t) override { return kInvalidMesh; }
 	void       updateVoxelMesh(MeshHandle, const float*, uint32_t) override {}
-	void       destroyMesh(MeshHandle) override {}
+	void       destroyMesh(MeshHandle mesh) override {
+		// Unified destroy — covers chunk meshes (the only persistent GL meshes
+		// today). Voxel meshes aren't created on this backend, so nothing else
+		// needs handling.
+		auto it = m_chunkMeshes.find(mesh);
+		if (it == m_chunkMeshes.end()) return;
+		if (it->second.vbo) glDeleteBuffers(1, &it->second.vbo);
+		if (it->second.vao) glDeleteVertexArrays(1, &it->second.vao);
+		m_chunkMeshes.erase(it);
+	}
 	void       drawVoxelsMesh(const SceneParams&, MeshHandle) override {}
 	void       renderShadowsMesh(const float[16], MeshHandle) override {}
 
-	// Chunk meshes — GL backend stub for now. Native GL game still routes
-	// terrain through Renderer + ChunkMesh's own VAOs; once the GL chunk-mesh
-	// pipeline is wired up here, ChunkMesh can drop its raw GL handles.
-	MeshHandle createChunkMesh(const float*, uint32_t) override { return kInvalidMesh; }
-	void       updateChunkMesh(MeshHandle, const float*, uint32_t) override {}
-	void       drawChunkMeshOpaque(const SceneParams&, const float[3], float, float,
-	                                MeshHandle) override {}
-	void       drawChunkMeshTransparent(const SceneParams&, const float[3], float, float,
-	                                     MeshHandle) override {}
+	// ── Chunk meshes ────────────────────────────────────────────────────
+	// 13-float vertex layout matches IRhi's spec and the chunk_mesher output;
+	// terrain.vert/frag (moved out of CivCraft into platform/shaders/) carry
+	// the per-vertex AO, fog, glow effects.
+	MeshHandle createChunkMesh(const float* verts, uint32_t vertexCount) override {
+		if (!m_chunkProgram && !createChunkResources()) return kInvalidMesh;
+		ChunkMeshGL m{};
+		m.vertexCount = vertexCount;
+		glGenVertexArrays(1, &m.vao);
+		glGenBuffers(1, &m.vbo);
+		glBindVertexArray(m.vao);
+		glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
+		const GLsizeiptr bytes = (GLsizeiptr)vertexCount * 13 * sizeof(float);
+		glBufferData(GL_ARRAY_BUFFER, bytes, verts, GL_DYNAMIC_DRAW);
+		setupChunkVertexAttribs();
+		glBindVertexArray(0);
+		const MeshHandle h = ++m_nextMesh;
+		m_chunkMeshes.emplace(h, m);
+		return h;
+	}
+	void updateChunkMesh(MeshHandle mesh, const float* verts,
+	                     uint32_t vertexCount) override {
+		auto it = m_chunkMeshes.find(mesh);
+		if (it == m_chunkMeshes.end()) return;
+		it->second.vertexCount = vertexCount;
+		glBindBuffer(GL_ARRAY_BUFFER, it->second.vbo);
+		const GLsizeiptr bytes = (GLsizeiptr)vertexCount * 13 * sizeof(float);
+		// glBufferData reallocates — fine on GL since there's no in-flight
+		// frame to worry about; the next draw sees the new data immediately.
+		glBufferData(GL_ARRAY_BUFFER, bytes, verts, GL_DYNAMIC_DRAW);
+	}
+	void drawChunkMeshOpaque(const SceneParams& scene,
+	                         const float fogColor[3],
+	                         float fogStart, float fogEnd,
+	                         MeshHandle mesh) override {
+		drawChunkMeshInternal(scene, fogColor, fogStart, fogEnd, mesh,
+		                      /*transparent=*/false);
+	}
+	void drawChunkMeshTransparent(const SceneParams& scene,
+	                              const float fogColor[3],
+	                              float fogStart, float fogEnd,
+	                              MeshHandle mesh) override {
+		drawChunkMeshInternal(scene, fogColor, fogStart, fogEnd, mesh,
+		                      /*transparent=*/true);
+	}
+	// GL Renderer doesn't drive a shadow map — civcraft-ui's main client uses
+	// per-entity oval discs instead of cascaded shadows. No-op here keeps the
+	// interface uniform with VK.
+	void renderShadowsChunkMesh(const float[16], MeshHandle) override {}
 
 	void drawUi2D(const float* verts, uint32_t vertCount,
 	              int mode, const float rgba[4]) override {
@@ -338,6 +433,149 @@ public:
 	}
 
 private:
+	// Read a text file fully into a std::string. Returns empty string on
+	// failure; caller treats that as "shader source not found, sky pass
+	// becomes a no-op." Loaded lazily so an init-time failure doesn't crash
+	// callers that don't draw a sky (model_editor etc).
+	static std::string slurp(const char* path) {
+		std::ifstream f(path, std::ios::binary);
+		if (!f) return {};
+		std::string out((std::istreambuf_iterator<char>(f)),
+		                 std::istreambuf_iterator<char>());
+		return out;
+	}
+
+	bool createSkyResources() {
+		// Load CivCraft's sky shader from the platform shader dir (moved out
+		// of src/CivCraft/shaders/ as part of Phase 3 — the platform RHI now
+		// owns the sky pass for all GL clients).
+		std::string vsSrc = slurp("shaders/sky.vert");
+		std::string fsSrc = slurp("shaders/sky.frag");
+		if (vsSrc.empty() || fsSrc.empty()) {
+			fprintf(stderr, "[gl-rhi] sky shader source not found "
+				"(shaders/sky.{vert,frag}); drawSky disabled\n");
+			return false;
+		}
+
+		GLuint vs = compileStage(GL_VERTEX_SHADER, vsSrc.c_str(), "sky.vert");
+		GLuint fs = compileStage(GL_FRAGMENT_SHADER, fsSrc.c_str(), "sky.frag");
+		if (!vs || !fs) return false;
+		m_skyProgram = linkProgram(vs, fs, "sky");
+		if (!m_skyProgram) return false;
+
+		m_skyUInvVP   = glGetUniformLocation(m_skyProgram, "uInvVP");
+		m_skyUSky     = glGetUniformLocation(m_skyProgram, "uSkyColor");
+		m_skyUHorizon = glGetUniformLocation(m_skyProgram, "uHorizonColor");
+		m_skyUSunDir  = glGetUniformLocation(m_skyProgram, "uSunDir");
+		m_skyUSunStr  = glGetUniformLocation(m_skyProgram, "uSunStrength");
+		m_skyUTime    = glGetUniformLocation(m_skyProgram, "uTime");
+
+		// Fullscreen quad — two triangles in NDC. Sky vertex shader pushes
+		// z to 0.999 so the quad sits behind everything.
+		const float quad[] = { -1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1 };
+		glGenVertexArrays(1, &m_skyVao);
+		glGenBuffers(1, &m_skyVbo);
+		glBindVertexArray(m_skyVao);
+		glBindBuffer(GL_ARRAY_BUFFER, m_skyVbo);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
+		glEnableVertexAttribArray(0);
+		glBindVertexArray(0);
+		return true;
+	}
+
+	// Bind the 13-float chunk-vertex layout on the currently-bound VAO/VBO.
+	// Matches IRhi's documented format: pos / color / normal / ao / shade /
+	// alpha / glow at locations 0..6.
+	static void setupChunkVertexAttribs() {
+		const GLsizei stride = 13 * sizeof(float);
+		auto setF = [&](GLuint loc, GLint n, size_t off) {
+			glVertexAttribPointer(loc, n, GL_FLOAT, GL_FALSE, stride,
+				(void*)(off * sizeof(float)));
+			glEnableVertexAttribArray(loc);
+		};
+		setF(0, 3, 0);   // position
+		setF(1, 3, 3);   // color
+		setF(2, 3, 6);   // normal
+		setF(3, 1, 9);   // ao
+		setF(4, 1, 10);  // shade
+		setF(5, 1, 11);  // alpha
+		setF(6, 1, 12);  // glow
+	}
+
+	bool createChunkResources() {
+		std::string vsSrc = slurp("shaders/terrain.vert");
+		std::string fsSrc = slurp("shaders/terrain.frag");
+		if (vsSrc.empty() || fsSrc.empty()) {
+			fprintf(stderr, "[gl-rhi] terrain shader source not found "
+				"(shaders/terrain.{vert,frag}); chunk meshes disabled\n");
+			return false;
+		}
+		GLuint vs = compileStage(GL_VERTEX_SHADER,   vsSrc.c_str(), "terrain.vert");
+		GLuint fs = compileStage(GL_FRAGMENT_SHADER, fsSrc.c_str(), "terrain.frag");
+		if (!vs || !fs) return false;
+		m_chunkProgram = linkProgram(vs, fs, "terrain");
+		if (!m_chunkProgram) return false;
+
+		m_chunkUViewProj = glGetUniformLocation(m_chunkProgram, "uViewProj");
+		m_chunkUSunDir   = glGetUniformLocation(m_chunkProgram, "uSunDir");
+		m_chunkUCamPos   = glGetUniformLocation(m_chunkProgram, "uCamPos");
+		m_chunkUFogColor = glGetUniformLocation(m_chunkProgram, "uFogColor");
+		m_chunkUFogStart = glGetUniformLocation(m_chunkProgram, "uFogStart");
+		m_chunkUFogEnd   = glGetUniformLocation(m_chunkProgram, "uFogEnd");
+		m_chunkUSunStr   = glGetUniformLocation(m_chunkProgram, "uSunStrength");
+		m_chunkUTime     = glGetUniformLocation(m_chunkProgram, "uTime");
+		return true;
+	}
+
+	void drawChunkMeshInternal(const SceneParams& scene,
+	                           const float fogColor[3],
+	                           float fogStart, float fogEnd,
+	                           MeshHandle mesh, bool transparent) {
+		if (!m_chunkProgram) return;
+		auto it = m_chunkMeshes.find(mesh);
+		if (it == m_chunkMeshes.end() || it->second.vertexCount == 0) return;
+
+		// Pass-specific GL state — opaque keeps full depth + back-face cull;
+		// transparent disables depth writes, enables alpha blend, and shows
+		// both faces (thin glass / portals).
+		glEnable(GL_DEPTH_TEST);
+		if (transparent) {
+			glDepthMask(GL_FALSE);
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glDisable(GL_CULL_FACE);
+		} else {
+			glDepthMask(GL_TRUE);
+			glDisable(GL_BLEND);
+			glEnable(GL_CULL_FACE);
+			glCullFace(GL_BACK);
+			glFrontFace(GL_CCW);
+		}
+
+		glUseProgram(m_chunkProgram);
+		glUniformMatrix4fv(m_chunkUViewProj, 1, GL_FALSE, scene.viewProj);
+		glUniform3fv(m_chunkUSunDir,   1, scene.sunDir);
+		glUniform3fv(m_chunkUCamPos,   1, scene.camPos);
+		glUniform3fv(m_chunkUFogColor, 1, fogColor);
+		glUniform1f(m_chunkUFogStart,  fogStart);
+		glUniform1f(m_chunkUFogEnd,    fogEnd);
+		glUniform1f(m_chunkUSunStr,    scene.sunStr);
+		glUniform1f(m_chunkUTime,      scene.time);
+
+		glBindVertexArray(it->second.vao);
+		glDrawArrays(GL_TRIANGLES, 0, (GLsizei)it->second.vertexCount);
+		glBindVertexArray(0);
+
+		// Restore the assumed default state so passes downstream don't see
+		// transparent's depth-mask-off / blend-on bleed-through.
+		if (transparent) {
+			glDepthMask(GL_TRUE);
+			glDisable(GL_BLEND);
+			glEnable(GL_CULL_FACE);
+		}
+	}
+
 	bool createUi2DResources() {
 		// Compile + link the UI shader.
 		GLuint vs = compileStage(GL_VERTEX_SHADER, kUiVertSrc, "ui2d.vert");
@@ -401,6 +639,31 @@ private:
 	GLuint m_uiVao     = 0;
 	GLuint m_uiVbo     = 0;
 	GLint  m_uLocColor = -1, m_uLocAlpha = -1, m_uLocMode = -1, m_uLocFont = -1;
+
+	// Sky pipeline (lazily initialized on first drawSky call).
+	GLuint m_skyProgram = 0;
+	GLuint m_skyVao     = 0;
+	GLuint m_skyVbo     = 0;
+	GLint  m_skyUInvVP   = -1;
+	GLint  m_skyUSky     = -1;
+	GLint  m_skyUHorizon = -1;
+	GLint  m_skyUSunDir  = -1;
+	GLint  m_skyUSunStr  = -1;
+	GLint  m_skyUTime    = -1;
+
+	// Chunk-mesh pipeline (lazy on first createChunkMesh).
+	GLuint m_chunkProgram = 0;
+	GLint  m_chunkUViewProj = -1;
+	GLint  m_chunkUSunDir   = -1;
+	GLint  m_chunkUCamPos   = -1;
+	GLint  m_chunkUFogColor = -1;
+	GLint  m_chunkUFogStart = -1;
+	GLint  m_chunkUFogEnd   = -1;
+	GLint  m_chunkUSunStr   = -1;
+	GLint  m_chunkUTime     = -1;
+	struct ChunkMeshGL { GLuint vao = 0, vbo = 0; uint32_t vertexCount = 0; };
+	std::unordered_map<MeshHandle, ChunkMeshGL> m_chunkMeshes;
+	MeshHandle m_nextMesh = 0;
 };
 
 IRhi* createRhi() { return new GlRhi(); }

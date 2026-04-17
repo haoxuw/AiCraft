@@ -12,6 +12,7 @@ AI-on-agent-clients, server-has-no-display-logic) are summarized in the repo roo
 - [`02_OBJECTS.md`](02_OBJECTS.md) — entities, items, blocks as first-class objects
 - [`03_ACTIONS.md`](03_ACTIONS.md) — the four `ActionProposal` types: MOVE / RELOCATE / CONVERT / INTERACT
 - [`09_CORE_LOOP.md`](09_CORE_LOOP.md) — per-tick loop, `decide()`, server/client responsibility split
+- [`10_CLIENT_SERVER_PHYSICS.md`](10_CLIENT_SERVER_PHYSICS.md) — **mandatory**: unified entity tick, LocalWorld, shared physics, no player special-casing
 - [`15_BLOCK_AND_ENTITY_MODEL.md`](15_BLOCK_AND_ENTITY_MODEL.md) — block & entity data model
 - [`19_OBJECT_MODEL.md`](19_OBJECT_MODEL.md) — Python-as-game: artifact store, hot-loading, customization flow
 - [`28_MATERIAL_VALUE.md`](28_MATERIAL_VALUE.md) — value-conservation rule for CONVERT / RELOCATE
@@ -26,6 +27,7 @@ AI-on-agent-clients, server-has-no-display-logic) are summarized in the repo roo
 
 ## Player-facing features
 
+- [`100_CORE_GAMEPLAY_FEATURE.md`](100_CORE_GAMEPLAY_FEATURE.md) — **the player-facing contract**: four camera modes (FPS/TPS/RPG/RTS), build/break, click-to-move, NPC loops that must work
 - [`07_PLAYER_CODING.md`](07_PLAYER_CODING.md) — in-game Python editor: view & override behaviors
 - [`17_RESOURCE_GUIDE.md`](17_RESOURCE_GUIDE.md) — art direction: making the voxel look great
 - [`18_WEB_CLIENT.md`](18_WEB_CLIENT.md) — WASM web client design (OpenGL migration track)

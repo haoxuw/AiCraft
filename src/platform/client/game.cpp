@@ -1,9 +1,9 @@
 #include "client/game.h"
 #include "client/game_logger.h"
 #include "server/entity_manager.h"
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include "client/model_loader.h"
-#include "shared/physics.h"
+#include "logic/physics.h"
 #include "client/network_server.h"
 #include "imgui.h"
 #include <cmath>
@@ -19,20 +19,9 @@
 
 namespace civcraft {
 
-// ============================================================
-// Screenshot utility
-// ============================================================
-static void writeScreenshot(int w, int h, const char* path) {
-	std::vector<uint8_t> px(w * h * 3);
-	glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px.data());
-	std::vector<uint8_t> fl(w * h * 3);
-	for (int y = 0; y < h; y++)
-		memcpy(&fl[y * w * 3], &px[(h - 1 - y) * w * 3], w * 3);
-	std::ofstream f(path, std::ios::binary);
-	f << "P6\n" << w << " " << h << "\n255\n";
-	f.write((char*)fl.data(), fl.size());
-	printf("Screenshot: %s\n", path);
-}
+// Screenshot now lives on the RHI (IRhi::screenshot writes a PPM to disk).
+// The legacy direct-glReadPixels helper retired with Phase 3 — game.cpp and
+// game_playing.cpp both hand off through m_rhi.
 
 // ============================================================
 // Init / Shutdown
@@ -75,7 +64,7 @@ bool Game::init(int argc, char** argv) {
 		}
 	}
 
-	if (!m_renderer.init("shaders")) return false;
+	if (!m_renderer.init(m_rhi.get(), "shaders")) return false;
 	if (!m_text.init("shaders")) return false;
 	if (!m_particles.init("shaders")) return false;
 
@@ -118,6 +107,8 @@ bool Game::init(int argc, char** argv) {
 	// Load all artifact definitions (Python files from artifacts/)
 	m_artifacts.setPlayerNamespace(ArtifactRegistry::generatePlayerNamespace());
 	m_artifacts.loadAll("artifacts");
+	// Merge Python-declared feature tags into LocalWorld's entity defs
+	m_localWorld.entityDefs().mergeArtifactTags(m_artifacts.livingTags());
 
 	// Parse args
 	{
@@ -314,11 +305,8 @@ bool Game::init(int argc, char** argv) {
 		} else if (d->cam->mode == CameraMode::RPG) {
 			d->cam->godDistanceTarget = std::clamp(d->cam->godDistanceTarget - (float)y * 2, 3.0f, 50.0f);
 		} else if (d->cam->mode == CameraMode::RTS) {
-			// Scroll controls pitch: each wheel tick tilts ~6°, so full sweep
-			// top-down (90°) ↔ horizon (0°) is a dozen clicks. Zoom lives on
-			// the right-drag vertical axis instead.
-			d->cam->rtsAngle = std::clamp(
-				d->cam->rtsAngle + (float)y * 6.0f, 0.0f, 90.0f);
+			// Zoom pivots around rtsCenter (screen center).
+			d->cam->pendingRtsZoom += (float)y;
 		}
 	});
 
@@ -484,6 +472,22 @@ void Game::handleGlobalInput() {
 		std::filesystem::remove("/tmp/civcraft_screenshot_request");
 		saveScreenshot();
 	}
+	if (std::filesystem::exists("/tmp/civcraft_inventory_request")) {
+		std::filesystem::remove("/tmp/civcraft_inventory_request");
+		m_equipUI.toggle();
+		if (m_equipUI.isOpen())
+			glfwSetInputMode(m_window.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		printf("[Game] [trigger] inventory %s\n", m_equipUI.isOpen() ? "OPEN" : "CLOSED");
+	}
+	if (std::filesystem::exists("/tmp/civcraft_camera_request")) {
+		std::filesystem::remove("/tmp/civcraft_camera_request");
+		if (m_camera.mode == CameraMode::FirstPerson)       m_camera.mode = CameraMode::ThirdPerson;
+		else if (m_camera.mode == CameraMode::ThirdPerson)  m_camera.mode = CameraMode::RPG;
+		else if (m_camera.mode == CameraMode::RPG)          m_camera.mode = CameraMode::RTS;
+		else                                                m_camera.mode = CameraMode::FirstPerson;
+		const char* names[] = {"FPS", "ThirdPerson", "RPG", "RTS"};
+		printf("[Game] [trigger] camera → %s\n", names[(int)m_camera.mode]);
+	}
 	if (m_controls.pressed(Action::ToggleDebug))
 		m_showDebug = !m_showDebug;
 
@@ -590,7 +594,7 @@ void Game::saveScreenshot() {
 	snprintf(name, sizeof(name), "civcraft_screenshot_%d.ppm", m_screenshotCounter++);
 	std::string path = (tmp / name).string();
 
-	writeScreenshot(m_window.width(), m_window.height(), path.c_str());
+	m_rhi->screenshot(path.c_str());
 	printf("Screenshot saved: %s\n", path.c_str());
 
 	// Best-effort clipboard copy (platform-specific)
@@ -785,7 +789,7 @@ void Game::joinServer(const std::string& host, int port, GameState targetState) 
 			usleep(200000);
 		}
 #endif
-		auto netServer = std::make_unique<NetworkServer>(host, port);
+		auto netServer = std::make_unique<NetworkServer>(host, port, m_localWorld);
 		netServer->setDisplayName(m_playerName);
 		netServer->setCreatureType(m_selectedCreature);
 		if (netServer->beginConnect()) {
@@ -926,11 +930,15 @@ void Game::setupAfterConnect(GameState targetState) {
 	glm::vec3 spawn = m_server->spawnPos();
 	m_camera.player.feetPos = spawn;
 
-	// Face +Z: toward portal stairs and village beyond
+	// Face +Z: toward portal stairs and village beyond. Sync every camera
+	// mode's heading so V-cycling keeps the player looking at the village.
 	float spawnYaw = 90.0f;
-	m_camera.player.yaw = spawnYaw;
-	m_camera.lookYaw = spawnYaw;
-	m_camera.lookPitch = -5;
+	m_camera.player.yaw  = spawnYaw;
+	m_camera.lookYaw     = spawnYaw;
+	m_camera.orbitYaw    = spawnYaw;
+	m_camera.godOrbitYaw = spawnYaw;
+	m_camera.rtsOrbitYaw = spawnYaw;
+	m_camera.lookPitch   = -5;
 	m_camera.resetSmoothing();
 	// Pre-initialize RTS/RPG camera centers to player spawn so switching
 	// to those modes looks at the right place from the start.

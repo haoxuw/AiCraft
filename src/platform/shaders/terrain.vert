@@ -8,8 +8,9 @@ layout(location = 4) in float aShade;
 layout(location = 5) in float aAlpha;
 layout(location = 6) in float aGlow;
 
-uniform mat4 uView;
-uniform mat4 uProj;
+// Combined view*projection — RHI's SceneParams provides this as one matrix
+// so backends don't have to decompose it.
+uniform mat4 uViewProj;
 
 out vec3 vColor;
 out vec3 vNormal;
@@ -28,5 +29,5 @@ void main() {
 	vAlpha = aAlpha;
 	vGlow = aGlow;
 
-	gl_Position = uProj * uView * vec4(aPos, 1.0);
+	gl_Position = uViewProj * vec4(aPos, 1.0);
 }

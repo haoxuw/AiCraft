@@ -15,7 +15,7 @@
 
 #include "client/text_input.h"
 #include "client/text.h"
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <string>
 #include <GLFW/glfw3.h>
 

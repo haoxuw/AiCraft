@@ -18,7 +18,7 @@
 
 #include "client/attack_anim.h"
 #include "client/particles.h"
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <glm/glm.hpp>
 #include <cmath>
 

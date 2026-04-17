@@ -1,6 +1,6 @@
 #pragma once
 
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>

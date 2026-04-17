@@ -15,13 +15,14 @@
 #include "server/world.h"
 #include "server/entity_manager.h"
 #include "server/world_gen_config.h"
-#include "shared/action.h"
-#include "shared/constants.h"
-#include "shared/physics.h"
+#include "logic/action.h"
+#include "logic/constants.h"
+#include "logic/physics.h"
 #include "server/world_template.h"
 #include "server/pathfind.h"
 #include "server/structure_blueprint.h"
 #include "server/structure_block_cacher.h"
+#include "server/weather.h"
 #include "shared/block_registry.h"
 // Owned-NPC persistence across client sessions. Included at namespace scope
 // (before the `namespace civcraft {` below) because its <string>/<vector>
@@ -143,7 +144,20 @@ public:
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
 		m_wgc = config.worldGenConfig;
 		m_hpRegenInterval = config.hpRegenInterval;
-		m_worldTime = 0.25f; // start at dawn
+		m_worldTime = 0.26f; // start just after sunrise — sun a few degrees above horizon for pink clouds + blue sky
+		// Day length is a Python-configurable knob (Rule 1). Default 1200s / 20min.
+		m_dayLengthTicks = tmpl->pyConfig().dayLengthTicks;
+
+		// Weather schedule: optional Python artifact path (relative to the
+		// staged artifacts/ directory, same convention world templates use).
+		// Empty falls back to the "clear" default baked into WeatherPyConfig.
+		WeatherPyConfig wcfg;
+		if (!tmpl->pyConfig().weatherSchedule.empty()) {
+			std::string wpath = std::string("artifacts/")
+			                  + tmpl->pyConfig().weatherSchedule;
+			loadWeatherSchedule(wpath, wcfg);
+		}
+		m_weather.load(wcfg, (uint32_t)config.seed);
 
 		// Ask the template where the player should spawn
 		glm::vec3 rawSpawn = tmpl->preferredSpawn(config.seed);
@@ -684,8 +698,16 @@ public:
 		}
 		markPhase(m_lastTickProfile.structureRegenMs);
 
-		// Advance world time
-		m_worldTime += (1.0f / 1200.0f) * dt; // 20-min cycle: 5min each night/morning/afternoon/evening
+		// Advance world time. One unit = one full day; dayLengthTicks is the
+		// real-second length of that unit (Python-configurable, default 1200s).
+		m_worldTime += (1.0f / (float)m_dayLengthTicks) * dt;
+		if (m_worldTime >= 1.0f) m_worldTime -= std::floor(m_worldTime);
+
+		// Advance the Markov weather schedule. Wind vector updates every tick;
+		// kind/intensity change only at scheduled transitions. ClientManager
+		// reads m_weather.state() + checkAndClearDirty() to decide whether to
+		// broadcast S_WEATHER this frame.
+		m_weather.tick(dt);
 
 		// Stuck detection: periodically check if walking entities haven't moved
 		m_stuckTimer += dt;
@@ -751,6 +773,10 @@ public:
 	const World& world() const { return *m_world; }
 	float worldTime() const { return m_worldTime; }
 	void setWorldTime(float t) { m_worldTime = t; }
+	// Weather state — read by ClientManager::broadcastState and wired through
+	// ServerInterface so the GUI client can also render local visuals.
+	const WeatherState& weather() const { return m_weather.state(); }
+	WeatherController&  weatherController()       { return m_weather; }
 	glm::vec3 spawnPos() const { return m_spawnPos; }
 	void setSpawnPos(glm::vec3 p) { m_spawnPos = p; }
 	const WorldGenConfig& worldGenConfig() const { return m_wgc; }
@@ -814,6 +840,8 @@ private:
 	ServerCallbacks m_callbacks;
 	WorldGenConfig m_wgc;
 	float m_worldTime = 0.30f;
+	int   m_dayLengthTicks = 1200;   // seeded from WorldPyConfig in initWorld
+	WeatherController m_weather;     // Markov-chain weather state (global)
 	float m_activeBlockTimer = 0;
 	float m_stuckTimer = 0;
 	float m_regenTimer = 0;

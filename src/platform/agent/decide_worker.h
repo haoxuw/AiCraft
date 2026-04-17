@@ -19,8 +19,8 @@
  *     race, acceptable per project policy).
  */
 
-#include "shared/types.h"
-#include "shared/entity.h"
+#include "logic/types.h"
+#include "logic/entity.h"
 #include "server/behavior.h"            // Plan, PlanStep
 #include "server/python_bridge.h"       // BehaviorHandle, NearbyEntity, EntitySnapshot
 #include "agent/decision_queue.h"       // LastOutcome

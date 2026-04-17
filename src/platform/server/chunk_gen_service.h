@@ -19,8 +19,8 @@
  * workers check the cancel set before doing expensive work.
  */
 
-#include "shared/types.h"
-#include "shared/net_protocol.h"
+#include "logic/types.h"
+#include "net/net_protocol.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>

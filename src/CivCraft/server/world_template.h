@@ -1,9 +1,9 @@
 #pragma once
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include "server/noise.h"
 #include "server/world_gen_config.h"
 #include "server/python_bridge.h"

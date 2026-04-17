@@ -15,9 +15,9 @@
  * mapping survives server restarts where the ephemeral playerId changes.
  */
 
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include "server/entity_manager.h"
-#include "shared/inventory.h"
+#include "logic/inventory.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>

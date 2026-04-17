@@ -1,6 +1,6 @@
 #pragma once
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk_source.h"
 #include <glm/glm.hpp>
 #include <optional>

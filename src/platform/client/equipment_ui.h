@@ -15,12 +15,11 @@
  *   - Dark fantasy theme (charcoal, gold accents)
  */
 
-#include "shared/inventory.h"
+#include "logic/inventory.h"
 #include "shared/block_registry.h"
-#include "shared/material_values.h"
+#include "logic/material_values.h"
 #include "client/box_model.h"
-#include "client/model_icon_cache.h"
-#include "client/inventory_visuals.h"
+#include "client/inventory_visuals.h"   // forward-declares ModelIconCache for VK
 #include <imgui.h>
 #include <string>
 #include <cmath>
@@ -171,7 +170,10 @@ private:
 
 	bool m_open = false;
 	float m_time = 0;
-	SortMode m_sortMode = SortMode::Name;
+	// Grid by default: items sit in real 72×72 square cells with space for
+	// a clear icon, rather than the compact name-sorted list that squeezes
+	// the iso-cube into a ~30 px strip.
+	SortMode m_sortMode = SortMode::Grid;
 	std::unordered_map<std::string, int> m_gridSlot; // id → slot index (Grid mode only)
 	std::string m_dragItem;     // item being dragged
 	std::string m_contextItem;  // for context menu

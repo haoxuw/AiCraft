@@ -15,4 +15,5 @@ item = {
 
     "model": "potion",
     "color": [0.8, 0.2, 0.3],
+    "held_shape": "flask",
 }

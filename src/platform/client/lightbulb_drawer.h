@@ -1,7 +1,7 @@
 #pragma once
 
 #include "client/rhi/rhi.h"
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <glm/glm.hpp>
 
 namespace civcraft {

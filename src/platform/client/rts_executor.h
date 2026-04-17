@@ -24,12 +24,12 @@
  */
 
 #include "agent/pathfind.h"
-#include "shared/action.h"
+#include "logic/action.h"
 #include "shared/block_registry.h"
 #include "shared/chunk_source.h"
-#include "shared/constants.h"
-#include "shared/entity.h"
-#include "shared/server_interface.h"
+#include "logic/constants.h"
+#include "logic/entity.h"
+#include "net/server_interface.h"
 #include <glm/glm.hpp>
 #include <atomic>
 #include <chrono>

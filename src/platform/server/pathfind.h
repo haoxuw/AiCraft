@@ -20,8 +20,8 @@
  */
 
 #include "server/server_tuning.h"
-#include "shared/entity.h"
-#include "shared/physics.h"
+#include "logic/entity.h"
+#include "logic/physics.h"
 #include <glm/glm.hpp>
 #include <vector>
 #include <cmath>

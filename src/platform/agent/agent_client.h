@@ -15,14 +15,14 @@
  * Plan visualization data is exposed for the renderer.
  */
 
-#include "shared/server_interface.h"
+#include "net/server_interface.h"
 #include "server/behavior_store.h"
 #include "server/behavior.h"
 #include "server/python_bridge.h"
 #include "agent/decision_queue.h"
 #include "agent/behavior_executor.h"
 #include "agent/decide_worker.h"  // TODO(decide-loop) Step 3: used when worker is wired up
-#include "shared/move_stuck_log.h"
+#include "debug/move_stuck_log.h"
 #include <unordered_map>
 #include <vector>
 #include <string>

@@ -109,6 +109,22 @@ its own display:
 - Damage text → client compares HP snapshots from successive `S_ENTITY` messages
 - Sounds, particles → client-side, triggered by client-observable events
 
+### Rule 6: Unified Physics, One Source of Truth
+
+**See `src/CivCraft/docs/10_CLIENT_SERVER_PHYSICS.md` for the full spec.**
+
+- **One tick loop** on the client for ALL entities (player + NPCs). No
+  `tickPlayer()` vs `tickNPC()` — there is `tickEntities()`.
+- **No dual state.** Entity position lives in `entity.position`. No parallel
+  `m_player.pos`. The player is just an entity whose input comes from the keyboard.
+- **LocalWorld** is the client's single chunk store (`ChunkSource`). Shared by
+  the player tick, agent ticks, chunk mesher, and raycasting.
+- **`moveAndCollide()`** in `logic/physics.h` is the ONE physics implementation.
+  Client and server both call it — the only difference is what backs the
+  `BlockSolidFn`: `LocalWorld` (client, incomplete) vs `World` (server, complete).
+- **Reconciliation is uniform.** The player and owned NPCs are reconciled against
+  server broadcasts with the same logic. No player special-casing.
+
 ## Architecture
 
 Three process types — **always TCP**, same architecture for singleplayer and multiplayer:
@@ -252,11 +268,20 @@ src/
     agent/                  Agent client — Python + pybind11, no OpenGL
       agent_client.h          TCP, receives world state, runs Python decide(), sends actions
       behavior_executor.h     BehaviorAction → ActionProposal translation
-    client/                 Rendering + input — OpenGL, no Python, no server-ownership
-      game.cpp                Main game loop, state machine, UI orchestration
+    client/                 Rendering + input — OpenGL/Vulkan, no Python, no server-ownership
+      game.cpp                GL client: main game loop, state machine, UI
+      game_vk.cpp             VK client: main loop, state transitions, playerEntity()
+      game_vk_playing.cpp     VK client: player tick, input, combat, block ops
+      game_vk_render.cpp      VK client: all rendering (world, entities, HUD, menus)
+      local_world.h           Client's single source of truth for terrain (ChunkSource)
       gameplay.cpp            Player input → ActionProposals
       process_manager.h       AgentManager: spawns the game server for singleplayer
+    logic/                  Simulation types (was shared/) — linked by ALL
+      entity.h, physics.h, action.h, inventory.h, constants.h, …
+    net/                    Networking — net_protocol.h, server_interface.h, net_socket.h
+    debug/                  Diagnostics — crash_log.h, move_stuck_log.h, entity_log.h
     shaders/  fonts/  docs/ Platform-level assets + architecture docs
+    tools/                  Thin entry points (civcraft_ui_vk/main.cpp)
 
   CivCraft/                 ← Voxel sandbox game (C++)
     main.cpp, main_server.cpp, main_client.cpp
@@ -264,6 +289,10 @@ src/
     server/                 world.h, world_template.h, noise.h, structure_blueprint.h, pathfind (voxel), …
     client/                 chunk_mesher, renderer, raycast, fog_of_war, hotbar, inventory_visuals, gameplay_interaction
     content/                C++ fallback block + entity registrations (builtin.cpp)
+
+  tests/                    ← E2E and regression tests
+    test_e2e.cpp              Headless gameplay tests (uses TestServer)
+    test_pathfinding.cpp      Pathfinding regression tests
 
   artifacts/                ← Python game content (top-level — most-modded surface)
                               hot-loadable, no rebuild needed
@@ -279,10 +308,11 @@ src/
 ```
 
 ### Dependency Rules
-- `platform/shared/` → nothing
-- `platform/server/` → `shared/` (no OpenGL, no Python except via pybind)
-- `platform/agent/` → `shared/` + `server/behavior.h` + Python
-- `platform/client/` → `shared/` (no Python, no server ownership)
+- `platform/logic/` → nothing (pure types, linked by all)
+- `platform/net/` → `logic/` (networking protocol types)
+- `platform/server/` → `logic/` (no OpenGL, no Python except via pybind)
+- `platform/agent/` → `logic/` + `server/behavior.h` + Python
+- `platform/client/` → `logic/` (no Python, no server ownership)
 - `CivCraft/` → `platform/` + its own files
 
 ## Code Style

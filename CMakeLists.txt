@@ -196,8 +196,6 @@ set(CIVCRAFT_CONTENT_SOURCES
 set(CIVCRAFT_CLIENT_SOURCES
 	src/CivCraft/client/chunk_mesher.h
 	src/CivCraft/client/chunk_mesher.cpp
-	src/CivCraft/client/chunk_mesh_gl.h
-	src/CivCraft/client/chunk_mesh_gl.cpp
 	src/CivCraft/client/renderer.h
 	src/CivCraft/client/renderer.cpp
 	src/CivCraft/client/gameplay_interaction.cpp
@@ -257,7 +255,7 @@ else()
 		src/platform/client/rhi/rhi_ui.cpp
 	)
 	target_include_directories(civcraft-ui PRIVATE ${GAME_INCLUDE_DIRS})
-	target_compile_definitions(civcraft-ui PRIVATE AICRAFT_RHI_GL)
+	target_compile_definitions(civcraft-ui PRIVATE AICRAFT_RHI_GL CIVCRAFT_USE_GL_ICONS)
 	target_link_libraries(civcraft-ui PRIVATE
 		glfw glad_gl_core_41 glm::glm OpenGL::GL
 		Python3::Python pybind11::embed
@@ -278,7 +276,7 @@ else()
 
 	# === Headless E2E test runner ===
 	add_executable(civcraft-test
-		src/CivCraft/test/test_e2e.cpp
+		src/tests/test_e2e.cpp
 		${FULL_SIM_SOURCES}
 	)
 	target_include_directories(civcraft-test PRIVATE ${GAME_INCLUDE_DIRS})
@@ -344,7 +342,7 @@ else()
 	# Same FULL_SIM_SOURCES as civcraft-test; separate binary so the pathfinding
 	# suite can run (and fail) independently of gameplay e2e.
 	add_executable(civcraft-test-pathfinding
-		src/CivCraft/test/test_pathfinding.cpp
+		src/tests/test_pathfinding.cpp
 		${FULL_SIM_SOURCES}
 	)
 	target_include_directories(civcraft-test-pathfinding PRIVATE ${GAME_INCLUDE_DIRS})
@@ -392,6 +390,7 @@ else()
 			${VK_SHADER_SRC_DIR}/text2d.frag
 			${VK_SHADER_SRC_DIR}/chunk_terrain.vert
 			${VK_SHADER_SRC_DIR}/chunk_terrain.frag
+			${VK_SHADER_SRC_DIR}/shadow_chunk.vert
 		)
 		set(VK_SPV_OUTPUTS "")
 		foreach(SHADER ${VK_SHADER_SOURCES})
@@ -417,29 +416,58 @@ else()
 	if(Vulkan_FOUND)
 		add_executable(civcraft-ui-vk
 			src/platform/tools/civcraft_ui_vk/main.cpp
-			src/platform/tools/civcraft_ui_vk/game_vk.h
-			src/platform/tools/civcraft_ui_vk/game_vk.cpp
+			src/platform/client/game_vk.h
+			src/platform/client/game_vk.cpp
+			src/platform/client/game_vk_playing.cpp
+			src/platform/client/game_vk_render.cpp
 			src/platform/client/rhi/rhi.h
 			src/platform/client/rhi/rhi_vk.h
 			src/platform/client/rhi/rhi_vk.cpp
 			src/platform/client/rhi/rhi_ui.cpp
-			# CivCraft chunk_mesher — backend-agnostic now that the GL upload
-			# code is split into chunk_mesh_gl.cpp. Pulled in so the VK slice
-			# can mesh real CivCraft Chunks through the new chunk-mesh pipeline.
+			# Audio — miniaudio-based spatial audio; VK consumes the same
+			# system GL uses so sounds are derived client-side from the TCP
+			# stream (Rule 5: no server-emitted audio).
+			src/platform/client/audio.h
+			src/platform/client/audio.cpp
+			# CivCraft chunk_mesher — backend-agnostic. Pulled in so the VK
+			# slice can mesh real CivCraft Chunks through IRhi::createChunkMesh.
+			src/platform/client/camera.h
+			src/platform/client/camera.cpp
 			src/CivCraft/client/chunk_mesher.h
 			src/CivCraft/client/chunk_mesher.cpp
+			# Real-server connection path. NetworkServer is header-only but
+			# transitively pulls in the full sim type set (server.h, chunk,
+			# block_registry, content/builtin) — link FULL_SIM_SOURCES so
+			# every needed .cpp ends up in the binary, same as civcraft-ui.
+			${FULL_SIM_SOURCES}
 		)
 		target_include_directories(civcraft-ui-vk PRIVATE src/platform src/CivCraft)
 		target_compile_definitions(civcraft-ui-vk PRIVATE AICRAFT_RHI_VK)
 		target_link_libraries(civcraft-ui-vk PRIVATE
 			glfw glm::glm Vulkan::Vulkan imgui_lib_vk
+			Python3::Python pybind11::embed
+			libzstd_static
 		)
 		add_dependencies(civcraft-ui-vk vk_shaders)
 		# Stage SPIR-V shaders next to the binary so it finds them at runtime
 		# regardless of CWD (same pattern as the GL build's asset staging).
+		# Also stage python/ + artifacts/ — the Python embedding brought in
+		# with FULL_SIM_SOURCES expects them at CWD when the civcraft-server
+		# child process spawns. (The VK binary itself doesn't run Python —
+		# but it shares the singleplayer spawn flow with civcraft-ui.)
 		add_custom_command(TARGET civcraft-ui-vk POST_BUILD
 			COMMAND ${CMAKE_COMMAND} -E copy_directory
 				${VK_SHADER_OUT_DIR} $<TARGET_FILE_DIR:civcraft-ui-vk>/shaders/vk
+			COMMAND ${CMAKE_COMMAND} -E copy_directory
+				${CMAKE_SOURCE_DIR}/src/CivCraft/python $<TARGET_FILE_DIR:civcraft-ui-vk>/python
+			COMMAND ${CMAKE_COMMAND} -E copy_directory
+				${CMAKE_SOURCE_DIR}/src/artifacts $<TARGET_FILE_DIR:civcraft-ui-vk>/artifacts
+			COMMAND ${CMAKE_COMMAND} -E copy_directory
+				${CMAKE_SOURCE_DIR}/src/CivCraft/config $<TARGET_FILE_DIR:civcraft-ui-vk>/config
+			# Sound + texture assets — AudioManager::loadSoundsFrom expects
+			# resources/sounds/ under CWD. Use cp -ru so rebuilds pick up new
+			# files incrementally without re-copying unchanged ones.
+			COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/CivCraft/resources $<TARGET_FILE_DIR:civcraft-ui-vk>/
 		)
 		message(STATUS "civcraft-ui-vk: enabled (Vulkan ${Vulkan_VERSION})")
 	else()

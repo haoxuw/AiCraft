@@ -1,7 +1,7 @@
 #pragma once
 
-#include "shared/entity.h"
-#include "shared/physics.h"
+#include "logic/entity.h"
+#include "logic/physics.h"
 
 namespace civcraft {
 

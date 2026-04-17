@@ -9,7 +9,7 @@
  * terrain from cached server data.
  */
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
 #include <array>

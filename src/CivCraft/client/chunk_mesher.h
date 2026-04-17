@@ -4,11 +4,11 @@
 // into a per-vertex stream ready for the GPU.
 //
 // This header is graphics-backend agnostic: it produces std::vector<ChunkVertex>
-// and never touches GL or Vulkan. The GL upload + draw container lives in
-// chunk_mesh_gl.h; the Vulkan backend uploads the same vertex stream through
-// IRhi::createChunkMesh.
+// and never touches GL or Vulkan. Both backends consume the same stream via
+// IRhi::createChunkMesh — the GL backend uploads to a VBO + binds the 13-float
+// vertex layout, the VK backend uploads to a device-local buffer.
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
 #include "shared/chunk_source.h"

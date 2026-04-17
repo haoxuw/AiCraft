@@ -13,10 +13,10 @@
 #include "server/world_save.h"
 #include "client/world_manager.h"
 #include "content/builtin.h"
-#include "shared/net_socket.h"
-#include "shared/net_protocol.h"
+#include "net/net_socket.h"
+#include "net/net_protocol.h"
 #include "server/python_bridge.h"
-#include "shared/artifact_registry.h"
+#include "logic/artifact_registry.h"
 #include <cstdio>
 #include <cstring>
 #include <chrono>

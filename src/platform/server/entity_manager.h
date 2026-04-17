@@ -8,13 +8,13 @@
  * Entity AI arrives as ActionProposals from agent client processes over TCP.
  */
 
-#include "shared/entity.h"
-#include "shared/constants.h"
-#include "shared/physics.h"
-#include "shared/entity_physics.h"
-#include "shared/move_stuck_log.h"
+#include "logic/entity.h"
+#include "logic/constants.h"
+#include "logic/physics.h"
+#include "logic/entity_physics.h"
+#include "debug/move_stuck_log.h"
 #include "server/server_tuning.h"
-#include "shared/action.h"
+#include "logic/action.h"
 #include <unordered_map>
 #include <memory>
 #include <vector>

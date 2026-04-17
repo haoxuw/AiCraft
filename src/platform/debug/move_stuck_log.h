@@ -9,7 +9,7 @@
 // per-entity cooldown still applies so a single flailing entity doesn't
 // overrun its own file either.
 
-#include "types.h"
+#include "logic/types.h"
 #include "entity_log.h"
 
 #include <chrono>

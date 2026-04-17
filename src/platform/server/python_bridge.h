@@ -20,8 +20,8 @@
  * Also provides world config and structure blueprint loading from Python artifacts.
  */
 
-#include "shared/entity.h"
-#include "shared/action.h"
+#include "logic/entity.h"
+#include "logic/action.h"
 #include "server/behavior.h"
 #include <string>
 #include <memory>
@@ -111,6 +111,12 @@ struct WorldPyConfig {
 	// spawn. Default 11 mirrors the historical STREAM_R behavior.
 	int   preloadRadiusChunks    = 11;
 
+	// Day/night cycle length in real seconds (at 60 tps → 1 unit = 60s).
+	// GameServer advances m_worldTime by (1/dayLengthTicks * dt) per tick
+	// so worldTime ∈ [0,1) completes one full cycle every dayLengthTicks
+	// seconds. 1200 = 20-minute day (default). Python: `day_length_ticks`.
+	int   dayLengthTicks         = 1200;
+
 	// Mobs
 	//   spawnAt: optional "monument" | "barn" | "portal" string from Python.
 	//     Translated to WorldGenConfig::SpawnAnchor in server init. Empty
@@ -128,10 +134,47 @@ struct WorldPyConfig {
 		{"dog",      2, 4.0f,  "barn"},
 		{"cat",      2, 4.0f,  "barn"},
 	};
+
+	// Weather schedule path (relative to src/artifacts). Empty = static "clear"
+	// weather, no transitions. Python-configurable via world_config `weather:`
+	// key (see artifacts/worlds/base/weather/temperate.py).
+	std::string weatherSchedule;
+};
+
+// ============================================================
+// WeatherPyConfig — Markov-chain weather schedule.
+// Read by the server's WeatherController and advanced each tick.
+// ============================================================
+struct WeatherPyConfig {
+	struct Kind {
+		std::string name;           // "clear" | "rain" | "snow" | "leaves" | ...
+		float       meanSeconds  = 300.0f;  // mean time-in-state (exponential)
+		float       minIntensity = 0.0f;    // uniform pick in [min,max]
+		float       maxIntensity = 1.0f;
+		// Transition probabilities. Keys reference other Kind::name entries.
+		// Weights don't need to sum to 1; controller normalises.
+		std::vector<std::pair<std::string, float>> next;
+	};
+	std::vector<Kind> kinds = {
+		{"clear", 600.0f, 0.0f, 0.0f, {{"clear", 1.0f}}},
+	};
+	// Wind model — base vector in world XZ, plus a low-frequency sinusoid.
+	float baseWindX      = 0.0f;
+	float baseWindZ      = 0.0f;
+	float windNoiseAmp   = 0.0f;
+	float windNoiseScale = 30.0f;          // seconds per full cycle
+
+	// Initial kind on world spawn. Must match one of kinds[].name. Falls back
+	// to kinds[0] if unknown.
+	std::string initialKind = "clear";
 };
 
 // Load world template config from a Python artifact file.
 bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out);
+
+// Load a weather schedule from a Python artifact file (see temperate.py).
+// Returns false on parse error; `out` is unchanged on failure.
+bool loadWeatherSchedule(const std::string& filePath, WeatherPyConfig& out);
 
 // Forward-declare StructureBlueprint (defined in structure_blueprint.h).
 struct StructureBlueprint;

@@ -73,6 +73,7 @@ bool VkRhi::init(const InitInfo& info) {
 	if (!createVoxelPipeline()) return false;
 	if (!createBoxModelPipeline()) return false;
 	if (!createChunkPipelines()) return false;
+	if (!createChunkShadowPipeline()) return false;
 	if (!createSkyPipeline()) return false;
 	if (!createParticlePipeline()) return false;
 	if (!createRibbonPipeline()) return false;
@@ -911,21 +912,24 @@ bool VkRhi::createBoxShadowPipeline() {
 	stages[1].module = fs; stages[1].pName = "main";
 
 	// binding 0 = per-vertex unit cube (6 floats = pos+normal);
-	// binding 1 = per-instance box data (9 floats = worldPos, size, color).
+	// binding 1 = per-instance box data (19 floats = mat4 model + vec3 color).
+	// Layout matches createBoxModelPipeline so one buffer feeds both passes.
 	VkVertexInputBindingDescription binds[2]{};
-	binds[0].binding = 0; binds[0].stride = sizeof(float)*6; binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-	binds[1].binding = 1; binds[1].stride = sizeof(float)*9; binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-	VkVertexInputAttributeDescription attrs[5]{};
-	attrs[0].location = 0; attrs[0].binding = 0; attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[0].offset = 0;
-	attrs[1].location = 1; attrs[1].binding = 0; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = sizeof(float)*3;
-	attrs[2].location = 2; attrs[2].binding = 1; attrs[2].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[2].offset = 0;
-	attrs[3].location = 3; attrs[3].binding = 1; attrs[3].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[3].offset = sizeof(float)*3;
-	attrs[4].location = 4; attrs[4].binding = 1; attrs[4].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[4].offset = sizeof(float)*6;
+	binds[0].binding = 0; binds[0].stride = sizeof(float)*6;  binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+	binds[1].binding = 1; binds[1].stride = sizeof(float)*19; binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+	VkVertexInputAttributeDescription attrs[7]{};
+	attrs[0].location = 0; attrs[0].binding = 0; attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;    attrs[0].offset = 0;
+	attrs[1].location = 1; attrs[1].binding = 0; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT;    attrs[1].offset = sizeof(float)*3;
+	attrs[2].location = 2; attrs[2].binding = 1; attrs[2].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[2].offset = sizeof(float)*0;
+	attrs[3].location = 3; attrs[3].binding = 1; attrs[3].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[3].offset = sizeof(float)*4;
+	attrs[4].location = 4; attrs[4].binding = 1; attrs[4].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[4].offset = sizeof(float)*8;
+	attrs[5].location = 5; attrs[5].binding = 1; attrs[5].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[5].offset = sizeof(float)*12;
+	attrs[6].location = 6; attrs[6].binding = 1; attrs[6].format = VK_FORMAT_R32G32B32_SFLOAT;    attrs[6].offset = sizeof(float)*16;
 
 	VkPipelineVertexInputStateCreateInfo vi{};
 	vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 	vi.vertexBindingDescriptionCount = 2; vi.pVertexBindingDescriptions = binds;
-	vi.vertexAttributeDescriptionCount = 5; vi.pVertexAttributeDescriptions = attrs;
+	vi.vertexAttributeDescriptionCount = 7; vi.pVertexAttributeDescriptions = attrs;
 
 	VkPipelineInputAssemblyStateCreateInfo ia{};
 	ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -988,6 +992,101 @@ bool VkRhi::createBoxShadowPipeline() {
 	return r == VK_SUCCESS;
 }
 
+// Chunk-mesh shadow pipeline. Reads only inPos at location 0 from the
+// 13-float chunk vertex stream — the unused attributes are still declared
+// in shadow_chunk.vert so the vertex input layout matches chunk_terrain's
+// (otherwise the validator would complain about location-mismatch). Shares
+// m_shadowLayout (push constant = mat4 shadowVP) and m_shadowRenderPass
+// with the voxel + box shadow pipelines.
+bool VkRhi::createChunkShadowPipeline() {
+	auto vsCode = readFile("shaders/vk/shadow_chunk.vert.spv");
+	auto fsCode = readFile("shaders/vk/shadow.frag.spv");
+	if (vsCode.empty() || fsCode.empty()) return false;
+	VkShaderModule vs = makeModule(m_device, vsCode);
+	VkShaderModule fs = makeModule(m_device, fsCode);
+
+	VkPipelineShaderStageCreateInfo stages[2]{};
+	stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	stages[0].module = vs; stages[0].pName = "main";
+	stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	stages[1].module = fs; stages[1].pName = "main";
+
+	// Single per-vertex binding, 13 floats: pos[3] color[3] normal[3] ao shade alpha glow.
+	VkVertexInputBindingDescription bind{};
+	bind.binding = 0; bind.stride = sizeof(float)*13; bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+	VkVertexInputAttributeDescription attrs[7]{};
+	attrs[0].location = 0; attrs[0].binding = 0; attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[0].offset = sizeof(float)*0;
+	attrs[1].location = 1; attrs[1].binding = 0; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = sizeof(float)*3;
+	attrs[2].location = 2; attrs[2].binding = 0; attrs[2].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[2].offset = sizeof(float)*6;
+	attrs[3].location = 3; attrs[3].binding = 0; attrs[3].format = VK_FORMAT_R32_SFLOAT;       attrs[3].offset = sizeof(float)*9;
+	attrs[4].location = 4; attrs[4].binding = 0; attrs[4].format = VK_FORMAT_R32_SFLOAT;       attrs[4].offset = sizeof(float)*10;
+	attrs[5].location = 5; attrs[5].binding = 0; attrs[5].format = VK_FORMAT_R32_SFLOAT;       attrs[5].offset = sizeof(float)*11;
+	attrs[6].location = 6; attrs[6].binding = 0; attrs[6].format = VK_FORMAT_R32_SFLOAT;       attrs[6].offset = sizeof(float)*12;
+
+	VkPipelineVertexInputStateCreateInfo vi{};
+	vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &bind;
+	vi.vertexAttributeDescriptionCount = 7; vi.pVertexAttributeDescriptions = attrs;
+
+	VkPipelineInputAssemblyStateCreateInfo ia{};
+	ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+	ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+	VkPipelineViewportStateCreateInfo vp{};
+	vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+	vp.viewportCount = 1; vp.scissorCount = 1;
+
+	// Front-face cull is the standard Peter-Panning trick for terrain.
+	// frontFace must match the chunk-mesh opaque pipeline (CCW) so the
+	// face being culled is actually the one facing the light.
+	VkPipelineRasterizationStateCreateInfo rs{};
+	rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+	rs.polygonMode = VK_POLYGON_MODE_FILL;
+	rs.cullMode = VK_CULL_MODE_FRONT_BIT;
+	rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	rs.lineWidth = 1.0f;
+
+	VkPipelineMultisampleStateCreateInfo ms{};
+	ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+	ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	VkPipelineDepthStencilStateCreateInfo ds{};
+	ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+	ds.depthTestEnable = VK_TRUE;
+	ds.depthWriteEnable = VK_TRUE;
+	ds.depthCompareOp = VK_COMPARE_OP_LESS;
+
+	VkPipelineColorBlendStateCreateInfo cb{};
+	cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+	cb.attachmentCount = 0;
+
+	VkDynamicState dyn[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkPipelineDynamicStateCreateInfo dynState{};
+	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
+
+	VkGraphicsPipelineCreateInfo gpci{};
+	gpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+	gpci.stageCount = 2; gpci.pStages = stages;
+	gpci.pVertexInputState = &vi;
+	gpci.pInputAssemblyState = &ia;
+	gpci.pViewportState = &vp;
+	gpci.pRasterizationState = &rs;
+	gpci.pMultisampleState = &ms;
+	gpci.pDepthStencilState = &ds;
+	gpci.pColorBlendState = &cb;
+	gpci.pDynamicState = &dynState;
+	gpci.layout = m_shadowLayout;
+	gpci.renderPass = m_shadowRenderPass;
+
+	VkResult r = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gpci, nullptr, &m_chunkShadowPipeline);
+	vkDestroyShaderModule(m_device, vs, nullptr);
+	vkDestroyShaderModule(m_device, fs, nullptr);
+	return r == VK_SUCCESS;
+}
+
 bool VkRhi::ensureBoxShadowInstanceCapacity(int frame, VkDeviceSize bytes) {
 	if (m_boxShadowInstCap[frame] >= bytes) return true;
 
@@ -1033,6 +1132,7 @@ void VkRhi::destroyShadowResources() {
 	if (m_shadowSampler) { vkDestroySampler(m_device, m_shadowSampler, nullptr); m_shadowSampler = VK_NULL_HANDLE; }
 	if (m_shadowPipeline) { vkDestroyPipeline(m_device, m_shadowPipeline, nullptr); m_shadowPipeline = VK_NULL_HANDLE; }
 	if (m_boxShadowPipeline) { vkDestroyPipeline(m_device, m_boxShadowPipeline, nullptr); m_boxShadowPipeline = VK_NULL_HANDLE; }
+	if (m_chunkShadowPipeline) { vkDestroyPipeline(m_device, m_chunkShadowPipeline, nullptr); m_chunkShadowPipeline = VK_NULL_HANDLE; }
 	if (m_shadowLayout) { vkDestroyPipelineLayout(m_device, m_shadowLayout, nullptr); m_shadowLayout = VK_NULL_HANDLE; }
 	if (m_shadowRenderPass) { vkDestroyRenderPass(m_device, m_shadowRenderPass, nullptr); m_shadowRenderPass = VK_NULL_HANDLE; }
 	if (m_voxelDescPool) { vkDestroyDescriptorPool(m_device, m_voxelDescPool, nullptr); m_voxelDescPool = VK_NULL_HANDLE; }
@@ -1113,11 +1213,11 @@ void VkRhi::renderShadows(const float sunVP[16], const float* instances, uint32_
 void VkRhi::renderBoxShadows(const float sunVP[16], const float* boxes, uint32_t count) {
 	if (!m_frameActive || !m_boxShadowPipeline || count == 0) return;
 
-	// Upload box instances (9 floats each) into the per-frame box-shadow
-	// buffer. Kept separate from drawBoxModel's append buffer so the two
-	// append cursors don't fight — the shadow pass writes the *same* boxes
-	// the main pass reads, but through an independent buffer.
-	VkDeviceSize need = (VkDeviceSize)count * sizeof(float) * 9;
+	// Upload box instances (19 floats each = mat4 + color) into the per-frame
+	// box-shadow buffer. Kept separate from drawBoxModel's append buffer so
+	// the two append cursors don't fight — the shadow pass writes the *same*
+	// boxes the main pass reads, but through an independent buffer.
+	VkDeviceSize need = (VkDeviceSize)count * sizeof(float) * 19;
 	if (!ensureBoxShadowInstanceCapacity(m_frame, need)) return;
 	memcpy(m_boxShadowInstMapped[m_frame], boxes, (size_t)need);
 
@@ -1282,22 +1382,26 @@ bool VkRhi::createBoxModelPipeline() {
 	stages[1].module = fs; stages[1].pName = "main";
 
 	// binding 0: unit-cube per-vertex (shared with voxel — same m_cubeVbo)
-	// binding 1: per-instance {worldPos[3], size[3], color[3]} = 9 floats
+	// binding 1: per-instance {mat4 model[16], color[3]} = 19 floats. The
+	// matrix is stored as four column vec4s (GLM column-major) and surfaced
+	// to the shader as four consecutive vec4 attribute slots.
 	VkVertexInputBindingDescription binds[2]{};
-	binds[0].binding = 0; binds[0].stride = sizeof(float)*6; binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-	binds[1].binding = 1; binds[1].stride = sizeof(float)*9; binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+	binds[0].binding = 0; binds[0].stride = sizeof(float)*6;  binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+	binds[1].binding = 1; binds[1].stride = sizeof(float)*19; binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-	VkVertexInputAttributeDescription attrs[5]{};
-	attrs[0].location = 0; attrs[0].binding = 0; attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[0].offset = 0;
-	attrs[1].location = 1; attrs[1].binding = 0; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = sizeof(float)*3;
-	attrs[2].location = 2; attrs[2].binding = 1; attrs[2].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[2].offset = 0;
-	attrs[3].location = 3; attrs[3].binding = 1; attrs[3].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[3].offset = sizeof(float)*3;
-	attrs[4].location = 4; attrs[4].binding = 1; attrs[4].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[4].offset = sizeof(float)*6;
+	VkVertexInputAttributeDescription attrs[7]{};
+	attrs[0].location = 0; attrs[0].binding = 0; attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;    attrs[0].offset = 0;
+	attrs[1].location = 1; attrs[1].binding = 0; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT;    attrs[1].offset = sizeof(float)*3;
+	attrs[2].location = 2; attrs[2].binding = 1; attrs[2].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[2].offset = sizeof(float)*0;
+	attrs[3].location = 3; attrs[3].binding = 1; attrs[3].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[3].offset = sizeof(float)*4;
+	attrs[4].location = 4; attrs[4].binding = 1; attrs[4].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[4].offset = sizeof(float)*8;
+	attrs[5].location = 5; attrs[5].binding = 1; attrs[5].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[5].offset = sizeof(float)*12;
+	attrs[6].location = 6; attrs[6].binding = 1; attrs[6].format = VK_FORMAT_R32G32B32_SFLOAT;    attrs[6].offset = sizeof(float)*16;
 
 	VkPipelineVertexInputStateCreateInfo vi{};
 	vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 	vi.vertexBindingDescriptionCount = 2; vi.pVertexBindingDescriptions = binds;
-	vi.vertexAttributeDescriptionCount = 5; vi.pVertexAttributeDescriptions = attrs;
+	vi.vertexAttributeDescriptionCount = 7; vi.pVertexAttributeDescriptions = attrs;
 
 	VkPipelineInputAssemblyStateCreateInfo ia{};
 	ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -1357,7 +1461,7 @@ bool VkRhi::createBoxModelPipeline() {
 
 bool VkRhi::ensureBoxInstanceCapacity(int frame, VkDeviceSize bytes) {
 	if (bytes <= m_boxInstCap[frame]) return true;
-	VkDeviceSize cap = m_boxInstCap[frame] ? m_boxInstCap[frame] : 64 * sizeof(float)*9;
+	VkDeviceSize cap = m_boxInstCap[frame] ? m_boxInstCap[frame] : 64 * sizeof(float)*19;
 	while (cap < bytes) cap *= 2;
 	vkDeviceWaitIdle(m_device);
 	if (m_boxInstMapped[frame]) { vkUnmapMemory(m_device, m_boxInstMem[frame]); m_boxInstMapped[frame] = nullptr; }
@@ -1568,9 +1672,13 @@ void VkRhi::updateVoxelMesh(MeshHandle mesh, const float* instances, uint32_t co
 	memcpy(mapped, instances, (size_t)bytes);
 	vkUnmapMemory(m_device, newMem);
 
-	// Hand the old buffer to the deferred-destroy queue keyed by m_frame —
-	// the same fence-driven drain that destroyMesh uses.
-	m_meshPending[m_frame].push_back(PersistentMesh{ m.buf, m.mem, m.instCount, m.capBytes });
+	// Hand the old buffer to the deferred-destroy queue. Pick the slot whose
+	// fence will signal AFTER the most-recent submission that could reference
+	// the old buffer — see destroyMesh() for the full reasoning.
+	const uint32_t pendingSlot = m_frameActive
+		? m_frame
+		: ((m_frame + kFramesInFlight - 1) % kFramesInFlight);
+	m_meshPending[pendingSlot].push_back(PersistentMesh{ m.buf, m.mem, m.instCount, m.capBytes });
 	m.buf       = newBuf;
 	m.mem       = newMem;
 	m.capBytes  = newCap;
@@ -1578,21 +1686,35 @@ void VkRhi::updateVoxelMesh(MeshHandle mesh, const float* instances, uint32_t co
 }
 
 void VkRhi::destroyMesh(MeshHandle mesh) {
-	// Defer the actual VkBuffer / VkDeviceMemory release: this frame's
-	// command buffer (or the previous frame's, still in flight) may still
-	// reference it. beginFrame drains m_{,chunk}MeshPending[m_frame] after
-	// the fence wait, where the GPU is guaranteed to be done with that
-	// frame index. Handles share an ID space — try voxel meshes first, then
-	// chunk meshes; one map will own the entry.
+	// Defer the actual VkBuffer / VkDeviceMemory release: in-flight command
+	// buffers may still reference it. beginFrame drains the pending list for
+	// slot s only after waiting fence[s] — fence[s] is set when the most-
+	// recent submission to slot s completes. So we want to push to the slot
+	// whose fence will signal AFTER all submissions that touched this buffer.
+	//
+	// While we're recording (m_frameActive), the current cmd buf may bind it,
+	// so push to m_frame (its fence is set at this frame's endFrame) — drain
+	// then happens kFIF frames from now, after the current frame is done.
+	//
+	// Between frames, m_frame already points at the NEXT slot. The most
+	// recent submission is in slot (m_frame + kFIF - 1) % kFIF; pushing
+	// there means drain fires at next beginFrame for that slot, which waits
+	// the fence we actually need.
+	//
+	// Handles share an ID space — try voxel meshes first, then chunk meshes;
+	// one map will own the entry.
+	const uint32_t pendingSlot = m_frameActive
+		? m_frame
+		: ((m_frame + kFramesInFlight - 1) % kFramesInFlight);
 	auto it = m_meshes.find(mesh);
 	if (it != m_meshes.end()) {
-		m_meshPending[m_frame].push_back(it->second);
+		m_meshPending[pendingSlot].push_back(it->second);
 		m_meshes.erase(it);
 		return;
 	}
 	auto cit = m_chunkMeshes.find(mesh);
 	if (cit != m_chunkMeshes.end()) {
-		m_chunkMeshPending[m_frame].push_back(cit->second);
+		m_chunkMeshPending[pendingSlot].push_back(cit->second);
 		m_chunkMeshes.erase(cit);
 	}
 }
@@ -1710,14 +1832,18 @@ bool VkRhi::createChunkPipelines() {
 	vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 	vp.viewportCount = 1; vp.scissorCount = 1;
 
-	// Opaque rasterizer: cull back. chunk_mesher emits CCW triangles in world
-	// space; we run with FRONT_FACE_CLOCKWISE because Vulkan's flipped Y in
-	// the projection matrix inverts winding (matches what voxel + sky use).
+	// Opaque rasterizer: cull back. chunk_mesher emits CCW-wound outward
+	// faces in world space (verified: +X face cross product = +X). The
+	// proj[1][1] *= -1 Y-flip combined with Vulkan's Y-down framebuffer
+	// preserves winding end-to-end, so CCW data → CCW front face — same as
+	// the GL backend (glFrontFace(GL_CCW)). The voxel cube template uses
+	// the opposite convention (CW from outside) and stays on its own
+	// pipeline with frontFace=CW.
 	VkPipelineRasterizationStateCreateInfo rsOpaque{};
 	rsOpaque.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 	rsOpaque.polygonMode = VK_POLYGON_MODE_FILL;
 	rsOpaque.cullMode = VK_CULL_MODE_BACK_BIT;
-	rsOpaque.frontFace = VK_FRONT_FACE_CLOCKWISE;
+	rsOpaque.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	rsOpaque.lineWidth = 1.0f;
 
 	// Transparent rasterizer: no cull (thin glass / portal panes).
@@ -1887,7 +2013,11 @@ void VkRhi::updateChunkMesh(MeshHandle mesh, const float* verts, uint32_t vertex
 	memcpy(mapped, verts, (size_t)bytes);
 	vkUnmapMemory(m_device, newMem);
 
-	m_chunkMeshPending[m_frame].push_back(PersistentMesh{ m.buf, m.mem, m.instCount, m.capBytes });
+	// Defer destroy of the old buffer — see destroyMesh() for slot reasoning.
+	const uint32_t pendingSlot = m_frameActive
+		? m_frame
+		: ((m_frame + kFramesInFlight - 1) % kFramesInFlight);
+	m_chunkMeshPending[pendingSlot].push_back(PersistentMesh{ m.buf, m.mem, m.instCount, m.capBytes });
 	m.buf = newBuf; m.mem = newMem;
 	m.capBytes = newCap;
 	m.instCount = vertexCount;
@@ -1984,18 +2114,48 @@ void VkRhi::drawChunkMeshTransparent(const SceneParams& scene, const float fogCo
 	vkCmdDraw(cb, m.instCount, 1, 0, 0);
 }
 
+void VkRhi::renderShadowsChunkMesh(const float sunVP[16], MeshHandle mesh) {
+	if (!m_frameActive || !m_chunkShadowPipeline) return;
+	auto it = m_chunkMeshes.find(mesh);
+	if (it == m_chunkMeshes.end() || it->second.instCount == 0) return;
+	const PersistentMesh& m = it->second;
+
+	// Same shadow UBO update as renderShadows{,Mesh} — chunk_terrain.frag
+	// doesn't read it, but the lit-pass voxel/box pipelines still consume
+	// the shadow params so we keep the contract identical across passes.
+	struct ShadowUBO { float shadowVP[16]; float shadowParams[4]; };
+	ShadowUBO ubo{};
+	memcpy(ubo.shadowVP, sunVP, sizeof(float) * 16);
+	ubo.shadowParams[0] = 1.0f / (float)kShadowRes;
+	ubo.shadowParams[1] = 0.0008f;
+	ubo.shadowParams[2] = 0.0f;
+	ubo.shadowParams[3] = 0.0f;
+	memcpy(m_shadowUboMapped[m_frame], &ubo, sizeof(ubo));
+
+	ensureShadowPass();
+
+	VkCommandBuffer cb = m_cmdBufs[m_frame];
+	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkShadowPipeline);
+	VkDeviceSize off = 0;
+	vkCmdBindVertexBuffers(cb, 0, 1, &m.buf, &off);
+	vkCmdPushConstants(cb, m_shadowLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+		sizeof(float) * 16, sunVP);
+	vkCmdDraw(cb, m.instCount, 1, 0, 0);
+}
+
 void VkRhi::drawBoxModel(const SceneParams& scene, const float* boxes, uint32_t count) {
 	if (!m_frameActive || !m_boxModelPipeline || count == 0) return;
 	ensureMainPass();
 
 	uint32_t firstInstance = m_boxInstCount[m_frame];
-	VkDeviceSize need = ((VkDeviceSize)firstInstance + count) * sizeof(float) * 9;
+	VkDeviceSize need = ((VkDeviceSize)firstInstance + count) * sizeof(float) * 19;
 	if (!ensureBoxInstanceCapacity(m_frame, need)) return;
 
 	// Append into the per-frame buffer (won't collide with prior draw calls
-	// in the same frame since each one advances m_boxInstCount).
-	float* dst = (float*)m_boxInstMapped[m_frame] + (size_t)firstInstance * 9;
-	memcpy(dst, boxes, (size_t)count * sizeof(float) * 9);
+	// in the same frame since each one advances m_boxInstCount). 19 floats
+	// per instance = mat4 (16) + RGB color (3).
+	float* dst = (float*)m_boxInstMapped[m_frame] + (size_t)firstInstance * 19;
+	memcpy(dst, boxes, (size_t)count * sizeof(float) * 19);
 	m_boxInstCount[m_frame] = firstInstance + count;
 
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
@@ -2166,10 +2326,12 @@ bool VkRhi::createSkyPipeline() {
 	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
 	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
 
-	// Push constants: invVP (mat4) + sunDir (vec4) = 80 bytes
+	// Push constants: invVP (mat4) + sunDir (vec4) + skyParams (vec4) = 96 B.
+	// skyParams.x = timeSec (cloud drift, star twinkle), yzw reserved for
+	// weather/season hooks wired up by later phases.
 	VkPushConstantRange pcr{};
 	pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-	pcr.size = sizeof(float) * (16 + 4); // invVP + sunDir
+	pcr.size = sizeof(float) * (16 + 4 + 4);
 	VkPipelineLayoutCreateInfo plci{};
 	plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 	plci.pushConstantRangeCount = 1; plci.pPushConstantRanges = &pcr;
@@ -3329,7 +3491,16 @@ void VkRhi::drawUi2D(const float* vertsPosUV, uint32_t vertCount,
 	vkCmdDraw(cb, vertCount, 1, 0, 0);
 }
 
-void VkRhi::drawSky(const float invVP[16], const float sunDir[3], float sunStr) {
+void VkRhi::drawSky(const float invVP[16],
+                    const float /*skyColor*/[3],
+                    const float /*horizonColor*/[3],
+                    const float sunDir[3],
+                    float sunStrength,
+                    float time) {
+	// VK backend derives zenith/horizon/stars/moon entirely in-shader from
+	// sunDir + sunStrength (server-driven). `time` drives star twinkle and
+	// cloud drift; skyColor/horizonColor stay in the IRhi contract for the
+	// GL backend but are ignored here.
 	if (!m_frameActive || !m_skyPipeline) return;
 	ensureMainPass();
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
@@ -3344,10 +3515,18 @@ void VkRhi::drawSky(const float invVP[16], const float sunDir[3], float sunStr) 
 
 	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
 
-	struct { float invVP[16]; float sunDir[3]; float sunStr; } pc;
+	struct {
+		float invVP[16];
+		float sunDir[4];     // xyz + sunStr
+		float skyParams[4];  // x=timeSec, yzw reserved
+	} pc;
 	memcpy(pc.invVP, invVP, sizeof(float)*16);
-	memcpy(pc.sunDir, sunDir, sizeof(float)*3);
-	pc.sunStr = sunStr;
+	pc.sunDir[0] = sunDir[0]; pc.sunDir[1] = sunDir[1]; pc.sunDir[2] = sunDir[2];
+	pc.sunDir[3] = sunStrength;
+	pc.skyParams[0] = time;
+	pc.skyParams[1] = 0.0f;
+	pc.skyParams[2] = 0.0f;
+	pc.skyParams[3] = 0.0f;
 	vkCmdPushConstants(cb, m_skyLayout,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		0, sizeof(pc), &pc);

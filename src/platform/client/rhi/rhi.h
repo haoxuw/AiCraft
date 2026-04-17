@@ -57,8 +57,21 @@ public:
 		float sunDir[3]; float sunStr;  // sun direction xyz + strength 0..1
 	};
 
+	// Fullscreen sky pass. The vertex shader reconstructs ray direction from
+	// invVP; the fragment shader paints a sky gradient (skyColor at zenith,
+	// horizonColor at the horizon) plus sun glow scaled by sunStr.
+	//
+	// Phase 3 carries the full CivCraft param set: skyColor and horizonColor
+	// are driven by time-of-day from the host, and `time` advances animated
+	// effects (cloud drift, star twinkle). Backends are free to use a subset
+	// — civcraft-ui-vk's sky shader is hardcoded "Dungeons golden" and
+	// ignores the colors; CivCraft's GL shader uses every param.
 	virtual void drawSky(const float invVP[16],
-	                     const float sunDir[3], float sunStr) = 0;
+	                     const float skyColor[3],
+	                     const float horizonColor[3],
+	                     const float sunDir[3],
+	                     float sunStrength,
+	                     float time) = 0;
 
 	// Write the current frame to a PPM file. Call after imguiRender, before
 	// endFrame. Returns true on success.
@@ -134,14 +147,23 @@ public:
 	                                            const float fogColor[3],
 	                                            float fogStart, float fogEnd,
 	                                            MeshHandle mesh) = 0;
+	// Shadow pass for chunk-mesh terrain. Same contract as renderShadowsMesh
+	// (must run AFTER beginFrame, BEFORE the first lit draw); appends into
+	// the same shadow depth map as renderShadows + renderBoxShadows. Reads
+	// only position from the 13-float vertex stream — everything else is
+	// ignored. No-op on backends without shadow maps.
+	virtual void       renderShadowsChunkMesh(const float sunVP[16],
+	                                          MeshHandle mesh) = 0;
 
-	// Box-model rendering. `boxes` packs {worldPosX, worldPosY, worldPosZ,
-	// sizeX, sizeY, sizeZ, r, g, b} per box (9 floats). Designed for entity
-	// meshes: each box is an axis-aligned box in world space. Shares lighting
-	// + shadow infrastructure with drawVoxels — boxes sample the shadow map
-	// but do NOT cast shadows in this pipeline iteration (TODO: add a
-	// box-model shadow pass). Must be called AFTER drawVoxels in the frame.
-	// Multiple calls per frame are allowed and append to a per-frame buffer.
+	// Box-model rendering. `boxes` packs {mat4 model[16], r, g, b} per box
+	// (19 floats). The matrix maps the unit cube [0,1]^3 to the final oriented
+	// box in world space, so per-part rotations (limb swings, head tracking,
+	// equip transforms) survive the instanced batch. Axis-aligned callers
+	// build a pure translate × scale matrix (see civcraft::emitAABox in
+	// client/box_model_flatten.h). Shares lighting + shadow infrastructure
+	// with drawVoxels — boxes sample the shadow map. Must be called AFTER
+	// drawVoxels in the frame. Multiple calls per frame are allowed and
+	// append into a per-frame buffer.
 	virtual void drawBoxModel(const SceneParams& scene,
 	                          const float* boxes,
 	                          uint32_t boxCount) = 0;
@@ -162,7 +184,7 @@ public:
 	                           uint32_t instanceCount) = 0;
 
 	// Box-model shadow pass. Same contract as renderShadows but consumes
-	// the 9-float-per-instance box format (matches drawBoxModel). Must run
+	// the 19-float-per-instance box format (matches drawBoxModel). Must run
 	// AFTER beginFrame and BEFORE the first drawSky/drawVoxels/drawBoxModel
 	// of the frame. Appends to the same shadow depth map as renderShadows
 	// so characters cast onto terrain and vice versa.

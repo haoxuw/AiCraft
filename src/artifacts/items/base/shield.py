@@ -15,4 +15,5 @@ item = {
 
     "model": "shield",
     "color": [0.45, 0.30, 0.15],
+    "held_shape": "plate",
 }

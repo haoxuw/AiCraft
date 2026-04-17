@@ -26,6 +26,11 @@ world = {
     # the full fog-bound radius (clamped to [1, 24]).
     "preload_radius_chunks": 11,
 
+    # Weather schedule — Markov chain driven server-side, broadcast via
+    # S_WEATHER. Path is relative to src/artifacts/. Empty string (or key
+    # omitted) disables weather (client falls back to static "clear").
+    "weather_schedule": "worlds/base/weather/temperate.py",
+
     # ── Terrain ────────────────────────────────────────────────
     # Continental-style terrain: large flat plains separated by gradual hills.
     # Amplitudes and scales are tuned so most terrain is 0-12 blocks above

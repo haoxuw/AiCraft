@@ -14,10 +14,10 @@
  *   4. User quits → Game calls disconnect()
  */
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk_source.h"
-#include "shared/entity.h"
-#include "shared/action.h"
+#include "logic/entity.h"
+#include "logic/action.h"
 #include "shared/annotation.h"
 #include "server/world_gen_config.h"
 #include <string>
@@ -25,6 +25,7 @@
 #include <memory>
 #include <vector>
 #include <utility>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
 namespace civcraft {
@@ -95,6 +96,17 @@ public:
 	virtual float worldTime() const = 0;
 	virtual glm::vec3 spawnPos() const = 0;
 	virtual float pickupRange() const = 0;
+
+	// Weather state — broadcast by the server via S_WEATHER. Defaults give
+	// "clear, still air" so implementations that don't care about weather
+	// (TestServer, headless tools) behave as if no weather system existed.
+	virtual const std::string& weatherKind() const {
+		static const std::string kClear = "clear";
+		return kClear;
+	}
+	virtual float weatherIntensity() const { return 0.0f; }
+	virtual glm::vec2 weatherWind()   const { return {0.0f, 0.0f}; }
+	virtual uint32_t weatherSeq()     const { return 0; }
 
 	// True once the server has finished initial setup for this client
 	// (mobs spawned, welcome/inventory sent). Loading screen waits on this.

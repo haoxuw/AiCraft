@@ -12,10 +12,10 @@
  * exercised directly in unit tests with synthetic inputs.
  */
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include "server/behavior.h"  // BlockSample
 
 #include <algorithm>

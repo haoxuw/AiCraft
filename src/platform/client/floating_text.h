@@ -3,7 +3,7 @@
 #include "client/gfx.h"
 #include "client/camera.h"
 #include "client/rhi/rhi.h"
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>

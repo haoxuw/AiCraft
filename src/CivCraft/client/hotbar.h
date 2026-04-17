@@ -13,9 +13,11 @@
  * always resolved against the live Inventory at read time.
  */
 
-#include "shared/inventory.h"
+#include "logic/inventory.h"
 #include <string>
 #include <array>
+#include <fstream>
+#include <sstream>
 
 namespace civcraft {
 
@@ -53,6 +55,51 @@ public:
 			if (cnt > 0 && !seen(id)) m_slots[slot++] = id;
 		}
 		for (; slot < SLOTS; slot++) m_slots[slot].clear();
+	}
+
+	// Merge an inventory update into the current slot layout — keeps any
+	// existing slot that still has stock, clears slots whose item is gone,
+	// and appends new items (not already bound) to the first empty slots.
+	// Use this on every S_INVENTORY after the initial repopulate so
+	// drag-drop assignments survive pickups and drops.
+	void mergeFrom(const Inventory& inv) {
+		auto seen = [&](const std::string& id) {
+			for (const auto& s : m_slots) if (s == id) return true;
+			return false;
+		};
+		for (auto& s : m_slots) {
+			if (!s.empty() && inv.count(s) <= 0) s.clear();
+		}
+		for (const auto& [id, cnt] : inv.items()) {
+			if (cnt <= 0 || seen(id)) continue;
+			for (auto& s : m_slots) {
+				if (s.empty()) { s = id; break; }
+			}
+		}
+	}
+
+	// Write slot array to a newline-separated file. Empty slots are
+	// written as blank lines so positions survive a round-trip.
+	bool saveToFile(const std::string& path) const {
+		std::ofstream f(path, std::ios::trunc);
+		if (!f) return false;
+		for (const auto& s : m_slots) f << s << "\n";
+		return true;
+	}
+
+	// Read slot array from a file written by saveToFile. Returns false
+	// only if the file is missing — short files simply leave trailing
+	// slots empty, tolerating hand-edited saves without trailing blank
+	// lines. Caller falls back to repopulateFrom on false.
+	bool loadFromFile(const std::string& path) {
+		std::ifstream f(path);
+		if (!f) return false;
+		std::array<std::string, SLOTS> tmp;
+		for (int i = 0; i < SLOTS; i++) {
+			if (!std::getline(f, tmp[i])) break;
+		}
+		m_slots = tmp;
+		return true;
 	}
 
 	void set(int slot, const std::string& itemId) {

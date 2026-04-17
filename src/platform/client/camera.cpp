@@ -64,19 +64,11 @@ void Camera::processMouse(GLFWwindow* window) {
 		godAngle = std::clamp(godAngle, -60.0f, 85.0f);
 		break;
 	case CameraMode::RTS:
-		// WoW-style: while right-mouse is held, mouse delta rotates the
-		// camera around `rtsCenter`. Purely delta-based — where the click
-		// landed doesn't matter. Slightly amplified vs other modes so
-		// mid-range drags cover the full yaw/pitch range comfortably.
+		// WoW-style: hold RMB and drag to orbit. X rotates yaw,
+		// Y tilts pitch. Zoom lives on the scroll wheel.
 		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
 			rtsOrbitYaw += dx * 2.5f;
-			// Mouse up → dy positive → zoom in (camera height shrinks
-			// multiplicatively). Mouse down → zoom out. Pitch is controlled
-			// by the scroll wheel, not the drag.
-			if (std::abs(dy) > 0.0f) {
-				float factor = std::pow(0.985f, dy);
-				rtsHeightTarget = std::clamp(rtsHeightTarget * factor, 5.0f, 120.0f);
-			}
+			rtsAngle = std::clamp(rtsAngle + dy * 0.5f, 5.0f, 89.0f);
 		}
 		break;
 	}
@@ -182,39 +174,92 @@ void Camera::updateRPGPosition(float dt) {
 }
 
 void Camera::updateRTS(GLFWwindow* window, float dt) {
-	// Top-down camera, WASD pans relative to orbit, mouse for selection
+	// SC2/WoW-style RTS camera:
+	//   WASD / edge-scroll pan with momentum, Ctrl = fast pan
+	//   Q/E rotate, Home resets orbit heading
+	//   Scroll wheel zoom-to-cursor (consumed via pendingRtsZoom)
+	//   MMB re-centers on player
+	//   Ctrl+1..4 save bookmark, 1..4 recall
+	// Shift is reserved for box-select additive (gameplay), so fast-pan is Ctrl.
 
 	// Keep m_smoothY updated for player model rendering (smoothedFeetPos)
 	smoothVertical(player.feetPos.y, dt);
 
-	// Middle mouse: center camera on player
-	if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS) {
+	// MMB: re-center on player
+	if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS)
 		rtsCenter = player.feetPos;
-	}
 
-	float speed = rtsPanSpeed * dt;
-	if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) speed *= 2.5f;
+	bool fast = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+	            glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+	bool altHeld = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+	               glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
 
-	// Pan relative to camera orbit direction (so W = "forward" on screen)
+	// Orbit basis (fwd is the "up on screen" direction)
 	float yaw = glm::radians(rtsOrbitYaw);
 	glm::vec3 fwd = glm::normalize(glm::vec3(-cos(yaw), 0, -sin(yaw)));
 	glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0, 1, 0)));
 
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) rtsCenter += fwd * speed;
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) rtsCenter -= fwd * speed;
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) rtsCenter -= right * speed;
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) rtsCenter += right * speed;
+	// Accumulate pan input direction from WASD + edge scroll.
+	glm::vec3 inputDir(0);
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) inputDir += fwd;
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) inputDir -= fwd;
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) inputDir -= right;
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) inputDir += right;
 
-	// Edge scrolling relative to orbit direction
-	double mx, my;
-	glfwGetCursorPos(window, &mx, &my);
-	int w, h;
-	glfwGetWindowSize(window, &w, &h);
-	float edgeMargin = 30.0f;
-	if (mx < edgeMargin) rtsCenter -= right * speed;
-	if (mx > w - edgeMargin) rtsCenter += right * speed;
-	if (my < edgeMargin) rtsCenter += fwd * speed;
-	if (my > h - edgeMargin) rtsCenter -= fwd * speed;
+	if (rtsEdgeScroll && !altHeld) {
+		double mx, my;
+		glfwGetCursorPos(window, &mx, &my);
+		int w, h;
+		glfwGetWindowSize(window, &w, &h);
+		// Narrow deadzone so unintentional brushes don't drift the camera.
+		const float edgeMargin = 18.0f;
+		if (mx >= 0 && mx < edgeMargin)     inputDir -= right;
+		if (mx > w - edgeMargin && mx <= w) inputDir += right;
+		if (my >= 0 && my < edgeMargin)     inputDir += fwd;
+		if (my > h - edgeMargin && my <= h) inputDir -= fwd;
+	}
+
+	// Momentum: snap up to target velocity quickly, coast down slowly so
+	// the camera glides to a stop after a key-up (SC2 feel).
+	float baseSpeed = rtsPanSpeed * (fast ? 2.5f : 1.0f);
+	glm::vec3 targetVel = (glm::length(inputDir) > 0.001f)
+		? glm::normalize(inputDir) * baseSpeed : glm::vec3(0);
+	float panLerp = (glm::length(targetVel) > 0.001f) ? 14.0f : 5.0f;
+	rtsPanVel += (targetVel - rtsPanVel) * std::min(dt * panLerp, 1.0f);
+	rtsCenter += rtsPanVel * dt;
+
+	// Q/E rotate, Home resets heading.
+	float rotSpeed = 90.0f * dt * (fast ? 2.0f : 1.0f);
+	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) rtsOrbitYaw -= rotSpeed;
+	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) rtsOrbitYaw += rotSpeed;
+	if (glfwGetKey(window, GLFW_KEY_HOME) == GLFW_PRESS) rtsOrbitYaw = 90.0f;
+
+	// Bookmarks: Ctrl+[1..4] set, [1..4] recall. Edge-detected so holding
+	// the key doesn't re-trigger. Ignore 1..4 when the window is in RTS
+	// panning but a gameplay-consuming UI (chat, hotbar) is not active.
+	for (int i = 0; i < 4; i++) {
+		int key = GLFW_KEY_1 + i;
+		bool pressed = glfwGetKey(window, key) == GLFW_PRESS;
+		bool wasPressed = m_rtsBookmarkKeyPrev[i];
+		m_rtsBookmarkKeyPrev[i] = pressed;
+		if (!pressed || wasPressed) continue;
+		if (fast) {
+			rtsBookmarks[i] = {rtsCenter, rtsHeightTarget, rtsOrbitYaw, true};
+		} else if (rtsBookmarks[i].set) {
+			rtsCenter      = rtsBookmarks[i].center;
+			rtsHeightTarget = rtsBookmarks[i].height;
+			rtsOrbitYaw    = rtsBookmarks[i].orbitYaw;
+			rtsPanVel      = glm::vec3(0);
+		}
+	}
+
+	// Consume queued scroll zoom. Zoom pivots around rtsCenter (the look
+	// target at screen center) — no cursor bias.
+	if (std::abs(pendingRtsZoom) > 0.001f) {
+		float factor = std::pow(0.85f, pendingRtsZoom);
+		rtsHeightTarget = std::clamp(rtsHeightTarget * factor, 5.0f, 120.0f);
+		pendingRtsZoom = 0;
+	}
 
 	// Smooth zoom
 	rtsHeight += (rtsHeightTarget - rtsHeight) * std::min(dt * 10.0f, 1.0f);

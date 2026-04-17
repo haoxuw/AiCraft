@@ -24,13 +24,13 @@
 #include "client/types.h"
 #include "client/handbook_ui.h"
 #include "client/world_manager.h"
-#include "shared/artifact_registry.h"
+#include "logic/artifact_registry.h"
 #include "server/world_template.h"
 #include "client/controls.h"
 #include "client/audio.h"
 #include "client/behavior_editor.h"
 #ifndef __EMSCRIPTEN__
-#include "shared/net_socket.h"
+#include "net/net_socket.h"
 #endif
 #include "client/box_model.h"
 #include "client/model_preview.h"

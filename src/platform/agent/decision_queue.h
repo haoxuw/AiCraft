@@ -12,7 +12,7 @@
  * than older terminal outcomes).
  */
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include <string>
 #include <vector>
 #include <utility>

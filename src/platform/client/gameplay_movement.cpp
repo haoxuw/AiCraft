@@ -1,10 +1,12 @@
 #include "client/gameplay.h"
 #include "agent/agent_client.h"
-#include "shared/physics.h"
-#include "shared/entity_physics.h"
+#include "logic/physics.h"
+#include "logic/entity_physics.h"
+#include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <algorithm>
+#include <unordered_set>
 
 namespace civcraft {
 
@@ -117,26 +119,29 @@ void GameplayController::processMovement(float dt, GameState state,
 					m_moveTargetKind = kind;
 				}
 			} else if (!isClick) {
-				// Drag → box select
-				m_rtsSelect.selected.clear();
+				// Drag → box select. Shift-additive (SC2/WoW/Diablo).
+				// Any Living entity is selectable — the player is not special.
+				bool shiftHeld =
+					glfwGetKey(window.handle(), GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
+					glfwGetKey(window.handle(), GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+				std::unordered_set<EntityId> existing;
+				if (shiftHeld)
+					existing.insert(m_rtsSelect.selected.begin(),
+					                m_rtsSelect.selected.end());
+				else
+					m_rtsSelect.selected.clear();
 
 				float aspect = (float)ww / (float)wh;
 				glm::mat4 vp = camera.projectionMatrix(aspect) * camera.viewMatrix();
-				EntityId myId = server.localPlayerId();
-				bool isAdmin = (state == GameState::ADMIN);
 				server.forEachEntity([&](Entity& e) {
 					if (!e.def().isLiving()) return;
-					// Only select entities the player owns (or all if admin)
-					if (!isAdmin) {
-						int owner = e.getProp<int>(Prop::Owner, 0);
-						if (owner != (int)myId) return;
-					}
 					glm::vec4 clip = vp * glm::vec4(e.position + glm::vec3(0, 0.5f, 0), 1.0f);
 					if (clip.w <= 0) return;
 					float sx = clip.x / clip.w;
 					float sy = clip.y / clip.w;
-					if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1)
-						m_rtsSelect.selected.push_back(e.id());
+					if (sx < x0 || sx > x1 || sy < y0 || sy > y1) return;
+					if (shiftHeld && existing.count(e.id())) return;
+					m_rtsSelect.selected.push_back(e.id());
 				});
 			}
 		}

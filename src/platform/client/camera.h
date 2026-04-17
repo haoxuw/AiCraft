@@ -61,6 +61,16 @@ public:
 	                                  // where unit silhouettes (hats, capes) read.
 	float rtsOrbitYaw = -90.0f;       // same orbit as RPG (looking south)
 	float rtsPanSpeed = 30.0f;
+	glm::vec3 rtsPanVel = {0, 0, 0}; // smoothed pan velocity (momentum)
+	bool rtsEdgeScroll = true;       // edge-scroll toggle (hold Alt to bypass)
+
+	// Camera bookmarks: Ctrl+1..4 saves current view, 1..4 jumps back.
+	struct RtsBookmark { glm::vec3 center; float height; float orbitYaw; bool set = false; };
+	RtsBookmark rtsBookmarks[4];
+
+	// Queued from scroll callback. Zoom pivots around rtsCenter (screen
+	// center), not the cursor — users found cursor-biased zoom disorienting.
+	float pendingRtsZoom = 0;
 
 	// Computed camera state (updated each frame)
 	glm::vec3 position = {0, 0, 0};  // actual camera position
@@ -104,6 +114,9 @@ private:
 
 	bool m_firstMouse = true;
 	double m_lastX = 0, m_lastY = 0;
+
+	// Edge-detection for bookmark 1..4 keys (press, not hold).
+	bool m_rtsBookmarkKeyPrev[4] = {false, false, false, false};
 };
 
 } // namespace civcraft

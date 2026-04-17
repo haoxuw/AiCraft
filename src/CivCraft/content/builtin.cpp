@@ -1,8 +1,8 @@
 #include "content/builtin.h"
 #include "shared/block_registry.h"
 #include "server/entity_manager.h"
-#include "shared/constants.h"
-#include "shared/material_values.h"
+#include "logic/constants.h"
+#include "logic/material_values.h"
 
 namespace civcraft {
 

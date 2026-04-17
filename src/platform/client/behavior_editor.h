@@ -13,7 +13,7 @@
  *   BehaviorEditorState — UI state for the menu editor panel
  */
 
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include <imgui.h>
 #include <string>
 #include <vector>

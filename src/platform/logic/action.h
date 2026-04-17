@@ -15,7 +15,7 @@
  * The server doesn't know or care which mode generated them.
  */
 
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>

@@ -11,21 +11,17 @@
  * The client generates a random UUID as its player name.
  */
 
-#include "shared/server_interface.h"
-#include "shared/physics.h"
-#include "shared/net_socket.h"
-#include "shared/net_protocol.h"
+#include "net/server_interface.h"
+#include "logic/physics.h"
+#include "net/net_socket.h"
+#include "net/net_protocol.h"
 #include "client/entity_reconciler.h"
+#include "client/local_world.h"
 #include <array>
 #ifndef __EMSCRIPTEN__
 #include <zstd.h>
 #endif
 #include "shared/annotation.h"
-#include "shared/block_registry.h"
-#include "shared/chunk.h"
-#include "server/entity_manager.h"
-#include "content/builtin.h"
-#include "shared/artifact_registry.h"
 #include <unordered_map>
 #include <functional>
 #include <string>
@@ -40,19 +36,8 @@ namespace civcraft {
 
 class NetworkServer : public ServerInterface {
 public:
-	NetworkServer(const std::string& host, int port)
-		: m_host(host), m_port(port) {
-		// Register all block and entity definitions (same as server)
-		// so entities have proper collision boxes, HP, inventory, etc.
-		registerAllBuiltins(m_blocks, m_entityDefs);
-
-		// Merge Python-declared feature tags into EntityDefs
-		{
-			ArtifactRegistry artifacts;
-			artifacts.loadAll("artifacts");
-			m_entityDefs.mergeArtifactTags(artifacts.livingTags());
-		}
-
+	NetworkServer(const std::string& host, int port, LocalWorld& world)
+		: m_host(host), m_port(port), m_world(world) {
 		// Generate random UUID for this client
 		std::random_device rd;
 		std::mt19937 gen(rd());
@@ -234,7 +219,7 @@ public:
 		// Early connection logging — only warn if player entity is missing
 		if (m_uptime < 5.0f && !getEntity(m_localPlayerId) && msgCount > 0) {
 			printf("[Net] t=%.1fs: waiting for player entity (received %zu entities, %zu chunks)\n",
-				m_uptime, m_entities.size(), m_chunkData.size());
+				m_uptime, m_entities.size(), m_world.chunkCount());
 		}
 
 		// Periodic diagnostics (every 30 seconds — quiet by default)
@@ -243,7 +228,7 @@ public:
 			Entity* pe = m_entities.count(m_localPlayerId)
 				? m_entities[m_localPlayerId].get() : nullptr;
 			printf("[Net] %zu entities, %zu chunks, %.0fs uptime\n",
-				m_entities.size(), m_chunkData.size(), m_uptime);
+				m_entities.size(), m_world.chunkCount(), m_uptime);
 			if (pe)
 				printf("[Net] Player pos=(%.1f,%.1f,%.1f) vel=(%.1f,%.1f,%.1f) ground=%d\n",
 					pe->position.x, pe->position.y, pe->position.z,
@@ -251,10 +236,7 @@ public:
 			m_diagTimer = 0;
 		}
 
-		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
-			const auto& bd = m_blocks.get(m_chunks.getBlock(x, y, z));
-			return bd.solid ? bd.collision_height : 0.0f;
-		};
+		BlockSolidFn solidFn = m_world.solidFn();
 		bool serverSilent = m_silentTime > 2.0f;
 		m_reconciler.tick(dt, m_localPlayerId, m_entities, solidFn, serverSilent);
 	}
@@ -310,7 +292,7 @@ public:
 	}
 
 	// --- State access ---
-	ChunkSource& chunks() override { return m_chunks; }
+	ChunkSource& chunks() override { return m_world; }
 	EntityId localPlayerId() const override { return m_localPlayerId; }
 	EntityId controlledEntityId() const override {
 		return m_controlledEid != ENTITY_NONE ? m_controlledEid : m_localPlayerId;
@@ -343,7 +325,12 @@ public:
 	float worldTime() const override { return m_worldTime; }
 	glm::vec3 spawnPos() const override { return m_spawnPos; }
 	float pickupRange() const override { return 1.5f; } // TODO: sync from server
-	const BlockRegistry& blockRegistry() const override { return m_blocks; }
+
+	const std::string& weatherKind() const override { return m_weatherKind; }
+	float    weatherIntensity() const override { return m_weatherIntensity; }
+	glm::vec2 weatherWind()      const override { return m_weatherWind; }
+	uint32_t weatherSeq()         const override { return m_weatherSeq; }
+	const BlockRegistry& blockRegistry() const override { return m_world.blockRegistry(); }
 	ActionProposalQueue& proposalQueue() override { return m_proposals; }
 
 	void setEffectCallbacks(
@@ -386,8 +373,7 @@ public:
 	// ServerInterface so the renderer never touches NetworkServer directly.
 	const std::vector<std::pair<glm::ivec3, Annotation>>*
 	annotationsForChunk(ChunkPos cp) const override {
-		auto it = m_annotations.find(cp);
-		return it != m_annotations.end() ? &it->second : nullptr;
+		return m_world.annotationsForChunk(cp);
 	}
 
 private:
@@ -396,7 +382,7 @@ private:
 	// and stores annotations in world-space under chunk cp.
 	void readChunkAnnotations(net::ReadBuffer& rb, ChunkPos cp) {
 		if (!rb.hasMore()) {
-			m_annotations.erase(cp);
+			m_world.setAnnotations(cp, {});
 			return;
 		}
 		uint32_t n = rb.readU32();
@@ -416,8 +402,7 @@ private:
 			                cp.z * CHUNK_SIZE + dz);
 			out.push_back({wpos, a});
 		}
-		if (out.empty()) m_annotations.erase(cp);
-		else m_annotations[cp] = std::move(out);
+		m_world.setAnnotations(cp, std::move(out));
 	}
 
 	// Original private section below.
@@ -502,7 +487,7 @@ private:
 			auto it = m_entities.find(es.id);
 			if (it == m_entities.end()) {
 				// New entity — look up proper EntityDef from registered builtins
-				const EntityDef* def = m_entityDefs.getTypeDef(es.typeId);
+				const EntityDef* def = m_world.entityDefs().getTypeDef(es.typeId);
 				if (!def) {
 					printf("[Net] WARNING: unknown entity type '%s' (id=%u), using default def\n",
 					       es.typeId.c_str(), es.id);
@@ -612,7 +597,7 @@ private:
 						uint32_t v = rb.readU32();
 						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
 					}
-			m_chunkData[cp] = std::move(chunk);
+			m_world.setChunk(cp, std::move(chunk));
 			readChunkAnnotations(rb, cp);
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
@@ -643,7 +628,7 @@ private:
 						uint32_t v = zrb.readU32();
 						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
 					}
-			m_chunkData[cp] = std::move(chunk);
+			m_world.setChunk(cp, std::move(chunk));
 			readChunkAnnotations(zrb, cp);
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
@@ -651,8 +636,7 @@ private:
 #endif
 		case net::S_CHUNK_EVICT: {
 			ChunkPos cp = {rb.readI32(), rb.readI32(), rb.readI32()};
-			m_chunkData.erase(cp);
-			m_annotations.erase(cp);
+			m_world.removeChunk(cp);
 			if (m_onChunkDirty) m_onChunkDirty(cp); // triggers mesh rebuild for that position
 			break;
 		}
@@ -662,16 +646,13 @@ private:
 			uint8_t slot = rb.readU8();
 			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 			ChunkPos cp = {div(x, CHUNK_SIZE), div(y, CHUNK_SIZE), div(z, CHUNK_SIZE)};
-			auto& vec = m_annotations[cp];
-			// Remove any existing annotation at this position.
-			vec.erase(std::remove_if(vec.begin(), vec.end(),
-				[&](const auto& p){ return p.first.x == x && p.first.y == y && p.first.z == z; }),
-				vec.end());
+			glm::ivec3 wpos(x, y, z);
+			m_world.removeAnnotation(cp, wpos);
 			if (!typeId.empty()) {
 				Annotation a;
 				a.typeId = typeId;
 				a.slot = (AnnotationSlot)slot;
-				vec.push_back({glm::ivec3(x, y, z), a});
+				m_world.addAnnotation(cp, wpos, a);
 			}
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
@@ -684,6 +665,15 @@ private:
 		}
 		case net::S_TIME: {
 			m_worldTime = rb.readF32();
+			break;
+		}
+		case net::S_WEATHER: {
+			m_weatherKind      = rb.readString();
+			m_weatherIntensity = rb.readF32();
+			float wx           = rb.readF32();
+			float wz           = rb.readF32();
+			m_weatherWind      = {wx, wz};
+			m_weatherSeq       = rb.readU32();
 			break;
 		}
 		case net::S_NPC_INTERRUPT: {
@@ -704,21 +694,33 @@ private:
 			uint8_t p2 = rb.hasMore() ? rb.readU8() : 0;
 			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
-			auto it = m_chunkData.find(cp);
-			if (it != m_chunkData.end()) {
-				int lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-				int ly = ((by % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-				int lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-				// Detect block break: non-air → air transition
-				if (bid == BLOCK_AIR && m_onBlockBreakText) {
-					BlockId oldBid = it->second->get(lx, ly, lz);
-					if (oldBid != BLOCK_AIR) {
-						const BlockDef& bdef = m_blocks.get(oldBid);
-						if (bdef.string_id != "air" && !bdef.string_id.empty())
-							m_onBlockBreakText(glm::vec3(bx, by, bz), bdef.display_name.empty() ? bdef.string_id : bdef.display_name);
-					}
+			// Read old block once — used for break-text and place callbacks so
+			// downstream audio/fx can distinguish dig (→AIR), place (AIR→X), and
+			// block swap (X→Y, e.g. door↔door_open).
+			BlockId oldBid = m_world.getBlock(bx, by, bz);
+			if (bid == BLOCK_AIR && oldBid != BLOCK_AIR && m_onBlockBreakText) {
+				const BlockDef& bdef = m_world.blockRegistry().get(oldBid);
+				if (bdef.string_id != "air" && !bdef.string_id.empty())
+					m_onBlockBreakText(glm::vec3(bx, by, bz),
+						bdef.display_name.empty() ? bdef.string_id : bdef.display_name);
+			} else if (bid != BLOCK_AIR && oldBid != bid && m_onBlockPlace) {
+				// Covers AIR→block placement AND block→block swaps (door toggle,
+				// water flow, etc.). Passes the NEW block's string_id so the
+				// audio layer can pick the correct sound group.
+				const BlockDef& bdef = m_world.blockRegistry().get(bid);
+				if (!bdef.string_id.empty())
+					m_onBlockPlace(glm::vec3(bx, by, bz), bdef.string_id);
+			}
+			m_world.setBlock(bx, by, bz, bid);
+			// Also set param2 if chunk exists
+			if (p2 != 0) {
+				Chunk* c = m_world.getChunk(cp);
+				if (c) {
+					int lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+					int ly = ((by % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+					int lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+					c->set(lx, ly, lz, bid, p2);
 				}
-				it->second->set(lx, ly, lz, bid, p2);
 			}
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
@@ -769,30 +771,6 @@ private:
 		}
 	}
 
-	// Chunk source that reads from received chunk data
-	class NetChunkSource : public ChunkSource {
-	public:
-		NetChunkSource(NetworkServer& ns) : m_ns(ns) {}
-		Chunk* getChunk(ChunkPos pos) override {
-			auto it = m_ns.m_chunkData.find(pos);
-			return it != m_ns.m_chunkData.end() ? it->second.get() : nullptr;
-		}
-		Chunk* getChunkIfLoaded(ChunkPos pos) override { return getChunk(pos); }
-		BlockId getBlock(int x, int y, int z) override {
-			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
-			ChunkPos cp = {div(x, CHUNK_SIZE), div(y, CHUNK_SIZE), div(z, CHUNK_SIZE)};
-			Chunk* c = getChunk(cp);
-			if (!c) return BLOCK_AIR;
-			int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-			int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-			int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-			return c->get(lx, ly, lz);
-		}
-		const BlockRegistry& blockRegistry() const override { return m_ns.m_blocks; }
-	private:
-		NetworkServer& m_ns;
-	};
-
 	std::string m_host;
 	int m_port;
 	std::string m_clientUUID;
@@ -807,18 +785,22 @@ private:
 	EntityId m_controlledEid = ENTITY_NONE; // Control mode; ENTITY_NONE = drive local player
 	glm::vec3 m_spawnPos = {0, 0, 0};
 	float m_worldTime = 0.25f;
+
+	// Latest weather broadcast from the server (S_WEATHER). The client consults
+	// these to drive sky tint, fog, and particle systems. Defaults match the
+	// WeatherPyConfig "clear, still air" fallback so visuals stay sane before
+	// the first broadcast lands.
+	std::string m_weatherKind      = "clear";
+	float       m_weatherIntensity = 0.0f;
+	glm::vec2   m_weatherWind      = {0.0f, 0.0f};
+	uint32_t    m_weatherSeq       = 0;
+
 	bool m_serverReady = false;
 	float m_preparingPct = -1.0f;  // -1 = no S_PREPARING seen; else [0..1]
 	std::string m_lastError;       // set on S_ERROR; surfaced to loading/menu UI
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
-	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunkData;
-	// Block decorations (flowers, moss, …) keyed by chunk for cheap eviction.
-	// Each entry: world-space host-block pos + Annotation. Populated from
-	// S_CHUNK / S_CHUNK_Z tails and single-cell S_ANNOTATION_SET updates.
-	std::unordered_map<ChunkPos, std::vector<std::pair<glm::ivec3, Annotation>>,
-	                   ChunkPosHash> m_annotations;
-	NetChunkSource m_chunks{*this};
+	LocalWorld& m_world;
 
 	// Client-side smoothing + reconciliation for remote entities.
 	// Owns all per-entity physics + drift-correction between 20Hz broadcasts.
@@ -830,10 +812,8 @@ private:
 	};
 	std::unordered_map<EntityId, PendingInv> m_pendingInventory;
 
-	BlockRegistry m_blocks;
 	ActionProposalQueue m_proposals;
 	EntityDef m_defaultDef;
-	EntityManager m_entityDefs;  // holds type defs for entity creation
 
 	// Diagnostics
 	float m_diagTimer = 0;

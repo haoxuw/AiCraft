@@ -8,7 +8,7 @@
  * canRegister() rejects placement if any blueprint slot is already claimed.
  */
 
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include "server/structure_blueprint.h"
 #include <glm/glm.hpp>
 #include <unordered_map>

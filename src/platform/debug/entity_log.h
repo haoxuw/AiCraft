@@ -9,7 +9,7 @@
 // prior file for that entity on first use in the process. Truncation is
 // per-process, not per-session — good enough for manual debugging.
 
-#include "types.h"
+#include "logic/types.h"
 
 #include <chrono>
 #include <cstdarg>

@@ -12,7 +12,7 @@
  *   - Targeting for attack actions
  */
 
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <glm/glm.hpp>
 #include <optional>
 #include <vector>

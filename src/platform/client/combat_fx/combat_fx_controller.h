@@ -23,7 +23,7 @@
 #include "client/combat_fx/camera_shake.h"
 #include "client/combat_fx/hit_stop.h"
 #include "client/particles.h"
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <glm/glm.hpp>
 
 namespace civcraft {

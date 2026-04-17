@@ -28,13 +28,12 @@
  * (Game::updatePlaying distance-check) or when the chest entity disappears.
  */
 
-#include "shared/inventory.h"
+#include "logic/inventory.h"
 #include "shared/block_registry.h"
-#include "shared/action.h"
-#include "shared/types.h"
+#include "logic/action.h"
+#include "logic/types.h"
 #include "client/box_model.h"
-#include "client/model_icon_cache.h"
-#include "client/inventory_visuals.h"
+#include "client/inventory_visuals.h"   // forward-declares ModelIconCache for VK
 #include <imgui.h>
 #include <string>
 #include <unordered_map>

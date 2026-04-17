@@ -44,7 +44,7 @@
  *     - Re-add MoveKind::Door later if locked/team-owned doors ship.
  */
 
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <glm/glm.hpp>
 #include <vector>
 #include <cstdint>

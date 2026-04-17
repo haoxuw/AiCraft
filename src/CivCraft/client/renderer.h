@@ -1,13 +1,13 @@
 #pragma once
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk_source.h"
 #include "client/shader.h"
 #include "client/fog_of_war.h"
 #include "client/camera.h"
 #include "client/chunk_mesher.h"
-#include "client/chunk_mesh_gl.h"
 #include "client/model.h"
+#include "client/rhi/rhi.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -25,7 +25,7 @@ struct DoorAnim {
 
 class Renderer {
 public:
-	bool init(const std::string& shaderDir);
+	bool init(rhi::IRhi* rhi, const std::string& shaderDir);
 	void shutdown();
 
 	void updateChunks(ChunkSource& world, const Camera& cam, int renderDistance);
@@ -34,7 +34,6 @@ public:
 	            int selectedSlot = 0, int hotbarSize = 7,
 	            glm::vec2 crosshairOffset = {0, 0}, bool showCrosshair = true);
 	void renderFogOfWar(const Camera& cam, float aspect, ChunkSource& chunks, int renderDistance);
-	void renderEntityShadow(const Camera& cam, float aspect, glm::vec3 pos, float radius);
 	ModelRenderer& modelRenderer() { return m_modelRenderer; }
 	Shader& highlightShader() { return m_highlightShader; }
 	void markChunkDirty(ChunkPos pos);
@@ -62,31 +61,45 @@ public:
 	                    const std::vector<glm::vec3>& points,
 	                    glm::vec4 color, float dashLen, float time);
 
+	// Per-chunk RHI mesh handles. Public so the .cpp file's free helpers can
+	// refer to it without a friend declaration; Renderer alone manages
+	// lifetime via createChunkMesh / destroyMesh.
+	struct ChunkMeshSlot {
+		rhi::IRhi::MeshHandle opaque      = rhi::IRhi::kInvalidMesh;
+		rhi::IRhi::MeshHandle transparent = rhi::IRhi::kInvalidMesh;
+		uint32_t opaqueVerts = 0;
+		uint32_t transparentVerts = 0;
+		glm::vec3 mn{0}, mx{0};
+	};
+
 private:
 	void renderSky(const Camera& cam, float aspect);
 	void renderTerrain(const Camera& cam, float aspect);
 	void renderHighlight(const Camera& cam, float aspect, glm::ivec3 pos);
-	void renderHotbar(float aspect, int selectedSlot, int hotbarSize);
 	void renderCrosshair(float aspect, glm::vec2 center = {0, 0});
 
-	Shader m_terrainShader;
-	Shader m_skyShader;
+	rhi::IRhi* m_rhi = nullptr;
+
+	// Terrain rendering is fully owned by the RHI now (terrain.vert/frag live
+	// in src/platform/shaders/, the GL backend's createChunkMesh handles
+	// upload, drawChunkMesh* runs the per-pass GL state). No m_terrainShader
+	// here anymore.
 	Shader m_crosshairShader;
 	Shader m_highlightShader;
-	Shader m_shadowShader;
 
-	GLuint m_skyVAO = 0, m_skyVBO = 0;
 	GLuint m_crosshairVAO = 0, m_crosshairVBO = 0;
 	GLuint m_highlightVAO = 0, m_highlightVBO = 0;
 	GLuint m_crackVAO = 0, m_crackVBO = 0;
 	GLuint m_quadVAO = 0, m_quadVBO = 0;
-	GLuint m_shadowVAO = 0, m_shadowVBO = 0;
-	GLuint m_doorAnimVAO = 0, m_doorAnimVBO = 0;
 	GLuint m_pathVAO = 0, m_pathVBO = 0;
+	// Door-anim verts ride on the RHI chunk-mesh pipeline — one persistent
+	// handle, re-uploaded each frame any door is mid-animation.
+	rhi::IRhi::MeshHandle m_doorAnimMesh = rhi::IRhi::kInvalidMesh;
 	ModelRenderer m_modelRenderer;
 
 	ChunkMesher m_mesher;
-	std::unordered_map<ChunkPos, ChunkMesh, ChunkPosHash> m_meshes;
+
+	std::unordered_map<ChunkPos, ChunkMeshSlot, ChunkPosHash> m_meshes;
 	std::unordered_set<ChunkPos, ChunkPosHash> m_dirtyChunks;
 
 	glm::vec3 m_skyColor = {0.40f, 0.60f, 0.85f};

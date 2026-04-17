@@ -6,8 +6,9 @@
 #include "client/behavior_editor.h"
 #include "client/equipment_ui.h"
 #include "client/chest_ui.h"
-#include "shared/artifact_registry.h"
-#include "shared/server_interface.h"
+#include "logic/artifact_registry.h"
+#include "net/server_interface.h"
+#include "client/local_world.h"
 #include "server/behavior_store.h"
 #include "client/process_manager.h"
 #include "client/gameplay.h"
@@ -118,6 +119,10 @@ private:
 	ControlManager  m_controls;
 	Camera          m_camera;
 	UI              m_ui;
+
+	// LocalWorld — single source of truth for client-side terrain.
+	// Shared by NetworkServer, player physics, agent ticks, mesher.
+	LocalWorld m_localWorld;
 
 	// Server interface — abstracts local vs network server
 	// Local: each client runs its own server when creating a game

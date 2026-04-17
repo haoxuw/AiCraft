@@ -1,6 +1,6 @@
 #include "server/python_bridge.h"
 #include "server/structure_blueprint.h"
-#include "shared/material_values.h"
+#include "logic/material_values.h"
 #include <fstream>
 #include <iterator>
 
@@ -26,6 +26,7 @@ std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
 void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
 bool loadWorldConfig(const std::string&, WorldPyConfig&) { return false; }
+bool loadWeatherSchedule(const std::string&, WeatherPyConfig&) { return false; }
 bool loadStructureBlueprint(const std::string&, StructureBlueprint&) { return false; }
 std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 	const Entity&, const std::function<std::string(int,int,int)>&) const { return std::nullopt; }
@@ -780,6 +781,16 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 		if (out.preloadRadiusChunks < 1)  out.preloadRadiusChunks = 1;
 		if (out.preloadRadiusChunks > 24) out.preloadRadiusChunks = 24;
 
+		// Day length in ticks. Clamp away from zero so the time advance
+		// doesn't divide by zero and doesn't sprint through 10 days/sec.
+		out.dayLengthTicks = getInt(w, "day_length_ticks", out.dayLengthTicks);
+		if (out.dayLengthTicks < 30)     out.dayLengthTicks = 30;       // floor: 30s
+		if (out.dayLengthTicks > 86400)  out.dayLengthTicks = 86400;    // ceil: 24h
+
+		// Weather schedule path (relative to src/artifacts/). Loaded separately
+		// by the server after the world config is parsed.
+		out.weatherSchedule = getStr(w, "weather_schedule", out.weatherSchedule);
+
 		// portal — default true; set "portal": False to disable the temple arch.
 		if (w.contains("portal") && !w["portal"].is_none()) {
 			py::object p = w["portal"];
@@ -855,6 +866,84 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 
 	} catch (const std::exception& e) {
 		printf("[WorldConfig] Error loading %s: %s\n", filePath.c_str(), e.what());
+		return false;
+	}
+}
+
+// ================================================================
+// Weather schedule loader — Markov chain of kinds + wind model.
+// See artifacts/worlds/base/weather/temperate.py for the schema.
+// ================================================================
+
+bool loadWeatherSchedule(const std::string& filePath, WeatherPyConfig& out) {
+	auto& bridge = pythonBridge();
+	if (!bridge.isInitialized()) return false;
+
+	std::ifstream f(filePath);
+	if (!f.is_open()) {
+		printf("[WeatherSchedule] File not found: %s\n", filePath.c_str());
+		return false;
+	}
+	std::string src((std::istreambuf_iterator<char>(f)), {});
+
+	py::gil_scoped_acquire gil;
+
+	try {
+		py::dict ns;
+		py::exec(src.c_str(), ns);
+		if (!ns.contains("schedule")) {
+			printf("[WeatherSchedule] %s: no `schedule` dict\n", filePath.c_str());
+			return false;
+		}
+
+		py::dict s = ns["schedule"].cast<py::dict>();
+		WeatherPyConfig cfg;
+
+		if (s.contains("kinds")) {
+			cfg.kinds.clear();
+			for (auto& k : s["kinds"].cast<py::list>()) {
+				py::dict kd = k.cast<py::dict>();
+				WeatherPyConfig::Kind kind;
+				kind.name = kd.contains("name") ? kd["name"].cast<std::string>() : "clear";
+				kind.meanSeconds = kd.contains("mean_s") ? (float)py::float_(kd["mean_s"]) : 300.0f;
+				if (kd.contains("intensity")) {
+					py::list iv = kd["intensity"].cast<py::list>();
+					kind.minIntensity = (float)py::float_(iv[0]);
+					kind.maxIntensity = (float)py::float_(iv[1]);
+				}
+				if (kd.contains("next")) {
+					for (auto& [nk, nv] : kd["next"].cast<py::dict>()) {
+						kind.next.push_back({nk.cast<std::string>(),
+						                     nv.cast<float>()});
+					}
+				}
+				cfg.kinds.push_back(std::move(kind));
+			}
+		}
+
+		if (s.contains("wind")) {
+			py::dict wd = s["wind"].cast<py::dict>();
+			if (wd.contains("base")) {
+				py::list bv = wd["base"].cast<py::list>();
+				cfg.baseWindX = (float)py::float_(bv[0]);
+				cfg.baseWindZ = (float)py::float_(bv[1]);
+			}
+			if (wd.contains("noise_amp"))
+				cfg.windNoiseAmp = (float)py::float_(wd["noise_amp"]);
+			if (wd.contains("noise_scale_s"))
+				cfg.windNoiseScale = (float)py::float_(wd["noise_scale_s"]);
+		}
+
+		if (s.contains("initial_kind"))
+			cfg.initialKind = s["initial_kind"].cast<std::string>();
+
+		out = std::move(cfg);
+		printf("[WeatherSchedule] Loaded %zu kinds from %s\n",
+		       out.kinds.size(), filePath.c_str());
+		return true;
+
+	} catch (const std::exception& e) {
+		printf("[WeatherSchedule] Error loading %s: %s\n", filePath.c_str(), e.what());
 		return false;
 	}
 }

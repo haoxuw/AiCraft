@@ -10,9 +10,9 @@
 #include "server/server.h"
 #include "server/chunk_info.h"
 #include "server/chunk_gen_service.h"
-#include "shared/net_socket.h"
-#include "shared/net_protocol.h"
-#include "shared/constants.h"
+#include "net/net_socket.h"
+#include "net/net_protocol.h"
+#include "logic/constants.h"
 #include <zstd.h>
 #include <memory>
 #include <unordered_map>
@@ -123,6 +123,12 @@ struct ClientSession {
 	// Edge-trigger state for S_NPC_INTERRUPT. True if a player was within
 	// proximity radius of this NPC on the previous broadcast tick.
 	std::unordered_map<EntityId, bool> prevProximity;
+
+	// Last S_WEATHER seq this client has acknowledged (ack = we shipped a
+	// packet; no round-trip confirmation needed since TCP is ordered).
+	// UINT32_MAX means "never sent" — the first broadcastState that sees a
+	// Ready client will push initial weather, then track changes thereafter.
+	uint32_t lastWeatherSeq = UINT32_MAX;
 
 	// Chunk streaming radii.
 	// STREAM_R must exceed fogEnd/CHUNK_SIZE so the player never sees void at the fog boundary.
@@ -547,6 +553,22 @@ public:
 			net::WriteBuffer tb;
 			tb.writeF32(m_server.worldTime());
 			net::sendMessage(client.transport.fd, net::S_TIME, tb);
+
+			// S_WEATHER — push on every kind/intensity change (seq bump) plus
+			// once per newly-Ready client (UINT32_MAX sentinel). Wind is not
+			// in the seq scheme but rides along with every weather packet,
+			// so the client picks it up at the broadcastInterval cadence.
+			const WeatherState& ws = m_server.weather();
+			if (client.lastWeatherSeq != ws.seq) {
+				net::WriteBuffer wb;
+				wb.writeString(ws.kind);
+				wb.writeF32(ws.intensity);
+				wb.writeF32(ws.windX);
+				wb.writeF32(ws.windZ);
+				wb.writeU32(ws.seq);
+				net::sendMessage(client.transport.fd, net::S_WEATHER, wb);
+				client.lastWeatherSeq = ws.seq;
+			}
 
 			// ── Event-driven decide-loop interrupts ────────────────────
 			// Edge-triggered, owner-scoped: emit only on prev→cur rising

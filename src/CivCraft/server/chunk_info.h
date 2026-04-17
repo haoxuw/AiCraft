@@ -12,7 +12,7 @@
 
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
-#include "shared/types.h"
+#include "logic/types.h"
 #include <unordered_map>
 #include <string>
 

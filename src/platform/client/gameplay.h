@@ -1,9 +1,9 @@
 #pragma once
 
 #include "client/types.h"
-#include "shared/server_interface.h"
-#include "shared/entity.h"
-#include "shared/constants.h"
+#include "net/server_interface.h"
+#include "logic/entity.h"
+#include "logic/constants.h"
 #include "client/gfx.h"
 #include "client/camera.h"
 #include "client/renderer.h"

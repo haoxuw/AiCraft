@@ -16,7 +16,7 @@
  */
 
 #include "server/server.h"
-#include "shared/net_protocol.h"
+#include "net/net_protocol.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>

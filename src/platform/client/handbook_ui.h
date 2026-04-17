@@ -17,8 +17,8 @@
  * Players can view source code of any definition and fork it for editing.
  */
 
-#include "shared/artifact_registry.h"
-#include "shared/material_values.h"
+#include "logic/artifact_registry.h"
+#include "logic/material_values.h"
 #include "client/box_model.h"
 #include "client/model_preview.h"
 #include "client/model.h"

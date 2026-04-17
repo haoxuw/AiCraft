@@ -10,7 +10,7 @@
  */
 
 #include "client/shader.h"
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk_source.h"
 #include "client/camera.h"
 #include "client/gfx.h"

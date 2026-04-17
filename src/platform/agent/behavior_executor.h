@@ -17,27 +17,14 @@
  */
 
 #include "server/behavior.h"
-#include "shared/entity.h"
-#include "shared/action.h"
+#include "logic/entity.h"
+#include "logic/action.h"
 #include <unordered_map>
 #include <vector>
 #include <functional>
 #include <cmath>
 
 namespace civcraft {
-
-// Per-entity state for plan execution
-struct AgentEntityState {
-	int behaviorHandle = -1;  // PythonBridge handle for this entity's behavior
-
-	// HP tracking for reactive re-decide (HP drop → immediate re-plan)
-	int lastKnownHp = -1;
-
-	// Performance tracking
-	float lastDecideMs  = 0.0f;
-	float totalDecideMs = 0.0f;
-	int   decideCount   = 0;
-};
 
 // Block query function: returns block type string at world position.
 // Used by Python pathfinding (get_block()) — queries shared chunk cache.

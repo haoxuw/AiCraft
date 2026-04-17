@@ -1,7 +1,7 @@
 #pragma once
 
 #include "client/types.h"
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include <string>
 #include "client/text.h"
 #include "client/shader.h"
@@ -10,7 +10,7 @@
 #include "client/raycast.h"
 #include "client/entity_raycast.h"
 #include "server/world.h"
-#include "shared/inventory.h"
+#include "logic/inventory.h"
 #include "client/hotbar.h"
 #include "client/gfx.h"
 
@@ -56,7 +56,6 @@ public:
 	void render(const HUDContext& ctx, TextRenderer& text, Shader& highlightShader);
 
 private:
-	void renderHotbar(const HUDContext& ctx, TextRenderer& text);
 	void renderInventoryPanel(const HUDContext& ctx, TextRenderer& text);
 	void renderHealthBars(const HUDContext& ctx, TextRenderer& text);
 	void renderModeLabel(const HUDContext& ctx, TextRenderer& text);

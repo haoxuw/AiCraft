@@ -153,29 +153,34 @@ float luminance(vec3 c) {
 	return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
+// Proper piecewise sRGB OETF (linear → sRGB). Our swap surface is UNORM, so
+// the display gamma is NOT applied by the hardware — we encode here.
+vec3 linearToSrgb(vec3 x) {
+	vec3 hi = 1.055 * pow(max(x, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+	vec3 lo = 12.92 * x;
+	return mix(hi, lo, step(x, vec3(0.0031308)));
+}
+
 void main() {
 	vec3 color = fxaa();
 
-	// Subtle SSAO — contact shadows only
 	float ao = ssao();
-	color *= mix(0.7, 1.0, ao);
+	color *= mix(0.62, 1.0, ao);
 
-	// Gentle bloom on bright spots
-	color += bloom() * 0.25;
+	color += bloom() * 0.18;
+	color = aces(color * 0.95);         // gentle exposure — peaceful, not punchy
+	color *= vec3(1.00, 1.00, 0.98);    // very subtle warm
 
-	// Tone map (light touch — input is already LDR)
-	color = aces(color * 1.15);
+	// Faint S-curve: crush blacks a hair, keep highlights soft.
+	color = mix(vec3(0.18), color, 1.04);
 
-	// Gentle warm push
-	color *= vec3(1.03, 1.0, 0.95);
-
-	// Mild saturation
+	// Saturation: just enough to feel natural, not cartoonish.
 	float gray = luminance(color);
-	color = mix(vec3(gray), color, 1.1);
+	color = mix(vec3(gray), color, 1.06);
 
-	// Light vignette
 	vec2 vc = vUV - 0.5;
-	color *= 1.0 - dot(vc, vc) * 0.2;
+	color *= 1.0 - dot(vc, vc) * 0.18;
 
-	outColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+	color = linearToSrgb(clamp(color, 0.0, 1.0));
+	outColor = vec4(color, 1.0);
 }

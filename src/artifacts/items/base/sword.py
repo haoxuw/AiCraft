@@ -21,4 +21,5 @@ item = {
 
     "model": "sword",
     "color": [0.7, 0.7, 0.75],
+    "held_shape": "blade",
 }

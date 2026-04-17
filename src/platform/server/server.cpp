@@ -1,6 +1,6 @@
 #include "server/server.h"
-#include "shared/material_values.h"
-#include "shared/move_stuck_log.h"
+#include "logic/material_values.h"
+#include "debug/move_stuck_log.h"
 #include <cmath>
 
 namespace civcraft {

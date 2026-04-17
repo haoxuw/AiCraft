@@ -1,6 +1,7 @@
 #include "client/renderer.h"
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
 namespace civcraft {
 
@@ -90,27 +91,15 @@ void Renderer::setTimeOfDay(float t) {
 	}
 }
 
-bool Renderer::init(const std::string& dir) {
-	if (!m_terrainShader.loadFromFile(dir + "/terrain.vert", dir + "/terrain.frag"))
-		return false;
-	if (!m_skyShader.loadFromFile(dir + "/sky.vert", dir + "/sky.frag"))
-		return false;
+bool Renderer::init(rhi::IRhi* rhi, const std::string& dir) {
+	m_rhi = rhi;
+	// Terrain + sky shaders are owned by the RHI now (terrain.vert/frag and
+	// sky.vert/frag live under platform/shaders/, loaded lazily by the GL
+	// backend on first use).
 	if (!m_crosshairShader.loadFromFile(dir + "/crosshair.vert", dir + "/crosshair.frag"))
 		return false;
 	if (!m_highlightShader.loadFromFile(dir + "/highlight.vert", dir + "/highlight.frag"))
 		return false;
-	if (!m_shadowShader.loadFromFile(dir + "/shadow.vert", dir + "/shadow.frag"))
-		return false;
-
-	// Fullscreen quad for sky
-	float quad[] = { -1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1 };
-	glGenVertexArrays(1, &m_skyVAO);
-	glGenBuffers(1, &m_skyVBO);
-	glBindVertexArray(m_skyVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, m_skyVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
-	glEnableVertexAttribArray(0);
 
 	// Crosshair — 4 lines with gap in center + center dot
 	// Gap = inner 0.006, outer = 0.024 (each arm)
@@ -174,28 +163,9 @@ bool Renderer::init(const std::string& dir) {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
 	glEnableVertexAttribArray(0);
 
-	// Door animation dynamic VAO
-	glGenVertexArrays(1, &m_doorAnimVAO);
-	glGenBuffers(1, &m_doorAnimVBO);
-	glBindVertexArray(m_doorAnimVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, m_doorAnimVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(ChunkVertex) * 512, nullptr, GL_DYNAMIC_DRAW);
-	// Attributes mirror terrain shader layout:
-	glEnableVertexAttribArray(0); // position
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, position));
-	glEnableVertexAttribArray(1); // color
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, color));
-	glEnableVertexAttribArray(2); // normal
-	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, normal));
-	glEnableVertexAttribArray(3); // ao
-	glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, ao));
-	glEnableVertexAttribArray(4); // shade
-	glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, shade));
-	glEnableVertexAttribArray(5); // alpha
-	glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, alpha));
-	glEnableVertexAttribArray(6); // glow
-	glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(ChunkVertex), (void*)offsetof(ChunkVertex, glow));
-	glBindVertexArray(0);
+	// Door-anim mesh handle is allocated lazily on first renderDoorAnims call
+	// (createChunkMesh + updateChunkMesh thereafter — one allocation, then
+	// per-frame re-uploads while a door is mid-animation).
 
 	// UI quad (2D, reusable for hotbar slots)
 	float uq[] = { 0,0, 1,0, 1,1, 0,0, 1,1, 0,1 };
@@ -207,26 +177,6 @@ bool Renderer::init(const std::string& dir) {
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
 	glEnableVertexAttribArray(0);
 
-	// Shadow disc: 16-sided polygon as TRIANGLE_FAN (center + 17 rim verts)
-	{
-		std::vector<float> sv;
-		sv.reserve(3 * 18);
-		sv.push_back(0); sv.push_back(0); sv.push_back(0); // center
-		for (int i = 0; i <= 16; i++) {
-			float a = i * 2.0f * PI / 16.0f;
-			sv.push_back(std::cos(a));
-			sv.push_back(0.0f);
-			sv.push_back(std::sin(a));
-		}
-		glGenVertexArrays(1, &m_shadowVAO);
-		glGenBuffers(1, &m_shadowVBO);
-		glBindVertexArray(m_shadowVAO);
-		glBindBuffer(GL_ARRAY_BUFFER, m_shadowVBO);
-		glBufferData(GL_ARRAY_BUFFER, sv.size() * sizeof(float), sv.data(), GL_STATIC_DRAW);
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
-		glEnableVertexAttribArray(0);
-	}
-
 	glBindVertexArray(0);
 
 	m_modelRenderer.init(&m_highlightShader);
@@ -235,20 +185,24 @@ bool Renderer::init(const std::string& dir) {
 }
 
 void Renderer::shutdown() {
-	for (auto& [_, mesh] : m_meshes) mesh.destroy();
+	for (auto& [_, slot] : m_meshes) {
+		if (slot.opaque)      m_rhi->destroyMesh(slot.opaque);
+		if (slot.transparent) m_rhi->destroyMesh(slot.transparent);
+	}
 	m_meshes.clear();
 	auto del = [](GLuint& vao, GLuint& vbo) {
 		if (vbo) glDeleteBuffers(1, &vbo);
 		if (vao) glDeleteVertexArrays(1, &vao);
 		vao = vbo = 0;
 	};
-	del(m_skyVAO, m_skyVBO);
 	del(m_crosshairVAO, m_crosshairVBO);
 	del(m_highlightVAO, m_highlightVBO);
 	del(m_crackVAO, m_crackVBO);
 	del(m_quadVAO, m_quadVBO);
-	del(m_shadowVAO, m_shadowVBO);
-	del(m_doorAnimVAO, m_doorAnimVBO);
+	if (m_doorAnimMesh) {
+		m_rhi->destroyMesh(m_doorAnimMesh);
+		m_doorAnimMesh = rhi::IRhi::kInvalidMesh;
+	}
 	m_modelRenderer.shutdown();
 	m_fogOfWar.shutdown();
 }
@@ -258,10 +212,39 @@ void Renderer::markChunkDirty(ChunkPos pos) {
 	// of updateChunks (sorted closest-first, so player-adjacent chunks rebuild first).
 	auto it = m_meshes.find(pos);
 	if (it != m_meshes.end()) {
-		it->second.destroy();
+		if (it->second.opaque)      m_rhi->destroyMesh(it->second.opaque);
+		if (it->second.transparent) m_rhi->destroyMesh(it->second.transparent);
 		m_meshes.erase(it);
 	}
 	m_dirtyChunks.erase(pos);
+}
+
+// Build (or rebuild) the RHI handle pair for one chunk. Reuses existing
+// handles via updateChunkMesh when the slot already has buffers; otherwise
+// allocates fresh ones via createChunkMesh. Empty side → handle stays
+// kInvalidMesh and the corresponding draw is skipped.
+static void uploadChunkSlot(rhi::IRhi* rhi,
+                            Renderer::ChunkMeshSlot& slot,
+                            const std::vector<ChunkVertex>& opaque,
+                            const std::vector<ChunkVertex>& transparent,
+                            ChunkPos cp) {
+	auto upload = [&](rhi::IRhi::MeshHandle& h, uint32_t& storedCount,
+	                  const std::vector<ChunkVertex>& v) {
+		if (v.empty()) {
+			if (h) { rhi->destroyMesh(h); h = rhi::IRhi::kInvalidMesh; }
+			storedCount = 0;
+			return;
+		}
+		const float* data = reinterpret_cast<const float*>(v.data());
+		const uint32_t n = (uint32_t)v.size();
+		if (h) rhi->updateChunkMesh(h, data, n);
+		else   h = rhi->createChunkMesh(data, n);
+		storedCount = n;
+	};
+	upload(slot.opaque,      slot.opaqueVerts,      opaque);
+	upload(slot.transparent, slot.transparentVerts, transparent);
+	slot.mn = glm::vec3(cp.x * CHUNK_SIZE, cp.y * CHUNK_SIZE, cp.z * CHUNK_SIZE);
+	slot.mx = slot.mn + glm::vec3(CHUNK_SIZE);
 }
 
 void Renderer::meshAllPending(ChunkSource& world, const Camera& cam, int renderDistance) {
@@ -279,10 +262,9 @@ void Renderer::meshAllPending(ChunkSource& world, const Camera& cam, int renderD
 				Chunk* chunk = world.getChunk(cp);
 				if (!chunk) continue;
 				auto [oVerts, tVerts] = m_mesher.buildMesh(world, cp);
-				ChunkMesh mesh;
-				mesh.pos = cp;
-				mesh.upload(oVerts, tVerts);
-				m_meshes[cp] = mesh;
+				ChunkMeshSlot slot;
+				uploadChunkSlot(m_rhi, slot, oVerts, tVerts, cp);
+				m_meshes[cp] = slot;
 			}
 }
 
@@ -321,10 +303,9 @@ void Renderer::updateChunks(ChunkSource& world, const Camera& cam, int renderDis
 		if (!chunk) continue;
 
 		auto [oVerts, tVerts] = m_mesher.buildMesh(world, pc.pos);
-		ChunkMesh mesh;
-		mesh.pos = pc.pos;
-		mesh.upload(oVerts, tVerts);
-		m_meshes[pc.pos] = mesh;
+		ChunkMeshSlot slot;
+		uploadChunkSlot(m_rhi, slot, oVerts, tVerts, pc.pos);
+		m_meshes[pc.pos] = slot;
 		newBuilt++;
 
 		// Mark 6 face-adjacent neighbors as dirty (deferred re-mesh)
@@ -348,18 +329,20 @@ void Renderer::updateChunks(ChunkSource& world, const Camera& cam, int renderDis
 		if (mit == m_meshes.end()) continue;
 
 		auto [oVerts, tVerts] = m_mesher.buildMesh(world, dp);
-		mit->second.destroy();
-		mit->second.upload(oVerts, tVerts);
+		// Reuse existing handles via update — keeps the slot live for any
+		// in-flight rendering (matters on the VK backend; harmless on GL).
+		uploadChunkSlot(m_rhi, mit->second, oVerts, tVerts, dp);
 		remeshed++;
 	}
 
 	// --- Phase 4: Unload distant meshes + world chunks ---
 	std::vector<ChunkPos> toRemove;
 	int unloadDistSq = (renderDistance + 2) * (renderDistance + 2);
-	for (auto& [pos, mesh] : m_meshes) {
+	for (auto& [pos, slot] : m_meshes) {
 		int dx = pos.x - center.x, dz = pos.z - center.z;
 		if (dx*dx + dz*dz > unloadDistSq) {
-			mesh.destroy();
+			if (slot.opaque)      m_rhi->destroyMesh(slot.opaque);
+			if (slot.transparent) m_rhi->destroyMesh(slot.transparent);
 			toRemove.push_back(pos);
 		}
 	}
@@ -389,112 +372,66 @@ void Renderer::renderFogOfWar(const Camera& cam, float aspect,
 	m_fogOfWar.render(cam, aspect, chunks, renderDistance, m_horizonColor, m_timeOfDay);
 }
 
-void Renderer::renderEntityShadow(const Camera& cam, float aspect,
-                                  glm::vec3 pos, float radius) {
-	if (!m_shadowVAO) return;
-
-	// Render a dark oval on the ground just under the entity's feet.
-	// Pos is entity feet position; we offset +0.02 to avoid z-fighting.
-	glm::mat4 model = glm::translate(glm::mat4(1.0f),
-		glm::vec3(pos.x, pos.y + 0.02f, pos.z));
-	// Scale disc by radius; flatten slightly on Z for an oval feel
-	model = glm::scale(model, glm::vec3(radius, 1.0f, radius * 0.85f));
-
-	glm::mat4 mvp = cam.projectionMatrix(aspect) * cam.viewMatrix() * model;
-
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glDepthMask(GL_FALSE);
-	glEnable(GL_POLYGON_OFFSET_FILL);
-	glPolygonOffset(-1.0f, -1.0f);
-
-	m_shadowShader.use();
-	m_shadowShader.setMat4("uMVP", mvp);
-	m_shadowShader.setFloat("uAlpha", 0.32f);
-
-	glBindVertexArray(m_shadowVAO);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 18);
-	glBindVertexArray(0);
-
-	glDisable(GL_POLYGON_OFFSET_FILL);
-	glDepthMask(GL_TRUE);
-	glDisable(GL_BLEND);
-}
-
 void Renderer::renderSky(const Camera& cam, float aspect) {
-	glDisable(GL_DEPTH_TEST);
-	m_skyShader.use();
-	m_skyShader.setMat4("uInvVP", glm::inverse(cam.projectionMatrix(aspect) * cam.viewMatrix()));
-	m_skyShader.setVec3("uSkyColor", m_skyColor);
-	m_skyShader.setVec3("uHorizonColor", m_horizonColor);
-	m_skyShader.setVec3("uSunDir", m_sunDir);
-	m_skyShader.setFloat("uSunStrength", m_sunStrength);
-	m_skyShader.setFloat("uTime", m_time);
-	glBindVertexArray(m_skyVAO);
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-	glEnable(GL_DEPTH_TEST);
+	glm::mat4 invVP = glm::inverse(cam.projectionMatrix(aspect) * cam.viewMatrix());
+	m_rhi->drawSky(&invVP[0][0],
+	               &m_skyColor.x,
+	               &m_horizonColor.x,
+	               &m_sunDir.x,
+	               m_sunStrength,
+	               m_time);
 }
 
 void Renderer::renderTerrain(const Camera& cam, float aspect) {
-	glEnable(GL_DEPTH_TEST);
-	glEnable(GL_CULL_FACE);
-	glCullFace(GL_BACK);
-	glFrontFace(GL_CCW);
-
-	m_terrainShader.use();
+	// Build the SceneParams snapshot once and feed every chunk draw through
+	// the RHI. State setup (depth/cull/blend) lives in the backend's per-pass
+	// drawChunkMesh* implementation, not here.
 	glm::mat4 view = cam.viewMatrix();
 	glm::mat4 proj = cam.projectionMatrix(aspect);
-	m_terrainShader.setMat4("uView", view);
-	m_terrainShader.setMat4("uProj", proj);
-	m_terrainShader.setVec3("uSunDir", m_sunDir);
-	m_terrainShader.setVec3("uCamPos", cam.position);
-	m_terrainShader.setVec3("uFogColor", m_horizonColor);
-	m_terrainShader.setFloat("uFogStart", m_fogStart);
-	m_terrainShader.setFloat("uFogEnd", m_fogEnd);
-	m_terrainShader.setFloat("uSunStrength", m_sunStrength);
-	m_terrainShader.setFloat("uTime", m_time);
+	glm::mat4 vp   = proj * view;
 
-	// Frustum culling: skip chunks outside the camera view
+	rhi::IRhi::SceneParams scene{};
+	std::memcpy(scene.viewProj, &vp[0][0], sizeof(float) * 16);
+	scene.camPos[0] = cam.position.x;
+	scene.camPos[1] = cam.position.y;
+	scene.camPos[2] = cam.position.z;
+	scene.time      = m_time;
+	scene.sunDir[0] = m_sunDir.x;
+	scene.sunDir[1] = m_sunDir.y;
+	scene.sunDir[2] = m_sunDir.z;
+	scene.sunStr    = m_sunStrength;
+
+	const float fogColor[3] = { m_horizonColor.r, m_horizonColor.g, m_horizonColor.b };
+
 	Frustum frustum;
-	frustum.extract(proj * view);
+	frustum.extract(vp);
 
-	// ── Pass 1: opaque geometry (depth write on, no blending) ──
-	for (auto& [pos, mesh] : m_meshes) {
-		if (mesh.vertexCount == 0) continue;
-		glm::vec3 mn = glm::vec3(pos.x * CHUNK_SIZE, pos.y * CHUNK_SIZE, pos.z * CHUNK_SIZE);
-		glm::vec3 mx = mn + glm::vec3(CHUNK_SIZE);
-		if (!frustum.testAABB(mn, mx)) continue;
-		mesh.draw();
+	// ── Pass 1: opaque ── unsorted, just iterate in map order.
+	for (auto& [pos, slot] : m_meshes) {
+		if (!slot.opaque) continue;
+		if (!frustum.testAABB(slot.mn, slot.mx)) continue;
+		m_rhi->drawChunkMeshOpaque(scene, fogColor, m_fogStart, m_fogEnd, slot.opaque);
 	}
 
-	// ── Pass 2: transparent geometry (depth test on, depth write off, blend on) ──
-	// Sort chunks back-to-front from camera for correct alpha compositing
+	// ── Pass 2: transparent ── sort back-to-front for correct compositing.
 	struct TChunk { float distSq; ChunkPos pos; };
 	std::vector<TChunk> tChunks;
-	for (auto& [pos, mesh] : m_meshes) {
-		if (mesh.tVertexCount == 0) continue;
-		glm::vec3 mn = glm::vec3(pos.x * CHUNK_SIZE, pos.y * CHUNK_SIZE, pos.z * CHUNK_SIZE);
-		glm::vec3 mx = mn + glm::vec3(CHUNK_SIZE);
-		if (!frustum.testAABB(mn, mx)) continue;
-		glm::vec3 center = (mn + mx) * 0.5f;
+	for (auto& [pos, slot] : m_meshes) {
+		if (!slot.transparent) continue;
+		if (!frustum.testAABB(slot.mn, slot.mx)) continue;
+		glm::vec3 center = (slot.mn + slot.mx) * 0.5f;
 		glm::vec3 d = center - cam.position;
-		tChunks.push_back({glm::dot(d, d), pos});
+		tChunks.push_back({ glm::dot(d, d), pos });
 	}
 	if (!tChunks.empty()) {
 		std::sort(tChunks.begin(), tChunks.end(),
 			[](const TChunk& a, const TChunk& b) { return a.distSq > b.distSq; });
-		glDepthMask(GL_FALSE);
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		glDisable(GL_CULL_FACE); // show both faces of thin glass/portal
-		for (auto& tc : tChunks)
-			m_meshes[tc.pos].drawTransparent();
-		glDepthMask(GL_TRUE);
-		glDisable(GL_BLEND);
-		glEnable(GL_CULL_FACE);
+		for (auto& tc : tChunks) {
+			auto& slot = m_meshes[tc.pos];
+			m_rhi->drawChunkMeshTransparent(scene, fogColor,
+				m_fogStart, m_fogEnd, slot.transparent);
+		}
 	}
-
-	glDisable(GL_CULL_FACE);
 }
 
 void Renderer::renderHighlight(const Camera& cam, float aspect, glm::ivec3 pos) {
@@ -557,76 +494,6 @@ void Renderer::renderMoveTarget(const Camera& cam, float aspect, glm::ivec3 pos)
 
 	glDepthFunc(GL_LESS);
 	glDisable(GL_BLEND);
-}
-
-void Renderer::renderHotbar(float aspect, int selectedSlot, int hotbarSize) {
-	glDisable(GL_DEPTH_TEST);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	m_highlightShader.use();
-
-	// Hotbar layout: centered at bottom of screen
-	float slotSize = 0.06f;
-	float padding = 0.008f;
-	float totalWidth = hotbarSize * (slotSize + padding) - padding;
-	float startX = -totalWidth / 2.0f;
-	float startY = -0.92f;
-
-	// Block colors for hotbar preview -- hardcoded for now,
-	// will be driven by registry when renderer gets a World reference
-	static const glm::vec3 hotbarColors[] = {
-		{0.48f,0.48f,0.50f}, // stone
-		{0.52f,0.34f,0.20f}, // dirt
-		{0.30f,0.58f,0.18f}, // grass
-		{0.82f,0.77f,0.50f}, // sand
-		{0.42f,0.28f,0.12f}, // wood
-		{0.18f,0.48f,0.10f}, // leaves
-		{0.93f,0.95f,0.97f}, // snow
-	};
-
-	glBindVertexArray(m_quadVAO);
-
-	for (int i = 0; i < hotbarSize; i++) {
-		float x = startX + i * (slotSize + padding);
-		float y = startY;
-
-		// Scale/translate the unit quad to slot position
-		glm::mat4 model(1.0f);
-		model = glm::translate(model, glm::vec3(x / aspect, y, 0.0f));
-		// Note: divide x by aspect since screen coords are in NDC
-		// Actually, we're working in NDC space directly
-		model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, 0.0f));
-		model = glm::scale(model, glm::vec3(slotSize, slotSize * aspect, 1.0f));
-
-		// Slot background
-		m_highlightShader.setMat4("uMVP", model);
-		GLint loc = glGetUniformLocation(m_highlightShader.id(), "uColor");
-
-		if (i == selectedSlot) {
-			// Selected: bright white border
-			glUniform4f(loc, 1.0f, 1.0f, 1.0f, 0.75f);
-		} else {
-			// Normal: dark translucent background
-			glUniform4f(loc, 0.08f, 0.08f, 0.08f, 0.50f);
-		}
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-
-		// Block color preview (smaller inner quad)
-		float inset = 0.15f;
-		glm::mat4 inner = glm::translate(glm::mat4(1.0f),
-			glm::vec3(x + slotSize * inset, y + slotSize * aspect * inset, 0.0f));
-		inner = glm::scale(inner,
-			glm::vec3(slotSize * (1.0f - 2*inset), slotSize * aspect * (1.0f - 2*inset), 1.0f));
-
-		m_highlightShader.setMat4("uMVP", inner);
-		glm::vec3 c = (i < 7) ? hotbarColors[i] : glm::vec3(1, 0, 1);
-		glUniform4f(loc, c.r, c.g, c.b, 0.9f);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-	}
-
-	glDisable(GL_BLEND);
-	glEnable(GL_DEPTH_TEST);
 }
 
 void Renderer::renderCrosshair(float aspect, glm::vec2 center) {
@@ -822,30 +689,28 @@ void Renderer::renderDoorAnims(const Camera& cam, float aspect,
 
 	if (verts.empty()) return;
 
-	// Upload and draw using terrain shader
-	glm::mat4 view = cam.viewMatrix();
-	glm::mat4 proj = cam.projectionMatrix(aspect);
+	// Door faces ride on the same RHI chunk-mesh pipeline as the terrain.
+	// They re-mesh every frame an animation is active, so we keep one
+	// persistent handle and call updateChunkMesh in place — the GL backend
+	// just glBufferData's, the VK backend reuses or grows the device buffer.
+	const float* data = reinterpret_cast<const float*>(verts.data());
+	const uint32_t n  = (uint32_t)verts.size();
+	if (!m_doorAnimMesh) m_doorAnimMesh = m_rhi->createChunkMesh(data, n);
+	else                 m_rhi->updateChunkMesh(m_doorAnimMesh, data, n);
 
-	m_terrainShader.use();
-	m_terrainShader.setMat4("uView", view);
-	m_terrainShader.setMat4("uProj", proj);
-	m_terrainShader.setVec3("uSunDir", m_sunDir);
-	m_terrainShader.setVec3("uCamPos", cam.position);
-	m_terrainShader.setVec3("uFogColor", m_horizonColor);
-	m_terrainShader.setFloat("uFogStart", m_fogStart);
-	m_terrainShader.setFloat("uFogEnd", m_fogEnd);
-	m_terrainShader.setFloat("uSunStrength", m_sunStrength);
-	m_terrainShader.setFloat("uTime", m_time);
-
-	glBindVertexArray(m_doorAnimVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, m_doorAnimVBO);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(verts.size() * sizeof(ChunkVertex)), verts.data(), GL_DYNAMIC_DRAW);
-
-	glEnable(GL_DEPTH_TEST);
-	glDisable(GL_CULL_FACE);
-	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)verts.size());
-	glEnable(GL_CULL_FACE);
-	glBindVertexArray(0);
+	glm::mat4 vp = cam.projectionMatrix(aspect) * cam.viewMatrix();
+	rhi::IRhi::SceneParams scene{};
+	std::memcpy(scene.viewProj, &vp[0][0], sizeof(float) * 16);
+	scene.camPos[0] = cam.position.x;
+	scene.camPos[1] = cam.position.y;
+	scene.camPos[2] = cam.position.z;
+	scene.time      = m_time;
+	scene.sunDir[0] = m_sunDir.x;
+	scene.sunDir[1] = m_sunDir.y;
+	scene.sunDir[2] = m_sunDir.z;
+	scene.sunStr    = m_sunStrength;
+	const float fogColor[3] = { m_horizonColor.r, m_horizonColor.g, m_horizonColor.b };
+	m_rhi->drawChunkMeshOpaque(scene, fogColor, m_fogStart, m_fogEnd, m_doorAnimMesh);
 }
 
 void Renderer::renderPlanPath(const Camera& cam, float aspect,

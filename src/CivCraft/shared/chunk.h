@@ -1,6 +1,6 @@
 #pragma once
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/block_registry.h"
 #include <array>
 

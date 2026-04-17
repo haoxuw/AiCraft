@@ -1,13 +1,13 @@
 #pragma once
 
-#include "shared/types.h"
+#include "logic/types.h"
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
 #include "shared/annotation.h"
 #include "server/chunk_info.h"
 #include "server/entity_manager.h"
 #include "server/world_template.h"
-#include "shared/action.h"
+#include "logic/action.h"
 #include "shared/chunk_source.h"
 #include "content/builtin.h"
 #include <glm/vec3.hpp>

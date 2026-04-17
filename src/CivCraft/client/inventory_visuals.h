@@ -12,8 +12,16 @@
 
 #include "shared/block_registry.h"
 #include "client/box_model.h"
-#include "client/model_icon_cache.h"
 #include <imgui.h>
+
+// ModelIconCache pulls GL; keep it out of this header so VK-only TUs can
+// include us. The GL build defines CIVCRAFT_USE_GL_ICONS (see CMakeLists)
+// to enable the textured-icon branch; VK stays on the iso-cube fallback.
+#ifdef CIVCRAFT_USE_GL_ICONS
+#include "client/model_icon_cache.h"
+#else
+namespace civcraft { class ModelIconCache; }
+#endif
 #include <glm/glm.hpp>
 #include <cmath>
 #include <string>
@@ -83,6 +91,7 @@ inline void drawItemIcon(ImDrawList* dl, const std::string& id,
                          const std::unordered_map<std::string, BoxModel>* models,
                          ModelIconCache* icons,
                          float time, float x, float y, float size) {
+#ifdef CIVCRAFT_USE_GL_ICONS
 	if (models && icons) {
 		std::string key = id;
 		auto colon = key.find(':');
@@ -97,8 +106,14 @@ inline void drawItemIcon(ImDrawList* dl, const std::string& id,
 			}
 		}
 	}
+#else
+	(void)icons;   // VK has no icon cache; iso-cube fallback below.
+#endif
 	glm::vec3 color = getItemColor(id, blocks, models);
-	drawIsoCube(dl, x + size * 0.5f, y + size * 0.4f, size * 0.34f,
+	// Factor 0.46 makes the iso-cube span ≈80% of the cell's width so the
+	// item clearly fills its square container — the old 0.34 left the cube
+	// floating in the middle looking like a tiny sticker.
+	drawIsoCube(dl, x + size * 0.5f, y + size * 0.45f, size * 0.46f,
 	            color, time, (int)(std::hash<std::string>{}(id) % 20));
 }
 

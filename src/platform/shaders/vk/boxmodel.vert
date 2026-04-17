@@ -1,17 +1,20 @@
 #version 450
 
-// Box-model vertex shader. Generalizes the voxel pipeline: per-instance
-// {worldPos, size, color} instead of unit-size cubes. Used for rendering
-// entities (creatures, players, items) as compositions of axis-aligned
-// boxes in world space. Pairs with voxel.frag (identical vertex outputs).
+// Box-model vertex shader. Per-instance oriented box: a 4x4 model matrix
+// mapping the unit cube [0,1]^3 into its world-space part, plus an RGB tint.
+// This replaces the older {worldPos, size, color} AA-only format — with a
+// full matrix, per-part rotations (walk-cycle limb swings, melee keyframes,
+// head tracking, item equip transforms) survive the instanced batch.
 
 // Per-vertex (unit cube [0,1]^3)
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
-// Per-instance
-layout(location = 2) in vec3 inWorldPos;  // box min-corner in world space
-layout(location = 3) in vec3 inSize;      // box size along each axis
-layout(location = 4) in vec3 inColor;
+// Per-instance — a mat4 is four vec4 attribute slots (GLSL convention).
+layout(location = 2) in vec4 inModelRow0;
+layout(location = 3) in vec4 inModelRow1;
+layout(location = 4) in vec4 inModelRow2;
+layout(location = 5) in vec4 inModelRow3;
+layout(location = 6) in vec3 inColor;
 
 layout(push_constant) uniform PC {
 	mat4 viewProj;
@@ -25,10 +28,16 @@ layout(location = 2) out vec3 vWorldPos;
 layout(location = 3) out float vDist;
 
 void main() {
-	vec3 world = inWorldPos + inPos * inSize;
-	gl_Position = pc.viewProj * vec4(world, 1.0);
+	// GLM column-major: four vec4 rows give us the model matrix directly.
+	mat4 model = mat4(inModelRow0, inModelRow1, inModelRow2, inModelRow3);
+	vec4 world4 = model * vec4(inPos, 1.0);
+	gl_Position = pc.viewProj * world4;
 	vColor = inColor;
-	vNormal = inNormal;
-	vWorldPos = world;
-	vDist = length(world - pc.camPos.xyz);
+	// Cube face normals are axis-aligned; the upper 3x3 of the model matrix
+	// contains rotation + per-axis scale. For axis-aligned input normals this
+	// preserves direction after normalize (scale along an axis doesn't change
+	// the direction of vectors on that axis).
+	vNormal = normalize(mat3(model) * inNormal);
+	vWorldPos = world4.xyz;
+	vDist = length(world4.xyz - pc.camPos.xyz);
 }

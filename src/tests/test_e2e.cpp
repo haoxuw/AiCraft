@@ -19,7 +19,7 @@
 #include "server/client_manager.h"
 #include "client/entity_reconciler.h"
 #include "agent/block_search.h"
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include "shared/chunk.h"
 #include "shared/block_registry.h"
 #include <cstdio>

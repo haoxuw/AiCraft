@@ -387,6 +387,22 @@ private:
 			if (!val.empty()) e.fields[key] = val;
 		}
 
+		// Numeric list fields — items and blocks carry "color": [r, g, b] for
+		// held-item tint and minimap/UI swatches. Store as three scalars so
+		// consumers don't need to re-parse a list.
+		auto colorVals = extractFloatList(e.source, "color");
+		if (colorVals.size() == 3) {
+			char buf[32];
+			snprintf(buf, sizeof(buf), "%g", colorVals[0]); e.fields["color_r"] = buf;
+			snprintf(buf, sizeof(buf), "%g", colorVals[1]); e.fields["color_g"] = buf;
+			snprintf(buf, sizeof(buf), "%g", colorVals[2]); e.fields["color_b"] = buf;
+		}
+
+		// Held-item shape hint — optional string. Renderers use it to pick a
+		// silhouette when the artifact wants something beyond a plain cube.
+		std::string heldShape = extract("held_shape");
+		if (!heldShape.empty()) e.fields["held_shape"] = heldShape;
+
 		// Parse list fields: "tags": ["hostile", ...]
 		e.tags = extractList(e.source, "tags");
 
@@ -406,6 +422,43 @@ private:
 			}
 			e.fields["tags"] = joined;
 		}
+	}
+
+	// Extract a list of floats from Python source: "key": [0.5, 1.0, ...]
+	// Accepts int or float literals separated by commas between [ and ].
+	static std::vector<float> extractFloatList(const std::string& source, const std::string& key) {
+		std::vector<float> result;
+		std::string pattern = "\"" + key + "\"";
+		auto pos = source.find(pattern);
+		if (pos == std::string::npos) return result;
+		auto bracket = source.find('[', pos + pattern.size());
+		if (bracket == std::string::npos) return result;
+		auto end = source.find(']', bracket);
+		if (end == std::string::npos) return result;
+
+		size_t cur = bracket + 1;
+		while (cur < end) {
+			while (cur < end && (source[cur] == ' ' || source[cur] == '\t' ||
+			                     source[cur] == ',' || source[cur] == '\n' ||
+			                     source[cur] == '\r'))
+				cur++;
+			if (cur >= end) break;
+			size_t numEnd = cur;
+			while (numEnd < end && source[numEnd] != ',' && source[numEnd] != ' ' &&
+			       source[numEnd] != '\t' && source[numEnd] != '\n' &&
+			       source[numEnd] != '\r')
+				numEnd++;
+			if (numEnd > cur) {
+				try {
+					result.push_back(std::stof(source.substr(cur, numEnd - cur)));
+				} catch (...) {
+					// Non-numeric entry — skip this list entirely.
+					return {};
+				}
+			}
+			cur = numEnd;
+		}
+		return result;
 	}
 
 	// Extract a list of quoted strings from Python source: "key": ["a", "b", ...]

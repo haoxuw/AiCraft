@@ -8,11 +8,17 @@
 
 #include "client/rhi/rhi.h"
 #include "client/rhi/rhi_vk.h"
-#include "game_vk.h"
+#include "client/game_logger.h"
+#include "client/local_world.h"
+#include "client/network_server.h"
+#include "logic/artifact_registry.h"
+#include "client/process_manager.h"
+#include "client/game_vk.h"
 
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <unistd.h>
@@ -29,13 +35,27 @@ void resizeCb(GLFWwindow* w, int width, int height) {
 	if (s && s->rhi) s->rhi->onResize(width, height);
 }
 
+void focusCb(GLFWwindow* w, int focused) {
+	auto* s = (Shell*)glfwGetWindowUserPointer(w);
+	if (s && s->game) s->game->onWindowFocus(focused != 0);
+}
+
+void scrollCb(GLFWwindow* w, double xoff, double yoff) {
+	auto* s = (Shell*)glfwGetWindowUserPointer(w);
+	if (s && s->game) s->game->onScroll(xoff, yoff);
+}
+
+
 } // namespace
 
 int main(int argc, char** argv) {
 	setvbuf(stdout, nullptr, _IONBF, 0);
 
-	// chdir to the directory containing the executable so shader paths
-	// ("shaders/vk/...") resolve regardless of where the user invokes from.
+	// Resolve execDir from argv[0] BEFORE chdir, then chdir into it so
+	// shader paths ("shaders/vk/...") resolve regardless of where the user
+	// invoked from. execDir is later passed to AgentManager so it can find
+	// the civcraft-server binary even though our cwd has changed.
+	std::string execDir;
 	{
 		std::string exe(argv[0]);
 		auto slash = exe.rfind('/');
@@ -44,30 +64,49 @@ int main(int argc, char** argv) {
 			if (chdir(dir.c_str()) == 0)
 				printf("[vk] cwd -> %s\n", dir.c_str());
 		}
+		execDir = std::filesystem::current_path().string();
 	}
 
 	bool noValidation = false;
 	bool skipMenu    = false;
+	bool logOnly     = false;
+	std::string host = "127.0.0.1"; // --host: server hostname
+	int  port = 0;                  // --port: server port (0 = spawn local)
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("civcraft-ui-vk - Vulkan-native playable slice\n\n"
+			printf("civcraft-ui-vk - Vulkan-native CivCraft client\n\n"
+			       "Always connects to civcraft-server. If --port is omitted, spawns\n"
+			       "a local civcraft-server subprocess (village world, seed 42).\n\n"
 			       "  --no-validation   Disable VK_LAYER_KHRONOS_validation\n"
-			       "  --skip-menu       Jump straight into gameplay\n\n"
+			       "  --skip-menu       Jump straight into gameplay\n"
+			       "  --log-only        Hidden window + echo events to stdout\n"
+			       "  --host HOST       Server hostname (default 127.0.0.1)\n"
+			       "  --port PORT       Server port (omit to spawn local server)\n\n"
 			       "In-game:\n"
-			       "  WASD        move         LMB          attack\n"
+			       "  WASD        move         LMB          attack / click-to-move\n"
 			       "  SPACE       jump         Mouse move   look\n"
+			       "  V           cycle camera (FPS/TPS/RPG/RTS)\n"
+			       "  Tab         inventory    H            handbook\n"
+			       "  F3          debug overlay             F2  screenshot\n"
 			       "  ESC         menu         R            respawn (when dead)\n"
-			       "  F2          screenshot\n");
+			       "  F12         admin        F11          fly (admin)\n"
+			       "  RTS mode: drag-select units, click to move group\n");
 			return 0;
 		}
 		if (strcmp(argv[i], "--no-validation") == 0) noValidation = true;
-		if (strcmp(argv[i], "--skip-menu")     == 0) skipMenu     = true;
+		else if (strcmp(argv[i], "--skip-menu") == 0) skipMenu = true;
+		else if (strcmp(argv[i], "--log-only") == 0) { logOnly = true; skipMenu = true; }
+		else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) host = argv[++i];
+		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) port = std::atoi(argv[++i]);
 	}
+
+	civcraft::GameLogger::instance().init(/*echoStdout=*/logOnly);
 
 	if (!glfwInit()) { fprintf(stderr, "glfwInit failed\n"); return 1; }
 	if (!glfwVulkanSupported()) { fprintf(stderr, "no vulkan\n"); glfwTerminate(); return 1; }
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+	if (logOnly) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 	GLFWwindow* win = glfwCreateWindow(1280, 800, "CivCraft (Vulkan)", nullptr, nullptr);
 	if (!win) { glfwTerminate(); return 1; }
 
@@ -82,7 +121,45 @@ int main(int argc, char** argv) {
 	if (!rhi->init(ii)) return 1;
 	if (!rhi->initImGui()) return 1;
 
+	// civcraft-ui-vk always connects to a civcraft-server (no local demo world
+	// anymore — if the player wanted a standalone demo, they can just launch
+	// the server themselves and this client against it). Spawn one if --port
+	// wasn't supplied; hand ServerInterface to Game BEFORE init() so the game
+	// streams chunks from the server instead of generating its own.
+	civcraft::AgentManager agentMgr;
+	civcraft::LocalWorld localWorld;
+	// Merge Python-declared feature tags into entity defs
+	{
+		civcraft::ArtifactRegistry artifacts;
+		artifacts.loadAll("artifacts");
+		localWorld.entityDefs().mergeArtifactTags(artifacts.livingTags());
+	}
+	std::unique_ptr<civcraft::NetworkServer> net;
+	{
+		int connectPort = port;
+		if (connectPort <= 0) {
+			civcraft::AgentManager::Config cfg;
+			cfg.seed = 42;
+			cfg.templateIndex = 1;  // village world — same as `make game` used to produce
+			cfg.execDir = execDir;
+			connectPort = agentMgr.launchServer(cfg);
+			if (connectPort < 0) {
+				fprintf(stderr, "[vk] failed to launch civcraft-server\n");
+				return 1;
+			}
+		}
+		net = std::make_unique<civcraft::NetworkServer>(host, connectPort, localWorld);
+		if (!net->createGame(42, 1)) {
+			fprintf(stderr, "[vk] handshake failed (%s:%d)\n",
+			        host.c_str(), connectPort);
+			return 1;
+		}
+		printf("[vk] connected to civcraft-server %s:%d (player eid=%d)\n",
+		       host.c_str(), connectPort, (int)net->localPlayerId());
+	}
+
 	civcraft::vk::Game game;
+	game.setServer(net.get());  // must precede init()
 	if (!game.init(rhi.get(), win)) {
 		fprintf(stderr, "game.init failed\n");
 		return 1;
@@ -92,6 +169,8 @@ int main(int argc, char** argv) {
 	Shell shell{ rhi.get(), &game };
 	glfwSetWindowUserPointer(win, &shell);
 	glfwSetFramebufferSizeCallback(win, resizeCb);
+	glfwSetWindowFocusCallback(win, focusCb);
+	glfwSetScrollCallback(win, scrollCb);
 
 	auto t0 = std::chrono::steady_clock::now();
 	auto tPrev = t0;
@@ -110,6 +189,7 @@ int main(int argc, char** argv) {
 	}
 
 	game.shutdown();
+	if (net) net->disconnect();
 	rhi->shutdown();
 	glfwDestroyWindow(win);
 	glfwTerminate();

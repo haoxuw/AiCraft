@@ -1,6 +1,6 @@
 #include "client/game.h"
-#include "shared/constants.h"
-#include "shared/physics.h"
+#include "logic/constants.h"
+#include "logic/physics.h"
 #include "server/server_tuning.h"
 #include "imgui.h"
 #include <sstream>
@@ -517,17 +517,7 @@ void Game::updatePlaying(float dt, float aspect) {
 		development::ScenarioCallbacks cb;
 
 		cb.save = [this](const std::string& path) {
-			// Write a PPM screenshot directly (mirrors writeScreenshot in game.cpp)
-			int w = m_window.width(), h = m_window.height();
-			std::vector<uint8_t> px(w * h * 3);
-			glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px.data());
-			std::vector<uint8_t> fl(w * h * 3);
-			for (int y = 0; y < h; y++)
-				memcpy(&fl[y * w * 3], &px[(h - 1 - y) * w * 3], w * 3);
-			std::ofstream f(path, std::ios::binary);
-			f << "P6\n" << w << " " << h << "\n255\n";
-			f.write((char*)fl.data(), fl.size());
-			printf("Screenshot: %s\n", path.c_str());
+			m_rhi->screenshot(path.c_str());
 		};
 		cb.cycleCamera = [this]() {
 			m_camera.cycleMode();

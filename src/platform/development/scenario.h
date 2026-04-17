@@ -10,7 +10,7 @@
 
 #include "client/camera.h"
 #include "client/hotbar.h"
-#include "shared/entity.h"
+#include "logic/entity.h"
 #include <string>
 #include <functional>
 

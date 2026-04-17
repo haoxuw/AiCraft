@@ -15,7 +15,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel gl vk
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e web web-build web-configure web-clean proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel gl vk sample
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -48,12 +48,16 @@ vk: configure
 	cmake --build $(BUILD_DIR) --target civcraft-ui-vk -j$(PAR)
 	cd $(BUILD_DIR) && ./civcraft-ui-vk
 
-# `make game` builds with CIVCRAFT_PERF=ON in a separate build dir so the
-# server emits frame/tick/handler timing logs (see [Perf] lines on stderr and
-# /tmp/civcraft_log_*.log). Production targets (`make server`, `make client`)
-# use the default build dir without this flag — the instrumentation code is
-# not compiled in.
+# `make game` launches the Vulkan-native client. civcraft-ui-vk always spawns
+# its own civcraft-server (village world, seed 42) on startup and connects
+# over TCP — same architecture as the GL client, just rendered through the
+# RHI's Vulkan backend. --skip-menu jumps straight into gameplay so the loop
+# is ready for behavior verification (DECIDE logs, screenshots, etc.).
 game: game-build
+	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
+
+# Legacy GL entry point — keep around for A/B comparisons during Phase 3.
+game-gl: game-build
 	cd $(GAME_BUILD_DIR) && ./$(GAME)-ui --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
 
 profiler: game-build
@@ -92,6 +96,17 @@ character_views: build
 item_views: build
 	cd $(BUILD_DIR) && ./$(GAME)-ui --skip-menu \
 	    --debug-scenario item_views --debug-item $(ITEM)
+
+# sample: drive civcraft-ui-vk through a menu → gameplay (FPS/TPS/RPG/RTS)
+# → inventory → paused → admin-overview tour and write one PNG per stage
+# to $(SAMPLE_DIR). Uses the file-based debug triggers baked into Debug
+# builds (no xdotool / key injection), so $(BUILD_DIR) MUST be Debug.
+#
+#   make sample                           # → /tmp/civcraft_samples/*.png
+#   make sample SAMPLE_DIR=/tmp/foo       # custom output dir
+SAMPLE_DIR := /tmp/civcraft_samples
+sample: build
+	@tools/platform/capture_samples.sh $(BUILD_DIR) $(SAMPLE_DIR)
 
 # animation_sweep: shoot every (character × clip) combination and sort the
 # output into /tmp/anim_review/<character>/<clip>_p{0..3}.png. Clips probed:

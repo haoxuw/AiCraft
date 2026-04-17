@@ -26,7 +26,11 @@ public:
 	void drawCube(const float mvp[16]) override;
 	bool screenshot(const char* path) override;
 	void drawSky(const float invVP[16],
-	             const float sunDir[3], float sunStr) override;
+	             const float skyColor[3],
+	             const float horizonColor[3],
+	             const float sunDir[3],
+	             float sunStrength,
+	             float time) override;
 	void drawVoxels(const SceneParams& scene,
 	                const float* instances,
 	                uint32_t instanceCount) override;
@@ -72,6 +76,7 @@ public:
 	                                     const float fogColor[3],
 	                                     float fogStart, float fogEnd,
 	                                     MeshHandle mesh) override;
+	void       renderShadowsChunkMesh(const float sunVP[16], MeshHandle mesh) override;
 
 private:
 	bool createInstance(const char* appName);
@@ -90,6 +95,7 @@ private:
 	bool createSkyPipeline();
 	bool createBoxModelPipeline();
 	bool createChunkPipelines();
+	bool createChunkShadowPipeline();
 	bool ensureInstanceCapacity(VkDeviceSize bytes);
 	bool ensureBoxInstanceCapacity(int frame, VkDeviceSize bytes);
 	uint32_t findMemType(uint32_t typeBits, VkMemoryPropertyFlags props);
@@ -206,6 +212,10 @@ private:
 	VkDeviceMemory m_boxShadowInstMem[kFramesInFlight]{};
 	void* m_boxShadowInstMapped[kFramesInFlight]{};
 	VkDeviceSize m_boxShadowInstCap[kFramesInFlight]{};
+	// Chunk-mesh shadow pipeline. Reads only position from the 13-float
+	// chunk vertex stream; shares m_shadowLayout + m_shadowRenderPass with
+	// the voxel/box shadow pipelines so all three accumulate into one map.
+	VkPipeline m_chunkShadowPipeline = VK_NULL_HANDLE;
 
 	// Per-frame descriptor set bound to the voxel pipeline at set=0.
 	//   binding 0: combined image sampler → shadow map

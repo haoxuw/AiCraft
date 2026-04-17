@@ -5,7 +5,7 @@
  * Non-blocking I/O using POSIX sockets.
  */
 
-#include "shared/net_protocol.h"
+#include "net/net_protocol.h"
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>

@@ -36,10 +36,11 @@
  * S_NPC_INTERRUPT 0x1010  [u32 eid][str reason]                  (v3, TODO(decide-loop))
  * S_WORLD_EVENT   0x1011  [str kind][str payload]                (v3, TODO(decide-loop))
  * S_ANNOTATION_SET 0x1014 [i32 x][i32 y][i32 z][str typeId — empty = remove][u8 slot]
+ * S_WEATHER       0x1015  [str kind][f32 intensity][f32 windX][f32 windZ][u32 seq]  (v3)
  */
 
-#include "shared/entity.h"
-#include "shared/action.h"
+#include "logic/entity.h"
+#include "logic/action.h"
 #include "shared/chunk.h"
 #include <cstdint>
 #include <cstring>
@@ -50,7 +51,8 @@ namespace civcraft::net {
 
 // Protocol version sent in C_HELLO. Server uses this to pick S_CHUNK vs S_CHUNK_Z.
 // Increment this whenever the wire format changes.
-static constexpr uint32_t PROTOCOL_VERSION = 2;
+// v3: adds S_WEATHER.
+static constexpr uint32_t PROTOCOL_VERSION = 3;
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -91,6 +93,10 @@ enum MsgType : uint32_t {
 	// annotations piggyback on S_CHUNK / S_CHUNK_Z after the block data.
 	S_ANNOTATION_SET  = 0x1014,  // [i32 x][i32 y][i32 z][str typeId][u8 slot]
 	                             //   typeId=="" means remove annotation at pos
+
+	// Weather state — broadcast on seq change + on join. Global (one kind
+	// for the whole world). Server owns the state; client renders it.
+	S_WEATHER         = 0x1015,  // [str kind][f32 intensity][f32 windX][f32 windZ][u32 seq]
 };
 
 // Message header (8 bytes)

@@ -15,9 +15,9 @@
  * Kept: NearbyEntity (used by gatherNearby), BlockSample (used by scan_blocks).
  */
 
-#include "shared/action.h"
-#include "shared/entity.h"
-#include "shared/constants.h"
+#include "logic/action.h"
+#include "logic/entity.h"
+#include "logic/constants.h"
 #include <glm/glm.hpp>
 #include <vector>
 #include <string>

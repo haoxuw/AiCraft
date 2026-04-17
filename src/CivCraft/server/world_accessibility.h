@@ -16,7 +16,7 @@
 
 #include "shared/chunk_source.h"
 #include "shared/block_registry.h"
-#include "shared/constants.h"
+#include "logic/constants.h"
 #include <glm/vec3.hpp>
 #include <string>
 #include <vector>

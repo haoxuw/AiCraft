@@ -1,8 +1,9 @@
 #pragma once
 
-#include "shared/entity.h"
-#include "shared/entity_physics.h"
-#include "shared/physics.h"
+#include "logic/entity.h"
+#include "logic/entity_physics.h"
+#include "logic/physics.h"
+#include "client/game_logger.h"
 #include <glm/glm.hpp>
 #include <memory>
 #include <unordered_map>
@@ -160,19 +161,49 @@ private:
 		glm::vec3 diff = predicted - e.position;
 		float dist = glm::length(diff);
 
-		// Owned player: client prediction is authoritative for smooth
-		// motion. We only intervene on genuine teleport-scale gaps
-		// (respawn, forced relocation, major desync). No soft-pull —
-		// it fights forward motion every frame and shakes the camera
-		// in RPG/TPS views. The server-side reject cooldown handles
-		// stale clientPos recovery; anything under kHardSnapDistance
-		// converges naturally as client and server physics run the same
-		// moveAndCollide on the same block data.
-		if (dist > kHardSnapDistance) {
-			e.position = target.position;
-			e.velocity = target.velocity;
-			logDrift(id, e, target, dist);
+		// Proof-of-life log: confirms reconcileToServer is actually running in
+		// the current backend (GL vs VK). First call + every 120th after
+		// (~2s at 60Hz), PLUS every tick where dist exceeds the snap threshold
+		// so if we're right on the edge we see every decision. `willSnap`
+		// prints the exact branch condition so a red HUD + willSnap=0 makes
+		// the threshold mismatch (HUD red @ 2m, snap @ 16m) visible.
+		{
+			static std::unordered_map<EntityId, uint32_t> s_tick;
+			uint32_t n = ++s_tick[id];
+			bool willSnap = (dist > kHardSnapDistance);
+			if (n == 1 || n % 120 == 0 || willSnap) {
+				std::fprintf(stderr, "[Reconcile] entity=%u tick=%u dist=%.2f "
+				             "willSnap=%d (dist>%.1f) "
+				             "client=(%.2f,%.2f,%.2f) server=(%.2f,%.2f,%.2f)\n",
+				             id, n, dist,
+				             willSnap ? 1 : 0, kHardSnapDistance,
+				             e.position.x, e.position.y, e.position.z,
+				             target.position.x, target.position.y, target.position.z);
+				std::fflush(stderr);
+			}
 		}
+
+		// // Owned player: client prediction is authoritative for smooth
+		// // motion. We only intervene on genuine teleport-scale gaps
+		// // (respawn, forced relocation, major desync). No soft-pull —
+		// // it fights forward motion every frame and shakes the camera
+		// // in RPG/TPS views. The server-side reject cooldown handles
+		// // stale clientPos recovery; anything under kHardSnapDistance
+		// // converges naturally as client and server physics run the same
+		// // moveAndCollide on the same block data.
+		// if (dist > kHardSnapDistance) {
+		// 	// ── CLIENT SNAP ── the one and only place we teleport the
+		// 	// local player back to the server's authoritative position.
+		// 	// Logged unconditionally on every occurrence (no throttle) so
+		// 	// the user sees proof the snap actually happened. Teed to
+		// 	// stderr, stdout AND GameLogger (/tmp/civcraft_game.log +
+		// 	// in-game Main Menu → Game Log viewer) so there is no stream
+		// 	// the user might be watching where this is invisible.
+		// 	glm::vec3 before = e.position;
+		// 	e.position = target.position;
+		// 	e.velocity = target.velocity;
+		// 	logSnap(id, before, target, dist);
+		// }
 
 		target.prevClientPos = e.position;
 	}
@@ -186,28 +217,28 @@ private:
 		}
 	}
 
-	// Prints the FIRST 10 drift events per entity immediately so the start of
-	// a desync is visible, then throttles to ~1 line/sec. Singleplayer on
-	// localhost should never trip this — every line is a real divergence
-	// between client prediction and server physics worth investigating.
-	void logDrift(EntityId id, const Entity& e, const InterpTarget& t, float dist) {
-		static std::unordered_map<EntityId, int> s_tick;
-		int& n = s_tick[id];
-		n++;
-		if (n > 10 && n % 60 != 0) return;
-		glm::vec3 serverD = t.prevInitialized ? (t.position - t.prevServerPos) : glm::vec3(0.0f);
-		glm::vec3 clientD = t.prevInitialized ? (e.position - t.prevClientPos) : glm::vec3(0.0f);
-		std::fprintf(stderr, "[!!][PosDrift] eid=%u n=%d client=(%.2f,%.2f,%.2f) "
-		             "server=(%.2f,%.2f,%.2f) dist=%.2f "
-		             "serverD=(%.2f,%.2f,%.2f) clientD=(%.2f,%.2f,%.2f) "
-		             "vel=(%.2f,%.2f,%.2f) (tol=%.2f snap=%.1f)\n",
-		             id, n, e.position.x, e.position.y, e.position.z,
-		             t.position.x, t.position.y, t.position.z, dist,
-		             serverD.x, serverD.y, serverD.z,
-		             clientD.x, clientD.y, clientD.z,
-		             e.velocity.x, e.velocity.y, e.velocity.z,
-		             kDriftTolerance, kHardSnapDistance);
-		std::fflush(stderr);
+	// Emits one line per snap to every stream the user might be watching:
+	//   - stderr with "[!!][Client][Snap]" (mirrors server-side "[!!][Server][Reject]")
+	//   - stdout (same text) so `--log-only` / redirected stdout captures it
+	//   - GameLogger so /tmp/civcraft_game.log and the in-game viewer show it
+	// NOT throttled: every snap prints. Singleplayer localhost should never
+	// trip this at all; each line is a real desync worth investigating.
+	void logSnap(EntityId id, glm::vec3 before, const InterpTarget& t, float dist) {
+		static std::unordered_map<EntityId, uint32_t> s_count;
+		uint32_t n = ++s_count[id];
+		char line[384];
+		std::snprintf(line, sizeof(line),
+		             "[!!][Client][Snap] PosErrorTooHigh entity=%u reason=\"dist>%.1f\" count=%u "
+		             "dist=%.2f before=(%.2f,%.2f,%.2f) server=(%.2f,%.2f,%.2f) "
+		             "vel=(%.2f,%.2f,%.2f) tol=%.2f",
+		             id, kHardSnapDistance, n, dist,
+		             before.x, before.y, before.z,
+		             t.position.x, t.position.y, t.position.z,
+		             t.velocity.x, t.velocity.y, t.velocity.z,
+		             kDriftTolerance);
+		std::fprintf(stderr, "%s\n", line); std::fflush(stderr);
+		std::fprintf(stdout, "%s\n", line); std::fflush(stdout);
+		GameLogger::instance().emit("SNAP", "%s", line);
 	}
 
 	std::unordered_map<EntityId, InterpTarget> m_targets;

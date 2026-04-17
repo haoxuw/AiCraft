@@ -27,6 +27,12 @@ struct MoveParams {
 	float gravity = 28.0f;
 	float maxFallSpeed = 50.0f;
 	float stepHeight = 1.0f;
+	// Max vertical distance the ground-snap helper will pull an on-ground entity
+	// downward to stick to terrain when walking over a ledge. Large values keep
+	// creatures glued to Warcraft-style terrain (no gliding across gaps). Small
+	// values let gravity take over on cliff drops — set low (≤0.5) for players
+	// so walking off a ledge falls instead of snapping. 0 disables snapping.
+	float maxGroundSnap = 2.0f;
 	bool canFly = false;
 	bool smoothStep = false; // true = jump arc instead of instant step-up (for creatures)
 };
@@ -40,6 +46,9 @@ inline MoveParams makeMoveParams(glm::vec3 boxMin, glm::vec3 boxMax,
 	mp.height     = boxMax.y - boxMin.y;
 	mp.gravity    = 32.0f * gravityScale;
 	mp.stepHeight = isLiving ? 1.0f : 0.0f;
+	// Preserve old ground-snap behavior (searchDepth = stepHeight + 1). Callers
+	// who want cliff-drop gravity (players) override this to a small value.
+	mp.maxGroundSnap = isLiving ? (mp.stepHeight + 1.0f) : 0.0f;
 	mp.canFly     = canFly;
 	mp.smoothStep = false;
 	return mp;
@@ -189,12 +198,15 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	// Only applies when entity WAS on ground, didn't step up, isn't flying,
 	// and isn't jumping (positive Y velocity = intentional upward movement).
 	bool jumping = result.velocity.y > 0.5f;
-	if (wasOnGround && !didStep && !params.canFly && !jumping) {
+	if (wasOnGround && !didStep && !params.canFly && !jumping
+	    && params.maxGroundSnap > 0.0f) {
 		// Check if we've moved horizontally but are now floating
 		bool movedHorizontally = (r.x != pos.x || r.z != pos.z);
 		if (movedHorizontally) {
-			// Look for ground below (up to stepHeight + 1 blocks down)
-			float searchDepth = params.stepHeight + 1.0f;
+			// Look for ground below (bounded by maxGroundSnap — players cap this
+			// low so gravity takes over on cliff drops; NPCs keep it tall so
+			// they don't glide off terrain edges).
+			float searchDepth = params.maxGroundSnap;
 			for (float dy = 0; dy >= -searchDepth; dy -= 0.5f) {
 				float testY = pos.y + dy;
 				if (testY < 0) break;

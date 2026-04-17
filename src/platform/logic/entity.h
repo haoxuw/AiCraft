@@ -1,7 +1,7 @@
 #pragma once
 
-#include "shared/constants.h"
-#include "shared/inventory.h"
+#include "logic/constants.h"
+#include "logic/inventory.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
@@ -62,6 +62,11 @@ struct EntityDef {
 	float eye_height = 0.0f;     // eye position above feet (0 = use collision_box_max.y * 0.75)
 	bool playable = false;        // true = appears in character selection menu (player skins)
 	float pickup_range = 1.5f;   // max distance to pick up items (0 = cannot pickup)
+	// Seconds the picked-up item arcs toward this picker. Every picker
+	// with pickup_range > 0 MUST set this; the client uses it both to
+	// drive the fly animation and as the timeout after which an
+	// unfulfilled pickup is treated as "denied".
+	float pickup_fly_duration = 0.35f;
 	// Carry capacity, measured in material-value units (see material_values.h).
 	// The sum of (count × material_value) for all items in this entity's
 	// inventory must be ≤ inventory_capacity. 0 = no capacity (cannot carry).
