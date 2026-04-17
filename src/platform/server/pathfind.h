@@ -1,23 +1,8 @@
 #pragma once
 
-/**
- * Server-side greedy navigation — simple local steering for click-to-move.
- *
- * No A* or long-range planning. Entities walk straight toward their goal.
- * If stuck (physics collision blocks progress), they dodge 45 degrees left
- * or right and keep walking. Entities never stop — they always keep pushing
- * toward the goal until they arrive or the player cancels.
- *
- * RTS click-to-move pathfinding is now handled on the client
- * (src/platform/client/rts_executor.h) — the client plans with GridPlanner,
- * stores waypoints, and drives each owned unit via per-tick Move proposals.
- * This file is what runs for any remaining *server-issued* nav goal, e.g.
- * scripted NPC movement that still uses C_SET_GOAL.
- *
- * Two functions:
- *   planGroupFormation() — assign formation-offset goals for a group of entities
- *   updateNavigation()   — called each server tick, sets entity velocities
- */
+// Greedy steering for C_SET_GOAL consumers; walks straight, dodges 45° on stuck.
+// RTS click-to-move runs client-side via rts_executor.h + GridPlanner — this is
+// the fallback for scripted/legacy server-issued goals.
 
 #include "server/server_tuning.h"
 #include "logic/entity.h"
@@ -29,8 +14,7 @@
 
 namespace civcraft {
 
-// Assign formation-offset long-term goals for a group of entities.
-// Entities spread into a grid centered on goalPos.
+// Grid formation around goalPos.
 inline void planGroupFormation(glm::vec3 goalPos, std::vector<Entity*>& entities) {
 	int n = (int)entities.size();
 	if (n == 0) return;
@@ -52,8 +36,7 @@ inline void planGroupFormation(glm::vec3 goalPos, std::vector<Entity*>& entities
 	}
 }
 
-// Update navigation for all entities with active nav goals.
-// Called once per server tick. Sets entity velocity toward their goal.
+// Per-tick. Sets velocity toward goal for active-nav Living entities.
 inline void updateNavigation(float dt, EntityManager& entities) {
 	entities.forEach([&](Entity& e) {
 		if (!e.nav.active) return;
@@ -62,7 +45,7 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 		glm::vec3 pos = e.position;
 		glm::vec3 goal = e.nav.longGoal;
 
-		// --- Arrived? (always check, even when client is driving) ---
+		// Check arrival even when client drives.
 		float dx = pos.x - goal.x;
 		float dz = pos.z - goal.z;
 		float distXZ = std::sqrt(dx * dx + dz * dz);
@@ -75,16 +58,12 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 			return;
 		}
 
-		// If the client is actively driving this entity (sent a Move action
-		// with clientPos this tick), don't override its velocity — the client's
-		// local moveAndCollide provides responsive movement. Nav will take over
-		// when the client stops sending Move actions.
+		// Client-driven (skipPhysics) → don't override; resumes when client stops.
 		if (e.skipPhysics) return;
 
 		float walkSpeed = e.def().walk_speed;
-		if (walkSpeed <= 0) walkSpeed = 2.0f; // fallback
+		if (walkSpeed <= 0) walkSpeed = 2.0f;
 
-		// --- Stuck detection ---
 		e.nav.stuckTimer += dt;
 		if (e.nav.stuckTimer >= ServerTuning::navStuckTimeout) {
 			float movedX = pos.x - e.nav.stuckCheckPos.x;
@@ -92,7 +71,7 @@ inline void updateNavigation(float dt, EntityManager& entities) {
 			float moved = std::sqrt(movedX * movedX + movedZ * movedZ);
 
 			if (moved < ServerTuning::navStuckMinMove) {
-				// Stuck! Start or flip dodge
+				// Start/flip dodge direction.
 				if (e.nav.dodgeSign == 0) {
 					e.nav.dodgeSign = (std::rand() % 2 == 0) ? 1 : -1;
 				} else {

@@ -1,12 +1,6 @@
 #pragma once
 
-/**
- * EntityManager — entity lifecycle, type registry, and physics.
- *
- * Behavior/AI code has been moved to the agent client process (src/agent/).
- * This class is now Python-free: no behavior loading, no decision gathering.
- * Entity AI arrives as ActionProposals from agent client processes over TCP.
- */
+// Entity lifecycle, type registry, physics. AI lives on agent clients; this is Python-free.
 
 #include "logic/entity.h"
 #include "logic/constants.h"
@@ -27,8 +21,6 @@ namespace civcraft {
 
 class EntityManager {
 public:
-	// --- Type Registry ---
-
 	void registerType(const EntityDef& def) {
 		m_typeDefs[def.string_id] = def;
 	}
@@ -38,8 +30,7 @@ public:
 		return it != m_typeDefs.end() ? &it->second : nullptr;
 	}
 
-	// Merge feature tags from ArtifactRegistry into registered EntityDefs.
-	// Called after registerAllBuiltins() + ArtifactRegistry::loadAll().
+	// Call after registerAllBuiltins() + ArtifactRegistry::loadAll().
 	void mergeArtifactTags(const std::vector<std::pair<std::string, std::vector<std::string>>>& tagsByType) {
 		int merged = 0;
 		for (auto& [typeId, tags] : tagsByType) {
@@ -52,8 +43,6 @@ public:
 		if (merged > 0)
 			printf("[EntityManager] Merged feature tags for %d entity types\n", merged);
 	}
-
-	// --- Instance Management ---
 
 	EntityId spawn(const std::string& typeId, glm::vec3 pos) {
 		auto* def = getTypeDef(typeId);
@@ -105,10 +94,7 @@ public:
 		return result;
 	}
 
-	// --- Physics ---
-
 	void stepPhysics(float dt, const BlockSolidFn& isSolid) {
-		// Remove dead
 		for (auto it = m_entities.begin(); it != m_entities.end(); ) {
 			if (it->second->removed) {
 				it = m_entities.erase(it);
@@ -119,20 +105,17 @@ public:
 			auto& e = *entity;
 			const auto& def = e.def();
 
-			// Age
 			if (e.hasProp(Prop::Age))
 				e.setProp(Prop::Age, e.getProp<float>(Prop::Age) + dt);
 
-			// Track walk distance for animation
 			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
 			if (hSpeed > 0.01f) {
 				float dist = e.getProp<float>(Prop::WalkDistance, 0.0f);
 				e.setProp(Prop::WalkDistance, dist + hSpeed * dt);
 			}
 
-			// Skip physics for entities whose position was set by clientPos this tick.
-			// The client already ran moveAndCollide — running it again would double
-			// gravity, causing jumps to fail and movement to feel sluggish.
+			// skipPhysics: clientPos applied this tick; re-running moveAndCollide
+			// would double gravity → failed jumps + sluggish input.
 			if (e.skipPhysics) {
 				e.skipPhysics = false;
 			} else {
@@ -140,11 +123,7 @@ public:
 				glm::vec3 prePos = e.position;
 				auto result = stepEntityPhysics(e, e.velocity, isSolid, dt);
 
-				// ── DEBUG: stuck-in-place — server-side collision clamp ──
-				// Input horiz velocity non-zero but output near-zero ⇒ the
-				// server thinks this entity is walking into a wall. Client
-				// animation plays regardless, producing the "walks in place"
-				// symptom until drift exceeds SNAP_THRESHOLD.
+				// Input horiz != 0 but output ≈ 0 → collision clamp ("walks in place").
 				float inHoriz  = std::sqrt(preVel.x * preVel.x + preVel.z * preVel.z);
 				float outHoriz = std::sqrt(result.velocity.x * result.velocity.x +
 				                            result.velocity.z * result.velocity.z);
@@ -162,10 +141,10 @@ public:
 				}
 			}
 
-			// Item entity: freeze on ground (no bouncing), despawn after timeout
+			// Freeze item entities on ground; despawn after DespawnTime.
 			if (e.typeId() == ItemName::ItemEntity) {
 				if (e.onGround) {
-					e.velocity = {0, 0, 0}; // stop moving once landed
+					e.velocity = {0, 0, 0};
 				}
 				float age = e.getProp<float>(Prop::Age);
 				if (age > e.getProp<float>(Prop::DespawnTime, 300.0f))
@@ -173,9 +152,6 @@ public:
 			}
 		}
 	}
-
-	// Item pickup is client-initiated via ActionProposal::PickupItem.
-	// Creatures pickup is handled by Python behavior code sending the same action.
 
 	void forEach(std::function<void(Entity&)> fn) {
 		for (auto& [id, e] : m_entities)

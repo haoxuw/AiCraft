@@ -1,9 +1,7 @@
 #pragma once
 
-// WeatherController — server-owned, tick-driven Markov chain over weather
-// kinds. Produces (kind, intensity, wind) state that the ClientManager
-// broadcasts to all connected clients via S_WEATHER. Visuals are client-
-// side (Rule 5): this file knows nothing about rendering.
+// Server-owned Markov chain. Broadcasts (kind, intensity, wind) via S_WEATHER.
+// Rule 5: visuals are client-side, this file knows nothing about rendering.
 
 #include "server/python_bridge.h"
 #include <cmath>
@@ -14,11 +12,11 @@
 namespace civcraft {
 
 struct WeatherState {
-	std::string kind      = "clear";   // matches WeatherPyConfig::Kind::name
-	float       intensity = 0.0f;      // 0..1 — client decides visual mapping
-	float       windX     = 0.0f;      // world-space wind XZ components (-1..1)
+	std::string kind      = "clear";   // WeatherPyConfig::Kind::name
+	float       intensity = 0.0f;      // 0..1 — client maps to visuals
+	float       windX     = 0.0f;      // world XZ, -1..1
 	float       windZ     = 0.0f;
-	uint32_t    seq       = 0;         // bumped on every kind/intensity change
+	uint32_t    seq       = 0;         // bumped on kind/intensity change
 };
 
 class WeatherController {
@@ -35,13 +33,11 @@ public:
 		m_dirty = true;
 	}
 
-	// Advance the schedule by dt seconds. Returns true if state mutated
-	// since the last call to changed().
 	void tick(float dt) {
 		m_elapsed += dt;
 		m_secondsUntilTransition -= dt;
 
-		// Wind: base vector + slow sinusoidal noise keyed off elapsed time.
+		// Wind: base + slow sinusoidal noise.
 		float phase = (m_cfg.windNoiseScale > 0.01f)
 		              ? (m_elapsed / m_cfg.windNoiseScale) * 6.2831853f
 		              : 0.0f;
@@ -50,10 +46,7 @@ public:
 		float newWX  = m_cfg.baseWindX + noiseX;
 		float newWZ  = m_cfg.baseWindZ + noiseZ;
 
-		// Low-pass the wind so direction doesn't flip every broadcast and
-		// particle systems don't pop. Wind is NOT counted as a state change
-		// for seq purposes — only kind/intensity are (seq is expensive —
-		// clients may use it to crossfade particles).
+		// Low-pass so particles don't pop. Wind doesn't bump seq — only kind/intensity do.
 		m_state.windX = m_state.windX * 0.98f + newWX * 0.02f;
 		m_state.windZ = m_state.windZ * 0.98f + newWZ * 0.02f;
 
@@ -71,16 +64,14 @@ public:
 
 	const WeatherState& state() const { return m_state; }
 
-	// Returns true once per mutation (kind or intensity change). Resets on
-	// read — the broadcaster uses it to decide whether to re-send S_WEATHER.
+	// True once per kind/intensity mutation; read-and-clear.
 	bool checkAndClearDirty() {
 		bool d = m_dirty;
 		m_dirty = false;
 		return d;
 	}
 
-	// Manual override for debug / admin commands. Bumps seq so clients
-	// observe the change.
+	// Debug/admin override; bumps seq so clients observe change.
 	void forceKind(const std::string& kind) {
 		m_state.kind = kind;
 		applyIntensity(kind);
@@ -120,8 +111,7 @@ private:
 		m_state.intensity = d(m_rng);
 	}
 
-	// Exponential-ish sample: expected value = meanSeconds, clamped to
-	// [0.2 * mean, 3 * mean] so the schedule never sticks or flaps.
+	// Exponential-ish, E=meanSeconds, clamped [0.2·mean, 3·mean] to avoid stick/flap.
 	float sampleDuration(const std::string& name) {
 		const auto* k = findKind(name);
 		float mean = k ? k->meanSeconds : 120.0f;

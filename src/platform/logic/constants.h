@@ -1,41 +1,21 @@
 #pragma once
 
-/**
- * constants.h — single source of truth for all identifiers and enums.
- *
- * Classification model (Entity = Living + Item):
- *
- *   EntityKind (enum):
- *     Living  — moves, has HP, has inventory (players, NPCs, animals)
- *     Item    — on ground or in inventory
- *
- *   LivingName — string IDs for Living entities: "player", "chicken", etc.
- *   ItemName   — string IDs for Item entities: "egg", "apple", etc.
- *   These are mutually exclusive: every entity is either Living or Item.
- *
- *   BlockType — string IDs for world blocks: "stone", "door", etc.
- *   Blocks are NOT entities. Mapped to BlockId (uint16) by BlockRegistry.
- */
+// Rule 2: Entity = Living + Item. LivingName/ItemName mutually exclusive.
+// BlockType strings map to BlockId (uint16) via BlockRegistry — blocks are NOT entities.
 
 #include <cstdint>
 
 namespace civcraft {
 
-// ================================================================
-// EntityKind — the two kinds of entity
-// ================================================================
 enum class EntityKind {
-	Living,    // moves, has HP, has inventory (players, NPCs, animals)
+	Living,    // moves, HP, inventory (players, NPCs, animals)
 	Item,      // on ground or in inventory
-	Structure, // made of blocks; valid only while all blueprint blocks are present
+	Structure, // multi-block; valid only while all blueprint blocks present
 };
 
 using EntityId = uint32_t;
 constexpr EntityId ENTITY_NONE = 0;
 
-// ================================================================
-// Living entity names (species/variant)
-// ================================================================
 namespace LivingName {
 	constexpr const char* Player       = "player";
 	constexpr const char* Pig          = "pig";
@@ -55,34 +35,24 @@ namespace LivingName {
 	constexpr const char* Owl          = "owl";
 }
 
-// ================================================================
-// Feature tags — orthogonal flags declared on Python artifacts.
-// An entity can have any subset. Used by behaviors, animation, etc.
-// ================================================================
+// Orthogonal flags from Python artifacts; any subset allowed.
 namespace FeatureTag {
-	constexpr const char* Humanoid   = "humanoid";   // bipedal (head/arms/legs) — walk anim, follow AI
-	constexpr const char* Hostile    = "hostile";     // aggressive to players — flee/combat AI
-	constexpr const char* Invincible = "invincible";  // immune to damage
+	constexpr const char* Humanoid   = "humanoid";   // bipedal → walk anim, follow AI
+	constexpr const char* Hostile    = "hostile";     // aggressive → flee/combat AI
+	constexpr const char* Invincible = "invincible";
 }
 
-// ================================================================
-// Structure entity names (multi-block assemblages in the world)
-// ================================================================
 namespace StructureName {
-	constexpr const char* Chest    = "chest";    // single block; owns an inventory
-	constexpr const char* Bed      = "bed";      // two-block head + foot
-	constexpr const char* Tree     = "tree";     // trunk + leaf canopy
-	constexpr const char* House    = "house";    // walls + roof + floor
-	constexpr const char* Spawner  = "spawner";  // spawner block structure
-	constexpr const char* Monument = "monument"; // village-center trident tower; flame anchor
+	constexpr const char* Chest    = "chest";    // owns inventory
+	constexpr const char* Bed      = "bed";
+	constexpr const char* Tree     = "tree";
+	constexpr const char* House    = "house";
+	constexpr const char* Spawner  = "spawner";
+	constexpr const char* Monument = "monument"; // village-center flame anchor
 }
 
-// ================================================================
-// Item names (equipment, tools, consumables, dropped blocks)
-// ================================================================
 namespace ItemName {
-	// The item entity type (wrapper for any item on the ground)
-	constexpr const char* ItemEntity   = "item_entity";
+	constexpr const char* ItemEntity   = "item_entity"; // wrapper for any ground item
 
 	// Equipment
 	constexpr const char* Jetpack      = "jetpack";
@@ -100,9 +70,6 @@ namespace ItemName {
 	constexpr const char* Egg          = "egg";
 }
 
-// ================================================================
-// Block Type IDs (world blocks in the chunk grid)
-// ================================================================
 namespace BlockType {
 	constexpr const char* Air          = "air";
 	constexpr const char* Stone        = "stone";
@@ -135,9 +102,6 @@ namespace BlockType {
 	constexpr const char* BeeNest      = "beenest";
 }
 
-// ================================================================
-// Property names (entity key-value store)
-// ================================================================
 namespace Prop {
 	constexpr const char* HP           = "hp";
 	constexpr const char* Hunger       = "hunger";
@@ -163,9 +127,6 @@ namespace Prop {
 	constexpr const char* Output       = "output";
 }
 
-// ================================================================
-// Sound IDs
-// ================================================================
 namespace Sound {
 	constexpr const char* DigStone     = "dig_stone";
 	constexpr const char* DigDirt      = "dig_dirt";
@@ -181,9 +142,6 @@ namespace Sound {
 	constexpr const char* StepSnow     = "step_snow";
 }
 
-// ================================================================
-// Networking
-// ================================================================
 constexpr int CIVCRAFT_DISCOVER_PORT = 7778;
 
 } // namespace civcraft

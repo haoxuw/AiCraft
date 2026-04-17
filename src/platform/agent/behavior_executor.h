@@ -1,20 +1,8 @@
 #pragma once
 
-/**
- * BehaviorExecutor — executes PlanSteps by converting them to ActionProposals.
- *
- * NEW ARCHITECTURE (Plan-based):
- *   The old behaviorToActionProposals() converted a single BehaviorAction to
- *   ActionProposals. That's been deleted — replaced by plan-step execution.
- *
- *   Each PlanStep type maps to ActionProposal(s):
- *     Move(pos)        → pathfind waypoints → TYPE_MOVE proposals
- *     Harvest(block)   → pathfind to range + TYPE_CONVERT
- *     Attack(entity)   → pathfind to range + TYPE_CONVERT
- *     Relocate(f,t,i)  → pathfind to range + TYPE_RELOCATE
- *
- * Kept: gatherNearby() for entity awareness (used by LocalWorld construction).
- */
+// Plan-step → ActionProposal translation:
+//   Move→TYPE_MOVE, Harvest/Attack→pathfind+TYPE_CONVERT, Relocate→pathfind+TYPE_RELOCATE.
+// gatherNearby() kept — used by LocalWorld construction.
 
 #include "server/behavior.h"
 #include "logic/entity.h"
@@ -26,11 +14,9 @@
 
 namespace civcraft {
 
-// Block query function: returns block type string at world position.
-// Used by Python pathfinding (get_block()) — queries shared chunk cache.
+// Python pathfind get_block() query — shared chunk cache.
 using BlockTypeFn = std::function<std::string(int, int, int)>;
 
-// Gather nearby entity info from the shared entity cache.
 inline std::vector<NearbyEntity> gatherNearby(
 		const Entity& self,
 		const std::unordered_map<EntityId, std::unique_ptr<Entity>>& entities,

@@ -1,13 +1,7 @@
 #pragma once
 
-// MoveStuck logging — per-entity, written to /tmp/civcraft_entity_<id>.log.
-//
-// Many detection sites (server collision clamp, agent stuck, client/server
-// snap) can fire for the same entity within the same second. Routing each
-// entity's diagnostics into its own file keeps the main game log clean
-// while preserving full detail when you want to investigate one eid. The
-// per-entity cooldown still applies so a single flailing entity doesn't
-// overrun its own file either.
+// MoveStuck logging → /tmp/civcraft_entity_<id>.log. Per-entity cooldown
+// shared across detection sites (clamp/stuck/snap) prevents log flooding.
 
 #include "logic/types.h"
 #include "entity_log.h"
@@ -21,9 +15,7 @@
 
 namespace civcraft {
 
-// Per-entity cooldown. First call for an entity within the window logs;
-// subsequent calls are dropped. Cross-site: a Clamp log silences an
-// Agent-Stuck log for the same entity for the window duration.
+// Cross-site: a Clamp log silences an Agent-Stuck log for the same eid during the window.
 constexpr double kMoveStuckCooldownSec = 600.0;
 
 inline bool moveStuckShouldLog(EntityId eid) {
@@ -38,9 +30,7 @@ inline bool moveStuckShouldLog(EntityId eid) {
 	return true;
 }
 
-// Caller supplies site tag ("Clamp", "Agent-Stuck", ...), a short reason,
-// and preformatted detail. Writes one line to the per-entity log:
-//   [MoveStuck:<tag>] reason="..." <detail>
+// Writes: [MoveStuck:<tag>] reason="..." <detail>
 inline void logMoveStuck(EntityId eid, const char* tag,
                          const char* reason, const char* detail) {
 	if (!moveStuckShouldLog(eid)) return;

@@ -1,19 +1,6 @@
 #pragma once
 
-/**
- * AgentClient — AI controller for NPC entities.
- *
- * Runs inside the PlayerClient process, sharing chunk/entity cache.
- * No separate TCP connection — reads world state from ServerInterface
- * and sends ActionProposals through the same connection as the player.
- *
- * Two-phase tick loop:
- *   Phase 1 (DECIDE):  drain DecisionQueue → call Python decide() → get Plan
- *   Phase 2 (EXECUTE): tick current PlanStep for each agent → emit ActionProposals
- *
- * Pathfinding is intentionally dumb: straight-line waypoints with jitter.
- * Plan visualization data is exposed for the renderer.
- */
+// AI controller for NPC entities. Two-phase tick: DECIDE (Python) → EXECUTE (ActionProposals).
 
 #include "net/server_interface.h"
 #include "server/behavior_store.h"
@@ -21,7 +8,7 @@
 #include "server/python_bridge.h"
 #include "agent/decision_queue.h"
 #include "agent/behavior_executor.h"
-#include "agent/decide_worker.h"  // TODO(decide-loop) Step 3: used when worker is wired up
+#include "agent/decide_worker.h"
 #include "debug/move_stuck_log.h"
 #include <unordered_map>
 #include <vector>
@@ -30,20 +17,21 @@
 
 namespace civcraft {
 
-// ================================================================
-// AgentClient
-// ================================================================
-
 class AgentClient {
 public:
 	AgentClient(ServerInterface& server, BehaviorStore& behaviors)
 		: m_server(server), m_behaviors(behaviors), m_rng(std::random_device{}()) {
+		std::printf("[Agent] AgentClient constructed — behavior store initialized=%d\n",
+			(int)m_behaviors.isInitialized());
+		std::fflush(stdout);
 		m_decideWorker.start();
 	}
 
-	~AgentClient() { m_decideWorker.stop(); }
-
-	// ── Main tick (called from Game::updatePlaying) ──────────────────────
+	~AgentClient() {
+		std::printf("[Agent] AgentClient destructed — had %zu agents\n", m_agents.size());
+		std::fflush(stdout);
+		m_decideWorker.stop();
+	}
 
 	void tick(float dt) {
 		using Clock = std::chrono::steady_clock;
@@ -72,12 +60,10 @@ public:
 		}
 	}
 
-	// ── Visualization data for renderEntityEffects ──────────────────────
-
 	struct PlanViz {
-		std::vector<glm::vec3> waypoints;  // full path (entity→waypoints→destination)
+		std::vector<glm::vec3> waypoints;
 		PlanStep::Type actionType = PlanStep::Move;
-		glm::vec3 actionPos = {0,0,0};    // where final action happens
+		glm::vec3 actionPos = {0,0,0};
 		bool hasAction = false;
 	};
 
@@ -88,103 +74,93 @@ public:
 		return &it->second.viz;
 	}
 
-	// Iterate all agents (for rendering)
 	template<typename Fn>
 	void forEachAgent(Fn&& fn) const {
 		for (auto& [eid, state] : m_agents) fn(eid, state.viz);
 	}
 
 private:
-	// ── Per-entity agent state ──────────────────────────────────────────
-
 	struct AgentState {
 		std::string behaviorId;
 		BehaviorHandle handle = -1;
 
-		// Current plan from Python decide()
 		Plan plan;
 		int stepIndex = 0;
 		std::string goalText;
 
-		// Visualization (rebuilt each time a new plan arrives)
 		PlanViz viz;
 
-		// Per-step observable-outcome bookkeeping. evaluateStep() uses these
-		// to detect Success/Failed from world state only. `initialized` resets
-		// to false on each stepIndex advance via advanceStep().
+		// Observable-outcome bookkeeping; resets on stepIndex advance.
 		struct StepWatch {
 			bool        initialized   = false;
-			bool        modeDetected  = false;  // first-tick mode latch (Move idle vs. travel)
-			bool        isIdleHold    = false;  // Move target == current pos → hold for kIdleHoldSeconds
-			float       stillAccum    = 0.0f;   // seconds with ~zero horizontal speed
-			float       progress      = 0.0f;   // for duration-based actions
-			int         prevTargetHP  = 0;      // Attack
+			bool        modeDetected  = false;
+			bool        isIdleHold    = false;  // Move target == current pos
+			float       stillAccum    = 0.0f;
+			float       progress      = 0.0f;
+			int         prevTargetHP  = 0;
 			std::string failReason;
 		};
 		StepWatch watch;
 
-		// ── Client-side interrupt diff snapshot — Step 6 ──
 		int prevHp = 0;
 
-		// Player-override pause: when the local player clicks to move a
-		// controlled NPC, we install a synthetic Move plan and arm this timer.
-		// On plan completion (finishPlan), decide() is NOT re-queued until
-		// the timer expires — giving the NPC a visible "I'm obeying you"
-		// idle beat before its Python behavior resumes.
+		// Player-override pause: Python decide() blocked until expires (visible obey beat).
 		float overridePauseTimer  = 0.0f;
 		bool  hasPendingOutcome   = false;
 		LastOutcome pendingOutcome;
 
-		// Tier-1 periodic rethink backstop. Counts time since the current
-		// plan was installed; when it crosses kPeriodicRethinkSec, the
-		// agent is interrupted with reason="periodic" so Python's rule
-		// list re-evaluates against the current world state. Catches any
-		// condition that flipped mid-plan (e.g. Threatened becoming true
-		// while Rejoin is walking) without special-casing per condition.
-		// Reset to 0 whenever state.plan is replaced.
+		// Periodic-rethink backstop so mid-plan condition changes get noticed.
 		float timeSinceDecide = 0.0f;
 
-		// Stuck detection: rolling window of (last position sample, seconds since
-		// last notable progress). If velocity stays non-zero but position doesn't
-		// advance, we emit a [MoveStuck:Agent-Stuck] diagnostic — this is the
-		// canonical "wants to move, not moving" signal the user cares about.
+		// "Wants to move, not moving" → [MoveStuck:Agent-Stuck].
 		glm::vec3 lastSampledPos   = glm::vec3(0.0f);
 		float     stuckAccum       = 0.0f;
 		bool      stuckLogged      = false;
 	};
 
-	// ── Entity discovery ────────────────────────────────────────────────
-
 	void discoverEntities() {
-		// Periodic scan: track NPCs with BehaviorId owned by this player.
-		// Ownership is baked in at spawn (server::spawnMobsForClient), so we
-		// never send a claim — we just register the entities the server
-		// already assigned to us.
-		m_discoveryTimer += 0.05f; // rough dt approximation
+		// Ownership baked in at spawn — pure registration, no claim RPC.
+		m_discoveryTimer += 0.05f;
 		if (m_discoveryTimer < 2.0f && !m_agents.empty()) return;
 		m_discoveryTimer = 0;
 
 		EntityId myId = m_server.localPlayerId();
-		if (myId == ENTITY_NONE) return;
+		if (myId == ENTITY_NONE) {
+			agentDiagnostic(true, "no localPlayerId yet");
+			return;
+		}
+
+		// Feeds "why zero agents?" diagnostic below.
+		int total = 0, skipSelf = 0, skipNonLiving = 0, skipRemoved = 0;
+		int skipNoBid = 0, skipAlreadyAgent = 0, skipNotOwnedByUs = 0, registered = 0;
+		int ownedBySomeoneElse = 0, ownedByNobody = 0;
 
 		m_server.forEachEntity([&](Entity& e) {
-			if (e.id() == myId) return;
-			if (!e.def().isLiving()) return;
-			if (e.removed) return;
+			total++;
+			if (e.id() == myId) { skipSelf++; return; }
+			if (!e.def().isLiving()) { skipNonLiving++; return; }
+			if (e.removed) { skipRemoved++; return; }
 			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
-			if (bid.empty()) return;
-			if (m_agents.count(e.id())) return;
-			if (e.getProp<int>(Prop::Owner, 0) != (int)myId) return;
+			if (bid.empty()) { skipNoBid++; return; }
+			if (m_agents.count(e.id())) { skipAlreadyAgent++; return; }
+			int owner = e.getProp<int>(Prop::Owner, 0);
+			if (owner != (int)myId) {
+				skipNotOwnedByUs++;
+				if (owner == 0) ownedByNobody++;
+				else ownedBySomeoneElse++;
+				return;
+			}
 
 			AgentState state;
 			state.behaviorId = bid;
 			state.handle = loadBehaviorForEntity(bid);
 			m_agents[e.id()] = std::move(state);
-			if (m_agents[e.id()].handle >= 0)
+			if (m_agents[e.id()].handle >= 0) {
 				m_decisionQueue.enqueue(e.id());
+				registered++;
+			}
 		});
 
-		// Drop agents whose entity disappeared.
 		for (auto it = m_agents.begin(); it != m_agents.end(); ) {
 			Entity* e = m_server.getEntity(it->first);
 			if (!e || e->removed) {
@@ -196,20 +172,34 @@ private:
 				++it;
 			}
 		}
+
+		// Periodic snapshot: why/how many entities became agents.
+		char msg[256];
+		std::snprintf(msg, sizeof(msg),
+			"myId=%u seen=%d agents=%zu (+%d new) skip[self=%d nonLiving=%d removed=%d "
+			"noBid=%d dup=%d notMine=%d(nobody=%d,other=%d)]",
+			(unsigned)myId, total, m_agents.size(), registered,
+			skipSelf, skipNonLiving, skipRemoved,
+			skipNoBid, skipAlreadyAgent, skipNotOwnedByUs,
+			ownedByNobody, ownedBySomeoneElse);
+		agentDiagnostic(m_agents.empty(), msg);
 	}
 
-	// ── Phase: AUTO-PICKUP ───────────────────────────────────────────────
-	//
-	// Every tick, for each controlled agent, scan nearby ItemEntities and
-	// send a Relocate proposal to pick them up when the agent has capacity.
-	// The *server* runs the same canAccept() check (shared/inventory.h) to
-	// validate, so this is purely a client-side intent — no authority.
-	// Behaviors don't need to emit pickup actions themselves; the engine
-	// handles it uniformly across all Living types.
+	// Log once per kHealthySec normally, per kStuckSec when zeroAgents — surfaces
+	// "why no NPCs are moving" first when diagnosing busted singleplayer.
+	void agentDiagnostic(bool zeroAgents, const std::string& what) {
+		constexpr float kHealthySec = 10.0f;
+		constexpr float kStuckSec   = 1.0f;
+		m_diagLogAccum += 2.0f;  // discoverEntities runs every ~2s
+		float threshold = zeroAgents ? kStuckSec : kHealthySec;
+		if (m_diagLogAccum < threshold) return;
+		m_diagLogAccum = 0;
+		std::printf("[Agent] discover: %s\n", what.c_str());
+		std::fflush(stdout);
+	}
 
+	// Engine-level intent; server enforces canAccept().
 	void phaseAutoPickup() {
-		// Throttle: at most once per 0.25s per agent — pickup rate is bounded
-		// by server validation anyway, but this avoids spamming proposals.
 		m_autoPickupTimer += 1.0f / 60.0f;
 		if (m_autoPickupTimer < 0.25f) return;
 		m_autoPickupTimer = 0.0f;
@@ -217,8 +207,7 @@ private:
 		for (auto& [eid, state] : m_agents) {
 			Entity* actor = m_server.getEntity(eid);
 			if (!actor || actor->removed || !actor->inventory) continue;
-			// Only humanoids auto-pickup. Animals ignore ground items so e.g.
-			// chickens don't instantly re-grab their own eggs.
+			// Humanoids only — chickens would instantly re-grab their own eggs.
 			if (!actor->def().hasTag("humanoid")) continue;
 			float cap = actor->def().inventory_capacity;
 			if (cap <= 0.0f) continue;
@@ -250,12 +239,8 @@ private:
 		}
 	}
 
-	// ── Phase 1: DECIDE ─────────────────────────────────────────────────
-
 	void phaseDecide() {
-		// Budgeted: run decisions until we've spent kBudgetMs on this phase.
-		// Python decide() (esp. A* pathfinding) is heavy. Over-budget decides
-		// get re-queued so agents still update, just a frame or two later.
+		// Budgeted: over-budget decides re-queue for next tick.
 		constexpr float kBudgetMs = 8.0f;
 		using Clock = std::chrono::steady_clock;
 		auto phaseStart = Clock::now();
@@ -266,7 +251,7 @@ private:
 			float elapsedMs = std::chrono::duration<float, std::milli>(
 				Clock::now() - phaseStart).count();
 			if (elapsedMs > kBudgetMs) {
-				m_decisionQueue.enqueue(eid, std::move(last)); // re-queue for next tick
+				m_decisionQueue.enqueue(eid, std::move(last));
 				continue;
 			}
 			m_lastDecidesRun++;
@@ -285,13 +270,12 @@ private:
 		if (state.handle < 0) {
 			state.handle = loadBehaviorForEntity(state.behaviorId);
 			if (state.handle < 0) {
-				// Behavior load failed — re-enqueue; next tick will retry.
 				m_decisionQueue.enqueue(eid, lastOutcome);
 				return;
 			}
 		}
 
-		// Build snapshot + request on main thread; worker reads immutably.
+		// THREADING: snapshot on main thread; worker reads immutably.
 		DecideRequest req;
 		req.eid        = eid;
 		req.generation = ++m_decideGen[eid];
@@ -302,9 +286,7 @@ private:
 		req.dt         = 0.25f;
 		req.lastOutcome = lastOutcome;
 
-		// Block query callback — runs on worker thread. Captures a
-		// ServerInterface* (stable for AgentClient's lifetime). Worst-case
-		// race is a stale block read (visual only).
+		// THREADING: closures run on worker thread; stale block reads are visual-only races.
 		ServerInterface* srv = &m_server;
 		req.blockQuery = [srv](int x, int y, int z) -> std::string {
 			auto& chunks = srv->chunks();
@@ -318,10 +300,6 @@ private:
 			return srv->blockRegistry().get(bid).string_id;
 		};
 
-		// Scan loaded chunks around `origin` for blocks matching `typeId`,
-		// returning up to `maxResults` nearest matches (Chebyshev-bounded
-		// by maxDist on XZ). Runs on the worker thread; stale reads are
-		// acceptable per project policy (visual-only race).
 		req.scanBlocks = [srv](const std::string& typeId, glm::vec3 origin,
 		                       float maxDist, int maxResults)
 		    -> std::vector<BlockSample> {
@@ -368,10 +346,7 @@ private:
 			return out;
 		};
 
-		// Scan all server-side entities by typeId within maxDist of origin.
-		// Used by Python behaviors that need world-wide entity lookup (e.g.
-		// villager finding any chest to deposit into — bypasses the 64-block
-		// per-agent nearby cache).
+		// Bypasses the 64-block nearby cache for world-wide lookups.
 		req.scanEntities = [srv](const std::string& typeId, glm::vec3 origin,
 		                         float maxDist, int maxResults)
 		    -> std::vector<NearbyEntity> {
@@ -398,9 +373,7 @@ private:
 			return out;
 		};
 
-		// Scan block decorations (flowers, moss, …) by typeId. Implemented
-		// via ServerInterface::annotationsForChunk; iterates loaded chunks in
-		// a Chebyshev box around origin and filters by typeId + maxDist.
+		// Flowers/moss/… via annotationsForChunk.
 		req.scanAnnotations = [srv](const std::string& typeId, glm::vec3 origin,
 		                            float maxDist, int maxResults)
 		    -> std::vector<BlockSample> {
@@ -443,12 +416,10 @@ private:
 		m_decideWorker.push(std::move(req));
 	}
 
-	// Drain completed decides from the worker and install plans on main thread.
 	void drainWorkerResults() {
 		DecideResult r;
 		while (m_decideWorker.tryPop(r)) {
-			// Stale-generation filter — discard results whose request was
-			// superseded by a newer decide (interrupt, etc.).
+			// Discard results superseded by newer decide (interrupt etc).
 			auto git = m_decideGen.find(r.eid);
 			if (git == m_decideGen.end() || git->second != r.generation)
 				continue;
@@ -464,8 +435,6 @@ private:
 				e->goalText = "ERROR: " + r.error.substr(0, 60);
 				e->hasError = true;
 				e->errorText = r.error;
-				// Re-enqueue so decide() is retried; next tick will hit the
-				// error again unless the behavior file changed on disk.
 				LastOutcome next;
 				next.outcome = StepOutcome::Failed;
 				next.reason  = "decide_error";
@@ -487,7 +456,6 @@ private:
 		}
 	}
 
-	// Snapshot entity state for off-thread consumption (DecideWorker).
 	EntitySnapshot snapshotEntity(const Entity& e) const {
 		EntitySnapshot s;
 		s.id        = e.id();
@@ -508,37 +476,19 @@ private:
 		return s;
 	}
 
-	// ── Phase 2: EXECUTE ────────────────────────────────────────────────
-	//
-	// Each step is evaluated against observable world state every tick.
-	// evaluateStep returns Success/Failed/InProgress from data — no timers
-	// except action-internal durations (via StepWatch::progress).
-	// applyStep sends the ActionProposal for an InProgress step.
-	// Terminal outcomes (Success on final step, Failed anywhere) enqueue
-	// a re-decide with LastOutcome describing what happened.
-
-	static constexpr float kArriveEps       = 1.5f;   // blocks
-	static constexpr float kStillEps        = 0.1f;   // speed blocks/s
+	// Steps evaluated from observable world state; only action-internal durations use timers.
+	static constexpr float kArriveEps       = 1.5f;
+	static constexpr float kStillEps        = 0.1f;
 	static constexpr float kStuckSeconds    = 2.0f;
 	static constexpr float kReachHarvest    = 3.0f;
 	static constexpr float kReachAttack     = 2.5f;
-	// When a behavior returns Move(entity.x, y, z) (stand-still), the plan would
-	// Success in one frame and thrash the decide loop at ~60 Hz. Hold idle Moves
-	// for this long before re-deciding — lets the behavior check "am I still
-	// near my target?" at a human-reasonable cadence, not per frame.
+	// Idle-hold: stand-still Moves would thrash decide() at 60 Hz otherwise.
 	static constexpr float kIdleHoldSeconds = 1.0f;
-	// Tier-1 periodic-rethink backstop. Generic across all entities and
-	// behaviors: every kPeriodicRethinkSec the current plan is interrupted
-	// (reason="periodic") so Python's rule list re-evaluates. Gives
-	// condition changes that no explicit event models (new predator
-	// approaches, HP climb/drop that didn't cross the delta, world
-	// weather, etc.) a bounded time before the agent notices.
 	static constexpr float kPeriodicRethinkSec = 1.0f;
 
 	void phaseExecute(float dt) {
 		for (auto& [eid, state] : m_agents) {
-			// Drain player-override pause; once it expires, flush the
-			// deferred outcome so Python decide() can pick up control.
+			// Drain override pause → flush deferred outcome to Python decide().
 			if (state.overridePauseTimer > 0.0f) {
 				state.overridePauseTimer -= dt;
 				if (state.overridePauseTimer <= 0.0f) {
@@ -556,12 +506,7 @@ private:
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
 
-			// Tier-1 periodic rethink: interrupt and re-decide every
-			// kPeriodicRethinkSec while a plan is running. Cheap backstop
-			// for any condition that flipped mid-plan and isn't covered
-			// by an explicit server event or scanClientInterrupts probe.
-			// Skipped while overridePauseTimer is armed — the pause is
-			// the explicit "sit still" promise to the player.
+			// Skip while pause armed — that pause is the "sit still" promise.
 			if (state.overridePauseTimer <= 0.0f) {
 				state.timeSinceDecide += dt;
 				if (state.timeSinceDecide >= kPeriodicRethinkSec &&
@@ -622,9 +567,7 @@ private:
 		delta.y = 0;
 		float dist = glm::length(delta);
 
-		// Latch mode on the first evaluation: if the behavior returned a
-		// stand-still Move (target == current pos), enter idle-hold. Applied
-		// Move will zero velocity; plan Successes after kIdleHoldSeconds.
+		// Latch idle-hold on first eval if target == current pos.
 		if (!watch.modeDetected) {
 			watch.modeDetected = true;
 			watch.isIdleHold   = (dist < kArriveEps);
@@ -662,11 +605,10 @@ private:
 		glm::vec3 delta = step.targetPos - entity.position;
 		delta.y = 0;
 		if (glm::length(delta) > kReachHarvest + 2.0f) {
-			// Walk closer — applyStep handles the move; stuck-detect applies.
 			float horiz = std::sqrt(entity.velocity.x * entity.velocity.x +
 			                        entity.velocity.z * entity.velocity.z);
 			if (horiz < kStillEps) {
-				watch.stillAccum += 1.0f / 60.0f; // dt-free fallback
+				watch.stillAccum += 1.0f / 60.0f;
 				if (watch.stillAccum > kStuckSeconds) {
 					watch.failReason = "stuck";
 					return StepOutcome::Failed;
@@ -680,7 +622,6 @@ private:
 	                           AgentState::StepWatch& watch, float /*dt*/) {
 		Entity* target = m_server.getEntity(step.targetEntity);
 		if (!target || target->removed) {
-			// Target gone — treat as Success (kill or disappear)
 			return StepOutcome::Success;
 		}
 		if (target->hp() <= 0) return StepOutcome::Success;
@@ -690,9 +631,7 @@ private:
 
 	StepOutcome evaluateRelocate(PlanStep& /*step*/, Entity& /*entity*/,
 	                             AgentState::StepWatch& watch, float /*dt*/) {
-		// First evaluation: return InProgress so applyStep fires once and sends
-		// the Relocate ActionProposal. modeDetected latches "already applied";
-		// the next evaluation returns Success to advance past this step.
+		// First eval: InProgress (applyStep fires once); next: Success.
 		if (!watch.modeDetected) {
 			watch.modeDetected = true;
 			return StepOutcome::InProgress;
@@ -721,8 +660,7 @@ private:
 		glm::vec3 dir = step.targetPos - entity.position;
 		dir.y = 0;
 		float dist = glm::length(dir);
-		// Idle-hold or already-at-target: zero velocity so residual drift from
-		// a prior travel plan doesn't carry the entity past its target.
+		// Zero velocity so drift doesn't overshoot target.
 		if (dist < kArriveEps) {
 			sendStopMove(eid, entity, state.goalText);
 			return;
@@ -745,9 +683,7 @@ private:
 		ActionProposal p;
 		p.type = ActionProposal::Convert;
 		p.actorId = eid;
-		// fromItem mirrors toItem: the value-conservation check on the
-		// server needs the input side to have at least the output's value.
-		// Harvesting a block of type X to produce item X is value-preserving.
+		// Mirror from/to: server value-conservation needs matching X→X.
 		p.fromItem  = step.itemId;
 		p.fromCount = step.itemCount > 0 ? step.itemCount : 1;
 		p.toItem    = step.itemId;
@@ -768,7 +704,7 @@ private:
 			sendMove(eid, dir * entity.def().walk_speed, state.goalText);
 		} else {
 			sendStopMove(eid, entity, state.goalText);
-			// TODO: melee damage Convert — currently no attack proposal.
+			// TODO: melee damage Convert.
 		}
 	}
 
@@ -788,16 +724,13 @@ private:
 		state.watch = AgentState::StepWatch{};
 	}
 
-	// Terminate the current plan and enqueue a re-decide with outcome info.
 	void finishPlan(EntityId eid, AgentState& state, StepOutcome outcome,
 	                const std::string& reason) {
 		PlanStep::Type lastType = PlanStep::Move;
 		if (!state.plan.empty())
 			lastType = state.plan[std::min(state.stepIndex,
 			                               (int)state.plan.size() - 1)].type;
-		// On Move-Success, zero velocity so residual drift doesn't carry the
-		// entity past its target while the worker computes the next plan
-		// (decide runs async — can be multiple frames in flight).
+		// Decide is async — zero velocity prevents drift past target during replan.
 		if (lastType == PlanStep::Move && outcome == StepOutcome::Success) {
 			if (Entity* e = m_server.getEntity(eid))
 				sendStopMove(eid, *e, state.goalText);
@@ -810,9 +743,7 @@ private:
 		state.plan.clear();
 		state.stepIndex  = 0;
 		state.viz.waypoints.clear();
-		// If player override is active, hold off on re-decide until the
-		// pause timer drains (see phaseExecute). The pending outcome is
-		// stashed so the eventual enqueue carries "interrupt:player_override".
+		// Stash until pause drains → enqueue as interrupt:player_override.
 		if (state.overridePauseTimer > 0.0f) {
 			next.reason = "interrupt:player_override";
 			state.pendingOutcome = std::move(next);
@@ -823,10 +754,7 @@ private:
 			m_decisionQueue.enqueue(eid, std::move(next));
 	}
 
-	// ── Client-side interrupt diff ──────────────────────────────────────
-	// Observe world state each tick; if something reasonably urgent
-	// happened (HP drop, attack target vanished), interrupt the current
-	// plan and enqueue a re-decide. Visual-only races are fine.
+	// Interrupt plan on urgent world changes (HP drop, target gone).
 	void scanClientInterrupts() {
 		for (auto& [eid, state] : m_agents) {
 			Entity* e = m_server.getEntity(eid);
@@ -857,12 +785,8 @@ private:
 	}
 
 public:
-	// Called in-process when the local player click-drives a controlled NPC
-	// (RTS/RPG right-click). Replaces any in-flight plan with a single
-	// Move to the clicked goal, arms a 3.14 s idle pause, and refreshes
-	// viz so the dash line snaps to the new target this frame. The
-	// re-decide is deferred until the pause expires (see phaseExecute
-	// + finishPlan).
+	// Player click overrides controlled NPC: plan := single Move, arm 3.14s pause,
+	// defer re-decide until expires.
 	void onOverride(EntityId eid, glm::vec3 goal) {
 		auto it = m_agents.find(eid);
 		if (it == m_agents.end()) return;
@@ -880,11 +804,7 @@ public:
 		rebuildViz(eid, state, *e);
 	}
 
-	// Called when the player enters Control mode on `eid`. Clears the
-	// current plan so the entity stops acting under AI, and parks the
-	// override-pause timer at ~forever — phaseExecute will skip plan
-	// progression + re-decide while paused. The pending outcome is left
-	// unset so there's nothing queued to flush on resume.
+	// Control-mode entry: park pause at ~forever, no flush.
 	void pauseAgent(EntityId eid) {
 		auto it = m_agents.find(eid);
 		if (it == m_agents.end()) return;
@@ -902,8 +822,7 @@ public:
 		rebuildViz(eid, state, *e);
 	}
 
-	// Called when the player releases Control of `eid`. Clears the pause
-	// timer and enqueues an immediate decide() so Python autonomy resumes.
+	// Control-mode exit: drop pause, enqueue immediate decide().
 	void resumeAgent(EntityId eid) {
 		auto it = m_agents.find(eid);
 		if (it == m_agents.end()) return;
@@ -914,8 +833,6 @@ public:
 			m_decisionQueue.enqueue(eid);
 	}
 
-	// Called from network layer when server broadcasts a per-entity
-	// interrupt (e.g. proximity trigger). See Step 7.
 	void onInterrupt(EntityId eid, const std::string& reason) {
 		auto it = m_agents.find(eid);
 		if (it == m_agents.end()) return;
@@ -924,8 +841,6 @@ public:
 		interruptPlan(eid, it->second, *e, reason);
 	}
 
-	// Called from network layer when server broadcasts a world-wide
-	// event (e.g. day/night edge). See Step 7.
 	void onWorldEvent(const std::string& kind, const std::string& /*payload*/) {
 		std::string reason = kind;
 		for (auto& [eid, state] : m_agents) {
@@ -936,7 +851,6 @@ public:
 	}
 private:
 
-	// Abort the current plan and enqueue re-decide with interrupt:<reason>.
 	void interruptPlan(EntityId eid, AgentState& state, Entity& /*entity*/,
 	                   const std::string& reason) {
 		if (state.plan.empty()) return;
@@ -953,24 +867,15 @@ private:
 		m_decisionQueue.enqueue(eid, std::move(next));
 	}
 
-	// ── Action helpers ──────────────────────────────────────────────────
-
 	void sendMove(EntityId eid, glm::vec3 vel, const std::string& goal) {
-		// Client-side prediction (same pattern as gameplay_movement.cpp for
-		// the player): update the entity's velocity locally so physics runs
-		// immediately. Yaw is derived from velocity each tick in
-		// network_server.h (mirror of gameplay_movement.cpp:297) — setting
-		// it here would only provide one snap at decision boundaries.
+		// Client-side prediction; yaw derived from velocity elsewhere.
 		Entity* e = m_server.getEntity(eid);
 		if (e) {
 			e->velocity.x = vel.x;
 			e->velocity.z = vel.z;
 		}
 
-		// ── Stuck detection: velocity non-zero but position not advancing ──
-		// Fires once per entity when the agent has been commanding motion
-		// for >=1.5 s without meaningful displacement. Resets when the
-		// entity starts moving again or the agent stops commanding motion.
+		// Stuck probe: intent>0 but no displacement ≥1.5s → log once.
 		if (e) {
 			auto it = m_agents.find(eid);
 			if (it != m_agents.end()) {
@@ -978,10 +883,10 @@ private:
 				float intent = std::sqrt(vel.x * vel.x + vel.z * vel.z);
 				float moved  = glm::length(glm::vec2(e->position.x, e->position.z) -
 				                           glm::vec2(s.lastSampledPos.x, s.lastSampledPos.z));
-				constexpr float kIntentThresh = 0.2f;   // agent wants motion
-				constexpr float kMoveThresh   = 0.05f;  // actually displaced
-				constexpr float kStuckWindow  = 1.5f;   // seconds before we yell
-				const float dt = 1.0f / 60.0f;          // rough; sendMove is tick-cadenced
+				constexpr float kIntentThresh = 0.2f;
+				constexpr float kMoveThresh   = 0.05f;
+				constexpr float kStuckWindow  = 1.5f;
+				const float dt = 1.0f / 60.0f;
 
 				if (intent > kIntentThresh && moved < kMoveThresh) {
 					s.stuckAccum += dt;
@@ -1014,12 +919,6 @@ private:
 			}
 		}
 
-		// ── DEBUG: agent Move-send probe (10-min cooldown) ──
-		// First Move command the agent sends for this entity. Pair with
-		// [MoveStuck:Server] to see whether the server accepts it
-		// unchanged or clamps it.
-		// (noisy per-entity startup diagnostic removed; Agent-Stuck path
-		// above still fires when an agent genuinely fails to progress.)
 		(void)e;
 
 		ActionProposal p;
@@ -1034,10 +933,7 @@ private:
 		sendMove(eid, {0, 0, 0}, goal);
 	}
 
-	// ── Visualization rebuild ───────────────────────────────────────────
-	// Straight-line: entities walk directly at their goal. Collision is
-	// the server's concern, not the AI's.
-
+	// Straight-line: collision is the server's problem.
 	void rebuildViz(EntityId /*eid*/, AgentState& state, Entity& /*entity*/) {
 		state.viz.waypoints.clear();
 		state.viz.hasAction = false;
@@ -1055,8 +951,6 @@ private:
 			}
 		}
 	}
-
-	// ── Helpers ─────────────────────────────────────────────────────────
 
 	BehaviorHandle loadBehaviorForEntity(const std::string& behaviorId) {
 		std::string src = m_behaviors.load(behaviorId);
@@ -1089,8 +983,6 @@ private:
 		return result;
 	}
 
-	// ── Members ─────────────────────────────────────────────────────────
-
 	ServerInterface& m_server;
 	BehaviorStore& m_behaviors;
 	std::unordered_map<EntityId, AgentState> m_agents;
@@ -1098,10 +990,10 @@ private:
 	std::mt19937 m_rng;
 	float m_time = 0;
 	float m_autoPickupTimer = 0.0f;
-	float m_discoveryTimer = 100.0f; // trigger immediate discovery on first tick
+	float m_discoveryTimer = 100.0f; // forces discovery on first tick
 	int m_lastDecidesRun = 0;
+	float m_diagLogAccum = 0.0f;
 
-	// ── Worker-thread decide loop ──────────────────────────────────────
 	DecideWorker                           m_decideWorker;
 	std::unordered_map<EntityId, uint32_t> m_decideGen;
 };

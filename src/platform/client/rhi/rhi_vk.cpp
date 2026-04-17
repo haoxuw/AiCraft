@@ -63,10 +63,8 @@ bool VkRhi::init(const InitInfo& info) {
 	if (!createSyncObjects()) return false;
 	if (!createCubeBuffers()) return false;
 	if (!createCubePipeline()) return false;
-	// Shadow resources (image, renderpass, sampler, UBOs, descriptor set)
-	// must exist before the voxel pipeline is built, because the voxel
-	// pipeline layout now includes the voxel descriptor set (shadow sampler
-	// + shadow UBO at set=0).
+	// Shadow resources must precede voxel pipeline — voxel layout includes
+	// the voxel descriptor set (shadow sampler + shadow UBO at set=0).
 	if (!createShadowResources()) return false;
 	if (!createShadowPipeline()) return false;
 	if (!createBoxShadowPipeline()) return false;
@@ -239,7 +237,7 @@ bool VkRhi::createSwapchain() {
 	sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	sci.preTransform = caps.currentTransform;
 	sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-	sci.presentMode = VK_PRESENT_MODE_FIFO_KHR; // vsync, always supported
+	sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;  // vsync, always supported
 	sci.clipped = VK_TRUE;
 
 	if (vkCreateSwapchainKHR(m_device, &sci, nullptr, &m_swapchain) != VK_SUCCESS) {
@@ -405,9 +403,8 @@ VkShaderModule makeModule(VkDevice dev, const std::vector<char>& code) {
 } // namespace
 
 bool VkRhi::createCubeBuffers() {
-	// 36 verts (12 tris). Each face carries position + face normal.
-	// Vertices span [0,1] so that instPos + inPos = integer-aligned world coords.
-	// This keeps floor()/fract() in the voxel shader aligned with block edges.
+	// 36 verts, 12 tris. [0,1] range so instPos+inPos = integer-aligned
+	// world coords (keeps voxel shader's floor()/fract() block-edge aligned).
 	struct V { float p[3]; float n[3]; };
 	const float A[3] = {0,0,0}, B[3] = {1,0,0};
 	const float C[3] = {1,1,0}, D[3] = {0,1,0};
@@ -558,13 +555,10 @@ bool VkRhi::createCubePipeline() {
 	return r == VK_SUCCESS;
 }
 
-// ═══════════════════════════════════════════════════════════
-// Shadow mapping — depth-only pre-pass from sun's POV, sampled by voxel.frag
-// ═══════════════════════════════════════════════════════════
+// Shadow mapping — depth-only pre-pass from sun's POV, sampled by voxel.frag.
 
 bool VkRhi::createShadowResources() {
-	// Depth-only render pass. Writes depth to an image that later gets
-	// sampled as a texture, so finalLayout is SHADER_READ_ONLY.
+	// finalLayout SHADER_READ_ONLY — image is sampled as a texture next pass.
 	VkAttachmentDescription att{};
 	att.format = m_depthFormat;
 	att.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -580,9 +574,8 @@ bool VkRhi::createShadowResources() {
 	sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 	sub.pDepthStencilAttachment = &depthRef;
 
-	// Dependency: wait for previous frame's shadow-map read in the voxel
-	// fragment shader before we start writing; then flush writes before the
-	// next frame's sampling.
+	// Deps: wait for prior frame's frag-shader read before writing, then
+	// flush writes before next frame's sampling.
 	VkSubpassDependency deps[2]{};
 	deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
 	deps[0].dstSubpass = 0;
@@ -605,7 +598,7 @@ bool VkRhi::createShadowResources() {
 	if (vkCreateRenderPass(m_device, &rci, nullptr, &m_shadowRenderPass) != VK_SUCCESS)
 		return false;
 
-	// Shadow images + views + framebuffers (one per frame-in-flight).
+	// One image+view+FB per frame-in-flight.
 	for (int f = 0; f < kFramesInFlight; f++) {
 		VkImageCreateInfo ici{};
 		ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -645,8 +638,7 @@ bool VkRhi::createShadowResources() {
 		if (vkCreateFramebuffer(m_device, &fci, nullptr, &m_shadowFB[f]) != VK_SUCCESS) return false;
 	}
 
-	// Shadow sampler — linear so we can blur slightly; clamp to border so
-	// out-of-bounds lookups read 1.0 (= far away, unshadowed).
+	// Linear filter; border=1.0 so out-of-map lookups read "far" (unshadowed).
 	VkSamplerCreateInfo sci{};
 	sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 	sci.magFilter = VK_FILTER_LINEAR;
@@ -659,8 +651,7 @@ bool VkRhi::createShadowResources() {
 	if (vkCreateSampler(m_device, &sci, nullptr, &m_shadowSampler) != VK_SUCCESS)
 		return false;
 
-	// Per-frame shadow UBOs — host-visible + coherent so we can memcpy each
-	// frame. Small enough (80 bytes) that a dedicated allocator is overkill.
+	// Per-frame UBO, host-visible+coherent for direct memcpy.
 	struct ShadowUBO { float shadowVP[16]; float shadowParams[4]; };
 	for (int f = 0; f < kFramesInFlight; f++) {
 		VkBufferCreateInfo bci{};
@@ -682,9 +673,7 @@ bool VkRhi::createShadowResources() {
 		vkMapMemory(m_device, m_shadowUboMem[f], 0, sizeof(ShadowUBO), 0, &m_shadowUboMapped[f]);
 	}
 
-	// Voxel descriptor set layout:
-	//   binding 0: sampler2D uShadowMap (fragment)
-	//   binding 1: uniform ShadowUBO    (fragment)
+	// Voxel set=0: b0 sampler2D uShadowMap (frag), b1 uniform ShadowUBO (frag).
 	VkDescriptorSetLayoutBinding binds[2]{};
 	binds[0].binding = 0;
 	binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -749,11 +738,8 @@ bool VkRhi::createShadowResources() {
 		vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
 	}
 
-	// One-time layout transition: UNDEFINED → SHADER_READ_ONLY for all shadow
-	// images. Needed because voxel.frag samples the map every frame, even on
-	// the very first frame (before any shadow pass has run). The shadow
-	// render pass has initialLayout=UNDEFINED so it'll work correctly on
-	// subsequent frames when it transitions DEPTH_ATTACHMENT → SHADER_READ.
+	// One-time UNDEFINED → SHADER_READ_ONLY — voxel.frag samples on frame 0
+	// before any shadow pass runs. Subsequent frames transition via render pass.
 	VkCommandBufferAllocateInfo aci{};
 	aci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 	aci.commandPool = m_cmdPool;
@@ -804,9 +790,8 @@ bool VkRhi::createShadowPipeline() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// Same vertex layout as voxel pipeline (binding 0 = per-vertex,
-	// binding 1 = per-instance). Shader declares all attributes so layout
-	// validation passes even though it only reads position + inst position.
+	// Matches voxel pipeline layout (per-vertex b0 + per-instance b1); shader
+	// declares all attrs for validator even though it only reads positions.
 	VkVertexInputBindingDescription binds[2]{};
 	binds[0].binding = 0; binds[0].stride = sizeof(float)*6; binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 	binds[1].binding = 1; binds[1].stride = sizeof(float)*6; binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
@@ -832,13 +817,11 @@ bool VkRhi::createShadowPipeline() {
 	VkPipelineRasterizationStateCreateInfo rs{};
 	rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 	rs.polygonMode = VK_POLYGON_MODE_FILL;
-	// Front-face cull avoids self-shadow acne on the lit face (a.k.a.
-	// "Peter Panning" trade-off — we accept it for performance and clarity).
+	// Front-face cull kills self-shadow acne (Peter Panning trade-off).
 	rs.cullMode = VK_CULL_MODE_FRONT_BIT;
 	rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
 	rs.lineWidth = 1.0f;
-	// Constant + slope-scaled depth bias — belt-and-suspenders with the
-	// fragment shader's slope-scaled bias to kill acne on grazing faces.
+	// Constant + slope bias — belt-and-suspenders with frag-shader slope bias.
 	rs.depthBiasEnable = VK_TRUE;
 	rs.depthBiasConstantFactor = 1.25f;
 	rs.depthBiasSlopeFactor = 1.75f;
@@ -853,7 +836,7 @@ bool VkRhi::createShadowPipeline() {
 	ds.depthWriteEnable = VK_TRUE;
 	ds.depthCompareOp = VK_COMPARE_OP_LESS;
 
-	// No color attachments in the shadow subpass — blend state is empty.
+	// Shadow subpass has no color attachments.
 	VkPipelineColorBlendStateCreateInfo cb{};
 	cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 	cb.attachmentCount = 0;
@@ -892,10 +875,8 @@ bool VkRhi::createShadowPipeline() {
 	return r == VK_SUCCESS;
 }
 
-// Box-model shadow pipeline. Shares m_shadowLayout (push-constant-only,
-// just shadowVP) and m_shadowRenderPass with the voxel shadow pipeline,
-// but uses a different vertex input (9 floats per instance: worldPos,
-// size, color) matching the drawBoxModel format.
+// Box-model shadow: shares m_shadowLayout + m_shadowRenderPass; different
+// vertex input (19-float instance: mat4 model + vec3 color) per drawBoxModel.
 bool VkRhi::createBoxShadowPipeline() {
 	auto vsCode = readFile("shaders/vk/boxshadow.vert.spv");
 	auto fsCode = readFile("shaders/vk/shadow.frag.spv");
@@ -911,9 +892,8 @@ bool VkRhi::createBoxShadowPipeline() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// binding 0 = per-vertex unit cube (6 floats = pos+normal);
-	// binding 1 = per-instance box data (19 floats = mat4 model + vec3 color).
-	// Layout matches createBoxModelPipeline so one buffer feeds both passes.
+	// b0 per-vertex unit cube (pos+normal); b1 per-instance (mat4+color).
+	// Matches createBoxModelPipeline so one buffer feeds both passes.
 	VkVertexInputBindingDescription binds[2]{};
 	binds[0].binding = 0; binds[0].stride = sizeof(float)*6;  binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 	binds[1].binding = 1; binds[1].stride = sizeof(float)*19; binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
@@ -942,10 +922,8 @@ bool VkRhi::createBoxShadowPipeline() {
 	VkPipelineRasterizationStateCreateInfo rs{};
 	rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 	rs.polygonMode = VK_POLYGON_MODE_FILL;
-	// Characters are small — back-face cull instead of front. Front-face
-	// cull (the voxel shadow trick) hides Peter Panning on wide terrain but
-	// would also hide the entire near-silhouette of a tiny 0.5m box. Rely
-	// on the constant + slope bias below to kill acne.
+	// Back-face cull (not front): characters are too small for the front-cull
+	// Peter-Panning trick — would hide the whole silhouette. Rely on bias.
 	rs.cullMode = VK_CULL_MODE_BACK_BIT;
 	rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
 	rs.lineWidth = 1.0f;
@@ -983,7 +961,7 @@ bool VkRhi::createBoxShadowPipeline() {
 	gpci.pDepthStencilState = &ds;
 	gpci.pColorBlendState = &cb;
 	gpci.pDynamicState = &dynState;
-	gpci.layout = m_shadowLayout;        // reuse voxel shadow push-constant-only layout
+	gpci.layout = m_shadowLayout;        // reuse voxel shadow layout
 	gpci.renderPass = m_shadowRenderPass;
 
 	VkResult r = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gpci, nullptr, &m_boxShadowPipeline);
@@ -992,12 +970,8 @@ bool VkRhi::createBoxShadowPipeline() {
 	return r == VK_SUCCESS;
 }
 
-// Chunk-mesh shadow pipeline. Reads only inPos at location 0 from the
-// 13-float chunk vertex stream — the unused attributes are still declared
-// in shadow_chunk.vert so the vertex input layout matches chunk_terrain's
-// (otherwise the validator would complain about location-mismatch). Shares
-// m_shadowLayout (push constant = mat4 shadowVP) and m_shadowRenderPass
-// with the voxel + box shadow pipelines.
+// Chunk-mesh shadow. Reads only inPos; unused attrs declared in shader to
+// match chunk_terrain's layout (validator). Shares m_shadowLayout + pass.
 bool VkRhi::createChunkShadowPipeline() {
 	auto vsCode = readFile("shaders/vk/shadow_chunk.vert.spv");
 	auto fsCode = readFile("shaders/vk/shadow.frag.spv");
@@ -1013,7 +987,7 @@ bool VkRhi::createChunkShadowPipeline() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// Single per-vertex binding, 13 floats: pos[3] color[3] normal[3] ao shade alpha glow.
+	// 13 floats/vertex: pos[3] color[3] normal[3] ao shade alpha glow.
 	VkVertexInputBindingDescription bind{};
 	bind.binding = 0; bind.stride = sizeof(float)*13; bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 	VkVertexInputAttributeDescription attrs[7]{};
@@ -1038,9 +1012,7 @@ bool VkRhi::createChunkShadowPipeline() {
 	vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 	vp.viewportCount = 1; vp.scissorCount = 1;
 
-	// Front-face cull is the standard Peter-Panning trick for terrain.
-	// frontFace must match the chunk-mesh opaque pipeline (CCW) so the
-	// face being culled is actually the one facing the light.
+	// Front-face cull (Peter-Panning trick); CCW must match chunk opaque.
 	VkPipelineRasterizationStateCreateInfo rs{};
 	rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 	rs.polygonMode = VK_POLYGON_MODE_FILL;
@@ -1139,9 +1111,8 @@ void VkRhi::destroyShadowResources() {
 	if (m_voxelSetLayout) { vkDestroyDescriptorSetLayout(m_device, m_voxelSetLayout, nullptr); m_voxelSetLayout = VK_NULL_HANDLE; }
 }
 
-// Open the depth-only shadow render pass if it isn't already open. Both
-// renderShadows and renderBoxShadows funnel through this so terrain + box
-// shadows accumulate into the same depth image in a single pass.
+// Lazy shadow pass open — both renderShadows/renderBoxShadows funnel here
+// so terrain + box shadows accumulate into one depth image.
 void VkRhi::ensureShadowPass() {
 	if (m_shadowPassActive || !m_frameActive || !m_shadowRenderPass) return;
 
@@ -1178,8 +1149,7 @@ void VkRhi::endShadowPassIfActive() {
 void VkRhi::renderShadows(const float sunVP[16], const float* instances, uint32_t count) {
 	if (!m_frameActive || !m_shadowPipeline || count == 0) return;
 
-	// Upload voxel instances (6 floats each) into the shared drawVoxels
-	// buffer. drawVoxels re-uploads later; fine for small terrains.
+	// Upload into shared drawVoxels buffer — drawVoxels re-uploads later.
 	VkDeviceSize need = (VkDeviceSize)count * sizeof(float) * 6;
 	if (!ensureInstanceCapacity(need)) return;
 	void* mapped = nullptr;
@@ -1187,8 +1157,7 @@ void VkRhi::renderShadows(const float sunVP[16], const float* instances, uint32_
 	memcpy(mapped, instances, (size_t)need);
 	vkUnmapMemory(m_device, m_instMem);
 
-	// Write shadowVP + params to this frame's UBO so voxel.frag can sample.
-	// Safe to write every renderShadows call — same sunVP each time.
+	// shadowVP + params into this frame's UBO for voxel.frag sampling.
 	struct ShadowUBO { float shadowVP[16]; float shadowParams[4]; };
 	ShadowUBO ubo{};
 	memcpy(ubo.shadowVP, sunVP, sizeof(float) * 16);
@@ -1213,17 +1182,14 @@ void VkRhi::renderShadows(const float sunVP[16], const float* instances, uint32_
 void VkRhi::renderBoxShadows(const float sunVP[16], const float* boxes, uint32_t count) {
 	if (!m_frameActive || !m_boxShadowPipeline || count == 0) return;
 
-	// Upload box instances (19 floats each = mat4 + color) into the per-frame
-	// box-shadow buffer. Kept separate from drawBoxModel's append buffer so
-	// the two append cursors don't fight — the shadow pass writes the *same*
-	// boxes the main pass reads, but through an independent buffer.
+	// Separate from drawBoxModel's buffer so append cursors don't fight —
+	// shadow pass writes same boxes main pass reads, via independent buffer.
 	VkDeviceSize need = (VkDeviceSize)count * sizeof(float) * 19;
 	if (!ensureBoxShadowInstanceCapacity(m_frame, need)) return;
 	memcpy(m_boxShadowInstMapped[m_frame], boxes, (size_t)need);
 
-	// Only update the UBO on the voxel shadow path — renderShadows is
-	// expected to run first when both are called. If only box shadows run,
-	// this call initialises the UBO so voxel.frag can still sample.
+	// Fallback UBO init if only box shadows run (renderShadows normally
+	// runs first and does this).
 	struct ShadowUBO { float shadowVP[16]; float shadowParams[4]; };
 	ShadowUBO ubo{};
 	memcpy(ubo.shadowVP, sunVP, sizeof(float) * 16);
@@ -1243,13 +1209,11 @@ void VkRhi::renderBoxShadows(const float sunVP[16], const float* boxes, uint32_t
 	vkCmdDraw(cb, m_cubeVertCount, count, 0, 0);
 }
 
-// Lazily begin the offscreen main pass on first scene draw of the frame.
-// beginFrame no longer starts it, so renderShadows can precede it cleanly.
+// Lazily begin offscreen main pass on first scene draw — lets renderShadows
+// precede beginFrame's content cleanly.
 void VkRhi::ensureMainPass() {
 	if (m_mainPassActive || !m_frameActive) return;
-	// Close any open shadow pass before starting the main pass. Vulkan
-	// doesn't allow two render passes to be active simultaneously on one
-	// command buffer.
+	// Close shadow pass first — only one active render pass per cmd buffer.
 	endShadowPassIfActive();
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
 	VkClearValue clears[2]{};
@@ -1280,7 +1244,7 @@ bool VkRhi::createVoxelPipeline() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// Two bindings: 0 = per-vertex (the cube VBO), 1 = per-instance.
+	// b0 per-vertex (cube VBO), b1 per-instance.
 	VkVertexInputBindingDescription binds[2]{};
 	binds[0].binding = 0; binds[0].stride = sizeof(float)*6; binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 	binds[1].binding = 1; binds[1].stride = sizeof(float)*6; binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
@@ -1334,7 +1298,7 @@ bool VkRhi::createVoxelPipeline() {
 
 	VkPushConstantRange pcr{};
 	pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-	pcr.size = sizeof(IRhi::SceneParams); // 96 bytes (viewProj + camPos/time + sunDir/sunStr)
+	pcr.size = sizeof(IRhi::SceneParams); // 96B
 	VkPipelineLayoutCreateInfo plci{};
 	plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 	plci.setLayoutCount = 1;
@@ -1363,10 +1327,7 @@ bool VkRhi::createVoxelPipeline() {
 }
 
 bool VkRhi::createBoxModelPipeline() {
-	// Reuses m_voxelLayout (same push constant + descriptor set layout — both
-	// pipelines sample the same shadow map). Only the vertex shader and the
-	// per-instance vertex-input layout differ. Fragment shader is shared with
-	// voxel (identical vertex-output contract).
+	// Reuses m_voxelLayout + voxel.frag — only VS + per-instance input differ.
 	auto vsCode = readFile("shaders/vk/boxmodel.vert.spv");
 	auto fsCode = readFile("shaders/vk/voxel.frag.spv");
 	if (vsCode.empty() || fsCode.empty()) return false;
@@ -1381,10 +1342,8 @@ bool VkRhi::createBoxModelPipeline() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// binding 0: unit-cube per-vertex (shared with voxel — same m_cubeVbo)
-	// binding 1: per-instance {mat4 model[16], color[3]} = 19 floats. The
-	// matrix is stored as four column vec4s (GLM column-major) and surfaced
-	// to the shader as four consecutive vec4 attribute slots.
+	// b0 unit cube (shared m_cubeVbo); b1 per-instance 19 floats —
+	// mat4 as 4 column vec4s (GLM column-major) + vec3 color.
 	VkVertexInputBindingDescription binds[2]{};
 	binds[0].binding = 0; binds[0].stride = sizeof(float)*6;  binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 	binds[1].binding = 1; binds[1].stride = sizeof(float)*19; binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
@@ -1450,8 +1409,8 @@ bool VkRhi::createBoxModelPipeline() {
 	gpci.pDepthStencilState = &ds;
 	gpci.pColorBlendState = &cb;
 	gpci.pDynamicState = &dynState;
-	gpci.layout = m_voxelLayout;       // shared with voxel
-	gpci.renderPass = m_renderPass;    // same offscreen-compatible pass
+	gpci.layout = m_voxelLayout;
+	gpci.renderPass = m_renderPass;
 
 	VkResult r = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gpci, nullptr, &m_boxModelPipeline);
 	vkDestroyShaderModule(m_device, vs, nullptr);
@@ -1524,9 +1483,7 @@ void VkRhi::drawVoxels(const SceneParams& scene, const float* instances, uint32_
 	VkDeviceSize need = (VkDeviceSize)count * sizeof(float) * 6;
 	if (!ensureInstanceCapacity(need)) return;
 
-	// If renderShadows already uploaded the same instances this frame, this
-	// re-upload is redundant but cheap. Keep simple for now; a future
-	// optimization is a "scene submit" API that pushes once.
+	// Redundant if renderShadows already uploaded — cheap, keep simple.
 	void* mapped = nullptr;
 	vkMapMemory(m_device, m_instMem, 0, need, 0, &mapped);
 	memcpy(mapped, instances, (size_t)need);
@@ -1542,10 +1499,8 @@ void VkRhi::drawVoxels(const SceneParams& scene, const float* instances, uint32_
 	vkCmdSetScissor(cb, 0, 1, &sc);
 
 	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_voxelPipeline);
-	// Bind per-frame descriptor set (shadow map + shadow UBO). Always bound,
-	// even on first frame before any shadow pass has run: the sampler reads
-	// an undefined-layout image on that one frame, which is harmless because
-	// the voxel shader's bounds check will return 1.0 for garbage UVs.
+	// Per-frame set (shadow map + UBO). First frame reads before any shadow
+	// pass — harmless, shader bounds check returns 1.0 (unshadowed).
 	vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		m_voxelLayout, 0, 1, &m_voxelDescSet[m_frame], 0, nullptr);
 	VkBuffer bufs[2] = { m_cubeVbo, m_instBuf };
@@ -1556,7 +1511,7 @@ void VkRhi::drawVoxels(const SceneParams& scene, const float* instances, uint32_
 		0, sizeof(SceneParams), &scene);
 	vkCmdDraw(cb, m_cubeVertCount, count, 0, 0);
 
-	// Stash viewProj + invViewProj for composite pass
+	// Stash viewProj + invVP for composite pass.
 	glm::mat4 vpMat;
 	memcpy(&vpMat[0][0], scene.viewProj, sizeof(float) * 16);
 	glm::mat4 invVP = glm::inverse(vpMat);
@@ -1564,17 +1519,8 @@ void VkRhi::drawVoxels(const SceneParams& scene, const float* instances, uint32_
 	memcpy(m_compPC.vp, scene.viewProj, sizeof(float) * 16);
 }
 
-// ── Persistent voxel meshes ──────────────────────────────────────────────
-//
-// Static terrain (the playable slice's village; future chunked terrain from
-// chunk_mesher) doesn't change every frame — uploading the same instances
-// over and over is pure waste. createVoxelMesh stamps the data into its own
-// device-visible buffer once; drawVoxelsMesh / renderShadowsMesh bind that
-// buffer instead of re-streaming through the shared m_instBuf.
-//
-// The format is identical to drawVoxels (6 floats per instance: pos.xyz +
-// color.rgb), so the same vertex pipelines bind cleanly — only the second
-// vertex buffer slot changes.
+// Persistent voxel meshes — one-time upload for static terrain; same 6-float
+// instance format as drawVoxels so pipelines bind without changes.
 
 IRhi::MeshHandle VkRhi::createVoxelMesh(const float* instances, uint32_t count) {
 	if (!m_device || count == 0 || !instances) return kInvalidMesh;
@@ -1622,12 +1568,8 @@ void VkRhi::updateVoxelMesh(MeshHandle mesh, const float* instances, uint32_t co
 
 	VkDeviceSize bytes = (VkDeviceSize)count * sizeof(float) * 6;
 
-	// Fast path: the new payload fits in the buffer we already have. Just
-	// memcpy and update the instance count — no GPU sync, no allocation.
-	// Note: the GPU may currently be reading the old contents from a frame
-	// in flight. host-coherent + a same-frame overwrite is safe here only
-	// because we don't expect callers to update a mesh that's already been
-	// drawn earlier in the same frame (chunk re-meshes happen between frames).
+	// Fast path — fits in existing buffer. Safe without sync because chunk
+	// re-meshes happen between frames, not after an in-frame bind.
 	if (bytes <= m.capBytes) {
 		if (count > 0) {
 			void* mapped = nullptr;
@@ -1639,9 +1581,7 @@ void VkRhi::updateVoxelMesh(MeshHandle mesh, const float* instances, uint32_t co
 		return;
 	}
 
-	// Grow path: allocate a buffer at least 2x larger so consecutive growths
-	// don't churn. The old buffer/memory go on the deferred-destroy queue —
-	// any in-flight frame still referencing them gets to finish first.
+	// Grow: 2x-min new buffer; old goes to deferred-destroy queue.
 	VkDeviceSize newCap = m.capBytes ? m.capBytes : bytes;
 	while (newCap < bytes) newCap *= 2;
 
@@ -1672,9 +1612,8 @@ void VkRhi::updateVoxelMesh(MeshHandle mesh, const float* instances, uint32_t co
 	memcpy(mapped, instances, (size_t)bytes);
 	vkUnmapMemory(m_device, newMem);
 
-	// Hand the old buffer to the deferred-destroy queue. Pick the slot whose
-	// fence will signal AFTER the most-recent submission that could reference
-	// the old buffer — see destroyMesh() for the full reasoning.
+	// Pick the slot whose fence signals AFTER the last submission that could
+	// reference the old buffer — see destroyMesh() for details.
 	const uint32_t pendingSlot = m_frameActive
 		? m_frame
 		: ((m_frame + kFramesInFlight - 1) % kFramesInFlight);
@@ -1686,23 +1625,11 @@ void VkRhi::updateVoxelMesh(MeshHandle mesh, const float* instances, uint32_t co
 }
 
 void VkRhi::destroyMesh(MeshHandle mesh) {
-	// Defer the actual VkBuffer / VkDeviceMemory release: in-flight command
-	// buffers may still reference it. beginFrame drains the pending list for
-	// slot s only after waiting fence[s] — fence[s] is set when the most-
-	// recent submission to slot s completes. So we want to push to the slot
-	// whose fence will signal AFTER all submissions that touched this buffer.
-	//
-	// While we're recording (m_frameActive), the current cmd buf may bind it,
-	// so push to m_frame (its fence is set at this frame's endFrame) — drain
-	// then happens kFIF frames from now, after the current frame is done.
-	//
-	// Between frames, m_frame already points at the NEXT slot. The most
-	// recent submission is in slot (m_frame + kFIF - 1) % kFIF; pushing
-	// there means drain fires at next beginFrame for that slot, which waits
-	// the fence we actually need.
-	//
-	// Handles share an ID space — try voxel meshes first, then chunk meshes;
-	// one map will own the entry.
+	// Defer release — in-flight cmd bufs may still reference it. Push to the
+	// slot whose fence signals AFTER all submissions that touched this buffer:
+	// recording → m_frame (fence set at this frame's endFrame);
+	// between frames → prior slot (most recent submission).
+	// Handles share an ID space — try voxel then chunk meshes.
 	const uint32_t pendingSlot = m_frameActive
 		? m_frame
 		: ((m_frame + kFramesInFlight - 1) % kFramesInFlight);
@@ -1747,7 +1674,7 @@ void VkRhi::drawVoxelsMesh(const SceneParams& scene, MeshHandle mesh) {
 		0, sizeof(SceneParams), &scene);
 	vkCmdDraw(cb, m_cubeVertCount, m.instCount, 0, 0);
 
-	// Stash viewProj + invViewProj for the composite pass — same as drawVoxels.
+	// Stash VP/invVP for composite — same as drawVoxels.
 	glm::mat4 vpMat;
 	memcpy(&vpMat[0][0], scene.viewProj, sizeof(float) * 16);
 	glm::mat4 invVP = glm::inverse(vpMat);
@@ -1761,8 +1688,7 @@ void VkRhi::renderShadowsMesh(const float sunVP[16], MeshHandle mesh) {
 	if (it == m_meshes.end() || it->second.instCount == 0) return;
 	const PersistentMesh& m = it->second;
 
-	// Same shadow UBO update as renderShadows — voxel.frag reads this every
-	// lit draw, so it needs to land before drawVoxelsMesh runs.
+	// voxel.frag reads UBO every lit draw — must land before drawVoxelsMesh.
 	struct ShadowUBO { float shadowVP[16]; float shadowParams[4]; };
 	ShadowUBO ubo{};
 	memcpy(ubo.shadowVP, sunVP, sizeof(float) * 16);
@@ -1784,10 +1710,8 @@ void VkRhi::renderShadowsMesh(const float sunVP[16], MeshHandle mesh) {
 	vkCmdDraw(cb, m_cubeVertCount, m.instCount, 0, 0);
 }
 
-// ── Chunk meshes (per-vertex 13-float format) ─────────────────────────────
-// Persistent buffers + dual pipeline (opaque + transparent) backing the
-// chunk_mesh API. Same defer-destroy pattern as voxel meshes — destroyMesh
-// checks m_chunkMeshes if the handle isn't in m_meshes.
+// Chunk meshes (13-float/vertex). Dual pipeline (opaque+transparent); same
+// defer-destroy pattern as voxel meshes.
 
 static constexpr uint32_t kChunkVertStride = sizeof(float) * 13;
 
@@ -1806,7 +1730,7 @@ bool VkRhi::createChunkPipelines() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// Single per-vertex binding, 13 floats: pos[3] color[3] normal[3] ao shade alpha glow.
+	// 13 floats/vertex: pos[3] color[3] normal[3] ao shade alpha glow.
 	VkVertexInputBindingDescription bind{};
 	bind.binding = 0; bind.stride = kChunkVertStride; bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
@@ -1832,13 +1756,9 @@ bool VkRhi::createChunkPipelines() {
 	vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 	vp.viewportCount = 1; vp.scissorCount = 1;
 
-	// Opaque rasterizer: cull back. chunk_mesher emits CCW-wound outward
-	// faces in world space (verified: +X face cross product = +X). The
-	// proj[1][1] *= -1 Y-flip combined with Vulkan's Y-down framebuffer
-	// preserves winding end-to-end, so CCW data → CCW front face — same as
-	// the GL backend (glFrontFace(GL_CCW)). The voxel cube template uses
-	// the opposite convention (CW from outside) and stays on its own
-	// pipeline with frontFace=CW.
+	// Opaque: cull back, CCW. chunk_mesher emits CCW outward in world space;
+	// proj Y-flip + VK Y-down framebuffer preserves winding end-to-end.
+	// Voxel cube template is CW-from-outside and uses a separate pipeline.
 	VkPipelineRasterizationStateCreateInfo rsOpaque{};
 	rsOpaque.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 	rsOpaque.polygonMode = VK_POLYGON_MODE_FILL;
@@ -1846,7 +1766,7 @@ bool VkRhi::createChunkPipelines() {
 	rsOpaque.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	rsOpaque.lineWidth = 1.0f;
 
-	// Transparent rasterizer: no cull (thin glass / portal panes).
+	// Transparent: no cull (thin glass / portal panes).
 	VkPipelineRasterizationStateCreateInfo rsTrans = rsOpaque;
 	rsTrans.cullMode = VK_CULL_MODE_NONE;
 
@@ -1859,8 +1779,7 @@ bool VkRhi::createChunkPipelines() {
 	dsOpaque.depthTestEnable = VK_TRUE; dsOpaque.depthWriteEnable = VK_TRUE;
 	dsOpaque.depthCompareOp = VK_COMPARE_OP_LESS;
 
-	// Transparent: depth test on, depth write off (so multiple transparent
-	// layers cleanly compose without occluding each other from later draws).
+	// Transparent: test on, write off for clean multi-layer compose.
 	VkPipelineDepthStencilStateCreateInfo dsTrans = dsOpaque;
 	dsTrans.depthWriteEnable = VK_FALSE;
 
@@ -1917,7 +1836,7 @@ bool VkRhi::createChunkPipelines() {
 		gpci.pColorBlendState = &cb;
 		gpci.pDynamicState = &dynState;
 		gpci.layout = m_chunkLayout;
-		gpci.renderPass = m_renderPass;  // shares the same offscreen-compatible pass as voxel/box-model
+		gpci.renderPass = m_renderPass;
 		return vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gpci, nullptr, &outPipeline) == VK_SUCCESS;
 	};
 
@@ -1932,7 +1851,7 @@ IRhi::MeshHandle VkRhi::createChunkMesh(const float* verts, uint32_t vertexCount
 	if (!m_device || vertexCount == 0 || !verts) return kInvalidMesh;
 
 	PersistentMesh mesh{};
-	mesh.instCount = vertexCount;  // semantic: vertex count
+	mesh.instCount = vertexCount;  // semantic: vertex count here
 	VkDeviceSize bytes = (VkDeviceSize)vertexCount * kChunkVertStride;
 
 	VkBufferCreateInfo bci{};
@@ -2044,8 +1963,8 @@ static void packChunkPC(ChunkPC& pc, const IRhi::SceneParams& scene,
 	pc.fog[0] = fogColor[0]; pc.fog[1] = fogColor[1]; pc.fog[2] = fogColor[2];
 	pc.fog[3] = fogStart;
 	pc.fogExtra[0] = fogEnd;
-	pc.fogExtra[1] = 0.0f;  // reserved (season LUT moved to composite UBO)
-	pc.fogExtra[2] = 0.0f;  // reserved (rain desat moved to composite UBO)
+	pc.fogExtra[1] = 0.0f;  // reserved — season LUT moved to composite UBO
+	pc.fogExtra[2] = 0.0f;  // reserved — rain desat moved to composite UBO
 	pc.fogExtra[3] = 0.0f;
 }
 
@@ -2078,7 +1997,7 @@ void VkRhi::drawChunkMeshOpaque(const SceneParams& scene, const float fogColor[3
 		0, sizeof(pc), &pc);
 	vkCmdDraw(cb, m.instCount, 1, 0, 0);
 
-	// Stash viewProj for the composite pass — same as drawVoxels{,Mesh}.
+	// Stash VP for composite — same as drawVoxels{,Mesh}.
 	glm::mat4 vpMat;
 	memcpy(&vpMat[0][0], scene.viewProj, sizeof(float) * 16);
 	glm::mat4 invVP = glm::inverse(vpMat);
@@ -2122,9 +2041,7 @@ void VkRhi::renderShadowsChunkMesh(const float sunVP[16], MeshHandle mesh) {
 	if (it == m_chunkMeshes.end() || it->second.instCount == 0) return;
 	const PersistentMesh& m = it->second;
 
-	// Same shadow UBO update as renderShadows{,Mesh} — chunk_terrain.frag
-	// doesn't read it, but the lit-pass voxel/box pipelines still consume
-	// the shadow params so we keep the contract identical across passes.
+	// Keep UBO in sync — chunk_terrain.frag ignores, but voxel/box lit passes read.
 	struct ShadowUBO { float shadowVP[16]; float shadowParams[4]; };
 	ShadowUBO ubo{};
 	memcpy(ubo.shadowVP, sunVP, sizeof(float) * 16);
@@ -2153,9 +2070,8 @@ void VkRhi::drawBoxModel(const SceneParams& scene, const float* boxes, uint32_t 
 	VkDeviceSize need = ((VkDeviceSize)firstInstance + count) * sizeof(float) * 19;
 	if (!ensureBoxInstanceCapacity(m_frame, need)) return;
 
-	// Append into the per-frame buffer (won't collide with prior draw calls
-	// in the same frame since each one advances m_boxInstCount). 19 floats
-	// per instance = mat4 (16) + RGB color (3).
+	// Append via m_boxInstCount cursor so multiple calls don't collide.
+	// 19 floats/instance = mat4(16) + color(3).
 	float* dst = (float*)m_boxInstMapped[m_frame] + (size_t)firstInstance * 19;
 	memcpy(dst, boxes, (size_t)count * sizeof(float) * 19);
 	m_boxInstCount[m_frame] = firstInstance + count;
@@ -2184,13 +2100,13 @@ void VkRhi::drawBoxModel(const SceneParams& scene, const float* boxes, uint32_t 
 bool VkRhi::screenshot(const char* path) {
 	if (!m_frameActive) return false;
 
-	// End the current render pass so we can copy from the swapchain image.
+	// End pass so we can copy from the swapchain image.
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
 	vkCmdEndRenderPass(cb);
 
 	uint32_t w = m_swapExtent.width, h = m_swapExtent.height;
 
-	// Create a host-visible buffer to receive pixels.
+	// Host-visible staging buffer.
 	VkDeviceSize bufSize = (VkDeviceSize)w * h * 4;
 	VkBuffer buf = VK_NULL_HANDLE;
 	VkDeviceMemory mem = VK_NULL_HANDLE;
@@ -2205,7 +2121,7 @@ bool VkRhi::screenshot(const char* path) {
 	vkAllocateMemory(m_device, &mai, nullptr, &mem);
 	vkBindBufferMemory(m_device, buf, mem, 0);
 
-	// Transition swapchain image to TRANSFER_SRC.
+	// PRESENT_SRC → TRANSFER_SRC.
 	VkImageMemoryBarrier b1{};
 	b1.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 	b1.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -2223,7 +2139,7 @@ bool VkRhi::screenshot(const char* path) {
 	vkCmdCopyImageToBuffer(cb, m_swapImages[m_imageIndex],
 		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &region);
 
-	// Transition back to PRESENT_SRC (endFrame will present it).
+	// Back to PRESENT_SRC for present.
 	VkImageMemoryBarrier b2 = b1;
 	b2.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 	b2.dstAccessMask = 0;
@@ -2232,7 +2148,7 @@ bool VkRhi::screenshot(const char* path) {
 	vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
 		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &b2);
 
-	// Submit + wait so we can read the buffer.
+	// Submit + wait so CPU can read.
 	vkEndCommandBuffer(cb);
 	VkPipelineStageFlags wait = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	VkSubmitInfo si{}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2243,7 +2159,7 @@ bool VkRhi::screenshot(const char* path) {
 	vkQueueSubmit(m_gfxQueue, 1, &si, m_inFlight[m_frame]);
 	vkQueueWaitIdle(m_gfxQueue);
 
-	// Read pixels and write PPM.
+	// Write PPM.
 	void* mapped = nullptr;
 	vkMapMemory(m_device, mem, 0, bufSize, 0, &mapped);
 	uint8_t* px = (uint8_t*)mapped;
@@ -2252,7 +2168,7 @@ bool VkRhi::screenshot(const char* path) {
 	bool ok = false;
 	if (f) {
 		fprintf(f, "P6\n%u %u\n255\n", w, h);
-		// Swapchain is B8G8R8A8 — swap to RGB.
+		// B8G8R8A8 → RGB.
 		for (uint32_t i = 0; i < w * h; i++) {
 			uint8_t rgb[3] = { px[i*4+2], px[i*4+1], px[i*4+0] };
 			fwrite(rgb, 3, 1, f);
@@ -2264,9 +2180,8 @@ bool VkRhi::screenshot(const char* path) {
 	vkDestroyBuffer(m_device, buf, nullptr);
 	vkFreeMemory(m_device, mem, nullptr);
 
-	// We consumed the submit that endFrame normally does. Flag the frame
-	// as no longer active so endFrame skips its own submit+present. We
-	// still need to present, so do it here.
+	// Consumed endFrame's submit — present here and flag frame inactive so
+	// endFrame skips its own submit+present.
 	VkPresentInfoKHR pi{}; pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	pi.waitSemaphoreCount = 1; pi.pWaitSemaphores = &m_renderDone[m_frame];
 	pi.swapchainCount = 1; pi.pSwapchains = &m_swapchain; pi.pImageIndices = &m_imageIndex;
@@ -2328,9 +2243,8 @@ bool VkRhi::createSkyPipeline() {
 	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
 	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
 
-	// Push constants: invVP (mat4) + sunDir (vec4) + skyParams (vec4) = 96 B.
-	// skyParams.x = timeSec (cloud drift, star twinkle), yzw reserved for
-	// weather/season hooks wired up by later phases.
+	// PC: invVP(mat4) + sunDir(vec4) + skyParams(vec4) = 96B.
+	// skyParams.x = timeSec (cloud/star anim); yzw reserved.
 	VkPushConstantRange pcr{};
 	pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	pcr.size = sizeof(float) * (16 + 4 + 4);
@@ -2359,9 +2273,7 @@ bool VkRhi::createSkyPipeline() {
 	return r == VK_SUCCESS;
 }
 
-// ═══════════════════════════════════════════════════════════
-// Post-process: offscreen render → composite (SSAO + bloom + tone map)
-// ═══════════════════════════════════════════════════════════
+// Post-process: offscreen render → composite (SSAO + bloom + tone map).
 
 bool VkRhi::createOffscreenRenderPass() {
 	VkAttachmentDescription atts[2]{};
@@ -2424,7 +2336,6 @@ bool VkRhi::createOffscreenRenderPass() {
 
 bool VkRhi::createOffscreen() {
 	for (int f = 0; f < kFramesInFlight; f++) {
-		// Color image
 		VkImageCreateInfo ici{};
 		ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 		ici.imageType = VK_IMAGE_TYPE_2D;
@@ -2454,7 +2365,7 @@ bool VkRhi::createOffscreen() {
 		vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 		if (vkCreateImageView(m_device, &vci, nullptr, &m_offColorView[f]) != VK_SUCCESS) return false;
 
-		// Depth image (with SAMPLED_BIT for composite shader)
+		// Depth image — SAMPLED for composite shader.
 		ici.format = m_depthFormat;
 		ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 		if (vkCreateImage(m_device, &ici, nullptr, &m_offDepth[f]) != VK_SUCCESS) return false;
@@ -2470,7 +2381,6 @@ bool VkRhi::createOffscreen() {
 		vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 		if (vkCreateImageView(m_device, &vci, nullptr, &m_offDepthView[f]) != VK_SUCCESS) return false;
 
-		// Framebuffer
 		VkImageView fbAtts[2] = {m_offColorView[f], m_offDepthView[f]};
 		VkFramebufferCreateInfo fci{};
 		fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -2498,7 +2408,6 @@ void VkRhi::destroyOffscreen() {
 }
 
 bool VkRhi::createCompositeResources() {
-	// Samplers
 	VkSamplerCreateInfo sci{};
 	sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 	sci.magFilter = VK_FILTER_LINEAR;
@@ -2511,7 +2420,7 @@ bool VkRhi::createCompositeResources() {
 	sci.minFilter = VK_FILTER_NEAREST;
 	if (vkCreateSampler(m_device, &sci, nullptr, &m_nearestSampler) != VK_SUCCESS) return false;
 
-	// Descriptor set layout — 2 samplers (color, depth) + 1 UBO (RenderTuning).
+	// 2 samplers (color, depth) + 1 UBO (RenderTuning).
 	VkDescriptorSetLayoutBinding binds[3]{};
 	binds[0].binding = 0;
 	binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -2532,7 +2441,7 @@ bool VkRhi::createCompositeResources() {
 	slci.pBindings = binds;
 	if (vkCreateDescriptorSetLayout(m_device, &slci, nullptr, &m_compSetLayout) != VK_SUCCESS) return false;
 
-	// Descriptor pool — two sampler types plus one UBO per frame-in-flight.
+	// Pool: samplers + UBO per frame-in-flight.
 	VkDescriptorPoolSize poolSizes[2]{
 		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)(kFramesInFlight * 2)},
 		{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         (uint32_t)(kFramesInFlight * 1)},
@@ -2544,8 +2453,7 @@ bool VkRhi::createCompositeResources() {
 	dpci.pPoolSizes = poolSizes;
 	if (vkCreateDescriptorPool(m_device, &dpci, nullptr, &m_compDescPool) != VK_SUCCESS) return false;
 
-	// RenderTuning UBO — one small persistent-mapped buffer per frame. Each
-	// frame's setGrading()/composite draw rewrites its bytes before the draw.
+	// Persistent-mapped RenderTuning UBO; rewritten each frame pre-draw.
 	for (int f = 0; f < kFramesInFlight; f++) {
 		VkBufferCreateInfo bci{};
 		bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -2563,12 +2471,11 @@ bool VkRhi::createCompositeResources() {
 		if (vkAllocateMemory(m_device, &mai, nullptr, &m_gradUboMem[f]) != VK_SUCCESS) return false;
 		vkBindBufferMemory(m_device, m_gradUbo[f], m_gradUboMem[f], 0);
 		vkMapMemory(m_device, m_gradUboMem[f], 0, mr.size, 0, &m_gradUboMapped[f]);
-		// Seed with defaults (all zeros = clean render, no post FX).
+		// Zero = clean render, no post FX.
 		GradingParams defaults{};
 		memcpy(m_gradUboMapped[f], &defaults, sizeof(defaults));
 	}
 
-	// Allocate descriptor sets
 	VkDescriptorSetLayout layouts[kFramesInFlight];
 	for (int i = 0; i < kFramesInFlight; i++) layouts[i] = m_compSetLayout;
 	VkDescriptorSetAllocateInfo dsai{};
@@ -2580,7 +2487,6 @@ bool VkRhi::createCompositeResources() {
 
 	updateCompositeDescriptors();
 
-	// Pipeline layout
 	VkPushConstantRange pcr{};
 	pcr.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	pcr.size = 128;
@@ -2592,7 +2498,6 @@ bool VkRhi::createCompositeResources() {
 	plci.pPushConstantRanges = &pcr;
 	if (vkCreatePipelineLayout(m_device, &plci, nullptr, &m_compLayout) != VK_SUCCESS) return false;
 
-	// Pipeline
 	auto vsCode = readFile("shaders/vk/composite.vert.spv");
 	auto fsCode = readFile("shaders/vk/composite.frag.spv");
 	if (vsCode.empty() || fsCode.empty()) return false;
@@ -2700,9 +2605,7 @@ void VkRhi::setGrading(const GradingParams& g) {
 	m_grading = g;
 }
 
-// ═══════════════════════════════════════════════════════════
-// Particle pipeline — additive billboards for magical effects
-// ═══════════════════════════════════════════════════════════
+// Particle pipeline — additive billboards for magical effects.
 
 bool VkRhi::createParticlePipeline() {
 	auto vsCode = readFile("shaders/vk/particle.vert.spv");
@@ -2719,7 +2622,7 @@ bool VkRhi::createParticlePipeline() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// Per-instance only — no per-vertex VBO. 8 floats per particle.
+	// Per-instance only, no per-vertex VBO. 8 floats/particle.
 	VkVertexInputBindingDescription bind{};
 	bind.binding = 0; bind.stride = sizeof(float)*8; bind.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 	VkVertexInputAttributeDescription attrs[3]{};
@@ -2743,23 +2646,21 @@ bool VkRhi::createParticlePipeline() {
 	VkPipelineRasterizationStateCreateInfo rs{};
 	rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 	rs.polygonMode = VK_POLYGON_MODE_FILL;
-	rs.cullMode = VK_CULL_MODE_NONE;       // billboards are 2-sided
+	rs.cullMode = VK_CULL_MODE_NONE;       // 2-sided billboards
 	rs.lineWidth = 1.0f;
 
 	VkPipelineMultisampleStateCreateInfo ms{};
 	ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 	ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-	// Depth test ON (so particles are occluded by terrain in front) but
-	// depth write OFF (so overlapping particles blend naturally).
+	// Test on (terrain occludes), write off (overlap blends naturally).
 	VkPipelineDepthStencilStateCreateInfo ds{};
 	ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
 	ds.depthTestEnable = VK_TRUE;
 	ds.depthWriteEnable = VK_FALSE;
 	ds.depthCompareOp = VK_COMPARE_OP_LESS;
 
-	// Additive blend: dst = src + dst. Source is already premultiplied in the
-	// fragment shader (rgb*=alpha), so srcAlpha=ONE, srcRGB=ONE.
+	// Additive; frag shader pre-multiplies rgb*=alpha, so srcRGB=srcAlpha=ONE.
 	VkPipelineColorBlendAttachmentState cba{};
 	cba.blendEnable = VK_TRUE;
 	cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -2779,7 +2680,7 @@ bool VkRhi::createParticlePipeline() {
 	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
 	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
 
-	// Push constants: viewProj (mat4) + camRight (vec4) + camUp (vec4) = 96 B.
+	// PC: viewProj(mat4) + camRight(vec4) + camUp(vec4) = 96B.
 	VkPushConstantRange pcr{};
 	pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 	pcr.size = sizeof(float) * (16 + 4 + 4);
@@ -2801,9 +2702,7 @@ bool VkRhi::createParticlePipeline() {
 	gpci.pColorBlendState = &cb;
 	gpci.pDynamicState = &dynState;
 	gpci.layout = m_particleLayout;
-	// Use swapchain render pass handle — the offscreen pass is compatible
-	// (same attachment formats) per Vulkan render-pass compatibility rules,
-	// so this pipeline works with either. Matches voxel/box-model/sky.
+	// Swapchain pass handle works here — offscreen pass is format-compatible.
 	gpci.renderPass = m_renderPass;
 
 	VkResult r = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gpci, nullptr, &m_particlePipeline);
@@ -2845,7 +2744,6 @@ void VkRhi::drawParticles(const SceneParams& scene, const float* particles, uint
 	if (!m_frameActive || !m_particlePipeline || count == 0) return;
 	ensureMainPass();
 
-	// Append into per-frame buffer.
 	VkDeviceSize stride = (VkDeviceSize)sizeof(float) * 8;
 	VkDeviceSize needBytes = (VkDeviceSize)(m_particleInstCount[m_frame] + count) * stride;
 	if (!ensureParticleInstanceCapacity(m_frame, needBytes)) return;
@@ -2866,36 +2764,12 @@ void VkRhi::drawParticles(const SceneParams& scene, const float* particles, uint
 
 	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_particlePipeline);
 
-	// Extract cam right + up from viewProj. We don't get a separate view
-	// matrix, but the rows of viewProj inverse give us world-space basis
-	// vectors. For billboards we need the camera's world-space right and up
-	// — easier to compute from sceneParams: given viewProj, the first two
-	// columns of its inverse's rotation are world-space right/up (up to
-	// normalization + perspective scale). To keep things simple, normalize
-	// the top row (right) and second row (up) of viewProj's transpose —
-	// equivalent to extracting the inverse-view basis assuming a
-	// non-skewed projection.
-	//
-	// The cleanest approach: pass the right/up directly from the caller by
-	// reading viewProj rows. But the caller only gives us viewProj, so we
-	// derive here.
+	// Recover world-space camRight/camUp from VP rows. For an axis-aligned
+	// perspective projection, VP row 0 (m[0], m[4], m[8]) is proportional to
+	// world-space right; row 1 → up. Normalize to drop projection scale.
 	float R[3], U[3];
 	{
-		// viewProj in column-major float[16]. Rows 0..2 of viewProj are the
-		// projected basis, so the *columns* of the upper 3x3 of viewProj's
-		// transpose give world-space right/up scaled by projection.
-		// Simpler: use the rows of the column-major matrix as taps, which
-		// correspond to columns of the conceptual matrix. The first column
-		// of viewProj is what transforms world X to clip X — so normalize
-		// the first 3 elements as world-space "right" direction (approx).
-		// This is only correct when the projection is axis-aligned; for our
-		// standard perspective it is.
 		const float* m = scene.viewProj;
-		// Row 0 of VP == (VP^T col 0) gives clipX coefficients. To extract
-		// world-right, we need VP^-1's first column. For axis-aligned
-		// perspective, the first row of VP (entries m[0], m[4], m[8])
-		// equals (1/tanHalfFov/aspect) * rightInWorld_x. Normalizing
-		// recovers rightInWorld.
 		R[0] = m[0]; R[1] = m[4]; R[2] = m[8];
 		U[0] = m[1]; U[1] = m[5]; U[2] = m[9];
 		auto norm = [](float* v) {
@@ -2915,14 +2789,11 @@ void VkRhi::drawParticles(const SceneParams& scene, const float* particles, uint
 	VkDeviceSize offs = 0;
 	vkCmdBindVertexBuffers(cb, 0, 1, &m_particleInstBuf[m_frame], &offs);
 
-	// 4 verts per particle, `count` instances, starting at firstInstance so
-	// we step over prior-call appended data.
+	// 4 verts × count instances; firstInstance skips prior-call data.
 	vkCmdDraw(cb, 4, count, 0, firstInstance);
 }
 
-// ═══════════════════════════════════════════════════════════
-// Ribbon pipeline — camera-facing additive trails
-// ═══════════════════════════════════════════════════════════
+// Ribbon pipeline — camera-facing additive trails.
 
 bool VkRhi::createRibbonPipeline() {
 	auto vsCode = readFile("shaders/vk/ribbon.vert.spv");
@@ -2939,7 +2810,7 @@ bool VkRhi::createRibbonPipeline() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// Per-vertex {pos[3], rgba[4]} = 7 floats.
+	// 7 floats/vertex: pos[3] rgba[4].
 	VkVertexInputBindingDescription bind{};
 	bind.binding = 0; bind.stride = sizeof(float)*7; bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 	VkVertexInputAttributeDescription attrs[2]{};
@@ -2964,16 +2835,14 @@ bool VkRhi::createRibbonPipeline() {
 	VkPipelineRasterizationStateCreateInfo rs{};
 	rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 	rs.polygonMode = VK_POLYGON_MODE_FILL;
-	rs.cullMode = VK_CULL_MODE_NONE;       // ribbon is flat + 2-sided
+	rs.cullMode = VK_CULL_MODE_NONE;       // flat 2-sided
 	rs.lineWidth = 1.0f;
 
 	VkPipelineMultisampleStateCreateInfo ms{};
 	ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 	ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-	// Depth test ON, depth write OFF — same as particles so the ribbon gets
-	// occluded by terrain in front of it but doesn't write a z-fight
-	// fingerprint that later draws collide with.
+	// Test on, write off — terrain occludes but no z-fight fingerprint.
 	VkPipelineDepthStencilStateCreateInfo ds{};
 	ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
 	ds.depthTestEnable = VK_TRUE;
@@ -2999,7 +2868,7 @@ bool VkRhi::createRibbonPipeline() {
 	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
 	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
 
-	// Push constant: viewProj only.
+	// PC: viewProj only.
 	VkPushConstantRange pcr{};
 	pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 	pcr.size = sizeof(float) * 16;
@@ -3062,11 +2931,8 @@ void VkRhi::drawRibbon(const SceneParams& scene, const float* points, uint32_t p
 	if (!m_frameActive || !m_ribbonPipeline || pointCount < 2) return;
 	ensureMainPass();
 
-	// Expand control points → vertex ribbon on CPU. For each point we emit
-	// two vertices offset ±width/2 along `side`, where side is perpendicular
-	// both to the curve tangent and to the camera-viewing direction. This is
-	// the classic "view-plane-aligned ribbon" technique — the band stays
-	// flat toward the camera while still hugging the path's shape.
+	// CPU expand: each point emits 2 verts offset ±width/2 along side =
+	// tangent × viewDir (view-plane-aligned ribbon — flat toward camera).
 	const float camX = scene.camPos[0], camY = scene.camPos[1], camZ = scene.camPos[2];
 	const size_t vertStride = sizeof(float) * 7;
 	const size_t vertCount = (size_t)pointCount * 2;
@@ -3157,26 +3023,15 @@ void VkRhi::drawRibbon(const SceneParams& scene, const float* points, uint32_t p
 	vkCmdDraw(cb, (uint32_t)vertCount, 1, 0, 0);
 }
 
-// ── 2D UI / text pipeline ──────────────────────────────────────────────
-//
-// One-time resources:
-//   * 512×192 R8 SDF font atlas uploaded via staging buffer
-//   * Descriptor set bound to the font sampler (set = 0, binding = 0)
-//   * Pipeline: alpha-blend, no depth, {pos.xy, uv.xy} vertex input
-//
-// Per-frame resources:
-//   * Persistent-mapped host-coherent vertex buffer with byte cursor,
-//     reset in beginFrame. Each drawUi2D appends at the cursor so
-//     multiple calls per frame accumulate cleanly.
-//
-// Render pass: the swapchain pass (m_renderPass), entered via
-// beginSwapchainPass() on first drawUi2D or imguiNewFrame of the frame.
+// 2D UI / text pipeline. One-time: 512×192 R8 SDF atlas + font sampler set.
+// Per-frame: persistent-mapped VB with byte cursor (reset in beginFrame),
+// appended by each drawUi2D. Runs in the swapchain pass.
 
 bool VkRhi::uploadFontAtlas() {
 	std::vector<uint8_t> sdf;
 	generateUiFontAtlas(sdf);
 
-	// Image: 512×192 R8, optimal tiling, sampled.
+	// 512×192 R8 sampled image.
 	VkImageCreateInfo ici{};
 	ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 	ici.imageType = VK_IMAGE_TYPE_2D;
@@ -3208,8 +3063,7 @@ bool VkRhi::uploadFontAtlas() {
 	if (vkCreateImageView(m_device, &vci, nullptr, &m_fontView) != VK_SUCCESS)
 		return false;
 
-	// Staging buffer: host-visible, filled from `sdf`, then copied to the
-	// image in a one-shot command buffer.
+	// Host-visible staging; one-shot cmd buf does the copy.
 	VkBuffer staging = VK_NULL_HANDLE;
 	VkDeviceMemory stagingMem = VK_NULL_HANDLE;
 	VkBufferCreateInfo bci{};
@@ -3234,7 +3088,7 @@ bool VkRhi::uploadFontAtlas() {
 	memcpy(mapped, sdf.data(), sdf.size());
 	vkUnmapMemory(m_device, stagingMem);
 
-	// One-shot command buffer for the upload.
+	// One-shot cmd buf.
 	VkCommandBufferAllocateInfo aci{};
 	aci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 	aci.commandPool = m_cmdPool;
@@ -3301,8 +3155,7 @@ bool VkRhi::uploadFontAtlas() {
 bool VkRhi::createUi2DResources() {
 	if (!uploadFontAtlas()) return false;
 
-	// Sampler: linear, clamp to edge (glyph borders shouldn't bleed between
-	// cells and the SDF already blurs the stroke).
+	// Linear, clamp to edge — SDF handles edge blur; no cross-cell bleed.
 	VkSamplerCreateInfo sci{};
 	sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 	sci.magFilter = VK_FILTER_LINEAR;
@@ -3314,7 +3167,7 @@ bool VkRhi::createUi2DResources() {
 	if (vkCreateSampler(m_device, &sci, nullptr, &m_fontSampler) != VK_SUCCESS)
 		return false;
 
-	// Descriptor set layout: one combined image sampler in the fragment stage.
+	// Set layout: one combined image sampler (frag).
 	VkDescriptorSetLayoutBinding bind{};
 	bind.binding = 0;
 	bind.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -3354,7 +3207,6 @@ bool VkRhi::createUi2DResources() {
 	w.pImageInfo = &ii;
 	vkUpdateDescriptorSets(m_device, 1, &w, 0, nullptr);
 
-	// Pipeline.
 	auto vsCode = readFile("shaders/vk/text2d.vert.spv");
 	auto fsCode = readFile("shaders/vk/text2d.frag.spv");
 	if (vsCode.empty() || fsCode.empty()) return false;
@@ -3369,7 +3221,7 @@ bool VkRhi::createUi2DResources() {
 	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	stages[1].module = fs; stages[1].pName = "main";
 
-	// {pos.xy, uv.xy} = 4 floats per vertex.
+	// 4 floats/vertex: pos.xy, uv.xy.
 	VkVertexInputBindingDescription vbind{};
 	vbind.binding = 0; vbind.stride = sizeof(float) * 4;
 	vbind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -3401,13 +3253,13 @@ bool VkRhi::createUi2DResources() {
 	ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 	ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-	// No depth — UI draws on top of the composite.
+	// UI draws on top of composite — no depth.
 	VkPipelineDepthStencilStateCreateInfo ds{};
 	ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
 	ds.depthTestEnable = VK_FALSE;
 	ds.depthWriteEnable = VK_FALSE;
 
-	// Standard alpha blending (non-premultiplied) — matches the GL text path.
+	// Standard alpha blend (non-premul) — matches GL text path.
 	VkPipelineColorBlendAttachmentState cba{};
 	cba.blendEnable = VK_TRUE;
 	cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -3427,7 +3279,7 @@ bool VkRhi::createUi2DResources() {
 	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
 	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
 
-	// Push constant: { vec4 color; ivec4 mode } = 32 bytes.
+	// PC: { vec4 color; ivec4 mode } = 32B.
 	VkPushConstantRange pcr{};
 	pcr.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	pcr.size = 32;
@@ -3450,7 +3302,7 @@ bool VkRhi::createUi2DResources() {
 	gpci.pColorBlendState = &cb;
 	gpci.pDynamicState = &dynState;
 	gpci.layout = m_uiLayout;
-	gpci.renderPass = m_renderPass;   // runs in the swapchain pass
+	gpci.renderPass = m_renderPass;   // swapchain pass
 
 	VkResult r = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gpci,
 		nullptr, &m_uiPipeline);
@@ -3462,9 +3314,8 @@ bool VkRhi::createUi2DResources() {
 bool VkRhi::ensureUi2DVertexCapacity(int frame, VkDeviceSize bytes) {
 	if (m_uiVtxCap[frame] >= bytes) return true;
 
-	// Grow. The OLD buffer may already be bound in this frame's command
-	// buffer from an earlier drawUi2D call, so we cannot destroy it now —
-	// queue it for deferred destruction at the next beginFrame(frame).
+	// Old buffer may already be bound this frame — queue for deferred destroy
+	// at next beginFrame(frame).
 	if (m_uiVtxMapped[frame]) { vkUnmapMemory(m_device, m_uiVtxMem[frame]); m_uiVtxMapped[frame] = nullptr; }
 	if (m_uiVtxBuf[frame] || m_uiVtxMem[frame]) {
 		m_uiVtxPending[frame].push_back({ m_uiVtxBuf[frame], m_uiVtxMem[frame] });
@@ -3498,8 +3349,7 @@ void VkRhi::drawUi2D(const float* vertsPosUV, uint32_t vertCount,
                      int mode, const float rgba[4]) {
 	if (!m_frameActive || !m_uiPipeline || vertCount == 0) return;
 
-	// UI draws on top of the composite. beginSwapchainPass is idempotent —
-	// callers don't need to order this against imguiNewFrame.
+	// Idempotent — callers don't need to order vs imguiNewFrame.
 	beginSwapchainPass();
 
 	const VkDeviceSize vertStride = sizeof(float) * 4;
@@ -3525,7 +3375,7 @@ void VkRhi::drawUi2D(const float* vertsPosUV, uint32_t vertCount,
 	vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		m_uiLayout, 0, 1, &m_uiDescSet, 0, nullptr);
 
-	// Push constant layout mirrors the shader: { vec4 color; ivec4 mode }.
+	// Matches shader: { vec4 color; ivec4 mode }.
 	struct PC { float color[4]; int mode; int _pad[3]; } pc{};
 	pc.color[0] = rgba[0]; pc.color[1] = rgba[1];
 	pc.color[2] = rgba[2]; pc.color[3] = rgba[3];
@@ -3545,10 +3395,8 @@ void VkRhi::drawSky(const float invVP[16],
                     const float sunDir[3],
                     float sunStrength,
                     float time) {
-	// VK backend derives zenith/horizon/stars/moon entirely in-shader from
-	// sunDir + sunStrength (server-driven). `time` drives star twinkle and
-	// cloud drift; skyColor/horizonColor stay in the IRhi contract for the
-	// GL backend but are ignored here.
+	// All sky gradients derived in-shader from sunDir + sunStrength; time
+	// drives star twinkle + cloud drift. skyColor/horizonColor are GL-only.
 	if (!m_frameActive || !m_skyPipeline) return;
 	ensureMainPass();
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
@@ -3687,16 +3535,13 @@ void VkRhi::onResize(int w, int h) {
 bool VkRhi::beginFrame() {
 	vkWaitForFences(m_device, 1, &m_inFlight[m_frame], VK_TRUE, UINT64_MAX);
 
-	// Fence has signalled → the command buffer we submitted for this frame
-	// index last time around is done. Any UI vertex buffers that got replaced
-	// mid-frame back then are now safe to destroy.
+	// Fence signalled → last submit at this frame index is retired; drain
+	// all deferred-destroy queues (UI vtx replacements + persistent meshes).
 	for (auto& p : m_uiVtxPending[m_frame]) {
 		if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
 		if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
 	}
 	m_uiVtxPending[m_frame].clear();
-	// Persistent meshes destroyed last time this frame index ran are now
-	// safe to release for the same fence-signalled reason.
 	for (auto& p : m_meshPending[m_frame]) {
 		if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
 		if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
@@ -3724,16 +3569,13 @@ bool VkRhi::beginFrame() {
 	VkCommandBufferBeginInfo bi{}; bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	vkBeginCommandBuffer(cb, &bi);
 
-	// Do NOT begin the offscreen (main) pass here — a shadow pass may run
-	// first. The first drawSky/drawVoxels/drawCube call lazily begins the
-	// main pass via ensureMainPass().
+	// No pass begun here — shadow pass may run before main. First lit draw
+	// lazily opens main via ensureMainPass().
 	m_frameActive = true;
 	m_mainPassActive = false;
 	m_shadowPassActive = false;
 	m_swapchainPassActive = false;
-	// Box-model + particle instance buffers are per-frame scratchpads: each
-	// draw*() call appends at the current offset. Reset here so frames
-	// start fresh.
+	// Per-frame scratchpad cursors — each draw*() appends at current offset.
 	m_boxInstCount[m_frame] = 0;
 	m_particleInstCount[m_frame] = 0;
 	m_ribbonVtxCursor[m_frame] = 0;
@@ -3825,15 +3667,14 @@ void VkRhi::beginSwapchainPass() {
 
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
 
-	// If no scene draw ever started the offscreen pass (e.g. menu-only
-	// frame), run it empty now so the composite pass has a valid input.
+	// Open offscreen empty if menu-only frame (composite needs valid input).
 	ensureMainPass();
 
-	// End offscreen render pass (transitions color+depth to SHADER_READ_ONLY)
+	// End offscreen (→ SHADER_READ_ONLY); begin swapchain for composite + UI.
 	vkCmdEndRenderPass(cb);
 	m_mainPassActive = false;
 
-	// Begin swapchain render pass for composite + overlays (UI / ImGui).
+
 	VkClearValue clears[2]{};
 	clears[0].color = {{0, 0, 0, 1}};
 	clears[1].depthStencil = {1.0f, 0};
@@ -3846,7 +3687,7 @@ void VkRhi::beginSwapchainPass() {
 	rpi.pClearValues = clears;
 	vkCmdBeginRenderPass(cb, &rpi, VK_SUBPASS_CONTENTS_INLINE);
 
-	// Draw composite fullscreen quad (SSAO + bloom + tone map)
+	// Composite fullscreen quad: SSAO + bloom + tone map.
 	if (m_compPipeline) {
 		VkViewport vp{};
 		vp.width = (float)m_swapExtent.width;
@@ -3856,8 +3697,7 @@ void VkRhi::beginSwapchainPass() {
 		vkCmdSetViewport(cb, 0, 1, &vp);
 		vkCmdSetScissor(cb, 0, 1, &sc);
 
-		// Stamp the current frame's RenderTuning UBO from the latest
-		// setGrading() state before the composite shader reads it.
+		// Stamp RenderTuning UBO from latest setGrading() before shader reads.
 		if (m_gradUboMapped[m_frame]) {
 			memcpy(m_gradUboMapped[m_frame], &m_grading, sizeof(GradingParams));
 		}
@@ -3941,14 +3781,13 @@ void VkRhi::shutdown() {
 		if (m_uiVtxMapped[f]) vkUnmapMemory(m_device, m_uiVtxMem[f]);
 		if (m_uiVtxBuf[f]) vkDestroyBuffer(m_device, m_uiVtxBuf[f], nullptr);
 		if (m_uiVtxMem[f]) vkFreeMemory(m_device, m_uiVtxMem[f], nullptr);
-		// Drain any deferred-destroy entries that accumulated during the final
-		// frame (shutdown is called after vkDeviceWaitIdle, so they're idle).
+		// Drain final-frame deferred-destroy queues (safe after WaitIdle).
 		for (auto& p : m_uiVtxPending[f]) {
 			if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
 			if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
 		}
 		m_uiVtxPending[f].clear();
-		// Persistent meshes deferred for this frame index — flush.
+		// Persistent mesh pending queues for this frame index.
 		for (auto& p : m_meshPending[f]) {
 			if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
 			if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
@@ -3960,8 +3799,7 @@ void VkRhi::shutdown() {
 		}
 		m_chunkMeshPending[f].clear();
 	}
-	// Anything still alive in m_meshes (caller forgot to destroyMesh) — release
-	// it directly. Safe because shutdown is called after vkDeviceWaitIdle.
+	// Leaked meshes (caller skipped destroyMesh) — release directly.
 	for (auto& kv : m_meshes) {
 		if (kv.second.buf) vkDestroyBuffer(m_device, kv.second.buf, nullptr);
 		if (kv.second.mem) vkFreeMemory(m_device, kv.second.mem, nullptr);
@@ -3977,8 +3815,7 @@ void VkRhi::shutdown() {
 	if (m_chunkLayout) vkDestroyPipelineLayout(m_device, m_chunkLayout, nullptr);
 	if (m_voxelPipeline) vkDestroyPipeline(m_device, m_voxelPipeline, nullptr);
 	if (m_voxelLayout) vkDestroyPipelineLayout(m_device, m_voxelLayout, nullptr);
-	// Shadow resources depend on m_voxelSetLayout / descriptor pool, which
-	// destroyShadowResources also cleans up. Call after pipeline destroys.
+	// Shadow resources share voxelSetLayout/descPool → destroy after pipelines.
 	destroyShadowResources();
 	if (m_instBuf) vkDestroyBuffer(m_device, m_instBuf, nullptr);
 	if (m_instMem) vkFreeMemory(m_device, m_instMem, nullptr);

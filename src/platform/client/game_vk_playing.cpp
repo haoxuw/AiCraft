@@ -20,16 +20,13 @@
 namespace civcraft::vk {
 
 void Game::clampCameraCollision() {
-	// FPS: camera is inside the player's collision capsule; nothing to clamp.
+	// FPS: camera inside player capsule — nothing to clamp.
 	if (m_cam.mode == civcraft::CameraMode::FirstPerson) return;
 
-	// RTS: commander view — camera flies freely over rooftops and through
-	// walls by design. Clamping would jerk the viewpoint whenever a zoom
-	// or pan happened to cross a structure, which is disorienting for an
-	// overhead camera. Zoom is the only height input in RTS.
+	// RTS: commander view flies through walls by design; clamp would jerk it.
 	if (m_cam.mode == civcraft::CameraMode::RTS) return;
 
-	// Orbit target that the camera is looking at (TPS/RPG head-ish anchor).
+	// Orbit target (TPS/RPG head anchor).
 	float feetY = m_cam.smoothedFeetPos().y;
 	glm::vec3 target(m_cam.player.feetPos.x,
 	                 feetY + m_cam.player.eyeHeight * 0.8f,
@@ -47,7 +44,7 @@ void Game::clampCameraCollision() {
 		float tHit = hit->distance;
 		float pulled = std::max(0.2f, tHit - kAirGap);
 		m_cam.position = target + dir * pulled;
-		// Throttled proof-receipt so headless runs can confirm the clamp fires.
+		// Throttled log so headless runs can confirm clamp fires.
 		static float sLastLog = 0;
 		if (m_wallTime - sLastLog > 0.5f) {
 			std::printf("[vk-game] cam-collide: pulled %.1f→%.1fb (hit @ (%d,%d,%d))\n",
@@ -61,10 +58,7 @@ void Game::clampCameraCollision() {
 void Game::processInput(float dt) {
 	if (!m_window) return;
 
-	// (F2 screenshot is handled at end of runOneFrame while a frame is active.)
-
-	// ESC — Playing → Paused, Paused → Playing. In Menu/Dead it's a no-op
-	// here (those states have their own Esc handling).
+	// ESC: Playing↔Paused. Menu/Dead handle Esc in their own code.
 	bool esc = glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
 	if (esc && !m_escLast) {
 		if (m_inspectedEntity != 0) {
@@ -82,7 +76,7 @@ void Game::processInput(float dt) {
 
 	if (m_state != GameState::Playing) return;
 
-	// Number keys 1..9,0 → hotbar slots 0..9 (matches GL client convention).
+	// Number keys 1..9,0 → hotbar slots 0..9.
 	static const int kNumKeys[10] = {
 		GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5,
 		GLFW_KEY_6, GLFW_KEY_7, GLFW_KEY_8, GLFW_KEY_9, GLFW_KEY_0,
@@ -110,7 +104,7 @@ void Game::processInput(float dt) {
 		std::printf("[vk-game] camera → %s\n", name);
 		pushNotification(std::string("Camera: ") + name,
 		                 glm::vec3(0.85f, 0.92f, 1.0f), 1.6f);
-		// First time in this mode: show a key-binding hint below the label.
+		// First entry to this mode — show key hints.
 		unsigned bit = 1u << (int)m_cam.mode;
 		if (!(m_modeHintsShown & bit)) {
 			m_modeHintsShown |= bit;
@@ -135,7 +129,7 @@ void Game::processInput(float dt) {
 	}
 	m_tabLast = tab;
 
-	// E: interact with door/chest/interactive block under cursor
+	// E: interact (door/chest/etc.) under cursor.
 	bool eKey = glfwGetKey(m_window, GLFW_KEY_E) == GLFW_PRESS;
 	if (eKey && !m_eLast) {
 		if (m_chestUI.open) {
@@ -167,9 +161,8 @@ void Game::processInput(float dt) {
 				m_server->sendAction(p);
 				civcraft::GameLogger::instance().emit("ACTION",
 					"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
-				// Generic container-open: any Structure entity with an inventory
-				// within clicking range of the hit opens a chest-like UI. Covers
-				// chests (exact block match) and monument (tower near deck anchor).
+				// Any Structure entity with inventory near the hit opens chest UI
+				// (chests, monument deck, …).
 				glm::vec3 hitCenter = glm::vec3(bp) + glm::vec3(0.5f);
 				civcraft::EntityId bestEid = 0;
 				float bestDist = 5.0f;
@@ -189,8 +182,7 @@ void Game::processInput(float dt) {
 	}
 	m_eLast = eKey;
 
-	// Q: drop one of the held hotbar item. Held-to-repeat at kTune.dropCD so a
-	// held key sequentially empties the stack at a readable pace.
+	// Q: drop one held item. Held-repeat at kTune.dropCD.
 	if (glfwGetKey(m_window, GLFW_KEY_Q) == GLFW_PRESS
 	    && !m_uiWantsCursor && m_dropCD <= 0) {
 		if (auto* me = playerEntity()) {
@@ -239,12 +231,12 @@ void Game::processInput(float dt) {
 	if (f3 && !m_f3Last) m_showDebug = !m_showDebug;
 	m_f3Last = f3;
 
-	// F6: toggle render-tuning panel (per-effect grading sliders)
+	// F6: render-tuning panel.
 	bool f6 = glfwGetKey(m_window, GLFW_KEY_F6) == GLFW_PRESS;
 	if (f6 && !m_f6Last) m_showTuning = !m_showTuning;
 	m_f6Last = f6;
 
-	// H: toggle handbook (artifact browser)
+	// H: handbook (artifact browser).
 	bool hKey = glfwGetKey(m_window, GLFW_KEY_H) == GLFW_PRESS;
 	if (hKey && !m_hLast)
 		m_handbookOpen = !m_handbookOpen;
@@ -255,7 +247,7 @@ void Game::processInput(float dt) {
 	// RPG/RTS: cursor free; right-click-drag = orbit camera.
 	// UI overlays (inventory, handbook, chest) always show cursor.
 	m_uiWantsCursor = m_invOpen || m_handbookOpen || m_chestUI.open
-	                || m_inspectedEntity != 0;
+	                || m_inspectedEntity != 0 || m_showTuning;
 
 	bool wantCapture = (m_cam.mode == civcraft::CameraMode::FirstPerson ||
 	                    m_cam.mode == civcraft::CameraMode::ThirdPerson);
@@ -297,7 +289,7 @@ void Game::processInput(float dt) {
 		m_cam.resetMouseTracking();
 	}
 
-	// Sync player position into Camera before it processes input.
+	// Sync player pos → camera before input.
 	if (auto* me = playerEntity())
 		m_cam.player.feetPos = me->position;
 
@@ -320,11 +312,9 @@ void Game::tickPlayer(float dt) {
 	civcraft::Entity* me = playerEntity();
 	if (!me) return;
 
-	// In RTS mode WASD pans the camera, not the player. The player walks
-	// only if box-selected and issued a group Move order (Rule 2: player is
-	// not special). Local-player steering follows the flow field via
-	// steerTargetFor and goes through the normal client-prediction path
-	// so movement stays smooth.
+	// RTS: WASD pans camera, not player. Player walks only when box-selected
+	// + issued a group Move order (Rule 2). Local steering uses steerTargetFor
+	// over the client-prediction path.
 	bool rtsMode = (m_cam.mode == civcraft::CameraMode::RTS);
 
 	glm::vec3 fwd, right;
@@ -365,24 +355,20 @@ void Game::tickPlayer(float dt) {
 	glm::vec3 moveDir = moveLen > 0.001f ? mv / moveLen : glm::vec3(0);
 	bool boost = glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
 
-	// Sprint FOV punch — layered on Camera::fov. Only kicks in when actually
-	// moving in FPS/TPS; RPG/RTS keep a fixed FOV so orthographic feel stays.
+	// Sprint FOV punch — FPS/TPS only (RPG/RTS keep fixed FOV).
 	{
 		bool sprinting = boost && moveLen > 0.001f &&
 		    (m_cam.mode == civcraft::CameraMode::FirstPerson ||
 		     m_cam.mode == civcraft::CameraMode::ThirdPerson);
 		const float kTarget = sprinting ? 6.0f : 0.0f;
-		// 7/s up (≈ 0.15s to full), 4/s down (≈ 0.25s to rest).
+		// up 7/s (~0.15s), down 4/s (~0.25s).
 		float rate = kTarget > m_sprintFovBoost ? 7.0f : 4.0f;
 		m_sprintFovBoost += (kTarget - m_sprintFovBoost) * std::min(rate * dt, 1.0f);
 		m_cam.fov = 70.0f + m_sprintFovBoost;
 	}
 
-	// Click-to-move "virtual joystick" — same approach as gameplay_movement.cpp
-	// in the GL client: the client drives the local player toward the target
-	// each tick (so client prediction + skipPhysics stay consistent); the server
-	// runs its own pathfinder in parallel for redundancy. WASD cancels; arriving
-	// within 1.5b clears.
+	// Click-to-move virtual joystick. Server runs parallel pathfinder; WASD
+	// cancels; arriving within 1.5b clears.
 	if (m_hasMoveOrder) {
 		if (moveLen > 0.001f) {
 			std::printf("[vk-game] click-to-move: canceled by WASD @ (%.1f,%.1f,%.1f)\n",
@@ -412,7 +398,7 @@ void Game::tickPlayer(float dt) {
 	bool space = glfwGetKey(m_window, GLFW_KEY_SPACE) == GLFW_PRESS;
 	m_spaceLast = space;
 
-	// Horizontal velocity: direct (no acceleration model — arcade feel).
+	// Horizontal velocity: direct (arcade feel).
 	float speed = kTune.playerSpeed * (boost ? 1.6f : 1.0f);
 
 	{
@@ -423,16 +409,13 @@ void Game::tickPlayer(float dt) {
 			return bd.solid ? bd.collision_height : 0.0f;
 		};
 
-		// Build MoveParams from the EntityDef — MUST match server's makeMoveParams
-		// so client-side physics produces identical results.
+		// MoveParams from EntityDef — must match server's makeMoveParams.
 		const auto& def = me->def();
 		civcraft::MoveParams mp = civcraft::makeMoveParams(
 			def.collision_box_min, def.collision_box_max,
 			def.gravity_scale, def.isLiving(), m_flyMode);
-		// Player-specific: cap ground-snap to ~slab height. Walking off a 1-block
-		// ledge drops with gravity (no "stuck to terrain" feel); half-slabs and
-		// curbs still step down smoothly. NPCs keep the default (2.0) so they
-		// don't glide across terrain edges while wandering.
+		// Cap ground-snap to slab height so 1-block drops fall with gravity
+		// but half-slabs still step down smoothly. NPCs keep default (2.0).
 		mp.maxGroundSnap = 0.4f;
 
 		int fx = (int)std::floor(me->position.x);
@@ -441,7 +424,7 @@ void Game::tickPlayer(float dt) {
 		civcraft::ChunkPos fp = { fx >> 4, fy >> 4, fz >> 4 };
 		bool feetReady = chunks.getChunkIfLoaded(fp) != nullptr;
 
-		// Build initial Move proposal (horizontal from input, Y filled later)
+		// Build Move proposal (horizontal from input, Y filled later).
 		civcraft::ActionProposal a;
 		a.type         = civcraft::ActionProposal::Move;
 		a.actorId      = m_server->localPlayerId();
@@ -460,14 +443,14 @@ void Game::tickPlayer(float dt) {
 		}
 
 		if (!feetReady) {
-			// Ground chunk not loaded — freeze in place, tell server we're staying.
+			// Ground chunk not loaded — freeze + inform server.
 			me->velocity = glm::vec3(0);
 			a.clientPos    = me->position;
 			a.hasClientPos = true;
 			a.desiredVel   = glm::vec3(0);
 			m_server->sendAction(a);
 		} else {
-			// Client-side physics: same moveAndCollide as server.
+			// Client physics: same moveAndCollide as server.
 			glm::vec3 localVel = { a.desiredVel.x, me->velocity.y, a.desiredVel.z };
 			if (m_flyMode) {
 				localVel.y = a.desiredVel.y;
@@ -483,9 +466,8 @@ void Game::tickPlayer(float dt) {
 			me->velocity = r.velocity;
 			m_onGround   = r.onGround;
 
-			// Physics just snapped the player up a ledge — start a cosmetic
-			// climb animation so the eye sees a continuous rise + hand reach
-			// instead of a teleport. Duration scales with height (0.22s/block).
+			// Ledge-step: cosmetic climb anim so the eye sees a rise
+			// instead of a teleport. Duration scales 0.22s/block.
 			if (r.stepped) {
 				float dy = r.position.y - prePos.y;
 				m_climb.t        = 0.0f;
@@ -499,8 +481,7 @@ void Game::tickPlayer(float dt) {
 				                                             std::sin(glm::radians(m_cam.lookYaw)));
 			}
 
-			// Validate position isn't stuck in a block — if so, revert and let
-			// the server run authoritative physics this tick.
+			// If stuck in a block, revert so server runs auth physics this tick.
 			bool clientPosInvalid = civcraft::isPositionBlocked(
 				isSolid, me->position, mp.halfWidth, mp.height);
 			if (clientPosInvalid) {
@@ -515,32 +496,24 @@ void Game::tickPlayer(float dt) {
 			m_server->sendAction(a);
 		}
 
-		// Reconcile: if server position drifts too far, snap to server.
-		// The entity's position IS the predicted position — no dual state.
-		// Server updates arrive via S_ENTITY and may differ; we snap if
-		// the drift exceeds tolerance.
-		// (Note: S_ENTITY handler writes me->position from the server;
-		// our client-side prediction above overwrites it. If the server's
-		// last position was far from ours, the next S_ENTITY will snap.)
+		// entity.position IS the predicted position; S_ENTITY snaps on drift.
 
 		if (me->hp() <= 0 && m_state == GameState::Playing)
 			enterDead("You died.");
 
-		// Damage detection for regen timer
+		// Damage resets regen timer.
 		float serverHp = (float)me->hp();
 		static float sLastHp = -1;
 		if (sLastHp >= 0 && serverHp < sLastHp) m_regenIdle = 0;
 		sLastHp = serverHp;
 	}
 
-	// Walk distance fuels arm/leg swing
+	// Walk dist drives arm/leg swing.
 	if (m_onGround && moveLen > 0.001f)
 		m_walkDist += speed * dt;
 
-	// Body yaw. FPS: snap to camera (body is hidden, but keep it consistent for
-	// the instant a player switches to TPS). TPS/RPG/RTS: lerp toward the
-	// horizontal velocity direction when moving, hold otherwise — so the
-	// character faces the way they're running, not where the camera is pointed.
+	// Body yaw. FPS: snap to camera. TPS/RPG/RTS: lerp to velocity direction
+	// so character faces the way they're moving, not the camera.
 	{
 		float targetYaw;
 		bool haveTarget = true;
@@ -559,8 +532,7 @@ void Game::tickPlayer(float dt) {
 			m_playerBodyYaw = targetYaw;
 			m_playerBodyYawInit = true;
 		} else if (haveTarget) {
-			// Shortest-arc lerp (8/s — fast enough for strafe flicks, slow
-			// enough to look natural).
+			// Shortest-arc lerp @ 8/s.
 			float diff = targetYaw - m_playerBodyYaw;
 			while (diff >  3.1415926535f) diff -= 6.2831853072f;
 			while (diff < -3.1415926535f) diff += 6.2831853072f;
@@ -569,16 +541,15 @@ void Game::tickPlayer(float dt) {
 		}
 	}
 
-	// Footstep audio — trigger when integer stride boundary crosses
-	// (stride ≈ 2 blocks). Floor picked from the block under the player's feet.
+	// Footstep audio on integer stride crossing (~2 blocks per step).
 	if (m_footstepCooldown > 0) m_footstepCooldown -= dt;
 	{
-		int stepIdx = (int)(m_walkDist * 0.5f);   // one step per ~2 blocks
+		int stepIdx = (int)(m_walkDist * 0.5f);   // ~1 step / 2 blocks
 		bool walking = m_onGround && moveLen > 0.001f;
 		if (walking && stepIdx != m_lastWalkStep && m_footstepCooldown <= 0) {
 			m_lastWalkStep = stepIdx;
 			m_footstepCooldown = 0.25f;
-			// Sample the block beneath the player's feet to pick the step sound.
+			// Pick step sound from the block underfoot.
 			int fx = (int)std::floor(me->position.x);
 			int fy = (int)std::floor(me->position.y) - 1;
 			int fz = (int)std::floor(me->position.z);
@@ -603,11 +574,11 @@ void Game::tickPlayer(float dt) {
 		if (!walking) m_lastWalkStep = stepIdx;  // reset phase on stop
 	}
 
-	// Audio listener follows the camera so positional sounds pan correctly.
+	// Listener follows camera for correct panning.
 	m_audio.setListener(m_cam.position, m_cam.front());
 	m_audio.updateMusic();
 
-	// HP regen (client-side prediction — server is authoritative)
+	// HP regen (prediction only — server authoritative).
 	m_regenIdle += dt;
 
 	if (m_attackCD > 0) m_attackCD -= dt;
@@ -619,7 +590,7 @@ void Game::tickPlayer(float dt) {
 		m_handSwingT += dt;
 		if (m_handSwingT > kHandSwingDur) m_handSwingT = -1.0f;
 	}
-	// Damage feedback decay — vignette fades ~0.5s, shake decays linearly.
+	// Damage FX decay: vignette ~0.5s, shake linear.
 	if (m_damageVignette > 0.0f) {
 		m_damageVignette -= dt * 2.0f;
 		if (m_damageVignette < 0.0f) m_damageVignette = 0.0f;
@@ -629,7 +600,7 @@ void Game::tickPlayer(float dt) {
 		if (m_cameraShake < 0.0f) { m_cameraShake = 0.0f; m_shakeIntensity = 0.0f; }
 	}
 
-	// Break timeout — if player hasn't hit the block in 2s, cancel progress.
+	// Break timeout: cancel after 2s idle.
 	if (m_breaking.active) {
 		m_breaking.timer += dt;
 		if (m_breaking.timer > 2.0f) {
@@ -638,9 +609,7 @@ void Game::tickPlayer(float dt) {
 		}
 	}
 
-	// Left-click:
-	//   FPS / TPS → swing weapon (cone attack)
-	//   RPG / RTS → click-to-move / box-select
+	// LMB — FPS/TPS: swing (cone attack). RPG/RTS: click-move / box-select.
 	int lmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_LEFT);
 	bool lmbNow = (lmb == GLFW_PRESS);
 	bool rtsLike = (m_cam.mode == civcraft::CameraMode::RPG || rtsMode);
@@ -722,9 +691,7 @@ void Game::tickPlayer(float dt) {
 					}
 				}
 			} else if (!isClick) {
-				// Shift-additive: hold Shift at drag-release to add to the
-				// existing selection instead of replacing it (SC2/WoW/Diablo
-				// convention). No modifier = clean replace.
+				// Shift-at-release: add to selection; no modifier: replace.
 				bool shiftHeld =
 					glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
 					glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
@@ -756,9 +723,8 @@ void Game::tickPlayer(float dt) {
 			}
 		}
 
-		// Drive commanded units via move proposals
+		// Drive commanded units, then clean up arrived/removed.
 		m_rtsExec.driveRemote(*m_server, m_server->localPlayerId());
-		// Clean up arrived/removed
 		std::vector<civcraft::EntityId> arrived;
 		for (auto& [eid, order] : m_moveOrders) {
 			if (!order.active || !m_server->getEntity(eid) || !m_rtsExec.has(eid))
@@ -775,8 +741,7 @@ void Game::tickPlayer(float dt) {
 			if (lmbNow && !m_lmbLast)
 				clickToMove();
 		} else {
-			// FPS/TPS: left-click = attack entity (if closer) or break block.
-			// Matches GL: LMB held = continuous mining, entity attack on edge.
+			// FPS/TPS LMB: attack entity (if closer) or break block.
 			bool lmbEdge = (lmbNow && !m_lmbLast);
 			bool lmbHeld = (lmbNow && m_mouseCaptured);
 
@@ -784,8 +749,7 @@ void Game::tickPlayer(float dt) {
 				glm::vec3 eye = m_cam.position;
 				glm::vec3 dir = m_cam.front();
 
-				// Entity attack takes priority. Held + cooldown so mashing
-				// LMB or holding both feel the same (modern ARPG convention).
+				// Entity attack priority. Held+CD so mash = hold (ARPG feel).
 				bool entityAttacked = false;
 				if ((lmbEdge || lmbHeld) && m_attackCD <= 0) {
 					std::vector<civcraft::RaycastEntity> ents;
@@ -816,7 +780,7 @@ void Game::tickPlayer(float dt) {
 					}
 				}
 
-				// Block breaking (if no entity attacked, with break cooldown)
+				// Block breaking (if no entity hit, break CD enforced).
 				if (!entityAttacked && m_breakCD <= 0) {
 					m_handSwingT = 0.0f;
 					if (m_adminMode) {
@@ -836,7 +800,7 @@ void Game::tickPlayer(float dt) {
 							m_breaking.timer = 0;
 							m_breakCD = 0.25f;
 
-							// Per-hit particle burst at block
+							// Per-hit particle burst.
 							{
 								const auto& bdef = m_server->blockRegistry().get(hit->blockId);
 								HitEvent he;
@@ -868,8 +832,7 @@ void Game::tickPlayer(float dt) {
 	}
 	m_lmbLast = lmbNow;
 
-	// Right-click: FPS/TPS = inspect entity (edge) or place block (held+CD).
-	//              RPG/RTS = quick-click action (orbit handled above, edge).
+	// RMB — FPS/TPS: inspect (edge) or place (held+CD). RPG/RTS: click action.
 	bool rmbPressed = false;
 	bool rmbIsHeld  = false;
 	{
@@ -887,13 +850,12 @@ void Game::tickPlayer(float dt) {
 		}
 		m_rmbLast = rmbNow;
 	}
-	// Held-place: fire every kTune.placeCD seconds while RMB is held in FPS/TPS.
-	// Skipped on edge frames (handled below) to avoid double-fire on press.
+	// Held-place fires every kTune.placeCD s while RMB held in FPS/TPS.
 	if (!rmbPressed && rmbIsHeld && m_placeCD <= 0) {
 		rmbPressed = true;
 	}
 	if (rmbPressed && m_breakCD <= 0) {
-		// Compute ray direction (cursor in RPG/RTS, camera forward in FPS/TPS)
+		// Ray dir: cursor for RPG/RTS, camera forward otherwise.
 		glm::vec3 eye = m_cam.position;
 		glm::vec3 dir = m_cam.front();
 		if (m_cam.mode == civcraft::CameraMode::RPG ||
@@ -911,7 +873,7 @@ void Game::tickPlayer(float dt) {
 			}
 		}
 
-		// Entity inspect — if an entity is hit closer than any block, inspect it.
+		// Entity inspect if closer than any block.
 		bool inspectTriggered = false;
 		{
 			std::vector<civcraft::RaycastEntity> ents;
@@ -934,15 +896,14 @@ void Game::tickPlayer(float dt) {
 			}
 		}
 
-		// Place block / interact (if no entity inspected)
+		// Place/interact if no entity inspect.
 		if (!inspectTriggered) {
 			placeBlock();
 			m_placeCD = kTune.placeCD;
 		}
 	}
 
-	// Middle-click: eyedropper (pick block type under cursor without breaking).
-	// Shift + right-click places block.
+	// MMB: eyedropper (pick block type without breaking).
 	int mmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_MIDDLE);
 	bool mmbNow = (mmb == GLFW_PRESS);
 	if (mmbNow && !m_mmbLast && !m_uiWantsCursor) {
@@ -1022,8 +983,7 @@ void Game::placeBlock() {
 	auto& chunks = m_server->chunks();
 	auto hit = civcraft::raycastBlocks(chunks, eye, dir, 8.0f);
 	if (!hit) return;
-	// Use the last block the player dug — requires it's still in inventory.
-	// Server rejects silently if the player doesn't have it.
+	// Uses last dug block; server silently rejects if player doesn't have it.
 	const std::string& blockType = m_lastDugBlock;
 	civcraft::ActionProposal p;
 	p.actorId     = m_server->localPlayerId();
@@ -1045,8 +1005,7 @@ void Game::placeBlock() {
 }
 
 void Game::clickToMove() {
-	// Use the actual screen cursor — in RPG/RTS the mouse is a pointer, not
-	// the camera forward.
+	// RPG/RTS use screen cursor, not camera forward.
 	double mx = 0, my = 0;
 	glfwGetCursorPos(m_window, &mx, &my);
 	int ww = m_fbW, wh = m_fbH;
@@ -1054,9 +1013,8 @@ void Game::clickToMove() {
 	float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
 	float ndcY = 1.0f - (float)(my / wh) * 2.0f;
 
-	// Build ray from near plane to far plane through the cursor. Re-undo the
-	// Vulkan Y-flip from viewProj() so the unprojection matches GL conventions.
-	glm::mat4 proj = m_cam.projectionMatrix(m_aspect);  // no Y-flip here
+	// Near→far cursor ray. Undo viewProj's Y-flip for GL-style unprojection.
+	glm::mat4 proj = m_cam.projectionMatrix(m_aspect);  // no Y-flip
 	glm::mat4 invVP = glm::inverse(proj * m_cam.viewMatrix());
 	glm::vec4 near4 = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
 	glm::vec4 far4  = invVP * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
@@ -1068,10 +1026,10 @@ void Game::clickToMove() {
 	auto hit = civcraft::raycastBlocks(chunks, rayOrigin, rayDir, 200.0f);
 	if (!hit) return;
 
-	// Place the goal on top of the hit block (y+1 is the walkable cell).
+	// Goal on top of hit block (y+1 is walkable).
 	glm::vec3 target = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
 
-	// Only walk to targets where a 2-block-tall body fits above solid ground.
+	// Only walk where a 2-block body fits above solid ground.
 	const auto& reg = m_server->blockRegistry();
 	auto solid = [&](int x, int y, int z) {
 		return reg.get(chunks.getBlock(x, y, z)).solid;
@@ -1094,9 +1052,8 @@ bool Game::tryServerAttack() {
 	glm::vec3 fwd  = playerForward();
 	civcraft::EntityId myId = m_server->localPlayerId();
 
-	// Swing whoosh — fires on every attempt (miss or hit). The hit sound fires
-	// a frame later from the HP-delta detector (Rule 5: client derives effects
-	// from the broadcast state stream, not from our local proposal).
+	// Swing whoosh fires on every attempt; hit sound comes from HP-delta
+	// detector (Rule 5: effects derived from broadcast stream).
 	m_audio.play("sword_swing", me->position, 0.5f);
 
 	civcraft::Entity* best = nullptr;
@@ -1129,7 +1086,7 @@ bool Game::tryServerAttack() {
 		0.0f, 1.0f, 1.6f
 	});
 
-	// Hitmarker flash — orange on damage, red on kill
+	// Hitmarker flash: orange hit, red kill.
 	m_hitmarkerTimer = 0.18f;
 	m_hitmarkerKill  = (best->hp() <= kTune.attackDmg);
 
@@ -1145,10 +1102,9 @@ void Game::tickCombat(float dt) {
 			[](const Slash& s){ return s.t >= s.duration; }),
 		m_slashes.end());
 
-	// Hitmarker timer countdown
 	if (m_hitmarkerTimer > 0) m_hitmarkerTimer -= dt;
 
-	// Hit event particle lifetime
+	// Hit particle lifetime.
 	for (auto& he : m_hitEvents) he.t += dt;
 	m_hitEvents.erase(
 		std::remove_if(m_hitEvents.begin(), m_hitEvents.end(),
@@ -1176,10 +1132,8 @@ void Game::tickFloaters(float dt) {
 		m_notifs.end());
 }
 
-// Auto-pickup scan + optimistic fly animation. Mirrors the GL client's
-// updateItemPickupAnimations (game_playing.cpp) but uses m_pickupAnims as
-// the single source of truth — anim presence == "client claimed this item"
-// — and reads pickup_range + pickup_fly_duration from the picker's def.
+// Auto-pickup scan + fly anim. m_pickupAnims presence == "client claimed
+// this item". pickup_range and pickup_fly_duration come from picker def.
 void Game::updatePickups(float dt) {
 	civcraft::Entity* pe = playerEntity();
 	if (!pe || !m_server) return;
@@ -1192,8 +1146,7 @@ void Game::updatePickups(float dt) {
 		return false;
 	};
 
-	// Proximity scan — send Relocate + start anim for any in-range item
-	// we haven't already claimed this pass.
+	// Scan: send Relocate + start anim for unclaimed in-range items.
 	m_server->forEachEntity([&](civcraft::Entity& e) {
 		if (!e.def().isItem()) return;
 		if (e.removed) return;
@@ -1205,33 +1158,27 @@ void Game::updatePickups(float dt) {
 		int count = e.getProp<int>(civcraft::Prop::Count, 1);
 		if (pe->inventory && !pe->inventory->canAccept(itemType, count,
 		                                                pdef.inventory_capacity)) {
-			// Capacity known-bad — surface once per entity via the anim
-			// system so we still get a "denied" floater, then rely on the
-			// entity still being present at t=1 to classify it as denied.
-			// Simpler path: don't send Relocate; drop a single floater now.
+			// Capacity full — drop one floater, no Relocate.
 			FloatText ft;
 			ft.worldPos = pe->position + glm::vec3(0, 2.0f, 0);
 			ft.color    = glm::vec3(0.95f, 0.55f, 0.35f);
 			ft.text     = "Inventory full";
 			ft.lifetime = 1.0f;
 			m_floaters.push_back(ft);
-			// Insert a no-send marker anim so we don't re-spam the floater
-			// every frame. Duration = picker's fly duration; outcome at
-			// t=1 will be "denied" (entity still exists).
+			// No-send marker anim prevents re-spamming the floater.
 			PickupAnim marker;
 			marker.itemId   = e.id();
 			marker.startPos = e.position;
 			marker.itemType = itemType;
 			marker.count    = count;
 			marker.duration = pdef.pickup_fly_duration;
-			// Mark as "no-send" by setting t past end so tick doesn't touch
-			// it again; we only add it here so the scan de-dups.
+			// t past end → tick skips; present only for scan de-dup.
 			marker.t = marker.duration;
 			m_pickupAnims.push_back(marker);
 			return;
 		}
 
-		// Optimistic claim: send Relocate, start fly animation.
+		// Optimistic claim + fly anim.
 		civcraft::ActionProposal p;
 		p.type    = civcraft::ActionProposal::Relocate;
 		p.actorId = m_server->controlledEntityId();
@@ -1251,8 +1198,7 @@ void Game::updatePickups(float dt) {
 		m_pickupAnims.push_back(a);
 	});
 
-	// Advance anims; resolve outcome at t=1 by checking server state.
-	// Entity gone → success ("+N name"); entity still present → denied.
+	// Resolve at t=1: entity gone → success, still present → denied.
 	for (auto it = m_pickupAnims.begin(); it != m_pickupAnims.end(); ) {
 		it->t += dt;
 		if (it->t >= it->duration) {
@@ -1263,7 +1209,7 @@ void Game::updatePickups(float dt) {
 			ft.worldPos = pe->position + glm::vec3(0, 2.0f, 0);
 			ft.lifetime = 1.0f;
 			if (gone) {
-				// Success — format "+N item_name"
+				// Success: "+N item_name"
 				std::string key = it->itemType;
 				auto col = key.find(':');
 				if (col != std::string::npos) key = key.substr(col + 1);

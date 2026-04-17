@@ -1,7 +1,7 @@
 #include "server/chunk_gen_service.h"
 
 #include "server/world.h"
-#include "shared/chunk.h"
+#include "logic/chunk.h"
 #include "net/net_protocol.h"
 
 #include <zstd.h>
@@ -14,7 +14,7 @@
 namespace civcraft {
 
 ChunkGenService::ChunkGenService(World& world, int numWorkers) : m_world(world) {
-	// Priority: env var > arg > hardware_concurrency() - 1 (leave one for tick).
+	// Priority: env var > arg > hw_concurrency-1 (reserve one core for tick).
 	int n = numWorkers;
 	if (const char* env = std::getenv("CIVCRAFT_CHUNK_WORKERS")) {
 		int envN = std::atoi(env);
@@ -24,7 +24,7 @@ ChunkGenService::ChunkGenService(World& world, int numWorkers) : m_world(world) 
 		unsigned hw = std::thread::hardware_concurrency();
 		n = (hw > 1) ? (int)(hw - 1) : 1;
 	}
-	n = std::max(1, std::min(n, 16)); // cap at 16 — diminishing returns
+	n = std::max(1, std::min(n, 16));
 
 	m_workers.reserve(n);
 	for (int i = 0; i < n; i++)
@@ -53,7 +53,7 @@ void ChunkGenService::cancelClient(ClientId cid) {
 		std::lock_guard<std::mutex> lk(m_cancelMu);
 		m_cancelled.insert(cid);
 	}
-	// Drop already-produced results for this client so drain() stays clean.
+	// Drop already-produced results so drain() stays clean.
 	std::lock_guard<std::mutex> lk(m_resultMu);
 	m_results.erase(
 		std::remove_if(m_results.begin(), m_results.end(),
@@ -84,22 +84,16 @@ void ChunkGenService::workerLoop() {
 			m_jobs.pop();
 		}
 
-		// Skip if client was cancelled while job was queued.
 		{
 			std::lock_guard<std::mutex> lk(m_cancelMu);
 			if (m_cancelled.count(job.cid)) continue;
 		}
 
-		// getChunk holds World::m_mutex internally; multiple workers serialize
-		// on world generation but parallelize on compression below (once
-		// getChunk returns, the chunk data is stable for this chunk — it
-		// won't be regenerated, only possibly mutated by block edits, which
-		// don't happen to distant chunks during HELLO prep).
+		// getChunk serializes on World::m_mutex; compression below runs parallel.
 		Chunk* chunk = m_world.getChunk(job.pos);
 		if (!chunk) continue;
 
-		// Re-check cancel after the expensive getChunk — client may have
-		// disconnected during worldgen.
+		// Re-check cancel — client may have disconnected during worldgen.
 		{
 			std::lock_guard<std::mutex> lk(m_cancelMu);
 			if (m_cancelled.count(job.cid)) continue;
@@ -115,8 +109,7 @@ void ChunkGenService::workerLoop() {
 
 void ChunkGenService::buildMessage(const Chunk& chunk, ChunkPos pos, bool useZstd,
                                    std::vector<uint8_t>& out) const {
-	// Payload: [i32 cx][i32 cy][i32 cz][u32×CHUNK_VOLUME]
-	// Matches the layout produced by ClientManager::queueChunk().
+	// Payload: [i32 cx][i32 cy][i32 cz][u32×CHUNK_VOLUME] — matches ClientManager::queueChunk.
 	net::WriteBuffer cb;
 	cb.writeI32(pos.x);
 	cb.writeI32(pos.y);
@@ -133,15 +126,14 @@ void ChunkGenService::buildMessage(const Chunk& chunk, ChunkPos pos, bool useZst
 		payload.resize(dstBound);
 		size_t compSize = ZSTD_compress(payload.data(), dstBound,
 			cb.data().data(), srcSize,
-			1 /* level 1 = fastest */);
+			1 /* fastest */);
 		payload.resize(compSize);
 		msgType = net::S_CHUNK_Z;
 	} else {
 		payload.assign(cb.data().begin(), cb.data().end());
 	}
 
-	// Prepend 8-byte frame header so the main thread can push bytes
-	// straight into the client socket.
+	// 8-byte frame header so main thread can push bytes straight to socket.
 	out.resize(8 + payload.size());
 	net::MsgHeader hdr{ (uint32_t)msgType, (uint32_t)payload.size() };
 	std::memcpy(out.data(), &hdr, 8);

@@ -1,24 +1,7 @@
 #pragma once
 
-/**
- * ArtifactRegistry — loads all Python definitions from the artifact store.
- *
- * This is the single source of truth for ALL game content:
- *   - Creatures (animals, monsters, NPCs)
- *   - Characters (playable skins)
- *   - Items (weapons, tools, potions)
- *   - Effects (renamed from actions — heal, damage, teleport)
- *   - Blocks (terrain, structures)
- *   - Behaviors (AI scripts)
- *
- * All definitions are Python dicts loaded from artifacts/{category}/base/*.py
- * and artifacts/{category}/player/*.py. The registry is read-only at runtime
- * — the Handbook UI reads from it to display content.
- *
- * Two sections:
- *   - Built-in (base/) — ships with the game, read-only
- *   - Custom (player/) — player-created content, editable
- */
+// Rule 1: single source of truth for ALL game content (living/items/blocks/behaviors/effects).
+// Loads Python dicts from artifacts/{cat}/base/*.py (read-only) + artifacts/{cat}/player/*.py (editable).
 
 #include <string>
 #include <vector>
@@ -34,21 +17,16 @@
 namespace civcraft {
 
 struct ArtifactEntry {
-	std::string id;           // "pig"
-	std::string name;         // "Pig"
+	std::string id;           // e.g. "pig"
+	std::string name;
 	std::string category;     // "living", "item", "block", "behavior", "effect", ...
-	std::string subcategory;  // for living: "humanoid" | "animal". Items: "weapon", etc.
+	std::string subcategory;  // living: "humanoid"|"animal"; items: "weapon", etc.
 	std::string description;
-	std::string filePath;     // path to .py file
-	bool isBuiltin;           // true = base/, false = player/
+	std::string filePath;
+	bool isBuiltin;           // base/ vs player/
 
-	// Raw Python source (loaded from file)
-	std::string source;
-
-	// Parsed fields (from Python dict)
+	std::string source;       // raw .py
 	std::unordered_map<std::string, std::string> fields;
-
-	// Feature tags parsed from "tags": ["humanoid", ...] in Python source
 	std::vector<std::string> tags;
 };
 
@@ -70,9 +48,7 @@ public:
 		printf("[ArtifactRegistry] Loaded %zu artifacts from %s\n",
 		       m_entries.size(), basePath.c_str());
 
-		// Validate: living entities and items must have a model file. Use
-		// the explicit "model": "<key>" field if present, otherwise fall
-		// back to the file stem (e.g. brave_chicken.py → "brave_chicken").
+		// Living/items must have a model file. Use "model" field if present, else file stem.
 		int warnings = 0;
 		for (auto& e : m_entries) {
 			if (e.category == "living" || e.category == "item" || e.category == "annotation") {
@@ -96,10 +72,8 @@ public:
 			printf("[ArtifactRegistry] %d artifact(s) missing model files!\n", warnings);
 	}
 
-	// Get all entries
 	const std::vector<ArtifactEntry>& entries() const { return m_entries; }
 
-	// Filter by category
 	std::vector<const ArtifactEntry*> byCategory(const std::string& cat) const {
 		std::vector<const ArtifactEntry*> result;
 		for (auto& e : m_entries)
@@ -107,7 +81,6 @@ public:
 		return result;
 	}
 
-	// Filter by category + builtin/custom
 	std::vector<const ArtifactEntry*> byCategory(const std::string& cat, bool builtin) const {
 		std::vector<const ArtifactEntry*> result;
 		for (auto& e : m_entries)
@@ -115,7 +88,7 @@ public:
 		return result;
 	}
 
-	// All unique categories in load order (for dynamic UI tabs)
+	// Unique categories in load order (for dynamic UI tabs).
 	std::vector<std::string> allCategories() const {
 		std::vector<std::string> result;
 		std::unordered_set<std::string> seen;
@@ -126,15 +99,13 @@ public:
 		return result;
 	}
 
-	// Find by ID
 	const ArtifactEntry* findById(const std::string& id) const {
 		for (auto& e : m_entries)
 			if (e.id == id) return &e;
 		return nullptr;
 	}
 
-	// Collect (typeId → tags) pairs for all living artifacts that have tags.
-	// Used by EntityManager::mergeArtifactTags() to propagate Python-declared tags.
+	// Consumed by EntityManager::mergeArtifactTags() to propagate Python-declared tags.
 	std::vector<std::pair<std::string, std::vector<std::string>>> livingTags() const {
 		std::vector<std::pair<std::string, std::vector<std::string>>> result;
 		for (auto& e : m_entries) {
@@ -144,7 +115,6 @@ public:
 		return result;
 	}
 
-	// Count
 	size_t count() const { return m_entries.size(); }
 	size_t countByCategory(const std::string& cat) const {
 		size_t n = 0;
@@ -156,10 +126,10 @@ public:
 	const std::string& basePath() const { return m_basePath; }
 	const std::string& playerNS() const { return m_playerNS; }
 
-	// Set the player namespace (e.g. "p_a3f1"). Generated once per client session.
+	// Per-client session namespace, e.g. "p_a3f1".
 	void setPlayerNamespace(const std::string& ns) { m_playerNS = ns; }
 
-	// Generate a short random player namespace: "p_" + 4 hex chars
+	// "p_" + 4 hex chars.
 	static std::string generatePlayerNamespace() {
 		std::random_device rd;
 		std::mt19937 gen(rd());
@@ -169,8 +139,7 @@ public:
 		return buf;
 	}
 
-	// Fork an entry to the player's local directory.
-	// Returns the new entry's ID, or "" on failure.
+	// Fork entry into player's local dir. Returns new ID, or "" on failure.
 	std::string forkEntry(const std::string& id) {
 		printf("[ArtifactRegistry::forkEntry] Looking up '%s'\n", id.c_str());
 		const ArtifactEntry* src = findById(id);
@@ -183,29 +152,24 @@ public:
 		printf("[ArtifactRegistry::forkEntry] Found: category='%s', file='%s', source=%zuB\n",
 			src->category.c_str(), src->filePath.c_str(), src->source.size());
 
-		// category → directory name (item→items, effect→effects, living→living).
-		// "living" is the only category that's already plural in meaning.
+		// category→dir: "living" is already-plural, others get "s".
 		std::string dirName = (src->category == "living") ? "living" : src->category + "s";
 
-		// Extract the base name from the original filename
 		std::filesystem::path srcPath(src->filePath);
 		std::string stem = srcPath.stem().string();
 
-		// Destination: artifacts/{dirName}/player/{playerNS}_{stem}.py
 		std::string destDir = m_basePath + "/" + dirName + "/player";
 		std::filesystem::create_directories(destDir);
 		std::string newStem = m_playerNS + "_" + stem;
 		std::string destPath = destDir + "/" + newStem + ".py";
 
-		// Don't overwrite if it already exists
 		if (std::filesystem::exists(destPath)) {
 			printf("[ArtifactRegistry] Fork already exists: %s\n", destPath.c_str());
 			return m_playerNS + ":" + stem;
 		}
 
-		// Rewrite source: replace the original namespace in the id field
+		// Rewrite namespace in the "id" field.
 		std::string newSource = src->source;
-		// Find "id": "something:name" and replace namespace
 		std::string oldIdField = "\"" + src->id + "\"";
 		std::string newId = m_playerNS + ":" + stem;
 		std::string newIdField = "\"" + newId + "\"";
@@ -213,7 +177,6 @@ public:
 		if (pos != std::string::npos)
 			newSource.replace(pos, oldIdField.size(), newIdField);
 
-		// Write the forked file
 		std::ofstream out(destPath);
 		if (!out.is_open()) {
 			printf("[ArtifactRegistry] Failed to write fork: %s\n", destPath.c_str());
@@ -224,7 +187,7 @@ public:
 
 		printf("[ArtifactRegistry] Forked %s → %s (%s)\n", id.c_str(), destPath.c_str(), newId.c_str());
 
-		// Also fork the model file if one exists (living entities and items need models)
+		// Also fork model (living/items need one).
 		if (src->category == "living" || src->category == "item") {
 			std::string modelSrc = m_basePath + "/models/base/" + stem + ".py";
 			if (std::filesystem::exists(modelSrc)) {
@@ -238,7 +201,6 @@ public:
 			}
 		}
 
-		// Reload to pick up the new entry
 		loadAll(m_basePath);
 
 		return newId;
@@ -261,18 +223,15 @@ private:
 				artifact.isBuiltin = isBuiltin;
 				artifact.filePath = entry.path().string();
 
-				// Read source
 				std::ifstream f(artifact.filePath);
 				if (!f.is_open()) continue;
 				std::ostringstream ss;
 				ss << f.rdbuf();
 				artifact.source = ss.str();
 
-				// Parse basic fields from Python source
 				artifact.name = entry.path().stem().string();
 				artifact.id = isBuiltin ? artifact.name : (std::string("player:") + artifact.name);
 
-				// Try to extract name/description from Python dict
 				parseFields(artifact);
 
 				m_entries.push_back(std::move(artifact));
@@ -281,37 +240,33 @@ private:
 	}
 
 	void parseFields(ArtifactEntry& e) {
-		// Parse Python dict fields: handles both "key": "string" and "key": number
+		// Handles "key": "string" and "key": number. Tokenizer only — no variable refs.
 		auto extract = [&](const std::string& key) -> std::string {
 			std::string pattern = "\"" + key + "\"";
 			auto pos = e.source.find(pattern);
 			if (pos == std::string::npos) return "";
 
-			// Find the colon after the key
 			auto colon = e.source.find(':', pos + pattern.size());
 			if (colon == std::string::npos) return "";
 
-			// Skip whitespace after colon
 			size_t valStart = colon + 1;
 			while (valStart < e.source.size() && (e.source[valStart] == ' ' || e.source[valStart] == '\t'))
 				valStart++;
 
 			if (valStart >= e.source.size()) return "";
 
-			// Check if value is a quoted string
 			if (e.source[valStart] == '"') {
 				auto end = e.source.find('"', valStart + 1);
 				if (end == std::string::npos) return "";
 				return e.source.substr(valStart + 1, end - valStart - 1);
 			}
 
-			// Otherwise, extract until comma, newline, or comment
+			// Unquoted: until , \n # or }
 			size_t valEnd = valStart;
 			while (valEnd < e.source.size() && e.source[valEnd] != ',' &&
 			       e.source[valEnd] != '\n' && e.source[valEnd] != '#' &&
 			       e.source[valEnd] != '}')
 				valEnd++;
-			// Trim trailing whitespace
 			while (valEnd > valStart && (e.source[valEnd-1] == ' ' || e.source[valEnd-1] == '\t'))
 				valEnd--;
 			if (valEnd <= valStart) return "";
@@ -330,23 +285,20 @@ private:
 		std::string subcat = extract("category");
 		if (!subcat.empty()) e.subcategory = subcat;
 
-		// Store parsed fields
 		e.fields["name"] = e.name;
 		e.fields["id"] = e.id;
 		if (!desc.empty()) e.fields["description"] = desc;
 		if (!subcat.empty()) e.fields["subcategory"] = subcat;
 
-		// Extract numeric fields
 		for (auto& key : {"walk_speed", "damage", "range", "cooldown", "hardness"}) {
 			std::string val = extract(key);
 			if (!val.empty()) e.fields[key] = val;
 		}
 
-		// Extract model reference
 		std::string model = extract("model");
 		if (!model.empty()) e.fields["model"] = model;
 
-		// Annotation-specific fields
+		// Annotation-specific
 		std::string slot = extract("slot");
 		if (!slot.empty()) e.fields["slot"] = slot;
 		std::string spawnChance = extract("spawn_chance");
@@ -361,11 +313,10 @@ private:
 			e.fields["spawn_on"] = joined;
 		}
 
-		// Extract behavior reference
 		std::string behavior = extract("behavior");
 		if (!behavior.empty()) e.fields["behavior"] = behavior;
 
-		// Extract equip slot and item action hooks
+		// Equip slot + item action hooks
 		std::string equipSlot = extract("equip_slot");
 		if (!equipSlot.empty()) e.fields["equip_slot"] = equipSlot;
 		std::string onUse = extract("on_use");
@@ -375,21 +326,16 @@ private:
 		std::string onInteract = extract("on_interact");
 		if (!onInteract.empty() && onInteract != "None") e.fields["on_interact"] = onInteract;
 
-		// Extract effect
 		std::string effect = extract("effect");
 		if (!effect.empty()) e.fields["effect"] = effect;
 
-		// on_use already extracted above with on_equip and on_interact
-
-		// Resource-specific fields
+		// Resource-specific
 		for (auto& key : {"source", "license", "source_url", "file_count", "format", "groups", "status"}) {
 			std::string val = extract(key);
 			if (!val.empty()) e.fields[key] = val;
 		}
 
-		// Numeric list fields — items and blocks carry "color": [r, g, b] for
-		// held-item tint and minimap/UI swatches. Store as three scalars so
-		// consumers don't need to re-parse a list.
+		// Items/blocks: "color": [r,g,b] → stored as 3 scalars so consumers skip list parsing.
 		auto colorVals = extractFloatList(e.source, "color");
 		if (colorVals.size() == 3) {
 			char buf[32];
@@ -398,17 +344,13 @@ private:
 			snprintf(buf, sizeof(buf), "%g", colorVals[2]); e.fields["color_b"] = buf;
 		}
 
-		// Held-item shape hint — optional string. Renderers use it to pick a
-		// silhouette when the artifact wants something beyond a plain cube.
+		// Optional silhouette hint for non-cube held items.
 		std::string heldShape = extract("held_shape");
 		if (!heldShape.empty()) e.fields["held_shape"] = heldShape;
 
-		// Parse list fields: "tags": ["hostile", ...]
 		e.tags = extractList(e.source, "tags");
 
-		// Auto-tag from category so "humanoid"/"animal" lives in one place:
-		// Python artifacts declare `category: "humanoid"` (or "animal") and we
-		// inject that into `tags` here. Avoids duplicating it as a feature tag.
+		// Auto-tag subcategory so humanoid/animal lives in one place (not duplicated as feature tag).
 		if ((e.subcategory == "humanoid" || e.subcategory == "animal") &&
 		    std::find(e.tags.begin(), e.tags.end(), e.subcategory) == e.tags.end()) {
 			e.tags.push_back(e.subcategory);
@@ -424,8 +366,7 @@ private:
 		}
 	}
 
-	// Extract a list of floats from Python source: "key": [0.5, 1.0, ...]
-	// Accepts int or float literals separated by commas between [ and ].
+	// "key": [0.5, 1.0, ...] — int/float literals between [ and ].
 	static std::vector<float> extractFloatList(const std::string& source, const std::string& key) {
 		std::vector<float> result;
 		std::string pattern = "\"" + key + "\"";
@@ -452,8 +393,7 @@ private:
 				try {
 					result.push_back(std::stof(source.substr(cur, numEnd - cur)));
 				} catch (...) {
-					// Non-numeric entry — skip this list entirely.
-					return {};
+					return {}; // non-numeric entry → skip list entirely
 				}
 			}
 			cur = numEnd;
@@ -461,22 +401,19 @@ private:
 		return result;
 	}
 
-	// Extract a list of quoted strings from Python source: "key": ["a", "b", ...]
+	// "key": ["a", "b", ...]
 	static std::vector<std::string> extractList(const std::string& source, const std::string& key) {
 		std::vector<std::string> result;
 		std::string pattern = "\"" + key + "\"";
 		auto pos = source.find(pattern);
 		if (pos == std::string::npos) return result;
 
-		// Find opening bracket
 		auto bracket = source.find('[', pos + pattern.size());
 		if (bracket == std::string::npos) return result;
 
-		// Find closing bracket
 		auto end = source.find(']', bracket);
 		if (end == std::string::npos) return result;
 
-		// Extract quoted strings between brackets
 		size_t cur = bracket + 1;
 		while (cur < end) {
 			auto qStart = source.find('"', cur);
@@ -490,7 +427,7 @@ private:
 	}
 
 	std::string m_basePath;
-	std::string m_playerNS = "player"; // default, overridden per-client
+	std::string m_playerNS = "player"; // overridden per-client
 	std::vector<ArtifactEntry> m_entries;
 };
 

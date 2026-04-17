@@ -1,16 +1,7 @@
 #pragma once
 
-/**
- * AgentManager — spawns and manages the server process for singleplayer.
- *
- * Used by the GUI (player client) to orchestrate singleplayer:
- *   1. Spawn civcraft-server on a free port
- *   2. Wait for server ready signal
- *   3. GUI connects to localhost as a regular player client
- *
- * AI agent processes are spawned by the server itself (via ClientManager).
- * On shutdown, signals server to save and stop (which also kills its agents).
- */
+// Spawns civcraft-server for singleplayer; GUI then connects over localhost.
+// AI agent processes are spawned by the server itself via ClientManager.
 
 #include <string>
 #include <vector>
@@ -31,14 +22,14 @@ public:
 	struct Config {
 		int seed = 42;
 		int templateIndex = 1;
-		int port = 0;            // 0 = auto-pick free port (7800-7899)
-		std::string worldPath;   // load saved world (empty = new world)
-		std::string execDir;     // directory containing civcraft-* binaries
+		int port = 0;            // 0 = auto-pick in [7800, 7900)
+		std::string worldPath;   // empty = new world
+		std::string execDir;
 	};
 
 	~AgentManager() { stopAll(); }
 
-	// Launch server process. Returns port on success, -1 on failure.
+	// Returns port on success, -1 on failure.
 	int launchServer(const Config& cfg) {
 		m_port = (cfg.port > 0) ? cfg.port : findFreePort();
 		if (m_port < 0) return -1;
@@ -60,8 +51,7 @@ public:
 			args.push_back(std::to_string(cfg.templateIndex));
 		}
 
-		// Pass nullptr to inherit GUI's stdout/stderr — server output (and
-		// agent output spawned by the server) appears in the GUI terminal.
+		// nullptr = inherit GUI stdout/stderr so server + its spawned agents log here.
 		m_serverPid = spawnProcess(args, nullptr);
 		if (m_serverPid <= 0) {
 			printf("[AgentManager] Failed to spawn server\n");
@@ -83,7 +73,7 @@ public:
 		return m_port;
 	}
 
-	// Stop server process (server will stop its own AI agent children).
+	// Server stops its own agent children on SIGTERM.
 	void stopAll() {
 		if (m_serverPid > 0) {
 			if (isAlive(m_serverPid)) {
@@ -119,8 +109,6 @@ private:
 			std::vector<char*> cargs;
 			for (auto& a : args) cargs.push_back(const_cast<char*>(a.c_str()));
 			cargs.push_back(nullptr);
-			// Inherit parent's stdout/stderr so child output appears in the
-			// GUI client's terminal. Set logPath to redirect to a file instead.
 			if (logPath) {
 				int outFd = open(logPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 				if (outFd >= 0) {
@@ -146,11 +134,9 @@ private:
 		return false;
 	}
 
-	// Find a free port by attempting a real bind — immune to stale ready-files.
-	// Also cleans up stale ready-files for ports that are no longer in use.
+	// Bind-probe port search — immune to stale ready-files (cleans them too).
 	static int findFreePort() {
 		for (int p = 7800; p < 7900; p++) {
-			// Try to bind — if it succeeds the port is free
 			int fd = socket(AF_INET, SOCK_STREAM, 0);
 			if (fd < 0) continue;
 			int opt = 1;
@@ -162,7 +148,6 @@ private:
 			bool free = (bind(fd, (sockaddr*)&addr, sizeof(addr)) == 0);
 			close(fd);
 			if (free) {
-				// Remove any stale ready-file left from a previous crash
 				char stale[64];
 				snprintf(stale, sizeof(stale), "/tmp/civcraft_ready_%d", p);
 				std::remove(stale);

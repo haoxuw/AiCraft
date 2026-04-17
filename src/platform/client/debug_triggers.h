@@ -1,13 +1,6 @@
 #pragma once
-// DebugTriggers — file-based remote control for headless testing.
-//
-// Each trigger is a sentinel file under /tmp/. When poll() detects the file,
-// it removes it and fires the associated callback. Triggers that carry a
-// payload (e.g. coordinates) read the file content before removal.
-//
-// Compiled out in Release builds (NDEBUG) so production frames pay zero cost
-// for filesystem polling. The class is still defined (empty poll()) so call
-// sites don't need #ifdefs.
+// File-sentinel remote control for headless testing. Compiled out in Release
+// (NDEBUG); empty poll() stays defined so call sites need no #ifdefs.
 
 #include <filesystem>
 #include <fstream>

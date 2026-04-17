@@ -1,20 +1,10 @@
 #pragma once
 
-/**
- * block_search — pure, unit-testable block lookup over a ChunkInfo index.
- *
- * The agent client holds per-chunk census data (counts only) and a cache of
- * loaded chunks. scan_blocks() from Python turns into a call here: pick
- * candidate chunks using the census, then scan real chunk data to find
- * concrete block positions.
- *
- * This module is deliberately free of AgentClient state so it can be
- * exercised directly in unit tests with synthetic inputs.
- */
+// Pure block lookup over a ChunkInfo census + loaded chunk cache.
 
 #include "logic/types.h"
-#include "shared/chunk.h"
-#include "shared/block_registry.h"
+#include "logic/chunk.h"
+#include "logic/block_registry.h"
 #include "logic/constants.h"
 #include "server/behavior.h"  // BlockSample
 
@@ -28,10 +18,7 @@
 
 namespace civcraft::block_search {
 
-// Per-chunk census: exact count per block type id in a chunk.
-// The real agent cache (AgentChunkInfo) and unit tests both satisfy this
-// shape — anything with an `entries` map of {typeId → {count}} works because
-// run() is templated on the info-map value type.
+// Per-chunk census: count per block type. run() is templated on the value type.
 struct ChunkCensus {
 	struct Entry { int count = 0; };
 	std::unordered_map<std::string, Entry> entries;
@@ -47,10 +34,8 @@ struct Options {
 	int         maxResults;
 };
 
-// Find blocks of Options::typeId near Options::searchOrigin.
 // Returns up to maxResults matches sorted by distance ascending.
-// InfoMap must be unordered_map<ChunkPos, T, ChunkPosHash> where T has an
-// `entries` field compatible with ChunkCensus::entries (any subclass works).
+// InfoMap: unordered_map<ChunkPos, T, ChunkPosHash> where T has `entries` map.
 template <typename InfoMap>
 inline std::vector<BlockSample> run(const Options& opt,
                                     const InfoMap& chunkInfoCache,
@@ -60,7 +45,6 @@ inline std::vector<BlockSample> run(const Options& opt,
 	BlockId targetBid = blocks.getId(opt.typeId);
 	if (targetBid == BLOCK_AIR && opt.typeId != "air") return {};
 
-	// Step 1: pick candidate chunks from the census index.
 	struct Candidate { ChunkPos pos; float dist; int count; };
 	std::vector<Candidate> candidates;
 	for (auto& [cp, ci] : chunkInfoCache) {
@@ -76,17 +60,12 @@ inline std::vector<BlockSample> run(const Options& opt,
 		candidates.push_back({cp, d, eIt->second.count});
 	}
 
-	// Distance-first ordering: the nearest non-empty chunk wins.
-	// This intentionally ignores count so the agent doesn't walk past a
-	// nearby lone tree to reach a far but denser forest. Performance-wise
-	// we accept "a relatively close block" rather than THE closest one.
+	// Distance-first, ignoring count: agent prefers nearby lone tree over far dense forest.
 	std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
 		return a.dist < b.dist;
 	});
 
-	// Step 2: scan real chunk data for matching cells. Stop at the first
-	// candidate chunk that yields any results — that's "relatively close"
-	// enough, and it avoids loading/scanning more distant chunks.
+	// Stop at first candidate yielding results to avoid scanning distant chunks.
 	std::vector<BlockSample> result;
 	for (auto& cand : candidates) {
 		if (chunks.find(cand.pos) == chunks.end()) {
@@ -111,7 +90,6 @@ inline std::vector<BlockSample> run(const Options& opt,
 			}
 		}
 
-		// First non-empty chunk wins — don't load more chunks than needed.
 		if (!result.empty()) break;
 	}
 

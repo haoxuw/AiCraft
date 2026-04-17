@@ -1,16 +1,8 @@
 #pragma once
 
-/**
- * GameServer — authoritative world simulation.
- *
- * Owns the World, runs the 3-phase game loop, validates all actions.
- * Clients connect and send ActionProposals; server validates, executes,
- * and broadcasts state updates back.
- *
- * Can run:
- *   - In-process (singleplayer): Game creates server + connects locally
- *   - Standalone (dedicated): main_server.cpp runs headless
- */
+// GameServer — authoritative world simulation. Owns World, runs 3-phase tick,
+// validates ActionProposals. Always over TCP (same code path for singleplayer
+// and dedicated).
 
 #include "server/world.h"
 #include "server/entity_manager.h"
@@ -23,10 +15,8 @@
 #include "server/structure_blueprint.h"
 #include "server/structure_block_cacher.h"
 #include "server/weather.h"
-#include "shared/block_registry.h"
-// Owned-NPC persistence across client sessions. Included at namespace scope
-// (before the `namespace civcraft {` below) because its <string>/<vector>
-// system includes must not land inside the civcraft namespace.
+#include "logic/block_registry.h"
+// Must precede `namespace civcraft {` — system headers can't land inside.
 #include "server/owned_entity_store.h"
 #include <algorithm>
 #include <memory>
@@ -41,11 +31,9 @@
 
 namespace civcraft {
 
-// ClientId moved to shared/types.h so services like ChunkGenService can
-// reference it without pulling the server header.
+// ClientId lives in shared/types.h.
 
-// Rejection codes logged when server rejects an action proposal.
-// Stored as uint32_t in log output for fast filtering without string allocation.
+// Rejection codes for action proposals; uint32_t for cheap log filtering.
 enum class ActionRejectCode : uint32_t {
 	ValueConservationViolated = 1,
 	ItemNotInInventory        = 2,
@@ -62,11 +50,8 @@ enum class ActionRejectCode : uint32_t {
 	MissingItemId             = 13,
 };
 
-// Count-throttled action-reject log. Prints the FIRST 5 hits immediately so
-// a fresh desync is visible the moment it starts, then every 100th hit to
-// show sustained loops without flooding. Singleplayer localhost should
-// never see any of these at all — every occurrence is a bug worth fixing.
-// Emits to stderr with "[!!]" so it stands out in mixed stdout/stderr logs.
+// First 5 hits immediate, then every 100th. Localhost singleplayer should
+// never see any — each one is a bug. "[!!]" prefix stands out.
 inline void logActionReject(const char* kind, EntityId eid,
                             const char* reason, const char* detail) {
 	static std::unordered_map<uint64_t, uint32_t> s_count;
@@ -85,7 +70,7 @@ inline void logActionReject(const char* kind, EntityId eid,
 	}
 }
 
-// Legacy shim (Move-only paths) — same throttle, prefixes kind="Move".
+// Legacy shim (Move-only paths); same throttle.
 inline void logMoveReject(EntityId eid, const char* reason, const char* detail) {
 	logActionReject("Move", eid, reason, detail);
 }
@@ -109,33 +94,30 @@ inline const char* rejectCodeName(ActionRejectCode c) {
 	return "Unknown";
 }
 
-// Server-side callbacks — used by dedicated server (main_server.cpp) to broadcast
-// world state changes to all connected clients over TCP.
+// TCP broadcast hooks. Rule 5: nothing display-related here.
 struct ServerCallbacks {
-	std::function<void(glm::ivec3 pos, BlockId oldBid, BlockId newBid, uint8_t p2)> onBlockChange; // block placed/broken
-	std::function<void(EntityId id)> onEntityRemove;                     // entity despawned
-	std::function<void(EntityId id, const Inventory&)> onInventoryChange; // inventory updated
+	std::function<void(glm::ivec3 pos, BlockId oldBid, BlockId newBid, uint8_t p2)> onBlockChange;
+	std::function<void(EntityId id)> onEntityRemove;
+	std::function<void(EntityId id, const Inventory&)> onInventoryChange;
 };
 
-// All server tuning constants in one header
 #include "server/server_tuning.h"
 
 struct ServerConfig {
 	int seed = 42;
 	int templateIndex = 1;  // VillageWorld (has trees)
 	int port = 7777;
-	float hpRegenInterval = ServerTuning::hpRegenInterval;  // seconds per +1 HP regen tick
+	float hpRegenInterval = ServerTuning::hpRegenInterval;
 	WorldGenConfig worldGenConfig;
 };
 
 class GameServer {
 public:
-	// Merge Python-declared feature tags into registered EntityDefs.
 	void mergeArtifactTags(const std::vector<std::pair<std::string, std::vector<std::string>>>& tagsByType) {
 		m_world->entities.mergeArtifactTags(tagsByType);
 	}
 
-	// Initialize world only (no entity spawning) — used by loadWorld
+	// World only (no entities) — used by loadWorld.
 	void initWorld(const ServerConfig& config,
 	               const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		auto tmpl = (config.templateIndex < (int)templates.size())
@@ -144,13 +126,11 @@ public:
 		m_world = std::make_unique<World>(config.seed, tmpl, config.templateIndex);
 		m_wgc = config.worldGenConfig;
 		m_hpRegenInterval = config.hpRegenInterval;
-		m_worldTime = 0.26f; // start just after sunrise — sun a few degrees above horizon for pink clouds + blue sky
-		// Day length is a Python-configurable knob (Rule 1). Default 1200s / 20min.
+		m_worldTime = 0.26f;  // just past sunrise
+		// Rule 1: Python-configurable; default 1200s / 20min.
 		m_dayLengthTicks = tmpl->pyConfig().dayLengthTicks;
 
-		// Weather schedule: optional Python artifact path (relative to the
-		// staged artifacts/ directory, same convention world templates use).
-		// Empty falls back to the "clear" default baked into WeatherPyConfig.
+		// Empty → "clear" default baked into WeatherPyConfig.
 		WeatherPyConfig wcfg;
 		if (!tmpl->pyConfig().weatherSchedule.empty()) {
 			std::string wpath = std::string("artifacts/")
@@ -159,11 +139,10 @@ public:
 		}
 		m_weather.load(wcfg, (uint32_t)config.seed);
 
-		// Ask the template where the player should spawn
 		glm::vec3 rawSpawn = tmpl->preferredSpawn(config.seed);
 		float sx = rawSpawn.x, sz = rawSpawn.z;
 
-		// Safety scan upward to escape any structure or tree placed at spawn
+		// Escape any structure/tree at spawn by scanning up.
 		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
 			const auto& def = m_world->blocks.get(m_world->getBlock(x, y, z));
 			return def.solid ? def.collision_height : 0.0f;
@@ -178,23 +157,18 @@ public:
 		}
 		m_spawnPos = {sx, (float)spawnY, sz};
 
-		// Load structure blueprints from artifacts/structures/
 		m_blueprints.loadAll("artifacts/structures");
 	}
 
-	// Initialize server with world + world-scope static entities (chests).
-	// Mobs are NOT spawned here — they spawn per-client in spawnMobsForClient()
-	// when a GUI client connects. Chests are world-scope (persist across
-	// sessions, owner=0, never despawn).
+	// World-scope entities only (chests, monument; owner=0, permanent).
+	// Mobs spawn per-client in spawnMobsForClient() on connect.
 	void init(const ServerConfig& config,
 	          const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		initWorld(config, templates);
 
 		auto& tmpl = m_world->getTemplate();
 
-		// Place chest blocks + matching Structure entities in all non-barn
-		// houses. Villager behaviors discover these dynamically via
-		// scan_entities("chest") — no per-villager chest wiring.
+		// Chests in non-barn houses. Villagers find via scan_entities("chest").
 		auto houseChests = tmpl.houseChestPositions(m_world->seed());
 		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
 		int chestCount = 0;
@@ -211,10 +185,7 @@ public:
 			chestCount++;
 		}
 
-		// Village-center Monument — single structure entity anchoring the
-		// flame FX client-side. The tower blocks themselves are still baked
-		// into the chunk mesh by world_template; this entity is just the
-		// handle clients use to find and visualise the monument.
+		// Client handle for flame FX; tower blocks live in world_template.
 		glm::vec3 mPos = tmpl.monumentPosition(m_world->seed());
 		if (mPos.y >= 0) {
 			EntityId mEid = m_world->entities.spawn(StructureName::Monument, mPos, {});
@@ -226,21 +197,14 @@ public:
 		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z, chestCount);
 	}
 
-	// Spawn the mob set for one connecting client. Every mob gets
-	// Prop::Owner = ownerId baked in, so the agent hosted by that client
-	// can drive them and so disconnect cleanup can despawn them.
+	// Rule 4: each mob gets Prop::Owner=ownerId for client-hosted agent + cleanup.
 	void spawnMobsForClient(EntityId ownerId) {
 		if (!m_world) return;
 		auto& tmpl = m_world->getTemplate();
 		auto& wgc  = m_wgc;
 
-		// Finds the standing surface at (x,z): starts at terrain noise height
-		// and walks up through built-up solid blocks (piled dirt, paths,
-		// house floors) until the first air block. Returns that air Y —
-		// i.e. where a mob's feet would rest. We do NOT keep scanning for
-		// the topmost solid in the column, which would land mobs on ROOFTOPS
-		// whenever a house covers (x,z). surfaceHeight() is terrain-only, so
-		// we stay grounded even directly under a placed building.
+		// Walk terrain → paths/floors → first air Y. Must NOT find topmost
+		// solid or mobs land on rooftops where houses cover (x,z).
 		auto actualSurfaceY = [&](float x, float z) -> float {
 			float terrainY = m_world->surfaceHeight(x, z);
 			int bx = (int)std::round(x), bz = (int)std::round(z);
@@ -256,13 +220,11 @@ public:
 			return actualSurfaceY(x, z) + ServerTuning::spawnHeightOffset;
 		};
 
-		// Village center from template (virtual — works for any template type)
 		auto vc = tmpl.villageCenter(m_world->seed());
 		float mobCX = (float)vc.x, mobCZ = (float)vc.y;
 
-		// Build mob list from wgc.mobs (seeded from Python template by the GUI,
-		// possibly edited by the user). If empty (dedicated server, no GUI),
-		// fall back to the Python template's mob config directly.
+		// GUI populates wgc.mobs from Python template (may be edited).
+		// Dedicated server has no GUI → fall back to template directly.
 		std::vector<MobSpawn> mobList = wgc.mobs;
 		if (mobList.empty()) {
 			for (auto& mc : tmpl.pyConfig().mobs)
@@ -270,14 +232,11 @@ public:
 					parseSpawnAnchor(mc.spawnAt), mc.yOffset, mc.props});
 		}
 
-		// Resolve where each SpawnAnchor positions a mob group in world XZ.
-		// Returns (cx, cz) anchor point and (spacing, insideBuilding):
-		//   insideBuilding=true distributes entities in a grid inside the
-		//   building (barn). Otherwise they're placed on a circular ring.
+		// inside=true → grid in barn; else → circular ring.
 		auto portalSpawn = tmpl.preferredSpawn(m_world->seed());
 		auto barnCtr     = tmpl.barnCenter(m_world->seed());
 		int  barnFY      = tmpl.barnFloorY(m_world->seed());
-		int barnSlot = 0;  // flat counter across all species so no two land on the same cell
+		int barnSlot = 0;  // cross-species counter (avoid cell collisions)
 		struct AnchorInfo { float cx, cz, defaultRadius; bool inside; float fixedY; };
 		auto resolveAnchor = [&](SpawnAnchor a) -> AnchorInfo {
 			switch (a) {
@@ -286,7 +245,7 @@ public:
 			case SpawnAnchor::Barn:
 				if (barnCtr.x >= 0)
 					return {(float)barnCtr.x, (float)barnCtr.y, 4.0f, true, (float)barnFY};
-				return {mobCX, mobCZ, 10.0f, false, -1.0f};  // no barn → fall back to ring
+				return {mobCX, mobCZ, 10.0f, false, -1.0f};  // no barn → ring
 			case SpawnAnchor::Portal:
 				return {portalSpawn.x, portalSpawn.z, 3.0f, false, -1.0f};
 			case SpawnAnchor::VillageCenter:
@@ -295,10 +254,7 @@ public:
 			}
 		};
 
-		// Check the chosen cell has 2-block air column (feet + head) so the
-		// entity doesn't spawn inside tree canopy or other solid geometry.
-		// actualSurfaceY() stops at the first air gap, which can be INSIDE
-		// a tree's leaf cluster — hence this verification + retry pass.
+		// actualSurfaceY can stop at an air gap inside a tree canopy.
 		auto hasHeadroom = [&](float x, float y, float z) -> bool {
 			int bx = (int)std::floor(x), bz = (int)std::floor(z);
 			int by = (int)std::floor(y);
@@ -315,16 +271,12 @@ public:
 			auto bIt = wgc.behaviorOverrides.find(ms.typeId);
 			if (bIt != wgc.behaviorOverrides.end())
 				extraProps[Prop::BehaviorId] = bIt->second;
-			// Every mob is owned by the connecting client so their in-process
-			// AgentClient can drive it and so logout cleanup is straightforward.
+			// Owner → hosted AgentClient drives it; logout cleanup finds by owner.
 			extraProps[Prop::Owner] = (int)ownerId;
 			float y = (fixedY >= 0.0f) ? fixedY : safeSpawnHeight(x, z);
 			y += ms.yOffset;
 
-			// If the chosen cell is blocked (e.g. inside tree canopy), spiral
-			// outward in 1-block steps until we find a clear standable cell.
-			// 16 attempts is enough to clear any single tree; after that we
-			// accept the original position to preserve prior behaviour.
+			// Spiral 16 cells to escape a single tree; fallback = original.
 			if (!hasHeadroom(x, y, z)) {
 				static const float kSpiral[16][2] = {
 					{ 1, 0},{ 0, 1},{-1, 0},{ 0,-1},
@@ -383,45 +335,34 @@ public:
 		printf("[Server] Spawned %d mobs for owner=%u\n", spawned, ownerId);
 	}
 
-	// Add a client. Returns the player's EntityId.
+	// Returns player's EntityId. characterSkin is visual-only.
 	EntityId addClient(ClientId clientId, const std::string& characterSkin = "") {
-		// Always spawn as base:player (has inventory, HP, physics).
-		// The characterSkin determines visual model, not entity type.
 		EntityId eid = m_world->entities.spawn(LivingName::Player, m_spawnPos);
 		Entity* pe = m_world->entities.get(eid);
 		if (pe) {
-			// Default yaw: +Z (toward stairs and village).
-			pe->yaw = 90.0f;
-			// When enabled and the template has a village/monument, orient
-			// the player toward the monument so they spawn already looking
-			// through the gateway arch at the village center.
+			pe->yaw = 90.0f;  // +Z toward stairs
 			if (m_wgc.playerFacesMonument && m_world) {
 				auto vc = m_world->getTemplate().villageCenter(m_world->seed());
 				float dx = (float)vc.x - m_spawnPos.x;
 				float dz = (float)vc.y - m_spawnPos.z;
 				if (dx * dx + dz * dz > 0.1f) {
-					// Yaw convention: 0=+X, 90=+Z (see gameplay_movement.cpp).
-					// atan2(dz, dx) gives the angle from +X to the
-					// gateway→monument vector.
+					// Yaw: 0=+X, 90=+Z (see gameplay_movement.cpp).
 					pe->yaw = glm::degrees(std::atan2(dz, dx));
 				}
 			}
 		}
-		// Server handles click-to-move navigation directly (no agent needed)
-		// Self-owned: player controls their own character
+		// Self-owned so server click-to-move can drive the player.
 		if (pe) pe->setProp(Prop::Owner, (int)eid);
-		// Store character skin as entity property (client reads for rendering)
 		if (pe && !characterSkin.empty())
 			pe->setProp("character_skin", characterSkin);
 		if (pe && pe->inventory) {
-			// Try loading saved inventory for this character
 			std::string skin = characterSkin.empty() ? "default" : characterSkin;
 			auto savedIt = m_savedInventories.find(skin);
 			if (savedIt != m_savedInventories.end()) {
 				*pe->inventory = savedIt->second;
 				printf("[Server] Restored saved inventory for '%s'\n", skin.c_str());
 			} else {
-				// First time — give starting items
+				// First-time starter kit.
 				auto sit = m_wgc.startingItems.find(LivingName::Player);
 				if (sit != m_wgc.startingItems.end()) {
 					for (auto& [item, count] : sit->second)
@@ -438,14 +379,7 @@ public:
 		m_clients[clientId] = {eid};
 		printf("[Server] Client %u joined. Player entity: %u\n", clientId, eid);
 
-		// Spawn this client's mob set. Every mob is owned by the player entity
-		// just created, so the client's in-process AgentClient can drive them
-		// and so removeClient() can despawn them on disconnect.
-		//
-		// Prior sessions leave a per-skin snapshot behind (see removeClient).
-		// If one exists, restore from that instead of respawning fresh — a
-		// dog you led to the far hills will still be at the far hills next
-		// login, not warped back to the village.
+		// Per-skin snapshot restore so owned NPCs keep their last position.
 		std::string skin = characterSkin.empty() ? "default" : characterSkin;
 		if (!m_ownedEntities.restore(m_world->entities, eid, skin))
 			spawnMobsForClient(eid);
@@ -453,21 +387,13 @@ public:
 		return eid;
 	}
 
-	// NOTE: Agent-specific APIs removed (addAgentClient, assignEntityToClient,
-	// revokeEntityFromClient, getControlledEntities, getUncontrolledNPCs).
-	// AgentClient now runs inside PlayerClient — no server-side agent management.
-
-	// Check if a client is allowed to control an entity.
-	// Rules: (1) GUI clients can control entities they own (Prop::Owner matches their player),
-	//        (2) admin clients (player has fly_mode) can control any entity.
+	// Clients control owned entities, or any entity if player has fly_mode (admin).
 	bool canClientControl(ClientId clientId, EntityId targetId) const {
 		auto cit = m_clients.find(clientId);
 		if (cit == m_clients.end()) return false;
-		// Admin: fly_mode on their player entity
 		Entity* playerEnt = m_world->entities.get(cit->second.playerEntityId);
 		if (playerEnt && playerEnt->getProp<bool>("fly_mode", false))
 			return true;
-		// Normal: target must be owned by this client's player
 		Entity* target = m_world->entities.get(targetId);
 		if (!target) return false;
 		int ownerId = target->getProp<int>(Prop::Owner, 0);
@@ -478,7 +404,6 @@ public:
 		auto it = m_clients.find(clientId);
 		if (it != m_clients.end()) {
 			EntityId playerId = it->second.playerEntityId;
-			// Save player inventory before removing
 			if (playerId != ENTITY_NONE) {
 				Entity* pe = m_world->entities.get(playerId);
 				std::string skin = "default";
@@ -487,16 +412,11 @@ public:
 					m_savedInventories[skin] = *pe->inventory;
 					printf("[Server] Saved inventory for '%s'\n", skin.c_str());
 				}
-				// Snapshot every owned NPC (not the player itself) so next
-				// login restores them in place instead of respawning fresh
-				// from the template. Dead entities and unknown types are
-				// dropped, not snapshotted — see OwnedEntityStore::snapshot.
+				// Snapshot owned NPCs for restore next login (dead/unknown dropped).
 				m_ownedEntities.snapshot(m_world->entities, playerId, skin);
 
-				// Despawn every entity owned by this client (their mob set).
-				// Entities with owner=0 (static chests, etc.) are world-scope
-				// and stay. Self-ownership of the player entity matches here
-				// too, so the player itself gets removed in the same pass.
+				// Player is self-owned so this pass also despawns them.
+				// World-scope entities (owner=0) stay.
 				int despawned = 0;
 				m_world->entities.forEach([&](Entity& e) {
 					if (e.getProp<int>(Prop::Owner, 0) == (int)playerId) {
@@ -512,7 +432,7 @@ public:
 		}
 	}
 
-	// Submit action directly without ownership check (test-only).
+	// Test-only: no ownership check.
 	void receiveActionDirect(const ActionProposal& action) {
 		m_world->proposals.propose(action);
 	}
@@ -556,7 +476,7 @@ public:
 			return;
 		}
 
-		// Goal text: update server-side entity for broadcast
+		// Server-side goalText for broadcast.
 		if (!action.goalText.empty()) {
 			Entity* e = m_world->entities.get(action.actorId);
 			if (e && e->goalText != action.goalText) {
@@ -567,11 +487,9 @@ public:
 		m_world->proposals.propose(action);
 	}
 
-	// Set callbacks for visual effects (client provides these)
 	void setCallbacks(ServerCallbacks cb) { m_callbacks = cb; }
 	ServerCallbacks& callbacks() { return m_callbacks; }
 
-	// Main server tick
 	void tick(float dt) {
 #ifdef CIVCRAFT_PERF
 		using Clock = std::chrono::steady_clock;
@@ -583,8 +501,7 @@ public:
 			phaseStart = now;
 		};
 #else
-		// No-op so call sites stay clean. Compiler eliminates the call.
-		auto markPhase = [](double&) {};
+		auto markPhase = [](double&) {};  // compiler elides
 #endif
 
 		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
@@ -592,14 +509,12 @@ public:
 			return def.solid ? def.collision_height : 0.0f;
 		};
 
-		// AI behavior decisions arrive as ActionProposals from bot client
-		// processes — no server-side AI gathering needed.
-
-		// Phase 1: Resolve all proposals (may set entity.removed = true)
+		// Rule 4: AI arrives as ActionProposals from agent clients.
+		// Phase 1: resolve (may set entity.removed=true).
 		resolveActions(dt);
 		markPhase(m_lastTickProfile.resolveActionsMs);
 
-		// Broadcast entity removals BEFORE stepPhysics erases them from the map
+		// Broadcast removals BEFORE stepPhysics erases them.
 		if (m_callbacks.onEntityRemove) {
 			m_world->entities.forEachIncludingRemoved([&](Entity& e) {
 				if (e.removed && !e.removalBroadcast) {
@@ -609,25 +524,21 @@ public:
 			});
 		}
 
-		// Server-side navigation: set velocities for entities with active nav goals
 		updateNavigation(dt, m_world->entities);
 		markPhase(m_lastTickProfile.navigationMs);
 
-		// Physics for all entities (purges removed entities from the map)
+		// Also purges removed entities.
 		m_world->entities.stepPhysics(dt, solidFn);
 		markPhase(m_lastTickProfile.physicsMs);
 
-		// Smooth body yaw toward direction of travel for every entity.
-		// Single authoritative source — replaces per-event yaw snaps in
-		// server.cpp and pathfind.h so NPCs turn naturally instead of
-		// flipping instantly when velocity reverses.
+		// Single authoritative yaw smoothing → natural turns on reversal.
 		m_world->entities.forEach([&](Entity& e) {
 			if (e.removed) return;
 			smoothYawTowardsVelocity(e.yaw, e.velocity, dt);
 		});
 		markPhase(m_lastTickProfile.yawSmoothMs);
 
-		// Active block ticking (TNT, wheat, wire)
+		// TNT, wheat, wire.
 		m_activeBlockTimer += dt;
 		if (m_activeBlockTimer >= 0.05f) {
 			m_world->tickActiveBlocks(m_activeBlockTimer, [&](int bx, int by, int bz, BlockId bid) {
@@ -638,11 +549,7 @@ public:
 		}
 		markPhase(m_lastTickProfile.activeBlocksMs);
 
-		// Item pickup is CLIENT-INITIATED: clients send PickupItem actions.
-		// Server validates and executes in resolveActions().
-		// Creatures pickup is handled by Python behavior → PickupItem action.
-
-		// HP regeneration: all Living entities regen +1 HP per tick (configurable interval)
+		// HP regen: +1 / m_hpRegenInterval for Living.
 		m_regenTimer += dt;
 		if (m_regenTimer >= m_hpRegenInterval) {
 			m_regenTimer = 0;
@@ -658,7 +565,7 @@ public:
 		}
 		markPhase(m_lastTickProfile.hpRegenMs);
 
-		// Structure regeneration: scan dirty set, place one missing block per structure per interval
+		// One missing block per structure per interval.
 		m_structureRegenTimer += dt;
 		if (m_structureRegenTimer >= ServerTuning::structureRegenCheckInterval) {
 			float elapsed = m_structureRegenTimer;
@@ -680,7 +587,6 @@ public:
 
 				auto missing = m_blueprints.firstMissingBlock(*e, blockAtFn);
 				if (!missing) {
-					// Fully healed
 					it = m_incompleteStructures.erase(it);
 					continue;
 				}
@@ -709,61 +615,50 @@ public:
 		}
 		markPhase(m_lastTickProfile.structureRegenMs);
 
-		// Advance world time. One unit = one full day; dayLengthTicks is the
-		// real-second length of that unit (Python-configurable, default 1200s).
+		// 1 unit = 1 full day; dayLengthTicks = real seconds per day.
 		m_worldTime += (1.0f / (float)m_dayLengthTicks) * dt;
 		if (m_worldTime >= 1.0f) m_worldTime -= std::floor(m_worldTime);
 
-		// Advance the Markov weather schedule. Wind vector updates every tick;
-		// kind/intensity change only at scheduled transitions. ClientManager
-		// reads m_weather.state() + checkAndClearDirty() to decide whether to
-		// broadcast S_WEATHER this frame.
+		// Wind updates every tick; kind/intensity on schedule.
 		m_weather.tick(dt);
 
-		// Stuck detection: periodically check if walking entities haven't moved
 		m_stuckTimer += dt;
 		if (m_stuckTimer >= ServerTuning::stuckCheckInterval) {
 			m_stuckTimer = 0;
 
 			m_world->entities.forEach([&](Entity& e) {
-				// Check all living entities (anything with HP)
 				if (!e.def().isLiving()) return;
-				// Skip entities with active nav — nav has its own stuck handling
-				if (e.nav.active) return;
+				if (e.nav.active) return;  // nav handles its own stuck
 
 				EntityId id = e.id();
 				auto it = m_lastPositions.find(id);
 				if (it == m_lastPositions.end()) {
-					// First check — record position
 					m_lastPositions[id] = e.position;
 					return;
 				}
 
-				// Was the entity trying to walk?
 				float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
 				if (hSpeed < ServerTuning::stuckMinSpeed) {
 					it->second = e.position;
-					return; // not trying to move, not stuck
+					return;
 				}
 
-				// Did it actually move?
 				float displacement = glm::length(glm::vec2(
 					e.position.x - it->second.x, e.position.z - it->second.z));
 
 				if (displacement < ServerTuning::stuckMaxDisplacement) {
-					// Stuck! Nudge up and slightly sideways to clear the obstacle
+					// Up + sideways; gravity drops them back down.
 					float nudgeX = (e.velocity.x > 0 ? 1 : -1) * ServerTuning::unstuckNudgeHoriz;
 					float nudgeZ = (e.velocity.z > 0 ? 1 : -1) * ServerTuning::unstuckNudgeHoriz;
 					e.position.y += ServerTuning::unstuckNudgeHeight;
 					e.position.x += nudgeX;
 					e.position.z += nudgeZ;
-					e.velocity.y = 0; // let gravity handle the drop
+					e.velocity.y = 0;
 				}
 
 				it->second = e.position;
 			});
 
-			// Clean up entries for removed entities
 			for (auto it = m_lastPositions.begin(); it != m_lastPositions.end(); ) {
 				if (!m_world->entities.get(it->first))
 					it = m_lastPositions.erase(it);
@@ -779,26 +674,21 @@ public:
 #endif
 	}
 
-	// Accessors
 	World& world() { return *m_world; }
 	const World& world() const { return *m_world; }
 	float worldTime() const { return m_worldTime; }
 	void setWorldTime(float t) { m_worldTime = t; }
-	// Weather state — read by ClientManager::broadcastState and wired through
-	// ServerInterface so the GUI client can also render local visuals.
+	// Read by ClientManager::broadcastState via ServerInterface.
 	const WeatherState& weather() const { return m_weather.state(); }
 	WeatherController&  weatherController()       { return m_weather; }
 	glm::vec3 spawnPos() const { return m_spawnPos; }
 	void setSpawnPos(glm::vec3 p) { m_spawnPos = p; }
 	const WorldGenConfig& worldGenConfig() const { return m_wgc; }
 
-	// Per-character inventory persistence
 	std::unordered_map<std::string, Inventory>& savedInventories() { return m_savedInventories; }
 	const std::unordered_map<std::string, Inventory>& savedInventories() const { return m_savedInventories; }
 
-	// Per-character owned-NPC snapshots. Written on disconnect, consumed on
-	// next login. Exposed for world_save.h so snapshots survive across
-	// server restarts (owned_entities.bin).
+	// Exposed for world_save.h (owned_entities.bin survives restarts).
 	OwnedEntityStore&       ownedEntities()       { return m_ownedEntities; }
 	const OwnedEntityStore& ownedEntities() const { return m_ownedEntities; }
 
@@ -808,18 +698,13 @@ public:
 	}
 
 public:
-	// Action-proposal counters — reset externally by the status log every 2s
-	// so we can confirm the server is actually receiving and resolving the
-	// C_ACTION messages the client claims to have sent. Missing the "recv"
-	// side of this pair means the TCP stream is delivering but the server
-	// rejected before queueing (ownership/unknown-client).
+	// Reset by status log every 2s. Missing "recv" = TCP ok but pre-queue
+	// rejected (ownership/unknown-client).
 	struct ActionStats {
 		int received = 0;
 		int rejected = 0;
 		int resolved = 0;
-		// Per-type breakdown of received proposals so [ServerAlive] can show
-		// WHICH kind of action (move/relocate/convert/interact) is pouring in,
-		// and whether any specific type is disproportionately rejected.
+		// Per-type for [ServerAlive] to spot disproportionate rejection.
 		int moveRecv     = 0;
 		int relocateRecv = 0;
 		int convertRecv  = 0;
@@ -827,8 +712,7 @@ public:
 	};
 	ActionStats& actionStats() { return m_actionStats; }
 
-	// Per-phase timing for the most recent tick(). Filled by tick() each call
-	// so main_server.cpp can print a breakdown when a tick exceeds budget.
+	// Filled by tick() so main can dump phase breakdown on overrun.
 	struct TickProfile {
 		double resolveActionsMs   = 0.0;
 		double navigationMs       = 0.0;
@@ -851,31 +735,26 @@ private:
 	ServerCallbacks m_callbacks;
 	WorldGenConfig m_wgc;
 	float m_worldTime = 0.30f;
-	int   m_dayLengthTicks = 1200;   // seeded from WorldPyConfig in initWorld
-	WeatherController m_weather;     // Markov-chain weather state (global)
+	int   m_dayLengthTicks = 1200;   // seeded from WorldPyConfig
+	WeatherController m_weather;     // Markov chain (global)
 	float m_activeBlockTimer = 0;
 	float m_stuckTimer = 0;
 	float m_regenTimer = 0;
 	float m_hpRegenInterval = ServerTuning::hpRegenInterval;
 	glm::vec3 m_spawnPos = {30, 10, 30};
-	std::unordered_map<std::string, Inventory> m_savedInventories;  // character_skin → inventory
-	OwnedEntityStore m_ownedEntities;  // character_skin → owned NPCs awaiting owner's next login
+	std::unordered_map<std::string, Inventory> m_savedInventories;  // skin → inventory
+	OwnedEntityStore m_ownedEntities;  // skin → owned NPCs awaiting next login
 
-	// Structure system
 	StructureBlueprintManager            m_blueprints;
 	StructureBlockCacher                 m_structureCacher;
-	std::unordered_set<EntityId>         m_incompleteStructures;  // dirty set: structures with missing blocks
+	std::unordered_set<EntityId>         m_incompleteStructures;  // dirty set
 	float                                m_structureRegenTimer = 0;
 
-	// Stuck detection: last known position per entity (checked every stuckCheckInterval)
 	std::unordered_map<EntityId, glm::vec3> m_lastPositions;
 
-	// After rejecting a clientPos for an entity (wall-phase, etc.) we drop
-	// `hasClientPos` on its Move actions for this many ticks. Reason: a handful
-	// of stale proposals are typically in the TCP pipe before the client's
-	// next frame processes S_BLOCK and sees the new world state; rejecting
-	// each one individually would spam the log. Counter is decremented once
-	// per tick in resolveActions. ~10 ticks ≈ 167ms at 60tps — a round trip.
+	// Post-reject: drop hasClientPos on Moves for ~10 ticks (~167ms) to let
+	// stale in-flight proposals observe the S_BLOCK update without spamming.
+	// See feedback_client_pos_reject_policy.md.
 	std::unordered_map<EntityId, int> m_clientPosRejectCooldown;
 
 	struct ClientState {

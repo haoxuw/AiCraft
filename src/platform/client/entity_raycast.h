@@ -1,16 +1,6 @@
 #pragma once
 
-/**
- * Entity raycasting — detect when player's crosshair points at an entity.
- *
- * Uses ray-AABB intersection against entity collision boxes.
- * Returns the closest entity hit within range.
- *
- * Used for:
- *   - Showing entity tooltip (name, goal, HP)
- *   - Clicking to inspect entity behavior
- *   - Targeting for attack actions
- */
+// Ray-AABB crosshair hit-test against entity collision boxes.
 
 #include "logic/entity.h"
 #include <glm/glm.hpp>
@@ -31,7 +21,7 @@ struct EntityHit {
 	bool hasError = false;
 };
 
-// Ray-AABB intersection test (slab method)
+// Slab method.
 inline bool rayIntersectsAABB(glm::vec3 origin, glm::vec3 dir,
                                glm::vec3 boxMin, glm::vec3 boxMax,
                                float& tOut) {
@@ -52,7 +42,6 @@ inline bool rayIntersectsAABB(glm::vec3 origin, glm::vec3 dir,
 	return true;
 }
 
-// Lightweight entity info for raycasting (avoids needing full Entity/EntityManager)
 struct RaycastEntity {
 	EntityId id;
 	std::string typeId;
@@ -63,7 +52,7 @@ struct RaycastEntity {
 	bool hasError = false;
 };
 
-// Raycast against a list of entities. Returns closest hit within maxDist.
+// Returns closest hit within maxDist.
 inline std::optional<EntityHit> raycastEntities(
 	const std::vector<RaycastEntity>& entities,
 	glm::vec3 origin, glm::vec3 dir, float maxDist,
@@ -75,7 +64,6 @@ inline std::optional<EntityHit> raycastEntities(
 	for (auto& e : entities) {
 		if (e.id == excludeId) continue;
 
-		// World-space AABB
 		glm::vec3 boxMin = e.position + e.collisionMin;
 		glm::vec3 boxMax = e.position + e.collisionMax;
 

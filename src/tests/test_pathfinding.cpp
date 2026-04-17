@@ -14,8 +14,8 @@
 #include "server/python_bridge.h"
 #include "agent/pathfind.h"
 #include "logic/entity.h"
-#include "shared/chunk.h"
-#include "shared/block_registry.h"
+#include "logic/chunk.h"
+#include "logic/block_registry.h"
 #include "logic/constants.h"
 #include <glm/glm.hpp>
 #include <cstdio>

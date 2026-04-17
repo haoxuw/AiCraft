@@ -1,9 +1,6 @@
 #pragma once
 
-/**
- * Simple TCP socket wrapper for client-server communication.
- * Non-blocking I/O using POSIX sockets.
- */
+// Non-blocking POSIX TCP socket wrappers.
 
 #include "net/net_protocol.h"
 #include <sys/socket.h>
@@ -20,39 +17,19 @@
 
 namespace civcraft::net {
 
-// Make a socket non-blocking
 inline void setNonBlocking(int fd) {
 	int flags = fcntl(fd, F_GETFL, 0);
 	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
-// Disable Nagle's algorithm — send small packets immediately.
-// Without this, TCP buffers small writes for ~40ms causing visible input lag.
+// Disable Nagle; otherwise small writes buffer ~40ms → visible input lag.
 inline void setNoDelay(int fd) {
 	int flag = 1;
 	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 }
 
-// Send a complete message (header + payload).
-//
-// Stream integrity rule: once the 8-byte header is on the wire, the exact
-// `hdr.length` payload bytes MUST follow — the peer reads a framed stream.
-// A short write that gets abandoned half-way leaves the peer reading random
-// bytes as the next header, which corrupts the stream permanently.
-//
-// On a non-blocking socket `send()` returns -1 / EAGAIN whenever the kernel
-// TCP send buffer is full (common during the preparing-phase chunk flood:
-// 10 chunks/tick × 60 tps × ~16KB = ~9.4 MB/s, which fills the default
-// 4MB send buffer quickly). The previous impl treated EAGAIN as a hard
-// failure and returned false — dropping e.g. the player's S_ENTITY and
-// sometimes leaving the header half-written, which then desynced the
-// framing on the receive side.
-//
-// Fix: retry EAGAIN until the kernel accepts the bytes. Real errors (peer
-// reset, bad fd) still return false. Spin is OK here because the caller
-// already rate-limits chunk writes — EAGAIN windows are short (µs–ms).
-// Higher-level back-pressure (e.g. pendingChunks queue in client_manager)
-// lives above this layer and bounds total in-flight bytes per tick.
+// INVARIANT: once hdr is on the wire, exactly hdr.length bytes MUST follow
+// or the peer desyncs permanently. Retry EAGAIN (buffer-full during chunk floods).
 inline bool sendMessage(int fd, MsgType type, const WriteBuffer& payload) {
 	MsgHeader hdr;
 	hdr.type = type;
@@ -66,8 +43,7 @@ inline bool sendMessage(int fd, MsgType type, const WriteBuffer& payload) {
 			ssize_t w = send(fd, p + sent, n - sent, MSG_NOSIGNAL);
 			if (w > 0) { sent += (size_t)w; continue; }
 			if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-				// Back-pressure: surface if we spin unreasonably long so a
-				// genuine livelock doesn't silently stall the tick loop.
+				// Surface runaway spins so livelock doesn't silently stall the tick loop.
 				if (++spins == 10000)
 					fprintf(stderr, "[net] sendMessage fd=%d type=%u EAGAIN spin=%d (%zu/%zu bytes)\n",
 						fd, (unsigned)type, spins, sent, n);
@@ -85,29 +61,24 @@ inline bool sendMessage(int fd, MsgType type, const WriteBuffer& payload) {
 	return true;
 }
 
-// Receive buffer that accumulates partial reads
 class RecvBuffer {
 public:
-	// Drain all available data from socket. Returns false if connection closed.
-	// Reads in a loop until EAGAIN to avoid starving on large payloads
-	// (each chunk is 16KB, many arrive per frame).
+	// Loop until EAGAIN — avoids starving on chunk floods. false = conn closed.
 	bool readFrom(int fd) {
-		uint8_t tmp[65536]; // 64KB — handles multiple chunks per read
+		uint8_t tmp[65536];
 		bool gotData = false;
 		for (;;) {
 			ssize_t n = recv(fd, tmp, sizeof(tmp), 0);
 			if (n > 0) {
 				m_buf.insert(m_buf.end(), tmp, tmp + n);
 				gotData = true;
-				continue; // try to read more
+				continue;
 			}
-			if (n == 0) return false; // connection closed
-			// EAGAIN = no more data right now (non-blocking)
+			if (n == 0) return false;
 			return gotData || (errno == EAGAIN || errno == EWOULDBLOCK);
 		}
 	}
 
-	// Try to extract a complete message. Returns true if one is available.
 	bool tryExtract(MsgHeader& hdr, std::vector<uint8_t>& payload) {
 		if (m_buf.size() < sizeof(MsgHeader)) return false;
 
@@ -124,10 +95,6 @@ public:
 private:
 	std::vector<uint8_t> m_buf;
 };
-
-// ================================================================
-// TCP Server Listener
-// ================================================================
 
 class TcpServer {
 public:
@@ -161,7 +128,6 @@ public:
 		int port = 0;
 	};
 
-	// Accept a new connection (non-blocking). Returns fd, IP, and port.
 	AcceptResult acceptClient() {
 		sockaddr_in addr{};
 		socklen_t len = sizeof(addr);
@@ -189,17 +155,11 @@ private:
 	int m_fd = -1;
 };
 
-// ================================================================
-// TCP Client Connection
-// ================================================================
-
 class TcpClient {
 public:
-	~TcpClient() { disconnect(); } // RAII: always close fd on destruction
+	~TcpClient() { disconnect(); }
 
-	// Connect with a short timeout (default 1 second).
-	// Uses non-blocking connect + select() to avoid hanging for 30+ seconds
-	// when no server is running.
+	// Non-blocking connect + select — prevents 30s hang on dead server.
 	bool connect(const char* host, int port, float timeoutSec = 1.0f) {
 		m_fd = socket(AF_INET, SOCK_STREAM, 0);
 		if (m_fd < 0) { perror("socket"); return false; }
@@ -223,7 +183,6 @@ public:
 			return true;
 		}
 
-		// Wait for connection with timeout using select()
 		fd_set wfds;
 		FD_ZERO(&wfds);
 		FD_SET(m_fd, &wfds);
@@ -233,11 +192,9 @@ public:
 
 		ret = select(m_fd + 1, nullptr, &wfds, nullptr, &tv);
 		if (ret <= 0) {
-			// Timeout or error
 			close(m_fd); m_fd = -1; return false;
 		}
 
-		// Check if connection succeeded
 		int err = 0;
 		socklen_t len = sizeof(err);
 		getsockopt(m_fd, SOL_SOCKET, SO_ERROR, &err, &len);
@@ -261,14 +218,12 @@ private:
 	int m_fd = -1;
 };
 
-// ================================================================
-// UDP Socket — LAN server discovery (broadcast send + non-blocking recv)
-// ================================================================
+// LAN server discovery: broadcast send + non-blocking recv.
 class UdpSocket {
 public:
 	struct Packet { std::string senderIp; std::string data; };
 
-	// Open socket.  bindPort=0 → ephemeral (for sending).  enableBroadcast for servers.
+	// bindPort=0 → ephemeral.
 	bool open(int bindPort = 0, bool enableBroadcast = false) {
 		m_fd = socket(AF_INET, SOCK_DGRAM, 0);
 		if (m_fd < 0) return false;
@@ -295,7 +250,6 @@ public:
 	void close() { if (m_fd >= 0) { ::close(m_fd); m_fd = -1; } }
 	bool isOpen() const { return m_fd >= 0; }
 
-	// Broadcast a packet to the entire LAN subnet.
 	bool broadcast(const char* data, int len, int port) {
 		sockaddr_in addr{};
 		addr.sin_family      = AF_INET;
@@ -304,7 +258,6 @@ public:
 		return sendto(m_fd, data, len, 0, (sockaddr*)&addr, sizeof(addr)) > 0;
 	}
 
-	// Non-blocking receive.  Returns true and fills `out` when a packet arrived.
 	bool tryRecv(Packet& out) {
 		char buf[256];
 		sockaddr_in addr{};

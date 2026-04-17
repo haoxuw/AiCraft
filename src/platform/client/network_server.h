@@ -1,15 +1,6 @@
 #pragma once
 
-/**
- * NetworkServer — connects to a remote GameServer via TCP.
- *
- * Implements ServerInterface so the Game class can use it
- * identically to LocalServer. Sends ActionProposals over TCP,
- * receives entity/chunk/time updates.
- *
- * Used when a dedicated server is already running.
- * The client generates a random UUID as its player name.
- */
+// ServerInterface over TCP. Client generates random UUID as player name.
 
 #include "net/server_interface.h"
 #include "logic/physics.h"
@@ -21,7 +12,7 @@
 #ifndef __EMSCRIPTEN__
 #include <zstd.h>
 #endif
-#include "shared/annotation.h"
+#include "logic/annotation.h"
 #include <unordered_map>
 #include <functional>
 #include <string>
@@ -38,7 +29,6 @@ class NetworkServer : public ServerInterface {
 public:
 	NetworkServer(const std::string& host, int port, LocalWorld& world)
 		: m_host(host), m_port(port), m_world(world) {
-		// Generate random UUID for this client
 		std::random_device rd;
 		std::mt19937 gen(rd());
 		std::uniform_int_distribution<uint32_t> dist;
@@ -59,8 +49,7 @@ public:
 
 		m_connected = true;
 
-		// Send C_HELLO immediately — server defers entity creation until it
-		// receives this, then responds with S_WELCOME.
+		// Server defers entity creation until C_HELLO, then replies S_WELCOME.
 		{
 			std::string name = m_displayName.empty()
 				? ("Player-" + m_clientUUID.substr(0, 4))
@@ -77,13 +66,10 @@ public:
 			net::sendMessage(m_tcp.fd(), net::C_HELLO, hello);
 		}
 
-		// Wait for S_WELCOME. The server may spend many seconds in its
-		// async Preparing phase (generating chunks) before sending welcome,
-		// so use a generous timeout and process any prep-phase traffic
-		// (S_PREPARING, S_CHUNK, S_CHUNK_Z) that arrives in the meantime.
+		// Generous 60s timeout — server prep phase streams S_PREPARING/S_CHUNK* first.
 		auto start = std::chrono::steady_clock::now();
 		while (true) {
-			m_recv.readFrom(m_tcp.fd()); // non-blocking, may return EAGAIN
+			m_recv.readFrom(m_tcp.fd());
 
 			if (recvWelcomeFromBuffer()) return true;
 
@@ -93,15 +79,13 @@ public:
 				break;
 			}
 
-			// Don't spin at 100% CPU while waiting
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 		disconnect();
 		return false;
 	}
 
-	// ── Async connect for web (WebSocket needs event-loop frames to complete) ──
-	// Step 1: initiate connection (non-blocking, returns immediately)
+	// Async connect for web (WebSocket needs event-loop frames to complete).
 	bool beginConnect() {
 		printf("[Net] Connecting to %s:%d ...\n", m_host.c_str(), m_port);
 		if (!m_tcp.connect(m_host.c_str(), m_port)) {
@@ -109,7 +93,6 @@ public:
 			return false;
 		}
 		m_connected = true;
-		// Send C_HELLO immediately (same as sync path)
 		{
 			std::string name = m_displayName.empty()
 				? ("Player-" + m_clientUUID.substr(0, 4))
@@ -128,22 +111,19 @@ public:
 		return true;
 	}
 
-	// Step 2: call every frame — returns true when S_WELCOME has been received
+	// Call every frame — returns true when S_WELCOME arrives.
 	bool pollWelcome() {
 		if (!m_connected) return false;
 		if (!m_recv.readFrom(m_tcp.fd())) {
 			printf("[Net] Connection lost while waiting for welcome\n");
-			disconnect(); // close fd properly
+			disconnect();
 			return false;
 		}
 		return recvWelcomeFromBuffer();
 	}
 
 	void disconnect() override {
-		// Polite quit: tell the server we're leaving so it can run cleanup
-		// immediately (snapshot owned NPCs, save inventory, despawn) instead
-		// of waiting for the heartbeat timeout. Best-effort — if the socket
-		// is already dead the send just fails silently.
+		// C_QUIT lets server run cleanup immediately instead of heartbeat timeout.
 		if (m_connected && m_tcp.connected()) {
 			net::WriteBuffer wb;
 			net::sendMessage(m_tcp.fd(), net::C_QUIT, wb);
@@ -160,9 +140,7 @@ public:
 	void tick(float dt) override {
 		if (!m_connected) return;
 
-		// Emit liveness pings on a fixed cadence. Any outbound traffic counts
-		// server-side, so this loop only fires when the player is otherwise
-		// quiet — no action, no goal, no inventory request.
+		// Liveness ping (any outbound traffic counts server-side).
 		m_heartbeatTimer += dt;
 		if (m_heartbeatTimer >= kHeartbeatSendInterval) {
 			m_heartbeatTimer = 0.0f;
@@ -170,10 +148,9 @@ public:
 			net::sendMessage(m_tcp.fd(), net::C_HEARTBEAT, wb);
 		}
 
-		// Read incoming messages
 		if (!m_recv.readFrom(m_tcp.fd())) {
 			printf("[Net] Connection lost\n");
-			disconnect(); // close fd properly, not just flag
+			disconnect();
 			return;
 		}
 
@@ -187,12 +164,7 @@ public:
 		m_totalMsgCount += msgCount;
 		m_uptime += dt;
 
-		// Silent-server detection + escalating response:
-		//   @2s → warn once (lets a brief hiccup self-recover)
-		//   @5s → disconnect() to force the reconnect / return-to-menu flow
-		// The reconciler will also flag individual entities red after 2s of
-		// their own staleness, so the player sees trouble before the full
-		// disconnect fires.
+		// Silent-server: warn @2s, disconnect @5s. Reconciler flags stale entities red at 2s too.
 		if (msgCount > 0) {
 			if (m_silentWarned) {
 				std::printf("[NetDiag] Server back (silent %.1fs)\n", m_silentTime);
@@ -202,27 +174,36 @@ public:
 			m_silentWarned = false;
 		} else {
 			m_silentTime += dt;
+			float limit = m_serverReady ? kHeartbeatDisconnectSec
+			                            : kHeartbeatDisconnectPrepSec;
 			if (!m_silentWarned && m_silentTime > 2.0f) {
-				std::printf("[NetDiag] Server silent for %.1fs — no messages arriving\n", m_silentTime);
+				std::printf("[NetDiag] Server silent for %.1fs "
+				            "(phase=%s, limit=%.0fs, chunks=%zu, prep=%.0f%%, entities=%zu)\n",
+				            m_silentTime, m_serverReady ? "playing" : "prep",
+				            limit, m_world.chunkCount(),
+				            m_preparingPct < 0 ? 0.0f : m_preparingPct * 100.0f,
+				            m_entities.size());
 				std::fflush(stdout);
 				m_silentWarned = true;
 			}
-			if (m_silentTime > kHeartbeatDisconnectSec) {
-				std::printf("[NetDiag] Server heartbeat lost >%.0fs — disconnecting to menu\n",
-				            kHeartbeatDisconnectSec);
+			if (m_silentTime > limit) {
+				std::printf("[NetDiag] Server heartbeat lost >%.0fs — disconnecting to menu "
+				            "(phase=%s, chunks=%zu, prep=%.0f%%, entities=%zu, uptime=%.1fs)\n",
+				            limit, m_serverReady ? "playing" : "prep",
+				            m_world.chunkCount(),
+				            m_preparingPct < 0 ? 0.0f : m_preparingPct * 100.0f,
+				            m_entities.size(), m_uptime);
 				std::fflush(stdout);
 				disconnect();
 				return;
 			}
 		}
 
-		// Early connection logging — only warn if player entity is missing
 		if (m_uptime < 5.0f && !getEntity(m_localPlayerId) && msgCount > 0) {
 			printf("[Net] t=%.1fs: waiting for player entity (received %zu entities, %zu chunks)\n",
 				m_uptime, m_entities.size(), m_world.chunkCount());
 		}
 
-		// Periodic diagnostics (every 30 seconds — quiet by default)
 		m_diagTimer += dt;
 		if (m_diagTimer >= 30.0f) {
 			Entity* pe = m_entities.count(m_localPlayerId)
@@ -287,11 +268,9 @@ public:
 	}
 
 	void sendProximity(const std::vector<EntityId>& eids) override {
-		// C_PROXIMITY removed — agents run inside PlayerClient now, no server relay needed
-		(void)eids;
+		(void)eids; // C_PROXIMITY removed — agents run inside PlayerClient now
 	}
 
-	// --- State access ---
 	ChunkSource& chunks() override { return m_world; }
 	EntityId localPlayerId() const override { return m_localPlayerId; }
 	EntityId controlledEntityId() const override {
@@ -302,8 +281,7 @@ public:
 	float preparingProgress() const override { return m_preparingPct; }
 	const std::string& lastError() const override { return m_lastError; }
 
-	// Latest server-authoritative position from the broadcast stream.
-	// Falls back to the last applied entity position if no interp target.
+	// Latest server-auth position; falls back to last applied entity position.
 	glm::vec3 getServerPosition(EntityId id) override {
 		Entity* e = getEntity(id);
 		return m_reconciler.getServerPosition(id, e ? e->position : glm::vec3(0));
@@ -346,8 +324,7 @@ public:
 		m_onInventoryUpdate = std::move(cb);
 	}
 
-	// Wired to AgentClient::onInterrupt / onWorldEvent by game.cpp after
-	// the agent client is constructed. See Step 7 of the decide-loop plan.
+	// Wired to AgentClient::onInterrupt / onWorldEvent by game.cpp.
 	void setInterruptHandlers(
 		std::function<void(EntityId, const std::string&)> onNpcInterrupt,
 		std::function<void(const std::string&, const std::string&)> onWorldEvent)
@@ -360,7 +337,6 @@ public:
 	void setDisplayName(const std::string& name) { m_displayName = name; }
 	void setCreatureType(const std::string& type) { m_creatureType = type; }
 
-	// Try to connect (non-blocking check for game.cpp)
 	static bool canConnect(const char* host, int port) {
 		net::TcpClient probe;
 		bool ok = probe.connect(host, port);
@@ -368,18 +344,14 @@ public:
 		return ok;
 	}
 
-	// Annotation accessor for the renderer. Returns null if the chunk has no
-	// cached annotations (or hasn't been received yet). Overrides
-	// ServerInterface so the renderer never touches NetworkServer directly.
+	// Returns null if the chunk has no cached annotations.
 	const std::vector<std::pair<glm::ivec3, Annotation>>*
 	annotationsForChunk(ChunkPos cp) const override {
 		return m_world.annotationsForChunk(cp);
 	}
 
 private:
-	// Shared annotation tail-parsing for S_CHUNK and S_CHUNK_Z payloads.
-	// Reads [u32 count][{i32 dx, i32 dy, i32 dz, str typeId, u8 slot}×count]
-	// and stores annotations in world-space under chunk cp.
+	// S_CHUNK / S_CHUNK_Z annotation tail: [u32 n][{i32 dx, dy, dz, str typeId, u8 slot}×n].
 	void readChunkAnnotations(net::ReadBuffer& rb, ChunkPos cp) {
 		if (!rb.hasMore()) {
 			m_world.setAnnotations(cp, {});
@@ -405,14 +377,7 @@ private:
 		m_world.setAnnotations(cp, std::move(out));
 	}
 
-	// Original private section below.
-
-	// Drain the receive buffer while waiting for S_WELCOME.
-	//
-	// The async Preparing phase streams S_PREPARING + chunk messages BEFORE
-	// welcome, so this loop must process them (otherwise chunks would be
-	// silently dropped and we'd just wait forever on the wire queue).
-	// Returns true the instant S_WELCOME is parsed.
+	// Must process pre-welcome S_PREPARING/S_CHUNK* or chunks get dropped.
 	bool recvWelcomeFromBuffer() {
 		net::MsgHeader hdr;
 		std::vector<uint8_t> payload;
@@ -428,7 +393,7 @@ private:
 			if (hdr.type == net::S_PREPARING) {
 				net::ReadBuffer rb(payload.data(), payload.size());
 				float pct = rb.readF32();
-				m_preparingPct = pct;  // surfaced to loading UI via preparingProgress()
+				m_preparingPct = pct;
 				static float s_lastLoggedPct = -1.0f;
 				if (pct - s_lastLoggedPct >= 0.1f || pct >= 1.0f) {
 					printf("[Net] Preparing world: %.0f%%\n", pct * 100.0f);
@@ -438,14 +403,13 @@ private:
 			}
 			if (hdr.type == net::S_ERROR) {
 				net::ReadBuffer rb(payload.data(), payload.size());
-				(void)rb.readU32(); // entityId, unused pre-welcome
+				(void)rb.readU32();
 				m_lastError = rb.readString();
 				printf("[Net] Server error (pre-welcome): %s\n", m_lastError.c_str());
 				disconnect();
 				return false;
 			}
-			// Other messages (S_CHUNK, S_CHUNK_Z, …) arrive before welcome
-			// during prep — dispatch so the chunk cache is populated.
+			// Prep-phase chunks land before welcome — dispatch to populate cache.
 			handleMessage(hdr.type, payload);
 		}
 		return false;
@@ -456,9 +420,7 @@ private:
 
 		switch (type) {
 		case net::S_WELCOME: {
-			// Race: if S_WELCOME lands between updateLoading()'s pollWelcome()
-			// and its tick(dt), tick drains it here — without this case it was
-			// silently dropped and m_localPlayerId stayed ENTITY_NONE.
+			// Race: S_WELCOME may land between pollWelcome() and tick().
 			if (m_localPlayerId == ENTITY_NONE) {
 				m_localPlayerId = rb.readU32();
 				m_spawnPos = rb.readVec3();
@@ -468,14 +430,13 @@ private:
 			break;
 		}
 		case net::S_READY: {
-			// Server finished per-client setup (mobs spawned, welcome done).
-			// The loading screen waits on this before handing off to gameplay.
+			// Loading screen waits on this before handoff.
 			m_serverReady = true;
 			printf("[Net] Server ready.\n");
 			break;
 		}
 		case net::S_ERROR: {
-			(void)rb.readU32(); // entityId, unused for fatal errors
+			(void)rb.readU32();
 			m_lastError = rb.readString();
 			printf("[Net] Server error: %s\n", m_lastError.c_str());
 			disconnect();
@@ -486,7 +447,6 @@ private:
 
 			auto it = m_entities.find(es.id);
 			if (it == m_entities.end()) {
-				// New entity — look up proper EntityDef from registered builtins
 				const EntityDef* def = m_world.entityDefs().getTypeDef(es.typeId);
 				if (!def) {
 					printf("[Net] WARNING: unknown entity type '%s' (id=%u), using default def\n",
@@ -501,12 +461,9 @@ private:
 				ent->velocity = es.velocity;
 				ent->yaw = es.yaw;
 				ent->onGround = es.onGround;
-				// Placeholder until first decide() lands — the render path asserts
-			// goalText is non-empty, but S_ENTITY on first spawn arrives before
-			// any Python decide() has populated a goal.
-			ent->goalText = es.goalText.empty() ? "Spawning..." : es.goalText;
-				// Entities owned by our in-process agent client keep lookYaw
-				// locally predicted (same reason as the S_ENTITY update path).
+				// First S_ENTITY predates any decide(); empty goalText renders "…".
+				ent->goalText = es.goalText;
+				// Owned entities keep locally-predicted lookYaw (see update path below).
 				bool ownedByUs = (es.owner == (int)m_localPlayerId);
 				if (!ownedByUs) {
 					ent->lookYaw   = es.lookYaw;
@@ -517,8 +474,7 @@ private:
 				}
 				if (!es.characterSkin.empty())
 					ent->setProp("character_skin", es.characterSkin);
-				// Apply string properties (ItemType, BehaviorId, etc.)
-				// WalkDistance is client-local (see tick() sync path).
+				// WalkDistance is client-local (see update path below).
 				for (auto& [k, v] : es.props) {
 					if (k == Prop::WalkDistance) continue;
 					ent->setProp(k, v);
@@ -530,9 +486,7 @@ private:
 					ent->setProp(Prop::HP, es.hp);
 				if (es.owner != 0)
 					ent->setProp(Prop::Owner, es.owner);
-				// Apply any inventory that arrived before this entity.
-				// Must move ent into m_entities BEFORE firing the callback
-				// so that getEntity(eid) inside the callback returns non-null.
+				// Must move ent into m_entities before firing callback so getEntity works.
 				auto pit = m_pendingInventory.find(es.id);
 				bool hadPendingInv = false;
 				if (pit != m_pendingInventory.end() && ent->inventory) {
@@ -553,15 +507,10 @@ private:
 				m_reconciler.onEntityUpdate(es.id, es.position, es.velocity, es.yaw,
 				                            es.moveTarget, es.moveSpeed);
 
-				// Sync non-positional state immediately.
-				// Skip onGround for local player — client physics owns it.
-				// Server's onGround is stale (20Hz) and would re-trigger jumps.
+				// Local player's onGround stays client-owned (20Hz server value retriggers jumps).
 				if (es.id != m_localPlayerId)
 					e.onGround = es.onGround;
-				// lookYaw/lookPitch are locally predicted for entities owned by
-				// our in-process agent (mirror of the WalkDistance filter below).
-				// Server broadcasts would stomp the agent's fast yaw updates and
-				// reintroduce the sideways-body bug.
+				// Owned lookYaw/Pitch are locally predicted; server value causes sideways-body bug.
 				{
 					int owner = e.getProp<int>(Prop::Owner, 0);
 					bool ownedByUs = (owner == (int)m_localPlayerId);
@@ -575,11 +524,7 @@ private:
 					e.setProp(Prop::HP, es.hp);
 				if (es.owner != 0)
 					e.setProp(Prop::Owner, es.owner);
-				// Sync entity properties from server (server already filters
-				// out client-private props like SelectedSlot at broadcast time).
-				// WalkDistance is client-local for smooth animation (same as
-				// player's m_playerWalkDist) — the server's 20Hz broadcasts
-				// would stairstep the walk cycle if we applied them.
+				// WalkDistance is client-local — 20Hz server value would stairstep walk cycle.
 				for (auto& [k, v] : es.props) {
 					if (k == Prop::WalkDistance) continue;
 					e.setProp(k, v);
@@ -604,7 +549,6 @@ private:
 		}
 #ifndef __EMSCRIPTEN__
 		case net::S_CHUNK_Z: {
-			// Decompress zstd frame, then parse identical to S_CHUNK
 			size_t compSize = rb.remaining();
 			const uint8_t* compData = rb.remainingData();
 			size_t decompBound = ZSTD_getFrameContentSize(compData, compSize);
@@ -637,7 +581,7 @@ private:
 		case net::S_CHUNK_EVICT: {
 			ChunkPos cp = {rb.readI32(), rb.readI32(), rb.readI32()};
 			m_world.removeChunk(cp);
-			if (m_onChunkDirty) m_onChunkDirty(cp); // triggers mesh rebuild for that position
+			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
 		}
 		case net::S_ANNOTATION_SET: {
@@ -694,9 +638,7 @@ private:
 			uint8_t p2 = rb.hasMore() ? rb.readU8() : 0;
 			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
-			// Read old block once — used for break-text and place callbacks so
-			// downstream audio/fx can distinguish dig (→AIR), place (AIR→X), and
-			// block swap (X→Y, e.g. door↔door_open).
+			// Old block lets fx distinguish dig/place/swap (e.g. door↔door_open).
 			BlockId oldBid = m_world.getBlock(bx, by, bz);
 			if (bid == BLOCK_AIR && oldBid != BLOCK_AIR && m_onBlockBreakText) {
 				const BlockDef& bdef = m_world.blockRegistry().get(oldBid);
@@ -704,15 +646,11 @@ private:
 					m_onBlockBreakText(glm::vec3(bx, by, bz),
 						bdef.display_name.empty() ? bdef.string_id : bdef.display_name);
 			} else if (bid != BLOCK_AIR && oldBid != bid && m_onBlockPlace) {
-				// Covers AIR→block placement AND block→block swaps (door toggle,
-				// water flow, etc.). Passes the NEW block's string_id so the
-				// audio layer can pick the correct sound group.
 				const BlockDef& bdef = m_world.blockRegistry().get(bid);
 				if (!bdef.string_id.empty())
 					m_onBlockPlace(glm::vec3(bx, by, bz), bdef.string_id);
 			}
 			m_world.setBlock(bx, by, bz, bid);
-			// Also set param2 if chunk exists
 			if (p2 != 0) {
 				Chunk* c = m_world.getChunk(cp);
 				if (c) {
@@ -727,7 +665,6 @@ private:
 		}
 		case net::S_INVENTORY: {
 			EntityId id = rb.readU32();
-			// Read items
 			uint32_t count = rb.readU32();
 			std::vector<std::pair<std::string,int>> items;
 			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
@@ -735,7 +672,7 @@ private:
 				int amount = rb.readI32();
 				items.push_back({itemId, amount});
 			}
-			// Read equipment: [u8 equipCount][{str slot, str id}...]
+			// Equipment tail: [u8 count][{str slot, str id}...]
 			std::vector<std::pair<std::string,std::string>> equipment;
 			if (rb.hasMore()) {
 				uint8_t equipCount = rb.readU8();
@@ -752,7 +689,7 @@ private:
 				for (auto& [slot, eqId] : equipment) {
 					WearSlot ws;
 					if (wearSlotFromString(slot, ws)) {
-						inv.add(eqId, 1); // need it in counter for equip()
+						inv.add(eqId, 1); // counter needs it for equip()
 						inv.equip(ws, eqId);
 					}
 				}
@@ -763,7 +700,7 @@ private:
 				applyInv(*it->second->inventory);
 				if (m_onInventoryUpdate) m_onInventoryUpdate(id);
 			} else {
-				// Entity not yet known — buffer for when S_ENTITY arrives
+				// Buffer until S_ENTITY for this id arrives.
 				m_pendingInventory[id] = {std::move(items)};
 			}
 			break;
@@ -774,22 +711,19 @@ private:
 	std::string m_host;
 	int m_port;
 	std::string m_clientUUID;
-	std::string m_displayName;   // player name
-	std::string m_creatureType;  // requested creature type
+	std::string m_displayName;
+	std::string m_creatureType;
 	bool m_connected = false;
 
 	net::TcpClient m_tcp;
 	net::RecvBuffer m_recv;
 
 	EntityId m_localPlayerId = ENTITY_NONE;
-	EntityId m_controlledEid = ENTITY_NONE; // Control mode; ENTITY_NONE = drive local player
+	EntityId m_controlledEid = ENTITY_NONE; // ENTITY_NONE = drive local player
 	glm::vec3 m_spawnPos = {0, 0, 0};
 	float m_worldTime = 0.25f;
 
-	// Latest weather broadcast from the server (S_WEATHER). The client consults
-	// these to drive sky tint, fog, and particle systems. Defaults match the
-	// WeatherPyConfig "clear, still air" fallback so visuals stay sane before
-	// the first broadcast lands.
+	// S_WEATHER drives sky/fog/particles. Defaults keep visuals sane pre-first-broadcast.
 	std::string m_weatherKind      = "clear";
 	float       m_weatherIntensity = 0.0f;
 	glm::vec2   m_weatherWind      = {0.0f, 0.0f};
@@ -797,16 +731,15 @@ private:
 
 	bool m_serverReady = false;
 	float m_preparingPct = -1.0f;  // -1 = no S_PREPARING seen; else [0..1]
-	std::string m_lastError;       // set on S_ERROR; surfaced to loading/menu UI
+	std::string m_lastError;
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	LocalWorld& m_world;
 
-	// Client-side smoothing + reconciliation for remote entities.
-	// Owns all per-entity physics + drift-correction between 20Hz broadcasts.
+	// Per-entity smoothing + drift correction between 20Hz broadcasts.
 	EntityReconciler m_reconciler;
 
-	// Pending inventory: arrived before entity — applied on first S_ENTITY
+	// Inventory that arrived before its entity — applied on first S_ENTITY.
 	struct PendingInv {
 		std::vector<std::pair<std::string,int>> items;
 	};
@@ -815,20 +748,20 @@ private:
 	ActionProposalQueue m_proposals;
 	EntityDef m_defaultDef;
 
-	// Diagnostics
 	float m_diagTimer = 0;
 	int m_totalMsgCount = 0;
 	float m_uptime = 0;
 
 	float m_silentTime = 0;
 	bool  m_silentWarned = false;
-	static constexpr float kHeartbeatDisconnectSec = 5.0f;
+	// Post-ready: 5s fine. Pre-ready: server may gen chunks synchronously on cold cache,
+	// 10-30s gaps between S_PREPARING on first connect.
+	static constexpr float kHeartbeatDisconnectSec    = 5.0f;
+	static constexpr float kHeartbeatDisconnectPrepSec = 60.0f;
 
-	// Outbound heartbeat. Keeps the server's per-client idle timer reset so
-	// the server can drop a silent client (crashed GUI, network drop) and
-	// run its normal cleanup — snapshot owned NPCs, save inventory, despawn.
+	// Outbound heartbeat resets server's per-client idle timer (enables cleanup on silent clients).
 	float m_heartbeatTimer = 0.0f;
-	static constexpr float kHeartbeatSendInterval = 2.0f; // seconds
+	static constexpr float kHeartbeatSendInterval = 2.0f;
 
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;

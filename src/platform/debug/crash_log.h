@@ -1,23 +1,5 @@
 #pragma once
-/**
- * CrashLog — dump a structured report + abort when the game hits an
- * unrecoverable state (e.g. a client/server snap-back deadlock).
- *
- * Output: /tmp/civcraft_crash.log (overwritten each crash). The report is
- * also echoed to stderr and to the GameLogger so the in-memory ring
- * buffer preserves it up to the moment of abort.
- *
- * Typical use:
- *
- *     CrashLog cl("SnapDeadlock eid=42");
- *     cl.line("reason", "10 snap-backs in 10s");
- *     cl.line("entity", "id=%u type=%s", id, type);
- *     cl.kv("clientPos",  "(%.2f,%.2f,%.2f)", pos.x, pos.y, pos.z);
- *     cl.abort();   // writes file + std::abort()
- *
- * The class is header-only and has no dependencies beyond GameLogger so
- * it can be used from any translation unit.
- */
+// Structured crash report → /tmp/civcraft_crash.log + stderr + GameLogger, then abort.
 
 #include "client/game_logger.h"
 #include <cstdarg>
@@ -38,7 +20,6 @@ public:
 		line("title: %s", title.c_str());
 	}
 
-	// Printf-style free-form line.
 	void line(const char* fmt, ...) {
 		char buf[1024];
 		va_list ap;
@@ -48,7 +29,6 @@ public:
 		m_lines.emplace_back(buf);
 	}
 
-	// "key = value" row with printf-style value.
 	void kv(const char* key, const char* fmt, ...) {
 		char val[512];
 		va_list ap;
@@ -60,14 +40,12 @@ public:
 		m_lines.emplace_back(row);
 	}
 
-	// Begin a named section header.
 	void section(const char* name) {
 		char row[128];
 		snprintf(row, sizeof(row), "-- %s --", name);
 		m_lines.emplace_back(row);
 	}
 
-	// Write to /tmp/civcraft_crash.log + stderr + GameLogger, then abort.
 	[[noreturn]] void abort() {
 		std::string path =
 			(std::filesystem::temp_directory_path() / "civcraft_crash.log").string();
@@ -84,14 +62,12 @@ public:
 			std::fputc('\n', stderr);
 		}
 		std::fflush(stderr);
-		// Echo a single CRASH line into the game log so the in-memory
-		// ring buffer preserves the context visible to the menu viewer.
 		GameLogger::instance().emit("CRASH", "%s (see %s)",
 			m_title.c_str(), path.c_str());
 		std::abort();
 	}
 
-	// Write the report without aborting — for soft-crash diagnostics.
+	// Soft-crash variant: writes report but does not abort.
 	void dump() {
 		std::string path =
 			(std::filesystem::temp_directory_path() / "civcraft_crash.log").string();

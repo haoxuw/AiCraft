@@ -5,10 +5,7 @@
 #include <iterator>
 
 #ifdef __EMSCRIPTEN__
-// ================================================================
-// Web build stub: Python bridge is server-only, not available in WASM.
-// All methods return safe defaults.
-// ================================================================
+// Web/WASM stub — Python is server-only, everything returns safe defaults.
 namespace civcraft {
 bool PythonBridge::init(const std::string&) { return false; }
 void PythonBridge::shutdown() {}
@@ -32,9 +29,7 @@ std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 	const Entity&, const std::function<std::string(int,int,int)>&) const { return std::nullopt; }
 } // namespace civcraft
 #else
-// ================================================================
-// Native build: full pybind11 implementation
-// ================================================================
+// Native build — full pybind11.
 #include <pybind11/embed.h>
 #include <pybind11/stl.h>
 #include <cstdio>
@@ -43,11 +38,6 @@ namespace py = pybind11;
 
 namespace civcraft {
 
-// ================================================================
-// pybind11 module: expose C++ types to Python behaviors
-// ================================================================
-
-// Python-visible entity info (what a behavior can see about nearby entities)
 struct PyEntityInfo {
 	EntityId id;
 	std::string type;
@@ -56,19 +46,14 @@ struct PyEntityInfo {
 	int hp;
 };
 
-// Python-visible container reference (mirrors C++ Container struct)
+// Mirrors C++ Container.
 struct PyContainer {
 	int      kind      = 0;              // 0=Self, 1=Ground, 2=Entity, 3=Block
 	EntityId entity_id = ENTITY_NONE;
-	float    x = 0, y = 0, z = 0;       // block position (kind=Block)
+	float    x = 0, y = 0, z = 0;       // kind=Block
 };
 
-// PyAction — the Python-visible action type.
-// TODO: Replace with Plan/PlanStep return type from decide().
-// The PyAction struct and its action constructors (Move, Idle, Relocate, Convert,
-// Interact) in the PYBIND11_EMBEDDED_MODULE below are still used by existing
-// Python behaviors during the transition. They will be replaced when decide()
-// returns Plan instead of (action, goal_str).
+// TODO: replace with Plan/PlanStep when decide() stops returning (action, goal_str).
 struct PyAction {
 	std::string type;    // "move", "relocate", "convert", "interact"
 	float x = 0, y = 0, z = 0;
@@ -90,30 +75,20 @@ struct PyAction {
 	PyContainer convert_into;
 };
 
-// Per-call state — set before callDecide(), cleared after.
-// Safe for single-threaded agent processes (one callDecide at a time).
+// Per-call state, set before callDecide(). Agent is single-threaded.
 static std::function<std::string(int,int,int)> s_blockQueryFn;
 
-// Block scan callback — set by agent_client before callDecide().
-// Returns list of {type, x, y, z, distance} for blocks of a given type
-// near the supplied origin (anchor for distance sorting + early-exit).
 using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 static ScanBlocksFn s_scanBlocksFn;
 
-// Entity scan callback — mirrors scan_blocks but for world entities.
-// Returns list of {id, type, x, y, z, distance} for entities of a given
-// type within maxDist of origin, sorted nearest-first and capped at maxResults.
 using ScanEntitiesFn = std::function<std::vector<NearbyEntity>(const std::string&, glm::vec3, float, int)>;
 static ScanEntitiesFn s_scanEntitiesFn;
 
-// Annotation scan callback — lookup by typeId, same shape as scan_blocks
-// (positions + distance). See shared/annotation.h for the data model.
+// See shared/annotation.h. Same shape as scan_blocks.
 using ScanAnnotationsFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 static ScanAnnotationsFn s_scanAnnotationsFn;
 
-// Default search anchor when Python passes near=None: the entity's current
-// position. Set by callDecide() alongside s_scanBlocksFn so the binding
-// can substitute it without needing access to `self`.
+// Default anchor when Python passes near=None.
 static glm::vec3 s_selfPos;
 
 PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
@@ -136,7 +111,7 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		.def_readwrite("y", &PyContainer::y)
 		.def_readwrite("z", &PyContainer::z);
 
-	// Container factory functions — used as convert_from / convert_into / relocate_from / relocate_to
+	// Factories for {relocate,convert}_{from,into,to}.
 	m.def("Self",   []()                          { PyContainer c; c.kind = 0; return c; });
 	m.def("Ground", []()                          { PyContainer c; c.kind = 1; return c; });
 	m.def("Entity", [](EntityId id)               { PyContainer c; c.kind = 2; c.entity_id = id; return c; },
@@ -165,9 +140,8 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		.def_readwrite("convert_from", &PyAction::convert_from)
 		.def_readwrite("convert_into", &PyAction::convert_into);
 
-	// Core action constructors — these are the only write primitives the server accepts.
-	// High-level helpers (BreakBlock, StoreItem, PickupItem, DropItem) are Python wrappers
-	// in python/actions.py that map to Relocate/Convert.
+	// Only write primitives the server accepts. High-level helpers
+	// (BreakBlock, StoreItem, PickupItem, DropItem) wrap these in python/actions.py.
 	m.def("Idle", []() {
 		PyAction a; a.type = "idle"; return a;
 	});
@@ -204,21 +178,15 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		PyAction a; a.type = "interact"; a.x = (float)x; a.y = (float)y; a.z = (float)z; return a;
 	}, py::arg("x"), py::arg("y"), py::arg("z"));
 
-	// get_block(x, y, z) → str — query block type from the agent's local chunk cache.
-	// Valid only inside decide(); returns "air" if called outside callDecide().
-	// Use this for pathfinding or any logic that needs to probe arbitrary world positions.
+	// Valid only inside decide(); returns "air" outside.
 	m.def("get_block", [](int x, int y, int z) -> std::string {
 		if (s_blockQueryFn) return s_blockQueryFn(x, y, z);
 		return "air";
 	}, py::arg("x"), py::arg("y"), py::arg("z"),
 	   "Query block type string at world position (x,y,z). Call only inside decide().");
 
-	// scan_blocks(type, near=None, max_dist, max_results) → list of dicts
-	// Targeted search: picks the nearest non-empty chunk (per the ChunkInfo
-	// index) and scans its real data. `near` is the world-space anchor for
-	// distance sorting; pass an entity's home/bed position to keep AI from
-	// chasing dense matches across the map. Defaults to the calling
-	// entity's position when omitted.
+	// Picks nearest non-empty chunk via ChunkInfo index. `near` anchors distance
+	// sort (e.g. pass home/bed so AI doesn't chase dense matches across the map).
 	m.def("scan_blocks", [](const std::string& typeId, py::object near,
 	                        float maxDist, int maxResults) -> py::list {
 		py::list result;
@@ -243,9 +211,7 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find blocks of a specific type near `near` (default: self position).");
 
-	// scan_entities(type, near=None, max_dist, max_results) → list of dicts.
-	// World-wide entity lookup (bypasses the per-agent 64-block nearby cache).
-	// Each hit: {id, type, x, y, z, distance}.
+	// World-wide lookup; bypasses the per-agent 64-block nearby cache.
 	m.def("scan_entities", [](const std::string& typeId, py::object near,
 	                          float maxDist, int maxResults) -> py::list {
 		py::list result;
@@ -272,9 +238,7 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	   "Find entities of a specific type near `near` (default: self position). "
 	   "Bypasses the per-agent nearby cache; scans the whole entity list.");
 
-	// scan_annotations(type, near=None, max_dist, max_results) — same output
-	// shape as scan_blocks; each hit is {type, x, y, z, distance} for a block
-	// decorator (flower, moss, …) matching `type`.
+	// Same shape as scan_blocks; hits are block decorators (flower, moss, …).
 	m.def("scan_annotations", [](const std::string& typeId, py::object near,
 	                             float maxDist, int maxResults) -> py::list {
 		py::list result;
@@ -299,8 +263,7 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find annotations (block decorators) of a specific type near `near`.");
 
-	// Expose C++ name constants as Python submodules so behaviors can use the
-	// same identifiers as C++ code (LivingName.Chicken, BlockType.Stone, etc.).
+	// Expose C++ name constants so behaviors use identical identifiers.
 	auto living = m.def_submodule("LivingName", "Living entity type IDs");
 	living.attr("Player")       = LivingName::Player;
 	living.attr("Pig")          = LivingName::Pig;
@@ -353,10 +316,6 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	block.attr("SpawnPoint")  = BlockType::SpawnPoint;
 }
 
-// ================================================================
-// PythonBridge implementation
-// ================================================================
-
 static PythonBridge s_bridge;
 PythonBridge& pythonBridge() { return s_bridge; }
 
@@ -365,9 +324,8 @@ bool PythonBridge::init(const std::string& pythonPath) {
 
 	py::initialize_interpreter();
 
-	// Inner scope so all stack-allocated pybind11 objects (sys, localWorldMod)
-	// destruct — calling Py_DECREF — while the GIL is still held by this
-	// thread. We release the GIL only after this scope exits.
+	// Inner scope so stack py::objects destruct (Py_DECREF) while we still hold
+	// the GIL. GIL is released only after this scope exits.
 	bool ok = false;
 	{
 		try {
@@ -392,16 +350,15 @@ bool PythonBridge::init(const std::string& pythonPath) {
 	}
 
 	m_initialized = true;
-	// Release the main thread's GIL so background threads (DecideWorker) can
-	// acquire it. All subsequent Python calls — from any thread, including
-	// main — must scope-acquire via py::gil_scoped_acquire.
+	// Release main GIL so DecideWorker can acquire it. All subsequent Python
+	// calls (any thread) must scope-acquire via py::gil_scoped_acquire.
 	m_gilReleaser = new py::gil_scoped_release();
 	return true;
 }
 
 void PythonBridge::shutdown() {
 	if (!m_initialized) return;
-	// Re-acquire GIL to tear down Python objects; then release to finalize.
+	// Re-acquire GIL to tear down objects, then release to finalize.
 	{
 		py::gil_scoped_acquire gil;
 		m_behaviors.clear();
@@ -415,8 +372,7 @@ void PythonBridge::shutdown() {
 	printf("[PythonBridge] Shutdown.\n");
 }
 
-// Helper: translate PyContainer → C++ Container
-// Used by Plan step execution when converting Relocate/Convert steps to ActionProposals.
+// PyContainer → C++ Container. Used when converting Plan steps to ActionProposals.
 static Container pyContainerToC(const PyContainer& pc) {
 	switch (pc.kind) {
 	case 1:  return Container::ground();
@@ -438,19 +394,14 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 		// Isolated namespace per behavior (one per entity instance).
 		py::dict ns;
 
-		// Import engine actions + convenience wrappers + Behavior base class.
 		py::exec("from civcraft_engine import *", ns);
 		py::exec("from actions import *", ns);
 		py::exec("from behavior_base import Behavior", ns);
 
-		// Execute the behavior source code.
 		py::exec(sourceCode, ns);
 
-		// Find the Behavior subclass and instantiate it.
-		// Uses Python introspection so behaviors don't need registration boilerplate.
-		// Picks the most-derived candidate so behaviors using rule-list base
-		// classes (e.g. RulesBehavior) don't get the base class instantiated
-		// instead of the concrete subclass.
+		// Instantiate the most-derived Behavior subclass — so RulesBehavior
+		// subclasses don't end up picking the base instead of the concrete.
 		py::exec(R"(
 import inspect as _i
 _candidates = [_c for _n, _c in list(globals().items())
@@ -485,19 +436,17 @@ except NameError: pass
 	}
 }
 
-// Convert a single old-format PyAction to a PlanStep.
+// Old-format PyAction → PlanStep.
 static PlanStep pyActionToPlanStep(const PyAction& pa) {
 	if (pa.type == "move")
 		return PlanStep::move({pa.x, pa.y, pa.z}, pa.speed);
 	if (pa.type == "convert") {
-		// Target block position is carried in convert_from (kind=Block).
-		// Fall back to (x,y,z) for legacy callers that set it directly.
+		// Block pos carried in convert_from (kind=Block); fall back to (x,y,z).
 		glm::vec3 pos = (pa.convert_from.kind == 3)
 			? glm::vec3(pa.convert_from.x, pa.convert_from.y, pa.convert_from.z)
 			: glm::vec3(pa.x, pa.y, pa.z);
 		PlanStep s = PlanStep::harvest(pos);
-		// Carry the output item so the executor knows what to place in
-		// the actor's inventory. An empty to_item means "just destroy".
+		// Empty to_item = destroy.
 		s.itemId    = pa.to_item;
 		s.itemCount = pa.to_count;
 		return s;
@@ -506,7 +455,7 @@ static PlanStep pyActionToPlanStep(const PyAction& pa) {
 		return PlanStep::relocate(pyContainerToC(pa.relocate_from),
 		                          pyContainerToC(pa.relocate_to),
 		                          pa.item_id, pa.item_count);
-	// idle / interact / unknown → stand still
+	// idle / interact / unknown → stand still.
 	return PlanStep::move({pa.x, pa.y, pa.z}, 0.0f);
 }
 
@@ -523,11 +472,10 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
                                const std::string& lastOutcome,
                                const std::string& lastGoal,
                                const std::string& lastReason) {
-	// Acquire GIL — callDecide runs on DecideWorker's thread.
+	// Runs on DecideWorker's thread.
 	py::gil_scoped_acquire gil;
 
-	// Set per-call block query callbacks (cleared on return). Serialized by
-	// the GIL: only one callDecide runs at a time, so the statics are safe.
+	// Per-call callbacks; GIL serializes callDecide so static state is safe.
 	s_blockQueryFn   = blockQueryFn ? std::move(blockQueryFn)
 	                                : [](int,int,int){ return std::string("air"); };
 	s_scanBlocksFn   = std::move(scanBlocksFn);
@@ -552,7 +500,6 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 	try {
 		py::object& instance = *static_cast<py::object*>(it->second.instanceObj);
 
-		// Build nearby entities list
 		py::list pyNearby;
 		for (auto& ne : nearby) {
 			py::dict info;
@@ -565,7 +512,6 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 			pyNearby.append(info);
 		}
 
-		// Build self entity dict from snapshot
 		py::dict pySelf;
 		for (auto& [key, val] : self.props) {
 			if (auto* s = std::get_if<std::string>(&val)) pySelf[key.c_str()] = *s;
@@ -583,7 +529,6 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 			pyInv[itemId.c_str()] = count;
 		pySelf["inventory"] = pyInv;
 
-		// Build LocalWorld dict
 		py::dict pyWorld;
 		pyWorld["nearby"] = pyNearby;
 		pyWorld["blocks"] = py::list();
@@ -593,16 +538,14 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 		pyWorld["last_goal"]    = lastGoal;
 		pyWorld["last_reason"]  = lastReason;
 
-		// Construct pydantic objects
 		py::object& LocalWorldCls = *static_cast<py::object*>(m_localWorldClass);
 		py::object& SelfEntityCls = *static_cast<py::object*>(m_selfEntityClass);
 		py::object pyLocalWorld = LocalWorldCls.attr("_from_raw")(pyWorld);
 		py::object pySelfEntity = SelfEntityCls.attr("_from_raw")(pySelf);
 
-		// Call Python decide()
 		py::object result = instance.attr("decide")(pySelfEntity, pyLocalWorld);
 
-		// Parse return — expect (action_or_plan, goal_str)
+		// Expect (action_or_plan, goal_str).
 		if (!py::isinstance<py::tuple>(result)) {
 			errorOut = "decide() must return a tuple";
 			return {};
@@ -616,19 +559,18 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 		goalOut = tup[1].cast<std::string>();
 		if (goalOut.empty()) goalOut = "Active";
 
-		// Parse first element: old-format PyAction or new-format list of dicts
+		// tup[0]: old-format PyAction | new-format list of PlanStep dicts | None.
 		py::object first = tup[0];
 		Plan plan;
 
 		if (first.is_none()) {
-			// Idle — empty plan (stand still)
+			// Idle.
 		} else if (py::isinstance<py::list>(first)) {
-			// New format: list of PlanStep dicts.
-			// Each step type has a fixed, required schema:
-			//   move:     {"type":"move",     "x":float, "y":float, "z":float, "speed":float}
-			//   harvest:  {"type":"harvest",  "x":float, "y":float, "z":float}
-			//   attack:   {"type":"attack",   "entity_id":int}
-			//   relocate: {"type":"relocate", "from":Container, "to":Container, "item":str, "count":int}
+			// PlanStep dict schema:
+			//   move:     {type, x, y, z, speed}
+			//   harvest:  {type, x, y, z}
+			//   attack:   {type, entity_id}
+			//   relocate: {type, from, to, item, count}
 			for (auto& item : first.cast<py::list>()) {
 				py::dict d = item.cast<py::dict>();
 				std::string stype = d["type"].cast<std::string>();
@@ -652,7 +594,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 				}
 			}
 		} else {
-			// Old format: single PyAction → single-step Plan (backward compat)
+			// Backward compat: single PyAction → single-step Plan.
 			PyAction pa = first.cast<PyAction>();
 			plan.push_back(pyActionToPlanStep(pa));
 		}
@@ -688,10 +630,7 @@ void PythonBridge::unloadBehavior(BehaviorHandle handle) {
 // The old Behavior class hierarchy (PythonBehavior, IdleFallbackBehavior) has been
 // deleted. AgentClient now calls Python decide() directly via PythonBridge.
 
-// ================================================================
-// World config loader — reads artifacts/worlds/*.py via pybind11
-// ================================================================
-
+// Loads artifacts/worlds/*.py via pybind11.
 bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 	auto& bridge = pythonBridge();
 	if (!bridge.isInitialized()) return false;
@@ -725,11 +664,9 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			return d.contains(k) ? d[k].cast<bool>() : def;
 		};
 
-		// metadata
 		out.name        = getStr(w, "name", "");
 		out.description = getStr(w, "description", "");
 
-		// terrain
 		if (w.contains("terrain") && !w["terrain"].is_none()) {
 			py::dict t = w["terrain"].cast<py::dict>();
 			out.terrainType      = getStr(t, "type",               out.terrainType);
@@ -747,7 +684,6 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			out.dirtDepth        = getInt(t,   "dirt_depth",        out.dirtDepth);
 		}
 
-		// trees
 		if (w.contains("trees") && !w["trees"].is_none()) {
 			py::dict t = w["trees"].cast<py::dict>();
 			out.treeDensity    = getFloat(t, "density",          out.treeDensity);
@@ -756,48 +692,42 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			out.leafRadius     = getInt(t,   "leaf_radius",      out.leafRadius);
 		}
 
-		// spawn
 		if (w.contains("spawn") && !w["spawn"].is_none()) {
 			py::dict s = w["spawn"].cast<py::dict>();
 			out.spawnSearchX = getFloat(s, "search_x",   out.spawnSearchX);
 			out.spawnSearchZ = getFloat(s, "search_z",   out.spawnSearchZ);
 			out.spawnMinH    = getFloat(s, "min_height", out.spawnMinH);
 			out.spawnMaxH    = getFloat(s, "max_height", out.spawnMaxH);
-			// flat world fixed spawn
+			// Flat-world fixed spawn.
 			if (s.contains("x")) out.spawnSearchX = getFloat(s, "x", out.spawnSearchX);
 			if (s.contains("z")) out.spawnSearchZ = getFloat(s, "z", out.spawnSearchZ);
 		}
 
-		// chest (flat world)
 		if (w.contains("chest") && !w["chest"].is_none()) {
 			py::dict c = w["chest"].cast<py::dict>();
 			out.chestOffsetX = getFloat(c, "offset_x", out.chestOffsetX);
 			out.chestOffsetZ = getFloat(c, "offset_z", out.chestOffsetZ);
 		}
 
-		// Preparing-phase preload radius (in chunks). Clamp to sane bounds
-		// so a typo can't stall the server with a 10k-chunk grid.
+		// Clamp to sane bounds — typo can't stall server with 10k-chunk grid.
 		out.preloadRadiusChunks = getInt(w, "preload_radius_chunks", out.preloadRadiusChunks);
 		if (out.preloadRadiusChunks < 1)  out.preloadRadiusChunks = 1;
 		if (out.preloadRadiusChunks > 24) out.preloadRadiusChunks = 24;
 
-		// Day length in ticks. Clamp away from zero so the time advance
-		// doesn't divide by zero and doesn't sprint through 10 days/sec.
+		// Clamp away from 0 to avoid div-by-zero / 10 days/sec.
 		out.dayLengthTicks = getInt(w, "day_length_ticks", out.dayLengthTicks);
-		if (out.dayLengthTicks < 30)     out.dayLengthTicks = 30;       // floor: 30s
-		if (out.dayLengthTicks > 86400)  out.dayLengthTicks = 86400;    // ceil: 24h
+		if (out.dayLengthTicks < 30)     out.dayLengthTicks = 30;
+		if (out.dayLengthTicks > 86400)  out.dayLengthTicks = 86400;
 
-		// Weather schedule path (relative to src/artifacts/). Loaded separately
-		// by the server after the world config is parsed.
+		// Path relative to src/artifacts/; loaded separately.
 		out.weatherSchedule = getStr(w, "weather_schedule", out.weatherSchedule);
 
-		// portal — default true; set "portal": False to disable the temple arch.
+		// "portal": False disables temple arch.
 		if (w.contains("portal") && !w["portal"].is_none()) {
 			py::object p = w["portal"];
 			out.hasPortal = p.cast<bool>();
 		}
 
-		// village
 		out.hasVillage = w.contains("village") && !w["village"].is_none();
 		if (out.hasVillage) {
 			py::dict v = w["village"].cast<py::dict>();
@@ -817,7 +747,7 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 				for (auto& h : v["houses"].cast<py::list>()) {
 					WorldPyConfig::HouseLayout layout;
 					if (py::isinstance<py::dict>(h)) {
-						// Dict format: {"cx":0,"cz":0,"w":14,"d":14,"stories":2,"wall":"wood"}
+						// {"cx":0,"cz":0,"w":14,"d":14,"stories":2,"wall":"wood"}
 						py::dict hd = h.cast<py::dict>();
 						layout.cx      = hd["cx"].cast<int>();
 						layout.cz      = hd["cz"].cast<int>();
@@ -828,7 +758,7 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 						if (hd.contains("wall")) layout.wallBlock = hd["wall"].cast<std::string>();
 						if (hd.contains("roof")) layout.roofBlock = hd["roof"].cast<std::string>();
 					} else {
-						// List format: [cx, cz, w, d, stories(optional)]
+						// [cx, cz, w, d, stories?]
 						auto hl = h.cast<py::list>();
 						layout.cx      = hl[0].cast<int>();
 						layout.cz      = hl[1].cast<int>();
@@ -841,7 +771,6 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			}
 		}
 
-		// mobs
 		if (w.contains("mobs")) {
 			out.mobs.clear();
 			for (auto& m : w["mobs"].cast<py::list>()) {
@@ -870,11 +799,7 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 	}
 }
 
-// ================================================================
-// Weather schedule loader — Markov chain of kinds + wind model.
-// See artifacts/worlds/base/weather/temperate.py for the schema.
-// ================================================================
-
+// Markov chain + wind model. Schema: artifacts/worlds/base/weather/temperate.py.
 bool loadWeatherSchedule(const std::string& filePath, WeatherPyConfig& out) {
 	auto& bridge = pythonBridge();
 	if (!bridge.isInitialized()) return false;
@@ -948,11 +873,7 @@ bool loadWeatherSchedule(const std::string& filePath, WeatherPyConfig& out) {
 	}
 }
 
-// ================================================================
-// Structure blueprint loader — reads artifacts/structures/*.py via pybind11.
-// Same pattern as loadWorldConfig() above.
-// ================================================================
-
+// Reads artifacts/structures/*.py; same pattern as loadWorldConfig().
 bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out) {
 	auto& bridge = pythonBridge();
 	if (!bridge.isInitialized()) return false;
@@ -991,7 +912,6 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 		out.regenerates  = getBool(bp, "regenerates", false);
 		out.regen_interval_s = getFloat(bp, "regen_interval_s", 60.0f);
 
-		// Anchor
 		if (bp.contains("anchor")) {
 			py::dict a = bp["anchor"].cast<py::dict>();
 			out.anchor.block_type = getStr(a, "block_type", "root");
@@ -1002,7 +922,6 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 			}
 		}
 
-		// Blocks
 		if (bp.contains("blocks")) {
 			for (auto& item : bp["blocks"].cast<py::list>()) {
 				py::dict bd = item.cast<py::dict>();
@@ -1025,10 +944,6 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 		return false;
 	}
 }
-
-// ================================================================
-// StructureBlueprintManager::firstMissingBlock
-// ================================================================
 
 std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 	const Entity& e,

@@ -9,15 +9,13 @@ void GameServer::resolveActions(float dt) {
 	auto proposals = m_world->proposals.drain();
 	m_actionStats.resolved += (int)proposals.size();
 
-	// Advance per-entity reject cooldowns once per tick; entries expire to 0
-	// naturally and are cleaned out so the map doesn't grow unbounded.
+	// Decrement + erase so the cooldown map stays bounded.
 	for (auto it = m_clientPosRejectCooldown.begin(); it != m_clientPosRejectCooldown.end();) {
 		if (--it->second <= 0) it = m_clientPosRejectCooldown.erase(it);
 		else                    ++it;
 	}
 
-	// Per-tick deduplication: each entity gets at most one nudge-back per tick.
-	// Prevents inventory resend spam when a client sends many invalid actions.
+	// One nudge-back per entity per tick.
 	std::unordered_set<EntityId> nudgedThisTick;
 
 	for (auto& p : proposals) {
@@ -34,18 +32,9 @@ void GameServer::resolveActions(float dt) {
 				break;
 			}
 
-			// Accept client-reported position if within tolerance AND it doesn't
-			// overlap any solid block. Client runs moveAndCollide locally; the
-			// server trusts the result only after verifying no wall-phasing.
-			// Rejected clientPos falls through to server-authoritative physics.
-			//
-			// Cooldown: after a rejection we skip subsequent clientPos checks
-			// for this entity for kRejectCooldownTicks ticks. This swallows
-			// the stale Move actions already in the TCP pipe from before the
-			// client received the S_BLOCK update that would have taught it
-			// about the new block. Suppressed proposals fall through to
-			// server-authoritative physics silently — the first reject already
-			// logged, additional logs would just be noise.
+			// Rule 3: trust clientPos iff within tolerance and not inside
+			// solid; else reject → server-authoritative. Cooldown swallows
+			// stale in-flight proposals (see feedback_client_pos_reject_policy.md).
 			constexpr float CLIENT_POS_TOLERANCE = 8.0f;
 			constexpr int   kRejectCooldownTicks = 10;
 			bool inCooldown = m_clientPosRejectCooldown.count(p.actorId) > 0;
@@ -64,14 +53,10 @@ void GameServer::resolveActions(float dt) {
 					if (!isPositionBlocked(solidFn, p.clientPos,
 					                       mp.halfWidth, mp.height)) {
 						e->position = p.clientPos;
-						// Client already ran moveAndCollide — skip server physics
-						// this tick to prevent double gravity/collision.
+						// Client already collided — skip server physics this tick.
 						e->skipPhysics = true;
 					} else {
-						// First rejection in this burst: log, then open the
-						// cooldown window. In-flight stale proposals that
-						// arrive over the next ~167ms hit the cooldown branch
-						// above and are silently server-authored.
+						// Subsequent stale in-flight proposals suppressed.
 						m_clientPosRejectCooldown[p.actorId] = kRejectCooldownTicks;
 						char detail[160];
 						std::snprintf(detail, sizeof(detail),
@@ -82,13 +67,11 @@ void GameServer::resolveActions(float dt) {
 					}
 				}
 			}
-			// During cooldown we must also ignore p.hasClientPos for the Y
-			// velocity branch below, otherwise server would trust a stale
-			// post-physics Y and desync vertically.
+			// Also ignore hasClientPos for Y branch during cooldown — stale
+			// post-physics Y would desync vertically.
 			if (inCooldown) p.hasClientPos = false;
 
-			// Clamp to entity's max speed (anti-cheat).
-			// Sprint allows 2.5x, admin/fly is uncapped. Tolerance: 3.5x walk.
+			// Anti-cheat: sprint 2.5x, fly uncapped, tolerance 3.5x walk.
 			float maxSpeed = e->def().walk_speed;
 			if (maxSpeed > 0) {
 				float speedCap = maxSpeed * (p.sprint ? 3.5f : 1.5f);
@@ -105,17 +88,13 @@ void GameServer::resolveActions(float dt) {
 			e->velocity.x = p.desiredVel.x;
 			e->velocity.z = p.desiredVel.z;
 
-			// ── DEBUG: server-side Move receipt probe (10-min cooldown) ──
-			// (noisy per-entity startup diagnostic removed — re-enable if
-			// you need to debug client-vs-server physics routing.)
-
-			// Derive move target for client-side prediction (10-block lookahead)
+			// 10-block lookahead for client prediction.
 			float hLen = std::sqrt(p.desiredVel.x * p.desiredVel.x + p.desiredVel.z * p.desiredVel.z);
 			if (hLen > 0.01f) {
 				glm::vec3 dir = {p.desiredVel.x / hLen, 0, p.desiredVel.z / hLen};
 				e->moveTarget = e->position + dir * 10.0f;
 				e->moveSpeed = hLen;
-				// yaw is smoothed per-tick in GameServer::tick from velocity.
+				// Yaw smoothed per-tick from velocity in GameServer::tick.
 			} else {
 				e->moveTarget = e->position;
 				e->moveSpeed = 0;
@@ -124,7 +103,7 @@ void GameServer::resolveActions(float dt) {
 			e->lookYaw   = p.lookYaw;
 
 			if (p.hasClientPos) {
-				// Client ran moveAndCollide — trust its Y velocity (gravity, jump, etc.)
+				// Client ran gravity/jump → trust its Y.
 				e->velocity.y = p.desiredVel.y;
 			} else if (p.fly) {
 				e->velocity.y = p.desiredVel.y;
@@ -139,14 +118,8 @@ void GameServer::resolveActions(float dt) {
 			Entity* actor = m_world->entities.get(p.actorId);
 			if (!actor) break;
 
-			// Nudge: re-send current inventory so client corrects any optimistic state.
-			// Deduplicated per tick — at most one resend per entity regardless of spam.
-			//
-			// The caller supplies a `why` string describing what was attempted
-			// (item, source→dest, distance vs threshold). Without it, a
-			// rejected Relocate is opaque: you only see the numeric code. Log
-			// what we were trying to do so the user can diagnose without
-			// reading server source for every code.
+			// Resend inventory to correct client optimistic state (dedup/tick).
+			// `why` carries item/src→dst/distance so rejects are diagnosable.
 			auto nudgeR = [&](ActionRejectCode code, const std::string& why) {
 				logActionReject("Relocate", p.actorId, rejectCodeName(code), why.c_str());
 				if (nudgedThisTick.count(p.actorId)) return;
@@ -156,7 +129,7 @@ void GameServer::resolveActions(float dt) {
 			};
 
 			if (p.relocateTo.kind == Container::Kind::Ground) {
-				// Drop item from actor inventory as a spawned item entity
+				// Drop → spawn item entity.
 				if (!actor->inventory) break;
 				std::string dropType = p.itemId;
 				if (dropType.empty()) break;
@@ -171,7 +144,6 @@ void GameServer::resolveActions(float dt) {
 				if (m_callbacks.onInventoryChange)
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 
-				// Spawn item entity and toss
 				glm::vec3 tossDir = p.desiredVel;
 				float tossLen = glm::length(tossDir);
 				if (tossLen < 0.1f) {
@@ -193,7 +165,6 @@ void GameServer::resolveActions(float dt) {
 			}
 
 			if (!p.equipSlot.empty()) {
-				// Equip item to wear slot
 				if (!actor->inventory) break;
 				WearSlot ws;
 				if (!wearSlotFromString(p.equipSlot, ws)) {
@@ -211,7 +182,7 @@ void GameServer::resolveActions(float dt) {
 			}
 
 			if (p.relocateTo.kind == Container::Kind::Entity) {
-				// Store into another entity's inventory (chest, Creatures, etc.)
+				// Store into chest/creature inventory.
 				Entity* target = m_world->entities.get(p.relocateTo.entityId);
 				if (!target || target->removed) {
 					char buf[128];
@@ -240,14 +211,13 @@ void GameServer::resolveActions(float dt) {
 						dist, target->id(), m_wgc.storeRange,
 						actor->position.x, actor->position.y, actor->position.z,
 						target->position.x, target->position.y, target->position.z);
-					// Out-of-range store is not a code-based reject today; log and drop.
+					// No reject code for out-of-range today; log-and-drop.
 					printf("[Server] Relocate rejected entity=%u (%s)\n", actor->id(), buf);
 					break;
 				}
 
 				int totalTransferred = 0;
 				if (!p.itemId.empty()) {
-					// Transfer specific item × count
 					int count = std::clamp(p.itemCount, 1, 64);
 					if (!actor->inventory->has(p.itemId, count)) {
 						char buf[160];
@@ -261,7 +231,7 @@ void GameServer::resolveActions(float dt) {
 					target->inventory->add(p.itemId, count);
 					totalTransferred = count;
 				} else {
-					// Transfer all items
+					// Transfer all.
 					for (auto& [itemIdStr, count] : actor->inventory->items()) {
 						target->inventory->add(itemIdStr, count);
 						totalTransferred += count;
@@ -294,7 +264,7 @@ void GameServer::resolveActions(float dt) {
 				}
 
 				if (src->typeId() == ItemName::ItemEntity) {
-					// Item entity pickup: validate range using the actor's pickup_range
+					// Pickup: validate actor's pickup_range.
 					float dist = glm::length(src->position - actor->position);
 					float maxRange = actor->def().pickup_range;
 					if (maxRange <= 0) maxRange = 1.5f;
@@ -330,7 +300,7 @@ void GameServer::resolveActions(float dt) {
 					if (m_callbacks.onInventoryChange)
 						m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 				} else if (src->inventory) {
-					// Take from another entity's inventory (chest, Creatures, etc.)
+					// Take from chest/creature inventory.
 					float dist = glm::length(src->position - actor->position);
 					if (dist > m_wgc.storeRange) {
 						char buf[160];
@@ -385,8 +355,7 @@ void GameServer::resolveActions(float dt) {
 			Entity* actor = m_world->entities.get(p.actorId);
 			if (!actor) break;
 
-			// Nudge: re-send current inventory so client corrects any optimistic state.
-			// Deduplicated per tick — at most one resend per entity regardless of spam.
+			// Resend inventory to correct optimistic state; dedup/tick.
 			auto nudge = [&](ActionRejectCode code, const std::string& why) {
 				char detail[256];
 				std::snprintf(detail, sizeof(detail), "from=%s to=%s: %s",
@@ -398,7 +367,7 @@ void GameServer::resolveActions(float dt) {
 					m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 			};
 
-			// Act on another entity's HP or inventory (e.g. attack: destroy target's HP)
+			// Act on target's HP/inventory (e.g. attack).
 			if (p.convertFrom.kind == Container::Kind::Entity) {
 				Entity* target = m_world->entities.get(p.convertFrom.entityId);
 				if (!target || target->removed) break;
@@ -410,17 +379,15 @@ void GameServer::resolveActions(float dt) {
 					int hp = target->hp();
 					target->setHp(std::max(hp - dmg, 0));
 
-					// Knockback
 					glm::vec3 diff = target->position - actor->position;
 					float dist = glm::length(diff);
 					glm::vec3 kb = (dist > 0.1f) ? glm::normalize(diff) : glm::vec3(0, 0, 1);
 					target->velocity += kb * 4.0f + glm::vec3(0, 3.0f, 0);
 
-					// Death
 					if (target->hp() <= 0) {
 						target->removed = true;
 
-						// Drop loot for animals
+						// Animal loot.
 						if (target->def().isLiving()) {
 							int count = 1 + (rand() % 2);
 							glm::vec3 lootPos = target->position + glm::vec3(0, 0.3f, 0);
@@ -434,14 +401,14 @@ void GameServer::resolveActions(float dt) {
 						}
 					}
 				} else {
-					// Destroy specific item from target's inventory
+					// Destroy specific item from target.
 					if (target->inventory && target->inventory->has(p.fromItem))
 						target->inventory->remove(p.fromItem, p.fromCount);
 				}
 				break;
 			}
 
-			// Value conservation check
+			// Rule 0: output value must not exceed input.
 			float inVal  = getMaterialValue(p.fromItem) * (float)p.fromCount;
 			float outVal = getMaterialValue(p.toItem)   * (float)p.toCount;
 			if (outVal > inVal + 0.001f) {
@@ -456,7 +423,7 @@ void GameServer::resolveActions(float dt) {
 			const bool fromBlock = (p.convertFrom.kind == Container::Kind::Block);
 			const bool intoBlock = (p.convertInto.kind == Container::Kind::Block);
 
-			// Pre-validate placement target BEFORE consuming source (prevents item loss on race)
+			// Validate placement BEFORE consuming source (prevents item loss on race).
 			if (intoBlock) {
 				auto& pp = p.convertInto.pos;
 				if (m_world->getBlock(pp.x, pp.y, pp.z) != BLOCK_AIR) {
@@ -475,9 +442,8 @@ void GameServer::resolveActions(float dt) {
 				}
 			}
 
-			// Consume source
+			// Consume source.
 			if (fromBlock) {
-				// Source is a world block
 				auto& bp = p.convertFrom.pos;
 				BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
 				if (bid == BLOCK_AIR) {
@@ -486,7 +452,7 @@ void GameServer::resolveActions(float dt) {
 					nudge(ActionRejectCode::SourceBlockGone, buf); break;
 				}
 				const BlockDef& bdef = m_world->blocks.get(bid);
-				// Anti-cheat: client must send matching fromItem
+				// Anti-cheat: fromItem must match actual block.
 				if (!p.fromItem.empty() && bdef.string_id != p.fromItem) {
 					char buf[160]; std::snprintf(buf, sizeof(buf),
 						"source block at (%d,%d,%d) is '%s', action claims '%s'",
@@ -502,13 +468,12 @@ void GameServer::resolveActions(float dt) {
 				       ((bp.z % 16) + 16) % 16, BLOCK_AIR);
 				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(bp, bid, BLOCK_AIR, 0);
 
-				// Notify structure system of block destruction
+				// Structure damage: remove entity if anchor destroyed.
 				EntityId sid = m_structureCacher.lookup(bp);
 				if (sid != ENTITY_NONE) {
 					Entity* se = m_world->entities.get(sid);
 					if (se && se->structure) {
 						if (bp == se->structure->anchorPos) {
-							// Anchor destroyed → remove structure entity
 							m_structureCacher.unregisterStructure(sid);
 							se->removed = true;
 							m_incompleteStructures.erase(sid);
@@ -518,11 +483,10 @@ void GameServer::resolveActions(float dt) {
 					}
 				}
 			} else if (p.fromItem == "hp") {
-				// Consume HP
 				int hp = actor->hp();
 				actor->setHp(std::max(hp - p.fromCount, 0));
 			} else {
-				// Consume from actor's inventory (Self)
+				// Consume from actor's inventory.
 				if (!actor->inventory) break;
 				if (!actor->inventory->has(p.fromItem)) {
 					char buf[160]; std::snprintf(buf, sizeof(buf),
@@ -532,16 +496,16 @@ void GameServer::resolveActions(float dt) {
 				actor->inventory->remove(p.fromItem, p.fromCount);
 			}
 
-			// Produce output
+			// Produce output.
 			if (intoBlock) {
-				// Place block (pre-validated above — target is guaranteed clear)
+				// Target was pre-validated clear.
 				auto& pp = p.convertInto.pos;
 				const BlockDef* placedDef = m_world->blocks.find(p.toItem);
 				ChunkPos cp = worldToChunk(pp.x, pp.y, pp.z);
 				Chunk* c = m_world->getChunk(cp);
-				if (!c || !placedDef) break;  // chunk unloaded between pre-check and now — rare
+				if (!c || !placedDef) break;  // rare race vs pre-check
 
-				// Door-specific: auto-detect hinge
+				// Door: auto-detect hinge from neighbors.
 				uint8_t placeP2 = 0;
 				if (placedDef->mesh_type == MeshType::Door) {
 					auto isSolidCube = [&](int nx, int ny, int nz) {
@@ -567,7 +531,7 @@ void GameServer::resolveActions(float dt) {
 					else if (wZm && !wZp)  placeP2 = 0;
 				}
 
-				// Check actor body doesn't overlap placement
+				// Don't let actor place inside their own body.
 				if (actor) {
 					auto& fp = actor->position;
 					float hw = (actor->def().collision_box_max.x - actor->def().collision_box_min.x) * 0.5f;
@@ -589,27 +553,24 @@ void GameServer::resolveActions(float dt) {
 				if (placedDef->behavior == BlockBehavior::Active)
 					m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
 			} else if (p.toItem == "hp") {
-				// Heal actor
 				int hp = actor->hp();
 				if (hp < actor->def().max_hp)
 					actor->setHp(std::min(hp + p.toCount, actor->def().max_hp));
 			} else if (!p.toItem.empty()) {
 				if (p.convertInto.kind == Container::Kind::Ground) {
-					// Spawn as item entity near actor or at the source block position
 					glm::vec3 spawnPos = fromBlock
 						? (glm::vec3(p.convertFrom.pos) + glm::vec3(0.5f, 0.5f, 0.5f))
 						: (actor->position + glm::vec3(0, 0.3f, 0));
 					m_world->entities.spawn(ItemName::ItemEntity, spawnPos,
 						{{Prop::ItemType, p.toItem}, {Prop::Count, p.toCount}, {Prop::Age, 0.0f}});
 				} else {
-					// Default: add directly to actor's inventory (Self)
+					// Default: into actor's inventory.
 					if (actor->inventory) {
 						actor->inventory->add(p.toItem, p.toCount);
 					}
 				}
 			}
 
-			// Sync inventory
 			if (actor->inventory && m_callbacks.onInventoryChange)
 				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
 			break;
@@ -621,7 +582,6 @@ void GameServer::resolveActions(float dt) {
 			BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
 			const BlockDef& bdef = m_world->blocks.get(bid);
 
-			// TNT ignition
 			if (bdef.string_id == BlockType::TNT) {
 				auto* tntState = m_world->getBlockState(bp.x, bp.y, bp.z);
 				if (!tntState) {
@@ -634,7 +594,7 @@ void GameServer::resolveActions(float dt) {
 				break;
 			}
 
-			// Door toggle
+			// Door: toggle + propagate vertically through connected door stack.
 			bool isDoor     = (bdef.string_id == BlockType::Door);
 			bool isDoorOpen = (bdef.string_id == BlockType::DoorOpen);
 			if (!isDoor && !isDoorOpen) break;
@@ -649,7 +609,7 @@ void GameServer::resolveActions(float dt) {
 				if (!c) return;
 				int lx = ((x%16)+16)%16, ly = ((y%16)+16)%16, lz = ((z%16)+16)%16;
 				uint8_t p2 = c->getParam2(lx, ly, lz);
-				BlockId oldId = c->get(lx, ly, lz);  // read BEFORE set
+				BlockId oldId = c->get(lx, ly, lz);  // MUST read before set
 				c->set(lx, ly, lz, id, p2);
 				glm::ivec3 pos{x, y, z};
 				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, oldId, id, p2);
@@ -670,7 +630,6 @@ void GameServer::resolveActions(float dt) {
 			break;
 		}
 
-		// default: unknown type — ignore
 		default: break;
 
 		} // switch

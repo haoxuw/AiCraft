@@ -1,24 +1,8 @@
 #pragma once
 
-/**
- * Python bridge — embeds CPython via pybind11.
- *
- * NEW ARCHITECTURE:
- *   PythonBridge owns the interpreter lifecycle (init/shutdown) and provides
- *   behavior loading. AgentClient calls decide() on a background thread with
- *   GIL management.
- *
- *   The old callDecide() that returned a single BehaviorAction has been removed.
- *   The new flow:
- *     1. loadBehavior(code) → handle (unchanged)
- *     2. AgentClient acquires GIL, calls Python decide(), gets Plan back
- *     3. AgentClient releases GIL, executes Plan steps as ActionProposals
- *
- *   Thread safety: static block query callbacks (s_blockQueryFn, s_scanBlocksFn)
- *   must be protected by a mutex since multiple agent ticks may overlap.
- *
- * Also provides world config and structure blueprint loading from Python artifacts.
- */
+// CPython via pybind11. Owns interpreter lifecycle; loads behaviors + world
+// configs + structure blueprints from Python artifacts. callDecide() returns
+// a Plan and is GIL-safe (callers must NOT hold the GIL).
 
 #include "logic/entity.h"
 #include "logic/action.h"
@@ -31,19 +15,13 @@
 
 namespace civcraft {
 
-// ============================================================
-// WorldPyConfig — world template parameters loaded from Python.
-// Defaults here match the base game values so C++ falls back
-// gracefully when Python is unavailable.
-// ============================================================
+// Defaults = base game so builds without Python still produce a playable world.
 struct WorldPyConfig {
-	// Metadata
 	std::string name;
 	std::string description;
 
-	// Terrain
-	std::string terrainType      = "natural";  // "flat" or "natural"
-	float surfaceY               = 4.0f;       // flat world only
+	std::string terrainType      = "natural";  // "flat" | "natural"
+	float surfaceY               = 4.0f;       // flat only
 
 	float continentScale         = 0.004f;
 	float continentAmplitude     = 18.0f;
@@ -57,22 +35,19 @@ struct WorldPyConfig {
 	float snowThreshold          = 22.0f;
 	int   dirtDepth              = 4;
 
-	// Trees
 	float treeDensity            = 0.025f;
 	int   trunkHeightMin         = 5;
 	int   trunkHeightMax         = 9;
 	int   leafRadius             = 3;
 
-	// Spawn search
 	float spawnSearchX           = 30.0f;
 	float spawnSearchZ           = 30.0f;
 	float spawnMinH              = 2.0f;
 	float spawnMaxH              = 12.0f;
 
-	// Spawn portal (set false for minimal test worlds → just a spawn-point block).
+	// false = minimal test world (spawn block only, no portal).
 	bool  hasPortal              = true;
 
-	// Village
 	bool  hasVillage             = true;
 	float villageOffsetX         = 40.0f;
 	float villageOffsetZ         = 12.0f;
@@ -80,9 +55,9 @@ struct WorldPyConfig {
 
 	struct HouseLayout {
 		int cx = 0, cz = 0, w = 8, d = 8, stories = 1;
-		std::string type;       // "" = house, "barn" = open barn (no walls, pillars only)
-		std::string wallBlock;  // "" = use village default
-		std::string roofBlock;  // "" = use village default
+		std::string type;       // "" = house, "barn" = open (no walls)
+		std::string wallBlock;  // "" = village default
+		std::string roofBlock;
 	};
 	std::vector<HouseLayout> houses = {
 		{  0,   0, 14, 14, 2, "",          ""},
@@ -99,32 +74,21 @@ struct WorldPyConfig {
 	int   doorHeight             = 5;
 	int   windowRow              = 2;
 
-	// Flat world: chest offset from spawn (village world: chest inside main house)
+	// Flat: chest offset from spawn. Village: chest inside main house.
 	float chestOffsetX           = 5.0f;
 	float chestOffsetZ           = 0.0f;
 
-	// Preparing-phase chunk radius (HELLO handshake). Read by ClientManager
-	// to size the (2R+1)² chunk grid preloaded around spawn before the
-	// player is admitted to the world. Post-spawn streaming still uses the
-	// engine's STREAM_R/STREAM_FAR_R constants (fog-bound). A smaller value
-	// here means faster joins; a larger value means more world visible at
-	// spawn. Default 11 mirrors the historical STREAM_R behavior.
+	// (2R+1)² preload grid before admit. Post-spawn uses STREAM_R/STREAM_FAR_R.
 	int   preloadRadiusChunks    = 11;
 
-	// Day/night cycle length in real seconds (at 60 tps → 1 unit = 60s).
-	// GameServer advances m_worldTime by (1/dayLengthTicks * dt) per tick
-	// so worldTime ∈ [0,1) completes one full cycle every dayLengthTicks
-	// seconds. 1200 = 20-minute day (default). Python: `day_length_ticks`.
+	// Real-time seconds for full day/night. Python key: day_length_ticks.
 	int   dayLengthTicks         = 1200;
 
-	// Mobs
-	//   spawnAt: optional "monument" | "barn" | "portal" string from Python.
-	//     Translated to WorldGenConfig::SpawnAnchor in server init. Empty
-	//     string falls back to legacy circular ring around villageCenter().
+	// spawnAt: "monument"|"barn"|"portal", "" = legacy ring around village center.
 	struct MobConfig {
 		std::string type; int count = 0; float radius = 20.0f;
-		std::string spawnAt;  // e.g. "monument", "barn", "portal", "" (village ring)
-		float yOffset = 0.0f;  // blocks above the resolved ground Y (flyers spawn at +3)
+		std::string spawnAt;
+		float yOffset = 0.0f;  // blocks above ground (flyers +3)
 		std::unordered_map<std::string, std::string> props;
 	};
 	std::vector<MobConfig> mobs = {
@@ -135,59 +99,46 @@ struct WorldPyConfig {
 		{"cat",      2, 4.0f,  "barn"},
 	};
 
-	// Weather schedule path (relative to src/artifacts). Empty = static "clear"
-	// weather, no transitions. Python-configurable via world_config `weather:`
-	// key (see artifacts/worlds/base/weather/temperate.py).
+	// Empty = static "clear". Set via world_config `weather:` key.
+	// See artifacts/worlds/base/weather/temperate.py.
 	std::string weatherSchedule;
 };
 
-// ============================================================
-// WeatherPyConfig — Markov-chain weather schedule.
-// Read by the server's WeatherController and advanced each tick.
-// ============================================================
+// Markov-chain schedule read by WeatherController each tick.
 struct WeatherPyConfig {
 	struct Kind {
 		std::string name;           // "clear" | "rain" | "snow" | "leaves" | ...
-		float       meanSeconds  = 300.0f;  // mean time-in-state (exponential)
-		float       minIntensity = 0.0f;    // uniform pick in [min,max]
+		float       meanSeconds  = 300.0f;  // exponential mean
+		float       minIntensity = 0.0f;    // uniform in [min,max]
 		float       maxIntensity = 1.0f;
-		// Transition probabilities. Keys reference other Kind::name entries.
-		// Weights don't need to sum to 1; controller normalises.
+		// Transition weights (controller normalises, don't need to sum to 1).
 		std::vector<std::pair<std::string, float>> next;
 	};
 	std::vector<Kind> kinds = {
 		{"clear", 600.0f, 0.0f, 0.0f, {{"clear", 1.0f}}},
 	};
-	// Wind model — base vector in world XZ, plus a low-frequency sinusoid.
+	// Wind: XZ base + low-frequency sinusoid.
 	float baseWindX      = 0.0f;
 	float baseWindZ      = 0.0f;
 	float windNoiseAmp   = 0.0f;
-	float windNoiseScale = 30.0f;          // seconds per full cycle
+	float windNoiseScale = 30.0f;  // seconds/cycle
 
-	// Initial kind on world spawn. Must match one of kinds[].name. Falls back
-	// to kinds[0] if unknown.
+	// Must match a kinds[].name; falls back to kinds[0].
 	std::string initialKind = "clear";
 };
 
-// Load world template config from a Python artifact file.
 bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out);
 
-// Load a weather schedule from a Python artifact file (see temperate.py).
-// Returns false on parse error; `out` is unchanged on failure.
+// Returns false on parse error; `out` unchanged on failure.
 bool loadWeatherSchedule(const std::string& filePath, WeatherPyConfig& out);
 
-// Forward-declare StructureBlueprint (defined in structure_blueprint.h).
 struct StructureBlueprint;
-
-// Load a structure blueprint from a Python artifact file.
 bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out);
 
 using BehaviorHandle = int;
 
-// Immutable snapshot of an entity's decide()-relevant state. Built on the
-// main thread before pushing to DecideWorker so the worker reads no shared
-// mutable state. Inventory and props are copied here to avoid iterating
-// live containers from another thread (unordered_map rehash = UB).
+// Immutable snapshot built on main thread; DecideWorker reads no shared state.
+// Inventory/props are copied to avoid cross-thread map rehash UB.
 struct EntitySnapshot {
 	EntityId    id       = ENTITY_NONE;
 	std::string typeId;
@@ -207,41 +158,27 @@ struct EntitySnapshot {
 
 class PythonBridge {
 public:
-	// Start the Python interpreter. Call once at startup.
+	// Call once at startup/shutdown.
 	bool init(const std::string& pythonPath = "python");
-
-	// Stop the interpreter. Call once at shutdown.
 	void shutdown();
 
 	bool isInitialized() const { return m_initialized; }
 
-	// Load a behavior from Python source code string.
-	// Returns a handle for calling decide() later.
 	BehaviorHandle loadBehavior(const std::string& sourceCode, std::string& errorOut);
-
-	// Get the source code of a loaded behavior
 	std::string getSource(BehaviorHandle handle) const;
-
-	// Unload a behavior (free Python objects)
 	void unloadBehavior(BehaviorHandle handle);
 
-	// Block query function types — set per-call, protected by mutex
+	// Per-call, mutex-protected.
 	using BlockQueryFn      = std::function<std::string(int, int, int)>;
 	using ScanBlocksFn      = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 	using ScanEntitiesFn    = std::function<std::vector<NearbyEntity>(const std::string&, glm::vec3, float, int)>;
-	// Annotations — same shape as blocks; caller treats hits as decorator
-	// positions (flowers, moss, …) matched by typeId.
+	// Same shape as blocks; hits are decorator positions (flowers, moss) by typeId.
 	using ScanAnnotationsFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 
-	// Call decide() on a loaded behavior.
-	// Returns a Plan (list of PlanSteps). Backward compatible: if the behavior
-	// returns old-format (action, goal_str), it's converted to a single-step Plan.
-	//
-	// Thread-safe. Internally acquires the GIL, so callers must NOT hold it.
-	// Typically invoked from DecideWorker's thread.
-	// lastOutcome/lastGoal/lastReason describe the outcome of the previous
-	// plan (event-driven decide loop). See python/local_world.py for the
-	// exposed Python fields (world.last_outcome / last_goal / last_reason).
+	// GIL-safe (caller must NOT hold it). Old (action, goal_str) tuples are
+	// converted to a single-step Plan for backward compat.
+	// lastOutcome/lastGoal/lastReason describe the previous plan (event-driven
+	// loop); see python/local_world.py for exposed fields.
 	Plan callDecide(BehaviorHandle handle,
 	                const EntitySnapshot& self,
 	                const std::vector<NearbyEntity>& nearby,
@@ -262,24 +199,22 @@ private:
 
 	struct LoadedBehavior {
 		std::string source;
-		// pybind11 objects stored as opaque pointers (impl in .cpp)
+		// pybind11 objects — opaque to avoid leaking pybind into header.
 		void* moduleObj = nullptr;
 		void* instanceObj = nullptr;
 	};
 
 	std::unordered_map<int, LoadedBehavior> m_behaviors;
 
-	// Cached pydantic class references for LocalWorld and SelfEntity.
+	// Cached pydantic classes.
 	void* m_localWorldClass  = nullptr;
 	void* m_selfEntityClass  = nullptr;
 
-	// Main thread's GIL release, held between init() and shutdown() so
-	// background threads (DecideWorker) can acquire the GIL on demand.
-	// Stored as void* to avoid leaking pybind11 into the header.
+	// Main-thread GIL release held init()→shutdown() so DecideWorker can
+	// acquire the GIL on demand. Opaque to keep pybind11 out of header.
 	void* m_gilReleaser = nullptr;
 };
 
-// Global bridge instance
 PythonBridge& pythonBridge();
 
 } // namespace civcraft

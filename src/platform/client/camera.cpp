@@ -31,7 +31,7 @@ glm::mat4 Camera::projectionMatrix(float aspect) const {
 void Camera::cycleMode() {
 	int m = ((int)mode + 1) % 4;
 	mode = (CameraMode)m;
-	m_firstMouse = true; // reset mouse tracking on mode change
+	m_firstMouse = true;
 }
 
 void Camera::processMouse(GLFWwindow* window) {
@@ -49,26 +49,23 @@ void Camera::processMouse(GLFWwindow* window) {
 		player.yaw = lookYaw;
 		break;
 	case CameraMode::ThirdPerson:
-		orbitYaw += dx; orbitPitch -= dy;  // mouse up → orbit lowers → view aims upward
-		// Allow camera to orbit below player so you can look up at the sky.
+		orbitYaw += dx; orbitPitch -= dy;
 		orbitPitch = std::clamp(orbitPitch, -60.0f, 85.0f);
-		// Don't set player.yaw here — character faces movement direction,
-		// handled by gameplay.cpp smooth turn logic (like Fortnite)
+		// player.yaw is driven by gameplay.cpp turn logic (faces movement direction).
 		break;
 	case CameraMode::RPG:
-		// Mouse orbits camera around player (player yaw unchanged)
-		// X: rotate orbit, Y: raise/lower camera. Mouse up → camera lowers →
-		// view aims upward (same convention as TPS).
 		godOrbitYaw += dx;
 		godAngle -= dy;
 		godAngle = std::clamp(godAngle, -60.0f, 85.0f);
 		break;
 	case CameraMode::RTS:
-		// WoW-style: hold RMB and drag to orbit. X rotates yaw,
-		// Y tilts pitch. Zoom lives on the scroll wheel.
+		// RMB drag = orbit (X yaw, Y pitch); MMB drag vertical = zoom.
 		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
 			rtsOrbitYaw += dx * 2.5f;
 			rtsAngle = std::clamp(rtsAngle + dy * 0.5f, 5.0f, 89.0f);
+		}
+		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS) {
+			pendingRtsZoom += dy * 0.6f;
 		}
 		break;
 	}
@@ -85,10 +82,7 @@ void Camera::processInput(GLFWwindow* window, float dt) {
 	}
 }
 
-// Smooth vertical camera tracking.
-// Going UP (step-up): gentle rise like climbing stairs.
-// Going DOWN (falling/stepping down): faster tracking for responsiveness.
-// Max-lag cap prevents portal stairs (1.0-block drops) from causing long camera trail.
+// Asymmetric: gentle climb, responsive fall. Max-lag cap prevents long trails on drops.
 float Camera::smoothVertical(float targetY, float dt) {
 	if (!m_smoothInit) {
 		m_smoothY = targetY;
@@ -98,23 +92,16 @@ float Camera::smoothVertical(float targetY, float dt) {
 
 	float diff = targetY - m_smoothY;
 
-	// Clamp maximum lag: camera can trail by at most half a stair step.
-	// This ensures large drops (portal staircase, 1.0-block step) are partially
-	// snapped then smoothed over the remaining 0.5 blocks — no long trailing camera.
 	const float kMaxLag = 1.1f;
 	if (diff > kMaxLag)  { m_smoothY = targetY - kMaxLag; diff =  kMaxLag; }
 	if (diff < -kMaxLag) { m_smoothY = targetY + kMaxLag; diff = -kMaxLag; }
 
-	// Asymmetric smoothing: gentle climb up, responsive fall down
 	float rate;
 	if (diff > 0.01f) {
-		// Rising (step-up): smooth climb; faster for taller steps
 		rate = 9.0f + diff * 5.0f;
 	} else if (diff < -0.01f) {
-		// Falling/stepping down: fast tracking
 		rate = 24.0f;
 	} else {
-		// Close enough: snap to avoid floating-point drift
 		m_smoothY = targetY;
 		return targetY;
 	}
@@ -124,13 +111,11 @@ float Camera::smoothVertical(float targetY, float dt) {
 }
 
 void Camera::updateFirstPerson(GLFWwindow* window, float dt) {
-	// Always smooth feetPos.y, then add eye height offset
 	float smoothedFeetY = smoothVertical(player.feetPos.y, dt);
 	position = glm::vec3(player.feetPos.x, smoothedFeetY + player.eyeHeight, player.feetPos.z);
 }
 
 void Camera::updateThirdPerson(GLFWwindow* window, float dt) {
-	// Smooth zoom
 	orbitDistance += (orbitDistanceTarget - orbitDistance) * std::min(dt * 10.0f, 1.0f);
 
 	float yaw = glm::radians(orbitYaw);
@@ -151,7 +136,6 @@ void Camera::updateThirdPerson(GLFWwindow* window, float dt) {
 	lookPitch = glm::degrees(asin(dir.y));
 }
 
-// RPG camera position update (no mouse processing)
 void Camera::updateRPGPosition(float dt) {
 	godDistance += (godDistanceTarget - godDistance) * std::min(dt * 10.0f, 1.0f);
 
@@ -174,32 +158,20 @@ void Camera::updateRPGPosition(float dt) {
 }
 
 void Camera::updateRTS(GLFWwindow* window, float dt) {
-	// SC2/WoW-style RTS camera:
-	//   WASD / edge-scroll pan with momentum, Ctrl = fast pan
-	//   Q/E rotate, Home resets orbit heading
-	//   Scroll wheel zoom-to-cursor (consumed via pendingRtsZoom)
-	//   MMB re-centers on player
-	//   Ctrl+1..4 save bookmark, 1..4 recall
-	// Shift is reserved for box-select additive (gameplay), so fast-pan is Ctrl.
-
-	// Keep m_smoothY updated for player model rendering (smoothedFeetPos)
+	// SC2/WoW-style: WASD/edge pan, RMB orbit, MMB/scroll zoom, Q/E rotate, Home reset.
+	// Ctrl+1..4 save bookmark, 1..4 recall. Ctrl = fast pan (Shift reserved for box-select).
 	smoothVertical(player.feetPos.y, dt);
-
-	// MMB: re-center on player
-	if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS)
-		rtsCenter = player.feetPos;
 
 	bool fast = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
 	            glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
 	bool altHeld = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
 	               glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
 
-	// Orbit basis (fwd is the "up on screen" direction)
+	// Matches TPS/RPG: cam at rtsCenter + (-cos(yaw), _, -sin(yaw))*D → "up on screen" = +x at yaw=0.
 	float yaw = glm::radians(rtsOrbitYaw);
-	glm::vec3 fwd = glm::normalize(glm::vec3(-cos(yaw), 0, -sin(yaw)));
+	glm::vec3 fwd = glm::normalize(glm::vec3(cos(yaw), 0, sin(yaw)));
 	glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0, 1, 0)));
 
-	// Accumulate pan input direction from WASD + edge scroll.
 	glm::vec3 inputDir(0);
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) inputDir += fwd;
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) inputDir -= fwd;
@@ -211,16 +183,14 @@ void Camera::updateRTS(GLFWwindow* window, float dt) {
 		glfwGetCursorPos(window, &mx, &my);
 		int w, h;
 		glfwGetWindowSize(window, &w, &h);
-		// Narrow deadzone so unintentional brushes don't drift the camera.
-		const float edgeMargin = 18.0f;
+		const float edgeMargin = 18.0f;  // narrow to avoid unintentional drift
 		if (mx >= 0 && mx < edgeMargin)     inputDir -= right;
 		if (mx > w - edgeMargin && mx <= w) inputDir += right;
 		if (my >= 0 && my < edgeMargin)     inputDir += fwd;
 		if (my > h - edgeMargin && my <= h) inputDir -= fwd;
 	}
 
-	// Momentum: snap up to target velocity quickly, coast down slowly so
-	// the camera glides to a stop after a key-up (SC2 feel).
+	// Momentum: snap up quickly, coast down slowly (SC2 feel).
 	float baseSpeed = rtsPanSpeed * (fast ? 2.5f : 1.0f);
 	glm::vec3 targetVel = (glm::length(inputDir) > 0.001f)
 		? glm::normalize(inputDir) * baseSpeed : glm::vec3(0);
@@ -228,15 +198,12 @@ void Camera::updateRTS(GLFWwindow* window, float dt) {
 	rtsPanVel += (targetVel - rtsPanVel) * std::min(dt * panLerp, 1.0f);
 	rtsCenter += rtsPanVel * dt;
 
-	// Q/E rotate, Home resets heading.
 	float rotSpeed = 90.0f * dt * (fast ? 2.0f : 1.0f);
 	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) rtsOrbitYaw -= rotSpeed;
 	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) rtsOrbitYaw += rotSpeed;
 	if (glfwGetKey(window, GLFW_KEY_HOME) == GLFW_PRESS) rtsOrbitYaw = 90.0f;
 
-	// Bookmarks: Ctrl+[1..4] set, [1..4] recall. Edge-detected so holding
-	// the key doesn't re-trigger. Ignore 1..4 when the window is in RTS
-	// panning but a gameplay-consuming UI (chat, hotbar) is not active.
+	// Edge-detected so held keys don't re-trigger.
 	for (int i = 0; i < 4; i++) {
 		int key = GLFW_KEY_1 + i;
 		bool pressed = glfwGetKey(window, key) == GLFW_PRESS;
@@ -253,29 +220,21 @@ void Camera::updateRTS(GLFWwindow* window, float dt) {
 		}
 	}
 
-	// Consume queued scroll zoom. Zoom pivots around rtsCenter (the look
-	// target at screen center) — no cursor bias.
 	if (std::abs(pendingRtsZoom) > 0.001f) {
 		float factor = std::pow(0.85f, pendingRtsZoom);
 		rtsHeightTarget = std::clamp(rtsHeightTarget * factor, 5.0f, 120.0f);
 		pendingRtsZoom = 0;
 	}
 
-	// Smooth zoom
 	rtsHeight += (rtsHeightTarget - rtsHeight) * std::min(dt * 10.0f, 1.0f);
 
-	// Angled overhead: `rtsAngle` is the elevation (deg above horizontal).
-	// height = rtsHeight, horizontalDist = rtsHeight / tan(angle) so the
-	// camera sits at the requested elevation from rtsCenter. The earlier
-	// `* 0.3f` squashed horizontalDist into a near-top-down view; removed
-	// so the angle tag matches what you see.
 	float angle = glm::radians(rtsAngle);
 	float tanA = std::max(0.1f, (float)std::tan(angle));
 	float horizontalDist = rtsHeight / tanA;
 	position = rtsCenter + glm::vec3(
-		cos(yaw) * horizontalDist,
+		-cos(yaw) * horizontalDist,
 		rtsHeight,
-		sin(yaw) * horizontalDist
+		-sin(yaw) * horizontalDist
 	);
 
 	glm::vec3 dir = glm::normalize(rtsCenter - position);

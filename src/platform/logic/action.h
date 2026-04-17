@@ -1,19 +1,7 @@
 #pragma once
 
-/**
- * ActionProposalQueue — the bridge between intent and world mutation.
- *
- * DESIGN PRINCIPLE: Objects NEVER directly modify world state.
- * They submit ActionProposals to the queue. The server validates
- * and executes them in Phase 1 of the step loop.
- *
- * All three control modes produce the same ActionProposals:
- *   1. First-Person (FPS) — keyboard/mouse → ActionProposal
- *   2. RTS (Warcraft-like) — click orders → ActionProposal
- *   3. Python Auto-Pilot — decide() → ActionProposal
- *
- * The server doesn't know or care which mode generated them.
- */
+// Rule 3: Objects NEVER mutate world directly — submit ActionProposals, server resolves.
+// FPS input, RTS clicks, and Python decide() all produce the same proposals.
 
 #include "logic/entity.h"
 #include <glm/glm.hpp>
@@ -23,14 +11,8 @@
 
 namespace civcraft {
 
-// ================================================================
-// Container — identifies any storage that holds items.
-//
+// Container: any item-holding storage (entity inventory, block, ground, self).
 // Used by Relocate (from/to) and Convert (source/destination).
-// Everything that can hold items — entity inventory, world block,
-// the ground, or the actor itself — is a Container.
-// ================================================================
-
 struct Container {
 	enum class Kind : uint8_t {
 		Self   = 0,  // actor's own inventory (default)
@@ -50,10 +32,7 @@ struct Container {
 	static Container block(int x, int y, int z)         { return block({x, y, z}); }
 };
 
-// ================================================================
-// ActionProposal — what an entity wants to happen
-// ================================================================
-
+// ActionProposal — what an entity wants to happen (Rule 0: exactly 4 types).
 struct ActionProposal {
 	enum Type {
 		Move,      // velocity-based move (any owned entity)
@@ -74,9 +53,7 @@ struct ActionProposal {
 	float     lookPitch   = 0.0f;  // for chunk streaming view bias (vertical)
 	float     lookYaw     = 0.0f;  // for chunk streaming view bias (horizontal, when standing still)
 	std::string goalText;
-	// Client-reported position. Server accepts this as authoritative if within
-	// CLIENT_POS_TOLERANCE, eliminating client/server position drift and overshoot.
-	// Always set by player client and agent clients. Only honoured for Move actions.
+	// Server accepts as authoritative if within CLIENT_POS_TOLERANCE; else snaps back. Move only.
 	glm::vec3 clientPos    = {0, 0, 0};
 	bool      hasClientPos = false;
 
@@ -98,16 +75,11 @@ struct ActionProposal {
 	// Interact: toggle block state (door/button/TNT)
 	glm::ivec3  blockPos   = {0, 0, 0};
 
-	// Hot-reload: non-empty behaviorSource triggers a Python behavior swap.
-	// This is a control message, not a game action — handled before the switch.
+	// Hot-reload: non-empty = Python behavior swap (control message, not a game action).
 	std::string behaviorSource;
 };
 
-// ================================================================
-// ActionEffect — side effects from executing an action
-// (particles, sounds, chunk updates — for client rendering)
-// ================================================================
-
+// ActionEffect — client-side rendering side-effects (particles, chunk dirty).
 struct ActionEffect {
 	enum Type { BlockBreakParticles, ItemPickupParticles, ChunkDirty };
 	Type type;
@@ -117,19 +89,13 @@ struct ActionEffect {
 	int count = 1;
 };
 
-// ================================================================
-// ActionProposalQueue — thread-safe buffer of pending ActionProposals.
-// Entities submit proposals here; the server drains and resolves them
-// once per tick. Renamed from ActionQueue for clarity.
-// ================================================================
-
+// Thread-safe buffer; server drains + resolves once per tick.
 class ActionProposalQueue {
 public:
 	void propose(ActionProposal action) {
 		m_pending.push_back(std::move(action));
 	}
 
-	// Drain all pending proposals. Returns them and clears the queue.
 	std::vector<ActionProposal> drain() {
 		std::vector<ActionProposal> result;
 		result.swap(m_pending);
@@ -139,8 +105,7 @@ public:
 	bool empty() const { return m_pending.empty(); }
 	size_t size() const { return m_pending.size(); }
 
-	// Check if the queue already contains a Move proposal for this entity
-	// (used to skip AI behavior when entity is player-commanded)
+	// Skip AI decide() if player-command already queued a Move for this entity.
 	bool hasMove(EntityId id) const {
 		for (auto& p : m_pending)
 			if (p.type == ActionProposal::Move && p.actorId == id) return true;

@@ -1,7 +1,5 @@
-// Shared CPU tessellation for drawText2D / drawRect2D / drawArc2D. Lives
-// on the IRhi base so both backends compile the same helper — each backend
-// only needs to implement the drawUi2D primitive (upload a triangle list
-// of {pos.xy, uv.xy} vertices and draw them with the UI pipeline).
+// Shared CPU tessellation for drawText2D/drawRect2D/drawArc2D — backends only
+// implement the drawUi2D primitive.
 
 #include "rhi.h"
 #include "ui_font_8x8.h"
@@ -12,8 +10,7 @@
 
 namespace civcraft::rhi {
 
-// Glyph size in NDC. Tuned to match the original GL TextRenderer so the
-// migration preserves visual layout exactly. 1.0 scale ≈ 24 px on 900p.
+// NDC glyph size; matches GL TextRenderer layout. 1.0 scale ≈ 24 px on 900p.
 static constexpr float kCharW = 0.018f;
 static constexpr float kCharH = 0.032f;
 
@@ -26,7 +23,7 @@ static void appendGlyph(std::vector<float>& verts, char c,
 	float u1 = u0 + 1.0f / kFontGridCols;
 	float v1 = v0 + 1.0f / kFontGridRows;
 
-	// Two tris per glyph, CCW in +y-up NDC.
+	// 2 tris, CCW in +y-up NDC.
 	const float vd[] = {
 		cx,     y,     u0, v1,
 		cx + w, y,     u1, v1,
@@ -96,7 +93,7 @@ void IRhi::drawArc2D(float cx, float cy, float r_inner, float r_outer,
 		float a1 = startRad + sweep * static_cast<float>(i + 1) / segments;
 		float c0 = std::cos(a0), s0 = std::sin(a0);
 		float c1 = std::cos(a1), s1 = std::sin(a1);
-		// x in NDC-x directly; y scaled by aspect so circles stay round.
+		// y scaled by aspect so circles stay round on non-square screens.
 		float ox0 = cx + r_outer * c0, oy0 = cy + r_outer * aspect * s0;
 		float ox1 = cx + r_outer * c1, oy1 = cy + r_outer * aspect * s1;
 		float ix0 = cx + r_inner * c0, iy0 = cy + r_inner * aspect * s0;

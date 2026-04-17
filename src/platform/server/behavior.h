@@ -1,19 +1,7 @@
 #pragma once
 
-/**
- * Behavior system — data types for entity AI.
- *
- * NEW ARCHITECTURE (Plan-based):
- *   Python decide(entity, local_world) → Plan (list of PlanStep)
- *   PlanStep types: Move(pos), Harvest(block_pos), Attack(entity_id),
- *                   Relocate(from, to, item)
- *
- * The old single-action BehaviorAction / Behavior class hierarchy / BehaviorWorldView
- * have been removed. AgentClient now calls Python decide() directly via
- * PythonBridge and gets back a Plan, which it executes step by step.
- *
- * Kept: NearbyEntity (used by gatherNearby), BlockSample (used by scan_blocks).
- */
+// Plan-based AI data types. Python decide() returns Plan (vector<PlanStep>);
+// AgentClient executes step by step. Also NearbyEntity + BlockSample scan results.
 
 #include "logic/action.h"
 #include "logic/entity.h"
@@ -24,10 +12,6 @@
 
 namespace civcraft {
 
-// ================================================================
-// NearbyEntity -- info about an entity visible to a behavior
-// ================================================================
-
 struct NearbyEntity {
 	EntityId id;
 	std::string typeId;
@@ -35,34 +19,26 @@ struct NearbyEntity {
 	glm::vec3 position;
 	float distance;
 	int hp;
-	std::vector<std::string> tags;  // feature tags from EntityDef (e.g. "humanoid")
+	std::vector<std::string> tags;  // EntityDef feature tags (e.g. "humanoid")
 };
-
-// ================================================================
-// BlockSample — a block position returned by scan_blocks()
-// ================================================================
 
 struct BlockSample {
 	std::string typeId;
 	int x, y, z;
-	float distance;  // from the querying entity
+	float distance;
 };
-
-// ================================================================
-// PlanStep — one step in a Plan returned by Python decide()
-// ================================================================
 
 struct PlanStep {
 	enum Type { Move, Harvest, Attack, Relocate };
 
 	Type      type          = Move;
-	glm::vec3 targetPos     = {0, 0, 0};     // Move/Harvest: world position
-	EntityId  targetEntity  = ENTITY_NONE;    // Attack: entity to hit
-	Container relocateFrom;                   // Relocate: source container
-	Container relocateTo;                     // Relocate: destination container
-	std::string itemId;                       // Relocate: item type
+	glm::vec3 targetPos     = {0, 0, 0};
+	EntityId  targetEntity  = ENTITY_NONE;
+	Container relocateFrom;
+	Container relocateTo;
+	std::string itemId;
 	int       itemCount     = 1;
-	float     speed         = 2.0f;           // Move: walk speed
+	float     speed         = 2.0f;
 
 	static PlanStep move(glm::vec3 pos, float spd = 2.0f) {
 		PlanStep s; s.type = Move; s.targetPos = pos; s.speed = spd; return s;

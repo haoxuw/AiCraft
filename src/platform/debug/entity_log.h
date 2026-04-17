@@ -1,13 +1,8 @@
 #pragma once
 
-// Per-entity rolling log at /tmp/civcraft_entity_<id>.log.
-//
-// Mirrors python/entity_log.py — one line per event, buffered by-line so
-// `tail -f` works in real time. Intended for per-entity diagnostics that
-// would flood the main log if aggregated (MoveStuck:Agent-Stuck, agent
-// decision tracing, etc.). Opens lazily on first write, overwrites any
-// prior file for that entity on first use in the process. Truncation is
-// per-process, not per-session — good enough for manual debugging.
+// Per-entity log at /tmp/civcraft_entity_<id>.log. Line-buffered for `tail -f`.
+// Truncates on first open per process (not per-session).
+// Mirrors python/entity_log.py.
 
 #include "logic/types.h"
 

@@ -1,25 +1,16 @@
 #pragma once
 
-/**
- * LocalWorld — the client's single source of truth for terrain data.
- *
- * Owns chunk storage, block registry, and block annotations. Implements
- * ChunkSource so all client-side code (physics, meshing, raycasting,
- * agent pathfinding) reads from one place.
- *
- * Populated by server messages (S_CHUNK, S_BLOCK, S_ANNOTATION_SET)
- * routed through NetworkServer. Nobody else stores chunks.
- *
- * See docs/10_CLIENT_SERVER_PHYSICS.md for the architecture.
- */
+// Client's single ChunkSource: owns chunk storage, block registry, annotations.
+// Populated by NetworkServer from S_CHUNK/S_BLOCK/S_ANNOTATION_SET.
+// See docs/10_CLIENT_SERVER_PHYSICS.md.
 
-#include "shared/chunk.h"
-#include "shared/block_registry.h"
-#include "shared/chunk_source.h"
-#include "shared/annotation.h"
+#include "logic/chunk.h"
+#include "logic/block_registry.h"
+#include "logic/chunk_source.h"
+#include "logic/annotation.h"
 #include "logic/physics.h"
 #include "server/entity_manager.h"
-#include "content/builtin.h"
+#include "server/builtin.h"
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -30,12 +21,8 @@ namespace civcraft {
 class LocalWorld : public ChunkSource {
 public:
 	LocalWorld() {
-		// Register all block and entity definitions so blocks have
-		// proper collision heights, names, etc.
 		registerAllBuiltins(m_blocks, m_entityDefs);
 	}
-
-	// ── ChunkSource interface ────────────────────────────────────────
 
 	Chunk* getChunk(ChunkPos pos) override {
 		auto it = m_chunks.find(pos);
@@ -57,8 +44,6 @@ public:
 
 	const BlockRegistry& blockRegistry() const override { return m_blocks; }
 
-	// ── Chunk mutation (called by NetworkServer on server messages) ───
-
 	void setChunk(ChunkPos pos, std::unique_ptr<Chunk> chunk) {
 		m_chunks[pos] = std::move(chunk);
 	}
@@ -79,8 +64,6 @@ public:
 			it->second->set(lx, ly, lz, bid);
 		}
 	}
-
-	// ── Annotations (block decorations: flowers, moss, …) ────────────
 
 	void setAnnotations(ChunkPos cp,
 	                     std::vector<std::pair<glm::ivec3, Annotation>> anns) {
@@ -110,10 +93,7 @@ public:
 		return it != m_annotations.end() ? &it->second : nullptr;
 	}
 
-	// ── Physics helper ───────────────────────────────────────────────
-
-	/// Returns a BlockSolidFn suitable for moveAndCollide(). Queries
-	/// this LocalWorld's chunks — unloaded chunks return 0 (air).
+	// Unloaded chunks return 0 (air).
 	BlockSolidFn solidFn() const {
 		return [this](int x, int y, int z) -> float {
 			BlockId bid = const_cast<LocalWorld*>(this)->getBlock(x, y, z);
@@ -121,8 +101,6 @@ public:
 			return bd.solid ? bd.collision_height : 0.0f;
 		};
 	}
-
-	// ── Accessors ────────────────────────────────────────────────────
 
 	BlockRegistry& blockRegistryMut() { return m_blocks; }
 	EntityManager& entityDefs() { return m_entityDefs; }
@@ -135,7 +113,7 @@ private:
 	                    std::vector<std::pair<glm::ivec3, Annotation>>,
 	                    ChunkPosHash> m_annotations;
 	BlockRegistry m_blocks;
-	EntityManager m_entityDefs;  // type definitions for entity creation
+	EntityManager m_entityDefs;
 };
 
 } // namespace civcraft

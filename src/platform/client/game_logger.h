@@ -1,12 +1,7 @@
 #pragma once
-// GameLogger — WoW-style event log.
-// Tees every event to:
-//   1. /tmp/civcraft_game.log (append, line-buffered; prior session → .log.prev)
-//   2. in-memory ring buffer (for the Main Menu → Game Log viewer)
-//   3. stdout when headless (--log-only)
-//
-// Event derivation lives elsewhere (game.cpp, network_server.h). This class
-// is a pure sink — it only knows how to format + persist lines.
+// GameLogger — WoW-style event log. Tees to /tmp/civcraft_game.log (line-buffered;
+// prior → .log.prev), an in-memory ring buffer (menu viewer), and stdout when --log-only.
+// Event derivation lives in game.cpp/network_server.h; this class is a pure sink.
 
 #include <cstdio>
 #include <cstdarg>
@@ -31,7 +26,7 @@ public:
 		return g;
 	}
 
-	// Call once at process start. Rotates prior log to .prev, truncates new file.
+	// Call once at process start; rotates prior log to .prev and truncates.
 	void init(bool echoStdout = false) {
 		std::lock_guard<std::mutex> lk(m_mu);
 		if (m_initialized) return;
@@ -48,7 +43,6 @@ public:
 		m_file = std::fopen(m_path.c_str(), "w");
 		if (m_file) setvbuf(m_file, nullptr, _IOLBF, 0);
 		m_initialized = true;
-		// Header so readers know which process this belongs to
 		char hdr[128];
 		snprintf(hdr, sizeof(hdr), "=== civcraft session pid=%d ===", (int)getpid());
 		if (m_file) { std::fputs(hdr, m_file); std::fputc('\n', m_file); }
@@ -61,16 +55,13 @@ public:
 		m_initialized = false;
 	}
 
-	// Log a raw line (already formatted with clock-time prefix + category).
-	// Prefer emit() which does the formatting.
+	// Prefer emit() — this takes a pre-formatted line (incl. time prefix + category).
 	void write(const std::string& line) {
 		std::lock_guard<std::mutex> lk(m_mu);
 		pushLocked(line);
 	}
 
-	// Emit a categorized event:
-	//   [HH:MM:SS] [CATEGORY] actor event...
-	// Real wall-clock HH:MM:SS so external readers can correlate.
+	// Emits: "[HH:MM:SS] [CATEGORY] actor event..." — real wall-clock for correlation.
 	void emit(const char* category, const char* fmt, ...) {
 		char body[512];
 		va_list ap;

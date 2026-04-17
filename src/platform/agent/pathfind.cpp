@@ -1,15 +1,4 @@
-/**
- * pathfind.cpp — Movement-primitive A* (Walk/Jump/Descend).
- *
- * Algorithm lifted from:
- *   [Baritone] baritone.api.pathing.movement.MovementType + A* over it.
- *   [Mineflayer] mineflayer-pathfinder Movement.getBlock walkability pattern.
- *   [HNR 1968] A* with admissible heuristic (octile, 2D horizontal + |dy|).
- *
- * Scope (current):
- *   - plan(): real A* producing a reconstructed Path, partial=true on budget exhaustion.
- *   - planBatch(), pathInvalidatedBy(), PathExecutor: still stubs (next iteration).
- */
+// A* over Walk/Jump/Descend primitives. Refs: [Baritone], [Mineflayer], [HNR 1968].
 
 #include "agent/pathfind.h"
 
@@ -22,14 +11,9 @@
 
 namespace civcraft {
 
-// ─────────────────────────────────────────────────────────────────────────
-// Helpers — internal linkage.
-// ─────────────────────────────────────────────────────────────────────────
 namespace {
 
-// Pack an ivec3 into int64 so it can key unordered_map + be cheap to compare.
-// 21 bits per axis → range [-2^20, 2^20-1] = ±1,048,575 blocks, enough for
-// any plausible path query.
+// 21 bits/axis → ±1,048,575 blocks.
 inline int64_t encode(glm::ivec3 p) {
 	constexpr int64_t BIAS = 1 << 20;
 	constexpr int64_t MASK = (1LL << 21) - 1;
@@ -51,8 +35,7 @@ struct CameFrom {
 	MoveKind kind;
 };
 
-// Min-heap entry. Storing g alongside f lets us detect stale pops without
-// re-computing h() — standard A* optimisation.
+// Storing g with f lets us detect stale pops without recomputing h.
 struct OpenEntry {
 	float   f;
 	float   g;
@@ -62,34 +45,26 @@ struct OpenEntry {
 
 } // namespace
 
-// ═════════════════════════════════════════════════════════════════════════
-// plan() — [Baritone]-style A* over Walk/Jump/Descend primitives.
-// ═════════════════════════════════════════════════════════════════════════
+// [Baritone]-style A* over Walk/Jump/Descend primitives.
 Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
-	// Octile horizontal + |dy| vertical. Admissible: never overestimates
-	// since diagonals aren't allowed (4-cardinal expand) so dHoriz is a
-	// lower bound on horizontal travel.
+	// Manhattan + |dy|. Admissible under 4-cardinal expansion.
 	auto H = [&](glm::ivec3 p) {
 		int dx = std::abs(p.x - goal.x);
 		int dy = std::abs(p.y - goal.y);
 		int dz = std::abs(p.z - goal.z);
-		float dHoriz = (float)(dx + dz);   // 4-cardinal: Manhattan, not octile.
+		float dHoriz = (float)(dx + dz);
 		return dHoriz + (float)dy;
 	};
 
-	// [Mineflayer] Move.getBlock: entity occupies 2 cells vertically.
-	// "standable" means p is a valid body cell — floor solid, body+head air.
+	// Entity is 2 cells tall: floor solid, body + head air.
 	auto standable = [&](glm::ivec3 p) {
-		if (!m_world.isSolid({p.x, p.y - 1, p.z})) return false;  // no floor
-		if ( m_world.isSolid(p))                   return false;  // body blocked
-		if ( m_world.isSolid({p.x, p.y + 1, p.z})) return false;  // head blocked
+		if (!m_world.isSolid({p.x, p.y - 1, p.z})) return false;
+		if ( m_world.isSolid(p))                   return false;
+		if ( m_world.isSolid({p.x, p.y + 1, p.z})) return false;
 		return true;
 	};
 
 	static const glm::ivec3 DIRS[4] = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1}};
-
-	// Initial sanity: if start isn't standable, A* would fail immediately.
-	// Seed gScore anyway — caller may have placed entity mid-air one frame.
 
 	std::priority_queue<OpenEntry>      open;
 	std::unordered_map<int64_t, float>  gScore;
@@ -121,7 +96,7 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 		float      hp = H(p);
 		if (hp < bestH) { bestH = hp; bestSeen = cur.key; }
 
-		float gCur = itG->second;   // copy before gScore writes invalidate the iterator
+		float gCur = itG->second;   // copy before gScore writes invalidate iterator
 
 		auto relax = [&](glm::ivec3 next, MoveKind kind, float stepCost) {
 			const int64_t kN = encode(next);
@@ -134,13 +109,7 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 			}
 		};
 
-		// [Baritone] MovementTraverse × 4 cardinals (Walk).
-		// [Baritone] MovementAscend           (Jump: +1 Y, requires takeoff headroom).
-		// [Baritone] MovementDescend          (Descend: -1 Y, requires safe landing).
-		// Wall-clearance penalty: count solid horizontal neighbours at the
-		// destination's feet level. Cells that graze walls get a small cost
-		// bump so A* prefers routes with breathing room, but still takes
-		// tight passages when they're the only option.
+		// Wall-clearance cost bump: prefer routes with breathing room.
 		auto wallPenalty = [&](glm::ivec3 c) {
 			if (m_cfg.wallClearancePenalty <= 0) return 0.0f;
 			int walls = 0;
@@ -163,7 +132,6 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 		}
 	}
 
-	// Reconstruct from bestSeen (= goal if reached, else closest-by-H).
 	// [Baritone] PathExecutor treats partial=true as "arrive and replan".
 	Path out;
 	out.partial = !reached;
@@ -181,23 +149,8 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 	return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Remaining stubs — next iterations.
-// ─────────────────────────────────────────────────────────────────────────
-
-// ═════════════════════════════════════════════════════════════════════════
-// planBatch() — [SupCom2 GDC 2011]-style reverse Dijkstra from one shared
-// goal to many starts. Grows a single closed set outward from the goal;
-// each start reads its own path from the resulting cameFrom tree. Cost is
-// one traversal regardless of the number of starts, which is the whole
-// point when an RTS user box-selects 20 units and right-clicks once.
-//
-// Asymmetric primitives: in the *forward* graph Jump is `p → p+d+up` at
-// cost 1.4 and Descend is `p → p+d-up` at cost 1.1. Running Dijkstra
-// *backwards* from the goal means that when we pop cell C we have to
-// enumerate every *predecessor* P from which some forward move lands on
-// C. For each such (P, fwdCost) we relax g(P) = g(C) + fwdCost.
-// ═════════════════════════════════════════════════════════════════════════
+// [SupCom2 GDC 2011] reverse Dijkstra. On pop C, enumerate predecessors P whose
+// forward move lands on C and relax g(P) = g(C) + fwdCost (asymmetric primitives).
 std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
                                          glm::ivec3 goal) {
 	std::vector<Path> out(starts.size());
@@ -218,16 +171,14 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 
 	const int64_t kGoal = encode(goal);
 	gScore[kGoal] = 0.0f;
-	open.push({0.0f, 0.0f, kGoal});   // pure Dijkstra: f = g (no heuristic)
+	open.push({0.0f, 0.0f, kGoal});   // pure Dijkstra: f = g
 
-	// Early-termination: as soon as every start has been settled, stop. Track
-	// which starts are still pending via an encoded set.
 	std::unordered_map<int64_t, size_t> pendingStarts;
 	for (size_t i = 0; i < starts.size(); i++) {
 		pendingStarts.emplace(encode(starts[i]), i);
 	}
 
-	// Budget grows with batch size so a 20-unit group gets 20× the A* budget.
+	// Budget grows with batch size (20 units → 20× single-plan budget).
 	const int totalBudget = m_cfg.maxNodes * (int)starts.size();
 	int expanded = 0;
 
@@ -235,34 +186,28 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 		OpenEntry cur = open.top();
 		open.pop();
 		auto itG = gScore.find(cur.key);
-		if (itG == gScore.end() || cur.g > itG->second + 1e-6f) continue;  // stale
+		if (itG == gScore.end() || cur.g > itG->second + 1e-6f) continue;
 		expanded++;
 
-		// Mark this cell as settled if it's a start.
 		pendingStarts.erase(cur.key);
 
 		glm::ivec3 c    = decode(cur.key);
 		float      gCur = itG->second;
 
 		auto relax = [&](glm::ivec3 pred, MoveKind fwdKind, float fwdCost) {
-			// The predecessor must itself be standable — i.e., a cell an
-			// entity could actually be in when the move originated.
 			if (!standable(pred)) return;
 			const int64_t kP = encode(pred);
 			float tentative = gCur + fwdCost;
 			auto it = gScore.find(kP);
 			if (it == gScore.end() || tentative < it->second - 1e-6f) {
 				gScore[kP]  = tentative;
-				// cameFrom[pred] points FORWARD toward goal: next step from
-				// `pred` is cell `c` via `fwdKind`. Reconstruction just walks
-				// this chain from each start down to goal.
+				// cameFrom[pred].prev = c (forward next step via fwdKind).
 				cameFrom[kP] = {cur.key, fwdKind};
 				open.push({tentative, tentative, kP});
 			}
 		};
 
-		// Wall-clearance penalty on the forward Walk cost — applied to the
-		// *destination* (c), matching plan()'s forward-direction behaviour.
+		// Penalty applied to destination c (matches plan()'s forward behaviour).
 		float walkPenalty = 0.0f;
 		if (m_cfg.wallClearancePenalty > 0) {
 			int walls = 0;
@@ -270,12 +215,7 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 			walkPenalty = m_cfg.wallClearancePenalty * (float)walls;
 		}
 
-		// Enumerate every forward move whose endpoint is `c`.
-		// Walk: predecessor = c - d (same Y).
-		// Jump: fwd is p+d+up = c → p = c - d - up; cost = cfg.jumpCost.
-		//   Requires headroom at p+up*2 in the forward move, i.e. c+up passable,
-		//   which is already implied by standable(c) (head clearance above c).
-		// Descend: fwd is p+d-up = c → p = c - d + up; cost = cfg.descendCost.
+		// Forward moves landing on c: Walk(pred=c-d), Jump(pred=c-d-up), Descend(pred=c-d+up).
 		for (auto d : DIRS) {
 			relax(c - d,                            MoveKind::Walk,    1.0f + walkPenalty);
 			relax(c - d - glm::ivec3(0, 1, 0),      MoveKind::Jump,    m_cfg.jumpCost);
@@ -283,40 +223,31 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 		}
 	}
 
-	// Reconstruct one path per start by walking cameFrom forward.
 	for (size_t i = 0; i < starts.size(); i++) {
 		const int64_t kS = encode(starts[i]);
 		auto itG = gScore.find(kS);
 		if (itG == gScore.end()) {
-			out[i].partial = true;   // unreachable within budget
+			out[i].partial = true;
 			continue;
 		}
 		Path& p = out[i];
 		p.cost = itG->second;
 		int64_t cur = kS;
-		// Safety: bound the reconstruction by the number of explored nodes
-		// so a corrupt cameFrom cycle can't hang the test.
+		// Bounded reconstruction in case of a corrupt cameFrom cycle.
 		int stepBudget = (int)gScore.size() + 1;
 		while (cur != kGoal && stepBudget-- > 0) {
 			auto it = cameFrom.find(cur);
 			if (it == cameFrom.end()) break;
-			// The forward move from `cur` goes to `it->second.prev` via kind.
 			p.steps.push_back({decode(it->second.prev), it->second.kind});
 			cur = it->second.prev;
 		}
-		// If we didn't land exactly on goal, mark partial.
 		if (cur != kGoal) p.partial = true;
 	}
 	return out;
 }
 
-// ═════════════════════════════════════════════════════════════════════════
-// planFlowField() — reverse Dijkstra from goal, shared across all units.
-// Same sweep as planBatch() but keeps the cameFrom map alive instead of
-// reconstructing per-unit paths. At 1000 units this avoids 1000 vector
-// allocations and 1000 chain walks — the field itself is built in one
-// pass regardless of unit count. [SupCom2 GDC 2011, Factorio, PA]
-// ═════════════════════════════════════════════════════════════════════════
+// Shared reverse-Dijkstra field. Avoids per-unit reconstruction at scale.
+// [SupCom2 GDC 2011, Factorio, PA]
 FlowField GridPlanner::planFlowField(glm::ivec3 goal,
                                      const std::vector<glm::ivec3>& startsHint) {
 	FlowField field;
@@ -337,16 +268,14 @@ FlowField GridPlanner::planFlowField(glm::ivec3 goal,
 	const int64_t kGoal = encode(goal);
 	gScore[kGoal] = 0.0f;
 	open.push({0.0f, 0.0f, kGoal});
-	// The goal itself has no "next" — mark it with next=goal so lookups
-	// near the goal can detect they've arrived.
+	// Goal's next=goal so arrival lookups near goal can detect arrival.
 	field.step[goal] = {goal, MoveKind::Walk, 0.0f};
 
 	std::unordered_map<int64_t, size_t> pendingStarts;
 	for (size_t i = 0; i < startsHint.size(); i++)
 		pendingStarts.emplace(encode(startsHint[i]), i);
 
-	// Budget scales with hint size (like planBatch). If no hints, use a
-	// generous default that covers a ~50-block radius on flat ground.
+	// Default (no hints) covers ~50-block radius on flat ground.
 	const int totalBudget = m_cfg.maxNodes * std::max((int)startsHint.size(), 4);
 	int expanded = 0;
 	const bool earlyExit = !startsHint.empty();
@@ -371,7 +300,6 @@ FlowField GridPlanner::planFlowField(glm::ivec3 goal,
 			auto it = gScore.find(kP);
 			if (it == gScore.end() || tentative < it->second - 1e-6f) {
 				gScore[kP]  = tentative;
-				// Flow-field entry: from `pred`, next step is `c` via `fwdKind`.
 				field.step[pred] = {c, fwdKind, tentative};
 				open.push({tentative, tentative, kP});
 			}
@@ -394,13 +322,7 @@ FlowField GridPlanner::planFlowField(glm::ivec3 goal,
 	return field;
 }
 
-// ═════════════════════════════════════════════════════════════════════════
-// pathInvalidatedBy() — [Baritone] PathExecutor#onTick: any block change
-// within the planned corridor invalidates the plan. Chebyshev distance
-// (L∞) is the right metric for a voxel grid with 4-cardinal moves plus
-// vertical — it's the smallest ball that contains every cell that could
-// affect any move-check touching a waypoint.
-// ═════════════════════════════════════════════════════════════════════════
+// Chebyshev is the smallest ball covering every cell a move-check touches.
 bool GridPlanner::pathInvalidatedBy(const Path& path,
                                     glm::ivec3 changedBlock) const {
 	const int r = m_cfg.corridorRadius;
@@ -414,24 +336,15 @@ bool GridPlanner::pathInvalidatedBy(const Path& path,
 	return false;
 }
 
-// ═════════════════════════════════════════════════════════════════════════
-// PathExecutor::tick — [Baritone] PathExecutor#onTick arrival + advance.
-// Doors not implemented yet (no doors in current test suite); see header
-// pseudocode for the Mineflayer observe-and-interact pattern when added.
-// ═════════════════════════════════════════════════════════════════════════
 PathExecutor::Intent PathExecutor::tick(const glm::vec3& entityPos,
                                         const WorldView& /*world*/) {
-	// Arrival threshold deliberately LARGER than ServerTuning::navArriveDistance
-	// (1.2) so the executor advances to the next waypoint BEFORE the server's
-	// greedy nav detects arrival and zeroes the velocity. If we waited past
-	// 1.2, the entity would stall at every waypoint. Keep in perpetual motion.
+	// MUST exceed ServerTuning::navArriveDistance (1.2) — otherwise greedy nav
+	// arrives first and zeroes velocity, stalling the entity at every waypoint.
 	constexpr float kArriveXZ = 1.3f;
 	constexpr float kArriveY  = 1.0f;
 
-	// Advance past any waypoints we're already at (tail-recursive loop).
 	while (m_cursor < (int)m_path.steps.size()) {
 		const Waypoint& wp = m_path.steps[m_cursor];
-		// Waypoint cell center (X,Z) + floor Y.
 		glm::vec3 center{wp.pos.x + 0.5f, (float)wp.pos.y, wp.pos.z + 0.5f};
 		float dx = entityPos.x - center.x;
 		float dz = entityPos.z - center.z;

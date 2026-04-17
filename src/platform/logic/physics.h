@@ -1,11 +1,7 @@
 #pragma once
 
-/**
- * Unified physics: collision detection + step-up for all objects.
- *
- * One function handles players, mobs, and items. Takes a
- * block-solid query function to avoid circular includes.
- */
+// Unified physics: one moveAndCollide() for players, mobs, items.
+// Takes a BlockSolidFn to avoid circular includes.
 
 #include <glm/glm.hpp>
 #include <cmath>
@@ -27,18 +23,14 @@ struct MoveParams {
 	float gravity = 28.0f;
 	float maxFallSpeed = 50.0f;
 	float stepHeight = 1.0f;
-	// Max vertical distance the ground-snap helper will pull an on-ground entity
-	// downward to stick to terrain when walking over a ledge. Large values keep
-	// creatures glued to Warcraft-style terrain (no gliding across gaps). Small
-	// values let gravity take over on cliff drops — set low (≤0.5) for players
-	// so walking off a ledge falls instead of snapping. 0 disables snapping.
+	// Ground-snap pull distance for grounded entities walking over ledges.
+	// Large = RTS-style terrain glue (creatures). Small (≤0.5) = cliff-drop gravity (players). 0 = disabled.
 	float maxGroundSnap = 2.0f;
 	bool canFly = false;
-	bool smoothStep = false; // true = jump arc instead of instant step-up (for creatures)
+	bool smoothStep = false; // jump arc vs instant step-up (creatures use arc)
 };
 
-// Build MoveParams from entity collision box + traits.
-// Used by both client (gameplay_movement, network_server) and server (entity_manager).
+// Shared by client (gameplay_movement, network_server) and server (entity_manager).
 inline MoveParams makeMoveParams(glm::vec3 boxMin, glm::vec3 boxMax,
                                   float gravityScale, bool isLiving, bool canFly) {
 	MoveParams mp;
@@ -46,19 +38,15 @@ inline MoveParams makeMoveParams(glm::vec3 boxMin, glm::vec3 boxMax,
 	mp.height     = boxMax.y - boxMin.y;
 	mp.gravity    = 32.0f * gravityScale;
 	mp.stepHeight = isLiving ? 1.0f : 0.0f;
-	// Preserve old ground-snap behavior (searchDepth = stepHeight + 1). Callers
-	// who want cliff-drop gravity (players) override this to a small value.
+	// Default = stepHeight+1; players override to get cliff-drop gravity.
 	mp.maxGroundSnap = isLiving ? (mp.stepHeight + 1.0f) : 0.0f;
 	mp.canFly     = canFly;
 	mp.smoothStep = false;
 	return mp;
 }
 
-// Smoothly rotate `yaw` (degrees) toward the direction of horizontal velocity.
-// Shared between server tick (entity_manager) and client prediction
-// (network_server) so both paths produce the same turn rate. Matches the
-// player-movement lerp at game_playing.cpp. No-op when speed is below
-// minSpeedSq to avoid chasing a zero vector.
+// Shared turn rate for server tick + client prediction; MUST match game_playing.cpp lerp.
+// No-op below minSpeedSq to avoid chasing zero vector.
 inline void smoothYawTowardsVelocity(float& yaw, glm::vec3 vel, float dt,
                                      float rate = 20.0f,
                                      float minSpeedSq = 0.0025f) {
@@ -71,15 +59,11 @@ inline void smoothYawTowardsVelocity(float& yaw, glm::vec3 vel, float dt,
 	yaw += diff * std::min(dt * rate, 1.0f);
 }
 
-// Block query: returns the collision height of the block at (x,y,z).
-// 0.0 = not solid (air/transparent), 1.0 = full block, 0.5 = half-height (stairs/slabs).
-// The block physically occupies [y, y + return_value] in world space.
+// Returns block collision height: 0=air, 1=full, 0.5=slab. Block occupies [y, y+bh].
 using BlockSolidFn = std::function<float(int, int, int)>;
 
-// True if an AABB (centered at p.x,p.z, base at p.y, size halfWidth×height×halfWidth)
-// overlaps any solid block. Same predicate as moveAndCollide's internal `blocked`,
-// exposed so callers can validate a position before trusting it (client pre-send
-// check, server clientPos acceptance check).
+// AABB-vs-world test. Same predicate as moveAndCollide's internal `blocked`,
+// exposed for client pre-send check + server clientPos acceptance.
 inline bool isPositionBlocked(const BlockSolidFn& isSolid, glm::vec3 p,
                               float halfWidth, float height) {
 	int x0 = (int)std::floor(p.x - halfWidth);
@@ -99,9 +83,7 @@ inline bool isPositionBlocked(const BlockSolidFn& isSolid, glm::vec3 p,
 	return false;
 }
 
-/**
- * Move an object with full collision. Used by players and entities.
- */
+// Full-collision move — the single physics implementation (Rule 6).
 inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
                                   glm::vec3 pos, glm::vec3 vel,
                                   float dt, const MoveParams& params,
@@ -118,9 +100,7 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 				for (int x = x0; x <= x1; x++) {
 					float bh = isSolid(x, y, z);
 					if (bh <= 0.0f) continue;
-					// Block at cell y occupies [y, y+bh].
-					// Player body occupies [p.y, p.y+height].
-					// Overlap: player.bottom < block.top AND player.top > block.bottom
+					// AABB overlap: block [y,y+bh] vs body [p.y,p.y+height]
 					if (p.y < (float)y + bh && p.y + params.height > (float)y)
 						return true;
 				}
@@ -139,9 +119,7 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	glm::vec3 r = pos;
 	bool didStep = false;
 
-	// Step-up helper: try incremental heights (0.1 .. stepHeight) to find
-	// the minimum step needed. This lets entities climb partial blocks
-	// (slabs, stairs) as well as full 1-block ledges.
+	// Find min step height (0.1 .. stepHeight) to climb slabs/stairs/ledges.
 	auto tryStepUp = [&](float newX, float baseY, float newZ) -> float {
 		for (float sh = 0.1f; sh <= params.stepHeight + 0.01f; sh += 0.1f) {
 			if (!blocked({newX, baseY + sh, newZ}))
@@ -157,10 +135,8 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 		float sh = tryStepUp(pos.x + delta.x, pos.y, pos.z);
 		if (sh > 0) {
 			if (params.smoothStep) {
-				// Creatures: apply jump impulse, don't teleport
-				// Jump velocity = sqrt(2 * gravity * stepHeight) to reach the ledge
+				// Creatures: jump impulse v = sqrt(2·g·h); horizontal resolves next frame.
 				result.velocity.y = std::sqrt(2.0f * params.gravity * sh * 1.3f);
-				// Don't move horizontally this frame — next frame we'll be airborne and clear it
 			} else {
 				r.x += delta.x;
 				r.y = pos.y + sh;
@@ -191,35 +167,24 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 		}
 	}
 
-	// Ground snap: when a grounded entity moves horizontally over a ledge,
-	// snap it down to the surface immediately instead of slowly falling.
-	// This prevents the "walking in air" gliding effect and makes movement
-	// follow terrain like in RTS games (Warcraft-style).
-	// Only applies when entity WAS on ground, didn't step up, isn't flying,
-	// and isn't jumping (positive Y velocity = intentional upward movement).
+	// Ground snap: glue grounded entities to terrain when walking off ledges (RTS-style).
+	// Skip when jumping (positive Y = intentional upward).
 	bool jumping = result.velocity.y > 0.5f;
 	if (wasOnGround && !didStep && !params.canFly && !jumping
 	    && params.maxGroundSnap > 0.0f) {
-		// Check if we've moved horizontally but are now floating
 		bool movedHorizontally = (r.x != pos.x || r.z != pos.z);
 		if (movedHorizontally) {
-			// Look for ground below (bounded by maxGroundSnap — players cap this
-			// low so gravity takes over on cliff drops; NPCs keep it tall so
-			// they don't glide off terrain edges).
 			float searchDepth = params.maxGroundSnap;
 			for (float dy = 0; dy >= -searchDepth; dy -= 0.5f) {
 				float testY = pos.y + dy;
 				if (testY < 0) break;
-				// Check if there's solid ground at this level
 				int bx = (int)std::floor(r.x);
-				int by = (int)std::floor(testY - 0.01f); // just below feet
+				int by = (int)std::floor(testY - 0.01f);
 				int bz = (int)std::floor(r.z);
 				float bh = isSolid(bx, by, bz);
 				if (bh > 0.0f) {
-					float groundY = (float)by + bh;  // top surface of block
-					// Snap down if we're above this ground
+					float groundY = (float)by + bh;
 					if (r.y > groundY && r.y - groundY <= searchDepth) {
-						// Verify body fits at the snapped position
 						if (!blocked({r.x, groundY, r.z})) {
 							r.y = groundY;
 							result.velocity.y = 0;

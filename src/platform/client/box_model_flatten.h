@@ -1,23 +1,8 @@
 #pragma once
 
-/**
- * Flatten a BoxModel + AnimState into a 19-float-per-box instance stream.
- *
- * This is the backend-agnostic twin of GL's ModelRenderer::draw: it runs the
- * same walk cycle, clip overrides, melee keyframes, head tracking, and
- * held-item equip transforms, but instead of binding GL uniforms and issuing
- * per-part draw calls, it emits one 19-float record per part for a batched
- * instanced pipeline (see rhi::IRhi::drawBoxModel).
- *
- * Instance format (packs a full model matrix — boxes are oriented, not just
- * axis-aligned, so per-part rotations survive the batch):
- *   floats 0..15  — mat4 model transform (unit cube [0,1]^3 → world-space part)
- *   floats 16..18 — r, g, b
- *
- * Ordering inside the mat4 is GLM column-major (glm::value_ptr layout) so a
- * vertex shader can consume it as four vec4 per-instance attributes, the same
- * way GL/VK shaders already unpack view/proj matrices.
- */
+// Flatten BoxModel + AnimState into 19 floats per box (mat4 + rgb) for
+// instanced drawBoxModel. Backend-agnostic twin of GL ModelRenderer::draw.
+// Instance format: mat4 model (column-major, [0,1]^3 → world) + vec3 rgb.
 
 #include "client/box_model.h"
 #include <glm/glm.hpp>
@@ -39,21 +24,14 @@ inline void emitBox(std::vector<float>& out, const glm::mat4& m,
 	out.push_back(color.b);
 }
 
-// Build the per-part matrix that transforms a unit cube [0,1]^3 into the
-// world-space oriented box for `part`. Mirrors the tail of GL's draw loop:
-//   worldMat  = translate(partMat, (offset - halfSize) * s)
-//   finalMat  = scale(worldMat, halfSize * 2 * s)
-// Emitted `finalMat` maps [0,1]^3 → box; caller tints with `color`.
+// Maps unit cube [0,1]^3 to world-space oriented box for `part`.
 inline glm::mat4 partUnitCubeToWorld(const glm::mat4& partMat,
                                      const BodyPart& part, float s) {
 	glm::mat4 m = glm::translate(partMat, (part.offset - part.halfSize) * s);
 	return glm::scale(m, part.halfSize * 2.0f * s);
 }
 
-// Emit the parts of a held item at a captured hand frame. Mirrors the drawHeld
-// lambda in GL's ModelRenderer::draw — anchors at `gripPos`, applies the
-// item's EquipTransform (offset/Y-X-Z rotation/scale), then emits one record
-// per part using the item's intrinsic modelScale.
+// Anchor item at gripPos, apply EquipTransform (Y-X-Z rotation order).
 inline void emitHeldItem(std::vector<float>& out,
                          const HeldItem& hi,
                          const glm::mat4& handFrame,
@@ -90,11 +68,8 @@ inline void emitHeldItem(std::vector<float>& out,
 
 } // namespace detail
 
-// Append 19 floats per part — matrix + color — to `out`. Produces the same
-// animation shape as GL's ModelRenderer::draw (walk cycle, clip overrides,
-// melee keyframes, head tracking, held items), minus the hit-flash tint
-// (callers can apply tint in the vertex shader via a push constant if they
-// want; VK's boxmodel pipeline doesn't currently, so `tint*` is ignored).
+// Append 19 floats per part (matrix + color). No hit-flash tint — apply via
+// shader push constant if needed.
 inline void appendBoxModel(std::vector<float>& out,
                            const BoxModel& model,
                            glm::vec3 feetPos, float yaw,
@@ -238,9 +213,7 @@ inline void appendBoxModel(std::vector<float>& out,
 	}
 }
 
-// Convenience — emit a single axis-aligned box as a 19-float record. For
-// callers (highlight outlines, debug boxes) that previously used the 9-float
-// {corner, size, color} format.
+// Emit single AABB as a 19-float record (for highlights, debug boxes).
 inline void emitAABox(std::vector<float>& out,
                       glm::vec3 corner, glm::vec3 size, glm::vec3 color) {
 	glm::mat4 m = glm::translate(glm::mat4(1.0f), corner);

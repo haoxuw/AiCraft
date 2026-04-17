@@ -1,11 +1,6 @@
 #pragma once
 
-/**
- * TestServer — lightweight in-process GameServer harness for unit tests.
- *
- * Wraps GameServer directly (no TCP, no ServerInterface). Only used by
- * test code — never by the game client.
- */
+// In-process GameServer harness for unit tests only (no TCP, no ServerInterface).
 
 #include "server/server.h"
 #include "server/world_template.h"
@@ -38,7 +33,7 @@ public:
 		if (m_server) m_server->receiveAction(m_clientId, action);
 	}
 
-	// Submit an action bypassing ownership checks (for testing server-side handlers directly).
+	// Bypasses ownership checks for direct server-handler tests.
 	void sendActionDirect(const ActionProposal& action) {
 		if (m_server) m_server->receiveActionDirect(action);
 	}
@@ -63,7 +58,6 @@ public:
 	const BlockRegistry& blockRegistry() const { return m_server->world().blocks; }
 	glm::vec3 spawnPos() const { return m_server ? m_server->spawnPos() : glm::vec3(0,10,0); }
 
-	// Direct access to underlying GameServer (for test-only operations)
 	GameServer* server() { return m_server.get(); }
 
 private:

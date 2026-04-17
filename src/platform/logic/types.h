@@ -8,9 +8,7 @@
 
 namespace civcraft {
 
-// Stable, small type aliases shared across platform/ and game code.
-// Defined here (not in server.h) so non-server translation units — like
-// chunk_gen_service.h — can use them without pulling the whole server.
+// Kept out of server.h so non-server TUs can depend on it.
 using ClientId = uint32_t;
 
 constexpr int CHUNK_SIZE = 16;
@@ -38,27 +36,24 @@ struct ChunkPosHash {
 	}
 };
 
-// 6 face directions
 constexpr glm::ivec3 FACE_DIRS[6] = {
-	{ 1,  0,  0}, // +X (east)
-	{-1,  0,  0}, // -X (west)
-	{ 0,  1,  0}, // +Y (up)
-	{ 0, -1,  0}, // -Y (down)
-	{ 0,  0,  1}, // +Z (south)
-	{ 0,  0, -1}, // -Z (north)
+	{ 1,  0,  0},
+	{-1,  0,  0},
+	{ 0,  1,  0},
+	{ 0, -1,  0},
+	{ 0,  0,  1},
+	{ 0,  0, -1},
 };
 
-// Face normals as floats for shading
 constexpr float FACE_SHADE[6] = {
-	0.80f, // +X
-	0.80f, // -X
-	1.00f, // +Y (top is brightest)
-	0.50f, // -Y (bottom is darkest)
-	0.90f, // +Z
-	0.90f, // -Z
+	0.80f,
+	0.80f,
+	1.00f,
+	0.50f,
+	0.90f,
+	0.90f,
 };
 
-// Convert world coordinates to chunk position
 inline ChunkPos worldToChunk(int wx, int wy, int wz) {
 	return {
 		(wx < 0 ? (wx + 1) / CHUNK_SIZE - 1 : wx / CHUNK_SIZE),

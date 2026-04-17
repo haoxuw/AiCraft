@@ -5,12 +5,8 @@
 
 namespace civcraft {
 
-// Step one tick of physics for an Entity. The single entry point used by:
-//   - server/entity_manager.h  (authoritative NPC physics)
-//   - client/gameplay_movement.cpp  (local player prediction)
-//   - client/network_server.h  (non-local entity prediction between broadcasts)
-// Guarantees every caller builds MoveParams identically and writes results
-// back in the same way, so client and server physics stay bit-for-bit aligned.
+// Rule 6: single physics entry point — keeps client/server bit-for-bit aligned.
+// Callers: entity_manager (server), gameplay_movement (local player), network_server (remote prediction).
 inline MoveResult stepEntityPhysics(Entity& e, glm::vec3 desiredVel,
                                      const BlockSolidFn& isSolid, float dt,
                                      bool fly) {
@@ -24,7 +20,7 @@ inline MoveResult stepEntityPhysics(Entity& e, glm::vec3 desiredVel,
 	return r;
 }
 
-// Overload that reads fly-mode from the entity's "fly_mode" property.
+// Overload: reads fly-mode from entity "fly_mode" property.
 inline MoveResult stepEntityPhysics(Entity& e, glm::vec3 desiredVel,
                                      const BlockSolidFn& isSolid, float dt) {
 	return stepEntityPhysics(e, desiredVel, isSolid, dt,

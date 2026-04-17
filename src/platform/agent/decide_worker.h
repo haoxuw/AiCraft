@@ -1,23 +1,7 @@
 #pragma once
 
-/**
- * DecideWorker — runs Python decide() on a background thread.
- *
- * Contract:
- *   - Main thread snapshots entity + nearby state, pushes a DecideRequest.
- *   - Worker pops, calls PythonBridge::callDecide (which acquires the GIL),
- *     pushes a DecideResult back.
- *   - Main thread drains DecideResults once per frame and installs plans.
- *   - Generation counter on DecideRequest filters stale results after
- *     interrupts supersede in-flight decides.
- *
- * Shared state safety:
- *   - Snapshot / nearby / lastOutcome: owned by the request, immutable after
- *     push → no locking needed.
- *   - blockQuery / scanBlocks callbacks: invoked from worker thread without
- *     locking the ChunkStore. Worst case is a stale block read (visual-only
- *     race, acceptable per project policy).
- */
+// Runs Python decide() on a background thread. Generation counter filters stale
+// results after interrupts. Callbacks read ChunkStore unlocked (visual-only race ok).
 
 #include "logic/types.h"
 #include "logic/entity.h"
@@ -34,8 +18,6 @@
 
 namespace civcraft {
 
-// ── Request (main → worker) ─────────────────────────────────────────────
-
 struct DecideRequest {
 	EntityId                        eid        = ENTITY_NONE;
 	uint32_t                        generation = 0;
@@ -51,8 +33,6 @@ struct DecideRequest {
 	PythonBridge::ScanAnnotationsFn   scanAnnotations;
 };
 
-// ── Result (worker → main) ──────────────────────────────────────────────
-
 struct DecideResult {
 	EntityId     eid        = ENTITY_NONE;
 	uint32_t     generation = 0;
@@ -60,8 +40,6 @@ struct DecideResult {
 	std::string  goalText;
 	std::string  error;
 };
-
-// ── Worker ──────────────────────────────────────────────────────────────
 
 class DecideWorker {
 public:
@@ -118,9 +96,7 @@ private:
 			res.eid = req.eid;
 			res.generation = req.generation;
 
-			// Translate StepOutcome enum → string for Python:
-			//   Success → "success", Failed → "failed", else "none".
-			// See python/local_world.py for the field semantics.
+			// Success→"success", Failed→"failed", else "none". See python/local_world.py.
 			std::string outcomeStr = "none";
 			if (req.lastOutcome.outcome == StepOutcome::Success) outcomeStr = "success";
 			else if (req.lastOutcome.outcome == StepOutcome::Failed) outcomeStr = "failed";

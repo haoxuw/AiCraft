@@ -41,7 +41,7 @@
 
 #include "logic/entity.h"
 #include "logic/action.h"
-#include "shared/chunk.h"
+#include "logic/chunk.h"
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -49,8 +49,7 @@
 
 namespace civcraft::net {
 
-// Protocol version sent in C_HELLO. Server uses this to pick S_CHUNK vs S_CHUNK_Z.
-// Increment this whenever the wire format changes.
+// C_HELLO version; server picks S_CHUNK vs S_CHUNK_Z. Bump on wire changes.
 // v3: adds S_WEATHER.
 static constexpr uint32_t PROTOCOL_VERSION = 3;
 
@@ -99,16 +98,13 @@ enum MsgType : uint32_t {
 	S_WEATHER         = 0x1015,  // [str kind][f32 intensity][f32 windX][f32 windZ][u32 seq]
 };
 
-// Message header (8 bytes)
+// 8-byte frame header.
 struct MsgHeader {
 	uint32_t type;
-	uint32_t length;  // payload length (excluding header)
+	uint32_t length;  // payload bytes (no header)
 };
 
-// ================================================================
-// Serialization helpers — simple memcpy-based binary encoding
-// ================================================================
-
+// memcpy-based binary encoding.
 class WriteBuffer {
 public:
 	void writeU8(uint8_t v)   { write(&v, 1); }
@@ -158,7 +154,7 @@ public:
 	bool hasMore() const { return m_pos < m_size; }
 	size_t remaining() const { return (m_pos < m_size) ? m_size - m_pos : 0; }
 
-	// Raw pointer to unread bytes — for passing to external decoders (e.g. zstd).
+	// For external decoders (zstd).
 	const uint8_t* remainingData() const { return m_data + m_pos; }
 
 private:
@@ -172,9 +168,7 @@ private:
 	size_t m_pos = 0;
 };
 
-// ================================================================
-// Serialize/deserialize ActionProposal
-// ================================================================
+// --- ActionProposal ---
 
 inline void writeContainer(WriteBuffer& buf, const Container& c) {
 	buf.writeU8((uint8_t)c.kind);
@@ -263,9 +257,7 @@ inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	return a;
 }
 
-// ================================================================
-// Serialize entity state update (server → client)
-// ================================================================
+// --- EntityState (server → client) ---
 
 struct EntityState {
 	EntityId id;
@@ -278,13 +270,12 @@ struct EntityState {
 	std::string characterSkin; // visual override (e.g., "knight")
 	int hp;
 	int maxHp;
-	int owner = 0;  // EntityId of owning player (0 = unowned)
-	glm::vec3 moveTarget = {0, 0, 0};  // where entity is heading (client prediction)
-	float moveSpeed = 0.0f;            // speed toward moveTarget
-	float lookYaw   = 0.0f;           // head look yaw (degrees, for remote head tracking)
-	float lookPitch = 0.0f;           // head look pitch (degrees)
-	// All properties — serialized as string key-value pairs.
-	// Float/int/bool/vec3 props are converted to strings for transport.
+	int owner = 0;  // owning player EntityId; 0 = unowned
+	glm::vec3 moveTarget = {0, 0, 0};  // for client prediction
+	float moveSpeed = 0.0f;
+	float lookYaw   = 0.0f;           // degrees, for remote head tracking
+	float lookPitch = 0.0f;           // degrees
+	// All props serialized as string k/v (float/int/bool/vec3 → string for transport).
 	std::vector<std::pair<std::string, std::string>> props;
 };
 

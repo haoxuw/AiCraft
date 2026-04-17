@@ -57,12 +57,15 @@ void main() {
 	// ── Palette LUT ────────────────────────────────────────────────────
 	// Four anchors: deep night, twilight, dawn/dusk bleed, full day.
 	// Blended by sunStr so the gradient tracks server worldTime exactly.
+	// Day anchors tuned to Mojang canonical sky #7BA4FF (0.482, 0.643, 1.000).
+	// Zenith is a punchier blue to read clearly against terrain; horizon sits
+	// at the canonical value so the sky fades toward what MC players expect.
 	vec3 zenithNight   = vec3(0.004, 0.008, 0.038);   // near-black indigo
 	vec3 horizonNight  = vec3(0.018, 0.028, 0.078);   // muted navy
 	vec3 zenithDawn    = vec3(0.090, 0.120, 0.300);   // cool pre-dawn
 	vec3 horizonDawn   = vec3(0.880, 0.430, 0.260);   // warm peach band
-	vec3 zenithDay     = vec3(0.100, 0.320, 0.780);   // saturated noon blue
-	vec3 horizonDay    = vec3(0.320, 0.580, 0.920);   // clearly blue, not white
+	vec3 zenithDay     = vec3(0.180, 0.400, 0.860);   // saturated noon blue (above MC canonical)
+	vec3 horizonDay    = vec3(0.482, 0.643, 1.000);   // Mojang canonical sky #7BA4FF
 
 	// sunStr drives two stages: night→dawn up to ~0.25, dawn→day up to ~0.75.
 	// The "dawnBlend" hump gives the peach horizon at low-sun angles.
@@ -162,23 +165,29 @@ void main() {
 		                       vec3(1.00, 0.99, 0.96),
 		                       brightRamp);
 
-		// Sunrise/sunset pink: the side of the cloud facing the sun picks
-		// up strong warm colour when the sun sits low in the sky.
-		float sunAlign   = max(dot(normalize(vec3(dir.x, 0.0, dir.z)),
-		                           normalize(vec3(sun.x, 0.0, sun.z))), 0.0);
-		float sunLowness = 1.0 - smoothstep(0.0, 0.30, abs(sun.y));
-		vec3  warmGlow   = vec3(1.00, 0.55, 0.40)
-		                 * sunLowness * sunStr * pow(sunAlign, 1.2) * 1.3;
-		cloudBase += warmGlow;
+		// Sunrise/sunset pink: when the sun sits low, the whole cloud layer
+		// catches warm light — grazing rays redden every underside. The
+		// cloud on the sunward azimuth gets hotter coral; the anti-sun
+		// side leans cooler mauve. Works in any camera direction.
+		vec2  dirAz  = length(dir.xz) > 0.001 ? normalize(vec2(dir.x, dir.z)) : vec2(0);
+		vec2  sunAz  = length(sun.xz) > 0.001 ? normalize(vec2(sun.x, sun.z)) : vec2(1, 0);
+		float sunAlign = dot(dirAz, sunAz) * 0.5 + 0.5;                 // [0..1]
+		// Keep the pink alive through a meaningful part of morning/evening.
+		float sunLowness = 1.0 - smoothstep(0.0, 0.45, abs(sun.y));
+		// Saturated coral on the sun side, mauve/violet on the opposite —
+		// matches real magic-hour clouds, clearly reads as "pink sunrise".
+		vec3  coralSide = vec3(1.50, 0.45, 0.38);
+		vec3  mauveSide = vec3(0.70, 0.55, 0.95);
+		vec3  magicHour = mix(mauveSide, coralSide, sunAlign);
+		float magicStr  = sunLowness * smoothstep(0.02, 0.40, sunStr);
+		cloudBase = mix(cloudBase, cloudBase * magicHour, clamp(magicStr, 0.0, 1.0));
 
-		// Depth shade so puff cores are slightly warmer-grey than edges —
-		// avoids a flat painted look.
+		// Depth shade: thick puff cores slightly darker/cooler than edges.
 		float depthShade = mix(0.78, 1.00, smoothstep(0.30, 1.00, n));
 		vec3  cloudColor = cloudBase * depthShade;
 
 		sky = mix(sky, cloudColor, cloud);
 	}
 
-	// DEBUG: verify ray direction varies — xz→RG channels (scaled & biased)
-	outColor = vec4(dir.x * 0.5 + 0.5, dir.z * 0.5 + 0.5, 0.2, 1.0);
+	outColor = vec4(sky, 1.0);
 }

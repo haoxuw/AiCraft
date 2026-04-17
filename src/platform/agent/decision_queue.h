@@ -1,16 +1,6 @@
 #pragma once
 
-/**
- * DecisionQueue — event set for triggering entity decide() calls.
- *
- * Event-driven, not timer-driven. Re-decides fire only on terminal
- * step outcomes (Success/Failed) or broadcast interrupts. No timestamps,
- * no polling.
- *
- * Latest-wins semantics: if enqueue() is called twice for the same eid
- * before drain, the newer LastOutcome wins (interrupts are more recent
- * than older terminal outcomes).
- */
+// Event-driven decide() trigger set. Latest-wins per eid.
 
 #include "logic/types.h"
 #include <string>
@@ -20,32 +10,29 @@
 
 namespace civcraft {
 
-// Why the previous plan ended. Handed to the next decide() call so Python
-// behaviors can branch on outcome rather than re-evaluating from scratch.
+// Handed to next decide() so Python can branch on outcome.
 enum class StepOutcome {
-	InProgress,   // executor shouldn't enqueue this — sentinel for evaluator
-	Success,      // goal observably reached (or duration elapsed)
-	Failed,       // observably unreachable / invalid
+	InProgress,   // evaluator sentinel, never enqueued
+	Success,
+	Failed,
 };
 
-struct PlanStep;  // from server/behavior.h
+struct PlanStep;
 
 struct LastOutcome {
 	StepOutcome  outcome     = StepOutcome::Success;
-	std::string  goalText;                   // previous goal
-	int          stepTypeRaw = 0;            // PlanStep::Type (kept as int to avoid include cycle)
-	std::string  reason;                     // "stuck", "target_gone", "interrupt:proximity", ...
+	std::string  goalText;
+	int          stepTypeRaw = 0;            // PlanStep::Type as int to avoid include cycle
+	std::string  reason;                     // "stuck", "target_gone", "interrupt:...", …
 };
 
 class DecisionQueue {
 public:
-	// Enqueue an entity for decide() with the outcome of its previous plan.
-	// Latest-wins: newer entries overwrite older ones for the same eid.
 	void enqueue(EntityId eid, LastOutcome o = {}) {
 		m_ready[eid] = std::move(o);
 	}
 
-	// Pop up to maxPerTick entries. Order is unspecified.
+	// Order is unspecified.
 	std::vector<std::pair<EntityId, LastOutcome>> drainReady(int maxPerTick) {
 		std::vector<std::pair<EntityId, LastOutcome>> result;
 		result.reserve(std::min((int)m_ready.size(), maxPerTick));

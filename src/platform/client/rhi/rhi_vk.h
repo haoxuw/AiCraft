@@ -159,42 +159,35 @@ private:
 	bool m_frameActive = false;
 	bool m_resizePending = false;
 
-	// Depth buffer (shared across swapchain images — recreated on resize).
+	// Shared across swapchain images; recreated on resize.
 	VkImage m_depthImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_depthMem = VK_NULL_HANDLE;
 	VkImageView m_depthView = VK_NULL_HANDLE;
 	VkFormat m_depthFormat = VK_FORMAT_D32_SFLOAT;
 
-	// Cube pipeline.
 	VkPipelineLayout m_cubeLayout = VK_NULL_HANDLE;
 	VkPipeline m_cubePipeline = VK_NULL_HANDLE;
 	VkBuffer m_cubeVbo = VK_NULL_HANDLE;
 	VkDeviceMemory m_cubeVboMem = VK_NULL_HANDLE;
 	uint32_t m_cubeVertCount = 0;
 
-	// Voxel (instanced) pipeline.
 	VkPipelineLayout m_voxelLayout = VK_NULL_HANDLE;
 	VkPipeline m_voxelPipeline = VK_NULL_HANDLE;
 	VkBuffer m_instBuf = VK_NULL_HANDLE;
 	VkDeviceMemory m_instMem = VK_NULL_HANDLE;
 	VkDeviceSize m_instCap = 0;
 
-	// Box-model pipeline. Shares m_voxelLayout (same push constant +
-	// descriptor set — it samples the shadow map like voxels do). Instance
-	// format is {worldPos[3], size[3], color[3]} = 9 floats per box. Separate
-	// per-frame-in-flight instance buffer so multiple drawBoxModel calls in
-	// one frame can append without overwriting each other.
+	// Shares m_voxelLayout (same PC + descriptor — samples shadow map).
+	// Per-frame buffers so multiple drawBoxModel calls append safely.
 	VkPipeline m_boxModelPipeline = VK_NULL_HANDLE;
 	VkBuffer m_boxInstBuf[kFramesInFlight]{};
 	VkDeviceMemory m_boxInstMem[kFramesInFlight]{};
 	void* m_boxInstMapped[kFramesInFlight]{};
 	VkDeviceSize m_boxInstCap[kFramesInFlight]{};
-	uint32_t m_boxInstCount[kFramesInFlight]{};  // # of instances appended this frame
+	uint32_t m_boxInstCount[kFramesInFlight]{};
 
-	// Shadow mapping. Single depth map per frame-in-flight (frames overlap
-	// on-GPU, so the second frame's shadow write must not alias the first
-	// frame's shadow read). Same pipeline regardless of frame — binds the
-	// per-frame framebuffer.
+	// Per-frame-in-flight depth map — prevents frame N+1 shadow write
+	// aliasing frame N shadow read (frames overlap on-GPU).
 	static constexpr uint32_t kShadowRes = 2048;
 	VkRenderPass m_shadowRenderPass = VK_NULL_HANDLE;
 	VkImage m_shadowImage[kFramesInFlight]{};
@@ -204,23 +197,19 @@ private:
 	VkSampler m_shadowSampler = VK_NULL_HANDLE;
 	VkPipelineLayout m_shadowLayout = VK_NULL_HANDLE;
 	VkPipeline m_shadowPipeline = VK_NULL_HANDLE;
-	// Box-model shadow pipeline. Separate pipeline (different vertex input
-	// format — 9 floats per instance instead of 6), shares m_shadowLayout
-	// and m_shadowRenderPass with the voxel shadow pipeline. Per-frame
-	// instance buffer so voxel + box shadow uploads don't collide.
+	// Box-model shadow — 19 floats/instance vs voxel's 6, so separate
+	// pipeline + per-frame buffer. Shares m_shadowLayout + render pass.
 	VkPipeline m_boxShadowPipeline = VK_NULL_HANDLE;
 	VkBuffer m_boxShadowInstBuf[kFramesInFlight]{};
 	VkDeviceMemory m_boxShadowInstMem[kFramesInFlight]{};
 	void* m_boxShadowInstMapped[kFramesInFlight]{};
 	VkDeviceSize m_boxShadowInstCap[kFramesInFlight]{};
-	// Chunk-mesh shadow pipeline. Reads only position from the 13-float
-	// chunk vertex stream; shares m_shadowLayout + m_shadowRenderPass with
-	// the voxel/box shadow pipelines so all three accumulate into one map.
+	// Chunk-mesh shadow — reads pos from 13-float stream. Shares
+	// m_shadowLayout + render pass so all three accumulate into one map.
 	VkPipeline m_chunkShadowPipeline = VK_NULL_HANDLE;
 
-	// Per-frame descriptor set bound to the voxel pipeline at set=0.
-	//   binding 0: combined image sampler → shadow map
-	//   binding 1: UBO → { mat4 shadowVP; vec4 shadowParams; }
+	// Voxel pipeline set=0: binding 0 = shadow map (combined sampler),
+	// binding 1 = UBO { mat4 shadowVP; vec4 shadowParams }.
 	VkDescriptorSetLayout m_voxelSetLayout = VK_NULL_HANDLE;
 	VkDescriptorPool m_voxelDescPool = VK_NULL_HANDLE;
 	VkDescriptorSet m_voxelDescSet[kFramesInFlight]{};
@@ -228,25 +217,20 @@ private:
 	VkDeviceMemory m_shadowUboMem[kFramesInFlight]{};
 	void* m_shadowUboMapped[kFramesInFlight]{};
 
-	// Lazy main-pass tracking. beginFrame no longer begins the offscreen
-	// pass; the first draw call of a frame begins it so a shadow pass can
-	// precede it cleanly.
+	// Lazy main-pass: first draw opens the offscreen pass, letting a
+	// shadow pass cleanly precede it.
 	bool m_mainPassActive = false;
-	bool m_shadowValid[kFramesInFlight]{};  // true once frame has shadow data
+	bool m_shadowValid[kFramesInFlight]{};
 
-	// Lazy shadow-pass tracking. renderShadows + renderBoxShadows share a
-	// single pass (clear on first open, load on subsequent opens… actually
-	// we keep it simpler: the first call starts and subsequent calls append
-	// because the pass stays open until any main-pass draw forces it closed).
+	// Lazy shadow-pass — all shadow calls share one pass, closed when a
+	// main-pass draw forces it closed.
 	bool m_shadowPassActive = false;
 
-	// Sky pipeline (fullscreen triangle, no VBO).
+	// Sky (fullscreen triangle, no VBO).
 	VkPipelineLayout m_skyLayout = VK_NULL_HANDLE;
 	VkPipeline m_skyPipeline = VK_NULL_HANDLE;
 
-	// Particle pipeline. Additive-blended billboards. Per-frame instance
-	// buffer so multiple drawParticles calls in one frame append without
-	// overwriting (same pattern as box model).
+	// Particles — additive billboards. Per-frame append buffer.
 	VkPipelineLayout m_particleLayout = VK_NULL_HANDLE;
 	VkPipeline m_particlePipeline = VK_NULL_HANDLE;
 	VkBuffer m_particleInstBuf[kFramesInFlight]{};
@@ -255,11 +239,8 @@ private:
 	VkDeviceSize m_particleInstCap[kFramesInFlight]{};
 	uint32_t m_particleInstCount[kFramesInFlight]{};
 
-	// Ribbon pipeline. Additive trails (sword slashes, magic bolts). Each
-	// drawRibbon call expands control points into a per-frame vertex buffer
-	// and submits a triangle-strip draw. Multiple calls per frame share the
-	// same buffer — we track a byte cursor and each draw binds at its own
-	// offset. Vertex format (post-expansion): {pos[3], rgba[4]} = 7 floats.
+	// Ribbon trails (sword slashes, magic bolts). Byte cursor so multiple
+	// calls per frame bind the same buffer at their own offsets.
 	VkPipelineLayout m_ribbonLayout = VK_NULL_HANDLE;
 	VkPipeline m_ribbonPipeline = VK_NULL_HANDLE;
 	VkBuffer m_ribbonVtxBuf[kFramesInFlight]{};
@@ -268,11 +249,8 @@ private:
 	VkDeviceSize m_ribbonVtxCap[kFramesInFlight]{};
 	VkDeviceSize m_ribbonVtxCursor[kFramesInFlight]{};  // bytes written this frame
 
-	// 2D UI / text pipeline. Font atlas is a 512×192 R8 SDF texture
-	// generated once at init and bound via a single descriptor set. Each
-	// drawUi2D appends {pos.xy, uv.xy} vertices into a per-frame buffer
-	// (cursor-tracked, mirrors the ribbon pattern) and issues one draw.
-	// Push constant: { vec4 color; ivec4 mode }. Depth off, alpha blend.
+	// 2D UI / text. 512×192 R8 SDF atlas bound once. Per-frame cursor
+	// buffer (mirrors ribbon pattern). PC: { vec4 color; ivec4 mode }.
 	VkImage m_fontImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_fontMem = VK_NULL_HANDLE;
 	VkImageView m_fontView = VK_NULL_HANDLE;
@@ -287,25 +265,20 @@ private:
 	void* m_uiVtxMapped[kFramesInFlight]{};
 	VkDeviceSize m_uiVtxCap[kFramesInFlight]{};
 	VkDeviceSize m_uiVtxCursor[kFramesInFlight]{};
-	// Deferred-destroy queue for UI vertex buffers that got replaced (grow).
-	// When ensureUi2DVertexCapacity reallocates mid-frame, the old buffer may
-	// still be bound by this frame's command buffer from an earlier drawUi2D
-	// call. We can't destroy it until the GPU has finished the frame, so we
-	// hand it to this queue keyed by frame index and drain at the TOP of the
-	// next beginFrame for the same index (after the fence wait, where the
-	// buffer is guaranteed idle).
+	// Deferred-destroy for grow-replaced UI buffers — the old buffer may
+	// still be bound by earlier drawUi2D in this frame's cmdbuf. Drain at
+	// top of next beginFrame for the same slot (after fence wait).
 	struct UiVtxPending {
 		VkBuffer buf;
 		VkDeviceMemory mem;
 	};
 	std::vector<UiVtxPending> m_uiVtxPending[kFramesInFlight];
 
-	// Swapchain-pass tracking. beginSwapchainPass() is idempotent — both
-	// imguiNewFrame and drawUi2D call it, and the first call does the
-	// offscreen→swapchain transition + composite quad.
+	// beginSwapchainPass() is idempotent — imguiNewFrame + drawUi2D both
+	// call it; first call does offscreen→swapchain + composite quad.
 	bool m_swapchainPassActive = false;
 
-	// Offscreen targets (per-frame for double buffering).
+	// Offscreen targets (per-frame double-buffered).
 	VkRenderPass m_offRenderPass = VK_NULL_HANDLE;
 	VkImage m_offColor[kFramesInFlight]{};
 	VkDeviceMemory m_offColorMem[kFramesInFlight]{};
@@ -315,7 +288,7 @@ private:
 	VkImageView m_offDepthView[kFramesInFlight]{};
 	VkFramebuffer m_offFB[kFramesInFlight]{};
 
-	// Composite (post-process) pipeline.
+	// Composite (post-process).
 	VkSampler m_linearSampler = VK_NULL_HANDLE;
 	VkSampler m_nearestSampler = VK_NULL_HANDLE;
 	VkDescriptorSetLayout m_compSetLayout = VK_NULL_HANDLE;
@@ -326,39 +299,29 @@ private:
 	struct CompPC { float invVP[16]; float vp[16]; };
 	CompPC m_compPC{};
 
-	// Render Tuning UBO — mirrors GradingParams (32 bytes). Composite shader
-	// reads this at set=0 binding=2. Updated per frame via setGrading().
+	// Grading UBO — mirrors GradingParams (32B). Composite reads at
+	// set=0 binding=2. Written per frame in setGrading().
 	VkBuffer m_gradUbo[kFramesInFlight]{};
 	VkDeviceMemory m_gradUboMem[kFramesInFlight]{};
 	void* m_gradUboMapped[kFramesInFlight]{};
 	GradingParams m_grading{};
 
-	// Persistent voxel meshes (createVoxelMesh / drawVoxelsMesh /
-	// renderShadowsMesh). The static playable-slice village uploads once
-	// here instead of re-streaming 6 floats per voxel every frame; future
-	// chunked terrain (chunk_mesher port) uses the same path. Keyed by
-	// monotonic id so handles can outlive map rehashes.
+	// Persistent voxel meshes — monotonic id keys (outlive map rehashes).
+	// updateVoxelMesh in-place if capBytes fits; only growth reallocates.
 	struct PersistentMesh {
 		VkBuffer       buf      = VK_NULL_HANDLE;
 		VkDeviceMemory mem      = VK_NULL_HANDLE;
 		uint32_t       instCount = 0;
-		// Allocated capacity in bytes. Lets updateVoxelMesh skip the realloc
-		// path when the new data still fits — chunk re-meshes are common
-		// and most shrink-or-stay-same; only growth needs a new buffer.
 		VkDeviceSize   capBytes  = 0;
 	};
 	std::unordered_map<uint64_t, PersistentMesh> m_meshes;
 	uint64_t m_nextMeshId = 1;
-	// destroyMesh moves entries here, drained per-frame in beginFrame after
-	// the fence wait so the buffer is guaranteed idle on the GPU.
+	// destroyMesh enqueues here; drained in beginFrame after fence wait.
 	std::vector<PersistentMesh> m_meshPending[kFramesInFlight];
 
-	// Chunk meshes (rich per-vertex 13-float format, no instancing). Separate
-	// map from m_meshes because the stride differs (52 vs 24 bytes), so the
-	// two pipelines must not see each other's buffers. Same defer-destroy
-	// pattern. Handles share the kInvalidMesh sentinel + uint64 ID space —
-	// destroyMesh checks both maps. PersistentMesh is reused: `instCount`
-	// here means "vertexCount", `capBytes` is buffer capacity in bytes.
+	// Chunk meshes — separate map (52B vs 24B stride; pipelines must not
+	// see each other's buffers). Shares ID space with m_meshes; destroyMesh
+	// checks both. Reuses PersistentMesh: instCount = vertexCount.
 	VkPipelineLayout m_chunkLayout = VK_NULL_HANDLE;
 	VkPipeline m_chunkPipelineOpaque = VK_NULL_HANDLE;
 	VkPipeline m_chunkPipelineTransparent = VK_NULL_HANDLE;
