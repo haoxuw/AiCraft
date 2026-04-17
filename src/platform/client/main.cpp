@@ -1,5 +1,7 @@
 // civcraft-ui-vk entry point. Owns GLFW window + RHI; pumps one frame per loop.
-// Game logic + input live in game_vk.cpp.
+// Game logic + input live in game_vk.cpp. If --port is omitted we spawn a local
+// civcraft-server and connect to it over TCP (singleplayer uses the same code
+// path as multiplayer — Rule: no in-process shortcut).
 
 #include "client/rhi/rhi.h"
 #include "client/rhi/rhi_vk.h"
@@ -46,8 +48,9 @@ void scrollCb(GLFWwindow* w, double xoff, double yoff) {
 int main(int argc, char** argv) {
 	setvbuf(stdout, nullptr, _IONBF, 0);
 
-	// Resolve execDir before chdir so shader paths resolve regardless of invocation cwd.
-	// execDir also lets AgentManager find civcraft-server after we've chdir'd.
+	// Resolve execDir from argv[0] BEFORE chdir, then chdir into it so
+	// shader paths resolve regardless of invocation cwd. execDir also lets
+	// AgentManager find civcraft-server once we've chdir'd.
 	std::string execDir;
 	{
 		std::string exe(argv[0]);
@@ -114,16 +117,47 @@ int main(int argc, char** argv) {
 	if (!rhi->init(ii)) return 1;
 	if (!rhi->initImGui()) return 1;
 
-	// Game owns server/network lifecycle (Menu → Loading → Playing).
+	// Spawn a civcraft-server (if --port absent) and connect over TCP, handing
+	// the NetworkServer to Game BEFORE init() so chunks stream from the server
+	// rather than being generated client-side.
+	civcraft::AgentManager agentMgr;
+	civcraft::LocalWorld localWorld;
+	{
+		civcraft::ArtifactRegistry artifacts;
+		artifacts.loadAll("artifacts");
+		localWorld.entityDefs().mergeArtifactTags(artifacts.livingTags());
+	}
+	std::unique_ptr<civcraft::NetworkServer> net;
+	{
+		int connectPort = port;
+		if (connectPort <= 0) {
+			civcraft::AgentManager::Config cfg;
+			cfg.seed = 42;
+			cfg.templateIndex = 1;  // village world
+			cfg.execDir = execDir;
+			connectPort = agentMgr.launchServer(cfg);
+			if (connectPort < 0) {
+				fprintf(stderr, "[vk] failed to launch civcraft-server\n");
+				return 1;
+			}
+		}
+		net = std::make_unique<civcraft::NetworkServer>(host, connectPort, localWorld);
+		if (!net->createGame(42, 1)) {
+			fprintf(stderr, "[vk] handshake failed (%s:%d)\n",
+			        host.c_str(), connectPort);
+			return 1;
+		}
+		printf("[vk] connected to civcraft-server %s:%d (player eid=%d)\n",
+		       host.c_str(), connectPort, (int)net->localPlayerId());
+	}
+
 	civcraft::vk::Game game;
-	game.setExecDir(execDir);
-	if (port > 0) game.setDirectConnectPrefill(host, port);
+	game.setServer(net.get());  // must precede init()
 	if (!game.init(rhi.get(), win)) {
 		fprintf(stderr, "game.init failed\n");
 		return 1;
 	}
-	// Uses --host/--port prefill if present, else spawns local village server.
-	if (skipMenu) game.skipMenuToSingleplayer();
+	if (skipMenu) game.skipMenu();
 
 	Shell shell{ rhi.get(), &game };
 	glfwSetWindowUserPointer(win, &shell);
@@ -147,6 +181,7 @@ int main(int argc, char** argv) {
 	}
 
 	game.shutdown();
+	if (net) net->disconnect();
 	rhi->shutdown();
 	glfwDestroyWindow(win);
 	glfwTerminate();

@@ -1,7 +1,7 @@
 /**
  * test_e2e.cpp — Headless end-to-end gameplay tests.
  *
- * Runs entirely in-process (no OpenGL, no network, no GLFW).
+ * Runs entirely in-process (no network, no GLFW).
  * Uses TestServer (wraps GameServer) directly to simulate gameplay
  * and assert correctness.
  *

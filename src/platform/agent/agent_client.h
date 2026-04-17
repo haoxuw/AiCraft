@@ -74,6 +74,32 @@ public:
 		return &it->second.viz;
 	}
 
+	// Plan progress for the inspector: step m_step of m_totalSteps, plus
+	// decide/stuck timers. Everything else (goalText, behaviorId, error) is
+	// already on Entity and should be read from there.
+	struct PlanProgress {
+		bool  registered         = false;
+		int   stepIndex          = 0;
+		int   totalSteps         = 0;
+		float timeSinceDecide    = 0.0f;
+		float stuckAccum         = 0.0f;
+		float overridePauseTimer = 0.0f;
+	};
+
+	PlanProgress getPlanProgress(EntityId id) const {
+		PlanProgress p;
+		auto it = m_agents.find(id);
+		if (it == m_agents.end()) return p;
+		const AgentState& s      = it->second;
+		p.registered             = true;
+		p.stepIndex              = s.stepIndex;
+		p.totalSteps             = (int)s.plan.size();
+		p.timeSinceDecide        = s.timeSinceDecide;
+		p.stuckAccum             = s.stuckAccum;
+		p.overridePauseTimer     = s.overridePauseTimer;
+		return p;
+	}
+
 	template<typename Fn>
 	void forEachAgent(Fn&& fn) const {
 		for (auto& [eid, state] : m_agents) fn(eid, state.viz);

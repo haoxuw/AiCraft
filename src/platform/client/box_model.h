@@ -1,7 +1,7 @@
 #pragma once
 
-// Box model data types — pure data, no OpenGL. Named clips in BoxModel.clips
-// override per-part swing when AnimState.currentClip matches.
+// Box model data types — pure data. Named clips in BoxModel.clips override
+// per-part swing when AnimState.currentClip matches.
 
 #include <glm/glm.hpp>
 #include <string>

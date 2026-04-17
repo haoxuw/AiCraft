@@ -3259,7 +3259,7 @@ bool VkRhi::createUi2DResources() {
 	ds.depthTestEnable = VK_FALSE;
 	ds.depthWriteEnable = VK_FALSE;
 
-	// Standard alpha blend (non-premul) — matches GL text path.
+	// Standard alpha blend (non-premul).
 	VkPipelineColorBlendAttachmentState cba{};
 	cba.blendEnable = VK_TRUE;
 	cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -3390,13 +3390,11 @@ void VkRhi::drawUi2D(const float* vertsPosUV, uint32_t vertCount,
 }
 
 void VkRhi::drawSky(const float invVP[16],
-                    const float /*skyColor*/[3],
-                    const float /*horizonColor*/[3],
                     const float sunDir[3],
                     float sunStrength,
                     float time) {
 	// All sky gradients derived in-shader from sunDir + sunStrength; time
-	// drives star twinkle + cloud drift. skyColor/horizonColor are GL-only.
+	// drives star twinkle + cloud drift.
 	if (!m_frameActive || !m_skyPipeline) return;
 	ensureMainPass();
 	VkCommandBuffer cb = m_cmdBufs[m_frame];

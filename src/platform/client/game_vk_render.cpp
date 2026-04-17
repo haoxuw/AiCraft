@@ -48,9 +48,8 @@ bool Game::projectWorld(const glm::vec3& world, glm::vec3& out) const {
 	if (clip.w <= 0.01f) return false;
 	float ndcX = clip.x / clip.w;
 	float ndcY = -clip.y / clip.w;  // Y already flipped in proj — un-flip
-	// ^ but our UI is in OpenGL NDC (+y up) while VP flipped — rhi_ui.cpp
-	// takes +y up directly. Internal VP has proj[1][1] *= -1 to handle VK
-	// image coords, so re-flip here for UI consumption.
+	// UI expects +y up (rhi_ui.cpp). Internal VP has proj[1][1] *= -1 for
+	// Vulkan image coords, so re-flip here for UI consumption.
 	if (ndcX < -1.2f || ndcX > 1.2f || ndcY < -1.2f || ndcY > 1.2f) return false;
 	out = glm::vec3(ndcX, ndcY, clip.z / clip.w);
 	return true;
@@ -62,10 +61,8 @@ bool Game::projectWorld(const glm::vec3& world, glm::vec3& out) const {
 
 namespace {
 
-// Goal-keyword → animation-clip map. Mirror of client/entity_drawer.cpp's
-// pickClip — kept identical so VK and GL mobs play the same clips for the
-// same Python-defined behaviors. Modders extending goalText don't need to
-// touch this file; they add the clip to the model's Python definition.
+// Goal-keyword → animation-clip map. Modders extending goalText don't need
+// to touch this file; they add the clip to the model's Python definition.
 const char* pickClip(const std::string& goal) {
 	if (goal.find("Chopping")   != std::string::npos) return "chop";
 	if (goal.find("Mining")     != std::string::npos) return "mine";
@@ -144,16 +141,15 @@ void Game::renderWorld(float wallTime) {
 	};
 
 	// Build entity box stream once per frame — shared by shadow + lit passes.
-	// Each box is 19 floats: {mat4 model, r, g, b}. Uses the same Python
-	// BoxModel definitions the GL client does (model_loader::loadAllModels),
-	// flattened through civcraft::appendBoxModel — walk/idle/clip/head-track
-	// animation runs in the same place for both backends.
+	// Each box is 19 floats: {mat4 model, r, g, b}. Python BoxModel
+	// definitions (model_loader::loadAllModels) are flattened through
+	// civcraft::appendBoxModel — walk/idle/clip/head-track animation runs here.
 	auto& charBoxes = m_scratch.charBoxes;
 	charBoxes.clear();
 
 	// Model-key resolution — character_skin prop wins; otherwise EntityDef.model
-	// (stripped of its .py extension) with deterministic variant selection from
-	// the entity id. Matches GL's resolveModelKey in game_render.cpp.
+	// (stripped of its .py extension) with deterministic variant selection
+	// from the entity id.
 	auto resolveModelKey = [this](const civcraft::Entity& e) -> std::string {
 		std::string skin = e.getProp<std::string>("character_skin", std::string{});
 		std::string key;
@@ -194,7 +190,7 @@ void Game::renderWorld(float wallTime) {
 			anim.time         = m_wallTime;
 
 			// Resolve held items: hotbar selected → main hand; offhand equip
-			// slot → opposite (or chosen) hand. Matches GL game_render.cpp.
+			// slot → opposite (or chosen) hand.
 			civcraft::HeldItems held;
 			int slot = m_hotbarSlot;
 			std::string mainItemId = m_hotbar.get(slot);
@@ -341,16 +337,11 @@ void Game::renderWorld(float wallTime) {
 	// (LUT-driven zenith/horizon, sunrise bleed, stars + moon at night).
 	glm::mat4 vp = viewProj();
 	glm::mat4 invVP = glm::inverse(vp);
-	// Zenith/horizon stubs are kept in the signature for the GL backend which
-	// consumes them directly; VK derives all colors in-shader from sunStr.
-	const float skyColor[3]     = { 0.50f, 0.70f, 0.95f };
-	const float horizonColor[3] = { 0.85f, 0.78f, 0.65f };
 	// Pass worldTime (in "day units") as the shader's animated phase — drives
 	// star twinkle and cloud drift. Using server time (not wallTime) keeps
 	// cloud motion consistent across all connected clients.
 	float skyTime = tod * 24.0f;  // hours since midnight, purely for animation phase
-	m_rhi->drawSky(&invVP[0][0], skyColor, horizonColor, &sunDir.x,
-	               sunStr, skyTime);
+	m_rhi->drawSky(&invVP[0][0], &sunDir.x, sunStr, skyTime);
 
 	// Terrain — one drawChunkMeshOpaque per loaded chunk. The mesher
 	// already trimmed hidden faces / applied AO + per-face shade, so this
@@ -407,8 +398,8 @@ void Game::renderWorld(float wallTime) {
 	m_rhi->drawBoxModel(scene, charBoxes.data(), charBoxCount);
 
 	// ── Block highlight — wireframe outline on targeted block ───────────
-	// Raycast from camera and draw 12 thin dark boxes for the cube edges.
-	// Matches GL renderHighlight dual-pass outline style.
+	// Raycast from camera and draw 12 thin dark boxes for the cube edges
+	// as a dual-pass outline.
 	{
 		glm::vec3 rayEye = m_cam.position;
 		glm::vec3 rayDir = m_cam.front();
@@ -826,7 +817,7 @@ void Game::renderEffects(float wallTime) {
 
 	// ── Block break progress overlay ────────────────────────────────────
 	// Dark crack-mark particles on each face of the block, progressively
-	// denser through 3 stages — matches the GL renderBreakProgress style.
+	// denser through 3 stages.
 	if (m_breaking.active && m_breaking.hits > 0) {
 		float progress = (float)m_breaking.hits / 3.0f;
 		glm::vec3 bpf = glm::vec3(m_breaking.target);
@@ -997,7 +988,7 @@ void Game::renderEffects(float wallTime) {
 				(uint32_t)(spinParts.size() / 8));
 	}
 
-	// Waypoint / plan visualization — GL parity: game_render.cpp:drawPlanViz.
+	// Waypoint / plan visualization.
 	//
 	//   Always-on in RTS:  red/blue dashes along the flow field for each
 	//                      unit currently holding a move order (m_moveOrders).
@@ -1822,10 +1813,9 @@ void Game::renderHUD() {
 		}
 	}
 
-	// ── Inventory panel (Tab) — same Diablo-style UI as the GL client ───
-	// Shared EquipmentUI lives in platform/client/ and is now backend-
-	// agnostic (see inventory_visuals.h — GL icon textures guarded by
-	// CIVCRAFT_USE_GL_ICONS, VK gets iso-cube fallbacks).
+	// ── Inventory panel (Tab) — Diablo-style equipment UI ───
+	// Shared EquipmentUI lives in platform/client/; see inventory_visuals.h
+	// for the iso-cube icon fallback.
 	if (m_invOpen) {
 		civcraft::Entity* me = m_server->getEntity(m_server->localPlayerId());
 		if (me && me->inventory) {
@@ -2371,6 +2361,50 @@ void Game::renderEntityInspect() {
 		}
 
 		ImGui::Separator();
+
+		// ── Agent (plan + decide state) ───────────────────────────────
+		// Only owned NPCs have a local AgentClient entry; others are driven
+		// by remote clients and we only see the goalText echoed above.
+		// goalText/behaviorId come straight from the Entity; plan step + action
+		// come from AgentClient (PlanProgress + PlanViz).
+		if (m_agentClient) {
+			auto pp = m_agentClient->getPlanProgress(e->id());
+			if (pp.registered) {
+				if (ImGui::CollapsingHeader("Agent", ImGuiTreeNodeFlags_DefaultOpen)) {
+					auto kv = [](const char* k, const char* fmt, auto... args) {
+						ImGui::TextColored(ImVec4(0.72f, 0.74f, 0.80f, 1), "%s", k);
+						ImGui::SameLine(140);
+						ImGui::Text(fmt, args...);
+					};
+					std::string bid = e->getProp<std::string>(civcraft::Prop::BehaviorId, "");
+					kv("behavior", "%s", bid.empty() ? "(none)" : bid.c_str());
+					kv("goal", "%s", e->goalText.empty() ? "(pending)" : e->goalText.c_str());
+					kv("plan", "step %d / %d", pp.stepIndex + 1, pp.totalSteps);
+					if (auto* viz = m_agentClient->getPlanViz(e->id())) {
+						if (viz->hasAction) {
+							const char* t = "Move";
+							switch (viz->actionType) {
+								case civcraft::PlanStep::Move:     t = "Move"; break;
+								case civcraft::PlanStep::Harvest:  t = "Harvest"; break;
+								case civcraft::PlanStep::Attack:   t = "Attack"; break;
+								case civcraft::PlanStep::Relocate: t = "Relocate"; break;
+							}
+							kv("action", "%s @ (%.1f, %.1f, %.1f)",
+								t, viz->actionPos.x, viz->actionPos.y, viz->actionPos.z);
+						}
+						kv("waypoints", "%zu", viz->waypoints.size());
+					}
+					kv("since decide", "%.1fs", pp.timeSinceDecide);
+					if (pp.stuckAccum > 0.1f)
+						ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1),
+							"stuck: %.1fs", pp.stuckAccum);
+					if (pp.overridePauseTimer > 0.01f)
+						ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.3f, 1),
+							"player override: %.1fs left", pp.overridePauseTimer);
+				}
+				ImGui::Separator();
+			}
+		}
 
 		// ── Ownership ─────────────────────────────────────────────────
 		int owner = e->getProp<int>(civcraft::Prop::Owner, 0);

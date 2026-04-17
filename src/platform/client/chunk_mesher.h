@@ -1,7 +1,7 @@
 #pragma once
 
-// Chunk mesher: 16³ volume + 1-block neighbor border → vertex stream. Backend-agnostic;
-// both GL and VK consume via IRhi::createChunkMesh (same 13-float layout).
+// Chunk mesher: 16³ volume + 1-block neighbor border → vertex stream.
+// RHI consumes via IRhi::createChunkMesh (13-float vertex layout).
 
 #include "logic/types.h"
 #include "logic/chunk.h"

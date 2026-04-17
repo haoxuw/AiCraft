@@ -1,8 +1,7 @@
 #version 450
 
-// 2D UI primitive. Vertex positions come in OpenGL-style NDC (+y up) so
-// CPU tessellation matches the GL path byte-for-byte; we flip y here to
-// map onto Vulkan's +y-down clip space.
+// 2D UI primitive. CPU emits NDC with +y up; flip here to map onto
+// Vulkan's +y-down clip space.
 
 layout(location = 0) in vec2 inPos;
 layout(location = 1) in vec2 inUV;

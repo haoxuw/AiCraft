@@ -242,7 +242,7 @@ void Game::processInput(float dt) {
 		m_handbookOpen = !m_handbookOpen;
 	m_hLast = hKey;
 
-	// ── Cursor mode (matches GL gameplay.cpp) ─────────────────────────────
+	// ── Cursor mode ───────────────────────────────────────────────────────
 	// FPS/TPS: cursor captured for mouse look.
 	// RPG/RTS: cursor free; right-click-drag = orbit camera.
 	// UI overlays (inventory, handbook, chest) always show cursor.
@@ -1013,7 +1013,7 @@ void Game::clickToMove() {
 	float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
 	float ndcY = 1.0f - (float)(my / wh) * 2.0f;
 
-	// Near→far cursor ray. Undo viewProj's Y-flip for GL-style unprojection.
+	// Near→far cursor ray. Use non-Y-flipped proj so +y=up unprojection works.
 	glm::mat4 proj = m_cam.projectionMatrix(m_aspect);  // no Y-flip
 	glm::mat4 invVP = glm::inverse(proj * m_cam.viewMatrix());
 	glm::vec4 near4 = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);

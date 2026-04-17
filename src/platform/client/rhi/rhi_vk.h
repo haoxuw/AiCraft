@@ -27,8 +27,6 @@ public:
 	void setGrading(const GradingParams& g) override;
 	bool screenshot(const char* path) override;
 	void drawSky(const float invVP[16],
-	             const float skyColor[3],
-	             const float horizonColor[3],
 	             const float sunDir[3],
 	             float sunStrength,
 	             float time) override;

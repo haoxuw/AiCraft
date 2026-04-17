@@ -1,7 +1,7 @@
 #pragma once
 
 // Flatten BoxModel + AnimState into 19 floats per box (mat4 + rgb) for
-// instanced drawBoxModel. Backend-agnostic twin of GL ModelRenderer::draw.
+// instanced drawBoxModel.
 // Instance format: mat4 model (column-major, [0,1]^3 → world) + vec3 rgb.
 
 #include "client/box_model.h"

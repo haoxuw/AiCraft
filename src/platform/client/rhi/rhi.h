@@ -1,6 +1,6 @@
 #pragma once
 
-// Render Hardware Interface — GL (legacy/web) or Vulkan (native) backend.
+// Render Hardware Interface — Vulkan backend.
 
 struct GLFWwindow;   // fwd-decl: avoid pulling backend headers
 
@@ -66,16 +66,14 @@ public:
 	};
 	static_assert(sizeof(GradingParams) == 32, "GradingParams must be 32 bytes");
 
-	// Fullscreen sky: VS reconstructs ray dir from invVP. VK ignores
-	// skyColor/horizonColor (hardcoded in shader); GL uses all.
+	// Fullscreen sky: VS reconstructs ray dir from invVP; colors derived
+	// in-shader from sunDir + sunStrength.
 	virtual void drawSky(const float invVP[16],
-	                     const float skyColor[3],
-	                     const float horizonColor[3],
 	                     const float sunDir[3],
 	                     float sunStrength,
 	                     float time) = 0;
 
-	// Call BEFORE endFrame (UBO read at swapchain-pass start). GL: no-op.
+	// Call BEFORE endFrame (UBO read at swapchain-pass start).
 	virtual void setGrading(const GradingParams& g) = 0;
 
 	// Call after imguiRender, before endFrame.
@@ -136,9 +134,9 @@ public:
 	                          uint32_t boxCount) = 0;
 
 	// AFTER beginFrame, BEFORE first drawSky/drawVoxels. sunVP = ortho light
-	// VP. voxel.frag samples with PCF. GL: no-op. Backend lazily opens
-	// depth-only pass on first shadow call, closes before first lit draw —
-	// all shadow calls accumulate into one map.
+	// VP. voxel.frag samples with PCF. Backend lazily opens depth-only pass
+	// on first shadow call, closes before first lit draw — all shadow calls
+	// accumulate into one map.
 	virtual void renderShadows(const float sunVP[16],
 	                           const float* instances,
 	                           uint32_t instanceCount) = 0;

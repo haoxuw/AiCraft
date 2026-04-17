@@ -1,7 +1,6 @@
 #version 450
 
 // 2D UI fragment: SDF text / solid fill / SDF title (outline + glow).
-// Ported 1:1 from the GL text.frag so visuals match across backends.
 
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;

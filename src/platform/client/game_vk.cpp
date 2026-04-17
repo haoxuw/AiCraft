@@ -383,8 +383,8 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	m_artifactRegistry.loadAll("artifacts");
 
 	// Load Python-defined BoxModels (one .py per creature/item under
-	// artifacts/models/). Shared with GL — same data, same parser — so
-	// sword has 14 parts, pig has legs, beaver has a tail, etc.
+	// artifacts/models/) — sword has 14 parts, pig has legs, beaver has
+	// a tail, etc.
 	m_models = civcraft::model_loader::loadAllModels("artifacts");
 	std::printf("[vk-game] Loaded %zu box models\n", m_models.size());
 
@@ -647,7 +647,7 @@ void Game::onScroll(double xoff, double yoff) {
 	float y = (float)yoff;
 	switch (m_cam.mode) {
 	case civcraft::CameraMode::FirstPerson: {
-		// Hotbar cycle — same convention as GL client (Prop::SelectedSlot).
+		// Hotbar cycle — stored in Prop::SelectedSlot.
 		if (auto* pe = playerEntity()) {
 			int slot = pe->getProp<int>(civcraft::Prop::SelectedSlot, 0);
 			slot = ((slot - (int)yoff) % 10 + 10) % 10;

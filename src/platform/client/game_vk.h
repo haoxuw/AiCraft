@@ -2,8 +2,8 @@
 
 // Vulkan-native CivCraft client — built on top of the RHI.
 //
-// Always connects to a civcraft-server over TCP (same architecture as the GL
-// client). main.cpp spawns a local server if no --port is supplied.
+// Always connects to a civcraft-server over TCP. main.cpp spawns a local
+// server if no --port is supplied.
 //
 // Systems (all talk to civcraft::rhi::IRhi):
 //   * GameState machine — MENU → PLAYING → PAUSED → DEAD → MENU.
@@ -28,9 +28,9 @@
 // 16³ Chunks and meshes them through ChunkMesher rather than streaming a
 // flat instance buffer. Pulling the headers in here means Game.h can hold
 // per-chunk MeshHandles directly; only the .cpp needs ChunkMesher.
-#include "shared/chunk.h"
-#include "shared/block_registry.h"
-#include "shared/chunk_source.h"
+#include "logic/chunk.h"
+#include "logic/block_registry.h"
+#include "logic/chunk_source.h"
 #include "client/hotbar.h"
 #include "client/box_model.h"
 #include "client/equipment_ui.h"
@@ -58,8 +58,8 @@ namespace civcraft::vk {
 
 // ── Tuning ────────────────────────────────────────────────────────────────
 // Keep tuning numbers at the top of the header so all systems can see the
-// same values. Follows the "Rule 1 / no-hardcoded-magic" spirit of the GL
-// game — if this were the real CivCraft we'd load these from Python.
+// same values. Follows the "Rule 1 / no-hardcoded-magic" spirit — if this
+// were the real CivCraft we'd load these from Python.
 struct Tuning {
 	// Physics
 	float gravity       = -20.0f;
@@ -127,7 +127,7 @@ public:
 	void setServer(civcraft::ServerInterface* s) { m_server = s; }
 
 	// Skip the main menu and drop straight into gameplay. Used by
-	// `--skip-menu` for headless/CI flows; mirrors the GL build.
+	// `--skip-menu` for headless/CI flows.
 	void skipMenu() { enterPlaying(); }
 
 	// Poll input, step sim, render one frame.
@@ -185,8 +185,8 @@ private:
 	// Camera math — delegates to m_cam; viewProj adds Vulkan Y-flip.
 	glm::mat4 viewProj() const;
 	// Picking/mouse unprojection matrix: no Y-flip, no camera shake. NDC here
-	// matches the GL convention (+1 top) that mouse coords are computed in,
-	// so unprojecting gives correct rays. Use this for cursor ↔ world math.
+	// uses +1=top (matches how mouse coords are computed), so unprojecting
+	// gives correct rays. Use this for cursor ↔ world math.
 	glm::mat4 pickViewProj() const;
 
 	// Keep the camera out of terrain: cast a ray from the orbit target toward
@@ -388,7 +388,7 @@ private:
 	bool         m_numKeyLast[10] = {};  // 1..0 → hotbar slots 0..9
 
 	// RPG/RTS right-click orbit: hold+drag to orbit camera, quick click = action.
-	// Matches GL gameplay.cpp pattern (wantCapture = orbiting only).
+	// wantCapture is set only while actively orbiting.
 	struct RightClickState {
 		bool   held     = false;
 		bool   orbiting = false;
@@ -400,7 +400,7 @@ private:
 	// UI overlay wants cursor free (inventory, handbook, chest, etc.)
 	bool         m_uiWantsCursor = false;
 
-	// Inventory panel (Tab toggle) — same Diablo-style UI as the GL client.
+	// Inventory panel (Tab toggle) — Diablo-style equipment UI.
 	// m_invOpen is the authoritative state; m_equipUI.render() is a no-op
 	// when closed. Kept as a separate bool (rather than delegating to
 	// EquipmentUI::isOpen) so the cursor/capture logic reads a single field.
@@ -497,14 +497,13 @@ private:
 	float m_breakCD = 0;
 
 	// Click-to-move order (RPG/RTS). While active, tickPlayer drives the player
-	// toward m_moveOrderTarget like a virtual joystick (same approach as the
-	// GL client's gameplay_movement.cpp) — client prediction stays consistent
-	// with server authority. WASD cancels; arrival (<1.5b) clears.
+	// toward m_moveOrderTarget like a virtual joystick — client prediction
+	// stays consistent with server authority. WASD cancels; arrival (<1.5b) clears.
 	bool         m_hasMoveOrder = false;
 	glm::vec3    m_moveOrderTarget{0};
 
 	// GameLogger state tracking — detect deltas across frames for DECIDE,
-	// COMBAT, DEATH, INV categories (same pattern as GL client).
+	// COMBAT, DEATH, INV categories.
 	std::unordered_map<civcraft::EntityId, std::string> m_entityGoals;
 	std::unordered_map<civcraft::EntityId, int>         m_prevEntityHP;
 	std::unordered_map<civcraft::EntityId, std::unordered_map<std::string,int>> m_prevInv;

@@ -10,7 +10,7 @@
 
 namespace civcraft::rhi {
 
-// NDC glyph size; matches GL TextRenderer layout. 1.0 scale ≈ 24 px on 900p.
+// NDC glyph size. 1.0 scale ≈ 24 px on 900p.
 static constexpr float kCharW = 0.018f;
 static constexpr float kCharH = 0.032f;
 
