@@ -149,25 +149,6 @@ void EntityUiRenderer::renderEntityInspect() {
 			def.collision_box_min.x, def.collision_box_min.y, def.collision_box_min.z,
 			def.collision_box_max.x, def.collision_box_max.y, def.collision_box_max.z);
 
-		// ── Inventory ─────────────────────────────────────────────────
-		if (e->inventory && !e->inventory->items().empty()) {
-			ui::VerticalSpace();
-			int itemCount = 0;
-			for (auto& [iid, cnt] : e->inventory->items()) itemCount += cnt;
-			char hdr[64];
-			snprintf(hdr, sizeof(hdr), "Inventory (%d)", itemCount);
-			ui::SectionHeader(hdr);
-			for (auto& [itemId, count] : e->inventory->items()) {
-				if (count <= 0) continue;
-				std::string name = itemId;
-				auto col = name.find(':');
-				if (col != std::string::npos) name = name.substr(col + 1);
-				for (auto& c : name) if (c == '_') c = ' ';
-				if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
-				ui::KeyValue(name.c_str(), "x%d", count);
-			}
-		}
-
 		// ── All properties (raw) ──────────────────────────────────────
 		ui::VerticalSpace();
 		if (ImGui::CollapsingHeader("All Properties (Raw)")) {
@@ -185,97 +166,6 @@ void EntityUiRenderer::renderEntityInspect() {
 	}
 	ImGui::End();
 	if (!open) g.m_inspectedEntity = 0;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Chest inventory transfer UI
-// ─────────────────────────────────────────────────────────────────────────
-
-void EntityUiRenderer::renderChestUI() {
-	Game& g = game_;
-	civcraft::Entity* chestE = g.m_server->getEntity(g.m_chestUI.chestEid);
-	civcraft::Entity* pe = g.m_server->getEntity(g.m_server->localPlayerId());
-	if (!chestE || !pe) { g.m_chestUI.open = false; return; }
-
-	ImGui::SetNextWindowSize(ImVec2(480, 420), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowPos(
-		ImVec2(g.m_fbW * 0.5f, g.m_fbH * 0.5f), ImGuiCond_FirstUseEver,
-		ImVec2(0.5f, 0.5f));
-
-	ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.06f, 0.04f, 0.92f));
-	ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.15f, 0.10f, 0.06f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.25f, 0.15f, 0.08f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.14f, 0.08f, 0.9f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.22f, 0.10f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.45f, 0.30f, 0.12f, 1.0f));
-
-	bool open = g.m_chestUI.open;
-	if (ImGui::Begin("Chest", &open,
-	    ImGuiWindowFlags_NoCollapse)) {
-
-		auto renderSection = [&](const char* label, civcraft::Inventory* inv,
-		                         bool isChest) {
-			ImGui::Text("%s", label);
-			ImGui::Separator();
-			if (!inv || inv->items().empty()) {
-				ImGui::TextDisabled("  (empty)");
-			} else {
-				for (auto& [itemId, count] : inv->items()) {
-					if (count <= 0) continue;
-					std::string name = itemId;
-					auto col = name.find(':');
-					if (col != std::string::npos) name = name.substr(col + 1);
-					for (auto& c : name) if (c == '_') c = ' ';
-					if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
-
-					ImGui::Text("  %s x%d", name.c_str(), count);
-					ImGui::SameLine();
-					std::string btnId = (isChest ? "Take##" : "Store##") + itemId;
-					if (ImGui::SmallButton(btnId.c_str())) {
-						civcraft::ActionProposal p;
-						p.type      = civcraft::ActionProposal::Relocate;
-						p.actorId   = g.m_server->localPlayerId();
-						p.itemId    = itemId;
-						p.itemCount = 1;
-						if (isChest) {
-							p.relocateFrom = civcraft::Container::entity(g.m_chestUI.chestEid);
-							p.relocateTo   = civcraft::Container::self();
-						} else {
-							p.relocateFrom = civcraft::Container::self();
-							p.relocateTo   = civcraft::Container::entity(g.m_chestUI.chestEid);
-						}
-						g.m_server->sendAction(p);
-						g.m_server->sendGetInventory(g.m_chestUI.chestEid);
-					}
-					ImGui::SameLine();
-					std::string allId = (isChest ? "All##" : "All##s") + itemId;
-					if (ImGui::SmallButton(allId.c_str())) {
-						civcraft::ActionProposal p;
-						p.type      = civcraft::ActionProposal::Relocate;
-						p.actorId   = g.m_server->localPlayerId();
-						p.itemId    = itemId;
-						p.itemCount = count;
-						if (isChest) {
-							p.relocateFrom = civcraft::Container::entity(g.m_chestUI.chestEid);
-							p.relocateTo   = civcraft::Container::self();
-						} else {
-							p.relocateFrom = civcraft::Container::self();
-							p.relocateTo   = civcraft::Container::entity(g.m_chestUI.chestEid);
-						}
-						g.m_server->sendAction(p);
-						g.m_server->sendGetInventory(g.m_chestUI.chestEid);
-					}
-				}
-			}
-		};
-
-		renderSection("Chest Contents", chestE->inventory.get(), true);
-		ImGui::Spacing(); ImGui::Spacing();
-		renderSection("Your Inventory", pe->inventory.get(), false);
-	}
-	ImGui::End();
-	ImGui::PopStyleColor(6);
-	g.m_chestUI.open = open;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

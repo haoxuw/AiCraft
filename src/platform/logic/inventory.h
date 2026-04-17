@@ -5,6 +5,7 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <cmath>
 
 #include "material_values.h"
 
@@ -93,9 +94,10 @@ public:
 		return v;
 	}
 
-	// capacity <= 0 means "no carry allowed".
+	// capacity <= 0 means "no carry allowed". +infinity = unlimited (players).
 	bool canAccept(const std::string& itemId, int count, float capacity) const {
 		if (capacity <= 0.0f) return false;
+		if (std::isinf(capacity)) return true;
 		float cost = getMaterialValue(itemId) * (float)count;
 		return totalValue() + cost <= capacity + 1e-4f;
 	}

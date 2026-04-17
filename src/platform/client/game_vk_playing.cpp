@@ -63,32 +63,14 @@ void Game::processInput(float dt) {
 	if (esc && !m_escLast) {
 		if (m_inspectedEntity != 0) {
 			m_inspectedEntity = 0;
-		} else if (m_chestUI.open) {
-			m_chestUI.open = false;
 		} else if (m_handbookOpen) {
 			m_handbookOpen = false;
-		} else if (m_invOpen) {
-			m_invOpen = false;
 		} else if (m_state == GameState::Playing) openGameMenu();
 		else if (m_state == GameState::GameMenu) closeGameMenu();
 	}
 	m_escLast = esc;
 
 	if (m_state != GameState::Playing) return;
-
-	// Number keys 1..9,0 → hotbar slots 0..9.
-	static const int kNumKeys[10] = {
-		GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5,
-		GLFW_KEY_6, GLFW_KEY_7, GLFW_KEY_8, GLFW_KEY_9, GLFW_KEY_0,
-	};
-	for (int i = 0; i < 10; i++) {
-		bool down = glfwGetKey(m_window, kNumKeys[i]) == GLFW_PRESS;
-		if (down && !m_numKeyLast[i]) {
-			m_hotbarSlot = i;
-			std::printf("[vk-game] hotbar slot → %d\n", i);
-		}
-		m_numKeyLast[i] = down;
-	}
 
 	// V: cycle camera mode (FPS → TPS → RPG → RTS)
 	// Selection persists across camera modes — only RMB-in-empty-space or an
@@ -109,7 +91,7 @@ void Game::processInput(float dt) {
 		if (!(m_modeHintsShown & bit)) {
 			m_modeHintsShown |= bit;
 			const char* hints[] = {
-				"WASD move · mouse look · LMB attack · RMB place · Q drop",
+				"WASD move · mouse look · LMB attack · RMB place",
 				"WASD move · mouse orbits · LMB attack · RMB place",
 				"RMB-drag orbits · click ground to move · drag to box-select",
 				"WASD pan · RMB-drag orbit · LMB box-select · LMB-hold=Build",
@@ -120,94 +102,38 @@ void Game::processInput(float dt) {
 	}
 	m_vLast = v;
 
-	// Tab: toggle inventory panel
-	bool tab = glfwGetKey(m_window, GLFW_KEY_TAB) == GLFW_PRESS;
-	if (tab && !m_tabLast) {
-		m_invOpen = !m_invOpen;
-		if (!m_invOpen && m_chestUI.open)
-			m_chestUI.open = false;
-	}
-	m_tabLast = tab;
-
-	// E: interact (door/chest/etc.) under cursor.
+	// E: interact (door/button/etc.) under cursor.
 	bool eKey = glfwGetKey(m_window, GLFW_KEY_E) == GLFW_PRESS;
 	if (eKey && !m_eLast) {
-		if (m_chestUI.open) {
-			m_chestUI.open = false;
-		} else {
-			glm::vec3 eye = m_cam.position;
-			glm::vec3 dir = m_cam.front();
-			if (m_cam.mode == civcraft::CameraMode::RPG ||
-			    m_cam.mode == civcraft::CameraMode::RTS) {
-				double mx, my;
-				glfwGetCursorPos(m_window, &mx, &my);
-				int ww = m_fbW, wh = m_fbH;
-				if (ww > 0 && wh > 0) {
-					float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
-					float ndcY = 1.0f - (float)(my / wh) * 2.0f;
-					glm::mat4 invVP = glm::inverse(viewProj());
-					glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
-					glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
-					dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
-				}
+		glm::vec3 eye = m_cam.position;
+		glm::vec3 dir = m_cam.front();
+		if (m_cam.mode == civcraft::CameraMode::RPG ||
+		    m_cam.mode == civcraft::CameraMode::RTS) {
+			double mx, my;
+			glfwGetCursorPos(m_window, &mx, &my);
+			int ww = m_fbW, wh = m_fbH;
+			if (ww > 0 && wh > 0) {
+				float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
+				float ndcY = 1.0f - (float)(my / wh) * 2.0f;
+				glm::mat4 invVP = glm::inverse(viewProj());
+				glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
+				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
+				dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
 			}
-			auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
-			if (hit) {
-				glm::ivec3 bp = hit->hasInteract ? hit->interactPos : hit->blockPos;
-				civcraft::ActionProposal p;
-				p.type     = civcraft::ActionProposal::Interact;
-				p.actorId  = m_server->localPlayerId();
-				p.blockPos = bp;
-				m_server->sendAction(p);
-				civcraft::GameLogger::instance().emit("ACTION",
-					"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
-				// Any Structure entity with inventory near the hit opens chest UI
-				// (chests, monument deck, …).
-				glm::vec3 hitCenter = glm::vec3(bp) + glm::vec3(0.5f);
-				civcraft::EntityId bestEid = 0;
-				float bestDist = 5.0f;
-				m_server->forEachEntity([&](civcraft::Entity& e) {
-					if (!e.def().isStructure() || !e.inventory) return;
-					float d = glm::distance(e.position, hitCenter);
-					if (d < bestDist) { bestDist = d; bestEid = e.id(); }
-				});
-				if (bestEid != 0) {
-					m_chestUI.open     = true;
-					m_chestUI.pos      = bp;
-					m_chestUI.chestEid = bestEid;
-					m_server->sendGetInventory(bestEid);
-				}
-			}
+		}
+		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+		if (hit) {
+			glm::ivec3 bp = hit->hasInteract ? hit->interactPos : hit->blockPos;
+			civcraft::ActionProposal p;
+			p.type     = civcraft::ActionProposal::Interact;
+			p.actorId  = m_server->localPlayerId();
+			p.blockPos = bp;
+			m_server->sendAction(p);
+			civcraft::GameLogger::instance().emit("ACTION",
+				"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
 		}
 	}
 	m_eLast = eKey;
-
-	// Q: drop one held item. Held-repeat at kTune.dropCD.
-	if (glfwGetKey(m_window, GLFW_KEY_Q) == GLFW_PRESS
-	    && !m_uiWantsCursor && m_dropCD <= 0) {
-		if (auto* me = playerEntity()) {
-			std::string heldItem = m_hotbar.get(m_hotbarSlot);
-			if (!heldItem.empty() && me->inventory && me->inventory->has(heldItem)) {
-				civcraft::ActionProposal p;
-				p.type       = civcraft::ActionProposal::Relocate;
-				p.actorId    = m_server->localPlayerId();
-				p.relocateTo = civcraft::Container::ground();
-				p.itemId     = heldItem;
-				p.itemCount  = 1;
-				p.desiredVel = m_cam.front() * 5.0f + glm::vec3(0, 3.0f, 0);
-				m_server->sendAction(p);
-				m_dropCD = kTune.dropCD;
-				civcraft::GameLogger::instance().emit("ACTION",
-					"dropped %s", heldItem.c_str());
-				FloatText ft;
-				ft.worldPos = me->position + glm::vec3(0, 2.0f, 0);
-				ft.color    = glm::vec3(0.85f, 0.75f, 0.55f);
-				ft.text     = "-1";
-				ft.lifetime = 0.7f;
-				m_floaters.push_back(ft);
-			}
-		}
-	}
 
 	// F12: toggle admin mode
 	bool f12 = glfwGetKey(m_window, GLFW_KEY_F12) == GLFW_PRESS;
@@ -245,9 +171,8 @@ void Game::processInput(float dt) {
 	// ── Cursor mode ───────────────────────────────────────────────────────
 	// FPS/TPS: cursor captured for mouse look.
 	// RPG/RTS: cursor free; right-click-drag = orbit camera.
-	// UI overlays (inventory, handbook, chest) always show cursor.
-	m_uiWantsCursor = m_invOpen || m_handbookOpen || m_chestUI.open
-	                || m_inspectedEntity != 0 || m_showTuning;
+	// UI overlays (handbook, inspector, tuning) always show cursor.
+	m_uiWantsCursor = m_handbookOpen || m_inspectedEntity != 0 || m_showTuning;
 
 	bool wantCapture = (m_cam.mode == civcraft::CameraMode::FirstPerson ||
 	                    m_cam.mode == civcraft::CameraMode::ThirdPerson);
@@ -584,7 +509,6 @@ void Game::tickPlayer(float dt) {
 	if (m_attackCD > 0) m_attackCD -= dt;
 	if (m_breakCD > 0) m_breakCD -= dt;
 	if (m_placeCD > 0) m_placeCD -= dt;
-	if (m_dropCD > 0)  m_dropCD  -= dt;
 	if (m_climb.active()) m_climb.t += dt;
 	if (m_handSwingT >= 0.0f) {
 		m_handSwingT += dt;
@@ -1025,8 +949,16 @@ void Game::placeBlock() {
 	auto& chunks = m_server->chunks();
 	auto hit = civcraft::raycastBlocks(chunks, eye, dir, 8.0f);
 	if (!hit) return;
-	// Uses last dug block; server silently rejects if player doesn't have it.
+
+	// Client-side guard: server will reject silently if any of these fail
+	// (no such block type, or actor has none in inventory). Guarding here
+	// avoids false-positive placement feedback and needless server traffic.
 	const std::string& blockType = m_lastDugBlock;
+	if (blockType.empty()) return;
+	if (!m_server->blockRegistry().find(blockType)) return;
+	auto* me = playerEntity();
+	if (!me || !me->inventory || !me->inventory->has(blockType)) return;
+
 	civcraft::ActionProposal p;
 	p.actorId     = m_server->localPlayerId();
 	p.type        = civcraft::ActionProposal::Convert;
@@ -1038,12 +970,6 @@ void Game::placeBlock() {
 	m_server->sendAction(p);
 	civcraft::GameLogger::instance().emit("ACTION", "placed %s @(%d,%d,%d)",
 		blockType.c_str(), hit->placePos.x, hit->placePos.y, hit->placePos.z);
-	FloatText ft;
-	ft.worldPos = glm::vec3(hit->placePos) + glm::vec3(0.5f, 1.4f, 0.5f);
-	ft.color    = glm::vec3(0.55f, 0.85f, 0.55f);
-	ft.text     = "PLACE";
-	ft.lifetime = 0.8f;
-	m_floaters.push_back(ft);
 }
 
 void Game::clickToMove() {
@@ -1174,102 +1100,119 @@ void Game::tickFloaters(float dt) {
 		m_notifs.end());
 }
 
-// Auto-pickup scan + fly anim. m_pickupAnims presence == "client claimed
-// this item". pickup_range and pickup_fly_duration come from picker def.
+// Auto-pickup: one Relocate per item per kPickupCooldown; fly anim + "+N"
+// floater fire only when the server removes the item (accepted). On no-show
+// within kPickupWait, emit one "Pickup denied" floater and hold the cooldown
+// so we don't re-send.
 void Game::updatePickups(float dt) {
 	civcraft::Entity* pe = playerEntity();
 	if (!pe || !m_server) return;
 	const auto& pdef = pe->def();
 	if (pdef.pickup_range <= 0.0f) return;
 
+	// Advance running fly anims; emit "+N item_name" + sound on completion.
+	for (auto it = m_pickupAnims.begin(); it != m_pickupAnims.end(); ) {
+		it->t += dt;
+		if (it->t >= it->duration) {
+			FloatText ft;
+			std::string key = it->itemType;
+			auto col = key.find(':');
+			if (col != std::string::npos) key = key.substr(col + 1);
+			if (!key.empty()) key[0] = (char)std::toupper((unsigned char)key[0]);
+			for (auto& c : key) if (c == '_') c = ' ';
+			ft.worldPos = pe->position + glm::vec3(0, 2.0f, 0);
+			ft.color    = glm::vec3(0.55f, 0.95f, 0.55f);
+			ft.text     = "+" + std::to_string(it->count) + " " + key;
+			ft.lifetime = 1.0f;
+			m_floaters.push_back(ft);
+			m_audio.play("item_pickup", 0.5f);
+			it = m_pickupAnims.erase(it);
+		} else ++it;
+	}
+
+	// Process outstanding requests: server approval → fly anim; kPickupWait
+	// with entity still present → one denial floater; kPickupCooldown → expire.
+	for (auto it = m_pickupRequests.begin(); it != m_pickupRequests.end(); ) {
+		it->second.age += dt;
+		civcraft::EntityId eid = it->first;
+		civcraft::Entity*  check = m_server->getEntity(eid);
+		bool gone = !check || check->removed;
+
+		if (gone && !it->second.deniedShown) {
+			PickupAnim a;
+			a.itemId   = eid;
+			a.startPos = it->second.startPos;
+			a.color    = it->second.color;
+			a.itemType = it->second.itemType;
+			a.count    = it->second.count;
+			a.duration = pdef.pickup_fly_duration;
+			m_pickupAnims.push_back(a);
+			it = m_pickupRequests.erase(it);
+			continue;
+		}
+		if (!it->second.deniedShown && it->second.age >= kPickupWait) {
+			FloatText ft;
+			ft.worldPos = pe->position + glm::vec3(0, 2.0f, 0);
+			ft.color    = glm::vec3(0.95f, 0.45f, 0.45f);
+			ft.text     = "Pickup denied";
+			ft.lifetime = 1.0f;
+			m_floaters.push_back(ft);
+			it->second.deniedShown = true;
+		}
+		if (it->second.age >= kPickupCooldown) {
+			it = m_pickupRequests.erase(it);
+		} else ++it;
+	}
+
+	// Scan for new in-range items and send one Relocate each.
 	auto hasAnim = [this](civcraft::EntityId eid) {
-		for (const auto& a : m_pickupAnims)
-			if (a.itemId == eid) return true;
+		for (const auto& a : m_pickupAnims) if (a.itemId == eid) return true;
 		return false;
 	};
-
-	// Scan: send Relocate + start anim for unclaimed in-range items.
 	m_server->forEachEntity([&](civcraft::Entity& e) {
 		if (!e.def().isItem()) return;
 		if (e.removed) return;
+		if (m_pickupRequests.count(e.id())) return;  // cooldown-gated
 		if (hasAnim(e.id())) return;
 		float dist = glm::length(e.position - pe->position);
 		if (dist >= pdef.pickup_range) return;
 
 		std::string itemType = e.getProp<std::string>(civcraft::Prop::ItemType);
 		int count = e.getProp<int>(civcraft::Prop::Count, 1);
+		const auto* bdef = m_server->blockRegistry().find(itemType);
+		glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
+
 		if (pe->inventory && !pe->inventory->canAccept(itemType, count,
 		                                                pdef.inventory_capacity)) {
-			// Capacity full — drop one floater, no Relocate.
 			FloatText ft;
 			ft.worldPos = pe->position + glm::vec3(0, 2.0f, 0);
 			ft.color    = glm::vec3(0.95f, 0.55f, 0.35f);
 			ft.text     = "Inventory full";
 			ft.lifetime = 1.0f;
 			m_floaters.push_back(ft);
-			// No-send marker anim prevents re-spamming the floater.
-			PickupAnim marker;
-			marker.itemId   = e.id();
-			marker.startPos = e.position;
-			marker.itemType = itemType;
-			marker.count    = count;
-			marker.duration = pdef.pickup_fly_duration;
-			// t past end → tick skips; present only for scan de-dup.
-			marker.t = marker.duration;
-			m_pickupAnims.push_back(marker);
+			PickupRequest req;
+			req.itemType    = itemType;
+			req.count       = count;
+			req.startPos    = e.position;
+			req.color       = color;
+			req.deniedShown = true;  // skip the denial path; cooldown still applies
+			m_pickupRequests[e.id()] = req;
 			return;
 		}
 
-		// Optimistic claim + fly anim.
 		civcraft::ActionProposal p;
-		p.type    = civcraft::ActionProposal::Relocate;
-		p.actorId = m_server->controlledEntityId();
+		p.type         = civcraft::ActionProposal::Relocate;
+		p.actorId      = m_server->controlledEntityId();
 		p.relocateFrom = civcraft::Container::entity(e.id());
 		m_server->sendAction(p);
 
-		const auto* bdef = m_server->blockRegistry().find(itemType);
-		glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
-
-		PickupAnim a;
-		a.itemId   = e.id();
-		a.startPos = e.position;
-		a.color    = color;
-		a.itemType = itemType;
-		a.count    = count;
-		a.duration = pdef.pickup_fly_duration;
-		m_pickupAnims.push_back(a);
+		PickupRequest req;
+		req.itemType = itemType;
+		req.count    = count;
+		req.startPos = e.position;
+		req.color    = color;
+		m_pickupRequests[e.id()] = req;
 	});
-
-	// Resolve at t=1: entity gone → success, still present → denied.
-	for (auto it = m_pickupAnims.begin(); it != m_pickupAnims.end(); ) {
-		it->t += dt;
-		if (it->t >= it->duration) {
-			civcraft::Entity* check = m_server->getEntity(it->itemId);
-			bool gone = !check || check->removed;
-
-			FloatText ft;
-			ft.worldPos = pe->position + glm::vec3(0, 2.0f, 0);
-			ft.lifetime = 1.0f;
-			if (gone) {
-				// Success: "+N item_name"
-				std::string key = it->itemType;
-				auto col = key.find(':');
-				if (col != std::string::npos) key = key.substr(col + 1);
-				if (!key.empty()) key[0] = (char)std::toupper((unsigned char)key[0]);
-				for (auto& c : key) if (c == '_') c = ' ';
-				ft.text  = "+" + std::to_string(it->count) + " " + key;
-				ft.color = glm::vec3(0.55f, 0.95f, 0.55f);
-				m_audio.play("item_pickup", 0.5f);
-			} else {
-				ft.text  = "Pickup denied";
-				ft.color = glm::vec3(0.95f, 0.45f, 0.45f);
-			}
-			m_floaters.push_back(ft);
-			it = m_pickupAnims.erase(it);
-		} else {
-			++it;
-		}
-	}
 }
 
 } // namespace civcraft::vk

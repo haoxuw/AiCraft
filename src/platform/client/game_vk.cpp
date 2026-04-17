@@ -177,23 +177,6 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		if (!m_server) return;
 		civcraft::Entity* ent = m_server->getEntity(eid);
 		if (!ent || !ent->inventory) return;
-		// Refresh hotbar slot map on local-player inventory updates.
-		// First update after a fresh session either restores the saved
-		// layout from disk or populates by priority; subsequent updates
-		// merge so drag-drop assignments survive pickups / drops. Save
-		// right after the first populate so a fresh install still gets
-		// a file on disk even if the user never drag-drops.
-		if (eid == m_server->localPlayerId()) {
-			if (!m_hotbarLoaded) {
-				if (!m_hotbar.loadFromFile(m_hotbarSavePath))
-					m_hotbar.repopulateFrom(*ent->inventory);
-				m_hotbar.mergeFrom(*ent->inventory);
-				m_hotbar.saveToFile(m_hotbarSavePath);
-				m_hotbarLoaded = true;
-			} else {
-				m_hotbar.mergeFrom(*ent->inventory);
-			}
-		}
 		auto prevIt = m_prevInv.find(eid);
 		bool seedingFirstSnapshot = (prevIt == m_prevInv.end());
 		auto& prev = m_prevInv[eid];
@@ -364,12 +347,6 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		if (m_state == GameState::Playing) openGameMenu();
 		else if (m_state == GameState::GameMenu) closeGameMenu();
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_inventory_request", [this] {
-		if (m_state != GameState::Playing) return;
-		m_invOpen = !m_invOpen;
-		if (!m_invOpen && m_chestUI.open) m_chestUI.open = false;
-		std::printf("[vk-game] [trigger] inventory %s\n", m_invOpen ? "OPEN" : "CLOSED");
-	});
 	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_goto_request", [this](const std::string& line) {
 		float tx = 0, ty = 0, tz = 0;
 		if (sscanf(line.c_str(), "%f %f %f", &tx, &ty, &tz) >= 3) {
@@ -378,13 +355,6 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 			m_hasMoveOrder    = true;
 			m_moveOrderTarget = target;
 			std::printf("[vk-game] [trigger] goto (%.1f,%.1f,%.1f)\n", tx, ty, tz);
-		}
-	});
-	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_hotbar_request", [this](const std::string& line) {
-		int slot = 0;
-		if (sscanf(line.c_str(), "%d", &slot) == 1 && slot >= 0 && slot <= 9) {
-			m_hotbarSlot = slot;
-			std::printf("[vk-game] [trigger] hotbar slot → %d\n", slot);
 		}
 	});
 	m_debugTriggers.addTrigger("/tmp/civcraft_vk_ascend_request", [this] {
@@ -621,9 +591,6 @@ void Game::streamServerChunks() {
 
 void Game::shutdown() {
 	if (!m_rhi) return;
-	// Persist hotbar layout so the player's drag-drop arrangement survives
-	// across sessions. loadFromFile() on next start will pick this up.
-	if (m_hotbarLoaded) m_hotbar.saveToFile(m_hotbarSavePath);
 	// Tear down the agent client BEFORE main.cpp drops the NetworkServer:
 	// AgentClient holds a reference to ServerInterface and its decide-worker
 	// thread may still be in flight when we hit ~AgentClient.
@@ -678,7 +645,6 @@ void Game::enterPlaying() {
 	m_walkDist  = 0.0f;
 	m_attackCD  = 0.0f;
 	m_placeCD   = 0.0f;
-	m_dropCD    = 0.0f;
 	m_regenIdle = 0.0f;
 	m_playerBodyYawInit = false;
 	m_sprintFovBoost = 0.0f;
@@ -782,15 +748,8 @@ void Game::onScroll(double xoff, double yoff) {
 	if (m_state != GameState::Playing) return;
 	float y = (float)yoff;
 	switch (m_cam.mode) {
-	case civcraft::CameraMode::FirstPerson: {
-		// Hotbar cycle — stored in Prop::SelectedSlot.
-		if (auto* pe = playerEntity()) {
-			int slot = pe->getProp<int>(civcraft::Prop::SelectedSlot, 0);
-			slot = ((slot - (int)yoff) % 10 + 10) % 10;
-			pe->setProp(civcraft::Prop::SelectedSlot, slot);
-		}
+	case civcraft::CameraMode::FirstPerson:
 		break;
-	}
 	case civcraft::CameraMode::ThirdPerson:
 		m_cam.orbitDistanceTarget = std::clamp(m_cam.orbitDistanceTarget - y, 2.0f, 20.0f);
 		break;
@@ -904,17 +863,6 @@ void Game::runOneFrame(float dt, float wallTime) {
 		tickCombat(dt);
 		updatePickups(dt);
 		tickFloaters(dt);
-		if (m_chestUI.open) {
-			civcraft::Entity* ce = m_server->getEntity(m_chestUI.chestEid);
-			auto* chestMe = playerEntity();
-			if (!ce || ce->removed) {
-				m_chestUI.open = false;
-			} else if (chestMe) {
-				float d = glm::length(ce->position - chestMe->position);
-				if (d > 6.0f)
-					m_chestUI.open = false;
-			}
-		}
 	} else if (m_state == GameState::Dead) {
 		bool r = glfwGetKey(m_window, GLFW_KEY_R) == GLFW_PRESS;
 		if (r) respawn();
@@ -957,13 +905,11 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_worldRenderer.renderEntities(wallTime);
 		m_frameProbe.mark("ents");
 		m_worldRenderer.renderEffects(wallTime);
-		m_hudRenderer.renderHotbarItems3D();  // 3D inventory icons — must precede HUD 2D
 		m_frameProbe.mark("fx3d");
 		m_rhi->imguiNewFrame();
 		m_frameProbe.mark("imNew");
 		m_hudRenderer.renderHUD();
 		m_frameProbe.mark("hud");
-		if (m_chestUI.open) m_entityUiRenderer.renderChestUI();
 		if (m_inspectedEntity != 0) m_entityUiRenderer.renderEntityInspect();
 		if (m_showDebug) m_panelRenderer.renderDebugOverlay();
 		if (m_showTuning) m_panelRenderer.renderTuningPanel();
@@ -978,7 +924,6 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_worldRenderer.renderEntities(wallTime);
 		m_frameProbe.mark("ents");
 		m_worldRenderer.renderEffects(wallTime);
-		m_hudRenderer.renderHotbarItems3D();
 		m_frameProbe.mark("fx3d");
 		m_rhi->imguiNewFrame();
 		m_frameProbe.mark("imNew");

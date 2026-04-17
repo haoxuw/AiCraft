@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
 			       "  WASD        move         LMB          attack / click-to-move\n"
 			       "  SPACE       jump         Mouse move   look\n"
 			       "  V           cycle camera (FPS/TPS/RPG/RTS)\n"
-			       "  Tab         inventory    H            handbook\n"
+			       "  H           handbook\n"
 			       "  F3          debug overlay             F2  screenshot\n"
 			       "  ESC         menu         R            respawn (when dead)\n"
 			       "  F12         admin        F11          fly (admin)\n"

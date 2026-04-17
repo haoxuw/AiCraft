@@ -13,7 +13,7 @@
 //   * Player — WASD + 4 camera modes (FPS/TPS/RPG/RTS), click-to-move,
 //     server-authoritative position via clientPos.
 //   * Combat — left-click swing → Convert proposal (server validates).
-//   * HUD — main menu (ImGui), hotbar (10 slots), HP bar, FPS counter.
+//   * HUD — main menu (ImGui), HP bar, FPS counter.
 //   * Particles — torch flames + fireflies.
 
 #include "client/rhi/rhi.h"
@@ -31,9 +31,7 @@
 #include "logic/chunk.h"
 #include "logic/block_registry.h"
 #include "logic/chunk_source.h"
-#include "client/hotbar.h"
 #include "client/box_model.h"
-#include "client/equipment_ui.h"
 #include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
 
@@ -162,7 +160,7 @@ public:
 
 	// Mouse-wheel routed from the platform shell. ImGui consumes first; if the
 	// cursor isn't over a UI widget the game dispatches per camera mode
-	// (hotbar cycle / orbit zoom / RTS zoom-to-cursor).
+	// (orbit zoom / RTS zoom-to-cursor).
 	void onScroll(double xoff, double yoff);
 
 private:
@@ -310,7 +308,6 @@ private:
 	float        m_walkDist  = 0.0f;  // animation swing phase
 	float        m_attackCD  = 0.0f;  // cooldown until next swing
 	float        m_placeCD   = 0.0f;  // cooldown until next RMB block place
-	float        m_dropCD    = 0.0f;  // cooldown until next Q drop
 	float        m_regenIdle = 0.0f;  // seconds since last damage
 
 	// Third-person body yaw (radians). In FPS it's snapped to cam.lookYaw each
@@ -364,24 +361,44 @@ private:
 	};
 	std::vector<HitEvent> m_hitEvents;
 
-	// Dropped-item pickup — single source of truth.
-	// An anim for itemId == eid means the client has optimistically claimed
-	// that ItemEntity: the Relocate is already in flight, the ground cube is
-	// hidden, and updatePickups() treats the entity as taken. At t=1 we
-	// confirm outcome from server state — entity removed = success, entity
-	// still present = denied (race / out-of-range / capacity rejected).
-	// Duration comes from the picker's EntityDef::pickup_fly_duration so
-	// tuning lives in artifacts, not here.
+	// Dropped-item pickup.
+	//
+	// Two-phase model:
+	//   1. A PickupRequest is created when updatePickups() sends a Relocate.
+	//      Its presence in m_pickupRequests acts as a per-entity cooldown:
+	//      we do not re-send Relocate for the same item for 5s. No anim
+	//      plays yet.
+	//   2. When the server accepts (observed as the item entity disappearing
+	//      from m_server), the request converts to a PickupAnim that plays
+	//      the fly-to-player arc. When the server rejects (no disappearance
+	//      within kPickupWait), we emit ONE "Pickup denied" floater and
+	//      keep the request around until kPickupCooldown elapses, blocking
+	//      retries.
+	// Duration of the arc comes from the picker's EntityDef::pickup_fly_duration.
 	struct PickupAnim {
 		civcraft::EntityId itemId = 0;
 		glm::vec3 startPos{0};
 		glm::vec3 color{1};
-		std::string itemType;   // "base:dirt" etc. — HUD display key
+		std::string itemType;
 		int count = 1;
 		float t = 0.0f;
 		float duration = 0.0f;
 	};
 	std::vector<PickupAnim> m_pickupAnims;
+
+	struct PickupRequest {
+		std::string itemType;
+		int         count = 1;
+		glm::vec3   startPos{0};
+		glm::vec3   color{1};
+		float       age = 0.0f;       // seconds since Relocate sent
+		bool        deniedShown = false;
+	};
+	std::unordered_map<civcraft::EntityId, PickupRequest> m_pickupRequests;
+	// Tuning. kPickupWait = grace period before we assume the server rejected.
+	// kPickupCooldown = total time an entry lingers, blocking re-requests.
+	static constexpr float kPickupWait     = 0.5f;
+	static constexpr float kPickupCooldown = 5.0f;
 
 	// Door swing — hinged-panel sweep between door ↔ door_open.
 	struct DoorAnim {
@@ -427,14 +444,12 @@ private:
 	bool         m_spaceLast     = false;
 	bool         m_escLast       = false;
 	bool         m_vLast         = false;
-	bool         m_tabLast       = false;
 	bool         m_eLast         = false;
 	bool         m_f3Last        = false;
 	bool         m_f6Last        = false;
 	bool         m_f12Last       = false;
 	bool         m_f11Last       = false;
 	bool         m_hLast         = false;   // H: handbook
-	bool         m_numKeyLast[10] = {};  // 1..0 → hotbar slots 0..9
 
 	// RPG/RTS right-click orbit: hold+drag to orbit camera, quick click = action.
 	// wantCapture is set only while actively orbiting.
@@ -446,22 +461,8 @@ private:
 		double startY   = 0;
 	} m_rightClick;
 
-	// UI overlay wants cursor free (inventory, handbook, chest, etc.)
+	// UI overlay wants cursor free (handbook, etc.)
 	bool         m_uiWantsCursor = false;
-
-	// Inventory panel (Tab toggle) — Diablo-style equipment UI.
-	// m_invOpen is the authoritative state; m_equipUI.render() is a no-op
-	// when closed. Kept as a separate bool (rather than delegating to
-	// EquipmentUI::isOpen) so the cursor/capture logic reads a single field.
-	bool                m_invOpen = false;
-	civcraft::EquipmentUI m_equipUI;
-
-	// Chest interaction UI
-	struct ChestUI {
-		bool   open     = false;
-		glm::ivec3 pos{0, 0, 0};
-		civcraft::EntityId chestEid = 0;
-	} m_chestUI;
 
 	// F3 debug overlay. Env-var init lets headless screenshots boot with F3 on.
 	bool         m_showDebug = []{
@@ -538,23 +539,8 @@ private:
 	bool         m_adminMode = false;
 	bool         m_flyMode   = false;
 
-	// Score counter (coins from killed NPCs). Shown in hotbar slot 0.
+	// Score counter (coins from killed NPCs).
 	int          m_coins = 0;
-
-	// Active hotbar slot (0..9). Number keys 1-9,0 select. Drives the
-	// selection highlight in renderHUD() and which item future equip logic
-	// will equip.
-	int          m_hotbarSlot = 0;
-
-	// Client-side 10-slot alias map over the player's Inventory. Server
-	// stores only {itemId -> count}; the hotbar is purely a local rearrange
-	// layer so the player can bind number keys to whichever items they want.
-	// First S_INVENTORY after a fresh session either restores the saved
-	// layout from config/hotbar.txt or falls back to repopulateFrom;
-	// subsequent updates use mergeFrom so drag-drop assignments survive.
-	civcraft::Hotbar m_hotbar;
-	bool             m_hotbarLoaded = false;
-	std::string      m_hotbarSavePath = "config/hotbar.txt";
 
 	// Last block the player dug — placeBlock() uses this as the Convert
 	// source so placement works without a full inventory UI (one dig → one

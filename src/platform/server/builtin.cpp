@@ -3,6 +3,7 @@
 #include "server/entity_manager.h"
 #include "logic/constants.h"
 #include "logic/material_values.h"
+#include <limits>
 
 namespace civcraft {
 
@@ -72,7 +73,9 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		def.max_hp = (int)getMaterialValue(id);
 		def.playable = true;
 		def.pickup_range = 1.5f;
-		def.inventory_capacity = getMaterialValue(id);
+		// Playable entities carry unlimited — players never hit "Inventory full"
+		// while looting. NPCs (animal lambda below) remain capped by body value.
+		def.inventory_capacity = std::numeric_limits<float>::infinity();
 		def.default_props = {
 			{PR::HP, def.max_hp}, {PR::Hunger, 20.0f},
 			{PR::Age, 0.0f}, {PR::WalkDistance, 0.0f},

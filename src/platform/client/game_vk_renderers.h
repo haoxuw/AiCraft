@@ -7,10 +7,10 @@
 // friend renderer classes, each responsible for one screen-space concern:
 //
 //   WorldRenderer     — sky, shadows, terrain, entities, particles, ribbons
-//   HudRenderer       — 3D hotbar items + 2D HUD (sundial, HP, hotbar chrome)
+//   HudRenderer       — 2D HUD (sundial, HP, crosshair)
 //   MenuRenderer      — main menu, in-game pause menu, death screen
 //   PanelRenderer     — F3 debug overlay, F6 tuning, H handbook
-//   EntityUiRenderer  — entity inspect card, chest UI, RTS selection box
+//   EntityUiRenderer  — entity inspect card, RTS selection box
 //
 // Each renderer holds only a `Game&` — no duplicated state. The friend
 // declarations in Game give them private access; method bodies prefix all
@@ -33,7 +33,6 @@ private:
 class HudRenderer {
 public:
 	explicit HudRenderer(Game& g) : game_(g) {}
-	void renderHotbarItems3D();
 	void renderHUD();
 private:
 	Game& game_;
@@ -63,7 +62,6 @@ class EntityUiRenderer {
 public:
 	explicit EntityUiRenderer(Game& g) : game_(g) {}
 	void renderEntityInspect();
-	void renderChestUI();
 	void renderRTSSelect();
 private:
 	Game& game_;

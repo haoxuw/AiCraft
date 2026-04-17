@@ -146,23 +146,6 @@ public:
 	                          const float* boxes,
 	                          uint32_t boxCount) = 0;
 
-	// Render-to-texture item icons. Used by the UI to render 3D box-models
-	// into small offscreen RGBA textures that compose cleanly above 2D
-	// chrome (ImGui::Image, etc.) — sidesteps the 3D-under-2D pass
-	// ordering. createItemIcon MUST be called outside beginFrame/endFrame
-	// (at init / during content load); it submits synchronously and waits
-	// idle. The returned handle is the ImGui descriptor set cast to
-	// uint64_t, directly usable as ImTextureID: ImGui::Image((ImTextureID)h).
-	using IconHandle = uint64_t;
-	static constexpr IconHandle kInvalidIcon = 0;
-	virtual IconHandle createItemIcon(uint32_t size,
-	                                  const float viewProj[16],
-	                                  const float sunDir[3],
-	                                  float sunStrength,
-	                                  const float* boxes,
-	                                  uint32_t boxCount) = 0;
-	virtual void destroyItemIcon(IconHandle icon) = 0;
-
 	// AFTER beginFrame, BEFORE first drawSky/drawVoxels. sunVP = ortho light
 	// VP. voxel.frag samples with PCF. Backend lazily opens depth-only pass
 	// on first shadow call, closes before first lit draw — all shadow calls
