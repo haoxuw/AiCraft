@@ -717,6 +717,69 @@ void Game::renderEffects(float wallTime) {
 		}
 	}
 
+	// ── Monument flame FX ─────────────────────────────────────────────
+	// For every Monument structure entity, wrap a ribbon of rising warm
+	// particles around the tower column. Position comes from the entity so
+	// modders can place monuments anywhere; height could scale from the
+	// GrowthStage property once the server-side growth loop lands.
+	if (m_server) {
+		glm::vec3 eyeP = m_cam.position;
+		m_server->forEachEntity([&](civcraft::Entity& e) {
+			if (e.typeId() != civcraft::StructureName::Monument) return;
+			glm::vec3 anchor = e.position;
+			// Cull by distance — the render radius matches view range so we
+			// don't emit 200 particles per frame for a monument five chunks
+			// away that's fog-clipped anyway.
+			glm::vec3 d = anchor - eyeP;
+			float dist2 = d.x*d.x + d.y*d.y + d.z*d.z;
+			if (dist2 > 240.0f * 240.0f) return;
+
+			int stage = e.getProp<int>(civcraft::Prop::GrowthStage);
+			if (stage <= 0) stage = 18;
+			// Flame wraps from deck down through the tower body and rises
+			// above the trident crown (+12 blocks headroom).
+			float colBottom = anchor.y - (float)stage;
+			float colTop    = anchor.y + 12.0f;
+			float span      = colTop - colBottom;
+			float orbitR    = 3.6f;
+			// Two orbital bands (CW + CCW) crossing at the trident plane
+			// give the "flowing around" swirl the user asked for.
+			constexpr int kRibbons = 3;
+			constexpr int kPerRib  = 56;
+			for (int rib = 0; rib < kRibbons; rib++) {
+				// Alternating CW/CCW + one slow axial ribbon gives the swirl.
+				float rotDir   = (rib == 1) ? -1.0f : 1.0f;
+				float rotSpeed = (rib == 2) ?  0.35f : 0.9f;
+				for (int k = 0; k < kPerRib; k++) {
+					float seed  = (float)(rib * kPerRib + k);
+					float phase = std::fmod(seed * 0.091f, 1.0f);
+					float t     = std::fmod(wallTime * 0.18f + phase, 1.0f);
+					float y     = colBottom + t * span;
+					// Breathing radius + wobble so the ribbon isn't a perfect circle.
+					float noise = std::sin(wallTime * 1.4f + seed * 2.7f) * 0.45f
+					            + std::cos(wallTime * 0.8f + seed * 5.1f) * 0.35f;
+					float r     = orbitR + noise + (rib == 2 ? 0.8f : 0.0f);
+					float ang   = rotDir * (wallTime * rotSpeed + seed * 0.42f);
+					// Warm core → cooler tip. Additive blend means higher values
+					// = brighter, so push the red channel well above 1.0.
+					float climb = t;  // 0 = bottom, 1 = top
+					glm::vec3 col = glm::mix(
+						glm::vec3(3.2f, 1.4f, 0.30f),   // deep orange at base
+						glm::vec3(2.0f, 1.9f, 0.70f),   // yellow-white at tip
+						climb);
+					// Fade in/out at the ribbon ends to avoid pop-in.
+					float edgeFade = std::min(t * 4.0f, std::min(1.0f, (1.0f - t) * 4.0f));
+					float alpha    = 0.85f * edgeFade;
+					glm::vec3 p = anchor + glm::vec3(
+						std::cos(ang) * r,
+						y - anchor.y,
+						std::sin(ang) * r);
+					pushP(p, 0.28f, col, alpha);
+				}
+			}
+		});
+	}
+
 	uint32_t particleCount = (uint32_t)(particles.size() / 8);
 	if (particleCount > 0) m_rhi->drawParticles(scene, particles.data(), particleCount);
 

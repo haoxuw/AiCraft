@@ -69,11 +69,12 @@ namespace FeatureTag {
 // Structure entity names (multi-block assemblages in the world)
 // ================================================================
 namespace StructureName {
-	constexpr const char* Chest   = "chest";    // single block; owns an inventory
-	constexpr const char* Bed     = "bed";      // two-block head + foot
-	constexpr const char* Tree    = "tree";     // trunk + leaf canopy
-	constexpr const char* House   = "house";    // walls + roof + floor
-	constexpr const char* Spawner = "spawner";  // spawner block structure
+	constexpr const char* Chest    = "chest";    // single block; owns an inventory
+	constexpr const char* Bed      = "bed";      // two-block head + foot
+	constexpr const char* Tree     = "tree";     // trunk + leaf canopy
+	constexpr const char* House    = "house";    // walls + roof + floor
+	constexpr const char* Spawner  = "spawner";  // spawner block structure
+	constexpr const char* Monument = "monument"; // village-center trident tower; flame anchor
 }
 
 // ================================================================

@@ -57,6 +57,11 @@ public:
 	// Villager[i] is assigned chest[i] so they know where to deposit items.
 	// Returns empty if this template has no village.
 	virtual std::vector<glm::vec3> houseChestPositions(int seed) const { return {}; }
+
+	// Anchor for the village-center Monument structure entity (trident tower
+	// observation-deck center). Returns {0, -1, 0} if this template has no
+	// monument — server checks y < 0 as the "none" sentinel before spawning.
+	virtual glm::vec3 monumentPosition(int seed) const { (void)seed; return {0, -1, 0}; }
 };
 
 // ============================================================
@@ -136,6 +141,17 @@ public:
 		auto anchor = findAnchor(seed);
 		return {(int)anchor.x + (int)offX,
 		        (int)anchor.y + (int)offZ};
+	}
+
+	glm::vec3 monumentPosition(int seed) const override {
+		// Only village worlds ship a monument. Tower layout in generateWorld()
+		// places the observation deck at my + 21 where my = groundHeight + 1.
+		// We anchor the Monument entity at deck center so flame FX wraps the
+		// tower body + trident crown rising above.
+		if (!m_py.hasVillage) return {0, -1, 0};
+		auto vc = villageCenter(seed);
+		int my = (int)std::round(groundHeight(seed, (float)vc.x, (float)vc.y)) + 1;
+		return {(float)vc.x + 0.5f, (float)(my + 21), (float)vc.y + 0.5f};
 	}
 
 	glm::vec3 chestPosition(int seed, glm::vec3 spawnPos) const override {

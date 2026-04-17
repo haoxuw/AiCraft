@@ -211,6 +211,17 @@ public:
 			chestCount++;
 		}
 
+		// Village-center Monument — single structure entity anchoring the
+		// flame FX client-side. The tower blocks themselves are still baked
+		// into the chunk mesh by world_template; this entity is just the
+		// handle clients use to find and visualise the monument.
+		glm::vec3 mPos = tmpl.monumentPosition(m_world->seed());
+		if (mPos.y >= 0) {
+			EntityId mEid = m_world->entities.spawn(StructureName::Monument, mPos, {});
+			printf("[Server] Monument entity %u at (%.1f,%.1f,%.1f)\n",
+			       mEid, mPos.x, mPos.y, mPos.z);
+		}
+
 		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f  Chests: %d houses\n",
 		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z, chestCount);
 	}

@@ -166,6 +166,25 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		entities.registerType(def);
 	}
 
+	// Monument: village-center trident tower. Spawned once per world at the
+	// deck anchor; flame FX is client-side (Rule 5). GrowthStage seeds the
+	// future growing-height mechanic — starts at the current hardcoded
+	// tower height so day 1 looks identical to pre-monument-entity worlds.
+	{
+		EntityDef def;
+		def.string_id = StructureName::Monument;
+		def.display_name = "Monument";
+		def.kind = EntityKind::Structure;
+		def.has_inventory = false;
+		def.collision_box_min = {-0.1f, -0.1f, -0.1f};
+		def.collision_box_max = { 0.1f,  0.1f,  0.1f};
+		def.default_props = {
+			{PR::GrowthStage, 18},  // current trident-tower towerH
+			{PR::MaxStage,    32},  // cap for future growth loop
+		};
+		entities.registerType(def);
+	}
+
 	// Item entity (wrapper for any dropped item)
 	{
 		EntityDef def;
