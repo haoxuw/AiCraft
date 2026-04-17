@@ -1600,48 +1600,10 @@ void Game::renderHUD() {
 				float matVal = civcraft::getMaterialValue(rawId);
 				glm::vec4 rc = rarityColor(matVal);
 
-				// 3D icon: renderHotbarItems3D() already drew the item's box
+				// Item visual: renderHotbarItems3D() draws the actual 3D box
 				// model just in front of the camera, projected into this slot.
-				// The 2D swatch below is only drawn as a fallback when no
-				// box-model exists for the item id (rare — every artifact
-				// item.py comes with a model.py).
-				bool hasModel = (m_models.find(rawId) != m_models.end())
-				             || (m_models.find(itemId) != m_models.end());
-				if (!hasModel) {
-					// Block color_top when available, otherwise a deterministic
-					// material-rarity tint. Drawn as a 3-tier iso-swatch.
-					const civcraft::BlockDef* bdef = m_server->blockRegistry().find(itemId);
-					glm::vec3 top, side, bot;
-					if (bdef) {
-						top  = bdef->color_top;
-						side = bdef->color_side;
-						bot  = bdef->color_bottom;
-					} else {
-						size_t hs = std::hash<std::string>{}(rawId);
-						auto ch = [&](int sh) { return 0.40f + 0.45f * (((hs >> sh) & 0xFF) / 255.0f); };
-						glm::vec3 base = { ch(0), ch(8), ch(16) };
-						glm::vec3 tint = { rc.x, rc.y, rc.z };
-						top  = glm::mix(base, tint, 0.35f);
-						side = top * 0.78f;
-						bot  = top * 0.58f;
-					}
-					float ix = x + 0.012f;
-					float iy = y0 + 0.014f;
-					float iw = slotW - 0.024f;
-					float ih = h - 0.028f;
-					float topRgba[4]  = { top.x,  top.y,  top.z,  0.95f };
-					float sideRgba[4] = { side.x, side.y, side.z, 0.95f };
-					float botRgba[4]  = { bot.x,  bot.y,  bot.z,  0.95f };
-					float band = ih / 3.0f;
-					m_rhi->drawRect2D(ix, iy + band * 2, iw, band, topRgba);
-					m_rhi->drawRect2D(ix, iy + band,     iw, band, sideRgba);
-					m_rhi->drawRect2D(ix, iy,            iw, band, botRgba);
-					const float outline[4] = {0.02f, 0.02f, 0.03f, 0.80f};
-					m_rhi->drawRect2D(ix, iy,         iw,     0.0015f, outline);
-					m_rhi->drawRect2D(ix, iy + ih,    iw,     0.0015f, outline);
-					m_rhi->drawRect2D(ix, iy,         0.0015f, ih,     outline);
-					m_rhi->drawRect2D(ix + iw, iy,    0.0015f, ih,     outline);
-				}
+				// No 2D fallback — if no model exists, the slot shows only
+				// chrome (rarity strip + count badge + key label).
 
 				// Rarity strip along the top edge of the slot — replaces the
 				// in-slot name as the "what tier is this" cue.

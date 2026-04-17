@@ -120,14 +120,9 @@ public:
 		}
 		ImGui::EndChild();
 
-		if (!m_dragItem.empty()) {
-			ImVec2 mouse = ImGui::GetMousePos();
-			ImDrawList* fg = ImGui::GetForegroundDrawList();
-			float sz = 50;
-			drawItemIcon(fg, m_dragItem, blocks, mouse.x - sz * 0.5f, mouse.y - sz * 0.5f, sz);
-			fg->AddEllipseFilled({mouse.x, mouse.y + sz * 0.32f}, {sz * 0.24f, sz * 0.08f},
-				IM_COL32(0, 0, 0, 60));
-		}
+		// Drag preview: item visual will be added by the upcoming world-item
+		// render-reuse pass. For now, no cursor-follower icon.
+		(void)blocks;
 
 		ImGui::End();
 		ImGui::PopStyleVar(2);
@@ -145,11 +140,6 @@ private:
 	std::string m_dragItem;
 	std::string m_contextItem;
 	const std::unordered_map<std::string, BoxModel>* m_models = nullptr;
-
-	void drawItemIcon(ImDrawList* dl, const std::string& id, const BlockRegistry& blocks,
-	                   float x, float y, float size) {
-		inv_vis::drawItemIcon(dl, id, blocks, m_models, m_time, x, y, size);
-	}
 
 	void drawSectionHeader(ImDrawList* dl, const char* label) {
 		inv_vis::drawSectionHeader(dl, label);
@@ -293,9 +283,7 @@ private:
 	// gridSlot >= 0 → Grid mode (payload carries slot for swap); -1 → Name/Value (ITEM payload).
 	void renderItemCell(ImDrawList* dl, Inventory& inv, const BlockRegistry& blocks,
 	                     const std::string& id, int count, float cellSize, int gridSlot = -1) {
-		const BlockDef* bdef = blocks.find(id);
-		glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.5f, 0.6f, 0.75f);
-
+		(void)blocks;
 		ImVec2 pos = ImGui::GetCursorScreenPos();
 
 		ImU32 cellBg = IM_COL32(18, 16, 12, 220);
@@ -312,8 +300,8 @@ private:
 				IM_COL32(200, 165, 55, 160), 4.0f, 0, 2.0f);
 		}
 
-		float iconPad = cellSize * 0.08f;
-		drawItemIcon(dl, id, blocks, pos.x + iconPad, pos.y + iconPad, cellSize - iconPad * 2);
+		// Item icon will be drawn by the world-item render-reuse pass. Cell
+		// currently shows only chrome, name, and count.
 
 		std::string name = id;
 		if (name.size() > 8) name = name.substr(0, 7) + "~";
@@ -464,8 +452,7 @@ private:
 		}
 
 		if (hasItem) {
-			drawItemIcon(dl, itemId, blocks, pos.x + 6, pos.y + 6, slotH - 12);
-
+			// Item icon will be drawn by the world-item render-reuse pass.
 			std::string name = itemId;
 				if (!name.empty()) name[0] = (char)toupper(name[0]);
 			dl->AddText(ImGui::GetFont(), 14.0f, {pos.x + 52, pos.y + 12},
@@ -590,7 +577,7 @@ private:
 		}
 
 		if (isActive) {
-			drawItemIcon(dl, itemId, blocks, pos.x + 6, pos.y + 6, slotH - 12);
+			// Item icon will be drawn by the world-item render-reuse pass.
 			std::string name = itemId;
 				if (!name.empty()) name[0] = (char)toupper(name[0]);
 			dl->AddText(ImGui::GetFont(), 12.0f, {pos.x + slotH - 6, pos.y + 10},
@@ -598,8 +585,8 @@ private:
 			dl->AddText(ImGui::GetFont(), 10.0f, {pos.x + slotH - 6, pos.y + 26},
 				IM_COL32(100, 90, 65, 180), label);
 		} else if (isInactive) {
-			// faint shadow of the item that lives in the other hand
-			drawItemIcon(dl, itemId, blocks, pos.x + 6, pos.y + 6, slotH - 12);
+			// Inactive side: darkening overlay + label only. The item icon
+			// will be drawn (and darkened) by the world-item render-reuse pass.
 			dl->AddRectFilled(pos, {pos.x + slotW, pos.y + slotH},
 				IM_COL32(0, 0, 0, 130), 5.0f);
 			dl->AddText(ImGui::GetFont(), 10.0f, {pos.x + 8, pos.y + slotH - 16},
