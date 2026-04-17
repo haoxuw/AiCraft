@@ -26,6 +26,7 @@
 #include <string>
 #include <functional>
 #include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <mutex>
 
@@ -132,6 +133,21 @@ public:
 		m_wgc = config.worldGenConfig;
 		m_hpRegenInterval = config.hpRegenInterval;
 		m_worldTime = 0.26f;  // just past sunrise
+		m_dayCount  = 0;
+		// Debug: CIVCRAFT_DEBUG_DAY=N fast-forwards the calendar so the
+		// top-bar HUD and grass shader can be sanity-checked across seasons.
+		if (const char* d = std::getenv("CIVCRAFT_DEBUG_DAY")) {
+			m_dayCount = (uint32_t)std::max(0, std::atoi(d));
+		}
+		// CIVCRAFT_DEBUG_TOD=0.0..1.0 pins time of day at init.
+		// CIVCRAFT_FREEZE_TIME=1 stops the clock — useful for HUD screenshots.
+		if (const char* t = std::getenv("CIVCRAFT_DEBUG_TOD")) {
+			float v = std::atof(t);
+			m_worldTime = v - std::floor(v);
+		}
+		if (const char* f = std::getenv("CIVCRAFT_FREEZE_TIME")) {
+			m_freezeTime = (std::atoi(f) != 0);
+		}
 		// Rule 1: Python-configurable; default 1200s / 20min.
 		m_dayLengthTicks = tmpl->pyConfig().dayLengthTicks;
 
@@ -235,6 +251,14 @@ public:
 			for (auto& mc : tmpl.pyConfig().mobs)
 				mobList.push_back({mc.type, mc.count, mc.radius,
 					parseSpawnAnchor(mc.spawnAt), mc.yOffset, mc.props});
+		}
+		// Perf stress hook: CIVCRAFT_STRESS_MULT multiplies every count.
+		if (const char* sm = std::getenv("CIVCRAFT_STRESS_MULT")) {
+			int mult = std::max(1, std::atoi(sm));
+			if (mult > 1) {
+				for (auto& m : mobList) m.count *= mult;
+				printf("[Server] CIVCRAFT_STRESS_MULT=%d applied to mob spawns\n", mult);
+			}
 		}
 
 		// inside=true → grid in barn; else → circular ring.
@@ -652,8 +676,14 @@ public:
 		markPhase(m_lastTickProfile.structureRegenMs);
 
 		// 1 unit = 1 full day; dayLengthTicks = real seconds per day.
-		m_worldTime += (1.0f / (float)m_dayLengthTicks) * dt;
-		if (m_worldTime >= 1.0f) m_worldTime -= std::floor(m_worldTime);
+		if (!m_freezeTime) {
+			m_worldTime += (1.0f / (float)m_dayLengthTicks) * dt;
+			if (m_worldTime >= 1.0f) {
+				int whole = (int)std::floor(m_worldTime);
+				m_worldTime -= (float)whole;
+				m_dayCount += (uint32_t)whole;
+			}
+		}
 
 		// Wind updates every tick; kind/intensity on schedule.
 		m_weather.tick(dt);
@@ -714,6 +744,8 @@ public:
 	const World& world() const { return *m_world; }
 	float worldTime() const { return m_worldTime; }
 	void setWorldTime(float t) { m_worldTime = t; }
+	uint32_t dayCount() const { return m_dayCount; }
+	void setDayCount(uint32_t d) { m_dayCount = d; }
 	// Read by ClientManager::broadcastState via ServerInterface.
 	const WeatherState& weather() const { return m_weather.state(); }
 	WeatherController&  weatherController()       { return m_weather; }
@@ -771,7 +803,9 @@ private:
 	ServerCallbacks m_callbacks;
 	WorldGenConfig m_wgc;
 	float m_worldTime = 0.30f;
+	uint32_t m_dayCount = 0;         // integer days elapsed (drives season)
 	int   m_dayLengthTicks = 1200;   // seeded from WorldPyConfig
+	bool  m_freezeTime = false;      // CIVCRAFT_FREEZE_TIME=1 stops the clock
 	WeatherController m_weather;     // Markov chain (global)
 	float m_activeBlockTimer = 0;
 	float m_stuckTimer = 0;

@@ -1063,9 +1063,14 @@ bool VkRhi::createChunkShadowPipeline() {
 bool VkRhi::ensureBoxShadowInstanceCapacity(int frame, VkDeviceSize bytes) {
 	if (m_boxShadowInstCap[frame] >= bytes) return true;
 
+	// Defer destroy — earlier renderBoxShadows in this frame may already
+	// have bound the old buffer to the current cmdbuf.
 	if (m_boxShadowInstMapped[frame]) { vkUnmapMemory(m_device, m_boxShadowInstMem[frame]); m_boxShadowInstMapped[frame] = nullptr; }
-	if (m_boxShadowInstBuf[frame]) { vkDestroyBuffer(m_device, m_boxShadowInstBuf[frame], nullptr); m_boxShadowInstBuf[frame] = VK_NULL_HANDLE; }
-	if (m_boxShadowInstMem[frame]) { vkFreeMemory(m_device, m_boxShadowInstMem[frame], nullptr); m_boxShadowInstMem[frame] = VK_NULL_HANDLE; }
+	if (m_boxShadowInstBuf[frame] || m_boxShadowInstMem[frame]) {
+		m_pendingBufDestroy[frame].push_back({ m_boxShadowInstBuf[frame], m_boxShadowInstMem[frame] });
+		m_boxShadowInstBuf[frame] = VK_NULL_HANDLE;
+		m_boxShadowInstMem[frame] = VK_NULL_HANDLE;
+	}
 
 	VkDeviceSize cap = std::max<VkDeviceSize>(bytes, 64 * 1024);
 	VkBufferCreateInfo bci{};
@@ -1423,10 +1428,15 @@ bool VkRhi::ensureBoxInstanceCapacity(int frame, VkDeviceSize bytes) {
 	if (bytes <= m_boxInstCap[frame]) return true;
 	VkDeviceSize cap = m_boxInstCap[frame] ? m_boxInstCap[frame] : 64 * sizeof(float)*19;
 	while (cap < bytes) cap *= 2;
-	vkDeviceWaitIdle(m_device);
+	// Defer destroy — earlier drawBoxModel in this frame may have bound
+	// the old buffer to the current cmdbuf. vkDeviceWaitIdle wouldn't help
+	// here (the cmdbuf is being recorded, not executing).
 	if (m_boxInstMapped[frame]) { vkUnmapMemory(m_device, m_boxInstMem[frame]); m_boxInstMapped[frame] = nullptr; }
-	if (m_boxInstBuf[frame]) vkDestroyBuffer(m_device, m_boxInstBuf[frame], nullptr);
-	if (m_boxInstMem[frame]) vkFreeMemory(m_device, m_boxInstMem[frame], nullptr);
+	if (m_boxInstBuf[frame] || m_boxInstMem[frame]) {
+		m_pendingBufDestroy[frame].push_back({ m_boxInstBuf[frame], m_boxInstMem[frame] });
+		m_boxInstBuf[frame] = VK_NULL_HANDLE;
+		m_boxInstMem[frame] = VK_NULL_HANDLE;
+	}
 
 	VkBufferCreateInfo bci{};
 	bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1453,9 +1463,15 @@ bool VkRhi::ensureInstanceCapacity(VkDeviceSize bytes) {
 	if (bytes <= m_instCap) return true;
 	VkDeviceSize cap = m_instCap ? m_instCap : 64 * sizeof(float)*6;
 	while (cap < bytes) cap *= 2;
-	vkDeviceWaitIdle(m_device);
-	if (m_instBuf) vkDestroyBuffer(m_device, m_instBuf, nullptr);
-	if (m_instMem) vkFreeMemory(m_device, m_instMem, nullptr);
+	// Defer destroy — earlier renderShadows/drawVoxels in this frame (or
+	// prior in-flight frames) may have bound the old buffer. Push to the
+	// current slot's pending list so it survives until that slot's next
+	// beginFrame fence wait + cmdbuf reset.
+	if (m_instBuf || m_instMem) {
+		m_pendingBufDestroy[m_frame].push_back({ m_instBuf, m_instMem });
+		m_instBuf = VK_NULL_HANDLE;
+		m_instMem = VK_NULL_HANDLE;
+	}
 
 	VkBufferCreateInfo bci{};
 	bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1964,7 +1980,7 @@ static void packChunkPC(ChunkPC& pc, const IRhi::SceneParams& scene,
 	pc.fog[0] = fogColor[0]; pc.fog[1] = fogColor[1]; pc.fog[2] = fogColor[2];
 	pc.fog[3] = fogStart;
 	pc.fogExtra[0] = fogEnd;
-	pc.fogExtra[1] = 0.0f;  // reserved — season LUT moved to composite UBO
+	pc.fogExtra[1] = scene.seasonPhase;  // 0..4 — frag tints grass-top faces
 	pc.fogExtra[2] = 0.0f;  // reserved — rain desat moved to composite UBO
 	pc.fogExtra[3] = 0.0f;
 }
@@ -2714,9 +2730,14 @@ bool VkRhi::createParticlePipeline() {
 bool VkRhi::ensureParticleInstanceCapacity(int frame, VkDeviceSize bytes) {
 	if (m_particleInstCap[frame] >= bytes) return true;
 
+	// Defer destroy — earlier drawParticles in this frame may have bound
+	// the old buffer to the current cmdbuf.
 	if (m_particleInstMapped[frame]) { vkUnmapMemory(m_device, m_particleInstMem[frame]); m_particleInstMapped[frame] = nullptr; }
-	if (m_particleInstBuf[frame]) { vkDestroyBuffer(m_device, m_particleInstBuf[frame], nullptr); m_particleInstBuf[frame] = VK_NULL_HANDLE; }
-	if (m_particleInstMem[frame]) { vkFreeMemory(m_device, m_particleInstMem[frame], nullptr); m_particleInstMem[frame] = VK_NULL_HANDLE; }
+	if (m_particleInstBuf[frame] || m_particleInstMem[frame]) {
+		m_pendingBufDestroy[frame].push_back({ m_particleInstBuf[frame], m_particleInstMem[frame] });
+		m_particleInstBuf[frame] = VK_NULL_HANDLE;
+		m_particleInstMem[frame] = VK_NULL_HANDLE;
+	}
 
 	VkDeviceSize cap = std::max<VkDeviceSize>(bytes, 64 * 1024);
 	VkBufferCreateInfo bci{};
@@ -2901,9 +2922,14 @@ bool VkRhi::createRibbonPipeline() {
 bool VkRhi::ensureRibbonVertexCapacity(int frame, VkDeviceSize bytes) {
 	if (m_ribbonVtxCap[frame] >= bytes) return true;
 
+	// Defer destroy — earlier drawRibbon in this frame may have bound the
+	// old buffer to the current cmdbuf.
 	if (m_ribbonVtxMapped[frame]) { vkUnmapMemory(m_device, m_ribbonVtxMem[frame]); m_ribbonVtxMapped[frame] = nullptr; }
-	if (m_ribbonVtxBuf[frame]) { vkDestroyBuffer(m_device, m_ribbonVtxBuf[frame], nullptr); m_ribbonVtxBuf[frame] = VK_NULL_HANDLE; }
-	if (m_ribbonVtxMem[frame]) { vkFreeMemory(m_device, m_ribbonVtxMem[frame], nullptr); m_ribbonVtxMem[frame] = VK_NULL_HANDLE; }
+	if (m_ribbonVtxBuf[frame] || m_ribbonVtxMem[frame]) {
+		m_pendingBufDestroy[frame].push_back({ m_ribbonVtxBuf[frame], m_ribbonVtxMem[frame] });
+		m_ribbonVtxBuf[frame] = VK_NULL_HANDLE;
+		m_ribbonVtxMem[frame] = VK_NULL_HANDLE;
+	}
 
 	VkDeviceSize cap = bytes < 4096 ? 4096 : bytes * 2;
 	VkBufferCreateInfo bci{};
@@ -3318,7 +3344,7 @@ bool VkRhi::ensureUi2DVertexCapacity(int frame, VkDeviceSize bytes) {
 	// at next beginFrame(frame).
 	if (m_uiVtxMapped[frame]) { vkUnmapMemory(m_device, m_uiVtxMem[frame]); m_uiVtxMapped[frame] = nullptr; }
 	if (m_uiVtxBuf[frame] || m_uiVtxMem[frame]) {
-		m_uiVtxPending[frame].push_back({ m_uiVtxBuf[frame], m_uiVtxMem[frame] });
+		m_pendingBufDestroy[frame].push_back({ m_uiVtxBuf[frame], m_uiVtxMem[frame] });
 		m_uiVtxBuf[frame] = VK_NULL_HANDLE;
 		m_uiVtxMem[frame] = VK_NULL_HANDLE;
 	}
@@ -3534,12 +3560,13 @@ bool VkRhi::beginFrame() {
 	vkWaitForFences(m_device, 1, &m_inFlight[m_frame], VK_TRUE, UINT64_MAX);
 
 	// Fence signalled → last submit at this frame index is retired; drain
-	// all deferred-destroy queues (UI vtx replacements + persistent meshes).
-	for (auto& p : m_uiVtxPending[m_frame]) {
+	// all deferred-destroy queues (per-frame buffer replacements +
+	// persistent meshes).
+	for (auto& p : m_pendingBufDestroy[m_frame]) {
 		if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
 		if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
 	}
-	m_uiVtxPending[m_frame].clear();
+	m_pendingBufDestroy[m_frame].clear();
 	for (auto& p : m_meshPending[m_frame]) {
 		if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
 		if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
@@ -3781,11 +3808,11 @@ void VkRhi::shutdown() {
 		if (m_uiVtxBuf[f]) vkDestroyBuffer(m_device, m_uiVtxBuf[f], nullptr);
 		if (m_uiVtxMem[f]) vkFreeMemory(m_device, m_uiVtxMem[f], nullptr);
 		// Drain final-frame deferred-destroy queues (safe after WaitIdle).
-		for (auto& p : m_uiVtxPending[f]) {
+		for (auto& p : m_pendingBufDestroy[f]) {
 			if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);
 			if (p.mem) vkFreeMemory(m_device, p.mem, nullptr);
 		}
-		m_uiVtxPending[f].clear();
+		m_pendingBufDestroy[f].clear();
 		// Persistent mesh pending queues for this frame index.
 		for (auto& p : m_meshPending[f]) {
 			if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);

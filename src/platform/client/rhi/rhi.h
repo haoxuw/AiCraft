@@ -38,13 +38,15 @@ public:
 	// Between beginFrame and imguiRender / endFrame.
 	virtual void drawCube(const float mvp[16]) = 0;
 
-	// std140 layout — stable binary contract with shaders (reserved slots
-	// were seasonPhase/rainAmt, now in composite UBO).
+	// std140 layout — stable binary contract with shaders. seasonPhase is a
+	// continuous 0..4 float (int part = spring/summer/autumn/winter index,
+	// frac = progress through season), driven by the server-broadcast day
+	// counter. rainAmt reserved for weather-driven terrain wetness.
 	struct SceneParams {
 		float viewProj[16];
 		float camPos[3]; float time;
 		float sunDir[3]; float sunStr;
-		float _reserved0;
+		float seasonPhase;
 		float _reserved1;
 		float _reserved[2];  // pad to 16B
 	};
@@ -143,6 +145,23 @@ public:
 	virtual void drawBoxModel(const SceneParams& scene,
 	                          const float* boxes,
 	                          uint32_t boxCount) = 0;
+
+	// Render-to-texture item icons. Used by the UI to render 3D box-models
+	// into small offscreen RGBA textures that compose cleanly above 2D
+	// chrome (ImGui::Image, etc.) — sidesteps the 3D-under-2D pass
+	// ordering. createItemIcon MUST be called outside beginFrame/endFrame
+	// (at init / during content load); it submits synchronously and waits
+	// idle. The returned handle is the ImGui descriptor set cast to
+	// uint64_t, directly usable as ImTextureID: ImGui::Image((ImTextureID)h).
+	using IconHandle = uint64_t;
+	static constexpr IconHandle kInvalidIcon = 0;
+	virtual IconHandle createItemIcon(uint32_t size,
+	                                  const float viewProj[16],
+	                                  const float sunDir[3],
+	                                  float sunStrength,
+	                                  const float* boxes,
+	                                  uint32_t boxCount) = 0;
+	virtual void destroyItemIcon(IconHandle icon) = 0;
 
 	// AFTER beginFrame, BEFORE first drawSky/drawVoxels. sunVP = ortho light
 	// VP. voxel.frag samples with PCF. Backend lazily opens depth-only pass

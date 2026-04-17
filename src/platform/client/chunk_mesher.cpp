@@ -17,19 +17,25 @@ static inline int padIdx(int x, int y, int z) {
 	return (y + PAD) * PADDED * PADDED + (z + PAD) * PADDED + (x + PAD);
 }
 
-void ChunkMesher::fillPaddedVolume(ChunkSource& world, ChunkPos cpos) {
-	// Fetch center + 26 neighbors in one mutex lock. Index = (dy+1)*9+(dz+1)*3+(dx+1); center=13.
+// Fills `out` from the live neighborhood. Expects a consistent 3x3x3 snapshot
+// from ChunkSource (locking is the source's responsibility). Returns false if
+// the center chunk isn't loaded — caller should skip meshing.
+static bool fillSnapshot(ChunkSource& world, ChunkPos cpos,
+                         ChunkMesher::PaddedSnapshot& out) {
 	auto neighborhood = world.getChunkNeighborhood(cpos);
 	Chunk* center = neighborhood[13];
-	if (!center) return;
+	if (!center) return false;
 
-	m_padded.fill(BLOCK_AIR);
+	out.blocks.fill(BLOCK_AIR);
+	out.param2.fill(0);
 
-	// Copy center chunk (local 0..15 → padded 1..16).
 	for (int y = 0; y < CHUNK_SIZE; y++)
 		for (int z = 0; z < CHUNK_SIZE; z++)
-			for (int x = 0; x < CHUNK_SIZE; x++)
-				m_padded[padIdx(x, y, z)] = center->get(x, y, z);
+			for (int x = 0; x < CHUNK_SIZE; x++) {
+				int i = padIdx(x, y, z);
+				out.blocks[i] = center->get(x, y, z);
+				out.param2[i] = center->getParam2(x, y, z);
+			}
 
 	for (int dy = -1; dy <= 1; dy++)
 		for (int dz = -1; dz <= 1; dz++)
@@ -51,24 +57,37 @@ void ChunkMesher::fillPaddedVolume(ChunkSource& world, ChunkPos cpos) {
 							int sx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 							int sy = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 							int sz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-							m_padded[padIdx(x, y, z)] = nc->get(sx, sy, sz);
+							out.blocks[padIdx(x, y, z)] = nc->get(sx, sy, sz);
 						}
 			}
+	return true;
+}
+
+bool ChunkMesher::snapshotPadded(ChunkSource& world, ChunkPos cpos,
+                                 PaddedSnapshot& out) {
+	return fillSnapshot(world, cpos, out);
+}
+
+void ChunkMesher::fillPaddedVolume(ChunkSource& world, ChunkPos cpos) {
+	fillSnapshot(world, cpos, m_padded);
 }
 
 std::pair<std::vector<ChunkVertex>, std::vector<ChunkVertex>>
 ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
+	Chunk* chunk = world.getChunkIfLoaded(cpos);
+	if (!chunk) return {{}, {}};
+	if (!fillSnapshot(world, cpos, m_padded)) return {{}, {}};
+	return buildMeshFromSnapshot(m_padded, cpos, world.blockRegistry());
+}
+
+std::pair<std::vector<ChunkVertex>, std::vector<ChunkVertex>>
+ChunkMesher::buildMeshFromSnapshot(const PaddedSnapshot& padded, ChunkPos cpos,
+                                   const BlockRegistry& reg) {
 	std::vector<ChunkVertex> verts;      // opaque
 	std::vector<ChunkVertex> tVerts;     // transparent
 	verts.reserve(4096);
 	tVerts.reserve(512);
 
-	Chunk* chunk = world.getChunkIfLoaded(cpos);
-	if (!chunk) return {verts, tVerts};
-
-	fillPaddedVolume(world, cpos);
-
-	const BlockRegistry& reg = world.blockRegistry();
 	int ox = cpos.x * CHUNK_SIZE;
 	int oy = cpos.y * CHUNK_SIZE;
 	int oz = cpos.z * CHUNK_SIZE;
@@ -76,8 +95,8 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 	// Padded-cache block access — no mutex, no hash lookup.
 	auto cachedBlock = [&](int lx, int ly, int lz) -> BlockId {
 		int idx = padIdx(lx, ly, lz);
-		if (idx < 0 || idx >= (int)m_padded.size()) return BLOCK_AIR;
-		return m_padded[idx];
+		if (idx < 0 || idx >= (int)padded.blocks.size()) return BLOCK_AIR;
+		return padded.blocks[idx];
 	};
 
 	// 6-face AABB emit, no neighbor culling. Used for non-cube meshes (stairs, doors)
@@ -88,7 +107,6 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 		constexpr glm::vec3 norms[6] = {
 			{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}
 		};
-		// 4 verts per face, counterclockwise when viewed from outside
 		float vs[6][4][3] = {
 			{{x1,y0,z0},{x1,y1,z0},{x1,y1,z1},{x1,y0,z1}}, // +X
 			{{x0,y0,z1},{x0,y1,z1},{x0,y1,z0},{x0,y0,z0}}, // -X
@@ -105,7 +123,6 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 				auto& v = vs[f][i];
 				dst.push_back({{v[0],v[1],v[2]}, col, norms[f], 1.0f, shade, alpha, 0.0f});
 			};
-			// Two triangles: 0,1,2 and 0,2,3
 			emit(0); emit(1); emit(2);
 			emit(0); emit(2); emit(3);
 		}
@@ -118,25 +135,19 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 		if (block == BLOCK_AIR) continue;
 
 		const BlockDef& bdef = reg.get(block);
-		// Skip non-solid cubes (water, leaves); non-cube meshes (open doors) still render.
 		if (!bdef.solid && bdef.mesh_type == MeshType::Cube) continue;
 
 		int wx = ox + lx, wy = oy + ly, wz = oz + lz;
 		float fx = (float)wx, fy = (float)wy, fz = (float)wz;
 
-		// ── Non-cube mesh types ──────────────────────────────────
 		if (bdef.mesh_type != MeshType::Cube) {
 			float a = bdef.transparent ? 0.75f : 1.0f;
 			if (bdef.mesh_type == MeshType::Stair) {
-				// 10 exterior faces of the stair L-shape. param2 bits 0-1 (FourDir) rotate
-				// 90° around Y: 0=+Z, 1=+X, 2=-Z, 3=-X (rise direction). Local (u,v) ∈ [0,1]²
-				// → world (x,z); positive Jacobian preserves CCW winding across all rotations.
 				glm::vec3 ct = bdef.color_top, cs = bdef.color_side;
 				auto& dst = (a < 1.0f) ? tVerts : verts;
 				float y0=fy, y5=fy+0.5f, y1=fy+1;
-				uint8_t p2 = chunk->getParam2(lx, ly, lz) & 0x3;
+				uint8_t p2 = padded.param2[padIdx(lx, ly, lz)] & 0x3;
 
-				// Local (u,v) → world (x,z). v=0 tread/near, v=1 back/far.
 				auto wx = [&](float u, float v) -> float {
 					switch (p2) {
 					default:
@@ -155,7 +166,6 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 					case 3: return fz + 1.f - u;
 					}
 				};
-				// Rotate horizontal normal matching the u/v 90° CCW: (nx,nz) → (-nz,nx).
 				auto rn = [&](float nx, float nz) -> glm::vec3 {
 					switch (p2) {
 					default:
@@ -165,7 +175,6 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 					case 3: return { nz,  0.f, -nx};
 					}
 				};
-				// Emit one quad (2 tris, CCW outward).
 				auto eq = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec3 v3,
 				              glm::vec3 n, glm::vec3 col) {
 					float sh;
@@ -179,24 +188,21 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 					dst.push_back({v2,col,n,1.f,sh,a,0.f}); dst.push_back({v0,col,n,1.f,sh,a,0.f});
 					dst.push_back({v2,col,n,1.f,sh,a,0.f}); dst.push_back({v3,col,n,1.f,sh,a,0.f});
 				};
-				// 10 faces in (u,v). v=0 near/tread, v=1 far/back.
-				eq({wx(0,1),y0,wz(0,1)},{wx(0,0),y0,wz(0,0)},{wx(1,0),y0,wz(1,0)},{wx(1,1),y0,wz(1,1)}, {0,-1,0},        cs); // bottom
-				eq({wx(0,0),y0,wz(0,0)},{wx(0,0),y5,wz(0,0)},{wx(1,0),y5,wz(1,0)},{wx(1,0),y0,wz(1,0)}, rn(0,-1),         cs); // near face (half-height)
-				eq({wx(0,0),y5,wz(0,0)},{wx(0,.5f),y5,wz(0,.5f)},{wx(1,.5f),y5,wz(1,.5f)},{wx(1,0),y5,wz(1,0)}, {0,1,0}, ct); // tread
-				eq({wx(0,.5f),y5,wz(0,.5f)},{wx(0,.5f),y1,wz(0,.5f)},{wx(1,.5f),y1,wz(1,.5f)},{wx(1,.5f),y5,wz(1,.5f)}, rn(0,-1), cs); // riser
-				eq({wx(0,.5f),y1,wz(0,.5f)},{wx(0,1),y1,wz(0,1)},{wx(1,1),y1,wz(1,1)},{wx(1,.5f),y1,wz(1,.5f)}, {0,1,0}, ct); // top (back half)
-				eq({wx(1,1),y0,wz(1,1)},{wx(1,1),y1,wz(1,1)},{wx(0,1),y1,wz(0,1)},{wx(0,1),y0,wz(0,1)}, rn(0,1),           cs); // back face (full-height)
-				eq({wx(0,1),y0,wz(0,1)},{wx(0,1),y5,wz(0,1)},{wx(0,0),y5,wz(0,0)},{wx(0,0),y0,wz(0,0)}, rn(-1,0),          cs); // left lower
-				eq({wx(0,1),y5,wz(0,1)},{wx(0,1),y1,wz(0,1)},{wx(0,.5f),y1,wz(0,.5f)},{wx(0,.5f),y5,wz(0,.5f)}, rn(-1,0),  cs); // left upper
-				eq({wx(1,0),y0,wz(1,0)},{wx(1,0),y5,wz(1,0)},{wx(1,1),y5,wz(1,1)},{wx(1,1),y0,wz(1,1)}, rn(1,0),           cs); // right lower
-				eq({wx(1,.5f),y5,wz(1,.5f)},{wx(1,.5f),y1,wz(1,.5f)},{wx(1,1),y1,wz(1,1)},{wx(1,1),y5,wz(1,1)}, rn(1,0),   cs); // right upper
+				eq({wx(0,1),y0,wz(0,1)},{wx(0,0),y0,wz(0,0)},{wx(1,0),y0,wz(1,0)},{wx(1,1),y0,wz(1,1)}, {0,-1,0},        cs);
+				eq({wx(0,0),y0,wz(0,0)},{wx(0,0),y5,wz(0,0)},{wx(1,0),y5,wz(1,0)},{wx(1,0),y0,wz(1,0)}, rn(0,-1),         cs);
+				eq({wx(0,0),y5,wz(0,0)},{wx(0,.5f),y5,wz(0,.5f)},{wx(1,.5f),y5,wz(1,.5f)},{wx(1,0),y5,wz(1,0)}, {0,1,0}, ct);
+				eq({wx(0,.5f),y5,wz(0,.5f)},{wx(0,.5f),y1,wz(0,.5f)},{wx(1,.5f),y1,wz(1,.5f)},{wx(1,.5f),y5,wz(1,.5f)}, rn(0,-1), cs);
+				eq({wx(0,.5f),y1,wz(0,.5f)},{wx(0,1),y1,wz(0,1)},{wx(1,1),y1,wz(1,1)},{wx(1,.5f),y1,wz(1,.5f)}, {0,1,0}, ct);
+				eq({wx(1,1),y0,wz(1,1)},{wx(1,1),y1,wz(1,1)},{wx(0,1),y1,wz(0,1)},{wx(0,1),y0,wz(0,1)}, rn(0,1),           cs);
+				eq({wx(0,1),y0,wz(0,1)},{wx(0,1),y5,wz(0,1)},{wx(0,0),y5,wz(0,0)},{wx(0,0),y0,wz(0,0)}, rn(-1,0),          cs);
+				eq({wx(0,1),y5,wz(0,1)},{wx(0,1),y1,wz(0,1)},{wx(0,.5f),y1,wz(0,.5f)},{wx(0,.5f),y5,wz(0,.5f)}, rn(-1,0),  cs);
+				eq({wx(1,0),y0,wz(1,0)},{wx(1,0),y5,wz(1,0)},{wx(1,1),y5,wz(1,1)},{wx(1,1),y0,wz(1,1)}, rn(1,0),           cs);
+				eq({wx(1,.5f),y5,wz(1,.5f)},{wx(1,.5f),y1,wz(1,.5f)},{wx(1,1),y1,wz(1,1)},{wx(1,1),y5,wz(1,1)}, rn(1,0),   cs);
 			} else if (bdef.mesh_type == MeshType::Door) {
-				// Closed: thin panel flush with -Z face.
 				emitBox(fx, fy, fz, fx+1, fy+1, fz+0.1f,
 				        bdef.color_top, bdef.color_side, a);
 			} else if (bdef.mesh_type == MeshType::DoorOpen) {
-				// Open: thin panel on ±X face (hinge = param2 bit 2).
-				uint8_t p2 = chunk->getParam2(lx, ly, lz);
+				uint8_t p2 = padded.param2[padIdx(lx, ly, lz)];
 				bool hingeRight = (p2 >> 2) & 1;
 				if (hingeRight)
 					emitBox(fx+0.9f, fy, fz, fx+1, fy+1, fz+1, bdef.color_top, bdef.color_side, a);
@@ -213,8 +219,6 @@ ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 
 			BlockId neighbor = cachedBlock(nlx, nly, nlz);
 			const BlockDef& ndef = reg.get(neighbor);
-			// Cull face if opaque-solid neighbor. Y-faces cull against any solid; X/Z-faces
-			// only against full-cube solids (floor sides remain visible next to stairs).
 			bool isYFace = (face == 2 || face == 3);
 			if (ndef.solid && !ndef.transparent && (isYFace || ndef.mesh_type == MeshType::Cube)) continue;
 

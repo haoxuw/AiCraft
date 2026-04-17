@@ -301,6 +301,7 @@ public:
 
 	BehaviorInfo getBehaviorInfo(EntityId) override { return {}; }
 	float worldTime() const override { return m_worldTime; }
+	uint32_t dayCount() const override { return m_dayCount; }
 	glm::vec3 spawnPos() const override { return m_spawnPos; }
 	float pickupRange() const override { return 1.5f; } // TODO: sync from server
 
@@ -351,6 +352,97 @@ public:
 	}
 
 private:
+	// Single path for S_ENTITY (full) and S_ENTITY_DELTA (merged into cached
+	// baseline first). Creates the Entity on first sight, else refreshes the
+	// reconciler + fields the client copies through verbatim.
+	void applyEntityState(const net::EntityState& es) {
+		auto it = m_entities.find(es.id);
+		if (it == m_entities.end()) {
+			const EntityDef* def = m_world.entityDefs().getTypeDef(es.typeId);
+			if (!def) {
+				printf("[Net] WARNING: unknown entity type '%s' (id=%u), using default def\n",
+				       es.typeId.c_str(), es.id);
+				def = &m_defaultDef;
+			}
+			printf("[Net] New entity: id=%u type=%s pos=(%.1f,%.1f,%.1f)%s\n",
+				es.id, es.typeId.c_str(), es.position.x, es.position.y, es.position.z,
+				es.id == m_localPlayerId ? " [LOCAL PLAYER]" : "");
+			auto ent = std::make_unique<Entity>(es.id, es.typeId, *def);
+			ent->position = es.position;
+			ent->velocity = es.velocity;
+			ent->yaw = es.yaw;
+			ent->onGround = es.onGround;
+			// First S_ENTITY predates any decide(); empty goalText renders "…".
+			ent->goalText = es.goalText;
+			// Owned entities keep locally-predicted lookYaw (see update path below).
+			bool ownedByUs = (es.owner == (int)m_localPlayerId);
+			if (!ownedByUs) {
+				ent->lookYaw   = es.lookYaw;
+				ent->lookPitch = es.lookPitch;
+			} else {
+				ent->lookYaw   = es.yaw;
+				ent->lookPitch = 0.0f;
+			}
+			if (!es.characterSkin.empty())
+				ent->setProp("character_skin", es.characterSkin);
+			// WalkDistance is client-local (see update path below).
+			for (auto& [k, v] : es.props) {
+				if (k == Prop::WalkDistance) continue;
+				ent->setProp(k, v);
+			}
+			if (es.id == m_localPlayerId)
+				printf("[Net] Local player entity created: type=%s pos=(%.1f,%.1f,%.1f)\n",
+					es.typeId.c_str(), es.position.x, es.position.y, es.position.z);
+			if (def->isLiving())
+				ent->setProp(Prop::HP, es.hp);
+			if (es.owner != 0)
+				ent->setProp(Prop::Owner, es.owner);
+			// Must move ent into m_entities before firing callback so getEntity works.
+			auto pit = m_pendingInventory.find(es.id);
+			bool hadPendingInv = false;
+			if (pit != m_pendingInventory.end() && ent->inventory) {
+				auto& inv = *ent->inventory;
+				inv.clear();
+				for (auto& [iid, amt] : pit->second.items)
+					inv.add(iid, amt);
+				m_pendingInventory.erase(pit);
+				hadPendingInv = true;
+			}
+			m_entities[es.id] = std::move(ent);
+			if (hadPendingInv && m_onInventoryUpdate) m_onInventoryUpdate(es.id);
+			m_reconciler.onEntityCreate(es.id, es.position, es.velocity, es.yaw,
+			                            es.moveTarget, es.moveSpeed);
+		} else {
+			auto& e = *it->second;
+
+			m_reconciler.onEntityUpdate(es.id, es.position, es.velocity, es.yaw,
+			                            es.moveTarget, es.moveSpeed);
+
+			// Local player's onGround stays client-owned (20Hz server value retriggers jumps).
+			if (es.id != m_localPlayerId)
+				e.onGround = es.onGround;
+			// Owned lookYaw/Pitch are locally predicted; server value causes sideways-body bug.
+			{
+				int owner = e.getProp<int>(Prop::Owner, 0);
+				bool ownedByUs = (owner == (int)m_localPlayerId);
+				if (!ownedByUs) {
+					e.lookYaw   = es.lookYaw;
+					e.lookPitch = es.lookPitch;
+				}
+			}
+			if (!es.goalText.empty()) e.goalText = es.goalText;
+			if (e.def().isLiving())
+				e.setProp(Prop::HP, es.hp);
+			if (es.owner != 0)
+				e.setProp(Prop::Owner, es.owner);
+			// WalkDistance is client-local — 20Hz server value would stairstep walk cycle.
+			for (auto& [k, v] : es.props) {
+				if (k == Prop::WalkDistance) continue;
+				e.setProp(k, v);
+			}
+		}
+	}
+
 	// S_CHUNK / S_CHUNK_Z annotation tail: [u32 n][{i32 dx, dy, dz, str typeId, u8 slot}×n].
 	void readChunkAnnotations(net::ReadBuffer& rb, ChunkPos cp) {
 		if (!rb.hasMore()) {
@@ -444,92 +536,18 @@ private:
 		}
 		case net::S_ENTITY: {
 			auto es = net::deserializeEntityState(rb);
-
-			auto it = m_entities.find(es.id);
-			if (it == m_entities.end()) {
-				const EntityDef* def = m_world.entityDefs().getTypeDef(es.typeId);
-				if (!def) {
-					printf("[Net] WARNING: unknown entity type '%s' (id=%u), using default def\n",
-					       es.typeId.c_str(), es.id);
-					def = &m_defaultDef;
-				}
-				printf("[Net] New entity: id=%u type=%s pos=(%.1f,%.1f,%.1f)%s\n",
-					es.id, es.typeId.c_str(), es.position.x, es.position.y, es.position.z,
-					es.id == m_localPlayerId ? " [LOCAL PLAYER]" : "");
-				auto ent = std::make_unique<Entity>(es.id, es.typeId, *def);
-				ent->position = es.position;
-				ent->velocity = es.velocity;
-				ent->yaw = es.yaw;
-				ent->onGround = es.onGround;
-				// First S_ENTITY predates any decide(); empty goalText renders "…".
-				ent->goalText = es.goalText;
-				// Owned entities keep locally-predicted lookYaw (see update path below).
-				bool ownedByUs = (es.owner == (int)m_localPlayerId);
-				if (!ownedByUs) {
-					ent->lookYaw   = es.lookYaw;
-					ent->lookPitch = es.lookPitch;
-				} else {
-					ent->lookYaw   = es.yaw;
-					ent->lookPitch = 0.0f;
-				}
-				if (!es.characterSkin.empty())
-					ent->setProp("character_skin", es.characterSkin);
-				// WalkDistance is client-local (see update path below).
-				for (auto& [k, v] : es.props) {
-					if (k == Prop::WalkDistance) continue;
-					ent->setProp(k, v);
-				}
-				if (es.id == m_localPlayerId)
-					printf("[Net] Local player entity created: type=%s pos=(%.1f,%.1f,%.1f)\n",
-						es.typeId.c_str(), es.position.x, es.position.y, es.position.z);
-				if (def->isLiving())
-					ent->setProp(Prop::HP, es.hp);
-				if (es.owner != 0)
-					ent->setProp(Prop::Owner, es.owner);
-				// Must move ent into m_entities before firing callback so getEntity works.
-				auto pit = m_pendingInventory.find(es.id);
-				bool hadPendingInv = false;
-				if (pit != m_pendingInventory.end() && ent->inventory) {
-					auto& inv = *ent->inventory;
-					inv.clear();
-					for (auto& [iid, amt] : pit->second.items)
-						inv.add(iid, amt);
-					m_pendingInventory.erase(pit);
-					hadPendingInv = true;
-				}
-				m_entities[es.id] = std::move(ent);
-				if (hadPendingInv && m_onInventoryUpdate) m_onInventoryUpdate(es.id);
-				m_reconciler.onEntityCreate(es.id, es.position, es.velocity, es.yaw,
-				                            es.moveTarget, es.moveSpeed);
-			} else {
-				auto& e = *it->second;
-
-				m_reconciler.onEntityUpdate(es.id, es.position, es.velocity, es.yaw,
-				                            es.moveTarget, es.moveSpeed);
-
-				// Local player's onGround stays client-owned (20Hz server value retriggers jumps).
-				if (es.id != m_localPlayerId)
-					e.onGround = es.onGround;
-				// Owned lookYaw/Pitch are locally predicted; server value causes sideways-body bug.
-				{
-					int owner = e.getProp<int>(Prop::Owner, 0);
-					bool ownedByUs = (owner == (int)m_localPlayerId);
-					if (!ownedByUs) {
-						e.lookYaw   = es.lookYaw;
-						e.lookPitch = es.lookPitch;
-					}
-				}
-				if (!es.goalText.empty()) e.goalText = es.goalText;
-				if (e.def().isLiving())
-					e.setProp(Prop::HP, es.hp);
-				if (es.owner != 0)
-					e.setProp(Prop::Owner, es.owner);
-				// WalkDistance is client-local — 20Hz server value would stairstep walk cycle.
-				for (auto& [k, v] : es.props) {
-					if (k == Prop::WalkDistance) continue;
-					e.setProp(k, v);
-				}
-			}
+			applyEntityState(es);
+			break;
+		}
+		case net::S_ENTITY_DELTA: {
+			// Look up baseline by id first, then merge only the flagged fields.
+			// A never-seen id starts from a zero-initialized EntityState; the
+			// server always sets FLD_TYPE_ID on the first broadcast per entity.
+			auto hdr = net::readEntityDeltaHeader(rb);
+			net::EntityState& es = m_lastEntityState[hdr.eid];
+			es.id = hdr.eid;
+			net::mergeEntityDeltaFields(rb, hdr.mask, es);
+			applyEntityState(es);
 			break;
 		}
 		case net::S_CHUNK: {
@@ -604,11 +622,14 @@ private:
 		case net::S_REMOVE: {
 			EntityId id = rb.readU32();
 			m_entities.erase(id);
+			m_lastEntityState.erase(id);
 			m_reconciler.onEntityRemove(id);
 			break;
 		}
 		case net::S_TIME: {
 			m_worldTime = rb.readF32();
+			// v3+ payload appends day counter; old servers omit it.
+			if (rb.hasMore()) m_dayCount = rb.readU32();
 			break;
 		}
 		case net::S_WEATHER: {
@@ -722,6 +743,7 @@ private:
 	EntityId m_controlledEid = ENTITY_NONE; // ENTITY_NONE = drive local player
 	glm::vec3 m_spawnPos = {0, 0, 0};
 	float m_worldTime = 0.25f;
+	uint32_t m_dayCount = 0;
 
 	// S_WEATHER drives sky/fog/particles. Defaults keep visuals sane pre-first-broadcast.
 	std::string m_weatherKind      = "clear";
@@ -744,6 +766,12 @@ private:
 		std::vector<std::pair<std::string,int>> items;
 	};
 	std::unordered_map<EntityId, PendingInv> m_pendingInventory;
+
+	// Baseline for S_ENTITY_DELTA merge (v4+). Holds the last fully-assembled
+	// EntityState per entity id; each delta updates only the fields whose
+	// bit is set, then we feed the merged struct through applyEntityState.
+	// Erased alongside m_entities on S_REMOVE.
+	std::unordered_map<EntityId, net::EntityState> m_lastEntityState;
 
 	ActionProposalQueue m_proposals;
 	EntityDef m_defaultDef;

@@ -375,6 +375,13 @@ void GameServer::resolveActions(float dt) {
 				if (p.fromItem == "hp") {
 					if (!target->def().isLiving()) break;
 
+					// TODO(lag-comp, gap #5): rewind `target->position` to where it was
+					// `rtt/2 + clientInterpDelay` ago before validating the hit.
+					// Needs: (a) per-entity position history ring (~500ms) in Entity or
+					// EntityManager, (b) `clientRenderTime` field on Convert proposals
+					// (or RTT from heartbeat echo), (c) range/LOS check against the
+					// rewound position here. Cap rewind at ~500ms to bound cheat window.
+					// See plans/netcode_lag_compensation.md (to be written).
 					int dmg = std::max(p.fromCount, 1);
 					int hp = target->hp();
 					target->setHp(std::max(hp - dmg, 0));

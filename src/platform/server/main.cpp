@@ -238,9 +238,7 @@ int main(int argc, char** argv) {
 		clients.onBlockChanged(pos, oldBid, newBid, p2);
 	};
 	cbs.onEntityRemove = [&](civcraft::EntityId id) {
-		civcraft::net::WriteBuffer wb;
-		wb.writeU32(id);
-		clients.broadcastToAll(civcraft::net::S_REMOVE, wb);
+		clients.broadcastEntityRemove(id);
 	};
 	cbs.onInventoryChange = [&](civcraft::EntityId id, const civcraft::Inventory& inv) {
 		civcraft::net::WriteBuffer wb;

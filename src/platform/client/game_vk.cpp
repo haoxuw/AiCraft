@@ -4,6 +4,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <memory>
 #include <string_view>
+#include <thread>
 
 // CivCraft chunk + mesher — civcraft-ui-vk now stores its world in real
 // 16³ Chunks and renders them via ChunkMesher feeding the RHI's
@@ -261,6 +263,18 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	}
 	std::printf("[vk-game] agent client up — Python decide() will run in-process\n");
 
+	// Async chunk mesher — worker pool sized to leave main/net/agent room.
+	// Min 2 workers, max 6 (diminishing returns past that; queue rarely deep).
+	{
+		unsigned hw = std::thread::hardware_concurrency();
+		int workers = hw > 0 ? std::max(2, (int)hw / 2 - 1) : 2;
+		if (workers > 6) workers = 6;
+		m_asyncMesher = std::make_unique<civcraft::AsyncChunkMesher>(
+			m_server->blockRegistry(), workers);
+		std::printf("[vk-game] async chunk mesher: %d worker%s\n",
+			workers, workers == 1 ? "" : "s");
+	}
+
 	// Register file-based debug triggers (no-op in Release builds).
 	m_debugTriggers.addTrigger("/tmp/civcraft_respawn_request", [this] {
 		if (m_state == GameState::Dead) respawn();
@@ -420,57 +434,130 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	return true;
 }
 
-void Game::uploadChunkMesh(civcraft::ChunkPos cp) {
-	civcraft::ChunkSource* src = &m_server->chunks();
-	civcraft::ChunkMesher mesher;
-	auto [opaque, transparent] = mesher.buildMesh(*src, cp);
-	(void)transparent; // no glass/water streams yet
-
+void Game::enqueueMeshBuild(civcraft::ChunkPos cp) {
+	if (!m_asyncMesher) return;
+	// Snapshot on the main thread — ChunkSource's live data is only safe to
+	// read here. Workers then mesh from the immutable copy.
+	auto snap = std::make_unique<civcraft::ChunkMesher::PaddedSnapshot>();
+	if (!civcraft::ChunkMesher::snapshotPadded(m_server->chunks(), cp, *snap))
+		return;  // center chunk not loaded yet — retry next frame
+	// Mark tracked: Pass 1 dedupes on m_chunkMeshes.count(), Pass 2 dedupes
+	// on m_inFlightMesh. kInvalidMesh placeholder gets overwritten when the
+	// result lands via applyMeshResult.
 	auto it = m_chunkMeshes.find(cp);
+	if (it == m_chunkMeshes.end())
+		m_chunkMeshes[cp] = rhi::IRhi::kInvalidMesh;
+	m_inFlightMesh.insert(cp);
+	m_asyncMesher->enqueue(cp, std::move(snap));
+}
 
-	// Empty mesh — nothing to draw. Release any GPU buffer, but keep a
-	// sentinel entry (kInvalidMesh) so Pass 1 won't re-discover this chunk
-	// every frame. A later dirty event will overwrite the sentinel via
-	// createChunkMesh once the chunk has real geometry again.
+void Game::applyMeshResult(civcraft::AsyncChunkMesher::Result&& r) {
+	m_inFlightMesh.erase(r.cp);
+	auto& opaque = r.opaque;
+	(void)r.transparent;  // no glass/water streams yet
+
+	auto it = m_chunkMeshes.find(r.cp);
+
+	// Empty mesh — nothing to draw. Keep a kInvalidMesh sentinel so Pass 1
+	// doesn't re-enqueue every frame; a later dirty event overwrites it.
 	if (opaque.empty()) {
 		if (it != m_chunkMeshes.end() && it->second != rhi::IRhi::kInvalidMesh) {
 			m_rhi->destroyMesh(it->second);
 		}
-		m_chunkMeshes[cp] = rhi::IRhi::kInvalidMesh;
+		m_chunkMeshes[r.cp] = rhi::IRhi::kInvalidMesh;
 		return;
 	}
 
-	// ChunkVertex is layout-compatible with the 13-float stream the VK
-	// chunk pipeline expects (see chunk_mesher.h + rhi.h Chunk meshes).
-	std::vector<float> scratch;
-	scratch.reserve(opaque.size() * 13);
+	// ChunkVertex is layout-compatible with the 13-float stream the VK chunk
+	// pipeline expects (see chunk_mesher.h + rhi.h Chunk meshes).
+	m_meshUploadScratch.clear();
+	m_meshUploadScratch.reserve(opaque.size() * 13);
 	for (const auto& v : opaque) {
-		scratch.push_back(v.position.x); scratch.push_back(v.position.y); scratch.push_back(v.position.z);
-		scratch.push_back(v.color.x);    scratch.push_back(v.color.y);    scratch.push_back(v.color.z);
-		scratch.push_back(v.normal.x);   scratch.push_back(v.normal.y);   scratch.push_back(v.normal.z);
-		scratch.push_back(v.ao);
-		scratch.push_back(v.shade);
-		scratch.push_back(v.alpha);
-		scratch.push_back(v.glow);
+		m_meshUploadScratch.push_back(v.position.x); m_meshUploadScratch.push_back(v.position.y); m_meshUploadScratch.push_back(v.position.z);
+		m_meshUploadScratch.push_back(v.color.x);    m_meshUploadScratch.push_back(v.color.y);    m_meshUploadScratch.push_back(v.color.z);
+		m_meshUploadScratch.push_back(v.normal.x);   m_meshUploadScratch.push_back(v.normal.y);   m_meshUploadScratch.push_back(v.normal.z);
+		m_meshUploadScratch.push_back(v.ao);
+		m_meshUploadScratch.push_back(v.shade);
+		m_meshUploadScratch.push_back(v.alpha);
+		m_meshUploadScratch.push_back(v.glow);
 	}
 	uint32_t vc = (uint32_t)opaque.size();
 	if (it == m_chunkMeshes.end() || it->second == rhi::IRhi::kInvalidMesh) {
-		auto h = m_rhi->createChunkMesh(scratch.data(), vc);
-		if (h != rhi::IRhi::kInvalidMesh) m_chunkMeshes[cp] = h;
+		auto h = m_rhi->createChunkMesh(m_meshUploadScratch.data(), vc);
+		if (h != rhi::IRhi::kInvalidMesh) m_chunkMeshes[r.cp] = h;
 	} else {
-		m_rhi->updateChunkMesh(it->second, scratch.data(), vc);
+		m_rhi->updateChunkMesh(it->second, m_meshUploadScratch.data(), vc);
 	}
 }
 
+void Game::drainAsyncMeshes() {
+	if (!m_asyncMesher) return;
+	// Cap uploads per frame so a burst of worker completions doesn't
+	// translate into a burst of createChunkMesh/updateChunkMesh calls.
+	constexpr size_t kMaxUploadsPerFrame = 8;
+	m_asyncMesher->drain(
+		[this](civcraft::AsyncChunkMesher::Result&& r) {
+			applyMeshResult(std::move(r));
+		},
+		kMaxUploadsPerFrame);
+}
+
+void Game::preloadVisibleChunks() {
+	// Block briefly at state-entry so the player's first rendered frame
+	// already has a full horizon instead of radial pop-in. We pump the
+	// network, run streamServerChunks (enqueue+drain), and loop until either
+	// (a) all reachable chunks in range are either meshed or the server
+	// can't give us more, or (b) we've burned the time budget. Workers keep
+	// running in the background — anything unfinished gets picked up by the
+	// normal streamServerChunks loop next frame.
+	using clock = std::chrono::steady_clock;
+	const auto start = clock::now();
+	const auto budget = std::chrono::milliseconds(1800);
+	size_t lastMeshCount = 0;
+	auto lastProgress = start;
+
+	while (clock::now() - start < budget) {
+		m_server->tick(0.0f);
+		streamServerChunks();
+
+		size_t meshed = m_chunkMeshes.size();
+		if (meshed != lastMeshCount) {
+			lastMeshCount = meshed;
+			lastProgress = clock::now();
+		}
+		// Quiesce: nothing in-flight, nothing dirty, no new meshes for 200ms
+		// → server has no more chunks to give us within range. Bail early.
+		if (m_inFlightMesh.empty() && m_serverDirtyChunks.empty() &&
+		    clock::now() - lastProgress > std::chrono::milliseconds(200))
+			break;
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+
+	// Pick up any final worker results before the first rendered frame.
+	drainAsyncMeshes();
+
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+		clock::now() - start).count();
+	std::printf("[vk-game] preload: %zu chunk meshes in %lldms (%zu in-flight)\n",
+		m_chunkMeshes.size(), (long long)elapsed, m_inFlightMesh.size());
+}
+
 void Game::streamServerChunks() {
-	// Sweep a render-radius box around the player's current chunk, asking
-	// the server for chunks we haven't meshed yet. ChunkSource::getChunk
-	// returns null for chunks the server hasn't delivered — those just get
-	// retried next frame. Throttled so a fresh spawn doesn't stall.
-	constexpr int kRenderChunkRadius = 6;    // ≈96 blocks horizontal
-	constexpr int kRenderChunkVertical = 3;  // ±3 chunks in Y (48 blocks)
-	constexpr int kMaxNewPerFrame = 12;
-	constexpr int kMaxRemeshPerFrame = 6;
+	// Sweep a render-radius box around the player's current chunk, enqueueing
+	// snapshots for any chunk we haven't meshed yet. The worker pool runs
+	// ChunkMesher::buildMeshFromSnapshot off the main thread so meshing never
+	// costs frame time — we only pay the snapshot cost (17KB memcpy per chunk)
+	// and the RHI upload (deferred to applyMeshResult on the main thread).
+	constexpr int kRenderChunkRadius = 12;   // ≈192 blocks horizontal
+	constexpr int kRenderChunkVertical = 4;  // ±4 chunks in Y (64 blocks)
+	// Upload throttle — workers can mesh fast but each createChunkMesh/
+	// updateChunkMesh is a Vulkan allocation on the main thread. Too many
+	// per frame becomes the new spike source (see [perf-spike] chunks=12ms).
+	constexpr int kMaxNewPerFrame = 8;
+	constexpr int kMaxRemeshPerFrame = 4;
+
+	drainAsyncMeshes();
 
 	auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 	const int CS = civcraft::CHUNK_SIZE;
@@ -485,12 +572,13 @@ void Game::streamServerChunks() {
 	// ── Pass 1: mesh any fresh server chunks in range, closest-first ──
 	struct Pending { civcraft::ChunkPos cp; int distSq; };
 	std::vector<Pending> pending;
-	pending.reserve(64);
+	pending.reserve(128);
 	auto& src = m_server->chunks();
 	for (int dy = -kRenderChunkVertical; dy <= kRenderChunkVertical; dy++)
 		for (int dz = -kRenderChunkRadius; dz <= kRenderChunkRadius; dz++)
 			for (int dx = -kRenderChunkRadius; dx <= kRenderChunkRadius; dx++) {
 				civcraft::ChunkPos cp = {center.x + dx, center.y + dy, center.z + dz};
+				// Tracked (sentinel or real mesh) or in-flight → skip.
 				if (m_chunkMeshes.count(cp)) continue;
 				if (!src.getChunkIfLoaded(cp)) continue;  // server hasn't sent it yet
 				pending.push_back({cp, dx*dx + dy*dy + dz*dz});
@@ -501,7 +589,7 @@ void Game::streamServerChunks() {
 	int built = 0;
 	for (auto& p : pending) {
 		if (built >= kMaxNewPerFrame) break;
-		uploadChunkMesh(p.cp);
+		enqueueMeshBuild(p.cp);
 		// Meshing this chunk can affect face-cull continuity on its
 		// neighbors (their cross-border faces may now be hidden or exposed).
 		for (auto& d : std::initializer_list<civcraft::ChunkPos>{
@@ -516,12 +604,17 @@ void Game::streamServerChunks() {
 	int remeshed = 0;
 	for (auto it = m_serverDirtyChunks.begin();
 	     it != m_serverDirtyChunks.end() && remeshed < kMaxRemeshPerFrame; ) {
-		// Only re-mesh if already GPU-resident; otherwise Pass 1 will pick
-		// it up in-range next frame.
-		if (m_chunkMeshes.count(*it)) {
-			uploadChunkMesh(*it);
-			remeshed++;
+		const civcraft::ChunkPos cp = *it;
+		// Not GPU-resident yet — Pass 1 owns it.
+		if (!m_chunkMeshes.count(cp)) {
+			it = m_serverDirtyChunks.erase(it);
+			continue;
 		}
+		// Already building — leave in dirty set; next tick re-queues with
+		// fresh block state once the in-flight result lands.
+		if (m_inFlightMesh.count(cp)) { ++it; continue; }
+		enqueueMeshBuild(cp);
+		remeshed++;
 		it = m_serverDirtyChunks.erase(it);
 	}
 }
@@ -536,6 +629,10 @@ void Game::shutdown() {
 	// thread may still be in flight when we hit ~AgentClient.
 	m_agentClient.reset();
 	m_behaviorStore.reset();
+	// Stop workers before the server's BlockRegistry reference disappears.
+	// Any results still in the queue are discarded — shutting down.
+	m_asyncMesher.reset();
+	m_inFlightMesh.clear();
 	m_audio.shutdown();
 	for (auto& kv : m_chunkMeshes) {
 		if (kv.second != rhi::IRhi::kInvalidMesh) m_rhi->destroyMesh(kv.second);
@@ -625,6 +722,12 @@ void Game::enterPlaying() {
 	pushNotification(
 		"WASD move · mouse look · LMB attack · RMB place · Q drop · V=camera",
 		glm::vec3(0.75f, 0.82f, 0.92f), 4.0f);
+
+	// Chunk preload — pump the network + worker pool for up to ~1.8s so the
+	// first rendered frame already shows a full horizon. Respawn re-enters
+	// this path; most chunks are already in m_chunkMeshes, so the quiesce
+	// check bails out fast.
+	preloadVisibleChunks();
 }
 
 void Game::openGameMenu() {

@@ -27,7 +27,7 @@
  * S_CHUNK         0x1003  Uncompressed chunk [i32 cx][i32 cy][i32 cz][u32×4096]
  *                          [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N
  * S_REMOVE        0x1004  [u32 entityId]
- * S_TIME          0x1005  [f32 worldTime]
+ * S_TIME          0x1005  [f32 worldTime][u32 dayCount?]  (dayCount optional for back-compat)
  * S_BLOCK         0x1006  [i32 x][i32 y][i32 z][u32 blockId][u8 param2]
  * S_INVENTORY     0x1007  [u32 eid][u32 n][str×n id][i32×n count][u8 equipN][str×equipN slot][str×equipN id]
  * S_ERROR         0x100B  [u32 entityId][str message]
@@ -42,6 +42,7 @@
 #include "logic/entity.h"
 #include "logic/action.h"
 #include "logic/chunk.h"
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -51,7 +52,9 @@ namespace civcraft::net {
 
 // C_HELLO version; server picks S_CHUNK vs S_CHUNK_Z. Bump on wire changes.
 // v3: adds S_WEATHER.
-static constexpr uint32_t PROTOCOL_VERSION = 3;
+// v4: adds S_ENTITY_DELTA — field-bitmap + quantized per-entity updates. Server
+//     sends S_ENTITY_DELTA for v4+ clients, legacy S_ENTITY for v3.
+static constexpr uint32_t PROTOCOL_VERSION = 4;
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -96,6 +99,13 @@ enum MsgType : uint32_t {
 	// Weather state — broadcast on seq change + on join. Global (one kind
 	// for the whole world). Server owns the state; client renders it.
 	S_WEATHER         = 0x1015,  // [str kind][f32 intensity][f32 windX][f32 windZ][u32 seq]
+
+	// Delta-encoded entity state. v4+ clients only.
+	// [u32 eid][u32 fieldMask] + (for each set bit, the quantized field payload).
+	// See EntityStateField + serializeEntityStateDelta() below for the exact layout.
+	// Broadcasts where fieldMask == 0 are suppressed server-side; if the client
+	// receives one (e.g. on newly-visible edge) it's a no-op.
+	S_ENTITY_DELTA    = 0x1016,
 };
 
 // 8-byte frame header.
@@ -109,6 +119,7 @@ class WriteBuffer {
 public:
 	void writeU8(uint8_t v)   { write(&v, 1); }
 	void writeU16(uint16_t v) { write(&v, 2); }
+	void writeI16(int16_t v)  { write(&v, 2); }
 	void writeU32(uint32_t v) { write(&v, 4); }
 	void writeI32(int32_t v)  { write(&v, 4); }
 	void writeF32(float v)    { write(&v, 4); }
@@ -137,6 +148,7 @@ public:
 
 	uint8_t  readU8()  { uint8_t  v; read(&v, 1); return v; }
 	uint16_t readU16() { uint16_t v; read(&v, 2); return v; }
+	int16_t  readI16() { int16_t  v; read(&v, 2); return v; }
 	uint32_t readU32() { uint32_t v; read(&v, 4); return v; }
 	int32_t  readI32() { int32_t  v; read(&v, 4); return v; }
 	float    readF32() { float    v; read(&v, 4); return v; }
@@ -326,6 +338,174 @@ inline EntityState deserializeEntityState(ReadBuffer& buf) {
 		e.props.push_back({k, v});
 	}
 	return e;
+}
+
+// --- EntityState delta codec (S_ENTITY_DELTA, v4+) ---
+//
+// Wire format: [u32 eid][u32 fieldMask][fields for set bits, in bit order].
+//   pos     → int32 mm per axis  (±2147 km range, 1 mm step)
+//   vel     → int16 cm/s per axis (±327 m/s range, 1 cm/s step)
+//   yaw/look→ int16 centidegrees (±327.68°; server wraps to [-180,180])
+//   hp/maxHp/owner → i32, moveSpeed → f32, bools/strings as-is.
+// Quantization thresholds below (kPosEps etc.) match the quantizer's
+// resolution so a sub-step float wiggle doesn't force a resend.
+enum EntityStateField : uint32_t {
+	FLD_TYPE_ID     = 1u << 0,   // only sent on first broadcast per entity
+	FLD_POSITION    = 1u << 1,
+	FLD_VELOCITY    = 1u << 2,
+	FLD_YAW         = 1u << 3,
+	FLD_ON_GROUND   = 1u << 4,
+	FLD_GOAL_TEXT   = 1u << 5,
+	FLD_CHAR_SKIN   = 1u << 6,
+	FLD_HP          = 1u << 7,
+	FLD_MAX_HP      = 1u << 8,
+	FLD_OWNER       = 1u << 9,
+	FLD_MOVE_TARGET = 1u << 10,
+	FLD_MOVE_SPEED  = 1u << 11,
+	FLD_LOOK_YAW    = 1u << 12,
+	FLD_LOOK_PITCH  = 1u << 13,
+	FLD_PROPS       = 1u << 14,  // props diff as a set → resend whole list on change
+};
+
+// Epsilons = one quantizer step. Smaller deltas would round to the same wire
+// value, so flagging them as "changed" would waste bytes for no fidelity.
+static constexpr float kPosEps      = 0.001f;   // 1 mm
+static constexpr float kVelEps      = 0.01f;    // 1 cm/s
+static constexpr float kAngleEps    = 0.01f;    // 0.01°
+static constexpr float kSpeedEps    = 0.001f;
+
+inline uint32_t diffEntityState(const EntityState& prev, const EntityState& cur,
+                                bool isFirst) {
+	auto vecDiffer = [](glm::vec3 a, glm::vec3 b, float eps) {
+		return std::fabs(a.x - b.x) > eps
+		    || std::fabs(a.y - b.y) > eps
+		    || std::fabs(a.z - b.z) > eps;
+	};
+	uint32_t m = 0;
+	if (isFirst || prev.typeId        != cur.typeId)        m |= FLD_TYPE_ID;
+	if (isFirst || vecDiffer(prev.position, cur.position, kPosEps))    m |= FLD_POSITION;
+	if (isFirst || vecDiffer(prev.velocity, cur.velocity, kVelEps))    m |= FLD_VELOCITY;
+	if (isFirst || std::fabs(prev.yaw - cur.yaw) > kAngleEps)          m |= FLD_YAW;
+	if (isFirst || prev.onGround      != cur.onGround)      m |= FLD_ON_GROUND;
+	if (isFirst || prev.goalText      != cur.goalText)      m |= FLD_GOAL_TEXT;
+	if (isFirst || prev.characterSkin != cur.characterSkin) m |= FLD_CHAR_SKIN;
+	if (isFirst || prev.hp            != cur.hp)            m |= FLD_HP;
+	if (isFirst || prev.maxHp         != cur.maxHp)         m |= FLD_MAX_HP;
+	if (isFirst || prev.owner         != cur.owner)         m |= FLD_OWNER;
+	if (isFirst || vecDiffer(prev.moveTarget, cur.moveTarget, kPosEps)) m |= FLD_MOVE_TARGET;
+	if (isFirst || std::fabs(prev.moveSpeed - cur.moveSpeed) > kSpeedEps) m |= FLD_MOVE_SPEED;
+	if (isFirst || std::fabs(prev.lookYaw   - cur.lookYaw)   > kAngleEps) m |= FLD_LOOK_YAW;
+	if (isFirst || std::fabs(prev.lookPitch - cur.lookPitch) > kAngleEps) m |= FLD_LOOK_PITCH;
+	if (isFirst || prev.props         != cur.props)         m |= FLD_PROPS;
+	return m;
+}
+
+namespace detail {
+	inline int32_t quantPosMm(float v)  { return (int32_t)std::lround(v * 1000.0f); }
+	inline float   dequantPosMm(int32_t q) { return (float)q * 0.001f; }
+	inline int16_t quantVelCm(float v) {
+		float c = v * 100.0f;
+		if (c >  32767.0f) c =  32767.0f;
+		if (c < -32768.0f) c = -32768.0f;
+		return (int16_t)std::lround(c);
+	}
+	inline float   dequantVelCm(int16_t q) { return (float)q * 0.01f; }
+	inline int16_t quantAngleCdeg(float deg) {
+		// Wrap to (-180, 180] so int16 covers the full circle with headroom.
+		float d = std::fmod(deg + 180.0f, 360.0f);
+		if (d < 0) d += 360.0f;
+		d -= 180.0f;
+		float c = d * 100.0f;
+		if (c >  32767.0f) c =  32767.0f;
+		if (c < -32768.0f) c = -32768.0f;
+		return (int16_t)std::lround(c);
+	}
+	inline float dequantAngleCdeg(int16_t q) { return (float)q * 0.01f; }
+}
+
+inline void serializeEntityStateDelta(WriteBuffer& buf, const EntityState& e,
+                                      uint32_t fieldMask) {
+	buf.writeU32(e.id);
+	buf.writeU32(fieldMask);
+	if (fieldMask & FLD_TYPE_ID)     buf.writeString(e.typeId);
+	if (fieldMask & FLD_POSITION) {
+		buf.writeI32(detail::quantPosMm(e.position.x));
+		buf.writeI32(detail::quantPosMm(e.position.y));
+		buf.writeI32(detail::quantPosMm(e.position.z));
+	}
+	if (fieldMask & FLD_VELOCITY) {
+		buf.writeI16(detail::quantVelCm(e.velocity.x));
+		buf.writeI16(detail::quantVelCm(e.velocity.y));
+		buf.writeI16(detail::quantVelCm(e.velocity.z));
+	}
+	if (fieldMask & FLD_YAW)         buf.writeI16(detail::quantAngleCdeg(e.yaw));
+	if (fieldMask & FLD_ON_GROUND)   buf.writeBool(e.onGround);
+	if (fieldMask & FLD_GOAL_TEXT)   buf.writeString(e.goalText);
+	if (fieldMask & FLD_CHAR_SKIN)   buf.writeString(e.characterSkin);
+	if (fieldMask & FLD_HP)          buf.writeI32(e.hp);
+	if (fieldMask & FLD_MAX_HP)      buf.writeI32(e.maxHp);
+	if (fieldMask & FLD_OWNER)       buf.writeI32(e.owner);
+	if (fieldMask & FLD_MOVE_TARGET) {
+		buf.writeI32(detail::quantPosMm(e.moveTarget.x));
+		buf.writeI32(detail::quantPosMm(e.moveTarget.y));
+		buf.writeI32(detail::quantPosMm(e.moveTarget.z));
+	}
+	if (fieldMask & FLD_MOVE_SPEED)  buf.writeF32(e.moveSpeed);
+	if (fieldMask & FLD_LOOK_YAW)    buf.writeI16(detail::quantAngleCdeg(e.lookYaw));
+	if (fieldMask & FLD_LOOK_PITCH)  buf.writeI16(detail::quantAngleCdeg(e.lookPitch));
+	if (fieldMask & FLD_PROPS) {
+		buf.writeU32((uint32_t)e.props.size());
+		for (auto& [k, v] : e.props) { buf.writeString(k); buf.writeString(v); }
+	}
+}
+
+// Header precedes the per-field payload. Exposed so client can look up its
+// baseline EntityState by id before merging the delta into it.
+struct EntityDeltaHeader { EntityId eid; uint32_t mask; };
+inline EntityDeltaHeader readEntityDeltaHeader(ReadBuffer& buf) {
+	EntityDeltaHeader h;
+	h.eid = buf.readU32();
+	h.mask = buf.readU32();
+	return h;
+}
+
+// Merge field payload into `out`. Unset bits leave the corresponding field
+// untouched, so callers must seed `out` from their per-entity cached last
+// state before calling (empty EntityState for a newly-seen entity is fine
+// since the server sends FLD_TYPE_ID on first broadcast).
+inline void mergeEntityDeltaFields(ReadBuffer& buf, uint32_t mask, EntityState& out) {
+	if (mask & FLD_TYPE_ID)     out.typeId = buf.readString();
+	if (mask & FLD_POSITION) {
+		int32_t x = buf.readI32(), y = buf.readI32(), z = buf.readI32();
+		out.position = {detail::dequantPosMm(x), detail::dequantPosMm(y), detail::dequantPosMm(z)};
+	}
+	if (mask & FLD_VELOCITY) {
+		int16_t x = buf.readI16(), y = buf.readI16(), z = buf.readI16();
+		out.velocity = {detail::dequantVelCm(x), detail::dequantVelCm(y), detail::dequantVelCm(z)};
+	}
+	if (mask & FLD_YAW)         out.yaw = detail::dequantAngleCdeg(buf.readI16());
+	if (mask & FLD_ON_GROUND)   out.onGround = buf.readBool();
+	if (mask & FLD_GOAL_TEXT)   out.goalText = buf.readString();
+	if (mask & FLD_CHAR_SKIN)   out.characterSkin = buf.readString();
+	if (mask & FLD_HP)          out.hp = buf.readI32();
+	if (mask & FLD_MAX_HP)      out.maxHp = buf.readI32();
+	if (mask & FLD_OWNER)       out.owner = buf.readI32();
+	if (mask & FLD_MOVE_TARGET) {
+		int32_t x = buf.readI32(), y = buf.readI32(), z = buf.readI32();
+		out.moveTarget = {detail::dequantPosMm(x), detail::dequantPosMm(y), detail::dequantPosMm(z)};
+	}
+	if (mask & FLD_MOVE_SPEED)  out.moveSpeed = buf.readF32();
+	if (mask & FLD_LOOK_YAW)    out.lookYaw   = detail::dequantAngleCdeg(buf.readI16());
+	if (mask & FLD_LOOK_PITCH)  out.lookPitch = detail::dequantAngleCdeg(buf.readI16());
+	if (mask & FLD_PROPS) {
+		out.props.clear();
+		uint32_t n = buf.readU32();
+		for (uint32_t i = 0; i < n && buf.hasMore(); i++) {
+			std::string k = buf.readString();
+			std::string v = buf.readString();
+			out.props.push_back({k, v});
+		}
+	}
 }
 
 // ChunkInfo wire protocol removed — agents share PlayerClient's chunk cache

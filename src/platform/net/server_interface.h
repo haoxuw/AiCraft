@@ -69,6 +69,8 @@ public:
 	virtual BehaviorInfo getBehaviorInfo(EntityId id) = 0;
 
 	virtual float worldTime() const = 0;
+	// Integer days elapsed since world creation. Season = (dayCount / kDaysPerSeason) % 4.
+	virtual uint32_t dayCount() const { return 0; }
 	virtual glm::vec3 spawnPos() const = 0;
 	virtual float pickupRange() const = 0;
 

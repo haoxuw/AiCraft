@@ -26,6 +26,37 @@ namespace civcraft::vk {
 
 namespace {
 
+// Six-plane frustum for broad-phase chunk culling. Planes extracted from a
+// row-vec VP matrix (Vulkan clip-space: x,y ∈ [-w,w], z ∈ [0,w]). The sign
+// convention is "point P is inside if n·P + d ≥ 0" for every plane. The VP
+// can include a Y-flip without changing the bounded world volume — we still
+// get the same 6-plane envelope, just with top/bottom labels swapped.
+struct Frustum {
+	glm::vec4 planes[6];
+	void setFromVP(const glm::mat4& m) {
+		auto row = [&](int i) { return glm::vec4(m[0][i], m[1][i], m[2][i], m[3][i]); };
+		glm::vec4 r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+		planes[0] = r3 + r0;   // left
+		planes[1] = r3 - r0;   // right
+		planes[2] = r3 + r1;   // bottom
+		planes[3] = r3 - r1;   // top
+		planes[4] = r2;         // near (Vulkan: z ≥ 0)
+		planes[5] = r3 - r2;   // far  (w - z ≥ 0)
+	}
+	// AABB-vs-frustum: for each plane, test the AABB corner farthest along
+	// the plane's outward normal (the "p-vertex"). If that corner is outside,
+	// the whole box is outside. Cheap — 6 branches, 6 dot products, no sqrt.
+	bool aabbVisible(const glm::vec3& mn, const glm::vec3& mx) const {
+		for (const auto& p : planes) {
+			glm::vec3 pv(p.x > 0 ? mx.x : mn.x,
+			             p.y > 0 ? mx.y : mn.y,
+			             p.z > 0 ? mx.z : mn.z);
+			if (p.x * pv.x + p.y * pv.y + p.z * pv.z + p.w < 0) return false;
+		}
+		return true;
+	}
+};
+
 // Goal-keyword → animation-clip map. Modders extending goalText don't need
 // to touch this file; they add the clip to the model's Python definition.
 const char* pickClip(const std::string& goal) {
@@ -287,14 +318,20 @@ void WorldRenderer::renderWorld(float wallTime) {
 	}
 	uint32_t charBoxCount = (uint32_t)(charBoxes.size() / 19);
 
-	// Shadow pass: every chunk casts via the chunk-mesh shadow pipeline,
-	// then characters via the box-shadow pipeline. All three pipelines
-	// (voxel/box/chunk) accumulate into the same depth map. Skip at night
-	// — a sun below the horizon projects shadows from underground.
+	// Shadow pass: every in-range chunk casts via the chunk-mesh shadow
+	// pipeline, then characters via the box-shadow pipeline. All three
+	// pipelines (voxel/box/chunk) accumulate into the same depth map. Skip
+	// at night — a sun below the horizon projects shadows from underground.
 	if (sunStr > 0.05f) {
+		Frustum shadowFr;
+		shadowFr.setFromVP(shadowVP);
+		const float CS = (float)civcraft::CHUNK_SIZE;
 		for (const auto& kv : g.m_chunkMeshes) {
-			if (kv.second != rhi::IRhi::kInvalidMesh)
-				g.m_rhi->renderShadowsChunkMesh(&shadowVP[0][0], kv.second);
+			if (kv.second == rhi::IRhi::kInvalidMesh) continue;
+			glm::vec3 mn(kv.first.x * CS, kv.first.y * CS, kv.first.z * CS);
+			glm::vec3 mx = mn + glm::vec3(CS);
+			if (!shadowFr.aabbVisible(mn, mx)) continue;
+			g.m_rhi->renderShadowsChunkMesh(&shadowVP[0][0], kv.second);
 		}
 		g.m_rhi->renderBoxShadows(&shadowVP[0][0], charBoxes.data(), charBoxCount);
 	}
@@ -355,9 +392,25 @@ void WorldRenderer::renderWorld(float wallTime) {
 		}
 	}
 	float fogColor[3] = { fogMix.x, fogMix.y, fogMix.z };
+	// Frustum cull + distance cull — fog fades geometry to invisible past
+	// fogFar, so chunks outside the view cone or beyond (fogFar + diag) can
+	// be skipped without any visible change. With render radius 12 this
+	// typically drops draw calls from ~2000 to ~200-400.
+	Frustum viewFr;
+	viewFr.setFromVP(vp);
+	const float CS = (float)civcraft::CHUNK_SIZE;
+	const float kCullDistSq = (fogFar + CS * 2.0f) * (fogFar + CS * 2.0f);
+	glm::vec3 camPos = g.m_cam.position;
 	for (const auto& kv : g.m_chunkMeshes) {
-		if (kv.second != rhi::IRhi::kInvalidMesh)
-			g.m_rhi->drawChunkMeshOpaque(scene, fogColor, fogNear, fogFar, kv.second);
+		if (kv.second == rhi::IRhi::kInvalidMesh) continue;
+		glm::vec3 mn(kv.first.x * CS, kv.first.y * CS, kv.first.z * CS);
+		glm::vec3 mx = mn + glm::vec3(CS);
+		// Distance: use closest AABB corner to camera.
+		glm::vec3 clamped = glm::clamp(camPos, mn, mx);
+		glm::vec3 delta = clamped - camPos;
+		if (glm::dot(delta, delta) > kCullDistSq) continue;
+		if (!viewFr.aabbVisible(mn, mx)) continue;
+		g.m_rhi->drawChunkMeshOpaque(scene, fogColor, fogNear, fogFar, kv.second);
 	}
 
 	// Entities

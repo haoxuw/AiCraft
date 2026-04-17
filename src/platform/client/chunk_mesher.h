@@ -25,17 +25,36 @@ struct ChunkVertex {
 
 class ChunkMesher {
 public:
-	// Returns {opaque vertices, transparent vertices}
+	// 18³ cached volume (chunk + 1-block border).
+	static constexpr int PADDED_SIZE = CHUNK_SIZE + 2;
+	static constexpr int PADDED_VOL  = PADDED_SIZE * PADDED_SIZE * PADDED_SIZE;
+	struct PaddedSnapshot {
+		std::array<BlockId, PADDED_VOL> blocks;
+		std::array<uint8_t, PADDED_VOL> param2;  // only center-chunk cells are used (stairs/doors)
+	};
+
+	// Main-thread convenience: snapshot live world + mesh in one call.
 	std::pair<std::vector<ChunkVertex>, std::vector<ChunkVertex>>
 		buildMesh(ChunkSource& world, ChunkPos pos);
 
+	// Async path: main thread calls snapshotPadded() to capture block data
+	// under whatever thread-safety ChunkSource requires, then any thread may
+	// call buildMeshFromSnapshot() on the result — it only reads the padded
+	// snapshot + the (immutable-after-init) BlockRegistry. Returns false if
+	// the center chunk is not loaded.
+	static bool snapshotPadded(ChunkSource& world, ChunkPos pos,
+	                           PaddedSnapshot& out);
+
+	static std::pair<std::vector<ChunkVertex>, std::vector<ChunkVertex>>
+		buildMeshFromSnapshot(const PaddedSnapshot& padded, ChunkPos pos,
+		                      const BlockRegistry& reg);
+
 private:
-	float computeAO(bool side1, bool side2, bool corner);
+	static float computeAO(bool side1, bool side2, bool corner);
 	void fillPaddedVolume(ChunkSource& world, ChunkPos cpos);
 
-	// 18³ cached volume (chunk + border). Eliminates per-block getBlock()/mutex during meshing.
-	static constexpr int PADDED_SIZE = CHUNK_SIZE + 2;
-	std::array<BlockId, PADDED_SIZE * PADDED_SIZE * PADDED_SIZE> m_padded;
+	// Eliminates per-block getBlock()/mutex during meshing.
+	PaddedSnapshot m_padded;
 };
 
 } // namespace civcraft

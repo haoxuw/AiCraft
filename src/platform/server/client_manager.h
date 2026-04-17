@@ -10,6 +10,7 @@
 #include "net/net_protocol.h"
 #include "logic/constants.h"
 #include <zstd.h>
+#include <algorithm>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -89,6 +90,12 @@ struct ClientSession {
 
 	// Edge-trigger state for S_NPC_INTERRUPT (prev tick proximity).
 	std::unordered_map<EntityId, bool> prevProximity;
+
+	// Per-client memory of the last EntityState we transmitted, keyed by
+	// entity id. Used to compute the field-delta bitmap for S_ENTITY_DELTA
+	// (protocol v4+). Cleared on S_REMOVE, and whenever an entity drops out
+	// of perception scope (so the re-entry gets a full "first" snapshot).
+	std::unordered_map<EntityId, net::EntityState> lastSentEntity;
 
 	// UINT32_MAX sentinel = "never sent" → first broadcast pushes initial weather.
 	uint32_t lastWeatherSeq = UINT32_MAX;
@@ -416,6 +423,35 @@ public:
 				sv = std::to_string(v->x) + "," + std::to_string(v->y) + "," + std::to_string(v->z);
 			if (!sv.empty()) es.props.push_back({key, sv});
 		}
+		// props comes from unordered_map — sort by key so the delta diff
+		// doesn't flag FLD_PROPS on every broadcast because the iteration
+		// order shifted after a rehash. Matches our per-client baseline cache.
+		std::sort(es.props.begin(), es.props.end(),
+		          [](const auto& a, const auto& b) { return a.first < b.first; });
+
+		// v4+: delta-encode against lastSentEntity[eid]. Suppress entirely
+		// when mask == 0 (idle entity = zero bytes). v3 still gets full state
+		// so older clients keep working.
+		if (client.protocolVersion >= 4) {
+			auto it = client.lastSentEntity.find(e.id());
+			bool isFirst = (it == client.lastSentEntity.end());
+			const net::EntityState& prev = isFirst
+				? net::EntityState{}   // irrelevant; diff uses isFirst path
+				: it->second;
+			uint32_t mask = net::diffEntityState(prev, es, isFirst);
+			if (mask == 0) return;  // nothing changed — skip broadcast
+
+			net::WriteBuffer wb;
+			net::serializeEntityStateDelta(wb, es, mask);
+			if (!net::sendMessage(client.transport.fd, net::S_ENTITY_DELTA, wb)) {
+				fprintf(stderr, "[ClientMgr] sendEntityState(delta) FAILED: client=%s eid=%u type=%s (peer likely gone)\n",
+					client.label().c_str(), (unsigned)e.id(), e.typeId().c_str());
+				return;
+			}
+			client.lastSentEntity[e.id()] = es;
+			m_broadcastStats.sEntity++;
+			return;
+		}
 
 		net::WriteBuffer wb;
 		net::serializeEntityState(wb, es);
@@ -467,6 +503,7 @@ public:
 
 			net::WriteBuffer tb;
 			tb.writeF32(m_server.worldTime());
+			tb.writeU32(m_server.dayCount());
 			net::sendMessage(client.transport.fd, net::S_TIME, tb);
 
 			// Push on seq bump + once per newly-Ready client (UINT32_MAX sentinel).
@@ -658,6 +695,20 @@ public:
 	};
 	const BroadcastStats& broadcastStats() const { return m_broadcastStats; }
 	void resetBroadcastStats() { m_broadcastStats = {}; }
+
+	// Server calls this instead of broadcastToAll(S_REMOVE, ...) so we can
+	// drop the dead entity from each client's delta-baseline cache in lockstep.
+	// Otherwise lastSentEntity[id] would linger and a future spawn reusing
+	// the same id would miss FLD_TYPE_ID and render as the wrong model.
+	void broadcastEntityRemove(EntityId id) {
+		net::WriteBuffer wb;
+		wb.writeU32(id);
+		for (auto& [cid, c] : m_clients) {
+			net::sendMessage(c.transport.fd, net::S_REMOVE, wb);
+			c.lastSentEntity.erase(id);
+		}
+		m_broadcastStats.sRemove += (int)m_clients.size();
+	}
 
 	void broadcastToAll(net::MsgType msgType, const net::WriteBuffer& wb) {
 		for (auto& [cid, c] : m_clients)

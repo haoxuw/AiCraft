@@ -263,14 +263,16 @@ private:
 	void* m_uiVtxMapped[kFramesInFlight]{};
 	VkDeviceSize m_uiVtxCap[kFramesInFlight]{};
 	VkDeviceSize m_uiVtxCursor[kFramesInFlight]{};
-	// Deferred-destroy for grow-replaced UI buffers — the old buffer may
-	// still be bound by earlier drawUi2D in this frame's cmdbuf. Drain at
-	// top of next beginFrame for the same slot (after fence wait).
-	struct UiVtxPending {
+	// Deferred-destroy for any per-frame buffer that was replaced by a
+	// grow (UI vtx, box-shadow inst, particle inst, ribbon vtx). The old
+	// buffer may still be bound to this frame's cmdbuf via an earlier
+	// draw* call — destroying it now would invalidate the cmdbuf. Drained
+	// at top of next beginFrame for the same slot, after fence wait.
+	struct DeferredBufDestroy {
 		VkBuffer buf;
 		VkDeviceMemory mem;
 	};
-	std::vector<UiVtxPending> m_uiVtxPending[kFramesInFlight];
+	std::vector<DeferredBufDestroy> m_pendingBufDestroy[kFramesInFlight];
 
 	// beginSwapchainPass() is idempotent — imguiNewFrame + drawUi2D both
 	// call it; first call does offscreen→swapchain + composite quad.

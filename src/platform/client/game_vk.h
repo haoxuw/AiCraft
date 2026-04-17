@@ -34,6 +34,7 @@
 #include "client/hotbar.h"
 #include "client/box_model.h"
 #include "client/equipment_ui.h"
+#include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -234,9 +235,19 @@ private:
 	// (populated by the onChunkDirty callback). Both passes are throttled so
 	// a player teleporting into a fresh world doesn't stall the frame.
 	void streamServerChunks();
-	// Mesh+upload one ChunkPos against the active source (server or local
-	// world). Creates a new MeshHandle if absent, updateChunkMesh if present.
-	void uploadChunkMesh(civcraft::ChunkPos cp);
+	// Snapshot the live 18³ block neighborhood around `cp` on the main thread
+	// (under ChunkSource's invariants) and enqueue an async mesh build. The
+	// worker pool runs ChunkMesher::buildMeshFromSnapshot; the result is picked
+	// up by drainAsyncMeshes() and applied via createChunkMesh/updateChunkMesh.
+	void enqueueMeshBuild(civcraft::ChunkPos cp);
+	// Drain worker results and upload verts to the RHI. Main-thread only.
+	void drainAsyncMeshes();
+	// Apply one finished mesh (create or update the GPU buffer).
+	void applyMeshResult(civcraft::AsyncChunkMesher::Result&& r);
+	// Pre-load chunks before the loading screen hands off to gameplay. Fills
+	// the entire render radius + vertical range so the first rendered frame
+	// already has a full horizon instead of popping in.
+	void preloadVisibleChunks();
 
 	// The entity the player is currently controlling. Returns nullptr if
 	// the server hasn't delivered the entity yet. ALL player position,
@@ -282,6 +293,16 @@ private:
 	// Chunks the server has marked dirty (initial delivery or block change).
 	// Drained by streamServerChunks() each frame.
 	std::unordered_set<civcraft::ChunkPos, civcraft::ChunkPosHash> m_serverDirtyChunks;
+	// Chunks currently queued on the async mesher worker pool. Keeps Pass 1/
+	// Pass 2 from double-enqueuing and lets dirty events wait for the in-flight
+	// build to land before re-queueing.
+	std::unordered_set<civcraft::ChunkPos, civcraft::ChunkPosHash> m_inFlightMesh;
+	// Worker pool lives as long as Game. Constructed lazily once the server
+	// handshake is done and the BlockRegistry is known. Destroyed in
+	// shutdown() before the server reference goes away.
+	std::unique_ptr<civcraft::AsyncChunkMesher> m_asyncMesher;
+	// Per-frame scratch so we don't realloc the 13-float interleaved buffer.
+	std::vector<float> m_meshUploadScratch;
 	std::vector<FloatText> m_floaters;
 
 	// Client-only physics/animation state (not on Entity).

@@ -3,6 +3,7 @@
 // Rule 2: Entity = Living + Item. LivingName/ItemName mutually exclusive.
 // BlockType strings map to BlockId (uint16) via BlockRegistry — blocks are NOT entities.
 
+#include <cmath>
 #include <cstdint>
 
 namespace civcraft {
@@ -144,5 +145,60 @@ namespace Sound {
 }
 
 constexpr int CIVCRAFT_DISCOVER_PORT = 7778;
+
+// ── Calendar ─────────────────────────────────────────────────────────
+// Four-section day — matches src/python/conditions_lib.py exactly so
+// Python behaviour checks (IsMorning etc.) and C++ UI agree on boundaries.
+//   Night     [0.00, 0.25)   midnight → dawn
+//   Morning   [0.25, 0.50)   dawn     → noon
+//   Afternoon [0.50, 0.75)   noon     → dusk
+//   Evening   [0.75, 1.00)   dusk     → midnight
+enum class DayPhase : uint32_t { Night = 0, Morning = 1, Afternoon = 2, Evening = 3, Count = 4 };
+
+inline DayPhase dayPhaseFromWorldTime(float wt) {
+	float f = wt - std::floor(wt);
+	if (f < 0.25f) return DayPhase::Night;
+	if (f < 0.50f) return DayPhase::Morning;
+	if (f < 0.75f) return DayPhase::Afternoon;
+	return DayPhase::Evening;
+}
+
+inline const char* dayPhaseName(DayPhase p) {
+	switch (p) {
+		case DayPhase::Night:     return "Night";
+		case DayPhase::Morning:   return "Morning";
+		case DayPhase::Afternoon: return "Afternoon";
+		case DayPhase::Evening:   return "Evening";
+		default:                  return "?";
+	}
+}
+
+// Four seasons, cycle on a short rotation so a single play session crosses
+// all of them. 2 in-game days per season × 4 seasons = 8-day year ≈ 160
+// real-minutes at the default 20-min day. Tune via kDaysPerSeason.
+enum class Season : uint32_t { Spring = 0, Summer = 1, Autumn = 2, Winter = 3, Count = 4 };
+constexpr uint32_t kDaysPerSeason = 2;
+
+inline Season seasonFromDay(uint32_t dayCount) {
+	return (Season)((dayCount / kDaysPerSeason) % (uint32_t)Season::Count);
+}
+
+// Continuous 0..4 float: integer part = current season index, fractional
+// part = progress through the current season. Shader lerps between palettes.
+inline float seasonPhase(uint32_t dayCount, float worldTimePhase) {
+	uint32_t cycle = kDaysPerSeason * (uint32_t)Season::Count;
+	float d = (float)(dayCount % cycle) + worldTimePhase;
+	return d / (float)kDaysPerSeason;
+}
+
+inline const char* seasonName(Season s) {
+	switch (s) {
+		case Season::Spring: return "Spring";
+		case Season::Summer: return "Summer";
+		case Season::Autumn: return "Autumn";
+		case Season::Winter: return "Winter";
+		default:             return "?";
+	}
+}
 
 } // namespace civcraft

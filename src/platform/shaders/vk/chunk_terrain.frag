@@ -29,7 +29,7 @@ layout(push_constant) uniform PC {
 	vec4 camPos;       // xyz, w=time
 	vec4 sunDir;       // xyz, w=sunStrength
 	vec4 fog;          // rgb=fogColor, a=fogStart
-	vec4 fogExtra;     // x=fogEnd, yzw reserved
+	vec4 fogExtra;     // x=fogEnd, y=seasonPhase (0..4), zw reserved
 } pc;
 
 layout(location = 0) out vec4 fragColor;
@@ -92,6 +92,33 @@ void main() {
 	vec3 baseColor = vColor + colorVariation + grain;
 	baseColor = clamp(baseColor, 0.0, 1.0);
 	baseColor *= edgeFactor;
+
+	// ── Season tint on grass tops ──────────────────────────────────────
+	// Detect the grass-top face by colour hint + normal direction (top face
+	// && vColor greener than red/blue). Mix toward a per-season target so
+	// winter can override the base green entirely and read as snow — a
+	// multiplicative tint couldn't do that. Driven by pc.fogExtra.y ∈ [0,4):
+	// 0=spring, 1=summer, 2=autumn, 3=winter (wraps).
+	bool topFace = vNormal.y > 0.5;
+	bool greenish = (vColor.g > vColor.r + 0.05) && (vColor.g > vColor.b + 0.05);
+	if (topFace && greenish) {
+		float sp = mod(pc.fogExtra.y, 4.0);
+		int i0 = int(floor(sp));
+		int i1 = (i0 + 1) % 4;
+		float t = smoothstep(0.0, 1.0, sp - float(i0));
+		// Target colour grass leans toward in each season.
+		vec3 target[4];
+		target[0] = vec3(0.42, 0.78, 0.24);   // spring  — fresh lime
+		target[1] = vec3(0.26, 0.58, 0.18);   // summer  — deep saturated
+		target[2] = vec3(0.62, 0.40, 0.14);   // autumn  — warm ochre/brown
+		target[3] = vec3(0.88, 0.94, 1.00);   // winter  — frost white
+		// How strongly to replace the base colour each season. Winter is
+		// near-total takeover so the ground reads as snow cover.
+		float amt[4] = float[4](0.30, 0.35, 0.75, 0.90);
+		vec3  tgt    = mix(target[i0], target[i1], t);
+		float mixAmt = mix(amt[i0],    amt[i1],    t);
+		baseColor = mix(baseColor, tgt, mixAmt);
+	}
 
 	// ── Classic directional lighting ──────────────────────────────────
 	// Single-channel diffuse with a constant ambient floor. No tinting —
