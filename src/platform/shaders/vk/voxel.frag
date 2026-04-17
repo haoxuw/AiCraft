@@ -105,54 +105,28 @@ void main() {
 	vec3 baseColor = clamp(vColor + colorVar + grain, 0.0, 1.0);
 	baseColor *= edgeFactor;
 
-	// Mild saturation (final boost in composite pass)
-	float lum = dot(baseColor, vec3(0.299, 0.587, 0.114));
-	baseColor = clamp(mix(vec3(lum), baseColor, 1.25), 0.0, 1.0);
-
-	// ═══════════════════════════════════════════════════════════
-	// DUNGEONS-STYLE LIGHTING — shadow-map-driven, warm, high contrast
-	// ═══════════════════════════════════════════════════════════
-
-	// Shadow map drives the big lighting decision: is this fragment in the
-	// sun's path or not? Per-face normal dot product shapes intensity. No
-	// hardcoded face brightness — shadow map + dot product do that naturally.
+	// Neutral lighting: shadow map + sun dot for direction, grey ambient so
+	// hue comes from the material only. Any global grading/saturation/warmth
+	// is owned by the composite UBO (set via the Render Tuning panel).
 	float sunDot = max(dot(n, sun), 0.0);
 	float shadowK = sampleShadow(vWorldPos, n, sun);
 	float direct = sunDot * sunStr * shadowK;
 
-	// Warm low ambient. Shadowed areas land here and read clearly as shadow.
-	vec3 warmAmbient = vec3(0.22, 0.18, 0.14) * sunStr + vec3(0.07, 0.06, 0.09);
+	vec3 ambient = vec3(0.32) * sunStr + vec3(0.08);
+	vec3 lit = baseColor * (ambient + vec3(direct));
 
-	// Rich golden sun, strong enough to make lit faces pop against shadow.
-	vec3 sunColor = vec3(1.15, 0.95, 0.62);
+	// Sky/ground fills kept neutral (gentle hemisphere), no hue tinting.
+	float skyFill = max(n.y, 0.0) * 0.10;
+	lit += baseColor * skyFill * sunStr;
+	float groundBounce = max(-n.y, 0.0) * 0.05;
+	lit += baseColor * groundBounce * sunStr;
 
-	vec3 lit = baseColor * (warmAmbient + sunColor * direct);
+	// Overhangs still read darker so geometry is legible.
+	if (n.y < -0.5) lit *= 0.65;
 
-	// Sky fill — blueish bounce for top-ish faces, independent of shadow
-	// (sky is huge, always visible where the normal points upward).
-	float skyFill = max(n.y, 0.0) * 0.18;
-	lit += baseColor * vec3(0.42, 0.52, 0.70) * skyFill * sunStr;
-
-	// Warm ground bounce from below (like Dungeons' warm reflected fill).
-	float groundBounce = max(-n.y, 0.0) * 0.10;
-	lit += baseColor * vec3(0.80, 0.55, 0.32) * groundBounce * sunStr;
-
-	// Bottom faces (overhangs): extra darken since nothing shines on them.
-	if (n.y < -0.5) lit *= 0.55;
-
-	// Warm rim on side faces for block-edge definition.
-	if (abs(n.y) < 0.5) {
-		vec3 viewDir = normalize(pc.camPos.xyz - vWorldPos);
-		float rim = pow(1.0 - max(dot(n, viewDir), 0.0), 3.0);
-		lit += vec3(0.20, 0.14, 0.06) * rim * sunStr * 0.4;
-	}
-
-	// ── Distance fog → warm horizon (Dungeons fog is golden, not grey) ──
-	vec3 fogColor = mix(
-		vec3(0.12, 0.10, 0.18),                    // night
-		vec3(0.72, 0.62, 0.48) * 0.9 + vec3(0.15, 0.20, 0.30) * 0.1, // day: golden haze
-		sunStr
-	);
+	// Neutral distance fog (night→day stays grey; colored sky bleed is the
+	// composite pass's job, not this shader's).
+	vec3 fogColor = mix(vec3(0.12), vec3(0.62), sunStr);
 	float fogStart = 40.0;
 	float fogEnd = 80.0;
 	float fog = smoothstep(fogStart, fogEnd, vDist);

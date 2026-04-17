@@ -23,18 +23,17 @@ void Game::clampCameraCollision() {
 	// FPS: camera is inside the player's collision capsule; nothing to clamp.
 	if (m_cam.mode == civcraft::CameraMode::FirstPerson) return;
 
-	// Orbit target that the camera is looking at. For TPS/RPG it's the player's
-	// head-ish anchor (matches updateThirdPerson / updateRPGPosition). For RTS
-	// it's the ground point the camera pans over (rtsCenter).
-	glm::vec3 target;
-	if (m_cam.mode == civcraft::CameraMode::RTS) {
-		target = m_cam.rtsCenter;
-	} else {
-		float feetY = m_cam.smoothedFeetPos().y;
-		target = glm::vec3(m_cam.player.feetPos.x,
-		                   feetY + m_cam.player.eyeHeight * 0.8f,
-		                   m_cam.player.feetPos.z);
-	}
+	// RTS: commander view — camera flies freely over rooftops and through
+	// walls by design. Clamping would jerk the viewpoint whenever a zoom
+	// or pan happened to cross a structure, which is disorienting for an
+	// overhead camera. Zoom is the only height input in RTS.
+	if (m_cam.mode == civcraft::CameraMode::RTS) return;
+
+	// Orbit target that the camera is looking at (TPS/RPG head-ish anchor).
+	float feetY = m_cam.smoothedFeetPos().y;
+	glm::vec3 target(m_cam.player.feetPos.x,
+	                 feetY + m_cam.player.eyeHeight * 0.8f,
+	                 m_cam.player.feetPos.z);
 
 	glm::vec3 delta = m_cam.position - target;
 	float dist = glm::length(delta);
@@ -161,9 +160,6 @@ void Game::processInput(float dt) {
 			auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 			if (hit) {
 				glm::ivec3 bp = hit->hasInteract ? hit->interactPos : hit->blockPos;
-				const auto& bdef = m_server->blockRegistry().get(
-					m_server->chunks().getBlock(bp.x, bp.y, bp.z));
-				bool isChest = bdef.string_id.find("chest") != std::string::npos;
 				civcraft::ActionProposal p;
 				p.type     = civcraft::ActionProposal::Interact;
 				p.actorId  = m_server->localPlayerId();
@@ -171,19 +167,22 @@ void Game::processInput(float dt) {
 				m_server->sendAction(p);
 				civcraft::GameLogger::instance().emit("ACTION",
 					"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
-				if (isChest) {
-					m_chestUI.open = true;
-					m_chestUI.pos  = bp;
-					m_server->forEachEntity([&](civcraft::Entity& e) {
-						if (e.typeId().find("chest") != std::string::npos) {
-							glm::vec3 epos = e.position;
-							if ((int)std::floor(epos.x) == bp.x &&
-							    (int)std::floor(epos.y) == bp.y &&
-							    (int)std::floor(epos.z) == bp.z)
-								m_chestUI.chestEid = e.id();
-						}
-					});
-					m_server->sendGetInventory(m_chestUI.chestEid);
+				// Generic container-open: any Structure entity with an inventory
+				// within clicking range of the hit opens a chest-like UI. Covers
+				// chests (exact block match) and monument (tower near deck anchor).
+				glm::vec3 hitCenter = glm::vec3(bp) + glm::vec3(0.5f);
+				civcraft::EntityId bestEid = 0;
+				float bestDist = 5.0f;
+				m_server->forEachEntity([&](civcraft::Entity& e) {
+					if (!e.def().isStructure() || !e.inventory) return;
+					float d = glm::distance(e.position, hitCenter);
+					if (d < bestDist) { bestDist = d; bestEid = e.id(); }
+				});
+				if (bestEid != 0) {
+					m_chestUI.open     = true;
+					m_chestUI.pos      = bp;
+					m_chestUI.chestEid = bestEid;
+					m_server->sendGetInventory(bestEid);
 				}
 			}
 		}
@@ -239,6 +238,11 @@ void Game::processInput(float dt) {
 	bool f3 = glfwGetKey(m_window, GLFW_KEY_F3) == GLFW_PRESS;
 	if (f3 && !m_f3Last) m_showDebug = !m_showDebug;
 	m_f3Last = f3;
+
+	// F6: toggle render-tuning panel (per-effect grading sliders)
+	bool f6 = glfwGetKey(m_window, GLFW_KEY_F6) == GLFW_PRESS;
+	if (f6 && !m_f6Last) m_showTuning = !m_showTuning;
+	m_f6Last = f6;
 
 	// H: toggle handbook (artifact browser)
 	bool hKey = glfwGetKey(m_window, GLFW_KEY_H) == GLFW_PRESS;
@@ -316,11 +320,13 @@ void Game::tickPlayer(float dt) {
 	civcraft::Entity* me = playerEntity();
 	if (!me) return;
 
-	// In RTS mode, WASD is consumed by the Camera for panning — player
-	// doesn't walk. Movement is click-to-move (server-side goal).
+	// In RTS mode WASD pans the camera, not the player. The player walks
+	// only if box-selected and issued a group Move order (Rule 2: player is
+	// not special). Local-player steering follows the flow field via
+	// steerTargetFor and goes through the normal client-prediction path
+	// so movement stays smooth.
 	bool rtsMode = (m_cam.mode == civcraft::CameraMode::RTS);
 
-	// Intent vector relative to camera orientation.
 	glm::vec3 fwd, right;
 	if (m_cam.mode == civcraft::CameraMode::RPG) {
 		fwd   = m_cam.godCameraForward();
@@ -335,6 +341,24 @@ void Game::tickPlayer(float dt) {
 		if (glfwGetKey(m_window, GLFW_KEY_S) == GLFW_PRESS) mv -= fwd;
 		if (glfwGetKey(m_window, GLFW_KEY_A) == GLFW_PRESS) mv -= right;
 		if (glfwGetKey(m_window, GLFW_KEY_D) == GLFW_PRESS) mv += right;
+	} else {
+		civcraft::EntityId pid = m_server->localPlayerId();
+		auto pit = m_moveOrders.find(pid);
+		if (pit != m_moveOrders.end() && pit->second.active) {
+			auto wp = m_rtsExec.steerTargetFor(pid, me->position);
+			glm::vec3 steer = wp ? *wp : pit->second.target;
+			glm::vec3 toTarget = steer - me->position;
+			toTarget.y = 0;
+			float dist = glm::length(toTarget);
+			glm::vec3 finalDelta = pit->second.target - me->position;
+			finalDelta.y = 0;
+			if (glm::length(finalDelta) < 1.0f) {
+				m_moveOrders.erase(pit);
+				m_rtsExec.cancel(pid);
+			} else if (dist > 0.01f) {
+				mv = toTarget / dist;
+			}
+		}
 	}
 
 	float moveLen = glm::length(mv);
@@ -660,15 +684,12 @@ void Game::tickPlayer(float dt) {
 			m_rtsLongPress.active = false;
 
 			if (isClick && !m_rtsSelect.selected.empty()) {
-				clickToMove();
-				glm::vec3 eye = m_cam.position;
-				glm::mat4 invVP = glm::inverse(viewProj());
-				glm::vec4 nearNdc(ndcX, ndcY, 0.0f, 1.0f);
-				glm::vec4 farNdc(ndcX, ndcY, 1.0f, 1.0f);
-				glm::vec4 nearW = invVP * nearNdc; nearW /= nearW.w;
-				glm::vec4 farW  = invVP * farNdc;  farW  /= farW.w;
-				glm::vec3 dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
-				auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 200.0f);
+				glm::mat4 invVP = glm::inverse(pickViewProj());
+				glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
+				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
+				glm::vec3 rayOrigin = glm::vec3(nearW);
+				glm::vec3 dir = glm::normalize(glm::vec3(farW) - rayOrigin);
+				auto hit = civcraft::raycastBlocks(m_server->chunks(), rayOrigin, dir, 200.0f);
 				if (hit) {
 					glm::vec3 center = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
 					civcraft::CommandKind kind = isBuildCmd
@@ -714,10 +735,12 @@ void Game::tickPlayer(float dt) {
 				else
 					m_rtsSelect.selected.clear();
 				size_t added = 0;
-				glm::mat4 vp = viewProj();
+				glm::mat4 vp = pickViewProj();
 				m_server->forEachEntity([&](civcraft::Entity& e) {
 					if (!e.def().isLiving()) return;
-					glm::vec4 clip = vp * glm::vec4(e.position + glm::vec3(0, 0.5f, 0), 1.0f);
+					float cy = e.position.y + e.def().collision_box_max.y * 0.5f;
+					glm::vec3 anchor(e.position.x, cy, e.position.z);
+					glm::vec4 clip = vp * glm::vec4(anchor, 1.0f);
 					if (clip.w <= 0) return;
 					float sx = clip.x / clip.w;
 					float sy = clip.y / clip.w;

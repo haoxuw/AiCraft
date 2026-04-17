@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string_view>
+#include <unordered_set>
 
 #include "client/box_model_flatten.h"
 #include "client/model_loader.h"
@@ -36,6 +37,10 @@ glm::mat4 Game::viewProj() const {
 		view = jitter * view;
 	}
 	return proj * view;
+}
+
+glm::mat4 Game::pickViewProj() const {
+	return m_cam.projectionMatrix(m_aspect) * m_cam.viewMatrix();
 }
 
 bool Game::projectWorld(const glm::vec3& world, glm::vec3& out) const {
@@ -100,6 +105,11 @@ void fillMobAnim(const civcraft::Entity& e, float globalTime,
 
 
 void Game::renderWorld(float wallTime) {
+	// Push the current render-tuning grading to the RHI. Composite shader
+	// reads the UBO when the swapchain pass runs, so this needs to land
+	// before endFrame. Zeros = clean render; slider values add each FX.
+	m_rhi->setGrading(m_grading);
+
 	// Sun trajectory driven by server worldTime (Rule 3 — server is the sole
 	// owner of time-of-day). worldTime ∈ [0,1): 0=midnight, 0.25=dawn,
 	// 0.5=noon, 0.75=dusk. Angle convention puts the sun overhead at noon.
@@ -352,6 +362,10 @@ void Game::renderWorld(float wallTime) {
 	scene.time = wallTime;
 	scene.sunDir[0] = sunDir.x; scene.sunDir[1] = sunDir.y; scene.sunDir[2] = sunDir.z;
 	scene.sunStr = sunStr;
+
+	// Season/weather color grading now lives in the composite RenderTuning
+	// UBO (see GradingParams). The terrain shader no longer carries season
+	// or rain — all global color filters are panel-tunable in one place.
 	// Fog tracks the sky's horizon color so distant geometry dissolves into
 	// the actual horizon tint, not a mismatched cold blue. sunStr drives the
 	// warm→cool blend (dawn/dusk pushes toward peach; overcast→deep blue).
@@ -359,7 +373,7 @@ void Game::renderWorld(float wallTime) {
 	// geometry reads as black/indigo, matching the starfield overhead.
 	glm::vec3 fogNight{0.025f, 0.035f, 0.082f};  // matches horizonNight
 	glm::vec3 fogDawn {0.920f, 0.490f, 0.320f};  // matches horizonDawn (warm peach)
-	glm::vec3 fogDay  {0.360f, 0.620f, 0.920f};  // matches horizonDay (blue, not white)
+	glm::vec3 fogDay  {0.482f, 0.643f, 1.000f};  // matches Mojang canonical sky #7BA4FF
 	float dayBlend  = glm::smoothstep(0.15f, 0.70f, sunStr);
 	float dawnBlend = glm::smoothstep(0.00f, 0.35f, sunStr);
 	glm::vec3 fogMix = glm::mix(glm::mix(fogNight, fogDawn, dawnBlend), fogDay, dayBlend);
@@ -736,46 +750,36 @@ void Game::renderEffects(float wallTime) {
 
 			int stage = e.getProp<int>(civcraft::Prop::GrowthStage);
 			if (stage <= 0) stage = 18;
-			// Flame wraps from deck down through the tower body and rises
-			// above the trident crown (+12 blocks headroom).
-			float colBottom = anchor.y - (float)stage;
-			float colTop    = anchor.y + 12.0f;
+			// Flame drifts from the deck up past the trident crown. Kept
+			// sparse — subtle glow, not a pyre.
+			float colBottom = anchor.y - 1.0f;
+			float colTop    = anchor.y + 10.0f;
 			float span      = colTop - colBottom;
-			float orbitR    = 3.6f;
-			// Two orbital bands (CW + CCW) crossing at the trident plane
-			// give the "flowing around" swirl the user asked for.
-			constexpr int kRibbons = 3;
-			constexpr int kPerRib  = 56;
-			for (int rib = 0; rib < kRibbons; rib++) {
-				// Alternating CW/CCW + one slow axial ribbon gives the swirl.
-				float rotDir   = (rib == 1) ? -1.0f : 1.0f;
-				float rotSpeed = (rib == 2) ?  0.35f : 0.9f;
-				for (int k = 0; k < kPerRib; k++) {
-					float seed  = (float)(rib * kPerRib + k);
-					float phase = std::fmod(seed * 0.091f, 1.0f);
-					float t     = std::fmod(wallTime * 0.18f + phase, 1.0f);
-					float y     = colBottom + t * span;
-					// Breathing radius + wobble so the ribbon isn't a perfect circle.
-					float noise = std::sin(wallTime * 1.4f + seed * 2.7f) * 0.45f
-					            + std::cos(wallTime * 0.8f + seed * 5.1f) * 0.35f;
-					float r     = orbitR + noise + (rib == 2 ? 0.8f : 0.0f);
-					float ang   = rotDir * (wallTime * rotSpeed + seed * 0.42f);
-					// Warm core → cooler tip. Additive blend means higher values
-					// = brighter, so push the red channel well above 1.0.
-					float climb = t;  // 0 = bottom, 1 = top
-					glm::vec3 col = glm::mix(
-						glm::vec3(3.2f, 1.4f, 0.30f),   // deep orange at base
-						glm::vec3(2.0f, 1.9f, 0.70f),   // yellow-white at tip
-						climb);
-					// Fade in/out at the ribbon ends to avoid pop-in.
-					float edgeFade = std::min(t * 4.0f, std::min(1.0f, (1.0f - t) * 4.0f));
-					float alpha    = 0.85f * edgeFade;
-					glm::vec3 p = anchor + glm::vec3(
-						std::cos(ang) * r,
-						y - anchor.y,
-						std::sin(ang) * r);
-					pushP(p, 0.28f, col, alpha);
-				}
+			float orbitR    = 3.2f;
+			constexpr int kPerRib = 14;
+			for (int k = 0; k < kPerRib; k++) {
+				float seed  = (float)k;
+				float phase = std::fmod(seed * 0.091f, 1.0f);
+				float t     = std::fmod(wallTime * 0.14f + phase, 1.0f);
+				float y     = colBottom + t * span;
+				// Slow breathing radius — one gentle orbit, no second ribbon.
+				float noise = std::sin(wallTime * 0.9f + seed * 2.7f) * 0.35f;
+				float r     = orbitR + noise;
+				float ang   = wallTime * 0.45f + seed * 0.42f;
+				// Warm but muted. Additive blend values stay close to 1.0 so
+				// the flame reads as a subtle glow, not a torch.
+				float climb = t;
+				glm::vec3 col = glm::mix(
+					glm::vec3(1.4f, 0.70f, 0.18f),   // ember orange at base
+					glm::vec3(1.1f, 1.05f, 0.45f),   // soft amber at tip
+					climb);
+				float edgeFade = std::min(t * 4.0f, std::min(1.0f, (1.0f - t) * 4.0f));
+				float alpha    = 0.35f * edgeFade;
+				glm::vec3 p = anchor + glm::vec3(
+					std::cos(ang) * r,
+					y - anchor.y,
+					std::sin(ang) * r);
+				pushP(p, 0.18f, col, alpha);
 			}
 		});
 	}
@@ -947,34 +951,186 @@ void Game::renderEffects(float wallTime) {
 			(uint32_t)(spinParts.size() / 8));
 	}
 
-	// RTS group waypoints — one triangle per active move order, plus a trail
-	// of particles from each ordered unit to its target. Smaller + blue-tinted
-	// so they read as "unit orders" distinct from the player's green move
-	// marker. Always visible in RTS (not F3-gated) — issuing a move order
-	// without seeing where units are heading is disorienting.
-	if (m_cam.mode == civcraft::CameraMode::RTS && !m_moveOrders.empty()) {
+	// RTS selection head markers — rotating yellow triangle hovering above
+	// each selected unit's head. Reads as "this unit is under my command"
+	// from any camera angle, unlike the small ground ring which gets
+	// occluded by terrain and squashed from overhead.
+	if (m_cam.mode == civcraft::CameraMode::RTS && !m_rtsSelect.selected.empty()) {
 		auto& spinParts = m_scratch.spinParts;
 		spinParts.clear();
-		glm::vec3 waypointCol(0.35f, 0.75f, 1.0f);
-		for (const auto& [eid, mo] : m_moveOrders) {
-			if (!mo.active) continue;
-			emitGoTriangle(mo.target, waypointCol, 0.5f);
-			// Trail of particles from the unit up to the triangle so it's
-			// obvious which unit owns which target.
-			if (auto* e = m_server->getEntity(eid)) {
-				glm::vec3 from = e->position + glm::vec3(0, 1.2f, 0);
-				glm::vec3 to   = mo.target + glm::vec3(0, 0.5f, 0);
-				for (int k = 1; k < 10; k++) {
-					glm::vec3 p = glm::mix(from, to, (float)k / 10.0f);
-					spinParts.push_back(p.x); spinParts.push_back(p.y); spinParts.push_back(p.z);
-					spinParts.push_back(0.05f);
-					spinParts.push_back(waypointCol.x);
-					spinParts.push_back(waypointCol.y);
-					spinParts.push_back(waypointCol.z);
-					spinParts.push_back(0.35f);
+		const glm::vec3 selCol(1.0f, 0.95f, 0.30f);
+		float spin = wallTime * 2.5f;
+		for (auto eid : m_rtsSelect.selected) {
+			civcraft::Entity* e = m_server->getEntity(eid);
+			if (!e) continue;
+			float topY = e->position.y + e->def().collision_box_max.y + 0.7f;
+			glm::vec3 c(e->position.x, topY, e->position.z);
+			// 3 bright corner particles forming a spinning triangle around
+			// the head.
+			glm::vec3 verts[3];
+			for (int i = 0; i < 3; i++) {
+				float a = spin + (float)i * ((float)M_PI * 2.0f / 3.0f);
+				verts[i] = c + glm::vec3(std::cos(a) * 0.30f, 0, std::sin(a) * 0.30f);
+				spinParts.push_back(verts[i].x);
+				spinParts.push_back(verts[i].y);
+				spinParts.push_back(verts[i].z);
+				spinParts.push_back(0.08f);
+				spinParts.push_back(selCol.x);
+				spinParts.push_back(selCol.y);
+				spinParts.push_back(selCol.z);
+				spinParts.push_back(1.0f);
+			}
+			// Downward tip: a small dot just above the unit's head pointing
+			// at it, so selection reads even at low angles.
+			glm::vec3 tip = c - glm::vec3(0, 0.30f, 0);
+			spinParts.push_back(tip.x);
+			spinParts.push_back(tip.y);
+			spinParts.push_back(tip.z);
+			spinParts.push_back(0.09f);
+			spinParts.push_back(selCol.x);
+			spinParts.push_back(selCol.y);
+			spinParts.push_back(selCol.z);
+			spinParts.push_back(0.9f);
+		}
+		if (!spinParts.empty())
+			m_rhi->drawParticles(scene, spinParts.data(),
+				(uint32_t)(spinParts.size() / 8));
+	}
+
+	// Waypoint / plan visualization — GL parity: game_render.cpp:drawPlanViz.
+	//
+	//   Always-on in RTS:  red/blue dashes along the flow field for each
+	//                      unit currently holding a move order (m_moveOrders).
+	//   F3 in any mode:    green dashes for every entity with a known plan —
+	//                      RTS-commanded (via traceFlow) OR running a Python
+	//                      agent behavior (via AgentClient::PlanViz). Agents
+	//                      already drawn by the RTS pass are skipped to avoid
+	//                      double lines.
+	{
+		auto& spinParts = m_scratch.spinParts;
+		spinParts.clear();
+		constexpr float kStep    = 0.40f;
+		constexpr float kDotSize = 0.14f;
+		constexpr float kYLift   = 0.25f;
+		const float phase = std::fmod(wallTime * 1.5f, kStep * 2.0f);
+
+		// Lay down alternating A/B dots along a polyline, scrolling toward
+		// the end. `dotIdxSeed` offsets the stripe pattern so different
+		// paths don't all start on the same color.
+		auto emitDashes = [&](const std::vector<glm::vec3>& path,
+		                      const glm::vec3& colA, const glm::vec3& colB,
+		                      int dotIdxSeed) {
+			if (path.size() < 2) return;
+			float accum = -phase;
+			int dotIdx  = dotIdxSeed;
+			for (size_t i = 0; i + 1 < path.size(); i++) {
+				glm::vec3 a = path[i];
+				glm::vec3 b = path[i + 1];
+				float segLen = glm::length(b - a);
+				if (segLen < 0.001f) continue;
+				glm::vec3 dir = (b - a) / segLen;
+				float t = accum;
+				while (t < segLen) {
+					if (t >= 0) {
+						glm::vec3 p = a + dir * t;
+						const glm::vec3& c = (dotIdx & 1) ? colB : colA;
+						spinParts.push_back(p.x); spinParts.push_back(p.y); spinParts.push_back(p.z);
+						spinParts.push_back(kDotSize);
+						spinParts.push_back(c.x); spinParts.push_back(c.y); spinParts.push_back(c.z);
+						spinParts.push_back(0.90f);
+					}
+					t += kStep;
+					dotIdx++;
 				}
+				accum = t - segLen;
+			}
+		};
+
+		// Build path: unit → flow trace cells → formation slot. Returns the
+		// destination point for the triangle marker. If no flow field is up
+		// yet, degrades to a two-point line to the raw target.
+		auto buildRtsPath = [&](civcraft::Entity& e, glm::vec3 fallback,
+		                        std::vector<glm::vec3>& path) -> glm::vec3 {
+			path.push_back(e.position + glm::vec3(0, kYLift, 0));
+			glm::vec3 dest = fallback;
+			if (m_rtsExec.field()) {
+				glm::ivec3 cell{
+					(int)std::floor(e.position.x),
+					(int)std::floor(e.position.y),
+					(int)std::floor(e.position.z)};
+				auto trace = m_rtsExec.traceFlow(cell, 64);
+				for (auto& p : trace)
+					path.push_back(p + glm::vec3(0, kYLift, 0));
+				auto slot = m_rtsExec.formationSlot(e.id());
+				if (slot)
+					dest = glm::vec3{slot->x + 0.5f, (float)slot->y + 0.3f, slot->z + 0.5f};
+				else if (!trace.empty())
+					dest = trace.back();
+			}
+			if (path.size() < 2)
+				path.push_back(dest + glm::vec3(0, kYLift, 0));
+			return dest;
+		};
+
+		// Always-on RTS move orders (red/blue).
+		std::unordered_set<civcraft::EntityId> rtsDrawn;
+		if (m_cam.mode == civcraft::CameraMode::RTS && !m_moveOrders.empty()) {
+			const glm::vec3 colA(1.00f, 0.15f, 0.15f);
+			const glm::vec3 colB(0.20f, 0.45f, 1.00f);
+			for (const auto& [eid, mo] : m_moveOrders) {
+				if (!mo.active) continue;
+				civcraft::Entity* e = m_server->getEntity(eid);
+				if (!e) continue;
+				std::vector<glm::vec3> path;
+				path.reserve(16);
+				glm::vec3 dest = buildRtsPath(*e, mo.target, path);
+				emitGoTriangle(dest, colA, 0.9f);
+				emitDashes(path, colA, colB, (int)eid);
+				rtsDrawn.insert(eid);
 			}
 		}
+
+		// F3: universal plan viz across all camera modes.
+		if (m_showDebug) {
+			const glm::vec3 rtsColA(0.30f, 1.00f, 0.50f);   // bright green
+			const glm::vec3 rtsColB(0.10f, 0.65f, 0.25f);   // deep green
+			const glm::vec3 agentColA(0.70f, 1.00f, 0.40f); // yellow-green
+			const glm::vec3 agentColB(0.25f, 0.55f, 0.15f); // olive
+
+			// Every RTS-commanded entity not already drawn above.
+			if (m_rtsExec.field()) {
+				m_server->forEachEntity([&](civcraft::Entity& e) {
+					if (!m_rtsExec.has(e.id())) return;
+					if (rtsDrawn.count(e.id())) return;
+					std::vector<glm::vec3> path;
+					path.reserve(16);
+					glm::vec3 dest = buildRtsPath(e, e.position, path);
+					emitGoTriangle(dest, rtsColA, 0.6f);
+					emitDashes(path, rtsColA, rtsColB, (int)e.id());
+					rtsDrawn.insert(e.id());
+				});
+			}
+
+			// Every autonomous agent with Python waypoints.
+			if (m_agentClient) {
+				m_agentClient->forEachAgent(
+					[&](civcraft::EntityId eid,
+					    const civcraft::AgentClient::PlanViz& viz) {
+					if (viz.waypoints.empty()) return;
+					if (rtsDrawn.count(eid)) return;
+					civcraft::Entity* a = m_server->getEntity(eid);
+					if (!a) return;
+					std::vector<glm::vec3> path;
+					path.reserve(viz.waypoints.size() + 1);
+					path.push_back(a->position + glm::vec3(0, kYLift, 0));
+					for (auto& wp : viz.waypoints)
+						path.push_back(wp + glm::vec3(0, kYLift, 0));
+					emitGoTriangle(viz.waypoints.back(), agentColA, 0.6f);
+					emitDashes(path, agentColA, agentColB, (int)eid);
+				});
+			}
+		}
+
 		if (!spinParts.empty())
 			m_rhi->drawParticles(scene, spinParts.data(),
 				(uint32_t)(spinParts.size() / 8));
@@ -1185,11 +1341,17 @@ void Game::renderHotbarItems3D() {
 
 		civcraft::AnimState anim{};
 		anim.time = m_wallTime;
-		// Fixed 25° yaw gives a three-quarter pose (shows front + right side)
-		// so cubic blocks read as 3D without spinning — spinning under
-		// perspective makes the corners swing toward the camera and grow
-		// visibly, breaking slot boundaries.
-		float spinYaw = 25.0f;
+		// Item rotation must be CAMERA-INDEPENDENT: the on-screen pose
+		// should not change when the player turns. We achieve that by
+		// adding `90 + lookYaw` to the model yaw, which cancels the
+		// camera's horizontal rotation (the item's world orientation
+		// tracks the camera so its view-space orientation stays fixed).
+		// On top of that, `time * 45°/sec` gives a natural slow spin,
+		// and `i * 27°` staggers the phase per slot so adjacent items
+		// aren't locked in unison. The 0.72×slot safety margin already
+		// accounts for the cube's corner projection during the spin.
+		float slowSpin = (float)m_wallTime * 45.0f + i * 27.0f;
+		float spinYaw  = 90.0f + m_cam.lookYaw + slowSpin;
 
 		civcraft::appendBoxModel(boxes, m, feet, spinYaw, anim);
 	}
@@ -1916,6 +2078,65 @@ void Game::renderDebugOverlay() {
 		const float blue[4] = {0.35f, 0.75f, 1.0f, 0.95f};
 		m_rhi->drawText2D(buf, x, y, 0.60f, blue); y -= step;
 	}
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Render Tuning panel (F6). Every global color/grading effect the VK
+// composite pass applies is driven by one slider here — all defaulting
+// to 0 (no effect) so the base render is clean. Drag to taste.
+// ══════════════════════════════════════════════════════════════════
+
+void Game::renderTuningPanel() {
+	ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowPos(ImVec2(20, 120), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Render Tuning (F6)", &m_showTuning)) {
+		ImGui::TextWrapped("All effects start at 0 (off). Drag to add. "
+		                   "Click \"Reset\" to clear, \"Preset: Dungeons\" "
+		                   "to load the old baked-in look.");
+		ImGui::Separator();
+
+		ImGui::TextDisabled("Post Process");
+		ImGui::SliderFloat("SSAO",      &m_grading.ssao,     0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat("Bloom",     &m_grading.bloom,    0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat("Vignette",  &m_grading.vignette, 0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat("ACES Tone", &m_grading.aces,     0.0f, 1.0f, "%.2f");
+
+		ImGui::Separator();
+		ImGui::TextDisabled("Color Grade");
+		ImGui::SliderFloat("Exposure",  &m_grading.exposure,   0.3f, 1.5f, "%.2f");
+		ImGui::SliderFloat("Warm Tint", &m_grading.warmTint,   0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat("S-Curve",   &m_grading.sCurve,     0.0f, 0.2f, "%.3f");
+		ImGui::SliderFloat("Saturation",&m_grading.saturation,-1.0f, 1.0f, "%+0.2f");
+
+		ImGui::Separator();
+		if (ImGui::Button("Reset (clean)")) {
+			m_grading = rhi::IRhi::GradingParams{};
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Preset: Dungeons")) {
+			// Reproduces the previously hardcoded composite stack.
+			m_grading.ssao       = 1.00f;
+			m_grading.bloom      = 1.00f;
+			m_grading.vignette   = 1.00f;
+			m_grading.aces       = 1.00f;
+			m_grading.exposure   = 0.95f;
+			m_grading.warmTint   = 1.00f;
+			m_grading.sCurve     = 0.04f;
+			m_grading.saturation = 0.06f;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Preset: Vivid")) {
+			m_grading.ssao       = 0.60f;
+			m_grading.bloom      = 0.50f;
+			m_grading.vignette   = 0.40f;
+			m_grading.aces       = 1.00f;
+			m_grading.exposure   = 1.00f;
+			m_grading.warmTint   = 0.30f;
+			m_grading.sCurve     = 0.02f;
+			m_grading.saturation = 0.35f;
+		}
+	}
+	ImGui::End();
 }
 
 // ─────────────────────────────────────────────────────────────────────────

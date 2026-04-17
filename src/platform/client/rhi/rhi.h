@@ -55,7 +55,37 @@ public:
 		float viewProj[16];
 		float camPos[3]; float time;    // camPos xyz + elapsed time
 		float sunDir[3]; float sunStr;  // sun direction xyz + strength 0..1
+		// Reserved slots — used to carry seasonPhase/rainAmt into chunk terrain,
+		// but those filters now live in the composite UBO (RenderTuning), so
+		// these are currently unused. Kept to preserve struct layout.
+		float _reserved0;
+		float _reserved1;
+		float _reserved[2];  // pad to 16-byte alignment
 	};
+
+	// Render Tuning — every global color/grading knob in one place. Default
+	// (all zeros) produces a clean render with no post-processing. The Render
+	// Tuning ImGui panel (F6 in the VK client) sets these per frame. See
+	// shaders/vk/composite.frag for how each knob is applied.
+	//
+	// Std140 layout: 16-byte alignment. Keep fields in groups of 4 floats
+	// (one vec4) so the GLSL side can mirror exactly.
+	struct GradingParams {
+		// vec4 #0 — post-process amounts, 0 = disabled.
+		float ssao     = 0.0f;   // AO darken strength  (0..1)
+		float bloom    = 0.0f;   // bloom add amount    (0..1)
+		float vignette = 0.0f;   // edge darken         (0..0.5)
+		float aces     = 0.0f;   // apply ACES tonemap  (0 = skip, 1 = apply)
+
+		// vec4 #1 — ACES exposure + tint + contrast + saturation.
+		// Default baseline: average brightness, slightly boosted saturation so
+		// blocks don't read washed-out without any post-process enabled.
+		float exposure    = 1.0f;   // pre-ACES exposure (0.3..1.5, 1.0 neutral)
+		float warmTint    = 0.0f;   // warm white balance (0..1)
+		float sCurve      = 0.0f;   // black-crush contrast (0..0.2)
+		float saturation  = 0.20f;  // delta saturation (-1..+1, 0 neutral)
+	};
+	static_assert(sizeof(GradingParams) == 32, "GradingParams must be 32 bytes");
 
 	// Fullscreen sky pass. The vertex shader reconstructs ray direction from
 	// invVP; the fragment shader paints a sky gradient (skyColor at zenith,
@@ -72,6 +102,12 @@ public:
 	                     const float sunDir[3],
 	                     float sunStrength,
 	                     float time) = 0;
+
+	// Update the composite pass's RenderTuning UBO for the current frame.
+	// Call each frame BEFORE endFrame (the composite pass reads the UBO
+	// when the swapchain pass begins). No-op on backends that don't have a
+	// composite pass (currently: GL stub).
+	virtual void setGrading(const GradingParams& g) = 0;
 
 	// Write the current frame to a PPM file. Call after imguiRender, before
 	// endFrame. Returns true on success.

@@ -417,6 +417,10 @@ public:
 		if (prevCull)       glEnable(GL_CULL_FACE);
 	}
 
+	void setGrading(const GradingParams&) override {
+		// GL backend has no composite pass yet — grading tuning is VK-only.
+	}
+
 	bool screenshot(const char* path) override {
 		int w = m_width, h = m_height;
 		std::vector<unsigned char> pixels(w * h * 3);

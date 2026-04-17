@@ -1,10 +1,20 @@
 #version 450
 
+// Fullscreen composite pass. FXAA + SSAO + bloom + ACES + S-curve + warm
+// tint + saturation + vignette are all gated on the RenderTuning UBO —
+// every knob defaults to 0 (fully off / neutral) so the baseline render
+// has NO global color filter. The Render Tuning ImGui panel drives them.
+// See rhi.h::GradingParams for the struct layout.
+
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D colorTex;
 layout(set = 0, binding = 1) uniform sampler2D depthTex;
+layout(set = 0, binding = 2) uniform Grading {
+	vec4 fx;     // x=ssao, y=bloom, z=vignette, w=aces(0=skip,1=apply)
+	vec4 tone;   // x=exposure, y=warmTint, z=sCurve, w=saturation (delta)
+} g;
 
 layout(push_constant) uniform PC {
 	mat4 invVP;
@@ -153,8 +163,8 @@ float luminance(vec3 c) {
 	return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
-// Proper piecewise sRGB OETF (linear → sRGB). Our swap surface is UNORM, so
-// the display gamma is NOT applied by the hardware — we encode here.
+// Proper piecewise sRGB OETF. The swapchain is UNORM, so the display gamma
+// isn't applied by the hardware — encode it here. (Not a filter — core.)
 vec3 linearToSrgb(vec3 x) {
 	vec3 hi = 1.055 * pow(max(x, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
 	vec3 lo = 12.92 * x;
@@ -162,24 +172,56 @@ vec3 linearToSrgb(vec3 x) {
 }
 
 void main() {
+	float kSsao   = g.fx.x;
+	float kBloom  = g.fx.y;
+	float kVign   = g.fx.z;
+	float kAces   = g.fx.w;
+	float kExpo   = g.tone.x;
+	float kWarm   = g.tone.y;
+	float kCurve  = g.tone.z;
+	float kSat    = g.tone.w;
+
 	vec3 color = fxaa();
 
-	float ao = ssao();
-	color *= mix(0.62, 1.0, ao);
+	// SSAO — full effect at k=1 (ao factor 0.62→1.0 range), disabled at k=0.
+	if (kSsao > 0.0001) {
+		float ao = ssao();
+		float aoFactor = mix(1.0, mix(0.62, 1.0, ao), kSsao);
+		color *= aoFactor;
+	}
 
-	color += bloom() * 0.18;
-	color = aces(color * 0.95);         // gentle exposure — peaceful, not punchy
-	color *= vec3(1.00, 1.00, 0.98);    // very subtle warm
+	// Bloom — additive, scaled by knob.
+	if (kBloom > 0.0001) {
+		color += bloom() * (0.18 * kBloom);
+	}
 
-	// Faint S-curve: crush blacks a hair, keep highlights soft.
-	color = mix(vec3(0.18), color, 1.04);
+	// Exposure — 1.0 neutral, <1 darker, >1 brighter.
+	color *= clamp(kExpo, 0.0, 4.0);
 
-	// Saturation: just enough to feel natural, not cartoonish.
-	float gray = luminance(color);
-	color = mix(vec3(gray), color, 1.06);
+	// ACES tonemap. kAces blends between linear identity and tonemapped.
+	if (kAces > 0.0001) {
+		color = mix(color, aces(color), kAces);
+	}
 
-	vec2 vc = vUV - 0.5;
-	color *= 1.0 - dot(vc, vc) * 0.18;
+	// Warm tint (slightly blue suppression) — blend from neutral at k=0.
+	color *= mix(vec3(1.0), vec3(1.00, 1.00, 0.98), kWarm);
+
+	// S-curve (crush blacks). mix(vec3(0.18), color, 1+strength).
+	if (kCurve > 0.0001) {
+		color = mix(vec3(0.18), color, 1.0 + kCurve);
+	}
+
+	// Saturation delta — >0 pushes, <0 desaturates.
+	if (abs(kSat) > 0.0001) {
+		float gray = luminance(color);
+		color = mix(vec3(gray), color, 1.0 + kSat);
+	}
+
+	// Vignette — 0 off; 1 full 0.18 darken at corners.
+	if (kVign > 0.0001) {
+		vec2 vc = vUV - 0.5;
+		color *= 1.0 - dot(vc, vc) * (0.18 * kVign);
+	}
 
 	color = linearToSrgb(clamp(color, 0.0, 1.0));
 	outColor = vec4(color, 1.0);

@@ -172,6 +172,7 @@ private:
 	void renderPaused();                        // in-game pause overlay
 	void renderDeath();                         // death overlay + respawn btn
 	void renderDebugOverlay();                  // F3 debug stats
+	void renderTuningPanel();                   // F6 render-tuning sliders
 	void renderHandbook();                      // H handbook browser
 	void renderRTSSelect();                     // box selection rectangle
 	void renderChestUI();                       // chest inventory transfer
@@ -183,6 +184,10 @@ private:
 
 	// Camera math — delegates to m_cam; viewProj adds Vulkan Y-flip.
 	glm::mat4 viewProj() const;
+	// Picking/mouse unprojection matrix: no Y-flip, no camera shake. NDC here
+	// matches the GL convention (+1 top) that mouse coords are computed in,
+	// so unprojecting gives correct rays. Use this for cursor ↔ world math.
+	glm::mat4 pickViewProj() const;
 
 	// Keep the camera out of terrain: cast a ray from the orbit target toward
 	// m_cam.position and pull forward if it hits a solid block, so the camera
@@ -376,6 +381,7 @@ private:
 	bool         m_tabLast       = false;
 	bool         m_eLast         = false;
 	bool         m_f3Last        = false;
+	bool         m_f6Last        = false;
 	bool         m_f12Last       = false;
 	bool         m_f11Last       = false;
 	bool         m_hLast         = false;   // H: handbook
@@ -410,6 +416,11 @@ private:
 
 	// F3 debug overlay
 	bool         m_showDebug = false;
+
+	// F6 render-tuning panel — drives the composite GradingParams UBO.
+	// Defaults are all zero (no post FX); user drags sliders to tune.
+	bool                    m_showTuning = false;  // toggled by F6
+	rhi::IRhi::GradingParams m_grading{};
 
 	// H handbook panel
 	bool         m_handbookOpen = false;

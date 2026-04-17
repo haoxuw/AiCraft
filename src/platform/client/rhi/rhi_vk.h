@@ -24,6 +24,7 @@ public:
 	void imguiNewFrame() override;
 	void imguiRender() override;
 	void drawCube(const float mvp[16]) override;
+	void setGrading(const GradingParams& g) override;
 	bool screenshot(const char* path) override;
 	void drawSky(const float invVP[16],
 	             const float skyColor[3],
@@ -324,6 +325,13 @@ private:
 	VkPipeline m_compPipeline = VK_NULL_HANDLE;
 	struct CompPC { float invVP[16]; float vp[16]; };
 	CompPC m_compPC{};
+
+	// Render Tuning UBO — mirrors GradingParams (32 bytes). Composite shader
+	// reads this at set=0 binding=2. Updated per frame via setGrading().
+	VkBuffer m_gradUbo[kFramesInFlight]{};
+	VkDeviceMemory m_gradUboMem[kFramesInFlight]{};
+	void* m_gradUboMapped[kFramesInFlight]{};
+	GradingParams m_grading{};
 
 	// Persistent voxel meshes (createVoxelMesh / drawVoxelsMesh /
 	// renderShadowsMesh). The static playable-slice village uploads once

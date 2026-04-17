@@ -1,8 +1,20 @@
 #version 450
 
-// Chunk-mesh terrain fragment shader. Faithful port of CivCraft's
-// src/CivCraft/shaders/terrain.frag — same lighting/AO/fog/glass logic, but
-// receives uniforms via a push-constant block instead of GL uniforms.
+// Chunk-mesh terrain fragment shader.
+//
+// KEPT: per-block color variation, material grain, edge darkening,
+// classic diffuse + ambient lighting, distance fog, transparent-block
+// fresnel, glow arcane.
+//
+// REMOVED (were "global color filters", now driven by the Render Tuning
+// panel in the composite pass instead):
+//   · saturation pump
+//   · warm dawn/dusk bonus
+//   · night blue ambient
+//   · seasonal LUT (spring/summer/fall/winter tints)
+//   · rain desaturation
+//   · grass-blade procedural texture on top faces
+// Those knobs live in the composite UBO — drag them from the tuning menu.
 
 layout(location = 0) in vec3 vColor;
 layout(location = 1) in vec3 vNormal;
@@ -17,7 +29,7 @@ layout(push_constant) uniform PC {
 	vec4 camPos;       // xyz, w=time
 	vec4 sunDir;       // xyz, w=sunStrength
 	vec4 fog;          // rgb=fogColor, a=fogStart
-	vec4 fogExtra;     // x=fogEnd
+	vec4 fogExtra;     // x=fogEnd, yzw reserved
 } pc;
 
 layout(location = 0) out vec4 fragColor;
@@ -81,21 +93,14 @@ void main() {
 	baseColor = clamp(baseColor, 0.0, 1.0);
 	baseColor *= edgeFactor;
 
-	float lum = dot(baseColor, vec3(0.299, 0.587, 0.114));
-	baseColor = mix(vec3(lum), baseColor, 1.45);
-	baseColor = clamp(baseColor, 0.0, 1.0);
-
+	// ── Classic directional lighting ──────────────────────────────────
+	// Single-channel diffuse with a constant ambient floor. No tinting —
+	// all color grading is done in composite via the Render Tuning panel.
 	float sunDot = max(dot(vNormal, sunDir), 0.0);
 	float ambient = 0.15 + 0.30 * sunStrength;
 	float diffuse = ambient + (1.0 - ambient) * sunDot * sunStrength;
 
 	vec3 lit = baseColor * diffuse * vShade * vAO;
-
-	float dawnDusk = sunStrength * (1.0 - sunStrength) * 4.0;
-	lit += baseColor * sunDot * sunStrength * (0.10 * vec3(1.0, 0.85, 0.60)
-	     + dawnDusk * 0.14 * vec3(1.0, 0.50, 0.18));
-
-	lit += baseColor * (1.0 - sunStrength) * 0.03 * vec3(0.3, 0.4, 0.8);
 
 	if (vGlow > 0.5) {
 		float t = time * 0.5;

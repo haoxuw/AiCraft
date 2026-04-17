@@ -2044,7 +2044,9 @@ static void packChunkPC(ChunkPC& pc, const IRhi::SceneParams& scene,
 	pc.fog[0] = fogColor[0]; pc.fog[1] = fogColor[1]; pc.fog[2] = fogColor[2];
 	pc.fog[3] = fogStart;
 	pc.fogExtra[0] = fogEnd;
-	pc.fogExtra[1] = pc.fogExtra[2] = pc.fogExtra[3] = 0.0f;
+	pc.fogExtra[1] = 0.0f;  // reserved (season LUT moved to composite UBO)
+	pc.fogExtra[2] = 0.0f;  // reserved (rain desat moved to composite UBO)
+	pc.fogExtra[3] = 0.0f;
 }
 
 void VkRhi::drawChunkMeshOpaque(const SceneParams& scene, const float fogColor[3],
@@ -2509,8 +2511,8 @@ bool VkRhi::createCompositeResources() {
 	sci.minFilter = VK_FILTER_NEAREST;
 	if (vkCreateSampler(m_device, &sci, nullptr, &m_nearestSampler) != VK_SUCCESS) return false;
 
-	// Descriptor set layout
-	VkDescriptorSetLayoutBinding binds[2]{};
+	// Descriptor set layout — 2 samplers (color, depth) + 1 UBO (RenderTuning).
+	VkDescriptorSetLayoutBinding binds[3]{};
 	binds[0].binding = 0;
 	binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	binds[0].descriptorCount = 1;
@@ -2519,21 +2521,52 @@ bool VkRhi::createCompositeResources() {
 	binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	binds[1].descriptorCount = 1;
 	binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	binds[2].binding = 2;
+	binds[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	binds[2].descriptorCount = 1;
+	binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
 	VkDescriptorSetLayoutCreateInfo slci{};
 	slci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-	slci.bindingCount = 2;
+	slci.bindingCount = 3;
 	slci.pBindings = binds;
 	if (vkCreateDescriptorSetLayout(m_device, &slci, nullptr, &m_compSetLayout) != VK_SUCCESS) return false;
 
-	// Descriptor pool
-	VkDescriptorPoolSize poolSz{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)(kFramesInFlight * 2)};
+	// Descriptor pool — two sampler types plus one UBO per frame-in-flight.
+	VkDescriptorPoolSize poolSizes[2]{
+		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)(kFramesInFlight * 2)},
+		{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         (uint32_t)(kFramesInFlight * 1)},
+	};
 	VkDescriptorPoolCreateInfo dpci{};
 	dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 	dpci.maxSets = kFramesInFlight;
-	dpci.poolSizeCount = 1;
-	dpci.pPoolSizes = &poolSz;
+	dpci.poolSizeCount = 2;
+	dpci.pPoolSizes = poolSizes;
 	if (vkCreateDescriptorPool(m_device, &dpci, nullptr, &m_compDescPool) != VK_SUCCESS) return false;
+
+	// RenderTuning UBO — one small persistent-mapped buffer per frame. Each
+	// frame's setGrading()/composite draw rewrites its bytes before the draw.
+	for (int f = 0; f < kFramesInFlight; f++) {
+		VkBufferCreateInfo bci{};
+		bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bci.size = sizeof(GradingParams);
+		bci.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+		bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		if (vkCreateBuffer(m_device, &bci, nullptr, &m_gradUbo[f]) != VK_SUCCESS) return false;
+		VkMemoryRequirements mr;
+		vkGetBufferMemoryRequirements(m_device, m_gradUbo[f], &mr);
+		VkMemoryAllocateInfo mai{};
+		mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		mai.allocationSize = mr.size;
+		mai.memoryTypeIndex = findMemType(mr.memoryTypeBits,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		if (vkAllocateMemory(m_device, &mai, nullptr, &m_gradUboMem[f]) != VK_SUCCESS) return false;
+		vkBindBufferMemory(m_device, m_gradUbo[f], m_gradUboMem[f], 0);
+		vkMapMemory(m_device, m_gradUboMem[f], 0, mr.size, 0, &m_gradUboMapped[f]);
+		// Seed with defaults (all zeros = clean render, no post FX).
+		GradingParams defaults{};
+		memcpy(m_gradUboMapped[f], &defaults, sizeof(defaults));
+	}
 
 	// Allocate descriptor sets
 	VkDescriptorSetLayout layouts[kFramesInFlight];
@@ -2635,7 +2668,12 @@ void VkRhi::updateCompositeDescriptors() {
 		depthInfo.imageView = m_offDepthView[f];
 		depthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-		VkWriteDescriptorSet writes[2]{};
+		VkDescriptorBufferInfo gradInfo{};
+		gradInfo.buffer = m_gradUbo[f];
+		gradInfo.offset = 0;
+		gradInfo.range  = sizeof(GradingParams);
+
+		VkWriteDescriptorSet writes[3]{};
 		writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[0].dstSet = m_compDescSet[f];
 		writes[0].dstBinding = 0;
@@ -2648,8 +2686,18 @@ void VkRhi::updateCompositeDescriptors() {
 		writes[1].descriptorCount = 1;
 		writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		writes[1].pImageInfo = &depthInfo;
-		vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
+		writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[2].dstSet = m_compDescSet[f];
+		writes[2].dstBinding = 2;
+		writes[2].descriptorCount = 1;
+		writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		writes[2].pBufferInfo = &gradInfo;
+		vkUpdateDescriptorSets(m_device, 3, writes, 0, nullptr);
 	}
+}
+
+void VkRhi::setGrading(const GradingParams& g) {
+	m_grading = g;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3808,6 +3856,12 @@ void VkRhi::beginSwapchainPass() {
 		vkCmdSetViewport(cb, 0, 1, &vp);
 		vkCmdSetScissor(cb, 0, 1, &sc);
 
+		// Stamp the current frame's RenderTuning UBO from the latest
+		// setGrading() state before the composite shader reads it.
+		if (m_gradUboMapped[m_frame]) {
+			memcpy(m_gradUboMapped[m_frame], &m_grading, sizeof(GradingParams));
+		}
+
 		vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_compPipeline);
 		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
 			m_compLayout, 0, 1, &m_compDescSet[m_frame], 0, nullptr);
@@ -3843,6 +3897,11 @@ void VkRhi::shutdown() {
 	if (m_compLayout) vkDestroyPipelineLayout(m_device, m_compLayout, nullptr);
 	if (m_compDescPool) vkDestroyDescriptorPool(m_device, m_compDescPool, nullptr);
 	if (m_compSetLayout) vkDestroyDescriptorSetLayout(m_device, m_compSetLayout, nullptr);
+	for (int f = 0; f < kFramesInFlight; f++) {
+		if (m_gradUboMapped[f]) vkUnmapMemory(m_device, m_gradUboMem[f]);
+		if (m_gradUbo[f])       vkDestroyBuffer(m_device, m_gradUbo[f], nullptr);
+		if (m_gradUboMem[f])    vkFreeMemory(m_device, m_gradUboMem[f], nullptr);
+	}
 	if (m_linearSampler) vkDestroySampler(m_device, m_linearSampler, nullptr);
 	if (m_nearestSampler) vkDestroySampler(m_device, m_nearestSampler, nullptr);
 	destroyOffscreen();

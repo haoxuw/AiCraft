@@ -317,6 +317,14 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		m_cam.orbitPitch = -40.0f;  // TPS orbit (negative = view aims up)
 		std::printf("[vk-game] [trigger] look up (lookPitch=55, orbitPitch=-40)\n");
 	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_face_east_request", [this] {
+		m_cam.lookYaw    = 0.0f;    // +X (toward sunrise)
+		m_cam.lookPitch  = 35.0f;   // horizon slightly low, most of frame = sky + clouds
+		m_cam.orbitYaw   = 0.0f;
+		m_cam.orbitPitch = -25.0f;
+		m_cam.resetSmoothing();
+		std::printf("[vk-game] [trigger] face east (sunrise view)\n");
+	});
 	m_debugTriggers.addTrigger("/tmp/civcraft_vk_noon_request", [this] {
 		if (m_server) {
 			// no client-side setter; this only works in the single-process test
@@ -810,6 +818,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		if (m_chestUI.open) renderChestUI();
 		if (m_inspectedEntity != 0) renderEntityInspect();
 		if (m_showDebug) renderDebugOverlay();
+		if (m_showTuning) renderTuningPanel();
 		if (m_handbookOpen) renderHandbook();
 		renderRTSSelect();
 		m_rhi->imguiRender();
@@ -821,6 +830,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_rhi->imguiNewFrame();
 		renderHUD();       // world state frozen underneath
 		renderPaused();
+		if (m_showTuning) renderTuningPanel();
 		m_rhi->imguiRender();
 	} else {  // Dead
 		renderWorld(wallTime);
