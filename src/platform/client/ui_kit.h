@@ -39,6 +39,17 @@ inline bool rectContainsNdc(float x, float y, float w, float h,
 void drawOutline(rhi::IRhi* r, float x, float y, float w, float h,
                  float thickness, const float color[4]);
 
+// Shadow + fill + outlined border. Pass nullptr for any of shadow/border
+// to skip that layer. Shadow is offset down-right by 0.010 NDC.
+void drawShadowPanel(rhi::IRhi* r, float x, float y, float w, float h,
+                     const float shadow[4], const float fill[4],
+                     const float border[4], float borderT);
+
+// Horizontal progress bar (HP, load, etc.). `frac` clamped to [0,1].
+void drawMeter(rhi::IRhi* r, float x, float y, float w, float h,
+               float frac, const float fill[4], const float bg[4],
+               const float border[4]);
+
 // Horizontally-centered SDF text / title around NDC x=cx.
 void drawCenteredText(rhi::IRhi* r, const char* txt, float cx, float y,
                       float scale, const float color[4]);

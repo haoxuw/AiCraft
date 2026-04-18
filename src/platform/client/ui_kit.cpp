@@ -28,6 +28,24 @@ void drawOutline(rhi::IRhi* r, float x, float y, float w, float h,
 	r->drawRect2D(x + w - t, y,         t, h, color);
 }
 
+void drawShadowPanel(rhi::IRhi* r, float x, float y, float w, float h,
+                     const float shadow[4], const float fill[4],
+                     const float border[4], float borderT) {
+	if (shadow) r->drawRect2D(x + 0.010f, y - 0.014f, w, h, shadow);
+	if (fill)   r->drawRect2D(x, y, w, h, fill);
+	if (border) drawOutline(r, x, y, w, h, borderT, border);
+}
+
+void drawMeter(rhi::IRhi* r, float x, float y, float w, float h,
+               float frac, const float fill[4], const float bg[4],
+               const float border[4]) {
+	if (frac < 0.0f) frac = 0.0f;
+	if (frac > 1.0f) frac = 1.0f;
+	r->drawRect2D(x, y, w, h, bg);
+	r->drawRect2D(x, y, w * frac, h, fill);
+	if (border) drawOutline(r, x, y, w, h, 0.0015f, border);
+}
+
 void drawCenteredText(rhi::IRhi* r, const char* txt, float cx, float y,
                       float scale, const float color[4]) {
 	float wNdc = textWidthNdc(std::strlen(txt), scale);
