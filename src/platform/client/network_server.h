@@ -68,19 +68,21 @@ public:
 
 		// Generous 60s timeout — server prep phase streams S_PREPARING/S_CHUNK* first.
 		auto start = std::chrono::steady_clock::now();
-		while (true) {
-			m_recv.readFrom(m_tcp.fd());
-
-			if (recvWelcomeFromBuffer()) return true;
+		while (m_connected && !m_welcomeReceived) {
+			if (!drainSocket()) {
+				printf("[Net] Connection lost waiting for welcome\n");
+				break;
+			}
+			if (m_welcomeReceived) return true;
 
 			auto elapsed = std::chrono::steady_clock::now() - start;
 			if (std::chrono::duration<float>(elapsed).count() > 60.0f) {
 				printf("[Net] Timeout waiting for welcome (60s)\n");
 				break;
 			}
-
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
+		if (m_welcomeReceived) return true;
 		disconnect();
 		return false;
 	}
@@ -114,16 +116,10 @@ public:
 		return true;
 	}
 
-	// Call every frame — returns true when S_WELCOME arrives.
-	bool pollWelcome() override {
-		if (!m_connected) return false;
-		if (!m_recv.readFrom(m_tcp.fd())) {
-			printf("[Net] Connection lost while waiting for welcome\n");
-			disconnect();
-			return false;
-		}
-		return recvWelcomeFromBuffer();
-	}
+	// Pure query: tick() is the sole socket consumer and flips
+	// m_welcomeReceived when S_WELCOME is dispatched. Must be read after
+	// tick() each frame (see Game::runOneFrame order).
+	bool pollWelcome() override { return m_welcomeReceived; }
 
 	void disconnect() override {
 		// C_QUIT lets server run cleanup immediately instead of heartbeat timeout.
@@ -134,6 +130,8 @@ public:
 		m_tcp.disconnect();
 		m_connected = false;
 		m_serverReady = false;
+		m_welcomeReceived = false;
+		m_preparingPct = -1.0f;
 		m_controlledEid = ENTITY_NONE;
 		m_heartbeatTimer = 0.0f;
 	}
@@ -151,18 +149,11 @@ public:
 			net::sendMessage(m_tcp.fd(), net::C_HEARTBEAT, wb);
 		}
 
-		if (!m_recv.readFrom(m_tcp.fd())) {
+		int msgCount = drainSocket();
+		if (msgCount < 0) {
 			printf("[Net] Connection lost\n");
 			disconnect();
 			return;
-		}
-
-		net::MsgHeader hdr;
-		std::vector<uint8_t> payload;
-		int msgCount = 0;
-		while (m_recv.tryExtract(hdr, payload)) {
-			handleMessage(hdr.type, payload);
-			msgCount++;
 		}
 		m_totalMsgCount += msgCount;
 		m_uptime += dt;
@@ -484,42 +475,19 @@ private:
 		m_world.setAnnotations(cp, std::move(out));
 	}
 
-	// Must process pre-welcome S_PREPARING/S_CHUNK* or chunks get dropped.
-	bool recvWelcomeFromBuffer() {
+	// Sole socket consumer. readFrom() + extract-all → handleMessage().
+	// Returns messages drained, or -1 if the socket closed.
+	int drainSocket() {
+		if (!m_connected) return 0;
+		if (!m_recv.readFrom(m_tcp.fd())) return -1;
 		net::MsgHeader hdr;
 		std::vector<uint8_t> payload;
+		int n = 0;
 		while (m_recv.tryExtract(hdr, payload)) {
-			if (hdr.type == net::S_WELCOME) {
-				net::ReadBuffer rb(payload.data(), payload.size());
-				m_localPlayerId = rb.readU32();
-				m_spawnPos = rb.readVec3();
-				printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f)\n",
-					m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
-				return true;
-			}
-			if (hdr.type == net::S_PREPARING) {
-				net::ReadBuffer rb(payload.data(), payload.size());
-				float pct = rb.readF32();
-				m_preparingPct = pct;
-				static float s_lastLoggedPct = -1.0f;
-				if (pct - s_lastLoggedPct >= 0.1f || pct >= 1.0f) {
-					printf("[Net] Preparing world: %.0f%%\n", pct * 100.0f);
-					s_lastLoggedPct = pct;
-				}
-				continue;
-			}
-			if (hdr.type == net::S_ERROR) {
-				net::ReadBuffer rb(payload.data(), payload.size());
-				(void)rb.readU32();
-				m_lastError = rb.readString();
-				printf("[Net] Server error (pre-welcome): %s\n", m_lastError.c_str());
-				disconnect();
-				return false;
-			}
-			// Prep-phase chunks land before welcome — dispatch to populate cache.
 			handleMessage(hdr.type, payload);
+			n++;
 		}
-		return false;
+		return n;
 	}
 
 	void handleMessage(uint32_t type, const std::vector<uint8_t>& payload) {
@@ -527,12 +495,21 @@ private:
 
 		switch (type) {
 		case net::S_WELCOME: {
-			// Race: S_WELCOME may land between pollWelcome() and tick().
-			if (m_localPlayerId == ENTITY_NONE) {
-				m_localPlayerId = rb.readU32();
-				m_spawnPos = rb.readVec3();
-				printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f) [via tick]\n",
-					m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+			if (m_welcomeReceived) break; // defensive — server shouldn't resend
+			m_localPlayerId = rb.readU32();
+			m_spawnPos = rb.readVec3();
+			m_welcomeReceived = true;
+			printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f)\n",
+				m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+			break;
+		}
+		case net::S_PREPARING: {
+			float pct = rb.readF32();
+			m_preparingPct = pct;
+			static float s_lastLoggedPct = -1.0f;
+			if (pct - s_lastLoggedPct >= 0.1f || pct >= 1.0f) {
+				printf("[Net] Preparing world: %.0f%%\n", pct * 100.0f);
+				s_lastLoggedPct = pct;
 			}
 			break;
 		}
@@ -767,6 +744,7 @@ private:
 	uint32_t    m_weatherSeq       = 0;
 
 	bool m_serverReady = false;
+	bool m_welcomeReceived = false; // set by handleMessage; read by pollWelcome
 	float m_preparingPct = -1.0f;  // -1 = no S_PREPARING seen; else [0..1]
 	std::string m_lastError;
 
