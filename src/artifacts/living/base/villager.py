@@ -43,4 +43,12 @@ living = {
     # Behavior props (woodcutter reads these)
     "work_radius": 80.0,
     "collect_goal": 5,
+
+    # LLM chat persona — press T while looking at this villager to open a
+    # dialog box. Routed to a locally-run llama-server (see `make llm_setup`).
+    # Remove these two fields to disable chat on this NPC. The artifact loader
+    # is a single-line tokenizer, so keep these as one-line string literals.
+    "dialog_system_prompt": "You are a villager in a small voxel sandbox town. You chop wood, build houses, and know the woods nearby. Reply in 1-2 short, warm sentences. Speak plainly, never break character, never mention being an AI. You know nothing of the modern world.",
+    "dialog_greeting": "Hello there, traveller. What brings you by?",
+    "dialog_temperature": 0.7,
 }

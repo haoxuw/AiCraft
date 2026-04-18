@@ -49,3 +49,7 @@ resources/sounds/
 # Stale directories
 src/common/
 src/builtin/
+
+# Local LLM sidecar — llama.cpp source + model weights, never committed.
+# Populated by `make llm_setup`; purge with `make llm_clean`.
+/llm/

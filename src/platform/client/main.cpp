@@ -12,12 +12,15 @@
 #include "client/process_manager.h"
 #include "client/game_vk.h"
 
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -37,11 +40,30 @@ void scrollCb(GLFWwindow* w, double xoff, double yoff) {
 	if (s && s->game) s->game->onScroll(xoff, yoff);
 }
 
+void charCb(GLFWwindow* w, unsigned int codepoint) {
+	auto* s = (Shell*)glfwGetWindowUserPointer(w);
+	if (s && s->game) s->game->onChar(codepoint);
+}
+
+void keyCb(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) {
+	auto* s = (Shell*)glfwGetWindowUserPointer(w);
+	if (s && s->game) s->game->onKey(key, action);
+}
+
+// Ctrl-C in the terminal running `make game` used to orphan child processes
+// (civcraft-server, llama-server) because the default SIGTERM/SIGINT handler
+// kills us without running destructors. Flip a flag the main loop polls so
+// we exit cleanly and Game::shutdown() reaps every child.
+std::atomic<bool> g_sigQuit{false};
+void onSignal(int) { g_sigQuit.store(true); }
 
 } // namespace
 
 int main(int argc, char** argv) {
 	setvbuf(stdout, nullptr, _IONBF, 0);
+
+	std::signal(SIGINT,  onSignal);
+	std::signal(SIGTERM, onSignal);
 
 	// Resolve execDir from argv[0] BEFORE chdir, then chdir into it so
 	// shader paths resolve regardless of invocation cwd. execDir also lets
@@ -158,10 +180,16 @@ int main(int argc, char** argv) {
 	glfwSetWindowUserPointer(win, &shell);
 	glfwSetFramebufferSizeCallback(win, resizeCb);
 	glfwSetScrollCallback(win, scrollCb);
+	glfwSetCharCallback(win, charCb);
+	glfwSetKeyCallback(win, keyCb);
 
+	// 200 fps ceiling — matches the swapchain's MAILBOX/IMMEDIATE mode so
+	// render rate isn't pinned to vsync while also not melting the GPU on
+	// idle menus. Cheap sleep loop; precise enough for a 5 ms budget.
+	constexpr double kFrameBudgetSec = 1.0 / 200.0;
 	auto t0 = std::chrono::steady_clock::now();
 	auto tPrev = t0;
-	while (!glfwWindowShouldClose(win) && !game.shouldQuit()) {
+	while (!glfwWindowShouldClose(win) && !game.shouldQuit() && !g_sigQuit.load()) {
 		glfwPollEvents();
 		auto tNow = std::chrono::steady_clock::now();
 		float dt = std::chrono::duration<float>(tNow - tPrev).count();
@@ -172,6 +200,13 @@ int main(int argc, char** argv) {
 		float wallTime = std::chrono::duration<float>(tNow - t0).count();
 
 		game.runOneFrame(dt, wallTime);
+
+		auto tAfter = std::chrono::steady_clock::now();
+		double elapsed = std::chrono::duration<double>(tAfter - tNow).count();
+		if (elapsed < kFrameBudgetSec) {
+			std::this_thread::sleep_for(
+				std::chrono::duration<double>(kFrameBudgetSec - elapsed));
+		}
 	}
 
 	game.shutdown();

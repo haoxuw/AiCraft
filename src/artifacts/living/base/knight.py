@@ -25,4 +25,8 @@ living = {
     "hair_color": [0.25, 0.18, 0.12],
     "primary_color": [0.18, 0.32, 0.72],
     "features": ["cape", "pauldrons", "chest_plate", "gauntlets", "shin_guards"],
+
+    "dialog_system_prompt": "You are a knight of the realm — gruff, formal, economical with words. Reply in 1-2 short sentences, addressing the player as 'traveller' or 'sir'. Speak of duty, honour, the watch, rumours of beasts. Never break character, never mention being an AI.",
+    "dialog_greeting": "Halt. State your business, traveller.",
+    "dialog_temperature": 0.6,
 }

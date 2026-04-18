@@ -12,7 +12,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test llm_setup llm_server llm_stop llm_clean
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -199,3 +199,91 @@ download_music:
 
 jukebox: download_music
 	cd music && python3 jukebox.py
+
+# ── Local LLM sidecar (NPC dialog) ──────────────────────────
+#
+# `make llm_setup` builds llama.cpp and downloads ONE permissively-licensed
+# chat model into llm/models/. `make llm_server` starts the sidecar on
+# 127.0.0.1:8080 — civcraft-ui-vk's DialogPanel connects here when you press
+# [T] on a humanoid NPC.
+#
+# Weights are NOT checked into source. Override model choice via LLM_MODEL=.
+# Three vetted choices (all Apache-2.0 / MIT, safe for Steam redistribution):
+#
+#   LLM_MODEL=qwen    Qwen 2.5 3B Instruct, Q4_K_M (~2.0 GB) — default, best quality
+#   LLM_MODEL=smol    SmolLM2 1.7B Instruct, Q4_K_M (~1.1 GB) — fastest, low-VRAM
+#   LLM_MODEL=phi     Phi-3.5 Mini 3.8B Instruct, Q4_K_M (~2.3 GB) — strongest reasoning
+#
+# Named LLM_MODEL (not MODEL) to avoid collision with the bbmodel MODEL= var
+# used by the modelcrafter targets further up.
+LLM_MODEL   ?= qwen
+LLM_DIR     := llm
+LLAMA_DIR   := $(LLM_DIR)/llama.cpp
+LLM_MODELS  := $(LLM_DIR)/models
+LLM_PORT    ?= 8080
+LLM_CTX     ?= 2048
+
+# Model catalog — url + filename. Keep entries together so adding a new
+# option is a single block.
+LLM_URL_qwen  := https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
+LLM_FILE_qwen := qwen2.5-3b-instruct-q4_k_m.gguf
+
+LLM_URL_smol  := https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/resolve/main/smollm2-1.7b-instruct-q4_k_m.gguf
+LLM_FILE_smol := smollm2-1.7b-instruct-q4_k_m.gguf
+
+LLM_URL_phi   := https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf
+LLM_FILE_phi  := Phi-3.5-mini-instruct-Q4_K_M.gguf
+
+LLM_URL  := $(LLM_URL_$(LLM_MODEL))
+LLM_FILE := $(LLM_FILE_$(LLM_MODEL))
+
+llm_setup:
+	@if [ -z "$(LLM_URL)" ]; then \
+		echo "Unknown LLM_MODEL='$(LLM_MODEL)'. Pick one of: qwen, smol, phi" >&2; exit 1; \
+	fi
+	@mkdir -p $(LLM_MODELS)
+	@if [ ! -d $(LLAMA_DIR) ]; then \
+		echo "[llm] cloning llama.cpp into $(LLAMA_DIR)…"; \
+		git clone --depth 1 https://github.com/ggerganov/llama.cpp $(LLAMA_DIR); \
+	else \
+		echo "[llm] llama.cpp already cloned — skipping"; \
+	fi
+	@if [ ! -x $(LLAMA_DIR)/build/bin/llama-server ]; then \
+		echo "[llm] building llama.cpp (llama-server)…"; \
+		cmake -S $(LLAMA_DIR) -B $(LLAMA_DIR)/build -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release; \
+		cmake --build $(LLAMA_DIR)/build -j$(PAR) --target llama-server; \
+	else \
+		echo "[llm] llama-server already built — skipping"; \
+	fi
+	@if [ ! -f $(LLM_MODELS)/$(LLM_FILE) ]; then \
+		echo "[llm] downloading model $(LLM_MODEL) → $(LLM_MODELS)/$(LLM_FILE)"; \
+		echo "[llm]   (large file — may take several minutes)"; \
+		curl -L --fail --progress-bar -o $(LLM_MODELS)/$(LLM_FILE).part $(LLM_URL) \
+		  && mv $(LLM_MODELS)/$(LLM_FILE).part $(LLM_MODELS)/$(LLM_FILE); \
+	else \
+		echo "[llm] model $(LLM_FILE) already present — skipping"; \
+	fi
+	@echo ""
+	@echo "[llm] setup done. The sidecar is spawned automatically by 'make game'."
+	@echo "[llm] (or run 'make llm_server' to start it manually in its own terminal.)"
+
+llm_server:
+	@if [ ! -x $(LLAMA_DIR)/build/bin/llama-server ]; then \
+		echo "[llm] llama-server not built — run 'make llm_setup' first" >&2; exit 1; \
+	fi
+	@if [ ! -f $(LLM_MODELS)/$(LLM_FILE) ]; then \
+		echo "[llm] model $(LLM_FILE) missing — run 'make llm_setup' first" >&2; exit 1; \
+	fi
+	@echo "[llm] serving $(LLM_FILE) on 127.0.0.1:$(LLM_PORT)"
+	@echo "[llm] (press [T] on a humanoid in-game to open the chat)"
+	$(LLAMA_DIR)/build/bin/llama-server \
+	    --host 127.0.0.1 --port $(LLM_PORT) \
+	    --ctx-size $(LLM_CTX) --n-predict 200 \
+	    -m $(LLM_MODELS)/$(LLM_FILE)
+
+llm_stop:
+	@-pgrep -x llama-server 2>/dev/null | xargs -r kill ; true
+	@echo "[llm] sidecar stopped."
+
+llm_clean:
+	rm -rf $(LLM_DIR)

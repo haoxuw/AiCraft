@@ -24,4 +24,8 @@ living = {
     "skin_color": [0.92, 0.82, 0.70],
     "primary_color": [0.45, 0.10, 0.65],
     "features": ["tall_hat", "bell_sleeves", "staff", "robe"],
+
+    "dialog_system_prompt": "You are a wandering mage — curious, verbose in vocabulary but brief in answer. Reply in 1-2 sentences. You speak of runes, stars, dreams, and the shimmer between worlds. Never break character, never mention being an AI.",
+    "dialog_greeting": "Ah… the weave hums around you. Speak.",
+    "dialog_temperature": 0.85,
 }

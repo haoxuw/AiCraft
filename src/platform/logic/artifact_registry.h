@@ -422,6 +422,15 @@ private:
 		std::string behavior = extract("behavior");
 		if (!behavior.empty()) e.fields["behavior"] = behavior;
 
+		// Dialog persona — opt-in chat persona for humanoid NPCs. Consumed by
+		// the client's DialogPanel; server never sees it (Rule 5).
+		std::string dialogSys = extract("dialog_system_prompt");
+		if (!dialogSys.empty()) e.fields["dialog_system_prompt"] = dialogSys;
+		std::string dialogGreet = extract("dialog_greeting");
+		if (!dialogGreet.empty()) e.fields["dialog_greeting"] = dialogGreet;
+		std::string dialogTemp = extract("dialog_temperature");
+		if (!dialogTemp.empty()) e.fields["dialog_temperature"] = dialogTemp;
+
 		// Equip slot + item action hooks
 		std::string equipSlot = extract("equip_slot");
 		if (!equipSlot.empty()) e.fields["equip_slot"] = equipSlot;

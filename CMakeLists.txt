@@ -92,6 +92,15 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/chunk_mesher.cpp
 )
 
+# LLM sidecar client (HTTP/SSE → llama-server). Client-side only — server
+# never touches these (Rule 5). See src/platform/llm/llm_client.h.
+set(PLATFORM_LLM_SOURCES
+	src/platform/llm/llm_client.h
+	src/platform/llm/llm_client.cpp
+	src/platform/llm/llm_session.h
+	src/platform/llm/llm_sidecar.h
+)
+
 set(GAME_INCLUDE_DIRS src/platform)
 
 # === SPIR-V shader compilation ===
@@ -175,6 +184,7 @@ add_executable(civcraft-ui-vk
 	src/platform/client/rhi/rhi_ui.cpp
 	${PLATFORM_CLIENT_SOURCES}
 	${PLATFORM_SERVER_SOURCES}
+	${PLATFORM_LLM_SOURCES}
 )
 target_include_directories(civcraft-ui-vk PRIVATE ${GAME_INCLUDE_DIRS})
 target_compile_definitions(civcraft-ui-vk PRIVATE AICRAFT_RHI_VK)

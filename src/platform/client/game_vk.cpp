@@ -451,8 +451,31 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 			}
 		} else if (s == "multiplayer") {
 			m_menuScreen = MenuScreen::Multiplayer;
+		} else if (s == "connecting") {
+			m_menuScreen = MenuScreen::Connecting;
+			m_connecting = true;
+			m_connectStartTime = m_wallTime;
 		}
 	}
+
+	// Spawn the LLM sidecar (llama-server) so `make game` brings up dialog
+	// out of the box. If the user hasn't run `make llm_setup`, probe() fails
+	// and we degrade gracefully — NPC dialog shows an error instead of
+	// crashing. Client-only (Rule 5); server never sees this process.
+	{
+		civcraft::llm::LlmSidecar::Paths paths;
+		if (civcraft::llm::LlmSidecar::probe(paths)) {
+			m_llmSidecar = std::make_unique<civcraft::llm::LlmSidecar>();
+			if (!m_llmSidecar->start(paths)) {
+				std::fprintf(stderr, "[vk-game] llm sidecar failed to start; NPC dialog disabled\n");
+				m_llmSidecar.reset();
+			}
+		} else {
+			std::printf("[vk-game] no llama-server/model found — NPC dialog disabled. "
+			            "Run 'make llm_setup' to enable.\n");
+		}
+	}
+
 	return true;
 }
 
@@ -643,6 +666,10 @@ void Game::streamServerChunks() {
 
 void Game::shutdown() {
 	if (!m_rhi) return;
+	// Stop the LLM sidecar first so llama-server gets SIGTERM while the
+	// process is still alive and can reap it cleanly. Also silences its
+	// stderr chatter during the rest of teardown.
+	m_llmSidecar.reset();
 	// Tear down the agent client BEFORE main.cpp drops the NetworkServer:
 	// AgentClient holds a reference to ServerInterface and its decide-worker
 	// thread may still be in flight when we hit ~AgentClient.
@@ -812,6 +839,20 @@ void Game::enterDead(const char* cause) {
 }
 
 void Game::respawn() { enterPlaying(); }
+
+void Game::onChar(uint32_t codepoint) {
+	// Always queue; processInput decides whether DialogPanel consumes it.
+	// Cap to avoid a paste-bomb blowing up the queue between frames.
+	if (m_charQueue.size() < 256) m_charQueue.push_back(codepoint);
+}
+
+void Game::onKey(int glfwKey, int action) {
+	if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
+	// Only the handful of keys DialogPanel cares about.
+	if (glfwKey != GLFW_KEY_BACKSPACE && glfwKey != GLFW_KEY_ENTER &&
+	    glfwKey != GLFW_KEY_ESCAPE) return;
+	if (m_keyQueue.size() < 64) m_keyQueue.push_back(glfwKey);
+}
 
 void Game::onScroll(double xoff, double yoff) {
 	(void)xoff;
@@ -1035,6 +1076,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		if (m_showDebug) m_panelRenderer.renderDebugOverlay();
 		if (m_showTuning) m_panelRenderer.renderTuningPanel();
 		if (m_handbookOpen) m_panelRenderer.renderHandbook();
+		if (m_dialogPanel.isOpen()) m_dialogPanel.render(m_rhi, m_aspect);
 		m_entityUiRenderer.renderRTSSelect();
 		m_frameProbe.mark("panels");
 	} else if (m_state == GameState::GameMenu) {

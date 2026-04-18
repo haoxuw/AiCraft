@@ -20,9 +20,12 @@
 #include "client/audio.h"
 #include "client/camera.h"
 #include "client/debug_triggers.h"
+#include "client/dialog_panel.h"
 #include "client/entity_raycast.h"
 #include "client/rts_executor.h"
 #include "logic/artifact_registry.h"
+#include "llm/llm_client.h"
+#include "llm/llm_sidecar.h"
 
 // CivCraft chunk plumbing — civcraft-ui-vk now stores its world in real
 // 16³ Chunks and meshes them through ChunkMesher rather than streaming a
@@ -166,6 +169,14 @@ public:
 	// Mouse-wheel routed from the platform shell. Dispatches per camera mode
 	// (FPS hotbar scroll, orbit zoom, RTS zoom-to-cursor).
 	void onScroll(double xoff, double yoff);
+
+	// Unicode codepoint from GLFW char callback — used by DialogPanel to
+	// consume typed text. Queued here and drained in processInput so the
+	// panel never races the input loop.
+	void onChar(uint32_t codepoint);
+	// Non-char keys (Backspace/Enter/Esc) forwarded from GLFW key callback;
+	// queued for DialogPanel to consume when open.
+	void onKey(int glfwKey, int action);
 
 	// Inventory-UI slot record, published by the 2D pass each frame so the
 	// next frame's 3D item-preview pass can render box models at the exact
@@ -496,6 +507,7 @@ private:
 	bool         m_f12Last       = false;
 	bool         m_f11Last       = false;
 	bool         m_hLast         = false;   // H: handbook
+	bool         m_tKeyLast      = false;   // T: talk to NPC
 
 	// RPG/RTS right-click orbit: hold+drag to orbit camera, quick click = action.
 	// wantCapture is set only while actively orbiting.
@@ -659,6 +671,16 @@ private:
 
 	// Entity inspection (right-click on entity in RPG/RTS, or Shift+RMB in FPS/TPS)
 	civcraft::EntityId m_inspectedEntity = 0;
+
+	// ── NPC dialog (local LLM) ───────────────────────────────────────────
+	// Lazily initialised on the first T-key press (so the sidecar health
+	// probe doesn't block boot). The panel + session are client-only —
+	// server has no idea dialog is happening (Rule 5).
+	std::unique_ptr<civcraft::llm::LlmClient>  m_llmClient;
+	std::unique_ptr<civcraft::llm::LlmSidecar> m_llmSidecar;    // child llama-server, spawned in init()
+	DialogPanel                                m_dialogPanel;
+	std::vector<uint32_t>                      m_charQueue;     // drained each input tick
+	std::vector<int>                           m_keyQueue;      // GLFW key codes (press only)
 
 	// File-based debug triggers (compiled out in Release via NDEBUG).
 	civcraft::DebugTriggers m_debugTriggers;
