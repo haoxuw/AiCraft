@@ -166,6 +166,16 @@ void WorldRenderer::renderWorld(float wallTime) {
 		return key;
 	};
 
+	auto resolveItemModel = [&](const std::string& itemId)
+	    -> const civcraft::BoxModel* {
+		if (itemId.empty()) return nullptr;
+		std::string key = itemId;
+		auto colon = key.find(':');
+		if (colon != std::string::npos) key = key.substr(colon + 1);
+		auto it = g.m_models.find(key);
+		return (it != g.m_models.end()) ? &it->second : nullptr;
+	};
+
 	// Local player body — skip in FPS so the body doesn't eclipse the camera.
 	if (me && g.m_cam.mode != civcraft::CameraMode::FirstPerson) {
 		auto pit = g.m_models.find(resolveModelKey(*me));
@@ -176,11 +186,30 @@ void WorldRenderer::renderWorld(float wallTime) {
 			                                          me->velocity.z));
 			anim.time         = g.m_wallTime;
 
+			// Held items: hotbar selection → main hand, offhand equip → other.
+			civcraft::HeldItems held;
+			civcraft::HeldItem mainItem;
+			mainItem.model = me->inventory
+			    ? resolveItemModel(g.m_hotbar.mainHand(*me->inventory))
+			    : nullptr;
+			civcraft::HeldItem offItem;
+			offItem.model = me->inventory
+			    ? resolveItemModel(me->inventory->equipped(
+			          civcraft::WearSlot::Offhand))
+			    : nullptr;
+			bool offhandRight = me->inventory
+			    && me->inventory->offhandInRightHand();
+			if (offhandRight) {
+				held.rightHand = offItem; held.leftHand = mainItem;
+			} else {
+				held.rightHand = mainItem; held.leftHand = offItem;
+			}
+
 			glm::vec3 bodyPos(me->position.x, visualPlayerY(me->position.y),
 			                  me->position.z);
 			civcraft::appendBoxModel(charBoxes, pit->second, bodyPos,
 			                         glm::degrees(g.m_playerBodyYaw),
-			                         anim);
+			                         anim, &held);
 		}
 	}
 

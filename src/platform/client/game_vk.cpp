@@ -223,6 +223,23 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 			}
 		}
 		prev.swap(cur);
+
+		// Keep the hotbar alias layer in sync with the local player's
+		// inventory. First delivery primes the slots by priority order; every
+		// subsequent S_INVENTORY merges in new picks and clears slots for
+		// items the player no longer carries. Drag layout (set via UI) is
+		// persisted to m_hotbarSavePath and preserved across merges.
+		if (isLocalPlayer && ent->inventory) {
+			if (!m_hotbarSeeded) {
+				bool loaded = !m_hotbarSavePath.empty()
+				    && m_hotbar.loadFromFile(m_hotbarSavePath);
+				if (!loaded) m_hotbar.repopulateFrom(*ent->inventory);
+				m_hotbarSeeded = true;
+			}
+			m_hotbar.mergeFrom(*ent->inventory);
+			if (!m_hotbarSavePath.empty())
+				m_hotbar.saveToFile(m_hotbarSavePath);
+		}
 	});
 
 	std::printf("[vk-game] chunks will stream from %s\n",
@@ -368,6 +385,23 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		m_handbookOpen = !m_handbookOpen;
 		std::printf("[vk-game] [trigger] handbook %s\n", m_handbookOpen ? "OPEN" : "CLOSED");
 	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_inventory_request", [this] {
+		m_invOpen = !m_invOpen;
+		std::printf("[vk-game] [trigger] inventory %s\n", m_invOpen ? "OPEN" : "CLOSED");
+	});
+	// Test drag: place cursor on an inventory slot (given slot index 0..47) and
+	// drop on hotbar slot `to` (0..9). Format: "<from_inv_idx> <to_hotbar_idx>".
+	// No LMB events are synthesized — we call into the hotbar directly since
+	// this is a dev shortcut for screenshot verification.
+	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_cursor_request",
+		[this](const std::string& line) {
+			float x, y;
+			if (sscanf(line.c_str(), "%f %f", &x, &y) == 2) {
+				m_mouseNdcX = x;
+				m_mouseNdcY = y;
+				std::printf("[vk-game] [trigger] cursor=(%.2f,%.2f)\n", x, y);
+			}
+		});
 	m_debugTriggers.addTrigger("/tmp/civcraft_vk_tuning_request", [this] {
 		m_showTuning = !m_showTuning;
 		std::printf("[vk-game] [trigger] tuning %s\n", m_showTuning ? "OPEN" : "CLOSED");
@@ -640,6 +674,18 @@ void Game::enterMenu() {
 
 void Game::enterPlaying() {
 	m_state = GameState::Playing;
+	// Hotbar persistence path, keyed by spawn seed so two worlds on the same
+	// machine don't share a layout. Flushed on every drag and on shutdown.
+	{
+		char buf[128];
+		std::snprintf(buf, sizeof(buf), "/tmp/civcraft_hotbar_%d.txt",
+		              m_pendingSeed);
+		m_hotbarSavePath = buf;
+	}
+	m_hotbarSeeded = false;  // first S_INVENTORY after entering will seed it
+	m_invOpen = false;
+	m_slotRectsLast.clear();
+	m_slotRectsThis.clear();
 	// Reset client-only physics/animation state.
 	m_onGround  = false;
 	m_walkDist  = 0.0f;
@@ -650,7 +696,6 @@ void Game::enterPlaying() {
 	m_sprintFovBoost = 0.0f;
 	m_modeHintsShown = 0;
 	m_climb = {};
-	m_coins = 0;
 	m_slashes.clear();
 	m_floaters.clear();
 	m_adminMode = false;
@@ -735,18 +780,20 @@ void Game::enterDead(const char* cause) {
 
 void Game::respawn() { enterPlaying(); }
 
-void Game::onWindowFocus(bool focused) {
-	m_windowFocused = focused;
-	if (!focused && m_state == GameState::Playing && !std::getenv("CIVCRAFT_NO_FOCUS_PAUSE"))
-		openGameMenu();
-}
-
 void Game::onScroll(double xoff, double yoff) {
 	ImGuiIO& io = ImGui::GetIO();
 	io.AddMouseWheelEvent((float)xoff, (float)yoff);
 	if (io.WantCaptureMouse) return;
 	if (m_state != GameState::Playing) return;
 	float y = (float)yoff;
+	// Scroll cycles the hotbar slot in FPS (no camera zoom there). Down = next.
+	if (m_cam.mode == civcraft::CameraMode::FirstPerson && y != 0.0f) {
+		int step = y > 0 ? -1 : 1;
+		int n = (m_hotbar.selected + step + Hotbar::SLOTS) % Hotbar::SLOTS;
+		m_hotbar.selected = n;
+		if (!m_hotbarSavePath.empty()) m_hotbar.saveToFile(m_hotbarSavePath);
+		return;
+	}
 	switch (m_cam.mode) {
 	case civcraft::CameraMode::FirstPerson:
 		break;
@@ -906,9 +953,19 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_frameProbe.mark("ents");
 		m_worldRenderer.renderEffects(wallTime);
 		m_frameProbe.mark("fx3d");
+		// 3D pass for hotbar/inventory item previews. Reads last frame's slot
+		// rects (so imgui windows "hover" 3D items in-place); writes none.
+		m_hudRenderer.renderInventoryItems3D();
+		m_frameProbe.mark("inv3d");
 		m_rhi->imguiNewFrame();
 		m_frameProbe.mark("imNew");
+		// Clear slot-rect collection — every slot drawn this frame re-records.
+		m_slotRectsThis.clear();
 		m_hudRenderer.renderHUD();
+		m_hudRenderer.renderHotbarBar();
+		m_hudRenderer.renderInventoryPanel();
+		// Publish this frame's rects to be read by next frame's 3D pass.
+		m_slotRectsLast = m_slotRectsThis;
 		m_frameProbe.mark("hud");
 		if (m_inspectedEntity != 0) m_entityUiRenderer.renderEntityInspect();
 		if (m_showDebug) m_panelRenderer.renderDebugOverlay();

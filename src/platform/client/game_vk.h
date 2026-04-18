@@ -34,6 +34,7 @@
 #include "client/box_model.h"
 #include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
+#include "client/hotbar.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -155,13 +156,44 @@ public:
 	// Check if we should quit (menu → Quit, or window close).
 	bool shouldQuit() const { return m_shouldQuit; }
 
-	// Window focus notification — opens the in-game menu on focus loss.
-	void onWindowFocus(bool focused);
-
 	// Mouse-wheel routed from the platform shell. ImGui consumes first; if the
 	// cursor isn't over a UI widget the game dispatches per camera mode
 	// (orbit zoom / RTS zoom-to-cursor).
 	void onScroll(double xoff, double yoff);
+
+	// Inventory-UI slot record, published by the 2D pass each frame so the
+	// next frame's 3D item-preview pass can render box models at the exact
+	// same screen locations. Public so the inventory renderer (a friend of
+	// HudRenderer, not of Game) can read/write it through the public API.
+	//
+	// `kind` + `index` let the hit-tester translate a cursor-over-rect hit
+	// into a logical slot for drag/drop resolution without re-walking the
+	// rendered layouts.
+	struct SlotRect {
+		enum class Kind : uint8_t {
+			Hotbar,     // index = 0..9
+			Inventory,  // index = position in sorted items list
+			Other,      // index = position in other entity's inventory
+			DragGhost   // index = -1 (follows cursor, not hit-testable)
+		};
+		float ndcX = 0, ndcY = 0, ndcW = 0, ndcH = 0;
+		std::string itemId;
+		int  count = 0;
+		bool selected = false;
+		Kind kind = Kind::Inventory;
+		int  index = -1;
+	};
+	enum class InvSort : uint8_t { ByName = 0, ByValue = 1, ByCount = 2 };
+
+	// Drag-and-drop state. Lives on Game so input (processInput) can start/
+	// advance/end the drag and the renderer can read it to paint the ghost.
+	struct DragState {
+		bool        active = false;
+		std::string itemId;
+		int         count = 0;
+		SlotRect::Kind srcKind = SlotRect::Kind::Inventory;
+		int            srcIndex = -1;
+	};
 
 private:
 	// ── Scene transitions ─────────────────────────────────────────────────
@@ -501,6 +533,45 @@ private:
 	bool         m_handbookOpen = false;
 	civcraft::ArtifactRegistry m_artifactRegistry;
 
+	// ── Hotbar + Inventory UI ────────────────────────────────────────────
+	// Hotbar: 10-slot alias over the player's inventory. The selected slot's
+	// itemId becomes the main-hand model. Drag layout persists to
+	// m_hotbarSavePath; `mergeFrom` runs on every S_INVENTORY so drag edits
+	// survive pickups.
+	civcraft::Hotbar m_hotbar;
+	std::string      m_hotbarSavePath;  // set after login; empty before.
+	bool             m_hotbarSeeded = false;  // false until first S_INVENTORY.
+
+	// Tab opens the inventory panel. When m_invOther != 0, renders a second
+	// pane for that entity (chest/NPC). Sort mode cycles via a UI button.
+	bool             m_invOpen = false;
+	bool             m_tabLast = false;
+	bool             m_qLast   = false;
+	civcraft::EntityId m_invOther = 0;
+	InvSort          m_invSort = InvSort::ByName;
+
+	// Cached slot rects — 2D pass records, 3D pass (next frame) reads. The
+	// one-frame lag is invisible (UI doesn't move in a single frame) and
+	// lets the 3D pass precede imguiNewFrame without reordering code.
+	std::vector<SlotRect> m_slotRectsLast;
+	std::vector<SlotRect> m_slotRectsThis;
+
+	// Cursor + LMB tracking for custom hit-testing. NDC y grows upward (matches
+	// rhi.drawRect2D). processInput refreshes these every frame.
+	float        m_mouseNdcX = 0.0f;
+	float        m_mouseNdcY = 0.0f;
+	bool         m_mouseLHeld     = false;
+	bool         m_mouseLPressed  = false;   // edge: not-held → held this frame
+	bool         m_mouseLReleased = false;   // edge: held → not-held this frame
+	bool         m_mouseLLast     = false;
+
+	// Which slot in m_slotRectsLast the cursor is over (-1 = none). Updated
+	// per-frame by the inventory-UI hit-tester before drawing.
+	int          m_hoverSlot = -1;
+
+	// Active drag-and-drop (inventory↔hotbar + drop-to-world).
+	DragState    m_drag;
+
 	// Python-defined BoxModels for all entities + items, loaded once at
 	// startup via model_loader::loadAllModels. Keyed by model stem (e.g.
 	// "pig", "sword"). Used by the box-model flattener to render oriented
@@ -539,9 +610,6 @@ private:
 	bool         m_adminMode = false;
 	bool         m_flyMode   = false;
 
-	// Score counter (coins from killed NPCs).
-	int          m_coins = 0;
-
 	// Last block the player dug — placeBlock() uses this as the Convert
 	// source so placement works without a full inventory UI (one dig → one
 	// place). Falls back to "cobblestone" for fresh admin-mode players.
@@ -570,9 +638,6 @@ private:
 
 	// Entity inspection (right-click on entity in RPG/RTS, or Shift+RMB in FPS/TPS)
 	civcraft::EntityId m_inspectedEntity = 0;
-
-	// Window focus — pause gameplay when window loses focus.
-	bool         m_windowFocused = true;
 
 	// File-based debug triggers (compiled out in Release via NDEBUG).
 	civcraft::DebugTriggers m_debugTriggers;

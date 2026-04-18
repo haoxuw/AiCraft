@@ -34,6 +34,16 @@ class HudRenderer {
 public:
 	explicit HudRenderer(Game& g) : game_(g) {}
 	void renderHUD();
+
+	// Inventory + hotbar.
+	//   renderInventoryItems3D — main-pass draw of every visible slot's 3D
+	//     item model. Must run BEFORE imguiNewFrame so box models render into
+	//     the main scene and ImGui frames/text compose over them.
+	//   renderHotbarBar       — 2D bezel + selection glow + count/key text.
+	//   renderInventoryPanel  — Tab-triggered ImGui window; player/chest/NPC.
+	void renderInventoryItems3D();
+	void renderHotbarBar();
+	void renderInventoryPanel();
 private:
 	Game& game_;
 };

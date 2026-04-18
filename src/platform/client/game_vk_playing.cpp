@@ -58,10 +58,33 @@ void Game::clampCameraCollision() {
 void Game::processInput(float dt) {
 	if (!m_window) return;
 
-	// ESC: Playing↔GameMenu. Menu/Dead handle Esc in their own code.
+	// Mouse cursor → NDC (+Y up, matching drawRect2D) + LMB edge detection.
+	// Used by custom inventory UI hit-testing and drag-and-drop. We track
+	// this every frame regardless of state so the release edge fires even
+	// if the inventory just closed.
+	{
+		double mx = 0, my = 0;
+		glfwGetCursorPos(m_window, &mx, &my);
+		if (m_fbW > 0 && m_fbH > 0) {
+			m_mouseNdcX = (float)(mx / m_fbW) * 2.0f - 1.0f;
+			m_mouseNdcY = 1.0f - (float)(my / m_fbH) * 2.0f;
+		}
+		bool lmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+		m_mouseLPressed  = (lmb && !m_mouseLLast);
+		m_mouseLReleased = (!lmb && m_mouseLLast);
+		m_mouseLHeld     = lmb;
+		m_mouseLLast     = lmb;
+	}
+
+	// ESC: cancel drag → close inventory → dismiss panels → pause.
+	// Each handler short-circuits so one tap doesn't cascade.
 	bool esc = glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
 	if (esc && !m_escLast) {
-		if (m_inspectedEntity != 0) {
+		if (m_drag.active) {
+			m_drag = {};
+		} else if (m_invOpen) {
+			m_invOpen = false;
+		} else if (m_inspectedEntity != 0) {
 			m_inspectedEntity = 0;
 		} else if (m_handbookOpen) {
 			m_handbookOpen = false;
@@ -168,11 +191,58 @@ void Game::processInput(float dt) {
 		m_handbookOpen = !m_handbookOpen;
 	m_hLast = hKey;
 
+	// Tab: toggle inventory.
+	bool tabKey = glfwGetKey(m_window, GLFW_KEY_TAB) == GLFW_PRESS;
+	if (tabKey && !m_tabLast)
+		m_invOpen = !m_invOpen;
+	m_tabLast = tabKey;
+
+	// 1..9, 0: select hotbar slot. 0 is the rightmost slot (index 9).
+	{
+		int picked = -1;
+		for (int i = 0; i < 9; i++) {
+			if (glfwGetKey(m_window, GLFW_KEY_1 + i) == GLFW_PRESS) {
+				picked = i; break;
+			}
+		}
+		if (picked < 0 && glfwGetKey(m_window, GLFW_KEY_0) == GLFW_PRESS)
+			picked = 9;
+		if (picked >= 0 && picked != m_hotbar.selected) {
+			m_hotbar.selected = picked;
+			if (!m_hotbarSavePath.empty())
+				m_hotbar.saveToFile(m_hotbarSavePath);
+		}
+	}
+
+	// Q: drop one of the currently held item (hotbar selection). Uses
+	// TYPE_RELOCATE (Self → Ground) — no new action type needed.
+	bool qKey = glfwGetKey(m_window, GLFW_KEY_Q) == GLFW_PRESS;
+	if (qKey && !m_qLast) {
+		civcraft::Entity* me = playerEntity();
+		if (me && me->inventory) {
+			const std::string& held = m_hotbar.mainHand(*me->inventory);
+			if (!held.empty()) {
+				civcraft::ActionProposal p;
+				p.type        = civcraft::ActionProposal::Relocate;
+				p.actorId     = m_server->localPlayerId();
+				p.relocateFrom = civcraft::Container::self();
+				p.relocateTo   = civcraft::Container::ground();
+				p.itemId      = held;
+				p.itemCount   = 1;
+				m_server->sendAction(p);
+				civcraft::GameLogger::instance().emit("ACTION",
+					"drop %s x1", held.c_str());
+			}
+		}
+	}
+	m_qLast = qKey;
+
 	// ── Cursor mode ───────────────────────────────────────────────────────
 	// FPS/TPS: cursor captured for mouse look.
 	// RPG/RTS: cursor free; right-click-drag = orbit camera.
 	// UI overlays (handbook, inspector, tuning) always show cursor.
-	m_uiWantsCursor = m_handbookOpen || m_inspectedEntity != 0 || m_showTuning;
+	m_uiWantsCursor = m_handbookOpen || m_inspectedEntity != 0 || m_showTuning
+	                || m_invOpen;
 
 	bool wantCapture = (m_cam.mode == civcraft::CameraMode::FirstPerson ||
 	                    m_cam.mode == civcraft::CameraMode::ThirdPerson);

@@ -32,11 +32,6 @@ void resizeCb(GLFWwindow* w, int width, int height) {
 	if (s && s->rhi) s->rhi->onResize(width, height);
 }
 
-void focusCb(GLFWwindow* w, int focused) {
-	auto* s = (Shell*)glfwGetWindowUserPointer(w);
-	if (s && s->game) s->game->onWindowFocus(focused != 0);
-}
-
 void scrollCb(GLFWwindow* w, double xoff, double yoff) {
 	auto* s = (Shell*)glfwGetWindowUserPointer(w);
 	if (s && s->game) s->game->onScroll(xoff, yoff);
@@ -163,7 +158,6 @@ int main(int argc, char** argv) {
 	Shell shell{ rhi.get(), &game };
 	glfwSetWindowUserPointer(win, &shell);
 	glfwSetFramebufferSizeCallback(win, resizeCb);
-	glfwSetWindowFocusCallback(win, focusCb);
 	glfwSetScrollCallback(win, scrollCb);
 
 	auto t0 = std::chrono::steady_clock::now();
