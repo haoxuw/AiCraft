@@ -108,13 +108,10 @@ void WorldRenderer::renderWorld(float wallTime) {
 	// owner of time-of-day). worldTime ∈ [0,1): 0=midnight, 0.25=dawn,
 	// 0.5=noon, 0.75=dusk. Angle convention puts the sun overhead at noon.
 	float tod      = g.m_server ? g.m_server->worldTime() : 0.5f;
-	// Menu preview (CharacterSelect / Connecting) forces a late-morning sun
-	// so the model reads well regardless of the live server's time-of-day —
-	// the character picker shouldn't be a black silhouette at dawn/dusk.
-	if (g.m_state == civcraft::vk::GameState::Menu
-	    && (g.m_menuScreen == civcraft::vk::MenuScreen::CharacterSelect
-	        || g.m_menuScreen == civcraft::vk::MenuScreen::Connecting)
-	    && !g.m_previewCreatureId.empty()) {
+	// Menu force-lights the backdrop to a bright mid-morning regardless of
+	// the live server's time-of-day — the main-menu scene (trees, plaza,
+	// character preview) shouldn't be a black silhouette at dawn/dusk.
+	if (g.m_state == civcraft::vk::GameState::Menu) {
 		tod = 0.42f;  // mid-morning: sun well above horizon, warm slant light
 	}
 	float sunAngle = tod * 6.2831853f - 1.5707963f;   // 2π·tod − π/2
@@ -317,6 +314,89 @@ void WorldRenderer::renderWorld(float wallTime) {
 			                    drawPos - size * 0.5f, size, a.color);
 		}
 	}
+	// Main-menu backdrop — no chunks stream until HELLO (character-select
+	// completes), so the menu camera has nothing but sky to look at. Emit a
+	// decorative grass plaza with a few trees and flowers as box instances,
+	// on the same pipeline that draws characters. Placed around origin; the
+	// menu camera orbits (0, 1.6, 0) so this fills the frame.
+	if (g.m_state == civcraft::vk::GameState::Menu
+	    && g.m_menuScreen != civcraft::vk::MenuScreen::CharacterSelect
+	    && g.m_menuScreen != civcraft::vk::MenuScreen::Connecting) {
+		const glm::vec3 grass(0.36f, 0.58f, 0.22f);
+		const glm::vec3 grassDk(0.28f, 0.46f, 0.18f);
+		const glm::vec3 dirt (0.42f, 0.30f, 0.20f);
+		const glm::vec3 stone(0.48f, 0.48f, 0.50f);
+		const glm::vec3 bark (0.32f, 0.22f, 0.14f);
+		const glm::vec3 leaf (0.22f, 0.44f, 0.18f);
+		const glm::vec3 leafLt(0.30f, 0.55f, 0.22f);
+
+		// Ground — 32×32 plaza; grass top, dirt below so the edge shows a cliff.
+		for (int z = -16; z < 16; ++z) {
+			for (int x = -16; x < 16; ++x) {
+				// Gentle checker variation so it's not a flat color.
+				const glm::vec3& g0 = ((x + z) & 1) ? grass : grassDk;
+				civcraft::emitAABox(charBoxes,
+					glm::vec3((float)x, 0.0f, (float)z),
+					glm::vec3(1.0f, 1.0f, 1.0f), g0);
+				civcraft::emitAABox(charBoxes,
+					glm::vec3((float)x, -1.0f, (float)z),
+					glm::vec3(1.0f, 1.0f, 1.0f), dirt);
+			}
+		}
+
+		// Trees — trunk + leaf canopy. Scattered around origin, clear of the
+		// camera focus so the orbit frames them.
+		auto emitTree = [&](float cx, float cz, float scale) {
+			float trunkH = 4.0f * scale;
+			civcraft::emitAABox(charBoxes,
+				glm::vec3(cx - 0.5f, 1.0f, cz - 0.5f),
+				glm::vec3(1.0f, trunkH, 1.0f), bark);
+			// Canopy: 5×3×5 leaf cluster, slightly jagged.
+			float cyBase = 1.0f + trunkH - 0.5f;
+			for (int ly = 0; ly < 3; ++ly) {
+				int rad = (ly == 1) ? 2 : 1;
+				for (int lz = -rad; lz <= rad; ++lz) {
+					for (int lx = -rad; lx <= rad; ++lx) {
+						// trim corners on top/bottom layers
+						if (ly != 1 && std::abs(lx) + std::abs(lz) > rad) continue;
+						const glm::vec3& lc = ((lx + lz + ly) & 1) ? leaf : leafLt;
+						civcraft::emitAABox(charBoxes,
+							glm::vec3(cx + lx - 0.5f,
+							          cyBase + (float)ly,
+							          cz + lz - 0.5f),
+							glm::vec3(1.0f, 1.0f, 1.0f), lc);
+					}
+				}
+			}
+		};
+		emitTree(-7.0f, -5.0f, 1.0f);
+		emitTree( 6.0f, -6.0f, 1.1f);
+		emitTree( 8.0f,  4.0f, 0.9f);
+		emitTree(-5.0f,  7.0f, 1.0f);
+		emitTree(-9.0f,  1.0f, 0.8f);
+
+		// Scattered flower/stone accents — tiny boxes on the grass.
+		const glm::vec3 red(0.90f, 0.28f, 0.20f);
+		const glm::vec3 yel(0.95f, 0.85f, 0.25f);
+		const glm::vec3 blu(0.30f, 0.45f, 0.90f);
+		struct Accent { float x, z; glm::vec3 c; };
+		const Accent accents[] = {
+			{ 2.5f,  1.5f, red}, { 3.5f,  2.5f, yel}, { -2.5f, 3.5f, blu},
+			{-3.5f, -2.5f, yel}, { 1.0f, -3.5f, red}, {  4.0f,-2.5f, blu},
+			{-4.0f,  0.5f, yel}, {-1.5f,  4.5f, red},
+		};
+		for (const auto& a : accents) {
+			civcraft::emitAABox(charBoxes,
+				glm::vec3(a.x - 0.15f, 1.0f, a.z - 0.15f),
+				glm::vec3(0.30f, 0.40f, 0.30f), a.c);
+		}
+		// A small rock cluster — visual interest in the open.
+		civcraft::emitAABox(charBoxes, glm::vec3(2.5f, 1.0f, -6.5f),
+			glm::vec3(1.3f, 0.6f, 1.0f), stone);
+		civcraft::emitAABox(charBoxes, glm::vec3(3.0f, 1.5f, -6.0f),
+			glm::vec3(0.8f, 0.5f, 0.7f), stone);
+	}
+
 	// CharacterSelect / Connecting preview — inject the hovered playable at a
 	// fixed world pose so the camera (pinned in game_vk.cpp menu block) frames
 	// it to the right of the menu panel. Model rotates slowly so the player

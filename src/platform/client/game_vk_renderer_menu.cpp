@@ -33,8 +33,77 @@ struct MenuListInput {
 	bool         mouseReleased;
 };
 
-// Vertical list of text rows with a highlighted cursor. Returns index of
-// the row that was activated this frame, or -1.
+// Framed backdrop for a menu screen: shadow + dark fill + thick brass
+// border + an inner hair-line so the panel reads as "chiseled metal"
+// over the 3D plaza. Title strip above the content area.
+void drawMenuFrame(rhi::IRhi* r, float x, float y, float w, float h,
+                   const char* title) {
+	const float shadow[4]    = {0.00f, 0.00f, 0.00f, 0.60f};
+	const float fill[4]      = {0.07f, 0.06f, 0.06f, 0.94f};
+	const float brass[4]     = {0.72f, 0.54f, 0.22f, 1.00f};
+	const float brassIn[4]   = {0.95f, 0.78f, 0.35f, 0.85f};
+	const float titleFill[4] = {0.14f, 0.10f, 0.07f, 0.95f};
+	const float titleCol[4]  = {1.00f, 0.86f, 0.45f, 1.00f};
+
+	ui::drawShadowPanel(r, x, y, w, h, shadow, fill, brass, 0.004f);
+	// Inner brass pinstripe — sits 0.010 inside the outer border.
+	ui::drawOutline(r, x + 0.010f, y + 0.010f,
+	                w - 0.020f, h - 0.020f, 0.0015f, brassIn);
+
+	if (title && *title) {
+		const float titleH = 0.085f;
+		const float ty = y + h - titleH - 0.016f;
+		r->drawRect2D(x + 0.018f, ty, w - 0.036f, titleH, titleFill);
+		ui::drawOutline(r, x + 0.018f, ty, w - 0.036f, titleH, 0.0012f, brassIn);
+		ui::drawCenteredTitle(r, title, x + w * 0.5f, ty + 0.022f, 1.35f, titleCol);
+	}
+}
+
+// Chunky bevel-style menu button. Dark fill, thick brass border; on
+// hover/select the fill warms and a brass accent bar lights up on the
+// left edge. Label text is centered, brass when active, off-white
+// otherwise. Returns true the frame it's clicked.
+bool drawMenuButton(rhi::IRhi* r, float x, float y, float w, float h,
+                    const char* label, bool active,
+                    float mouseX, float mouseY, bool mouseReleased) {
+	bool hover = ui::rectContainsNdc(x, y, w, h, mouseX, mouseY);
+
+	const float bgIdle[4] = {0.10f, 0.09f, 0.09f, 0.96f};
+	const float bgHov [4] = {0.18f, 0.14f, 0.10f, 0.98f};
+	const float bgSel [4] = {0.28f, 0.20f, 0.10f, 0.98f};
+	const float brass [4] = {0.78f, 0.58f, 0.22f, 1.00f};
+	const float brassLt[4]= {0.98f, 0.84f, 0.42f, 1.00f};
+	const float txtIdle[4]= {0.85f, 0.82f, 0.78f, 1.00f};
+	const float txtActv[4]= {1.00f, 0.88f, 0.48f, 1.00f};
+
+	const float* bg = active ? bgSel : (hover ? bgHov : bgIdle);
+	r->drawRect2D(x, y, w, h, bg);
+
+	// Top inner highlight — 1-px warm line across the top, simulates bevel.
+	const float hiTop[4] = {0.95f, 0.80f, 0.40f, 0.22f};
+	r->drawRect2D(x + 0.004f, y + h - 0.005f, w - 0.008f, 0.002f, hiTop);
+	// Bottom inner shadow — darker line for bevel complement.
+	const float loBot[4] = {0.00f, 0.00f, 0.00f, 0.40f};
+	r->drawRect2D(x + 0.004f, y + 0.003f, w - 0.008f, 0.002f, loBot);
+
+	ui::drawOutline(r, x, y, w, h, 0.0025f, active ? brassLt : brass);
+
+	// Left accent bar — only on active row, a warm rectangle glowing beside.
+	if (active) {
+		const float ac[4] = {0.98f, 0.80f, 0.30f, 1.00f};
+		r->drawRect2D(x - 0.012f, y + 0.006f, 0.008f, h - 0.012f, ac);
+		const float acGlow[4] = {0.98f, 0.80f, 0.30f, 0.18f};
+		r->drawRect2D(x - 0.028f, y + 0.004f, 0.016f, h - 0.008f, acGlow);
+	}
+
+	ui::drawCenteredText(r, label, x + w * 0.5f,
+		y + h * 0.5f - ui::kCharHNdc * 1.05f * 0.5f,
+		1.05f, active ? txtActv : txtIdle);
+
+	return hover && mouseReleased;
+}
+
+// Vertical list of chunky buttons. Returns activated index or -1.
 int drawMenuList(const MenuListInput& in,
                  const std::vector<std::string>& items,
                  int& cursor, float cx, float topY, float rowH,
@@ -53,19 +122,13 @@ int drawMenuList(const MenuListInput& in,
 
 	float x = cx - rowW * 0.5f;
 	for (int i = 0; i < (int)items.size(); ++i) {
-		float y = topY - i * (rowH + 0.008f);
-		bool sel = (i == cursor);
-		in.rhi->drawRect2D(x, y, rowW, rowH, sel ? kSelBg : kRowBg);
-
-		if (ui::rectContainsNdc(x, y, rowW, rowH, in.mouseX, in.mouseY)) {
-			cursor = i;
-			if (in.mouseReleased) activated = i;
-		}
-
-		const std::string& t = items[i];
-		ui::drawCenteredText(in.rhi, t.c_str(), cx,
-			y + rowH * 0.5f - ui::kCharHNdc * 0.95f * 0.5f,
-			0.95f, sel ? kText : kTextDim);
+		float y = topY - i * (rowH + 0.014f);
+		bool hover = ui::rectContainsNdc(x, y, rowW, rowH, in.mouseX, in.mouseY);
+		if (hover) cursor = i;
+		bool click = drawMenuButton(in.rhi, x, y, rowW, rowH,
+			items[i].c_str(), (i == cursor),
+			in.mouseX, in.mouseY, in.mouseReleased);
+		if (click) activated = i;
 	}
 	return activated;
 }
@@ -91,16 +154,17 @@ void MenuRenderer::renderMenu() {
 		}
 	}
 
-	ui::drawCenteredTitle(R, "CIVCRAFT", 0.0f, 0.58f, 3.6f, ui::color::kBrass);
+	ui::drawCenteredTitle(R, "CIVCRAFT", 0.0f, 0.72f, 3.4f, ui::color::kBrass);
 
 	switch (g.m_menuScreen) {
 	case MenuScreen::Main: {
+		drawMenuFrame(R, -0.30f, 0.02f, 0.60f, 0.56f, nullptr);
 		static int cursor = 0;
 		std::vector<std::string> items = {
 			"SINGLEPLAYER", "MULTIPLAYER", "SETTINGS", "QUIT"
 		};
 		int picked = drawMenuList(in, items, cursor,
-			0.0f, 0.20f, 0.080f, 0.48f);
+			0.0f, 0.46f, 0.090f, 0.50f);
 		if (picked == 0) g.m_menuScreen = MenuScreen::Singleplayer;
 		else if (picked == 1) g.m_menuScreen = MenuScreen::Multiplayer;
 		else if (picked == 2) g.m_menuScreen = MenuScreen::Settings;
@@ -111,15 +175,16 @@ void MenuRenderer::renderMenu() {
 		break;
 	}
 	case MenuScreen::Singleplayer: {
-		ui::drawCenteredText(R, "Your Worlds", 0.0f, 0.25f, 1.10f, kText);
-		ui::drawCenteredText(R, "(world list coming in Stage C)", 0.0f, 0.15f, 0.70f, kTextHint);
+		drawMenuFrame(R, -0.36f, -0.32f, 0.72f, 0.82f, "Your Worlds");
+		ui::drawCenteredText(R, "(world list coming in Stage C)",
+			0.0f, 0.20f, 0.72f, kTextHint);
 
 		static int cursor = 0;
 		std::vector<std::string> items = {
 			"START VILLAGE WORLD", "BACK"
 		};
 		int picked = drawMenuList(in, items, cursor,
-			0.0f, 0.00f, 0.080f, 0.52f);
+			0.0f, 0.04f, 0.100f, 0.56f);
 		if (picked == 0) {
 			g.m_connectError.clear();
 			g.m_menuScreen = MenuScreen::CharacterSelect;
@@ -131,9 +196,10 @@ void MenuRenderer::renderMenu() {
 		break;
 	}
 	case MenuScreen::CharacterSelect: {
-		ui::drawCenteredText(R, "Choose Your Character", 0.0f, 0.30f, 1.10f, kText);
-		ui::drawCenteredText(R, "Arrow keys to pick, Enter to enter the world.",
-			0.0f, 0.23f, 0.70f, kTextDim);
+		// Panel stays on the LEFT so the model preview has the right half.
+		drawMenuFrame(R, -0.92f, -0.70f, 0.62f, 1.40f, "Choose Your Character");
+		ui::drawCenteredText(R, "Arrow keys to pick, Enter to enter.",
+			-0.61f, 0.48f, 0.65f, kTextDim);
 
 		struct PlayableItem { std::string id, name; };
 		std::vector<PlayableItem> playables;
@@ -147,7 +213,8 @@ void MenuRenderer::renderMenu() {
 			[](const PlayableItem& a, const PlayableItem& b) { return a.name < b.name; });
 
 		if (playables.empty()) {
-			ui::drawCenteredText(R, "No playable livings registered.", 0.0f, 0.10f, 0.90f, kDanger);
+			ui::drawCenteredText(R, "No playable livings registered.",
+				-0.61f, 0.10f, 0.90f, kDanger);
 		} else {
 			std::vector<std::string> names;
 			names.reserve(playables.size() + 1);
@@ -156,7 +223,7 @@ void MenuRenderer::renderMenu() {
 
 			static int cursor = 0;
 			int picked = drawMenuList(in, names, cursor,
-				-0.45f, 0.12f, 0.070f, 0.50f);
+				-0.61f, 0.38f, 0.085f, 0.52f);
 
 			if (cursor >= 0 && cursor < (int)playables.size())
 				g.m_previewCreatureId = playables[cursor].id;
@@ -171,17 +238,18 @@ void MenuRenderer::renderMenu() {
 		}
 
 		if (!g.m_connectError.empty())
-			ui::drawCenteredText(R, g.m_connectError.c_str(), 0.0f, -0.80f, 0.70f, kDanger);
+			ui::drawCenteredText(R, g.m_connectError.c_str(),
+				-0.61f, -0.62f, 0.70f, kDanger);
 		break;
 	}
 	case MenuScreen::Connecting: {
-		ui::drawCenteredText(R, "Connecting...", 0.0f, 0.15f, 1.30f, kText);
+		drawMenuFrame(R, -0.40f, -0.18f, 0.80f, 0.50f, "Entering World");
 		int dots = (int)(g.m_wallTime * 2.0f) % 4;
 		const char* dotStr[] = {"", ".", "..", "..."};
 		char buf[64];
 		std::snprintf(buf, sizeof(buf), "Streaming world%s", dotStr[dots]);
-		ui::drawCenteredText(R, buf, 0.0f, 0.05f, 0.80f, kTextHint);
-		ui::drawCenteredText(R, "[Esc] Cancel", 0.0f, -0.10f, 0.70f, kTextDim);
+		ui::drawCenteredText(R, buf, 0.0f, 0.08f, 0.90f, kText);
+		ui::drawCenteredText(R, "[Esc] Cancel", 0.0f, -0.06f, 0.70f, kTextDim);
 
 		if (g.m_server && g.m_server->pollWelcome()) {
 			g.m_connecting = false;
@@ -200,20 +268,21 @@ void MenuRenderer::renderMenu() {
 		break;
 	}
 	case MenuScreen::Multiplayer: {
-		ui::drawCenteredText(R, "Multiplayer", 0.0f, 0.25f, 1.10f, kText);
-		ui::drawCenteredText(R, "LAN browser coming in Stage C.", 0.0f, 0.15f, 0.70f, kTextHint);
+		drawMenuFrame(R, -0.44f, -0.28f, 0.88f, 0.72f, "Multiplayer");
+		ui::drawCenteredText(R, "LAN browser coming in Stage C.",
+			0.0f, 0.16f, 0.80f, kText);
 		ui::drawCenteredText(R, "For now: civcraft-ui-vk --host HOST --port PORT",
 			0.0f, 0.08f, 0.65f, kTextHint);
 
 		static int cursor = 0;
 		std::vector<std::string> items = { "BACK" };
 		int picked = drawMenuList(in, items, cursor,
-			0.0f, -0.10f, 0.080f, 0.40f);
+			0.0f, -0.08f, 0.100f, 0.40f);
 		if (picked == 0) { g.m_menuScreen = MenuScreen::Main; cursor = 0; }
 		break;
 	}
 	case MenuScreen::Settings: {
-		ui::drawCenteredText(R, "Controls", 0.0f, 0.35f, 1.10f, kText);
+		drawMenuFrame(R, -0.40f, -0.42f, 0.80f, 1.00f, "Controls");
 
 		struct KV { const char* k; const char* v; };
 		const KV kvs[] = {
@@ -230,18 +299,18 @@ void MenuRenderer::renderMenu() {
 			{"Debug / Tuning", "F3 / F6"},
 			{"Screenshot",     "F2"},
 		};
-		float y = 0.26f;
+		float y = 0.40f;
 		for (const auto& kv : kvs) {
 			char buf[96];
 			std::snprintf(buf, sizeof(buf), "%-16s %s", kv.k, kv.v);
-			ui::drawCenteredText(R, buf, 0.0f, y, 0.75f, kTextDim);
+			ui::drawCenteredText(R, buf, 0.0f, y, 0.75f, kText);
 			y -= 0.040f;
 		}
 
 		static int cursor = 0;
 		std::vector<std::string> items = { "BACK" };
 		int picked = drawMenuList(in, items, cursor,
-			0.0f, -0.30f, 0.080f, 0.40f);
+			0.0f, -0.24f, 0.100f, 0.40f);
 		if (picked == 0) { g.m_menuScreen = MenuScreen::Main; cursor = 0; }
 		break;
 	}
@@ -257,17 +326,18 @@ void MenuRenderer::renderGameMenu() {
 	MenuListInput in{R, g.m_window, g.m_mouseNdcX, g.m_mouseNdcY, g.m_mouseLReleased};
 
 	R->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, ui::color::kScrim);
-	ui::drawCenteredTitle(R, "Game Is Not Paused", 0.0f, 0.42f, 3.0f, ui::color::kBrass);
+	ui::drawCenteredTitle(R, "Game Is Not Paused", 0.0f, 0.70f, 2.4f, ui::color::kBrass);
 
 	static bool showLog = false;
 
 	if (!showLog) {
+		drawMenuFrame(R, -0.28f, -0.30f, 0.56f, 0.86f, nullptr);
 		static int cursor = 0;
 		std::vector<std::string> items = {
 			"RESUME", "GAME LOG", "MAIN MENU", "QUIT"
 		};
 		int picked = drawMenuList(in, items, cursor,
-			0.0f, 0.12f, 0.080f, 0.44f);
+			0.0f, 0.40f, 0.100f, 0.48f);
 		if (picked == 0) g.closeGameMenu();
 		else if (picked == 1) showLog = true;
 		else if (picked == 2) g.enterMenu();
@@ -320,18 +390,20 @@ void MenuRenderer::renderDeath() {
 	MenuListInput in{R, g.m_window, g.m_mouseNdcX, g.m_mouseNdcY, g.m_mouseLReleased};
 
 	R->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, ui::color::kScrimDark);
-	ui::drawCenteredTitle(R, "YOU DIED", 0.0f, 0.32f, 3.0f, ui::color::kRed);
+	ui::drawCenteredTitle(R, "YOU DIED", 0.0f, 0.62f, 2.8f, ui::color::kRed);
+
+	drawMenuFrame(R, -0.32f, -0.38f, 0.64f, 0.82f, nullptr);
 
 	if (!g.m_lastDeathReason.empty())
-		ui::drawCenteredText(R, g.m_lastDeathReason.c_str(), 0.0f, 0.18f, 0.90f, kDanger);
+		ui::drawCenteredText(R, g.m_lastDeathReason.c_str(), 0.0f, 0.28f, 0.85f, kDanger);
 
 	ui::drawCenteredText(R, "[R] Respawn    [Esc] Main Menu",
-		0.0f, 0.08f, 0.80f, kTextDim);
+		0.0f, 0.16f, 0.70f, kTextDim);
 
 	static int cursor = 0;
 	std::vector<std::string> items = { "RESPAWN", "MAIN MENU" };
 	int picked = drawMenuList(in, items, cursor,
-		0.0f, -0.05f, 0.080f, 0.40f);
+		0.0f, -0.02f, 0.100f, 0.46f);
 	if (picked == 0) g.respawn();
 	else if (picked == 1) g.enterMenu();
 }

@@ -946,9 +946,11 @@ void Game::runOneFrame(float dt, float wallTime) {
 
 	if (m_state == GameState::Menu) {
 		// Render a calm ambient backdrop so the menu isn't just a
-		// solid rect — reuse the sky + a faraway camera orbit.
+		// solid rect — reuse the sky + a slow camera orbit over the
+		// menu plaza (grass + trees emitted by WorldRenderer).
 		float menuAng = m_menuTitleT * 0.08f;
-		glm::vec3 menuFocus(std::sin(menuAng) * 2.0f, 7.0f, std::cos(menuAng) * 2.0f);
+		glm::vec3 menuFocus(std::sin(menuAng) * 0.5f, 2.5f,
+		                    std::cos(menuAng) * 0.5f);
 		// CharacterSelect pins the camera so the preview model holds steady
 		// to the right of the panel (panel is anchorX=0.28, preview lands at
 		// roughly anchorX≈0.72). Other menu screens keep the slow orbit.
@@ -971,10 +973,12 @@ void Game::runOneFrame(float dt, float wallTime) {
 		} else {
 			// Manually drive camera for the menu backdrop — don't run the full
 			// Camera::processInput (it would reset mouse-tracking every frame).
-			radius = kTune.camDistance * 1.2f;
-			pitch  = 0.15f;
+			// Wider orbit + slight tilt so the plaza + tree silhouettes read
+			// as layered depth behind the menu chrome.
+			radius = 14.0f;
+			pitch  = 0.12f;   // slight downward tilt
 			yaw    = menuAng + 3.14f * 0.5f;
-			head   = menuFocus + glm::vec3(0, kTune.camHeight, 0);
+			head   = menuFocus + glm::vec3(0, 1.5f, 0);
 		}
 		glm::vec3 dir(std::cos(pitch) * std::cos(yaw),
 		              std::sin(pitch),
