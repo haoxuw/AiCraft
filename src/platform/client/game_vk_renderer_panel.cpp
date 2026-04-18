@@ -1,5 +1,6 @@
 #include "client/game_vk_renderers.h"
 #include "client/game_vk.h"
+#include "client/ui_kit.h"
 
 #include <algorithm>
 #include <cmath>
@@ -92,21 +93,163 @@ void PanelRenderer::renderDebugOverlay() {
 	}
 }
 
-// Phase-1 stub: render tuning panel is hidden until it's rebuilt
-// custom-drawn. The sliders + presets live on m_grading; F6 still toggles
-// m_showTuning but there's nothing to draw. Defaults are Vivid.
+// ─────────────────────────────────────────────────────────────────────────
+// F6 tuning panel — sliders for GradingParams (post-process look)
+//
+// Tracks are clickable + draggable: press within the track sets the value
+// from cursor x; holding keeps updating while the mouse is down. Presets
+// snap the whole GradingParams to one of the rhi::IRhi::GradingParams
+// named factories (Vivid / Dungeons / neutral reset).
+// ─────────────────────────────────────────────────────────────────────────
 void PanelRenderer::renderTuningPanel() {
 	Game& g = game_;
-	(void)g;
-	// TODO: custom-drawn sliders for SSAO/Bloom/Vignette/ACES/etc.
+	rhi::IRhi* r = g.m_rhi;
+	using namespace ui::color;
+
+	// Panel geometry — top-right, fits beside the inventory button column.
+	const float panelW = 0.58f;
+	const float panelH = 0.92f;
+	const float panelX = 1.0f - panelW - 0.020f;
+	const float panelY = 0.50f - panelH * 0.5f;
+
+	const float shadow[4] = {0.00f, 0.00f, 0.00f, 0.55f};
+	const float fill[4]   = {0.08f, 0.07f, 0.08f, 0.96f};
+	const float brass[4]  = {0.65f, 0.48f, 0.20f, 1.00f};
+	ui::drawShadowPanel(r, panelX, panelY, panelW, panelH,
+		shadow, fill, brass, 0.003f);
+
+	// Title strip.
+	const float titleH = 0.075f;
+	const float titleY = panelY + panelH - titleH;
+	const float titleFill[4] = {0.14f, 0.10f, 0.07f, 0.95f};
+	r->drawRect2D(panelX + 0.010f, titleY, panelW - 0.020f, titleH - 0.010f, titleFill);
+	const float titleCol[4] = {1.0f, 0.85f, 0.45f, 1.0f};
+	ui::drawCenteredTitle(r, "Look & Tuning",
+		panelX + panelW * 0.5f, titleY + 0.020f, 1.05f, titleCol);
+	const float closeDim[4] = {0.70f, 0.65f, 0.55f, 0.90f};
+	r->drawText2D("[F6] close",
+		panelX + panelW - 0.17f, titleY + 0.026f, 0.60f, closeDim);
+
+	// Body layout.
+	const float bodyX     = panelX + 0.035f;
+	const float bodyRight = panelX + panelW - 0.035f;
+	const float labelW    = 0.16f;
+	const float valueW    = 0.06f;
+	const float trackX    = bodyX + labelW;
+	const float trackW    = bodyRight - bodyX - labelW - valueW;
+	const float trackH    = 0.012f;
+	const float rowStep   = 0.055f;
+	float y = titleY - 0.050f;
+
+	// Slider — click/drag within the track sets the value.
+	auto slider = [&](const char* label, float* v, float vmin, float vmax) {
+		// Label + numeric value
+		r->drawText2D(label, bodyX, y, 0.65f, kTextDim);
+		char num[32];
+		std::snprintf(num, sizeof(num), "%.2f", *v);
+		r->drawText2D(num, bodyRight - valueW + 0.005f, y, 0.65f, kText);
+
+		float tY = y + 0.004f;
+		const float trkBg[4]   = {0.05f, 0.05f, 0.06f, 1.00f};
+		const float trkFill[4] = {0.55f, 0.75f, 0.95f, 0.90f};
+		float frac = (*v - vmin) / (vmax - vmin);
+		if (frac < 0.0f) frac = 0.0f;
+		if (frac > 1.0f) frac = 1.0f;
+		ui::drawMeter(r, trackX, tY, trackW, trackH, frac, trkFill, trkBg, brass);
+
+		// Knob (square, centered on frac).
+		const float knobW = 0.010f;
+		const float knobH = 0.028f;
+		float knobX = trackX + trackW * frac - knobW * 0.5f;
+		float knobY = tY + trackH * 0.5f - knobH * 0.5f;
+		const float knobCol[4] = {0.98f, 0.84f, 0.40f, 1.0f};
+		r->drawRect2D(knobX, knobY, knobW, knobH, knobCol);
+
+		// Hit-test: a generous Y band around the track; click or drag updates.
+		const float hitPadY = 0.010f;
+		bool inBand = g.m_mouseNdcX >= trackX && g.m_mouseNdcX <= trackX + trackW
+		           && g.m_mouseNdcY >= tY - hitPadY
+		           && g.m_mouseNdcY <= tY + trackH + hitPadY;
+		if ((g.m_mouseLPressed && inBand) || (g.m_mouseLHeld && inBand)) {
+			float nf = (g.m_mouseNdcX - trackX) / trackW;
+			if (nf < 0.0f) nf = 0.0f;
+			if (nf > 1.0f) nf = 1.0f;
+			*v = vmin + nf * (vmax - vmin);
+		}
+		y -= rowStep;
+	};
+
+	slider("SSAO",       &g.m_grading.ssao,       0.0f, 1.0f);
+	slider("Bloom",      &g.m_grading.bloom,      0.0f, 1.0f);
+	slider("Vignette",   &g.m_grading.vignette,   0.0f, 0.5f);
+	slider("ACES",       &g.m_grading.aces,       0.0f, 1.0f);
+	slider("Exposure",   &g.m_grading.exposure,   0.3f, 1.5f);
+	slider("Warm Tint",  &g.m_grading.warmTint,   0.0f, 1.0f);
+	slider("S-Curve",    &g.m_grading.sCurve,     0.0f, 0.2f);
+	slider("Saturation", &g.m_grading.saturation, -1.0f, 1.0f);
+
+	// Preset buttons row.
+	y -= 0.010f;
+	const float btnH = 0.044f;
+	const float btnGap = 0.012f;
+	const float btnW = (bodyRight - bodyX - btnGap * 2) / 3.0f;
+	auto button = [&](float bx, const char* label,
+	                  rhi::IRhi::GradingParams target) {
+		bool hov = ui::rectContainsNdc(bx, y, btnW, btnH,
+			g.m_mouseNdcX, g.m_mouseNdcY);
+		const float bgIdle[4] = {0.14f, 0.13f, 0.12f, 0.95f};
+		const float bgHov [4] = {0.24f, 0.20f, 0.12f, 0.98f};
+		r->drawRect2D(bx, y, btnW, btnH, hov ? bgHov : bgIdle);
+		ui::drawOutline(r, bx, y, btnW, btnH, 0.002f, brass);
+		const float* lc = hov ? titleCol : kText;
+		ui::drawCenteredText(r, label, bx + btnW * 0.5f, y + btnH * 0.5f - 0.010f,
+			0.75f, lc);
+		if (hov && g.m_mouseLPressed) g.m_grading = target;
+	};
+	button(bodyX,                           "Vivid",    rhi::IRhi::GradingParams::Vivid());
+	button(bodyX + btnW + btnGap,           "Dungeons", rhi::IRhi::GradingParams::Dungeons());
+	button(bodyX + (btnW + btnGap) * 2,     "Reset",    rhi::IRhi::GradingParams{});
 }
 
-// Phase-1 stub: handbook is hidden until the tabbed browser is rebuilt
-// custom-drawn. H toggles m_handbookOpen but there's nothing to draw.
+// ─────────────────────────────────────────────────────────────────────────
+// H handbook — minimal placeholder shell
+//
+// The legacy handbook was a full artifact browser + model/behavior editors
+// in ImGui (see handbook_features.md). That's a large standalone feature
+// and not part of the ImGui-purge re-skin. This renders a small centered
+// notice so [H] isn't a dead key, and points at the roadmap.
+// ─────────────────────────────────────────────────────────────────────────
 void PanelRenderer::renderHandbook() {
 	Game& g = game_;
-	(void)g;
-	// TODO: custom-drawn artifact browser with category tabs + detail pane.
+	rhi::IRhi* r = g.m_rhi;
+	using namespace ui::color;
+
+	r->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, kScrim);
+
+	const float panelW = 0.80f;
+	const float panelH = 0.36f;
+	const float panelX = -panelW * 0.5f;
+	const float panelY = -panelH * 0.5f;
+
+	const float shadow[4] = {0.00f, 0.00f, 0.00f, 0.55f};
+	const float fill[4]   = {0.09f, 0.07f, 0.06f, 0.97f};
+	const float brass[4]  = {0.65f, 0.48f, 0.20f, 1.00f};
+	ui::drawShadowPanel(r, panelX, panelY, panelW, panelH,
+		shadow, fill, brass, 0.003f);
+
+	const float titleCol[4] = {1.0f, 0.85f, 0.45f, 1.0f};
+	ui::drawCenteredTitle(r, "Handbook",
+		0.0f, panelY + panelH - 0.075f, 1.25f, titleCol);
+
+	ui::drawCenteredText(r,
+		"The artifact browser is being rebuilt.",
+		0.0f, panelY + panelH - 0.155f, 0.75f, kText);
+	ui::drawCenteredText(r,
+		"Fork / edit / model-preview flow returns in a later pass.",
+		0.0f, panelY + panelH - 0.195f, 0.65f, kTextDim);
+	ui::drawCenteredText(r,
+		"[H] or [Esc] to close",
+		0.0f, panelY + 0.060f, 0.65f, kTextHint);
 }
 
 } // namespace civcraft::vk
