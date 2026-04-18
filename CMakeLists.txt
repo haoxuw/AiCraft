@@ -167,6 +167,8 @@ add_executable(civcraft-ui-vk
 	src/platform/client/game_vk_renderer_panel.cpp
 	src/platform/client/game_vk_renderer_entity_ui.cpp
 	src/platform/client/game_vk_renderer_inventory.cpp
+	src/platform/client/ui_kit.h
+	src/platform/client/ui_kit.cpp
 	src/platform/client/rhi/rhi.h
 	src/platform/client/rhi/rhi_vk.h
 	src/platform/client/rhi/rhi_vk.cpp

@@ -28,6 +28,7 @@
 
 #include "client/game_vk_renderers.h"
 #include "client/game_vk.h"
+#include "client/ui_kit.h"
 
 #include "client/box_model_flatten.h"
 #include "client/box_model.h"
@@ -78,10 +79,10 @@ static std::string prettify(const std::string& id) {
 	return s;
 }
 
-// Point-in-rect using NDC (+Y up).
+// Point-in-rect using NDC (+Y up). Thin adapter over ui::rectContainsNdc
+// so callers don't unpack SlotRect fields.
 static bool rectContains(const Game::SlotRect& r, float x, float y) {
-	return x >= r.ndcX && x <= r.ndcX + r.ndcW
-	    && y >= r.ndcY && y <= r.ndcY + r.ndcH;
+	return ui::rectContainsNdc(r.ndcX, r.ndcY, r.ndcW, r.ndcH, x, y);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -267,10 +268,7 @@ void drawSlotFrame(rhi::IRhi* r, const SlotChromeArgs& a) {
 	const float outDim  [4] = {0.38f, 0.28f, 0.14f, 0.85f};
 	const float* out = a.selected ? outSel : (a.hover ? outHover : outDim);
 	float t = a.selected ? 0.004f : 0.002f;
-	r->drawRect2D(a.x,            a.y,             a.w, t,   out);
-	r->drawRect2D(a.x,            a.y + a.h - t,   a.w, t,   out);
-	r->drawRect2D(a.x,            a.y,             t,   a.h, out);
-	r->drawRect2D(a.x + a.w - t,  a.y,             t,   a.h, out);
+	ui::drawOutline(r, a.x, a.y, a.w, a.h, t, out);
 
 	// Count chip bottom-right (no rarity strip — user prefers a clean slot).
 	if (hasItem) {
@@ -492,12 +490,8 @@ void HudRenderer::renderInventoryPanel() {
 	// Outer dark frame as 4 thin edges (leaves the center transparent).
 	{
 		float ft = 0.008f;
-		float fx = panelX - ft, fy = panelY - ft;
-		float fw = panelW + 2 * ft, fh = panelH + 2 * ft;
-		r->drawRect2D(fx,           fy,            fw, ft, frameOut);
-		r->drawRect2D(fx,           fy + fh - ft,  fw, ft, frameOut);
-		r->drawRect2D(fx,           fy,            ft, fh, frameOut);
-		r->drawRect2D(fx + fw - ft, fy,            ft, fh, frameOut);
+		ui::drawOutline(r, panelX - ft, panelY - ft,
+			panelW + 2 * ft, panelH + 2 * ft, ft, frameOut);
 	}
 	// Dark fill bands — top (title+tabs+stats), bottom (footer), sides.
 	r->drawRect2D(panelX, gridBandTopY, panelW, gridReserveTop, fill);
@@ -511,10 +505,7 @@ void HudRenderer::renderInventoryPanel() {
 		float off = 0.010f;
 		float bx = panelX + off, by = panelY + off;
 		float bw = panelW - off * 2, bh = panelH - off * 2;
-		r->drawRect2D(bx,          by,          bw, t,  brass);
-		r->drawRect2D(bx,          by + bh - t, bw, t,  brass);
-		r->drawRect2D(bx,          by,          t,  bh, brass);
-		r->drawRect2D(bx + bw - t, by,          t,  bh, brass);
+		ui::drawOutline(r, bx, by, bw, bh, t, brass);
 		// Upper highlight (1-px warm line just above the top brass edge).
 		r->drawRect2D(bx + t, by + bh - t - 0.002f, bw - 2 * t, 0.002f, brassHi);
 		// Inner brass edges framing the grid window.
@@ -572,11 +563,7 @@ void HudRenderer::renderInventoryPanel() {
 			r->drawRect2D(tx, tabY + tabH - 0.003f, tabW, 0.003f, topLit);
 		}
 		const float brd[4] = {0.35f, 0.25f, 0.10f, 0.95f};
-		float t = 0.0015f;
-		r->drawRect2D(tx, tabY, tabW, t, brd);
-		r->drawRect2D(tx, tabY + tabH - t, tabW, t, brd);
-		r->drawRect2D(tx, tabY, t, tabH, brd);
-		r->drawRect2D(tx + tabW - t, tabY, t, tabH, brd);
+		ui::drawOutline(r, tx, tabY, tabW, tabH, 0.0015f, brd);
 
 		const float labelCol[4]  = {0.94f, 0.88f, 0.70f, 1.0f};
 		const float labelDim [4] = {0.70f, 0.62f, 0.50f, 1.0f};
@@ -745,11 +732,7 @@ void HudRenderer::renderInventoryPanel() {
 			const float tipBorder[4] = {0.55f, 0.40f, 0.18f, 1.0f};
 			r->drawRect2D(tx + 0.008f, ty - 0.008f, tipW, tipH, tipShadow);
 			r->drawRect2D(tx, ty, tipW, tipH, tipFill);
-			float bt = 0.002f;
-			r->drawRect2D(tx, ty, tipW, bt, tipBorder);
-			r->drawRect2D(tx, ty + tipH - bt, tipW, bt, tipBorder);
-			r->drawRect2D(tx, ty, bt, tipH, tipBorder);
-			r->drawRect2D(tx + tipW - bt, ty, bt, tipH, tipBorder);
+			ui::drawOutline(r, tx, ty, tipW, tipH, 0.002f, tipBorder);
 
 			const float nameColArr[4] = { rc.x, rc.y, rc.z, 1.0f };
 			const float metaCol[4]    = {0.70f, 0.64f, 0.54f, 1.0f};
