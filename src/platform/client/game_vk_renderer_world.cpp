@@ -108,6 +108,15 @@ void WorldRenderer::renderWorld(float wallTime) {
 	// owner of time-of-day). worldTime ∈ [0,1): 0=midnight, 0.25=dawn,
 	// 0.5=noon, 0.75=dusk. Angle convention puts the sun overhead at noon.
 	float tod      = g.m_server ? g.m_server->worldTime() : 0.5f;
+	// Menu preview (CharacterSelect / Connecting) forces a late-morning sun
+	// so the model reads well regardless of the live server's time-of-day —
+	// the character picker shouldn't be a black silhouette at dawn/dusk.
+	if (g.m_state == civcraft::vk::GameState::Menu
+	    && (g.m_menuScreen == civcraft::vk::MenuScreen::CharacterSelect
+	        || g.m_menuScreen == civcraft::vk::MenuScreen::Connecting)
+	    && !g.m_previewCreatureId.empty()) {
+		tod = 0.42f;  // mid-morning: sun well above horizon, warm slant light
+	}
 	float sunAngle = tod * 6.2831853f - 1.5707963f;   // 2π·tod − π/2
 	glm::vec3 sunDir = glm::normalize(glm::vec3(
 		std::cos(sunAngle),

@@ -133,7 +133,7 @@ void MenuRenderer::renderMenu() {
 	case MenuScreen::CharacterSelect: {
 		ui::drawCenteredText(R, "Choose Your Character", 0.0f, 0.30f, 1.10f, kText);
 		ui::drawCenteredText(R, "Arrow keys to pick, Enter to enter the world.",
-			0.0f, 0.23f, 0.65f, kTextHint);
+			0.0f, 0.23f, 0.70f, kTextDim);
 
 		struct PlayableItem { std::string id, name; };
 		std::vector<PlayableItem> playables;
