@@ -70,11 +70,17 @@ inline void emitHeldItem(std::vector<float>& out,
 
 // Append 19 floats per part (matrix + color). No hit-flash tint — apply via
 // shader push constant if needed.
+//
+// rootOverride: if non-null, use this matrix as the model's root frame
+// instead of building one from feetPos+yaw. Lets HUD callers orient items
+// fully along the camera basis (right/up/back) so slot items stay upright
+// at any camera pitch, not just yaw.
 inline void appendBoxModel(std::vector<float>& out,
                            const BoxModel& model,
                            glm::vec3 feetPos, float yaw,
                            const AnimState& anim,
-                           const HeldItems* held = nullptr) {
+                           const HeldItems* held = nullptr,
+                           const glm::mat4* rootOverride = nullptr) {
 	constexpr float TWO_PI = 6.28318530718f;
 	float s = model.modelScale;
 
@@ -94,12 +100,17 @@ inline void appendBoxModel(std::vector<float>& out,
 		          * idleBlend * s;
 	}
 
-	glm::mat4 root = glm::translate(glm::mat4(1.0f),
-		feetPos + glm::vec3(0, idleBob + walkBob, 0));
-	root = glm::rotate(root, glm::radians(-yaw - 90.0f), glm::vec3(0, 1, 0));
-	if (smoothSpeed > 0.05f) {
-		float lean = smoothSpeed * 3.5f;
-		root = glm::rotate(root, glm::radians(lean), glm::vec3(1, 0, 0));
+	glm::mat4 root;
+	if (rootOverride) {
+		root = *rootOverride;
+	} else {
+		root = glm::translate(glm::mat4(1.0f),
+			feetPos + glm::vec3(0, idleBob + walkBob, 0));
+		root = glm::rotate(root, glm::radians(-yaw - 90.0f), glm::vec3(0, 1, 0));
+		if (smoothSpeed > 0.05f) {
+			float lean = smoothSpeed * 3.5f;
+			root = glm::rotate(root, glm::radians(lean), glm::vec3(1, 0, 0));
+		}
 	}
 
 	const AnimClip* activeClip = nullptr;

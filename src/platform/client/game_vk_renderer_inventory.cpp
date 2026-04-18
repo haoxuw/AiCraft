@@ -196,10 +196,6 @@ void HudRenderer::renderInventoryItems3D() {
 			part.halfSize *= scale;
 		}
 		float cy = (minY + maxY) * 0.5f * scale;
-		// Centre the model in the slot along the camera's up axis so the
-		// item stays in place when the camera looks straight down (where
-		// world-Y offset would push it behind the camera).
-		glm::vec3 feet = itemWorldPos - camUp * cy;
 
 		civcraft::AnimState anim{};
 		anim.time = g.m_wallTime;
@@ -207,9 +203,20 @@ void HudRenderer::renderInventoryItems3D() {
 		float rpm     = s.selected ? 80.0f : 32.0f;
 		float offset  = (float)((size_t)(&s - slots.data()) * 37);
 		float slowSpin = (float)g.m_wallTime * rpm + offset;
-		float spinYaw  = 90.0f + g.m_cam.lookYaw + slowSpin;
 
-		civcraft::appendBoxModel(boxes, m, feet, spinYaw, anim);
+		// Camera-basis root: local +X = camRight, +Y = camUp, +Z = -camFwd
+		// (toward the camera). This pins the slot item upright in the slot
+		// at any camera pitch/yaw, not just yaw. Then spin around local +Y
+		// for the in-place rotation, and -Y * cy to centre vertically.
+		glm::mat4 root(1.0f);
+		root[0] = glm::vec4(camRight, 0.0f);
+		root[1] = glm::vec4(camUp,    0.0f);
+		root[2] = glm::vec4(-camFwd,  0.0f);
+		root[3] = glm::vec4(itemWorldPos, 1.0f);
+		root = glm::rotate(root, glm::radians(-slowSpin - 90.0f), glm::vec3(0, 1, 0));
+		root = glm::translate(root, glm::vec3(0.0f, -cy, 0.0f));
+
+		civcraft::appendBoxModel(boxes, m, glm::vec3(0.0f), 0.0f, anim, nullptr, &root);
 	}
 
 	if (boxes.empty()) return;
