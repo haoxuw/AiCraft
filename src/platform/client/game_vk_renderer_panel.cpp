@@ -1,16 +1,12 @@
 #include "client/game_vk_renderers.h"
 #include "client/game_vk.h"
 
-#include <imgui.h>
-
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
 #include "client/raycast.h"
-#include "client/ui/ui_screen.h"
-#include "client/ui/ui_theme.h"
-#include "client/ui/ui_widgets.h"
 #include "client/network_server.h"
 #include "net/server_interface.h"
 #include "logic/action.h"
@@ -18,7 +14,7 @@
 namespace civcraft::vk {
 
 // ─────────────────────────────────────────────────────────────────────────
-// F3 debug overlay
+// F3 debug overlay — custom-drawn text column (top-left)
 // ─────────────────────────────────────────────────────────────────────────
 void PanelRenderer::renderDebugOverlay() {
 	Game& g = game_;
@@ -27,7 +23,7 @@ void PanelRenderer::renderDebugOverlay() {
 	float step = 0.035f;
 	const float dim[4] = {0.85f, 0.85f, 0.90f, 0.95f};
 
-	float fps = ImGui::GetIO().Framerate;
+	float fps = g.m_fpsDisplay;
 	float fpsCol[4] = {0.85f, 0.85f, 0.90f, 0.95f};
 	if (fps < 30) { fpsCol[0] = 1.0f; fpsCol[1] = 0.3f; fpsCol[2] = 0.3f; }
 	else if (fps < 45) { fpsCol[0] = 1.0f; fpsCol[1] = 0.8f; fpsCol[2] = 0.2f; }
@@ -96,166 +92,21 @@ void PanelRenderer::renderDebugOverlay() {
 	}
 }
 
-// ══════════════════════════════════════════════════════════════════
-// Render Tuning panel (F6). Every global color/grading effect the VK
-// composite pass applies is driven by one slider here — all defaulting
-// to 0 (no effect) so the base render is clean. Drag to taste.
-// ══════════════════════════════════════════════════════════════════
-
+// Phase-1 stub: render tuning panel is hidden until it's rebuilt
+// custom-drawn. The sliders + presets live on m_grading; F6 still toggles
+// m_showTuning but there's nothing to draw. Defaults are Vivid.
 void PanelRenderer::renderTuningPanel() {
 	Game& g = game_;
-	ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowPos(ImVec2(20, 120), ImGuiCond_FirstUseEver);
-	if (ImGui::Begin("Render Tuning (F6)", &g.m_showTuning)) {
-		ui::Hint("Scene starts on the Vivid preset. Drag to tweak or pick another.");
-		ui::VerticalSpace();
-
-		ui::SectionHeader("Post Process");
-		ImGui::SliderFloat("SSAO",      &g.m_grading.ssao,     0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat("Bloom",     &g.m_grading.bloom,    0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat("Vignette",  &g.m_grading.vignette, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat("ACES Tone", &g.m_grading.aces,     0.0f, 1.0f, "%.2f");
-
-		ui::VerticalSpace();
-		ui::SectionHeader("Color Grade");
-		ImGui::SliderFloat("Exposure",  &g.m_grading.exposure,   0.3f, 1.5f, "%.2f");
-		ImGui::SliderFloat("Warm Tint", &g.m_grading.warmTint,   0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat("S-Curve",   &g.m_grading.sCurve,     0.0f, 0.2f, "%.3f");
-		ImGui::SliderFloat("Saturation",&g.m_grading.saturation,-1.0f, 1.0f, "%+0.2f");
-
-		ui::VerticalSpace();
-		ui::SectionHeader("Presets");
-		float half = (ImGui::GetContentRegionAvail().x - 8.0f) * 0.5f;
-		if (ui::SecondaryButton("Vivid", half))
-			g.m_grading = rhi::IRhi::GradingParams::Vivid();
-		ImGui::SameLine(0, 8.0f);
-		if (ui::SecondaryButton("Dungeons", half))
-			g.m_grading = rhi::IRhi::GradingParams::Dungeons();
-	}
-	ImGui::End();
+	(void)g;
+	// TODO: custom-drawn sliders for SSAO/Bloom/Vignette/ACES/etc.
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Handbook — ImGui artifact browser (H key)
-// ─────────────────────────────────────────────────────────────────────────
+// Phase-1 stub: handbook is hidden until the tabbed browser is rebuilt
+// custom-drawn. H toggles m_handbookOpen but there's nothing to draw.
 void PanelRenderer::renderHandbook() {
 	Game& g = game_;
-	ImGui::SetNextWindowSize(ImVec2(780, 540), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowPos(
-		ImVec2(g.m_fbW * 0.5f, g.m_fbH * 0.5f), ImGuiCond_FirstUseEver,
-		ImVec2(0.5f, 0.5f));
-
-	if (ImGui::Begin("Handbook", &g.m_handbookOpen)) {
-		auto categories = g.m_artifactRegistry.allCategories();
-		if (ImGui::BeginTabBar("HandbookTabs")) {
-			for (auto& cat : categories) {
-				auto entries = g.m_artifactRegistry.byCategory(cat);
-				if (entries.empty()) continue;
-				std::string label = cat;
-				if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
-				char tabLabel[64];
-				snprintf(tabLabel, sizeof(tabLabel), "%s (%zu)",
-					label.c_str(), entries.size());
-				if (ImGui::BeginTabItem(tabLabel)) {
-					// Left panel: entry list
-					ImGui::BeginChild("EntryList", ImVec2(200, 0), true);
-					static std::string selectedId;
-					for (auto* e : entries) {
-						bool sel = (selectedId == e->id);
-						ImGui::PushID(e->id.c_str());
-						if (ImGui::Selectable(e->name.c_str(), sel))
-							selectedId = e->id;
-						ImGui::PopID();
-					}
-					ImGui::EndChild();
-
-					ImGui::SameLine();
-
-					// Right panel: detail
-					ImGui::BeginChild("EntryDetail", ImVec2(0, 0), true);
-					const civcraft::ArtifactEntry* selected = nullptr;
-					for (auto* e : entries)
-						if (e->id == selectedId) { selected = e; break; }
-
-					if (selected) {
-						if (auto* f = ui::header()) ImGui::PushFont(f);
-						ui::ColoredText(ui::kAccent, "%s", selected->name.c_str());
-						if (ui::header()) ImGui::PopFont();
-						ui::Hint("%s", selected->id.c_str());
-						ui::Divider();
-
-						if (!selected->description.empty()) {
-							ImGui::TextWrapped("%s", selected->description.c_str());
-							ui::VerticalSpace();
-						}
-
-						// Properties
-						ui::SectionHeader("Properties");
-						float matVal = civcraft::getMaterialValue(selected->id);
-						ui::KeyValue("Material value", "%g", matVal);
-						for (auto& [key, val] : selected->fields) {
-							if (key == "name" || key == "id" || key == "description"
-							    || key == "subcategory") continue;
-							std::string label2 = key;
-							for (auto& c : label2) if (c == '_') c = ' ';
-							if (!label2.empty()) label2[0] = toupper(label2[0]);
-							ui::KeyValue(label2.c_str(), "%s", val.c_str());
-						}
-
-						// Source code (Python syntax highlighting)
-						if (!selected->source.empty()) {
-							ui::VerticalSpace();
-							if (ImGui::CollapsingHeader("Source")) {
-								ImGui::PushStyleColor(ImGuiCol_ChildBg,
-									ImVec4(0.02f, 0.02f, 0.02f, 0.95f));
-								ImGui::BeginChild("SourceCode",
-									ImVec2(0, 280), true);
-								if (auto* f = ui::mono()) ImGui::PushFont(f);
-								std::istringstream ss(selected->source);
-								std::string line;
-								while (std::getline(ss, line)) {
-									std::string_view sv(line);
-									auto trimmed = sv;
-									while (!trimmed.empty() && trimmed[0] == ' ')
-										trimmed.remove_prefix(1);
-									ImVec4 color = ui::kText;
-									if (trimmed.substr(0, 1) == "#")
-										color = ui::kOk;
-									else if (trimmed.substr(0, 3) == "def" ||
-									         trimmed.substr(0, 5) == "class")
-										color = ui::kAccent;
-									else if (trimmed.substr(0, 6) == "return" ||
-									         trimmed.substr(0, 6) == "import")
-										color = ui::kAccentGlow;
-									ImGui::TextColored(color, "%s", line.c_str());
-								}
-								if (ui::mono()) ImGui::PopFont();
-								ImGui::EndChild();
-								ImGui::PopStyleColor();
-							}
-						}
-
-						// File path
-						if (!selected->filePath.empty()) {
-							ui::VerticalSpace();
-							ui::Hint("%s", selected->filePath.c_str());
-						}
-					} else {
-						ui::Hint("Select an entry from the list.");
-					}
-					ImGui::EndChild();
-
-					ImGui::EndTabItem();
-				}
-			}
-			ImGui::EndTabBar();
-		}
-	}
-	ImGui::End();
-
-	if (!g.m_handbookOpen) {
-		glfwSetInputMode(g.m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-	}
+	(void)g;
+	// TODO: custom-drawn artifact browser with category tabs + detail pane.
 }
 
 } // namespace civcraft::vk

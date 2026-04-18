@@ -6,7 +6,7 @@ living = {
     "description": "Herd animal that grazes peacefully and goes home at night.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "pig",
     "behavior": "wander",

@@ -10,7 +10,7 @@ living = {
     "description": "Tiny buzzing pollinator. Will tend a beenest once it has a real behavior.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "bee",
     "behavior": "bee_wander",

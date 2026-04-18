@@ -6,7 +6,7 @@ living = {
     "description": "Independent feline that chases chickens and takes frequent naps.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "cat",
     "behavior": "prowl",

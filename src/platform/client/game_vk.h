@@ -13,7 +13,7 @@
 //   * Player — WASD + 4 camera modes (FPS/TPS/RPG/RTS), click-to-move,
 //     server-authoritative position via clientPos.
 //   * Combat — left-click swing → Convert proposal (server validates).
-//   * HUD — main menu (ImGui), HP bar, FPS counter.
+//   * HUD — custom-drawn menus, HP bar, FPS counter.
 //   * Particles — torch flames + fireflies.
 
 #include "client/rhi/rhi.h"
@@ -117,7 +117,7 @@ enum class GameState { Menu, Loading, Playing, GameMenu, Dead };
 // Stage C will flesh out Singleplayer (world list + create-world) and
 // Multiplayer (LAN/Saved/Direct-Connect tabs); today they're placeholders
 // that delegate to the existing auto-spawn-and-join flow.
-enum class MenuScreen : uint8_t { Main, Singleplayer, CharacterSelect, Multiplayer, Settings };
+enum class MenuScreen : uint8_t { Main, Singleplayer, CharacterSelect, Connecting, Multiplayer, Settings };
 
 class Game {
 public:
@@ -142,8 +142,14 @@ public:
 	}
 
 	// Send C_HELLO with the chosen creatureType (empty ⇒ server-default).
-	// Transitions the state machine into Playing on success.
+	// Blocking: busy-waits for S_WELCOME. Only safe for one-shot startup
+	// paths like skipMenu() where there's no UI window to keep pumping.
 	bool connectAs(const std::string& creatureType);
+
+	// Non-blocking variant for the CharacterSelect UI: sends HELLO and
+	// returns immediately. Caller transitions MenuScreen to Connecting and
+	// polls m_server->pollWelcome() each frame.
+	bool beginConnectAs(const std::string& creatureType);
 
 	// Skip the main menu and drop straight into gameplay. Used by
 	// `--skip-menu` for headless/CI flows. Connects as the server's default
@@ -156,9 +162,8 @@ public:
 	// Check if we should quit (menu → Quit, or window close).
 	bool shouldQuit() const { return m_shouldQuit; }
 
-	// Mouse-wheel routed from the platform shell. ImGui consumes first; if the
-	// cursor isn't over a UI widget the game dispatches per camera mode
-	// (orbit zoom / RTS zoom-to-cursor).
+	// Mouse-wheel routed from the platform shell. Dispatches per camera mode
+	// (FPS hotbar scroll, orbit zoom, RTS zoom-to-cursor).
 	void onScroll(double xoff, double yoff);
 
 	// Inventory-UI slot record, published by the 2D pass each frame so the
@@ -312,6 +317,11 @@ private:
 	int          m_pendingTemplate  = 1;
 	std::string  m_connectError;        // last handshake error, displayed on CharacterSelect
 	bool         m_connecting = false;  // true while awaiting S_WELCOME
+	float        m_connectStartTime = 0.0f; // m_wallTime when beginConnect fired; timeout at +60s
+	// Currently previewed playable on CharacterSelect. Button hover updates it
+	// each frame; the menu backdrop injects this model into the entity vertex
+	// stream next to the panel so the user sees what they're about to pick.
+	std::string  m_previewCreatureId;
 
 	// One persistent chunk-mesh handle per loaded chunk. ChunkMesher emits
 	// world-space vertices, so each handle just needs drawChunkMeshOpaque +
@@ -529,6 +539,13 @@ private:
 	bool                    m_showTuning = false;  // toggled by F6
 	rhi::IRhi::GradingParams m_grading = rhi::IRhi::GradingParams::Vivid();
 
+	// Rolling FPS counter. Ticked each frame by runOneFrame; exposed to HUD
+	// + F3 debug overlay. Recomputed once per second so the displayed number
+	// doesn't flicker.
+	float m_fpsDisplay   = 0.0f;
+	float m_fpsWindowS   = 0.0f;
+	int   m_fpsWindowFrames = 0;
+
 	// H handbook panel
 	bool         m_handbookOpen = false;
 	civcraft::ArtifactRegistry m_artifactRegistry;
@@ -552,7 +569,7 @@ private:
 
 	// Cached slot rects — 2D pass records, 3D pass (next frame) reads. The
 	// one-frame lag is invisible (UI doesn't move in a single frame) and
-	// lets the 3D pass precede imguiNewFrame without reordering code.
+	// lets the 3D pass precede the 2D UI pass without reordering code.
 	std::vector<SlotRect> m_slotRectsLast;
 	std::vector<SlotRect> m_slotRectsThis;
 

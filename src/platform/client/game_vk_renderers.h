@@ -37,10 +37,10 @@ public:
 
 	// Inventory + hotbar.
 	//   renderInventoryItems3D — main-pass draw of every visible slot's 3D
-	//     item model. Must run BEFORE imguiNewFrame so box models render into
-	//     the main scene and ImGui frames/text compose over them.
+	//     item model. Must run before the 2D UI pass so box models render into
+	//     the main scene and custom-drawn chrome/text composes over them.
 	//   renderHotbarBar       — 2D bezel + selection glow + count/key text.
-	//   renderInventoryPanel  — Tab-triggered ImGui window; player/chest/NPC.
+	//   renderInventoryPanel  — Tab-triggered window; player/chest/NPC.
 	void renderInventoryItems3D();
 	void renderHotbarBar();
 	void renderInventoryPanel();

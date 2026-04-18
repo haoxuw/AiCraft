@@ -29,6 +29,15 @@ public:
 	virtual void disconnect() = 0;
 	virtual bool isConnected() const = 0;
 
+	// Non-blocking handshake: UI callers send HELLO then pollWelcome() every
+	// frame, so the window keeps pumping events instead of freezing for the
+	// seconds the server spends streaming prep chunks. Default falls back to
+	// the blocking createGame() for interfaces that don't need it.
+	virtual bool beginConnect(int seed = 42, int templateIndex = 1) {
+		return createGame(seed, templateIndex);
+	}
+	virtual bool pollWelcome() { return isConnected(); }
+
 	// Chosen playable creature type (sent in C_HELLO, so call BEFORE
 	// createGame). Empty ⇒ server picks its default playable. No-op for
 	// in-process server implementations that don't use the handshake.

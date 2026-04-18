@@ -6,7 +6,7 @@ living = {
     "description": "Skittish bird that pecks, flocks, and lays eggs.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "chicken",
     "behavior": "peck",

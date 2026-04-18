@@ -10,7 +10,7 @@ living = {
     "description": "Huge-eyed night flyer. Just wandering in the air for now.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "owl",
     "behavior": "flyer_wander",

@@ -32,12 +32,6 @@ include(FetchContent)
 FetchContent_Declare(glm URL https://github.com/g-truc/glm/archive/refs/tags/1.0.1.tar.gz)
 FetchContent_MakeAvailable(glm)
 
-FetchContent_Declare(imgui
-	GIT_REPOSITORY https://github.com/ocornut/imgui.git
-	GIT_TAG v1.91.8
-)
-FetchContent_MakeAvailable(imgui)
-
 FetchContent_Declare(glfw
 	GIT_REPOSITORY https://github.com/glfw/glfw.git
 	GIT_TAG 3.4
@@ -66,19 +60,6 @@ FetchContent_Declare(pybind11
 FetchContent_MakeAvailable(pybind11)
 
 find_package(Vulkan REQUIRED)
-
-# Dear ImGui with the Vulkan backend (the only backend we ship now).
-add_library(imgui_lib_vk STATIC
-	${imgui_SOURCE_DIR}/imgui.cpp
-	${imgui_SOURCE_DIR}/imgui_demo.cpp
-	${imgui_SOURCE_DIR}/imgui_draw.cpp
-	${imgui_SOURCE_DIR}/imgui_tables.cpp
-	${imgui_SOURCE_DIR}/imgui_widgets.cpp
-	${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-	${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
-)
-target_include_directories(imgui_lib_vk PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_link_libraries(imgui_lib_vk PRIVATE glfw Vulkan::Vulkan)
 
 # --- Engine sources ---
 # Header-only except for the .cpp files listed explicitly.
@@ -109,11 +90,6 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/camera.cpp
 	src/platform/client/chunk_mesher.h
 	src/platform/client/chunk_mesher.cpp
-	src/platform/client/ui/ui_theme.h
-	src/platform/client/ui/ui_theme.cpp
-	src/platform/client/ui/ui_widgets.h
-	src/platform/client/ui/ui_widgets.cpp
-	src/platform/client/ui/ui_screen.h
 )
 
 set(GAME_INCLUDE_DIRS src/platform)
@@ -201,7 +177,7 @@ add_executable(civcraft-ui-vk
 target_include_directories(civcraft-ui-vk PRIVATE ${GAME_INCLUDE_DIRS})
 target_compile_definitions(civcraft-ui-vk PRIVATE AICRAFT_RHI_VK)
 target_link_libraries(civcraft-ui-vk PRIVATE
-	glfw glm::glm Vulkan::Vulkan imgui_lib_vk
+	glfw glm::glm Vulkan::Vulkan
 	Python3::Python pybind11::embed
 	libzstd_static
 )

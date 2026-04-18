@@ -29,13 +29,7 @@ public:
 	virtual bool beginFrame() = 0;
 	virtual void endFrame() = 0;
 
-	virtual bool initImGui() = 0;
-	virtual void shutdownImGui() = 0;
-	virtual void imguiNewFrame() = 0;
 	// Between beginFrame and endFrame.
-	virtual void imguiRender() = 0;
-
-	// Between beginFrame and imguiRender / endFrame.
 	virtual void drawCube(const float mvp[16]) = 0;
 
 	// std140 layout — stable binary contract with shaders. seasonPhase is a
@@ -89,7 +83,7 @@ public:
 	// Call BEFORE endFrame (UBO read at swapchain-pass start).
 	virtual void setGrading(const GradingParams& g) = 0;
 
-	// Call after imguiRender, before endFrame.
+	// Call after the 2D UI pass, before endFrame.
 	virtual bool screenshot(const char* path) = 0;
 
 	// Re-uploads instances per call. 6 floats/instance {pos,rgb}.
@@ -171,7 +165,7 @@ public:
 	                        uint32_t pointCount) = 0;
 
 	// NDC (+y up; VK flips Y internally). 4 floats/vertex {pos.xy, uv.xy}.
-	// Backend lazily enters swapchain pass (idempotent with imguiNewFrame).
+	// Backend lazily enters the swapchain pass on first call each frame.
 	// mode: 0=SDF text, 1=solid fill, 2=SDF title (fill+outline+glow).
 	virtual void drawUi2D(const float* vertsPosUV,
 	                      uint32_t vertCount,

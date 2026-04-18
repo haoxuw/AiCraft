@@ -308,6 +308,35 @@ void WorldRenderer::renderWorld(float wallTime) {
 			                    drawPos - size * 0.5f, size, a.color);
 		}
 	}
+	// CharacterSelect / Connecting preview — inject the hovered playable at a
+	// fixed world pose so the camera (pinned in game_vk.cpp menu block) frames
+	// it to the right of the menu panel. Model rotates slowly so the player
+	// can read all sides without having to drag the camera.
+	if (g.m_state == civcraft::vk::GameState::Menu
+	    && (g.m_menuScreen == civcraft::vk::MenuScreen::CharacterSelect
+	        || g.m_menuScreen == civcraft::vk::MenuScreen::Connecting)
+	    && !g.m_previewCreatureId.empty()) {
+		const civcraft::ArtifactEntry* entry =
+		    g.m_artifactRegistry.findById(g.m_previewCreatureId);
+		if (entry) {
+			std::string key;
+			auto mit = entry->fields.find("model");
+			if (mit != entry->fields.end() && !mit->second.empty()) key = mit->second;
+			else key = entry->id;
+			auto dot = key.rfind('.');
+			if (dot != std::string::npos) key = key.substr(0, dot);
+			auto it = g.m_models.find(key);
+			if (it != g.m_models.end()) {
+				civcraft::AnimState anim{};
+				anim.time = g.m_wallTime;
+				float spinYaw = g.m_wallTime * 30.0f;  // slow turntable
+				civcraft::appendBoxModel(charBoxes, it->second,
+				                         glm::vec3(0.0f, 399.5f, 0.0f),
+				                         spinYaw, anim);
+			}
+		}
+	}
+
 	uint32_t charBoxCount = (uint32_t)(charBoxes.size() / 19);
 
 	// Shadow pass: every in-range chunk casts via the chunk-mesh shadow

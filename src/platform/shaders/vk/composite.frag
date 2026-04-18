@@ -3,7 +3,7 @@
 // Fullscreen composite pass. FXAA + SSAO + bloom + ACES + S-curve + warm
 // tint + saturation + vignette are all gated on the RenderTuning UBO —
 // every knob defaults to 0 (fully off / neutral) so the baseline render
-// has NO global color filter. The Render Tuning ImGui panel drives them.
+// has NO global color filter. The Render Tuning panel (F6) drives them.
 // See rhi.h::GradingParams for the struct layout.
 
 layout(location = 0) in vec2 vUV;

@@ -6,7 +6,7 @@ living = {
     "description": "Quick little rodent with a big bushy tail.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "squirrel",
     "behavior": "squirrel_wander",

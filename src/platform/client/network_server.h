@@ -85,8 +85,11 @@ public:
 		return false;
 	}
 
-	// Async connect for web (WebSocket needs event-loop frames to complete).
-	bool beginConnect() {
+	// Async connect: the native UI uses this during CharacterSelect so the
+	// window keeps pumping events while S_WELCOME is in flight (blocking in
+	// the click handler triggers "App not responding"). Web still needs it
+	// because WebSocket handshakes require event-loop frames.
+	bool beginConnect(int /*seed*/ = 42, int /*templateIndex*/ = 1) override {
 		printf("[Net] Connecting to %s:%d ...\n", m_host.c_str(), m_port);
 		if (!m_tcp.connect(m_host.c_str(), m_port)) {
 			printf("[Net] beginConnect failed for %s:%d\n", m_host.c_str(), m_port);
@@ -112,7 +115,7 @@ public:
 	}
 
 	// Call every frame — returns true when S_WELCOME arrives.
-	bool pollWelcome() {
+	bool pollWelcome() override {
 		if (!m_connected) return false;
 		if (!m_recv.readFrom(m_tcp.fd())) {
 			printf("[Net] Connection lost while waiting for welcome\n");

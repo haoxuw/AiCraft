@@ -6,7 +6,7 @@ living = {
     "description": "Loyal guard companion. Follows players and chases cats.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "dog",
     "behavior": "follow",

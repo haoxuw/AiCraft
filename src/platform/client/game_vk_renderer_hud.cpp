@@ -2,7 +2,6 @@
 #include "client/game_vk.h"
 
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 
 #include <algorithm>
 #include <cmath>
@@ -225,7 +224,7 @@ void HudRenderer::renderHUD() {
 		auto* fpsMe = g.playerEntity();
 		glm::vec3 fpsPos = fpsMe ? fpsMe->position : glm::vec3(0);
 		std::snprintf(buf, sizeof(buf), "%.0f fps  |  %.0f %.0f %.0f  |  %zu ent  %zu chk",
-			ImGui::GetIO().Framerate,
+			g.m_fpsDisplay,
 			fpsPos.x, fpsPos.y, fpsPos.z,
 			g.m_server->entityCount(),
 			g.m_chunkMeshes.size());

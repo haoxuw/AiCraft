@@ -1,7 +1,6 @@
 #include "client/game_vk.h"
 
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 
 #include <cmath>
 #include <cstdio>

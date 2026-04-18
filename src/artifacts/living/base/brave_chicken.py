@@ -17,7 +17,7 @@ living = {
     "description": "A fearless golden hen. Follows players, fights cats, lays eggs when happy.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "chicken",
     "behavior": "brave_chicken",

@@ -1,10 +1,5 @@
 #include "rhi_vk.h"
 #include "ui_font_8x8.h"
-#include "client/ui/ui_theme.h"
-
-#include <imgui.h>
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -3375,7 +3370,8 @@ void VkRhi::drawUi2D(const float* vertsPosUV, uint32_t vertCount,
                      int mode, const float rgba[4]) {
 	if (!m_frameActive || !m_uiPipeline || vertCount == 0) return;
 
-	// Idempotent — callers don't need to order vs imguiNewFrame.
+	// Idempotent — safe to call many times per frame; only the first opens
+	// the swapchain pass + composites the main pass into it.
 	beginSwapchainPass();
 
 	const VkDeviceSize vertStride = sizeof(float) * 4;
@@ -3642,52 +3638,6 @@ void VkRhi::endFrame() {
 	m_frameActive = false;
 }
 
-bool VkRhi::initImGui() {
-	VkDescriptorPoolSize sizes[] = {
-		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
-	};
-	VkDescriptorPoolCreateInfo pci{};
-	pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-	pci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-	pci.maxSets = 1000;
-	pci.poolSizeCount = 1;
-	pci.pPoolSizes = sizes;
-	if (vkCreateDescriptorPool(m_device, &pci, nullptr, &m_imguiPool) != VK_SUCCESS) return false;
-
-	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
-	civcraft::ui::applyTheme(ImGui::GetStyle());
-	civcraft::ui::loadFonts(ImGui::GetIO());
-	ImGui_ImplGlfw_InitForVulkan(m_window, true);
-
-	ImGui_ImplVulkan_InitInfo ii{};
-	ii.Instance = m_instance;
-	ii.PhysicalDevice = m_phys;
-	ii.Device = m_device;
-	ii.QueueFamily = m_gfxQueueFamily;
-	ii.Queue = m_gfxQueue;
-	ii.DescriptorPool = m_imguiPool;
-	ii.RenderPass = m_renderPass;
-	ii.MinImageCount = 2;
-	ii.ImageCount = (uint32_t)m_swapImages.size();
-	ii.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-	ImGui_ImplVulkan_Init(&ii);
-
-	m_imguiInited = true;
-	return true;
-}
-
-void VkRhi::shutdownImGui() {
-	if (!m_imguiInited) return;
-	vkDeviceWaitIdle(m_device);
-	ImGui_ImplVulkan_Shutdown();
-	ImGui_ImplGlfw_Shutdown();
-	ImGui::DestroyContext();
-	if (m_imguiPool) vkDestroyDescriptorPool(m_device, m_imguiPool, nullptr);
-	m_imguiPool = VK_NULL_HANDLE;
-	m_imguiInited = false;
-}
-
 void VkRhi::beginSwapchainPass() {
 	if (!m_frameActive || m_swapchainPassActive) return;
 
@@ -3739,21 +3689,8 @@ void VkRhi::beginSwapchainPass() {
 	m_swapchainPassActive = true;
 }
 
-void VkRhi::imguiNewFrame() {
-	beginSwapchainPass();
-	ImGui_ImplVulkan_NewFrame();
-	ImGui_ImplGlfw_NewFrame();
-	ImGui::NewFrame();
-}
-
-void VkRhi::imguiRender() {
-	ImGui::Render();
-	ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), m_cmdBufs[m_frame]);
-}
-
 void VkRhi::shutdown() {
 	if (m_device) vkDeviceWaitIdle(m_device);
-	shutdownImGui();
 	for (int i = 0; i < kFramesInFlight; i++) {
 		if (m_imgAvail.size() > (size_t)i) vkDestroySemaphore(m_device, m_imgAvail[i], nullptr);
 		if (m_renderDone.size() > (size_t)i) vkDestroySemaphore(m_device, m_renderDone[i], nullptr);

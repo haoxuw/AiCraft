@@ -19,10 +19,6 @@ public:
 	void onResize(int width, int height) override;
 	bool beginFrame() override;
 	void endFrame() override;
-	bool initImGui() override;
-	void shutdownImGui() override;
-	void imguiNewFrame() override;
-	void imguiRender() override;
 	void drawCube(const float mvp[16]) override;
 	void setGrading(const GradingParams& g) override;
 	bool screenshot(const char* path) override;
@@ -274,8 +270,8 @@ private:
 	};
 	std::vector<DeferredBufDestroy> m_pendingBufDestroy[kFramesInFlight];
 
-	// beginSwapchainPass() is idempotent — imguiNewFrame + drawUi2D both
-	// call it; first call does offscreen→swapchain + composite quad.
+	// beginSwapchainPass() is idempotent — drawUi2D calls it lazily each
+	// frame; first call does offscreen→swapchain + composite quad.
 	bool m_swapchainPassActive = false;
 
 	// Offscreen targets (per-frame double-buffered).
@@ -327,10 +323,6 @@ private:
 	VkPipeline m_chunkPipelineTransparent = VK_NULL_HANDLE;
 	std::unordered_map<uint64_t, PersistentMesh> m_chunkMeshes;
 	std::vector<PersistentMesh> m_chunkMeshPending[kFramesInFlight];
-
-	// ImGui
-	VkDescriptorPool m_imguiPool = VK_NULL_HANDLE;
-	bool m_imguiInited = false;
 };
 
 } // namespace civcraft::rhi

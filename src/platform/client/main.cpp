@@ -110,7 +110,6 @@ int main(int argc, char** argv) {
 	ii.appName = "civcraft-ui-vk";
 	ii.enableValidation = !noValidation;
 	if (!rhi->init(ii)) return 1;
-	if (!rhi->initImGui()) return 1;
 
 	// Spawn a civcraft-server (if --port absent) and connect over TCP, handing
 	// the NetworkServer to Game BEFORE init() so chunks stream from the server

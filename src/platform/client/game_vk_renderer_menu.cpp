@@ -1,230 +1,376 @@
 #include "client/game_vk_renderers.h"
 #include "client/game_vk.h"
+#include "client/rhi/rhi.h"
 
-#include <imgui.h>
+#include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
-#include "client/ui/ui_screen.h"
-#include "client/ui/ui_theme.h"
-#include "client/ui/ui_widgets.h"
+#include "client/game_logger.h"
 #include "client/network_server.h"
+#include "logic/artifact_registry.h"
 #include "net/server_interface.h"
 
 namespace civcraft::vk {
 
-// ── Menu screens ─────────────────────────────────────────────────────
-// All menu/pause/death screens compose from the UI kit (ui_screen +
-// ui_widgets). No per-screen palette pushes — theme + fonts come from
-// ui_theme globally.
+// Phase-1 menus: custom-drawn, text-only. Arrow keys / WS move the
+// highlight, Enter/Space activate, Esc backs out. No ImGui.
+// Slot metrics are NDC units.
 
-static void menuControlsBlock() {
-	ui::SectionHeader("Controls");
-	ui::KeyValue("Move",           "WASD");
-	ui::KeyValue("Jump",           "Space");
-	ui::KeyValue("Sprint",         "Shift");
-	ui::KeyValue("Look",           "Mouse");
-	ui::KeyValue("Attack / Place", "LMB  /  RMB");
-	ui::KeyValue("Drop",           "Q");
-	ui::KeyValue("Inventory",      "Tab");
-	ui::KeyValue("Handbook",       "H");
-	ui::KeyValue("Camera",         "V");
-	ui::KeyValue("Pause",          "Esc");
-	ui::KeyValue("Debug / Tuning", "F3  /  F6");
-	ui::KeyValue("Screenshot",     "F2");
+namespace {
+
+constexpr float kCharWNdc = 0.018f;
+constexpr float kCharHNdc = 0.032f;
+
+constexpr float kTitleBrass[4] = { 0.96f, 0.82f, 0.40f, 1.00f };
+constexpr float kTitleRed[4]   = { 1.00f, 0.35f, 0.30f, 1.00f };
+constexpr float kText[4]       = { 0.92f, 0.90f, 0.88f, 1.00f };
+constexpr float kTextDim[4]    = { 0.65f, 0.62f, 0.60f, 0.90f };
+constexpr float kTextHint[4]   = { 0.55f, 0.55f, 0.60f, 0.85f };
+constexpr float kSelBg[4]      = { 0.30f, 0.55f, 0.85f, 0.55f };
+constexpr float kRowBg[4]      = { 0.08f, 0.08f, 0.10f, 0.55f };
+constexpr float kDanger[4]     = { 0.95f, 0.35f, 0.30f, 1.00f };
+constexpr float kScrim[4]      = { 0.00f, 0.00f, 0.00f, 0.55f };
+constexpr float kScrimDark[4]  = { 0.00f, 0.00f, 0.00f, 0.68f };
+
+void drawCenteredTitle(rhi::IRhi* r, const char* txt, float y, float scale,
+                       const float color[4]) {
+	float w = std::strlen(txt) * kCharWNdc * scale;
+	r->drawTitle2D(txt, -w * 0.5f, y, scale, color);
 }
 
+void drawCenteredText(rhi::IRhi* r, const char* txt, float y, float scale,
+                      const float color[4]) {
+	float w = std::strlen(txt) * kCharWNdc * scale;
+	r->drawText2D(txt, -w * 0.5f, y, scale, color);
+}
+
+// Detect a key press edge by tracking which keys were down last frame.
+bool keyEdge(GLFWwindow* win, int key) {
+	static std::unordered_map<int, int> lastState;
+	int cur = glfwGetKey(win, key);
+	int prev = lastState[key];
+	lastState[key] = cur;
+	return cur == GLFW_PRESS && prev != GLFW_PRESS;
+}
+
+struct MenuListInput {
+	rhi::IRhi*   rhi;
+	GLFWwindow*  window;
+	float        mouseX;
+	float        mouseY;
+	bool         mouseReleased;
+};
+
+// Vertical list of text rows with a highlighted cursor. Returns index of
+// the row that was activated this frame, or -1.
+int drawMenuList(const MenuListInput& in,
+                 const std::vector<std::string>& items,
+                 int& cursor, float cx, float topY, float rowH,
+                 float rowW) {
+	if (items.empty()) return -1;
+	cursor = std::clamp(cursor, 0, (int)items.size() - 1);
+
+	if (keyEdge(in.window, GLFW_KEY_DOWN) || keyEdge(in.window, GLFW_KEY_S))
+		cursor = (cursor + 1) % (int)items.size();
+	if (keyEdge(in.window, GLFW_KEY_UP) || keyEdge(in.window, GLFW_KEY_W))
+		cursor = (cursor - 1 + (int)items.size()) % (int)items.size();
+
+	int activated = -1;
+	if (keyEdge(in.window, GLFW_KEY_ENTER) || keyEdge(in.window, GLFW_KEY_SPACE))
+		activated = cursor;
+
+	float x = cx - rowW * 0.5f;
+	for (int i = 0; i < (int)items.size(); ++i) {
+		float y = topY - i * (rowH + 0.008f);
+		bool sel = (i == cursor);
+		in.rhi->drawRect2D(x, y, rowW, rowH, sel ? kSelBg : kRowBg);
+
+		if (in.mouseX >= x && in.mouseX <= x + rowW &&
+		    in.mouseY >= y && in.mouseY <= y + rowH) {
+			cursor = i;
+			if (in.mouseReleased) activated = i;
+		}
+
+		const std::string& t = items[i];
+		float scale = 0.95f;
+		float tw = t.size() * kCharWNdc * scale;
+		in.rhi->drawText2D(t.c_str(), cx - tw * 0.5f,
+			y + rowH * 0.5f - kCharHNdc * scale * 0.5f,
+			scale, sel ? kText : kTextDim);
+	}
+	return activated;
+}
+
+} // namespace
+
+// ─────────────────────────────────────────────────────────────────────
+// Main menu (pre-game)
+// ─────────────────────────────────────────────────────────────────────
 void MenuRenderer::renderMenu() {
 	Game& g = game_;
-	// Centered brass title over rotating-world backdrop.
-	ui::ScreenTitle(g.m_rhi, "CIVCRAFT", 0.48f, 3.6f, g.m_menuTitleT);
+	rhi::IRhi* R = g.m_rhi;
+	MenuListInput in{R, g.m_window, g.m_mouseNdcX, g.m_mouseNdcY, g.m_mouseLReleased};
 
-	// ESC in a sub-screen returns to Main (same gesture as closing a popup).
-	bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+	bool escPressed = keyEdge(g.m_window, GLFW_KEY_ESCAPE);
 	if (escPressed && g.m_menuScreen != MenuScreen::Main) {
-		g.m_menuScreen = MenuScreen::Main;
+		if (g.m_menuScreen == MenuScreen::Connecting) {
+			if (g.m_server) g.m_server->disconnect();
+			g.m_connecting = false;
+			g.m_menuScreen = MenuScreen::CharacterSelect;
+		} else {
+			g.m_menuScreen = MenuScreen::Main;
+		}
 	}
 
-	ui::ScreenOpts opts;
-	opts.panelW  = 380.0f;
-	opts.anchorY = 0.34f;
+	drawCenteredTitle(R, "CIVCRAFT", 0.58f, 3.6f, kTitleBrass);
 
 	switch (g.m_menuScreen) {
 	case MenuScreen::Main: {
-		if (ui::BeginScreen("##menu_main", g.m_rhi, opts)) {
-			// ImGui's keyboard Nav already activates the focused button on
-			// ENTER/SPACE — don't add a second handler or it double-fires on
-			// Nav-auto-focus (jumps past the main menu on first frame).
-			if (ui::PrimaryButton("SINGLEPLAYER")) g.m_menuScreen = MenuScreen::Singleplayer;
-			if (ui::SecondaryButton("MULTIPLAYER")) g.m_menuScreen = MenuScreen::Multiplayer;
-			if (ui::SecondaryButton("SETTINGS"))    g.m_menuScreen = MenuScreen::Settings;
-			ui::VerticalSpace();
-			if (ui::GhostButton("QUIT")) g.m_shouldQuit = true;
+		static int cursor = 0;
+		std::vector<std::string> items = {
+			"SINGLEPLAYER", "MULTIPLAYER", "SETTINGS", "QUIT"
+		};
+		int picked = drawMenuList(in, items, cursor,
+			0.0f, 0.20f, 0.080f, 0.48f);
+		if (picked == 0) g.m_menuScreen = MenuScreen::Singleplayer;
+		else if (picked == 1) g.m_menuScreen = MenuScreen::Multiplayer;
+		else if (picked == 2) g.m_menuScreen = MenuScreen::Settings;
+		else if (picked == 3) g.m_shouldQuit = true;
 
-			if (!g.m_lastDeathReason.empty()) {
-				ui::VerticalSpace();
-				ui::Divider();
-				ui::ColoredText(ui::kBad, "%s", g.m_lastDeathReason.c_str());
-			}
-		}
-		ui::EndScreen();
+		if (!g.m_lastDeathReason.empty())
+			drawCenteredText(R, g.m_lastDeathReason.c_str(), -0.78f, 0.70f, kDanger);
 		break;
 	}
 	case MenuScreen::Singleplayer: {
-		opts.panelW = 440.0f;
-		if (ui::BeginScreen("##menu_sp", g.m_rhi, opts)) {
-			ui::SectionHeader("Your Worlds");
-			ui::Hint("World list, thumbnails, and create-world arrive in Stage C.");
-			ui::VerticalSpace();
-			if (ui::PrimaryButton("START  VILLAGE  WORLD")) {
-				g.m_connectError.clear();
-				g.m_menuScreen = MenuScreen::CharacterSelect;
-			}
-			ui::VerticalSpace();
-			if (ui::GhostButton("Back")) g.m_menuScreen = MenuScreen::Main;
+		drawCenteredText(R, "Your Worlds", 0.25f, 1.10f, kText);
+		drawCenteredText(R, "(world list coming in Stage C)", 0.15f, 0.70f, kTextHint);
+
+		static int cursor = 0;
+		std::vector<std::string> items = {
+			"START VILLAGE WORLD", "BACK"
+		};
+		int picked = drawMenuList(in, items, cursor,
+			0.0f, 0.00f, 0.080f, 0.52f);
+		if (picked == 0) {
+			g.m_connectError.clear();
+			g.m_menuScreen = MenuScreen::CharacterSelect;
+			cursor = 0;
+		} else if (picked == 1) {
+			g.m_menuScreen = MenuScreen::Main;
+			cursor = 0;
 		}
-		ui::EndScreen();
 		break;
 	}
 	case MenuScreen::CharacterSelect: {
-		opts.panelW = 520.0f;
-		if (ui::BeginScreen("##menu_charpick", g.m_rhi, opts)) {
-			ui::SectionHeader("Choose Your Character");
-			ui::Hint("Any living with \"playable\": True in its artifact can be played.");
-			ui::VerticalSpace();
+		drawCenteredText(R, "Choose Your Character", 0.30f, 1.10f, kText);
+		drawCenteredText(R, "Arrow keys to pick, Enter to enter the world.",
+			0.23f, 0.65f, kTextHint);
 
-			// Collect playable livings from the artifact registry (data-driven —
-			// add a new entry in artifacts/living/*.py and it shows up here).
-			struct PlayableItem { std::string id, name, desc; };
-			std::vector<PlayableItem> playables;
-			for (auto* e : g.m_artifactRegistry.byCategory("living")) {
-				auto it = e->fields.find("playable");
-				if (it == e->fields.end()) continue;
-				// Python's True; parser strips surrounding whitespace.
-				if (it->second != "True" && it->second != "true") continue;
-				playables.push_back({e->id, e->name, e->description});
-			}
-			std::sort(playables.begin(), playables.end(),
-				[](const PlayableItem& a, const PlayableItem& b) { return a.name < b.name; });
-
-			if (playables.empty()) {
-				ui::ColoredText(ui::kBad, "No playable livings registered.");
-			} else {
-				for (auto& p : playables) {
-					if (ui::SecondaryButton(p.name.c_str())) {
-						if (g.connectAs(p.id)) g.enterPlaying();
-					}
-					if (!p.desc.empty()) ui::Hint("%s", p.desc.c_str());
-					ui::VerticalSpace(4.0f);
-				}
-			}
-
-			if (!g.m_connectError.empty()) {
-				ui::VerticalSpace();
-				ui::ColoredText(ui::kBad, "%s", g.m_connectError.c_str());
-			}
-
-			ui::VerticalSpace();
-			if (ui::GhostButton("Back")) g.m_menuScreen = MenuScreen::Singleplayer;
+		struct PlayableItem { std::string id, name; };
+		std::vector<PlayableItem> playables;
+		for (auto* e : g.m_artifactRegistry.byCategory("living")) {
+			auto it = e->fields.find("playable");
+			if (it == e->fields.end()) continue;
+			if (it->second != "True" && it->second != "true") continue;
+			playables.push_back({e->id, e->name});
 		}
-		ui::EndScreen();
+		std::sort(playables.begin(), playables.end(),
+			[](const PlayableItem& a, const PlayableItem& b) { return a.name < b.name; });
+
+		if (playables.empty()) {
+			drawCenteredText(R, "No playable livings registered.", 0.10f, 0.90f, kDanger);
+		} else {
+			std::vector<std::string> names;
+			names.reserve(playables.size() + 1);
+			for (auto& p : playables) names.push_back(p.name);
+			names.push_back("BACK");
+
+			static int cursor = 0;
+			int picked = drawMenuList(in, names, cursor,
+				-0.45f, 0.12f, 0.070f, 0.50f);
+
+			if (cursor >= 0 && cursor < (int)playables.size())
+				g.m_previewCreatureId = playables[cursor].id;
+
+			if (picked >= 0 && picked < (int)playables.size()) {
+				if (g.beginConnectAs(playables[picked].id))
+					g.m_menuScreen = MenuScreen::Connecting;
+			} else if (picked == (int)playables.size()) {
+				g.m_menuScreen = MenuScreen::Singleplayer;
+				cursor = 0;
+			}
+		}
+
+		if (!g.m_connectError.empty())
+			drawCenteredText(R, g.m_connectError.c_str(), -0.80f, 0.70f, kDanger);
+		break;
+	}
+	case MenuScreen::Connecting: {
+		drawCenteredText(R, "Connecting...", 0.15f, 1.30f, kText);
+		int dots = (int)(g.m_wallTime * 2.0f) % 4;
+		const char* dotStr[] = {"", ".", "..", "..."};
+		char buf[64];
+		std::snprintf(buf, sizeof(buf), "Streaming world%s", dotStr[dots]);
+		drawCenteredText(R, buf, 0.05f, 0.80f, kTextHint);
+		drawCenteredText(R, "[Esc] Cancel", -0.10f, 0.70f, kTextDim);
+
+		if (g.m_server && g.m_server->pollWelcome()) {
+			g.m_connecting = false;
+			g.enterPlaying();
+		} else if (g.m_server && !g.m_server->isConnected()) {
+			const std::string& err = g.m_server->lastError();
+			g.m_connectError = err.empty() ? "connection lost" : err;
+			g.m_connecting = false;
+			g.m_menuScreen = MenuScreen::CharacterSelect;
+		} else if (g.m_wallTime - g.m_connectStartTime > 60.0f) {
+			if (g.m_server) g.m_server->disconnect();
+			g.m_connectError = "timeout waiting for welcome (60s)";
+			g.m_connecting = false;
+			g.m_menuScreen = MenuScreen::CharacterSelect;
+		}
 		break;
 	}
 	case MenuScreen::Multiplayer: {
-		opts.panelW = 440.0f;
-		if (ui::BeginScreen("##menu_mp", g.m_rhi, opts)) {
-			ui::SectionHeader("Multiplayer");
-			ui::Hint("LAN discovery, saved servers, and direct connect arrive in Stage C.");
-			ui::VerticalSpace();
-			ui::Hint("For now, launch with:  civcraft-ui-vk --host HOST --port PORT");
-			ui::VerticalSpace();
-			if (ui::GhostButton("Back")) g.m_menuScreen = MenuScreen::Main;
-		}
-		ui::EndScreen();
+		drawCenteredText(R, "Multiplayer", 0.25f, 1.10f, kText);
+		drawCenteredText(R, "LAN browser coming in Stage C.", 0.15f, 0.70f, kTextHint);
+		drawCenteredText(R, "For now: civcraft-ui-vk --host HOST --port PORT",
+			0.08f, 0.65f, kTextHint);
+
+		static int cursor = 0;
+		std::vector<std::string> items = { "BACK" };
+		int picked = drawMenuList(in, items, cursor,
+			0.0f, -0.10f, 0.080f, 0.40f);
+		if (picked == 0) { g.m_menuScreen = MenuScreen::Main; cursor = 0; }
 		break;
 	}
 	case MenuScreen::Settings: {
-		opts.panelW = 440.0f;
-		if (ui::BeginScreen("##menu_settings", g.m_rhi, opts)) {
-			menuControlsBlock();
-			ui::VerticalSpace();
-			ui::Hint("Render tuning is still on F6 in-game — it'll move here in Stage B4.");
-			ui::VerticalSpace();
-			if (ui::GhostButton("Back")) g.m_menuScreen = MenuScreen::Main;
+		drawCenteredText(R, "Controls", 0.35f, 1.10f, kText);
+
+		struct KV { const char* k; const char* v; };
+		const KV kvs[] = {
+			{"Move",           "WASD"},
+			{"Jump",           "Space"},
+			{"Sprint",         "Shift"},
+			{"Look",           "Mouse"},
+			{"Attack / Place", "LMB / RMB"},
+			{"Drop",           "Q"},
+			{"Inventory",      "Tab"},
+			{"Handbook",       "H"},
+			{"Camera",         "V"},
+			{"Pause",          "Esc"},
+			{"Debug / Tuning", "F3 / F6"},
+			{"Screenshot",     "F2"},
+		};
+		float y = 0.26f;
+		for (const auto& kv : kvs) {
+			char buf[96];
+			std::snprintf(buf, sizeof(buf), "%-16s %s", kv.k, kv.v);
+			drawCenteredText(R, buf, y, 0.75f, kTextDim);
+			y -= 0.040f;
 		}
-		ui::EndScreen();
+
+		static int cursor = 0;
+		std::vector<std::string> items = { "BACK" };
+		int picked = drawMenuList(in, items, cursor,
+			0.0f, -0.30f, 0.080f, 0.40f);
+		if (picked == 0) { g.m_menuScreen = MenuScreen::Main; cursor = 0; }
 		break;
 	}
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// In-game pause menu
+// ─────────────────────────────────────────────────────────────────────
 void MenuRenderer::renderGameMenu() {
 	Game& g = game_;
-	ui::ScreenTitle(g.m_rhi, "Game Is Not Paused", 0.28f, 3.0f, g.m_menuTitleT);
+	rhi::IRhi* R = g.m_rhi;
+	MenuListInput in{R, g.m_window, g.m_mouseNdcX, g.m_mouseNdcY, g.m_mouseLReleased};
 
-	ui::ScreenOpts opts;
-	opts.panelW  = 340.0f;
-	opts.anchorY = 0.48f;
-	opts.scrimColor = ImVec4(0.0f, 0.0f, 0.0f, 0.55f);
+	R->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, kScrim);
+	drawCenteredTitle(R, "Game Is Not Paused", 0.42f, 3.0f, kTitleBrass);
 
 	static bool showLog = false;
 
-	if (ui::BeginScreen("##gamemenu", g.m_rhi, opts)) {
-		if (ui::PrimaryButton("RESUME")) g.closeGameMenu();
-		if (ui::SecondaryButton(showLog ? "HIDE GAME LOG" : "GAME LOG")) showLog = !showLog;
-		if (ui::SecondaryButton("MAIN MENU")) g.enterMenu();
-		ui::VerticalSpace();
-		if (ui::DangerButton("QUIT")) g.m_shouldQuit = true;
-	}
-	ui::EndScreen();
-
-	if (showLog) {
+	if (!showLog) {
+		static int cursor = 0;
+		std::vector<std::string> items = {
+			"RESUME", "GAME LOG", "MAIN MENU", "QUIT"
+		};
+		int picked = drawMenuList(in, items, cursor,
+			0.0f, 0.12f, 0.080f, 0.44f);
+		if (picked == 0) g.closeGameMenu();
+		else if (picked == 1) showLog = true;
+		else if (picked == 2) g.enterMenu();
+		else if (picked == 3) g.m_shouldQuit = true;
+	} else {
 		auto lines = civcraft::GameLogger::instance().snapshot();
-		ImGuiIO& io = ImGui::GetIO();
-		ImGui::SetNextWindowSize(ImVec2(760, 440), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowPos(
-			ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-			ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-		if (ImGui::Begin("Game Log", &showLog)) {
-			if (auto* f = ui::mono()) ImGui::PushFont(f);
-			for (auto& line : lines) {
-				ImVec4 col = ui::kText;
-				if      (line.find("[DECIDE]") != std::string::npos) col = ui::kOk;
-				else if (line.find("[COMBAT]") != std::string::npos) col = ui::kBad;
-				else if (line.find("[DEATH]")  != std::string::npos) col = ImVec4(0.95f, 0.25f, 0.25f, 1.0f);
-				else if (line.find("[ACTION]") != std::string::npos) col = ImVec4(0.55f, 0.75f, 0.95f, 1.0f);
-				else if (line.find("[INV]")    != std::string::npos) col = ui::kAccent;
-				ImGui::TextColored(col, "%s", line.c_str());
-			}
-			if (ui::mono()) ImGui::PopFont();
-			if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-				ImGui::SetScrollHereY(1.0f);
+		const float logX = -0.82f, logW = 1.64f;
+		const float logY = -0.40f, logH = 1.00f;
+		const float logBg[4] = {0.02f, 0.02f, 0.03f, 0.92f};
+		R->drawRect2D(logX, logY, logW, logH, logBg);
+
+		const float kLogDecide[4] = { 0.55f, 0.95f, 0.55f, 1.0f };
+		const float kLogDeath[4]  = { 0.95f, 0.25f, 0.25f, 1.0f };
+		const float kLogAction[4] = { 0.55f, 0.75f, 0.95f, 1.0f };
+		const float kLogInv[4]    = { 0.95f, 0.82f, 0.40f, 1.0f };
+
+		float lineH = 0.030f;
+		int maxLines = (int)(logH / lineH) - 1;
+		int start = std::max(0, (int)lines.size() - maxLines);
+		float y = logY + logH - lineH - 0.008f;
+		for (int i = start; i < (int)lines.size(); ++i) {
+			const std::string& ln = lines[i];
+			const float* col = kText;
+			if      (ln.find("[DECIDE]") != std::string::npos) col = kLogDecide;
+			else if (ln.find("[COMBAT]") != std::string::npos) col = kDanger;
+			else if (ln.find("[DEATH]")  != std::string::npos) col = kLogDeath;
+			else if (ln.find("[ACTION]") != std::string::npos) col = kLogAction;
+			else if (ln.find("[INV]")    != std::string::npos) col = kLogInv;
+			R->drawText2D(ln.c_str(), logX + 0.012f, y, 0.60f, col);
+			y -= lineH;
 		}
-		ImGui::End();
+
+		static int cursor = 0;
+		std::vector<std::string> items = { "BACK" };
+		int picked = drawMenuList(in, items, cursor,
+			0.0f, -0.55f, 0.070f, 0.32f);
+		if (picked == 0 || keyEdge(g.m_window, GLFW_KEY_ESCAPE)) {
+			showLog = false;
+			cursor = 0;
+		}
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Death screen
+// ─────────────────────────────────────────────────────────────────────
 void MenuRenderer::renderDeath() {
 	Game& g = game_;
-	ui::ScreenTitleRed(g.m_rhi, "YOU DIED", 0.22f, 3.0f);
+	rhi::IRhi* R = g.m_rhi;
+	MenuListInput in{R, g.m_window, g.m_mouseNdcX, g.m_mouseNdcY, g.m_mouseLReleased};
 
-	ui::ScreenOpts opts;
-	opts.panelW  = 360.0f;
-	opts.anchorY = 0.48f;
-	opts.scrimColor = ImVec4(0.0f, 0.0f, 0.0f, 0.65f);
+	R->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, kScrimDark);
+	drawCenteredTitle(R, "YOU DIED", 0.32f, 3.0f, kTitleRed);
 
-	if (ui::BeginScreen("##dead", g.m_rhi, opts)) {
-		if (!g.m_lastDeathReason.empty()) {
-			ui::ColoredText(ui::kBad, "%s", g.m_lastDeathReason.c_str());
-			ui::VerticalSpace();
-		}
-		ui::Hint("Press R to respawn, Esc for main menu.");
-		ui::VerticalSpace();
-		if (ui::PrimaryButton("RESPAWN")) g.respawn();
-		if (ui::GhostButton("MAIN MENU")) g.enterMenu();
-	}
-	ui::EndScreen();
+	if (!g.m_lastDeathReason.empty())
+		drawCenteredText(R, g.m_lastDeathReason.c_str(), 0.18f, 0.90f, kDanger);
+
+	drawCenteredText(R, "[R] Respawn    [Esc] Main Menu",
+		0.08f, 0.80f, kTextDim);
+
+	static int cursor = 0;
+	std::vector<std::string> items = { "RESPAWN", "MAIN MENU" };
+	int picked = drawMenuList(in, items, cursor,
+		0.0f, -0.05f, 0.080f, 0.40f);
+	if (picked == 0) g.respawn();
+	else if (picked == 1) g.enterMenu();
 }
 
 } // namespace civcraft::vk

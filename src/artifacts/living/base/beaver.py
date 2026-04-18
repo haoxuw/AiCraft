@@ -9,7 +9,7 @@ living = {
     "description": "Stocky brown rodent with a paddle tail. Will build dams once rivers exist.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "beaver",
     "behavior": "wander",

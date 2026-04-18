@@ -1,7 +1,6 @@
 #include "client/game_vk.h"
 
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 
 #include <algorithm>
 #include <chrono>
@@ -662,10 +661,25 @@ bool Game::connectAs(const std::string& creatureType) {
 	return true;
 }
 
+bool Game::beginConnectAs(const std::string& creatureType) {
+	if (!m_server) { m_connectError = "no server"; return false; }
+	if (m_server->isConnected()) return true;
+	m_connectError.clear();
+	m_server->setCreatureType(creatureType);
+	if (!m_server->beginConnect(m_pendingSeed, m_pendingTemplate)) {
+		const std::string& err = m_server->lastError();
+		m_connectError = err.empty() ? "failed to begin connect" : err;
+		return false;
+	}
+	m_connecting = true;
+	m_connectStartTime = m_wallTime;
+	return true;
+}
+
 void Game::enterMenu() {
 	m_state = GameState::Menu;
 	m_menuScreen = MenuScreen::Main;
-	// Release mouse so the menu can be clicked with ImGui.
+	// Release mouse so the menu can be clicked / the cursor is visible.
 	if (m_window) {
 		glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 	}
@@ -781,9 +795,7 @@ void Game::enterDead(const char* cause) {
 void Game::respawn() { enterPlaying(); }
 
 void Game::onScroll(double xoff, double yoff) {
-	ImGuiIO& io = ImGui::GetIO();
-	io.AddMouseWheelEvent((float)xoff, (float)yoff);
-	if (io.WantCaptureMouse) return;
+	(void)xoff;
 	if (m_state != GameState::Playing) return;
 	float y = (float)yoff;
 	// Scroll cycles the hotbar slot in FPS (no camera zoom there). Down = next.
@@ -817,6 +829,15 @@ void Game::runOneFrame(float dt, float wallTime) {
 	m_wallTime = wallTime;
 	m_menuTitleT += dt;
 	m_frameProbe.begin();
+
+	// FPS counter — recompute displayed rate once per second.
+	m_fpsWindowS      += dt;
+	m_fpsWindowFrames += 1;
+	if (m_fpsWindowS >= 1.0f) {
+		m_fpsDisplay      = (float)m_fpsWindowFrames / m_fpsWindowS;
+		m_fpsWindowS      = 0.0f;
+		m_fpsWindowFrames = 0;
+	}
 
 	int w = 0, h = 0;
 	glfwGetFramebufferSize(m_window, &w, &h);
@@ -928,12 +949,33 @@ void Game::runOneFrame(float dt, float wallTime) {
 		// solid rect — reuse the sky + a faraway camera orbit.
 		float menuAng = m_menuTitleT * 0.08f;
 		glm::vec3 menuFocus(std::sin(menuAng) * 2.0f, 7.0f, std::cos(menuAng) * 2.0f);
-		// Manually drive camera for the menu backdrop — don't run the full
-		// Camera::processInput (it would reset mouse-tracking every frame).
-		float radius = kTune.camDistance * 1.2f;
-		float pitch = 0.15f;
-		float yaw   = menuAng + 3.14f * 0.5f;
-		glm::vec3 head = menuFocus + glm::vec3(0, kTune.camHeight, 0);
+		// CharacterSelect pins the camera so the preview model holds steady
+		// to the right of the panel (panel is anchorX=0.28, preview lands at
+		// roughly anchorX≈0.72). Other menu screens keep the slow orbit.
+		bool previewing = (m_menuScreen == MenuScreen::CharacterSelect
+		                || m_menuScreen == MenuScreen::Connecting)
+		               && !m_previewCreatureId.empty();
+		float radius, pitch, yaw;
+		glm::vec3 head;
+		if (previewing) {
+			// Fixed-pose head looks at kPreviewWorldPos (see renderer_world).
+			// Camera right of model and slightly above, so model occupies the
+			// right half of the screen with the panel still fully visible.
+			// High altitude + matching preview model Y so streamed terrain
+			// can't occlude the preview once the server starts shipping chunks.
+			menuFocus = glm::vec3(0.0f, 400.0f, 0.0f);
+			head      = menuFocus + glm::vec3(0, 1.0f, 0);
+			radius    = 4.5f;
+			pitch     = 0.05f;
+			yaw       = 3.14f * 0.35f;   // ~63°, model faces camera slightly off-axis
+		} else {
+			// Manually drive camera for the menu backdrop — don't run the full
+			// Camera::processInput (it would reset mouse-tracking every frame).
+			radius = kTune.camDistance * 1.2f;
+			pitch  = 0.15f;
+			yaw    = menuAng + 3.14f * 0.5f;
+			head   = menuFocus + glm::vec3(0, kTune.camHeight, 0);
+		}
 		glm::vec3 dir(std::cos(pitch) * std::cos(yaw),
 		              std::sin(pitch),
 		              std::cos(pitch) * std::sin(yaw));
@@ -943,9 +985,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_cam.lookPitch = glm::degrees(std::asin(look.y));
 		m_worldRenderer.renderWorld(wallTime);
 		m_worldRenderer.renderEffects(wallTime);
-		m_rhi->imguiNewFrame();
 		m_menuRenderer.renderMenu();
-		m_rhi->imguiRender();
 	} else if (m_state == GameState::Playing) {
 		m_worldRenderer.renderWorld(wallTime);
 		m_frameProbe.mark("world");
@@ -954,11 +994,10 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_worldRenderer.renderEffects(wallTime);
 		m_frameProbe.mark("fx3d");
 		// 3D pass for hotbar/inventory item previews. Reads last frame's slot
-		// rects (so imgui windows "hover" 3D items in-place); writes none.
+		// rects (items composite on top of their backing tiles in the main pass);
+		// writes none.
 		m_hudRenderer.renderInventoryItems3D();
 		m_frameProbe.mark("inv3d");
-		m_rhi->imguiNewFrame();
-		m_frameProbe.mark("imNew");
 		// Clear slot-rect collection — every slot drawn this frame re-records.
 		m_slotRectsThis.clear();
 		m_hudRenderer.renderHUD();
@@ -973,8 +1012,6 @@ void Game::runOneFrame(float dt, float wallTime) {
 		if (m_handbookOpen) m_panelRenderer.renderHandbook();
 		m_entityUiRenderer.renderRTSSelect();
 		m_frameProbe.mark("panels");
-		m_rhi->imguiRender();
-		m_frameProbe.mark("imDraw");
 	} else if (m_state == GameState::GameMenu) {
 		m_worldRenderer.renderWorld(wallTime);
 		m_frameProbe.mark("world");
@@ -982,22 +1019,16 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_frameProbe.mark("ents");
 		m_worldRenderer.renderEffects(wallTime);
 		m_frameProbe.mark("fx3d");
-		m_rhi->imguiNewFrame();
-		m_frameProbe.mark("imNew");
 		m_hudRenderer.renderHUD();       // world keeps ticking underneath
 		m_frameProbe.mark("hud");
 		m_menuRenderer.renderGameMenu();
 		if (m_showTuning) m_panelRenderer.renderTuningPanel();
 		m_frameProbe.mark("panels");
-		m_rhi->imguiRender();
-		m_frameProbe.mark("imDraw");
 	} else {  // Dead
 		m_worldRenderer.renderWorld(wallTime);
 		m_worldRenderer.renderEffects(wallTime);
-		m_rhi->imguiNewFrame();
 		m_hudRenderer.renderHUD();       // still show world state behind the veil
 		m_menuRenderer.renderDeath();
-		m_rhi->imguiRender();
 	}
 
 	// F2 / file-trigger screenshot — must run mid-frame (needs active render

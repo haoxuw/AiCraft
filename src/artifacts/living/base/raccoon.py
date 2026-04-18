@@ -6,7 +6,7 @@ living = {
     "description": "Masked bandit with a ringed tail. Wandering for now — will raid chests later.",
 
     "category": "animal",
-    "playable": True,
+    "playable": False,
 
     "model": "raccoon",
     "behavior": "wander",
