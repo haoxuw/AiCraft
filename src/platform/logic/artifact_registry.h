@@ -368,6 +368,42 @@ private:
 		std::string model = extract("model");
 		if (!model.empty()) e.fields["model"] = model;
 
+		// Living "stats": {"strength": N, "stamina": N, "agility": N, "intelligence": N}
+		// Flatten to stats_strength / stats_stamina / ... so consumers can read scalars.
+		{
+			auto pos = e.source.find("\"stats\"");
+			if (pos != std::string::npos) {
+				auto openBrace = e.source.find('{', pos);
+				auto closeBrace = std::string::npos;
+				if (openBrace != std::string::npos) {
+					int depth = 1;
+					size_t scan = openBrace + 1;
+					while (scan < e.source.size() && depth > 0) {
+						if (e.source[scan] == '{') depth++;
+						else if (e.source[scan] == '}') { depth--; if (depth == 0) { closeBrace = scan; break; } }
+						scan++;
+					}
+				}
+				if (closeBrace != std::string::npos) {
+					std::string sub = e.source.substr(openBrace, closeBrace - openBrace + 1);
+					for (auto& key : {"strength", "stamina", "agility", "intelligence"}) {
+						std::string pat = std::string("\"") + key + "\"";
+						auto kp = sub.find(pat);
+						if (kp == std::string::npos) continue;
+						auto colon = sub.find(':', kp);
+						if (colon == std::string::npos) continue;
+						size_t vs = colon + 1;
+						while (vs < sub.size() && (sub[vs] == ' ' || sub[vs] == '\t')) vs++;
+						size_t ve = vs;
+						while (ve < sub.size() && sub[ve] != ',' && sub[ve] != '}' &&
+						       sub[ve] != '\n' && sub[ve] != ' ') ve++;
+						if (ve > vs)
+							e.fields[std::string("stats_") + key] = sub.substr(vs, ve - vs);
+					}
+				}
+			}
+		}
+
 		// Annotation-specific
 		std::string slot = extract("slot");
 		if (!slot.empty()) e.fields["slot"] = slot;

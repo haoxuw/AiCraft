@@ -249,6 +249,61 @@ void MenuRenderer::renderMenu() {
 		if (!g.m_connectError.empty())
 			ui::drawCenteredText(R, g.m_connectError.c_str(),
 				kLeftCx, -0.62f, 0.70f, kDanger);
+
+		// Stats chart under the preview character (right half of screen,
+		// matches camera pose in game_vk.cpp's preview block). Bars are
+		// filled 0..5 so modders can use any small int scale.
+		if (!g.m_previewCreatureId.empty()) {
+			const ArtifactEntry* entry =
+			    g.m_artifactRegistry.findById(g.m_previewCreatureId);
+			if (entry) {
+				struct StatRow { const char* label; const char* key; };
+				static const StatRow kRows[] = {
+					{"STR", "stats_strength"},
+					{"STA", "stats_stamina"},
+					{"AGI", "stats_agility"},
+					{"INT", "stats_intelligence"},
+				};
+				constexpr float kPanelX = 0.06f;
+				constexpr float kPanelY = -0.76f;
+				constexpr float kPanelW = 0.52f;
+				constexpr float kPanelH = 0.40f;
+				drawMenuFrame(R, kPanelX, kPanelY, kPanelW, kPanelH, nullptr);
+				ui::drawCenteredText(R, entry->name.c_str(),
+					kPanelX + kPanelW * 0.5f,
+					kPanelY + kPanelH - 0.08f, 0.80f, kText);
+
+				constexpr float kBarMax = 5.0f;
+				const float kBarFill[4] = {0.96f, 0.82f, 0.40f, 1.0f}; // brass
+				const float kBarBg[4]   = {0.08f, 0.08f, 0.10f, 0.75f};
+				const float kBarBorder[4] = {0.50f, 0.38f, 0.20f, 0.90f};
+
+				float rowY = kPanelY + kPanelH - 0.18f;
+				constexpr float kRowStep = 0.065f;
+				constexpr float kLabelX  = kPanelX + 0.04f;
+				constexpr float kBarX    = kPanelX + 0.13f;
+				constexpr float kBarW    = kPanelW - 0.22f;
+				constexpr float kBarH    = 0.028f;
+
+				for (auto& row : kRows) {
+					auto it = entry->fields.find(row.key);
+					float frac = 0.0f;
+					int val = 0;
+					if (it != entry->fields.end()) {
+						try { val = std::stoi(it->second); } catch (...) { val = 0; }
+						frac = std::min(1.0f, (float)val / kBarMax);
+					}
+					R->drawText2D(row.label, kLabelX, rowY, 0.62f, kText);
+					ui::drawMeter(R, kBarX, rowY, kBarW, kBarH, frac,
+					              kBarFill, kBarBg, kBarBorder);
+					char num[8];
+					std::snprintf(num, sizeof(num), "%d", val);
+					R->drawText2D(num, kBarX + kBarW + 0.015f, rowY,
+					              0.62f, kTextDim);
+					rowY -= kRowStep;
+				}
+			}
+		}
 		break;
 	}
 	case MenuScreen::Connecting: {
