@@ -35,6 +35,7 @@
 #include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
 #include "client/hotbar.h"
+#include "client/lan_browser.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -310,6 +311,9 @@ private:
 	float        m_menuTitleT = 0.0f;
 	std::string  m_lastDeathReason;
 	MenuScreen   m_menuScreen = MenuScreen::Main;
+	// Listens on UDP 7778 for civcraft-server LAN broadcasts. Ticked every
+	// frame while in the Menu state; populates the Multiplayer screen list.
+	civcraft::LanBrowser m_lanBrowser;
 
 	// World to request on the pending C_HELLO handshake. main.cpp fills these
 	// before init(); CharacterSelect passes them into createGame().

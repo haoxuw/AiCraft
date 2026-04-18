@@ -196,10 +196,19 @@ void MenuRenderer::renderMenu() {
 		break;
 	}
 	case MenuScreen::CharacterSelect: {
-		// Panel stays on the LEFT so the model preview has the right half.
-		drawMenuFrame(R, -0.92f, -0.70f, 0.62f, 1.40f, "Choose Your Character");
+		// Left-column selection panel; the previewed character stands on the
+		// plaza grass (world-space pose in WorldRenderer::renderWorld) framed
+		// by the pinned camera in game_vk.cpp's menu block.
+		constexpr float kColW   = 0.54f;
+		constexpr float kColH   = 1.40f;
+		constexpr float kColY   = -0.70f;
+		constexpr float kLeftX  = -0.80f;
+		constexpr float kLeftCx = kLeftX + kColW * 0.5f;   // -0.53
+
+		drawMenuFrame(R, kLeftX, kColY, kColW, kColH, "Choose Your Character");
+
 		ui::drawCenteredText(R, "Arrow keys to pick, Enter to enter.",
-			-0.61f, 0.48f, 0.65f, kTextDim);
+			kLeftCx, 0.48f, 0.65f, kTextDim);
 
 		struct PlayableItem { std::string id, name; };
 		std::vector<PlayableItem> playables;
@@ -214,7 +223,7 @@ void MenuRenderer::renderMenu() {
 
 		if (playables.empty()) {
 			ui::drawCenteredText(R, "No playable livings registered.",
-				-0.61f, 0.10f, 0.90f, kDanger);
+				kLeftCx, 0.10f, 0.90f, kDanger);
 		} else {
 			std::vector<std::string> names;
 			names.reserve(playables.size() + 1);
@@ -223,7 +232,7 @@ void MenuRenderer::renderMenu() {
 
 			static int cursor = 0;
 			int picked = drawMenuList(in, names, cursor,
-				-0.61f, 0.38f, 0.085f, 0.52f);
+				kLeftCx, 0.38f, 0.085f, kColW - 0.06f);
 
 			if (cursor >= 0 && cursor < (int)playables.size())
 				g.m_previewCreatureId = playables[cursor].id;
@@ -239,7 +248,7 @@ void MenuRenderer::renderMenu() {
 
 		if (!g.m_connectError.empty())
 			ui::drawCenteredText(R, g.m_connectError.c_str(),
-				-0.61f, -0.62f, 0.70f, kDanger);
+				kLeftCx, -0.62f, 0.70f, kDanger);
 		break;
 	}
 	case MenuScreen::Connecting: {
@@ -268,17 +277,59 @@ void MenuRenderer::renderMenu() {
 		break;
 	}
 	case MenuScreen::Multiplayer: {
-		drawMenuFrame(R, -0.44f, -0.28f, 0.88f, 0.72f, "Multiplayer");
-		ui::drawCenteredText(R, "LAN browser coming in Stage C.",
-			0.0f, 0.16f, 0.80f, kText);
-		ui::drawCenteredText(R, "For now: civcraft-ui-vk --host HOST --port PORT",
-			0.0f, 0.08f, 0.65f, kTextHint);
+		drawMenuFrame(R, -0.50f, -0.60f, 1.00f, 1.12f, "LAN Servers");
+
+		const auto& servers = g.m_lanBrowser.servers();
+
+		if (!g.m_lanBrowser.listening()) {
+			ui::drawCenteredText(R,
+				"Could not bind UDP 7778 for discovery.",
+				0.0f, 0.34f, 0.80f, kDanger);
+			ui::drawCenteredText(R,
+				"Fall back to: civcraft-ui-vk --host HOST --port PORT",
+				0.0f, 0.26f, 0.65f, kTextHint);
+		} else if (servers.empty()) {
+			ui::drawCenteredText(R, "Scanning for servers...",
+				0.0f, 0.34f, 0.90f, kText);
+			ui::drawCenteredText(R,
+				"Servers broadcast every 2s on UDP 7778.",
+				0.0f, 0.26f, 0.65f, kTextHint);
+		} else {
+			char hdr[64];
+			std::snprintf(hdr, sizeof(hdr), "%zu server%s found",
+				servers.size(), servers.size() == 1 ? "" : "s");
+			ui::drawCenteredText(R, hdr, 0.0f, 0.34f, 0.80f, kTextDim);
+		}
+
+		std::vector<std::string> items;
+		items.reserve(servers.size() + 1);
+		for (const auto& s : servers) {
+			char row[128];
+			std::snprintf(row, sizeof(row), "%s:%d   (%d player%s)",
+				s.ip.c_str(), s.port, s.humans, s.humans == 1 ? "" : "s");
+			items.emplace_back(row);
+		}
+		items.emplace_back("BACK");
 
 		static int cursor = 0;
-		std::vector<std::string> items = { "BACK" };
 		int picked = drawMenuList(in, items, cursor,
-			0.0f, -0.08f, 0.100f, 0.40f);
-		if (picked == 0) { g.m_menuScreen = MenuScreen::Main; cursor = 0; }
+			0.0f, 0.18f, 0.085f, 0.84f);
+
+		int backIdx = (int)items.size() - 1;
+		if (picked == backIdx) {
+			g.m_menuScreen = MenuScreen::Main;
+			cursor = 0;
+		} else if (picked >= 0 && picked < (int)servers.size()) {
+			const auto& chosen = servers[picked];
+			if (auto* net = dynamic_cast<civcraft::NetworkServer*>(g.m_server)) {
+				net->setTarget(chosen.ip, chosen.port);
+				g.m_connectError.clear();
+				g.m_menuScreen = MenuScreen::CharacterSelect;
+				cursor = 0;
+			} else {
+				g.m_connectError = "client has no network transport";
+			}
+		}
 		break;
 	}
 	case MenuScreen::Settings: {

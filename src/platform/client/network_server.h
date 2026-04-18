@@ -341,6 +341,18 @@ public:
 	void setDisplayName(const std::string& name) { m_displayName = name; }
 	void setCreatureType(const std::string& type) override { m_creatureType = type; }
 
+	// Repoint at a different civcraft-server before reconnecting. Only safe
+	// while disconnected — the Multiplayer menu calls this after the user
+	// picks a LAN-discovered server, then CharacterSelect drives the handshake.
+	void setTarget(const std::string& host, int port) {
+		if (m_connected) disconnect();
+		m_host = host;
+		m_port = port;
+		printf("[Net] Target set to %s:%d\n", host.c_str(), port);
+	}
+	const std::string& host() const { return m_host; }
+	int targetPort() const { return m_port; }
+
 	static bool canConnect(const char* host, int port) {
 		net::TcpClient probe;
 		bool ok = probe.connect(host, port);

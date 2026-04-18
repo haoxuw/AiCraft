@@ -318,10 +318,10 @@ void WorldRenderer::renderWorld(float wallTime) {
 	// completes), so the menu camera has nothing but sky to look at. Emit a
 	// decorative grass plaza with a few trees and flowers as box instances,
 	// on the same pipeline that draws characters. Placed around origin; the
-	// menu camera orbits (0, 1.6, 0) so this fills the frame.
-	if (g.m_state == civcraft::vk::GameState::Menu
-	    && g.m_menuScreen != civcraft::vk::MenuScreen::CharacterSelect
-	    && g.m_menuScreen != civcraft::vk::MenuScreen::Connecting) {
+	// menu camera orbits (0, 1.6, 0) so this fills the frame. CharacterSelect
+	// reuses the same plaza so the previewed character stands on the grass
+	// instead of floating in sky.
+	if (g.m_state == civcraft::vk::GameState::Menu) {
 		const glm::vec3 grass(0.36f, 0.58f, 0.22f);
 		const glm::vec3 grassDk(0.28f, 0.46f, 0.18f);
 		const glm::vec3 dirt (0.42f, 0.30f, 0.20f);
@@ -418,9 +418,13 @@ void WorldRenderer::renderWorld(float wallTime) {
 			if (it != g.m_models.end()) {
 				civcraft::AnimState anim{};
 				anim.time = g.m_wallTime;
+				anim.currentClip = "mine";
 				float spinYaw = g.m_wallTime * 30.0f;  // slow turntable
+				// Stands on the plaza grass (y=1, top of the ground slab).
+				// The pinned camera in game_vk.cpp positions the viewport so
+				// this world pose lands in the right half of the screen.
 				civcraft::appendBoxModel(charBoxes, it->second,
-				                         glm::vec3(0.0f, 399.5f, 0.0f),
+				                         glm::vec3(0.0f, 1.0f, 0.0f),
 				                         spinYaw, anim);
 			}
 		}

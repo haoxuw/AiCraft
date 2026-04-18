@@ -434,6 +434,25 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	}
 
 	enterMenu();
+
+	// Debug hook for UI iteration: CIVCRAFT_BOOT_MENU=character lands directly
+	// on CharacterSelect with the first registered playable preselected, so
+	// screenshots of that layout can be taken without scripted keyboard input.
+	if (const char* boot = std::getenv("CIVCRAFT_BOOT_MENU")) {
+		std::string s = boot;
+		if (s == "character" || s == "characterselect") {
+			m_menuScreen = MenuScreen::CharacterSelect;
+			for (auto* e : m_artifactRegistry.byCategory("living")) {
+				auto it = e->fields.find("playable");
+				if (it == e->fields.end()) continue;
+				if (it->second != "True" && it->second != "true") continue;
+				m_previewCreatureId = e->id;
+				break;
+			}
+		} else if (s == "multiplayer") {
+			m_menuScreen = MenuScreen::Multiplayer;
+		}
+	}
 	return true;
 }
 
@@ -847,6 +866,11 @@ void Game::runOneFrame(float dt, float wallTime) {
 	// Pump the network connection, stream chunks, run AI.
 	m_server->tick(dt);
 	m_frameProbe.mark("net");
+
+	// Drain LAN server broadcasts so the Multiplayer menu has a live list.
+	// Only while in Menu — once we're Playing the browser's list isn't shown.
+	if (m_state == GameState::Menu)
+		m_lanBrowser.tick(wallTime);
 	streamServerChunks();
 	m_frameProbe.mark("chunks");
 	if (m_agentClient && m_state == GameState::Playing)
@@ -957,36 +981,33 @@ void Game::runOneFrame(float dt, float wallTime) {
 		bool previewing = (m_menuScreen == MenuScreen::CharacterSelect
 		                || m_menuScreen == MenuScreen::Connecting)
 		               && !m_previewCreatureId.empty();
-		float radius, pitch, yaw;
-		glm::vec3 head;
 		if (previewing) {
-			// Fixed-pose head looks at kPreviewWorldPos (see renderer_world).
-			// Camera right of model and slightly above, so model occupies the
-			// right half of the screen with the panel still fully visible.
-			// High altitude + matching preview model Y so streamed terrain
-			// can't occlude the preview once the server starts shipping chunks.
-			menuFocus = glm::vec3(0.0f, 400.0f, 0.0f);
-			head      = menuFocus + glm::vec3(0, 1.0f, 0);
-			radius    = 4.5f;
-			pitch     = 0.05f;
-			yaw       = 3.14f * 0.35f;   // ~63°, model faces camera slightly off-axis
+			// Pinned plaza-level camera: the preview character stands at world
+			// (0, 1, 0) (top of the grass slab). We aim at a point LEFT of the
+			// character so projection lands them in the RIGHT half of the
+			// screen, leaving the left half free for the menu panel.
+			m_cam.position = glm::vec3(5.0f, 2.8f, -5.0f);
+			glm::vec3 target(1.5f, 1.8f, 0.5f);
+			glm::vec3 look = glm::normalize(target - m_cam.position);
+			m_cam.lookYaw   = glm::degrees(std::atan2(look.z, look.x));
+			m_cam.lookPitch = glm::degrees(std::asin(look.y));
 		} else {
 			// Manually drive camera for the menu backdrop — don't run the full
 			// Camera::processInput (it would reset mouse-tracking every frame).
 			// Wider orbit + slight tilt so the plaza + tree silhouettes read
 			// as layered depth behind the menu chrome.
-			radius = 14.0f;
-			pitch  = 0.12f;   // slight downward tilt
-			yaw    = menuAng + 3.14f * 0.5f;
-			head   = menuFocus + glm::vec3(0, 1.5f, 0);
+			float radius = 14.0f;
+			float pitch  = 0.12f;   // slight downward tilt
+			float yaw    = menuAng + 3.14f * 0.5f;
+			glm::vec3 head = menuFocus + glm::vec3(0, 1.5f, 0);
+			glm::vec3 dir(std::cos(pitch) * std::cos(yaw),
+			              std::sin(pitch),
+			              std::cos(pitch) * std::sin(yaw));
+			m_cam.position = head - dir * radius;
+			glm::vec3 look = glm::normalize(head - m_cam.position);
+			m_cam.lookYaw   = glm::degrees(std::atan2(look.z, look.x));
+			m_cam.lookPitch = glm::degrees(std::asin(look.y));
 		}
-		glm::vec3 dir(std::cos(pitch) * std::cos(yaw),
-		              std::sin(pitch),
-		              std::cos(pitch) * std::sin(yaw));
-		m_cam.position = head - dir * radius;
-		glm::vec3 look = glm::normalize(head - m_cam.position);
-		m_cam.lookYaw   = glm::degrees(std::atan2(look.z, look.x));
-		m_cam.lookPitch = glm::degrees(std::asin(look.y));
 		m_worldRenderer.renderWorld(wallTime);
 		m_worldRenderer.renderEffects(wallTime);
 		m_menuRenderer.renderMenu();
