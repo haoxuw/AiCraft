@@ -196,10 +196,14 @@ void HudRenderer::renderInventoryItems3D() {
 			part.halfSize *= scale;
 		}
 		float cy = (minY + maxY) * 0.5f * scale;
-		glm::vec3 feet = itemWorldPos - glm::vec3(0.0f, cy, 0.0f);
+		// Centre the model in the slot along the camera's up axis so the
+		// item stays in place when the camera looks straight down (where
+		// world-Y offset would push it behind the camera).
+		glm::vec3 feet = itemWorldPos - camUp * cy;
 
 		civcraft::AnimState anim{};
 		anim.time = g.m_wallTime;
+		anim.suppressIdleBob = true;
 		float rpm     = s.selected ? 80.0f : 32.0f;
 		float offset  = (float)((size_t)(&s - slots.data()) * 37);
 		float slowSpin = (float)g.m_wallTime * rpm + offset;
@@ -261,17 +265,8 @@ void drawSlotFrame(rhi::IRhi* r, const SlotChromeArgs& a) {
 	r->drawRect2D(a.x,            a.y,             t,   a.h, out);
 	r->drawRect2D(a.x + a.w - t,  a.y,             t,   a.h, out);
 
-	// Rarity strip at top edge (inside border).
+	// Count chip bottom-right (no rarity strip — user prefers a clean slot).
 	if (hasItem) {
-		std::string raw = *a.itemId;
-		auto colon = raw.find(':');
-		if (colon != std::string::npos) raw = raw.substr(colon + 1);
-		glm::vec4 rc = rarityColor(civcraft::getMaterialValue(raw));
-		const float strip[4] = { rc.x, rc.y, rc.z, 0.85f };
-		r->drawRect2D(a.x + 0.005f, a.y + a.h - 0.006f,
-		              a.w - 0.010f, 0.003f, strip);
-
-		// Count chip bottom-right.
 		if (a.count > 1) {
 			char cnt[8]; std::snprintf(cnt, sizeof(cnt), "x%d", a.count);
 			size_t cntLen = std::strlen(cnt);

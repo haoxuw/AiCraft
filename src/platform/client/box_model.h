@@ -101,6 +101,10 @@ struct AnimState {
 	float lookPitch = 0.0f;
 
 	std::string currentClip;  // empty = default walk cycle
+
+	// HUD use: skip idle Y bob so inventory/hotbar items rotate in place
+	// without floating up and down. Ground items leave this false.
+	bool suppressIdleBob = false;
 };
 
 } // namespace civcraft

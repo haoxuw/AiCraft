@@ -88,7 +88,7 @@ inline void appendBoxModel(std::vector<float>& out,
 		walkBob = rawBob * rawBob * model.walkBobAmount * smoothSpeed * s;
 	}
 	float idleBob = 0.0f;
-	if (smoothSpeed < 0.1f) {
+	if (smoothSpeed < 0.1f && !anim.suppressIdleBob) {
 		float idleBlend = 1.0f - smoothSpeed / 0.1f;
 		idleBob = std::sin(anim.time * model.idleBobSpeed) * model.idleBobAmount
 		          * idleBlend * s;
