@@ -221,6 +221,25 @@ bool VkRhi::createSwapchain() {
 	uint32_t imgCount = caps.minImageCount + 1;
 	if (caps.maxImageCount > 0 && imgCount > caps.maxImageCount) imgCount = caps.maxImageCount;
 
+	// Prefer MAILBOX (triple-buffered, tear-free, not bound to vblank) so we
+	// can render above display refresh. Fall back to IMMEDIATE (may tear) and
+	// finally FIFO (vsync, always supported). Frame rate is then clamped in
+	// the main loop — see Shell::runOneFrame in main.cpp.
+	VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+	{
+		uint32_t pn = 0;
+		vkGetPhysicalDeviceSurfacePresentModesKHR(m_phys, m_surface, &pn, nullptr);
+		std::vector<VkPresentModeKHR> modes(pn);
+		vkGetPhysicalDeviceSurfacePresentModesKHR(m_phys, m_surface, &pn, modes.data());
+		bool hasMailbox = false, hasImmediate = false;
+		for (auto m : modes) {
+			if (m == VK_PRESENT_MODE_MAILBOX_KHR)   hasMailbox = true;
+			if (m == VK_PRESENT_MODE_IMMEDIATE_KHR) hasImmediate = true;
+		}
+		if      (hasMailbox)   presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+		else if (hasImmediate) presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+	}
+
 	VkSwapchainCreateInfoKHR sci{};
 	sci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
 	sci.surface = m_surface;
@@ -233,7 +252,7 @@ bool VkRhi::createSwapchain() {
 	sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	sci.preTransform = caps.currentTransform;
 	sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-	sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;  // vsync, always supported
+	sci.presentMode = presentMode;
 	sci.clipped = VK_TRUE;
 
 	if (vkCreateSwapchainKHR(m_device, &sci, nullptr, &m_swapchain) != VK_SUCCESS) {

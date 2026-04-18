@@ -310,10 +310,28 @@ void MenuRenderer::renderMenu() {
 		drawMenuFrame(R, -0.40f, -0.18f, 0.80f, 0.50f, "Entering World");
 		int dots = (int)(g.m_wallTime * 2.0f) % 4;
 		const char* dotStr[] = {"", ".", "..", "..."};
+		float pct = g.m_server ? g.m_server->preparingProgress() : -1.0f;
 		char buf[64];
-		std::snprintf(buf, sizeof(buf), "Streaming world%s", dotStr[dots]);
-		ui::drawCenteredText(R, buf, 0.0f, 0.08f, 0.90f, kText);
-		ui::drawCenteredText(R, "[Esc] Cancel", 0.0f, -0.06f, 0.70f, kTextDim);
+		if (pct >= 0.0f)
+			std::snprintf(buf, sizeof(buf), "Streaming world%s  %.0f%%",
+			              dotStr[dots], pct * 100.0f);
+		else
+			std::snprintf(buf, sizeof(buf), "Streaming world%s", dotStr[dots]);
+		ui::drawCenteredText(R, buf, 0.0f, 0.14f, 0.90f, kText);
+
+		// Progress meter — brass fill on dark bg, centered under the text.
+		constexpr float kBarX = -0.30f;
+		constexpr float kBarY = 0.02f;
+		constexpr float kBarW = 0.60f;
+		constexpr float kBarH = 0.040f;
+		const float kBarFill[4]   = {0.96f, 0.82f, 0.40f, 1.0f};
+		const float kBarBg[4]     = {0.08f, 0.08f, 0.10f, 0.80f};
+		const float kBarBorder[4] = {0.50f, 0.38f, 0.20f, 0.95f};
+		float frac = (pct < 0.0f) ? 0.0f : std::min(1.0f, pct);
+		ui::drawMeter(R, kBarX, kBarY, kBarW, kBarH, frac,
+		              kBarFill, kBarBg, kBarBorder);
+
+		ui::drawCenteredText(R, "[Esc] Cancel", 0.0f, -0.08f, 0.70f, kTextDim);
 
 		if (g.m_server && g.m_server->pollWelcome()) {
 			g.m_connecting = false;

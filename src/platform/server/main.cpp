@@ -409,6 +409,7 @@ int main(int argc, char** argv) {
 						{"blocks",    worstProfile.activeBlocksMs},
 						{"hpregen",   worstProfile.hpRegenMs},
 						{"structregen", worstProfile.structureRegenMs},
+						{"structfeat", worstProfile.structureFeaturesMs},
 						{"stuck",     worstProfile.stuckDetectionMs},
 					};
 					const char* bn = "?"; double bv = 0.0;
