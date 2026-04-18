@@ -13,7 +13,7 @@ Priority:
 """
 from rules import RulesBehavior
 from conditions_lib import (Threatened, IsEveningOrNight, FarFromHome,
-                             FarFromFlock, NearPlayer, Always)
+                             FarFromFlock, NearPlayer, Chance, Always)
 from actions_lib import Flee, GoHome, Rest, Rejoin, Wander, Follow, LayEgg
 
 
@@ -24,7 +24,7 @@ class BraveChickenBehavior(RulesBehavior):
             (Threatened(range=6, types=["dog"]),         Flee(distance=12, speed_mul=2.0,
                                                                     message="EEK! Dog!")),
             (IsEveningOrNight() & FarFromHome(radius=3),      GoHome(message="Heading home to roost...")),
-            (IsEveningOrNight(),                              Rest(message="Roosting zzz")),
+            (IsEveningOrNight(),                              Rest(message="Roosting zzz", duration=120.0)),
             (NearPlayer(range=3),                        LayEgg(chance=0.15, cooldown=8.0,
                                                                       message="*happy cluck* Laid an egg!")),
             (NearPlayer(range=20),                       Follow(target_tag="playable",
@@ -32,5 +32,8 @@ class BraveChickenBehavior(RulesBehavior):
                                                                       at_target_msg="Sitting by player",
                                                                       following_msg="Following player")),
             (FarFromFlock(range=4),                           Rejoin(close_dist=4, message="Rejoining flock")),
-            (Always(),                                        Wander(radius=10, message="Strutting around")),
+            (Chance(0.50),                                    Rest(message="Strutting", duration=30.0)),
+            (Always(),                                        Wander(radius=10, min_radius=3,
+                                                                     plan_duration=30.0,
+                                                                     message="Strutting around")),
         ]

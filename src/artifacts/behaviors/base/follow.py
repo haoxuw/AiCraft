@@ -33,13 +33,20 @@ class FollowBehavior(RulesBehavior):
             dist   = float(entity.get("follow_dist", _PRESETS.get(preset, 3.0)))
             patrol = float(entity.get("patrol_range", 12.0))
             tag    = entity.get("target_tag", "humanoid")
+            # Rule order matters: Follow.run returns None when no target is
+            # in range, so it falls through. Putting FarFromHome/Wander BEFORE
+            # Follow would short-circuit target acquisition; putting Always
+            # before FarFromHome (old ordering) made the patrol-home rule
+            # dead code.
             self.rules = [
-                (Always(),               Follow(target_tag=tag,
-                                                close_dist=dist,
-                                                range=patrol,
-                                                at_target_msg="Guarding")),
+                (Always(),                   Follow(target_tag=tag,
+                                                    close_dist=dist,
+                                                    range=patrol,
+                                                    at_target_msg="Guarding")),
                 (FarFromHome(radius=patrol), GoHome(speed_mul=0.5, message="Heading home")),
-                (Always(),               Wander(radius=4, speed_mul=0.4,
-                                                message="Sniffing around")),
+                (Always(),                   Wander(radius=6, min_radius=2,
+                                                    speed_mul=0.4,
+                                                    plan_duration=30.0,
+                                                    message="Sniffing around")),
             ]
         return super().decide(entity, world)

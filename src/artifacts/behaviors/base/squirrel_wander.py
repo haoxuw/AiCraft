@@ -1,7 +1,7 @@
 """Squirrel wander — scampers around logs; despawns if none nearby.
 
-Biases wander around the nearest `log` block within 32 units; if no log is
-present for 2 minutes the squirrel despawns so the world stays tidy.
+Biases wander around the nearest `logs` block within 32 units; if no tree
+is present for 5 minutes the squirrel despawns so the world stays tidy.
 """
 from rules import RulesBehavior
 from conditions_lib import Threatened, Always
@@ -13,8 +13,14 @@ class SquirrelWanderBehavior(RulesBehavior):
         super().__init__()
         self.rules = [
             (Threatened(range=5), Flee()),
-            (Always(),            Wander(target_block="log",
+            # Block id is "logs" (plural) — see artifacts/blocks/base/terrain.py.
+            # plan_duration=60 matches the decide floor so one scamper leg
+            # is one commit cycle.
+            (Always(),            Wander(target_block="logs",
+                                         radius=12.0,
+                                         min_radius=3.0,
                                          search_radius=32.0,
-                                         despawn_after=120.0,
+                                         despawn_after=300.0,
+                                         plan_duration=60.0,
                                          message="Scampering")),
         ]

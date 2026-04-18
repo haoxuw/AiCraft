@@ -40,10 +40,14 @@ class Wander(Action):
                       creatures (bees, squirrels) that need to go away if their
                       target block/annotation never appears.
     """
-    def __init__(self, radius=8.0, target_block=None, search_radius=24.0,
-                 despawn_after=None, speed_mul=1.0, message="Wandering",
-                 plan_duration=3.0):
+    def __init__(self, radius=8.0, min_radius=0.0, target_block=None,
+                 search_radius=24.0, despawn_after=None, speed_mul=1.0,
+                 message="Wandering", plan_duration=3.0):
         self.radius = radius
+        # Inner radius — picked point is sampled in [min_radius, radius]. Use
+        # this so a creature doesn't spam tiny one-block hops; default 0 keeps
+        # legacy callers' behavior.
+        self.min_radius = min_radius
         self.target_block = target_block
         self.search_radius = search_radius
         self.despawn_after = despawn_after
@@ -95,7 +99,9 @@ class Wander(Action):
             cx, cz = e.x, e.z
 
         angle = random.uniform(0, 2 * math.pi)
-        d = random.uniform(self.radius * 0.3, self.radius)
+        # Honor min_radius if set; otherwise legacy 30% inner ring.
+        lo = self.min_radius if self.min_radius > 0.0 else self.radius * 0.3
+        d = random.uniform(lo, self.radius)
         return (Move(cx + math.cos(angle) * d, e.y, cz + math.sin(angle) * d,
                      speed=e.walk_speed * self.speed_mul),
                 self.message,

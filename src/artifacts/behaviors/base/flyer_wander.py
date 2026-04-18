@@ -1,11 +1,16 @@
-"""Flyer wander — airborne variant of wander.
+"""Flyer wander — shared hover/fly behavior for airborne creatures.
 
-Same rule list as wander, but the wander action emits goalText "Flying"
-instead of "Wandering" so the client plays the flap animation (see
-entity_drawer.cpp::pickClip → "fly" clip in owl.py).
+Biases the wander around the nearest `flower_red` annotation within 128
+blocks; falls back to wandering around self when no flower is reachable.
+goalText "Flying" makes the client play the flap animation
+(entity_drawer.cpp::pickClip → "fly").
 
-Full take-off/landing state machine is a future step; for now flyers
-just hover + flap. gravity_scale=0 in C++ builtin.cpp keeps them airborne.
+Used by: bee, owl. Bees gravitate toward flowers for pollination flavor;
+owls will orbit anything colourful too — harmless, and keeps the behavior
+single-source.
+
+gravity_scale=0 on each living def keeps them airborne; the wander action
+just picks XZ waypoints.
 """
 from rules import RulesBehavior
 from conditions_lib import Threatened, Always
@@ -17,5 +22,13 @@ class FlyerWanderBehavior(RulesBehavior):
         super().__init__()
         self.rules = [
             (Threatened(range=6), Flee()),
-            (Always(),            Wander(radius=10, message="Flying")),
+            # plan_duration=60 matches the C++ decide floor (kMinGapSec) so
+            # one flight leg == one decide cycle; radius/search_radius are
+            # sized for flyers to cross a meadow per commit.
+            (Always(),            Wander(target_block="flower_red",
+                                         radius=40.0,
+                                         min_radius=10.0,
+                                         search_radius=128.0,
+                                         plan_duration=60.0,
+                                         message="Flying")),
         ]

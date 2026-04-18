@@ -187,8 +187,8 @@ void EntityUiRenderer::renderEntityInspect() {
 				std::snprintf(buf, sizeof(buf), "%zu", viz->waypoints.size());
 				rowKV("Waypoints", buf, kText);
 			}
-			std::snprintf(buf, sizeof(buf), "%.1fs", pp.timeSinceDecide);
-			rowKV("Since decide", buf, kText);
+			std::snprintf(buf, sizeof(buf), "%.1f/min", pp.decideRatePerMin);
+			rowKV("Decide rate", buf, kText);
 			if (pp.stuckAccum > 0.1f) {
 				const float warn[4] = {0.95f, 0.75f, 0.20f, 1.0f};
 				std::snprintf(buf, sizeof(buf), "stuck: %.1fs", pp.stuckAccum);

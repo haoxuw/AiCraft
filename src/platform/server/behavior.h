@@ -40,8 +40,16 @@ struct PlanStep {
 	int       itemCount     = 1;
 	float     speed         = 2.0f;
 
-	static PlanStep move(glm::vec3 pos, float spd = 2.0f) {
-		PlanStep s; s.type = Move; s.targetPos = pos; s.speed = spd; return s;
+	// Commit duration requested by the behavior. Semantics per step type:
+	//   Move, idle-hold (target==self): success at progress >= holdTime
+	//   Move, travel:                   success on arrival OR progress >= holdTime
+	//   Harvest / Attack / Relocate:    ignored (natural success criteria)
+	// holdTime == 0 means "use evaluator default" (see agent_client.h).
+	float     holdTime      = 0.0f;
+
+	static PlanStep move(glm::vec3 pos, float spd = 2.0f, float hold = 0.0f) {
+		PlanStep s; s.type = Move; s.targetPos = pos; s.speed = spd;
+		s.holdTime = hold; return s;
 	}
 	static PlanStep harvest(glm::vec3 pos) {
 		PlanStep s; s.type = Harvest; s.targetPos = pos; return s;

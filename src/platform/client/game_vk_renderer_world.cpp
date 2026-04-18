@@ -1163,7 +1163,7 @@ void WorldRenderer::renderEffects(float wallTime) {
 			if (g.m_agentClient) {
 				g.m_agentClient->forEachAgent(
 					[&](civcraft::EntityId eid,
-					    const civcraft::AgentClient::PlanViz& viz) {
+					    const civcraft::PlanViz& viz) {
 					if (viz.waypoints.empty()) return;
 					if (rtsDrawn.count(eid)) return;
 					civcraft::Entity* a = g.m_server->getEntity(eid);

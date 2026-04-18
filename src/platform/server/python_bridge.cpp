@@ -551,7 +551,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 
 		py::object result = instance.attr("decide")(pySelfEntity, pyLocalWorld);
 
-		// Expect (action_or_plan, goal_str).
+		// Expect (action_or_plan, goal_str[, hold_seconds]).
 		if (!py::isinstance<py::tuple>(result)) {
 			errorOut = "decide() must return a tuple";
 			return {};
@@ -565,6 +565,13 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 		goalOut = tup[1].cast<std::string>();
 		if (goalOut.empty()) goalOut = "Active";
 
+		// Legacy single-action tuples carry the behavior's commit duration in
+		// tup[2]; dict-list plans carry it per-step via d["hold"].
+		float legacyHold = 0.0f;
+		if (tup.size() >= 3 && !tup[2].is_none()) {
+			legacyHold = tup[2].cast<float>();
+		}
+
 		// tup[0]: old-format PyAction | new-format list of PlanStep dicts | None.
 		py::object first = tup[0];
 		Plan plan;
@@ -573,17 +580,19 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 			// Idle.
 		} else if (py::isinstance<py::list>(first)) {
 			// PlanStep dict schema:
-			//   move:     {type, x, y, z, speed}
+			//   move:     {type, x, y, z, speed, hold?}
 			//   harvest:  {type, x, y, z}
 			//   attack:   {type, entity_id}
 			//   relocate: {type, from, to, item, count}
 			for (auto& item : first.cast<py::list>()) {
 				py::dict d = item.cast<py::dict>();
 				std::string stype = d["type"].cast<std::string>();
+				float hold = d.contains("hold") && !d["hold"].is_none()
+					? d["hold"].cast<float>() : 0.0f;
 				if (stype == "move") {
 					plan.push_back(PlanStep::move(
 						{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()},
-						 d["speed"].cast<float>()));
+						 d["speed"].cast<float>(), hold));
 				} else if (stype == "harvest") {
 					plan.push_back(PlanStep::harvest(
 						{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()}));
@@ -601,8 +610,13 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 			}
 		} else {
 			// Backward compat: single PyAction → single-step Plan.
+			// Legacy (action, goal, duration) tuple carries duration in tup[2];
+			// applied to the single step's holdTime.
 			PyAction pa = first.cast<PyAction>();
-			plan.push_back(pyActionToPlanStep(pa));
+			PlanStep step = pyActionToPlanStep(pa);
+			if (step.type == PlanStep::Move && legacyHold > 0.0f)
+				step.holdTime = legacyHold;
+			plan.push_back(step);
 		}
 
 		return plan;
