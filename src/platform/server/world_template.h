@@ -19,9 +19,12 @@ namespace civcraft {
 // also spawn as an entity. Collected during chunk generation, drained after
 // the chunk lock is released (avoids re-entering EntityManager under the lock).
 struct PendingStructureSpawn {
-	std::string blueprintId;        // e.g. "tree" — matches artifacts/structures/*.py
-	std::string entityType;         // e.g. StructureName::Tree — registered EntityDef
-	glm::ivec3  anchorPos = {0,0,0};// usually the trunk/root base
+	std::string blueprintId;         // e.g. "tree" — matches artifacts/structures/*.py
+	std::string entityType;          // e.g. StructureName::Tree — registered EntityDef
+	glm::ivec3  anchorPos = {0,0,0}; // usually the trunk/root base
+	// Exact leaf positions this tree planted — handed to the SeasonalLeaves
+	// feature so each tree paints only its own canopy, not overlapping neighbors.
+	std::vector<glm::ivec3> leafPositions;
 };
 
 class WorldTemplate {
@@ -307,15 +310,22 @@ public:
 						int ly = ty - oy;
 						if (ly >= 0 && ly < CHUNK_SIZE) chunk.set(lx, ly, lz, bLog);
 					}
-					// Record the tree so the server can spawn a structure entity
-					// for it — SeasonalLeaves reads its leafPositions from the
-					// world (BFS from this anchor) on first tick.
-					if (pendingSpawns) {
-						PendingStructureSpawn s;
+					// Worldgen runs per-chunk, and the same (wx,wz) is visited
+					// in every stacked Y-chunk. Only the chunk whose Y range
+					// contains trunkBase hosts a real tree — the rest would
+					// push phantom spawns with no blocks. Early-out there.
+					int anchorLy = trunkBase - oy;
+					bool anchorInThisChunk = anchorLy >= 0 && anchorLy < CHUNK_SIZE;
+
+					// Build the structure-spawn record alongside the leaf
+					// sphere: every leaf placed here is recorded in world
+					// coordinates so SeasonalLeaves can paint exactly this
+					// tree's canopy (no BFS, no neighbor overlap).
+					PendingStructureSpawn s;
+					if (pendingSpawns && anchorInThisChunk) {
 						s.blueprintId = "tree";
 						s.entityType  = StructureName::Tree;
 						s.anchorPos   = {wx, trunkBase, wz};
-						pendingSpawns->push_back(std::move(s));
 					}
 					int leafR = m_py.leafRadius;
 					for (int dy = -1; dy <= leafR; dy++) {
@@ -326,10 +336,15 @@ public:
 								if (dx*dx+ddz*ddz+dy*dy > leafR*leafR+1) continue;
 								int lxx=lx+dx, lyy=trunkTop+dy-oy, lzz=lz+ddz;
 								if (lxx>=0&&lxx<CHUNK_SIZE&&lyy>=0&&lyy<CHUNK_SIZE&&
-								    lzz>=0&&lzz<CHUNK_SIZE&&chunk.get(lxx,lyy,lzz)==BLOCK_AIR)
+								    lzz>=0&&lzz<CHUNK_SIZE&&chunk.get(lxx,lyy,lzz)==BLOCK_AIR) {
 									chunk.set(lxx, lyy, lzz, bLeaves);
+									if (pendingSpawns && anchorInThisChunk)
+										s.leafPositions.push_back({ox+lxx, oy+lyy, oz+lzz});
+								}
 							}
 					}
+					if (pendingSpawns && anchorInThisChunk)
+						pendingSpawns->push_back(std::move(s));
 				}
 			}
 		}

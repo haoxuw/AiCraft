@@ -564,86 +564,9 @@ public:
 		    || sid == BlockType::LeavesSnow;
 	}
 
-	// Drained each tick — worldgen adds tree entities as chunks stream in.
-	// Copies blueprint-level features into the fresh entity's StructureComponent
-	// so every tree instance gets independent runtime state.
-	void spawnPendingStructures() {
-		auto pending = m_world->drainPendingStructureSpawns();
-		for (auto& p : pending) {
-			glm::vec3 pos{(float)p.anchorPos.x + 0.5f,
-			              (float)p.anchorPos.y,
-			              (float)p.anchorPos.z + 0.5f};
-			EntityId eid = m_world->entities.spawn(p.entityType, pos, {});
-			Entity* e = m_world->entities.get(eid);
-			if (!e || !e->structure) continue;
-			e->structure->blueprintId = p.blueprintId;
-			e->structure->anchorPos   = p.anchorPos;
-			if (const auto* bp = m_blueprints.get(p.blueprintId)) {
-				// Copy features + reset runtime state so each tree rolls fresh.
-				e->structure->features = bp->features;
-				for (auto& f : e->structure->features) {
-					f.scanned = false;
-					f.seasonIdxApplied = -1;
-					f.currentVariant.clear();
-					f.leafPositions.clear();
-				}
-			}
-		}
-	}
-
-	// One pass of the SeasonalLeaves feature for a single entity.
-	// - First call: BFS-scan `scanRadius` around anchor, cache leaf positions.
-	// - If the current season matches `seasonIdxApplied`, no-op.
-	// - Else roll `perTickProb`; on hit, pick a random variant from this
-	//   season's palette and rewrite every cached position whose block is
-	//   still a leaf variant (respects player mining).
-	void tickSeasonalLeaves(Entity& e, StructureFeature& f) {
-		if (!e.structure) return;
-		const glm::ivec3 anchor = e.structure->anchorPos;
-
-		if (!f.scanned) {
-			f.scanned = true;
-			f.leafPositions.clear();
-			const int r = f.scanRadius;
-			// Tree canopy sits above the trunk base. Scan from a bit below
-			// the anchor (cover root-level decorations) up to 2*r above.
-			for (int dy = -1; dy <= 2 * r; dy++) {
-				for (int dz = -r; dz <= r; dz++) {
-					for (int dx = -r; dx <= r; dx++) {
-						int wx = anchor.x + dx, wy = anchor.y + dy, wz = anchor.z + dz;
-						ChunkPos cp = worldToChunk(wx, wy, wz);
-						Chunk* c = m_world->getChunkIfLoaded(cp);
-						if (!c) continue;
-						BlockId bid = c->get(((wx%16)+16)%16,
-						                     ((wy%16)+16)%16,
-						                     ((wz%16)+16)%16);
-						const std::string& sid = m_world->blocks.get(bid).string_id;
-						if (isLeafBlockId(sid))
-							f.leafPositions.push_back({wx, wy, wz});
-					}
-				}
-			}
-		}
-
-		int currentSeason = (int)seasonFromDay(m_dayCount);
-		if (currentSeason == f.seasonIdxApplied) return;
-		const auto& palette = f.seasonVariants[currentSeason];
-		if (palette.empty()) {
-			// Nothing defined for this season — mark as applied to skip future rolls.
-			f.seasonIdxApplied = currentSeason;
-			return;
-		}
-
-		// Per-tick probability roll.
-		std::uniform_real_distribution<float> uroll(0.0f, 1.0f);
-		if (uroll(m_featureRng) >= f.perTickProb) return;
-
-		// Pick a variant for this tree (uniform over the season palette).
-		std::uniform_int_distribution<int> pick(0, (int)palette.size() - 1);
-		const std::string& chosen = palette[pick(m_featureRng)];
-		BlockId newBid = m_world->blocks.getId(chosen);
-		if (newBid == BLOCK_AIR) return;
-
+	// Paints every position in `f.leafPositions` that is still a leaf-variant
+	// block to `newBid`. Caller handles RNG/season gating.
+	void paintTreeLeaves(const StructureFeature& f, BlockId newBid) {
 		for (const auto& p : f.leafPositions) {
 			ChunkPos cp = worldToChunk(p.x, p.y, p.z);
 			Chunk* c = m_world->getChunkIfLoaded(cp);
@@ -657,6 +580,82 @@ public:
 			if (m_callbacks.onBlockChange)
 				m_callbacks.onBlockChange(p, cur, newBid, 0);
 		}
+	}
+
+	// Drained each tick — worldgen adds tree entities as chunks stream in.
+	// Copies blueprint-level features into the fresh entity's StructureComponent
+	// and hands over the precise leaf positions the worldgen planted. With
+	// spawnTransitionChance probability, the tree also immediately paints into
+	// the current season's palette so an autumn world looks autumn on load.
+	void spawnPendingStructures() {
+		auto pending = m_world->drainPendingStructureSpawns();
+		if (pending.empty()) return;
+		int currentSeason = (int)seasonFromDay(m_dayCount);
+		std::uniform_real_distribution<float> uroll(0.0f, 1.0f);
+
+		for (auto& p : pending) {
+			glm::vec3 pos{(float)p.anchorPos.x + 0.5f,
+			              (float)p.anchorPos.y,
+			              (float)p.anchorPos.z + 0.5f};
+			EntityId eid = m_world->entities.spawn(p.entityType, pos, {});
+			Entity* e = m_world->entities.get(eid);
+			if (!e || !e->structure) continue;
+			e->structure->blueprintId = p.blueprintId;
+			e->structure->anchorPos   = p.anchorPos;
+			const auto* bp = m_blueprints.get(p.blueprintId);
+			if (!bp) continue;
+			e->structure->features = bp->features;
+			for (auto& f : e->structure->features) {
+				if (f.type != StructureFeature::Type::SeasonalLeaves) continue;
+				f.leafPositions    = p.leafPositions;  // exact per-tree canopy
+				f.scanned          = true;             // authoritative — skip BFS
+				f.seasonIdxApplied = -1;
+				f.currentVariant.clear();
+
+				// Some trees spawn already in this season's palette so a fresh
+				// autumn world shows autumn colors. Others stay default (green)
+				// and roll into variant gradually via the 1 Hz dispatcher.
+				const auto& palette = f.seasonVariants[currentSeason];
+				if (!palette.empty() && uroll(m_featureRng) < f.spawnTransitionChance) {
+					std::uniform_int_distribution<int> pick(0, (int)palette.size() - 1);
+					const std::string& chosen = palette[pick(m_featureRng)];
+					BlockId newBid = m_world->blocks.getId(chosen);
+					if (newBid != BLOCK_AIR) {
+						paintTreeLeaves(f, newBid);
+						f.seasonIdxApplied = currentSeason;
+						f.currentVariant   = chosen;
+					}
+				}
+			}
+		}
+	}
+
+	// One pass of the SeasonalLeaves feature for a single entity.
+	// - Once per season: if the current season matches `seasonIdxApplied`,
+	//   no-op (this tree has already picked its color for this season).
+	// - Otherwise roll `perTickProb`; on hit, pick one variant and repaint
+	//   every one of this tree's own leaves in a single atomic pass, then
+	//   mark as applied so it stays that color for the rest of the season.
+	void tickSeasonalLeaves(Entity& e, StructureFeature& f) {
+		if (!e.structure) return;
+		int currentSeason = (int)seasonFromDay(m_dayCount);
+		if (currentSeason == f.seasonIdxApplied) return;
+
+		const auto& palette = f.seasonVariants[currentSeason];
+		if (palette.empty()) {
+			f.seasonIdxApplied = currentSeason;  // nothing to roll — lock.
+			return;
+		}
+
+		std::uniform_real_distribution<float> uroll(0.0f, 1.0f);
+		if (uroll(m_featureRng) >= f.perTickProb) return;
+
+		std::uniform_int_distribution<int> pick(0, (int)palette.size() - 1);
+		const std::string& chosen = palette[pick(m_featureRng)];
+		BlockId newBid = m_world->blocks.getId(chosen);
+		if (newBid == BLOCK_AIR) return;
+
+		paintTreeLeaves(f, newBid);
 		f.seasonIdxApplied = currentSeason;
 		f.currentVariant   = chosen;
 	}

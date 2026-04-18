@@ -28,7 +28,17 @@ struct StructureFeature {
 	// Per-season candidate block-id strings. Empty season = skip that season.
 	// Indexed by the Season enum value.
 	std::vector<std::string> seasonVariants[4];
-	float perTickProb = 0.02f;
+	// Per-tick roll (at 1 Hz dispatcher) — probability this tree transitions
+	// from the default palette into the current season's palette this tick.
+	// Low values spread the transition across the season so the forest
+	// turns gradually rather than all at once.
+	float perTickProb = 0.005f;
+	// Probability a freshly-spawned tree immediately paints into the current
+	// season's palette (so an autumn-start world shows autumn on load).
+	// Remaining trees transition via perTickProb over time.
+	float spawnTransitionChance = 0.5f;
+	// Retained for schema stability; BFS fallback is no longer used — worldgen
+	// now hands precise leaf positions to the feature at spawn time.
 	int   scanRadius  = 5;
 
 	// --- SeasonalLeaves runtime state (in-memory only for v1) ---

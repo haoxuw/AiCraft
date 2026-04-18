@@ -18,10 +18,12 @@ blueprint = {
         {"offset": [0, 2, -1], "type": "leaves"},
         {"offset": [0, 3, 0], "type": "leaves"},
     ],
-    # Server applies these every StructureFeature tick (~1 Hz). Each tree
-    # independently rolls per_tick_prob to switch its leaves to a random
-    # variant from the current season's palette — so at mid-season some
-    # trees are still green while others have already turned.
+    # Each tree rolls once per season: on hit, every leaf in ITS OWN canopy
+    # flips to a single randomly-picked variant and the tree is locked for the
+    # rest of the season. spawn_transition_chance seeds a fresh world already
+    # in-season (~half the trees arrive pre-transitioned), and per_tick_prob
+    # at 1 Hz spreads the remainder gradually — ~200s expected per tree so
+    # the forest visibly turns over minutes, not seconds.
     "features": [
         {
             "type": "seasonal_leaves",
@@ -29,8 +31,8 @@ blueprint = {
             "summer_variants": ["leaves", "leaves_summer"],
             "autumn_variants": ["leaves_gold", "leaves_orange", "leaves_red"],
             "winter_variants": ["leaves_bare", "leaves_snow"],
-            "per_tick_prob": 0.02,
-            "scan_radius": 3,
+            "per_tick_prob": 0.005,
+            "spawn_transition_chance": 0.5,
         },
     ],
 }

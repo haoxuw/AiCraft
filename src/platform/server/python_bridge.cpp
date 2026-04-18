@@ -965,8 +965,9 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 					readList("summer_variants", 1);
 					readList("autumn_variants", 2);
 					readList("winter_variants", 3);
-					f.perTickProb = getFloat(fd, "per_tick_prob", f.perTickProb);
-					f.scanRadius  = getInt(fd,   "scan_radius",   f.scanRadius);
+					f.perTickProb           = getFloat(fd, "per_tick_prob",           f.perTickProb);
+					f.spawnTransitionChance = getFloat(fd, "spawn_transition_chance", f.spawnTransitionChance);
+					f.scanRadius            = getInt(fd,   "scan_radius",             f.scanRadius);
 					out.features.push_back(std::move(f));
 				} else {
 					printf("[StructureBlueprint] Unknown feature type '%s' in %s — skipping.\n",
