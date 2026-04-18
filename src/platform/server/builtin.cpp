@@ -37,6 +37,16 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	blocks.registerBlock({BT::Wood, "Wood", {0.50f,0.38f,0.18f},{0.42f,0.28f,0.12f},{0.50f,0.38f,0.18f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood});
 	blocks.registerBlock({BT::Planks, "Planks", {0.68f,0.52f,0.30f},{0.64f,0.47f,0.24f},{0.68f,0.52f,0.30f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood});
 	blocks.registerBlock({BT::Leaves, "Leaves", {0.18f,0.48f,0.10f},{0.20f,0.45f,0.12f},{0.20f,0.45f,0.12f}, true,false, "",64,0, "",SN::DigLeaves,""});
+	// Seasonal leaf variants. Distinct BlockIds (not palette-tinted) so chunk
+	// save/load is stateless and individual trees can hold independent colors.
+	// SeasonalLeaves (structure feature) swaps the tree's leaves between these.
+	blocks.registerBlock({BT::LeavesSpring, "Leaves (Spring)", {0.45f,0.75f,0.22f},{0.48f,0.72f,0.24f},{0.48f,0.72f,0.24f}, true,false, BT::Leaves,64,0, "",SN::DigLeaves,""});
+	blocks.registerBlock({BT::LeavesSummer, "Leaves (Summer)", {0.12f,0.38f,0.08f},{0.14f,0.36f,0.10f},{0.14f,0.36f,0.10f}, true,false, BT::Leaves,64,0, "",SN::DigLeaves,""});
+	blocks.registerBlock({BT::LeavesGold,   "Leaves (Gold)",   {0.90f,0.78f,0.20f},{0.82f,0.68f,0.18f},{0.82f,0.68f,0.18f}, true,false, BT::Leaves,64,0, "",SN::DigLeaves,""});
+	blocks.registerBlock({BT::LeavesOrange, "Leaves (Orange)", {0.88f,0.48f,0.12f},{0.80f,0.42f,0.10f},{0.80f,0.42f,0.10f}, true,false, BT::Leaves,64,0, "",SN::DigLeaves,""});
+	blocks.registerBlock({BT::LeavesRed,    "Leaves (Red)",    {0.78f,0.20f,0.14f},{0.70f,0.18f,0.12f},{0.70f,0.18f,0.12f}, true,false, BT::Leaves,64,0, "",SN::DigLeaves,""});
+	blocks.registerBlock({BT::LeavesBare,   "Bare Branches",   {0.32f,0.22f,0.14f},{0.30f,0.20f,0.12f},{0.28f,0.18f,0.10f}, true,true,  "",    64,0, "",SN::DigLeaves,""});
+	blocks.registerBlock({BT::LeavesSnow,   "Snowy Leaves",    {0.88f,0.92f,0.96f},{0.78f,0.82f,0.88f},{0.74f,0.78f,0.82f}, true,false, BT::Leaves,64,0, "",SN::DigLeaves,""});
 
 	// Active (with behavior)
 	blocks.registerBlock({BT::TNT, "TNT", {0.80f,0.25f,0.20f},{0.80f,0.25f,0.20f},{0.80f,0.25f,0.20f}, true,false, "",64,0, "","","", BlockBehavior::Active, {{PR::FuseTicks,0},{PR::Lit,0}}, "tnt_block"});
@@ -167,6 +177,21 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		def.has_inventory = true;
 		def.collision_box_min = {0, 0, 0};
 		def.collision_box_max = {1, 1, 1};
+		entities.registerType(def);
+	}
+
+	// Trees — one structure entity per procgen tree. The entity itself is
+	// invisible (leaves/logs are real chunk blocks); it just carries the
+	// StructureFeature decorator (seasonal palette) that mutates those blocks
+	// on a schedule. Tight collision box so rays / queries don't hit it.
+	{
+		EntityDef def;
+		def.string_id = StructureName::Tree;
+		def.display_name = "Tree";
+		def.kind = EntityKind::Structure;
+		def.has_inventory = false;
+		def.collision_box_min = {-0.05f, 0.0f, -0.05f};
+		def.collision_box_max = { 0.05f, 0.1f,  0.05f};
 		entities.registerType(def);
 	}
 

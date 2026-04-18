@@ -84,6 +84,10 @@ struct WorldPyConfig {
 	// Real-time seconds for full day/night. Python key: day_length_ticks.
 	int   dayLengthTicks         = 1200;
 
+	// In-game day the world starts on. Feeds seasonFromDay() so a fresh
+	// world can open in e.g. autumn (4) instead of Spring (0).
+	int   startingDay            = 0;
+
 	// spawnAt: "monument"|"barn"|"portal", "" = legacy ring around village center.
 	struct MobConfig {
 		std::string type; int count = 0; float radius = 20.0f;

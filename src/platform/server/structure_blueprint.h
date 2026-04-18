@@ -5,6 +5,7 @@
 // and provides firstMissingBlock() for integrity checks.
 
 #include "logic/constants.h"
+#include "logic/entity.h"   // StructureFeature (shared with live entities)
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>
@@ -37,6 +38,9 @@ struct StructureBlueprint {
 	std::vector<BlockSlot> blocks;
 	bool  regenerates      = false;
 	float regen_interval_s = 60.0f;  // seconds between one block replacement
+	// Decorators applied when a structure entity spawns (seasonal leaves,
+	// flame FX, etc). Server tick dispatcher walks them per-entity.
+	std::vector<StructureFeature> features;
 };
 
 // Implemented in python_bridge.cpp alongside loadWorldConfig().

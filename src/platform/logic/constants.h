@@ -82,7 +82,16 @@ namespace BlockType {
 	constexpr const char* Water        = "water";
 	constexpr const char* Wood         = "wood";
 	constexpr const char* Log          = "logs";
+	// Default leaves block (summer green). SeasonalLeaves feature swaps every
+	// tree's leaves between this and the seasonal variants below.
 	constexpr const char* Leaves       = "leaves";
+	constexpr const char* LeavesSpring = "leaves_spring";     // fresh bright green
+	constexpr const char* LeavesSummer = "leaves_summer";     // deep summer green
+	constexpr const char* LeavesGold   = "leaves_gold";       // early autumn
+	constexpr const char* LeavesOrange = "leaves_orange";     // autumn pumpkin
+	constexpr const char* LeavesRed    = "leaves_red";        // autumn maple
+	constexpr const char* LeavesBare   = "leaves_bare";       // late-autumn branches
+	constexpr const char* LeavesSnow   = "leaves_snow";       // winter frosted
 	constexpr const char* Snow         = "snow";
 	constexpr const char* TNT          = "tnt";
 	constexpr const char* Wheat        = "wheat";

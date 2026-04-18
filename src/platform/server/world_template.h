@@ -15,6 +15,15 @@
 
 namespace civcraft {
 
+// A structure placed by worldgen (e.g. a tree trunk) that the server should
+// also spawn as an entity. Collected during chunk generation, drained after
+// the chunk lock is released (avoids re-entering EntityManager under the lock).
+struct PendingStructureSpawn {
+	std::string blueprintId;        // e.g. "tree" — matches artifacts/structures/*.py
+	std::string entityType;         // e.g. StructureName::Tree — registered EntityDef
+	glm::ivec3  anchorPos = {0,0,0};// usually the trunk/root base
+};
+
 class WorldTemplate {
 public:
 	virtual ~WorldTemplate() = default;
@@ -22,8 +31,11 @@ public:
 	virtual std::string name()        const = 0;
 	virtual std::string description() const = 0;
 
+	// pendingSpawns (optional): populated with structure entities that should
+	// be spawned after the chunk is stored. Pass nullptr to discard.
 	virtual void generate(Chunk& chunk, ChunkPos cpos, int seed,
-	                      const BlockRegistry& blocks) = 0;
+	                      const BlockRegistry& blocks,
+	                      std::vector<PendingStructureSpawn>* pendingSpawns = nullptr) = 0;
 
 	virtual float surfaceHeight(int seed, float x, float z) const = 0;
 	virtual glm::vec3 preferredSpawn(int seed) const = 0;
@@ -200,7 +212,8 @@ public:
 	}
 
 	void generate(Chunk& chunk, ChunkPos cpos, int seed,
-	              const BlockRegistry& blocks) override {
+	              const BlockRegistry& blocks,
+	              std::vector<PendingStructureSpawn>* pendingSpawns = nullptr) override {
 		BlockId bStone  = blocks.getId(BlockType::Stone);
 		BlockId bDirt   = blocks.getId(BlockType::Dirt);
 		BlockId bGrass  = blocks.getId(BlockType::Grass);
@@ -293,6 +306,16 @@ public:
 					for (int ty = trunkBase; ty <= trunkTop; ty++) {
 						int ly = ty - oy;
 						if (ly >= 0 && ly < CHUNK_SIZE) chunk.set(lx, ly, lz, bLog);
+					}
+					// Record the tree so the server can spawn a structure entity
+					// for it — SeasonalLeaves reads its leafPositions from the
+					// world (BFS from this anchor) on first tick.
+					if (pendingSpawns) {
+						PendingStructureSpawn s;
+						s.blueprintId = "tree";
+						s.entityType  = StructureName::Tree;
+						s.anchorPos   = {wx, trunkBase, wz};
+						pendingSpawns->push_back(std::move(s));
 					}
 					int leafR = m_py.leafRadius;
 					for (int dy = -1; dy <= leafR; dy++) {

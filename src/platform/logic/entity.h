@@ -14,11 +14,38 @@
 
 namespace civcraft {
 
+// Decorator attached to a structure entity. Copied by value from the blueprint
+// when the entity spawns — carries both immutable config and per-instance
+// runtime state so different trees can hold independent colors / progress.
+//
+// Adding a new feature type: extend the enum, add config+state fields, handle
+// parsing in python_bridge.cpp and dispatch in server.h's tick loop.
+struct StructureFeature {
+	enum class Type : uint8_t { SeasonalLeaves };
+	Type type = Type::SeasonalLeaves;
+
+	// --- SeasonalLeaves config (from blueprint; treat as read-only) ---
+	// Per-season candidate block-id strings. Empty season = skip that season.
+	// Indexed by the Season enum value.
+	std::vector<std::string> seasonVariants[4];
+	float perTickProb = 0.02f;
+	int   scanRadius  = 5;
+
+	// --- SeasonalLeaves runtime state (in-memory only for v1) ---
+	std::vector<glm::ivec3> leafPositions;   // discovered on first tick
+	bool        scanned          = false;
+	int         seasonIdxApplied = -1;       // matches Season enum; -1 = never
+	std::string currentVariant;              // string id last applied
+};
+
 // Per-Structure runtime state. Blueprint (blocks/anchor/regen) lives in StructureBlueprintManager.
 struct StructureComponent {
 	std::string blueprintId;       // key into StructureBlueprintManager
 	glm::ivec3  anchorPos = {0,0,0};
 	float       regenTimer = 0.0f;
+	// Cloned from StructureBlueprint::features at spawn; carry per-instance
+	// state so two adjacent trees can hold different palettes.
+	std::vector<StructureFeature> features;
 };
 
 using PropValue = std::variant<

@@ -725,6 +725,9 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 		if (out.dayLengthTicks < 30)     out.dayLengthTicks = 30;
 		if (out.dayLengthTicks > 86400)  out.dayLengthTicks = 86400;
 
+		out.startingDay = getInt(w, "starting_day", out.startingDay);
+		if (out.startingDay < 0) out.startingDay = 0;
+
 		// Path relative to src/artifacts/; loaded separately.
 		out.weatherSchedule = getStr(w, "weather_schedule", out.weatherSchedule);
 
@@ -941,8 +944,39 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 			}
 		}
 
-		printf("[StructureBlueprint] Loaded %s from %s (%zu blocks)\n",
-		       out.id.c_str(), filePath.c_str(), out.blocks.size());
+		// Optional: decorators that the server applies to each spawned instance.
+		// Schema: features: [{"type": "seasonal_leaves",
+		//                     "spring_variants": [...], "summer_variants": [...],
+		//                     "autumn_variants": [...], "winter_variants": [...],
+		//                     "per_tick_prob": 0.02, "scan_radius": 5}, ...]
+		if (bp.contains("features")) {
+			for (auto& item : bp["features"].cast<py::list>()) {
+				py::dict fd = item.cast<py::dict>();
+				std::string t = getStr(fd, "type", "");
+				StructureFeature f;
+				if (t == "seasonal_leaves") {
+					f.type = StructureFeature::Type::SeasonalLeaves;
+					auto readList = [&](const char* key, int seasonIdx) {
+						if (!fd.contains(key)) return;
+						for (auto& v : fd[key].cast<py::list>())
+							f.seasonVariants[seasonIdx].push_back(v.cast<std::string>());
+					};
+					readList("spring_variants", 0);
+					readList("summer_variants", 1);
+					readList("autumn_variants", 2);
+					readList("winter_variants", 3);
+					f.perTickProb = getFloat(fd, "per_tick_prob", f.perTickProb);
+					f.scanRadius  = getInt(fd,   "scan_radius",   f.scanRadius);
+					out.features.push_back(std::move(f));
+				} else {
+					printf("[StructureBlueprint] Unknown feature type '%s' in %s — skipping.\n",
+					       t.c_str(), filePath.c_str());
+				}
+			}
+		}
+
+		printf("[StructureBlueprint] Loaded %s from %s (%zu blocks, %zu features)\n",
+		       out.id.c_str(), filePath.c_str(), out.blocks.size(), out.features.size());
 		return !out.id.empty();
 
 	} catch (const std::exception& e) {

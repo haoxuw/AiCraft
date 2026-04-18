@@ -319,15 +319,30 @@ public:
 		for (auto& [pos, chunk] : m_chunks) fn(pos, *chunk);
 	}
 
+	// Drained once per server tick so the server can spawn structure entities
+	// (trees, etc.) for anything worldgen placed since the last tick.
+	// Swap semantics: returns the queue contents, leaves the internal list empty.
+	std::vector<PendingStructureSpawn> drainPendingStructureSpawns() {
+		std::lock_guard<std::mutex> lock(m_pendingMutex);
+		std::vector<PendingStructureSpawn> out;
+		out.swap(m_pendingStructureSpawns);
+		return out;
+	}
+
 private:
 	Chunk* generateChunk(ChunkPos pos) {
 		auto chunk = std::make_unique<Chunk>();
-		m_template->generate(*chunk, pos, m_seed, blocks);
+		std::vector<PendingStructureSpawn> pending;
+		m_template->generate(*chunk, pos, m_seed, blocks, &pending);
 		auto* ptr = chunk.get();
 		m_chunks[pos] = std::move(chunk);
 		// Build ChunkInfo — counts + hasAir flag, O(CHUNK_VOLUME).
 		m_chunkInfos[pos] = ChunkInfo::build(pos, *ptr, blocks);
 		scatterAnnotations(pos, *ptr);
+		if (!pending.empty()) {
+			std::lock_guard<std::mutex> plock(m_pendingMutex);
+			for (auto& p : pending) m_pendingStructureSpawns.push_back(std::move(p));
+		}
 		return ptr;
 	}
 
@@ -375,6 +390,12 @@ private:
 	std::mutex m_mutex;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunks;
 	std::unordered_map<ChunkPos, ChunkInfo, ChunkPosHash> m_chunkInfos;
+
+	// Structure-entity spawns queued by worldgen (see generate()'s out-param).
+	// Owned separately with its own mutex to avoid re-entering EntityManager
+	// while m_mutex (chunk lock) is held.
+	std::vector<PendingStructureSpawn> m_pendingStructureSpawns;
+	std::mutex m_pendingMutex;
 };
 
 } // namespace civcraft

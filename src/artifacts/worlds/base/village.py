@@ -31,6 +31,11 @@ world = {
     # omitted) disables weather (client falls back to static "clear").
     "weather_schedule": "worlds/base/weather/temperate.py",
 
+    # Open the world in autumn so trees show off their seasonal palette from
+    # the first minute of play. seasonFromDay(): 0/1 Spring, 2/3 Summer,
+    # 4/5 Autumn, 6/7 Winter (kDaysPerSeason = 2 in logic/constants.h).
+    "starting_day": 4,
+
     # ── Terrain ────────────────────────────────────────────────
     # Continental-style terrain: large flat plains separated by gradual hills.
     # Amplitudes and scales are tuned so most terrain is 0-12 blocks above

@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <chrono>
 #include <mutex>
+#include <random>
 
 namespace civcraft {
 
@@ -133,9 +134,9 @@ public:
 		m_wgc = config.worldGenConfig;
 		m_hpRegenInterval = config.hpRegenInterval;
 		m_worldTime = 0.26f;  // just past sunrise
-		m_dayCount  = 0;
-		// Debug: CIVCRAFT_DEBUG_DAY=N fast-forwards the calendar so the
-		// top-bar HUD and grass shader can be sanity-checked across seasons.
+		// World template decides the starting season (e.g. village starts in
+		// autumn so trees open colored). CIVCRAFT_DEBUG_DAY still overrides.
+		m_dayCount  = (uint32_t)std::max(0, tmpl->pyConfig().startingDay);
 		if (const char* d = std::getenv("CIVCRAFT_DEBUG_DAY")) {
 			m_dayCount = (uint32_t)std::max(0, std::atoi(d));
 		}
@@ -550,6 +551,116 @@ public:
 	void setCallbacks(ServerCallbacks cb) { m_callbacks = cb; }
 	ServerCallbacks& callbacks() { return m_callbacks; }
 
+	// Any leaf-variant block. SeasonalLeaves mutates these and only these, so
+	// player-placed logs or player-broken gaps are left alone.
+	static bool isLeafBlockId(const std::string& sid) {
+		return sid == BlockType::Leaves
+		    || sid == BlockType::LeavesSpring
+		    || sid == BlockType::LeavesSummer
+		    || sid == BlockType::LeavesGold
+		    || sid == BlockType::LeavesOrange
+		    || sid == BlockType::LeavesRed
+		    || sid == BlockType::LeavesBare
+		    || sid == BlockType::LeavesSnow;
+	}
+
+	// Drained each tick — worldgen adds tree entities as chunks stream in.
+	// Copies blueprint-level features into the fresh entity's StructureComponent
+	// so every tree instance gets independent runtime state.
+	void spawnPendingStructures() {
+		auto pending = m_world->drainPendingStructureSpawns();
+		for (auto& p : pending) {
+			glm::vec3 pos{(float)p.anchorPos.x + 0.5f,
+			              (float)p.anchorPos.y,
+			              (float)p.anchorPos.z + 0.5f};
+			EntityId eid = m_world->entities.spawn(p.entityType, pos, {});
+			Entity* e = m_world->entities.get(eid);
+			if (!e || !e->structure) continue;
+			e->structure->blueprintId = p.blueprintId;
+			e->structure->anchorPos   = p.anchorPos;
+			if (const auto* bp = m_blueprints.get(p.blueprintId)) {
+				// Copy features + reset runtime state so each tree rolls fresh.
+				e->structure->features = bp->features;
+				for (auto& f : e->structure->features) {
+					f.scanned = false;
+					f.seasonIdxApplied = -1;
+					f.currentVariant.clear();
+					f.leafPositions.clear();
+				}
+			}
+		}
+	}
+
+	// One pass of the SeasonalLeaves feature for a single entity.
+	// - First call: BFS-scan `scanRadius` around anchor, cache leaf positions.
+	// - If the current season matches `seasonIdxApplied`, no-op.
+	// - Else roll `perTickProb`; on hit, pick a random variant from this
+	//   season's palette and rewrite every cached position whose block is
+	//   still a leaf variant (respects player mining).
+	void tickSeasonalLeaves(Entity& e, StructureFeature& f) {
+		if (!e.structure) return;
+		const glm::ivec3 anchor = e.structure->anchorPos;
+
+		if (!f.scanned) {
+			f.scanned = true;
+			f.leafPositions.clear();
+			const int r = f.scanRadius;
+			// Tree canopy sits above the trunk base. Scan from a bit below
+			// the anchor (cover root-level decorations) up to 2*r above.
+			for (int dy = -1; dy <= 2 * r; dy++) {
+				for (int dz = -r; dz <= r; dz++) {
+					for (int dx = -r; dx <= r; dx++) {
+						int wx = anchor.x + dx, wy = anchor.y + dy, wz = anchor.z + dz;
+						ChunkPos cp = worldToChunk(wx, wy, wz);
+						Chunk* c = m_world->getChunkIfLoaded(cp);
+						if (!c) continue;
+						BlockId bid = c->get(((wx%16)+16)%16,
+						                     ((wy%16)+16)%16,
+						                     ((wz%16)+16)%16);
+						const std::string& sid = m_world->blocks.get(bid).string_id;
+						if (isLeafBlockId(sid))
+							f.leafPositions.push_back({wx, wy, wz});
+					}
+				}
+			}
+		}
+
+		int currentSeason = (int)seasonFromDay(m_dayCount);
+		if (currentSeason == f.seasonIdxApplied) return;
+		const auto& palette = f.seasonVariants[currentSeason];
+		if (palette.empty()) {
+			// Nothing defined for this season — mark as applied to skip future rolls.
+			f.seasonIdxApplied = currentSeason;
+			return;
+		}
+
+		// Per-tick probability roll.
+		std::uniform_real_distribution<float> uroll(0.0f, 1.0f);
+		if (uroll(m_featureRng) >= f.perTickProb) return;
+
+		// Pick a variant for this tree (uniform over the season palette).
+		std::uniform_int_distribution<int> pick(0, (int)palette.size() - 1);
+		const std::string& chosen = palette[pick(m_featureRng)];
+		BlockId newBid = m_world->blocks.getId(chosen);
+		if (newBid == BLOCK_AIR) return;
+
+		for (const auto& p : f.leafPositions) {
+			ChunkPos cp = worldToChunk(p.x, p.y, p.z);
+			Chunk* c = m_world->getChunkIfLoaded(cp);
+			if (!c) continue;
+			int lx = ((p.x%16)+16)%16, ly = ((p.y%16)+16)%16, lz = ((p.z%16)+16)%16;
+			BlockId cur = c->get(lx, ly, lz);
+			const std::string& csid = m_world->blocks.get(cur).string_id;
+			if (!isLeafBlockId(csid)) continue;  // mined / replaced — skip
+			if (cur == newBid) continue;
+			c->set(lx, ly, lz, newBid);
+			if (m_callbacks.onBlockChange)
+				m_callbacks.onBlockChange(p, cur, newBid, 0);
+		}
+		f.seasonIdxApplied = currentSeason;
+		f.currentVariant   = chosen;
+	}
+
 	void tick(float dt) {
 #ifdef CIVCRAFT_PERF
 		using Clock = std::chrono::steady_clock;
@@ -568,6 +679,10 @@ public:
 			const auto& def = m_world->blocks.get(m_world->getBlock(x, y, z));
 			return def.solid ? def.collision_height : 0.0f;
 		};
+
+		// Drain worldgen queue: tree/structure entities spawned lazily as chunks
+		// stream in. Cheap no-op when the queue is empty.
+		spawnPendingStructures();
 
 		// Rule 4: AI arrives as ActionProposals from agent clients.
 		// Phase 1: resolve (may set entity.removed=true).
@@ -674,6 +789,23 @@ public:
 			}
 		}
 		markPhase(m_lastTickProfile.structureRegenMs);
+
+		// Throttled StructureFeature dispatcher (SeasonalLeaves, etc).
+		// 1 Hz — perTickProb inside each feature tunes pacing per-tree.
+		m_structureFeatureTimer += dt;
+		if (m_structureFeatureTimer >= 1.0f) {
+			m_structureFeatureTimer = 0;
+			m_world->entities.forEach([&](Entity& e) {
+				if (e.removed) return;
+				if (!e.structure) return;
+				if (e.structure->features.empty()) return;
+				for (auto& f : e.structure->features) {
+					if (f.type == StructureFeature::Type::SeasonalLeaves)
+						tickSeasonalLeaves(e, f);
+				}
+			});
+		}
+		markPhase(m_lastTickProfile.structureFeaturesMs);
 
 		// 1 unit = 1 full day; dayLengthTicks = real seconds per day.
 		if (!m_freezeTime) {
@@ -789,6 +921,7 @@ public:
 		double activeBlocksMs     = 0.0;
 		double hpRegenMs          = 0.0;
 		double structureRegenMs   = 0.0;
+		double structureFeaturesMs = 0.0;
 		double stuckDetectionMs   = 0.0;
 		double totalMs            = 0.0;
 	};
@@ -819,6 +952,12 @@ private:
 	StructureBlockCacher                 m_structureCacher;
 	std::unordered_set<EntityId>         m_incompleteStructures;  // dirty set
 	float                                m_structureRegenTimer = 0;
+	// Throttle for StructureFeature ticks (1 Hz is plenty for palette changes).
+	// Low-frequency on purpose: perTickProb tunes pacing inside the feature.
+	float                                m_structureFeatureTimer = 0;
+	// Shared RNG for seasonal leaf rolls. Deterministic seed; visible race
+	// is harmless (single-threaded server tick).
+	std::mt19937                         m_featureRng{1337u};
 
 	std::unordered_map<EntityId, glm::vec3> m_lastPositions;
 
