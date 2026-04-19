@@ -6,7 +6,7 @@ src/platform/client/model.cpp, and renders boxes in matplotlib 3D.
 
 Usage:
   # Interactive — time scrubs automatically, hit clip buttons to switch:
-  python3 src/model_editor/modelcrafter.py src/artifacts/models/base/player.py
+  python3 src/model_editor/modelcrafter.py src/artifacts/models/base/knight.py
 
   # Force a single clip:
   python3 src/model_editor/modelcrafter.py <model.py> --clip attack

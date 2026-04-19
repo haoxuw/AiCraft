@@ -245,7 +245,7 @@ void PanelRenderer::renderHandbook() {
 		"The artifact browser is being rebuilt.",
 		0.0f, panelY + panelH - 0.155f, 0.75f, kText);
 	ui::drawCenteredText(r,
-		"Fork / edit / model-preview flow returns in a later pass.",
+		"Browse / edit / model-preview flow returns in a later pass.",
 		0.0f, panelY + panelH - 0.195f, 0.65f, kTextDim);
 	ui::drawCenteredText(r,
 		"[H] or [Esc] to close",
