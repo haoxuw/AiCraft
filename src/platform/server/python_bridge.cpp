@@ -22,6 +22,15 @@ Plan PythonBridge::callDecide(BehaviorHandle, const EntitySnapshot&,
                                AppearanceQueryFn) {
 	err = "Python not available in web build"; return {};
 }
+bool PythonBridge::callReact(BehaviorHandle, const EntitySnapshot&,
+                              const std::vector<NearbyEntity>&,
+                              float, float, const std::string&,
+                              const std::vector<std::pair<std::string, std::string>>&,
+                              Plan&, std::string&, std::string& err,
+                              BlockQueryFn, ScanBlocksFn, ScanEntitiesFn,
+                              ScanAnnotationsFn, AppearanceQueryFn) {
+	err = "Python not available in web build"; return false;
+}
 std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
 void PythonBridge::unloadBehavior(BehaviorHandle) {}
 PythonBridge& pythonBridge() { static PythonBridge b; return b; }
@@ -492,6 +501,70 @@ except NameError: pass
 	}
 }
 
+// Builds the pydantic SelfEntity + LocalWorld from a snapshot. Shared by
+// callDecide and callReact so the two entry points see identical world
+// state. GIL must be held.
+static void buildPyWorld(const EntitySnapshot& self,
+                         const std::vector<NearbyEntity>& nearby,
+                         float dt, float timeOfDay,
+                         const std::string& lastOutcome,
+                         const std::string& lastGoal,
+                         const std::string& lastReason,
+                         void* localWorldClsRaw, void* selfEntityClsRaw,
+                         py::object& outSelfEntity,
+                         py::object& outLocalWorld) {
+	py::list pyNearby;
+	for (auto& ne : nearby) {
+		py::dict info;
+		info["id"] = ne.id; info["type"] = ne.typeId;
+		info["kind"] = (ne.kind == EntityKind::Living) ? "living" : "item";
+		info["x"] = ne.position.x; info["y"] = ne.position.y; info["z"] = ne.position.z;
+		info["distance"] = ne.distance; info["hp"] = ne.hp;
+		py::list pyTags; for (auto& t : ne.tags) pyTags.append(t);
+		info["tags"] = pyTags;
+		pyNearby.append(info);
+	}
+
+	py::dict pySelf;
+	for (auto& [key, val] : self.props) {
+		if (auto* s = std::get_if<std::string>(&val)) pySelf[key.c_str()] = *s;
+		else if (auto* i = std::get_if<int>(&val))     pySelf[key.c_str()] = *i;
+		else if (auto* f = std::get_if<float>(&val))   pySelf[key.c_str()] = *f;
+		else if (auto* b = std::get_if<bool>(&val))    pySelf[key.c_str()] = *b;
+	}
+	pySelf["id"] = self.id; pySelf["type"] = self.typeId;
+	pySelf["x"] = self.position.x; pySelf["y"] = self.position.y; pySelf["z"] = self.position.z;
+	pySelf["yaw"] = self.yaw; pySelf["hp"] = self.hp;
+	pySelf["walk_speed"] = self.walkSpeed; pySelf["on_ground"] = self.onGround;
+	pySelf["inventory_capacity"] = self.inventoryCapacity;
+	py::dict pyInv;
+	for (auto& [itemId, count] : self.inventory)
+		pyInv[itemId.c_str()] = count;
+	pySelf["inventory"] = pyInv;
+
+	py::dict pyWorld;
+	pyWorld["nearby"] = pyNearby;
+	pyWorld["blocks"] = py::list();
+	pyWorld["dt"] = dt; pyWorld["time"] = timeOfDay;
+	pyWorld["goal"] = py::none();
+	pyWorld["last_outcome"] = lastOutcome;
+	pyWorld["last_goal"]    = lastGoal;
+	pyWorld["last_reason"]  = lastReason;
+
+	py::object& LocalWorldCls = *static_cast<py::object*>(localWorldClsRaw);
+	py::object& SelfEntityCls = *static_cast<py::object*>(selfEntityClsRaw);
+	outLocalWorld = LocalWorldCls.attr("_from_raw")(pyWorld);
+	outSelfEntity = SelfEntityCls.attr("_from_raw")(pySelf);
+}
+
+// Converts a Python (action_or_plan, goal[, duration]) tuple into a Plan.
+// Returns false on malformed result (errorOut populated). firstIsNone
+// outputs whether tup[0] was Python None — callers distinguish "Idle plan"
+// (decide) from "ignore signal" (react) by inspecting this.
+static bool parsePyResult(const py::object& result, Plan& outPlan,
+                          std::string& goalOut, std::string& errorOut,
+                          bool& firstIsNone);
+
 // Old-format PyAction → PlanStep.
 static PlanStep pyActionToPlanStep(const PyAction& pa) {
 	if (pa.type == "move") {
@@ -568,126 +641,17 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 	try {
 		py::object& instance = *static_cast<py::object*>(it->second.instanceObj);
 
-		py::list pyNearby;
-		for (auto& ne : nearby) {
-			py::dict info;
-			info["id"] = ne.id; info["type"] = ne.typeId;
-			info["kind"] = (ne.kind == EntityKind::Living) ? "living" : "item";
-			info["x"] = ne.position.x; info["y"] = ne.position.y; info["z"] = ne.position.z;
-			info["distance"] = ne.distance; info["hp"] = ne.hp;
-			py::list pyTags; for (auto& t : ne.tags) pyTags.append(t);
-			info["tags"] = pyTags;
-			pyNearby.append(info);
-		}
-
-		py::dict pySelf;
-		for (auto& [key, val] : self.props) {
-			if (auto* s = std::get_if<std::string>(&val)) pySelf[key.c_str()] = *s;
-			else if (auto* i = std::get_if<int>(&val))     pySelf[key.c_str()] = *i;
-			else if (auto* f = std::get_if<float>(&val))   pySelf[key.c_str()] = *f;
-			else if (auto* b = std::get_if<bool>(&val))    pySelf[key.c_str()] = *b;
-		}
-		pySelf["id"] = self.id; pySelf["type"] = self.typeId;
-		pySelf["x"] = self.position.x; pySelf["y"] = self.position.y; pySelf["z"] = self.position.z;
-		pySelf["yaw"] = self.yaw; pySelf["hp"] = self.hp;
-		pySelf["walk_speed"] = self.walkSpeed; pySelf["on_ground"] = self.onGround;
-		pySelf["inventory_capacity"] = self.inventoryCapacity;
-		py::dict pyInv;
-		for (auto& [itemId, count] : self.inventory)
-			pyInv[itemId.c_str()] = count;
-		pySelf["inventory"] = pyInv;
-
-		py::dict pyWorld;
-		pyWorld["nearby"] = pyNearby;
-		pyWorld["blocks"] = py::list();
-		pyWorld["dt"] = dt; pyWorld["time"] = timeOfDay;
-		pyWorld["goal"] = py::none();
-		pyWorld["last_outcome"] = lastOutcome;
-		pyWorld["last_goal"]    = lastGoal;
-		pyWorld["last_reason"]  = lastReason;
-
-		py::object& LocalWorldCls = *static_cast<py::object*>(m_localWorldClass);
-		py::object& SelfEntityCls = *static_cast<py::object*>(m_selfEntityClass);
-		py::object pyLocalWorld = LocalWorldCls.attr("_from_raw")(pyWorld);
-		py::object pySelfEntity = SelfEntityCls.attr("_from_raw")(pySelf);
+		py::object pySelfEntity, pyLocalWorld;
+		buildPyWorld(self, nearby, dt, timeOfDay,
+		             lastOutcome, lastGoal, lastReason,
+		             m_localWorldClass, m_selfEntityClass,
+		             pySelfEntity, pyLocalWorld);
 
 		py::object result = instance.attr("decide")(pySelfEntity, pyLocalWorld);
 
-		// Expect (action_or_plan, goal_str[, hold_seconds]).
-		if (!py::isinstance<py::tuple>(result)) {
-			errorOut = "decide() must return a tuple";
+		Plan plan; bool firstIsNone = false;
+		if (!parsePyResult(result, plan, goalOut, errorOut, firstIsNone))
 			return {};
-		}
-		py::tuple tup = result.cast<py::tuple>();
-		if (tup.size() < 2) {
-			errorOut = "decide() must return at least (action/plan, goal_str)";
-			return {};
-		}
-
-		goalOut = tup[1].cast<std::string>();
-		if (goalOut.empty()) goalOut = "Active";
-
-		// Legacy single-action tuples carry the behavior's commit duration in
-		// tup[2]; dict-list plans carry it per-step via d["hold"].
-		float legacyHold = 0.0f;
-		if (tup.size() >= 3 && !tup[2].is_none()) {
-			legacyHold = tup[2].cast<float>();
-		}
-
-		// tup[0]: old-format PyAction | new-format list of PlanStep dicts | None.
-		py::object first = tup[0];
-		Plan plan;
-
-		if (first.is_none()) {
-			// Idle.
-		} else if (py::isinstance<py::list>(first)) {
-			// PlanStep dict schema:
-			//   move:     {type, x, y, z, speed, hold?}
-			//   harvest:  {type, x, y, z}
-			//   attack:   {type, entity_id}
-			//   relocate: {type, from, to, item, count}
-			for (auto& item : first.cast<py::list>()) {
-				py::dict d = item.cast<py::dict>();
-				std::string stype = d["type"].cast<std::string>();
-				float hold = d.contains("hold") && !d["hold"].is_none()
-					? d["hold"].cast<float>() : 0.0f;
-				if (stype == "move") {
-					PlanStep step = PlanStep::move(
-						{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()},
-						 d["speed"].cast<float>(), hold);
-					if (d.contains("anchor") && !d["anchor"].is_none())
-						step.anchorEntityId = d["anchor"].cast<EntityId>();
-					if (d.contains("keep_within") && !d["keep_within"].is_none())
-						step.keepWithin = d["keep_within"].cast<float>();
-					if (d.contains("keep_away") && !d["keep_away"].is_none())
-						step.keepAway = d["keep_away"].cast<float>();
-					plan.push_back(step);
-				} else if (stype == "harvest") {
-					plan.push_back(PlanStep::harvest(
-						{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()}));
-				} else if (stype == "attack") {
-					plan.push_back(PlanStep::attack(d["entity_id"].cast<EntityId>()));
-				} else if (stype == "relocate") {
-					plan.push_back(PlanStep::relocate(
-						Container::self(), Container::self(),
-						d["item"].cast<std::string>(),
-						d["count"].cast<int>()));
-				} else {
-					errorOut = "Unknown PlanStep type: " + stype;
-					return {};
-				}
-			}
-		} else {
-			// Backward compat: single PyAction → single-step Plan.
-			// Legacy (action, goal, duration) tuple carries duration in tup[2];
-			// applied to the single step's holdTime.
-			PyAction pa = first.cast<PyAction>();
-			PlanStep step = pyActionToPlanStep(pa);
-			if (step.type == PlanStep::Move && legacyHold > 0.0f)
-				step.holdTime = legacyHold;
-			plan.push_back(step);
-		}
-
 		return plan;
 
 	} catch (const py::error_already_set& e) {
@@ -696,6 +660,172 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 		fflush(stderr);
 		return {};
 	}
+}
+
+bool PythonBridge::callReact(BehaviorHandle handle,
+                              const EntitySnapshot& self,
+                              const std::vector<NearbyEntity>& nearby,
+                              float dt, float timeOfDay,
+                              const std::string& signalKind,
+                              const std::vector<std::pair<std::string, std::string>>& signalPayload,
+                              Plan& outPlan,
+                              std::string& goalOut,
+                              std::string& errorOut,
+                              BlockQueryFn blockQueryFn,
+                              ScanBlocksFn scanBlocksFn,
+                              ScanEntitiesFn scanEntitiesFn,
+                              ScanAnnotationsFn scanAnnotationsFn,
+                              AppearanceQueryFn appearanceQueryFn) {
+	// Runs on DecideWorker's thread.
+	py::gil_scoped_acquire gil;
+
+	// Same static-state protocol as callDecide — GIL serializes this.
+	s_blockQueryFn   = blockQueryFn ? std::move(blockQueryFn)
+	                                : [](int,int,int){ return std::string("air"); };
+	s_appearanceQueryFn = appearanceQueryFn ? std::move(appearanceQueryFn)
+	                                        : [](int,int,int){ return 0; };
+	s_scanBlocksFn   = std::move(scanBlocksFn);
+	s_scanEntitiesFn = std::move(scanEntitiesFn);
+	s_scanAnnotationsFn = std::move(scanAnnotationsFn);
+	s_selfPos        = self.position;
+	struct Cleanup {
+		~Cleanup() {
+			s_blockQueryFn = nullptr;
+			s_appearanceQueryFn = nullptr;
+			s_scanBlocksFn = nullptr;
+			s_scanEntitiesFn = nullptr;
+			s_scanAnnotationsFn = nullptr;
+		}
+	} _cleanup;
+
+	auto it = m_behaviors.find(handle);
+	if (it == m_behaviors.end()) {
+		errorOut = "Invalid behavior handle";
+		return false;
+	}
+
+	try {
+		py::object& instance = *static_cast<py::object*>(it->second.instanceObj);
+
+		py::object pySelfEntity, pyLocalWorld;
+		buildPyWorld(self, nearby, dt, timeOfDay,
+		             "none", "", "signal:" + signalKind,
+		             m_localWorldClass, m_selfEntityClass,
+		             pySelfEntity, pyLocalWorld);
+
+		// Build signal as types.SimpleNamespace so Python sees .kind + .payload
+		// attribute access (matches the documented react() contract).
+		py::dict pyPayload;
+		for (auto& [k, v] : signalPayload) pyPayload[k.c_str()] = v;
+		py::object types = py::module_::import("types");
+		py::object pySignal = types.attr("SimpleNamespace")(
+			py::arg("kind") = signalKind,
+			py::arg("payload") = pyPayload);
+
+		py::object result = instance.attr("react")(pySelfEntity, pyLocalWorld, pySignal);
+
+		// None from react() = ignore the signal, keep current plan.
+		if (result.is_none()) return false;
+
+		Plan plan; bool firstIsNone = false;
+		if (!parsePyResult(result, plan, goalOut, errorOut, firstIsNone))
+			return false;
+		// A tuple with (None, goal) also means "no change" — don't install an
+		// empty plan over a live one.
+		if (firstIsNone && plan.empty()) return false;
+
+		outPlan = std::move(plan);
+		return true;
+
+	} catch (const py::error_already_set& e) {
+		errorOut = e.what();
+		fprintf(stderr, "[PythonBridge] react() exception: %s\n", e.what());
+		fflush(stderr);
+		return false;
+	}
+}
+
+static bool parsePyResult(const py::object& result, Plan& outPlan,
+                          std::string& goalOut, std::string& errorOut,
+                          bool& firstIsNone) {
+	firstIsNone = false;
+
+	// Expect (action_or_plan, goal_str[, hold_seconds]).
+	if (!py::isinstance<py::tuple>(result)) {
+		errorOut = "behavior must return a tuple";
+		return false;
+	}
+	py::tuple tup = result.cast<py::tuple>();
+	if (tup.size() < 2) {
+		errorOut = "behavior must return at least (action/plan, goal_str)";
+		return false;
+	}
+
+	goalOut = tup[1].cast<std::string>();
+	if (goalOut.empty()) goalOut = "Active";
+
+	// Legacy single-action tuples carry the behavior's commit duration in
+	// tup[2]; dict-list plans carry it per-step via d["hold"].
+	float legacyHold = 0.0f;
+	if (tup.size() >= 3 && !tup[2].is_none()) {
+		legacyHold = tup[2].cast<float>();
+	}
+
+	// tup[0]: old-format PyAction | new-format list of PlanStep dicts | None.
+	py::object first = tup[0];
+
+	if (first.is_none()) {
+		firstIsNone = true;
+		return true;  // Idle.
+	}
+	if (py::isinstance<py::list>(first)) {
+		// PlanStep dict schema:
+		//   move:     {type, x, y, z, speed, hold?}
+		//   harvest:  {type, x, y, z}
+		//   attack:   {type, entity_id}
+		//   relocate: {type, from, to, item, count}
+		for (auto& item : first.cast<py::list>()) {
+			py::dict d = item.cast<py::dict>();
+			std::string stype = d["type"].cast<std::string>();
+			float hold = d.contains("hold") && !d["hold"].is_none()
+				? d["hold"].cast<float>() : 0.0f;
+			if (stype == "move") {
+				PlanStep step = PlanStep::move(
+					{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()},
+					 d["speed"].cast<float>(), hold);
+				if (d.contains("anchor") && !d["anchor"].is_none())
+					step.anchorEntityId = d["anchor"].cast<EntityId>();
+				if (d.contains("keep_within") && !d["keep_within"].is_none())
+					step.keepWithin = d["keep_within"].cast<float>();
+				if (d.contains("keep_away") && !d["keep_away"].is_none())
+					step.keepAway = d["keep_away"].cast<float>();
+				outPlan.push_back(step);
+			} else if (stype == "harvest") {
+				outPlan.push_back(PlanStep::harvest(
+					{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()}));
+			} else if (stype == "attack") {
+				outPlan.push_back(PlanStep::attack(d["entity_id"].cast<EntityId>()));
+			} else if (stype == "relocate") {
+				outPlan.push_back(PlanStep::relocate(
+					Container::self(), Container::self(),
+					d["item"].cast<std::string>(),
+					d["count"].cast<int>()));
+			} else {
+				errorOut = "Unknown PlanStep type: " + stype;
+				return false;
+			}
+		}
+		return true;
+	}
+	// Backward compat: single PyAction → single-step Plan.
+	// Legacy (action, goal, duration) tuple carries duration in tup[2];
+	// applied to the single step's holdTime.
+	PyAction pa = first.cast<PyAction>();
+	PlanStep step = pyActionToPlanStep(pa);
+	if (step.type == PlanStep::Move && legacyHold > 0.0f)
+		step.holdTime = legacyHold;
+	outPlan.push_back(step);
+	return true;
 }
 
 std::string PythonBridge::getSource(BehaviorHandle handle) const {

@@ -51,6 +51,13 @@ public:
 		LastOutcome outcome;
 		float       requestTime = 0.0f;
 		bool        priority    = false;
+
+		// React-specific fields (ignored when isReact == false). A react
+		// request triggers Python's Behavior.react(signal) instead of
+		// decide() and replaces the current plan on a non-None return.
+		bool        isReact     = false;
+		std::string signalKind;
+		std::vector<std::pair<std::string, std::string>> signalPayload;
 	};
 
 	// Plan completion / first-time discovery. No-op if already in priority lane.
@@ -61,7 +68,9 @@ public:
 			it->second->outcome = std::move(o);     // latest-wins, keep position
 			return;
 		}
-		m_normal.push_back({eid, std::move(o), now, false});
+		Request req; req.eid = eid; req.outcome = std::move(o);
+		req.requestTime = now; req.priority = false;
+		m_normal.push_back(std::move(req));
 		m_normalIdx[eid] = std::prev(m_normal.end());
 	}
 
@@ -76,9 +85,44 @@ public:
 		auto it = m_priorityIdx.find(eid);
 		if (it != m_priorityIdx.end()) {
 			it->second->outcome = std::move(o);     // latest-wins, keep position
+			it->second->isReact = false;            // demote any pending react
 			return;
 		}
-		m_priority.push_back({eid, std::move(o), now, true});
+		Request req; req.eid = eid; req.outcome = std::move(o);
+		req.requestTime = now; req.priority = true;
+		m_priority.push_back(std::move(req));
+		m_priorityIdx[eid] = std::prev(m_priority.end());
+	}
+
+	// Engine detected a signal (threat_nearby, …). React is priority lane;
+	// replaces any pending decide request for this eid so we respond to
+	// "right now" events instead of the plan-completion backlog. Latest-wins
+	// per eid within the priority lane.
+	void requestReact(EntityId eid, std::string signalKind,
+	                  std::vector<std::pair<std::string, std::string>> payload,
+	                  float now) {
+		auto nit = m_normalIdx.find(eid);
+		if (nit != m_normalIdx.end()) {
+			m_normal.erase(nit->second);
+			m_normalIdx.erase(nit);
+		}
+		Request req;
+		req.eid            = eid;
+		req.priority       = true;
+		req.isReact        = true;
+		req.signalKind     = std::move(signalKind);
+		req.signalPayload  = std::move(payload);
+		req.requestTime    = now;
+		req.outcome.outcome = StepOutcome::Success;
+		req.outcome.reason  = "signal:" + req.signalKind;
+
+		auto pit = m_priorityIdx.find(eid);
+		if (pit != m_priorityIdx.end()) {
+			// Replace in place to preserve FIFO position.
+			*pit->second = std::move(req);
+			return;
+		}
+		m_priority.push_back(std::move(req));
 		m_priorityIdx[eid] = std::prev(m_priority.end());
 	}
 

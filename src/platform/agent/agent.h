@@ -71,6 +71,9 @@ public:
 	static constexpr float kOverridePauseSec   = 3.14f;
 	// Pause-while-controlled marker. Just needs to outlive any session.
 	static constexpr float kForeverPauseSec    = 1.0e9f;
+	// Per-agent rate limit for react(signal). Prevents a chatty signal
+	// source from pinning one Agent's Python budget.
+	static constexpr float kReactCooldownSec   = 0.5f;
 
 	Agent(EntityId eid, std::string behaviorId, BehaviorHandle handle)
 		: m_eid(eid),
@@ -175,6 +178,39 @@ public:
 	void onInterrupt(const std::string& reason,
 	                 DecisionQueue& q, float now) {
 		interruptPlan(reason, q, now);
+	}
+
+	// ── Signal handling (react path) ──────────────────────────────────────
+	//
+	// AgentClient detects world events (threat_nearby, …) and pushes them
+	// here via onSignal(). We don't run Python inline — we just set a dirty
+	// bit. maybeReact() is called once per tick and enqueues a React request
+	// on the priority lane if the rate limit + guards allow.
+	void onSignal(std::string kind,
+	              std::vector<std::pair<std::string, std::string>> payload) {
+		// Latest-wins: a new signal overrides an older pending one (we'll
+		// only ever react to the freshest event).
+		m_dirtyKind    = std::move(kind);
+		m_dirtyPayload = std::move(payload);
+		m_dirty        = true;
+	}
+
+	// Returns true when a React request was enqueued.
+	bool maybeReact(DecisionQueue& q, float now, float dt) {
+		if (m_reactCooldown > 0.0f) m_reactCooldown -= dt;
+
+		if (!m_dirty) return false;
+		if (m_overridePauseTimer > 0.0f) return false;  // player controls us
+		if (m_reactCooldown > 0.0f)      return false;  // rate-limit
+		if (hasAnchoredStep())           return false;  // anchor already tracks it
+
+		q.requestReact(m_eid, std::move(m_dirtyKind),
+		               std::move(m_dirtyPayload), now);
+		m_dirty = false;
+		m_dirtyKind.clear();
+		m_dirtyPayload.clear();
+		m_reactCooldown = kReactCooldownSec;
+		return true;
 	}
 
 	// HP drop + target-gone detection. Called every tick by the orchestrator.
@@ -323,10 +359,12 @@ private:
 	// ── The single chokepoint for decide-requests ────────────────────────
 	//
 	// EVERY code path that wants this eid to re-decide ends up here. If a
-	// player-override pause is active, the request is stashed; otherwise it
-	// goes onto the appropriate queue lane. Re-requesting an already-pending
-	// eid is a no-op (the queue itself has latest-wins semantics, but we
-	// don't even reach it — we want plan completion to dictate cadence).
+	// player-override pause is active, the request is stashed; otherwise
+	// the DecisionQueue is called directly — it has latest-wins semantics
+	// per lane plus upgrade-from-normal behavior for priority requests, so
+	// de-duping here would drop legitimate priority upgrades (e.g. an HP
+	// drop arriving while a normal plan-completion request was pending
+	// used to get silently lost).
 	void requestRedecide(LastOutcome out, bool priority,
 	                     DecisionQueue& q, float now) {
 		if (m_overridePauseTimer > 0.0f) {
@@ -334,9 +372,18 @@ private:
 			m_hasPendingOutcome = true;
 			return;
 		}
-		if (q.hasPending(m_eid)) return;
 		if (priority) q.requestPriority(m_eid, std::move(out), now);
 		else          q.requestNormal  (m_eid, std::move(out), now);
+	}
+
+	// Any plan step carrying a live anchor keeps us latched to a target
+	// (flee, follow). The server's anchor aim pass re-derives velocity
+	// each tick from the anchored entity's current position, so react()
+	// would only duplicate work — skip it.
+	bool hasAnchoredStep() const {
+		for (auto& s : m_plan)
+			if (s.anchorEntityId != ENTITY_NONE) return true;
+		return false;
 	}
 
 	// Plan completion → normal lane (it's expected, not urgent).
@@ -688,6 +735,13 @@ private:
 	LastOutcome m_pendingOutcome;
 
 	DecideRateTracker m_rate;
+
+	// React/signal state. Dirty bit + latest-wins payload, consumed at most
+	// once per kReactCooldownSec by maybeReact().
+	bool        m_dirty         = false;
+	std::string m_dirtyKind;
+	std::vector<std::pair<std::string, std::string>> m_dirtyPayload;
+	float       m_reactCooldown = 0.0f;
 
 	// "Wants to move, not moving" → [MoveStuck:Agent-Stuck].
 	glm::vec3 m_stuckLastSampledPos = glm::vec3(0.0f);

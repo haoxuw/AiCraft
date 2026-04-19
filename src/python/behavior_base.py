@@ -65,6 +65,33 @@ class Behavior:
     Subclasses must implement decide(entity, local_world) → (plan, goal_str).
     """
 
+    def react(self, entity: SelfEntity, local_world: LocalWorld, signal):
+        """Handle an out-of-band event signal (threat_nearby, …).
+
+        Called by AgentClient when a notable world event is detected near
+        this entity. Return the same shape as decide() to override the
+        current plan, or None to ignore the signal and let the existing
+        plan keep running.
+
+        Parameters
+        ----------
+        entity, local_world
+            Same as decide() — a fresh snapshot at the moment the signal
+            fired.
+        signal : types.SimpleNamespace
+            signal.kind    — str, one of signals.THREAT_NEARBY, …
+            signal.payload — dict with event-specific fields
+
+        Returns
+        -------
+        (action, goal_str[, duration])  — override current plan, or
+        list of plan-step dicts            same shape as decide()
+        None                            — keep current plan
+
+        Default implementation ignores every signal.
+        """
+        return None
+
     def decide(self, entity: SelfEntity, local_world: LocalWorld) -> tuple:
         """Called at ~4 Hz. Must return (plan: list[dict], goal: str).
 

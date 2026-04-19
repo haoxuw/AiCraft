@@ -13,15 +13,15 @@ gravity_scale=0 on each living def keeps them airborne; the wander action
 just picks XZ waypoints.
 """
 from rules import RulesBehavior
-from conditions_lib import Threatened, Always
+from conditions_lib import Always
 from actions_lib import Flee, Wander
+from signals import THREAT_NEARBY
 
 
 class FlyerWanderBehavior(RulesBehavior):
     def __init__(self):
         super().__init__()
         self.rules = [
-            (Threatened(range=6), Flee()),
             # plan_duration=60 matches the C++ decide floor (kMinGapSec) so
             # one flight leg == one decide cycle; radius/search_radius are
             # sized for flyers to cross a meadow per commit.
@@ -32,3 +32,9 @@ class FlyerWanderBehavior(RulesBehavior):
                                          plan_duration=60.0,
                                          message="Flying")),
         ]
+        self._flee = Flee(range=6)
+
+    def react(self, e, w, signal):
+        if signal.kind == THREAT_NEARBY:
+            return self._flee.run(e, w, self.ctx)
+        return None

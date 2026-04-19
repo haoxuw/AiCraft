@@ -199,6 +199,27 @@ public:
 	                const std::string& lastReason  = "",
 	                AppearanceQueryFn appearanceQueryFn = nullptr);
 
+	// Signal-driven react path. Mirrors callDecide but invokes
+	// Behavior.react(entity, world, signal) instead of decide(). Returns
+	// true when react returned a plan (outPlan/goalOut populated), false
+	// when react returned None (signal ignored, existing plan keeps
+	// running). errorOut is non-empty on Python exception.
+	// GIL-safe (caller must NOT hold it).
+	bool callReact(BehaviorHandle handle,
+	               const EntitySnapshot& self,
+	               const std::vector<NearbyEntity>& nearby,
+	               float dt, float timeOfDay,
+	               const std::string& signalKind,
+	               const std::vector<std::pair<std::string, std::string>>& signalPayload,
+	               Plan& outPlan,
+	               std::string& goalOut,
+	               std::string& errorOut,
+	               BlockQueryFn blockQueryFn = nullptr,
+	               ScanBlocksFn scanBlocksFn = nullptr,
+	               ScanEntitiesFn scanEntitiesFn = nullptr,
+	               ScanAnnotationsFn scanAnnotationsFn = nullptr,
+	               AppearanceQueryFn appearanceQueryFn = nullptr);
+
 private:
 	bool m_initialized = false;
 	int m_nextHandle = 1;

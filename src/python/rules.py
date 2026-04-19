@@ -83,6 +83,11 @@ class RulesBehavior(Behavior):
     """Behavior that evaluates a rule list each decide().
 
     Subclass sets `self.rules = [(Condition, Action), ...]` in __init__.
+
+    Reactive rules (Threatened → Flee, etc.) do NOT belong in `self.rules`.
+    Put them in `react(signal)` with a switch on `signal.kind` — that way
+    they fire the instant the engine detects the event, without waiting
+    for the current plan to complete.
     """
     def __init__(self):
         self.ctx = {}
@@ -99,3 +104,11 @@ class RulesBehavior(Behavior):
                 if result is not None:
                     return result
         return Move(entity.x, entity.y, entity.z), "Idle"
+
+    def react(self, entity, world, signal):
+        """Default: subclasses override with a switch on signal.kind.
+
+        Return (action, goal[, duration]) / list-of-dicts to override the
+        current plan, or None to ignore the signal.
+        """
+        return None

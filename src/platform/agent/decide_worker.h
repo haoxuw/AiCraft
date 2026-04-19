@@ -19,6 +19,13 @@
 namespace civcraft {
 
 struct DecideRequest {
+	// Decide = normal plan-completion / first-time discovery path.
+	// React  = engine-detected signal (threat_nearby, …) → Behavior.react().
+	enum class Kind { Decide, React };
+	Kind                            kind       = Kind::Decide;
+	std::string                     signalKind;                  // React only
+	std::vector<std::pair<std::string, std::string>> signalPayload;
+
 	EntityId                        eid        = ENTITY_NONE;
 	uint32_t                        generation = 0;
 	BehaviorHandle                  handle     = -1;
@@ -37,6 +44,10 @@ struct DecideRequest {
 struct DecideResult {
 	EntityId     eid        = ENTITY_NONE;
 	uint32_t     generation = 0;
+	// React returning None (ignore the signal) → fromReact=true, reactNoOp=true.
+	// The orchestrator uses this to skip installing an empty plan.
+	bool         fromReact  = false;
+	bool         reactNoOp  = false;
 	Plan         plan;
 	std::string  goalText;
 	std::string  error;
@@ -97,19 +108,32 @@ private:
 			res.eid = req.eid;
 			res.generation = req.generation;
 
-			// Success→"success", Failed→"failed", else "none". See python/local_world.py.
-			std::string outcomeStr = "none";
-			if (req.lastOutcome.outcome == StepOutcome::Success) outcomeStr = "success";
-			else if (req.lastOutcome.outcome == StepOutcome::Failed) outcomeStr = "failed";
+			if (req.kind == DecideRequest::Kind::React) {
+				res.fromReact = true;
+				bool reacted = pythonBridge().callReact(
+					req.handle, req.self, req.nearby, req.dt,
+					req.worldTime, req.signalKind, req.signalPayload,
+					res.plan, res.goalText, res.error,
+					std::move(req.blockQuery), std::move(req.scanBlocks),
+					std::move(req.scanEntities),
+					std::move(req.scanAnnotations),
+					std::move(req.appearanceQuery));
+				if (!reacted && res.error.empty()) res.reactNoOp = true;
+			} else {
+				// Success→"success", Failed→"failed", else "none". See python/local_world.py.
+				std::string outcomeStr = "none";
+				if (req.lastOutcome.outcome == StepOutcome::Success) outcomeStr = "success";
+				else if (req.lastOutcome.outcome == StepOutcome::Failed) outcomeStr = "failed";
 
-			res.plan = pythonBridge().callDecide(
-				req.handle, req.self, req.nearby, req.dt,
-				req.worldTime, res.goalText, res.error,
-				std::move(req.blockQuery), std::move(req.scanBlocks),
-				std::move(req.scanEntities),
-				std::move(req.scanAnnotations),
-				outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason,
-				std::move(req.appearanceQuery));
+				res.plan = pythonBridge().callDecide(
+					req.handle, req.self, req.nearby, req.dt,
+					req.worldTime, res.goalText, res.error,
+					std::move(req.blockQuery), std::move(req.scanBlocks),
+					std::move(req.scanEntities),
+					std::move(req.scanAnnotations),
+					outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason,
+					std::move(req.appearanceQuery));
+			}
 
 			{
 				std::lock_guard<std::mutex> lk(m_resMutex);

@@ -70,7 +70,8 @@ public:
 		drainWorkerResults();
 		auto t2 = Clock::now();
 		phaseExecute(dt);
-		scanInterrupts();
+		emitMovementSignals();
+		scanInterrupts(dt);
 		auto t3 = Clock::now();
 		auto ms = [](Clock::duration d) {
 			return std::chrono::duration<float, std::milli>(d).count();
@@ -323,14 +324,21 @@ private:
 
 			m_lastDecidesRun++;
 			ait->second.noteDecideFired(m_time);
-			dispatchDecide(ait->second, *e, req.outcome);
+			dispatchWorker(ait->second, *e, req);
 		}
 	}
 
-	// Build the immutable decide request and push it to the worker thread.
-	void dispatchDecide(Agent& agent, Entity& entity,
-	                    const LastOutcome& lastOutcome) {
+	// Build the immutable decide/react request and push it to the worker
+	// thread. Handles both Decide and React kinds — the only difference is
+	// which Python entry point the worker calls (decide() vs react()) and
+	// the signal payload carried alongside.
+	void dispatchWorker(Agent& agent, Entity& entity,
+	                    const DecisionQueue::Request& qreq) {
 		DecideRequest req;
+		req.kind        = qreq.isReact ? DecideRequest::Kind::React
+		                               : DecideRequest::Kind::Decide;
+		req.signalKind    = qreq.signalKind;
+		req.signalPayload = qreq.signalPayload;
 		req.eid         = agent.id();
 		req.generation  = ++m_decideGen[agent.id()];
 		req.handle      = agent.handle();
@@ -338,7 +346,7 @@ private:
 		req.nearby      = gatherNearbyFromServer(entity);
 		req.worldTime   = m_server.worldTime();
 		req.dt          = 0.25f;
-		req.lastOutcome = lastOutcome;
+		req.lastOutcome = qreq.outcome;
 
 		// THREADING: closures run on worker thread; stale block reads are
 		// visual-only races (no chunk mutation outside the server-tick path).
@@ -503,6 +511,8 @@ private:
 				ait->second.onDecideError(r.error, *e, m_decisionQueue, m_time);
 				continue;
 			}
+			// React returning None → current plan keeps running, nothing to do.
+			if (r.fromReact && r.reactNoOp) continue;
 			ait->second.onDecideResult(std::move(r.plan),
 			                           std::move(r.goalText), *e);
 		}
@@ -516,13 +526,62 @@ private:
 		}
 	}
 
-	// ── scanInterrupts — HP-drop / target-gone watchdog ──────────────────
+	// ── scanInterrupts — HP-drop / target-gone watchdog + react pump ─────
 
-	void scanInterrupts() {
+	void scanInterrupts(float dt) {
 		for (auto& [eid, agent] : m_agents) {
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
 			agent.scanForInterrupts(*e, m_decisionQueue, m_time);
+			// Consume any dirty signal set by emitMovementSignals(). Agent
+			// enforces its own 0.5s per-agent cooldown + anchor/override guards.
+			agent.maybeReact(m_decisionQueue, m_time, dt);
+		}
+	}
+
+	// ── emitMovementSignals — engine-level threat detector ───────────────
+	//
+	// Event-driven: every Living whose horizontal velocity > kMoveSpeedThresh
+	// inside kThreatAlertRadius of an agent of a different typeId sets the
+	// dirty bit on that agent. maybeReact() (in scanInterrupts) drains the bit
+	// at most once per kReactCooldownSec per agent. This keeps us O(A·N) per
+	// tick with a low inner cost — the cooldown stops work amplification even
+	// when many signal sources are present.
+	void emitMovementSignals() {
+		if (m_agents.empty()) return;
+		constexpr float kThreatAlertRadius = 16.0f;
+		constexpr float kMoveSpeedThresh   = 0.05f;
+		const float kAlertRadius2          = kThreatAlertRadius * kThreatAlertRadius;
+
+		for (auto& [eid, agent] : m_agents) {
+			Entity* self = m_server.getEntity(eid);
+			if (!self || self->removed) continue;
+
+			EntityId    bestId = ENTITY_NONE;
+			float       bestD2 = kAlertRadius2;
+			std::string bestType;
+
+			m_server.forEachEntity([&](Entity& other) {
+				if (other.id() == eid || other.removed) return;
+				if (!other.def().isLiving()) return;
+				// Same-species noise filter: chickens don't flee chickens.
+				if (other.typeId() == self->typeId()) return;
+				float vh = std::sqrt(other.velocity.x * other.velocity.x +
+				                     other.velocity.z * other.velocity.z);
+				if (vh < kMoveSpeedThresh) return;
+				glm::vec3 d = other.position - self->position;
+				float d2 = glm::dot(d, d);
+				if (d2 > bestD2) return;
+				bestD2   = d2;
+				bestId   = other.id();
+				bestType = other.typeId();
+			});
+			if (bestId == ENTITY_NONE) continue;
+
+			std::vector<std::pair<std::string, std::string>> payload;
+			payload.emplace_back("source_id", std::to_string((unsigned)bestId));
+			payload.emplace_back("source_type", bestType);
+			agent.onSignal("threat_nearby", std::move(payload));
 		}
 	}
 
