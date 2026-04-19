@@ -232,10 +232,6 @@ inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	buf.writeI16(a.appearanceIdx);
 	// Hot-reload side-channel
 	buf.writeString(a.behaviorSource);
-	// Move anchor (optional, always appended for forward readers)
-	buf.writeU32(a.anchorEntityId);
-	buf.writeF32(a.keepWithin);
-	buf.writeF32(a.keepAway);
 }
 
 inline ActionProposal deserializeAction(ReadBuffer& buf) {
@@ -276,11 +272,6 @@ inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	// Hot-reload side-channel
 	if (!buf.hasMore()) return a;
 	a.behaviorSource = buf.readString();
-	// Move anchor (optional, appended for forward readers)
-	if (!buf.hasMore()) return a;
-	a.anchorEntityId = buf.readU32();
-	a.keepWithin     = buf.readF32();
-	if (buf.hasMore()) a.keepAway = buf.readF32();
 	return a;
 }
 

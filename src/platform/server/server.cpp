@@ -1,13 +1,31 @@
 #include "server/server.h"
 #include "logic/material_values.h"
 #include "debug/move_stuck_log.h"
+#include <cassert>
 #include <cmath>
 
 namespace civcraft {
 
+// Rule 0: the server accepts exactly four primitives. High-level intents
+// (follow, flee, attack, pathfind, …) are resolved entirely on the agent
+// client and must compile down to one of these before hitting the wire.
+static_assert(ActionProposal::Move     == 0, "Rule 0: primitive order fixed");
+static_assert(ActionProposal::Relocate == 1, "Rule 0: primitive order fixed");
+static_assert(ActionProposal::Convert  == 2, "Rule 0: primitive order fixed");
+static_assert(ActionProposal::Interact == 3, "Rule 0: primitive order fixed");
+
 void GameServer::resolveActions(float dt) {
 	auto proposals = m_world->proposals.drain();
 	m_actionStats.resolved += (int)proposals.size();
+
+	// Rule 0 gate: reject anything that isn't one of the 4 primitives.
+	for (auto& p : proposals) {
+		assert((p.type == ActionProposal::Move     ||
+		        p.type == ActionProposal::Relocate ||
+		        p.type == ActionProposal::Convert  ||
+		        p.type == ActionProposal::Interact)
+		       && "Rule 0: server only accepts Move/Relocate/Convert/Interact");
+	}
 
 	// Decrement + erase so the cooldown map stays bounded.
 	for (auto it = m_clientPosRejectCooldown.begin(); it != m_clientPosRejectCooldown.end();) {
@@ -112,14 +130,6 @@ void GameServer::resolveActions(float dt) {
 				e->onGround = false;
 			}
 
-			// Live-follow/flee anchor: persists across ticks until cleared by a
-			// new Move proposal without an anchor. The pre-physics aim pass in
-			// GameServer::tick re-derives velocity toward (chase) or away from
-			// (flee) the anchor each tick.
-			e->anchorEntityId   = p.anchorEntityId;
-			e->anchorKeepWithin = p.keepWithin;
-			e->anchorKeepAway   = p.keepAway;
-			e->anchorSpeed      = glm::length(glm::vec2(p.desiredVel.x, p.desiredVel.z));
 			break;
 		}
 

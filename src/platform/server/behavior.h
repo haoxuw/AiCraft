@@ -45,8 +45,9 @@ struct PlanStep {
 	// legacy "toggle" (door/TNT); see docs/22_APPEARANCE.md.
 	int16_t   appearanceIdx = -1;
 
-	// Move: live anchor. When set, server re-derives velocity toward (chase)
-	// or away from (flee) this entity each tick; see ActionProposal fields.
+	// Move: client-side Execute() target. applyMove re-reads live target pos
+	// each tick (chase inside keepWithin / scatter past keepAway). Client-only
+	// — never serialized onto ActionProposal (Rule 4).
 	EntityId  anchorEntityId = ENTITY_NONE;
 	float     keepWithin     = 0.0f;  // chase stop ring
 	float     keepAway       = 0.0f;  // flee stop ring

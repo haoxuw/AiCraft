@@ -56,15 +56,6 @@ struct ActionProposal {
 	// Server accepts as authoritative if within CLIENT_POS_TOLERANCE; else snaps back. Move only.
 	glm::vec3 clientPos    = {0, 0, 0};
 	bool      hasClientPos = false;
-	// Optional live-target: when set, server re-derives desiredVel each tick from
-	// (anchor.position - self.position), ignoring the stale direction in desiredVel.
-	// Speed = desiredVel.length(); mode selected by which ring is non-zero:
-	//   keepWithin > 0 → chase: move toward anchor, zero velocity inside the ring
-	//   keepAway   > 0 → flee:  move AWAY from anchor, zero velocity past the ring
-	// Cleared by any new Move proposal without an anchor.
-	EntityId  anchorEntityId = ENTITY_NONE;
-	float     keepWithin     = 0.0f;
-	float     keepAway       = 0.0f;
 
 	// Relocate: move item from one container to another (no creation)
 	Container   relocateFrom;            // source container (default = Self)

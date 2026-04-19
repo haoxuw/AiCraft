@@ -202,7 +202,6 @@ public:
 		if (!m_dirty) return false;
 		if (m_overridePauseTimer > 0.0f) return false;  // player controls us
 		if (m_reactCooldown > 0.0f)      return false;  // rate-limit
-		if (hasAnchoredStep())           return false;  // anchor already tracks it
 
 		q.requestReact(m_eid, std::move(m_dirtyKind),
 		               std::move(m_dirtyPayload), now);
@@ -286,6 +285,15 @@ public:
 			Entity* t = server.getEntity(step.targetEntity);
 			if (!t || t->removed) {
 				interruptPlan("target_gone", q, now);
+				return;
+			}
+		}
+
+		// Anchored Move target gone → priority re-decide.
+		if (step.type == PlanStep::Move && step.anchorEntityId != ENTITY_NONE) {
+			Entity* t = server.getEntity(step.anchorEntityId);
+			if (!t || t->removed) {
+				interruptPlan("anchor_gone", q, now);
 				return;
 			}
 		}
@@ -376,16 +384,6 @@ private:
 		else          q.requestNormal  (m_eid, std::move(out), now);
 	}
 
-	// Any plan step carrying a live anchor keeps us latched to a target
-	// (flee, follow). The server's anchor aim pass re-derives velocity
-	// each tick from the anchored entity's current position, so react()
-	// would only duplicate work — skip it.
-	bool hasAnchoredStep() const {
-		for (auto& s : m_plan)
-			if (s.anchorEntityId != ENTITY_NONE) return true;
-		return false;
-	}
-
 	// Plan completion → normal lane (it's expected, not urgent).
 	void finishPlan(StepOutcome outcome, std::string reason,
 	                ServerInterface& server,
@@ -396,7 +394,15 @@ private:
 			lastType = m_plan[idx].type;
 		}
 		// Decide is async → zero velocity to prevent drift past target.
-		if (lastType == PlanStep::Move && outcome == StepOutcome::Success) {
+		// Skip for anchored Moves: the next re-decide reinstalls velocity
+		// within one tick, so braking only creates stutter.
+		bool wasAnchored = false;
+		if (!m_plan.empty()) {
+			int idx = std::min(m_stepIndex, (int)m_plan.size() - 1);
+			wasAnchored = m_plan[idx].anchorEntityId != ENTITY_NONE;
+		}
+		if (lastType == PlanStep::Move && outcome == StepOutcome::Success
+		    && !wasAnchored) {
 			if (Entity* e = server.getEntity(m_eid))
 				sendStopMove(*e, server);
 		}
@@ -461,6 +467,17 @@ private:
 		glm::vec3 delta = step.targetPos - e.position;
 		delta.y = 0;
 		float dist = glm::length(delta);
+
+		// Anchored Move: applyMove re-aims every tick. Only holdTime (the
+		// re-decide cadence) completes the step — arrival is meaningless
+		// for a moving target.
+		if (step.anchorEntityId != ENTITY_NONE) {
+			float hold = step.holdTime > 0.0f ? step.holdTime
+			                                  : kDefaultIdleHoldSec;
+			m_watch.progress += dt;
+			if (m_watch.progress >= hold) return StepOutcome::Success;
+			return StepOutcome::InProgress;
+		}
 
 		// Latch idle-hold mode on first eval (target == current pos).
 		if (!m_watch.modeDetected) {
@@ -557,20 +574,33 @@ private:
 	}
 
 	void applyMove(PlanStep& step, Entity& e, ServerInterface& server) {
+		float speed = step.speed > 0 ? step.speed : e.def().walk_speed;
+		// Anchored Move = per-tick Execute(). Reads live target position,
+		// seeks (keepWithin) or scatters (keepAway). Server sees plain Moves.
+		if (step.anchorEntityId != ENTITY_NONE) {
+			Entity* t = server.getEntity(step.anchorEntityId);
+			if (!t || t->removed) {
+				sendStopMove(e, server);
+				return;
+			}
+			glm::vec3 to = t->position - e.position;
+			to.y = 0;
+			float hLen = glm::length(to);
+			bool flee = step.keepAway > 0.0f;
+			float ring = flee ? step.keepAway : step.keepWithin;
+			bool stop = flee ? (hLen >= ring) : (hLen <= ring);
+			if (stop || hLen < 0.01f) {
+				sendStopMove(e, server);
+				return;
+			}
+			float sign = flee ? -1.0f : 1.0f;
+			glm::vec3 dir = {sign * to.x / hLen, 0, sign * to.z / hLen};
+			sendMove(e, dir * speed, server);
+			return;
+		}
 		glm::vec3 dir = step.targetPos - e.position;
 		dir.y = 0;
 		float dist = glm::length(dir);
-		float speed = step.speed > 0 ? step.speed : e.def().walk_speed;
-		// Anchored Move: let the server re-aim each tick. We still emit a
-		// velocity (magnitude = speed) so the server knows how fast to chase,
-		// but direction is recomputed from the anchor inside GameServer::tick.
-		if (step.anchorEntityId != ENTITY_NONE) {
-			glm::vec3 vel = dist > kArriveEps ? dir / dist * speed
-			                                  : glm::vec3(speed, 0, 0);
-			sendMove(e, vel, server, step.anchorEntityId,
-			         step.keepWithin, step.keepAway);
-			return;
-		}
 		if (dist < kArriveEps) {
 			sendStopMove(e, server);
 			return;
@@ -637,9 +667,7 @@ private:
 	}
 
 	// ── Move emission + stuck telemetry ──────────────────────────────────
-	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server,
-	              EntityId anchor = ENTITY_NONE,
-	              float keepWithin = 0.0f, float keepAway = 0.0f) {
+	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server) {
 		// Client-side prediction; yaw derives from velocity elsewhere.
 		e.velocity.x = vel.x;
 		e.velocity.z = vel.z;
@@ -686,13 +714,10 @@ private:
 		m_stuckLastSampledPos = e.position;
 
 		ActionProposal p;
-		p.type           = ActionProposal::Move;
-		p.actorId        = m_eid;
-		p.desiredVel     = vel;
-		p.goalText       = m_goalText;
-		p.anchorEntityId = anchor;
-		p.keepWithin     = keepWithin;
-		p.keepAway       = keepAway;
+		p.type       = ActionProposal::Move;
+		p.actorId    = m_eid;
+		p.desiredVel = vel;
+		p.goalText   = m_goalText;
 		server.sendAction(p);
 	}
 

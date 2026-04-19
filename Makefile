@@ -35,24 +35,53 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
 civcraft: game
 
-# `make game` launches the Vulkan client. It spawns its own civcraft-server
-# on startup and connects over TCP — same architecture as `make client`,
-# just wired for single-user, skip-menu iteration.
+# `make game` launches the Vulkan client under gdb so any crash auto-dumps
+# a full backtrace + all-threads + disasm + regs into GAME_LOG. SIGTERM/
+# SIGINT/SIGHUP/SIGPIPE pass through silently so Esc-quit and Ctrl+C still
+# end the game cleanly without gdb stopping the inferior. Live stdout still
+# goes to the terminal (tee) so you can watch perf lines as you play.
+#
+# Override the log path with `make game GAME_LOG=/path/to.log`.
+GAME_LOG := /tmp/civcraft_game_run.log
+
+# Common wrapper: $(call run_under_gdb, <extra civcraft-ui-vk args>)
+define run_under_gdb
+	cd $(GAME_BUILD_DIR) && \
+	echo "[make] launching under gdb — log: $(GAME_LOG)" && \
+	gdb -batch \
+	    -ex 'set pagination off' \
+	    -ex 'set confirm off' \
+	    -ex 'handle SIGPIPE nostop noprint pass' \
+	    -ex 'handle SIGINT  nostop noprint pass' \
+	    -ex 'handle SIGTERM nostop noprint pass' \
+	    -ex 'handle SIGHUP  nostop noprint pass' \
+	    -ex 'run' \
+	    -ex 'echo \n=========== CRASH BACKTRACE ===========\n' \
+	    -ex 'bt full' \
+	    -ex 'echo \n=========== ALL THREADS ===========\n' \
+	    -ex 'thread apply all bt' \
+	    -ex 'echo \n=========== DISASM AT CRASH ===========\n' \
+	    -ex 'disassemble' \
+	    -ex 'info registers' \
+	    -ex 'quit' \
+	    --args ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG)
+endef
+
 game: game-build
-	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --skip-menu$(if $(GAME_PORT), --port $(GAME_PORT),)
+	$(call run_under_gdb,$(if $(GAME_PORT),--port $(GAME_PORT)))
 
 profiler: game-build
-	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --skip-menu --profiler$(if $(GAME_PORT), --port $(GAME_PORT),)
+	$(call run_under_gdb,--profiler $(if $(GAME_PORT),--port $(GAME_PORT)))
 
 # Minimal isolation worlds for focused behavior testing.
 test-dog: game-build
-	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --skip-menu --template 3
+	$(call run_under_gdb,--template 3)
 
 test-villager: game-build
-	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --skip-menu --template 4
+	$(call run_under_gdb,--template 4)
 
 test-chicken: game-build
-	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --skip-menu --template 5
+	$(call run_under_gdb,--template 5)
 
 # ── Visual QA scenarios ─────────────────────────────────────
 CHARACTER := base:pig

@@ -712,44 +712,6 @@ public:
 		updateNavigation(dt, m_world->entities);
 		markPhase(m_lastTickProfile.navigationMs);
 
-		// Live anchor aim: for each entity tracking another entity, re-derive
-		// horizontal velocity toward (chase) or away from (flee) the anchor's
-		// current position. Keeps followers/fleers latched onto moving targets
-		// without Python re-decide each tick. See action.h anchor fields.
-		m_world->entities.forEach([&](Entity& e) {
-			if (e.removed) return;
-			if (e.anchorEntityId == ENTITY_NONE) return;
-			const Entity* a = m_world->entities.get(e.anchorEntityId);
-			if (!a || a->removed) {
-				e.anchorEntityId = ENTITY_NONE;
-				e.velocity.x = 0;
-				e.velocity.z = 0;
-				e.moveSpeed = 0;
-				return;
-			}
-			glm::vec3 to = a->position - e.position;
-			float hLen = std::sqrt(to.x * to.x + to.z * to.z);
-			bool flee = e.anchorKeepAway > 0.0f;
-			bool stop = flee
-				? (hLen >= e.anchorKeepAway)       // fled far enough
-				: (hLen <= e.anchorKeepWithin);    // arrived close enough
-			if (stop || hLen < 0.01f) {
-				e.velocity.x = 0;
-				e.velocity.z = 0;
-				e.moveTarget = e.position;
-				e.moveSpeed  = 0;
-				return;
-			}
-			float speed = e.anchorSpeed;
-			if (speed <= 0) speed = e.def().walk_speed;
-			float sign = flee ? -1.0f : 1.0f;
-			glm::vec3 dir = {sign * to.x / hLen, 0, sign * to.z / hLen};
-			e.velocity.x = dir.x * speed;
-			e.velocity.z = dir.z * speed;
-			e.moveTarget = e.position + dir * 10.0f;
-			e.moveSpeed  = speed;
-		});
-
 		// Also purges removed entities.
 		m_world->entities.stepPhysics(dt, solidFn);
 		markPhase(m_lastTickProfile.physicsMs);
