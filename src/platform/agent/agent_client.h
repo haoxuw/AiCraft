@@ -486,7 +486,6 @@ private:
 			BlockId want = reg.getId(typeId);
 			if (want == BLOCK_AIR) return out;
 			auto& chunks = srv->chunks();
-			auto guard = acquireShared(chunks);
 			int cxMin = (int)std::floor((origin.x - maxDist) / (float)CHUNK_SIZE);
 			int cxMax = (int)std::floor((origin.x + maxDist) / (float)CHUNK_SIZE);
 			int czMin = (int)std::floor((origin.z - maxDist) / (float)CHUNK_SIZE);
@@ -494,9 +493,16 @@ private:
 			int cyMin = (int)std::floor((origin.y - maxDist) / (float)CHUNK_SIZE);
 			int cyMax = (int)std::floor((origin.y + maxDist) / (float)CHUNK_SIZE);
 			float maxDist2 = maxDist * maxDist;
+			// Acquire the shared_lock PER CHUNK rather than across the whole
+			// scan — previously the lock was held for the full sweep (10-100ms
+			// for a 3×3×3 region), starving S_CHUNK / S_CHUNK_EVICT writers
+			// on the main thread. Per-chunk hold is ~50μs; writers slip in
+			// between iterations and chunk lifetime is still safe because the
+			// guard covers both getChunkIfLoaded() and the inner block walk.
 			for (int cx = cxMin; cx <= cxMax; cx++)
 			for (int cz = czMin; cz <= czMax; cz++)
 			for (int cy = cyMin; cy <= cyMax; cy++) {
+				auto guard = acquireShared(chunks);
 				Chunk* chunk = chunks.getChunkIfLoaded({cx, cy, cz});
 				if (!chunk) continue;
 				for (int ly = 0; ly < CHUNK_SIZE; ly++)
