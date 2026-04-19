@@ -13,7 +13,7 @@ living = {
     "playable": False,
 
     "model": "bee",
-    "behavior": "bee_wander",
+    "behavior": "flyer_wander",
 
     "collision": {"min": [-0.1, 0, -0.1], "max": [0.1, 0.3, 0.1]},
     "walk_speed": 4.0,
