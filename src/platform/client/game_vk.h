@@ -568,6 +568,15 @@ private:
 	float m_fpsWindowS   = 0.0f;
 	int   m_fpsWindowFrames = 0;
 
+	// Perf-session anchor: wall-time (seconds since epoch) of the first frame
+	// spent in Playing state. Zero until then, which also makes the exit
+	// summary a no-op if the user quits from the main menu. Only read in
+	// CIVCRAFT_PERF builds but kept unconditional to avoid ABI divergence.
+	double m_perfSessionStart = 0.0;
+public:
+	double perfSessionStart() const { return m_perfSessionStart; }
+private:
+
 	// H handbook panel
 	bool         m_handbookOpen = false;
 	civcraft::ArtifactRegistry m_artifactRegistry;

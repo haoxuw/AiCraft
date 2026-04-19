@@ -11,6 +11,9 @@
 #include "logic/artifact_registry.h"
 #include "client/process_manager.h"
 #include "client/game_vk.h"
+#include "debug/perf_registry.h"
+
+#include <ctime>
 
 #include <atomic>
 #include <chrono>
@@ -217,5 +220,53 @@ int main(int argc, char** argv) {
 	rhi->shutdown();
 	glfwDestroyWindow(win);
 	glfwTerminate();
+
+#ifdef CIVCRAFT_PERF
+	// End-of-session client perf dump. Mirrors the server's format so
+	// `make game` surfaces both after quit. Skipped if no Playing frame was
+	// ever recorded (game.perfSessionStart() == 0) — saves menu-only runs
+	// from printing an empty block.
+	{
+		double anchor = game.perfSessionStart();
+		if (anchor > 0.0) {
+			double elapsed = std::chrono::duration<double>(
+				std::chrono::steady_clock::now().time_since_epoch()).count()
+				- anchor;
+			std::string summary = civcraft::perf::formatSummary(
+				"CIVCRAFT CLIENT PERF", elapsed);
+
+			auto [topName, topV] = civcraft::perf::topByP99({
+				"client.phase.net",     "client.phase.chunks",
+				"client.phase.agent",   "client.phase.events",
+				"client.phase.sim",     "client.phase.world",
+				"client.phase.ents",    "client.phase.fx3d",
+				"client.phase.hud",     "client.phase.panels",
+				"client.phase.imDraw",  "client.phase.present",
+			});
+			char blline[128] = "";
+			if (!topName.empty()) {
+				std::snprintf(blline, sizeof(blline),
+					"── bottleneck (highest p99): %s = %.2f ms\n",
+					topName.c_str(), topV);
+			}
+
+			std::fprintf(stderr, "\n%s%s\n", summary.c_str(), blline);
+
+			char ts[32];
+			std::time_t tt = std::time(nullptr);
+			std::strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", std::localtime(&tt));
+			char path[96];
+			std::snprintf(path, sizeof(path),
+				"/tmp/civcraft_perf_client_%s.txt", ts);
+			if (FILE* f = std::fopen(path, "w")) {
+				std::fputs(summary.c_str(), f);
+				std::fputs(blline, f);
+				std::fclose(f);
+				std::fprintf(stderr, "[Perf] summary written to %s\n", path);
+			}
+		}
+	}
+#endif
+
 	return 0;
 }

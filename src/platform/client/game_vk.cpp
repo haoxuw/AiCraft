@@ -31,6 +31,7 @@
 // civcraft-agent processes). Pulling these in lets civcraft-ui-vk drive
 // every NPC the server hands us via in-process Python decide().
 #include "agent/agent_client.h"
+#include "debug/perf_registry.h"
 #include "server/behavior_store.h"
 #include "server/python_bridge.h"
 
@@ -1188,6 +1189,41 @@ void Game::runOneFrame(float dt, float wallTime) {
 			m_frameProbe.last - m_frameProbe.frameStart).count();
 		m_frameProbe.frames++;
 		m_frameProbe.windowMaxMs = std::max(m_frameProbe.windowMaxMs, totalMs);
+
+#ifdef CIVCRAFT_PERF
+		// Session-long histograms + counters. Scoped to Playing *and* server
+		// ready so main-menu, loading screens, and the pre-S_READY window
+		// (chunks still streaming, player entity not yet pushed) don't
+		// pollute p50/p99. First qualifying frame anchors the session-start
+		// timestamp for the exit summary.
+		if (m_state == GameState::Playing && m_server && m_server->isServerReady()) {
+			if (m_perfSessionStart == 0.0) {
+				m_perfSessionStart = std::chrono::duration<double>(
+					std::chrono::steady_clock::now().time_since_epoch()).count();
+			}
+			PERF_RECORD_MS("client.frame.total_ms", totalMs);
+			PERF_COUNT("client.frames.total");
+			// 60Hz target → 16.67ms. "slow" = missed one vsync; "dropped" =
+			// missed two (player-visible stutter).
+			if (totalMs > 16.7) PERF_COUNT("client.frames.slow_16ms");
+			if (totalMs > 33.3) PERF_COUNT("client.frames.dropped_33ms");
+
+			// Per-section histograms. Cache histogram* by literal pointer —
+			// mark() is always called with string literals so identity is
+			// stable, and we avoid reallocating the "client.phase.<name>"
+			// key every frame.
+			static std::unordered_map<const char*, civcraft::perf::Histogram*> phaseCache;
+			for (auto& [name, ms] : m_frameProbe.sections) {
+				auto& h = phaseCache[name];
+				if (!h) {
+					char key[64];
+					std::snprintf(key, sizeof(key), "client.phase.%s", name);
+					h = &civcraft::perf::Registry::instance().histogram(key);
+				}
+				h->record(ms);
+			}
+		}
+#endif
 		if (totalMs > m_frameProbe.spikeMs && !m_frameProbe.sections.empty()) {
 			char line[512]; int n = 0;
 			n += std::snprintf(line + n, sizeof(line) - n, "[perf-spike] %.1fms", totalMs);

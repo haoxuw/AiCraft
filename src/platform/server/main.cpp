@@ -11,9 +11,11 @@
 #include "net/net_protocol.h"
 #include "server/python_bridge.h"
 #include "logic/artifact_registry.h"
+#include "debug/perf_registry.h"
 #include <cstdio>
 #include <cstring>
 #include <chrono>
+#include <ctime>
 #include <thread>
 #include <csignal>
 #include <unistd.h>
@@ -289,6 +291,12 @@ int main(int argc, char** argv) {
 	double worstFrameMs = 0.0;
 	int slowFrameCount = 0;
 	constexpr double SLOW_FRAME_MS = 16.7;  // over 60Hz budget
+
+	// Anchor for elapsed-time in the exit summary. 0 until the first client
+	// reaches S_READY — recording is suppressed during world-gen / handshake
+	// so the summary reflects actual gameplay, not boot cost.
+	double perfSessionStart = 0.0;
+	bool   perfRecording    = false;
 #endif
 
 	while (g_running) {
@@ -299,6 +307,16 @@ int main(int argc, char** argv) {
 		accumulator += dt;
 		statusTimer += dt;
 #ifdef CIVCRAFT_PERF
+		// Flip recording on the first frame after the first client is READY.
+		// perfSessionStart anchors "now" so the exit summary's elapsed clock
+		// starts at handshake, not process start.
+		if (!perfRecording && clients.anyReady()) {
+			perfRecording = true;
+			perfSessionStart = std::chrono::duration<double>(
+				std::chrono::steady_clock::now().time_since_epoch()).count();
+			printf("[Perf] gameplay started — recording enabled\n");
+			fflush(stdout);
+		}
 		perfTimer += dt;
 
 		FramePhases fp{};
@@ -377,6 +395,23 @@ int main(int argc, char** argv) {
 					worstProfile = server.lastTickProfile();
 				}
 			}
+			if (perfRecording) {
+				// Session-long histograms. Record per-tick total + each
+				// TickProfile phase so the exit summary can report p50/p95/p99.
+				const auto& p = server.lastTickProfile();
+				PERF_RECORD_MS("server.tick.total_ms",       perTickMs);
+				PERF_RECORD_MS("server.tick.resolve_ms",     p.resolveActionsMs);
+				PERF_RECORD_MS("server.tick.nav_ms",         p.navigationMs);
+				PERF_RECORD_MS("server.tick.physics_ms",     p.physicsMs);
+				PERF_RECORD_MS("server.tick.yaw_ms",         p.yawSmoothMs);
+				PERF_RECORD_MS("server.tick.blocks_ms",      p.activeBlocksMs);
+				PERF_RECORD_MS("server.tick.hpregen_ms",     p.hpRegenMs);
+				PERF_RECORD_MS("server.tick.structregen_ms", p.structureRegenMs);
+				PERF_RECORD_MS("server.tick.structfeat_ms",  p.structureFeaturesMs);
+				PERF_RECORD_MS("server.tick.stuck_ms",       p.stuckDetectionMs);
+				PERF_COUNT("server.ticks.total");
+				if (perTickMs > TICK_BUDGET_MS) PERF_COUNT("server.ticks.over_budget");
+			}
 		}
 #endif
 
@@ -396,6 +431,23 @@ int main(int argc, char** argv) {
 				worstFrameMs = fp.totalMs;
 				worstFrame = fp;
 			}
+		}
+
+		if (perfRecording) {
+			// Session-long frame-phase histograms. Covers the outer server loop —
+			// network I/O, accept, broadcast — not just the simulation tick.
+			PERF_RECORD_MS("server.frame.total_ms",     fp.totalMs);
+			PERF_RECORD_MS("server.frame.accept_ms",    fp.acceptMs);
+			PERF_RECORD_MS("server.frame.sendchunks_ms",fp.sendChunksMs);
+			PERF_RECORD_MS("server.frame.receive_ms",   fp.receiveMs);
+			PERF_RECORD_MS("server.frame.prune_ms",     fp.pruneMs);
+			PERF_RECORD_MS("server.frame.tick_ms",      fp.tickMs);
+			PERF_RECORD_MS("server.frame.broadcast_ms", fp.broadcastMs);
+			PERF_RECORD_MS("server.frame.lan_ms",       fp.announceLanMs);
+			PERF_RECORD_MS("server.frame.statuslog_ms", fp.statusLogMs);
+			PERF_COUNT("server.frames.total");
+			if (fp.totalMs > SLOW_FRAME_MS) PERF_COUNT("server.frames.slow_16ms");
+			if (fp.totalMs > 33.3)          PERF_COUNT("server.frames.dropped_33ms");
 		}
 
 		if (perfTimer >= PERF_LOG_INTERVAL) {
@@ -483,6 +535,53 @@ int main(int argc, char** argv) {
 
 	// Let AgentManager::findFreePort() reuse this port.
 	if (g_readyPath[0]) std::remove(g_readyPath);
+
+#ifdef CIVCRAFT_PERF
+	// End-of-session perf dump. Structured block to stderr + a timestamped
+	// file so `make game` can surface the summary after the client exits.
+	// Skip entirely if no client ever reached READY — nothing was recorded,
+	// and printing a zero-sample block is noisy.
+	if (perfRecording) {
+		double elapsed = std::chrono::duration<double>(
+			std::chrono::steady_clock::now().time_since_epoch()).count()
+			- perfSessionStart;
+		std::string summary = civcraft::perf::formatSummary(
+			"CIVCRAFT SERVER PERF", elapsed);
+
+		// Highlight the top-p99 tick phase so the bottleneck is obvious.
+		auto [topName, topV] = civcraft::perf::topByP99({
+			"server.tick.resolve_ms",
+			"server.tick.nav_ms",
+			"server.tick.physics_ms",
+			"server.tick.yaw_ms",
+			"server.tick.blocks_ms",
+			"server.tick.hpregen_ms",
+			"server.tick.structregen_ms",
+			"server.tick.structfeat_ms",
+			"server.tick.stuck_ms",
+		});
+		char blline[128] = "";
+		if (!topName.empty()) {
+			std::snprintf(blline, sizeof(blline),
+				"── bottleneck (highest p99): %s = %.2f ms\n",
+				topName.c_str(), topV);
+		}
+
+		std::fprintf(stderr, "\n%s%s\n", summary.c_str(), blline);
+
+		char ts[32];
+		std::time_t tt = std::time(nullptr);
+		std::strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", std::localtime(&tt));
+		char path[96];
+		std::snprintf(path, sizeof(path), "/tmp/civcraft_perf_server_%s.txt", ts);
+		if (FILE* f = std::fopen(path, "w")) {
+			std::fputs(summary.c_str(), f);
+			std::fputs(blline, f);
+			std::fclose(f);
+			std::fprintf(stderr, "[Perf] summary written to %s\n", path);
+		}
+	}
+#endif
 
 	printf("[Server] Shut down.\n");
 	civcraft::pythonBridge().shutdown();
