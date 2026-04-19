@@ -21,12 +21,15 @@
 #include "llm/tts_client.h"
 #include "llm/whisper_client.h"
 
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <cstdint>
-#include <cstdlib>
 
 namespace civcraft::vk {
 
@@ -81,6 +84,11 @@ public:
 			m_sttResult.clear();
 			m_sttPending = false;
 		}
+		{
+			std::lock_guard<std::mutex> lk(m_ttsMtx);
+			m_voiceQueue.clear();
+			m_voiceNextPlayTime = {};
+		}
 		m_open = true;
 		return true;
 	}
@@ -104,6 +112,11 @@ public:
 			std::lock_guard<std::mutex> lk(m_sttMtx);
 			m_sttResult.clear();
 			m_sttPending = false;
+		}
+		{
+			std::lock_guard<std::mutex> lk(m_ttsMtx);
+			m_voiceQueue.clear();
+			m_voiceNextPlayTime = {};
 		}
 	}
 
@@ -206,6 +219,64 @@ public:
 		return false;
 	}
 
+	// Advance the serial voice queue. Called each frame while the panel
+	// is open. Pops the next WAV only after the previous utterance's
+	// estimated duration has elapsed, so sentences don't overlap.
+	//
+	// "Estimated" because miniaudio's playFile fires and forgets — we don't
+	// get a completion callback. Instead we read the WAV header, compute
+	// duration in seconds, and schedule the next play at now+duration+gap.
+	void drainVoiceQueue() {
+		if (!m_audioOut) return;
+		auto now = std::chrono::steady_clock::now();
+		std::string toPlay;
+		{
+			std::lock_guard<std::mutex> lk(m_ttsMtx);
+			if (m_voiceQueue.empty()) return;
+			if (now < m_voiceNextPlayTime) return;
+			toPlay = std::move(m_voiceQueue.front());
+			m_voiceQueue.pop_front();
+		}
+		float durSec = readWavDurationSec(toPlay);
+		// Small inter-sentence gap keeps the cadence from sounding rushed.
+		const float gapSec = 0.08f;
+		{
+			std::lock_guard<std::mutex> lk(m_ttsMtx);
+			m_voiceNextPlayTime = now + std::chrono::milliseconds(
+				(long long)((durSec + gapSec) * 1000.0f));
+		}
+		m_audioOut->playFile(toPlay, 1.0f);
+	}
+
+	// Minimal RIFF/WAVE parser — returns total duration in seconds, or a
+	// 2 s fallback on any parse failure (safe-ish default that won't cause
+	// sentences to overlap even for unknown formats).
+	static float readWavDurationSec(const std::string& path) {
+		std::FILE* f = std::fopen(path.c_str(), "rb");
+		if (!f) return 2.0f;
+		uint8_t h[44];
+		size_t n = std::fread(h, 1, 44, f);
+		std::fclose(f);
+		if (n < 44) return 2.0f;
+		if (std::memcmp(h, "RIFF", 4) != 0 ||
+		    std::memcmp(h + 8, "WAVE", 4) != 0) return 2.0f;
+		auto rd32 = [](const uint8_t* p) -> uint32_t {
+			return  (uint32_t)p[0]        | ((uint32_t)p[1] << 8)
+			      | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+		};
+		auto rd16 = [](const uint8_t* p) -> uint16_t {
+			return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+		};
+		uint16_t channels   = rd16(h + 22);
+		uint32_t sampleRate = rd32(h + 24);
+		uint16_t bitsPer    = rd16(h + 34);
+		uint32_t dataBytes  = rd32(h + 40);
+		if (channels == 0 || sampleRate == 0 || bitsPer == 0) return 2.0f;
+		float byteRate = (float)sampleRate * channels * (bitsPer / 8.0f);
+		if (byteRate <= 0.0f) return 2.0f;
+		return (float)dataBytes / byteRate;
+	}
+
 	// Per-frame pump: peel finished sentences off the streaming reply and
 	// hand them to piper. Called by Game while the panel is open.
 	//
@@ -219,6 +290,10 @@ public:
 	// new turn starts, resetting the spoken-char cursor to 0.
 	void tickVoice() {
 		if (!m_open || !m_tts || !m_audioOut) return;
+		// Play back completed WAVs sequentially. Runs every frame so the
+		// queue advances even while we're waiting for the next sentence
+		// to finish synthesizing.
+		drainVoiceQueue();
 		auto snap = m_session ? m_session->snapshot()
 		                      : civcraft::llm::LlmSession::Snapshot{};
 
@@ -281,19 +356,18 @@ public:
 		std::string chunk = s.substr(pos, chunkEnd - pos);
 		m_ttsSpokenChars = chunkEnd;
 
-		civcraft::AudioManager* out = m_audioOut;
 		{
 			std::lock_guard<std::mutex> lk(m_ttsMtx);
 			m_ttsInFlight++;
 		}
 		m_tts->speak(std::move(chunk),
-			[this, out](bool ok, std::string wavPath) {
-				{
-					std::lock_guard<std::mutex> lk(m_ttsMtx);
-					if (m_ttsInFlight > 0) m_ttsInFlight--;
-				}
+			[this](bool ok, std::string wavPath) {
+				std::lock_guard<std::mutex> lk(m_ttsMtx);
+				if (m_ttsInFlight > 0) m_ttsInFlight--;
 				if (!ok || wavPath.empty()) return;
-				if (out) out->playFile(wavPath, 1.0f);
+				// Enqueue — the main-thread pump in tickVoice() plays these
+				// back one at a time so sentences don't overlap audibly.
+				m_voiceQueue.push_back(std::move(wavPath));
 			});
 	}
 
@@ -543,6 +617,11 @@ private:
 	size_t                                       m_ttsSpokenChars = 0;  // index into current turn
 	mutable std::mutex                           m_ttsMtx;
 	int                                          m_ttsInFlight    = 0;  // speak() calls pending
+	// Serial playback queue. The TTS worker thread pushes finished WAV
+	// paths here; drainVoiceQueue (main thread) pops one at a time so only
+	// one sentence is audible at once. Guarded by m_ttsMtx.
+	std::deque<std::string>                      m_voiceQueue;
+	std::chrono::steady_clock::time_point        m_voiceNextPlayTime{};
 
 	static constexpr size_t kMaxInputChars = 200;
 };
