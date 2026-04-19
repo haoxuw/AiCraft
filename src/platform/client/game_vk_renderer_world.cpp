@@ -70,6 +70,29 @@ const char* pickClip(const std::string& goal) {
 	return "";
 }
 
+// Frame-rate-independent EMA smoothing. alpha = 1 − exp(−dt/tau); on first
+// call the state snaps to target so new entities don't drift in from zero.
+// tau is the time constant (seconds) — how long the trail lags real input.
+void smoothScalar(float& state, float target, float dt, float tau,
+                  bool& initialized) {
+	if (!initialized) { state = target; initialized = true; return; }
+	if (dt <= 0.0f || tau <= 0.0f) { state = target; return; }
+	float alpha = 1.0f - std::exp(-dt / tau);
+	state += (target - state) * alpha;
+}
+
+// Same, but for degrees — shortest-arc unwrap so 359→1 is treated as +2°.
+void smoothAngleDeg(float& state, float target, float dt, float tau,
+                    bool& initialized) {
+	if (!initialized) { state = target; initialized = true; return; }
+	if (dt <= 0.0f || tau <= 0.0f) { state = target; return; }
+	float diff = target - state;
+	while (diff >  180.0f) diff -= 360.0f;
+	while (diff < -180.0f) diff += 360.0f;
+	float alpha = 1.0f - std::exp(-dt / tau);
+	state += diff * alpha;
+}
+
 // Fill an AnimState for a remote mob and return its body yaw. Living entities
 // get head tracking (±45° cap, overflow rolls into body yaw); non-living
 // entities face e.yaw and don't track the head. Matches EntityDrawer::draw.
@@ -188,8 +211,15 @@ void WorldRenderer::renderWorld(float wallTime) {
 		if (pit != g.m_models.end()) {
 			civcraft::AnimState anim{};
 			anim.walkDistance = g.m_walkDist;
-			anim.speed        = glm::length(glm::vec2(me->velocity.x,
-			                                          me->velocity.z));
+			{
+				// Smooth speed → walk-cycle clip blending doesn't snap on
+				// abrupt velocity changes (sprint toggle, wall impact).
+				float rawSpeed = glm::length(glm::vec2(me->velocity.x,
+				                                       me->velocity.z));
+				smoothScalar(g.m_playerAnimSpeed, rawSpeed, g.m_frameDt,
+				             /*tau=*/0.15f, g.m_playerAnimSpeedInit);
+				anim.speed = g.m_playerAnimSpeed;
+			}
 			anim.time         = g.m_wallTime;
 
 			// Held items: hotbar selection → main hand, offhand equip → other.
@@ -290,9 +320,30 @@ void WorldRenderer::renderWorld(float wallTime) {
 			civcraft::AnimState anim{};
 			float bodyYaw;
 			fillMobAnim(e, g.m_wallTime, anim, bodyYaw);
+
+			// EMA-smooth speed + body yaw per entity. Decide() re-aims step
+			// velocity in one frame; without this, legs and torso snap.
+			auto& sm = g.m_entityAnimSmooth[e.id()];
+			smoothScalar   (sm.speed,      anim.speed, g.m_frameDt,
+			                /*tau=*/0.15f, sm.initialized);
+			bool yawInit = sm.initialized;   // already true after smoothScalar
+			smoothAngleDeg (sm.bodyYawDeg, bodyYaw,    g.m_frameDt,
+			                /*tau=*/0.12f, yawInit);
+			anim.speed = sm.speed;
+			bodyYaw    = sm.bodyYawDeg;
+
 			civcraft::appendBoxModel(charBoxes, mit->second,
 			                         e.position, bodyYaw, anim);
 		});
+
+		// Drop trails for entities that left the world — otherwise the map
+		// grows unbounded as mobs respawn with fresh ids.
+		for (auto it = g.m_entityAnimSmooth.begin();
+		     it != g.m_entityAnimSmooth.end(); ) {
+			civcraft::Entity* ent = g.m_server->getEntity(it->first);
+			if (!ent || ent->removed) it = g.m_entityAnimSmooth.erase(it);
+			else                      ++it;
+		}
 
 		// Fly-to-player arc for claimed items — lerp from spawn point to the
 		// picker's chest height with smoothstep, shrink as it approaches.
