@@ -37,6 +37,7 @@
 #include "agent/decide_worker.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -275,6 +276,7 @@ private:
 				m_needy.erase(it->first);
 				m_enteredAt.erase(it->first);
 				m_decideGen.erase(it->first);
+				m_decideBackoff.forget(it->first);
 				it = m_agents.erase(it);
 			} else {
 				++it;
@@ -380,6 +382,10 @@ private:
 			if (wanted == Agent::ComputeKind::React  && agent.reactInFlight()) continue;
 			if (wanted == Agent::ComputeKind::Decide
 			    && (agent.decideInFlight() || agent.reactInFlight())) continue;
+
+			// Don't hammer a behavior that just raised — the exception will
+			// repeat on identical inputs. Cooldown elapses → we retry.
+			if (m_decideBackoff.inCooldown(eid, m_time)) continue;
 
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
@@ -609,11 +615,14 @@ private:
 			if (!e || e->removed) { updateMembership(r.eid); continue; }
 
 			if (!r.error.empty()) {
+				m_decideBackoff.retryWithBackoff(r.eid, m_time,
+					r.fromReact ? "react" : "decide", r.error);
 				ait->second.onDecideError(r.error, *e);
 			} else if (r.fromReact && r.reactNoOp) {
 				// React produced no action: m_needsDecide untouched, next
 				// visit will dispatch Decide (rule: react-None → decide-next).
 			} else {
+				m_decideBackoff.noteSuccess(r.eid);
 				ait->second.onDecideResult(std::move(r.plan),
 				                           std::move(r.goalText), *e);
 			}
@@ -684,18 +693,70 @@ private:
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────
+	// Generic exponential-backoff gate for Python-side failures that would
+	// otherwise spam once per decide sweep (missing behavior id, Python
+	// exceptions in decide/react, etc.). Non-blocking failures: back off
+	// 0.1s → 1s → 10s → ... capped at 1e10s (effectively give up). Optional
+	// giveUpAfter bounds retries for cases where further attempts are
+	// pointless (e.g. a behavior that hung the worker once already).
+	template<typename Key>
+	class RetryBackoff {
+	public:
+		// True during cooldown OR after giveUp — caller should skip work.
+		bool inCooldown(const Key& k, float now) const {
+			auto it = m_map.find(k);
+			if (it == m_map.end()) return false;
+			if (it->second.gaveUp) return true;
+			return now < it->second.nextAttemptAt;
+		}
+
+		// Record a failure, schedule next attempt, log once. Returns true if
+		// this failure exceeded giveUpAfter (caller may stop retrying for good).
+		bool retryWithBackoff(const Key& k, float now,
+		                      const char* label, const std::string& why,
+		                      int giveUpAfter = 0) {
+			auto& e = m_map[k];
+			e.failures++;
+			double delay = 0.1 * std::pow(10.0, e.failures - 1);
+			if (delay > 1e10) delay = 1e10;
+			e.nextAttemptAt = now + (float)delay;
+			if (giveUpAfter > 0 && e.failures >= giveUpAfter) {
+				e.gaveUp = true;
+				std::printf("[AgentClient] %s failed for %s (%s); attempt %d — giving up\n",
+					label, keyToStr(k).c_str(), why.c_str(), e.failures);
+				return true;
+			}
+			std::printf("[AgentClient] %s failed for %s (%s); attempt %d, retry in %.1fs\n",
+				label, keyToStr(k).c_str(), why.c_str(), e.failures, delay);
+			return false;
+		}
+
+		void noteSuccess(const Key& k) { m_map.erase(k); }
+		void forget(const Key& k)      { m_map.erase(k); }
+
+	private:
+		struct Entry { int failures = 0; float nextAttemptAt = 0.0f; bool gaveUp = false; };
+		std::unordered_map<Key, Entry> m_map;
+
+		static std::string keyToStr(const std::string& s) { return "'" + s + "'"; }
+		static std::string keyToStr(EntityId e)           { return "eid#" + std::to_string((unsigned)e); }
+	};
+
 	BehaviorHandle loadBehaviorForEntity(const std::string& behaviorId) {
+		if (m_loadBackoff.inCooldown(behaviorId, m_time)) return -1;
+
 		std::string src = m_behaviors.load(behaviorId);
 		if (src.empty()) {
-			std::printf("[AgentClient] No behavior source for '%s'\n",
-				behaviorId.c_str());
+			m_loadBackoff.retryWithBackoff(behaviorId, m_time, "load behavior", "no source");
 			return -1;
 		}
 		std::string err;
 		BehaviorHandle h = pythonBridge().loadBehavior(src, err);
-		if (h < 0)
-			std::printf("[AgentClient] Failed to load '%s': %s\n",
-				behaviorId.c_str(), err.c_str());
+		if (h < 0) {
+			m_loadBackoff.retryWithBackoff(behaviorId, m_time, "load behavior", err);
+			return h;
+		}
+		m_loadBackoff.noteSuccess(behaviorId);
 		return h;
 	}
 
@@ -740,6 +801,9 @@ private:
 	ServerInterface& m_server;
 	BehaviorStore&   m_behaviors;
 	std::unordered_map<EntityId, Agent> m_agents;
+
+	RetryBackoff<std::string> m_loadBackoff;    // behavior-id → load-failure backoff
+	RetryBackoff<EntityId>    m_decideBackoff;  // entity-id  → decide/react runtime-error backoff
 
 	// Scheduling: needy-set + rotating cursor.
 	std::set<EntityId>                    m_needy;
