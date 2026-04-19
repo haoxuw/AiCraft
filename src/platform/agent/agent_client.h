@@ -1,35 +1,38 @@
 #pragma once
 
 // AI orchestrator for NPCs owned by this client. Owns one Agent per entity;
-// drives them through a four-phase tick:
+// drives them through a fixed-phase tick:
 //
 //   1. discoverEntities   — register/unregister Agents as the world changes
 //   2. phaseAutoPickup    — engine-level convenience (humanoid grab nearby items)
-//   3. phaseDecide        — drain DecisionQueue, dispatch to background worker
+//   3. phaseDecide        — round-robin scan of m_needy → dispatch to worker
 //   4. drainWorkerResults — install completed Plans on the right Agent
 //   5. phaseExecute       — Agent.tickPlan: evaluate + apply current step
-//   6. scanInterrupts     — HP-drop / target-gone → priority re-decide
+//   6. emitMovementSignals — threat_nearby signal fan-in
+//   7. scanInterrupts     — tick timers, HP-drop, refresh membership
 //
-// Single-producer / single-consumer architecture:
+// Scheduling:
 //
-//   * Plans are owned by Agent. AgentClient never reads/writes plan state
-//     directly — it only routes external callbacks (override/pause/interrupt)
-//     and per-tick events to the matching Agent.
+//   There is no queue. Every Agent exposes needsCompute() → {None,React,Decide}.
+//   Membership in `m_needy` (std::set<EntityId>) is derived from that after
+//   every mutating call. phaseDecide walks the set in eid order starting at
+//   a persistent cursor, dispatching until the 8 ms / 8-dispatch budget is
+//   consumed. Cursor rotation guarantees no eid is starved.
 //
-//   * The DecisionQueue has exactly ONE producer (Agent::requestRedecide,
-//     reached only via Agent's public API) and exactly ONE consumer
-//     (phaseDecide).
+//   React wins over Decide per-agent (signals represent "right now" events).
+//   Across agents, the first needy agent at the cursor is served first,
+//   regardless of kind — this is the deliberate "no cross-entity priority"
+//   call (see design review).
 //
-//   * The DecideWorker has exactly ONE producer (phaseDecide) and exactly ONE
-//     consumer (drainWorkerResults). Stale results are filtered by a
-//     per-eid generation counter held here.
+//   In-flight tracking: Agent carries m_reactInFlight / m_decideInFlight.
+//   React may preempt an in-flight Decide (the stale Decide result is
+//   dropped via the generation counter). Decide waits for both to clear.
 
 #include "net/server_interface.h"
 #include "server/behavior_store.h"
 #include "server/behavior.h"
 #include "server/python_bridge.h"
 #include "agent/agent.h"
-#include "agent/decision_queue.h"
 #include "agent/behavior_executor.h"  // gatherNearby (used elsewhere)
 #include "agent/decide_worker.h"
 
@@ -38,6 +41,7 @@
 #include <cstring>
 #include <mutex>
 #include <random>
+#include <set>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -84,38 +88,32 @@ public:
 			if (cnt <= 5 || cnt % 60 == 0)
 				std::fprintf(stderr,
 					"[Agent] slow tick %.1fms — discover=%.1f decide=%.1f exec=%.1f "
-					"(decides=%d agents=%zu pending=%zu oldest=%.1fs)\n",
+					"(decides=%d agents=%zu needy=%zu oldest=%.1fs)\n",
 					total, ms(t1 - t0), ms(t2 - t1), ms(t3 - t2),
 					m_lastDecidesRun, m_agents.size(),
-					m_decisionQueue.pendingCount(),
-					m_decisionQueue.oldestWaitSec(m_time));
+					m_needy.size(), oldestWaitSec());
 		}
-		// Starvation watchdog: oldest-waiter > 5s in a busy queue → flag once.
-		float oldestWait = m_decisionQueue.oldestWaitSec(m_time);
+		// Starvation watchdog: oldest-in-set > 5s → flag once per 5s.
+		float oldestWait = oldestWaitSec();
 		if (oldestWait > 5.0f) {
 			m_starvationLogAccum += dt;
 			if (m_starvationLogAccum >= 5.0f) {
 				m_starvationLogAccum = 0.0f;
 				std::fprintf(stderr,
-					"[Agent] starvation: eid=%u waited %.1fs (queue: %zu pri / %zu norm)\n",
-					(unsigned)m_decisionQueue.oldestWaiter(), oldestWait,
-					m_decisionQueue.priorityCount(), m_decisionQueue.normalCount());
+					"[Agent] starvation: eid=%u waited %.1fs (needy=%zu)\n",
+					(unsigned)oldestWaiter(), oldestWait, m_needy.size());
 			}
 		} else {
 			m_starvationLogAccum = 0.0f;
 		}
 
-		// Chunk-lock perf probe. scan_blocks takes a shared_lock over all
-		// 17³ chunks in range — if readers are holding long enough to stall
-		// the main-thread writers (S_CHUNK_EVICT arrivals), we'll see it in
-		// writerWaitNs. 10s window; only print if any activity.
 		m_lockPerfAccum += dt;
 		if (m_lockPerfAccum >= 10.0f) {
 			m_lockPerfAccum = 0.0f;
 			ChunkLockStats s = m_server.chunks().snapshotLockStatsAndReset();
 			if (s.writerCount || s.readerCount) {
 				auto avg = [](uint64_t tot, uint64_t n) {
-					return n ? (double)tot / (double)n / 1000.0 : 0.0;  // ns → µs
+					return n ? (double)tot / (double)n / 1000.0 : 0.0;
 				};
 				std::fprintf(stderr,
 					"[Agent] chunk-lock 10s: W=%llu (wait avg %.1fµs, hold avg %.1fµs) "
@@ -134,7 +132,6 @@ public:
 	}
 
 	// ── Inspector / renderer hooks ───────────────────────────────────────
-
 	const PlanViz* getPlanViz(EntityId id) const {
 		auto it = m_agents.find(id);
 		if (it == m_agents.end()) return nullptr;
@@ -154,14 +151,13 @@ public:
 	}
 
 	// ── External callbacks (network + UI) ────────────────────────────────
-
-	// Player click on an owned NPC → single-step Move + obey-pause.
 	void onOverride(EntityId eid, glm::vec3 goal) {
 		auto it = m_agents.find(eid);
 		if (it == m_agents.end()) return;
 		Entity* e = m_server.getEntity(eid);
 		if (!e) return;
 		it->second.applyOverride(goal, *e);
+		updateMembership(eid);
 	}
 
 	void pauseAgent(EntityId eid) {
@@ -170,33 +166,66 @@ public:
 		Entity* e = m_server.getEntity(eid);
 		if (!e) return;
 		it->second.pause(*e);
+		updateMembership(eid);
 	}
 
 	void resumeAgent(EntityId eid) {
 		auto it = m_agents.find(eid);
 		if (it == m_agents.end()) return;
-		it->second.resume(m_decisionQueue, m_time);
+		it->second.resume();
+		updateMembership(eid);
 	}
 
 	void onInterrupt(EntityId eid, const std::string& reason) {
 		auto it = m_agents.find(eid);
 		if (it == m_agents.end()) return;
-		it->second.onInterrupt(reason, m_decisionQueue, m_time);
+		it->second.onInterrupt(reason);
+		updateMembership(eid);
 	}
 
 	void onWorldEvent(const std::string& kind, const std::string& /*payload*/) {
 		for (auto& [eid, agent] : m_agents) {
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
-			agent.onInterrupt(kind, m_decisionQueue, m_time);
+			agent.onWorldEvent(kind);
+			updateMembership(eid);
 		}
 	}
 
 private:
-	// ── discoverEntities ─────────────────────────────────────────────────
+	// ── Membership: m_needy ⇔ (agent.needsCompute() != None) ─────────────
+	void updateMembership(EntityId eid) {
+		auto ait = m_agents.find(eid);
+		if (ait == m_agents.end()) {
+			m_needy.erase(eid);
+			m_enteredAt.erase(eid);
+			return;
+		}
+		bool needs = ait->second.needsCompute() != Agent::ComputeKind::None;
+		if (needs) {
+			if (m_needy.insert(eid).second) m_enteredAt[eid] = m_time;
+		} else {
+			if (m_needy.erase(eid)) m_enteredAt.erase(eid);
+		}
+	}
 
+	float oldestWaitSec() const {
+		if (m_enteredAt.empty()) return 0.0f;
+		float oldest = m_time;
+		for (auto& [eid, t] : m_enteredAt) if (t < oldest) oldest = t;
+		return m_time - oldest;
+	}
+
+	EntityId oldestWaiter() const {
+		EntityId best = ENTITY_NONE;
+		float oldest = m_time;
+		for (auto& [eid, t] : m_enteredAt)
+			if (t < oldest) { oldest = t; best = eid; }
+		return best;
+	}
+
+	// ── discoverEntities ─────────────────────────────────────────────────
 	void discoverEntities() {
-		// Ownership baked in at spawn — pure registration, no claim RPC.
 		m_discoveryTimer += 0.05f;
 		if (m_discoveryTimer < 2.0f && !m_agents.empty()) return;
 		m_discoveryTimer = 0;
@@ -230,9 +259,11 @@ private:
 			BehaviorHandle h = loadBehaviorForEntity(bid);
 			auto [ait, _ins] = m_agents.emplace(
 				e.id(), Agent(e.id(), bid, h));
+			// Agent constructor marks m_needsDecide=true (discovery);
+			// enrolment in m_needy happens via updateMembership here.
 			if (h >= 0) {
-				ait->second.requestInitialDecide(m_decisionQueue, m_time);
 				registered++;
+				updateMembership(e.id());
 			}
 		});
 
@@ -241,7 +272,8 @@ private:
 			if (!e || e->removed) {
 				if (it->second.handle() >= 0)
 					pythonBridge().unloadBehavior(it->second.handle());
-				m_decisionQueue.cancel(it->first);
+				m_needy.erase(it->first);
+				m_enteredAt.erase(it->first);
 				m_decideGen.erase(it->first);
 				it = m_agents.erase(it);
 			} else {
@@ -260,11 +292,10 @@ private:
 		agentDiagnostic(m_agents.empty(), msg);
 	}
 
-	// Surface "why no NPCs are moving" first when diagnosing busted singleplayer.
 	void agentDiagnostic(bool zeroAgents, const std::string& what) {
 		constexpr float kHealthySec = 10.0f;
 		constexpr float kStuckSec   = 1.0f;
-		m_diagLogAccum += 2.0f;  // discoverEntities runs every ~2s
+		m_diagLogAccum += 2.0f;
 		float threshold = zeroAgents ? kStuckSec : kHealthySec;
 		if (m_diagLogAccum < threshold) return;
 		m_diagLogAccum = 0;
@@ -273,7 +304,6 @@ private:
 	}
 
 	// ── phaseAutoPickup ──────────────────────────────────────────────────
-
 	void phaseAutoPickup() {
 		m_autoPickupTimer += 1.0f / 60.0f;
 		if (m_autoPickupTimer < 0.25f) return;
@@ -282,7 +312,7 @@ private:
 		for (auto& [eid, agent] : m_agents) {
 			Entity* actor = m_server.getEntity(eid);
 			if (!actor || actor->removed || !actor->inventory) continue;
-			if (!actor->def().hasTag("humanoid")) continue;  // chickens vs eggs
+			if (!actor->def().hasTag("humanoid")) continue;
 			float cap = actor->def().inventory_capacity;
 			if (cap <= 0.0f) continue;
 			float range = actor->def().pickup_range > 0.0f
@@ -313,61 +343,73 @@ private:
 		}
 	}
 
-	// ── phaseDecide — sole consumer of the DecisionQueue ─────────────────
-
+	// ── phaseDecide — round-robin over m_needy ───────────────────────────
 	void phaseDecide() {
-		// Wall-clock budget: at most kBudgetMs spent dispatching decides per
-		// tick. Anything that doesn't fit gets re-inserted at the FRONT of
-		// its lane so it keeps its turn next tick (already won the draw,
-		// only the clock lost). This is the starvation guarantee.
 		constexpr float kBudgetMs = 8.0f;
-		constexpr int   kMaxDrain = 8;
+		constexpr int   kMaxDispatch = 8;
 		using Clock = std::chrono::steady_clock;
 		auto phaseStart = Clock::now();
-
-		auto requests = m_decisionQueue.drain(kMaxDrain);
 		m_lastDecidesRun = 0;
 
-		for (auto& req : requests) {
+		if (m_needy.empty()) return;
+
+		// Cursor resumes where we left off last tick. lower_bound on an
+		// ordered set gives the first eid ≥ cursor; wrap to begin() if past end.
+		auto it = m_needy.lower_bound(m_cursor);
+		size_t visited = 0;
+		const size_t N = m_needy.size();
+
+		while (visited < N && m_lastDecidesRun < kMaxDispatch) {
+			if (it == m_needy.end()) it = m_needy.begin();
+			EntityId eid = *it;
+			// Advance the iterator NOW — updateMembership during dispatch
+			// may invalidate it via erase.
+			++it;
+			visited++;
+
 			float elapsedMs = std::chrono::duration<float, std::milli>(
 				Clock::now() - phaseStart).count();
-			if (elapsedMs > kBudgetMs) {
-				m_decisionQueue.reinsertFront(std::move(req));
-				continue;
-			}
+			if (elapsedMs > kBudgetMs) { m_cursor = eid; return; }
 
-			auto ait = m_agents.find(req.eid);
+			auto ait = m_agents.find(eid);
 			if (ait == m_agents.end()) continue;
+			Agent& agent = ait->second;
 
-			Entity* e = m_server.getEntity(req.eid);
+			Agent::ComputeKind wanted = agent.needsCompute();
+			if (wanted == Agent::ComputeKind::None) continue;
+			if (wanted == Agent::ComputeKind::React  && agent.reactInFlight()) continue;
+			if (wanted == Agent::ComputeKind::Decide
+			    && (agent.decideInFlight() || agent.reactInFlight())) continue;
+
+			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
 
-			if (ait->second.handle() < 0) {
-				BehaviorHandle h = loadBehaviorForEntity(ait->second.behaviorId());
-				if (h < 0) {
-					m_decisionQueue.reinsertFront(std::move(req));
-					continue;
-				}
-				ait->second.setHandle(h);
+			if (agent.handle() < 0) {
+				BehaviorHandle h = loadBehaviorForEntity(agent.behaviorId());
+				if (h < 0) continue;   // try again next sweep
+				agent.setHandle(h);
 			}
 
 			m_lastDecidesRun++;
-			ait->second.noteDecideFired(m_time);
-			dispatchWorker(ait->second, *e, req);
+			dispatchWorker(agent, *e, wanted);
+			agent.markDispatched(wanted, m_time);
+			updateMembership(eid);
 		}
+
+		// Completed the sweep; next tick resumes one past the last visited eid.
+		if (it == m_needy.end()) it = m_needy.begin();
+		m_cursor = (it == m_needy.end()) ? ENTITY_NONE : *it;
 	}
 
-	// Build the immutable decide/react request and push it to the worker
-	// thread. Handles both Decide and React kinds — the only difference is
-	// which Python entry point the worker calls (decide() vs react()) and
-	// the signal payload carried alongside.
-	void dispatchWorker(Agent& agent, Entity& entity,
-	                    const DecisionQueue::Request& qreq) {
+	void dispatchWorker(Agent& agent, Entity& entity, Agent::ComputeKind kind) {
 		DecideRequest req;
-		req.kind        = qreq.isReact ? DecideRequest::Kind::React
-		                               : DecideRequest::Kind::Decide;
-		req.signalKind    = qreq.signalKind;
-		req.signalPayload = qreq.signalPayload;
+		req.kind = (kind == Agent::ComputeKind::React)
+			? DecideRequest::Kind::React
+			: DecideRequest::Kind::Decide;
+		if (kind == Agent::ComputeKind::React) {
+			req.signalKind    = agent.takeSignalKind();
+			req.signalPayload = agent.takeSignalPayload();
+		}
 		req.eid         = agent.id();
 		req.generation  = ++m_decideGen[agent.id()];
 		req.handle      = agent.handle();
@@ -375,14 +417,12 @@ private:
 		req.nearby      = gatherNearbyFromServer(entity);
 		req.worldTime   = m_server.worldTime();
 		req.dt          = 0.25f;
-		req.lastOutcome = qreq.outcome;
+		req.lastOutcome = agent.lastOutcome();
 
 		// THREADING: closures run on the DecideWorker thread while the main
 		// thread can be mutating LocalWorld (S_CHUNK_EVICT frees chunks, etc).
 		// Hold a shared_lock on chunks.mutex() for the ENTIRE body of each
-		// closure — a raw Chunk* survives the lock scope, no longer. The helper
-		// records wait/hold ns into ChunkSource perf counters so we can see if
-		// the lock is slowing things down in practice.
+		// closure — a raw Chunk* survives the lock scope, no longer.
 		ServerInterface* srv = &m_server;
 		auto acquireShared = [](ChunkSource& cs) {
 			struct Guard {
@@ -479,7 +519,6 @@ private:
 			return out;
 		};
 
-		// Bypasses the 64-block nearby cache for world-wide lookups.
 		req.scanEntities = [srv](const std::string& typeId, glm::vec3 origin,
 		                         float maxDist, int maxResults)
 		    -> std::vector<NearbyEntity> {
@@ -506,7 +545,6 @@ private:
 			return out;
 		};
 
-		// Flowers/moss/… via annotationsForChunk.
 		req.scanAnnotations = [srv](const std::string& typeId, glm::vec3 origin,
 		                            float maxDist, int maxResults)
 		    -> std::vector<BlockSample> {
@@ -549,52 +587,56 @@ private:
 		m_decideWorker.push(std::move(req));
 	}
 
-	// ── drainWorkerResults — sole consumer of DecideWorker outputs ───────
-
+	// ── drainWorkerResults ───────────────────────────────────────────────
 	void drainWorkerResults() {
 		DecideResult r;
 		while (m_decideWorker.tryPop(r)) {
-			// Stale-result filter: an interrupt that fired between dispatch
-			// and worker completion bumped the generation counter.
-			auto git = m_decideGen.find(r.eid);
-			if (git == m_decideGen.end() || git->second != r.generation)
-				continue;
-
 			auto ait = m_agents.find(r.eid);
 			if (ait == m_agents.end()) continue;
 
-			Entity* e = m_server.getEntity(r.eid);
-			if (!e || e->removed) continue;
+			// Always release the in-flight slot first — the worker returns
+			// exactly one result per dispatch.
+			ait->second.clearInFlight(r.fromReact);
 
-			if (!r.error.empty()) {
-				ait->second.onDecideError(r.error, *e, m_decisionQueue, m_time);
+			// Stale: preempted by a newer dispatch. Flag already cleared.
+			auto git = m_decideGen.find(r.eid);
+			if (git == m_decideGen.end() || git->second != r.generation) {
+				updateMembership(r.eid);
 				continue;
 			}
-			// React returning None → current plan keeps running, nothing to do.
-			if (r.fromReact && r.reactNoOp) continue;
-			ait->second.onDecideResult(std::move(r.plan),
-			                           std::move(r.goalText), *e);
+
+			Entity* e = m_server.getEntity(r.eid);
+			if (!e || e->removed) { updateMembership(r.eid); continue; }
+
+			if (!r.error.empty()) {
+				ait->second.onDecideError(r.error, *e);
+			} else if (r.fromReact && r.reactNoOp) {
+				// React produced no action: m_needsDecide untouched, next
+				// visit will dispatch Decide (rule: react-None → decide-next).
+			} else {
+				ait->second.onDecideResult(std::move(r.plan),
+				                           std::move(r.goalText), *e);
+			}
+			updateMembership(r.eid);
 		}
 	}
 
 	// ── phaseExecute — drives every Agent's plan one step ────────────────
-
 	void phaseExecute(float dt) {
 		for (auto& [eid, agent] : m_agents) {
-			agent.tickPlan(dt, m_server, m_decisionQueue, m_time);
+			agent.tickPlan(dt, m_server);
+			updateMembership(eid);
 		}
 	}
 
-	// ── scanInterrupts — HP-drop / target-gone watchdog + react pump ─────
-
+	// ── scanInterrupts — timers + HP-drop + membership refresh ───────────
 	void scanInterrupts(float dt) {
 		for (auto& [eid, agent] : m_agents) {
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
-			agent.scanForInterrupts(*e, m_decisionQueue, m_time);
-			// Consume any dirty signal set by emitMovementSignals(). Agent
-			// enforces its own 0.5s per-agent cooldown + anchor/override guards.
-			agent.maybeReact(m_decisionQueue, m_time, dt);
+			agent.tickTimers(dt);
+			agent.scanForInterrupts(*e);
+			updateMembership(eid);
 		}
 	}
 
@@ -602,10 +644,7 @@ private:
 	//
 	// Event-driven: every Living whose horizontal velocity > kMoveSpeedThresh
 	// inside kThreatAlertRadius of an agent of a different typeId sets the
-	// dirty bit on that agent. maybeReact() (in scanInterrupts) drains the bit
-	// at most once per kReactCooldownSec per agent. This keeps us O(A·N) per
-	// tick with a low inner cost — the cooldown stops work amplification even
-	// when many signal sources are present.
+	// dirty bit. O(A·N); react cooldown stops amplification.
 	void emitMovementSignals() {
 		if (m_agents.empty()) return;
 		constexpr float kThreatAlertRadius = 16.0f;
@@ -623,7 +662,6 @@ private:
 			m_server.forEachEntity([&](Entity& other) {
 				if (other.id() == eid || other.removed) return;
 				if (!other.def().isLiving()) return;
-				// Same-species noise filter: chickens don't flee chickens.
 				if (other.typeId() == self->typeId()) return;
 				float vh = std::sqrt(other.velocity.x * other.velocity.x +
 				                     other.velocity.z * other.velocity.z);
@@ -641,11 +679,11 @@ private:
 			payload.emplace_back("source_id", std::to_string((unsigned)bestId));
 			payload.emplace_back("source_type", bestType);
 			agent.onSignal("threat_nearby", std::move(payload));
+			updateMembership(eid);
 		}
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────
-
 	BehaviorHandle loadBehaviorForEntity(const std::string& behaviorId) {
 		std::string src = m_behaviors.load(behaviorId);
 		if (src.empty()) {
@@ -702,11 +740,16 @@ private:
 	ServerInterface& m_server;
 	BehaviorStore&   m_behaviors;
 	std::unordered_map<EntityId, Agent> m_agents;
-	DecisionQueue    m_decisionQueue;
+
+	// Scheduling: needy-set + rotating cursor.
+	std::set<EntityId>                    m_needy;
+	std::unordered_map<EntityId, float>   m_enteredAt;
+	EntityId                              m_cursor = ENTITY_NONE;
+
 	std::mt19937     m_rng;
 	float            m_time              = 0;
 	float            m_autoPickupTimer   = 0.0f;
-	float            m_discoveryTimer    = 100.0f;  // forces discovery on first tick
+	float            m_discoveryTimer    = 100.0f;
 	int              m_lastDecidesRun    = 0;
 	float            m_diagLogAccum      = 0.0f;
 	float            m_starvationLogAccum = 0.0f;

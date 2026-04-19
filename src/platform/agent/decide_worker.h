@@ -7,7 +7,7 @@
 #include "logic/entity.h"
 #include "server/behavior.h"            // Plan, PlanStep
 #include "server/python_bridge.h"       // BehaviorHandle, NearbyEntity, EntitySnapshot
-#include "agent/decision_queue.h"       // LastOutcome
+#include "agent/outcome.h"              // LastOutcome, StepOutcome
 #include <atomic>
 #include <condition_variable>
 #include <deque>
