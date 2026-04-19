@@ -206,11 +206,11 @@ When you click Apply:
 - **"Apply to This Pig"** — only this specific entity gets the new behavior
 - **"Apply to All Pigs"** — every pig in the world gets it
 
-Instance behaviors are saved to `artifacts/behaviors/player/entity_N_behavior.py`.
-Type behaviors are saved to `artifacts/behaviors/player/custom_XXXXXX.py`.
+User-authored behaviors are persisted through the planned DB layer (see
+docs/19_OBJECT_MODEL.md). The on-disk `artifacts/behaviors/base/` tree is
+read-only and ships with the game.
 
 ## Advanced: Raw Python
 
-For behaviors too complex for the tree (timers, state machines, memory), edit
-the `.py` files directly in `artifacts/behaviors/player/`. See `docs/22_BEHAVIORS.md`
-for the full Python API reference.
+For behaviors too complex for the tree (timers, state machines, memory),
+see `docs/22_BEHAVIORS.md` for the full Python API reference.

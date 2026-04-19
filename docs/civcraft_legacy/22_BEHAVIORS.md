@@ -92,12 +92,10 @@ The village world template generates features that behaviors interact with:
 
 ## Creating Custom Behaviors
 
-Fork any behavior and edit:
-```bash
-# In-game: Inspect entity → [E] → edit Python → Apply
-# Or fork via Handbook → "Fork to Custom"
-# Or edit directly: artifacts/behaviors/player/my_behavior.py
-```
+User-authored behaviors are served by a DB layer (not yet implemented);
+`artifacts/behaviors/base/` is read-only. The planned in-game flow is
+Inspect entity → [E] → edit Python → Apply, which uploads to the DB
+layer.
 
 All parameters are optional and read via `self.get("key", default)`.
 Override per-entity through creature definitions or the behavior editor.

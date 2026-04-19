@@ -178,8 +178,9 @@ for entity in controlled_entities:
 
 ### Player Override
 - Players can view and fork any rule from the in-game editor
-- Forked rules go to `artifacts/behaviors/player/`
-- Player rules override base rules of the same name
+- Forked rules are persisted by the DB layer (not yet implemented) —
+  there is no on-disk `player/` tier
+- Player rules override base rules of the same name at load time
 
 ## Future Extensions
 

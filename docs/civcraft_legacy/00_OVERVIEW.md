@@ -188,7 +188,8 @@ Any entity can be "possessed" (human-controlled) or run on auto-pilot.
 ## Artifact System
 
 Artifacts are Python files that define **all game content**. They live in
-`artifacts/` with `base/` (built-in) and `player/` (user-created) subdirs.
+`artifacts/<category>/base/`. User-created content will be served from a
+DB layer (not yet implemented) — there is no on-disk writable tier.
 
 ### Categories
 
@@ -207,10 +208,12 @@ Artifacts are Python files that define **all game content**. They live in
 
 ### Forking & Sharing
 
-- Fork: `ArtifactRegistry::forkEntry()` copies `base/pig.py` → `player/my_pig.py`
-- Namespace rewritten: `"base:pig"` → `"player_abc:pig"`
-- Upload custom creatures, behaviors, items, models to share with others
+User-authored artifacts (forked from base or written from scratch) are
+served by a DB layer — not an on-disk `player/` directory. The DB layer
+is not yet implemented; in the meantime only `base/` is loaded.
+
 - Each artifact is self-contained — one Python file, standard dict format
+- Upload custom creatures, behaviors, items, models to share with others
 
 ### Behavior Hot-Swap
 

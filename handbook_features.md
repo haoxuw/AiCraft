@@ -1,5 +1,13 @@
 # Handbook — Feature Inventory & Replacement Spec
 
+> **Partially superseded (2026-04):** the on-disk `player/` artifact tier
+> and `ArtifactRegistry::forkEntry()` are gone. User-authored content will
+> be served from a DB layer; sections below that describe fork buttons,
+> `isBuiltin` gating, `playerNS`, or `player/<category>/<id>.py` save paths
+> are kept for visual-design reference only — the save target is no longer
+> on-disk. All other Handbook spec (browsing, preview rig, model/behavior
+> editors) still stands.
+
 Detailed description of every feature in and around the Handbook, written
 so the replacement UI in the Vulkan rewrite can hit at least feature
 parity — and ideally look significantly better.

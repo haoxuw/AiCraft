@@ -332,7 +332,7 @@ process-model rationale.
 1. Player sees a pig → right-clicks → Inspection Panel shows stats + behavior code
 2. Player presses E → Code Editor opens with `wander.py`
 3. Player edits the behavior (e.g., makes the pig aggressive instead of fleeing)
-4. Player presses Ctrl+Enter → code saved to `artifacts/behaviors/player/my_aggressive_pig.py`
+4. Player presses Ctrl+Enter → code uploaded to DB layer (planned)
 5. Server validates (sandbox) → loads the new behavior → pig starts attacking players
 6. Other players see the pig's new behavior in the shared world
 
@@ -351,19 +351,16 @@ Players can customize:
 artifacts/
   blocks/
     base/               ← built-in (dirt, stone, sand, water, ...)
-    player/             ← player-created blocks
   creatures/
     base/               ← built-in (pig, chicken, dog, villager)
-    player/             ← player-created creatures
   behaviors/
     base/               ← built-in (wander, peck, follow, prowl, woodcutter)
-    player/             ← player-modified behaviors
   items/
     base/               ← built-in (sword, shield, potion, bucket, torch)
-    player/             ← player-created items
   actions/
     base/               ← built-in (attack, place, break, use)
-    player/             ← player-created actions
 ```
 
-Everything in `base/` is read-only (ships with the game). Everything in `player/` is created or modified by players. Players can fork any `base/` definition to `player/` and customize it.
+Everything in `base/` is read-only (ships with the game). User-created or
+user-modified artifacts are served by a DB layer (not yet implemented) —
+there is no on-disk `player/` tier.
