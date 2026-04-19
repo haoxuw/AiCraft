@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
+#include <sys/prctl.h>
 #include <netinet/in.h>
 #include <filesystem>
 
@@ -60,7 +61,10 @@ public:
 
 		char readyPath[64];
 		snprintf(readyPath, sizeof(readyPath), "/tmp/civcraft_ready_%d", m_port);
-		if (!waitForFile(readyPath, 5.0f)) {
+		// 30s covers cold-start world gen on slower machines / first-run
+		// without Python bytecode cache. The live path hits this in well
+		// under 1s once warmed up.
+		if (!waitForFile(readyPath, 30.0f)) {
 			printf("[AgentManager] Server failed to start (timeout)\n");
 			kill(m_serverPid, SIGKILL);
 			int status;
@@ -106,6 +110,16 @@ private:
 	static pid_t spawnProcess(const std::vector<std::string>& args, const char* logPath = nullptr) {
 		pid_t pid = fork();
 		if (pid == 0) {
+			// Kernel-enforced: if the parent (client) dies for any reason
+			// (crash, SIGKILL, terminal close) send SIGTERM to this child so
+			// the spawned server can't outlive it and occupy the port. The
+			// explicit stopAll() path in ~AgentManager still runs on clean
+			// shutdown — this is the belt to that suspenders.
+			prctl(PR_SET_PDEATHSIG, SIGTERM);
+			// Race: parent may have already died between fork() and the
+			// prctl above. Check and bail if so.
+			if (getppid() == 1) _exit(0);
+
 			std::vector<char*> cargs;
 			for (auto& a : args) cargs.push_back(const_cast<char*>(a.c_str()));
 			cargs.push_back(nullptr);
