@@ -169,11 +169,15 @@ class Follow(Action):
         if t is None:
             return None
         name = t.type.split(":")[-1] if ":" in t.type else t.type
-        if t.distance <= self.close_dist:
-            return (Move(e.x, e.y, e.z),
-                    self.at_target_msg or f"With {name}")
-        return (Move(t.x, t.y, t.z, speed=e.walk_speed * self.speed_mul),
-                self.following_msg or f"Following {name}")
+        # Live-follow: server re-aims each tick toward t.id, stops inside
+        # close_dist. No re-decide needed between ticks — the anchor field
+        # keeps the follower latched even if the target walks away.
+        msg = (self.at_target_msg if t.distance <= self.close_dist
+               else self.following_msg) or f"Following {name}"
+        return (Move(t.x, t.y, t.z,
+                     speed=e.walk_speed * self.speed_mul,
+                     anchor=t.id, keep_within=self.close_dist),
+                msg)
 
 
 class Rejoin(Action):

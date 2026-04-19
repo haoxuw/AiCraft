@@ -513,12 +513,21 @@ private:
 		glm::vec3 dir = step.targetPos - e.position;
 		dir.y = 0;
 		float dist = glm::length(dir);
+		float speed = step.speed > 0 ? step.speed : e.def().walk_speed;
+		// Anchored Move: let the server re-aim each tick. We still emit a
+		// velocity (magnitude = speed) so the server knows how fast to chase,
+		// but direction is recomputed from the anchor inside GameServer::tick.
+		if (step.anchorEntityId != ENTITY_NONE) {
+			glm::vec3 vel = dist > kArriveEps ? dir / dist * speed
+			                                  : glm::vec3(speed, 0, 0);
+			sendMove(e, vel, server, step.anchorEntityId, step.keepWithin);
+			return;
+		}
 		if (dist < kArriveEps) {
 			sendStopMove(e, server);
 			return;
 		}
 		dir /= dist;
-		float speed = step.speed > 0 ? step.speed : e.def().walk_speed;
 		sendMove(e, dir * speed, server);
 	}
 
@@ -580,7 +589,8 @@ private:
 	}
 
 	// ── Move emission + stuck telemetry ──────────────────────────────────
-	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server) {
+	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server,
+	              EntityId anchor = ENTITY_NONE, float keepWithin = 0.0f) {
 		// Client-side prediction; yaw derives from velocity elsewhere.
 		e.velocity.x = vel.x;
 		e.velocity.z = vel.z;
@@ -627,10 +637,12 @@ private:
 		m_stuckLastSampledPos = e.position;
 
 		ActionProposal p;
-		p.type       = ActionProposal::Move;
-		p.actorId    = m_eid;
-		p.desiredVel = vel;
-		p.goalText   = m_goalText;
+		p.type           = ActionProposal::Move;
+		p.actorId        = m_eid;
+		p.desiredVel     = vel;
+		p.goalText       = m_goalText;
+		p.anchorEntityId = anchor;
+		p.keepWithin     = keepWithin;
 		server.sendAction(p);
 	}
 

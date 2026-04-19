@@ -79,6 +79,10 @@ struct PyAction {
 
 	// Interact: -1 = legacy toggle (door/TNT); >=0 = write appearance index (I3).
 	int         appearance_idx = -1;
+
+	// Move: optional live-follow anchor (see ActionProposal::anchorEntityId).
+	EntityId    anchor_entity_id = ENTITY_NONE;
+	float       keep_within      = 0.0f;
 };
 
 // Per-call state, set before callDecide(). Agent is single-threaded.
@@ -147,16 +151,25 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		.def_readwrite("convert_from", &PyAction::convert_from)
 		.def_readwrite("convert_into", &PyAction::convert_into)
 		// Interact
-		.def_readwrite("appearance_idx", &PyAction::appearance_idx);
+		.def_readwrite("appearance_idx", &PyAction::appearance_idx)
+		// Move anchor
+		.def_readwrite("anchor_entity_id", &PyAction::anchor_entity_id)
+		.def_readwrite("keep_within",      &PyAction::keep_within);
 
 	// Only write primitives the server accepts. High-level helpers
 	// (BreakBlock, StoreItem, PickupItem, DropItem) wrap these in python/actions.py.
 	m.def("Idle", []() {
 		PyAction a; a.type = "idle"; return a;
 	});
-	m.def("Move", [](float x, float y, float z, float speed) {
-		PyAction a; a.type = "move"; a.x = x; a.y = y; a.z = z; a.speed = speed; return a;
-	}, py::arg("x"), py::arg("y"), py::arg("z"), py::arg("speed") = 2.0f);
+	m.def("Move", [](float x, float y, float z, float speed,
+	                 EntityId anchor, float keep_within) {
+		PyAction a; a.type = "move"; a.x = x; a.y = y; a.z = z; a.speed = speed;
+		a.anchor_entity_id = anchor; a.keep_within = keep_within; return a;
+	}, py::arg("x"), py::arg("y"), py::arg("z"), py::arg("speed") = 2.0f,
+	   py::arg("anchor") = ENTITY_NONE, py::arg("keep_within") = 0.0f,
+	   "Move toward (x,y,z). When `anchor` is a live entity id, the server "
+	   "re-aims toward that entity each tick — use with `keep_within` to stop "
+	   "inside the given distance.");
 	m.def("Relocate", [](PyContainer relocate_from, PyContainer relocate_to,
 	                     const std::string& item_id, int count, const std::string& equip_slot) {
 		PyAction a; a.type = "relocate";
@@ -474,8 +487,12 @@ except NameError: pass
 
 // Old-format PyAction → PlanStep.
 static PlanStep pyActionToPlanStep(const PyAction& pa) {
-	if (pa.type == "move")
-		return PlanStep::move({pa.x, pa.y, pa.z}, pa.speed);
+	if (pa.type == "move") {
+		PlanStep s = PlanStep::move({pa.x, pa.y, pa.z}, pa.speed);
+		s.anchorEntityId = pa.anchor_entity_id;
+		s.keepWithin     = pa.keep_within;
+		return s;
+	}
 	if (pa.type == "convert") {
 		// Block pos carried in convert_from (kind=Block); fall back to (x,y,z).
 		glm::vec3 pos = (pa.convert_from.kind == 3)
@@ -627,9 +644,14 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 				float hold = d.contains("hold") && !d["hold"].is_none()
 					? d["hold"].cast<float>() : 0.0f;
 				if (stype == "move") {
-					plan.push_back(PlanStep::move(
+					PlanStep step = PlanStep::move(
 						{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()},
-						 d["speed"].cast<float>(), hold));
+						 d["speed"].cast<float>(), hold);
+					if (d.contains("anchor") && !d["anchor"].is_none())
+						step.anchorEntityId = d["anchor"].cast<EntityId>();
+					if (d.contains("keep_within") && !d["keep_within"].is_none())
+						step.keepWithin = d["keep_within"].cast<float>();
+					plan.push_back(step);
 				} else if (stype == "harvest") {
 					plan.push_back(PlanStep::harvest(
 						{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()}));

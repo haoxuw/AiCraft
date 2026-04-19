@@ -111,6 +111,13 @@ void GameServer::resolveActions(float dt) {
 				e->velocity.y = p.jumpVelocity;
 				e->onGround = false;
 			}
+
+			// Live-follow anchor: persists across ticks until cleared by a new
+			// Move proposal without an anchor. The pre-physics aim pass in
+			// GameServer::tick re-derives velocity toward the anchor each tick.
+			e->anchorEntityId   = p.anchorEntityId;
+			e->anchorKeepWithin = p.keepWithin;
+			e->anchorSpeed      = glm::length(glm::vec2(p.desiredVel.x, p.desiredVel.z));
 			break;
 		}
 

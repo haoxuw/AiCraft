@@ -712,6 +712,39 @@ public:
 		updateNavigation(dt, m_world->entities);
 		markPhase(m_lastTickProfile.navigationMs);
 
+		// Live-follow anchor aim: for each entity tracking another entity, re-derive
+		// horizontal velocity toward the anchor's current position. Keeps followers
+		// latched onto moving targets without Python re-decide each tick. See
+		// ActionProposal::anchorEntityId in logic/action.h.
+		m_world->entities.forEach([&](Entity& e) {
+			if (e.removed) return;
+			if (e.anchorEntityId == ENTITY_NONE) return;
+			const Entity* a = m_world->entities.get(e.anchorEntityId);
+			if (!a || a->removed) {
+				e.anchorEntityId = ENTITY_NONE;
+				e.velocity.x = 0;
+				e.velocity.z = 0;
+				e.moveSpeed = 0;
+				return;
+			}
+			glm::vec3 to = a->position - e.position;
+			float hLen = std::sqrt(to.x * to.x + to.z * to.z);
+			if (hLen <= e.anchorKeepWithin || hLen < 0.01f) {
+				e.velocity.x = 0;
+				e.velocity.z = 0;
+				e.moveTarget = e.position;
+				e.moveSpeed  = 0;
+				return;
+			}
+			float speed = e.anchorSpeed;
+			if (speed <= 0) speed = e.def().walk_speed;
+			glm::vec3 dir = {to.x / hLen, 0, to.z / hLen};
+			e.velocity.x = dir.x * speed;
+			e.velocity.z = dir.z * speed;
+			e.moveTarget = e.position + dir * 10.0f;
+			e.moveSpeed  = speed;
+		});
+
 		// Also purges removed entities.
 		m_world->entities.stepPhysics(dt, solidFn);
 		markPhase(m_lastTickProfile.physicsMs);

@@ -147,6 +147,14 @@ public:
 	glm::vec3 moveTarget = {0, 0, 0};
 	float moveSpeed = 0.0f;            // 0 = stopped
 
+	// Live-follow anchor. When set, server re-derives velocity each tick toward
+	// this entity's current position (see ActionProposal anchor fields). Survives
+	// across ticks so Python decide() can run at normal cadence while execution
+	// tracks the anchor every frame. Cleared on new Move without an anchor.
+	EntityId  anchorEntityId = ENTITY_NONE;
+	float     anchorKeepWithin = 0.0f;
+	float     anchorSpeed      = 0.0f;  // magnitude of desiredVel at post time
+
 	// --- Properties ---
 	template<typename T>
 	T getProp(const std::string& key, T fallback = {}) const {
