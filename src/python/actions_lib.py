@@ -111,14 +111,20 @@ class Wander(Action):
 class Flee(Action):
     """Move away from the nearest threat within `range`. If `types` is given,
     only those type ids count as threats; otherwise any non-same-species
-    Living is a threat."""
+    Living is a threat.
+
+    Commit duration (plan_duration) keeps the anchor latched in the executor
+    so the server's aim pass keeps retargeting the live threat even after
+    the threat leaves `range` — otherwise decide() would pick Wander the
+    next tick and clear the anchor, stranding us mid-escape."""
     def __init__(self, range=5.0, types=None, distance=12.0,
-                 speed_mul=1.8, message="Fleeing!"):
+                 speed_mul=1.8, message="Fleeing!", plan_duration=6.0):
         self.range = range
         self.types = set(types) if types else None
         self.distance = distance
         self.speed_mul = speed_mul
         self.message = message
+        self.plan_duration = plan_duration
     def run(self, e, w, ctx):
         threat = None
         for x in w.entities:
@@ -130,21 +136,26 @@ class Flee(Action):
                 threat = x
         if threat is None:
             return None
-        dx = e.x - threat.x
-        dz = e.z - threat.z
-        d = (dx * dx + dz * dz) ** 0.5 or 1.0
-        tx = e.x + dx / d * self.distance
-        tz = e.z + dz / d * self.distance
-        return (Move(tx, e.y, tz, speed=e.walk_speed * self.speed_mul),
-                self.message)
+        # Live-flee: server re-aims away from threat.id each tick and stops
+        # once we're farther than `distance`. Anchor target (x,y,z) is only
+        # a seed — the server ignores it once the anchor is live.
+        return (Move(threat.x, e.y, threat.z,
+                     speed=e.walk_speed * self.speed_mul,
+                     anchor=threat.id, keep_away=self.distance),
+                self.message,
+                self.plan_duration)
 
 
 class Follow(Action):
     """Trail a target entity matched by tag or type. Stands still once within
-    `close_dist`, walks toward it otherwise."""
+    `close_dist`, walks toward it otherwise.
+
+    plan_duration keeps the executor committed so the server's anchor aim
+    pass keeps retargeting even when decide() would otherwise pick a
+    fallback rule that clears the anchor."""
     def __init__(self, target_tag=None, target_type=None,
                  close_dist=3.0, range=20.0, speed_mul=1.0,
-                 at_target_msg=None, following_msg=None):
+                 at_target_msg=None, following_msg=None, plan_duration=5.0):
         self.target_tag = target_tag
         self.target_type = target_type
         self.close_dist = close_dist
@@ -152,6 +163,7 @@ class Follow(Action):
         self.speed_mul = speed_mul
         self.at_target_msg = at_target_msg
         self.following_msg = following_msg
+        self.plan_duration = plan_duration
     def _find(self, e, w):
         if self.target_type:
             return w.get(self.target_type, max_dist=self.range)
@@ -177,7 +189,8 @@ class Follow(Action):
         return (Move(t.x, t.y, t.z,
                      speed=e.walk_speed * self.speed_mul,
                      anchor=t.id, keep_within=self.close_dist),
-                msg)
+                msg,
+                self.plan_duration)
 
 
 class Rejoin(Action):

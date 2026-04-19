@@ -712,10 +712,10 @@ public:
 		updateNavigation(dt, m_world->entities);
 		markPhase(m_lastTickProfile.navigationMs);
 
-		// Live-follow anchor aim: for each entity tracking another entity, re-derive
-		// horizontal velocity toward the anchor's current position. Keeps followers
-		// latched onto moving targets without Python re-decide each tick. See
-		// ActionProposal::anchorEntityId in logic/action.h.
+		// Live anchor aim: for each entity tracking another entity, re-derive
+		// horizontal velocity toward (chase) or away from (flee) the anchor's
+		// current position. Keeps followers/fleers latched onto moving targets
+		// without Python re-decide each tick. See action.h anchor fields.
 		m_world->entities.forEach([&](Entity& e) {
 			if (e.removed) return;
 			if (e.anchorEntityId == ENTITY_NONE) return;
@@ -729,7 +729,11 @@ public:
 			}
 			glm::vec3 to = a->position - e.position;
 			float hLen = std::sqrt(to.x * to.x + to.z * to.z);
-			if (hLen <= e.anchorKeepWithin || hLen < 0.01f) {
+			bool flee = e.anchorKeepAway > 0.0f;
+			bool stop = flee
+				? (hLen >= e.anchorKeepAway)       // fled far enough
+				: (hLen <= e.anchorKeepWithin);    // arrived close enough
+			if (stop || hLen < 0.01f) {
 				e.velocity.x = 0;
 				e.velocity.z = 0;
 				e.moveTarget = e.position;
@@ -738,7 +742,8 @@ public:
 			}
 			float speed = e.anchorSpeed;
 			if (speed <= 0) speed = e.def().walk_speed;
-			glm::vec3 dir = {to.x / hLen, 0, to.z / hLen};
+			float sign = flee ? -1.0f : 1.0f;
+			glm::vec3 dir = {sign * to.x / hLen, 0, sign * to.z / hLen};
 			e.velocity.x = dir.x * speed;
 			e.velocity.z = dir.z * speed;
 			e.moveTarget = e.position + dir * 10.0f;

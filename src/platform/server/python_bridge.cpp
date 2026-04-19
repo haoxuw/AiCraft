@@ -80,9 +80,10 @@ struct PyAction {
 	// Interact: -1 = legacy toggle (door/TNT); >=0 = write appearance index (I3).
 	int         appearance_idx = -1;
 
-	// Move: optional live-follow anchor (see ActionProposal::anchorEntityId).
+	// Move: optional live-follow/flee anchor (see ActionProposal::anchorEntityId).
 	EntityId    anchor_entity_id = ENTITY_NONE;
 	float       keep_within      = 0.0f;
+	float       keep_away        = 0.0f;
 };
 
 // Per-call state, set before callDecide(). Agent is single-threaded.
@@ -154,7 +155,8 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		.def_readwrite("appearance_idx", &PyAction::appearance_idx)
 		// Move anchor
 		.def_readwrite("anchor_entity_id", &PyAction::anchor_entity_id)
-		.def_readwrite("keep_within",      &PyAction::keep_within);
+		.def_readwrite("keep_within",      &PyAction::keep_within)
+		.def_readwrite("keep_away",        &PyAction::keep_away);
 
 	// Only write primitives the server accepts. High-level helpers
 	// (BreakBlock, StoreItem, PickupItem, DropItem) wrap these in python/actions.py.
@@ -162,14 +164,19 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		PyAction a; a.type = "idle"; return a;
 	});
 	m.def("Move", [](float x, float y, float z, float speed,
-	                 EntityId anchor, float keep_within) {
+	                 EntityId anchor, float keep_within, float keep_away) {
 		PyAction a; a.type = "move"; a.x = x; a.y = y; a.z = z; a.speed = speed;
-		a.anchor_entity_id = anchor; a.keep_within = keep_within; return a;
+		a.anchor_entity_id = anchor;
+		a.keep_within = keep_within;
+		a.keep_away   = keep_away;
+		return a;
 	}, py::arg("x"), py::arg("y"), py::arg("z"), py::arg("speed") = 2.0f,
-	   py::arg("anchor") = ENTITY_NONE, py::arg("keep_within") = 0.0f,
+	   py::arg("anchor") = ENTITY_NONE,
+	   py::arg("keep_within") = 0.0f,
+	   py::arg("keep_away")   = 0.0f,
 	   "Move toward (x,y,z). When `anchor` is a live entity id, the server "
-	   "re-aims toward that entity each tick — use with `keep_within` to stop "
-	   "inside the given distance.");
+	   "re-aims each tick: `keep_within` chases and stops inside the ring; "
+	   "`keep_away` flees and stops once farther than the ring. Pick one.");
 	m.def("Relocate", [](PyContainer relocate_from, PyContainer relocate_to,
 	                     const std::string& item_id, int count, const std::string& equip_slot) {
 		PyAction a; a.type = "relocate";
@@ -491,6 +498,7 @@ static PlanStep pyActionToPlanStep(const PyAction& pa) {
 		PlanStep s = PlanStep::move({pa.x, pa.y, pa.z}, pa.speed);
 		s.anchorEntityId = pa.anchor_entity_id;
 		s.keepWithin     = pa.keep_within;
+		s.keepAway       = pa.keep_away;
 		return s;
 	}
 	if (pa.type == "convert") {
@@ -651,6 +659,8 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 						step.anchorEntityId = d["anchor"].cast<EntityId>();
 					if (d.contains("keep_within") && !d["keep_within"].is_none())
 						step.keepWithin = d["keep_within"].cast<float>();
+					if (d.contains("keep_away") && !d["keep_away"].is_none())
+						step.keepAway = d["keep_away"].cast<float>();
 					plan.push_back(step);
 				} else if (stype == "harvest") {
 					plan.push_back(PlanStep::harvest(

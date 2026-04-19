@@ -45,12 +45,11 @@ struct PlanStep {
 	// legacy "toggle" (door/TNT); see docs/22_APPEARANCE.md.
 	int16_t   appearanceIdx = -1;
 
-	// Move: live-follow anchor. When set, server re-derives velocity toward
-	// this entity's current position each tick, ignoring the stale targetPos
-	// direction (see ActionProposal::anchorEntityId). Zero velocity inside
-	// keepWithin blocks.
+	// Move: live anchor. When set, server re-derives velocity toward (chase)
+	// or away from (flee) this entity each tick; see ActionProposal fields.
 	EntityId  anchorEntityId = ENTITY_NONE;
-	float     keepWithin     = 0.0f;
+	float     keepWithin     = 0.0f;  // chase stop ring
+	float     keepAway       = 0.0f;  // flee stop ring
 
 	// Commit duration requested by the behavior. Semantics per step type:
 	//   Move, idle-hold (target==self): success at progress >= holdTime

@@ -151,8 +151,9 @@ public:
 	// this entity's current position (see ActionProposal anchor fields). Survives
 	// across ticks so Python decide() can run at normal cadence while execution
 	// tracks the anchor every frame. Cleared on new Move without an anchor.
-	EntityId  anchorEntityId = ENTITY_NONE;
-	float     anchorKeepWithin = 0.0f;
+	EntityId  anchorEntityId   = ENTITY_NONE;
+	float     anchorKeepWithin = 0.0f;  // chase ring (stop inside this distance)
+	float     anchorKeepAway   = 0.0f;  // flee ring (stop past this distance)
 	float     anchorSpeed      = 0.0f;  // magnitude of desiredVel at post time
 
 	// --- Properties ---

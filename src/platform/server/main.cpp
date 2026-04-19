@@ -141,7 +141,7 @@ int main(int argc, char** argv) {
 			       "  --world PATH      Load saved world from PATH\n"
 			       "  --seed N          World seed (default 42)\n"
 			       "  --template N      World template: 0=flat, 1=village, 2=test_behaviors,\n"
-			       "                    3=test_dog, 4=test_villager (default 1)\n"
+			       "                    3=test_dog, 4=test_villager, 5=test_chicken (default 1)\n"
 			       "  --help, -h        Show this help\n", argv[0]);
 			return 0;
 		}
@@ -156,13 +156,14 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	// --template index → 0 flat  1 village  2 test_behaviors  3 test_dog  4 test_villager
+	// --template index → 0 flat  1 village  2 test_behaviors  3 test_dog  4 test_villager  5 test_chicken
 	std::vector<std::shared_ptr<civcraft::WorldTemplate>> templates = {
 		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/flat.py"),
 		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/village.py"),
 		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_behaviors.py"),
 		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_dog.py"),
 		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_villager.py"),
+		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_chicken.py"),
 	};
 
 	if (interactive && isatty(fileno(stdin)))

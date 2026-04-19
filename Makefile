@@ -12,7 +12,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test llm_setup llm_server llm_stop llm_clean
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test llm_setup llm_server llm_stop llm_clean
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -50,6 +50,9 @@ test-dog: game-build
 
 test-villager: game-build
 	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --skip-menu --template 4
+
+test-chicken: game-build
+	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --skip-menu --template 5
 
 # ── Visual QA scenarios ─────────────────────────────────────
 CHARACTER := base:pig

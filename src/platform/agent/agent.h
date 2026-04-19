@@ -520,7 +520,8 @@ private:
 		if (step.anchorEntityId != ENTITY_NONE) {
 			glm::vec3 vel = dist > kArriveEps ? dir / dist * speed
 			                                  : glm::vec3(speed, 0, 0);
-			sendMove(e, vel, server, step.anchorEntityId, step.keepWithin);
+			sendMove(e, vel, server, step.anchorEntityId,
+			         step.keepWithin, step.keepAway);
 			return;
 		}
 		if (dist < kArriveEps) {
@@ -590,7 +591,8 @@ private:
 
 	// ── Move emission + stuck telemetry ──────────────────────────────────
 	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server,
-	              EntityId anchor = ENTITY_NONE, float keepWithin = 0.0f) {
+	              EntityId anchor = ENTITY_NONE,
+	              float keepWithin = 0.0f, float keepAway = 0.0f) {
 		// Client-side prediction; yaw derives from velocity elsewhere.
 		e.velocity.x = vel.x;
 		e.velocity.z = vel.z;
@@ -643,6 +645,7 @@ private:
 		p.goalText       = m_goalText;
 		p.anchorEntityId = anchor;
 		p.keepWithin     = keepWithin;
+		p.keepAway       = keepAway;
 		server.sendAction(p);
 	}
 

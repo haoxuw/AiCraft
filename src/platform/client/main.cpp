@@ -85,6 +85,7 @@ int main(int argc, char** argv) {
 	bool logOnly     = false;
 	std::string host = "127.0.0.1"; // --host: server hostname
 	int  port = 0;                  // --port: server port (0 = spawn local)
+	int  templateIndex = 1;         // --template: world template (default village)
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
 			printf("civcraft-ui-vk - Vulkan-native CivCraft client\n\n"
@@ -94,7 +95,8 @@ int main(int argc, char** argv) {
 			       "  --skip-menu       Jump straight into gameplay\n"
 			       "  --log-only        Hidden window + echo events to stdout\n"
 			       "  --host HOST       Server hostname (default 127.0.0.1)\n"
-			       "  --port PORT       Server port (omit to spawn local server)\n\n"
+			       "  --port PORT       Server port (omit to spawn local server)\n"
+			       "  --template N      World template (0=flat 1=village 5=test_chicken)\n\n"
 			       "In-game:\n"
 			       "  WASD        move         LMB          attack / click-to-move\n"
 			       "  SPACE       jump         Mouse move   look\n"
@@ -111,6 +113,7 @@ int main(int argc, char** argv) {
 		else if (strcmp(argv[i], "--log-only") == 0) { logOnly = true; skipMenu = true; }
 		else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) host = argv[++i];
 		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) port = std::atoi(argv[++i]);
+		else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) templateIndex = std::atoi(argv[++i]);
 	}
 
 	civcraft::GameLogger::instance().init(/*echoStdout=*/logOnly);
@@ -150,7 +153,7 @@ int main(int argc, char** argv) {
 		if (connectPort <= 0) {
 			civcraft::AgentManager::Config cfg;
 			cfg.seed = 42;
-			cfg.templateIndex = 1;  // village world
+			cfg.templateIndex = templateIndex;
 			cfg.execDir = execDir;
 			connectPort = agentMgr.launchServer(cfg);
 			if (connectPort < 0) {
@@ -169,7 +172,7 @@ int main(int argc, char** argv) {
 
 	civcraft::vk::Game game;
 	game.setServer(net.get());  // must precede init()
-	game.setPendingConnect(42, 1);  // village world; seed+template used on character-select confirm
+	game.setPendingConnect(42, templateIndex);  // seed+template used on character-select confirm
 	if (!game.init(rhi.get(), win)) {
 		fprintf(stderr, "game.init failed\n");
 		return 1;

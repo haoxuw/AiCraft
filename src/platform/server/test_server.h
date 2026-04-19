@@ -4,6 +4,7 @@
 
 #include "server/server.h"
 #include "server/world_template.h"
+#include "logic/artifact_registry.h"
 #include <vector>
 #include <functional>
 
@@ -24,6 +25,17 @@ public:
 		config.worldGenConfig = wgc;
 		m_server = std::make_unique<GameServer>();
 		m_server->init(config, m_templates);
+
+		// Mirror the real server (main.cpp): load Python artifacts so EntityDefs
+		// see the data-driven values (behavior id, walk/run speed, collision box,
+		// feature tags) — not just the C++ bootstrap defaults from builtin.cpp.
+		// Without this, e.g. villager keeps the bootstrap behavior "wander"
+		// instead of villager.py's "woodcutter".
+		ArtifactRegistry artifacts;
+		artifacts.loadAll("artifacts");
+		m_server->mergeArtifactTags(artifacts.livingTags());
+		m_server->applyLivingStats(artifacts.livingStats());
+
 		m_clientId = 1;
 		m_playerId = m_server->addClient(m_clientId, m_creatureType);
 		return true;
