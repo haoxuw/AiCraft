@@ -181,11 +181,15 @@ class Follow(Action):
         if t is None:
             return None
         name = t.type.split(":")[-1] if ":" in t.type else t.type
-        # Live-follow: server re-aims each tick toward t.id, stops inside
-        # close_dist. No re-decide needed between ticks — the anchor field
-        # keeps the follower latched even if the target walks away.
-        msg = (self.at_target_msg if t.distance <= self.close_dist
-               else self.following_msg) or f"Following {name}"
+        # Live-follow: client's applyMove re-aims each tick toward t.id,
+        # stops inside close_dist. Goal text names the target so the overlay
+        # shows *which* entity we're trailing, not just "Following human".
+        target_label = f"{name}#{t.id}"
+        close = t.distance <= self.close_dist
+        default_msg = f"Guarding {target_label}" if close else f"Following {target_label}"
+        msg = ((self.at_target_msg if close else self.following_msg)
+               and f"{(self.at_target_msg if close else self.following_msg)} {target_label}"
+               or default_msg)
         return (Move(t.x, t.y, t.z,
                      speed=e.walk_speed * self.speed_mul,
                      anchor=t.id, keep_within=self.close_dist),

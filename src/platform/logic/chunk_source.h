@@ -7,8 +7,19 @@
 #include "logic/chunk.h"
 #include "logic/block_registry.h"
 #include <array>
+#include <shared_mutex>
 
 namespace civcraft {
+
+// Aggregated lock-perf snapshot. Zero-valued for sources that don't lock.
+struct ChunkLockStats {
+	uint64_t writerCount   = 0;
+	uint64_t writerWaitNs  = 0;   // time blocked trying to acquire unique_lock
+	uint64_t writerHoldNs  = 0;   // time held (measures reader stalls on us)
+	uint64_t readerCount   = 0;
+	uint64_t readerWaitNs  = 0;   // time blocked trying to acquire shared_lock
+	uint64_t readerHoldNs  = 0;   // time held (measures writer stalls on us)
+};
 
 class ChunkSource {
 public:
@@ -18,6 +29,19 @@ public:
 	virtual Chunk* getChunkIfLoaded(ChunkPos pos) = 0;
 	virtual BlockId getBlock(int x, int y, int z) = 0;
 	virtual const BlockRegistry& blockRegistry() const = 0;
+
+	// Off-main-thread long scans (e.g. DecideWorker.scan_blocks) must hold
+	// a shared_lock on this mutex for the entire scan. Main-thread reads
+	// don't lock because writers are on the main thread too. Returns nullptr
+	// when no synchronization is needed (server-side World).
+	virtual std::shared_mutex* mutex() { return nullptr; }
+
+	// Sample + reset perf counters (no-op for sources that don't lock).
+	virtual ChunkLockStats snapshotLockStatsAndReset() { return {}; }
+
+	// Called by readers after a scan to contribute their wait/hold timing.
+	// (Writers record themselves inside their scoped lock helper.)
+	virtual void recordReaderAcquire(uint64_t /*waitNs*/, uint64_t /*holdNs*/) {}
 
 	// Appearance lookup — default forwards to the underlying chunk's storage.
 	// Override only if you need to intercept (e.g. tests). Returns 0 for

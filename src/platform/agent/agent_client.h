@@ -36,7 +36,9 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <random>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -101,6 +103,33 @@ public:
 			}
 		} else {
 			m_starvationLogAccum = 0.0f;
+		}
+
+		// Chunk-lock perf probe. scan_blocks takes a shared_lock over all
+		// 17³ chunks in range — if readers are holding long enough to stall
+		// the main-thread writers (S_CHUNK_EVICT arrivals), we'll see it in
+		// writerWaitNs. 10s window; only print if any activity.
+		m_lockPerfAccum += dt;
+		if (m_lockPerfAccum >= 10.0f) {
+			m_lockPerfAccum = 0.0f;
+			ChunkLockStats s = m_server.chunks().snapshotLockStatsAndReset();
+			if (s.writerCount || s.readerCount) {
+				auto avg = [](uint64_t tot, uint64_t n) {
+					return n ? (double)tot / (double)n / 1000.0 : 0.0;  // ns → µs
+				};
+				std::fprintf(stderr,
+					"[Agent] chunk-lock 10s: W=%llu (wait avg %.1fµs, hold avg %.1fµs) "
+					"R=%llu (wait avg %.1fµs, hold avg %.1fµs) "
+					"totalWriterWait=%.2fms totalReaderHold=%.2fms\n",
+					(unsigned long long)s.writerCount,
+					avg(s.writerWaitNs, s.writerCount),
+					avg(s.writerHoldNs, s.writerCount),
+					(unsigned long long)s.readerCount,
+					avg(s.readerWaitNs, s.readerCount),
+					avg(s.readerHoldNs, s.readerCount),
+					s.writerWaitNs / 1e6,
+					s.readerHoldNs / 1e6);
+			}
 		}
 	}
 
@@ -348,11 +377,39 @@ private:
 		req.dt          = 0.25f;
 		req.lastOutcome = qreq.outcome;
 
-		// THREADING: closures run on worker thread; stale block reads are
-		// visual-only races (no chunk mutation outside the server-tick path).
+		// THREADING: closures run on the DecideWorker thread while the main
+		// thread can be mutating LocalWorld (S_CHUNK_EVICT frees chunks, etc).
+		// Hold a shared_lock on chunks.mutex() for the ENTIRE body of each
+		// closure — a raw Chunk* survives the lock scope, no longer. The helper
+		// records wait/hold ns into ChunkSource perf counters so we can see if
+		// the lock is slowing things down in practice.
 		ServerInterface* srv = &m_server;
-		req.blockQuery = [srv](int x, int y, int z) -> std::string {
+		auto acquireShared = [](ChunkSource& cs) {
+			struct Guard {
+				ChunkSource& cs;
+				std::shared_lock<std::shared_mutex> lk;
+				std::chrono::steady_clock::time_point held;
+				uint64_t waitNs;
+				Guard(ChunkSource& c) : cs(c) {
+					auto* m = cs.mutex();
+					auto t0 = std::chrono::steady_clock::now();
+					if (m) lk = std::shared_lock<std::shared_mutex>(*m);
+					held = std::chrono::steady_clock::now();
+					waitNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+						held - t0).count();
+				}
+				~Guard() {
+					auto t1 = std::chrono::steady_clock::now();
+					uint64_t holdNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+						t1 - held).count();
+					cs.recordReaderAcquire(waitNs, holdNs);
+				}
+			};
+			return Guard(cs);
+		};
+		req.blockQuery = [srv, acquireShared](int x, int y, int z) -> std::string {
 			auto& chunks = srv->chunks();
+			auto guard = acquireShared(chunks);
 			ChunkPos cp = worldToChunk(x, y, z);
 			auto* chunk = chunks.getChunkIfLoaded(cp);
 			if (!chunk) return "air";
@@ -363,8 +420,9 @@ private:
 			return srv->blockRegistry().get(bid).string_id;
 		};
 
-		req.appearanceQuery = [srv](int x, int y, int z) -> int {
+		req.appearanceQuery = [srv, acquireShared](int x, int y, int z) -> int {
 			auto& chunks = srv->chunks();
+			auto guard = acquireShared(chunks);
 			ChunkPos cp = worldToChunk(x, y, z);
 			auto* chunk = chunks.getChunkIfLoaded(cp);
 			if (!chunk) return 0;
@@ -374,7 +432,7 @@ private:
 			return (int)chunk->getAppearance(lx, ly, lz);
 		};
 
-		req.scanBlocks = [srv](const std::string& typeId, glm::vec3 origin,
+		req.scanBlocks = [srv, acquireShared](const std::string& typeId, glm::vec3 origin,
 		                       float maxDist, int maxResults)
 		    -> std::vector<BlockSample> {
 			std::vector<BlockSample> out;
@@ -382,6 +440,7 @@ private:
 			BlockId want = reg.getId(typeId);
 			if (want == BLOCK_AIR) return out;
 			auto& chunks = srv->chunks();
+			auto guard = acquireShared(chunks);
 			int cxMin = (int)std::floor((origin.x - maxDist) / (float)CHUNK_SIZE);
 			int cxMax = (int)std::floor((origin.x + maxDist) / (float)CHUNK_SIZE);
 			int czMin = (int)std::floor((origin.z - maxDist) / (float)CHUNK_SIZE);
@@ -651,6 +710,7 @@ private:
 	int              m_lastDecidesRun    = 0;
 	float            m_diagLogAccum      = 0.0f;
 	float            m_starvationLogAccum = 0.0f;
+	float            m_lockPerfAccum     = 0.0f;
 
 	DecideWorker                           m_decideWorker;
 	std::unordered_map<EntityId, uint32_t> m_decideGen;

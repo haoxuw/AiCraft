@@ -289,10 +289,13 @@ public:
 			}
 		}
 
-		// Anchored Move target gone → priority re-decide.
+		// Anchored Move target gone → priority re-decide. "Gone" = erased
+		// (S_REMOVE already fired), flagged removed (transition window), or
+		// dead (hp==0). Dead-but-not-yet-erased is a ~0.5s window; checking
+		// hp here stops followers/fleers from tailing a corpse in that gap.
 		if (step.type == PlanStep::Move && step.anchorEntityId != ENTITY_NONE) {
 			Entity* t = server.getEntity(step.anchorEntityId);
-			if (!t || t->removed) {
+			if (!t || t->removed || t->hp() <= 0) {
 				interruptPlan("anchor_gone", q, now);
 				return;
 			}
@@ -577,9 +580,11 @@ private:
 		float speed = step.speed > 0 ? step.speed : e.def().walk_speed;
 		// Anchored Move = per-tick Execute(). Reads live target position,
 		// seeks (keepWithin) or scatters (keepAway). Server sees plain Moves.
+		// tickPlan's anchor-gone guard fires first, but keep a defensive
+		// check here in case evaluate→apply interleaves with a removal.
 		if (step.anchorEntityId != ENTITY_NONE) {
 			Entity* t = server.getEntity(step.anchorEntityId);
-			if (!t || t->removed) {
+			if (!t || t->removed || t->hp() <= 0) {
 				sendStopMove(e, server);
 				return;
 			}
