@@ -234,8 +234,8 @@ int main(int argc, char** argv) {
 	clients.setPort(config.port);
 
 	civcraft::ServerCallbacks cbs;
-	cbs.onBlockChange = [&](glm::ivec3 pos, civcraft::BlockId oldBid, civcraft::BlockId newBid, uint8_t p2) {
-		clients.onBlockChanged(pos, oldBid, newBid, p2);
+	cbs.onBlockChange = [&](const civcraft::BlockChange& bc) {
+		clients.onBlockChanged(bc);
 	};
 	cbs.onEntityRemove = [&](civcraft::EntityId id) {
 		clients.broadcastEntityRemove(id);

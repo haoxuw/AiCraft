@@ -69,7 +69,7 @@ public:
 		// Generous 60s timeout — server prep phase streams S_PREPARING/S_CHUNK* first.
 		auto start = std::chrono::steady_clock::now();
 		while (m_connected && !m_welcomeReceived) {
-			if (!drainSocket()) {
+			if (drainSocket() < 0) {
 				printf("[Net] Connection lost waiting for welcome\n");
 				break;
 			}
@@ -193,21 +193,30 @@ public:
 			}
 		}
 
-		if (m_uptime < 5.0f && !getEntity(m_localPlayerId) && msgCount > 0) {
-			printf("[Net] t=%.1fs: waiting for player entity (received %zu entities, %zu chunks)\n",
-				m_uptime, m_entities.size(), m_world.chunkCount());
+		// Pre-join waiting tick. Throttle to 1Hz; fires while we're still
+		// before the "player entity arrived" milestone. Stops printing once
+		// the player entity exists — the arrival line is emitted elsewhere.
+		if (!getEntity(m_localPlayerId) && msgCount > 0) {
+			m_waitLogTimer += dt;
+			if (m_waitLogTimer >= 1.0f) {
+				m_waitLogTimer = 0;
+				printf("[Net] waiting for player entity — t=%.1fs, %zu entities, %zu chunks\n",
+					m_uptime, m_entities.size(), m_world.chunkCount());
+			}
 		}
 
 		m_diagTimer += dt;
 		if (m_diagTimer >= 30.0f) {
 			Entity* pe = m_entities.count(m_localPlayerId)
 				? m_entities[m_localPlayerId].get() : nullptr;
-			printf("[Net] %zu entities, %zu chunks, %.0fs uptime\n",
-				m_entities.size(), m_world.chunkCount(), m_uptime);
+			printf("[Net] stats: %zu entities (+%d), %zu chunks, %.0fs uptime\n",
+				m_entities.size(), m_entitiesArrivedSinceLastDiag,
+				m_world.chunkCount(), m_uptime);
 			if (pe)
 				printf("[Net] Player pos=(%.1f,%.1f,%.1f) vel=(%.1f,%.1f,%.1f) ground=%d\n",
 					pe->position.x, pe->position.y, pe->position.z,
 					pe->velocity.x, pe->velocity.y, pe->velocity.z, pe->onGround);
+			m_entitiesArrivedSinceLastDiag = 0;
 			m_diagTimer = 0;
 		}
 
@@ -370,9 +379,14 @@ private:
 				       es.typeId.c_str(), es.id);
 				def = &m_defaultDef;
 			}
-			printf("[Net] New entity: id=%u type=%s pos=(%.1f,%.1f,%.1f)%s\n",
-				es.id, es.typeId.c_str(), es.position.x, es.position.y, es.position.z,
-				es.id == m_localPlayerId ? " [LOCAL PLAYER]" : "");
+			// Per-entity arrival is tallied; the periodic diag line reports
+			// counts. Only the local-player arrival is milestone-worthy.
+			m_entitiesArrivedSinceLastDiag++;
+			if (es.id == m_localPlayerId) {
+				printf("[Net] Player entity arrived: id=%u type=%s pos=(%.1f,%.1f,%.1f) t=%.1fs\n",
+					es.id, es.typeId.c_str(),
+					es.position.x, es.position.y, es.position.z, m_uptime);
+			}
 			auto ent = std::make_unique<Entity>(es.id, es.typeId, *def);
 			ent->position = es.position;
 			ent->velocity = es.velocity;
@@ -552,6 +566,13 @@ private:
 						uint32_t v = rb.readU32();
 						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
 					}
+			// v5+: [u8×CHUNK_VOLUME] appearance array, before annotations.
+			if (rb.remaining() >= (size_t)CHUNK_VOLUME) {
+				for (int ly = 0; ly < CHUNK_SIZE; ly++)
+					for (int lz = 0; lz < CHUNK_SIZE; lz++)
+						for (int lx = 0; lx < CHUNK_SIZE; lx++)
+							chunk->setAppearance(lx, ly, lz, rb.readU8());
+			}
 			m_world.setChunk(cp, std::move(chunk));
 			readChunkAnnotations(rb, cp);
 			if (m_onChunkDirty) m_onChunkDirty(cp);
@@ -582,6 +603,12 @@ private:
 						uint32_t v = zrb.readU32();
 						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
 					}
+			if (zrb.remaining() >= (size_t)CHUNK_VOLUME) {
+				for (int ly = 0; ly < CHUNK_SIZE; ly++)
+					for (int lz = 0; lz < CHUNK_SIZE; lz++)
+						for (int lx = 0; lx < CHUNK_SIZE; lx++)
+							chunk->setAppearance(lx, ly, lz, zrb.readU8());
+			}
 			m_world.setChunk(cp, std::move(chunk));
 			readChunkAnnotations(zrb, cp);
 			if (m_onChunkDirty) m_onChunkDirty(cp);
@@ -649,6 +676,7 @@ private:
 			int bx = rb.readI32(), by = rb.readI32(), bz = rb.readI32();
 			BlockId bid = (BlockId)rb.readU32();
 			uint8_t p2 = rb.hasMore() ? rb.readU8() : 0;
+			uint8_t appearance = rb.hasMore() ? rb.readU8() : 0;  // v5+
 			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
 			// Old block lets fx distinguish dig/place/swap (e.g. door↔door_open).
@@ -673,6 +701,7 @@ private:
 					c->set(lx, ly, lz, bid, p2);
 				}
 			}
+			m_world.setAppearance(bx, by, bz, appearance);
 			if (m_onChunkDirty) m_onChunkDirty(cp);
 			break;
 		}
@@ -770,8 +799,12 @@ private:
 	EntityDef m_defaultDef;
 
 	float m_diagTimer = 0;
+	float m_waitLogTimer = 0;
 	int m_totalMsgCount = 0;
 	float m_uptime = 0;
+	// Per-entity new-entity spam is replaced with a periodic stats line; we
+	// still track arrivals since the last diag so the line says something.
+	int m_entitiesArrivedSinceLastDiag = 0;
 
 	float m_silentTime = 0;
 	bool  m_silentWarned = false;

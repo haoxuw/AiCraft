@@ -226,6 +226,7 @@ public:
 		BlockId bWood   = blocks.getId(BlockType::Wood);
 		BlockId bLog    = blocks.getId(BlockType::Log);
 		BlockId bLeaves = blocks.getId(BlockType::Leaves);
+		BlockId bTallGrass = blocks.getId(BlockType::TallGrass);
 
 		BlockId wallB  = blocks.getId(m_py.wallBlock);
 		BlockId roofB  = blocks.getId(m_py.roofBlock);
@@ -243,6 +244,102 @@ public:
 
 		bool isFlat = (m_py.terrainType == "flat");
 
+		// Per-cell grass tint roll. Coarse smoothNoise gives 4-8 block patches
+		// of one tint; a sprinkle of hashFloat jitter breaks straight patch
+		// edges. Bucket weights: 40% default, 18% lush, 18% pale, 10% dry,
+		// 10% mossy, 4% shadow — accent tints (dry/mossy) are bumped so the
+		// field reads as varied terrain rather than near-uniform green.
+		auto grassAppearance = [seed](int wx, int wz) -> uint8_t {
+			float r = smoothNoise2D((wx + seed * 31) * 0.18f,
+			                        (wz + seed * 17) * 0.18f);
+			r = r * 0.90f + hashFloat(wx * 7, wz * 11) * 0.10f;
+			if (r < 0.40f) return 0;
+			if (r < 0.58f) return 1;
+			if (r < 0.76f) return 2;
+			if (r < 0.86f) return 3;
+			if (r < 0.96f) return 4;
+			return 5;
+		};
+
+		// Minecraft-style cluster placement: most of the world is bare grass,
+		// but scattered "patches" of tall grass — sparse between, dense within.
+		//
+		// Approach: tile the world with 24×24 *macro cells*. A stable hash
+		// per macro cell decides (30% chance) whether this tile contains a
+		// cluster, plus the cluster's center offset, radius (5..7), and core
+		// density (0.70..0.95). A grass top then scans the 3×3 ring of macro
+		// cells around it, finds the strongest cluster contribution, and
+		// rolls a cell-local hash to decide whether to spawn — and at what
+		// height tier (palette 1..5).
+		//
+		// Height tier encodes distance from the cluster center: center → 5
+		// (very tall), edge → 1 (short fringe). Quadratic falloff so the
+		// center is a dense mound and coverage thins at the rim.
+		// MACRO tile pitch × CLUSTER_P together set how often you walk into a
+		// patch. Current values give ~1.5 clusters per 100×100 area — rare
+		// enough that each clump is an event, frequent enough that the plains
+		// aren't empty. Falloff is `1 - t²` (plateau then fade) so the inner
+		// ~60% of every cluster is near-solid, only the rim thins out —
+		// patches read as dense cushions, not scattered spikes.
+		constexpr int   MACRO      = 40;     // cluster lattice pitch (blocks)
+		constexpr float CLUSTER_P  = 0.22f;  // fraction of macro cells hosting a cluster
+		auto tallGrassRoll = [seed](int wx, int wz) -> uint8_t {
+			int mx = (wx >= 0 ? wx : wx - (MACRO - 1)) / MACRO;
+			int mz = (wz >= 0 ? wz : wz - (MACRO - 1)) / MACRO;
+
+			float bestP = 0.0f;
+			float bestT = 1.0f;  // normalized d/r of best cluster (1 = edge)
+
+			for (int dmz = -1; dmz <= 1; dmz++) {
+				for (int dmx = -1; dmx <= 1; dmx++) {
+					int cmx = mx + dmx, cmz = mz + dmz;
+					// Stable per-macro-cell hash stream.
+					float h0 = hashFloat(cmx * 97 + seed, cmz * 131 + seed * 3);
+					if (h0 >= CLUSTER_P) continue;  // no cluster in this tile
+
+					float h1 = hashFloat(cmx * 53 + seed * 7, cmz * 211 - seed);
+					float h2 = hashFloat(cmx * 17 - seed * 11, cmz * 73 + seed * 19);
+					float h3 = hashFloat(cmx * 29 + seed * 13, cmz * 41 - seed * 5);
+
+					// Center placed inside the macro cell; margin so neighbouring
+					// clusters don't fuse into one ambiguous blob.
+					float cx = (float)(cmx * MACRO) + 5.0f + h1 * (float)(MACRO - 10);
+					float cz = (float)(cmz * MACRO) + 5.0f + h2 * (float)(MACRO - 10);
+
+					float radius = 5.0f + h3 * 4.0f;          // 5..9 blocks
+					float coreDensity = 0.95f;                // near-solid core
+
+					float dx = (float)wx - cx;
+					float dz = (float)wz - cz;
+					float d  = std::sqrt(dx * dx + dz * dz);
+					if (d >= radius) continue;
+
+					float t = d / radius;                     // 0 = core, 1 = edge
+					// Plateau-then-fade falloff (`1 - t²`): inner ~60% of the
+					// cluster stays ≥70% density, only the outer rim thins.
+					// Previously we used `(1 - t)²` which dropped to 20% at
+					// mid-radius — looked like random spikes, not a patch.
+					float p = coreDensity * (1.0f - t * t);
+					if (p > bestP) { bestP = p; bestT = t; }
+				}
+			}
+
+			if (bestP <= 0.0f) return 0;
+
+			// Per-cell spawn roll against the strongest contributing cluster.
+			float cellRoll = hashFloat(wx * 53 + seed * 9, wz * 19 - seed);
+			if (cellRoll > bestP) return 0;
+
+			// Height tier from normalized distance. Center (t≈0) → 5 (very
+			// tall), edge (t→1) → 1 (short fringe). Tight core (<10% radius)
+			// so the tallest tufts form a small mound, not a plateau.
+			if (bestT < 0.10f) return 5;
+			if (bestT < 0.25f) return 4;
+			if (bestT < 0.45f) return 3;
+			if (bestT < 0.70f) return 2;
+			return 1;
+		};
+
 		// Terrain
 		if (isFlat) {
 			int sy = (int)m_py.surfaceY;
@@ -254,9 +351,28 @@ public:
 				else if (wy < sy)      type = bDirt;
 				else if (wy == sy)     type = bGrass;
 				else                   continue;
+				bool isGrass = (type == bGrass);
 				for (int lz = 0; lz < CHUNK_SIZE; lz++)
-					for (int lx = 0; lx < CHUNK_SIZE; lx++)
+					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
 						chunk.set(lx, ly, lz, type);
+						if (isGrass)
+							chunk.setAppearance(lx, ly, lz, grassAppearance(ox + lx, oz + lz));
+					}
+			}
+			// Decoration pass: scatter tall_grass on the +1 layer above any
+			// exposed grass top. Runs after the main terrain loop so the grass
+			// cells are already in place and we don't race against them.
+			if (bTallGrass != BLOCK_AIR) {
+				int plantLy = sy - oy + 1;  // surface+1 in local coords
+				if (plantLy >= 0 && plantLy < CHUNK_SIZE) {
+					for (int lz = 0; lz < CHUNK_SIZE; lz++)
+						for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+							uint8_t app = tallGrassRoll(ox + lx, oz + lz);
+							if (!app) continue;
+							chunk.set(lx, plantLy, lz, bTallGrass);
+							chunk.setAppearance(lx, plantLy, lz, app);
+						}
+				}
 			}
 		} else {
 			int wl = (int)m_py.waterLevel;
@@ -273,7 +389,21 @@ public:
 						} else if (wy == sy) {
 							if      (sy <= wl)             chunk.set(lx, ly, lz, bSand);
 							else if ((float)sy >= snowLine) chunk.set(lx, ly, lz, bSnow);
-							else                            chunk.set(lx, ly, lz, bGrass);
+							else {
+								chunk.set(lx, ly, lz, bGrass);
+								chunk.setAppearance(lx, ly, lz, grassAppearance(wx, wz));
+								// Tall-grass decoration immediately above, if the
+								// +1 cell is within this chunk's local span and
+								// would otherwise stay air.
+								int plantLy = ly + 1;
+								if (plantLy < CHUNK_SIZE && bTallGrass != BLOCK_AIR) {
+									uint8_t app = tallGrassRoll(wx, wz);
+									if (app) {
+										chunk.set(lx, plantLy, lz, bTallGrass);
+										chunk.setAppearance(lx, plantLy, lz, app);
+									}
+								}
+							}
 						} else if (wy > sy - dd) {
 							chunk.set(lx, ly, lz, (sy <= wl + 1) ? bSand : bDirt);
 						} else {

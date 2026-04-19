@@ -30,7 +30,8 @@ public:
 	static constexpr int PADDED_VOL  = PADDED_SIZE * PADDED_SIZE * PADDED_SIZE;
 	struct PaddedSnapshot {
 		std::array<BlockId, PADDED_VOL> blocks;
-		std::array<uint8_t, PADDED_VOL> param2;  // only center-chunk cells are used (stairs/doors)
+		std::array<uint8_t, PADDED_VOL> param2;      // only center-chunk cells are used (stairs/doors)
+		std::array<uint8_t, PADDED_VOL> appearance;  // palette index per cell (see docs/22_APPEARANCE.md)
 	};
 
 	// Main-thread convenience: snapshot live world + mesh in one call.

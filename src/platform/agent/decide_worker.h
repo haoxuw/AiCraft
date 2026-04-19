@@ -28,6 +28,7 @@ struct DecideRequest {
 	float                           dt         = 0;
 	LastOutcome                     lastOutcome;
 	PythonBridge::BlockQueryFn        blockQuery;
+	PythonBridge::AppearanceQueryFn   appearanceQuery;
 	PythonBridge::ScanBlocksFn        scanBlocks;
 	PythonBridge::ScanEntitiesFn      scanEntities;
 	PythonBridge::ScanAnnotationsFn   scanAnnotations;
@@ -107,7 +108,8 @@ private:
 				std::move(req.blockQuery), std::move(req.scanBlocks),
 				std::move(req.scanEntities),
 				std::move(req.scanAnnotations),
-				outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason);
+				outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason,
+				std::move(req.appearanceQuery));
 
 			{
 				std::lock_guard<std::mutex> lk(m_resMutex);

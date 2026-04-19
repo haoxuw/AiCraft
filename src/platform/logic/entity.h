@@ -25,9 +25,11 @@ struct StructureFeature {
 	Type type = Type::SeasonalLeaves;
 
 	// --- SeasonalLeaves config (from blueprint; treat as read-only) ---
-	// Per-season candidate block-id strings. Empty season = skip that season.
-	// Indexed by the Season enum value.
-	std::vector<std::string> seasonVariants[4];
+	// Per-season candidate appearance-palette indices into the Leaves block's
+	// appearance_palette. Empty season = skip. Indexed by Season enum value.
+	// See docs/22_APPEARANCE.md — the block id is preserved, only the palette
+	// entry changes, so save-stateless + no SourceBlockTypeMismatch rejects.
+	std::vector<uint8_t> seasonVariants[4];
 	// Per-tick roll (at 1 Hz dispatcher) — probability this tree transitions
 	// from the default palette into the current season's palette this tick.
 	// Low values spread the transition across the season so the forest
@@ -45,7 +47,7 @@ struct StructureFeature {
 	std::vector<glm::ivec3> leafPositions;   // discovered on first tick
 	bool        scanned          = false;
 	int         seasonIdxApplied = -1;       // matches Season enum; -1 = never
-	std::string currentVariant;              // string id last applied
+	int         currentAppearance = -1;      // palette index last applied; -1 = never
 };
 
 // Per-Structure runtime state. Blueprint (blocks/anchor/regen) lives in StructureBlueprintManager.

@@ -16,7 +16,10 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) 
 Plan PythonBridge::callDecide(BehaviorHandle, const EntitySnapshot&,
                                const std::vector<NearbyEntity>&,
                                float, float, std::string&, std::string& err,
-                               BlockQueryFn, ScanBlocksFn) {
+                               BlockQueryFn, ScanBlocksFn, ScanEntitiesFn,
+                               ScanAnnotationsFn, const std::string&,
+                               const std::string&, const std::string&,
+                               AppearanceQueryFn) {
 	err = "Python not available in web build"; return {};
 }
 std::string PythonBridge::getSource(BehaviorHandle) const { return ""; }
@@ -73,10 +76,14 @@ struct PyAction {
 	int         to_count   = 1;
 	PyContainer convert_from;
 	PyContainer convert_into;
+
+	// Interact: -1 = legacy toggle (door/TNT); >=0 = write appearance index (I3).
+	int         appearance_idx = -1;
 };
 
 // Per-call state, set before callDecide(). Agent is single-threaded.
 static std::function<std::string(int,int,int)> s_blockQueryFn;
+static std::function<int(int,int,int)>         s_appearanceQueryFn;
 
 using ScanBlocksFn = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 static ScanBlocksFn s_scanBlocksFn;
@@ -138,7 +145,9 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		.def_readwrite("to_item",      &PyAction::to_item)
 		.def_readwrite("to_count",     &PyAction::to_count)
 		.def_readwrite("convert_from", &PyAction::convert_from)
-		.def_readwrite("convert_into", &PyAction::convert_into);
+		.def_readwrite("convert_into", &PyAction::convert_into)
+		// Interact
+		.def_readwrite("appearance_idx", &PyAction::appearance_idx);
 
 	// Only write primitives the server accepts. High-level helpers
 	// (BreakBlock, StoreItem, PickupItem, DropItem) wrap these in python/actions.py.
@@ -174,9 +183,31 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	   "Lookup material value for an item/block. Single source of truth "
 	   "is src/shared/material_values.h — never hardcode values in Python.");
 
-	m.def("Interact", [](int x, int y, int z) {
-		PyAction a; a.type = "interact"; a.x = (float)x; a.y = (float)y; a.z = (float)z; return a;
-	}, py::arg("x"), py::arg("y"), py::arg("z"));
+	m.def("Interact", [](int x, int y, int z, int appearance) {
+		PyAction a;
+		a.type = "interact";
+		a.x = (float)x; a.y = (float)y; a.z = (float)z;
+		a.appearance_idx = appearance;
+		return a;
+	}, py::arg("x"), py::arg("y"), py::arg("z"), py::arg("appearance") = -1,
+	   "Toggle interactive block (door/TNT). Pass appearance>=0 to write a "
+	   "palette entry at (x,y,z) without changing block type.");
+
+	m.def("get_appearance", [](int x, int y, int z) -> int {
+		return s_appearanceQueryFn ? s_appearanceQueryFn(x, y, z) : 0;
+	}, py::arg("x"), py::arg("y"), py::arg("z"),
+	   "Return the appearance-palette index at world position (x,y,z). "
+	   "Call only inside decide().");
+
+	m.def("set_appearance", [](int x, int y, int z, int appearance) {
+		PyAction a;
+		a.type = "interact";
+		a.x = (float)x; a.y = (float)y; a.z = (float)z;
+		a.appearance_idx = appearance;
+		return a;
+	}, py::arg("x"), py::arg("y"), py::arg("z"), py::arg("appearance"),
+	   "Emit an Interact action that writes appearance idx at (x,y,z). "
+	   "Block id is preserved; only the palette entry changes.");
 
 	// Valid only inside decide(); returns "air" outside.
 	m.def("get_block", [](int x, int y, int z) -> std::string {
@@ -433,7 +464,6 @@ except NameError: pass
 		beh.moduleObj  = new py::dict(ns);
 		beh.instanceObj = new py::object(ns["_behavior_instance"]);
 
-		printf("[PythonBridge] Loaded behavior (handle=%d)\n", handle);
 		return handle;
 
 	} catch (const py::error_already_set& e) {
@@ -461,7 +491,10 @@ static PlanStep pyActionToPlanStep(const PyAction& pa) {
 		return PlanStep::relocate(pyContainerToC(pa.relocate_from),
 		                          pyContainerToC(pa.relocate_to),
 		                          pa.item_id, pa.item_count);
-	// idle / interact / unknown → stand still.
+	if (pa.type == "interact")
+		return PlanStep::interact({pa.x, pa.y, pa.z},
+		                          (int16_t)pa.appearance_idx);
+	// idle / unknown → stand still.
 	return PlanStep::move({pa.x, pa.y, pa.z}, 0.0f);
 }
 
@@ -477,13 +510,16 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
                                ScanAnnotationsFn scanAnnotationsFn,
                                const std::string& lastOutcome,
                                const std::string& lastGoal,
-                               const std::string& lastReason) {
+                               const std::string& lastReason,
+                               AppearanceQueryFn appearanceQueryFn) {
 	// Runs on DecideWorker's thread.
 	py::gil_scoped_acquire gil;
 
 	// Per-call callbacks; GIL serializes callDecide so static state is safe.
 	s_blockQueryFn   = blockQueryFn ? std::move(blockQueryFn)
 	                                : [](int,int,int){ return std::string("air"); };
+	s_appearanceQueryFn = appearanceQueryFn ? std::move(appearanceQueryFn)
+	                                        : [](int,int,int){ return 0; };
 	s_scanBlocksFn   = std::move(scanBlocksFn);
 	s_scanEntitiesFn = std::move(scanEntitiesFn);
 	s_scanAnnotationsFn = std::move(scanAnnotationsFn);
@@ -491,6 +527,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 	struct Cleanup {
 		~Cleanup() {
 			s_blockQueryFn = nullptr;
+			s_appearanceQueryFn = nullptr;
 			s_scanBlocksFn = nullptr;
 			s_scanEntitiesFn = nullptr;
 			s_scanAnnotationsFn = nullptr;
@@ -970,10 +1007,36 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 				StructureFeature f;
 				if (t == "seasonal_leaves") {
 					f.type = StructureFeature::Type::SeasonalLeaves;
+					// Legacy string block-ids map to indices in the Leaves
+					// block's appearance_palette (see builtin.cpp). Unknown
+					// strings are skipped with a warning.
+					static const std::unordered_map<std::string, uint8_t> legacyMap = {
+						{"leaves",         0},
+						{"base:leaves",    0},
+						{"leaves_spring",  1}, {"base:leaves_spring",  1},
+						{"leaves_summer",  2}, {"base:leaves_summer",  2},
+						{"leaves_gold",    3}, {"base:leaves_gold",    3},
+						{"leaves_orange",  4}, {"base:leaves_orange",  4},
+						{"leaves_red",     5}, {"base:leaves_red",     5},
+						{"leaves_bare",    6}, {"base:leaves_bare",    6},
+						{"leaves_snow",    7}, {"base:leaves_snow",    7},
+					};
 					auto readList = [&](const char* key, int seasonIdx) {
 						if (!fd.contains(key)) return;
-						for (auto& v : fd[key].cast<py::list>())
-							f.seasonVariants[seasonIdx].push_back(v.cast<std::string>());
+						for (auto& v : fd[key].cast<py::list>()) {
+							if (py::isinstance<py::int_>(v)) {
+								f.seasonVariants[seasonIdx]
+									.push_back((uint8_t)v.cast<int>());
+							} else {
+								auto s = v.cast<std::string>();
+								auto it = legacyMap.find(s);
+								if (it != legacyMap.end())
+									f.seasonVariants[seasonIdx].push_back(it->second);
+								else
+									printf("[StructureBlueprint] unknown seasonal-leaves variant '%s'; skipping\n",
+									       s.c_str());
+							}
+						}
 					};
 					readList("spring_variants", 0);
 					readList("summer_variants", 1);

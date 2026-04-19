@@ -254,6 +254,21 @@ public:
 			}
 		}
 
+		// Harvest block gone mid-step → step succeeds immediately. Without
+		// this the agent keeps firing Convert proposals against air and the
+		// server rejects them as SourceBlockGone every tick.
+		if (step.type == PlanStep::Harvest) {
+			glm::ivec3 bp = glm::ivec3(glm::floor(step.targetPos));
+			BlockId bid = server.chunks().getBlock(bp.x, bp.y, bp.z);
+			if (bid == BLOCK_AIR) {
+				advanceStep();
+				if (m_stepIndex >= (int)m_plan.size())
+					finishPlan(StepOutcome::Success, std::string{},
+					           server, q, now);
+				return;
+			}
+		}
+
 		StepOutcome outcome = evaluateStep(step, *e, dt);
 		switch (outcome) {
 		case StepOutcome::InProgress:
@@ -390,6 +405,7 @@ private:
 		case PlanStep::Harvest:  return evaluateHarvest(step, e, dt);
 		case PlanStep::Attack:   return evaluateAttack(step, e, dt);
 		case PlanStep::Relocate: return evaluateRelocate(step, e, dt);
+		case PlanStep::Interact: return evaluateInteract(step, e, dt);
 		}
 		return StepOutcome::Success;
 	}
@@ -438,11 +454,8 @@ private:
 	}
 
 	StepOutcome evaluateHarvest(PlanStep& step, Entity& e, float dt) {
-		// Block-gone short-circuit lives in applyHarvest's caller — but the
-		// authoritative check is here against the chunk grid via the Server
-		// reference passed to applyStep(). We don't have it in evaluate(), so
-		// the Move-then-Harvest pattern relies on applyHarvest() noticing.
-		// Here we only watch for stuck travel toward the harvest target.
+		// Block-gone is checked in tickPlan() before we get here, parallel to
+		// the Attack target-gone check. Here we only watch for stuck travel.
 		glm::vec3 delta = step.targetPos - e.position;
 		delta.y = 0;
 		if (glm::length(delta) > kReachHarvest + 2.0f) {
@@ -476,6 +489,15 @@ private:
 		return StepOutcome::Success;
 	}
 
+	StepOutcome evaluateInteract(PlanStep& /*s*/, Entity& /*e*/, float /*dt*/) {
+		// One-shot: first eval fires apply, second eval completes.
+		if (!m_watch.modeDetected) {
+			m_watch.modeDetected = true;
+			return StepOutcome::InProgress;
+		}
+		return StepOutcome::Success;
+	}
+
 	// ── Step appliers ────────────────────────────────────────────────────
 	void applyStep(PlanStep& step, Entity& e, ServerInterface& server) {
 		switch (step.type) {
@@ -483,6 +505,7 @@ private:
 		case PlanStep::Harvest:  applyHarvest(step, e, server); break;
 		case PlanStep::Attack:   applyAttack(step, e, server); break;
 		case PlanStep::Relocate: applyRelocate(step, server); break;
+		case PlanStep::Interact: applyInteract(step, server); break;
 		}
 	}
 
@@ -544,6 +567,15 @@ private:
 		p.relocateTo = step.relocateTo;
 		p.itemId = step.itemId;
 		p.itemCount = step.itemCount;
+		server.sendAction(p);
+	}
+
+	void applyInteract(PlanStep& step, ServerInterface& server) {
+		ActionProposal p;
+		p.type          = ActionProposal::Interact;
+		p.actorId       = m_eid;
+		p.blockPos      = glm::ivec3(step.targetPos);
+		p.appearanceIdx = step.appearanceIdx;
 		server.sendAction(p);
 	}
 

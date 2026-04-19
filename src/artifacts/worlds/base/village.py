@@ -23,8 +23,10 @@ world = {
 
     # Prep-phase chunk preload radius. Village world is larger than flat and
     # the player should see terrain to the village center at spawn, so load
-    # the full fog-bound radius (clamped to [1, 24]).
-    "preload_radius_chunks": 11,
+    # the full fog-bound radius (clamped to [1, 24]). Bumped to 16 once the
+    # Lite-mode chunk compression made the per-chunk RAM cost ~free for the
+    # all-air sky chunks that dominate large-radius preloads.
+    "preload_radius_chunks": 16,
 
     # Weather schedule — Markov chain driven server-side, broadcast via
     # S_WEATHER. Path is relative to src/artifacts/. Empty string (or key

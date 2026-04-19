@@ -19,7 +19,31 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	blocks.registerBlock({BT::Stone, "Stone", {0.48f,0.48f,0.50f},{0.48f,0.48f,0.50f},{0.48f,0.48f,0.50f}, true,false, BT::Cobblestone,64,0, "",SN::DigStone,SN::StepStone});
 	blocks.registerBlock({BT::Cobblestone, "Cobblestone", {0.42f,0.42f,0.44f},{0.42f,0.42f,0.44f},{0.42f,0.42f,0.44f}, true,false, "",64,0, "",SN::DigStone,SN::StepStone});
 	blocks.registerBlock({BT::Dirt, "Dirt", {0.52f,0.34f,0.20f},{0.52f,0.34f,0.20f},{0.52f,0.34f,0.20f}, true,false, "",64,0, "",SN::DigDirt,SN::StepDirt});
-	blocks.registerBlock({BT::Grass, "Grass Block", {0.30f,0.58f,0.18f},{0.40f,0.38f,0.20f},{0.52f,0.34f,0.20f}, true,false, BT::Dirt,64,0, "",SN::DigDirt,SN::StepGrass});
+	{
+		// Grass palette: tints multiply the green top + brown side. Index 0 is
+		// pass-through (the unmodified default green) so chunks with a uniform
+		// appearance=0 stay Lite. Worldgen rolls a per-cell index using a stable
+		// hash so adjacent cells differ subtly — turns flat fields into a mosaic
+		// without changing block type. See world_template.h for the roll.
+		BlockDef g;
+		g.string_id    = BT::Grass;
+		g.display_name = "Grass Block";
+		g.color_top    = {0.30f, 0.58f, 0.18f};
+		g.color_side   = {0.40f, 0.38f, 0.20f};
+		g.color_bottom = {0.52f, 0.34f, 0.20f};
+		g.solid = true; g.transparent = false;
+		g.drop = BT::Dirt; g.stack_max = 64;
+		g.sound_dig = SN::DigDirt; g.sound_footstep = SN::StepGrass;
+		g.appearance_palette = {
+			{{1.00f, 1.00f, 1.00f}, ""},  // 0 default — unchanged
+			{{0.70f, 1.05f, 0.65f}, ""},  // 1 lush — distinctly deeper green
+			{{1.25f, 1.10f, 0.70f}, ""},  // 2 pale — distinctly yellow-green
+			{{1.55f, 0.92f, 0.45f}, ""},  // 3 dry — golden patch (visible accent)
+			{{0.55f, 0.85f, 0.50f}, ""},  // 4 mossy — deep moss
+			{{0.65f, 0.75f, 0.65f}, ""},  // 5 shadowed — clearly darker
+		};
+		blocks.registerBlock(g);
+	}
 	blocks.registerBlock({BT::Sand, "Sand", {0.82f,0.77f,0.50f},{0.82f,0.77f,0.50f},{0.82f,0.77f,0.50f}, true,false, "",64,0, "",SN::DigSand,SN::StepSand});
 	blocks.registerBlock({BT::Water, "Water", {0.12f,0.35f,0.70f},{0.12f,0.35f,0.70f},{0.12f,0.35f,0.70f}, false,true, "",64,0, "","",""});
 	blocks.registerBlock({BT::Snow, "Snow", {0.93f,0.95f,0.97f},{0.90f,0.92f,0.94f},{0.90f,0.92f,0.94f}, true,false, "",64,0, "",SN::DigSnow,SN::StepSnow});
@@ -36,7 +60,31 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	blocks.registerBlock({BT::Log, "Log", {0.38f,0.28f,0.14f},{0.52f,0.38f,0.20f},{0.38f,0.28f,0.14f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood});
 	blocks.registerBlock({BT::Wood, "Wood", {0.50f,0.38f,0.18f},{0.42f,0.28f,0.12f},{0.50f,0.38f,0.18f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood});
 	blocks.registerBlock({BT::Planks, "Planks", {0.68f,0.52f,0.30f},{0.64f,0.47f,0.24f},{0.68f,0.52f,0.30f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood});
-	blocks.registerBlock({BT::Leaves, "Leaves", {0.18f,0.48f,0.10f},{0.20f,0.45f,0.12f},{0.20f,0.45f,0.12f}, true,false, "",64,0, "",SN::DigLeaves,""});
+	{
+		// I5: palette indices tint the base Leaves color. Index 0 is the default
+		// summer green; higher entries are seasonal shifts applied via
+		// TYPE_INTERACT appearance-idx (server-side StructureFeature). Legacy
+		// leaves_* block ids below are kept only for save back-compat.
+		BlockDef leaf;
+		leaf.string_id    = BT::Leaves;
+		leaf.display_name = "Leaves";
+		leaf.color_top = leaf.color_side = leaf.color_bottom = {1.0f, 1.0f, 1.0f};
+		leaf.solid = true; leaf.transparent = false;
+		leaf.stack_max = 64; leaf.sound_dig = SN::DigLeaves;
+		// Mesher computes face = base_color * palette[idx].tint, with
+		// base_color=white the tint IS the final color — no divide dance.
+		leaf.appearance_palette = {
+			{{0.18f,0.48f,0.10f}, ""},  // 0 default summer-green
+			{{0.45f,0.75f,0.22f}, ""},  // 1 spring
+			{{0.12f,0.38f,0.08f}, ""},  // 2 deep summer
+			{{0.90f,0.78f,0.20f}, ""},  // 3 gold
+			{{0.88f,0.48f,0.12f}, ""},  // 4 orange
+			{{0.78f,0.20f,0.14f}, ""},  // 5 red
+			{{0.32f,0.22f,0.14f}, ""},  // 6 bare branches
+			{{0.88f,0.92f,0.96f}, ""},  // 7 snowy
+		};
+		blocks.registerBlock(leaf);
+	}
 	// Seasonal leaf variants. Distinct BlockIds (not palette-tinted) so chunk
 	// save/load is stateless and individual trees can hold independent colors.
 	// SeasonalLeaves (structure feature) swaps the tree's leaves between these.
@@ -47,6 +95,41 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	blocks.registerBlock({BT::LeavesRed,    "Leaves (Red)",    {0.78f,0.20f,0.14f},{0.70f,0.18f,0.12f},{0.70f,0.18f,0.12f}, true,false, BT::Leaves,64,0, "",SN::DigLeaves,""});
 	blocks.registerBlock({BT::LeavesBare,   "Bare Branches",   {0.32f,0.22f,0.14f},{0.30f,0.20f,0.12f},{0.28f,0.18f,0.10f}, true,true,  "",    64,0, "",SN::DigLeaves,""});
 	blocks.registerBlock({BT::LeavesSnow,   "Snowy Leaves",    {0.88f,0.92f,0.96f},{0.78f,0.82f,0.88f},{0.74f,0.78f,0.82f}, true,false, BT::Leaves,64,0, "",SN::DigLeaves,""});
+
+	{
+		// Tall grass: decoration-only block. Non-solid (walk-through, no
+		// raycast hit) and placed by worldgen on top of a random subset of
+		// grass blocks — Minecraft convention. The mesher reads
+		// mesh_type=Plant and emits Bezier blades using color_side for the
+		// root and color_top for the tip. The appearance palette rolls a
+		// height/density/tint variant per cell so the field reads as varied
+		// vegetation instead of identical tufts.
+		BlockDef tg;
+		tg.string_id    = BT::TallGrass;
+		tg.display_name = "Tall Grass";
+		tg.color_top    = {0.55f, 0.82f, 0.30f};  // tip — bright sunlit leaf
+		tg.color_side   = {0.22f, 0.40f, 0.14f};  // root — shaded base
+		tg.color_bottom = {0.22f, 0.40f, 0.14f};
+		tg.solid = false; tg.transparent = false;
+		tg.collision_height = 0.0f;  // walk-through
+		tg.drop = ""; tg.stack_max = 64;
+		tg.mesh_type = MeshType::Plant;
+		tg.sound_footstep = SN::StepGrass;
+		// Palette index = cluster-height tier (see world_template.h
+		// tallGrassRoll). Index 0 is reserved "no spawn" — never stored.
+		// Indices 1..5 go from cluster edge (short fringe, pale) to cluster
+		// core (dramatic, deep green). Colours shift alongside height so tall
+		// tufts also read as older / richer growth.
+		tg.appearance_palette = {
+			{{1.00f, 1.00f, 1.00f}, ""},   // 0 unused — "no spawn" sentinel
+			{{1.15f, 1.05f, 0.80f}, ""},   // 1 fringe — pale, short
+			{{1.00f, 1.00f, 0.80f}, ""},   // 2 outer — warm green
+			{{0.90f, 1.05f, 0.70f}, ""},   // 3 inner — lush
+			{{0.70f, 1.00f, 0.55f}, ""},   // 4 near-core — deep lush
+			{{0.55f, 0.95f, 0.45f}, ""},   // 5 core — dramatic
+		};
+		blocks.registerBlock(tg);
+	}
 
 	// Active (with behavior)
 	blocks.registerBlock({BT::TNT, "TNT", {0.80f,0.25f,0.20f},{0.80f,0.25f,0.20f},{0.80f,0.25f,0.20f}, true,false, "",64,0, "","","", BlockBehavior::Active, {{PR::FuseTicks,0},{PR::Lit,0}}, "tnt_block"});

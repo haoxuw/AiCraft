@@ -1,6 +1,20 @@
 #include "client/chunk_mesher.h"
 
+#include <cmath>
+
 namespace civcraft {
+
+// Stable per-blade hash. Used to seed the random position / angle / height
+// of each blade within a grass cell so blades appear scattered but stay
+// deterministic between mesh rebuilds (no flicker on chunk reload).
+static inline float bladeHash(int x, int z, int k) {
+	unsigned int n = (unsigned int)(x * 73856093)
+	              ^ (unsigned int)(z * 19349663)
+	              ^ (unsigned int)(k * 83492791);
+	n = (n << 13) ^ n;
+	return (float)((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff)
+	       / 2147483647.0f;
+}
 
 float ChunkMesher::computeAO(bool side1, bool side2, bool corner) {
 	if (side1 && side2) return 0.1f;
@@ -28,13 +42,15 @@ static bool fillSnapshot(ChunkSource& world, ChunkPos cpos,
 
 	out.blocks.fill(BLOCK_AIR);
 	out.param2.fill(0);
+	out.appearance.fill(0);
 
 	for (int y = 0; y < CHUNK_SIZE; y++)
 		for (int z = 0; z < CHUNK_SIZE; z++)
 			for (int x = 0; x < CHUNK_SIZE; x++) {
 				int i = padIdx(x, y, z);
-				out.blocks[i] = center->get(x, y, z);
-				out.param2[i] = center->getParam2(x, y, z);
+				out.blocks[i]     = center->get(x, y, z);
+				out.param2[i]     = center->getParam2(x, y, z);
+				out.appearance[i] = center->getAppearance(x, y, z);
 			}
 
 	for (int dy = -1; dy <= 1; dy++)
@@ -76,6 +92,46 @@ std::pair<std::vector<ChunkVertex>, std::vector<ChunkVertex>>
 ChunkMesher::buildMesh(ChunkSource& world, ChunkPos cpos) {
 	Chunk* chunk = world.getChunkIfLoaded(cpos);
 	if (!chunk) return {{}, {}};
+
+	// I8 cull: skip snapshot+meshing when no face from this chunk would emit.
+	// Lite uniformity means every cell is identical, so the per-cell face test
+	// reduces to a uniform yes/no per direction.
+	if (chunk->isLite()) {
+		const auto& reg = world.blockRegistry();
+		const BlockDef& cdef = reg.get(chunk->liteBid());
+
+		// Non-cube blocks (wheat, doors, stairs) emit special geometry every
+		// cell, regardless of neighbors — never safe to cull.
+		if (cdef.mesh_type == MeshType::Cube) {
+			if (!cdef.solid) {
+				// Non-solid (air): no faces emitted from this chunk ever.
+				return {{}, {}};
+			}
+			// Solid cube. A face emits iff the neighbor isn't fully occluding.
+			// Mirror the per-face cull rule used by the inner loop (line 262).
+			auto neigh = world.getChunkNeighborhood(cpos);
+			const Chunk* faces[6] = {
+				neigh[(0+1)*9 + (0+1)*3 + (-1+1)],  // -X (face 0)
+				neigh[(0+1)*9 + (0+1)*3 + ( 1+1)],  // +X (face 1)
+				neigh[(-1+1)*9 + (0+1)*3 + (0+1)],  // -Y (face 2)
+				neigh[( 1+1)*9 + (0+1)*3 + (0+1)],  // +Y (face 3)
+				neigh[(0+1)*9 + (-1+1)*3 + (0+1)],  // -Z (face 4)
+				neigh[(0+1)*9 + ( 1+1)*3 + (0+1)],  // +Z (face 5)
+			};
+			bool allCulled = true;
+			for (int f = 0; f < 6 && allCulled; ++f) {
+				const Chunk* nc = faces[f];
+				if (!nc || !nc->isLite()) { allCulled = false; break; }
+				const BlockDef& ndef = reg.get(nc->liteBid());
+				bool isYFace = (f == 2 || f == 3);
+				bool occludes = ndef.solid && !ndef.transparent
+				             && (isYFace || ndef.mesh_type == MeshType::Cube);
+				if (!occludes) { allCulled = false; break; }
+			}
+			if (allCulled) return {{}, {}};
+		}
+	}
+
 	if (!fillSnapshot(world, cpos, m_padded)) return {{}, {}};
 	return buildMeshFromSnapshot(m_padded, cpos, world.blockRegistry());
 }
@@ -97,6 +153,89 @@ ChunkMesher::buildMeshFromSnapshot(const PaddedSnapshot& padded, ChunkPos cpos,
 		int idx = padIdx(lx, ly, lz);
 		if (idx < 0 || idx >= (int)padded.blocks.size()) return BLOCK_AIR;
 		return padded.blocks[idx];
+	};
+
+	// Generic plant-mesh emitter. Used by any block with MeshType::Plant
+	// (tall_grass, ferns, cattails, …). Bezier-curve blades distilled from
+	// Vulkan-Grass-Rendering (shineyruan fork, shaders/grass.tese): 3 control
+	// points + De Casteljau along the blade, width tapering to a tip. We emit
+	// static triangles from the CPU instead of driving a tessellation shader
+	// — simpler, fits the existing ChunkVertex pipeline, works from the
+	// mesher's threadpool path.
+	//
+	// Per cell we emit BLADES tufts of SEGMENTS segments, hash-seeded so the
+	// scatter is stable across mesh rebuilds (no flicker on chunk reload).
+	// Every tri is emitted in both winding orders — plants have no back face.
+	//
+	// `rootCol` = base shade (typically color_side), `tipCol` = leaf shade
+	// (typically color_top). Appearance-palette tint (if any) has already
+	// been folded into both by the caller.
+	auto emitPlant = [&](int wx, int wy, int wz,
+	                     const glm::vec3& rootCol, const glm::vec3& tipCol,
+	                     float heightScale, int bladeCount) {
+		const int BLADES = bladeCount;
+		constexpr int SEGMENTS = 3;
+		constexpr float BASE_SHADE = 1.0f;   // plants catch sun — treat as top-lit
+		constexpr glm::vec3 UP_NORMAL = {0.0f, 1.0f, 0.0f};
+
+		for (int b = 0; b < BLADES; b++) {
+			float r0 = bladeHash(wx, wz, b * 4 + 0);  // offset X
+			float r1 = bladeHash(wx, wz, b * 4 + 1);  // offset Z
+			float r2 = bladeHash(wx, wz, b * 4 + 2);  // angle
+			float r3 = bladeHash(wx, wz, b * 4 + 3);  // height/lean
+
+			float bx = (float)wx + 0.15f + r0 * 0.70f;
+			float bz = (float)wz + 0.15f + r1 * 0.70f;
+			float by = (float)wy;   // plant cell sits on its own support
+
+			float ang    = r2 * 6.2831853f;
+			float height = (0.40f + r3 * 0.45f) * heightScale;  // 0.40..0.85
+			float lean   = 0.08f + r3 * 0.18f;
+			float width  = 0.045f;
+
+			glm::vec3 lead = {std::cos(ang), 0.0f, std::sin(ang)};
+			glm::vec3 side = {-lead.z, 0.0f, lead.x};
+
+			glm::vec3 p0 = {bx, by, bz};
+			glm::vec3 p2 = p0 + glm::vec3(lead.x * lean, height, lead.z * lean);
+			glm::vec3 mid = (p0 + p2) * 0.5f;
+			// Lift midpoint so blade arcs convexly upward (Bezier bow).
+			glm::vec3 p1 = mid + glm::vec3(0.0f, height * 0.18f, 0.0f);
+
+			glm::vec3 l[SEGMENTS + 1], r[SEGMENTS + 1];
+			float colorT[SEGMENTS + 1];
+			for (int s = 0; s <= SEGMENTS; s++) {
+				float v = (float)s / (float)SEGMENTS;
+				glm::vec3 a = p0 + v * (p1 - p0);
+				glm::vec3 b2 = p1 + v * (p2 - p1);
+				glm::vec3 c = a + v * (b2 - a);
+				float w = width * (1.0f - v);   // tip tapers to a point
+				l[s] = c - side * w;
+				r[s] = c + side * w;
+				colorT[s] = v;
+			}
+
+			auto pushTri = [&](const glm::vec3& a, const glm::vec3& b2,
+			                   const glm::vec3& c, float ta, float tb, float tc) {
+				glm::vec3 ca = glm::mix(rootCol, tipCol, ta);
+				glm::vec3 cb = glm::mix(rootCol, tipCol, tb);
+				glm::vec3 cc = glm::mix(rootCol, tipCol, tc);
+				verts.push_back({a, ca, UP_NORMAL, 1.0f, BASE_SHADE, 1.0f, 0.0f});
+				verts.push_back({b2, cb, UP_NORMAL, 1.0f, BASE_SHADE, 1.0f, 0.0f});
+				verts.push_back({c, cc, UP_NORMAL, 1.0f, BASE_SHADE, 1.0f, 0.0f});
+			};
+
+			for (int s = 0; s < SEGMENTS; s++) {
+				const glm::vec3& lA = l[s],     rA = r[s];
+				const glm::vec3& lB = l[s + 1], rB = r[s + 1];
+				float cA = colorT[s], cB = colorT[s + 1];
+				pushTri(lA, rA, rB, cA, cA, cB);
+				pushTri(lA, rB, lB, cA, cB, cB);
+				// Double-sided: flipped winding for the back face.
+				pushTri(lA, rB, rA, cA, cB, cA);
+				pushTri(lA, lB, rB, cA, cB, cB);
+			}
+		}
 	};
 
 	// 6-face AABB emit, no neighbor culling. Used for non-cube meshes (stairs, doors)
@@ -208,6 +347,41 @@ ChunkMesher::buildMeshFromSnapshot(const PaddedSnapshot& padded, ChunkPos cpos,
 					emitBox(fx+0.9f, fy, fz, fx+1, fy+1, fz+1, bdef.color_top, bdef.color_side, a);
 				else
 					emitBox(fx, fy, fz, fx+0.1f, fy+1, fz+1, bdef.color_top, bdef.color_side, a);
+			} else if (bdef.mesh_type == MeshType::Plant) {
+				// Plant decoration — Bezier blades keyed off BlockDef colors and
+				// the per-cell appearance tint. Height and blade count both scale
+				// with the palette index so a cluster reads as a visual mound:
+				// short fringe at the edge (idx 1) → tall dramatic tuft at the
+				// core (idx 5). The exact tier meanings are defined by the
+				// content block that uses the Plant mesh (see world_template.h
+				// tallGrassRoll for tall_grass).
+				glm::vec3 rootCol = bdef.color_side;
+				glm::vec3 tipCol  = bdef.color_top;
+				float heightScale = 0.85f;
+				int bladeCount    = 4;
+				if (!bdef.appearance_palette.empty()) {
+					uint8_t appIdx = padded.appearance[padIdx(lx, ly, lz)];
+					if (appIdx >= bdef.appearance_palette.size()) appIdx = 0;
+					glm::vec3 tint = bdef.appearance_palette[appIdx].tint;
+					rootCol *= tint;
+					tipCol  *= tint;
+					// Height table — wide range so the center vs edge of a
+					// cluster reads as obviously different heights. Index 5
+					// exceeds 1 block so the core tufts poke above eye-level.
+					static constexpr float HEIGHT_BY_TIER[6] = {
+						0.85f,  // 0 default (unused for tall_grass)
+						0.55f,  // 1 fringe — short
+						0.80f,  // 2 outer
+						1.10f,  // 3 inner
+						1.45f,  // 4 near-core
+						1.90f,  // 5 core — very tall (> 1 block)
+					};
+					heightScale = HEIGHT_BY_TIER[appIdx];
+					// Taller tufts also have more blades so the core reads as
+					// a dense tussock, not one stretched blade.
+					bladeCount = 3 + (int)appIdx;  // 3..8
+				}
+				emitPlant(wx, wy, wz, rootCol, tipCol, heightScale, bladeCount);
 			}
 			continue;
 		}
@@ -226,6 +400,14 @@ ChunkMesher::buildMeshFromSnapshot(const PaddedSnapshot& padded, ChunkPos cpos,
 			if (face == 2)      color = bdef.color_top;
 			else if (face == 3) color = bdef.color_bottom;
 			else                color = bdef.color_side;
+
+			// Appearance tint multiplies base face color (I5). Empty palette
+			// or index 0 are pass-through; out-of-range is clamped to default.
+			if (!bdef.appearance_palette.empty()) {
+				uint8_t appIdx = padded.appearance[padIdx(lx, ly, lz)];
+				if (appIdx >= bdef.appearance_palette.size()) appIdx = 0;
+				color *= bdef.appearance_palette[appIdx].tint;
+			}
 
 			glm::vec3 normal = glm::vec3(FACE_DIRS[face]);
 			float shade = BLOCK_FACE_SHADE[face];

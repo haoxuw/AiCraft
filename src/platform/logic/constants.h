@@ -95,6 +95,7 @@ namespace BlockType {
 	constexpr const char* Snow         = "snow";
 	constexpr const char* TNT          = "tnt";
 	constexpr const char* Wheat        = "wheat";
+	constexpr const char* TallGrass    = "tall_grass";    // decoration: Bezier tuft on top of grass
 	constexpr const char* Wire         = "wire";
 	constexpr const char* NANDGate     = "nand_gate";
 	constexpr const char* WheatSeeds   = "wheat_seeds";

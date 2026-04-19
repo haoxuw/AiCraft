@@ -727,11 +727,15 @@ public:
 	}
 
 	// S_BLOCK broadcast + drop annotations as items on break + update ChunkInfo.
-	void onBlockChanged(glm::ivec3 pos, BlockId oldBid, BlockId newBid, uint8_t p2) {
+	void onBlockChanged(const BlockChange& bc) {
+		const glm::ivec3& pos = bc.pos;
+		BlockId oldBid = bc.oldBid;
+		BlockId newBid = bc.newBid;
+		uint8_t p2 = bc.newP2;
 		{
 			net::WriteBuffer wb;
 			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
-			wb.writeU32(newBid); wb.writeU8(p2);
+			wb.writeU32(newBid); wb.writeU8(p2); wb.writeU8(bc.newApp);  // v5+
 			broadcastToAll(net::S_BLOCK, wb);
 		}
 
@@ -1103,12 +1107,14 @@ private:
 		Chunk* chunk = m_server.world().getChunk(pos);
 		if (!chunk) return;
 
-		// Payload: [i32 cx][i32 cy][i32 cz][u32×4096]
+		// Payload: [i32 cx][i32 cy][i32 cz][u32×4096][u8×4096 appearance] (v5+)
 		//          [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N
 		net::WriteBuffer cb;
 		cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
 		for (int i = 0; i < CHUNK_VOLUME; i++)
 			cb.writeU32(((uint32_t)chunk->getRawParam2(i) << 16) | chunk->getRaw(i));
+		for (int i = 0; i < CHUNK_VOLUME; i++)
+			cb.writeU8(chunk->getRawAppearance(i));
 
 		// Annotations piggyback on S_CHUNK so decorations render immediately.
 		auto annots = m_server.world().annotationsInChunk(pos);

@@ -29,7 +29,7 @@ struct BlockSample {
 };
 
 struct PlanStep {
-	enum Type { Move, Harvest, Attack, Relocate };
+	enum Type { Move, Harvest, Attack, Relocate, Interact };
 
 	Type      type          = Move;
 	glm::vec3 targetPos     = {0, 0, 0};
@@ -39,6 +39,11 @@ struct PlanStep {
 	std::string itemId;
 	int       itemCount     = 1;
 	float     speed         = 2.0f;
+
+	// Interact: world-space block to mutate. appearanceIdx >= 0 writes the
+	// palette entry at targetPos without changing block type (I3). -1 means
+	// legacy "toggle" (door/TNT); see docs/22_APPEARANCE.md.
+	int16_t   appearanceIdx = -1;
 
 	// Commit duration requested by the behavior. Semantics per step type:
 	//   Move, idle-hold (target==self): success at progress >= holdTime
@@ -62,6 +67,10 @@ struct PlanStep {
 		PlanStep s; s.type = Relocate;
 		s.relocateFrom = from; s.relocateTo = to;
 		s.itemId = item; s.itemCount = count; return s;
+	}
+	static PlanStep interact(glm::vec3 pos, int16_t appearanceIdx = -1) {
+		PlanStep s; s.type = Interact; s.targetPos = pos;
+		s.appearanceIdx = appearanceIdx; return s;
 	}
 };
 

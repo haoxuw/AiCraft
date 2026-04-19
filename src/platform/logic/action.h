@@ -74,6 +74,10 @@ struct ActionProposal {
 
 	// Interact: toggle block state (door/button/TNT)
 	glm::ivec3  blockPos   = {0, 0, 0};
+	// Interact with an appearance index set (>=0) writes BlockDef palette index
+	// at blockPos; -1 means "no appearance mutation, toggle block state as
+	// before". See docs/22_APPEARANCE.md invariant I3.
+	int16_t     appearanceIdx = -1;
 
 	// Hot-reload: non-empty = Python behavior swap (control message, not a game action).
 	std::string behaviorSource;

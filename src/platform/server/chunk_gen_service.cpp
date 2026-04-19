@@ -109,13 +109,17 @@ void ChunkGenService::workerLoop() {
 
 void ChunkGenService::buildMessage(const Chunk& chunk, ChunkPos pos, bool useZstd,
                                    std::vector<uint8_t>& out) const {
-	// Payload: [i32 cx][i32 cy][i32 cz][u32×CHUNK_VOLUME] — matches ClientManager::queueChunk.
+	// Payload: [i32 cx][i32 cy][i32 cz][u32×CHUNK_VOLUME][u8×CHUNK_VOLUME appearance]
+	// — matches ClientManager::queueChunk. Annotation tail (if any) is appended
+	// by the caller, after the appearance block.
 	net::WriteBuffer cb;
 	cb.writeI32(pos.x);
 	cb.writeI32(pos.y);
 	cb.writeI32(pos.z);
 	for (int i = 0; i < CHUNK_VOLUME; i++)
 		cb.writeU32(((uint32_t)chunk.getRawParam2(i) << 16) | chunk.getRaw(i));
+	for (int i = 0; i < CHUNK_VOLUME; i++)
+		cb.writeU8(chunk.getRawAppearance(i));
 
 	std::vector<uint8_t> payload;
 	net::MsgType msgType = net::S_CHUNK;

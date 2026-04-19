@@ -19,6 +19,23 @@ public:
 	virtual BlockId getBlock(int x, int y, int z) = 0;
 	virtual const BlockRegistry& blockRegistry() const = 0;
 
+	// Appearance lookup — default forwards to the underlying chunk's storage.
+	// Override only if you need to intercept (e.g. tests). Returns 0 for
+	// unloaded chunks or out-of-range coords.
+	virtual uint8_t getAppearance(int x, int y, int z) {
+		ChunkPos cp{
+			(x >= 0) ? x / CHUNK_SIZE : (x - CHUNK_SIZE + 1) / CHUNK_SIZE,
+			(y >= 0) ? y / CHUNK_SIZE : (y - CHUNK_SIZE + 1) / CHUNK_SIZE,
+			(z >= 0) ? z / CHUNK_SIZE : (z - CHUNK_SIZE + 1) / CHUNK_SIZE,
+		};
+		Chunk* c = getChunkIfLoaded(cp);
+		if (!c) return 0;
+		int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+		int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+		int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+		return c->getAppearance(lx, ly, lz);
+	}
+
 	// Center + 26 neighbors. Default: 27 getChunkIfLoaded calls.
 	virtual std::array<Chunk*, 27> getChunkNeighborhood(ChunkPos center) {
 		std::array<Chunk*, 27> result{};

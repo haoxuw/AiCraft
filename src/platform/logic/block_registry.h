@@ -1,11 +1,13 @@
 #pragma once
 
 #include "logic/constants.h"
+#include "logic/appearance.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
+#include <algorithm>
 
 namespace civcraft {
 
@@ -20,6 +22,11 @@ enum class MeshType {
 	Stair,     // L-step; param2 FourDir = rise direction (0=+Z, 1=+X, 2=-Z, 3=-X)
 	Door,      // closed: thin panel on -Z, 0.1 thick
 	DoorOpen,  // open: rotated 90° to -X
+	Plant,     // decoration: Bezier blades/tufts emitted by the mesher.
+	           // color_side = base (root), color_top = tip. Non-solid cells sit
+	           // ON TOP of their supporting block. Worldgen places them on
+	           // specific surfaces (tall_grass on grass, cattail on sand near
+	           // water, etc.) — the mesh is generic; the placement is content.
 };
 
 // None = param2 unused; FourDir = bits 0-1 facing (0=+Z, 1=+X, 2=-Z, 3=-X).
@@ -54,6 +61,17 @@ struct BlockDef {
 	MeshType mesh_type = MeshType::Cube;      // visual only, not physics
 	Param2Type param2type = Param2Type::None;
 	bool surface_glow = false;                // client-only animated effect
+
+	// Visual variations. Entry 0 is the default (implicit if palette is empty).
+	// See docs/22_APPEARANCE.md — appearance is independent of block type.
+	std::vector<AppearanceEntry> appearance_palette;
+
+	// Clamp an incoming appearance index to [0, paletteSize). An empty palette
+	// is treated as a single entry (the default), so the only valid index is 0.
+	uint8_t clampAppearance(uint8_t idx) const {
+		size_t n = appearance_palette.empty() ? 1 : appearance_palette.size();
+		return (idx < n) ? idx : 0;
+	}
 };
 
 struct BlockState {

@@ -173,6 +173,23 @@ public:
 		return out;
 	}
 
+	// Appearance mutator — see docs/22_APPEARANCE.md invariant I1. Clamped
+	// against the block's palette (I4). Returns the old appearance index so the
+	// caller can emit onBlockChange without an extra read.
+	uint8_t setAppearance(int x, int y, int z, uint8_t idx) {
+		ChunkPos cp = worldToChunk(x, y, z);
+		Chunk* c = getChunk(cp);
+		if (!c) return 0;
+		int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+		int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+		int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+		BlockId bid = c->get(lx, ly, lz);
+		uint8_t clamped = blocks.get(bid).clampAppearance(idx);
+		uint8_t old = c->getAppearance(lx, ly, lz);
+		c->setAppearance(lx, ly, lz, clamped);
+		return old;
+	}
+
 	void setBlockState(int x, int y, int z, const BlockStateMap& state) {
 		activeBlocks[{x, y, z}] = state;
 	}

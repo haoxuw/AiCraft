@@ -25,10 +25,11 @@
  * S_WELCOME       0x1001  [u32 entityId][vec3 spawn]
  * S_ENTITY        0x1002  EntityState (see serializeEntityState)
  * S_CHUNK         0x1003  Uncompressed chunk [i32 cx][i32 cy][i32 cz][u32×4096]
+ *                          [u8×4096 appearance]  (v5+)
  *                          [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N
  * S_REMOVE        0x1004  [u32 entityId]
  * S_TIME          0x1005  [f32 worldTime][u32 dayCount?]  (dayCount optional for back-compat)
- * S_BLOCK         0x1006  [i32 x][i32 y][i32 z][u32 blockId][u8 param2]
+ * S_BLOCK         0x1006  [i32 x][i32 y][i32 z][u32 blockId][u8 param2][u8 appearance?]  (appearance v5+)
  * S_INVENTORY     0x1007  [u32 eid][u32 n][str×n id][i32×n count][u8 equipN][str×equipN slot][str×equipN id]
  * S_ERROR         0x100B  [u32 entityId][str message]
  * S_CHUNK_EVICT   0x100E  Discard chunk [i32 cx][i32 cy][i32 cz]  (v2)
@@ -54,7 +55,10 @@ namespace civcraft::net {
 // v3: adds S_WEATHER.
 // v4: adds S_ENTITY_DELTA — field-bitmap + quantized per-entity updates. Server
 //     sends S_ENTITY_DELTA for v4+ clients, legacy S_ENTITY for v3.
-static constexpr uint32_t PROTOCOL_VERSION = 4;
+// v5: S_CHUNK carries a trailing [u8 × CHUNK_VOLUME] appearance array after the
+//     packed block data and before the annotation tail. S_BLOCK gains a trailing
+//     u8 appearance index (read conditionally via hasMore for back-compat reads).
+static constexpr uint32_t PROTOCOL_VERSION = 5;
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -225,6 +229,7 @@ inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	writeContainer(buf, a.convertInto);
 	// Interact
 	buf.writeIVec3(a.blockPos);
+	buf.writeI16(a.appearanceIdx);
 	// Hot-reload side-channel
 	buf.writeString(a.behaviorSource);
 }
@@ -263,6 +268,7 @@ inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	// Interact
 	if (!buf.hasMore()) return a;
 	a.blockPos = buf.readIVec3();
+	if (buf.hasMore()) a.appearanceIdx = buf.readI16();
 	// Hot-reload side-channel
 	if (!buf.hasMore()) return a;
 	a.behaviorSource = buf.readString();

@@ -66,12 +66,33 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		         savePath.c_str(), pos.x, pos.y, pos.z);
 		std::ofstream cf(filename, std::ios::binary);
 		if (cf.is_open()) {
-			// Format: 4096×uint16_t blocks + 4096×uint8_t param2 = 12288 bytes
-			auto& blocks = chunk.rawBlocks();
-			cf.write(reinterpret_cast<const char*>(blocks.data()),
-			         CHUNK_VOLUME * sizeof(BlockId));
-			auto& p2 = chunk.rawParam2();
-			cf.write(reinterpret_cast<const char*>(p2.data()), CHUNK_VOLUME);
+			// Format v2: u8 mode + payload.
+			//   Lite (mode=0): u16 bid + u8 appearance = 3 byte payload (4 B total).
+			//   Full (mode=1): 4096×u16 blocks + 4096×u8 param2 + 4096×u8 app
+			//                  = 16384 byte payload (16385 B total).
+			// Legacy headerless v1: 8192 / 12288 / 16384 raw bytes — see load.
+			if (chunk.isLite()) {
+				uint8_t mode = 0;
+				cf.write(reinterpret_cast<const char*>(&mode), 1);
+				BlockId bid = chunk.liteBid();
+				uint8_t app = chunk.liteAppearance();
+				cf.write(reinterpret_cast<const char*>(&bid), sizeof(BlockId));
+				cf.write(reinterpret_cast<const char*>(&app), 1);
+			} else {
+				uint8_t mode = 1;
+				cf.write(reinterpret_cast<const char*>(&mode), 1);
+				std::array<BlockId, CHUNK_VOLUME> blocks;
+				std::array<uint8_t, CHUNK_VOLUME> p2, app;
+				for (int i = 0; i < CHUNK_VOLUME; ++i) {
+					blocks[i] = chunk.getRaw(i);
+					p2[i]     = chunk.getRawParam2(i);
+					app[i]    = chunk.getRawAppearance(i);
+				}
+				cf.write(reinterpret_cast<const char*>(blocks.data()),
+				         CHUNK_VOLUME * sizeof(BlockId));
+				cf.write(reinterpret_cast<const char*>(p2.data()), CHUNK_VOLUME);
+				cf.write(reinterpret_cast<const char*>(app.data()), CHUNK_VOLUME);
+			}
 			chunkCount++;
 		}
 	});
@@ -362,25 +383,52 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 			std::ifstream cf(entry.path(), std::ios::binary);
 			if (!cf.is_open()) continue;
 
-			// 8192 = legacy blocks-only; 12288 = blocks + param2.
+			// File-size discriminator:
+			//   4         = v2 Lite (mode=0, u16 bid, u8 app)
+			//   16385     = v2 Full (mode=1, then 4096×u16 + 4096×u8 + 4096×u8)
+			//   8192      = v1 legacy blocks-only
+			//   12288     = v1 legacy blocks + param2
+			//   16384     = v1 legacy blocks + param2 + appearance
 			cf.seekg(0, std::ios::end);
 			auto fileSize = cf.tellg();
 			cf.seekg(0, std::ios::beg);
 
-			std::array<BlockId, CHUNK_VOLUME> blocks;
-			cf.read(reinterpret_cast<char*>(blocks.data()), CHUNK_VOLUME * sizeof(BlockId));
-
-			std::array<uint8_t, CHUNK_VOLUME> param2;
-			param2.fill(0);
-			if (fileSize >= (std::streampos)(CHUNK_VOLUME * sizeof(BlockId) + CHUNK_VOLUME))
-				cf.read(reinterpret_cast<char*>(param2.data()), CHUNK_VOLUME);
-
-			// getChunk generates first, then we overwrite with saved data.
 			ChunkPos pos = {cx, cy, cz};
 			Chunk* chunk = world.getChunk(pos);
-			if (chunk) {
+			if (!chunk) continue;
+
+			if (fileSize == (std::streampos)4) {
+				uint8_t mode; cf.read(reinterpret_cast<char*>(&mode), 1);
+				BlockId bid; cf.read(reinterpret_cast<char*>(&bid), sizeof(BlockId));
+				uint8_t app; cf.read(reinterpret_cast<char*>(&app), 1);
+				chunk->resetLite(bid, app);
+				chunkCount++;
+				continue;
+			}
+
+			std::array<BlockId, CHUNK_VOLUME> blocks;
+			std::array<uint8_t, CHUNK_VOLUME> param2; param2.fill(0);
+			std::array<uint8_t, CHUNK_VOLUME> appearance; appearance.fill(0);
+
+			if (fileSize == (std::streampos)16385) {
+				// v2 Full — skip 1-byte mode prefix.
+				uint8_t mode; cf.read(reinterpret_cast<char*>(&mode), 1);
+				cf.read(reinterpret_cast<char*>(blocks.data()), CHUNK_VOLUME * sizeof(BlockId));
+				cf.read(reinterpret_cast<char*>(param2.data()), CHUNK_VOLUME);
+				cf.read(reinterpret_cast<char*>(appearance.data()), CHUNK_VOLUME);
+			} else {
+				// v1 legacy formats — headerless.
+				cf.read(reinterpret_cast<char*>(blocks.data()), CHUNK_VOLUME * sizeof(BlockId));
+				if (fileSize >= (std::streampos)(CHUNK_VOLUME * sizeof(BlockId) + CHUNK_VOLUME))
+					cf.read(reinterpret_cast<char*>(param2.data()), CHUNK_VOLUME);
+				if (fileSize >= (std::streampos)(CHUNK_VOLUME * sizeof(BlockId) + 2 * CHUNK_VOLUME))
+					cf.read(reinterpret_cast<char*>(appearance.data()), CHUNK_VOLUME);
+			}
+
+			{
 				chunk->setRawBlocks(blocks);
 				chunk->setRawParam2Array(param2);
+				chunk->setRawAppearanceArray(appearance);
 				chunkCount++;
 			}
 		}

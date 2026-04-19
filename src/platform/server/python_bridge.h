@@ -174,6 +174,7 @@ public:
 
 	// Per-call, mutex-protected.
 	using BlockQueryFn      = std::function<std::string(int, int, int)>;
+	using AppearanceQueryFn = std::function<int(int, int, int)>;
 	using ScanBlocksFn      = std::function<std::vector<BlockSample>(const std::string&, glm::vec3, float, int)>;
 	using ScanEntitiesFn    = std::function<std::vector<NearbyEntity>(const std::string&, glm::vec3, float, int)>;
 	// Same shape as blocks; hits are decorator positions (flowers, moss) by typeId.
@@ -195,7 +196,8 @@ public:
 	                ScanAnnotationsFn scanAnnotationsFn = nullptr,
 	                const std::string& lastOutcome = "none",
 	                const std::string& lastGoal    = "",
-	                const std::string& lastReason  = "");
+	                const std::string& lastReason  = "",
+	                AppearanceQueryFn appearanceQueryFn = nullptr);
 
 private:
 	bool m_initialized = false;

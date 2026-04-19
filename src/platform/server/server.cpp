@@ -415,6 +415,26 @@ void GameServer::resolveActions(float dt) {
 				break;
 			}
 
+			const bool fromBlock = (p.convertFrom.kind == Container::Kind::Block);
+			const bool intoBlock = (p.convertInto.kind == Container::Kind::Block);
+
+			// Position-authoritative block source (I3 of docs/22_APPEARANCE.md):
+			// when the source is a block, server derives fromItem from the actual
+			// block at the position. Client-supplied fromItem is ignored — this
+			// eliminates SourceBlockTypeMismatch rejects when a painter mutates
+			// the block type mid-plan. Must run before value-conservation so the
+			// material-value lookup uses the authoritative id.
+			if (fromBlock) {
+				auto& bp = p.convertFrom.pos;
+				BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
+				if (bid == BLOCK_AIR) {
+					char buf[96]; std::snprintf(buf, sizeof(buf),
+						"source block at (%d,%d,%d) is already air", bp.x, bp.y, bp.z);
+					nudge(ActionRejectCode::SourceBlockGone, buf); break;
+				}
+				p.fromItem = m_world->blocks.get(bid).string_id;
+			}
+
 			// Rule 0: output value must not exceed input.
 			float inVal  = getMaterialValue(p.fromItem) * (float)p.fromCount;
 			float outVal = getMaterialValue(p.toItem)   * (float)p.toCount;
@@ -426,9 +446,6 @@ void GameServer::resolveActions(float dt) {
 				nudge(ActionRejectCode::ValueConservationViolated, buf);
 				break;
 			}
-
-			const bool fromBlock = (p.convertFrom.kind == Container::Kind::Block);
-			const bool intoBlock = (p.convertInto.kind == Container::Kind::Block);
 
 			// Validate placement BEFORE consuming source (prevents item loss on race).
 			if (intoBlock) {
@@ -452,28 +469,17 @@ void GameServer::resolveActions(float dt) {
 			// Consume source.
 			if (fromBlock) {
 				auto& bp = p.convertFrom.pos;
+				// Early derivation above already proved bid != AIR and set fromItem.
 				BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
-				if (bid == BLOCK_AIR) {
-					char buf[96]; std::snprintf(buf, sizeof(buf),
-						"source block at (%d,%d,%d) is already air", bp.x, bp.y, bp.z);
-					nudge(ActionRejectCode::SourceBlockGone, buf); break;
-				}
-				const BlockDef& bdef = m_world->blocks.get(bid);
-				// Anti-cheat: fromItem must match actual block.
-				if (!p.fromItem.empty() && bdef.string_id != p.fromItem) {
-					char buf[160]; std::snprintf(buf, sizeof(buf),
-						"source block at (%d,%d,%d) is '%s', action claims '%s'",
-						bp.x, bp.y, bp.z, bdef.string_id.c_str(), p.fromItem.c_str());
-					nudge(ActionRejectCode::SourceBlockTypeMismatch, buf); break;
-				}
-
 				m_world->removeBlockState(bp.x, bp.y, bp.z);
 				ChunkPos cp = worldToChunk(bp.x, bp.y, bp.z);
 				Chunk* c = m_world->getChunk(cp);
 				if (!c) break;
-				c->set(((bp.x % 16) + 16) % 16, ((bp.y % 16) + 16) % 16,
-				       ((bp.z % 16) + 16) % 16, BLOCK_AIR);
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(bp, bid, BLOCK_AIR, 0);
+				int lx = ((bp.x % 16) + 16) % 16, ly = ((bp.y % 16) + 16) % 16, lz = ((bp.z % 16) + 16) % 16;
+				uint8_t oldP2 = c->getParam2(lx, ly, lz);
+				uint8_t oldApp = c->getAppearance(lx, ly, lz);
+				c->set(lx, ly, lz, BLOCK_AIR);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{bp, bid, BLOCK_AIR, oldP2, 0, oldApp, 0});
 
 				// Structure damage: remove entity if anchor destroyed.
 				EntityId sid = m_structureCacher.lookup(bp);
@@ -555,7 +561,7 @@ void GameServer::resolveActions(float dt) {
 				BlockId placedBid = m_world->blocks.getId(p.toItem);
 				c->set(((pp.x % 16) + 16) % 16, ((pp.y % 16) + 16) % 16,
 				       ((pp.z % 16) + 16) % 16, placedBid, placeP2);
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pp, BLOCK_AIR, placedBid, placeP2);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pp, BLOCK_AIR, placedBid, 0, placeP2, 0, 0});
 
 				if (placedDef->behavior == BlockBehavior::Active)
 					m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
@@ -589,6 +595,25 @@ void GameServer::resolveActions(float dt) {
 			BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
 			const BlockDef& bdef = m_world->blocks.get(bid);
 
+			// Appearance mutation (I3): TYPE_INTERACT with appearanceIdx >= 0
+			// writes into the palette; BlockId/param2 are preserved. No-op if
+			// source block is AIR.
+			if (p.appearanceIdx >= 0) {
+				if (bid == BLOCK_AIR) break;
+				uint8_t clamped = bdef.clampAppearance((uint8_t)p.appearanceIdx);
+				uint8_t oldApp = m_world->setAppearance(bp.x, bp.y, bp.z, clamped);
+				if (oldApp != clamped && m_callbacks.onBlockChange) {
+					uint8_t p2 = 0;
+					ChunkPos cp = worldToChunk(bp.x, bp.y, bp.z);
+					if (Chunk* c = m_world->getChunk(cp)) {
+						int lx = ((bp.x%16)+16)%16, ly = ((bp.y%16)+16)%16, lz = ((bp.z%16)+16)%16;
+						p2 = c->getParam2(lx, ly, lz);
+					}
+					m_callbacks.onBlockChange(BlockChange{bp, bid, bid, p2, p2, oldApp, clamped});
+				}
+				break;
+			}
+
 			if (bdef.string_id == BlockType::TNT) {
 				auto* tntState = m_world->getBlockState(bp.x, bp.y, bp.z);
 				if (!tntState) {
@@ -616,10 +641,11 @@ void GameServer::resolveActions(float dt) {
 				if (!c) return;
 				int lx = ((x%16)+16)%16, ly = ((y%16)+16)%16, lz = ((z%16)+16)%16;
 				uint8_t p2 = c->getParam2(lx, ly, lz);
+				uint8_t oldApp = c->getAppearance(lx, ly, lz);
 				BlockId oldId = c->get(lx, ly, lz);  // MUST read before set
 				c->set(lx, ly, lz, id, p2);
 				glm::ivec3 pos{x, y, z};
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, oldId, id, p2);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pos, oldId, id, p2, p2, oldApp, 0});
 			};
 
 			setBlock(bp.x, bp.y, bp.z, newId);

@@ -97,8 +97,19 @@ inline const char* rejectCodeName(ActionRejectCode c) {
 }
 
 // TCP broadcast hooks. Rule 5: nothing display-related here.
+// BlockChange carries the full before/after triple per invariant I2
+// (docs/22_APPEARANCE.md). Unset fields default to 0.
+struct BlockChange {
+	glm::ivec3 pos{0, 0, 0};
+	BlockId oldBid = 0;
+	BlockId newBid = 0;
+	uint8_t oldP2 = 0;
+	uint8_t newP2 = 0;
+	uint8_t oldApp = 0;
+	uint8_t newApp = 0;
+};
 struct ServerCallbacks {
-	std::function<void(glm::ivec3 pos, BlockId oldBid, BlockId newBid, uint8_t p2)> onBlockChange;
+	std::function<void(const BlockChange&)> onBlockChange;
 	std::function<void(EntityId id)> onEntityRemove;
 	std::function<void(EntityId id, const Inventory&)> onInventoryChange;
 };
@@ -552,7 +563,8 @@ public:
 	ServerCallbacks& callbacks() { return m_callbacks; }
 
 	// Any leaf-variant block. SeasonalLeaves mutates these and only these, so
-	// player-placed logs or player-broken gaps are left alone.
+	// player-placed logs or player-broken gaps are left alone. Legacy leaves_*
+	// ids remain valid for worlds saved before the appearance migration.
 	static bool isLeafBlockId(const std::string& sid) {
 		return sid == BlockType::Leaves
 		    || sid == BlockType::LeavesSpring
@@ -564,21 +576,25 @@ public:
 		    || sid == BlockType::LeavesSnow;
 	}
 
-	// Paints every position in `f.leafPositions` that is still a leaf-variant
-	// block to `newBid`. Caller handles RNG/season gating.
-	void paintTreeLeaves(const StructureFeature& f, BlockId newBid) {
+	// Writes appearance idx into every position in `f.leafPositions` whose
+	// cell is still a leaf-variant block. Block id is preserved (I3). Caller
+	// handles RNG/season gating.
+	void paintTreeLeaves(const StructureFeature& f, uint8_t appearanceIdx) {
 		for (const auto& p : f.leafPositions) {
 			ChunkPos cp = worldToChunk(p.x, p.y, p.z);
 			Chunk* c = m_world->getChunkIfLoaded(cp);
 			if (!c) continue;
 			int lx = ((p.x%16)+16)%16, ly = ((p.y%16)+16)%16, lz = ((p.z%16)+16)%16;
 			BlockId cur = c->get(lx, ly, lz);
-			const std::string& csid = m_world->blocks.get(cur).string_id;
-			if (!isLeafBlockId(csid)) continue;  // mined / replaced — skip
-			if (cur == newBid) continue;
-			c->set(lx, ly, lz, newBid);
+			const BlockDef& def = m_world->blocks.get(cur);
+			if (!isLeafBlockId(def.string_id)) continue;  // mined / replaced — skip
+			uint8_t clamped = def.clampAppearance(appearanceIdx);
+			uint8_t oldApp = c->getAppearance(lx, ly, lz);
+			if (oldApp == clamped) continue;
+			c->setAppearance(lx, ly, lz, clamped);
+			uint8_t p2 = c->getParam2(lx, ly, lz);
 			if (m_callbacks.onBlockChange)
-				m_callbacks.onBlockChange(p, cur, newBid, 0);
+				m_callbacks.onBlockChange(BlockChange{p, cur, cur, p2, p2, oldApp, clamped});
 		}
 	}
 
@@ -610,7 +626,7 @@ public:
 				f.leafPositions    = p.leafPositions;  // exact per-tree canopy
 				f.scanned          = true;             // authoritative — skip BFS
 				f.seasonIdxApplied = -1;
-				f.currentVariant.clear();
+				f.currentAppearance = -1;
 
 				// Some trees spawn already in this season's palette so a fresh
 				// autumn world shows autumn colors. Others stay default (green)
@@ -618,13 +634,10 @@ public:
 				const auto& palette = f.seasonVariants[currentSeason];
 				if (!palette.empty() && uroll(m_featureRng) < f.spawnTransitionChance) {
 					std::uniform_int_distribution<int> pick(0, (int)palette.size() - 1);
-					const std::string& chosen = palette[pick(m_featureRng)];
-					BlockId newBid = m_world->blocks.getId(chosen);
-					if (newBid != BLOCK_AIR) {
-						paintTreeLeaves(f, newBid);
-						f.seasonIdxApplied = currentSeason;
-						f.currentVariant   = chosen;
-					}
+					uint8_t chosen = palette[pick(m_featureRng)];
+					paintTreeLeaves(f, chosen);
+					f.seasonIdxApplied  = currentSeason;
+					f.currentAppearance = chosen;
 				}
 			}
 		}
@@ -651,13 +664,11 @@ public:
 		if (uroll(m_featureRng) >= f.perTickProb) return;
 
 		std::uniform_int_distribution<int> pick(0, (int)palette.size() - 1);
-		const std::string& chosen = palette[pick(m_featureRng)];
-		BlockId newBid = m_world->blocks.getId(chosen);
-		if (newBid == BLOCK_AIR) return;
+		uint8_t chosen = palette[pick(m_featureRng)];
 
-		paintTreeLeaves(f, newBid);
-		f.seasonIdxApplied = currentSeason;
-		f.currentVariant   = chosen;
+		paintTreeLeaves(f, chosen);
+		f.seasonIdxApplied  = currentSeason;
+		f.currentAppearance = chosen;
 	}
 
 	void tick(float dt) {
@@ -717,7 +728,7 @@ public:
 		if (m_activeBlockTimer >= 0.05f) {
 			m_world->tickActiveBlocks(m_activeBlockTimer, [&](int bx, int by, int bz, BlockId bid) {
 				glm::ivec3 pos{bx, by, bz};
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(pos, BLOCK_AIR, bid, 0);
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pos, BLOCK_AIR, bid, 0, 0, 0, 0});
 			});
 			m_activeBlockTimer = 0;
 		}
@@ -779,7 +790,7 @@ public:
 								       ((wp.y % 16) + 16) % 16,
 								       ((wp.z % 16) + 16) % 16, bid);
 								if (m_callbacks.onBlockChange)
-									m_callbacks.onBlockChange(wp, BLOCK_AIR, bid, 0);
+									m_callbacks.onBlockChange(BlockChange{wp, BLOCK_AIR, bid, 0, 0, 0, 0});
 							}
 						}
 					}

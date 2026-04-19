@@ -355,6 +355,17 @@ private:
 			return srv->blockRegistry().get(bid).string_id;
 		};
 
+		req.appearanceQuery = [srv](int x, int y, int z) -> int {
+			auto& chunks = srv->chunks();
+			ChunkPos cp = worldToChunk(x, y, z);
+			auto* chunk = chunks.getChunkIfLoaded(cp);
+			if (!chunk) return 0;
+			int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+			return (int)chunk->getAppearance(lx, ly, lz);
+		};
+
 		req.scanBlocks = [srv](const std::string& typeId, glm::vec3 origin,
 		                       float maxDist, int maxResults)
 		    -> std::vector<BlockSample> {
