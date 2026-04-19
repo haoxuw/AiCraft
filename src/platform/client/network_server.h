@@ -19,6 +19,8 @@
 #include <string>
 #include <random>
 #include <thread>
+#include <atomic>
+#include <mutex>
 #include <chrono>
 #include <algorithm>
 #include <vector>
@@ -41,6 +43,11 @@ public:
 		printf("[Net] Client UUID: %s\n", m_clientUUID.c_str());
 	}
 
+	~NetworkServer() {
+		// Belt & suspenders: stop the worker in case the caller skipped disconnect().
+		stopNetThread();
+	}
+
 	bool createGame(int seed, int templateIndex,
 	                const WorldGenConfig& /*wgc*/ = WorldGenConfig{}) override {
 		if (!m_tcp.connect(m_host.c_str(), m_port)) {
@@ -49,6 +56,7 @@ public:
 		}
 
 		m_connected = true;
+		startNetThread();
 
 		// Server defers entity creation until C_HELLO, then replies S_WELCOME.
 		{
@@ -70,7 +78,9 @@ public:
 		// Generous 60s timeout — server prep phase streams S_PREPARING/S_CHUNK* first.
 		auto start = std::chrono::steady_clock::now();
 		while (m_connected && !m_welcomeReceived) {
-			if (drainSocket() < 0) {
+			// Worker feeds queue asynchronously; we drain on this thread so
+			// handleMessage's mutation of m_entities / m_world stays single-threaded.
+			if (drainQueue() < 0) {
 				printf("[Net] Connection lost waiting for welcome\n");
 				break;
 			}
@@ -99,6 +109,7 @@ public:
 			return false;
 		}
 		m_connected = true;
+		startNetThread();
 		{
 			std::string name = m_displayName.empty()
 				? ("Player-" + m_clientUUID.substr(0, 4))
@@ -128,6 +139,11 @@ public:
 			net::WriteBuffer wb;
 			net::sendMessage(m_tcp.fd(), net::C_QUIT, wb);
 		}
+		// Stop the worker BEFORE closing the socket — the worker reads from the
+		// fd, and closing it while the worker is in readFrom() gives a clean
+		// EBADF/0-return; stop flag ensures the worker exits its loop instead
+		// of racing on a new fd if we reconnect soon after.
+		stopNetThread();
 		m_tcp.disconnect();
 		m_connected = false;
 		m_serverReady = false;
@@ -135,6 +151,12 @@ public:
 		m_preparingPct = -1.0f;
 		m_controlledEid = ENTITY_NONE;
 		m_heartbeatTimer = 0.0f;
+		// Drop any unprocessed messages from the last session.
+		{
+			std::lock_guard<std::mutex> lk(m_queueMu);
+			m_queue.clear();
+		}
+		m_pending.clear();
 	}
 
 	bool isConnected() const override { return m_connected; }
@@ -164,7 +186,7 @@ public:
 			net::sendMessage(m_tcp.fd(), net::C_PING, wb);
 		}
 
-		int msgCount = drainSocket();
+		int msgCount = drainQueue();
 		if (msgCount < 0) {
 			printf("[Net] Connection lost\n");
 			disconnect();
@@ -503,6 +525,128 @@ private:
 			out.push_back({wpos, a});
 		}
 		m_world.setAnnotations(cp, std::move(out));
+	}
+
+	// ── Network worker ────────────────────────────────────────────────
+	// Moves socket-read and zstd decompress off the render thread. The worker
+	// reads frames, decompresses S_CHUNK_Z payloads (pushed as S_CHUNK — the
+	// decompressed layout matches an uncompressed chunk frame byte-for-byte),
+	// and enqueues QueuedMsg's. The main thread calls drainQueue() once per
+	// tick; handleMessage still runs on the main thread, so all mutation of
+	// m_entities / m_world / m_reconciler stays single-threaded. TCP sends
+	// stay on the main thread — kernel allows concurrent send/recv on one fd.
+	struct QueuedMsg {
+		uint32_t type;
+		std::vector<uint8_t> payload;
+	};
+
+	void startNetThread() {
+		if (m_netThread.joinable()) return;
+		m_netStop.store(false, std::memory_order_relaxed);
+		m_netError.store(false, std::memory_order_relaxed);
+		m_netThread = std::thread(&NetworkServer::netThreadLoop, this);
+	}
+
+	void stopNetThread() {
+		if (!m_netThread.joinable()) return;
+		m_netStop.store(true, std::memory_order_relaxed);
+		// The fd is closed by the caller (disconnect) which wakes the worker
+		// out of readFrom() with EBADF. If we're called from the destructor
+		// without a prior disconnect, the socket is still open — the stop
+		// flag + the 1ms idle sleep bounds the shutdown wait.
+		m_netThread.join();
+	}
+
+	void netThreadLoop() {
+#ifndef __EMSCRIPTEN__
+		while (!m_netStop.load(std::memory_order_relaxed)) {
+			if (!m_recv.readFrom(m_tcp.fd())) {
+				m_netError.store(true, std::memory_order_relaxed);
+				return;
+			}
+			net::MsgHeader hdr;
+			std::vector<uint8_t> payload;
+			bool extracted = false;
+			while (m_recv.tryExtract(hdr, payload)) {
+				extracted = true;
+				uint32_t type = hdr.type;
+				std::vector<uint8_t> out;
+				if (type == net::S_CHUNK_Z) {
+					// Decompress here so the main thread sees a regular
+					// S_CHUNK payload — same x/y/z/block/appearance/annotation
+					// layout, no zstd cost on the render thread.
+					size_t compSize = payload.size();
+					const uint8_t* compData = payload.data();
+					size_t decompBound = ZSTD_getFrameContentSize(compData, compSize);
+					if (decompBound == ZSTD_CONTENTSIZE_ERROR || decompBound == ZSTD_CONTENTSIZE_UNKNOWN) {
+						fprintf(stderr, "[Net] bad zstd frame\n");
+						continue;
+					}
+					out.resize(decompBound);
+					size_t actual = ZSTD_decompress(out.data(), out.size(), compData, compSize);
+					if (ZSTD_isError(actual)) {
+						fprintf(stderr, "[Net] zstd error: %s\n", ZSTD_getErrorName(actual));
+						continue;
+					}
+					out.resize(actual);
+					type = net::S_CHUNK;
+				} else {
+					out = std::move(payload);
+				}
+				{
+					std::lock_guard<std::mutex> lk(m_queueMu);
+					m_queue.push_back({type, std::move(out)});
+				}
+			}
+			if (!extracted) {
+				// readFrom on a non-blocking socket returns immediately when
+				// no data is ready. 1ms idle keeps us out of a busy spin while
+				// still responding to bursts within one frame.
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
+		}
+#endif
+	}
+
+	// Main-thread drain with a per-frame time budget. Pull fresh messages
+	// from the worker into m_pending (main-thread-only, FIFO preserved),
+	// then dispatch up to kBudgetMs; leftovers carry to the next frame.
+	// Prevents a burst of S_CHUNK after S_READY from blowing the frame
+	// budget — we trade a few frames of catch-up for smoother FPS.
+	int drainQueue() {
+		if (!m_connected) return 0;
+		if (m_netError.load(std::memory_order_relaxed)) return -1;
+		{
+			std::lock_guard<std::mutex> lk(m_queueMu);
+			if (!m_queue.empty()) {
+				m_pending.reserve(m_pending.size() + m_queue.size());
+				for (auto& m : m_queue) m_pending.push_back(std::move(m));
+				m_queue.clear();
+			}
+		}
+		if (m_pending.empty()) return 0;
+
+		// 3ms cap per frame. Checked after *every* message — not every 4 —
+		// because one unlucky S_CHUNK already blows the budget by itself.
+		// A single over-budget message still completes (we can't split it),
+		// so worst-case frame overshoot = cost of one handleMessage.
+		// 3ms cap per frame. Checked after every message — a single over-
+		// budget handleMessage still completes (we can't split it), so worst
+		// case per frame = cost of one message. With the agent-scan lock fix
+		// that's ≤1ms; without it, S_CHUNK / S_CHUNK_EVICT could block on the
+		// agent's shared_lock for 70-100ms.
+		constexpr double kBudgetMs = 3.0;
+		auto t0 = std::chrono::steady_clock::now();
+		size_t i = 0;
+		for (; i < m_pending.size(); i++) {
+			handleMessage(m_pending[i].type, m_pending[i].payload);
+			auto elapsed = std::chrono::duration<double,std::milli>(
+				std::chrono::steady_clock::now() - t0).count();
+			if (elapsed >= kBudgetMs) { i++; break; }
+		}
+		int processed = (int)i;
+		m_pending.erase(m_pending.begin(), m_pending.begin() + i);
+		return processed;
 	}
 
 	// Sole socket consumer. readFrom() + extract-all → handleMessage().
@@ -856,6 +1000,17 @@ private:
 	std::function<void(EntityId)> m_onInventoryUpdate;
 	std::function<void(EntityId, const std::string&)> m_onNpcInterrupt;
 	std::function<void(const std::string&, const std::string&)> m_onWorldEvent;
+
+	// Network worker. m_recv is touched only on the worker once it starts;
+	// tick()/drainQueue() see messages through m_queue exclusively.
+	std::thread m_netThread;
+	std::atomic<bool> m_netStop{false};
+	std::atomic<bool> m_netError{false};
+	std::mutex m_queueMu;
+	std::vector<QueuedMsg> m_queue;
+	// Main-thread leftover from previous drain (budget not reached to here).
+	// Never touched by worker; no lock needed.
+	std::vector<QueuedMsg> m_pending;
 };
 
 } // namespace civcraft
