@@ -12,7 +12,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test llm_setup llm_server llm_stop llm_clean
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -319,3 +319,156 @@ llm_stop:
 
 llm_clean:
 	rm -rf $(LLM_DIR)
+
+# ── Whisper.cpp sidecar (speech-to-text for dialog input) ───────────────────
+#
+# `make whisper_setup` builds whisper.cpp's HTTP server binary and downloads
+# one ggml model into llm/whisper_models/. civcraft-ui-vk auto-spawns the
+# sidecar on 127.0.0.1:8081 — hold [Y] in the dialog panel to push-to-talk.
+#
+#   WHISPER_MODEL=tiny   ~75 MB  — fastest, fine for short dialog (default)
+#   WHISPER_MODEL=base   ~150 MB — more accurate
+#   WHISPER_MODEL=small  ~490 MB — overkill but crispest
+#
+# Shared llm/ dir with LLM models so one `make ai_clean` wipes everything.
+WHISPER_MODEL ?= tiny
+WHISPER_DIR   := $(LLM_DIR)/whisper.cpp
+WHISPER_MODELS:= $(LLM_DIR)/whisper_models
+WHISPER_PORT  ?= 8081
+
+WHISPER_URL_tiny  := https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+WHISPER_FILE_tiny := ggml-tiny.en.bin
+
+WHISPER_URL_base  := https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+WHISPER_FILE_base := ggml-base.en.bin
+
+WHISPER_URL_small := https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
+WHISPER_FILE_small:= ggml-small.en.bin
+
+WHISPER_URL  := $(WHISPER_URL_$(WHISPER_MODEL))
+WHISPER_FILE := $(WHISPER_FILE_$(WHISPER_MODEL))
+
+whisper_setup:
+	@if [ -z "$(WHISPER_URL)" ]; then \
+		echo "Unknown WHISPER_MODEL='$(WHISPER_MODEL)'. Pick tiny, base, or small" >&2; exit 1; \
+	fi
+	@mkdir -p $(WHISPER_MODELS)
+	@if [ ! -d $(WHISPER_DIR) ]; then \
+		echo "[whisper] cloning whisper.cpp into $(WHISPER_DIR)…"; \
+		git clone --depth 1 https://github.com/ggerganov/whisper.cpp $(WHISPER_DIR); \
+	else \
+		echo "[whisper] whisper.cpp already cloned — skipping"; \
+	fi
+	@if [ ! -x $(WHISPER_DIR)/build/bin/whisper-server ]; then \
+		echo "[whisper] building whisper.cpp (whisper-server)…"; \
+		cmake -S $(WHISPER_DIR) -B $(WHISPER_DIR)/build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_SERVER=ON; \
+		cmake --build $(WHISPER_DIR)/build -j$(PAR) --target whisper-server; \
+	else \
+		echo "[whisper] whisper-server already built — skipping"; \
+	fi
+	@if [ ! -f $(WHISPER_MODELS)/$(WHISPER_FILE) ]; then \
+		echo "[whisper] downloading model $(WHISPER_MODEL) → $(WHISPER_MODELS)/$(WHISPER_FILE)"; \
+		curl -L --fail --progress-bar -o $(WHISPER_MODELS)/$(WHISPER_FILE).part $(WHISPER_URL) \
+		  && mv $(WHISPER_MODELS)/$(WHISPER_FILE).part $(WHISPER_MODELS)/$(WHISPER_FILE); \
+	else \
+		echo "[whisper] model $(WHISPER_FILE) already present — skipping"; \
+	fi
+	@echo "[whisper] setup done. Sidecar is spawned automatically by 'make game'."
+
+whisper_server:
+	@if [ ! -x $(WHISPER_DIR)/build/bin/whisper-server ]; then \
+		echo "[whisper] not built — run 'make whisper_setup' first" >&2; exit 1; \
+	fi
+	@if [ ! -f $(WHISPER_MODELS)/$(WHISPER_FILE) ]; then \
+		echo "[whisper] model missing — run 'make whisper_setup' first" >&2; exit 1; \
+	fi
+	@echo "[whisper] serving $(WHISPER_FILE) on 127.0.0.1:$(WHISPER_PORT)"
+	$(WHISPER_DIR)/build/bin/whisper-server \
+	    --host 127.0.0.1 --port $(WHISPER_PORT) \
+	    -m $(WHISPER_MODELS)/$(WHISPER_FILE)
+
+whisper_stop:
+	@-pgrep -x whisper-server 2>/dev/null | xargs -r kill ; true
+	@echo "[whisper] sidecar stopped."
+
+# ── Piper sidecar (text-to-speech for NPC voice) ────────────────────────────
+#
+# Piper is a small, fast neural TTS (MIT, Rhasspy). We download a prebuilt
+# binary + one voice model, and civcraft-ui-vk spawns it in "JSON stdin →
+# WAV-file" mode so each utterance gets a predictable output path.
+#
+#   TTS_VOICE=amy     en_US, female, medium   (~60 MB) — default
+#   TTS_VOICE=ryan    en_US, male,   medium   (~60 MB)
+#   TTS_VOICE=alan    en_GB, male,   medium   (~60 MB)
+TTS_VOICE     ?= amy
+PIPER_DIR     := $(LLM_DIR)/piper
+PIPER_VOICES  := $(LLM_DIR)/piper_voices
+TTS_PORT      ?= 8082
+
+# Piper binary release (platform-agnostic .tar.gz with its own libs bundled).
+# Pinning to a specific release so builds are reproducible; bump deliberately.
+PIPER_REL      := 2023.11.14-2
+PIPER_TGZ_URL  := https://github.com/rhasspy/piper/releases/download/$(PIPER_REL)/piper_linux_x86_64.tar.gz
+
+VOICE_URL_amy_onnx  := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
+VOICE_URL_amy_json  := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
+VOICE_FILE_amy      := en_US-amy-medium
+
+VOICE_URL_ryan_onnx := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium/en_US-ryan-medium.onnx
+VOICE_URL_ryan_json := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium/en_US-ryan-medium.onnx.json
+VOICE_FILE_ryan     := en_US-ryan-medium
+
+VOICE_URL_alan_onnx := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx
+VOICE_URL_alan_json := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json
+VOICE_FILE_alan     := en_GB-alan-medium
+
+VOICE_ONNX_URL := $(VOICE_URL_$(TTS_VOICE)_onnx)
+VOICE_JSON_URL := $(VOICE_URL_$(TTS_VOICE)_json)
+VOICE_FILE     := $(VOICE_FILE_$(TTS_VOICE))
+
+tts_setup:
+	@if [ -z "$(VOICE_ONNX_URL)" ]; then \
+		echo "Unknown TTS_VOICE='$(TTS_VOICE)'. Pick amy, ryan, or alan" >&2; exit 1; \
+	fi
+	@mkdir -p $(PIPER_VOICES)
+	@if [ ! -x $(PIPER_DIR)/piper ]; then \
+		echo "[tts] downloading piper binary release $(PIPER_REL)…"; \
+		mkdir -p $(LLM_DIR); \
+		curl -L --fail --progress-bar -o $(LLM_DIR)/piper.tgz $(PIPER_TGZ_URL); \
+		tar -xzf $(LLM_DIR)/piper.tgz -C $(LLM_DIR); \
+		rm $(LLM_DIR)/piper.tgz; \
+	else \
+		echo "[tts] piper binary already present — skipping"; \
+	fi
+	@if [ ! -f $(PIPER_VOICES)/$(VOICE_FILE).onnx ]; then \
+		echo "[tts] downloading voice $(TTS_VOICE) → $(PIPER_VOICES)/$(VOICE_FILE).onnx"; \
+		curl -L --fail --progress-bar -o $(PIPER_VOICES)/$(VOICE_FILE).onnx.part $(VOICE_ONNX_URL) \
+		  && mv $(PIPER_VOICES)/$(VOICE_FILE).onnx.part $(PIPER_VOICES)/$(VOICE_FILE).onnx; \
+		curl -L --fail --progress-bar -o $(PIPER_VOICES)/$(VOICE_FILE).onnx.json $(VOICE_JSON_URL); \
+	else \
+		echo "[tts] voice $(VOICE_FILE) already present — skipping"; \
+	fi
+	@echo "[tts] setup done. Piper launches on demand inside civcraft-ui-vk."
+
+tts_server:
+	@if [ ! -x $(PIPER_DIR)/piper ]; then \
+		echo "[tts] piper not present — run 'make tts_setup' first" >&2; exit 1; \
+	fi
+	@echo "[tts] piper is spawned inside civcraft-ui-vk. For a CLI smoke test:"
+	@echo "      echo 'hello world' | $(PIPER_DIR)/piper --model $(PIPER_VOICES)/$(VOICE_FILE).onnx --output_file /tmp/piper_test.wav"
+
+tts_stop:
+	@-pgrep -x piper 2>/dev/null | xargs -r kill ; true
+	@echo "[tts] piper stopped."
+
+# ── Bundled AI setup (all three sidecars) ──────────────────────────────────
+# Single command to prepare a dialog-capable game: chat LLM, whisper STT,
+# and piper TTS. Needed once; model files are cached under llm/.
+ai_setup: llm_setup whisper_setup tts_setup
+	@echo ""
+	@echo "[ai] All three sidecars ready. 'make game' will spawn them automatically."
+
+ai_stop: llm_stop whisper_stop tts_stop
+
+ai_clean: llm_clean
+	@echo "[ai] Everything under llm/ removed."

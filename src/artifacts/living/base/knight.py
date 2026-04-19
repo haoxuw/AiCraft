@@ -29,4 +29,7 @@ living = {
     "dialog_system_prompt": "You are a knight of the realm — gruff, formal, economical with words. Reply in 1-2 short sentences, addressing the player as 'traveller' or 'sir'. Speak of duty, honour, the watch, rumours of beasts. Never break character, never mention being an AI.",
     "dialog_greeting": "Halt. State your business, traveller.",
     "dialog_temperature": 0.6,
+    # Prefer a deeper male voice when one is installed (e.g. piper's
+    # `ryan`). Falls back to the default voice via TtsVoiceMux otherwise.
+    "dialog_voice": "ryan",
 }

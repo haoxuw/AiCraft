@@ -18,6 +18,7 @@
 
 #include "client/rhi/rhi.h"
 #include "client/audio.h"
+#include "client/audio_capture.h"
 #include "client/camera.h"
 #include "client/debug_triggers.h"
 #include "client/dialog_panel.h"
@@ -26,6 +27,11 @@
 #include "logic/artifact_registry.h"
 #include "llm/llm_client.h"
 #include "llm/llm_sidecar.h"
+#include "llm/tts_client.h"
+#include "llm/tts_sidecar.h"
+#include "llm/tts_voice_mux.h"
+#include "llm/whisper_client.h"
+#include "llm/whisper_sidecar.h"
 
 // CivCraft chunk plumbing — civcraft-ui-vk now stores its world in real
 // 16³ Chunks and meshes them through ChunkMesher rather than streaming a
@@ -635,6 +641,24 @@ private:
 	// Wall-clock time (for sky/particle animation phases that don't
 	// want to pause with the game).
 	float        m_wallTime = 0.0f;
+	// Frame delta (seconds) — set from runOneFrame so renderers can drive
+	// dt-based lerps (EMA smoothing, etc.) without threading dt through.
+	float        m_frameDt  = 0.0f;
+
+	// Per-entity anim-smoothing trails. Raw e.velocity / e.yaw step when
+	// decide() re-aims; walk/run clip selection and body yaw would snap.
+	// EMA this input before handing to appendBoxModel. Cleaned up by the
+	// remote-entity loop in WorldRenderer::renderWorld.
+	struct EntityAnimSmooth {
+		float speed       = 0.0f;     // smoothed horizontal speed (blocks/s)
+		float bodyYawDeg  = 0.0f;     // smoothed body yaw (degrees)
+		bool  initialized = false;
+	};
+	std::unordered_map<civcraft::EntityId, EntityAnimSmooth> m_entityAnimSmooth;
+	// Player uses the existing m_playerBodyYaw lerp for yaw; only speed needs
+	// its own trail here.
+	float        m_playerAnimSpeed     = 0.0f;
+	bool         m_playerAnimSpeedInit = false;
 
 	// Camera — uses the shared Camera class (FPS/TPS/RPG/RTS modes).
 	civcraft::Camera m_cam;
@@ -676,11 +700,15 @@ private:
 	// Lazily initialised on the first T-key press (so the sidecar health
 	// probe doesn't block boot). The panel + session are client-only —
 	// server has no idea dialog is happening (Rule 5).
-	std::unique_ptr<civcraft::llm::LlmClient>  m_llmClient;
-	std::unique_ptr<civcraft::llm::LlmSidecar> m_llmSidecar;    // child llama-server, spawned in init()
-	DialogPanel                                m_dialogPanel;
-	std::vector<uint32_t>                      m_charQueue;     // drained each input tick
-	std::vector<int>                           m_keyQueue;      // GLFW key codes (press only)
+	std::unique_ptr<civcraft::llm::LlmClient>     m_llmClient;
+	std::unique_ptr<civcraft::llm::WhisperClient> m_whisperClient; // STT over HTTP to whisper-server
+	std::unique_ptr<civcraft::AudioCapture>       m_audioCapture;  // mic, s16 mono 16 kHz
+	std::unique_ptr<civcraft::llm::TtsVoiceMux>   m_ttsMux;        // lazily spawns 1 piper per distinct voice
+	std::unique_ptr<civcraft::llm::LlmSidecar>    m_llmSidecar;    // child llama-server, spawned in init()
+	std::unique_ptr<civcraft::llm::WhisperSidecar> m_whisperSidecar; // child whisper-server (STT), port 8081
+	DialogPanel                                   m_dialogPanel;
+	std::vector<uint32_t>                         m_charQueue;     // drained each input tick
+	std::vector<int>                              m_keyQueue;      // GLFW key codes (press only)
 
 	// File-based debug triggers (compiled out in Release via NDEBUG).
 	civcraft::DebugTriggers m_debugTriggers;

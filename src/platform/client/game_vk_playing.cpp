@@ -85,6 +85,13 @@ void Game::processInput(float dt) {
 			if (!m_dialogPanel.onKey(k)) unconsumed.push_back(k);
 		}
 		m_keyQueue.swap(unconsumed);
+		// Push-to-talk: physical Y key state. Polled (not queued) so the
+		// press/release edges land on the same frame the user produces them.
+		bool yHeld = glfwGetKey(m_window, GLFW_KEY_Y) == GLFW_PRESS;
+		m_dialogPanel.onPushToTalk(yHeld);
+		// Feed streaming reply tokens into piper (sentence-by-sentence) so
+		// the NPC voice overlaps the visible text animation.
+		m_dialogPanel.tickVoice();
 	} else {
 		// No panel open — drop queued text so it doesn't fire a turn later.
 		m_charQueue.clear();
@@ -250,7 +257,18 @@ void Game::processInput(float dt) {
 						"127.0.0.1", 8080);
 				}
 				std::string name = art->name.empty() ? hit->typeId : art->name;
-				if (!m_dialogPanel.open(hit->entityId, name, *art, *m_llmClient)) {
+				// Resolve this NPC's preferred voice (artifact field
+				// `dialog_voice`; empty/missing → mux picks default).
+				civcraft::llm::TtsClient* voice = nullptr;
+				if (m_ttsMux) {
+					std::string v;
+					auto vIt = art->fields.find("dialog_voice");
+					if (vIt != art->fields.end()) v = vIt->second;
+					voice = m_ttsMux->clientFor(v);
+				}
+				if (!m_dialogPanel.open(hit->entityId, name, *art, *m_llmClient,
+				                        m_audioCapture.get(), m_whisperClient.get(),
+				                        voice, &m_audio)) {
 					pushNotification(name + " has nothing to say.",
 						glm::vec3(0.75f, 0.72f, 0.60f), 2.0f);
 				}

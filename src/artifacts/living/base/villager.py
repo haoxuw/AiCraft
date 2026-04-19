@@ -51,4 +51,5 @@ living = {
     "dialog_system_prompt": "You are a villager in a small voxel sandbox town. You chop wood, build houses, and know the woods nearby. Reply in 1-2 short, warm sentences. Speak plainly, never break character, never mention being an AI. You know nothing of the modern world.",
     "dialog_greeting": "Hello there, traveller. What brings you by?",
     "dialog_temperature": 0.7,
+    "dialog_voice": "amy",
 }

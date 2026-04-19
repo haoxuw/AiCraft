@@ -336,6 +336,8 @@ private:
 		if (!dialogGreet.empty()) e.fields["dialog_greeting"] = dialogGreet;
 		std::string dialogTemp = extract("dialog_temperature");
 		if (!dialogTemp.empty()) e.fields["dialog_temperature"] = dialogTemp;
+		std::string dialogVoice = extract("dialog_voice");
+		if (!dialogVoice.empty()) e.fields["dialog_voice"] = dialogVoice;
 
 		// Equip slot + item action hooks
 		std::string equipSlot = extract("equip_slot");

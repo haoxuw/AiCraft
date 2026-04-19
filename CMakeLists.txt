@@ -86,6 +86,8 @@ set(PLATFORM_SERVER_SOURCES
 set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/audio.h
 	src/platform/client/audio.cpp
+	src/platform/client/audio_capture.h
+	src/platform/client/audio_capture.cpp
 	src/platform/client/camera.h
 	src/platform/client/camera.cpp
 	src/platform/client/chunk_mesher.h
@@ -99,6 +101,11 @@ set(PLATFORM_LLM_SOURCES
 	src/platform/llm/llm_client.cpp
 	src/platform/llm/llm_session.h
 	src/platform/llm/llm_sidecar.h
+	src/platform/llm/whisper_sidecar.h
+	src/platform/llm/whisper_client.h
+	src/platform/llm/whisper_client.cpp
+	src/platform/llm/tts_sidecar.h
+	src/platform/llm/tts_client.h
 )
 
 set(GAME_INCLUDE_DIRS src/platform)
@@ -242,3 +249,32 @@ target_link_libraries(civcraft-test-pathfinding PRIVATE
 	libzstd_static
 )
 stage_runtime_assets(civcraft-test-pathfinding)
+
+# === Whisper smoke test (phase-2 STT) ===
+# Tiny one-shot: WAV → whisper-server → stdout. Not shipped; only for
+# verifying WhisperClient outside the GUI client.
+add_executable(civcraft-whisper-smoke
+	src/platform/llm/whisper_smoke.cpp
+	src/platform/llm/whisper_client.h
+	src/platform/llm/whisper_client.cpp
+)
+target_include_directories(civcraft-whisper-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+
+# === Piper/TTS smoke test (phase-3) ===
+# Spawns piper, synthesises one sentence, prints the output WAV path.
+add_executable(civcraft-tts-smoke
+	src/platform/llm/tts_smoke.cpp
+	src/platform/llm/tts_client.h
+	src/platform/llm/tts_sidecar.h
+)
+target_include_directories(civcraft-tts-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+
+# === Voice mux resolution test (phase-4) ===
+# Asserts dialog_voice → .onnx routing; does not spawn any piper child.
+add_executable(civcraft-mux-smoke
+	src/platform/llm/mux_smoke.cpp
+	src/platform/llm/tts_voice_mux.h
+	src/platform/llm/tts_client.h
+	src/platform/llm/tts_sidecar.h
+)
+target_include_directories(civcraft-mux-smoke PRIVATE ${GAME_INCLUDE_DIRS})

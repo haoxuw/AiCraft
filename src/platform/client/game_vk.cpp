@@ -458,21 +458,67 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		}
 	}
 
-	// Spawn the LLM sidecar (llama-server) so `make game` brings up dialog
-	// out of the box. If the user hasn't run `make llm_setup`, probe() fails
-	// and we degrade gracefully — NPC dialog shows an error instead of
-	// crashing. Client-only (Rule 5); server never sees this process.
+	// Spawn all three AI sidecars so `make game` brings up dialog + voice
+	// out of the box. Each is independent: LLM can run without STT, STT can
+	// run without TTS. If the user hasn't run the corresponding `make *_setup`,
+	// the missing sidecar degrades gracefully (dialog still works, just text-
+	// only on the input side or silent NPCs on the output side). Client-only
+	// (Rule 5); server never sees any of these processes.
 	{
-		civcraft::llm::LlmSidecar::Paths paths;
-		if (civcraft::llm::LlmSidecar::probe(paths)) {
+		civcraft::llm::LlmSidecar::Paths lp;
+		if (civcraft::llm::LlmSidecar::probe(lp)) {
 			m_llmSidecar = std::make_unique<civcraft::llm::LlmSidecar>();
-			if (!m_llmSidecar->start(paths)) {
+			if (!m_llmSidecar->start(lp)) {
 				std::fprintf(stderr, "[vk-game] llm sidecar failed to start; NPC dialog disabled\n");
 				m_llmSidecar.reset();
 			}
 		} else {
 			std::printf("[vk-game] no llama-server/model found — NPC dialog disabled. "
 			            "Run 'make llm_setup' to enable.\n");
+		}
+
+		civcraft::llm::WhisperSidecar::Paths wp;
+		if (civcraft::llm::WhisperSidecar::probe(wp)) {
+			m_whisperSidecar = std::make_unique<civcraft::llm::WhisperSidecar>();
+			if (!m_whisperSidecar->start(wp)) {
+				std::fprintf(stderr, "[vk-game] whisper sidecar failed to start; STT disabled\n");
+				m_whisperSidecar.reset();
+			} else {
+				// Only bring up the mic + HTTP client when the sidecar is live.
+				// If the mic is missing (headless box), we still leave the HTTP
+				// client around so future device hotplug could work — but
+				// DialogPanel gates push-to-talk on AudioCapture::isReady().
+				m_audioCapture = std::make_unique<civcraft::AudioCapture>();
+				if (!m_audioCapture->init()) {
+					std::fprintf(stderr, "[vk-game] mic init failed; push-to-talk disabled\n");
+					m_audioCapture.reset();
+				}
+				civcraft::llm::WhisperClient::Config wc;
+				wc.host = "127.0.0.1";
+				wc.port = 8081;
+				m_whisperClient = std::make_unique<civcraft::llm::WhisperClient>(wc);
+			}
+		} else {
+			std::printf("[vk-game] no whisper-server/model found — STT disabled. "
+			            "Run 'make whisper_setup' to enable push-to-talk.\n");
+		}
+
+		// TTS voice mux: one piper child per distinct `dialog_voice` value.
+		// We don't eagerly spawn any here — the first NPC conversation will
+		// instantiate its voice on demand.
+		m_ttsMux = std::make_unique<civcraft::llm::TtsVoiceMux>();
+		if (!m_ttsMux->init()) {
+			std::printf("[vk-game] no piper/voice found — NPC voice disabled. "
+			            "Run 'make tts_setup' to enable.\n");
+			m_ttsMux.reset();
+		} else {
+			auto names = m_ttsMux->voiceNames();
+			std::string list;
+			for (size_t i = 0; i < names.size(); ++i) {
+				if (i) list += ", ";
+				list += names[i];
+			}
+			std::printf("[vk-game] tts voices available: %s\n", list.c_str());
 		}
 	}
 
@@ -666,9 +712,18 @@ void Game::streamServerChunks() {
 
 void Game::shutdown() {
 	if (!m_rhi) return;
-	// Stop the LLM sidecar first so llama-server gets SIGTERM while the
-	// process is still alive and can reap it cleanly. Also silences its
-	// stderr chatter during the rest of teardown.
+	// Stop the AI sidecars first so their children get SIGTERM while this
+	// process is still alive and can reap them cleanly. Order is indifferent;
+	// all three are independent, and all three must die before we exit.
+	// Tear clients down first so their worker threads don't race a dying
+	// sidecar socket. AudioCapture::shutdown releases the mic device.
+	// TtsVoiceMux owns both its sidecars and clients; reset handles both.
+	m_ttsMux.reset();
+	m_whisperClient.reset();
+	if (m_audioCapture) m_audioCapture->shutdown();
+	m_audioCapture.reset();
+	m_llmClient.reset();
+	m_whisperSidecar.reset();
 	m_llmSidecar.reset();
 	// Tear down the agent client BEFORE main.cpp drops the NetworkServer:
 	// AgentClient holds a reference to ServerInterface and its decide-worker
@@ -887,6 +942,7 @@ void Game::onScroll(double xoff, double yoff) {
 
 void Game::runOneFrame(float dt, float wallTime) {
 	m_wallTime = wallTime;
+	m_frameDt  = dt;
 	m_menuTitleT += dt;
 	m_frameProbe.begin();
 
