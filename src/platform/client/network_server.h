@@ -8,6 +8,7 @@
 #include "net/net_protocol.h"
 #include "client/entity_reconciler.h"
 #include "client/local_world.h"
+#include "debug/perf_registry.h"
 #include <array>
 #ifndef __EMSCRIPTEN__
 #include <zstd.h>
@@ -147,6 +148,20 @@ public:
 			m_heartbeatTimer = 0.0f;
 			net::WriteBuffer wb;
 			net::sendMessage(m_tcp.fd(), net::C_HEARTBEAT, wb);
+		}
+
+		// 2 Hz RTT probe. Token is the steady_clock now in microseconds —
+		// we echo it back, S_PONG handler diffs against a fresh now to get
+		// round-trip millis. PING costs 8 bytes + header; trivial vs the
+		// chunk/entity stream.
+		m_pingTimer += dt;
+		if (m_pingTimer >= kPingSendInterval) {
+			m_pingTimer = 0.0f;
+			uint64_t nowUs = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count();
+			net::WriteBuffer wb;
+			wb.writeU64(nowUs);
+			net::sendMessage(m_tcp.fd(), net::C_PING, wb);
 		}
 
 		int msgCount = drainSocket();
@@ -305,6 +320,7 @@ public:
 	BehaviorInfo getBehaviorInfo(EntityId) override { return {}; }
 	float worldTime() const override { return m_worldTime; }
 	uint32_t dayCount() const override { return m_dayCount; }
+	float lastRttMs() const { return m_lastRttMs; }
 	glm::vec3 spawnPos() const override { return m_spawnPos; }
 	float pickupRange() const override { return 1.5f; } // TODO: sync from server
 
@@ -651,6 +667,20 @@ private:
 			if (rb.hasMore()) m_dayCount = rb.readU32();
 			break;
 		}
+		case net::S_PONG: {
+			uint64_t sentUs = rb.readU64();
+			uint64_t nowUs  = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count();
+			double rttMs = (nowUs - sentUs) / 1000.0;
+			m_lastRttMs = (float)rttMs;
+			// Only record post-handshake. Pre-READY pings would sit alongside
+			// chunk streams and skew the distribution toward setup cost.
+			if (m_serverReady) {
+				PERF_RECORD_MS("client.net.rtt_ms", rttMs);
+				PERF_COUNT("client.net.pings");
+			}
+			break;
+		}
 		case net::S_WEATHER: {
 			m_weatherKind      = rb.readString();
 			m_weatherIntensity = rb.readF32();
@@ -816,6 +846,9 @@ private:
 	// Outbound heartbeat resets server's per-client idle timer (enables cleanup on silent clients).
 	float m_heartbeatTimer = 0.0f;
 	static constexpr float kHeartbeatSendInterval = 2.0f;
+	float m_pingTimer = 0.0f;
+	static constexpr float kPingSendInterval = 0.5f;   // 2 Hz
+	float m_lastRttMs = 0.0f;
 
 	std::function<void(ChunkPos)> m_onChunkDirty;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;

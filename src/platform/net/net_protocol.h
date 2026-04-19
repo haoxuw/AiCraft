@@ -58,7 +58,7 @@ namespace civcraft::net {
 // v5: S_CHUNK carries a trailing [u8 × CHUNK_VOLUME] appearance array after the
 //     packed block data and before the annotation tail. S_BLOCK gains a trailing
 //     u8 appearance index (read conditionally via hasMore for back-compat reads).
-static constexpr uint32_t PROTOCOL_VERSION = 5;
+static constexpr uint32_t PROTOCOL_VERSION = 6;
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -70,6 +70,7 @@ enum MsgType : uint32_t {
 	C_GET_INVENTORY   = 0x000D,  // [u32 entityId] — request entity inventory snapshot
 	C_QUIT            = 0x000E,  // []  — graceful disconnect (client leaving); server runs full cleanup
 	C_HEARTBEAT       = 0x000F,  // []  — keepalive ping; resets server's per-client idle timer
+	C_PING            = 0x0010,  // [u64 token] — RTT probe; server replies S_PONG echoing token
 
 	// Server → Client
 	S_WELCOME         = 0x1001,
@@ -110,6 +111,8 @@ enum MsgType : uint32_t {
 	// Broadcasts where fieldMask == 0 are suppressed server-side; if the client
 	// receives one (e.g. on newly-visible edge) it's a no-op.
 	S_ENTITY_DELTA    = 0x1016,
+
+	S_PONG            = 0x1017,  // [u64 token] — echo of C_PING; client times RTT
 };
 
 // 8-byte frame header.
@@ -126,6 +129,7 @@ public:
 	void writeI16(int16_t v)  { write(&v, 2); }
 	void writeU32(uint32_t v) { write(&v, 4); }
 	void writeI32(int32_t v)  { write(&v, 4); }
+	void writeU64(uint64_t v) { write(&v, 8); }
 	void writeF32(float v)    { write(&v, 4); }
 	void writeVec3(glm::vec3 v) { writeF32(v.x); writeF32(v.y); writeF32(v.z); }
 	void writeIVec3(glm::ivec3 v) { writeI32(v.x); writeI32(v.y); writeI32(v.z); }
@@ -155,6 +159,7 @@ public:
 	int16_t  readI16() { int16_t  v; read(&v, 2); return v; }
 	uint32_t readU32() { uint32_t v; read(&v, 4); return v; }
 	int32_t  readI32() { int32_t  v; read(&v, 4); return v; }
+	uint64_t readU64() { uint64_t v; read(&v, 8); return v; }
 	float    readF32() { float    v; read(&v, 4); return v; }
 	glm::vec3 readVec3() { float x = readF32(), y = readF32(), z = readF32(); return {x,y,z}; }
 	glm::ivec3 readIVec3() { int x = readI32(), y = readI32(), z = readI32(); return {x,y,z}; }

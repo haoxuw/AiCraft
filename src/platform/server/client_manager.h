@@ -139,6 +139,10 @@ public:
 	// Server port (for LAN discovery announcements).
 	void setPort(int port) { m_port = port; }
 
+	// True once S_READY has been sent to at least one client. Perf gathering
+	// in server/main.cpp keys off this to skip the boot/world-gen window.
+	bool anyReady() const { return m_anyReady; }
+
 	// Entity creation is deferred to C_HELLO.
 	void acceptConnections(net::TcpServer& listener) {
 		auto accepted = listener.acceptClient();
@@ -773,6 +777,8 @@ public:
 	}
 
 private:
+	bool m_anyReady = false;
+
 	// Single chokepoint so pruneDisconnected() stays uniform. Idempotent.
 	void markDisconnect(ClientId cid, std::string_view reason) {
 		auto applyFlag = [&](ClientSession& c) {
@@ -905,11 +911,13 @@ private:
 			net::WriteBuffer wb;
 			net::sendMessage(client.transport.fd, net::S_READY, wb);
 		}
+		m_anyReady = true;
 
 		printf("[Server] %s: S_READY sent — handshake complete (player eid=%u, %zu chunks still queued)\n",
 			client.label().c_str(), eid, client.transport.pendingChunks.size());
 		fflush(stdout);
 	}
+
 
 	void handleMessage(ClientId cid, ClientSession& client, uint32_t type, net::ReadBuffer& rb) {
 		switch (type) {
@@ -1040,6 +1048,15 @@ private:
 		}
 		case net::C_HEARTBEAT: {
 			// No-op; noteActivity() in receiveMessages is the entire point.
+			break;
+		}
+		case net::C_PING: {
+			// Echo the client's token back immediately. RTT = client-observed
+			// S_PONG arrival time minus client-recorded token at send.
+			uint64_t token = rb.readU64();
+			net::WriteBuffer wb;
+			wb.writeU64(token);
+			net::sendMessage(client.transport.fd, net::S_PONG, wb);
 			break;
 		}
 		case net::C_GET_INVENTORY: {
