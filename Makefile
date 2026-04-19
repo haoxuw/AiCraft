@@ -1,6 +1,12 @@
 SHELL := /bin/bash
 BUILD_DIR := build
 GAME_BUILD_DIR := build-perf
+# NOTE: both trees currently use Debug until the Release-mode world-gen crash
+# in ConfigurableWorldTemplate::generate is fixed (recursive generateChunk
+# via getBlock in initWorld's lambda — SIGSEGVs in Release, hangs silently in
+# RelWithDebInfo). Once that's resolved, flip `make client`/`make server` to
+# Release and `make game` to RelWithDebInfo+CIVCRAFT_PERF=ON for representative
+# perf numbers.
 BUILD_TYPE := Debug
 HOST :=
 PORT := 7777
@@ -19,11 +25,13 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 # CivCraft is a native Vulkan C++ voxel sandbox.
 #
 # Quick reference:
-#   make game                 Singleplayer (spawns its own server, skip-menu)
-#   make game GAME_PORT=7890  Singleplayer on a fixed port
+#   make game                 Singleplayer under perf record (dev/profiling default)
+#   make game GDB=1           Same, but wrap under gdb for crash debugging
+#   make game PROFILE=none    Bare binary (no gdb, no perf)
+#   make game GAME_PORT=7890  Fixed singleplayer port
 #   make server               Dedicated server (interactive world select)
 #   make server PORT=N        Dedicated server on port N
-#   make client               GUI client → menu (Start / Join)
+#   make client               GUI client → menu (no profiler, prod-style)
 #   make client HOST=X PORT=N GUI with server pre-filled
 #   make test_e2e             Headless end-to-end gameplay tests
 #   make stop                 Kill all game processes
@@ -35,14 +43,47 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
 civcraft: game
 
-# `make game` launches the Vulkan client under gdb so any crash auto-dumps
-# a full backtrace + all-threads + disasm + regs into GAME_LOG. SIGTERM/
-# SIGINT/SIGHUP/SIGPIPE pass through silently so Esc-quit and Ctrl+C still
-# end the game cleanly without gdb stopping the inferior. Live stdout still
-# goes to the terminal (tee) so you can watch perf lines as you play.
+# `make game` launches the Vulkan client under `perf record` (CPU profiling)
+# by default so you get per-session stack samples *and* the built-in PERF
+# histograms + bottleneck line in the exit summary. For release-style smoke
+# runs without the profiler attached, use `make client` instead.
 #
 # Override the log path with `make game GAME_LOG=/path/to.log`.
-GAME_LOG := /tmp/civcraft_game_run.log
+#
+# Escape hatches:
+#   make game GDB=1    — wrap under gdb (crash-debug mode; no perf record)
+#   make game PROFILE=none — run bare binary (no gdb, no perf)
+GAME_LOG  := /tmp/civcraft_game_run.log
+PERF_DATA := /tmp/civcraft.perf.data
+PERF_REPORT := /tmp/civcraft_perf_report.txt
+
+# perf samples at 99 Hz with call graphs (DWARF unwinder — works on our
+# non-frame-pointer-friendly optimization levels). --call-graph dwarf keeps
+# stacks accurate at modest recording overhead (<5% in our framework).
+define run_under_perf
+	cd $(GAME_BUILD_DIR) && \
+	paranoid=$$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo 99); \
+	if [ "$$paranoid" -gt 2 ]; then \
+	    echo "[make] kernel.perf_event_paranoid=$$paranoid — perf record would fail."; \
+	    echo "[make] run:  sudo sysctl kernel.perf_event_paranoid=2"; \
+	    echo "[make] or use:  make game GDB=1   (no profiling)"; \
+	    exit 1; \
+	fi; \
+	rm -f $(PERF_DATA); \
+	echo "[make] launching under perf — data: $(PERF_DATA), log: $(GAME_LOG)"; \
+	perf record -F 99 --call-graph dwarf -o $(PERF_DATA) \
+	    -- ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG); \
+	echo; echo "=========== perf report (top-30) ==========="; \
+	perf report --stdio --no-children -g none -i $(PERF_DATA) 2>/dev/null | head -60 | tee $(PERF_REPORT); \
+	if command -v flamegraph.pl >/dev/null && command -v stackcollapse-perf.pl >/dev/null; then \
+	    perf script -i $(PERF_DATA) | stackcollapse-perf.pl | flamegraph.pl > /tmp/civcraft_flamegraph.svg && \
+	    echo "[make] flamegraph → /tmp/civcraft_flamegraph.svg"; \
+	else \
+	    echo "[make] flamegraph.pl not in PATH — install FlameGraph to get /tmp/civcraft_flamegraph.svg:"; \
+	    echo "         git clone https://github.com/brendangregg/FlameGraph ~/FlameGraph"; \
+	    echo "         export PATH=\$$PATH:~/FlameGraph"; \
+	fi
+endef
 
 # Common wrapper: $(call run_under_gdb, <extra civcraft-ui-vk args>)
 define run_under_gdb
@@ -67,21 +108,44 @@ define run_under_gdb
 	    --args ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG)
 endef
 
+# Bare invocation for PROFILE=none.
+define run_bare
+	cd $(GAME_BUILD_DIR) && \
+	echo "[make] launching bare — log: $(GAME_LOG)" && \
+	./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG)
+endef
+
+# Router: GDB=1 → gdb wrapper; PROFILE=none → bare; else → perf record.
+# $(call launch, <extra args>)
+ifeq ($(GDB),1)
+define launch
+	$(call run_under_gdb,$(1))
+endef
+else ifeq ($(PROFILE),none)
+define launch
+	$(call run_bare,$(1))
+endef
+else
+define launch
+	$(call run_under_perf,$(1))
+endef
+endif
+
 game: game-build
-	$(call run_under_gdb,$(if $(GAME_PORT),--port $(GAME_PORT)))
+	$(call launch,$(if $(GAME_PORT),--port $(GAME_PORT)))
 
 profiler: game-build
-	$(call run_under_gdb,--profiler $(if $(GAME_PORT),--port $(GAME_PORT)))
+	$(call launch,--profiler $(if $(GAME_PORT),--port $(GAME_PORT)))
 
 # Minimal isolation worlds for focused behavior testing.
 test-dog: game-build
-	$(call run_under_gdb,--template 3)
+	$(call launch,--template 3)
 
 test-villager: game-build
-	$(call run_under_gdb,--template 4)
+	$(call launch,--template 4)
 
 test-chicken: game-build
-	$(call run_under_gdb,--template 5)
+	$(call launch,--template 5)
 
 # ── Visual QA scenarios ─────────────────────────────────────
 CHARACTER := base:pig
