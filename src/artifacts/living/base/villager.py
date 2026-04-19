@@ -2,7 +2,7 @@
 
 Every living thing in CivCraft uses the same `living = {...}` schema.
 Fork this file to make your own humanoid — change `stats`, `behavior`,
-`features`, or `model` and drop it into artifacts/living/player/.
+`features`, or `model` and add a new entry under artifacts/living/base/.
 
 Try:
   - behavior = 'wander' for a lazy villager

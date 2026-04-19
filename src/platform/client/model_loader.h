@@ -1,7 +1,7 @@
 #pragma once
 
 // Parses the Python subset used in model dicts: numbers, lists, dicts,
-// strings, math.pi, comments. Lookup: player/ → base/ → C++ fallback.
+// strings, math.pi, comments. Lookup: base/ → C++ fallback.
 
 #include "client/box_model.h"
 #include <string>
@@ -294,13 +294,9 @@ inline bool loadModelFile(const std::string& path, BoxModel& out) {
 	return !out.parts.empty();
 }
 
-// player/ override takes priority over base/.
 inline bool loadModel(const std::string& artifactsDir, const std::string& name, BoxModel& out) {
-	std::string playerPath = artifactsDir + "/models/player/" + name + ".py";
-	if (loadModelFile(playerPath, out)) return true;
 	std::string basePath = artifactsDir + "/models/base/" + name + ".py";
-	if (loadModelFile(basePath, out)) return true;
-	return false;
+	return loadModelFile(basePath, out);
 }
 
 // Clone base, apply color overrides by role, drop parts in hide list.
@@ -380,31 +376,26 @@ inline bool loadModelFileWithVariants(const std::string& path, BoxModel& out,
 inline std::unordered_map<std::string, BoxModel> loadAllModels(const std::string& artifactsDir) {
 	std::unordered_map<std::string, BoxModel> models;
 
-	for (auto* sub : {"base", "player"}) {
-		std::string dir = artifactsDir + "/models/" + sub;
-		if (!std::filesystem::exists(dir)) continue;
-		for (auto& entry : std::filesystem::directory_iterator(dir)) {
-			if (entry.path().extension() != ".py") continue;
-			std::string name = entry.path().stem().string();
+	std::string dir = artifactsDir + "/models/base";
+	if (!std::filesystem::exists(dir)) return models;
 
-			std::string playerPath = artifactsDir + "/models/player/" + name + ".py";
-			std::string basePath   = artifactsDir + "/models/base/"   + name + ".py";
-			BoxModel m;
-			std::vector<Dict> variants;
-			if (!loadModelFileWithVariants(playerPath, m, variants))
-				if (!loadModelFileWithVariants(basePath, m, variants))
-					continue;
+	for (auto& entry : std::filesystem::directory_iterator(dir)) {
+		if (entry.path().extension() != ".py") continue;
+		std::string name = entry.path().stem().string();
 
-			if (variants.empty()) {
-				models[name] = std::move(m);
-			} else {
-				for (size_t i = 0; i < variants.size(); ++i) {
-					BoxModel baked = bakeVariant(m, variants[i]);
-					models[name + "#" + std::to_string(i)] = baked;
-				}
-				// Default lookup (`name`) → variant 0
-				models[name] = models[name + "#0"];
+		BoxModel m;
+		std::vector<Dict> variants;
+		if (!loadModelFileWithVariants(entry.path().string(), m, variants)) continue;
+
+		if (variants.empty()) {
+			models[name] = std::move(m);
+		} else {
+			for (size_t i = 0; i < variants.size(); ++i) {
+				BoxModel baked = bakeVariant(m, variants[i]);
+				models[name + "#" + std::to_string(i)] = baked;
 			}
+			// Default lookup (`name`) → variant 0
+			models[name] = models[name + "#0"];
 		}
 	}
 

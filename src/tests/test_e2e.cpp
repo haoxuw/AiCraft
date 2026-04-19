@@ -1107,7 +1107,7 @@ static std::string t35_item_entity_has_type() {
 		}
 	});
 	if (itemType.empty()) return "item entity has no ItemType property";
-	if (itemType.find(':') != std::string::npos && itemType.substr(0, 7) != "player:")
+	if (itemType.find(':') != std::string::npos)
 		return "ItemType has unexpected namespace (got: " + itemType + ")";
 	return "";
 }

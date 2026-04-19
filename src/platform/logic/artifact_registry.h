@@ -1,7 +1,9 @@
 #pragma once
 
 // Rule 1: single source of truth for ALL game content (living/items/blocks/behaviors/effects).
-// Loads Python dicts from artifacts/{cat}/base/*.py (read-only) + artifacts/{cat}/player/*.py (editable).
+// Loads Python dicts from artifacts/{cat}/base/*.py. User/mod content will be
+// served from a database layer (not yet implemented) — there is no on-disk
+// player/ tier.
 
 #include <string>
 #include <vector>
@@ -11,7 +13,6 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
-#include <random>
 #include <algorithm>
 
 namespace civcraft {
@@ -23,7 +24,6 @@ struct ArtifactEntry {
 	std::string subcategory;  // living: "humanoid"|"animal"; items: "weapon", etc.
 	std::string description;
 	std::string filePath;
-	bool isBuiltin;           // base/ vs player/
 
 	std::string source;       // raw .py
 	std::unordered_map<std::string, std::string> fields;
@@ -60,8 +60,7 @@ public:
 					key = std::filesystem::path(e.filePath).stem().string();
 				}
 				std::string modelPath = basePath + "/models/base/" + key + ".py";
-				std::string modelPathPlayer = basePath + "/models/player/" + key + ".py";
-				if (!std::filesystem::exists(modelPath) && !std::filesystem::exists(modelPathPlayer)) {
+				if (!std::filesystem::exists(modelPath)) {
 					printf("[ArtifactRegistry] WARNING: %s '%s' has no model file (%s.py)\n",
 						e.category.c_str(), e.name.c_str(), key.c_str());
 					warnings++;
@@ -78,13 +77,6 @@ public:
 		std::vector<const ArtifactEntry*> result;
 		for (auto& e : m_entries)
 			if (e.category == cat) result.push_back(&e);
-		return result;
-	}
-
-	std::vector<const ArtifactEntry*> byCategory(const std::string& cat, bool builtin) const {
-		std::vector<const ArtifactEntry*> result;
-		for (auto& e : m_entries)
-			if (e.category == cat && e.isBuiltin == builtin) result.push_back(&e);
 		return result;
 	}
 
@@ -174,118 +166,32 @@ public:
 	}
 
 	const std::string& basePath() const { return m_basePath; }
-	const std::string& playerNS() const { return m_playerNS; }
-
-	// Per-client session namespace, e.g. "p_a3f1".
-	void setPlayerNamespace(const std::string& ns) { m_playerNS = ns; }
-
-	// "p_" + 4 hex chars.
-	static std::string generatePlayerNamespace() {
-		std::random_device rd;
-		std::mt19937 gen(rd());
-		std::uniform_int_distribution<> dist(0, 0xFFFF);
-		char buf[16];
-		snprintf(buf, sizeof(buf), "p_%04x", dist(gen));
-		return buf;
-	}
-
-	// Fork entry into player's local dir. Returns new ID, or "" on failure.
-	std::string forkEntry(const std::string& id) {
-		printf("[ArtifactRegistry::forkEntry] Looking up '%s'\n", id.c_str());
-		const ArtifactEntry* src = findById(id);
-		if (!src) {
-			printf("[ArtifactRegistry::forkEntry] Entry NOT FOUND in %zu entries\n", m_entries.size());
-			for (auto& e : m_entries)
-				printf("  - '%s' (%s)\n", e.id.c_str(), e.filePath.c_str());
-			return "";
-		}
-		printf("[ArtifactRegistry::forkEntry] Found: category='%s', file='%s', source=%zuB\n",
-			src->category.c_str(), src->filePath.c_str(), src->source.size());
-
-		// category→dir: "living" is already-plural, others get "s".
-		std::string dirName = (src->category == "living") ? "living" : src->category + "s";
-
-		std::filesystem::path srcPath(src->filePath);
-		std::string stem = srcPath.stem().string();
-
-		std::string destDir = m_basePath + "/" + dirName + "/player";
-		std::filesystem::create_directories(destDir);
-		std::string newStem = m_playerNS + "_" + stem;
-		std::string destPath = destDir + "/" + newStem + ".py";
-
-		if (std::filesystem::exists(destPath)) {
-			printf("[ArtifactRegistry] Fork already exists: %s\n", destPath.c_str());
-			return m_playerNS + ":" + stem;
-		}
-
-		// Rewrite namespace in the "id" field.
-		std::string newSource = src->source;
-		std::string oldIdField = "\"" + src->id + "\"";
-		std::string newId = m_playerNS + ":" + stem;
-		std::string newIdField = "\"" + newId + "\"";
-		auto pos = newSource.find(oldIdField);
-		if (pos != std::string::npos)
-			newSource.replace(pos, oldIdField.size(), newIdField);
-
-		std::ofstream out(destPath);
-		if (!out.is_open()) {
-			printf("[ArtifactRegistry] Failed to write fork: %s\n", destPath.c_str());
-			return "";
-		}
-		out << newSource;
-		out.close();
-
-		printf("[ArtifactRegistry] Forked %s → %s (%s)\n", id.c_str(), destPath.c_str(), newId.c_str());
-
-		// Also fork model (living/items need one).
-		if (src->category == "living" || src->category == "item") {
-			std::string modelSrc = m_basePath + "/models/base/" + stem + ".py";
-			if (std::filesystem::exists(modelSrc)) {
-				std::string modelDestDir = m_basePath + "/models/player";
-				std::filesystem::create_directories(modelDestDir);
-				std::string modelDest = modelDestDir + "/" + newStem + ".py";
-				if (!std::filesystem::exists(modelDest)) {
-					std::filesystem::copy_file(modelSrc, modelDest);
-					printf("[ArtifactRegistry] Forked model %s → %s\n", modelSrc.c_str(), modelDest.c_str());
-				}
-			}
-		}
-
-		loadAll(m_basePath);
-
-		return newId;
-	}
 
 private:
 	void loadCategory(const std::string& dirName, const std::string& category) {
-		for (const char* subdir : {"base", "player"}) {
-			std::string path = m_basePath + "/" + dirName + "/" + subdir;
-			if (!std::filesystem::exists(path)) continue;
+		std::string path = m_basePath + "/" + dirName + "/base";
+		if (!std::filesystem::exists(path)) return;
 
-			bool isBuiltin = (std::string(subdir) == "base");
+		for (auto& entry : std::filesystem::directory_iterator(path)) {
+			if (entry.path().extension() != ".py") continue;
+			if (entry.path().filename().string()[0] == '_') continue; // skip __init__.py
 
-			for (auto& entry : std::filesystem::directory_iterator(path)) {
-				if (entry.path().extension() != ".py") continue;
-				if (entry.path().filename().string()[0] == '_') continue; // skip __init__.py
+			ArtifactEntry artifact;
+			artifact.category = category;
+			artifact.filePath = entry.path().string();
 
-				ArtifactEntry artifact;
-				artifact.category = category;
-				artifact.isBuiltin = isBuiltin;
-				artifact.filePath = entry.path().string();
+			std::ifstream f(artifact.filePath);
+			if (!f.is_open()) continue;
+			std::ostringstream ss;
+			ss << f.rdbuf();
+			artifact.source = ss.str();
 
-				std::ifstream f(artifact.filePath);
-				if (!f.is_open()) continue;
-				std::ostringstream ss;
-				ss << f.rdbuf();
-				artifact.source = ss.str();
+			artifact.name = entry.path().stem().string();
+			artifact.id = artifact.name;
 
-				artifact.name = entry.path().stem().string();
-				artifact.id = isBuiltin ? artifact.name : (std::string("player:") + artifact.name);
+			parseFields(artifact);
 
-				parseFields(artifact);
-
-				m_entries.push_back(std::move(artifact));
-			}
+			m_entries.push_back(std::move(artifact));
 		}
 	}
 
@@ -567,7 +473,6 @@ private:
 	}
 
 	std::string m_basePath;
-	std::string m_playerNS = "player"; // overridden per-client
 	std::vector<ArtifactEntry> m_entries;
 };
 

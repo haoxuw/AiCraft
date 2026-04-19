@@ -48,18 +48,16 @@ bool loadStructureBlueprint(const std::string& filePath, StructureBlueprint& out
 
 class StructureBlueprintManager {
 public:
-	// Scans artifacts/structures/{base,player}.
+	// Scans artifacts/structures/base.
 	void loadAll(const std::string& baseDir) {
-		for (const char* sub : {"base", "player"}) {
-			std::string dir = baseDir + "/" + sub;
-			if (!std::filesystem::is_directory(dir)) continue;
-			for (auto& entry : std::filesystem::directory_iterator(dir)) {
-				if (entry.path().extension() != ".py") continue;
-				if (entry.path().filename() == "__init__.py") continue;
-				StructureBlueprint bp;
-				if (loadStructureBlueprint(entry.path().string(), bp)) {
-					m_blueprints[bp.id] = std::move(bp);
-				}
+		std::string dir = baseDir + "/base";
+		if (!std::filesystem::is_directory(dir)) return;
+		for (auto& entry : std::filesystem::directory_iterator(dir)) {
+			if (entry.path().extension() != ".py") continue;
+			if (entry.path().filename() == "__init__.py") continue;
+			StructureBlueprint bp;
+			if (loadStructureBlueprint(entry.path().string(), bp)) {
+				m_blueprints[bp.id] = std::move(bp);
 			}
 		}
 	}
