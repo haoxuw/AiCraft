@@ -11,12 +11,70 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
 namespace civcraft::vk {
 
 namespace {
 
 using namespace ui::color;
+
+// Meta-grouping: flat tabs (living/item/block/behavior/model/…) roll up into
+// a handful of player-facing sections. Each group's "All" sub-filter shows
+// the union of its member categories; picking a specific sub-filter narrows
+// to one underlying registry category. "voice" is synthetic — not a registry
+// category — so it's a pseudo-sub only under Modding.
+struct SubCat {
+	const char* label;
+	const char* registryCat;   // "" for synthetic (voice)
+};
+struct Group {
+	const char* label;
+	std::vector<SubCat> subs;  // [0] is always "All"
+};
+
+static const std::vector<Group>& groups() {
+	static const std::vector<Group> g = {
+		{ "Creatures", {
+			{ "All", "" },
+			{ "Living", "living" },
+		}},
+		{ "Items",    {
+			{ "All", "" },
+			{ "Items",     "item" },
+			{ "Effects",   "effect" },
+			{ "Resources", "resource" },
+		}},
+		{ "World",    {
+			{ "All", "" },
+			{ "Blocks",      "block" },
+			{ "Structures",  "structure" },
+			{ "Annotations", "annotation" },
+			{ "Worlds",      "world" },
+		}},
+		{ "Gameplay", {
+			{ "All", "" },
+			{ "Behaviors", "behavior" },
+		}},
+		{ "Modding",  {
+			{ "All", "" },
+			{ "Models", "model" },
+			{ "Voices", "" },   // synthetic — fed by TtsVoiceMux
+		}},
+	};
+	return g;
+}
+
+static bool isVoiceSub(const Group& grp, int sub) {
+	if (sub <= 0 || sub >= (int)grp.subs.size()) return false;
+	return std::strcmp(grp.subs[sub].label, "Voices") == 0;
+}
+
+// True iff this group's "All" should include voices (only Modding).
+static bool groupIncludesVoices(const Group& grp) {
+	return std::strcmp(grp.label, "Modding") == 0;
+}
 
 // Rectangular button with hover + click. Returns true the frame the mouse
 // releases over the rect (matches drawMenuButton's release-edge semantics).
@@ -42,6 +100,33 @@ bool drawButton(rhi::IRhi* r, float x, float y, float w, float h,
 	return hover && mouseReleased;
 }
 
+// Pill-style sub-filter button; active when current, hover when mouse over.
+bool drawPill(rhi::IRhi* r, float x, float y, float w, float h,
+              const char* label, bool active,
+              float mouseX, float mouseY, bool mouseReleased) {
+	bool hover = ui::rectContainsNdc(x, y, w, h, mouseX, mouseY);
+
+	const float bgIdle[4]   = {0.08f, 0.07f, 0.06f, 0.82f};
+	const float bgHov[4]    = {0.18f, 0.14f, 0.09f, 0.90f};
+	const float bgActive[4] = {0.34f, 0.24f, 0.10f, 0.92f};
+	const float brass[4]    = {0.72f, 0.54f, 0.22f, 1.00f};
+	const float brassLt[4]  = {0.95f, 0.78f, 0.35f, 1.00f};
+	const float txtDim[4]   = {0.72f, 0.70f, 0.66f, 1.00f};
+	const float txtActive[4]= {1.00f, 0.90f, 0.50f, 1.00f};
+
+	const float* bg = active ? bgActive : (hover ? bgHov : bgIdle);
+	r->drawRect2D(x, y, w, h, bg);
+	ui::drawOutline(r, x, y, w, h, 0.0014f,
+		(active || hover) ? brassLt : brass);
+
+	const float scale = 0.58f;
+	ui::drawCenteredText(r, label, x + w * 0.5f,
+		y + h * 0.5f - ui::kCharHNdc * scale * 0.5f,
+		scale, active ? txtActive : txtDim);
+
+	return hover && mouseReleased;
+}
+
 } // namespace
 
 void HandbookPanel::render(Game& g) {
@@ -52,42 +137,84 @@ void HandbookPanel::render(Game& g) {
 	const float my     = g.m_mouseNdcY;
 	const bool  mClick = g.m_mouseLReleased;
 
-	// ── Category/entry state ─────────────────────────────────────────────
-	m_categoriesCache = g.m_artifactRegistry.allCategories();
-	// "voice" is a synthetic category — not in ArtifactRegistry. It lists
-	// piper .onnx voices found by TtsVoiceMux. Only offered when the mux
-	// loaded at startup; if tts_setup was never run, this tab is hidden.
-	if (g.m_ttsMux) m_categoriesCache.push_back("voice");
-	if (m_categoriesCache.empty()) {
-		g.m_shell.title = "Handbook";
-		g.m_shell.previewId.clear();
-		g.m_shell.drawChrome(R);
-		ui::drawCenteredText(R, "No artifacts registered.",
-			0.0f, 0.0f, 0.90f, kDanger);
-		return;
-	}
-	m_categoryCursor = std::clamp(m_categoryCursor, 0,
-		(int)m_categoriesCache.size() - 1);
+	const auto& GR = groups();
+	m_groupCursor = std::clamp(m_groupCursor, 0, (int)GR.size() - 1);
+	const Group* grp = &GR[m_groupCursor];
+	m_subCursor = std::clamp(m_subCursor, 0, (int)grp->subs.size() - 1);
 
-	auto bumpCat = [&](int delta) {
-		int n = (int)m_categoriesCache.size();
-		m_categoryCursor = (m_categoryCursor + delta + n) % n;
+	auto bumpGroup = [&](int delta) {
+		int n = (int)GR.size();
+		m_groupCursor = (m_groupCursor + delta + n) % n;
+		m_subCursor   = 0;
 		m_entryCursor = 0;
 		m_entryScroll = 0;
 	};
 
-	if (ui::keyEdge(W, GLFW_KEY_LEFT)  || ui::keyEdge(W, GLFW_KEY_A)) bumpCat(-1);
-	if (ui::keyEdge(W, GLFW_KEY_RIGHT) || ui::keyEdge(W, GLFW_KEY_D)) bumpCat(+1);
+	if (ui::keyEdge(W, GLFW_KEY_LEFT)  || ui::keyEdge(W, GLFW_KEY_A)) bumpGroup(-1);
+	if (ui::keyEdge(W, GLFW_KEY_RIGHT) || ui::keyEdge(W, GLFW_KEY_D)) bumpGroup(+1);
 
-	const std::string& cat = m_categoriesCache[m_categoryCursor];
-	const bool isVoice = (cat == "voice");
-	auto entries = isVoice ? std::vector<const ArtifactEntry*>{}
-	                       : g.m_artifactRegistry.byCategory(cat);
-	std::vector<std::string> voiceNames;
-	if (isVoice && g.m_ttsMux) voiceNames = g.m_ttsMux->voiceNames();
+	grp = &GR[m_groupCursor];
 
-	const int entryCount = isVoice ? (int)voiceNames.size()
-	                               : (int)entries.size();
+	// ── Build entry list for the current (group, sub) ───────────────────
+	// Each item is either a real ArtifactEntry (living/item/block/…) or a
+	// synthetic voice name. We keep them in two parallel vectors so the
+	// selection logic stays simple and voice stays a first-class citizen
+	// without needing a fake ArtifactEntry.
+	std::vector<const ArtifactEntry*> entries;
+	std::vector<std::string>          voices;
+	std::vector<bool>                 rowIsVoice;   // parallel to display order
+
+	auto appendCategory = [&](const std::string& cat) {
+		auto v = g.m_artifactRegistry.byCategory(cat);
+		for (auto* e : v) {
+			entries.push_back(e);
+			rowIsVoice.push_back(false);
+		}
+	};
+	auto appendVoices = [&]() {
+		if (!g.m_ttsMux) return;
+		for (const auto& v : g.m_ttsMux->voiceNames()) {
+			voices.push_back(v);
+			rowIsVoice.push_back(true);
+		}
+	};
+
+	if (m_subCursor == 0) {
+		// "All" — union of every sub in this group (skipping the All pseudo).
+		for (size_t i = 1; i < grp->subs.size(); ++i) {
+			const SubCat& s = grp->subs[i];
+			if (s.registryCat[0] != '\0') appendCategory(s.registryCat);
+		}
+		if (groupIncludesVoices(*grp)) appendVoices();
+	} else {
+		const SubCat& s = grp->subs[m_subCursor];
+		if (isVoiceSub(*grp, m_subCursor)) appendVoices();
+		else if (s.registryCat[0] != '\0') appendCategory(s.registryCat);
+	}
+
+	const int entryCount = (int)rowIsVoice.size();
+
+	// ── Shell state ──────────────────────────────────────────────────────
+	m_titleBuf = std::string("Handbook: ") + grp->label;
+	g.m_shell.title = m_titleBuf.c_str();
+
+	// Entry -> voice/entry index lookup table (row i in display order)
+	auto entryIndexAt = [&](int row) -> int {
+		int ei = 0;
+		for (int i = 0; i <= row && i < entryCount; ++i) {
+			if (!rowIsVoice[i] && i == row) return ei;
+			if (!rowIsVoice[i]) ei++;
+		}
+		return -1;
+	};
+	auto voiceIndexAt = [&](int row) -> int {
+		int vi = 0;
+		for (int i = 0; i <= row && i < entryCount; ++i) {
+			if (rowIsVoice[i] && i == row) return vi;
+			if (rowIsVoice[i]) vi++;
+		}
+		return -1;
+	};
 
 	if (entryCount > 0) {
 		bool entryNext = ui::keyEdge(W, GLFW_KEY_DOWN) || ui::keyEdge(W, GLFW_KEY_S);
@@ -99,18 +226,29 @@ void HandbookPanel::render(Game& g) {
 		m_entryCursor = 0;
 	}
 
-	const ArtifactEntry* selected =
-		(isVoice || entries.empty() || m_entryCursor >= (int)entries.size())
-		? nullptr : entries[m_entryCursor];
+	const bool curIsVoice = (entryCount > 0) && rowIsVoice[m_entryCursor];
+	const ArtifactEntry* selected = nullptr;
+	std::string selectedVoice;
+	if (entryCount > 0) {
+		if (curIsVoice) {
+			int vi = voiceIndexAt(m_entryCursor);
+			if (vi >= 0 && vi < (int)voices.size()) selectedVoice = voices[vi];
+		} else {
+			int ei = entryIndexAt(m_entryCursor);
+			if (ei >= 0 && ei < (int)entries.size()) selected = entries[ei];
+		}
+	}
 
-	// ── Shell state ──────────────────────────────────────────────────────
-	m_titleBuf = "Handbook: " + cat;
-	g.m_shell.title = m_titleBuf.c_str();
-
-	bool hasModel = (cat == "living" || cat == "item" ||
-	                 cat == "annotation" || cat == "model");
-	if (selected && hasModel) g.m_shell.previewId = selected->id;
-	else                       g.m_shell.previewId.clear();
+	// 3D preview — honor the selected entry's *own* category so a Creature
+	// under a union view still pins the camera (its category is "living"),
+	// while a Behavior under Gameplay does not (no model).
+	auto categoryHasModel = [](const std::string& c) {
+		return c == "living" || c == "item" || c == "annotation" || c == "model";
+	};
+	if (selected && categoryHasModel(selected->category))
+		g.m_shell.previewId = selected->id;
+	else
+		g.m_shell.previewId.clear();
 
 	g.m_shell.drawChrome(R);
 
@@ -118,39 +256,69 @@ void HandbookPanel::render(Game& g) {
 	auto B = g.m_shell.bottomBar();
 	auto P = g.m_shell.previewArea();
 
-	// ── LeftBar: category strip with clickable arrows ───────────────────
-	// Banner sits below the title strip (titleH 0.080 + 0.016 top pad +
-	// gap = 0.112). Arrow buttons flank a centered category label.
-	const float catY  = L.y + L.h - 0.112f - 0.054f;
-	const float catCx = L.x + L.w * 0.5f;
+	// ── LeftBar: top-level group strip ──────────────────────────────────
+	// Banner sits below the title strip (titleH 0.080 + 0.016 top pad).
+	const float groupY = L.y + L.h - 0.112f - 0.054f;
+	const float groupCx = L.x + L.w * 0.5f;
 
 	const float arrowW = 0.040f;
 	const float arrowH = 0.046f;
-	const float arrowYBtn = catY - 0.008f;
+	const float arrowY = groupY - 0.008f;
 
-	if (drawButton(R, L.x + 0.024f, arrowYBtn, arrowW, arrowH,
+	if (drawButton(R, L.x + 0.024f, arrowY, arrowW, arrowH,
 	               "<", 0.95f, mx, my, mClick)) {
-		bumpCat(-1);
-		entries = g.m_artifactRegistry.byCategory(m_categoriesCache[m_categoryCursor]);
-		selected = entries.empty() ? nullptr : entries[0];
+		bumpGroup(-1);
 	}
-	if (drawButton(R, L.x + L.w - 0.024f - arrowW, arrowYBtn,
+	if (drawButton(R, L.x + L.w - 0.024f - arrowW, arrowY,
 	               arrowW, arrowH, ">", 0.95f, mx, my, mClick)) {
-		bumpCat(+1);
-		entries = g.m_artifactRegistry.byCategory(m_categoriesCache[m_categoryCursor]);
-		selected = entries.empty() ? nullptr : entries[0];
+		bumpGroup(+1);
 	}
 
-	const std::string& curCat = m_categoriesCache[m_categoryCursor];
-	ui::drawCenteredText(R, curCat.c_str(), catCx, catY, 0.85f, kText);
+	grp = &GR[m_groupCursor];
+	m_subCursor = std::clamp(m_subCursor, 0, (int)grp->subs.size() - 1);
+
+	ui::drawCenteredText(R, grp->label, groupCx, groupY, 0.90f, kText);
 
 	char countBuf[64];
 	std::snprintf(countBuf, sizeof(countBuf), "%d / %d",
 		entryCount == 0 ? 0 : m_entryCursor + 1, entryCount);
-	ui::drawCenteredText(R, countBuf, catCx, catY - 0.034f, 0.60f, kTextHint);
+	ui::drawCenteredText(R, countBuf, groupCx, groupY - 0.034f, 0.58f, kTextHint);
+
+	// ── LeftBar: sub-filter pills ───────────────────────────────────────
+	// Two-per-row grid so any group (≤4 subs right now) fits cleanly. Pills
+	// are only drawn when >1 sub; single-sub groups (Creatures, Gameplay)
+	// skip the strip entirely and claim the vertical space for entries.
+	float pillsBottom = groupY - 0.072f;
+	const bool hasSubs = (grp->subs.size() > 1);
+	if (hasSubs) {
+		const float pillAreaTop  = groupY - 0.072f;
+		const float pillH        = 0.034f;
+		const float pillGap      = 0.006f;
+		const float pillInsetX   = 0.024f;
+		const float pillRowW     = L.w - 2.0f * pillInsetX;
+		const int   pillsPerRow  = 2;
+		const float pillW        = (pillRowW - pillGap * (pillsPerRow - 1))
+		                           / pillsPerRow;
+
+		for (int i = 0; i < (int)grp->subs.size(); ++i) {
+			int row = i / pillsPerRow;
+			int col = i % pillsPerRow;
+			float px = L.x + pillInsetX + col * (pillW + pillGap);
+			float py = pillAreaTop - (row + 1) * pillH - row * pillGap;
+			bool active = (i == m_subCursor);
+			if (drawPill(R, px, py, pillW, pillH,
+			             grp->subs[i].label, active, mx, my, mClick)) {
+				m_subCursor   = i;
+				m_entryCursor = 0;
+				m_entryScroll = 0;
+			}
+			pillsBottom = py;
+		}
+		pillsBottom -= 0.012f;
+	}
 
 	// ── LeftBar: clickable entry list ───────────────────────────────────
-	const float listTop  = catY - 0.072f;
+	const float listTop  = pillsBottom;
 	const float listBot  = L.y + 0.040f;
 	const float rowH     = 0.036f;
 	int maxRows = std::max(1, (int)((listTop - listBot) / rowH));
@@ -161,7 +329,7 @@ void HandbookPanel::render(Game& g) {
 	m_entryScroll = std::max(0, m_entryScroll);
 
 	if (entryCount == 0) {
-		ui::drawCenteredText(R, "(empty)", catCx,
+		ui::drawCenteredText(R, "(empty)", groupCx,
 			listTop - 0.040f, 0.75f, kTextHint);
 	} else {
 		float y = listTop;
@@ -174,11 +342,11 @@ void HandbookPanel::render(Game& g) {
 			bool hover = ui::rectContainsNdc(rowX, ry, rowW, rh, mx, my);
 			bool sel   = (i == m_entryCursor);
 
-			// Mouse hover snaps the keyboard cursor here too — matches
-			// Civilopedia muscle memory: whatever is under the mouse is the
-			// "current" entry.
+			// Mouse hover snaps the keyboard cursor here too.
 			if (hover) m_entryCursor = i;
-			if (hover && mClick && !isVoice) selected = entries[i];
+			if (hover && mClick) {
+				m_entryCursor = i;
+			}
 
 			if (sel) {
 				const float selBg[4] = {0.28f, 0.20f, 0.10f, 0.78f};
@@ -190,12 +358,38 @@ void HandbookPanel::render(Game& g) {
 				R->drawRect2D(rowX, ry, rowW, rh, hovBg);
 			}
 
-			const char* label = isVoice
-				? voiceNames[i].c_str()
-				: (entries[i]->name.empty() ? entries[i]->id.c_str()
-				                            : entries[i]->name.c_str());
-			R->drawText2D(label, rowX + 0.016f, y, 0.70f,
-				sel ? kText : (hover ? kText : kTextDim));
+			std::string label;
+			const float* txt = sel ? kText : (hover ? kText : kTextDim);
+			if (rowIsVoice[i]) {
+				int vi = voiceIndexAt(i);
+				label = (vi >= 0 && vi < (int)voices.size()) ? voices[vi] : "";
+			} else {
+				int ei = entryIndexAt(i);
+				if (ei >= 0 && ei < (int)entries.size()) {
+					const ArtifactEntry* e = entries[ei];
+					label = e->name.empty() ? e->id : e->name;
+				}
+			}
+			R->drawText2D(label.c_str(), rowX + 0.016f, y, 0.70f, txt);
+
+			// In "All" views, a tiny right-aligned category tag disambiguates
+			// entries drawn from different underlying categories.
+			if (m_subCursor == 0 && !rowIsVoice[i]) {
+				int ei = entryIndexAt(i);
+				if (ei >= 0 && ei < (int)entries.size()) {
+					const std::string& c = entries[ei]->category;
+					float tw = ui::textWidthNdc(c.size(), 0.48f);
+					R->drawText2D(c.c_str(),
+						rowX + rowW - tw - 0.010f,
+						y + 0.002f, 0.48f, kTextHint);
+				}
+			} else if (m_subCursor == 0 && rowIsVoice[i]) {
+				const char* c = "voice";
+				float tw = ui::textWidthNdc(std::strlen(c), 0.48f);
+				R->drawText2D(c, rowX + rowW - tw - 0.010f,
+					y + 0.002f, 0.48f, kTextHint);
+			}
+
 			y -= rowH;
 		}
 
@@ -203,15 +397,27 @@ void HandbookPanel::render(Game& g) {
 			char sb[32];
 			std::snprintf(sb, sizeof(sb), "%d-%d of %d",
 				m_entryScroll + 1, end, entryCount);
-			ui::drawCenteredText(R, sb, catCx, listBot - 0.010f,
+			ui::drawCenteredText(R, sb, groupCx, listBot - 0.010f,
 				0.55f, kTextHint);
 		}
 	}
 
-	// Re-resolve selected after possible mouse-driven cursor moves.
-	selected = (isVoice || entries.empty() || m_entryCursor >= (int)entries.size())
-		? nullptr : entries[m_entryCursor];
-	if (selected && hasModel) g.m_shell.previewId = selected->id;
+	// Re-resolve selection after possible mouse-hover cursor moves.
+	selected       = nullptr;
+	selectedVoice.clear();
+	if (entryCount > 0) {
+		if (rowIsVoice[m_entryCursor]) {
+			int vi = voiceIndexAt(m_entryCursor);
+			if (vi >= 0 && vi < (int)voices.size()) selectedVoice = voices[vi];
+		} else {
+			int ei = entryIndexAt(m_entryCursor);
+			if (ei >= 0 && ei < (int)entries.size()) selected = entries[ei];
+		}
+	}
+	if (selected && categoryHasModel(selected->category))
+		g.m_shell.previewId = selected->id;
+	else
+		g.m_shell.previewId.clear();
 
 	// ── BottomBar: BACK button + hints ──────────────────────────────────
 	const float btnW = 0.18f;
@@ -219,9 +425,6 @@ void HandbookPanel::render(Game& g) {
 	const float btnX = B.x + 0.020f;
 	const float btnY = B.y + (B.h - btnH) * 0.5f;
 	if (drawButton(R, btnX, btnY, btnW, btnH, "BACK", 0.85f, mx, my, mClick)) {
-		// Esc and BACK do the same thing: tear down preview/cover state and
-		// hop back to whatever container hosted us. Menu → Main; in-game →
-		// clear the overlay flag so the world resumes.
 		if (g.m_state == GameState::Menu) g.m_menuScreen = MenuScreen::Main;
 		else                              g.m_handbookOpen = false;
 		g.m_shell.coverVisible = false;
@@ -232,18 +435,13 @@ void HandbookPanel::render(Game& g) {
 
 	const float hintY = B.y + B.h * 0.5f - ui::kCharHNdc * 0.65f * 0.5f;
 	const char* hint =
-		"[Click] Select   [Left/Right] Category   [Up/Down] Entry   [Esc] Back";
+		"[Click] Select   [Left/Right] Group   [Up/Down] Entry   [Esc] Back";
 	float hintW = ui::textWidthNdc(std::strlen(hint), 0.65f);
 	R->drawText2D(hint, B.x + B.w - hintW - 0.028f, hintY, 0.65f, kTextDim);
 
 	// ── Preview area: voice detail card ─────────────────────────────────
-	// The voice tab has no ArtifactEntry to describe; instead we surface
-	// the resolved .onnx path, what this voice would sound like, and a
-	// Play Sample button that pipes through the same TTS stack DialogPanel
-	// uses. Single-shot — no sequential queue here: a debounce prevents
-	// rapid clicks from stacking overlapping piper jobs.
-	if (isVoice && m_entryCursor >= 0 && m_entryCursor < (int)voiceNames.size()) {
-		const std::string& voice = voiceNames[m_entryCursor];
+	if (!selectedVoice.empty()) {
+		const std::string& voice = selectedVoice;
 
 		const float cardW = 0.60f;
 		const float cardH = 0.34f;
@@ -268,8 +466,6 @@ void HandbookPanel::render(Game& g) {
 		R->drawText2D(line.c_str(), cardX + 0.022f,
 			cardY + cardH - 0.132f, 0.65f, kTextDim);
 
-		// NPCs that already route to this voice — tiny affordance so a
-		// modder writing `dialog_voice: "..."` can see who picks it.
 		std::string users;
 		for (const ArtifactEntry* e : g.m_artifactRegistry.byCategory("living")) {
 			auto it = e->fields.find("dialog_voice");
@@ -286,15 +482,15 @@ void HandbookPanel::render(Game& g) {
 				cardY + cardH - 0.170f, 0.60f, kTextDim);
 		}
 
-		const float btnW = 0.22f;
-		const float btnH = 0.052f;
-		const float btnX = cardX + 0.022f;
-		const float btnY = cardY + 0.028f;
+		const float pbW = 0.22f;
+		const float pbH = 0.052f;
+		const float pbX = cardX + 0.022f;
+		const float pbY = cardY + 0.028f;
 		auto now = std::chrono::steady_clock::now();
 		bool cooldownActive =
 			(now - m_lastVoiceSampleTime) < std::chrono::seconds(2);
 		const char* btnLabel = cooldownActive ? "Synthesizing..." : "Play Sample";
-		bool clicked = drawButton(R, btnX, btnY, btnW, btnH,
+		bool clicked = drawButton(R, pbX, pbY, pbW, pbH,
 			btnLabel, 0.80f, mx, my, mClick);
 		if (clicked && !cooldownActive && g.m_ttsMux) {
 			if (auto* tts = g.m_ttsMux->clientFor(voice)) {

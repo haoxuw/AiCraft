@@ -30,9 +30,10 @@ public:
 	// Reset cursor state — call when opening the panel so the user lands on
 	// a deterministic first entry.
 	void reset() {
-		m_categoryCursor = 0;
-		m_entryCursor    = 0;
-		m_entryScroll    = 0;
+		m_groupCursor = 0;
+		m_subCursor   = 0;
+		m_entryCursor = 0;
+		m_entryScroll = 0;
 	}
 
 	// Called every frame while the panel is visible. Reads registry +
@@ -41,11 +42,17 @@ public:
 	void render(Game& g);
 
 private:
-	int m_categoryCursor = 0;
-	int m_entryCursor    = 0;
-	int m_entryScroll    = 0;   // first visible entry row
+	// Two-axis nav: m_groupCursor picks one of the top-level meta-groups
+	// (Creatures / Items / World / Gameplay / Modding); m_subCursor picks a
+	// sub-filter inside the group (0 = "All", i = group.categories[i-1]).
+	// The flat-tab layout is gone — model/behavior/voice are no longer
+	// peer tabs of living/item; they're grouped by the player's mental
+	// model of what they're inspecting.
+	int m_groupCursor = 0;
+	int m_subCursor   = 0;
+	int m_entryCursor = 0;
+	int m_entryScroll = 0;   // first visible entry row
 
-	std::vector<std::string> m_categoriesCache;
 	std::string              m_titleBuf;   // storage for shell.title
 
 	// Voice tab: debounces the Play Sample button so a double-click doesn't
