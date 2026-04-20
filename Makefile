@@ -63,11 +63,18 @@ PERF_REPORT := /tmp/civcraft_perf_report.txt
 define run_under_perf
 	cd $(GAME_BUILD_DIR) && \
 	paranoid=$$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo 99); \
-	if [ "$$paranoid" -gt 2 ]; then \
-	    echo "[make] kernel.perf_event_paranoid=$$paranoid — perf record would fail."; \
-	    echo "[make] run:  sudo sysctl kernel.perf_event_paranoid=2"; \
-	    echo "[make] or use:  make game GDB=1   (no profiling)"; \
-	    exit 1; \
+	if ! command -v perf >/dev/null 2>&1 || [ "$$paranoid" -gt 2 ]; then \
+	    if ! command -v perf >/dev/null 2>&1; then \
+	        echo "[make] perf not on PATH — falling back to bare run."; \
+	        echo "[make]   install with:  sudo apt install linux-tools-generic"; \
+	    else \
+	        echo "[make] kernel.perf_event_paranoid=$$paranoid (>2) — falling back to bare run."; \
+	        echo "[make]   enable with:   sudo sysctl kernel.perf_event_paranoid=2"; \
+	    fi; \
+	    echo "[make]   for crash-debug:  make game GDB=1"; \
+	    echo "[make] launching bare — log: $(GAME_LOG)"; \
+	    ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG); \
+	    exit $${PIPESTATUS[0]}; \
 	fi; \
 	rm -f $(PERF_DATA); \
 	echo "[make] launching under perf — data: $(PERF_DATA), log: $(GAME_LOG)"; \

@@ -43,8 +43,10 @@
 #include "client/box_model.h"
 #include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
+#include "client/handbook_panel.h"
 #include "client/hotbar.h"
 #include "client/lan_browser.h"
+#include "client/screen_shell.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -127,7 +129,7 @@ enum class GameState { Menu, Loading, Playing, GameMenu, Dead };
 // Stage C will flesh out Singleplayer (world list + create-world) and
 // Multiplayer (LAN/Saved/Direct-Connect tabs); today they're placeholders
 // that delegate to the existing auto-spawn-and-join flow.
-enum class MenuScreen : uint8_t { Main, Singleplayer, CharacterSelect, Connecting, Multiplayer, Settings };
+enum class MenuScreen : uint8_t { Main, Singleplayer, CharacterSelect, Connecting, Multiplayer, Handbook, Settings };
 
 class Game {
 public:
@@ -246,6 +248,7 @@ private:
 	friend class MenuRenderer;
 	friend class PanelRenderer;
 	friend class EntityUiRenderer;
+	friend class HandbookPanel;
 	WorldRenderer     m_worldRenderer    { *this };
 	HudRenderer       m_hudRenderer      { *this };
 	MenuRenderer      m_menuRenderer     { *this };
@@ -339,10 +342,12 @@ private:
 	std::string  m_connectError;        // last handshake error, displayed on CharacterSelect
 	bool         m_connecting = false;  // true while awaiting S_WELCOME
 	float        m_connectStartTime = 0.0f; // m_wallTime when beginConnect fired; timeout at +60s
-	// Currently previewed playable on CharacterSelect. Button hover updates it
-	// each frame; the menu backdrop injects this model into the entity vertex
-	// stream next to the panel so the user sees what they're about to pick.
-	std::string  m_previewCreatureId;
+	// Shared chrome for immersive preview screens (CharacterSelect, Handbook).
+	// Holds the previewed artifact id, clip, cover-toggle state, and layout
+	// constants. Camera pin (game_vk.cpp) and world injection
+	// (game_vk_renderer_world.cpp) both read `m_shell.previewId` — the owning
+	// screen mutates it each frame based on cursor selection.
+	ScreenShell  m_shell;
 
 	// One persistent chunk-mesh handle per loaded chunk. ChunkMesher emits
 	// world-space vertices, so each handle just needs drawChunkMeshOpaque +
@@ -579,6 +584,7 @@ private:
 
 	// H handbook panel
 	bool         m_handbookOpen = false;
+	HandbookPanel m_handbook;
 	civcraft::ArtifactRegistry m_artifactRegistry;
 
 	// ── Hotbar + Inventory UI ────────────────────────────────────────────

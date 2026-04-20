@@ -447,11 +447,14 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 				auto it = e->fields.find("playable");
 				if (it == e->fields.end()) continue;
 				if (it->second != "True" && it->second != "true") continue;
-				m_previewCreatureId = e->id;
+				m_shell.previewId = e->id;
 				break;
 			}
 		} else if (s == "multiplayer") {
 			m_menuScreen = MenuScreen::Multiplayer;
+		} else if (s == "handbook") {
+			m_handbook.reset();
+			m_menuScreen = MenuScreen::Handbook;
 		} else if (s == "connecting") {
 			m_menuScreen = MenuScreen::Connecting;
 			m_connecting = true;
@@ -1062,8 +1065,17 @@ void Game::runOneFrame(float dt, float wallTime) {
 	m_debugTriggers.poll();
 	m_frameProbe.mark("sim");
 
-	// ── Render ─────────────────────────────────────────────────────────
+	// ── GPU sync ───────────────────────────────────────────────────────
+	// beginFrame() calls vkWaitForFences + vkAcquireNextImageKHR: the CPU
+	// blocks until the prior in-flight frame's fence signals AND the
+	// presenter hands back a swap image. On a GPU-bound or vsync-capped
+	// session this is where the bulk of the frame budget goes — it's
+	// CPU-idle time, not CPU work. Keeping it on its own probe is how we
+	// tell "too much draw work" from "waiting on the GPU" in the rollup.
 	bool rendered = m_rhi->beginFrame();
+	m_frameProbe.mark("gpuWait");
+
+	// ── Render ─────────────────────────────────────────────────────────
 	if (rendered) {
 
 	if (m_state == GameState::Menu) {
@@ -1073,17 +1085,20 @@ void Game::runOneFrame(float dt, float wallTime) {
 		float menuAng = m_menuTitleT * 0.08f;
 		glm::vec3 menuFocus(std::sin(menuAng) * 0.5f, 2.5f,
 		                    std::cos(menuAng) * 0.5f);
-		// CharacterSelect pins the camera so the preview model holds steady
-		// to the right of the panel (panel is anchorX=0.28, preview lands at
-		// roughly anchorX≈0.72). Other menu screens keep the slow orbit.
+		// CharacterSelect / Connecting pin the camera so the ScreenShell's
+		// preview model holds steady in the preview area (flush-right of the
+		// LeftBar, above the BottomBar). Other menu screens keep the slow
+		// orbit. Pin condition: we're on a shell-driven screen AND the shell
+		// actually has a preview id.
 		bool previewing = (m_menuScreen == MenuScreen::CharacterSelect
-		                || m_menuScreen == MenuScreen::Connecting)
-		               && !m_previewCreatureId.empty();
+		                || m_menuScreen == MenuScreen::Connecting
+		                || m_menuScreen == MenuScreen::Handbook)
+		               && !m_shell.previewId.empty();
 		if (previewing) {
 			// Pinned plaza-level camera: the preview character stands at world
-			// (0, 1, 0) (top of the grass slab). We aim at a point LEFT of the
-			// character so projection lands them in the RIGHT half of the
-			// screen, leaving the left half free for the menu panel.
+			// (0, 1, 0) (top of the grass slab). Aim-point is shifted LEFT of
+			// the character so the projection centers it within the shell's
+			// preview area (roughly the right 3/4 of the screen).
 			m_cam.position = glm::vec3(5.0f, 2.8f, -5.0f);
 			glm::vec3 target(1.5f, 1.8f, 0.5f);
 			glm::vec3 look = glm::normalize(target - m_cam.position);
@@ -1243,9 +1258,13 @@ void Game::runOneFrame(float dt, float wallTime) {
 			// excluding the serial tick work (net/chunks/agent/events/sim).
 			// Gives the visual-ceiling FPS — i.e. what we'd see if the tick
 			// stages moved off the main thread.
+			// Render-only slice: CPU time spent recording Vulkan command-buffer
+			// draws plus the final submit/present. Excludes tick work AND the
+			// gpuWait sync. Ratio is the "visual-ceiling FPS" if everything
+			// else moved off-thread AND the GPU served us instantly.
 			static const char* kRenderKeys[] = {
-				"world", "ents", "fx3d", "imNew", "hud",
-				"panels", "imDraw", "present"
+				"world", "ents", "fx3d", "inv3d",
+				"hud", "panels", "present"
 			};
 			double renderMs = 0.0;
 			for (auto* k : kRenderKeys) {
@@ -1257,10 +1276,11 @@ void Game::runOneFrame(float dt, float wallTime) {
 			n += std::snprintf(line + n, sizeof(line) - n,
 				"[perf] %.0ffps avg=%.1fms peak=%.1fms render=%.1fms(%.0ffps)",
 				fps, avgMs, m_frameProbe.windowMaxMs, renderMs, renderFps);
+			// Print order: pre-render CPU → GPU sync → render CPU → present.
 			static const char* kOrder[] = {
 				"net", "chunks", "agent", "events", "sim",
-				"world", "ents", "fx3d",
-				"imNew", "hud", "panels", "imDraw",
+				"gpuWait",
+				"world", "ents", "fx3d", "inv3d", "hud", "panels",
 				"present", "skip"
 			};
 			for (auto* k : kOrder) {

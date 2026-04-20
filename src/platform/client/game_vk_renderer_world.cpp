@@ -448,16 +448,18 @@ void WorldRenderer::renderWorld(float wallTime) {
 			glm::vec3(0.8f, 0.5f, 0.7f), stone);
 	}
 
-	// CharacterSelect / Connecting preview — inject the hovered playable at a
-	// fixed world pose so the camera (pinned in game_vk.cpp menu block) frames
-	// it to the right of the menu panel. Model rotates slowly so the player
-	// can read all sides without having to drag the camera.
+	// ScreenShell preview — inject the shell's current previewId at a fixed
+	// world pose so the camera (pinned in game_vk.cpp menu block) frames it
+	// inside the shell's preview area. Used by CharacterSelect, Connecting,
+	// and (later) Handbook. Model rotates slowly on a turntable; the shell's
+	// yaw/pitch add user-drag offsets on top.
 	if (g.m_state == civcraft::vk::GameState::Menu
 	    && (g.m_menuScreen == civcraft::vk::MenuScreen::CharacterSelect
-	        || g.m_menuScreen == civcraft::vk::MenuScreen::Connecting)
-	    && !g.m_previewCreatureId.empty()) {
+	        || g.m_menuScreen == civcraft::vk::MenuScreen::Connecting
+	        || g.m_menuScreen == civcraft::vk::MenuScreen::Handbook)
+	    && !g.m_shell.previewId.empty()) {
 		const civcraft::ArtifactEntry* entry =
-		    g.m_artifactRegistry.findById(g.m_previewCreatureId);
+		    g.m_artifactRegistry.findById(g.m_shell.previewId);
 		if (entry) {
 			std::string key;
 			auto mit = entry->fields.find("model");
@@ -469,11 +471,9 @@ void WorldRenderer::renderWorld(float wallTime) {
 			if (it != g.m_models.end()) {
 				civcraft::AnimState anim{};
 				anim.time = g.m_wallTime;
-				anim.currentClip = "mine";
-				float spinYaw = g.m_wallTime * 30.0f;  // slow turntable
-				// Stands on the plaza grass (y=1, top of the ground slab).
-				// The pinned camera in game_vk.cpp positions the viewport so
-				// this world pose lands in the right half of the screen.
+				anim.currentClip = g.m_shell.previewClip.empty()
+				    ? "mine" : g.m_shell.previewClip;
+				float spinYaw = g.m_wallTime * 30.0f + g.m_shell.previewYaw;
 				civcraft::appendBoxModel(charBoxes, it->second,
 				                         glm::vec3(0.0f, 1.0f, 0.0f),
 				                         spinYaw, anim);

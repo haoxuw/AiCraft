@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -158,17 +159,21 @@ void MenuRenderer::renderMenu() {
 
 	switch (g.m_menuScreen) {
 	case MenuScreen::Main: {
-		drawMenuFrame(R, -0.30f, 0.02f, 0.60f, 0.56f, nullptr);
+		drawMenuFrame(R, -0.30f, -0.06f, 0.60f, 0.64f, nullptr);
 		static int cursor = 0;
 		std::vector<std::string> items = {
-			"SINGLEPLAYER", "MULTIPLAYER", "SETTINGS", "QUIT"
+			"SINGLEPLAYER", "MULTIPLAYER", "HANDBOOK", "SETTINGS", "QUIT"
 		};
 		int picked = drawMenuList(in, items, cursor,
 			0.0f, 0.46f, 0.090f, 0.50f);
 		if (picked == 0) g.m_menuScreen = MenuScreen::Singleplayer;
 		else if (picked == 1) g.m_menuScreen = MenuScreen::Multiplayer;
-		else if (picked == 2) g.m_menuScreen = MenuScreen::Settings;
-		else if (picked == 3) g.m_shouldQuit = true;
+		else if (picked == 2) {
+			g.m_handbook.reset();
+			g.m_menuScreen = MenuScreen::Handbook;
+		}
+		else if (picked == 3) g.m_menuScreen = MenuScreen::Settings;
+		else if (picked == 4) g.m_shouldQuit = true;
 
 		if (!g.m_lastDeathReason.empty())
 			ui::drawCenteredText(R, g.m_lastDeathReason.c_str(), 0.0f, -0.78f, 0.70f, kDanger);
@@ -196,19 +201,14 @@ void MenuRenderer::renderMenu() {
 		break;
 	}
 	case MenuScreen::CharacterSelect: {
-		// Left-column selection panel; the previewed character stands on the
-		// plaza grass (world-space pose in WorldRenderer::renderWorld) framed
-		// by the pinned camera in game_vk.cpp's menu block.
-		constexpr float kColW   = 0.54f;
-		constexpr float kColH   = 1.40f;
-		constexpr float kColY   = -0.70f;
-		constexpr float kLeftX  = -0.80f;
-		constexpr float kLeftCx = kLeftX + kColW * 0.5f;   // -0.53
+		// Runs on the shared ScreenShell: LeftBar holds the playable list,
+		// BottomBar holds Back + navigation hints, and the PreviewArea shows
+		// the selected character's 3D model (injected by WorldRenderer and
+		// framed by the pinned camera in game_vk.cpp's menu block). Small
+		// stat bars float as an overlay on the preview.
+		g.m_shell.title = "Choose Your Character";
 
-		drawMenuFrame(R, kLeftX, kColY, kColW, kColH, "Choose Your Character");
-
-		ui::drawCenteredText(R, "Arrow keys to pick, Enter to enter.",
-			kLeftCx, 0.48f, 0.65f, kTextDim);
+		g.m_shell.drawChrome(R);
 
 		struct PlayableItem { std::string id, name; };
 		std::vector<PlayableItem> playables;
@@ -221,42 +221,84 @@ void MenuRenderer::renderMenu() {
 		std::sort(playables.begin(), playables.end(),
 			[](const PlayableItem& a, const PlayableItem& b) { return a.name < b.name; });
 
+		// ── LeftBar: playable list ─────────────────────────────────────
+		auto L = g.m_shell.leftBar();
+		// List sits below the title strip (0.080 h + 0.016 top margin +
+		// row height + small gap) so the top button clears the title.
+		const float listRowH = 0.070f;
+		const float listTop = L.y + L.h - 0.115f - listRowH - 0.020f;
+		const float listCx  = L.x + L.w * 0.5f;
+		const float listRowW = L.w - 0.060f;
+
 		if (playables.empty()) {
 			ui::drawCenteredText(R, "No playable livings registered.",
-				kLeftCx, 0.10f, 0.90f, kDanger);
+				listCx, listTop - 0.04f, 0.85f, kDanger);
 		} else {
 			std::vector<std::string> names;
-			names.reserve(playables.size() + 1);
+			names.reserve(playables.size());
 			for (auto& p : playables) names.push_back(p.name);
-			names.push_back("BACK");
 
 			static int cursor = 0;
 			int picked = drawMenuList(in, names, cursor,
-				kLeftCx, 0.38f, 0.085f, kColW - 0.06f);
+				listCx, listTop, listRowH, listRowW);
 
 			if (cursor >= 0 && cursor < (int)playables.size())
-				g.m_previewCreatureId = playables[cursor].id;
+				g.m_shell.previewId = playables[cursor].id;
 
 			if (picked >= 0 && picked < (int)playables.size()) {
 				if (g.beginConnectAs(playables[picked].id))
 					g.m_menuScreen = MenuScreen::Connecting;
-			} else if (picked == (int)playables.size()) {
-				g.m_menuScreen = MenuScreen::Singleplayer;
-				cursor = 0;
 			}
 		}
 
 		if (!g.m_connectError.empty())
 			ui::drawCenteredText(R, g.m_connectError.c_str(),
-				kLeftCx, -0.62f, 0.70f, kDanger);
+				listCx, L.y + 0.050f, 0.65f, kDanger);
 
-		// Stats chart under the preview character (right half of screen,
-		// matches camera pose in game_vk.cpp's preview block). Bars are
-		// filled 0..5 so modders can use any small int scale.
-		if (!g.m_previewCreatureId.empty()) {
+		// ── BottomBar: Back + hints ────────────────────────────────────
+		auto B = g.m_shell.bottomBar();
+		const float btnW = 0.18f;
+		const float btnH = B.h - 0.040f;
+		const float btnX = B.x + 0.020f;
+		const float btnY = B.y + (B.h - btnH) * 0.5f;
+		static int backCursor = 0;
+		// One-item list so hover/click/keyboard all route through drawMenuList.
+		std::vector<std::string> backItems = { "BACK" };
+		if (drawMenuList(in, backItems, backCursor,
+		                 btnX + btnW * 0.5f, btnY + btnH,
+		                 btnH, btnW) == 0) {
+			g.m_menuScreen = MenuScreen::Singleplayer;
+		}
+
+		// Right-aligned hint strip: navigation + action.
+		const float hintY = B.y + B.h * 0.5f - ui::kCharHNdc * 0.60f * 0.5f;
+		const char* navHint    = "[Up/Down] Select   [Enter] Play   [Esc] Back";
+		float hintW = ui::textWidthNdc(std::strlen(navHint), 0.65f);
+		R->drawText2D(navHint, B.x + B.w - hintW - 0.028f, hintY,
+		              0.65f, kTextDim);
+
+		// ── PreviewArea overlay: character name + stat bars ────────────
+		if (!g.m_shell.previewId.empty()) {
 			const ArtifactEntry* entry =
-			    g.m_artifactRegistry.findById(g.m_previewCreatureId);
+			    g.m_artifactRegistry.findById(g.m_shell.previewId);
 			if (entry) {
+				auto P = g.m_shell.previewArea();
+
+				// Floating title card, bottom-left of preview, above the BottomBar.
+				const float cardW = 0.44f;
+				const float cardH = 0.36f;
+				const float cardX = P.x + 0.040f;
+				const float cardY = P.y + 0.030f;
+				const float cardFill[4]   = {0.07f, 0.06f, 0.06f, 0.72f};
+				const float cardShadow[4] = {0.00f, 0.00f, 0.00f, 0.40f};
+				const float brass[4]      = {0.72f, 0.54f, 0.22f, 0.90f};
+				ui::drawShadowPanel(R, cardX, cardY, cardW, cardH,
+				                    cardShadow, cardFill, brass, 0.003f);
+
+				ui::drawCenteredText(R, entry->name.c_str(),
+					cardX + cardW * 0.5f,
+					cardY + cardH - 0.062f, 0.95f, kText);
+
 				struct StatRow { const char* label; const char* key; };
 				static const StatRow kRows[] = {
 					{"STR", "stats_strength"},
@@ -264,26 +306,17 @@ void MenuRenderer::renderMenu() {
 					{"AGI", "stats_agility"},
 					{"INT", "stats_intelligence"},
 				};
-				constexpr float kPanelX = 0.06f;
-				constexpr float kPanelY = -0.76f;
-				constexpr float kPanelW = 0.52f;
-				constexpr float kPanelH = 0.40f;
-				drawMenuFrame(R, kPanelX, kPanelY, kPanelW, kPanelH, nullptr);
-				ui::drawCenteredText(R, entry->name.c_str(),
-					kPanelX + kPanelW * 0.5f,
-					kPanelY + kPanelH - 0.08f, 0.80f, kText);
-
 				constexpr float kBarMax = 5.0f;
-				const float kBarFill[4] = {0.96f, 0.82f, 0.40f, 1.0f}; // brass
-				const float kBarBg[4]   = {0.08f, 0.08f, 0.10f, 0.75f};
+				const float kBarFill[4]   = {0.96f, 0.82f, 0.40f, 1.0f};
+				const float kBarBg[4]     = {0.08f, 0.08f, 0.10f, 0.75f};
 				const float kBarBorder[4] = {0.50f, 0.38f, 0.20f, 0.90f};
 
-				float rowY = kPanelY + kPanelH - 0.18f;
-				constexpr float kRowStep = 0.065f;
-				constexpr float kLabelX  = kPanelX + 0.04f;
-				constexpr float kBarX    = kPanelX + 0.13f;
-				constexpr float kBarW    = kPanelW - 0.22f;
-				constexpr float kBarH    = 0.028f;
+				float rowY = cardY + cardH - 0.138f;
+				const float rowStep = 0.058f;
+				const float labelX  = cardX + 0.034f;
+				const float barX    = cardX + 0.108f;
+				const float barW    = cardW - 0.208f;
+				const float barH    = 0.024f;
 
 				for (auto& row : kRows) {
 					auto it = entry->fields.find(row.key);
@@ -293,14 +326,14 @@ void MenuRenderer::renderMenu() {
 						try { val = std::stoi(it->second); } catch (...) { val = 0; }
 						frac = std::min(1.0f, (float)val / kBarMax);
 					}
-					R->drawText2D(row.label, kLabelX, rowY, 0.62f, kText);
-					ui::drawMeter(R, kBarX, rowY, kBarW, kBarH, frac,
+					R->drawText2D(row.label, labelX, rowY, 0.60f, kText);
+					ui::drawMeter(R, barX, rowY, barW, barH, frac,
 					              kBarFill, kBarBg, kBarBorder);
 					char num[8];
 					std::snprintf(num, sizeof(num), "%d", val);
-					R->drawText2D(num, kBarX + kBarW + 0.015f, rowY,
-					              0.62f, kTextDim);
-					rowY -= kRowStep;
+					R->drawText2D(num, barX + barW + 0.013f, rowY,
+					              0.60f, kTextDim);
+					rowY -= rowStep;
 				}
 			}
 		}
@@ -403,6 +436,14 @@ void MenuRenderer::renderMenu() {
 				g.m_connectError = "client has no network transport";
 			}
 		}
+		break;
+	}
+	case MenuScreen::Handbook: {
+		// HandbookPanel owns the whole screen — draws chrome + lists + cards
+		// and mutates g.m_shell.previewId so the 3D preview injection picks up
+		// the currently selected artifact. Esc exit is handled at the top of
+		// renderMenu() (returns to Main).
+		g.m_handbook.render(g);
 		break;
 	}
 	case MenuScreen::Settings: {

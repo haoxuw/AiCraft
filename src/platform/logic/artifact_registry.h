@@ -44,6 +44,8 @@ public:
 		loadCategory("resources", "resource");
 		loadCategory("worlds", "world");
 		loadCategory("annotations", "annotation");
+		loadCategory("structures", "structure");
+		loadCategory("models", "model");
 
 		printf("[ArtifactRegistry] Loaded %zu artifacts from %s\n",
 		       m_entries.size(), basePath.c_str());
@@ -176,23 +178,95 @@ private:
 			if (entry.path().extension() != ".py") continue;
 			if (entry.path().filename().string()[0] == '_') continue; // skip __init__.py
 
-			ArtifactEntry artifact;
-			artifact.category = category;
-			artifact.filePath = entry.path().string();
-
-			std::ifstream f(artifact.filePath);
+			std::string filePath = entry.path().string();
+			std::ifstream f(filePath);
 			if (!f.is_open()) continue;
 			std::ostringstream ss;
 			ss << f.rdbuf();
-			artifact.source = ss.str();
+			std::string source = ss.str();
+			std::string stem = entry.path().stem().string();
 
-			artifact.name = entry.path().stem().string();
-			artifact.id = artifact.name;
+			// Block files may hold a LIST of block dicts (blocks = [{...}, {...}])
+			// rather than one dict per file. Emit one ArtifactEntry per dict so
+			// the handbook can browse and crosslink each block independently.
+			// Falls back to single-entry parse for files without the list shape.
+			if (category == "block") {
+				auto dicts = splitListDicts(source, "blocks");
+				if (!dicts.empty()) {
+					for (auto& sub : dicts) {
+						ArtifactEntry a;
+						a.category = category;
+						a.filePath = filePath;
+						a.source = sub;
+						a.name = stem;   // fallback; parseFields will override from the dict
+						a.id   = stem;
+						parseFields(a);
+						m_entries.push_back(std::move(a));
+					}
+					continue;
+				}
+			}
+
+			ArtifactEntry artifact;
+			artifact.category = category;
+			artifact.filePath = filePath;
+			artifact.source   = source;
+			artifact.name     = stem;
+			artifact.id       = stem;
 
 			parseFields(artifact);
 
 			m_entries.push_back(std::move(artifact));
 		}
+	}
+
+	// "<listKey> = [ {...}, {...}, ... ]" — return each top-level {...} dict
+	// as its own substring. Brace-balanced; skips over quoted strings so a
+	// closing brace inside a string doesn't break depth tracking.
+	static std::vector<std::string> splitListDicts(const std::string& source,
+	                                               const std::string& listKey) {
+		std::vector<std::string> result;
+		auto kpos = source.find(listKey);
+		if (kpos == std::string::npos) return result;
+		auto eq = source.find('=', kpos + listKey.size());
+		if (eq == std::string::npos) return result;
+		auto lbr = source.find('[', eq);
+		if (lbr == std::string::npos) return result;
+
+		size_t pos = lbr + 1;
+		while (pos < source.size()) {
+			while (pos < source.size() &&
+			       (source[pos] == ' ' || source[pos] == '\t' ||
+			        source[pos] == '\n' || source[pos] == '\r' ||
+			        source[pos] == ','))
+				pos++;
+			if (pos >= source.size() || source[pos] == ']') break;
+			if (source[pos] != '{') { pos++; continue; }
+
+			size_t start = pos;
+			int depth = 1;
+			pos++;
+			while (pos < source.size() && depth > 0) {
+				char c = source[pos];
+				if (c == '"') {
+					// Skip past string literal so braces inside strings don't count.
+					pos++;
+					while (pos < source.size() && source[pos] != '"') {
+						if (source[pos] == '\\' && pos + 1 < source.size()) pos++;
+						pos++;
+					}
+				} else if (c == '{') {
+					depth++;
+				} else if (c == '}') {
+					depth--;
+				}
+				pos++;
+			}
+			if (depth == 0) {
+				result.push_back(source.substr(start, pos - start));
+			}
+		}
+		return result;
 	}
 
 	void parseFields(ArtifactEntry& e) {

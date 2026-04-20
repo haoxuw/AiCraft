@@ -212,12 +212,14 @@ void PanelRenderer::renderTuningPanel() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// H handbook — minimal placeholder shell
+// H handbook — in-game overlay variant
 //
-// The legacy handbook was a full artifact browser + model/behavior editors
-// in ImGui (see handbook_features.md). That's a large standalone feature
-// and not part of the ImGui-purge re-skin. This renders a small centered
-// notice so [H] isn't a dead key, and points at the roadmap.
+// The full panel lives in HandbookPanel (handbook_panel.cpp) and is shared
+// with the main-menu Handbook screen. In-game we darken the play field
+// behind it so the shell's translucent bars read clearly over terrain.
+// 3D preview injection is gated to MenuScreen in the world renderer, so
+// the preview card here falls back to text-only — good enough for "what
+// is this block/item?" lookups without hijacking the world render.
 // ─────────────────────────────────────────────────────────────────────────
 void PanelRenderer::renderHandbook() {
 	Game& g = game_;
@@ -225,31 +227,7 @@ void PanelRenderer::renderHandbook() {
 	using namespace ui::color;
 
 	r->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, kScrim);
-
-	const float panelW = 0.80f;
-	const float panelH = 0.36f;
-	const float panelX = -panelW * 0.5f;
-	const float panelY = -panelH * 0.5f;
-
-	const float shadow[4] = {0.00f, 0.00f, 0.00f, 0.55f};
-	const float fill[4]   = {0.09f, 0.07f, 0.06f, 0.97f};
-	const float brass[4]  = {0.65f, 0.48f, 0.20f, 1.00f};
-	ui::drawShadowPanel(r, panelX, panelY, panelW, panelH,
-		shadow, fill, brass, 0.003f);
-
-	const float titleCol[4] = {1.0f, 0.85f, 0.45f, 1.0f};
-	ui::drawCenteredTitle(r, "Handbook",
-		0.0f, panelY + panelH - 0.075f, 1.25f, titleCol);
-
-	ui::drawCenteredText(r,
-		"The artifact browser is being rebuilt.",
-		0.0f, panelY + panelH - 0.155f, 0.75f, kText);
-	ui::drawCenteredText(r,
-		"Browse / edit / model-preview flow returns in a later pass.",
-		0.0f, panelY + panelH - 0.195f, 0.65f, kTextDim);
-	ui::drawCenteredText(r,
-		"[H] or [Esc] to close",
-		0.0f, panelY + 0.060f, 0.65f, kTextHint);
+	g.m_handbook.render(g);
 }
 
 } // namespace civcraft::vk
