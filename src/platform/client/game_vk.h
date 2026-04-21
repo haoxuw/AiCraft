@@ -429,6 +429,32 @@ private:
 	};
 	std::vector<HitEvent> m_hitEvents;
 
+	// Block-break burst (Minecraft-style). Two concepts share one struct so
+	// they're cleaned up together:
+	//   • Black crack flash — 18 fracture marks × 6 faces, stationary at the
+	//     block's ghost cube, fades in first kCrackDuration. Reads as "the
+	//     block cracked before shattering" — what the user actually sees as
+	//     "the break animation", since the block itself is already gone.
+	//   • Flying debris — ~14 cubes in block color, gravity + drag, lifetime
+	//     kDuration. Reads as "chunks flying off".
+	// Per-debris state needs memory frame-to-frame (gravity integration);
+	// the crack flash is procedural (computed each frame from origin).
+	struct BreakBurst {
+		struct Part {
+			glm::vec3 pos{};
+			glm::vec3 vel{};
+			float     size = 0.06f;
+		};
+		std::vector<Part> parts;
+		glm::vec3 origin{};    // block corner (float-cast ivec3), for crack-face math
+		glm::vec3 color{1};
+		float t = 0.0f;
+		static constexpr float kDuration      = 0.7f;
+		static constexpr float kCrackDuration = 0.35f;  // crack flash ends halfway
+	};
+	std::vector<BreakBurst> m_breakBursts;
+	void spawnBreakBurst(glm::vec3 center, glm::vec3 color);
+
 	// Dropped-item pickup.
 	//
 	// Two-phase model:

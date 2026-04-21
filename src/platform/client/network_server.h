@@ -1,12 +1,14 @@
 #pragma once
 
-// ServerInterface over TCP. Client generates random UUID as player name.
+// ServerInterface over TCP. Client identity (UUID) is persisted across
+// launches — see client/client_identity.h and docs/28_SEATS_AND_OWNERSHIP.md.
 
 #include "net/server_interface.h"
 #include "logic/physics.h"
 #include "net/net_socket.h"
 #include "net/net_protocol.h"
 #include "client/entity_reconciler.h"
+#include "client/client_identity.h"
 #include "client/local_world.h"
 #include "debug/perf_registry.h"
 #include <array>
@@ -32,14 +34,7 @@ class NetworkServer : public ServerInterface {
 public:
 	NetworkServer(const std::string& host, int port, LocalWorld& world)
 		: m_host(host), m_port(port), m_world(world) {
-		std::random_device rd;
-		std::mt19937 gen(rd());
-		std::uniform_int_distribution<uint32_t> dist;
-		char buf[40];
-		snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%08x%04x",
-			dist(gen), dist(gen) & 0xFFFF, dist(gen) & 0xFFFF,
-			dist(gen) & 0xFFFF, dist(gen), dist(gen) & 0xFFFF);
-		m_clientUUID = buf;
+		m_clientUUID = loadOrCreateClientUuid();
 		printf("[Net] Client UUID: %s\n", m_clientUUID.c_str());
 	}
 
@@ -148,6 +143,8 @@ public:
 		m_connected = false;
 		m_serverReady = false;
 		m_welcomeReceived = false;
+		m_seatId    = 0;
+		m_seatIsNew = false;
 		m_preparingPct = -1.0f;
 		m_controlledEid = ENTITY_NONE;
 		m_heartbeatTimer = 0.0f;
@@ -360,6 +357,17 @@ public:
 		m_onChunkDirty      = onChunkDirty;
 		m_onBlockBreakText  = onBlockBreakText;
 		m_onBlockPlace      = onBlockPlace;
+	}
+
+	// Client-side prediction for player-initiated breaks. Writes AIR to
+	// LocalWorld and fires the same break callbacks (sound, floater, chunk
+	// dirty) applyBlockWire would fire when the server's S_BLOCK arrives.
+	// When that S_BLOCK eventually lands, oldBid==AIR==bid so the callback
+	// short-circuits — no double sound/floater. If the server rejects the
+	// Convert, it broadcasts the original block back and applyBlockWire
+	// snaps the chunk back. Rule 3: optimistic UX, not authority transfer.
+	void predictBlockBreak(glm::ivec3 wpos) override {
+		applyBlockWire(wpos.x, wpos.y, wpos.z, BLOCK_AIR, 0, 0);
 	}
 
 	void setInventoryCallback(std::function<void(EntityId)> cb) override {
@@ -705,9 +713,14 @@ private:
 			if (m_welcomeReceived) break; // defensive — server shouldn't resend
 			m_localPlayerId = rb.readU32();
 			m_spawnPos = rb.readVec3();
+			// Phase 1 of ownership overhaul: server appends seatId + isNew.
+			// Older servers stop here; hasMore() keeps us back-compatible.
+			if (rb.hasMore()) m_seatId      = rb.readU32();
+			if (rb.hasMore()) m_seatIsNew   = rb.readBool();
 			m_welcomeReceived = true;
-			printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f)\n",
-				m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+			printf("[Net] Welcome! Player ID=%u, spawn=(%.1f,%.1f,%.1f), seat=%u (%s)\n",
+				m_localPlayerId, m_spawnPos.x, m_spawnPos.y, m_spawnPos.z,
+				m_seatId, m_seatIsNew ? "new" : "returning");
 			break;
 		}
 		case net::S_PREPARING: {
@@ -983,6 +996,10 @@ private:
 	bool m_serverReady = false;
 	bool m_welcomeReceived = false; // set by handleMessage; read by pollWelcome
 	float m_preparingPct = -1.0f;  // -1 = no S_PREPARING seen; else [0..1]
+	// Phase 1 of ownership overhaul. Populated from S_WELCOME tail.
+	// 0 = server doesn't speak seats yet (legacy server); non-zero = real seat.
+	uint32_t m_seatId    = 0;
+	bool     m_seatIsNew = false;
 	std::string m_lastError;
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;

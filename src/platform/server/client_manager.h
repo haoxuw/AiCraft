@@ -60,11 +60,20 @@ struct ClientSession {
 
 	ClientId  id       = 0;
 	EntityId  playerId = ENTITY_NONE;
+	// Seat = durable ownership handle across sessions. Allocated on C_HELLO
+	// from the persistent client uuid (stashed in `name`). SEAT_NONE until the
+	// SeatRegistry has processed this session. Phase 1 wiring only — ownership
+	// still tracked via Prop::Owner=entityId; see docs/28_SEATS_AND_OWNERSHIP.md.
+	SeatId    seatId   = SEAT_NONE;
 
 	// Streaming bookkeeping: last chunk player stood in (drives re-eval) + dedup.
 	ChunkPos                                  lastChunkPos = {0, 0, 0};
 	std::unordered_set<ChunkPos, ChunkPosHash> sentChunks;
 
+	// Persistent UUID sent in C_HELLO (from ~/.civcraft/client_id.json). Kept
+	// pristine so SeatRegistry lookups stay stable even after `name` gets
+	// reshaped for display.
+	std::string clientUuid;
 	std::string name;
 	float       pendingAge = 0;    // seconds in pending pool before hello
 
@@ -84,6 +93,9 @@ struct ClientSession {
 	ClientPhase phase = ClientPhase::Ready;
 	std::string pendingDisplayName;   // HELLO fields stashed until Ready
 	std::string pendingCreatureType;
+	// Set at C_HELLO alongside seatId; pipelined to S_WELCOME so the client can
+	// tell "first-ever login for this seat" vs "rejoin".
+	bool        pendingSeatIsNew = false;
 	size_t requiredChunkCount     = 0;
 	size_t chunksCompletedForPrep = 0;
 	float  lastProgressSent       = -1.0f;
@@ -990,6 +1002,10 @@ private:
 			net::WriteBuffer swb;
 			swb.writeU32(eid);
 			swb.writeVec3(m_server.spawnPos());
+			// Appended in Phase 1 of ownership overhaul. Older clients stop
+			// parsing at spawnPos; ReadBuffer::hasMore() guards on the client.
+			swb.writeU32((uint32_t)client.seatId);
+			swb.writeBool(client.pendingSeatIsNew);
 			net::sendMessage(client.transport.fd, net::S_WELCOME, swb);
 		}
 
@@ -1052,14 +1068,27 @@ private:
 			// → Preparing; advancePreparing() drains + finalizes.
 			client.protocolVersion = rb.readU32();
 			client.supportsZstd    = (client.protocolVersion >= 2);
-			client.name = rb.readString();
+			client.clientUuid = rb.readString();
+			client.name       = client.clientUuid;
 			printf("[Server] %s: protocol v%u%s\n",
 			       client.label().c_str(), client.protocolVersion,
 			       client.supportsZstd ? " (zstd chunks)" : "");
 			std::string displayName  = rb.hasMore() ? rb.readString() : "";
 			std::string creatureType = rb.hasMore() ? rb.readString() : "";
 			if (!displayName.empty())
-				client.name = displayName + " (" + client.name.substr(0, 8) + ")";
+				client.name = displayName + " (" + client.clientUuid.substr(0, 8) + ")";
+
+			// Phase 1 of seats+ownership overhaul. Uuid → stable SeatId; first
+			// claim for a uuid allocates a fresh seat, later claims return it.
+			// Still advisory — ownership is tracked via Prop::Owner=entityId.
+			{
+				auto r = m_server.seats().claim(client.clientUuid);
+				client.seatId           = r.id;
+				client.pendingSeatIsNew = r.isNew;
+				printf("[Server] %s claimed seat=%u (%s)\n",
+				       client.label().c_str(), client.seatId,
+				       r.isNew ? "new" : "returning");
+			}
 
 			// Skin lock: also checks Preparing clients so simultaneous joins can't race.
 			if (!creatureType.empty()) {

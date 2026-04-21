@@ -1093,6 +1093,16 @@ void Game::digInFront() {
 	p.convertFrom = civcraft::Container::block(hit->blockPos);
 	p.convertInto = civcraft::Container::ground();
 	m_server->sendAction(p);
+
+	// Client-side prediction: snap the block to AIR locally and fire the
+	// break callback right now. Without this, the player waits a full
+	// round-trip + remesh pipeline (~100ms+) to see their own click land.
+	// The chunk is re-meshed next frame via the dirty-set flagged by the
+	// callback. Server S_BLOCK will confirm (no-op) or correct (snap back).
+	// The break burst + sound + floater are emitted inside the callback;
+	// we deliberately don't fire them here so villager/TNT breaks (which
+	// arrive via S_BLOCK only) get the same VFX from one code path.
+	m_server->predictBlockBreak(hit->blockPos);
 }
 
 void Game::placeBlock() {
@@ -1245,6 +1255,56 @@ void Game::tickCombat(float dt) {
 		std::remove_if(m_hitEvents.begin(), m_hitEvents.end(),
 			[](const HitEvent& h){ return h.t > 0.4f; }),
 		m_hitEvents.end());
+
+	// Block-break debris: integrate gravity + drag per part, cull the burst
+	// once its lifetime is up. Drag (0.88^frame at 60Hz) keeps the spray
+	// from flying unrealistically far; we skip floor collision — debris
+	// passing through the ground looks fine at this scale and saves raycasts.
+	constexpr float kGravity = 12.0f;  // m/s² (heavier than real g for punchy feel)
+	constexpr float kDrag    = 0.88f;
+	float dragStep = std::pow(kDrag, dt * 60.0f);
+	for (auto& b : m_breakBursts) {
+		b.t += dt;
+		for (auto& p : b.parts) {
+			p.vel.y -= kGravity * dt;
+			p.vel   *= dragStep;
+			p.pos   += p.vel * dt;
+		}
+	}
+	m_breakBursts.erase(
+		std::remove_if(m_breakBursts.begin(), m_breakBursts.end(),
+			[](const BreakBurst& b){ return b.t >= BreakBurst::kDuration; }),
+		m_breakBursts.end());
+}
+
+void Game::spawnBreakBurst(glm::vec3 center, glm::vec3 color) {
+	BreakBurst b;
+	// Darken the block's surface color for debris — raw color_top is often
+	// so close to the surrounding terrain that chunks blend in. Mixing 45%
+	// toward black reads clearly as "broken chunks" against any backdrop.
+	b.color  = color * 0.45f;
+	b.origin = glm::floor(center - glm::vec3(0.5f));  // block's min corner
+	b.t      = 0.0f;
+	// 14 small cubes sprayed from the block center with a mostly-upward,
+	// mostly-outward initial velocity. Deterministic pseudo-random seed
+	// from the center coord keeps two bursts at the same block identical —
+	// irrelevant visually since they despawn fast, but trivial to implement.
+	constexpr int kParts = 14;
+	b.parts.resize(kParts);
+	float seed = center.x * 31.1f + center.y * 17.7f + center.z * 13.3f;
+	for (int i = 0; i < kParts; i++) {
+		float a = seed + (float)i * 2.399f;
+		float dx = std::sin(a * 1.37f);
+		float dz = std::cos(a * 1.91f);
+		float dy = 0.55f + 0.35f * std::sin(a * 0.71f);
+		// Jitter spawn slightly inside the block so the cloud looks volumetric,
+		// not like it spawned from a single point.
+		glm::vec3 jitter = glm::vec3(std::sin(a*3.1f), std::cos(a*2.7f), std::sin(a*4.3f)) * 0.18f;
+		b.parts[i].pos  = center + jitter;
+		b.parts[i].vel  = glm::vec3(dx, dy, dz) * (1.6f + 0.8f * std::sin(a*5.1f));
+		b.parts[i].size = 0.10f + 0.04f * std::cos(a * 7.3f);
+	}
+	m_breakBursts.push_back(std::move(b));
 }
 
 void Game::tickFloaters(float dt) {

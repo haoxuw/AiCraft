@@ -293,6 +293,25 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 		}
 	}
 
+	// seats.bin — persistent uuid → SeatId map. Tiny file; simple layout:
+	//   u32 count, then count × { string uuid, u32 seatId }.
+	{
+		net::WriteBuffer wb;
+		uint32_t count = 0;
+		for (auto& [uuid, seatId] : server.seats().all()) {
+			if (uuid.empty() || seatId == SEAT_NONE) continue;
+			wb.writeString(uuid);
+			wb.writeU32(seatId);
+			count++;
+		}
+		std::ofstream sf(savePath + "/seats.bin", std::ios::binary);
+		if (sf.is_open()) {
+			sf.write(reinterpret_cast<const char*>(&count), 4);
+			sf.write(reinterpret_cast<const char*>(wb.data().data()), wb.data().size());
+			printf("[WorldSave] Saved %u seat(s)\n", count);
+		}
+	}
+
 	printf("[WorldSave] Saved to %s (%d chunks)\n", savePath.c_str(), chunkCount);
 	return true;
 }
@@ -643,6 +662,27 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 			if (totalSnaps)
 				printf("[WorldSave] Loaded %u owned-entity snapshots for %u character(s)\n",
 					totalSnaps, skinCount);
+		}
+	}
+
+	// seats.bin — inverse of the save step above. Absent on pre-seat worlds;
+	// that's fine — the registry starts empty and allocates from 1.
+	{
+		std::ifstream sf(savePath + "/seats.bin", std::ios::binary);
+		if (sf.is_open()) {
+			uint32_t count;
+			sf.read(reinterpret_cast<char*>(&count), 4);
+			std::vector<uint8_t> data((std::istreambuf_iterator<char>(sf)),
+			                           std::istreambuf_iterator<char>());
+			net::ReadBuffer rb(data.data(), data.size());
+			uint32_t loaded = 0;
+			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
+				std::string uuid = rb.readString();
+				SeatId id = (SeatId)rb.readU32();
+				server.seats().loadEntry(uuid, id);
+				loaded++;
+			}
+			if (loaded) printf("[WorldSave] Loaded %u seat(s)\n", loaded);
 		}
 	}
 

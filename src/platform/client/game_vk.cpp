@@ -99,6 +99,15 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 			else if (has("glass"))                         snd = "dig_glass";
 			else if (has("iron") || has("metal") || has("gold") || has("copper")) snd = "dig_metal";
 			m_audio.play(snd, pos + glm::vec3(0.5f), 0.55f);
+
+			// Minecraft-style debris burst. Color uses the block's top face
+			// tint as a proxy for "what it looks like" — we don't run the
+			// full per-face shader for particles, so one color is the closest
+			// cheap match. Fires on BOTH player prediction and server-
+			// observed breaks (villager chops, TNT) — one path, no duplicates.
+			const civcraft::BlockDef* bdef = m_server->blockRegistry().find(blockName);
+			glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.6f, 0.5f, 0.4f);
+			spawnBreakBurst(pos + glm::vec3(0.5f), color);
 		},
 		// onBlockPlace: fires on AIR→X and X→Y (door toggle, water flow, etc.)
 		[this](glm::vec3 pos, const std::string& newBlockId) {

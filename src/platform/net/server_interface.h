@@ -125,6 +125,13 @@ public:
 		std::function<void(glm::vec3, const std::string&)> onBlockPlace = nullptr
 	) = 0;
 
+	// Client-side prediction: apply a break locally (write AIR + fire the
+	// usual break callbacks) without waiting for the server S_BLOCK. The
+	// GUI client calls this right after sendAction(Convert) so the player
+	// doesn't see the ~round-trip + remesh-pipeline lag. Test harnesses
+	// that don't use a LocalWorld can leave the default no-op in place.
+	virtual void predictBlockBreak(glm::ivec3 /*wpos*/) {}
+
 	// Fired on S_INVENTORY apply — client re-populates hotbar/UI views.
 	virtual void setInventoryCallback(std::function<void(EntityId)> /*onInventoryUpdate*/) {}
 };

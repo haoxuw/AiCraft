@@ -18,6 +18,7 @@
 #include "logic/block_registry.h"
 // Must precede `namespace civcraft {` — system headers can't land inside.
 #include "server/owned_entity_store.h"
+#include "server/seat_registry.h"
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -928,6 +929,11 @@ public:
 	OwnedEntityStore&       ownedEntities()       { return m_ownedEntities; }
 	const OwnedEntityStore& ownedEntities() const { return m_ownedEntities; }
 
+	// UUID → SeatId. Phase 1 of the ownership overhaul — see
+	// docs/28_SEATS_AND_OWNERSHIP.md. Persisted to seats.bin.
+	SeatRegistry&       seats()       { return m_seats; }
+	const SeatRegistry& seats() const { return m_seats; }
+
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
@@ -983,6 +989,7 @@ private:
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	std::unordered_map<std::string, Inventory> m_savedInventories;  // skin → inventory
 	OwnedEntityStore m_ownedEntities;  // skin → owned NPCs awaiting next login
+	SeatRegistry     m_seats;          // uuid → seatId (Phase 1 of ownership overhaul)
 
 	StructureBlueprintManager            m_blueprints;
 	StructureBlockCacher                 m_structureCacher;

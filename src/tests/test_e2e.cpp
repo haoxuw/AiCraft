@@ -2726,6 +2726,51 @@ static std::string r3_no_drift_during_steady_state() {
 	return "";
 }
 
+// ================================================================
+// Seats + Ownership (Phase 1): stable uuid → SeatId mapping
+// ================================================================
+
+static std::string s01_same_uuid_same_seat() {
+	SeatRegistry reg;
+	auto r1 = reg.claim("uuid-alpha");
+	if (r1.id == SEAT_NONE)      return "first claim returned SEAT_NONE";
+	if (!r1.isNew)               return "first claim not flagged isNew";
+	auto r2 = reg.claim("uuid-alpha");
+	if (r2.id != r1.id)          return "second claim issued a different seat";
+	if (r2.isNew)                return "second claim wrongly flagged isNew";
+	return "";
+}
+
+static std::string s02_different_uuids_different_seats() {
+	SeatRegistry reg;
+	auto a = reg.claim("uuid-a");
+	auto b = reg.claim("uuid-b");
+	auto c = reg.claim("uuid-c");
+	if (a.id == b.id || b.id == c.id || a.id == c.id)
+		return "distinct uuids collided on seat id";
+	// Lookup must hit stored values and be SEAT_NONE for unknowns.
+	if (reg.lookup("uuid-b") != b.id) return "lookup mismatch";
+	if (reg.lookup("uuid-zzz") != SEAT_NONE) return "lookup of unknown returned non-zero";
+	return "";
+}
+
+static std::string s03_loadEntry_preserves_high_water() {
+	SeatRegistry reg;
+	// Simulating "restored from seats.bin": ids 1 and 5 are on disk; next claim
+	// must be 6 so no live session ever collides with a persisted seat.
+	reg.loadEntry("uuid-old-1", 1);
+	reg.loadEntry("uuid-old-5", 5);
+	auto fresh = reg.claim("uuid-new");
+	if (fresh.id != 6)
+		return std::string("expected seatId=6 after loading {1,5}, got ")
+		     + std::to_string(fresh.id);
+	// Returning user must still resolve to their persisted seat.
+	auto returning = reg.claim("uuid-old-5");
+	if (returning.id != 5)   return "existing uuid mapped to wrong seat after reload";
+	if (returning.isNew)     return "existing uuid flagged as isNew after reload";
+	return "";
+}
+
 // Main
 // ================================================================
 
@@ -2836,6 +2881,11 @@ int main() {
 	run("M2: TPS diagonal walk + sprint",       m02_tps_diagonal_sprint);
 	run("M3: RPG click-to-move (agent sim)",     m03_rpg_click_to_move);
 	run("M4: RTS multi-entity movement",         m04_rts_multi_entity);
+
+	printf("\n--- Seats + Ownership ---\n");
+	run("S1: same uuid → same seat",              s01_same_uuid_same_seat);
+	run("S2: different uuids → different seats",  s02_different_uuids_different_seats);
+	run("S3: loadEntry preserves high-water mark", s03_loadEntry_preserves_high_water);
 
 	pythonBridge().shutdown();
 

@@ -977,6 +977,72 @@ void WorldRenderer::renderEffects(float wallTime) {
 		g.m_rhi->drawParticles(scene, crackParts.data(), (uint32_t)total);
 	}
 
+	// ── Block-break burst ───────────────────────────────────────────────
+	// Two-part effect: a black crack flash stamped on the block's ghost cube
+	// (the "break animation" the user sees — block is already gone), plus
+	// the flying debris pre-integrated in tickCombat. Reuses the same
+	// face-crack (u,v) layout as the progressive-break overlay above for
+	// visual consistency.
+	static const float kBurstCracks[][2] = {
+		// Full stage-3 density, 18 marks/face, applied at full strength for
+		// an instant break (no progressive phase to build up).
+		{0.50f,0.52f}, {0.18f,0.85f}, {0.80f,0.22f}, {0.82f,0.70f}, {0.28f,0.73f},
+		{0.25f,0.15f}, {0.05f,0.28f}, {0.60f,0.90f}, {0.45f,0.38f}, {0.90f,0.55f},
+		{0.95f,0.10f}, {0.10f,0.05f}, {0.40f,0.95f}, {0.72f,0.95f},
+		{0.15f,0.45f}, {0.85f,0.85f}, {0.35f,0.65f}, {0.65f,0.15f},
+	};
+	auto burstFacePoint = [](int face, float u, float v) -> glm::vec3 {
+		switch (face) {
+		case 0: return {u,     v,     1.002f};
+		case 1: return {1-u,   v,    -0.002f};
+		case 2: return {1.002f, v,    1-u};
+		case 3: return {-0.002f,v,    u};
+		case 4: return {u,     1.002f, v};
+		case 5: return {u,    -0.002f, 1-v};
+		default: return {u, v, 0};
+		}
+	};
+
+	for (const auto& b : g.m_breakBursts) {
+		float age = b.t / Game::BreakBurst::kDuration;
+		if (age >= 1.0f) continue;
+
+		// Crack flash — stationary on the ghost cube, fades out over the
+		// first kCrackDuration. Larger + darker than the debris so it reads
+		// as cracks, not just "more particles".
+		if (b.t < Game::BreakBurst::kCrackDuration) {
+			float crackAge = b.t / Game::BreakBurst::kCrackDuration;
+			float crackFade = 1.0f - crackAge * crackAge;  // ease-out
+			auto& cracks = g.m_scratch.crackParts;
+			cracks.clear();
+			constexpr int kMarks = 18;
+			float size = 0.08f;
+			for (int face = 0; face < 6; face++) {
+				for (int m = 0; m < kMarks; m++) {
+					glm::vec3 fp = burstFacePoint(face, kBurstCracks[m][0], kBurstCracks[m][1]);
+					glm::vec3 p = b.origin + fp;
+					cracks.push_back(p.x); cracks.push_back(p.y); cracks.push_back(p.z);
+					cracks.push_back(size);
+					cracks.push_back(0.04f); cracks.push_back(0.03f); cracks.push_back(0.02f);
+					cracks.push_back(0.95f * crackFade);
+				}
+			}
+			g.m_rhi->drawParticles(scene, cracks.data(), (uint32_t)(kMarks * 6));
+		}
+
+		// Flying debris — integrated in tickCombat, emitted here with fade.
+		auto& parts = g.m_scratch.hitParts;
+		parts.clear();
+		float fade = 1.0f - age * age;
+		for (const auto& p : b.parts) {
+			parts.push_back(p.pos.x); parts.push_back(p.pos.y); parts.push_back(p.pos.z);
+			parts.push_back(p.size * (0.6f + 0.4f * fade));
+			parts.push_back(b.color.x); parts.push_back(b.color.y); parts.push_back(b.color.z);
+			parts.push_back(fade);
+		}
+		g.m_rhi->drawParticles(scene, parts.data(), (uint32_t)b.parts.size());
+	}
+
 	// ── Mining hit event particles (burst per swing) ────────────────────
 	for (const auto& he : g.m_hitEvents) {
 		float age = he.t / 0.4f;
