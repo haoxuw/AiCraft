@@ -375,11 +375,18 @@ void GameServer::resolveActions(float dt) {
 			if (!actor) break;
 
 			// Resend inventory to correct optimistic state; dedup/tick.
+			// SourceBlockGone on a block harvest is a benign multi-agent race
+			// (villager A chops first, B's LocalWorld hasn't drained the
+			// S_BLOCK yet, B re-emits Convert). The agent auto-corrects once
+			// the block update arrives, so skip the noisy stderr log but keep
+			// the inventory nudge — the optimistic log-pickup still needs to
+			// be rolled back. Other codes are genuine bugs and stay loud.
 			auto nudge = [&](ActionRejectCode code, const std::string& why) {
 				char detail[256];
 				std::snprintf(detail, sizeof(detail), "from=%s to=%s: %s",
 				              p.fromItem.c_str(), p.toItem.c_str(), why.c_str());
-				logActionReject("Convert", p.actorId, rejectCodeName(code), detail);
+				if (code != ActionRejectCode::SourceBlockGone)
+					logActionReject("Convert", p.actorId, rejectCodeName(code), detail);
 				if (nudgedThisTick.count(p.actorId)) return;
 				nudgedThisTick.insert(p.actorId);
 				if (actor->inventory && m_callbacks.onInventoryChange)
