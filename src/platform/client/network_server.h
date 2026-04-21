@@ -853,14 +853,19 @@ private:
 			uint8_t appearance = rb.hasMore() ? rb.readU8() : 0;  // v5+
 			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
-			// Old block lets fx distinguish dig/place/swap (e.g. door↔door_open).
-			BlockId oldBid = m_world.getBlock(bx, by, bz);
-			if (bid == BLOCK_AIR && oldBid != BLOCK_AIR && m_onBlockBreakText) {
+			// Only fire dig/place fx if this chunk was already loaded — otherwise
+			// getBlock() returns AIR for the "old" block and every routine server
+			// tick (grass growth, water flow, fire, doors) in still-streaming
+			// chunks sounds like a placed block, producing an overlapping chorus
+			// of place_stone/wood/soft during login.
+			bool chunkLoaded = (m_world.getChunk(cp) != nullptr);
+			BlockId oldBid = chunkLoaded ? m_world.getBlock(bx, by, bz) : bid;
+			if (chunkLoaded && bid == BLOCK_AIR && oldBid != BLOCK_AIR && m_onBlockBreakText) {
 				const BlockDef& bdef = m_world.blockRegistry().get(oldBid);
 				if (bdef.string_id != "air" && !bdef.string_id.empty())
 					m_onBlockBreakText(glm::vec3(bx, by, bz),
 						bdef.display_name.empty() ? bdef.string_id : bdef.display_name);
-			} else if (bid != BLOCK_AIR && oldBid != bid && m_onBlockPlace) {
+			} else if (chunkLoaded && bid != BLOCK_AIR && oldBid != bid && m_onBlockPlace) {
 				const BlockDef& bdef = m_world.blockRegistry().get(bid);
 				if (!bdef.string_id.empty())
 					m_onBlockPlace(glm::vec3(bx, by, bz), bdef.string_id);

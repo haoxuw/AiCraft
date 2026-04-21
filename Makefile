@@ -18,7 +18,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test perf_fps perf_server llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -42,6 +42,21 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 #   Terminal 2: make client HOST=127.0.0.1 PORT=7777
 
 civcraft: game
+
+# `make game N` → spawn N villagers. Captures the first positional arg after
+# `game` when it's all digits, stamps it into GAME_VILLAGERS, and registers
+# the digit-word as a no-op phony target so make doesn't bail on "no rule to
+# make target '100'". Pure client-side — the client sets CIVCRAFT_VILLAGERS
+# in the env inherited by the spawned server.
+ifeq ($(firstword $(MAKECMDGOALS)),game)
+  GAME_ARG := $(word 2,$(MAKECMDGOALS))
+  GAME_VILLAGERS := $(shell echo "$(GAME_ARG)" | grep -E '^[0-9]+$$')
+  ifneq ($(GAME_VILLAGERS),)
+    .PHONY: $(GAME_VILLAGERS)
+    $(GAME_VILLAGERS):
+	@:
+  endif
+endif
 
 # `make game` launches the Vulkan client under `perf record` (CPU profiling)
 # by default so you get per-session stack samples *and* the built-in PERF
@@ -139,7 +154,7 @@ endef
 endif
 
 game: game-build
-	$(call launch,$(if $(GAME_PORT),--port $(GAME_PORT)))
+	$(call launch,$(if $(GAME_VILLAGERS),--villagers $(GAME_VILLAGERS)) $(if $(GAME_PORT),--port $(GAME_PORT)))
 
 profiler: game-build
 	$(call launch,--profiler $(if $(GAME_PORT),--port $(GAME_PORT)))
@@ -262,6 +277,53 @@ test_e2e: build pathfinding_test
 	@echo "[test_e2e] Running headless gameplay tests..."
 	cd $(BUILD_DIR) && ./civcraft-test
 	@echo "[test_e2e] Done."
+
+# ── Perf breakdown tables ──────────────────────────────────────────────
+# Spin a civcraft-ui-vk session (which auto-spawns a civcraft-server),
+# wait PERF_DURATION seconds, then parse the histograms each binary writes
+# to /tmp/civcraft_perf_{client,server}_<ts>.txt into a percent-breakdown
+# table. Overrides:
+#   PERF_DURATION=120  sample window (seconds)
+#   PERF_TEMPLATE=6    world template index (6 = perf_stress, 100 villagers)
+PERF_DURATION ?= 60
+PERF_TEMPLATE ?= 1
+PERF_REPORT_PY := src/platform/debug/perf_report.py
+
+define run_perf_session
+	@-pgrep -x civcraft-ui-vk  2>/dev/null | xargs -r kill ; true
+	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill ; true
+	@sleep 1
+	@echo "[$(1)] running civcraft-ui-vk (template=$(PERF_TEMPLATE)) for $(PERF_DURATION)s..."
+	@cd $(GAME_BUILD_DIR) && timeout $(PERF_DURATION) \
+	    ./civcraft-ui-vk --skip-menu --log-only --template $(PERF_TEMPLATE) \
+	    > /tmp/civcraft_perf_$(1).stdout 2> /tmp/civcraft_perf_$(1).stderr ; \
+	    true
+	@-pgrep -x civcraft-ui-vk  2>/dev/null | xargs -r kill ; true
+	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill ; true
+	@sleep 1
+endef
+
+perf_fps: game-build
+	$(call run_perf_session,fps)
+	@dump=$$(ls -t /tmp/civcraft_perf_client_*.txt 2>/dev/null | head -1); \
+	if [ -z "$$dump" ]; then \
+	    echo "[perf_fps] no client dump — session may have crashed pre-Playing."; \
+	    echo "[perf_fps] see /tmp/civcraft_perf_fps.stderr"; \
+	    exit 1; \
+	fi; \
+	echo "[perf_fps] parsing $$dump"; echo; \
+	python3 $(PERF_REPORT_PY) client "$$dump"
+
+perf_server: game-build
+	$(call run_perf_session,server)
+	@dump=$$(ls -t /tmp/civcraft_perf_server_*.txt 2>/dev/null | head -1); \
+	if [ -z "$$dump" ]; then \
+	    echo "[perf_server] no server dump — session may have crashed early."; \
+	    echo "[perf_server] see /tmp/civcraft_perf_server.stderr"; \
+	    exit 1; \
+	fi; \
+	echo "[perf_server] parsing $$dump"; echo; \
+	python3 $(PERF_REPORT_PY) server "$$dump"
 
 build: configure
 	cmake --build $(BUILD_DIR) -j$(PAR)

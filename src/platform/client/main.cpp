@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
 	std::string host = "127.0.0.1"; // --host: server hostname
 	int  port = 0;                  // --port: server port (0 = spawn local)
 	int  templateIndex = 1;         // --template: world template (default village)
+	int  villagersOverride = 0;     // --villagers: override villager count (0 = leave template as-is)
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
 			printf("civcraft-ui-vk - Vulkan-native CivCraft client\n\n"
@@ -99,7 +100,8 @@ int main(int argc, char** argv) {
 			       "  --log-only        Hidden window + echo events to stdout\n"
 			       "  --host HOST       Server hostname (default 127.0.0.1)\n"
 			       "  --port PORT       Server port (omit to spawn local server)\n"
-			       "  --template N      World template (0=flat 1=village 5=test_chicken)\n\n"
+			       "  --template N      World template (0=flat 1=village 5=test_chicken)\n"
+		       "  --villagers N     Spawn N villagers (override template count; local server only)\n\n"
 			       "In-game:\n"
 			       "  WASD        move         LMB          attack / click-to-move\n"
 			       "  SPACE       jump         Mouse move   look\n"
@@ -117,6 +119,7 @@ int main(int argc, char** argv) {
 		else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) host = argv[++i];
 		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) port = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) templateIndex = std::atoi(argv[++i]);
+		else if (strcmp(argv[i], "--villagers") == 0 && i + 1 < argc) villagersOverride = std::atoi(argv[++i]);
 	}
 
 	civcraft::GameLogger::instance().init(/*echoStdout=*/logOnly);
@@ -158,6 +161,7 @@ int main(int argc, char** argv) {
 			cfg.seed = 42;
 			cfg.templateIndex = templateIndex;
 			cfg.execDir = execDir;
+			cfg.villagersOverride = villagersOverride;
 			connectPort = agentMgr.launchServer(cfg);
 			if (connectPort < 0) {
 				fprintf(stderr, "[vk] failed to launch civcraft-server\n");
@@ -238,10 +242,11 @@ int main(int argc, char** argv) {
 			auto [topName, topV] = civcraft::perf::topByP99({
 				"client.phase.net",     "client.phase.chunks",
 				"client.phase.agent",   "client.phase.events",
-				"client.phase.sim",     "client.phase.world",
-				"client.phase.ents",    "client.phase.fx3d",
+				"client.phase.sim",     "client.phase.gpuWait",
+				"client.phase.world",   "client.phase.ents",
+				"client.phase.fx3d",    "client.phase.inv3d",
 				"client.phase.hud",     "client.phase.panels",
-				"client.phase.imDraw",  "client.phase.present",
+				"client.phase.present",
 			});
 			char blline[128] = "";
 			if (!topName.empty()) {

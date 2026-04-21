@@ -272,6 +272,22 @@ public:
 				printf("[Server] CIVCRAFT_STRESS_MULT=%d applied to mob spawns\n", mult);
 			}
 		}
+		// Client-chosen villager override (Rule 1: client hosts the world, decides
+		// population). Replaces the template villager count; other mobs untouched.
+		if (const char* vc = std::getenv("CIVCRAFT_VILLAGERS")) {
+			int n = std::atoi(vc);
+			if (n > 0) {
+				bool found = false;
+				for (auto& m : mobList) {
+					if (m.typeId == "villager" || m.typeId == "base:villager") {
+						m.count = n;
+						found = true;
+					}
+				}
+				if (found)
+					printf("[Server] CIVCRAFT_VILLAGERS=%d — villager count overridden\n", n);
+			}
+		}
 
 		// inside=true → grid in barn; else → circular ring.
 		auto portalSpawn = tmpl.preferredSpawn(m_world->seed());

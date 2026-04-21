@@ -24,6 +24,7 @@ public:
 		int seed = 42;
 		int templateIndex = 1;
 		int port = 0;            // 0 = auto-pick in [7800, 7900)
+		int villagersOverride = 0;  // >0 → CIVCRAFT_VILLAGERS=N inherited by server
 		std::string worldPath;   // empty = new world
 		std::string execDir;
 	};
@@ -50,6 +51,15 @@ public:
 			args.push_back(std::to_string(cfg.seed));
 			args.push_back("--template");
 			args.push_back(std::to_string(cfg.templateIndex));
+		}
+
+		// Client-chosen villager override: env var inherits across fork() into
+		// the spawned server, which reads it in spawnMobsForClient (mirrors
+		// the existing CIVCRAFT_STRESS_MULT pattern). Keeps the server host
+		// agnostic — the client decides the population.
+		if (cfg.villagersOverride > 0) {
+			setenv("CIVCRAFT_VILLAGERS",
+			       std::to_string(cfg.villagersOverride).c_str(), 1);
 		}
 
 		// nullptr = inherit GUI stdout/stderr so server + its spawned agents log here.
