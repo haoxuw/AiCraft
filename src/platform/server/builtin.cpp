@@ -16,8 +16,14 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 
 	// Terrain
 	blocks.registerBlock({BT::Air, "Air", {0,0,0},{0,0,0},{0,0,0}, false, true, "",64,0, "","",""});
-	blocks.registerBlock({BT::Stone, "Stone", {0.48f,0.48f,0.50f},{0.48f,0.48f,0.50f},{0.48f,0.48f,0.50f}, true,false, BT::Cobblestone,64,0, "",SN::DigStone,SN::StepStone});
+	// Invariant (see terrain.py): every breakable block drops itself. Stone
+	// breaks into stone, not cobblestone — cobblestone is its own distinct
+	// placeable block reachable via worldgen/chests/mob drops.
+	blocks.registerBlock({BT::Stone, "Stone", {0.48f,0.48f,0.50f},{0.48f,0.48f,0.50f},{0.48f,0.48f,0.50f}, true,false, "",64,0, "",SN::DigStone,SN::StepStone});
 	blocks.registerBlock({BT::Cobblestone, "Cobblestone", {0.42f,0.42f,0.44f},{0.42f,0.42f,0.44f},{0.42f,0.42f,0.44f}, true,false, "",64,0, "",SN::DigStone,SN::StepStone});
+	blocks.registerBlock({BT::Granite,   "Granite",   {0.58f,0.42f,0.38f},{0.55f,0.40f,0.36f},{0.55f,0.40f,0.36f}, true,false, "",64,0, "",SN::DigStone,SN::StepStone});
+	blocks.registerBlock({BT::Marble,    "Marble",    {0.88f,0.88f,0.85f},{0.84f,0.84f,0.82f},{0.84f,0.84f,0.82f}, true,false, "",64,0, "",SN::DigStone,SN::StepStone});
+	blocks.registerBlock({BT::Sandstone, "Sandstone", {0.80f,0.72f,0.48f},{0.76f,0.68f,0.44f},{0.76f,0.68f,0.44f}, true,false, "",64,0, "",SN::DigStone,SN::StepStone});
 	blocks.registerBlock({BT::Dirt, "Dirt", {0.52f,0.34f,0.20f},{0.52f,0.34f,0.20f},{0.52f,0.34f,0.20f}, true,false, "",64,0, "",SN::DigDirt,SN::StepDirt});
 	{
 		// Grass palette: tints multiply the green top + brown side. Index 0 is

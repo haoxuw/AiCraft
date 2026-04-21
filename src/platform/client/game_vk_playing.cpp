@@ -11,7 +11,6 @@
 #include "client/raycast.h"
 #include "net/server_interface.h"
 #include "logic/physics.h"
-#include "logic/entity_physics.h"
 #include "logic/action.h"
 #include "logic/material_values.h"
 #include "agent/agent_client.h"
@@ -1034,7 +1033,19 @@ void Game::tickPlayer(float dt) {
 		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 16.0f);
 		if (hit) {
 			const auto& bdef = m_server->blockRegistry().get(hit->blockId);
-			m_lastDugBlock = bdef.string_id;
+			// MMB eyedropper: select the hotbar slot that holds this block
+			// type (if any) so RMB will place it. Slots not carrying the
+			// item remain untouched; if no slot has it, selection stays put.
+			auto* me = playerEntity();
+			if (me && me->inventory) {
+				for (int s = 0; s < civcraft::Hotbar::SLOTS; s++) {
+					if (m_hotbar.get(s) == bdef.string_id &&
+					    me->inventory->count(bdef.string_id) > 0) {
+						m_hotbar.selected = s;
+						break;
+					}
+				}
+			}
 			FloatText ft;
 			ft.worldPos = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.4f, 0.5f);
 			ft.color    = glm::vec3(0.55f, 0.75f, 1.0f);
@@ -1082,7 +1093,6 @@ void Game::digInFront() {
 	p.convertFrom = civcraft::Container::block(hit->blockPos);
 	p.convertInto = civcraft::Container::ground();
 	m_server->sendAction(p);
-	m_lastDugBlock = p.toItem;
 }
 
 void Game::placeBlock() {
@@ -1106,14 +1116,15 @@ void Game::placeBlock() {
 	auto hit = civcraft::raycastBlocks(chunks, eye, dir, 8.0f);
 	if (!hit) return;
 
-	// Client-side guard: server will reject silently if any of these fail
-	// (no such block type, or actor has none in inventory). Guarding here
-	// avoids false-positive placement feedback and needless server traffic.
-	const std::string& blockType = m_lastDugBlock;
+	auto* me = playerEntity();
+	if (!me || !me->inventory) return;
+
+	// Held item drives placement: its id must be a registered block type and
+	// the player must still carry one. Items with no matching block (sword,
+	// potion) naturally no-op — the registry lookup fails.
+	const std::string& blockType = m_hotbar.mainHand(*me->inventory);
 	if (blockType.empty()) return;
 	if (!m_server->blockRegistry().find(blockType)) return;
-	auto* me = playerEntity();
-	if (!me || !me->inventory || !me->inventory->has(blockType)) return;
 
 	civcraft::ActionProposal p;
 	p.actorId     = m_server->localPlayerId();

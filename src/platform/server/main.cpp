@@ -240,8 +240,9 @@ int main(int argc, char** argv) {
 	clients.setPort(config.port);
 
 	civcraft::ServerCallbacks cbs;
-	cbs.onBlockChange = [&](const civcraft::BlockChange& bc) {
-		clients.onBlockChanged(bc);
+	cbs.onBlockChange = [&](const civcraft::BlockChange& bc,
+	                        civcraft::BroadcastPriority pri) {
+		clients.onBlockChanged(bc, pri);
 	};
 	cbs.onEntityRemove = [&](civcraft::EntityId id) {
 		clients.broadcastEntityRemove(id);
@@ -419,6 +420,9 @@ int main(int argc, char** argv) {
 #endif
 
 		clients.broadcastState(dt);
+		// Any low-pri block batches the worker finished this cycle go out here,
+		// after high-pri S_BLOCKs have already hit the wire during tick().
+		clients.drainLowPriBroadcasts();
 		markPhase(fp.broadcastMs);
 		clients.announceOnLAN(dt);
 		markPhase(fp.announceLanMs);

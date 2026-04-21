@@ -1111,6 +1111,92 @@ static std::string t39_second_floor_reachable() {
 }
 
 // ================================================================
+// T40: Breaking a stone block yields a stone item (not cobblestone).
+// Locks the block/item same-name invariant — any block is break-and-
+// placeable as itself.
+// ================================================================
+static std::string t40_break_stone_drops_stone() {
+	auto srv = makeFlatServer();
+	EntityId pid = srv->localPlayerId();
+	Entity* p = srv->getEntity(pid);
+	if (!p) return "no player";
+
+	tickN(*srv, 30);
+	glm::vec3 pos = p->position;
+	glm::ivec3 blockPos = {(int)std::floor(pos.x),
+	                       (int)std::floor(pos.y) - 1,
+	                       (int)std::floor(pos.z) - 4};
+	placeBlockDirect(*srv, blockPos.x, blockPos.y, blockPos.z, BlockType::Stone);
+	if (srv->chunks().getBlock(blockPos.x, blockPos.y, blockPos.z) == BLOCK_AIR)
+		return "failed to place target stone block";
+
+	breakAndTick(*srv, pid, blockPos);
+
+	std::string itemType;
+	srv->forEachEntity([&](Entity& e) {
+		if (e.typeId() == ItemName::ItemEntity)
+			itemType = e.getProp<std::string>(Prop::ItemType);
+	});
+	if (itemType.empty()) return "no item entity spawned";
+	if (itemType != BlockType::Stone)
+		return "stone broke into '" + itemType + "', expected 'stone'";
+	return "";
+}
+
+// ================================================================
+// T41: No village house uses 'logs' for walls/floors/roof.
+// Villagers' scan_blocks("logs") finds tree trunks; if a house were
+// built from logs, they'd chop the house.
+// ================================================================
+static std::string t41_village_houses_no_logs() {
+	auto srv = makeVillageServer();
+	tickN(*srv, 5);
+
+	auto& tmpl   = srv->server()->world().getTemplate();
+	auto& chunks = srv->chunks();
+	auto& blocks = srv->blockRegistry();
+	if (!tmpl.pyConfig().hasVillage) return "no village (skip)";
+
+	BlockId bLogs = blocks.getId(BlockType::Log);
+	if (bLogs == BLOCK_AIR) return "logs block id not registered";
+
+	auto vc = tmpl.villageCenter(42);
+	int sh = tmpl.pyConfig().storyHeight;
+	for (const auto& h : tmpl.pyConfig().houses) {
+		// Barns are open pillar structures (wood, not logs) that extend past
+		// the clearingRadius. Stray tree trunks can legally spawn at their
+		// far corners; that's a tree-near-barn, not structural logs.
+		if (h.type == "barn") continue;
+		int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
+		// House floor = max surface over the footprint (worldgen lifts the
+		// whole structure to the tallest ground block). Scan only within the
+		// structure's own volume — stricter than center-column so stray tree
+		// logs near (but below) the house don't trigger false positives.
+		int baseY = -1000;
+		for (int dx = 0; dx < h.w; dx++)
+			for (int dz = 0; dz < h.d; dz++) {
+				int y = (int)std::round(
+					tmpl.surfaceHeight(42, (float)(hcx+dx), (float)(hcz+dz)));
+				if (y > baseY) baseY = y;
+			}
+		int yMin = baseY + 1;                          // floor row
+		int yMax = baseY + sh * h.stories + h.w / 2;   // + gable roof layers
+		for (int y = yMin; y <= yMax; y++)
+			for (int dx = 0; dx < h.w; dx++)
+				for (int dz = 0; dz < h.d; dz++) {
+					BlockId bid = chunks.getBlock(hcx+dx, y, hcz+dz);
+					if (bid == bLogs) {
+						return "house has 'logs' at ("
+						       + std::to_string(hcx+dx) + ","
+						       + std::to_string(y) + ","
+						       + std::to_string(hcz+dz) + ")";
+					}
+				}
+	}
+	return "";
+}
+
+// ================================================================
 // Physics helpers — place/remove blocks directly for setup
 // ================================================================
 
@@ -2704,6 +2790,8 @@ int main() {
 	run("T32: attack damages creature",           t32_attack_damages_entity);
 	run("T33: drop item deducts from inventory",  t33_dropitem_deducts_inventory);
 	run("T39: second floor reachable from spawn",    t39_second_floor_reachable);
+	run("T40: break stone drops stone (same-name)",  t40_break_stone_drops_stone);
+	run("T41: village houses contain no logs",       t41_village_houses_no_logs);
 	run("T35: item entity has ItemType property",  t35_item_entity_has_type);
 	run("T36: equip+unequip cycle returns item",  t36_equip_unequip_cycle);
 	run("T37: pickup denied if out of range",     t37_pickup_denied_out_of_range);

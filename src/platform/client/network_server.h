@@ -501,6 +501,39 @@ private:
 		}
 	}
 
+	// Shared path for S_BLOCK (single) and S_BLOCK_BATCH (decompressed entries):
+	// fires dig/place callbacks only when the chunk is already loaded (so
+	// still-streaming chunks don't get misread as "AIR→X placements" and
+	// spam place-sounds), then writes bid/p2/appearance into the chunk cache.
+	void applyBlockWire(int bx, int by, int bz, BlockId bid, uint8_t p2, uint8_t appearance) {
+		auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+		ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
+		bool chunkLoaded = (m_world.getChunk(cp) != nullptr);
+		BlockId oldBid = chunkLoaded ? m_world.getBlock(bx, by, bz) : bid;
+		if (chunkLoaded && bid == BLOCK_AIR && oldBid != BLOCK_AIR && m_onBlockBreakText) {
+			const BlockDef& bdef = m_world.blockRegistry().get(oldBid);
+			if (bdef.string_id != "air" && !bdef.string_id.empty())
+				m_onBlockBreakText(glm::vec3(bx, by, bz),
+					bdef.display_name.empty() ? bdef.string_id : bdef.display_name);
+		} else if (chunkLoaded && bid != BLOCK_AIR && oldBid != bid && m_onBlockPlace) {
+			const BlockDef& bdef = m_world.blockRegistry().get(bid);
+			if (!bdef.string_id.empty())
+				m_onBlockPlace(glm::vec3(bx, by, bz), bdef.string_id);
+		}
+		m_world.setBlock(bx, by, bz, bid);
+		if (p2 != 0) {
+			Chunk* c = m_world.getChunk(cp);
+			if (c) {
+				int lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+				int ly = ((by % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+				int lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+				c->set(lx, ly, lz, bid, p2);
+			}
+		}
+		m_world.setAppearance(bx, by, bz, appearance);
+		if (m_onChunkDirty) m_onChunkDirty(cp);
+	}
+
 	// S_CHUNK / S_CHUNK_Z annotation tail: [u32 n][{i32 dx, dy, dz, str typeId, u8 slot}×n].
 	void readChunkAnnotations(net::ReadBuffer& rb, ChunkPos cp) {
 		if (!rb.hasMore()) {
@@ -851,39 +884,35 @@ private:
 			BlockId bid = (BlockId)rb.readU32();
 			uint8_t p2 = rb.hasMore() ? rb.readU8() : 0;
 			uint8_t appearance = rb.hasMore() ? rb.readU8() : 0;  // v5+
-			auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
-			ChunkPos cp = {div(bx, CHUNK_SIZE), div(by, CHUNK_SIZE), div(bz, CHUNK_SIZE)};
-			// Only fire dig/place fx if this chunk was already loaded — otherwise
-			// getBlock() returns AIR for the "old" block and every routine server
-			// tick (grass growth, water flow, fire, doors) in still-streaming
-			// chunks sounds like a placed block, producing an overlapping chorus
-			// of place_stone/wood/soft during login.
-			bool chunkLoaded = (m_world.getChunk(cp) != nullptr);
-			BlockId oldBid = chunkLoaded ? m_world.getBlock(bx, by, bz) : bid;
-			if (chunkLoaded && bid == BLOCK_AIR && oldBid != BLOCK_AIR && m_onBlockBreakText) {
-				const BlockDef& bdef = m_world.blockRegistry().get(oldBid);
-				if (bdef.string_id != "air" && !bdef.string_id.empty())
-					m_onBlockBreakText(glm::vec3(bx, by, bz),
-						bdef.display_name.empty() ? bdef.string_id : bdef.display_name);
-			} else if (chunkLoaded && bid != BLOCK_AIR && oldBid != bid && m_onBlockPlace) {
-				const BlockDef& bdef = m_world.blockRegistry().get(bid);
-				if (!bdef.string_id.empty())
-					m_onBlockPlace(glm::vec3(bx, by, bz), bdef.string_id);
-			}
-			m_world.setBlock(bx, by, bz, bid);
-			if (p2 != 0) {
-				Chunk* c = m_world.getChunk(cp);
-				if (c) {
-					int lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-					int ly = ((by % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-					int lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-					c->set(lx, ly, lz, bid, p2);
-				}
-			}
-			m_world.setAppearance(bx, by, bz, appearance);
-			if (m_onChunkDirty) m_onChunkDirty(cp);
+			applyBlockWire(bx, by, bz, bid, p2, appearance);
 			break;
 		}
+#ifndef __EMSCRIPTEN__
+		case net::S_BLOCK_BATCH: {
+			// [u32 uncompressedSize][zstd payload...]
+			// Decompressed payload: [u32 count]{i32 x, i32 y, i32 z, u32 bid, u8 p2, u8 app}×count
+			uint32_t uncompSize = rb.readU32();
+			size_t compSize = rb.remaining();
+			const uint8_t* compData = rb.remainingData();
+			std::vector<uint8_t> decomp(uncompSize);
+			size_t actual = ZSTD_decompress(decomp.data(), uncompSize, compData, compSize);
+			if (ZSTD_isError(actual) || actual != uncompSize) {
+				fprintf(stderr, "[Client] S_BLOCK_BATCH: decompression error (size=%zu)\n",
+				        actual);
+				break;
+			}
+			net::ReadBuffer zrb(decomp.data(), actual);
+			uint32_t count = zrb.readU32();
+			for (uint32_t i = 0; i < count && zrb.hasMore(); i++) {
+				int bx = zrb.readI32(), by = zrb.readI32(), bz = zrb.readI32();
+				BlockId bid = (BlockId)zrb.readU32();
+				uint8_t p2 = zrb.readU8();
+				uint8_t appearance = zrb.readU8();
+				applyBlockWire(bx, by, bz, bid, p2, appearance);
+			}
+			break;
+		}
+#endif
 		case net::S_INVENTORY: {
 			EntityId id = rb.readU32();
 			uint32_t count = rb.readU32();

@@ -36,6 +36,7 @@
 #include "agent/behavior_executor.h"  // gatherNearby (used elsewhere)
 #include "agent/decide_worker.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -240,17 +241,21 @@ private:
 		int total = 0, skipSelf = 0, skipNonLiving = 0, skipRemoved = 0;
 		int skipNoBid = 0, skipAlreadyAgent = 0, skipNotOwnedByUs = 0, registered = 0;
 		int ownedBySomeoneElse = 0, ownedByNobody = 0;
+		std::unordered_map<std::string, int> byTypeNonLiving, byTypeRemoved;
+		std::unordered_map<std::string, int> byTypeNoBid, byTypeDup;
+		std::unordered_map<std::string, int> byTypeNotMine, byTypeRegistered;
 
 		m_server.forEachEntity([&](Entity& e) {
 			total++;
 			if (e.id() == myId) { skipSelf++; return; }
-			if (!e.def().isLiving()) { skipNonLiving++; return; }
-			if (e.removed) { skipRemoved++; return; }
+			if (!e.def().isLiving()) { byTypeNonLiving[e.typeId()]++; skipNonLiving++; return; }
+			if (e.removed) { byTypeRemoved[e.typeId()]++; skipRemoved++; return; }
 			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
-			if (bid.empty()) { skipNoBid++; return; }
-			if (m_agents.count(e.id())) { skipAlreadyAgent++; return; }
+			if (bid.empty()) { byTypeNoBid[e.typeId()]++; skipNoBid++; return; }
+			if (m_agents.count(e.id())) { byTypeDup[e.typeId()]++; skipAlreadyAgent++; return; }
 			int owner = e.getProp<int>(Prop::Owner, 0);
 			if (owner != (int)myId) {
+				byTypeNotMine[e.typeId()]++;
 				skipNotOwnedByUs++;
 				if (owner == 0) ownedByNobody++;
 				else ownedBySomeoneElse++;
@@ -263,6 +268,7 @@ private:
 			// Agent constructor marks m_needsDecide=true (discovery);
 			// enrolment in m_needy happens via updateMembership here.
 			if (h >= 0) {
+				byTypeRegistered[e.typeId()]++;
 				registered++;
 				updateMembership(e.id());
 			}
@@ -283,14 +289,38 @@ private:
 			}
 		}
 
-		char msg[256];
-		std::snprintf(msg, sizeof(msg),
-			"myId=%u seen=%d agents=%zu (+%d new) skip[self=%d nonLiving=%d removed=%d "
-			"noBid=%d dup=%d notMine=%d(nobody=%d,other=%d)]",
-			(unsigned)myId, total, m_agents.size(), registered,
-			skipSelf, skipNonLiving, skipRemoved,
-			skipNoBid, skipAlreadyAgent, skipNotOwnedByUs,
-			ownedByNobody, ownedBySomeoneElse);
+		// "type×N,type×N" — sorted desc by count, first 6 types, "+K more" suffix.
+		auto fmtTypes = [](const std::unordered_map<std::string,int>& m) {
+			if (m.empty()) return std::string{};
+			std::vector<std::pair<std::string,int>> v(m.begin(), m.end());
+			std::sort(v.begin(), v.end(), [](auto& a, auto& b){
+				if (a.second != b.second) return a.second > b.second;
+				return a.first < b.first;
+			});
+			std::string out = "[";
+			size_t n = std::min<size_t>(v.size(), 6);
+			for (size_t i = 0; i < n; i++) {
+				if (i) out += ",";
+				out += v[i].first + "×" + std::to_string(v[i].second);
+			}
+			if (v.size() > n)
+				out += ",+" + std::to_string(v.size() - n) + " more";
+			out += "]";
+			return out;
+		};
+
+		std::string msg = "myId=" + std::to_string((unsigned)myId)
+			+ " seen=" + std::to_string(total)
+			+ " agents=" + std::to_string(m_agents.size()) + fmtTypes(byTypeDup)
+			+ " (+" + std::to_string(registered) + " new" + fmtTypes(byTypeRegistered) + ")"
+			+ " skip[self=" + std::to_string(skipSelf)
+			+ " nonLiving=" + std::to_string(skipNonLiving) + fmtTypes(byTypeNonLiving)
+			+ " removed=" + std::to_string(skipRemoved) + fmtTypes(byTypeRemoved)
+			+ " noBid=" + std::to_string(skipNoBid) + fmtTypes(byTypeNoBid)
+			+ " notMine=" + std::to_string(skipNotOwnedByUs) + fmtTypes(byTypeNotMine)
+			+ "(nobody=" + std::to_string(ownedByNobody)
+			+ ",other=" + std::to_string(ownedBySomeoneElse) + ")]";
+		// `dup` is folded into `agents[...]` above — same entities, same types.
 		agentDiagnostic(m_agents.empty(), msg);
 	}
 

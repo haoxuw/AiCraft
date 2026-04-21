@@ -58,7 +58,12 @@ namespace civcraft::net {
 // v5: S_CHUNK carries a trailing [u8 × CHUNK_VOLUME] appearance array after the
 //     packed block data and before the annotation tail. S_BLOCK gains a trailing
 //     u8 appearance index (read conditionally via hasMore for back-compat reads).
-static constexpr uint32_t PROTOCOL_VERSION = 6;
+// v7: S_BLOCK_BATCH — zstd-compressed bundle of block changes. Used for
+//     tick-driven environmental mutations (seasonal leaf repaint, structure
+//     regen, wheat growth, etc.) so hundreds of per-block broadcasts collapse
+//     into one coalesced packet per flush window. Individual player/NPC
+//     actions keep using synchronous S_BLOCK for minimum latency.
+static constexpr uint32_t PROTOCOL_VERSION = 7;
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -113,6 +118,13 @@ enum MsgType : uint32_t {
 	S_ENTITY_DELTA    = 0x1016,
 
 	S_PONG            = 0x1017,  // [u64 token] — echo of C_PING; client times RTT
+
+	// Batched block changes — zstd-compressed list of (i32 x,i32 y,i32 z,
+	// u32 bid, u8 p2, u8 app) tuples, prefixed with a u32 entry count.
+	// Server uses this for low-priority environmental sweeps that would
+	// otherwise emit hundreds of per-block S_BLOCKs in one tick; per-entry
+	// semantics are identical to S_BLOCK. Added in v7.
+	S_BLOCK_BATCH     = 0x1018,
 };
 
 // 8-byte frame header.
@@ -141,6 +153,9 @@ public:
 
 	const std::vector<uint8_t>& data() const { return m_data; }
 	size_t size() const { return m_data.size(); }
+
+	// Append opaque bytes (e.g. a pre-compressed zstd payload).
+	void writeBytes(const void* ptr, size_t n) { write(ptr, n); }
 
 private:
 	void write(const void* ptr, size_t n) {

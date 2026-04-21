@@ -24,7 +24,6 @@
 #include "client/raycast.h"
 #include "net/server_interface.h"
 #include "logic/physics.h"
-#include "logic/entity_physics.h"
 #include "logic/action.h"
 #include "logic/material_values.h"
 // AgentClient now lives inside the player client (server stopped spawning
@@ -1197,13 +1196,11 @@ void Game::runOneFrame(float dt, float wallTime) {
 	if (!rendered) m_frameProbe.mark("skip");
 
 	// ── Perf rollup ────────────────────────────────────────────────────
-	// One line every windowS seconds, plus an immediate dump for any
-	// frame that exceeds spikeMs.
+	// Console prints only on spike frames; the rolling rollup moved to the
+	// PERF_RECORD histograms (dumped on exit) so normal-path runs stay quiet.
 	{
 		double totalMs = std::chrono::duration<double, std::milli>(
 			m_frameProbe.last - m_frameProbe.frameStart).count();
-		m_frameProbe.frames++;
-		m_frameProbe.windowMaxMs = std::max(m_frameProbe.windowMaxMs, totalMs);
 
 #ifdef CIVCRAFT_PERF
 		// Session-long histograms + counters. Scoped to Playing *and* server
@@ -1245,55 +1242,6 @@ void Game::runOneFrame(float dt, float wallTime) {
 			for (auto& [name, ms] : m_frameProbe.sections)
 				n += std::snprintf(line + n, sizeof(line) - n, " %s=%.1f", name, ms);
 			std::fprintf(stderr, "%s\n", line);
-		}
-		double now = std::chrono::duration<double>(
-			m_frameProbe.last.time_since_epoch()).count();
-		if (m_frameProbe.windowStart == 0.0) m_frameProbe.windowStart = now;
-		double elapsed = now - m_frameProbe.windowStart;
-		if (elapsed >= m_frameProbe.windowS && m_frameProbe.frames > 0) {
-			double frames = (double)m_frameProbe.frames;
-			double fps    = frames / elapsed;
-			double avgMs  = 1000.0 / std::max(1.0, fps);
-			// Render-only slice: what the GPU/CPU render path costs per frame,
-			// excluding the serial tick work (net/chunks/agent/events/sim).
-			// Gives the visual-ceiling FPS — i.e. what we'd see if the tick
-			// stages moved off the main thread.
-			// Render-only slice: CPU time spent recording Vulkan command-buffer
-			// draws plus the final submit/present. Excludes tick work AND the
-			// gpuWait sync. Ratio is the "visual-ceiling FPS" if everything
-			// else moved off-thread AND the GPU served us instantly.
-			static const char* kRenderKeys[] = {
-				"world", "ents", "fx3d", "inv3d",
-				"hud", "panels", "present"
-			};
-			double renderMs = 0.0;
-			for (auto* k : kRenderKeys) {
-				auto it = m_frameProbe.accum.find(k);
-				if (it != m_frameProbe.accum.end()) renderMs += it->second / frames;
-			}
-			double renderFps = renderMs > 0.01 ? 1000.0 / renderMs : 0.0;
-			char line[512]; int n = 0;
-			n += std::snprintf(line + n, sizeof(line) - n,
-				"[perf] %.0ffps avg=%.1fms peak=%.1fms render=%.1fms(%.0ffps)",
-				fps, avgMs, m_frameProbe.windowMaxMs, renderMs, renderFps);
-			// Print order: pre-render CPU → GPU sync → render CPU → present.
-			static const char* kOrder[] = {
-				"net", "chunks", "agent", "events", "sim",
-				"gpuWait",
-				"world", "ents", "fx3d", "inv3d", "hud", "panels",
-				"present", "skip"
-			};
-			for (auto* k : kOrder) {
-				auto it = m_frameProbe.accum.find(k);
-				if (it == m_frameProbe.accum.end()) continue;
-				n += std::snprintf(line + n, sizeof(line) - n,
-					" %s=%.2f", k, it->second / frames);
-			}
-			std::fprintf(stderr, "%s\n", line);
-			m_frameProbe.accum.clear();
-			m_frameProbe.frames = 0;
-			m_frameProbe.windowStart = now;
-			m_frameProbe.windowMaxMs = 0.0;
 		}
 	}
 }

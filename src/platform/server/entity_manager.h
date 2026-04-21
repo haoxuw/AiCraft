@@ -5,7 +5,6 @@
 #include "logic/entity.h"
 #include "logic/constants.h"
 #include "logic/physics.h"
-#include "logic/entity_physics.h"
 #include "debug/move_stuck_log.h"
 #include "server/server_tuning.h"
 #include "logic/action.h"
@@ -185,7 +184,15 @@ public:
 			} else {
 				glm::vec3 preVel = e.velocity;
 				glm::vec3 prePos = e.position;
-				auto result = stepEntityPhysics(e, e.velocity, isSolid, dt);
+				// Rule 6: same moveAndCollide the client uses for prediction.
+				MoveParams mp = makeMoveParams(
+					def.collision_box_min, def.collision_box_max,
+					def.gravity_scale, def.isLiving(),
+					e.getProp<bool>("fly_mode", false));
+				MoveResult result = moveAndCollide(isSolid, e.position, e.velocity, dt, mp, e.onGround);
+				e.position = result.position;
+				e.velocity = result.velocity;
+				e.onGround = result.onGround;
 
 				// Input horiz != 0 but output ≈ 0 → collision clamp ("walks in place").
 				float inHoriz  = std::sqrt(preVel.x * preVel.x + preVel.z * preVel.z);

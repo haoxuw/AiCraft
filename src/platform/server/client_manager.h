@@ -11,7 +11,11 @@
 #include "logic/constants.h"
 #include <zstd.h>
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -132,9 +136,16 @@ class ClientManager {
 public:
 	explicit ClientManager(GameServer& server)
 		: m_server(server),
-		  m_chunkGen(std::make_unique<ChunkGenService>(m_server.world())) {}
+		  m_chunkGen(std::make_unique<ChunkGenService>(m_server.world())) {
+		m_lowPriRun.store(true);
+		m_lowPriWorker = std::thread([this] { lowPriWorkerLoop(); });
+	}
 
-	~ClientManager() = default;
+	~ClientManager() {
+		m_lowPriRun.store(false);
+		m_lowPriCv.notify_all();
+		if (m_lowPriWorker.joinable()) m_lowPriWorker.join();
+	}
 
 	// Server port (for LAN discovery announcements).
 	void setPort(int port) { m_port = port; }
@@ -730,18 +741,13 @@ public:
 		return it != m_clients.end() ? &it->second : nullptr;
 	}
 
-	// S_BLOCK broadcast + drop annotations as items on break + update ChunkInfo.
-	void onBlockChanged(const BlockChange& bc) {
+	// Server-side side effects (annotation→item drop, ChunkInfo stats) always
+	// run synchronously on the tick thread regardless of priority — these
+	// mutate world state, not wire traffic.
+	void applyBlockSideEffects(const BlockChange& bc) {
 		const glm::ivec3& pos = bc.pos;
 		BlockId oldBid = bc.oldBid;
 		BlockId newBid = bc.newBid;
-		uint8_t p2 = bc.newP2;
-		{
-			net::WriteBuffer wb;
-			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
-			wb.writeU32(newBid); wb.writeU8(p2); wb.writeU8(bc.newApp);  // v5+
-			broadcastToAll(net::S_BLOCK, wb);
-		}
 
 		if (newBid == BLOCK_AIR) {
 			auto* ann = m_server.world().getAnnotation(pos.x, pos.y, pos.z);
@@ -749,13 +755,11 @@ public:
 				std::string typeId = ann->typeId;
 				m_server.world().removeAnnotation(pos.x, pos.y, pos.z);
 
-				{
-					net::WriteBuffer wb;
-					wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
-					wb.writeString(std::string()); // empty = remove
-					wb.writeU8(0);
-					broadcastToAll(net::S_ANNOTATION_SET, wb);
-				}
+				net::WriteBuffer wb;
+				wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
+				wb.writeString(std::string()); // empty = remove
+				wb.writeU8(0);
+				broadcastToAll(net::S_ANNOTATION_SET, wb);
 
 				glm::vec3 dropPos = glm::vec3(pos) + glm::vec3(0.5f, 0.2f, 0.5f);
 				m_server.world().entities.spawn(ItemName::ItemEntity, dropPos,
@@ -766,18 +770,135 @@ public:
 		auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 		ChunkPos cp = {div(pos.x, CHUNK_SIZE), div(pos.y, CHUNK_SIZE), div(pos.z, CHUNK_SIZE)};
 
-		ChunkInfo* ci = m_server.world().getChunkInfo(cp);
-		if (!ci) return;
+		if (ChunkInfo* ci = m_server.world().getChunkInfo(cp)) {
+			const std::string& oldTypeId = m_server.world().blocks.get(oldBid).string_id;
+			const std::string& newTypeId = m_server.world().blocks.get(newBid).string_id;
+			ci->applyBlockChange(pos, oldTypeId, newTypeId);
+		}
+	}
 
-		const std::string& oldTypeId = m_server.world().blocks.get(oldBid).string_id;
-		const std::string& newTypeId = m_server.world().blocks.get(newBid).string_id;
-		ci->applyBlockChange(pos, oldTypeId, newTypeId);
+	// Dispatch by priority. High = synchronous S_BLOCK (player feedback).
+	// Low = buffered for the worker thread to coalesce + zstd-batch.
+	void onBlockChanged(const BlockChange& bc, BroadcastPriority pri) {
+		applyBlockSideEffects(bc);
 
-		// S_CHUNK_INFO_DELTA removed — agents share PlayerClient's chunk cache
+		if (pri == BroadcastPriority::High) {
+			const glm::ivec3& pos = bc.pos;
+			net::WriteBuffer wb;
+			wb.writeI32(pos.x); wb.writeI32(pos.y); wb.writeI32(pos.z);
+			wb.writeU32(bc.newBid); wb.writeU8(bc.newP2); wb.writeU8(bc.newApp);
+			broadcastToAll(net::S_BLOCK, wb);
+			return;
+		}
+
+		// Low: buffer under lock; worker picks it up on next cycle.
+		{
+			std::lock_guard<std::mutex> lk(m_lowPriMu);
+			m_lowPriBuffer.push_back(bc);
+			// Overflow guard: drop oldest half. Seasonal/growth ticks will
+			// repaint the same cells next cycle, so losing a sliver is fine.
+			if (m_lowPriBuffer.size() > kLowPriCap) {
+				m_lowPriBuffer.erase(m_lowPriBuffer.begin(),
+					m_lowPriBuffer.begin() + (m_lowPriBuffer.size() - kLowPriCap / 2));
+			}
+		}
+	}
+
+	// Drain compressed batches produced by the worker thread and broadcast
+	// them as S_BLOCK_BATCH. Called once per outer loop iteration from main.
+	void drainLowPriBroadcasts() {
+		std::vector<std::vector<uint8_t>> batches;
+		{
+			std::lock_guard<std::mutex> lk(m_lowPriOutboxMu);
+			batches.swap(m_lowPriOutbox);
+		}
+		for (auto& payload : batches) {
+			net::WriteBuffer wb;
+			wb.writeBytes(payload.data(), payload.size());
+			broadcastToAll(net::S_BLOCK_BATCH, wb);
+		}
 	}
 
 private:
 	bool m_anyReady = false;
+
+	// --- Low-pri block-change batcher ---------------------------------------
+	// Tick thread pushes BlockChanges here; the worker wakes every
+	// kLowPriFlushMs, coalesces by (x,y,z) keeping latest, zstd-compresses
+	// the resulting [u32 count][(i32 x, i32 y, i32 z, u32 bid, u8 p2, u8 app)]
+	// payload, and drops it in m_lowPriOutbox. The tick thread broadcasts
+	// whatever's in the outbox inside drainLowPriBroadcasts(), so all socket
+	// writes stay on one thread and ordering vs. high-pri is preserved.
+	static constexpr size_t kLowPriCap       = 50000;   // coalesced entries
+	static constexpr int    kLowPriFlushMs   = 500;
+
+	std::mutex                       m_lowPriMu;
+	std::vector<BlockChange>         m_lowPriBuffer;
+
+	std::mutex                       m_lowPriOutboxMu;
+	std::vector<std::vector<uint8_t>> m_lowPriOutbox; // each entry = one compressed payload
+
+	std::atomic<bool>                m_lowPriRun{false};
+	std::condition_variable          m_lowPriCv;
+	std::mutex                       m_lowPriCvMu;
+	std::thread                      m_lowPriWorker;
+
+	void lowPriWorkerLoop() {
+		while (m_lowPriRun.load(std::memory_order_relaxed)) {
+			{
+				std::unique_lock<std::mutex> lk(m_lowPriCvMu);
+				m_lowPriCv.wait_for(lk, std::chrono::milliseconds(kLowPriFlushMs),
+					[this] { return !m_lowPriRun.load(std::memory_order_relaxed); });
+			}
+			if (!m_lowPriRun.load(std::memory_order_relaxed)) break;
+
+			std::vector<BlockChange> local;
+			{
+				std::lock_guard<std::mutex> lk(m_lowPriMu);
+				local.swap(m_lowPriBuffer);
+			}
+			if (local.empty()) continue;
+
+			// Coalesce by position: last write wins. 20-bit axis fits
+			// ±524k blocks — plenty for typical world bounds.
+			auto key = [](const glm::ivec3& p) -> uint64_t {
+				auto mask20 = [](int v) { return (uint64_t)(v & 0xFFFFF); };
+				return (mask20(p.x) << 40) | (mask20(p.y) << 20) | mask20(p.z);
+			};
+			std::unordered_map<uint64_t, BlockChange> coalesced;
+			coalesced.reserve(local.size());
+			for (auto& bc : local) coalesced[key(bc.pos)] = bc;
+
+			// Serialize raw: [u32 count] then per-entry tuple.
+			net::WriteBuffer raw;
+			raw.writeU32((uint32_t)coalesced.size());
+			for (auto& [k, bc] : coalesced) {
+				raw.writeI32(bc.pos.x); raw.writeI32(bc.pos.y); raw.writeI32(bc.pos.z);
+				raw.writeU32(bc.newBid); raw.writeU8(bc.newP2); raw.writeU8(bc.newApp);
+			}
+
+			const auto& rawBytes = raw.data();
+			size_t bound = ZSTD_compressBound(rawBytes.size());
+			std::vector<uint8_t> comp(bound);
+			size_t n = ZSTD_compress(comp.data(), bound,
+			                         rawBytes.data(), rawBytes.size(), 3);
+			if (ZSTD_isError(n)) continue;  // drop this batch on encode failure
+
+			// Wire payload: [u32 uncompressedSize][compressed bytes...]
+			std::vector<uint8_t> out;
+			out.reserve(4 + n);
+			uint32_t uncompSize = (uint32_t)rawBytes.size();
+			out.insert(out.end(),
+			           reinterpret_cast<const uint8_t*>(&uncompSize),
+			           reinterpret_cast<const uint8_t*>(&uncompSize) + 4);
+			out.insert(out.end(), comp.begin(), comp.begin() + n);
+
+			{
+				std::lock_guard<std::mutex> lk(m_lowPriOutboxMu);
+				m_lowPriOutbox.push_back(std::move(out));
+			}
+		}
+	}
 
 	// Single chokepoint so pruneDisconnected() stays uniform. Idempotent.
 	void markDisconnect(ClientId cid, std::string_view reason) {

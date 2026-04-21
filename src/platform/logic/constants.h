@@ -76,6 +76,9 @@ namespace BlockType {
 	constexpr const char* Air          = "air";
 	constexpr const char* Stone        = "stone";
 	constexpr const char* Cobblestone  = "cobblestone";
+	constexpr const char* Granite      = "granite";
+	constexpr const char* Marble       = "marble";
+	constexpr const char* Sandstone    = "sandstone";
 	constexpr const char* Dirt         = "dirt";
 	constexpr const char* Grass        = "grass";
 	constexpr const char* Sand         = "sand";

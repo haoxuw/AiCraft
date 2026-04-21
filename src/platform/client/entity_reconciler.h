@@ -1,7 +1,6 @@
 #pragma once
 
 #include "logic/entity.h"
-#include "logic/entity_physics.h"
 #include "logic/physics.h"
 #include "client/game_logger.h"
 #include <glm/glm.hpp>

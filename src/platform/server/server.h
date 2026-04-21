@@ -108,8 +108,14 @@ struct BlockChange {
 	uint8_t oldApp = 0;
 	uint8_t newApp = 0;
 };
+// High: player/NPC actions — synchronous S_BLOCK at action time so feedback
+//       is immediate (mine, place, door toggle, appearance-interact).
+// Low : server-tick environmental sweeps (seasonal leaves, wheat/wire/TNT,
+//       structure regen) — coalesced + zstd-batched + flushed on a slower
+//       cadence so hundreds of leaf repaints don't flood the socket.
+enum class BroadcastPriority : uint8_t { High, Low };
 struct ServerCallbacks {
-	std::function<void(const BlockChange&)> onBlockChange;
+	std::function<void(const BlockChange&, BroadcastPriority)> onBlockChange;
 	std::function<void(EntityId id)> onEntityRemove;
 	std::function<void(EntityId id, const Inventory&)> onInventoryChange;
 };
@@ -610,7 +616,8 @@ public:
 			c->setAppearance(lx, ly, lz, clamped);
 			uint8_t p2 = c->getParam2(lx, ly, lz);
 			if (m_callbacks.onBlockChange)
-				m_callbacks.onBlockChange(BlockChange{p, cur, cur, p2, p2, oldApp, clamped});
+				m_callbacks.onBlockChange(BlockChange{p, cur, cur, p2, p2, oldApp, clamped},
+					BroadcastPriority::Low);
 		}
 	}
 
@@ -744,7 +751,9 @@ public:
 		if (m_activeBlockTimer >= 0.05f) {
 			m_world->tickActiveBlocks(m_activeBlockTimer, [&](int bx, int by, int bz, BlockId bid) {
 				glm::ivec3 pos{bx, by, bz};
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pos, BLOCK_AIR, bid, 0, 0, 0, 0});
+				if (m_callbacks.onBlockChange)
+					m_callbacks.onBlockChange(BlockChange{pos, BLOCK_AIR, bid, 0, 0, 0, 0},
+						BroadcastPriority::Low);
 			});
 			m_activeBlockTimer = 0;
 		}
@@ -806,7 +815,8 @@ public:
 								       ((wp.y % 16) + 16) % 16,
 								       ((wp.z % 16) + 16) % 16, bid);
 								if (m_callbacks.onBlockChange)
-									m_callbacks.onBlockChange(BlockChange{wp, BLOCK_AIR, bid, 0, 0, 0, 0});
+									m_callbacks.onBlockChange(BlockChange{wp, BLOCK_AIR, bid, 0, 0, 0, 0},
+										BroadcastPriority::Low);
 							}
 						}
 					}

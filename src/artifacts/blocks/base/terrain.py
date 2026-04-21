@@ -1,6 +1,10 @@
 """Basic terrain blocks — the building blocks of the world.
 
-Only the essentials. No granite, diorite, etc.
+Invariant: every breakable block drops itself. Break a block → get an item
+with the same id → re-place it as the same block. The `drop` field is therefore
+always omitted (default = self). Items that aren't blocks (sword, potion, etc.)
+live in artifacts/items/ and are non-placeable because their id is not a
+registered block type.
 """
 
 blocks = [
@@ -27,7 +31,6 @@ blocks = [
         "solid": True,
         "hardness": 4.0,
         "color": [0.48, 0.48, 0.50],
-        "drop": "cobblestone",
     },
     {
         "id": "cobblestone",
@@ -35,6 +38,27 @@ blocks = [
         "solid": True,
         "hardness": 4.0,
         "color": [0.42, 0.42, 0.44],
+    },
+    {
+        "id": "granite",
+        "name": "Granite",
+        "solid": True,
+        "hardness": 4.0,
+        "color": [0.58, 0.42, 0.38],
+    },
+    {
+        "id": "marble",
+        "name": "Marble",
+        "solid": True,
+        "hardness": 4.0,
+        "color": [0.88, 0.88, 0.85],
+    },
+    {
+        "id": "sandstone",
+        "name": "Sandstone",
+        "solid": True,
+        "hardness": 3.0,
+        "color": [0.80, 0.72, 0.48],
     },
     {
         "id": "sand",
@@ -90,7 +114,6 @@ blocks = [
         "transparent": True,
         "hardness": 0.3,
         "color": [0.75, 0.85, 0.90],
-        "drop": "",                    # doesn't drop when broken
     },
     {
         "id": "beenest",

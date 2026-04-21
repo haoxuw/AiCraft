@@ -539,25 +539,19 @@ private:
 		return v && std::atoi(v) != 0;
 	}();
 
-	// Per-frame section timings — rolls up every 2s as [perf] and fires
-	// [perf-spike] for any frame that busts the threshold.
+	// Per-frame section timings — feeds CIVCRAFT_PERF histograms and the
+	// [perf-spike] console line when a frame busts spikeMs.
 	struct FrameProbe {
 		using clock = std::chrono::steady_clock;
 		clock::time_point frameStart;
 		clock::time_point last;
 		std::vector<std::pair<const char*, double>> sections;
-		std::unordered_map<std::string, double> accum;
-		int    frames      = 0;
-		double windowStart = 0.0;
-		double windowMaxMs = 0.0;
 		const double spikeMs = 40.0;
-		const double windowS = 2.0;
 		void begin() { frameStart = clock::now(); last = frameStart; sections.clear(); }
 		void mark(const char* name) {
 			auto now = clock::now();
 			double ms = std::chrono::duration<double, std::milli>(now - last).count();
 			sections.push_back({name, ms});
-			accum[name] += ms;
 			last = now;
 		}
 	} m_frameProbe;
@@ -681,11 +675,6 @@ private:
 	// Admin mode (F12 toggle, F11 fly in admin)
 	bool         m_adminMode = false;
 	bool         m_flyMode   = false;
-
-	// Last block the player dug — placeBlock() uses this as the Convert
-	// source so placement works without a full inventory UI (one dig → one
-	// place). Falls back to "cobblestone" for fresh admin-mode players.
-	std::string  m_lastDugBlock = "cobblestone";
 
 	// Survival-mode block breaking — 3 hits on the same block to break.
 	struct BreakState {

@@ -505,7 +505,8 @@ void GameServer::resolveActions(float dt) {
 				uint8_t oldP2 = c->getParam2(lx, ly, lz);
 				uint8_t oldApp = c->getAppearance(lx, ly, lz);
 				c->set(lx, ly, lz, BLOCK_AIR);
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{bp, bid, BLOCK_AIR, oldP2, 0, oldApp, 0});
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{bp, bid, BLOCK_AIR, oldP2, 0, oldApp, 0},
+					BroadcastPriority::High);
 
 				// Structure damage: remove entity if anchor destroyed.
 				EntityId sid = m_structureCacher.lookup(bp);
@@ -587,7 +588,8 @@ void GameServer::resolveActions(float dt) {
 				BlockId placedBid = m_world->blocks.getId(p.toItem);
 				c->set(((pp.x % 16) + 16) % 16, ((pp.y % 16) + 16) % 16,
 				       ((pp.z % 16) + 16) % 16, placedBid, placeP2);
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pp, BLOCK_AIR, placedBid, 0, placeP2, 0, 0});
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pp, BLOCK_AIR, placedBid, 0, placeP2, 0, 0},
+					BroadcastPriority::High);
 
 				if (placedDef->behavior == BlockBehavior::Active)
 					m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
@@ -635,7 +637,8 @@ void GameServer::resolveActions(float dt) {
 						int lx = ((bp.x%16)+16)%16, ly = ((bp.y%16)+16)%16, lz = ((bp.z%16)+16)%16;
 						p2 = c->getParam2(lx, ly, lz);
 					}
-					m_callbacks.onBlockChange(BlockChange{bp, bid, bid, p2, p2, oldApp, clamped});
+					m_callbacks.onBlockChange(BlockChange{bp, bid, bid, p2, p2, oldApp, clamped},
+						BroadcastPriority::High);
 				}
 				break;
 			}
@@ -671,7 +674,8 @@ void GameServer::resolveActions(float dt) {
 				BlockId oldId = c->get(lx, ly, lz);  // MUST read before set
 				c->set(lx, ly, lz, id, p2);
 				glm::ivec3 pos{x, y, z};
-				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pos, oldId, id, p2, p2, oldApp, 0});
+				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pos, oldId, id, p2, p2, oldApp, 0},
+					BroadcastPriority::High);
 			};
 
 			setBlock(bp.x, bp.y, bp.z, newId);
