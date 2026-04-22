@@ -232,9 +232,14 @@ private:
 		if (m_discoveryTimer < 2.0f && !m_agents.empty()) return;
 		m_discoveryTimer = 0;
 
-		EntityId myId = m_server.localPlayerId();
-		if (myId == ENTITY_NONE) {
+		EntityId myEid  = m_server.localPlayerId();
+		uint32_t mySeat = m_server.localSeatId();
+		if (myEid == ENTITY_NONE) {
 			agentDiagnostic(true, "no localPlayerId yet");
+			return;
+		}
+		if (mySeat == 0) {
+			agentDiagnostic(true, "no seat granted yet");
 			return;
 		}
 
@@ -247,18 +252,18 @@ private:
 
 		m_server.forEachEntity([&](Entity& e) {
 			total++;
-			if (e.id() == myId) { skipSelf++; return; }
+			if (e.id() == myEid) { skipSelf++; return; }
 			if (!e.def().isLiving()) { byTypeNonLiving[e.typeId()]++; skipNonLiving++; return; }
 			if (e.removed) { byTypeRemoved[e.typeId()]++; skipRemoved++; return; }
 			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
 			if (bid.empty()) { byTypeNoBid[e.typeId()]++; skipNoBid++; return; }
 			if (m_agents.count(e.id())) { byTypeDup[e.typeId()]++; skipAlreadyAgent++; return; }
-			int owner = e.getProp<int>(Prop::Owner, 0);
-			if (owner != (int)myId) {
+			int ownerSeat = e.getProp<int>(Prop::Owner, 0);
+			if (ownerSeat != (int)mySeat) {
 				byTypeNotMine[e.typeId()]++;
 				skipNotOwnedByUs++;
-				if (owner == 0) ownedByNobody++;
-				else ownedBySomeoneElse++;
+				if (ownerSeat == 0) ownedByNobody++;
+				else                ownedBySomeoneElse++;
 				return;
 			}
 
@@ -309,7 +314,8 @@ private:
 			return out;
 		};
 
-		std::string msg = "myId=" + std::to_string((unsigned)myId)
+		std::string msg = "myEid=" + std::to_string((unsigned)myEid)
+			+ " seat=" + std::to_string(mySeat)
 			+ " seen=" + std::to_string(total)
 			+ " agents=" + std::to_string(m_agents.size()) + fmtTypes(byTypeDup)
 			+ " (+" + std::to_string(registered) + " new" + fmtTypes(byTypeRegistered) + ")"

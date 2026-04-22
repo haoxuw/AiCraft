@@ -959,17 +959,20 @@ void WorldRenderer::renderEffects(float wallTime) {
 			}
 		};
 
+		// Near-black, large, near-opaque marks — matches the instant-break
+		// burst so progressive cracks read as "visible black cracks" at any
+		// stage, not faint grey dots that disappear against dark textures.
 		auto& crackParts = g.m_scratch.crackParts;
 		crackParts.clear();
-		float alpha = 0.55f + progress * 0.35f;
-		float size  = 0.03f + progress * 0.04f;
+		float alpha = 0.85f + progress * 0.13f;  // 0.85 → 0.98
+		float size  = 0.07f + progress * 0.03f;  // 0.07 → 0.10
 		for (int face = 0; face < 6; face++) {
 			for (int m = 0; m < numMarks; m++) {
 				glm::vec3 fp = facePoint(face, cracks[m][0], cracks[m][1]);
 				glm::vec3 p = bpf + fp;
 				crackParts.push_back(p.x); crackParts.push_back(p.y); crackParts.push_back(p.z);
 				crackParts.push_back(size);
-				crackParts.push_back(0.08f); crackParts.push_back(0.06f); crackParts.push_back(0.04f);
+				crackParts.push_back(0.04f); crackParts.push_back(0.03f); crackParts.push_back(0.02f);
 				crackParts.push_back(alpha);
 			}
 		}

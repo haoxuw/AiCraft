@@ -8,8 +8,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "client/network_server.h"
+#include "client/raycast.h"
 #include "net/server_interface.h"
 #include "agent/agent_client.h"
 #include "logic/entity.h"
@@ -200,13 +202,13 @@ void EntityUiRenderer::renderEntityInspect() {
 	// ── Ownership ─────────────────────────────────────────────────────
 	y -= 0.010f;
 	sectionHeader("Ownership");
-	int owner = e->getProp<int>(civcraft::Prop::Owner, 0);
-	civcraft::EntityId myId = g.m_server->localPlayerId();
+	int ownerSeat = e->getProp<int>(civcraft::Prop::Owner, 0);
+	uint32_t mySeat = g.m_server->localSeatId();
 	const float okCol[4] = {0.55f, 0.95f, 0.55f, 1.0f};
-	if (owner == (int)myId)
+	if (mySeat != 0 && ownerSeat == (int)mySeat)
 		rowKV("Owner", "you", okCol);
-	else if (owner != 0) {
-		std::snprintf(buf, sizeof(buf), "player #%d", owner);
+	else if (ownerSeat != 0) {
+		std::snprintf(buf, sizeof(buf), "seat #%d", ownerSeat);
 		rowKV("Owner", buf, kText);
 	} else {
 		rowKV("Owner", "world", kTextDim);
@@ -257,6 +259,133 @@ void EntityUiRenderer::renderRTSSelect() {
 	g.m_rhi->drawRect2D(x0, y0, x1 - x0, y1 - y0, rectFill);
 	const float edge[4] = {0.39f, 0.78f, 1.0f, 0.75f};
 	ui::drawOutline(g.m_rhi, x0, y0, x1 - x0, y1 - y0, 0.003f, edge);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RTS drag-command: drag circle (while RMB held) and action wheel (on release)
+// ─────────────────────────────────────────────────────────────────────────
+void EntityUiRenderer::renderRTSDragCommand() {
+	Game& g = game_;
+	if (g.m_cam.mode != civcraft::CameraMode::RTS) return;
+	const float kPi = 3.14159265f;
+	float aspect = g.m_aspect > 0 ? g.m_aspect : 1.0f;
+
+	// Drag-in-progress ring — sampled around the world circle and raycast
+	// straight down to find ground height per sample, so the ring drapes
+	// over hills/valleys. Segments whose endpoints project off-screen or
+	// hit no terrain are skipped; occluders naturally break the ring.
+	if (g.m_rtsDragCmd.active && g.m_rtsDragCmd.hasStartWorld
+	    && g.m_rtsDragCmd.radiusWorld > 0.5f && g.m_server) {
+		const int   N         = 48;
+		const float thickness = 0.004f;
+		float cx = g.m_rtsDragCmd.startWorld.x;
+		float cz = g.m_rtsDragCmd.startWorld.z;
+		float r  = g.m_rtsDragCmd.radiusWorld;
+		auto& chunks = g.m_server->chunks();
+		std::vector<glm::vec2> pts(N);
+		std::vector<bool>      ok(N, false);
+		for (int i = 0; i < N; i++) {
+			float a  = (2.0f * kPi * (float)i) / (float)N;
+			float wx = cx + r * std::cos(a);
+			float wz = cz + r * std::sin(a);
+			auto hit = civcraft::raycastBlocks(
+				chunks, glm::vec3(wx, 256.0f, wz),
+				glm::vec3(0.0f, -1.0f, 0.0f), 300.0f);
+			if (!hit) continue;
+			glm::vec3 surface(wx, (float)hit->blockPos.y + 1.02f, wz);
+			glm::vec3 ndc;
+			if (!g.projectWorld(surface, ndc)) continue;
+			pts[i] = {ndc.x, ndc.y};
+			ok[i]  = true;
+		}
+		std::vector<float> verts;
+		verts.reserve((size_t)N * 24);
+		for (int i = 0; i < N; i++) {
+			int j = (i + 1) % N;
+			if (!ok[i] || !ok[j]) continue;
+			glm::vec2 a = pts[i], b = pts[j];
+			glm::vec2 t = b - a;
+			float L = glm::length(t);
+			if (L < 1e-5f) continue;
+			t /= L;
+			glm::vec2 n(-t.y, t.x);
+			glm::vec2 o  = n * (thickness * 0.5f);
+			glm::vec2 a0 = a - o, a1 = a + o;
+			glm::vec2 b0 = b - o, b1 = b + o;
+			const float seg[] = {
+				a0.x, a0.y, 0, 0,  b0.x, b0.y, 0, 0,  b1.x, b1.y, 0, 0,
+				a0.x, a0.y, 0, 0,  b1.x, b1.y, 0, 0,  a1.x, a1.y, 0, 0,
+			};
+			verts.insert(verts.end(), std::begin(seg), std::end(seg));
+		}
+		if (!verts.empty()) {
+			const float ring[4] = {0.98f, 0.78f, 0.24f, 0.90f};
+			g.m_rhi->drawUi2D(verts.data(),
+				(uint32_t)(verts.size() / 4), /*mode=*/1, ring);
+		}
+	}
+	// Cursor-endpoint dot — projected from the ground-anchored currentWorld,
+	// so it sits on the terrain where the cursor ray hit, not on the cursor
+	// sprite. Also renders during idle hover (no drag) when we have a world pt.
+	if (g.m_rtsDragCmd.active && g.m_rtsDragCmd.hasStartWorld) {
+		glm::vec3 ndcCur;
+		if (g.projectWorld(g.m_rtsDragCmd.currentWorld + glm::vec3(0, 0.05f, 0),
+		                   ndcCur)) {
+			const float dot[4] = {1.0f, 0.9f, 0.4f, 0.90f};
+			g.m_rhi->drawArc2D(ndcCur.x, ndcCur.y, 0.0f, 0.009f,
+				0.0f, 2.0f * kPi, dot, aspect, 16);
+		}
+	}
+
+	// Action wheel — four 90° slices (N Gather / E Attack / S Mine / W Cancel).
+	if (g.m_rtsWheel.active) {
+		const float kRIn  = 0.04f;
+		const float kROut = 0.14f;
+		float cx = g.m_rtsWheel.centerNdc.x;
+		float cy = g.m_rtsWheel.centerNdc.y;
+
+		// Dim disc at the cursor center so the hub reads against any backdrop.
+		const float cap[4] = {0.0f, 0.0f, 0.0f, 0.55f};
+		g.m_rhi->drawArc2D(cx, cy, 0.0f, kRIn,
+			0.0f, 2.0f * kPi, cap, aspect, 32);
+
+		struct Slice { float a0, a1; const char* label; float labelAng; };
+		const Slice slices[4] = {
+			{      kPi / 4,  3.0f * kPi / 4, "GATHER",  kPi / 2 }, // 0 N
+			{     -kPi / 4,         kPi / 4, "ATTACK",  0.0f    }, // 1 E
+			{ -3.0f * kPi / 4,     -kPi / 4, "MINE",   -kPi / 2 }, // 2 S
+			{  3.0f * kPi / 4,  5.0f * kPi / 4, "CANCEL", kPi    }, // 3 W
+		};
+		for (int i = 0; i < 4; i++) {
+			const Slice& s = slices[i];
+			bool hover = (g.m_rtsWheel.hoverSlice == i);
+			const float idle[4]      = {0.10f, 0.10f, 0.10f, 0.72f};
+			const float hoverC[4]    = {0.39f, 0.78f, 1.0f,  0.88f};
+			const float cancelIdle[4]  = {0.78f, 0.32f, 0.32f, 0.72f};
+			const float cancelHover[4] = {1.00f, 0.45f, 0.45f, 0.92f};
+			const float* col = (i == 3)
+				? (hover ? cancelHover : cancelIdle)
+				: (hover ? hoverC     : idle);
+			g.m_rhi->drawArc2D(cx, cy, kRIn, kROut, s.a0, s.a1,
+				col, aspect, 28);
+		}
+
+		// Labels — centered along slice midline.
+		const float kLabelR = (kRIn + kROut) * 0.5f;
+		const float scale   = 0.70f;
+		const float charW   = 0.018f * scale;
+		const float lineH   = 0.032f * scale;
+		for (int i = 0; i < 4; i++) {
+			const Slice& s = slices[i];
+			float lx = cx + kLabelR * std::cos(s.labelAng);
+			float ly = cy + kLabelR * aspect * std::sin(s.labelAng);
+			float w  = (float)std::strlen(s.label) * charW;
+			lx -= w * 0.5f;
+			ly -= lineH * 0.5f;
+			const float txtColor[4] = {1.0f, 1.0f, 1.0f, 0.96f};
+			g.m_rhi->drawText2D(s.label, lx, ly, scale, txtColor);
+		}
+	}
 }
 
 } // namespace civcraft::vk

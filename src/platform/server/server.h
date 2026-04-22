@@ -19,6 +19,9 @@
 // Must precede `namespace civcraft {` — system headers can't land inside.
 #include "server/owned_entity_store.h"
 #include "server/seat_registry.h"
+#include "server/village_registry.h"
+#include "server/village_siter.h"
+#include "server/village_stamper.h"
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -117,7 +120,9 @@ struct BlockChange {
 enum class BroadcastPriority : uint8_t { High, Low };
 struct ServerCallbacks {
 	std::function<void(const BlockChange&, BroadcastPriority)> onBlockChange;
-	std::function<void(EntityId id)> onEntityRemove;
+	// `reason` is the wire byte (EntityRemovalReason) — whoever set `removed`
+	// also set `e.removalReason`, forwarded verbatim here.
+	std::function<void(EntityId id, uint8_t reason)> onEntityRemove;
 	std::function<void(EntityId id, const Inventory&)> onInventoryChange;
 };
 
@@ -200,19 +205,46 @@ public:
 		m_blueprints.loadAll("artifacts/structures");
 	}
 
-	// World-scope entities only (chests, monument; owner=0, permanent).
-	// Mobs spawn per-client in spawnMobsForClient() on connect.
+	// Phase 4: world-gen now produces **only** terrain. Chests, monument, and
+	// every village block are stamped per-seat on the first claim (see
+	// placeVillageForSeat). A dedicated server with zero clients → no
+	// villages, no structures, no entities.
 	void init(const ServerConfig& config,
 	          const std::vector<std::shared_ptr<WorldTemplate>>& templates) {
 		initWorld(config, templates);
+		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f (villages stamped per-seat)\n",
+		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z);
+	}
 
-		auto& tmpl = m_world->getTemplate();
+	// Called from addClient on first-ever claim for this seat. Picks a
+	// center via the siter, records the village, stamps house/tower blocks
+	// into the footprint chunks, and spawns the chest + monument entities.
+	// Idempotent-ish: if the seat already has a record, re-stamps but does
+	// not duplicate entities (checks by Prop::VillageId).
+	void placeVillageForSeat(SeatId seat) {
+		if (!m_world) return;
+		auto& tmpl = static_cast<ConfigurableWorldTemplate&>(m_world->getTemplate());
+		if (!tmpl.pyConfig().hasVillage) return;
 
-		// Chests in non-barn houses. Villagers find via scan_entities("chest").
-		auto houseChests = tmpl.houseChestPositions(m_world->seed());
+		VillageRecord* rec = m_villages.findBySeat(seat);
+		if (!rec) {
+			auto center = VillageSiter::pick(m_villages,
+				tmpl.villageCenter(m_world->seed()), m_world->seed(), seat);
+			if (!center) {
+				printf("[Server] Village siter exhausted for seat %u — skipping\n", seat);
+				return;
+			}
+			rec = &m_villages.allocate(seat, *center);
+			printf("[Server] Allocated village %u for seat %u at (%d,%d)\n",
+			       rec->id, seat, rec->centerXZ.x, rec->centerXZ.y);
+		}
+
+		VillageStamper::stamp(*m_world, *rec, tmpl, m_world->blocks);
+
+		// Chest entities per non-barn house, at the stamped chest-block positions.
+		auto chests = tmpl.houseChestPositionsAt(m_world->seed(), rec->centerXZ);
 		BlockId chestId = m_world->blocks.getId(BlockType::Chest);
-		int chestCount = 0;
-		for (auto& cPos : houseChests) {
+		for (auto& cPos : chests) {
 			int cx = (int)std::round(cPos.x), cy = (int)std::round(cPos.y), cz = (int)std::round(cPos.z);
 			if (chestId != BLOCK_AIR) {
 				ChunkPos cp = worldToChunk(cx, cy, cz);
@@ -221,27 +253,33 @@ public:
 			}
 			glm::vec3 blockCenter = {(float)cx + 0.5f, (float)cy + 0.5f, (float)cz + 0.5f};
 			EntityId chestEid = m_world->entities.spawn(StructureName::Chest, blockCenter, {});
-			printf("[Server] Chest entity %u at (%d,%d,%d)\n", chestEid, cx, cy, cz);
-			chestCount++;
+			printf("[Server] Chest entity %u at (%d,%d,%d) (seat %u)\n",
+			       chestEid, cx, cy, cz, seat);
 		}
 
-		// Client handle for flame FX; tower blocks live in world_template.
-		glm::vec3 mPos = tmpl.monumentPosition(m_world->seed());
+		glm::vec3 mPos = tmpl.monumentPositionAt(m_world->seed(), rec->centerXZ);
 		if (mPos.y >= 0) {
 			EntityId mEid = m_world->entities.spawn(StructureName::Monument, mPos, {});
-			printf("[Server] Monument entity %u at (%.1f,%.1f,%.1f)\n",
-			       mEid, mPos.x, mPos.y, mPos.z);
+			printf("[Server] Monument entity %u at (%.1f,%.1f,%.1f) (seat %u)\n",
+			       mEid, mPos.x, mPos.y, mPos.z, seat);
 		}
-
-		printf("[Server] Initialized. Spawn: %.0f, %.0f, %.0f  Chests: %d houses\n",
-		       m_spawnPos.x, m_spawnPos.y, m_spawnPos.z, chestCount);
 	}
 
-	// Rule 4: each mob gets Prop::Owner=ownerId for client-hosted agent + cleanup.
-	void spawnMobsForClient(EntityId ownerId) {
+	// Rule 4: each mob gets Prop::Owner=seatId so the owning client's hosted
+	// AgentClient adopts it and cleanup-on-disconnect finds it by seat.
+	void spawnMobsForClient(SeatId ownerSeat) {
 		if (!m_world) return;
 		auto& tmpl = m_world->getTemplate();
 		auto& wgc  = m_wgc;
+
+		// Phase 4: mobs anchor at *this seat's* village (registry), not the
+		// old seed-derived global center. Fallback to seed-derived only if
+		// the registry has no record (should be rare — placeVillageForSeat
+		// runs first in addClient).
+		const VillageRecord* seatRec = m_villages.findBySeat(ownerSeat);
+		glm::ivec2 seatVillageCenter = seatRec
+			? seatRec->centerXZ
+			: tmpl.villageCenter(m_world->seed());
 
 		// Walk terrain → paths/floors → first air Y. Must NOT find topmost
 		// solid or mobs land on rooftops where houses cover (x,z).
@@ -260,8 +298,7 @@ public:
 			return actualSurfaceY(x, z) + ServerTuning::spawnHeightOffset;
 		};
 
-		auto vc = tmpl.villageCenter(m_world->seed());
-		float mobCX = (float)vc.x, mobCZ = (float)vc.y;
+		float mobCX = (float)seatVillageCenter.x, mobCZ = (float)seatVillageCenter.y;
 
 		// GUI populates wgc.mobs from Python template (may be edited).
 		// Dedicated server has no GUI → fall back to template directly.
@@ -298,8 +335,9 @@ public:
 
 		// inside=true → grid in barn; else → circular ring.
 		auto portalSpawn = tmpl.preferredSpawn(m_world->seed());
-		auto barnCtr     = tmpl.barnCenter(m_world->seed());
-		int  barnFY      = tmpl.barnFloorY(m_world->seed());
+		auto& cfgTmpl = static_cast<ConfigurableWorldTemplate&>(tmpl);
+		auto barnCtr     = cfgTmpl.barnCenterAt(seatVillageCenter);
+		int  barnFY      = cfgTmpl.barnFloorYAt(m_world->seed(), seatVillageCenter);
 		int barnSlot = 0;  // cross-species counter (avoid cell collisions)
 		struct AnchorInfo { float cx, cz, defaultRadius; bool inside; float fixedY; };
 		auto resolveAnchor = [&](SpawnAnchor a) -> AnchorInfo {
@@ -335,8 +373,9 @@ public:
 			auto bIt = wgc.behaviorOverrides.find(ms.typeId);
 			if (bIt != wgc.behaviorOverrides.end())
 				extraProps[Prop::BehaviorId] = bIt->second;
-			// Owner → hosted AgentClient drives it; logout cleanup finds by owner.
-			extraProps[Prop::Owner] = (int)ownerId;
+			// Owner = seatId → hosted AgentClient with matching seat drives it;
+			// logout cleanup finds by seat.
+			extraProps[Prop::Owner] = (int)ownerSeat;
 			float y = (fixedY >= 0.0f) ? fixedY : safeSpawnHeight(x, z);
 			y += ms.yOffset;
 
@@ -396,13 +435,18 @@ public:
 			spawnMob(mobList[i], (float)i);
 		}
 		int spawned = (int)m_world->entities.count() - mobsBefore;
-		printf("[Server] Spawned %d mobs for owner=%u\n", spawned, ownerId);
+		printf("[Server] Spawned %d mobs for seat=%u\n", spawned, ownerSeat);
 	}
 
 	// Returns player's EntityId. `creatureType` must name a registered Living
 	// with EntityDef.playable=true; falls back to the first playable type if
 	// missing / unknown / non-playable.
-	EntityId addClient(ClientId clientId, const std::string& creatureType = "") {
+	//
+	// `seatId` is the durable ownership key (Phase 2). SEAT_NONE is rejected —
+	// every live client owns exactly one seat. TestServer mints a synthetic
+	// seat for its lone client.
+	EntityId addClient(ClientId clientId, SeatId seatId,
+	                   const std::string& creatureType = "") {
 		std::string chosenType = creatureType;
 		auto isPlayable = [&](const std::string& t) {
 			if (t.empty()) return false;
@@ -431,7 +475,12 @@ public:
 				return ENTITY_NONE;
 			}
 		}
-		EntityId eid = m_world->entities.spawn(chosenType, m_spawnPos);
+		// Owner = seatId threaded at spawn time (Phase 6 invariant): the
+		// player's own entity, their mobs, and any future rejoin snapshot all
+		// share one ownership key. `character_skin` is the per-player save-key
+		// so per-character inventories/owned-NPCs stay separate.
+		EntityId eid = m_world->entities.spawn(chosenType, m_spawnPos,
+			{{Prop::Owner, (int)seatId}, {"character_skin", chosenType}});
 		Entity* pe = m_world->entities.get(eid);
 		if (pe) {
 			pe->yaw = 90.0f;  // +Z toward stairs
@@ -445,11 +494,6 @@ public:
 				}
 			}
 		}
-		// Self-owned so server click-to-move can drive the player.
-		if (pe) pe->setProp(Prop::Owner, (int)eid);
-		// character_skin is the per-player save-key; we store the chosen
-		// creature type so per-character inventories/owned-NPCs stay separate.
-		if (pe) pe->setProp("character_skin", chosenType);
 		if (pe && pe->inventory) {
 			std::string skin = chosenType;
 			auto savedIt = m_savedInventories.find(skin);
@@ -471,35 +515,43 @@ public:
 				}
 			}
 		}
-		m_clients[clientId] = {eid};
-		printf("[Server] Client %u joined as '%s'. Player entity: %u\n",
-		       clientId, chosenType.c_str(), eid);
+		m_clients[clientId] = {eid, seatId};
+		printf("[Server] Client %u joined as '%s'. Player entity: %u, seat: %u\n",
+		       clientId, chosenType.c_str(), eid, seatId);
 
-		// Per-character snapshot restore so owned NPCs keep their last position.
-		if (!m_ownedEntities.restore(m_world->entities, eid, chosenType))
-			spawnMobsForClient(eid);
+		// Phase 4: before spawning mobs, ensure this seat has its village
+		// footprint stamped into the world (no-op if template has no village).
+		placeVillageForSeat(seatId);
+
+		// Per-seat snapshot restore so owned NPCs keep their last position.
+		if (!m_ownedEntities.restore(m_world->entities, seatId))
+			spawnMobsForClient(seatId);
 
 		return eid;
 	}
 
-	// Clients control owned entities, or any entity if player has fly_mode (admin).
+	// Clients control entities owned by their seat, or any entity if the player
+	// has fly_mode (admin). SEAT_NONE sessions cannot control anything —
+	// matches the design invariant that every live client has a real seat.
 	bool canClientControl(ClientId clientId, EntityId targetId) const {
 		auto cit = m_clients.find(clientId);
 		if (cit == m_clients.end()) return false;
+		if (cit->second.seatId == SEAT_NONE) return false;
 		Entity* playerEnt = m_world->entities.get(cit->second.playerEntityId);
 		if (playerEnt && playerEnt->getProp<bool>("fly_mode", false))
 			return true;
 		Entity* target = m_world->entities.get(targetId);
 		if (!target) return false;
-		int ownerId = target->getProp<int>(Prop::Owner, 0);
-		return ownerId == (int)cit->second.playerEntityId;
+		int ownerSeat = target->getProp<int>(Prop::Owner, 0);
+		return ownerSeat == (int)cit->second.seatId;
 	}
 
 	void removeClient(ClientId clientId) {
 		auto it = m_clients.find(clientId);
 		if (it != m_clients.end()) {
 			EntityId playerId = it->second.playerEntityId;
-			if (playerId != ENTITY_NONE) {
+			SeatId   seatId   = it->second.seatId;
+			if (playerId != ENTITY_NONE && seatId != SEAT_NONE) {
 				Entity* pe = m_world->entities.get(playerId);
 				std::string skin = "default";
 				if (pe) skin = pe->getProp<std::string>("character_skin", "default");
@@ -508,19 +560,20 @@ public:
 					printf("[Server] Saved inventory for '%s'\n", skin.c_str());
 				}
 				// Snapshot owned NPCs for restore next login (dead/unknown dropped).
-				m_ownedEntities.snapshot(m_world->entities, playerId, skin);
+				m_ownedEntities.snapshot(m_world->entities, seatId);
 
-				// Player is self-owned so this pass also despawns them.
-				// World-scope entities (owner=0) stay.
+				// Player entity + all NPCs owned by this seat go together.
+				// World-scope entities (owner=SEAT_NONE) stay.
 				int despawned = 0;
 				m_world->entities.forEach([&](Entity& e) {
-					if (e.getProp<int>(Prop::Owner, 0) == (int)playerId) {
-						m_world->entities.remove(e.id());
+					if (e.getProp<int>(Prop::Owner, 0) == (int)seatId) {
+						m_world->entities.remove(e.id(),
+							EntityRemovalReason::OwnerOffline);
 						despawned++;
 					}
 				});
-				printf("[Server] Despawned %d entities owned by player %u\n",
-					despawned, playerId);
+				printf("[Server] Despawned %d entities owned by seat %u\n",
+					despawned, seatId);
 			}
 			m_clients.erase(it);
 			printf("[Server] Client %u disconnected.\n", clientId);
@@ -561,10 +614,10 @@ public:
 						"actor entity=%u not found (client=%u)",
 						action.actorId, clientId);
 				} else {
-					int ownerId = t->getProp<int>(Prop::Owner, 0);
+					int ownerSeat = t->getProp<int>(Prop::Owner, 0);
 					std::snprintf(buf, sizeof(buf),
-						"owner=%d but client player=%u (client=%u)",
-						ownerId, it->second.playerEntityId, clientId);
+						"owner_seat=%d but client_seat=%u (client=%u)",
+						ownerSeat, it->second.seatId, clientId);
 				}
 				logMoveReject(action.actorId, "ownership-check-failed", buf);
 			}
@@ -727,7 +780,7 @@ public:
 		if (m_callbacks.onEntityRemove) {
 			m_world->entities.forEachIncludingRemoved([&](Entity& e) {
 				if (e.removed && !e.removalBroadcast) {
-					m_callbacks.onEntityRemove(e.id());
+					m_callbacks.onEntityRemove(e.id(), e.removalReason);
 					e.removalBroadcast = true;
 				}
 			});
@@ -934,6 +987,11 @@ public:
 	SeatRegistry&       seats()       { return m_seats; }
 	const SeatRegistry& seats() const { return m_seats; }
 
+	// Per-seat village records. Phase 4 of the ownership overhaul.
+	// Persisted to villages.bin. Empty for worlds that pre-date the phase.
+	VillageRegistry&       villages()       { return m_villages; }
+	const VillageRegistry& villages() const { return m_villages; }
+
 	EntityId getPlayerEntity(ClientId clientId) const {
 		auto it = m_clients.find(clientId);
 		return it != m_clients.end() ? it->second.playerEntityId : ENTITY_NONE;
@@ -988,8 +1046,9 @@ private:
 	float m_hpRegenInterval = ServerTuning::hpRegenInterval;
 	glm::vec3 m_spawnPos = {30, 10, 30};
 	std::unordered_map<std::string, Inventory> m_savedInventories;  // skin → inventory
-	OwnedEntityStore m_ownedEntities;  // skin → owned NPCs awaiting next login
+	OwnedEntityStore m_ownedEntities;  // SeatId → owned NPCs awaiting next login
 	SeatRegistry     m_seats;          // uuid → seatId (Phase 1 of ownership overhaul)
+	VillageRegistry  m_villages;       // per-seat village records (Phase 4)
 
 	StructureBlueprintManager            m_blueprints;
 	StructureBlockCacher                 m_structureCacher;
@@ -1011,6 +1070,10 @@ private:
 
 	struct ClientState {
 		EntityId playerEntityId = ENTITY_NONE;
+		// Durable ownership key (Phase 2 of seats+ownership overhaul).
+		// Entities carry Prop::Owner = seatId, so ownership survives reconnects
+		// regardless of which entity id the rejoining player ends up with.
+		SeatId   seatId         = SEAT_NONE;
 	};
 	std::unordered_map<ClientId, ClientState> m_clients;
 };

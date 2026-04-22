@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -234,6 +235,7 @@ public:
 	// Per-tick timer maintenance. Call once per tick, before dispatch decisions.
 	void tickTimers(float dt) {
 		if (m_reactCooldown > 0.0f)       m_reactCooldown      -= dt;
+		if (m_chopCooldown  > 0.0f)       m_chopCooldown       -= dt;
 		if (m_overridePauseTimer > 0.0f
 		 && m_overridePauseTimer < kForeverPauseSec * 0.5f) {
 			m_overridePauseTimer -= dt;
@@ -291,12 +293,18 @@ public:
 			}
 		}
 
-		// Harvest block already gone → step succeeds immediately (avoids
-		// spamming Convert proposals that the server rejects as SourceBlockGone).
+		// Harvest housekeeping: bail out if inventory is full before the next
+		// swing (the capacity gate is the step's itemId, a conservative hint
+		// from Python — typically the heaviest item the step might produce).
+		// The "nothing in range" exit is handled inside applyHarvest, since
+		// it needs to run a local block scan anyway.
 		if (step.type == PlanStep::Harvest) {
-			glm::ivec3 bp = glm::ivec3(glm::floor(step.targetPos));
-			BlockId bid = server.chunks().getBlock(bp.x, bp.y, bp.z);
-			if (bid == BLOCK_AIR) {
+			bool invFull = false;
+			if (e->inventory && !step.itemId.empty()) {
+				invFull = !e->inventory->canAccept(
+					step.itemId, 1, e->def().inventory_capacity);
+			}
+			if (invFull) {
 				advanceStep();
 				if (m_stepIndex >= (int)m_plan.size())
 					finishPlan(StepOutcome::Success, std::string{}, server);
@@ -469,6 +477,10 @@ private:
 	}
 
 	StepOutcome evaluateHarvest(PlanStep& step, Entity& e, float dt) {
+		// Stuck-outside-range: the executor's only "target" is the gather
+		// anchor (targetPos). Once the villager is within reach of the
+		// anchor they stand still while chopping, so the "not moving" check
+		// only fires before arrival.
 		glm::vec3 delta = step.targetPos - e.position;
 		delta.y = 0;
 		if (glm::length(delta) > kReachHarvest + 2.0f) {
@@ -551,6 +563,9 @@ private:
 	}
 
 	void applyHarvest(PlanStep& step, Entity& e, ServerInterface& server) {
+		// Phase 1 — navigate to the gather anchor. The anchor is just "where
+		// to stand"; the executor scans the surrounding volume for actual
+		// targets once in range.
 		glm::vec3 delta = step.targetPos - e.position;
 		delta.y = 0;
 		float dist = glm::length(delta);
@@ -560,16 +575,92 @@ private:
 			return;
 		}
 		sendStopMove(e, server);
+
+		// Phase 2 — cooldown gate. Cooldown lives on the agent (not the step)
+		// so a mid-plan re-decide can't grant a free swing.
+		if (m_chopCooldown > 0.0f) return;
+
+		// Phase 3 — prioritized local scan. For each tier (index 0 = highest),
+		// find the nearest non-AIR block matching the tier's type within
+		// gatherRadius of the entity. First tier with a hit wins — this is
+		// what enforces "don't chop a log while a leaf exists nearby".
+		std::optional<glm::ivec3> hit;
+		for (const std::string& typeName : step.gatherTypes) {
+			hit = findNearestBlockOfType(
+				typeName, e.position, step.gatherRadius, server);
+			if (hit) break;
+		}
+
+		if (!hit) {
+			// Nothing to gather in any tier within radius → step complete.
+			// decide() will re-run and either pick a new anchor or transition
+			// to the next state (DEPOSIT, etc.).
+			advanceStep();
+			if (m_stepIndex >= (int)m_plan.size())
+				finishPlan(StepOutcome::Success, std::string{}, server);
+			return;
+		}
+
+		glm::ivec3 targetBlock = *hit;
+
+		// Convert's from/to match the block we're actually chopping —
+		// step.itemId is a capacity-gate hint only (see applyStep), NOT the
+		// output id, otherwise mixed leaves+logs plans trip ValueConservation.
+		const BlockDef& bdef = server.blockRegistry().get(
+			server.chunks().getBlock(targetBlock.x, targetBlock.y, targetBlock.z));
+		std::string fromItem = bdef.string_id;
+		std::string outItem  = bdef.drop.empty() ? fromItem : bdef.drop;
+
 		ActionProposal p;
 		p.type = ActionProposal::Convert;
-		p.actorId = m_eid;
-		p.fromItem  = step.itemId;
-		p.fromCount = step.itemCount > 0 ? step.itemCount : 1;
-		p.toItem    = step.itemId;
-		p.toCount   = step.itemCount > 0 ? step.itemCount : 1;
-		p.convertFrom = Container::block(glm::ivec3(step.targetPos));
+		p.actorId    = m_eid;
+		p.fromItem   = fromItem;
+		p.fromCount  = 1;
+		p.toItem     = outItem;
+		p.toCount    = step.itemCount > 0 ? step.itemCount : 1;
+		p.convertFrom = Container::block(targetBlock);
 		p.convertInto = Container::self();
 		server.sendAction(p);
+
+		// Default 1s if Python didn't specify. Positive number required or
+		// the executor would re-swing every tick.
+		m_chopCooldown = step.chopCooldown > 0.0f ? step.chopCooldown : 1.0f;
+	}
+
+	// Sphere-scan for the nearest block matching `typeName` around `origin`.
+	// Returns nullopt if the name is unknown or no match exists in range.
+	// Walks an axis-aligned cube around origin (radius-bounded) and early-
+	// accepts on a distance check — the cube's ~2x volume vs. a sphere is
+	// a cheap way to avoid per-cell sqrt before knowing the candidate id.
+	std::optional<glm::ivec3> findNearestBlockOfType(
+		const std::string& typeName, const glm::vec3& origin,
+		float radius, ServerInterface& server) {
+		BlockId wantId = server.blockRegistry().getId(typeName);
+		if (wantId == BLOCK_AIR) return std::nullopt;  // unknown name
+
+		int r = (int)std::ceil(radius);
+		int cx = (int)std::floor(origin.x);
+		int cy = (int)std::floor(origin.y);
+		int cz = (int)std::floor(origin.z);
+
+		auto& chunks = server.chunks();
+		float bestDistSq = radius * radius;
+		std::optional<glm::ivec3> best;
+
+		for (int dx = -r; dx <= r; ++dx)
+		for (int dy = -r; dy <= r; ++dy)
+		for (int dz = -r; dz <= r; ++dz) {
+			int x = cx + dx, y = cy + dy, z = cz + dz;
+			if (chunks.getBlock(x, y, z) != wantId) continue;
+			glm::vec3 c(x + 0.5f, y + 0.5f, z + 0.5f);
+			glm::vec3 d = c - origin;
+			float dsq = d.x*d.x + d.y*d.y + d.z*d.z;
+			if (dsq < bestDistSq) {
+				bestDistSq = dsq;
+				best = glm::ivec3(x, y, z);
+			}
+		}
+		return best;
 	}
 
 	void applyAttack(PlanStep& step, Entity& e, ServerInterface& server) {
@@ -715,6 +806,10 @@ private:
 	glm::vec3 m_stuckLastSampledPos = glm::vec3(0.0f);
 	float     m_stuckAccum          = 0.0f;
 	bool      m_stuckLogged         = false;
+
+	// Seconds until the next harvest swing is allowed. Lives on the agent,
+	// not on PlanStep, so a re-plan mid-chop doesn't grant a free swing.
+	float     m_chopCooldown        = 0.0f;
 };
 
 } // namespace civcraft

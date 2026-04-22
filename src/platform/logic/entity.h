@@ -14,6 +14,16 @@
 
 namespace civcraft {
 
+// Why an entity disappeared. Wire-stable values (S_REMOVE trailing byte, v8):
+// the client branches on this to pick the right FX/SFX. Kept here in logic/ so
+// the server tick loop can record a reason without depending on net/.
+enum class EntityRemovalReason : uint8_t {
+	Unspecified  = 0,  // legacy / unknown sender — client treats as Despawned
+	Died         = 1,  // killed by combat, damage, starvation — play death SFX
+	Despawned    = 2,  // natural GC (item DespawnTime, anchor destroyed) — silent
+	OwnerOffline = 3,  // seat disconnected; NPC snapshotted for rejoin — puff FX, no SFX
+};
+
 // Decorator attached to a structure entity. Copied by value from the blueprint
 // when the entity spawns — carries both immutable config and per-instance
 // runtime state so different trees can hold independent colors / progress.
@@ -222,6 +232,7 @@ public:
 
 	bool removed = false;
 	bool removalBroadcast = false;  // S_REMOVE sent
+	uint8_t removalReason = 0;      // EntityRemovalReason wire value; set by whoever set `removed`
 
 private:
 	EntityId m_id;

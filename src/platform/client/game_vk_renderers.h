@@ -73,6 +73,7 @@ public:
 	explicit EntityUiRenderer(Game& g) : game_(g) {}
 	void renderEntityInspect();
 	void renderRTSSelect();
+	void renderRTSDragCommand();
 private:
 	Game& game_;
 };

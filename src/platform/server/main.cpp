@@ -244,8 +244,9 @@ int main(int argc, char** argv) {
 	                        civcraft::BroadcastPriority pri) {
 		clients.onBlockChanged(bc, pri);
 	};
-	cbs.onEntityRemove = [&](civcraft::EntityId id) {
-		clients.broadcastEntityRemove(id);
+	cbs.onEntityRemove = [&](civcraft::EntityId id, uint8_t reason) {
+		clients.broadcastEntityRemove(id,
+			(civcraft::net::EntityRemoveReason)reason);
 	};
 	cbs.onInventoryChange = [&](civcraft::EntityId id, const civcraft::Inventory& inv) {
 		civcraft::net::WriteBuffer wb;

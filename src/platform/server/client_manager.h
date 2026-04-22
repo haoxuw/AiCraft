@@ -61,9 +61,9 @@ struct ClientSession {
 	ClientId  id       = 0;
 	EntityId  playerId = ENTITY_NONE;
 	// Seat = durable ownership handle across sessions. Allocated on C_HELLO
-	// from the persistent client uuid (stashed in `name`). SEAT_NONE until the
-	// SeatRegistry has processed this session. Phase 1 wiring only — ownership
-	// still tracked via Prop::Owner=entityId; see docs/28_SEATS_AND_OWNERSHIP.md.
+	// from the persistent client uuid (stashed in `clientUuid`). SEAT_NONE
+	// until SeatRegistry has processed this session. Every spawned entity
+	// carries Prop::Owner = seatId. See docs/28_SEATS_AND_OWNERSHIP.md.
 	SeatId    seatId   = SEAT_NONE;
 
 	// Streaming bookkeeping: last chunk player stood in (drives re-eval) + dedup.
@@ -132,12 +132,14 @@ struct ClientSession {
 };
 
 // Pure predicate so test_e2e can assert without TCP loopback. MUST match broadcastState().
+// Seat match overrides perception distance so an agent never misses its own mob.
 inline bool shouldBroadcastEntityToClient(const Entity& e,
-                                          EntityId clientPlayerId,
+                                          SeatId clientSeat,
                                           const std::vector<glm::vec3>& viewPoints,
                                           float perceptionR2 = 64.0f * 64.0f) {
-	int ownerId = e.getProp<int>(Prop::Owner, 0);
-	if (ownerId == (int)clientPlayerId) return true;  // owner-override
+	int ownerSeat = e.getProp<int>(Prop::Owner, 0);
+	if (clientSeat != SEAT_NONE && ownerSeat == (int)clientSeat)
+		return true;  // owner-override
 	for (auto& vp : viewPoints)
 		if (glm::dot(e.position - vp, e.position - vp) <= perceptionR2)
 			return true;
@@ -523,7 +525,7 @@ public:
 			// Owner-override (Rule 4): owned NPCs broadcast regardless of range,
 			// else they go stale past the 64-block ring (red lightbulb false positive).
 			m_server.world().entities.forEach([&](Entity& e) {
-				if (!shouldBroadcastEntityToClient(e, client.playerId, viewPoints, PERCEPTION_R2))
+				if (!shouldBroadcastEntityToClient(e, client.seatId, viewPoints, PERCEPTION_R2))
 					return;
 				sendEntityState(client, e);
 			});
@@ -551,8 +553,9 @@ public:
 			const float r2Prox = ServerTuning::proximityRadius *
 			                     ServerTuning::proximityRadius;
 			m_server.world().entities.forEach([&](Entity& e) {
-				int owner = e.getProp<int>(Prop::Owner, 0);
-				if (owner != (int)client.playerId) return;
+				int ownerSeat = e.getProp<int>(Prop::Owner, 0);
+				if (client.seatId == SEAT_NONE) return;
+				if (ownerSeat != (int)client.seatId) return;
 				if (!e.def().isLiving() || e.removed) return;
 				const std::string& bid = e.getProp<std::string>(Prop::BehaviorId, "");
 				if (bid.empty()) return;
@@ -727,9 +730,15 @@ public:
 	// drop the dead entity from each client's delta-baseline cache in lockstep.
 	// Otherwise lastSentEntity[id] would linger and a future spawn reusing
 	// the same id would miss FLD_TYPE_ID and render as the wrong model.
-	void broadcastEntityRemove(EntityId id) {
+	//
+	// `reason` tells the client how to react visually: Died → death SFX,
+	// OwnerOffline → puff particle + skip SFX, Despawned → silent. Appended
+	// as a trailing byte (v8); v7 clients simply stop reading after the id.
+	void broadcastEntityRemove(EntityId id,
+	                           net::EntityRemoveReason reason = net::EntityRemoveReason::Unspecified) {
 		net::WriteBuffer wb;
 		wb.writeU32(id);
+		wb.writeU8((uint8_t)reason);
 		for (auto& [cid, c] : m_clients) {
 			net::sendMessage(c.transport.fd, net::S_REMOVE, wb);
 			c.lastSentEntity.erase(id);
@@ -988,7 +997,7 @@ private:
 #ifdef CIVCRAFT_PERF
 		auto t_add0 = std::chrono::steady_clock::now();
 #endif
-		EntityId eid = m_server.addClient(client.id, creatureType);
+		EntityId eid = m_server.addClient(client.id, client.seatId, creatureType);
 #ifdef CIVCRAFT_PERF
 		double add_ms = std::chrono::duration<double, std::milli>(
 			std::chrono::steady_clock::now() - t_add0).count();
@@ -1078,9 +1087,9 @@ private:
 			if (!displayName.empty())
 				client.name = displayName + " (" + client.clientUuid.substr(0, 8) + ")";
 
-			// Phase 1 of seats+ownership overhaul. Uuid → stable SeatId; first
-			// claim for a uuid allocates a fresh seat, later claims return it.
-			// Still advisory — ownership is tracked via Prop::Owner=entityId.
+			// Seats+ownership overhaul. Uuid → stable SeatId; first claim for a
+			// uuid allocates a fresh seat, later claims return it. SeatId then
+			// flows through addClient → Prop::Owner on every spawn.
 			{
 				auto r = m_server.seats().claim(client.clientUuid);
 				client.seatId           = r.id;

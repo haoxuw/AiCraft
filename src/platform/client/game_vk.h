@@ -669,6 +669,29 @@ private:
 	struct MoveOrder { glm::vec3 target; bool active; };
 	std::unordered_map<civcraft::EntityId, MoveOrder> m_moveOrders;
 
+	// RTS drag-command: in RTS mode with a non-empty selection, hold RMB and
+	// drag on the ground to define a circle; on release, a 4-slice wheel
+	// (Gather/Attack/Mine/Cancel) opens at the cursor. A non-Cancel slice
+	// preempts AI with a manual order; Cancel returns units to AI control.
+	// Slice indices — also the display order (N/E/S/W):
+	//   0 = Gather (top), 1 = Attack (right), 2 = Mine (bottom), 3 = Cancel (left)
+	struct RTSDragCmd {
+		bool      active        = false;
+		glm::vec2 startNdc{0, 0};
+		glm::vec2 currentNdc{0, 0};
+		glm::vec3 startWorld{0, 0, 0};
+		glm::vec3 currentWorld{0, 0, 0};
+		float     radiusWorld   = 0.0f;
+		bool      hasStartWorld = false;
+	} m_rtsDragCmd;
+	struct RTSWheel {
+		bool      active            = false;
+		glm::vec2 centerNdc{0, 0};
+		glm::vec3 circleCenterWorld{0, 0, 0};
+		float     circleRadiusWorld = 0.0f;
+		int       hoverSlice        = -1;
+	} m_rtsWheel;
+
 	// Screen
 	int          m_fbW = 0, m_fbH = 0;
 	float        m_aspect = 1.0f;

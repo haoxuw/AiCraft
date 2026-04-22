@@ -62,7 +62,6 @@ world = {
     "mobs": [
         {"type": "villager", "count": 100, "radius": 40, "spawn_at": "monument",
          "props": {
-             "chop_period":  0.1,
              "collect_goal": 3,
              "work_radius":  60.0,
          }},

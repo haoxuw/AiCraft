@@ -63,7 +63,16 @@ namespace civcraft::net {
 //     regen, wheat growth, etc.) so hundreds of per-block broadcasts collapse
 //     into one coalesced packet per flush window. Individual player/NPC
 //     actions keep using synchronous S_BLOCK for minimum latency.
-static constexpr uint32_t PROTOCOL_VERSION = 7;
+// v8: S_REMOVE — trailing u8 `reason` (EntityRemoveReason). v7 clients still
+//     parse the id-only prefix; newer clients branch on reason for FX/SFX
+//     (puff particle + no death sound on owner_offline).
+static constexpr uint32_t PROTOCOL_VERSION = 8;
+
+// S_REMOVE trailing byte. Server writes it unconditionally (from v8); a v7
+// client stops reading after the entity id, so appending a byte is safe.
+// Wire values live on Entity itself (logic/entity.h::EntityRemovalReason)
+// so the server tick loop can record a reason without depending on net/.
+using EntityRemoveReason = EntityRemovalReason;
 
 enum MsgType : uint32_t {
 	// Client → Server
@@ -81,7 +90,7 @@ enum MsgType : uint32_t {
 	S_WELCOME         = 0x1001,
 	S_ENTITY          = 0x1002,
 	S_CHUNK           = 0x1003,  // uncompressed chunk (v1 clients or fallback)
-	S_REMOVE          = 0x1004,
+	S_REMOVE          = 0x1004,  // [u32 entityId][u8 reason (v8; EntityRemoveReason)]
 	S_TIME            = 0x1005,
 	S_BLOCK           = 0x1006,
 	S_INVENTORY       = 0x1007,

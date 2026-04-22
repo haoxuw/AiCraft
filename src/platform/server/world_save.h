@@ -249,10 +249,13 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 	}
 
 	// owned_entities.bin — NPC snapshots for logged-out players. Shape mirrors
-	// entities.bin: per-skin groups of { typeId, pos, vel, yaw, props, inv, nav }.
+	// entities.bin: per-seat groups of { typeId, pos, vel, yaw, props, inv, nav }.
+	// Phase 5: keyed by SeatId (was character_skin); old saves from the
+	// pre-Phase-5 layout are rejected by load. Format:
+	//   u32 seatCount, then seatCount × { u32 seatId, u32 entCount, entCount × snap }.
 	{
 		net::WriteBuffer wb;
-		uint32_t skinCount = 0;
+		uint32_t seatCount = 0;
 		auto writeSnap = [&](const OwnedEntitySnapshot& s) {
 			wb.writeString(s.typeId);
 			wb.writeVec3(s.position);
@@ -278,18 +281,18 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 			wb.writeBool(s.navActive);
 			wb.writeVec3(s.navLongGoal);
 		};
-		for (auto& [skin, snaps] : server.ownedEntities().all()) {
-			if (snaps.empty()) continue;
-			wb.writeString(skin);
+		for (auto& [seatId, snaps] : server.ownedEntities().all()) {
+			if (snaps.empty() || seatId == SEAT_NONE) continue;
+			wb.writeU32(seatId);
 			wb.writeU32((uint32_t)snaps.size());
 			for (auto& s : snaps) writeSnap(s);
-			skinCount++;
+			seatCount++;
 		}
 		std::ofstream of(savePath + "/owned_entities.bin", std::ios::binary);
 		if (of.is_open()) {
-			of.write(reinterpret_cast<const char*>(&skinCount), 4);
+			of.write(reinterpret_cast<const char*>(&seatCount), 4);
 			of.write(reinterpret_cast<const char*>(wb.data().data()), wb.data().size());
-			printf("[WorldSave] Saved owned-entity snapshots for %u character(s)\n", skinCount);
+			printf("[WorldSave] Saved owned-entity snapshots for %u seat(s)\n", seatCount);
 		}
 	}
 
@@ -309,6 +312,28 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 			sf.write(reinterpret_cast<const char*>(&count), 4);
 			sf.write(reinterpret_cast<const char*>(wb.data().data()), wb.data().size());
 			printf("[WorldSave] Saved %u seat(s)\n", count);
+		}
+	}
+
+	// villages.bin — per-seat village records (Phase 4). Layout:
+	//   u32 count, then count × { u32 id, u32 ownerSeat, i32 cx, i32 cz, u8 status }.
+	{
+		net::WriteBuffer wb;
+		uint32_t count = 0;
+		for (auto& r : server.villages().all()) {
+			if (r.id == VILLAGE_NONE) continue;
+			wb.writeU32(r.id);
+			wb.writeU32(r.ownerSeat);
+			wb.writeI32(r.centerXZ.x);
+			wb.writeI32(r.centerXZ.y);
+			wb.writeU8((uint8_t)r.status);
+			count++;
+		}
+		std::ofstream vf(savePath + "/villages.bin", std::ios::binary);
+		if (vf.is_open()) {
+			vf.write(reinterpret_cast<const char*>(&count), 4);
+			vf.write(reinterpret_cast<const char*>(wb.data().data()), wb.data().size());
+			printf("[WorldSave] Saved %u village(s)\n", count);
 		}
 	}
 
@@ -608,14 +633,14 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 	{
 		std::ifstream of(savePath + "/owned_entities.bin", std::ios::binary);
 		if (of.is_open()) {
-			uint32_t skinCount;
-			of.read(reinterpret_cast<char*>(&skinCount), 4);
+			uint32_t seatCount;
+			of.read(reinterpret_cast<char*>(&seatCount), 4);
 			std::vector<uint8_t> data((std::istreambuf_iterator<char>(of)),
 			                           std::istreambuf_iterator<char>());
 			net::ReadBuffer rb(data.data(), data.size());
 			uint32_t totalSnaps = 0;
-			for (uint32_t i = 0; i < skinCount && rb.hasMore(); i++) {
-				std::string skin = rb.readString();
+			for (uint32_t i = 0; i < seatCount && rb.hasMore(); i++) {
+				SeatId seatId = rb.readU32();
 				uint32_t entCount = rb.readU32();
 				std::vector<OwnedEntitySnapshot> snaps;
 				snaps.reserve(entCount);
@@ -657,11 +682,11 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 					snaps.push_back(std::move(s));
 				}
 				totalSnaps += (uint32_t)snaps.size();
-				server.ownedEntities().loadFromDisk(skin, std::move(snaps));
+				server.ownedEntities().loadFromDisk(seatId, std::move(snaps));
 			}
 			if (totalSnaps)
-				printf("[WorldSave] Loaded %u owned-entity snapshots for %u character(s)\n",
-					totalSnaps, skinCount);
+				printf("[WorldSave] Loaded %u owned-entity snapshots for %u seat(s)\n",
+					totalSnaps, seatCount);
 		}
 	}
 
@@ -683,6 +708,31 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 				loaded++;
 			}
 			if (loaded) printf("[WorldSave] Loaded %u seat(s)\n", loaded);
+		}
+	}
+
+	// villages.bin — inverse of save above. Absent on pre-Phase-4 worlds;
+	// registry starts empty, ids allocate from 1.
+	{
+		std::ifstream vf(savePath + "/villages.bin", std::ios::binary);
+		if (vf.is_open()) {
+			uint32_t count;
+			vf.read(reinterpret_cast<char*>(&count), 4);
+			std::vector<uint8_t> data((std::istreambuf_iterator<char>(vf)),
+			                           std::istreambuf_iterator<char>());
+			net::ReadBuffer rb(data.data(), data.size());
+			uint32_t loaded = 0;
+			for (uint32_t i = 0; i < count && rb.hasMore(); i++) {
+				VillageRecord r;
+				r.id         = (VillageId)rb.readU32();
+				r.ownerSeat  = (SeatId)rb.readU32();
+				r.centerXZ.x = rb.readI32();
+				r.centerXZ.y = rb.readI32();
+				r.status     = (VillageRecord::Status)rb.readU8();
+				server.villages().loadEntry(r);
+				loaded++;
+			}
+			if (loaded) printf("[WorldSave] Loaded %u village(s)\n", loaded);
 		}
 	}
 

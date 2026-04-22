@@ -315,6 +315,7 @@ void GameServer::resolveActions(float dt) {
 					}
 					actor->inventory->add(itemType, count);
 					src->removed = true;
+					src->removalReason = (uint8_t)EntityRemovalReason::Despawned;
 
 					if (m_callbacks.onInventoryChange)
 						m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
@@ -419,6 +420,7 @@ void GameServer::resolveActions(float dt) {
 
 					if (target->hp() <= 0) {
 						target->removed = true;
+						target->removalReason = (uint8_t)EntityRemovalReason::Died;
 
 						// Animal loot.
 						if (target->def().isLiving()) {
@@ -516,6 +518,7 @@ void GameServer::resolveActions(float dt) {
 						if (bp == se->structure->anchorPos) {
 							m_structureCacher.unregisterStructure(sid);
 							se->removed = true;
+							se->removalReason = (uint8_t)EntityRemovalReason::Despawned;
 							m_incompleteStructures.erase(sid);
 						} else {
 							m_incompleteStructures.insert(sid);

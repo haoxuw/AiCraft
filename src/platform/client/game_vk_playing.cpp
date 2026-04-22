@@ -103,7 +103,11 @@ void Game::processInput(float dt) {
 	// runs when the panel is closed or ignored the key.
 	bool esc = glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
 	if (esc && !m_escLast) {
-		if (m_drag.active) {
+		if (m_rtsWheel.active) {
+			m_rtsWheel = {};
+		} else if (m_rtsDragCmd.active) {
+			m_rtsDragCmd = {};
+		} else if (m_drag.active) {
 			m_drag = {};
 		} else if (m_dialogPanel.isOpen()) {
 			m_dialogPanel.close();
@@ -340,7 +344,11 @@ void Game::processInput(float dt) {
 			m_rightClick.orbiting = false;
 			glfwGetCursorPos(m_window, &m_rightClick.startX, &m_rightClick.startY);
 		}
-		if (rmb && m_rightClick.held && !m_rightClick.orbiting) {
+		// RTS drag-command steals RMB-drag from camera orbit when a selection
+		// exists: selected units = command mode; empty selection = camera mode.
+		bool commandDrag = (m_cam.mode == civcraft::CameraMode::RTS
+		                    && !m_rtsSelect.selected.empty());
+		if (rmb && m_rightClick.held && !m_rightClick.orbiting && !commandDrag) {
 			double cx, cy;
 			glfwGetCursorPos(m_window, &cx, &cy);
 			double ddx = cx - m_rightClick.startX, ddy = cy - m_rightClick.startY;
@@ -693,6 +701,92 @@ void Game::tickPlayer(float dt) {
 	bool lmbNow = (lmb == GLFW_PRESS);
 	bool rtsLike = (m_cam.mode == civcraft::CameraMode::RPG || rtsMode);
 
+	// RTS action wheel: modal. LMB picks a slice (or dismisses); cursor hover
+	// highlights. Slice labels and their behavior:
+	//   0 Gather / 1 Attack / 2 Mine — pause AI, walk to circle center, retain selection
+	//   3 Cancel — resume AI, clear selection (same as legacy RMB-click)
+	if (m_rtsWheel.active) {
+		const float kRIn  = 0.04f;
+		const float kROut = 0.14f;
+		const float kPi   = 3.14159265f;
+		double mxD, myD;
+		glfwGetCursorPos(m_window, &mxD, &myD);
+		float fbWf = (float)m_fbW, fbHf = (float)m_fbH;
+		float ndcX = fbWf > 0 ? ((float)(mxD / fbWf) * 2.0f - 1.0f) : 0.0f;
+		float ndcY = fbHf > 0 ? (1.0f - (float)(myD / fbHf) * 2.0f) : 0.0f;
+		float aspect = (fbHf > 0 ? (fbWf / fbHf) : 1.0f);
+		float dxn = ndcX - m_rtsWheel.centerNdc.x;
+		float dyn = (ndcY - m_rtsWheel.centerNdc.y) / (aspect > 0 ? aspect : 1.0f);
+		float dist = std::sqrt(dxn * dxn + dyn * dyn);
+		int hover = -1;
+		if (dist >= kRIn && dist <= kROut) {
+			float ang = std::atan2(dyn, dxn);
+			if (ang >= -kPi / 4 && ang <  kPi / 4)          hover = 1; // Attack (E)
+			else if (ang >=  kPi / 4 && ang < 3 * kPi / 4)  hover = 0; // Gather (N)
+			else if (ang >= -3 * kPi / 4 && ang < -kPi / 4) hover = 2; // Mine (S)
+			else                                            hover = 3; // Cancel (W)
+		}
+		m_rtsWheel.hoverSlice = hover;
+
+		if (lmbNow && !m_lmbLast) {
+			int slice = hover;
+			if (slice == 3 || slice == -1) {
+				// Cancel slice or click-outside-wheel: legacy release path.
+				for (auto eid : m_rtsSelect.selected) {
+					m_server->sendCancelGoal(eid);
+					if (m_agentClient && eid != m_server->localPlayerId())
+						m_agentClient->resumeAgent(eid);
+					m_moveOrders.erase(eid);
+				}
+				std::printf("[vk-rts] wheel: %s %zu unit%s → default behavior\n",
+					slice == 3 ? "CANCEL" : "dismissed",
+					m_rtsSelect.selected.size(),
+					m_rtsSelect.selected.size() == 1 ? "" : "s");
+				m_rtsSelect.selected.clear();
+			} else {
+				// Gather/Attack/Mine: pause AI and issue a Walk order to the
+				// circle center. Per-kind behavior differentiation is Phase C;
+				// for now all three commit the same Walk, so the UX pipeline
+				// works end-to-end. Selection is retained so the user can
+				// re-command or switch to Cancel.
+				const char* label = (slice == 0 ? "GATHER"
+				                   : slice == 1 ? "ATTACK" : "MINE");
+				glm::vec3 ctr = m_rtsWheel.circleCenterWorld;
+				glm::ivec3 goal{(int)std::floor(ctr.x),
+				                (int)std::floor(ctr.y),
+				                (int)std::floor(ctr.z)};
+				std::vector<civcraft::EntityId> eids;
+				std::vector<glm::ivec3> starts;
+				for (auto eid : m_rtsSelect.selected) {
+					civcraft::Entity* e = m_server->getEntity(eid);
+					if (!e) continue;
+					eids.push_back(eid);
+					starts.push_back(glm::ivec3(
+						(int)std::floor(e->position.x),
+						(int)std::floor(e->position.y),
+						(int)std::floor(e->position.z)));
+				}
+				if (!eids.empty()) {
+					m_rtsExec.planGroup(eids, starts, goal,
+						m_server->chunks(), m_server->blockRegistry(),
+						civcraft::CommandKind::Walk);
+					for (auto eid : eids) {
+						m_moveOrders[eid] = {ctr, true};
+						if (m_agentClient && eid != m_server->localPlayerId())
+							m_agentClient->pauseAgent(eid);
+					}
+					std::printf("[vk-rts] wheel: %s %zu unit%s → (%.1f,%.1f,%.1f) r=%.1f\n",
+						label, eids.size(), eids.size() == 1 ? "" : "s",
+						ctr.x, ctr.y, ctr.z, m_rtsWheel.circleRadiusWorld);
+				}
+			}
+			m_rtsWheel = {};
+		}
+		m_lmbLast = lmbNow;
+		// Wheel is modal — skip all further LMB input processing this frame.
+		goto after_lmb_handling;
+	}
+
 	if (rtsMode && !m_uiWantsCursor) {
 		double mx, my;
 		glfwGetCursorPos(m_window, &mx, &my);
@@ -784,6 +878,7 @@ void Game::tickPlayer(float dt) {
 				glm::mat4 vp = pickViewProj();
 				m_server->forEachEntity([&](civcraft::Entity& e) {
 					if (!e.def().isLiving()) return;
+					if (!e.def().hasTag("humanoid")) return;
 					float cy = e.position.y + e.def().collision_box_max.y * 0.5f;
 					glm::vec3 anchor(e.position.x, cy, e.position.z);
 					glm::vec4 clip = vp * glm::vec4(anchor, 1.0f);
@@ -910,6 +1005,7 @@ void Game::tickPlayer(float dt) {
 		}
 	}
 	m_lmbLast = lmbNow;
+after_lmb_handling:;
 
 	// RMB — FPS/TPS: inspect (edge) or place (held+CD). RPG/RTS: click action.
 	bool rmbPressed = false;
@@ -929,10 +1025,80 @@ void Game::tickPlayer(float dt) {
 		}
 		m_rmbLast = rmbNow;
 	}
+
+	// RTS drag-command state machine. In RTS mode with a non-empty selection,
+	// RMB-hold-and-drag defines a ground circle; release opens the action wheel.
+	// Pure RMB-click (no drag) falls through to the legacy release-selection
+	// handler below, which cancels the selection and resumes AI — the same
+	// semantics as the Cancel slice.
+	if (m_cam.mode == civcraft::CameraMode::RTS
+	    && !m_rtsSelect.selected.empty()
+	    && !m_rtsWheel.active) {
+		bool rmbDown = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT)
+		               == GLFW_PRESS;
+		double mxD, myD;
+		glfwGetCursorPos(m_window, &mxD, &myD);
+		float fbWf = (float)m_fbW, fbHf = (float)m_fbH;
+		float ndcX = fbWf > 0 ? ((float)(mxD / fbWf) * 2.0f - 1.0f) : 0.0f;
+		float ndcY = fbHf > 0 ? (1.0f - (float)(myD / fbHf) * 2.0f) : 0.0f;
+		auto raycastGround = [&](float nx, float ny, glm::vec3& out) -> bool {
+			glm::mat4 invVP = glm::inverse(pickViewProj());
+			glm::vec4 nearW = invVP * glm::vec4(nx, ny, 0.0f, 1.0f); nearW /= nearW.w;
+			glm::vec4 farW  = invVP * glm::vec4(nx, ny, 1.0f, 1.0f); farW  /= farW.w;
+			glm::vec3 o = glm::vec3(nearW);
+			glm::vec3 d = glm::normalize(glm::vec3(farW) - o);
+			auto hit = civcraft::raycastBlocks(m_server->chunks(), o, d, 200.0f);
+			if (!hit) return false;
+			out = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
+			return true;
+		};
+		// Start drag on RMB press edge.
+		if (rmbDown && !m_rtsDragCmd.active) {
+			m_rtsDragCmd.active        = true;
+			m_rtsDragCmd.startNdc      = {ndcX, ndcY};
+			m_rtsDragCmd.currentNdc    = {ndcX, ndcY};
+			m_rtsDragCmd.hasStartWorld = raycastGround(ndcX, ndcY,
+			                                           m_rtsDragCmd.startWorld);
+			m_rtsDragCmd.currentWorld  = m_rtsDragCmd.startWorld;
+			m_rtsDragCmd.radiusWorld   = 0.0f;
+		}
+		// Track while held.
+		if (rmbDown && m_rtsDragCmd.active) {
+			m_rtsDragCmd.currentNdc = {ndcX, ndcY};
+			if (m_rtsDragCmd.hasStartWorld) {
+				glm::vec3 cur;
+				if (raycastGround(ndcX, ndcY, cur)) {
+					m_rtsDragCmd.currentWorld = cur;
+					float dx = cur.x - m_rtsDragCmd.startWorld.x;
+					float dz = cur.z - m_rtsDragCmd.startWorld.z;
+					m_rtsDragCmd.radiusWorld = std::sqrt(dx * dx + dz * dz);
+				}
+			}
+		}
+		// Release: open wheel on meaningful drag, else fall through as click.
+		if (!rmbDown && m_rtsDragCmd.active) {
+			float dxn = m_rtsDragCmd.currentNdc.x - m_rtsDragCmd.startNdc.x;
+			float dyn = m_rtsDragCmd.currentNdc.y - m_rtsDragCmd.startNdc.y;
+			bool dragged = (dxn * dxn + dyn * dyn) > 0.0004f
+			               && m_rtsDragCmd.hasStartWorld
+			               && m_rtsDragCmd.radiusWorld > 0.5f;
+			if (dragged) {
+				m_rtsWheel.active            = true;
+				m_rtsWheel.centerNdc         = m_rtsDragCmd.currentNdc;
+				m_rtsWheel.circleCenterWorld = m_rtsDragCmd.startWorld;
+				m_rtsWheel.circleRadiusWorld = std::max(m_rtsDragCmd.radiusWorld, 1.5f);
+				m_rtsWheel.hoverSlice        = -1;
+				// Suppress the legacy click-release path — wheel controls the fate now.
+				rmbPressed = false;
+				m_rightClick.action = false;
+			}
+			m_rtsDragCmd.active = false;
+		}
+	}
 	// RMB first takes precedence to release RTS-selected units back to their
 	// default behavior (works in any camera mode — you can box-select in RTS,
 	// switch to TPS, and still drop the group). Skips place/inspect when it fires.
-	if (rmbPressed && !m_rtsSelect.selected.empty()) {
+	if (rmbPressed && !m_rtsSelect.selected.empty() && !m_rtsWheel.active) {
 		for (auto eid : m_rtsSelect.selected) {
 			m_server->sendCancelGoal(eid);
 			if (m_agentClient && eid != m_server->localPlayerId())

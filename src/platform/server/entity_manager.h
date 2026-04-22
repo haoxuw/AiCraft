@@ -125,6 +125,19 @@ public:
 		for (auto& [key, val] : overrides)
 			entity->setProp(key, val);
 		entity->clearDirty();
+		// Phase 6 invariant (docs/28_SEATS_AND_OWNERSHIP.md): every Living spawn
+		// must be attributable to a seat. Items + structures are world-scope
+		// (SEAT_NONE is correct). Warn loudly on the spawn path so a stray
+		// reactive-spawn callsite that forgets to thread the originator's seat
+		// is easy to catch — the AgentClient would silently never adopt it.
+		if (entity->def().isLiving()) {
+			int owner = entity->getProp<int>(Prop::Owner, 0);
+			if (owner == 0) {
+				printf("[EntityManager] WARN: living '%s' #%u spawned with "
+				       "Prop::Owner=0 — add originatorSeat to the spawn call\n",
+				       typeId.c_str(), (unsigned)id);
+			}
+		}
 		return id;
 	}
 
@@ -133,9 +146,15 @@ public:
 		return it != m_entities.end() ? it->second.get() : nullptr;
 	}
 
-	void remove(EntityId id) {
+	void remove(EntityId id, EntityRemovalReason reason = EntityRemovalReason::Unspecified) {
 		auto it = m_entities.find(id);
-		if (it != m_entities.end()) it->second->removed = true;
+		if (it == m_entities.end()) return;
+		it->second->removed = true;
+		// Don't clobber a more-specific reason that a caller already set on
+		// the entity (e.g. hp→0 marked Died, then a later sweep tries to
+		// remove the same id). First reason wins.
+		if (it->second->removalReason == (uint8_t)EntityRemovalReason::Unspecified)
+			it->second->removalReason = (uint8_t)reason;
 	}
 
 	std::vector<Entity*> getInRadius(glm::vec3 center, float radius) {
@@ -218,8 +237,11 @@ public:
 					e.velocity = {0, 0, 0};
 				}
 				float age = e.getProp<float>(Prop::Age);
-				if (age > e.getProp<float>(Prop::DespawnTime, 300.0f))
+				if (age > e.getProp<float>(Prop::DespawnTime, 300.0f)) {
 					e.removed = true;
+					if (e.removalReason == (uint8_t)EntityRemovalReason::Unspecified)
+						e.removalReason = (uint8_t)EntityRemovalReason::Despawned;
+				}
 			}
 		}
 	}

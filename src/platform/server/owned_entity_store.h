@@ -2,9 +2,13 @@
 
 // Player-owned NPC state across sessions. Server runs no AI, so on disconnect we
 // snapshot everything the client owns and restore on next login. Keyed by
-// character_skin (not playerId) so it survives server restarts. Disk side: world_save.h.
+// SeatId — the same durable id used for ownership on `Prop::Owner` (Phase 5 of
+// docs/28_SEATS_AND_OWNERSHIP.md). Keying by seat (not `character_skin`) means
+// a player switching skins or reclaiming a seat from a different keypair still
+// gets their NPCs back. Disk side: world_save.h.
 
 #include "logic/entity.h"
+#include "server/seat_registry.h"
 #include "server/entity_manager.h"
 #include "logic/inventory.h"
 #include <glm/glm.hpp>
@@ -33,50 +37,53 @@ struct OwnedEntitySnapshot {
 
 class OwnedEntityStore {
 public:
-	using Map = std::unordered_map<std::string, std::vector<OwnedEntitySnapshot>>;
+	using Map = std::unordered_map<SeatId, std::vector<OwnedEntitySnapshot>>;
 
 	// Last-disconnect-wins. Must be called before removeClient's despawn loop.
-	void snapshot(EntityManager& entities, EntityId playerId, const std::string& skin) {
+	// Player entity intentionally excluded (respawned fresh by addClient).
+	void snapshot(EntityManager& entities, SeatId ownerSeat) {
+		if (ownerSeat == SEAT_NONE) return;
 		std::vector<OwnedEntitySnapshot> snaps;
 		entities.forEach([&](Entity& e) {
-			if (e.id() == playerId) return;
-			if (e.getProp<int>(Prop::Owner, 0) != (int)playerId) return;
+			if (e.getProp<int>(Prop::Owner, 0) != (int)ownerSeat) return;
+			if (e.def().playable) return;  // skip the player entity itself
 			if (!e.alive()) return;
 			snaps.push_back(captureEntity(e));
 		});
 		if (snaps.empty()) {
-			m_snapshots.erase(skin);
+			m_snapshots.erase(ownerSeat);
 			return;
 		}
-		std::printf("[Server] Snapshotted %zu owned entities for '%s'\n",
-		            snaps.size(), skin.c_str());
-		m_snapshots[skin] = std::move(snaps);
+		std::printf("[Server] Snapshotted %zu owned entities for seat %u\n",
+		            snaps.size(), ownerSeat);
+		m_snapshots[ownerSeat] = std::move(snaps);
 	}
 
 	// Consumes snapshot (crash mid-restore can't duplicate mobs). Returns true
 	// if anything restored so caller skips fresh template spawn.
-	bool restore(EntityManager& entities, EntityId ownerId, const std::string& skin) {
-		auto it = m_snapshots.find(skin);
+	bool restore(EntityManager& entities, SeatId ownerSeat) {
+		if (ownerSeat == SEAT_NONE) return false;
+		auto it = m_snapshots.find(ownerSeat);
 		if (it == m_snapshots.end() || it->second.empty()) return false;
 		int restored = 0, dropped = 0;
 		for (auto& s : it->second) {
-			if (respawnOne(entities, ownerId, s)) restored++;
-			else                                   dropped++;
+			if (respawnOne(entities, ownerSeat, s)) restored++;
+			else                                     dropped++;
 		}
 		m_snapshots.erase(it);
-		std::printf("[Server] Restored %d owned entities for '%s'%s\n",
-		            restored, skin.c_str(),
+		std::printf("[Server] Restored %d owned entities for seat %u%s\n",
+		            restored, ownerSeat,
 		            dropped ? (" (" + std::to_string(dropped) + " dropped)").c_str() : "");
 		return restored > 0;
 	}
 
 	// Persistence hooks (world_save.h).
 	const Map& all() const { return m_snapshots; }
-	void loadFromDisk(const std::string& skin, std::vector<OwnedEntitySnapshot> snaps) {
-		if (snaps.empty()) return;
-		m_snapshots[skin] = std::move(snaps);
+	void loadFromDisk(SeatId ownerSeat, std::vector<OwnedEntitySnapshot> snaps) {
+		if (ownerSeat == SEAT_NONE || snaps.empty()) return;
+		m_snapshots[ownerSeat] = std::move(snaps);
 	}
-	size_t skinCount() const { return m_snapshots.size(); }
+	size_t seatCount() const { return m_snapshots.size(); }
 
 private:
 	static OwnedEntitySnapshot captureEntity(const Entity& e) {
@@ -101,9 +108,9 @@ private:
 	}
 
 	// Returns false if type no longer registered (mod removed between sessions).
-	static bool respawnOne(EntityManager& entities, EntityId ownerId, const OwnedEntitySnapshot& s) {
+	static bool respawnOne(EntityManager& entities, SeatId ownerSeat, const OwnedEntitySnapshot& s) {
 		auto props = s.props;
-		props[Prop::Owner] = (int)ownerId;
+		props[Prop::Owner] = (int)ownerSeat;
 		EntityId eid = entities.spawn(s.typeId, s.position, props);
 		if (eid == ENTITY_NONE) {
 			std::printf("[Server] Restore: type '%s' no longer registered; dropped\n",
@@ -130,7 +137,7 @@ private:
 		return true;
 	}
 
-	Map m_snapshots;  // character_skin → NPCs
+	Map m_snapshots;  // SeatId → NPCs
 };
 
 } // namespace civcraft

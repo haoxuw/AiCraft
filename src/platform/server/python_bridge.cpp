@@ -801,8 +801,22 @@ static bool parsePyResult(const py::object& result, Plan& outPlan,
 					step.keepAway = d["keep_away"].cast<float>();
 				outPlan.push_back(step);
 			} else if (stype == "harvest") {
-				outPlan.push_back(PlanStep::harvest(
-					{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()}));
+				PlanStep step = PlanStep::harvest(
+					{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()});
+				// Priority-ordered gather types (index 0 = highest). The
+				// executor scans the local volume each tick and chops the
+				// first tier that has a hit in gatherRadius.
+				if (d.contains("gather_types") && !d["gather_types"].is_none()) {
+					for (auto& t : d["gather_types"].cast<py::list>())
+						step.gatherTypes.push_back(t.cast<std::string>());
+				}
+				if (d.contains("gather_radius") && !d["gather_radius"].is_none())
+					step.gatherRadius = d["gather_radius"].cast<float>();
+				if (d.contains("chop_cooldown") && !d["chop_cooldown"].is_none())
+					step.chopCooldown = d["chop_cooldown"].cast<float>();
+				if (d.contains("item") && !d["item"].is_none())
+					step.itemId = d["item"].cast<std::string>();
+				outPlan.push_back(step);
 			} else if (stype == "attack") {
 				outPlan.push_back(PlanStep::attack(d["entity_id"].cast<EntityId>()));
 			} else if (stype == "relocate") {

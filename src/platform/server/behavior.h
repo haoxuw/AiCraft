@@ -59,6 +59,23 @@ struct PlanStep {
 	// holdTime == 0 means "use evaluator default" (see agent_client.h).
 	float     holdTime      = 0.0f;
 
+	// Harvest: priority-ordered list of block string_ids the villager is
+	// willing to gather (index 0 = highest). Executor walks to targetPos,
+	// then every chop tick scans a gatherRadius sphere around the entity
+	// and chops the nearest hit of the highest-priority type still present.
+	// When no block of any type exists in range, the step concludes Success
+	// and decide() runs again (re-scans for higher tiers in the world).
+	// This makes the *executor* the authority on "don't chop a lower-tier
+	// block while a higher-tier one exists nearby" — Python only declares
+	// the ordering, never enumerates the individual blocks.
+	std::vector<std::string> gatherTypes;
+	float     gatherRadius   = 6.0f;
+
+	// Harvest: seconds between swings. 0 → evaluator uses entity default.
+	// Lives on the step (not the agent) so different gather steps in the
+	// same plan can pace differently (fast leaves, slow stone).
+	float     chopCooldown   = 0.0f;
+
 	static PlanStep move(glm::vec3 pos, float spd = 2.0f, float hold = 0.0f) {
 		PlanStep s; s.type = Move; s.targetPos = pos; s.speed = spd;
 		s.holdTime = hold; return s;

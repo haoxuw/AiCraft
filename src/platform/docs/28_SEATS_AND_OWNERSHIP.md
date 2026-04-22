@@ -1,7 +1,15 @@
 # Seats, Ownership, and Per-Seat Villages
 
-Status: **planned, not yet implemented.** This is the canonical design reference
-for the overhaul; the existing code still uses the older implicit-ownership model.
+Status: **Phases 1–6 landed; Phase 7 is a rolling test matrix.** Phases 1–3
+laid the scaffolding (identity handshake, seat-gated ownership, world-gen
+stripped of mob spawning). Phase 4 runtime-stamps a per-seat village when a
+seat claims (VillageSiter reject-samples in [256, 512] blocks; VillageStamper
+paints chunks; chest + monument + mob bundle all spawn with
+`Prop::Owner=seat`). Phase 5 reworked snapshot/restore: `OwnedEntityStore`
+now keyed by `SeatId` (not `character_skin`), and `S_REMOVE` carries a
+reason byte that drives the client's puff-FX-vs-death-SFX split. Phase 6
+audited every `spawnEntity` callsite — Living spawns without `Prop::Owner`
+now warn loudly on the spawn path.
 
 ---
 
@@ -213,47 +221,79 @@ and runtime (assertion).
 without changing gameplay (Phase 3 leaves a world empty of NPCs, but Phase 4
 fixes that). Phase 4 is the headline feature. 5–6 can run in parallel after 4.
 
-### Phase 1 — Identity + seat handshake
+### Phase 1 — Identity + seat handshake  ✅ landed
 - `src/platform/client/client_identity.h` — load/generate `client_id.json`.
 - `src/platform/net/net_protocol.h` — `C_CLAIM_SEAT`, `S_SEAT_GRANTED`.
 - `src/platform/server/seat_registry.h` — new class, `seats.bin` (de)serialize.
 - `ClientManager` — new join path routes through the handshake.
 - Test: two clients from same machine → same seat; two from different → different.
 
-### Phase 2 — Ownership gate
+### Phase 2 — Ownership gate  ✅ landed
 - `ClientManager::validateProposal` — reject if `actor.owner != sender.seat`.
 - `AgentClient::discoverEntities` — filter by `Prop::Owner == mySeatId`.
 - Test: cross-seat action proposal → rejected; no agent adopts another seat's NPC.
 
-### Phase 3 — Strip world-gen mobs
-- Delete the "spawn mobs from `WorldPyConfig.mobs`" path in world template load.
-- Keep the `mobs` list in Python templates — re-interpret as *per-seat spawn bundle*.
-- Test: dedicated server with 0 clients has 0 entities after boot.
+### Phase 3 — Strip world-gen mobs  ✅ landed
+- World-gen already only produced world-scope entities (chests, monument);
+  `spawnMobsForClient(seat)` runs exclusively from `addClient`. The Python
+  `template.mobs` list is interpreted as the per-seat spawn bundle (one copy
+  spawned every time a seat claims).
+- Verified by test `s05_worldgen_no_mobs_without_client`: `GameServer::init`
+  on the village template with no clients → 0 living entities after ticking.
 
-### Phase 4 — Village siting + per-seat spawn
-- `src/platform/server/village_registry.h` — persisted `std::vector<VillageRecord>`.
-- `src/platform/server/village_siter.h` — reject-sample siting within
-  `[256, 512]` of the nearest registered village.
-- Add a central tower to `worlds/base/village.py` (reuse the arcane monument
-  blueprint; anchor it at the exact village center).
-- Extend the spawn path: on `C_CLAIM_SEAT(new)`:
-  1. Pick location.
-  2. Record Live village.
-  3. `generateVillage(center)`.
-  4. Spawn mob bundle with `owner = new_seat`.
-- Test: three sequential seat claims → three villages, pairwise distance ≥ 256.
-- Test: first claim, disconnect, second claim → second village avoids the
-  despawned footprint.
+### Phase 4 — Village siting + per-seat spawn  ✅ landed
+- `server/village_registry.h` — persisted `std::vector<VillageRecord>`,
+  `villages.bin` (de)serialize.
+- `server/village_siter.h` — reject-sample siting within `[256, 512]` of the
+  newest Live village, widening maxD up to 4× on exhaustion.
+- `server/village_stamper.h` — paints one village per claim: force-loads every
+  chunk in the footprint (clearingRadius + widest house/pen/farm pads), then
+  calls `ConfigurableWorldTemplate::generateVillageInChunk` per chunk.
+  Y range scales with terrain: `surfaceHeight(center) - 12 .. + 34`.
+- `ConfigurableWorldTemplate`: per-chunk `generate()` no longer paints
+  villages; added `monumentPositionAt`, `barnCenterAt`, `barnFloorYAt`,
+  `houseChestPositionsAt`, `generateVillageInChunk` variants that take an
+  explicit center.
+- `GameServer::init` leaves the world terrain-only. `addClient` calls
+  `placeVillageForSeat(seat)` before `spawnMobsForClient(seat)`, which looks
+  up the center from the registry rather than the seed-derived fallback.
+- Tests: V1 (three sequential sitings ≥256 apart), V2 (siter avoids
+  despawned footprints), V3 (loadEntry preserves ids + high-water).
+- Smoke: `--log-only` run shows a seat-1 village stamped at an allocated
+  center, 5 chests + monument + 22 mobs spawned, 5 villagers decide
+  "Chopping trees" and stream log+leaves pickups within seconds.
 
-### Phase 5 — Snapshot + restore
-- On disconnect: walk `m_entities`, serialize owned ones, write to
-  `offlineSnapshots[pid]`, remove from live world, broadcast
-  `S_ENTITY_REMOVE(reason=owner_offline)`.
-- Client: particle burst at entity position on `owner_offline`, skip death SFX.
-- On `C_CLAIM_SEAT(existing)`: restore, then diff against template resources
-  and re-spawn what's missing.
-- Test: disconnect → reconnect round-trip, entity count and positions match.
-- Test: break wheat before disconnect → on rejoin, wheat has respawned.
+### Phase 5 — Snapshot + restore  ✅ mostly landed (resource-respawn deferred)
+- `OwnedEntityStore` rekeyed from `character_skin` → `SeatId`. A new keypair
+  reclaiming an old seat now gets the old seat's NPCs back (the whole point
+  of "seat-not-machine" durability). `owned_entities.bin` on-disk layout
+  swapped to `{u32 seatId, u32 entCount, …}` — pre-Phase-5 saves won't load
+  owned-entity snapshots (fine; the file is ephemeral).
+- `S_REMOVE` now carries a trailing `u8 reason` byte (`EntityRemovalReason`
+  — `Died`, `Despawned`, `OwnerOffline`, `Unspecified`). PROTOCOL_VERSION
+  bumped to 8. v7 clients stop reading after the entity id, so the append
+  is back-compatible; v8 clients branch on reason.
+- The enum lives in `logic/entity.h` (kept out of `net/` so the server tick
+  loop can record a reason on `Entity::removalReason` without pulling the
+  net layer into logic). `EntityManager::remove(id, reason)` takes a reason;
+  first-reason-wins. `ServerCallbacks::onEntityRemove(id, reason)` threads
+  it to the broadcaster. Server sites tag: action-kill → `Died`, item
+  DespawnTime + anchor-destroyed + pickup → `Despawned`, `removeClient`
+  loop → `OwnerOffline`.
+- Client: `ServerInterface::setEntityRemoveCallback` is a new optional
+  callback (default no-op — tests and headless runners are unchanged). The
+  GUI client wires it to fire `spawnBreakBurst` with a pale-white color at
+  the entity's last known position on `OwnerOffline`, and skips any death
+  SFX for that reason.
+- Tests: S7 (disconnect→snapshot→rejoin→restore — shoved NPC position
+  round-trips, snapshot map is drained after restore), S8 (`removeClient`
+  tags every owned entity with `removalReason=OwnerOffline` before broadcast).
+
+**Deferred for a follow-up pass:** resource-respawn on rejoin (e.g. harvested
+wheat regrowing when the seat reclaims). Needs a template-resource diff
+mechanism that doesn't exist yet; the design collapses into "periodic
+resource respawn during normal play" which would be a larger cut. For now,
+rejoin restores NPCs + terrain-as-left; depleted crops stay depleted.
 
 ### Phase 6 — Reactive-spawn attribution
 - Thread `PlayerId originatorSeat` through every `spawnEntity` callsite.

@@ -73,7 +73,6 @@ world = {
         # woodcutter behavior discovers chests via scan_entities("chest").
         {"type": "villager", "count": 1, "radius": 3, "spawn_at": "monument",
          "props": {
-            "chop_period":  0.1,
             "collect_goal": 3,
             "work_radius":  40.0,
         }},

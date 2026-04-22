@@ -128,6 +128,9 @@ public:
 	// tick() each frame (see Game::runOneFrame order).
 	bool pollWelcome() override { return m_welcomeReceived; }
 
+	// Seat arrives in S_WELCOME; 0 means pre-welcome or a pre-seat server.
+	uint32_t localSeatId() const override { return m_seatId; }
+
 	void disconnect() override {
 		// C_QUIT lets server run cleanup immediately instead of heartbeat timeout.
 		if (m_connected && m_tcp.connected()) {
@@ -374,6 +377,11 @@ public:
 		m_onInventoryUpdate = std::move(cb);
 	}
 
+	void setEntityRemoveCallback(
+		std::function<void(EntityId, glm::vec3, uint8_t)> cb) override {
+		m_onEntityRemove = std::move(cb);
+	}
+
 	// Wired to AgentClient::onInterrupt / onWorldEvent by game.cpp.
 	void setInterruptHandlers(
 		std::function<void(EntityId, const std::string&)> onNpcInterrupt,
@@ -489,8 +497,8 @@ private:
 				e.onGround = es.onGround;
 			// Owned lookYaw/Pitch are locally predicted; server value causes sideways-body bug.
 			{
-				int owner = e.getProp<int>(Prop::Owner, 0);
-				bool ownedByUs = (owner == (int)m_localPlayerId);
+				int ownerSeat = e.getProp<int>(Prop::Owner, 0);
+				bool ownedByUs = (m_seatId != 0 && ownerSeat == (int)m_seatId);
 				if (!ownedByUs) {
 					e.lookYaw   = es.lookYaw;
 					e.lookPitch = es.lookPitch;
@@ -846,6 +854,18 @@ private:
 		}
 		case net::S_REMOVE: {
 			EntityId id = rb.readU32();
+			// v8+ servers append a reason byte; v7 stops here (Unspecified).
+			uint8_t reason = rb.hasMore()
+				? rb.readU8()
+				: (uint8_t)EntityRemovalReason::Unspecified;
+			// Fire FX callback BEFORE erasing — the last-known position lives
+			// on the entity snapshot and the game wants it for particle spawn.
+			if (m_onEntityRemove) {
+				auto it = m_entities.find(id);
+				glm::vec3 pos = (it != m_entities.end() && it->second)
+					? it->second->position : glm::vec3(0);
+				m_onEntityRemove(id, pos, reason);
+			}
 			m_entities.erase(id);
 			m_lastEntityState.erase(id);
 			m_reconciler.onEntityRemove(id);
@@ -1049,6 +1069,7 @@ private:
 	std::function<void(glm::vec3, const std::string&)> m_onBlockBreakText;
 	std::function<void(glm::vec3, const std::string&)> m_onBlockPlace;
 	std::function<void(EntityId)> m_onInventoryUpdate;
+	std::function<void(EntityId, glm::vec3, uint8_t)> m_onEntityRemove;
 	std::function<void(EntityId, const std::string&)> m_onNpcInterrupt;
 	std::function<void(const std::string&, const std::string&)> m_onWorldEvent;
 

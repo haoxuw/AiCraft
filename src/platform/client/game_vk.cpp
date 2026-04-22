@@ -250,6 +250,18 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		}
 	});
 
+	// Entity-removal FX: server tags each S_REMOVE with a reason byte
+	// (EntityRemovalReason). OwnerOffline → gentle puff + no SFX so a
+	// disconnecting friend's mobs fade quietly. Died/Despawned fall through;
+	// death SFX, if any, should live on the attacker path, not here.
+	m_server->setEntityRemoveCallback(
+		[this](civcraft::EntityId /*eid*/, glm::vec3 pos, uint8_t reason) {
+			if (reason == (uint8_t)civcraft::EntityRemovalReason::OwnerOffline) {
+				spawnBreakBurst(pos + glm::vec3(0.0f, 0.8f, 0.0f),
+				                glm::vec3(0.85f, 0.88f, 0.95f));
+			}
+		});
+
 	std::printf("[vk-game] chunks will stream from %s\n",
 		m_server->isConnected() ? "network" : "???");
 
@@ -1158,6 +1170,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		if (m_handbookOpen) m_panelRenderer.renderHandbook();
 		if (m_dialogPanel.isOpen()) m_dialogPanel.render(m_rhi, m_aspect);
 		m_entityUiRenderer.renderRTSSelect();
+		m_entityUiRenderer.renderRTSDragCommand();
 		m_frameProbe.mark("panels");
 	} else if (m_state == GameState::GameMenu) {
 		m_worldRenderer.renderWorld(wallTime);

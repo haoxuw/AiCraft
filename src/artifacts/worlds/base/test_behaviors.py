@@ -69,7 +69,6 @@ world = {
     # Minimal set for testing.
     "mobs": [
         {"type": "villager", "count": 1, "radius": 5, "props": {
-            "chop_period": 0.1,         # chop every 0.1s instead of 0.5s
             "collect_goal": 3,          # deposit after 3 logs instead of 5
             "work_radius":  40.0,       # pin search radius for deterministic drift tests
         }},

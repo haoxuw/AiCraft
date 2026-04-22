@@ -126,9 +126,13 @@ public:
 	}
 
 	glm::vec3 monumentPosition(int seed) const override {
+		return monumentPositionAt(seed, villageCenter(seed));
+	}
+
+	// Phase 4: explicit-center variant used by the per-seat VillageStamper.
+	glm::vec3 monumentPositionAt(int seed, glm::ivec2 vc) const {
 		// Anchor at deck center (my+21) so flame FX wraps body + trident above.
 		if (!m_py.hasVillage) return {0, -1, 0};
-		auto vc = villageCenter(seed);
 		int my = (int)std::round(groundHeight(seed, (float)vc.x, (float)vc.y)) + 1;
 		return {(float)vc.x + 0.5f, (float)(my + 21), (float)vc.y + 0.5f};
 	}
@@ -150,8 +154,12 @@ public:
 	}
 
 	glm::ivec2 barnCenter(int seed) const override {
+		return barnCenterAt(villageCenter(seed));
+	}
+
+	// Phase 4: explicit-center variant used by the per-seat VillageStamper.
+	glm::ivec2 barnCenterAt(glm::ivec2 vc) const {
 		if (!m_py.hasVillage) return {-1, -1};
-		auto vc = villageCenter(seed);
 		for (const auto& h : m_py.houses) {
 			if (h.type == "barn")
 				return {vc.x + h.cx + h.w / 2, vc.y + h.cz + h.d / 2};
@@ -161,8 +169,11 @@ public:
 
 	// actualSurfaceY() column-scans can latch onto sparse roof blocks — use this.
 	int barnFloorY(int seed) const {
+		return barnFloorYAt(seed, villageCenter(seed));
+	}
+
+	int barnFloorYAt(int seed, glm::ivec2 vc) const {
 		if (!m_py.hasVillage) return -1;
-		auto vc = villageCenter(seed);
 		for (const auto& h : m_py.houses) {
 			if (h.type == "barn")
 				return structureFloorY(seed, vc.x + h.cx, vc.y + h.cz, h.w, h.d);
@@ -200,8 +211,12 @@ public:
 
 	// In house order (matches bedPositions()); uses footprint-max floor.
 	std::vector<glm::vec3> houseChestPositions(int seed) const override {
+		return houseChestPositionsAt(seed, villageCenter(seed));
+	}
+
+	// Phase 4: explicit-center variant used by the per-seat VillageStamper.
+	std::vector<glm::vec3> houseChestPositionsAt(int seed, glm::ivec2 vc) const {
 		if (!m_py.hasVillage || m_py.houses.empty()) return {};
-		auto vc = villageCenter(seed);
 		std::vector<glm::vec3> chests;
 		for (const auto& h : m_py.houses) {
 			if (h.type == "barn") continue;
@@ -212,6 +227,23 @@ public:
 			chests.push_back({hx, (float)floorY, hz});
 		}
 		return chests;
+	}
+
+	// Phase 4 public hook for VillageStamper: stamp all village blocks (houses,
+	// tower blocks, paths, farms, pens) into *one chunk* at an explicit center.
+	// Caller iterates chunks overlapping the village footprint.
+	void generateVillageInChunk(Chunk& chunk, ChunkPos cpos, int seed,
+	                            glm::ivec2 vc, const BlockRegistry& blocks) {
+		if (!m_py.hasVillage) return;
+		BlockId wallB  = blocks.getId(m_py.wallBlock);
+		BlockId roofB  = blocks.getId(m_py.roofBlock);
+		BlockId floorB = blocks.getId(m_py.floorBlock);
+		BlockId pathB  = blocks.getId(m_py.pathBlock);
+		if (wallB  == BLOCK_AIR) wallB  = blocks.getId(BlockType::Cobblestone);
+		if (roofB  == BLOCK_AIR) roofB  = blocks.getId(BlockType::Wood);
+		if (floorB == BLOCK_AIR) floorB = blocks.getId(BlockType::Cobblestone);
+		if (pathB  == BLOCK_AIR) pathB  = blocks.getId(BlockType::Cobblestone);
+		generateVillage(chunk, cpos, seed, wallB, roofB, floorB, pathB, vc, blocks);
 	}
 
 	void generate(Chunk& chunk, ChunkPos cpos, int seed,
@@ -479,8 +511,12 @@ public:
 			}
 		}
 
-		if (m_py.hasVillage)
-			generateVillage(chunk, cpos, seed, wallB, roofB, floorB, pathB, vc, blocks);
+		// Village blocks are no longer baked in at chunk-gen (Phase 4): the
+		// VillageStamper applies them per-seat when a seat claims, iterating
+		// over the footprint chunks and calling generateVillageInChunk().
+		// Tree-exclusion above still uses villageCenter(seed) as a soft anchor
+		// — that's fine, seat 1's village lands there by default and trees in
+		// later seats' footprints are overwritten by the stamper.
 
 		// Spawn portal, or bare SpawnPoint block for minimal test worlds.
 		BlockId spawnPtB = blocks.getId(BlockType::SpawnPoint);

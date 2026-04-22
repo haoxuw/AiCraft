@@ -59,6 +59,10 @@ public:
 	// Rendering state access
 	virtual ChunkSource& chunks() = 0;
 	virtual EntityId localPlayerId() const = 0;
+	// Durable ownership key; AgentClient filters adopted entities on this.
+	// Legacy paths that haven't upgraded return SEAT_NONE (0), which the agent
+	// treats as "adopt nothing yet."
+	virtual uint32_t localSeatId() const { return 0; }
 
 	// Controlled = whichever owned entity the local input drives. Defaults to localPlayer.
 	virtual EntityId controlledEntityId() const { return localPlayerId(); }
@@ -134,6 +138,13 @@ public:
 
 	// Fired on S_INVENTORY apply — client re-populates hotbar/UI views.
 	virtual void setInventoryCallback(std::function<void(EntityId)> /*onInventoryUpdate*/) {}
+
+	// Fired on S_REMOVE — client decides FX/SFX from the reason byte
+	// (EntityRemovalReason wire value). `pos` is the entity's last known
+	// position from the delta cache, so the puff lands where the entity was.
+	// Tests and headless clients leave the default no-op.
+	virtual void setEntityRemoveCallback(
+		std::function<void(EntityId, glm::vec3 /*pos*/, uint8_t /*reason*/)> /*cb*/) {}
 };
 
 } // namespace civcraft

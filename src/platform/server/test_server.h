@@ -37,7 +37,10 @@ public:
 		m_server->applyLivingStats(artifacts.livingStats());
 
 		m_clientId = 1;
-		m_playerId = m_server->addClient(m_clientId, m_creatureType);
+		// Synthetic seat for headless tests — TestServer bypasses the real
+		// uuid→seat handshake, so a fixed "seat 1" stands in.
+		m_seatId   = 1;
+		m_playerId = m_server->addClient(m_clientId, m_seatId, m_creatureType);
 		return true;
 	}
 
@@ -53,6 +56,7 @@ public:
 	void tick(float dt) { if (m_server) m_server->tick(dt); }
 
 	EntityId localPlayerId() const { return m_playerId; }
+	SeatId   localSeatId()   const { return m_seatId; }
 
 	Entity* getEntity(EntityId id) {
 		return m_server ? m_server->world().entities.get(id) : nullptr;
@@ -77,6 +81,7 @@ private:
 	std::unique_ptr<GameServer> m_server;
 	std::string m_creatureType;
 	ClientId m_clientId = 1;
+	SeatId   m_seatId   = SEAT_NONE;
 	EntityId m_playerId = ENTITY_NONE;
 };
 

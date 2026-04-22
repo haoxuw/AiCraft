@@ -12,6 +12,7 @@
  */
 
 #include "server/test_server.h"
+#include "server/village_siter.h"
 #include "server/world_template.h"
 #include "server/python_bridge.h"
 #include "server/world_accessibility.h"
@@ -2475,6 +2476,7 @@ static std::string m04_rts_multi_entity() {
 // (hasError, drift, staleness) directly.
 struct SimClient {
 	EntityId playerId = ENTITY_NONE;
+	SeatId   seatId   = SEAT_NONE;
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> mirror;
 	EntityReconciler reconciler;
 	// Server entity ids seen at least once — so we can assert "once known,
@@ -2489,7 +2491,7 @@ static void simBroadcastTick(TestServer& srv, SimClient& c) {
 	if (!player) return;
 	std::vector<glm::vec3> viewPoints = { player->position };
 	srv.forEachEntity([&](Entity& e) {
-		if (!shouldBroadcastEntityToClient(e, c.playerId, viewPoints)) return;
+		if (!shouldBroadcastEntityToClient(e, c.seatId, viewPoints)) return;
 		auto it = c.mirror.find(e.id());
 		if (it == c.mirror.end()) {
 			auto clone = std::make_unique<Entity>(e.id(), e.typeId(), e.def());
@@ -2538,6 +2540,7 @@ static std::string r1_no_stale_entities_in_steady_state() {
 	auto srv = makeVillageServer();
 	SimClient c;
 	c.playerId = srv->localPlayerId();
+	c.seatId   = srv->localSeatId();
 
 	// Seed the mirror first (so reconciler.tick has targets to reason about).
 	simBroadcastTick(*srv, c);
@@ -2549,8 +2552,8 @@ static std::string r1_no_stale_entities_in_steady_state() {
 	EntityId faraway = ENTITY_NONE;
 	srv->forEachEntity([&](Entity& e) {
 		if (faraway != ENTITY_NONE) return;
-		int owner = e.getProp<int>(Prop::Owner, 0);
-		if (owner == (int)c.playerId && e.id() != c.playerId && e.def().isLiving())
+		int ownerSeat = e.getProp<int>(Prop::Owner, 0);
+		if (ownerSeat == (int)c.seatId && e.id() != c.playerId && e.def().isLiving())
 			faraway = e.id();
 	});
 	if (faraway == ENTITY_NONE) return "no owned mob to test with";
@@ -2595,6 +2598,7 @@ static std::string r2_no_sustained_position_error() {
 	auto srv = makeVillageServer();
 	SimClient c;
 	c.playerId = srv->localPlayerId();
+	c.seatId   = srv->localSeatId();
 	simBroadcastTick(*srv, c);
 
 	// Run 2 seconds at 60Hz. Sample drift every 10 frames and keep the max
@@ -2648,6 +2652,7 @@ static std::string r3_no_drift_during_steady_state() {
 	auto srv = makeVillageServer();
 	SimClient c;
 	c.playerId = srv->localPlayerId();
+	c.seatId   = srv->localSeatId();
 	simBroadcastTick(*srv, c);
 
 	constexpr float dt = 1.0f / 60.0f;
@@ -2751,6 +2756,326 @@ static std::string s02_different_uuids_different_seats() {
 	// Lookup must hit stored values and be SEAT_NONE for unknowns.
 	if (reg.lookup("uuid-b") != b.id) return "lookup mismatch";
 	if (reg.lookup("uuid-zzz") != SEAT_NONE) return "lookup of unknown returned non-zero";
+	return "";
+}
+
+// S4 verifies the Phase 2 invariant: ownership gates on SeatId, not EntityId.
+// Before the flip Prop::Owner held the owning player's entity id; a careless
+// spoof (actorId=foreign_eid) would pass canClientControl since the server
+// only checked `owner == that eid`. Now `owner` is a seat, so the same attack
+// fails — client1 has seat 1, client2 has seat 2, their entities can't cross.
+static std::string s04_cross_seat_cannot_control() {
+	auto ts = makeVillageServer();             // client 1, seat 1, owned mobs spawned
+	GameServer* srv = ts->server();
+	if (!srv) return "no server";
+
+	EntityId p1 = ts->localPlayerId();
+	ClientId c2 = 2;
+	SeatId   s2 = 2;
+	EntityId p2 = srv->addClient(c2, s2, "knight");
+	if (p2 == ENTITY_NONE || p2 == p1) return "addClient did not return distinct entity";
+
+	// Sanity: each client controls its own player.
+	if (!srv->canClientControl(1,  p1))  return "client1 cannot control own player";
+	if (!srv->canClientControl(c2, p2))  return "client2 cannot control own player";
+	// The invariant: cross-seat control must be denied.
+	if (srv->canClientControl(1,  p2))   return "client1 wrongly controls client2's player";
+	if (srv->canClientControl(c2, p1))   return "client2 wrongly controls client1's player";
+
+	// Extend the invariant to owned mobs: any NPC whose Prop::Owner is seat 1
+	// must refuse actions from client 2, and vice versa.
+	int checkedMobs = 0;
+	std::string err;
+	srv->world().entities.forEach([&](Entity& e) {
+		if (!err.empty()) return;
+		int ownerSeat = e.getProp<int>(Prop::Owner, 0);
+		if (ownerSeat == 1 && e.id() != p1) {
+			if (srv->canClientControl(c2, e.id())) {
+				err = "client2 controls mob owned by seat 1";
+			}
+			checkedMobs++;
+		} else if (ownerSeat == 2 && e.id() != p2) {
+			if (srv->canClientControl(1, e.id())) {
+				err = "client1 controls mob owned by seat 2";
+			}
+			checkedMobs++;
+		}
+	});
+	if (!err.empty()) return err;
+	if (checkedMobs == 0) return "no owned mobs spawned for either seat";
+	return "";
+}
+
+// S7 (Phase 5): owned-entity round-trip keyed by SeatId. Drop the client,
+// rejoin, and the same mobs (same ids-or-count, same positions) come back.
+// This is the invariant that makes "log off / log on" feel like resuming a
+// save, not like a fresh spawn every session.
+static std::string s07_disconnect_snapshot_rejoin_restore() {
+	auto ts = makeVillageServer();
+	GameServer* srv = ts->server();
+	if (!srv) return "no server";
+
+	// Record pre-disconnect state: count owned NPCs and nudge one of them so
+	// we can verify the restored position isn't just the template default.
+	struct Snap { EntityId id; std::string typeId; glm::vec3 pos; };
+	std::vector<Snap> before;
+	srv->world().entities.forEach([&](Entity& e) {
+		if (e.getProp<int>(Prop::Owner, 0) == 1 && !e.def().playable
+		    && e.def().isLiving()) {
+			before.push_back({e.id(), e.typeId(), e.position});
+		}
+	});
+	if (before.empty()) return "no owned NPCs spawned for seat 1";
+
+	// Pick the first NPC and shove it to a distinctive offset.
+	glm::vec3 shoved = before[0].pos + glm::vec3(7.25f, 0, -3.125f);
+	Entity* sample = srv->world().entities.get(before[0].id);
+	if (!sample) return "sample NPC vanished before shove";
+	sample->position = shoved;
+
+	// Disconnect → snapshot + despawn.
+	srv->removeClient(1);
+	// Drain the removal broadcast and let stepPhysics evict removed entries.
+	tickN(*ts, 2);
+
+	// All owned NPCs for seat 1 are gone from the live world.
+	int stillLiving = 0;
+	srv->world().entities.forEach([&](Entity& e) {
+		if (e.getProp<int>(Prop::Owner, 0) == 1 && e.def().isLiving())
+			stillLiving++;
+	});
+	if (stillLiving != 0)
+		return "seat 1 owned entities remained after removeClient ("
+		     + std::to_string(stillLiving) + ")";
+	if (srv->ownedEntities().seatCount() != 1)
+		return "expected 1 seat's snapshot stored, got "
+		     + std::to_string(srv->ownedEntities().seatCount());
+
+	// Rejoin same seat: restore path fires (not a fresh template spawn).
+	EntityId pNew = srv->addClient(/*clientId*/1, /*seatId*/1, "knight");
+	if (pNew == ENTITY_NONE) return "addClient after reconnect failed";
+
+	// After restore + one tick, count + find the shoved NPC by position.
+	tickN(*ts, 1);
+	int restored = 0;
+	bool foundShoved = false;
+	srv->world().entities.forEach([&](Entity& e) {
+		if (e.getProp<int>(Prop::Owner, 0) != 1) return;
+		if (e.def().playable) return;
+		if (!e.def().isLiving()) return;
+		restored++;
+		if (e.typeId() == before[0].typeId
+		    && glm::length(e.position - shoved) < 0.5f)
+			foundShoved = true;
+	});
+	if (restored != (int)before.size())
+		return "restored " + std::to_string(restored)
+		     + " owned NPCs, expected " + std::to_string(before.size());
+	if (!foundShoved)
+		return "shoved NPC's position did not round-trip through the snapshot";
+	if (srv->ownedEntities().seatCount() != 0)
+		return "snapshot map should be empty after restore consumed it";
+	return "";
+}
+
+// S8 (Phase 5): removeClient tags every despawning owned entity with
+// removalReason=OwnerOffline so clients fire a puff particle instead of a
+// death SFX. We can't observe the wire packet from here, but the byte the
+// broadcaster reads lives on the entity itself — checking it there catches
+// regressions in either `EntityManager::remove(reason)` or the removeClient
+// loop.
+static std::string s08_removeclient_reason_owner_offline() {
+	auto ts = makeVillageServer();
+	GameServer* srv = ts->server();
+	if (!srv) return "no server";
+
+	// Freeze the pre-disconnect owned set.
+	std::vector<EntityId> ownedIds;
+	srv->world().entities.forEach([&](Entity& e) {
+		if (e.getProp<int>(Prop::Owner, 0) == 1) ownedIds.push_back(e.id());
+	});
+	if (ownedIds.empty()) return "no entities owned by seat 1";
+
+	srv->removeClient(1);
+
+	// After removeClient, entities are marked removed but stepPhysics hasn't
+	// erased them yet — we can still read removalReason.
+	int checked = 0, mismatched = 0;
+	srv->world().entities.forEachIncludingRemoved([&](Entity& e) {
+		if (std::find(ownedIds.begin(), ownedIds.end(), e.id()) == ownedIds.end())
+			return;
+		checked++;
+		if (e.removalReason != (uint8_t)EntityRemovalReason::OwnerOffline)
+			mismatched++;
+	});
+	if (checked == 0) return "none of seat 1's entities were visible post-removeClient";
+	if (mismatched > 0)
+		return std::to_string(mismatched) + "/" + std::to_string(checked)
+		     + " owned entities missing removalReason=OwnerOffline";
+	return "";
+}
+
+// V1 (Phase 4): three sequential sitings land ≥ kMinDistance apart pairwise.
+// The siter's contract is "≥ min from nearest already-registered village" —
+// we verify the stronger pairwise invariant holds because each siting runs
+// against the registry that contains everything placed before it.
+static std::string v01_three_sitings_spaced() {
+	VillageRegistry reg;
+	VillageSiterConfig cfg;  // defaults: 256..512
+
+	// Seed a starting anchor so the first site lands somewhere deterministic.
+	glm::ivec2 initial = {0, 0};
+	// Place three seats one at a time, as join-order would.
+	for (SeatId s = 1; s <= 3; s++) {
+		auto c = VillageSiter::pick(reg, initial, /*worldSeed*/42, s, cfg);
+		if (!c) return "siter returned nullopt for seat " + std::to_string(s);
+		reg.allocate(s, *c);
+	}
+	if (reg.size() != 3) return "registry size != 3 after three allocations";
+
+	// Pairwise distance check — must all be ≥ kMinDistance.
+	int64_t minD2 = (int64_t)cfg.kMinDistance * cfg.kMinDistance;
+	for (size_t i = 0; i < reg.all().size(); i++) {
+		for (size_t j = i + 1; j < reg.all().size(); j++) {
+			auto& a = reg.all()[i];
+			auto& b = reg.all()[j];
+			int64_t dx = (int64_t)a.centerXZ.x - b.centerXZ.x;
+			int64_t dz = (int64_t)a.centerXZ.y - b.centerXZ.y;
+			int64_t d2 = dx*dx + dz*dz;
+			if (d2 < minD2) {
+				char buf[160];
+				std::snprintf(buf, sizeof(buf),
+					"villages %zu and %zu only %lld blocks apart (min %d)",
+					i, j, (long long)std::llround(std::sqrt((double)d2)),
+					cfg.kMinDistance);
+				return buf;
+			}
+		}
+	}
+	return "";
+}
+
+// V2 (Phase 4): a despawned village's footprint still blocks new sitings.
+// Regression guard for "seat GC'd → new seat can land on the ruins"; the
+// registry is supposed to keep the record as Status::Despawned precisely so
+// placement stays consistent with world history.
+static std::string v02_siter_avoids_despawned() {
+	VillageRegistry reg;
+	// Seed one Despawned record. It should still count for distance checks.
+	auto& r = reg.allocate(/*ownerSeat*/SEAT_NONE, {0, 0});
+	r.status = VillageRecord::Status::Despawned;
+
+	// Now a live seat claims. The siter must not place near (0,0).
+	auto c = VillageSiter::pick(reg, {0, 0}, /*seed*/42, /*seat*/7);
+	if (!c) return "siter returned nullopt";
+	int64_t dx = c->x, dz = c->y;
+	int64_t d2 = dx*dx + dz*dz;
+	VillageSiterConfig cfg;
+	int64_t minD2 = (int64_t)cfg.kMinDistance * cfg.kMinDistance;
+	if (d2 < minD2) {
+		char buf[160];
+		std::snprintf(buf, sizeof(buf),
+			"new village at (%d,%d) within %lld of despawned at (0,0)",
+			c->x, c->y, (long long)std::llround(std::sqrt((double)d2)));
+		return buf;
+	}
+	return "";
+}
+
+// V3 (Phase 4): loadEntry replays ids verbatim and preserves the high-water
+// so a subsequent allocate() doesn't collide with a persisted id. This is the
+// same invariant as seats.bin — every reference that survives restart needs
+// the id to be stable.
+static std::string v03_loadEntry_preserves_ids() {
+	VillageRegistry reg;
+	VillageRecord a{3, 1, {100, 200}, VillageRecord::Status::Live};
+	VillageRecord b{7, 2, {-100, 400}, VillageRecord::Status::Despawned};
+	reg.loadEntry(a);
+	reg.loadEntry(b);
+
+	// The persisted ids must round-trip unchanged.
+	if (!reg.find(3) || reg.find(3)->centerXZ != glm::ivec2{100, 200})
+		return "village id 3 missing or wrong center after reload";
+	if (!reg.find(7) || reg.find(7)->status != VillageRecord::Status::Despawned)
+		return "village id 7 missing or wrong status after reload";
+
+	// A fresh allocate must pick an id strictly greater than any loaded.
+	auto& fresh = reg.allocate(/*seat*/9, {1000, 1000});
+	if (fresh.id <= 7)
+		return "fresh allocate id " + std::to_string(fresh.id) + " collides with loaded id 7";
+	return "";
+}
+
+// S6 (Phase 6): the spawn-with-overrides path must carry Prop::Owner = seatId
+// for every Living. If overrides omits it, the Living ends up with owner=0
+// (SEAT_NONE) — an AgentClient would never adopt it, so the server warns on
+// the spawn path. This test pins both directions of the invariant: empty
+// overrides → owner=0 (warn case), explicit overrides → owner honored.
+static std::string s06_living_spawn_requires_owner() {
+	auto ts = makeFlatServer();
+	GameServer* srv = ts->server();
+	if (!srv) return "no server";
+
+	// 1. overrides variant without Prop::Owner → Living lands at owner=0.
+	//    (Spawn path prints a WARN; we verify the state the warn triggers on.)
+	EntityId unowned = srv->world().entities.spawn(
+		"knight", glm::vec3(0, 10, 0),
+		std::unordered_map<std::string, PropValue>{});
+	if (unowned == ENTITY_NONE) return "spawn(overrides) returned ENTITY_NONE for 'knight'";
+	Entity* eu = srv->world().entities.get(unowned);
+	if (!eu) return "spawned 'knight' not findable by id";
+	if (!eu->def().isLiving()) return "'knight' unexpectedly not Living in this build";
+	int owner0 = eu->getProp<int>(Prop::Owner, 0);
+	if (owner0 != 0)
+		return "Living spawned with empty overrides has owner=" + std::to_string(owner0)
+		     + " (expected 0 — warn path)";
+
+	// 2. overrides variant with Prop::Owner threaded → honored verbatim.
+	EntityId owned = srv->world().entities.spawn(
+		"knight", glm::vec3(4, 10, 0),
+		{{Prop::Owner, (int)99}});
+	if (owned == ENTITY_NONE) return "spawn(overrides) returned ENTITY_NONE for owned 'knight'";
+	Entity* eo = srv->world().entities.get(owned);
+	if (!eo) return "owned 'knight' not findable by id";
+	int ownerN = eo->getProp<int>(Prop::Owner, 0);
+	if (ownerN != 99)
+		return "Living spawned with Prop::Owner=99 reports owner="
+		     + std::to_string(ownerN);
+	return "";
+}
+
+// S5 (Phase 3): world-gen itself spawns zero mobs. Only client join triggers
+// spawnMobsForClient(seat); a dedicated server with nobody connected must sit
+// empty of living entities. Chests and the monument are world-scope structure
+// entities (owner=SEAT_NONE, non-living) — they may remain.
+static std::string s05_worldgen_no_mobs_without_client() {
+	ServerConfig cfg;
+	cfg.seed = 42;
+	cfg.templateIndex = 1;           // village template — the worst case
+	GameServer srv;
+	srv.init(cfg, g_templates);
+	// Mirror main.cpp/TestServer: load artifacts so entity defs match runtime.
+	ArtifactRegistry artifacts;
+	artifacts.loadAll("artifacts");
+	srv.mergeArtifactTags(artifacts.livingTags());
+	srv.applyLivingStats(artifacts.livingStats());
+
+	// Tick 30 frames — any pending worldgen spawns drain into the world.
+	for (int i = 0; i < 30; i++) srv.tick(1.0f / 60.0f);
+
+	int living = 0;
+	std::string firstType;
+	srv.world().entities.forEach([&](Entity& e) {
+		if (e.def().isLiving()) {
+			if (firstType.empty()) firstType = e.typeId();
+			living++;
+		}
+	});
+	if (living > 0) {
+		return "world-gen spawned " + std::to_string(living)
+		     + " living entities (first=" + firstType
+		     + "); mobs must only spawn via addClient(seat)";
+	}
 	return "";
 }
 
@@ -2886,6 +3211,16 @@ int main() {
 	run("S1: same uuid → same seat",              s01_same_uuid_same_seat);
 	run("S2: different uuids → different seats",  s02_different_uuids_different_seats);
 	run("S3: loadEntry preserves high-water mark", s03_loadEntry_preserves_high_water);
+	run("S4: cross-seat clients cannot control each other", s04_cross_seat_cannot_control);
+	run("S5: world-gen spawns no mobs without a client",   s05_worldgen_no_mobs_without_client);
+	run("S6: living spawn requires Prop::Owner",           s06_living_spawn_requires_owner);
+	run("S7: disconnect→snapshot→rejoin→restore",          s07_disconnect_snapshot_rejoin_restore);
+	run("S8: removeClient tags reason=OwnerOffline",       s08_removeclient_reason_owner_offline);
+
+	printf("\n--- Village Registry + Siter ---\n");
+	run("V1: three sequential sitings are pairwise ≥256 apart", v01_three_sitings_spaced);
+	run("V2: siter avoids despawned village footprints",         v02_siter_avoids_despawned);
+	run("V3: loadEntry preserves ids + high-water",              v03_loadEntry_preserves_ids);
 
 	pythonBridge().shutdown();
 
