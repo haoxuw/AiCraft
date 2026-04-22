@@ -924,6 +924,21 @@ void WorldRenderer::renderEffects(float wallTime) {
 		if (rc >= 2) g.m_rhi->drawRibbon(scene, rbuf.data(), rc);
 	}
 
+	// Break-in-progress overlay, ghost preview, and post-break debris.
+	renderBreakEffects(wallTime);
+	// Click-to-move marker + RTS selection head markers.
+	renderSelectionMarkers(wallTime);
+}
+
+void WorldRenderer::renderBreakEffects(float wallTime) {
+	Game& g = game_;
+	rhi::IRhi::SceneParams scene{};
+	glm::mat4 vp = g.viewProj();
+	std::memcpy(scene.viewProj, &vp[0][0], sizeof(float)*16);
+	glm::vec3 eye = g.m_cam.position;
+	scene.camPos[0] = eye.x; scene.camPos[1] = eye.y; scene.camPos[2] = eye.z;
+	scene.time = wallTime;
+
 	// ── Block break progress overlay ────────────────────────────────────
 	// BlockShape (logic/block_shape.h) owns the per-mesh_type logic for
 	// which AABB sub-boxes the overlay should stamp; adding a new block
@@ -1034,6 +1049,16 @@ void WorldRenderer::renderEffects(float wallTime) {
 		}
 		g.m_rhi->drawParticles(scene, parts.data(), (uint32_t)b.parts.size());
 	}
+}
+
+void WorldRenderer::renderSelectionMarkers(float wallTime) {
+	Game& g = game_;
+	rhi::IRhi::SceneParams scene{};
+	glm::mat4 vp = g.viewProj();
+	std::memcpy(scene.viewProj, &vp[0][0], sizeof(float)*16);
+	glm::vec3 eye = g.m_cam.position;
+	scene.camPos[0] = eye.x; scene.camPos[1] = eye.y; scene.camPos[2] = eye.z;
+	scene.time = wallTime;
 
 	// ── Move target marker: spinning triangle hovering above the target.
 	// SC2/MOBA-style waypoint — 3 bright vertices forming an equilateral

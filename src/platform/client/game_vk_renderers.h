@@ -28,6 +28,12 @@ public:
 	void renderEffects(float wallTime);
 private:
 	Game& game_;
+
+	// Sub-passes of renderEffects(). Each builds its own SceneParams
+	// from the current camera; pulled out because renderEffects was a
+	// 560-line scroll otherwise.
+	void renderBreakEffects(float wallTime);      // break crack + ghost + burst
+	void renderSelectionMarkers(float wallTime);  // move order + RTS select rings
 };
 
 class HudRenderer {
