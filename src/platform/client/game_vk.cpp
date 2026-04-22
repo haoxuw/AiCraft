@@ -70,200 +70,8 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		return false;
 	}
 
-	m_server->setEffectCallbacks(
-		[this](civcraft::ChunkPos cp) { m_serverDirtyChunks.insert(cp); },
-		[this](glm::vec3 pos, const std::string& blockName) {
-			char buf[160];
-			snprintf(buf, sizeof(buf), "broke %s @(%d,%d,%d)",
-				blockName.c_str(), (int)pos.x, (int)pos.y, (int)pos.z);
-			civcraft::GameLogger::instance().emit("ACTION", "%s", buf);
-			FloatText ft;
-			ft.worldPos = pos + glm::vec3(0.5f, 1.5f, 0.5f);
-			ft.color    = glm::vec3(0.85f, 0.75f, 0.55f);
-			std::string name = blockName;
-			if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
-			for (auto& c : name) if (c == '_') c = ' ';
-			ft.text     = name;
-			ft.lifetime = 0.8f;
-			m_floaters.push_back(ft);
-
-			// Block-break sound — pick group from the block's display/id name.
-			std::string snd = "dig_stone";
-			const std::string& lb = blockName;
-			auto has = [&](const char* s) { return lb.find(s) != std::string::npos; };
-			if (has("wood") || has("log") || has("plank")) snd = "dig_wood";
-			else if (has("leaf") || has("leaves"))         snd = "dig_leaves";
-			else if (has("dirt") || has("grass"))          snd = "dig_dirt";
-			else if (has("sand"))                          snd = "dig_sand";
-			else if (has("snow") || has("ice"))            snd = "dig_snow";
-			else if (has("glass"))                         snd = "dig_glass";
-			else if (has("iron") || has("metal") || has("gold") || has("copper")) snd = "dig_metal";
-			m_audio.play(snd, pos + glm::vec3(0.5f), 0.55f);
-
-			// Minecraft-style debris burst. Color uses the block's top face
-			// tint as a proxy for "what it looks like" — we don't run the
-			// full per-face shader for particles, so one color is the closest
-			// cheap match. Fires on BOTH player prediction and server-
-			// observed breaks (villager chops, TNT) — one path, no duplicates.
-			const civcraft::BlockDef* bdef = m_server->blockRegistry().find(blockName);
-			glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.6f, 0.5f, 0.4f);
-			spawnBreakBurst(pos + glm::vec3(0.5f), color);
-		},
-		// onBlockPlace: fires on AIR→X and X→Y (door toggle, water flow, etc.)
-		[this](glm::vec3 pos, const std::string& newBlockId) {
-			glm::vec3 worldPos = pos + glm::vec3(0.5f);
-			// Door toggle gets its own sound + hinged-panel swing animation.
-			// The ":door" / ":door_open" string_ids come from the server's
-			// authoritative S_BLOCK broadcast, so both players see the swing.
-			auto endsWith = [&](const char* s) {
-				size_t n = strlen(s);
-				return newBlockId.size() >= n &&
-				       newBlockId.compare(newBlockId.size() - n, n, s) == 0;
-			};
-			bool isDoor     = endsWith(":door");
-			bool isDoorOpen = endsWith(":door_open");
-			if (isDoor || isDoorOpen) {
-				m_audio.play("door_open", worldPos, 0.6f);
-				// Walk the door column to find base + height, read hinge bit,
-				// and push an anim. The chunk has already been updated with the
-				// new block (network_server.h calls onBlockPlace after setBlock).
-				glm::ivec3 bp{(int)std::floor(pos.x),
-				              (int)std::floor(pos.y),
-				              (int)std::floor(pos.z)};
-				auto& chunks = m_server->chunks();
-				auto& blocks = m_server->blockRegistry();
-				auto isDoorBlock = [&](int x, int y, int z) {
-					const auto& bd = blocks.get(chunks.getBlock(x, y, z));
-					return bd.string_id.size() >= 4 &&
-					       (bd.string_id.rfind(":door") == bd.string_id.size() - 5 ||
-					        bd.string_id.rfind(":door_open") == bd.string_id.size() - 10);
-				};
-				// Walk down to base
-				glm::ivec3 base = bp;
-				while (base.y > 0 && isDoorBlock(base.x, base.y - 1, base.z)) base.y--;
-				// Count height upward (max 8)
-				int h = 0;
-				for (int dy = 0; dy < 8; dy++) {
-					if (isDoorBlock(base.x, base.y + dy, base.z)) h++;
-					else break;
-				}
-				if (h < 1) h = 1;
-				// Hinge bit lives in param2 bit 2 (matches chunk_mesher.cpp:217).
-				civcraft::ChunkPos cp = {
-					(base.x >= 0 ? base.x / civcraft::CHUNK_SIZE : (base.x - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE),
-					(base.y >= 0 ? base.y / civcraft::CHUNK_SIZE : (base.y - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE),
-					(base.z >= 0 ? base.z / civcraft::CHUNK_SIZE : (base.z - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE)
-				};
-				civcraft::Chunk* ch = chunks.getChunk(cp);
-				int lx = ((base.x % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
-				int ly = ((base.y % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
-				int lz = ((base.z % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
-				uint8_t p2 = ch ? ch->getParam2(lx, ly, lz) : 0;
-				DoorAnim da;
-				da.basePos    = base;
-				da.height     = h;
-				da.opening    = isDoorOpen;
-				da.hingeRight = (p2 >> 2) & 1;
-				const auto& bdef = blocks.get(chunks.getBlock(base.x, base.y, base.z));
-				da.color      = bdef.color_side;
-				m_doorAnims.push_back(da);
-				return;
-			}
-			if (newBlockId.find("wood") != std::string::npos ||
-			    newBlockId.find("log")  != std::string::npos ||
-			    newBlockId.find("plank")!= std::string::npos)
-				m_audio.play("place_wood", worldPos, 0.5f);
-			else if (newBlockId.find("dirt") != std::string::npos ||
-			         newBlockId.find("sand") != std::string::npos ||
-			         newBlockId.find("grass")!= std::string::npos)
-				m_audio.play("place_soft", worldPos, 0.5f);
-			else
-				m_audio.play("place_stone", worldPos, 0.5f);
-		}
-	);
-	m_server->setInventoryCallback([this](civcraft::EntityId eid) {
-		if (!m_server) return;
-		civcraft::Entity* ent = m_server->getEntity(eid);
-		if (!ent || !ent->inventory) return;
-		auto prevIt = m_prevInv.find(eid);
-		bool seedingFirstSnapshot = (prevIt == m_prevInv.end());
-		auto& prev = m_prevInv[eid];
-		std::unordered_map<std::string,int> cur;
-		for (auto& [iid, cnt] : ent->inventory->items()) cur[iid] = cnt;
-		std::string typeName = ent->typeId();
-		auto col = typeName.find(':');
-		if (col != std::string::npos) typeName = typeName.substr(col + 1);
-		if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
-		bool isLocalPlayer = (eid == m_server->localPlayerId());
-		for (auto& [iid, cnt] : cur) {
-			int was = 0;
-			auto it = prev.find(iid);
-			if (it != prev.end()) was = it->second;
-			if (cnt != was) {
-				int delta = cnt - was;
-				civcraft::GameLogger::instance().emit("INV",
-					"%s #%u %s %s x%d",
-					typeName.c_str(), eid,
-					seedingFirstSnapshot ? "Restored" :
-					  (delta > 0 ? "Picked up" : "Dropped"),
-					iid.c_str(), delta > 0 ? delta : -delta);
-				// Initial S_INVENTORY arrives during handshake (while still
-				// at menu) and during respawn/restore — items the player
-				// already owned aren't new pickups, so don't blip/notify.
-				if (delta > 0 && isLocalPlayer && !seedingFirstSnapshot) {
-					m_audio.play("item_pickup", 0.5f);
-					std::string pretty = iid;
-					auto colon = pretty.find(':');
-					if (colon != std::string::npos) pretty = pretty.substr(colon + 1);
-					for (auto& c : pretty) if (c == '_') c = ' ';
-					if (!pretty.empty()) pretty[0] = (char)toupper((unsigned char)pretty[0]);
-					char buf[96];
-					std::snprintf(buf, sizeof(buf), "+%d %s", delta, pretty.c_str());
-					pushNotification(buf, glm::vec3(0.60f, 0.95f, 0.55f), 3.0f);
-				}
-			}
-		}
-		for (auto& [iid, was] : prev) {
-			if (cur.find(iid) == cur.end() && was != 0) {
-				civcraft::GameLogger::instance().emit("INV",
-					"%s #%u Dropped %s x%d",
-					typeName.c_str(), eid, iid.c_str(), was);
-			}
-		}
-		prev.swap(cur);
-
-		// Keep the hotbar alias layer in sync with the local player's
-		// inventory. First delivery primes the slots by priority order; every
-		// subsequent S_INVENTORY merges in new picks and clears slots for
-		// items the player no longer carries. Drag layout (set via UI) is
-		// persisted to m_hotbarSavePath and preserved across merges.
-		if (isLocalPlayer && ent->inventory) {
-			if (!m_hotbarSeeded) {
-				bool loaded = !m_hotbarSavePath.empty()
-				    && m_hotbar.loadFromFile(m_hotbarSavePath);
-				if (!loaded) m_hotbar.repopulateFrom(*ent->inventory);
-				m_hotbarSeeded = true;
-			}
-			m_hotbar.mergeFrom(*ent->inventory);
-			if (!m_hotbarSavePath.empty())
-				m_hotbar.saveToFile(m_hotbarSavePath);
-		}
-	});
-
-	// Entity-removal FX: server tags each S_REMOVE with a reason byte
-	// (EntityRemovalReason). OwnerOffline → gentle puff + no SFX so a
-	// disconnecting friend's mobs fade quietly. Died/Despawned fall through;
-	// death SFX, if any, should live on the attacker path, not here.
-	m_server->setEntityRemoveCallback(
-		[this](civcraft::EntityId /*eid*/, glm::vec3 pos, uint8_t reason) {
-			if (reason == (uint8_t)civcraft::EntityRemovalReason::OwnerOffline) {
-				spawnBreakBurst(pos + glm::vec3(0.0f, 0.8f, 0.0f),
-				                glm::vec3(0.85f, 0.88f, 0.95f));
-			}
-		});
-
-	std::printf("[vk-game] chunks will stream from %s\n",
-		m_server->isConnected() ? "network" : "???");
+	// Wire up S_BLOCK / S_INVENTORY / S_REMOVE side-effect callbacks.
+	setupServerCallbacks();
 
 	if (!civcraft::pythonBridge().init("python"))
 		std::printf("[vk-game] WARN: Python bridge init failed; NPCs won't decide()\n");
@@ -295,144 +103,9 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 			workers, workers == 1 ? "" : "s");
 	}
 
-	// Register file-based debug triggers (no-op in Release builds).
-	m_debugTriggers.addTrigger("/tmp/civcraft_respawn_request", [this] {
-		if (m_state == GameState::Dead) respawn();
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_dig_request", [this] {
-		digInFront();
-	});
-	// Debug: break the nearest non-spawn_point solid block below the player.
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_dig_feet_request", [this] {
-		auto* me = playerEntity();
-		if (!me) { std::fprintf(stderr, "[vk-debug] dig_feet: no player\n"); return; }
-		auto& reg = m_server->blockRegistry();
-		glm::ivec3 bp{(int)std::floor(me->position.x),
-		              (int)std::floor(me->position.y) - 1,
-		              (int)std::floor(me->position.z)};
-		civcraft::BlockId bid = civcraft::BLOCK_AIR;
-		for (int dy = 0; dy < 6; dy++) {
-			glm::ivec3 cand = bp - glm::ivec3(0, dy, 0);
-			civcraft::BlockId cbid = m_server->chunks().getBlock(cand.x, cand.y, cand.z);
-			const auto& cdef = reg.get(cbid);
-			if (cbid != civcraft::BLOCK_AIR && cdef.string_id != "spawn_point") {
-				bp = cand; bid = cbid; break;
-			}
-		}
-		const auto& bdef = reg.get(bid);
-		std::fprintf(stderr, "[vk-debug] dig_feet: target=(%d,%d,%d) bid=%u id=%s drop=%s\n",
-			bp.x, bp.y, bp.z, bid, bdef.string_id.c_str(), bdef.drop.c_str());
-		if (bid == civcraft::BLOCK_AIR) return;
-		civcraft::ActionProposal p;
-		p.actorId     = m_server->localPlayerId();
-		p.type        = civcraft::ActionProposal::Convert;
-		p.fromItem    = bdef.string_id;
-		p.toItem      = bdef.drop.empty() ? bdef.string_id : bdef.drop;
-		p.fromCount   = 1;
-		p.toCount     = 1;
-		p.convertFrom = civcraft::Container::block(bp);
-		p.convertInto = civcraft::Container::ground();
-		m_server->sendAction(p);
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_attack_request", [this] {
-		auto* me = playerEntity(); if (!me) return;
-		glm::vec3 from = me->position + glm::vec3(0, kTune.playerHeight * 0.6f, 0);
-		m_slashes.push_back({ from, playerForward() });
-		if (!tryServerAttack())
-			std::printf("[vk-game] [trigger] swing — no target in cone\n");
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_camera_request", [this] {
-		m_cam.cycleMode();
-		const char* names[] = {"FPS", "ThirdPerson", "RPG", "RTS"};
-		std::printf("[vk-game] [trigger] camera → %s\n", names[(int)m_cam.mode]);
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_lookup_request", [this] {
-		m_cam.lookPitch  = 55.0f;   // FPS / ThirdPerson free-look
-		m_cam.orbitPitch = -40.0f;  // TPS orbit (negative = view aims up)
-		std::printf("[vk-game] [trigger] look up (lookPitch=55, orbitPitch=-40)\n");
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_face_east_request", [this] {
-		m_cam.lookYaw    = 0.0f;    // +X (toward sunrise)
-		m_cam.lookPitch  = 35.0f;   // horizon slightly low, most of frame = sky + clouds
-		m_cam.orbitYaw   = 0.0f;
-		m_cam.orbitPitch = -25.0f;
-		m_cam.resetSmoothing();
-		std::printf("[vk-game] [trigger] face east (sunrise view)\n");
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_noon_request", [this] {
-		if (m_server) {
-			// no client-side setter; this only works in the single-process test
-			// scenario — cast through if available, else noop
-			std::printf("[vk-game] [trigger] noon request — set time is server-side\n");
-		}
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_place_request", [this] {
-		placeBlock();
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_admin_request", [this] {
-		m_adminMode = !m_adminMode;
-		if (!m_adminMode) m_flyMode = false;
-		std::printf("[vk-game] [trigger] admin mode %s\n", m_adminMode ? "ON" : "OFF");
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_fly_request", [this] {
-		if (m_adminMode) {
-			m_flyMode = !m_flyMode;
-			std::printf("[vk-game] [trigger] fly mode %s\n", m_flyMode ? "ON" : "OFF");
-		}
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_pause_request", [this] {
-		if (m_state == GameState::Playing) openGameMenu();
-		else if (m_state == GameState::GameMenu) closeGameMenu();
-	});
-	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_goto_request", [this](const std::string& line) {
-		float tx = 0, ty = 0, tz = 0;
-		if (sscanf(line.c_str(), "%f %f %f", &tx, &ty, &tz) >= 3) {
-			glm::vec3 target(tx, ty, tz);
-			m_server->sendSetGoal(m_server->localPlayerId(), target);
-			m_hasMoveOrder    = true;
-			m_moveOrderTarget = target;
-			std::printf("[vk-game] [trigger] goto (%.1f,%.1f,%.1f)\n", tx, ty, tz);
-		}
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_ascend_request", [this] {
-		auto* me = playerEntity();
-		if (m_flyMode && me) {
-			me->position.y += 5.0f;
-			std::printf("[vk-game] [trigger] ascend +5 → y=%.1f\n", me->position.y);
-		}
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_handbook_request", [this] {
-		m_handbookOpen = !m_handbookOpen;
-		std::printf("[vk-game] [trigger] handbook %s\n", m_handbookOpen ? "OPEN" : "CLOSED");
-	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_inventory_request", [this] {
-		m_invOpen = !m_invOpen;
-		std::printf("[vk-game] [trigger] inventory %s\n", m_invOpen ? "OPEN" : "CLOSED");
-	});
-	// Test drag: place cursor on an inventory slot (given slot index 0..47) and
-	// drop on hotbar slot `to` (0..9). Format: "<from_inv_idx> <to_hotbar_idx>".
-	// No LMB events are synthesized — we call into the hotbar directly since
-	// this is a dev shortcut for screenshot verification.
-	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_cursor_request",
-		[this](const std::string& line) {
-			float x, y;
-			if (sscanf(line.c_str(), "%f %f", &x, &y) == 2) {
-				m_mouseNdcX = x;
-				m_mouseNdcY = y;
-				std::printf("[vk-game] [trigger] cursor=(%.2f,%.2f)\n", x, y);
-			}
-		});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_tuning_request", [this] {
-		m_showTuning = !m_showTuning;
-		std::printf("[vk-game] [trigger] tuning %s\n", m_showTuning ? "OPEN" : "CLOSED");
-	});
-	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_inspect_request", [this](const std::string& line) {
-		int eid = 0;
-		if (sscanf(line.c_str(), "%d", &eid) == 1 && eid > 0) {
-			m_inspectedEntity = (civcraft::EntityId)eid;
-			std::printf("[vk-game] [trigger] inspect entity #%d\n", eid);
-		}
-	});
+	// Register file-triggered debug helpers (respawn, dig, camera, …).
+	registerDebugTriggers();
+
 	m_artifactRegistry.loadAll("artifacts");
 
 	// Load Python-defined BoxModels (one .py per creature/item under
@@ -482,69 +155,9 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		}
 	}
 
-	// Spawn all three AI sidecars so `make game` brings up dialog + voice
-	// out of the box. Each is independent: LLM can run without STT, STT can
-	// run without TTS. If the user hasn't run the corresponding `make *_setup`,
-	// the missing sidecar degrades gracefully (dialog still works, just text-
-	// only on the input side or silent NPCs on the output side). Client-only
-	// (Rule 5); server never sees any of these processes.
-	{
-		civcraft::llm::LlmSidecar::Paths lp;
-		if (civcraft::llm::LlmSidecar::probe(lp)) {
-			m_llmSidecar = std::make_unique<civcraft::llm::LlmSidecar>();
-			if (!m_llmSidecar->start(lp)) {
-				std::fprintf(stderr, "[vk-game] llm sidecar failed to start; NPC dialog disabled\n");
-				m_llmSidecar.reset();
-			}
-		} else {
-			std::printf("[vk-game] no llama-server/model found — NPC dialog disabled. "
-			            "Run 'make llm_setup' to enable.\n");
-		}
-
-		civcraft::llm::WhisperSidecar::Paths wp;
-		if (civcraft::llm::WhisperSidecar::probe(wp)) {
-			m_whisperSidecar = std::make_unique<civcraft::llm::WhisperSidecar>();
-			if (!m_whisperSidecar->start(wp)) {
-				std::fprintf(stderr, "[vk-game] whisper sidecar failed to start; STT disabled\n");
-				m_whisperSidecar.reset();
-			} else {
-				// Only bring up the mic + HTTP client when the sidecar is live.
-				// If the mic is missing (headless box), we still leave the HTTP
-				// client around so future device hotplug could work — but
-				// DialogPanel gates push-to-talk on AudioCapture::isReady().
-				m_audioCapture = std::make_unique<civcraft::AudioCapture>();
-				if (!m_audioCapture->init()) {
-					std::fprintf(stderr, "[vk-game] mic init failed; push-to-talk disabled\n");
-					m_audioCapture.reset();
-				}
-				civcraft::llm::WhisperClient::Config wc;
-				wc.host = "127.0.0.1";
-				wc.port = 8081;
-				m_whisperClient = std::make_unique<civcraft::llm::WhisperClient>(wc);
-			}
-		} else {
-			std::printf("[vk-game] no whisper-server/model found — STT disabled. "
-			            "Run 'make whisper_setup' to enable push-to-talk.\n");
-		}
-
-		// TTS voice mux: one piper child per distinct `dialog_voice` value.
-		// We don't eagerly spawn any here — the first NPC conversation will
-		// instantiate its voice on demand.
-		m_ttsMux = std::make_unique<civcraft::llm::TtsVoiceMux>();
-		if (!m_ttsMux->init()) {
-			std::printf("[vk-game] no piper/voice found — NPC voice disabled. "
-			            "Run 'make tts_setup' to enable.\n");
-			m_ttsMux.reset();
-		} else {
-			auto names = m_ttsMux->voiceNames();
-			std::string list;
-			for (size_t i = 0; i < names.size(); ++i) {
-				if (i) list += ", ";
-				list += names[i];
-			}
-			std::printf("[vk-game] tts voices available: %s\n", list.c_str());
-		}
-	}
+	// Optional client-only AI sidecars (LLM + STT + TTS). Non-fatal if
+	// a given sidecar's binaries/models aren't installed.
+	initAiSidecars();
 
 	return true;
 }
@@ -1274,5 +887,410 @@ void Game::runOneFrame(float dt, float wallTime) {
 		}
 	}
 }
+
+void Game::setupServerCallbacks() {
+	m_server->setEffectCallbacks(
+		[this](civcraft::ChunkPos cp) { m_serverDirtyChunks.insert(cp); },
+		[this](glm::vec3 pos, const std::string& blockName) {
+			char buf[160];
+			snprintf(buf, sizeof(buf), "broke %s @(%d,%d,%d)",
+				blockName.c_str(), (int)pos.x, (int)pos.y, (int)pos.z);
+			civcraft::GameLogger::instance().emit("ACTION", "%s", buf);
+			FloatText ft;
+			ft.worldPos = pos + glm::vec3(0.5f, 1.5f, 0.5f);
+			ft.color    = glm::vec3(0.85f, 0.75f, 0.55f);
+			std::string name = blockName;
+			if (!name.empty()) name[0] = (char)toupper((unsigned char)name[0]);
+			for (auto& c : name) if (c == '_') c = ' ';
+			ft.text     = name;
+			ft.lifetime = 0.8f;
+			m_floaters.push_back(ft);
+
+			// Block-break sound — pick group from the block's display/id name.
+			std::string snd = "dig_stone";
+			const std::string& lb = blockName;
+			auto has = [&](const char* s) { return lb.find(s) != std::string::npos; };
+			if (has("wood") || has("log") || has("plank")) snd = "dig_wood";
+			else if (has("leaf") || has("leaves"))         snd = "dig_leaves";
+			else if (has("dirt") || has("grass"))          snd = "dig_dirt";
+			else if (has("sand"))                          snd = "dig_sand";
+			else if (has("snow") || has("ice"))            snd = "dig_snow";
+			else if (has("glass"))                         snd = "dig_glass";
+			else if (has("iron") || has("metal") || has("gold") || has("copper")) snd = "dig_metal";
+			m_audio.play(snd, pos + glm::vec3(0.5f), 0.55f);
+
+			// Minecraft-style debris burst. Color uses the block's top face
+			// tint as a proxy for "what it looks like" — we don't run the
+			// full per-face shader for particles, so one color is the closest
+			// cheap match. Fires on BOTH player prediction and server-
+			// observed breaks (villager chops, TNT) — one path, no duplicates.
+			const civcraft::BlockDef* bdef = m_server->blockRegistry().find(blockName);
+			glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.6f, 0.5f, 0.4f);
+			spawnBreakBurst(pos + glm::vec3(0.5f), color);
+		},
+		// onBlockPlace: fires on AIR→X and X→Y (door toggle, water flow, etc.)
+		[this](glm::vec3 pos, const std::string& newBlockId) {
+			glm::vec3 worldPos = pos + glm::vec3(0.5f);
+			// Door toggle gets its own sound + hinged-panel swing animation.
+			// The ":door" / ":door_open" string_ids come from the server's
+			// authoritative S_BLOCK broadcast, so both players see the swing.
+			auto endsWith = [&](const char* s) {
+				size_t n = strlen(s);
+				return newBlockId.size() >= n &&
+				       newBlockId.compare(newBlockId.size() - n, n, s) == 0;
+			};
+			bool isDoor     = endsWith(":door");
+			bool isDoorOpen = endsWith(":door_open");
+			if (isDoor || isDoorOpen) {
+				m_audio.play("door_open", worldPos, 0.6f);
+				// Walk the door column to find base + height, read hinge bit,
+				// and push an anim. The chunk has already been updated with the
+				// new block (network_server.h calls onBlockPlace after setBlock).
+				glm::ivec3 bp{(int)std::floor(pos.x),
+				              (int)std::floor(pos.y),
+				              (int)std::floor(pos.z)};
+				auto& chunks = m_server->chunks();
+				auto& blocks = m_server->blockRegistry();
+				auto isDoorBlock = [&](int x, int y, int z) {
+					const auto& bd = blocks.get(chunks.getBlock(x, y, z));
+					return bd.string_id.size() >= 4 &&
+					       (bd.string_id.rfind(":door") == bd.string_id.size() - 5 ||
+					        bd.string_id.rfind(":door_open") == bd.string_id.size() - 10);
+				};
+				// Walk down to base
+				glm::ivec3 base = bp;
+				while (base.y > 0 && isDoorBlock(base.x, base.y - 1, base.z)) base.y--;
+				// Count height upward (max 8)
+				int h = 0;
+				for (int dy = 0; dy < 8; dy++) {
+					if (isDoorBlock(base.x, base.y + dy, base.z)) h++;
+					else break;
+				}
+				if (h < 1) h = 1;
+				// Hinge bit lives in param2 bit 2 (matches chunk_mesher.cpp:217).
+				civcraft::ChunkPos cp = {
+					(base.x >= 0 ? base.x / civcraft::CHUNK_SIZE : (base.x - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE),
+					(base.y >= 0 ? base.y / civcraft::CHUNK_SIZE : (base.y - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE),
+					(base.z >= 0 ? base.z / civcraft::CHUNK_SIZE : (base.z - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE)
+				};
+				civcraft::Chunk* ch = chunks.getChunk(cp);
+				int lx = ((base.x % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
+				int ly = ((base.y % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
+				int lz = ((base.z % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
+				uint8_t p2 = ch ? ch->getParam2(lx, ly, lz) : 0;
+				DoorAnim da;
+				da.basePos    = base;
+				da.height     = h;
+				da.opening    = isDoorOpen;
+				da.hingeRight = (p2 >> 2) & 1;
+				const auto& bdef = blocks.get(chunks.getBlock(base.x, base.y, base.z));
+				da.color      = bdef.color_side;
+				m_doorAnims.push_back(da);
+				return;
+			}
+			if (newBlockId.find("wood") != std::string::npos ||
+			    newBlockId.find("log")  != std::string::npos ||
+			    newBlockId.find("plank")!= std::string::npos)
+				m_audio.play("place_wood", worldPos, 0.5f);
+			else if (newBlockId.find("dirt") != std::string::npos ||
+			         newBlockId.find("sand") != std::string::npos ||
+			         newBlockId.find("grass")!= std::string::npos)
+				m_audio.play("place_soft", worldPos, 0.5f);
+			else
+				m_audio.play("place_stone", worldPos, 0.5f);
+		}
+	);
+	m_server->setInventoryCallback([this](civcraft::EntityId eid) {
+		if (!m_server) return;
+		civcraft::Entity* ent = m_server->getEntity(eid);
+		if (!ent || !ent->inventory) return;
+		auto prevIt = m_prevInv.find(eid);
+		bool seedingFirstSnapshot = (prevIt == m_prevInv.end());
+		auto& prev = m_prevInv[eid];
+		std::unordered_map<std::string,int> cur;
+		for (auto& [iid, cnt] : ent->inventory->items()) cur[iid] = cnt;
+		std::string typeName = ent->typeId();
+		auto col = typeName.find(':');
+		if (col != std::string::npos) typeName = typeName.substr(col + 1);
+		if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
+		bool isLocalPlayer = (eid == m_server->localPlayerId());
+		for (auto& [iid, cnt] : cur) {
+			int was = 0;
+			auto it = prev.find(iid);
+			if (it != prev.end()) was = it->second;
+			if (cnt != was) {
+				int delta = cnt - was;
+				civcraft::GameLogger::instance().emit("INV",
+					"%s #%u %s %s x%d",
+					typeName.c_str(), eid,
+					seedingFirstSnapshot ? "Restored" :
+					  (delta > 0 ? "Picked up" : "Dropped"),
+					iid.c_str(), delta > 0 ? delta : -delta);
+				// Initial S_INVENTORY arrives during handshake (while still
+				// at menu) and during respawn/restore — items the player
+				// already owned aren't new pickups, so don't blip/notify.
+				if (delta > 0 && isLocalPlayer && !seedingFirstSnapshot) {
+					m_audio.play("item_pickup", 0.5f);
+					std::string pretty = iid;
+					auto colon = pretty.find(':');
+					if (colon != std::string::npos) pretty = pretty.substr(colon + 1);
+					for (auto& c : pretty) if (c == '_') c = ' ';
+					if (!pretty.empty()) pretty[0] = (char)toupper((unsigned char)pretty[0]);
+					char buf[96];
+					std::snprintf(buf, sizeof(buf), "+%d %s", delta, pretty.c_str());
+					pushNotification(buf, glm::vec3(0.60f, 0.95f, 0.55f), 3.0f);
+				}
+			}
+		}
+		for (auto& [iid, was] : prev) {
+			if (cur.find(iid) == cur.end() && was != 0) {
+				civcraft::GameLogger::instance().emit("INV",
+					"%s #%u Dropped %s x%d",
+					typeName.c_str(), eid, iid.c_str(), was);
+			}
+		}
+		prev.swap(cur);
+
+		// Keep the hotbar alias layer in sync with the local player's
+		// inventory. First delivery primes the slots by priority order; every
+		// subsequent S_INVENTORY merges in new picks and clears slots for
+		// items the player no longer carries. Drag layout (set via UI) is
+		// persisted to m_hotbarSavePath and preserved across merges.
+		if (isLocalPlayer && ent->inventory) {
+			if (!m_hotbarSeeded) {
+				bool loaded = !m_hotbarSavePath.empty()
+				    && m_hotbar.loadFromFile(m_hotbarSavePath);
+				if (!loaded) m_hotbar.repopulateFrom(*ent->inventory);
+				m_hotbarSeeded = true;
+			}
+			m_hotbar.mergeFrom(*ent->inventory);
+			if (!m_hotbarSavePath.empty())
+				m_hotbar.saveToFile(m_hotbarSavePath);
+		}
+	});
+
+	// Entity-removal FX: server tags each S_REMOVE with a reason byte
+	// (EntityRemovalReason). OwnerOffline → gentle puff + no SFX so a
+	// disconnecting friend's mobs fade quietly. Died/Despawned fall through;
+	// death SFX, if any, should live on the attacker path, not here.
+	m_server->setEntityRemoveCallback(
+		[this](civcraft::EntityId /*eid*/, glm::vec3 pos, uint8_t reason) {
+			if (reason == (uint8_t)civcraft::EntityRemovalReason::OwnerOffline) {
+				spawnBreakBurst(pos + glm::vec3(0.0f, 0.8f, 0.0f),
+				                glm::vec3(0.85f, 0.88f, 0.95f));
+			}
+		});
+
+	std::printf("[vk-game] chunks will stream from %s\n",
+		m_server->isConnected() ? "network" : "???");
+}
+
+void Game::registerDebugTriggers() {
+	// Register file-based debug triggers (no-op in Release builds).
+	m_debugTriggers.addTrigger("/tmp/civcraft_respawn_request", [this] {
+		if (m_state == GameState::Dead) respawn();
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_dig_request", [this] {
+		digInFront();
+	});
+	// Debug: break the nearest non-spawn_point solid block below the player.
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_dig_feet_request", [this] {
+		auto* me = playerEntity();
+		if (!me) { std::fprintf(stderr, "[vk-debug] dig_feet: no player\n"); return; }
+		auto& reg = m_server->blockRegistry();
+		glm::ivec3 bp{(int)std::floor(me->position.x),
+		              (int)std::floor(me->position.y) - 1,
+		              (int)std::floor(me->position.z)};
+		civcraft::BlockId bid = civcraft::BLOCK_AIR;
+		for (int dy = 0; dy < 6; dy++) {
+			glm::ivec3 cand = bp - glm::ivec3(0, dy, 0);
+			civcraft::BlockId cbid = m_server->chunks().getBlock(cand.x, cand.y, cand.z);
+			const auto& cdef = reg.get(cbid);
+			if (cbid != civcraft::BLOCK_AIR && cdef.string_id != "spawn_point") {
+				bp = cand; bid = cbid; break;
+			}
+		}
+		const auto& bdef = reg.get(bid);
+		std::fprintf(stderr, "[vk-debug] dig_feet: target=(%d,%d,%d) bid=%u id=%s drop=%s\n",
+			bp.x, bp.y, bp.z, bid, bdef.string_id.c_str(), bdef.drop.c_str());
+		if (bid == civcraft::BLOCK_AIR) return;
+		civcraft::ActionProposal p;
+		p.actorId     = m_server->localPlayerId();
+		p.type        = civcraft::ActionProposal::Convert;
+		p.fromItem    = bdef.string_id;
+		p.toItem      = bdef.drop.empty() ? bdef.string_id : bdef.drop;
+		p.fromCount   = 1;
+		p.toCount     = 1;
+		p.convertFrom = civcraft::Container::block(bp);
+		p.convertInto = civcraft::Container::ground();
+		m_server->sendAction(p);
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_attack_request", [this] {
+		auto* me = playerEntity(); if (!me) return;
+		glm::vec3 from = me->position + glm::vec3(0, kTune.playerHeight * 0.6f, 0);
+		m_slashes.push_back({ from, playerForward() });
+		if (!tryServerAttack())
+			std::printf("[vk-game] [trigger] swing — no target in cone\n");
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_camera_request", [this] {
+		m_cam.cycleMode();
+		const char* names[] = {"FPS", "ThirdPerson", "RPG", "RTS"};
+		std::printf("[vk-game] [trigger] camera → %s\n", names[(int)m_cam.mode]);
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_lookup_request", [this] {
+		m_cam.lookPitch  = 55.0f;   // FPS / ThirdPerson free-look
+		m_cam.orbitPitch = -40.0f;  // TPS orbit (negative = view aims up)
+		std::printf("[vk-game] [trigger] look up (lookPitch=55, orbitPitch=-40)\n");
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_face_east_request", [this] {
+		m_cam.lookYaw    = 0.0f;    // +X (toward sunrise)
+		m_cam.lookPitch  = 35.0f;   // horizon slightly low, most of frame = sky + clouds
+		m_cam.orbitYaw   = 0.0f;
+		m_cam.orbitPitch = -25.0f;
+		m_cam.resetSmoothing();
+		std::printf("[vk-game] [trigger] face east (sunrise view)\n");
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_noon_request", [this] {
+		if (m_server) {
+			// no client-side setter; this only works in the single-process test
+			// scenario — cast through if available, else noop
+			std::printf("[vk-game] [trigger] noon request — set time is server-side\n");
+		}
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_place_request", [this] {
+		placeBlock();
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_admin_request", [this] {
+		m_adminMode = !m_adminMode;
+		if (!m_adminMode) m_flyMode = false;
+		std::printf("[vk-game] [trigger] admin mode %s\n", m_adminMode ? "ON" : "OFF");
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_fly_request", [this] {
+		if (m_adminMode) {
+			m_flyMode = !m_flyMode;
+			std::printf("[vk-game] [trigger] fly mode %s\n", m_flyMode ? "ON" : "OFF");
+		}
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_pause_request", [this] {
+		if (m_state == GameState::Playing) openGameMenu();
+		else if (m_state == GameState::GameMenu) closeGameMenu();
+	});
+	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_goto_request", [this](const std::string& line) {
+		float tx = 0, ty = 0, tz = 0;
+		if (sscanf(line.c_str(), "%f %f %f", &tx, &ty, &tz) >= 3) {
+			glm::vec3 target(tx, ty, tz);
+			m_server->sendSetGoal(m_server->localPlayerId(), target);
+			m_hasMoveOrder    = true;
+			m_moveOrderTarget = target;
+			std::printf("[vk-game] [trigger] goto (%.1f,%.1f,%.1f)\n", tx, ty, tz);
+		}
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_ascend_request", [this] {
+		auto* me = playerEntity();
+		if (m_flyMode && me) {
+			me->position.y += 5.0f;
+			std::printf("[vk-game] [trigger] ascend +5 → y=%.1f\n", me->position.y);
+		}
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_handbook_request", [this] {
+		m_handbookOpen = !m_handbookOpen;
+		std::printf("[vk-game] [trigger] handbook %s\n", m_handbookOpen ? "OPEN" : "CLOSED");
+	});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_inventory_request", [this] {
+		m_invOpen = !m_invOpen;
+		std::printf("[vk-game] [trigger] inventory %s\n", m_invOpen ? "OPEN" : "CLOSED");
+	});
+	// Test drag: place cursor on an inventory slot (given slot index 0..47) and
+	// drop on hotbar slot `to` (0..9). Format: "<from_inv_idx> <to_hotbar_idx>".
+	// No LMB events are synthesized — we call into the hotbar directly since
+	// this is a dev shortcut for screenshot verification.
+	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_cursor_request",
+		[this](const std::string& line) {
+			float x, y;
+			if (sscanf(line.c_str(), "%f %f", &x, &y) == 2) {
+				m_mouseNdcX = x;
+				m_mouseNdcY = y;
+				std::printf("[vk-game] [trigger] cursor=(%.2f,%.2f)\n", x, y);
+			}
+		});
+	m_debugTriggers.addTrigger("/tmp/civcraft_vk_tuning_request", [this] {
+		m_showTuning = !m_showTuning;
+		std::printf("[vk-game] [trigger] tuning %s\n", m_showTuning ? "OPEN" : "CLOSED");
+	});
+	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_inspect_request", [this](const std::string& line) {
+		int eid = 0;
+		if (sscanf(line.c_str(), "%d", &eid) == 1 && eid > 0) {
+			m_inspectedEntity = (civcraft::EntityId)eid;
+			std::printf("[vk-game] [trigger] inspect entity #%d\n", eid);
+		}
+	});
+}
+
+void Game::initAiSidecars() {
+	// Spawn all three AI sidecars so `make game` brings up dialog + voice
+	// out of the box. Each is independent: LLM can run without STT, STT can
+	// run without TTS. If the user hasn't run the corresponding `make *_setup`,
+	// the missing sidecar degrades gracefully (dialog still works, just text-
+	// only on the input side or silent NPCs on the output side). Client-only
+	// (Rule 5); server never sees any of these processes.
+	{
+		civcraft::llm::LlmSidecar::Paths lp;
+		if (civcraft::llm::LlmSidecar::probe(lp)) {
+			m_llmSidecar = std::make_unique<civcraft::llm::LlmSidecar>();
+			if (!m_llmSidecar->start(lp)) {
+				std::fprintf(stderr, "[vk-game] llm sidecar failed to start; NPC dialog disabled\n");
+				m_llmSidecar.reset();
+			}
+		} else {
+			std::printf("[vk-game] no llama-server/model found — NPC dialog disabled. "
+			            "Run 'make llm_setup' to enable.\n");
+		}
+
+		civcraft::llm::WhisperSidecar::Paths wp;
+		if (civcraft::llm::WhisperSidecar::probe(wp)) {
+			m_whisperSidecar = std::make_unique<civcraft::llm::WhisperSidecar>();
+			if (!m_whisperSidecar->start(wp)) {
+				std::fprintf(stderr, "[vk-game] whisper sidecar failed to start; STT disabled\n");
+				m_whisperSidecar.reset();
+			} else {
+				// Only bring up the mic + HTTP client when the sidecar is live.
+				// If the mic is missing (headless box), we still leave the HTTP
+				// client around so future device hotplug could work — but
+				// DialogPanel gates push-to-talk on AudioCapture::isReady().
+				m_audioCapture = std::make_unique<civcraft::AudioCapture>();
+				if (!m_audioCapture->init()) {
+					std::fprintf(stderr, "[vk-game] mic init failed; push-to-talk disabled\n");
+					m_audioCapture.reset();
+				}
+				civcraft::llm::WhisperClient::Config wc;
+				wc.host = "127.0.0.1";
+				wc.port = 8081;
+				m_whisperClient = std::make_unique<civcraft::llm::WhisperClient>(wc);
+			}
+		} else {
+			std::printf("[vk-game] no whisper-server/model found — STT disabled. "
+			            "Run 'make whisper_setup' to enable push-to-talk.\n");
+		}
+
+		// TTS voice mux: one piper child per distinct `dialog_voice` value.
+		// We don't eagerly spawn any here — the first NPC conversation will
+		// instantiate its voice on demand.
+		m_ttsMux = std::make_unique<civcraft::llm::TtsVoiceMux>();
+		if (!m_ttsMux->init()) {
+			std::printf("[vk-game] no piper/voice found — NPC voice disabled. "
+			            "Run 'make tts_setup' to enable.\n");
+			m_ttsMux.reset();
+		} else {
+			auto names = m_ttsMux->voiceNames();
+			std::string list;
+			for (size_t i = 0; i < names.size(); ++i) {
+				if (i) list += ", ";
+				list += names[i];
+			}
+			std::printf("[vk-game] tts voices available: %s\n", list.c_str());
+		}
+	}
+}
+
 
 } // namespace civcraft::vk

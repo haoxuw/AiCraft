@@ -75,53 +75,13 @@ void Game::processInput(float dt) {
 		m_mouseLLast     = lmb;
 	}
 
-	// Drain text input into DialogPanel if open. Consumed keys are removed
-	// from the queue so nothing else sees them this frame.
-	if (m_dialogPanel.isOpen()) {
-		for (uint32_t cp : m_charQueue) m_dialogPanel.onChar(cp);
-		m_charQueue.clear();
-		std::vector<int> unconsumed;
-		for (int k : m_keyQueue) {
-			if (!m_dialogPanel.onKey(k)) unconsumed.push_back(k);
-		}
-		m_keyQueue.swap(unconsumed);
-		// Push-to-talk: physical Y key state. Polled (not queued) so the
-		// press/release edges land on the same frame the user produces them.
-		bool yHeld = glfwGetKey(m_window, GLFW_KEY_Y) == GLFW_PRESS;
-		m_dialogPanel.onPushToTalk(yHeld);
-		// Feed streaming reply tokens into piper (sentence-by-sentence) so
-		// the NPC voice overlaps the visible text animation.
-		m_dialogPanel.tickVoice();
-	} else {
-		// No panel open — drop queued text so it doesn't fire a turn later.
-		m_charQueue.clear();
-		m_keyQueue.clear();
-	}
+	// Dialog input drain first — consumed keys are removed so the rest
+	// of processInput doesn't re-trigger on them.
+	drainDialogInput();
 
-	// ESC: cancel drag → close dialog → close inventory → dismiss panels → pause.
-	// Each handler short-circuits so one tap doesn't cascade. Note: DialogPanel
-	// already handles its own Esc via the key queue above, so this branch only
-	// runs when the panel is closed or ignored the key.
-	bool esc = glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-	if (esc && !m_escLast) {
-		if (m_rtsWheel.active) {
-			m_rtsWheel = {};
-		} else if (m_rtsDragCmd.active) {
-			m_rtsDragCmd = {};
-		} else if (m_drag.active) {
-			m_drag = {};
-		} else if (m_dialogPanel.isOpen()) {
-			m_dialogPanel.close();
-		} else if (m_invOpen) {
-			m_invOpen = false;
-		} else if (m_inspectedEntity != 0) {
-			m_inspectedEntity = 0;
-		} else if (m_handbookOpen) {
-			m_handbookOpen = false;
-		} else if (m_state == GameState::Playing) openGameMenu();
-		else if (m_state == GameState::GameMenu) closeGameMenu();
-	}
-	m_escLast = esc;
+	// ESC: multi-layer dismiss (drag → dialog → inventory → pause menu).
+	// Handles its own m_escLast edge detect.
+	processEscapeKey();
 
 	if (m_state != GameState::Playing) return;
 
@@ -222,64 +182,7 @@ void Game::processInput(float dt) {
 	m_hLast = hKey;
 
 	// T: talk to humanoid NPC under cursor / crosshair.
-	//   - Raycasts an entity (20b reach, same as RMB inspect)
-	//   - Looks up its artifact; requires dialog_system_prompt to be set
-	//   - Lazily spins up LlmClient + opens DialogPanel
-	// Suppressed while the panel is already open (text input consumes 'T').
-	bool tKey = glfwGetKey(m_window, GLFW_KEY_T) == GLFW_PRESS;
-	if (tKey && !m_tKeyLast && !m_dialogPanel.isOpen() && m_server) {
-		glm::vec3 eye = m_cam.position;
-		glm::vec3 dir = m_cam.front();
-		if (m_cam.mode == civcraft::CameraMode::RPG ||
-		    m_cam.mode == civcraft::CameraMode::RTS) {
-			double mx, my;
-			glfwGetCursorPos(m_window, &mx, &my);
-			if (m_fbW > 0 && m_fbH > 0) {
-				float ndcX = (float)(mx / m_fbW) * 2.0f - 1.0f;
-				float ndcY = 1.0f - (float)(my / m_fbH) * 2.0f;
-				glm::mat4 invVP = glm::inverse(viewProj());
-				glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
-				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
-				dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
-			}
-		}
-		std::vector<civcraft::RaycastEntity> ents;
-		civcraft::EntityId myId = m_server->localPlayerId();
-		m_server->forEachEntity([&](civcraft::Entity& e) {
-			if (!e.def().isLiving()) return;
-			if (!e.def().hasTag("humanoid")) return;
-			ents.push_back({e.id(), e.typeId(), e.position,
-				e.def().collision_box_min, e.def().collision_box_max,
-				e.goalText, e.hasError});
-		});
-		auto hit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
-		if (hit) {
-			const auto* art = m_artifactRegistry.findById(hit->typeId);
-			if (art) {
-				if (!m_llmClient) {
-					m_llmClient = std::make_unique<civcraft::llm::LlmClient>(
-						"127.0.0.1", 8080);
-				}
-				std::string name = art->name.empty() ? hit->typeId : art->name;
-				// Resolve this NPC's preferred voice (artifact field
-				// `dialog_voice`; empty/missing → mux picks default).
-				civcraft::llm::TtsClient* voice = nullptr;
-				if (m_ttsMux) {
-					std::string v;
-					auto vIt = art->fields.find("dialog_voice");
-					if (vIt != art->fields.end()) v = vIt->second;
-					voice = m_ttsMux->clientFor(v);
-				}
-				if (!m_dialogPanel.open(hit->entityId, name, *art, *m_llmClient,
-				                        m_audioCapture.get(), m_whisperClient.get(),
-				                        voice, &m_audio)) {
-					pushNotification(name + " has nothing to say.",
-						glm::vec3(0.75f, 0.72f, 0.60f), 2.0f);
-				}
-			}
-		}
-	}
-	m_tKeyLast = tKey;
+	processTalkKey();
 
 	// Tab: toggle inventory.
 	bool tabKey = glfwGetKey(m_window, GLFW_KEY_TAB) == GLFW_PRESS;
@@ -1763,6 +1666,122 @@ void Game::updatePickups(float dt) {
 		req.color    = color;
 		m_pickupRequests[e.id()] = req;
 	});
+}
+
+
+// Extracted from processInput — see game_vk.h.
+void Game::drainDialogInput() {
+	// Drain text input into DialogPanel if open. Consumed keys are removed
+	// from the queue so nothing else sees them this frame.
+	if (m_dialogPanel.isOpen()) {
+		for (uint32_t cp : m_charQueue) m_dialogPanel.onChar(cp);
+		m_charQueue.clear();
+		std::vector<int> unconsumed;
+		for (int k : m_keyQueue) {
+			if (!m_dialogPanel.onKey(k)) unconsumed.push_back(k);
+		}
+		m_keyQueue.swap(unconsumed);
+		// Push-to-talk: physical Y key state. Polled (not queued) so the
+		// press/release edges land on the same frame the user produces them.
+		bool yHeld = glfwGetKey(m_window, GLFW_KEY_Y) == GLFW_PRESS;
+		m_dialogPanel.onPushToTalk(yHeld);
+		// Feed streaming reply tokens into piper (sentence-by-sentence) so
+		// the NPC voice overlaps the visible text animation.
+		m_dialogPanel.tickVoice();
+	} else {
+		// No panel open — drop queued text so it doesn't fire a turn later.
+		m_charQueue.clear();
+		m_keyQueue.clear();
+	}
+}
+
+void Game::processEscapeKey() {
+	// ESC: cancel drag → close dialog → close inventory → dismiss panels → pause.
+	// Each handler short-circuits so one tap doesn't cascade. Note: DialogPanel
+	// already handles its own Esc via the key queue above, so this branch only
+	// runs when the panel is closed or ignored the key.
+	bool esc = glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+	if (esc && !m_escLast) {
+		if (m_rtsWheel.active) {
+			m_rtsWheel = {};
+		} else if (m_rtsDragCmd.active) {
+			m_rtsDragCmd = {};
+		} else if (m_drag.active) {
+			m_drag = {};
+		} else if (m_dialogPanel.isOpen()) {
+			m_dialogPanel.close();
+		} else if (m_invOpen) {
+			m_invOpen = false;
+		} else if (m_inspectedEntity != 0) {
+			m_inspectedEntity = 0;
+		} else if (m_handbookOpen) {
+			m_handbookOpen = false;
+		} else if (m_state == GameState::Playing) openGameMenu();
+		else if (m_state == GameState::GameMenu) closeGameMenu();
+	}
+	m_escLast = esc;
+}
+
+void Game::processTalkKey() {
+	// T: talk to humanoid NPC under cursor / crosshair.
+	//   - Raycasts an entity (20b reach, same as RMB inspect)
+	//   - Looks up its artifact; requires dialog_system_prompt to be set
+	//   - Lazily spins up LlmClient + opens DialogPanel
+	// Suppressed while the panel is already open (text input consumes 'T').
+	bool tKey = glfwGetKey(m_window, GLFW_KEY_T) == GLFW_PRESS;
+	if (tKey && !m_tKeyLast && !m_dialogPanel.isOpen() && m_server) {
+		glm::vec3 eye = m_cam.position;
+		glm::vec3 dir = m_cam.front();
+		if (m_cam.mode == civcraft::CameraMode::RPG ||
+		    m_cam.mode == civcraft::CameraMode::RTS) {
+			double mx, my;
+			glfwGetCursorPos(m_window, &mx, &my);
+			if (m_fbW > 0 && m_fbH > 0) {
+				float ndcX = (float)(mx / m_fbW) * 2.0f - 1.0f;
+				float ndcY = 1.0f - (float)(my / m_fbH) * 2.0f;
+				glm::mat4 invVP = glm::inverse(viewProj());
+				glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
+				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
+				dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
+			}
+		}
+		std::vector<civcraft::RaycastEntity> ents;
+		civcraft::EntityId myId = m_server->localPlayerId();
+		m_server->forEachEntity([&](civcraft::Entity& e) {
+			if (!e.def().isLiving()) return;
+			if (!e.def().hasTag("humanoid")) return;
+			ents.push_back({e.id(), e.typeId(), e.position,
+				e.def().collision_box_min, e.def().collision_box_max,
+				e.goalText, e.hasError});
+		});
+		auto hit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
+		if (hit) {
+			const auto* art = m_artifactRegistry.findById(hit->typeId);
+			if (art) {
+				if (!m_llmClient) {
+					m_llmClient = std::make_unique<civcraft::llm::LlmClient>(
+						"127.0.0.1", 8080);
+				}
+				std::string name = art->name.empty() ? hit->typeId : art->name;
+				// Resolve this NPC's preferred voice (artifact field
+				// `dialog_voice`; empty/missing → mux picks default).
+				civcraft::llm::TtsClient* voice = nullptr;
+				if (m_ttsMux) {
+					std::string v;
+					auto vIt = art->fields.find("dialog_voice");
+					if (vIt != art->fields.end()) v = vIt->second;
+					voice = m_ttsMux->clientFor(v);
+				}
+				if (!m_dialogPanel.open(hit->entityId, name, *art, *m_llmClient,
+				                        m_audioCapture.get(), m_whisperClient.get(),
+				                        voice, &m_audio)) {
+					pushNotification(name + " has nothing to say.",
+						glm::vec3(0.75f, 0.72f, 0.60f), 2.0f);
+				}
+			}
+		}
+	}
+	m_tKeyLast = tKey;
 }
 
 } // namespace civcraft::vk

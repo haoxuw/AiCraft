@@ -228,6 +228,18 @@ public:
 	};
 
 private:
+	// ── init() helpers (see game_vk.cpp). Factored out so init() reads
+	//    as a short outline — each helper is one bounded sub-stage. ────
+	void setupServerCallbacks();    // S_BLOCK / S_INVENTORY / S_REMOVE
+	void registerDebugTriggers();   // /tmp/civcraft_vk_*_request hooks
+	void initAiSidecars();          // LLM / Whisper / TTS sidecar spawns
+
+	// ── processInput() helpers. Each returns control to processInput so
+	//    the outer function keeps orchestrating sequencing + early-exit.
+	void drainDialogInput();        // text/key queue → DialogPanel
+	void processEscapeKey();        // ESC: drag → dialog → inv → pause
+	void processTalkKey();          // T key: open dialog with NPC under cursor
+
 	// ── Scene transitions ─────────────────────────────────────────────────
 	void enterMenu();
 	void enterPlaying();
