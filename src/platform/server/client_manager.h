@@ -1132,6 +1132,14 @@ private:
 			client.lastPrepAdvanceAt    = std::chrono::steady_clock::now();
 			client.lastPrepAdvanceValue = 0;
 
+			// Stamp this seat's village BEFORE chunks are queued for streaming.
+			// ChunkGenService workers serialize whatever the chunk contains when
+			// getChunk() returns, so if we stamp after, workers race and ship
+			// terrain-only chunks to the client (village invisible client-side
+			// even though S9 passes server-side). addClient still calls this in
+			// finalizePreparing — the m_stampedSeats guard makes it a no-op.
+			m_server.placeVillageForSeat(client.seatId);
+
 			// Required: feet + feet-1 + (2R+1)² horizontal over dy=[-1..2]; sentChunks dedup.
 			ChunkPos feetCp = client.lastChunkPos;
 			std::vector<ChunkPos> required;

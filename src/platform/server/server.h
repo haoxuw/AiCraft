@@ -225,6 +225,9 @@ public:
 		if (!m_world) return;
 		auto& tmpl = static_cast<ConfigurableWorldTemplate&>(m_world->getTemplate());
 		if (!tmpl.pyConfig().hasVillage) return;
+		// Idempotent: called from both ClientManager handshake (before chunks
+		// stream) and GameServer::addClient (tests). Second call is a no-op.
+		if (!m_stampedSeats.insert(seat).second) return;
 
 		VillageRecord* rec = m_villages.findBySeat(seat);
 		if (!rec) {
@@ -1049,6 +1052,7 @@ private:
 	OwnedEntityStore m_ownedEntities;  // SeatId → owned NPCs awaiting next login
 	SeatRegistry     m_seats;          // uuid → seatId (Phase 1 of ownership overhaul)
 	VillageRegistry  m_villages;       // per-seat village records (Phase 4)
+	std::unordered_set<SeatId> m_stampedSeats;  // guards placeVillageForSeat from double-stamping
 
 	StructureBlueprintManager            m_blueprints;
 	StructureBlockCacher                 m_structureCacher;
