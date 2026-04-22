@@ -80,6 +80,15 @@ public:
 	std::vector<std::string> filesInGroup(const std::string& group) const;
 
 private:
+	// Populate one sound group from files in basePath/subdir whose
+	// stems start with `prefix`. Shared by the default-groups table
+	// loop in registerDefaultGroups(); kept private because callers
+	// should go through that table, not spray one-off groups in.
+	void buildSoundGroup(const std::string& basePath,
+	                      const std::string& group,
+	                      const std::string& subdir,
+	                      const std::string& prefix);
+
 	ma_engine* m_engine = nullptr;
 	bool m_initialized = false;
 	bool m_muted = false;

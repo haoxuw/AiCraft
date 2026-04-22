@@ -108,147 +108,154 @@ static void interactiveWorldSelect(civcraft::ServerConfig& config,
 	printf("  Invalid choice. Starting default world.\n\n");
 }
 
-int main(int argc, char** argv) {
-	setvbuf(stdout, nullptr, _IONBF, 0);
-	setvbuf(stderr, nullptr, _IONBF, 0);
-	signal(SIGINT, signalHandler);
-	signal(SIGTERM, signalHandler);
+// ─────────────────────────────────────────────────────────────────────
+// Boot helpers — each one does a single stage of main() so the top-level
+// function is a short outline instead of a 500-line scroll of globals.
+// ─────────────────────────────────────────────────────────────────────
 
-	int logPort = 7777;
-	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
-			logPort = atoi(argv[i + 1]);
-	}
-	char logPath[256];
-	snprintf(logPath, sizeof(logPath), "/tmp/civcraft_log_%d.log", logPort);
-	FILE* logFile = fopen(logPath, "w");
-	if (logFile) {
-		setvbuf(logFile, nullptr, _IONBF, 0);
-		printf("[Server] Also logging to %s\n", logPath);
-	}
+namespace {
 
-	printf("=== CivCraft Dedicated Server ===\n");
-
-	civcraft::pythonBridge().init("python");
-
+// Parsed CLI state, passed around by value.
+struct ServerCliArgs {
 	civcraft::ServerConfig config;
-	std::string worldPath;
-	bool interactive = true;
+	std::string            worldPath;
+	bool                   interactive = true;
+	int                    logPort     = 7777;
+};
 
+// Print --help text and exit(0). Kept as a function so both the arg
+// parser and the help-flag check share one source for the usage string.
+void printServerUsage(const char* prog) {
+	printf("CivCraft — dedicated server\n\n"
+	       "Usage: %s [options]\n"
+	       "  --port PORT       Listen port (default 7777)\n"
+	       "  --world PATH      Load saved world from PATH\n"
+	       "  --seed N          World seed (default 42)\n"
+	       "  --template N      World template: 0=flat, 1=village, 2=test_behaviors,\n"
+	       "                    3=test_dog, 4=test_villager, 5=test_chicken,\n"
+	       "                    6=perf_stress (100 villagers) (default 1)\n"
+	       "  --help, -h        Show this help\n", prog);
+}
+
+// Parse argv into a ServerCliArgs. Handles --help by exiting.
+// `interactive` stays true only when the user supplied nothing but
+// --port (so no preselected world/seed/template).
+ServerCliArgs parseServerArgs(int argc, char** argv) {
+	ServerCliArgs out;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("CivCraft — dedicated server\n\n"
-			       "Usage: %s [options]\n"
-			       "  --port PORT       Listen port (default 7777)\n"
-			       "  --world PATH      Load saved world from PATH\n"
-			       "  --seed N          World seed (default 42)\n"
-			       "  --template N      World template: 0=flat, 1=village, 2=test_behaviors,\n"
-			       "                    3=test_dog, 4=test_villager, 5=test_chicken,\n"
-			       "                    6=perf_stress (100 villagers) (default 1)\n"
-			       "  --help, -h        Show this help\n", argv[0]);
-			return 0;
+			printServerUsage(argv[0]);
+			exit(0);
 		}
-		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
-			config.port = atoi(argv[++i]);
-		else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
-			config.seed = atoi(argv[++i]); interactive = false;
-		} else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) {
-			config.templateIndex = atoi(argv[++i]); interactive = false;
-		} else if (strcmp(argv[i], "--world") == 0 && i + 1 < argc) {
-			worldPath = argv[++i]; interactive = false;
+		if      (strcmp(argv[i], "--port")     == 0 && i + 1 < argc) {
+			out.config.port = atoi(argv[++i]);
+			out.logPort     = out.config.port;
+		}
+		else if (strcmp(argv[i], "--seed")     == 0 && i + 1 < argc) {
+			out.config.seed = atoi(argv[++i]); out.interactive = false;
+		}
+		else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) {
+			out.config.templateIndex = atoi(argv[++i]); out.interactive = false;
+		}
+		else if (strcmp(argv[i], "--world")    == 0 && i + 1 < argc) {
+			out.worldPath = argv[++i]; out.interactive = false;
 		}
 	}
+	return out;
+}
 
-	// --template index → 0 flat  1 village  2 test_behaviors  3 test_dog
-	//                   4 test_villager  5 test_chicken  6 perf_stress
-	std::vector<std::shared_ptr<civcraft::WorldTemplate>> templates = {
-		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/flat.py"),
-		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/village.py"),
-		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_behaviors.py"),
-		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_dog.py"),
-		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_villager.py"),
-		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/test_chicken.py"),
-		std::make_shared<civcraft::ConfigurableWorldTemplate>("artifacts/worlds/base/perf_stress.py"),
+// Open the per-port tee log file (tmpfs). Returns the FILE* handle to
+// close at shutdown; nullptr if open failed.
+FILE* openServerLog(int port) {
+	char logPath[256];
+	snprintf(logPath, sizeof(logPath), "/tmp/civcraft_log_%d.log", port);
+	FILE* f = fopen(logPath, "w");
+	if (f) {
+		setvbuf(f, nullptr, _IONBF, 0);
+		printf("[Server] Also logging to %s\n", logPath);
+	}
+	return f;
+}
+
+// Build the ordered template list the world-select + save-load code
+// indexes by integer. One place to register a new template.
+std::vector<std::shared_ptr<civcraft::WorldTemplate>> buildWorldTemplates() {
+	using T = civcraft::ConfigurableWorldTemplate;
+	return {
+		std::make_shared<T>("artifacts/worlds/base/flat.py"),
+		std::make_shared<T>("artifacts/worlds/base/village.py"),
+		std::make_shared<T>("artifacts/worlds/base/test_behaviors.py"),
+		std::make_shared<T>("artifacts/worlds/base/test_dog.py"),
+		std::make_shared<T>("artifacts/worlds/base/test_villager.py"),
+		std::make_shared<T>("artifacts/worlds/base/test_chicken.py"),
+		std::make_shared<T>("artifacts/worlds/base/perf_stress.py"),
 	};
+}
 
-	if (interactive && isatty(fileno(stdin)))
-		interactiveWorldSelect(config, worldPath, templates);
+// Initialise GameServer from either a saved world on disk or a fresh
+// template. Returns true on success; server is usable on return.
+bool initServerFromArgs(civcraft::GameServer& server,
+                         const ServerCliArgs& args,
+                         const std::vector<std::shared_ptr<civcraft::WorldTemplate>>& templates) {
+	if (!args.worldPath.empty() &&
+	    std::filesystem::exists(args.worldPath + "/world.json")) {
+		printf("[Server] Loading world from %s\n", args.worldPath.c_str());
+		if (civcraft::loadWorld(server, args.worldPath, templates)) return true;
+		printf("[Server] Failed to load world, creating new\n");
+	}
+	server.init(args.config, templates);
+	return true;
+}
 
-	civcraft::GameServer server;
-	if (!worldPath.empty() && std::filesystem::exists(worldPath + "/world.json")) {
-		printf("[Server] Loading world from %s\n", worldPath.c_str());
-		if (!civcraft::loadWorld(server, worldPath, templates)) {
-			printf("[Server] Failed to load world, creating new\n");
-			server.init(config, templates);
+// Read artifact metadata (feature tags, living stats, annotation
+// spawn rules) and hand them to the server. Runs once after init.
+void applyArtifactData(civcraft::GameServer& server) {
+	civcraft::ArtifactRegistry artifacts;
+	artifacts.loadAll("artifacts");
+	server.mergeArtifactTags(artifacts.livingTags());
+	server.applyLivingStats(artifacts.livingStats());
+
+	for (auto* e : artifacts.byCategory("annotation")) {
+		civcraft::World::AnnotationSpawnRule rule;
+		rule.typeId = e->id;
+		if (auto sIt = e->fields.find("slot"); sIt != e->fields.end()) {
+			if      (sIt->second == "top")    rule.slot = civcraft::AnnotationSlot::Top;
+			else if (sIt->second == "bottom") rule.slot = civcraft::AnnotationSlot::Bottom;
+			else if (sIt->second == "around") rule.slot = civcraft::AnnotationSlot::Around;
 		}
-	} else {
-		server.init(config, templates);
-	}
-
-	// Merge Python feature tags + annotation spawn rules.
-	{
-		civcraft::ArtifactRegistry artifacts;
-		artifacts.loadAll("artifacts");
-		server.mergeArtifactTags(artifacts.livingTags());
-		server.applyLivingStats(artifacts.livingStats());
-
-		// Annotations (flowers etc.) fed to chunk gen.
-		for (auto* e : artifacts.byCategory("annotation")) {
-			civcraft::World::AnnotationSpawnRule rule;
-			rule.typeId = e->id;
-			auto sIt = e->fields.find("slot");
-			if (sIt != e->fields.end()) {
-				if      (sIt->second == "top")    rule.slot = civcraft::AnnotationSlot::Top;
-				else if (sIt->second == "bottom") rule.slot = civcraft::AnnotationSlot::Bottom;
-				else if (sIt->second == "around") rule.slot = civcraft::AnnotationSlot::Around;
+		if (auto chIt = e->fields.find("spawn_chance"); chIt != e->fields.end())
+			rule.chance = (float)std::atof(chIt->second.c_str());
+		if (auto onIt = e->fields.find("spawn_on"); onIt != e->fields.end()) {
+			const std::string& s = onIt->second;
+			for (size_t start = 0; start < s.size(); ) {
+				size_t comma = s.find(',', start);
+				std::string tok = s.substr(start,
+					comma == std::string::npos ? std::string::npos : comma - start);
+				if (!tok.empty()) rule.onBlocks.push_back(tok);
+				if (comma == std::string::npos) break;
+				start = comma + 1;
 			}
-			auto chIt = e->fields.find("spawn_chance");
-			if (chIt != e->fields.end()) rule.chance = (float)std::atof(chIt->second.c_str());
-			auto onIt = e->fields.find("spawn_on");
-			if (onIt != e->fields.end()) {
-				std::string s = onIt->second;
-				size_t start = 0;
-				while (start < s.size()) {
-					size_t comma = s.find(',', start);
-					std::string tok = s.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
-					if (!tok.empty()) rule.onBlocks.push_back(tok);
-					if (comma == std::string::npos) break;
-					start = comma + 1;
-				}
-			}
-			if (!rule.onBlocks.empty() && rule.chance > 0.0f)
-				server.world().addAnnotationSpawnRule(rule);
 		}
+		if (!rule.onBlocks.empty() && rule.chance > 0.0f)
+			server.world().addAnnotationSpawnRule(rule);
 	}
+}
 
-	civcraft::net::TcpServer listener;
-	if (!listener.listen(config.port)) {
-		printf("[Server] Failed to start listener on port %d\n", config.port);
-		return 1;
-	}
-
-	printf("[Server] Listening on port %d (seed=%d, template=%d)\n",
-	       config.port, config.seed, config.templateIndex);
-	printf("[Server] Press Ctrl+C to save and stop.\n");
-
-	// Readiness file for launchers.
-	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/civcraft_ready_%d", config.port);
-	if (FILE* f = fopen(g_readyPath, "w")) fclose(f);
-
-	civcraft::ClientManager clients(server);
-
-	clients.setPort(config.port);
-
+// Build the block/entity/inventory broadcast callbacks that bridge
+// GameServer mutations → ClientManager wire messages. One place to
+// tweak serialisation formats.
+civcraft::ServerCallbacks makeServerCallbacks(civcraft::ClientManager& clients) {
 	civcraft::ServerCallbacks cbs;
-	cbs.onBlockChange = [&](const civcraft::BlockChange& bc,
-	                        civcraft::BroadcastPriority pri) {
+	cbs.onBlockChange = [&clients](const civcraft::BlockChange& bc,
+	                                civcraft::BroadcastPriority pri) {
 		clients.onBlockChanged(bc, pri);
 	};
-	cbs.onEntityRemove = [&](civcraft::EntityId id, uint8_t reason) {
+	cbs.onEntityRemove = [&clients](civcraft::EntityId id, uint8_t reason) {
 		clients.broadcastEntityRemove(id,
 			(civcraft::net::EntityRemoveReason)reason);
 	};
-	cbs.onInventoryChange = [&](civcraft::EntityId id, const civcraft::Inventory& inv) {
+	cbs.onInventoryChange = [&clients](civcraft::EntityId id,
+	                                     const civcraft::Inventory& inv) {
 		civcraft::net::WriteBuffer wb;
 		wb.writeU32(id);
 		auto items = inv.items();
@@ -257,7 +264,6 @@ int main(int argc, char** argv) {
 			wb.writeString(itemId);
 			wb.writeI32(count);
 		}
-		// equipment: [u8 count][{slot, id}...]
 		uint8_t equipCount = 0;
 		for (int i = 0; i < civcraft::WEAR_SLOT_COUNT; i++)
 			if (!inv.equipped((civcraft::WearSlot)i).empty()) equipCount++;
@@ -271,7 +277,66 @@ int main(int argc, char** argv) {
 		}
 		clients.broadcastToAll(civcraft::net::S_INVENTORY, wb);
 	};
-	server.setCallbacks(cbs);
+	return cbs;
+}
+
+// Persist the current world to disk if the user specified --world.
+// Runs once during shutdown.
+void saveWorldIfNeeded(civcraft::GameServer& server,
+                        const ServerCliArgs& args,
+                        const std::vector<std::shared_ptr<civcraft::WorldTemplate>>& templates) {
+	if (args.worldPath.empty()) return;
+	printf("[Server] Saving world to %s...\n", args.worldPath.c_str());
+	civcraft::WorldMetadata meta;
+	meta.name          = args.worldPath.substr(args.worldPath.rfind('/') + 1);
+	meta.seed          = args.config.seed;
+	meta.templateIndex = args.config.templateIndex;
+	meta.gameMode      = "playing";
+	meta.version       = 1;
+	if (args.config.templateIndex < (int)templates.size())
+		meta.templateName = templates[args.config.templateIndex]->name();
+	civcraft::saveWorld(server, args.worldPath, meta);
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+	setvbuf(stdout, nullptr, _IONBF, 0);
+	setvbuf(stderr, nullptr, _IONBF, 0);
+	signal(SIGINT, signalHandler);
+	signal(SIGTERM, signalHandler);
+
+	ServerCliArgs args = parseServerArgs(argc, argv);
+	FILE* logFile = openServerLog(args.logPort);
+	printf("=== CivCraft Dedicated Server ===\n");
+
+	civcraft::pythonBridge().init("python");
+
+	auto templates = buildWorldTemplates();
+	if (args.interactive && isatty(fileno(stdin)))
+		interactiveWorldSelect(args.config, args.worldPath, templates);
+
+	civcraft::GameServer server;
+	initServerFromArgs(server, args, templates);
+	applyArtifactData(server);
+
+	civcraft::net::TcpServer listener;
+	if (!listener.listen(args.config.port)) {
+		printf("[Server] Failed to start listener on port %d\n", args.config.port);
+		return 1;
+	}
+
+	printf("[Server] Listening on port %d (seed=%d, template=%d)\n",
+	       args.config.port, args.config.seed, args.config.templateIndex);
+	printf("[Server] Press Ctrl+C to save and stop.\n");
+
+	// Readiness file for launchers.
+	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/civcraft_ready_%d", args.config.port);
+	if (FILE* f = fopen(g_readyPath, "w")) fclose(f);
+
+	civcraft::ClientManager clients(server);
+	clients.setPort(args.config.port);
+	server.setCallbacks(makeServerCallbacks(clients));
 
 	const float TICK_RATE = civcraft::ServerTuning::tickRate;
 	const double TICK_BUDGET_MS = TICK_RATE * 1000.0;  // 16.67ms @ 60tps
@@ -525,18 +590,7 @@ int main(int argc, char** argv) {
 	// entities.bin would carry orphaned mobs with stale owner ids.
 	clients.disconnectAll();
 
-	if (!worldPath.empty()) {
-		printf("[Server] Saving world to %s...\n", worldPath.c_str());
-		civcraft::WorldMetadata meta;
-		meta.name = worldPath.substr(worldPath.rfind('/') + 1);
-		meta.seed = config.seed;
-		meta.templateIndex = config.templateIndex;
-		meta.gameMode = "playing";
-		meta.version = 1;
-		if (config.templateIndex < (int)templates.size())
-			meta.templateName = templates[config.templateIndex]->name();
-		civcraft::saveWorld(server, worldPath, meta);
-	}
+	saveWorldIfNeeded(server, args, templates);
 
 	listener.shutdown();
 	if (logFile) fclose(logFile);

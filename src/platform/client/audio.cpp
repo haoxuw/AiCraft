@@ -115,104 +115,126 @@ void AudioManager::loadSoundsFrom(const std::string& basePath) {
 	       fileCount, m_groups.size(), basePath.c_str());
 }
 
+// Group specs: (group name, subdir under basePath, filename prefix that
+// gates files into the group). Kept in a table so adding a new sound
+// pack is one line, and so the group-build loop has one copy of the
+// filesystem-walk logic. File-list order matches the old inline code
+// so the same dig/place/step variants still win RNG ties.
+namespace {
+struct SoundGroupSpec {
+	const char* group;
+	const char* subdir;
+	const char* prefix;
+};
+
+// CC0 + CC-BY 3.0 recordings; see resources/sounds/creatures/ATTRIBUTION.
+constexpr SoundGroupSpec kDefaultSoundGroups[] = {
+	// Block mining
+	{"dig_stone",   "blocks", "impactMining"},
+	{"dig_dirt",    "blocks", "impactSoft_medium"},
+	{"dig_sand",    "blocks", "impactSoft_heavy"},
+	{"dig_wood",    "blocks", "impactWood_medium"},
+	{"dig_leaves",  "blocks", "impactSoft_medium"},
+	{"dig_snow",    "blocks", "impactSoft_heavy"},
+	{"dig_glass",   "blocks", "impactGlass_medium"},
+	{"dig_metal",   "blocks", "impactMetal_medium"},
+	// Block placement
+	{"place_stone", "blocks", "impactGeneric_light"},
+	{"place_wood",  "blocks", "impactWood_light"},
+	{"place_soft",  "blocks", "impactSoft_heavy"},
+	// Footsteps
+	{"step_stone",  "footsteps", "footstep_concrete"},
+	{"step_dirt",   "footsteps", "footstep0"},
+	{"step_grass",  "footsteps", "footstep_grass"},
+	{"step_sand",   "footsteps", "footstep0"},
+	{"step_wood",   "footsteps", "footstep_wood"},
+	{"step_snow",   "footsteps", "footstep_snow"},
+	// Combat
+	{"hit_punch",   "combat", "impactPunch_medium"},
+	{"hit_sword",   "combat", "knifeSlice"},
+	{"hit_shield",  "combat", "impactPlate_light"},
+	// Items / equip / consumables
+	{"item_pickup",      "items", "handleCoins"},
+	{"item_equip",       "rpg",   "Cloth_"},
+	{"item_equip_metal", "rpg",   "chain_"},
+	{"item_consume",     "rpg",   "Drink_"},
+	{"item_book",        "items", "bookFlip"},
+	// Creatures
+	{"creature_pig",     "creatures", "pig_idle"},
+	{"creature_chicken", "creatures", "chicken"},
+	{"creature_dog",     "creatures", "Dog Bark"},
+	{"creature_cat",     "creatures", "cat_"},
+	{"creature_sheep",   "creatures", "sheep"},
+	{"creature_bird",    "creatures", "quail"},
+	// Water
+	{"water_splash",  "water", "splash"},
+	{"water_bubble",  "water", "bubble"},
+	{"water_slime",   "water", "slime"},
+	{"water_mud",     "water", "mud"},
+	{"water_swim",    "water", "swim"},
+	// Spells
+	{"spell_heal",      "spells", "healing"},
+	{"spell_teleport",  "spells", "teleport"},
+	{"spell_electric",  "spells", "electricspell"},
+	{"spell_powerup",   "spells", "power_up"},
+	{"spell_buff",      "spells", "synth_beep"},
+	// Doors
+	{"door_open",       "doors", "qubodup-DoorOpen"},
+	{"door_close",      "doors", "qubodup-DoorClose"},
+	{"door_lock",       "doors", "DoorLock"},
+	{"door_locked",     "doors", "LockedDoorHandle"},
+	// Ambient / weather
+	{"ambient_wind",    "ambient", "wind"},
+	{"ambient_fire",    "ambient", "fire"},
+	{"ambient_birds",   "ambient", "birds"},
+	{"ambient_rain",    "ambient", "rain"},
+	// Explosions
+	{"explosion",       "explosions", "bang"},
+	// RPG weapons / currency
+	{"sword_swing",     "rpg", "blade"},
+	{"armor_equip",     "rpg", "chain"},
+	{"rpg_coin",        "rpg", "coin"},
+	// UI — only the clean "switch_00" variant family.
+	{"ui_click",        "ui", "click"},
+	{"ui_select",       "ui", "select"},
+	{"ui_confirm",      "ui", "confirmation"},
+	{"ui_open",         "ui", "open"},
+	{"ui_close",        "ui", "close"},
+	{"ui_scroll",       "ui", "scroll"},
+	{"ui_switch",       "ui", "switch_00"},
+	{"ui_error",        "ui", "error"},
+};
+}  // namespace
+
+// Build one group from the files in basePath/subdir whose stems begin
+// with `prefix`. Also retro-labels the matching AllSounds entries with
+// the group name so the UI browser can group recordings by intent.
+void AudioManager::buildSoundGroup(const std::string& basePath,
+                                     const std::string& group,
+                                     const std::string& subdir,
+                                     const std::string& prefix) {
+	std::string dir = basePath + "/" + subdir;
+	if (!std::filesystem::exists(dir)) return;
+
+	SoundGroup g;
+	for (auto& entry : std::filesystem::directory_iterator(dir)) {
+		if (!entry.is_regular_file()) continue;
+		std::string stem = entry.path().stem().string();
+		if (stem.rfind(prefix, 0) == 0)
+			g.files.push_back(entry.path().string());
+	}
+	if (g.files.empty()) return;
+
+	m_groups[group] = std::move(g);
+	for (auto& si : m_allSounds) {
+		if (si.category == subdir && si.name.rfind(prefix, 0) == 0)
+			si.group = group;
+	}
+}
+
 void AudioManager::registerDefaultGroups(const std::string& basePath) {
-	auto addGroup = [&](const std::string& groupName, const std::string& subdir,
-	                     const std::string& prefix) {
-		std::string dir = basePath + "/" + subdir;
-		if (!std::filesystem::exists(dir)) return;
-
-		SoundGroup group;
-		for (auto& entry : std::filesystem::directory_iterator(dir)) {
-			if (!entry.is_regular_file()) continue;
-			std::string stem = entry.path().stem().string();
-			if (stem.find(prefix) == 0) {
-				group.files.push_back(entry.path().string());
-			}
-		}
-		if (!group.files.empty()) {
-			m_groups[groupName] = std::move(group);
-			for (auto& si : m_allSounds) {
-				if (si.category == subdir && si.name.find(prefix) == 0) {
-					si.group = groupName;
-				}
-			}
-		}
-	};
-
-	addGroup("dig_stone",  "blocks", "impactMining");
-	addGroup("dig_dirt",   "blocks", "impactSoft_medium");
-	addGroup("dig_sand",   "blocks", "impactSoft_heavy");
-	addGroup("dig_wood",   "blocks", "impactWood_medium");
-	addGroup("dig_leaves", "blocks", "impactSoft_medium");
-	addGroup("dig_snow",   "blocks", "impactSoft_heavy");
-	addGroup("dig_glass",  "blocks", "impactGlass_medium");
-	addGroup("dig_metal",  "blocks", "impactMetal_medium");
-
-	addGroup("place_stone", "blocks", "impactGeneric_light");
-	addGroup("place_wood",  "blocks", "impactWood_light");
-	addGroup("place_soft",  "blocks", "impactSoft_heavy");
-
-	addGroup("step_stone", "footsteps", "footstep_concrete");
-	addGroup("step_dirt",  "footsteps", "footstep0");
-	addGroup("step_grass", "footsteps", "footstep_grass");
-	addGroup("step_sand",  "footsteps", "footstep0");
-	addGroup("step_wood",  "footsteps", "footstep_wood");
-	addGroup("step_snow",  "footsteps", "footstep_snow");
-
-	addGroup("hit_punch",  "combat", "impactPunch_medium");
-	addGroup("hit_sword",  "combat", "knifeSlice");
-	addGroup("hit_shield", "combat", "impactPlate_light");
-
-	addGroup("item_pickup",  "items",  "handleCoins");
-	addGroup("item_equip",   "rpg",    "Cloth_");
-	addGroup("item_equip_metal", "rpg", "chain_");
-	addGroup("item_consume", "rpg",    "Drink_");
-	addGroup("item_book",    "items",  "bookFlip");
-
-	// CC0 + CC-BY 3.0 recordings; see resources/sounds/creatures/ATTRIBUTION.
-	addGroup("creature_pig",     "creatures", "pig_idle");
-	addGroup("creature_chicken", "creatures", "chicken");
-	addGroup("creature_dog",     "creatures", "Dog Bark");
-	addGroup("creature_cat",     "creatures", "cat_");
-	addGroup("creature_sheep",   "creatures", "sheep");
-	addGroup("creature_bird",    "creatures", "quail");
-
-	addGroup("water_splash",  "water", "splash");
-	addGroup("water_bubble",  "water", "bubble");
-	addGroup("water_slime",   "water", "slime");
-	addGroup("water_mud",     "water", "mud");
-	addGroup("water_swim",    "water", "swim");
-
-	addGroup("spell_heal",      "spells", "healing");
-	addGroup("spell_teleport",  "spells", "teleport");
-	addGroup("spell_electric",  "spells", "electricspell");
-	addGroup("spell_powerup",   "spells", "power_up");
-	addGroup("spell_buff",      "spells", "synth_beep");
-
-	addGroup("door_open",       "doors", "qubodup-DoorOpen");
-	addGroup("door_close",      "doors", "qubodup-DoorClose");
-	addGroup("door_lock",       "doors", "DoorLock");
-	addGroup("door_locked",     "doors", "LockedDoorHandle");
-
-	addGroup("ambient_wind",    "ambient", "wind");
-	addGroup("ambient_fire",    "ambient", "fire");
-	addGroup("ambient_birds",   "ambient", "birds");
-	addGroup("ambient_rain",    "ambient", "rain");
-
-	addGroup("explosion",       "explosions", "bang");
-
-	addGroup("sword_swing",     "rpg", "blade");
-	addGroup("armor_equip",     "rpg", "chain");
-	addGroup("rpg_coin",        "rpg", "coin");
-
-	addGroup("ui_click",    "ui", "click");
-	addGroup("ui_select",   "ui", "select");
-	addGroup("ui_confirm",  "ui", "confirmation");
-	addGroup("ui_open",     "ui", "open");
-	addGroup("ui_close",    "ui", "close");
-	addGroup("ui_scroll",   "ui", "scroll");
-	addGroup("ui_switch",   "ui", "switch_00"); // only the clean switch variants
-	addGroup("ui_error",    "ui", "error");
+	for (const auto& spec : kDefaultSoundGroups)
+		buildSoundGroup(basePath, spec.group, spec.subdir, spec.prefix);
 }
 
 void AudioManager::play(const std::string& group, glm::vec3 worldPos, float volume) {

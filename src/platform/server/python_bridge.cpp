@@ -112,6 +112,32 @@ static ScanAnnotationsFn s_scanAnnotationsFn;
 // Default anchor when Python passes near=None.
 static glm::vec3 s_selfPos;
 
+// Resolve a Python `near` argument to a world-space origin. `None` →
+// the agent's own position; a (x, y, z) tuple → those coords.
+static glm::vec3 resolveScanOrigin(py::object near) {
+	if (near.is_none()) return s_selfPos;
+	auto t = near.cast<std::tuple<float, float, float>>();
+	return {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+}
+
+// Shared body of scan_blocks / scan_entities / scan_annotations. Guards
+// the null-callable case, resolves the origin, invokes the scan functor,
+// and serialises each hit to py::dict via the caller-supplied `fill`.
+template <typename ScanFn, typename DictFill>
+static py::list runScan(const ScanFn& scanFn, const std::string& typeId,
+                         py::object near, float maxDist, int maxResults,
+                         DictFill fill) {
+	py::list result;
+	if (!scanFn) return result;
+	auto hits = scanFn(typeId, resolveScanOrigin(near), maxDist, maxResults);
+	for (auto& h : hits) {
+		py::dict d;
+		fill(d, h);
+		result.append(d);
+	}
+	return result;
+}
+
 PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	m.doc() = "CivCraft engine bridge — exposes world view to Python behaviors";
 
@@ -249,24 +275,14 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	// sort (e.g. pass home/bed so AI doesn't chase dense matches across the map).
 	m.def("scan_blocks", [](const std::string& typeId, py::object near,
 	                        float maxDist, int maxResults) -> py::list {
-		py::list result;
-		if (!s_scanBlocksFn) return result;
-		glm::vec3 origin = s_selfPos;
-		if (!near.is_none()) {
-			auto t = near.cast<std::tuple<float, float, float>>();
-			origin = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
-		}
-		auto blocks = s_scanBlocksFn(typeId, origin, maxDist, maxResults);
-		for (auto& b : blocks) {
-			py::dict d;
-			d["type"] = b.typeId;
-			d["x"] = b.x;
-			d["y"] = b.y;
-			d["z"] = b.z;
-			d["distance"] = b.distance;
-			result.append(d);
-		}
-		return result;
+		return runScan(s_scanBlocksFn, typeId, near, maxDist, maxResults,
+			[](py::dict& d, const auto& b) {
+				d["type"]     = b.typeId;
+				d["x"]        = b.x;
+				d["y"]        = b.y;
+				d["z"]        = b.z;
+				d["distance"] = b.distance;
+			});
 	}, py::arg("type"), py::arg("near") = py::none(),
 	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find blocks of a specific type near `near` (default: self position).");
@@ -274,25 +290,15 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	// World-wide lookup; bypasses the per-agent 64-block nearby cache.
 	m.def("scan_entities", [](const std::string& typeId, py::object near,
 	                          float maxDist, int maxResults) -> py::list {
-		py::list result;
-		if (!s_scanEntitiesFn) return result;
-		glm::vec3 origin = s_selfPos;
-		if (!near.is_none()) {
-			auto t = near.cast<std::tuple<float, float, float>>();
-			origin = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
-		}
-		auto hits = s_scanEntitiesFn(typeId, origin, maxDist, maxResults);
-		for (auto& e : hits) {
-			py::dict d;
-			d["id"]       = e.id;
-			d["type"]     = e.typeId;
-			d["x"]        = e.position.x;
-			d["y"]        = e.position.y;
-			d["z"]        = e.position.z;
-			d["distance"] = e.distance;
-			result.append(d);
-		}
-		return result;
+		return runScan(s_scanEntitiesFn, typeId, near, maxDist, maxResults,
+			[](py::dict& d, const auto& e) {
+				d["id"]       = e.id;
+				d["type"]     = e.typeId;
+				d["x"]        = e.position.x;
+				d["y"]        = e.position.y;
+				d["z"]        = e.position.z;
+				d["distance"] = e.distance;
+			});
 	}, py::arg("type"), py::arg("near") = py::none(),
 	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find entities of a specific type near `near` (default: self position). "
@@ -301,24 +307,14 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	// Same shape as scan_blocks; hits are block decorators (flower, moss, …).
 	m.def("scan_annotations", [](const std::string& typeId, py::object near,
 	                             float maxDist, int maxResults) -> py::list {
-		py::list result;
-		if (!s_scanAnnotationsFn) return result;
-		glm::vec3 origin = s_selfPos;
-		if (!near.is_none()) {
-			auto t = near.cast<std::tuple<float, float, float>>();
-			origin = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
-		}
-		auto hits = s_scanAnnotationsFn(typeId, origin, maxDist, maxResults);
-		for (auto& h : hits) {
-			py::dict d;
-			d["type"]     = h.typeId;
-			d["x"]        = h.x;
-			d["y"]        = h.y;
-			d["z"]        = h.z;
-			d["distance"] = h.distance;
-			result.append(d);
-		}
-		return result;
+		return runScan(s_scanAnnotationsFn, typeId, near, maxDist, maxResults,
+			[](py::dict& d, const auto& h) {
+				d["type"]     = h.typeId;
+				d["x"]        = h.x;
+				d["y"]        = h.y;
+				d["z"]        = h.z;
+				d["distance"] = h.distance;
+			});
 	}, py::arg("type"), py::arg("near") = py::none(),
 	   py::arg("max_dist") = 80.0f, py::arg("max_results") = 20,
 	   "Find annotations (block decorators) of a specific type near `near`.");
