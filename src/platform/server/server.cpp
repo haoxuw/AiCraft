@@ -38,8 +38,22 @@ void GameServer::resolveActions(float dt) {
 
 	for (auto& p : proposals) {
 		switch (p.type) {
+		case ActionProposal::Move:     resolveMoveAction(p);                      break;
+		case ActionProposal::Relocate: resolveRelocateAction(p, nudgedThisTick);  break;
+		case ActionProposal::Convert:  resolveConvertAction(p, nudgedThisTick);   break;
+		case ActionProposal::Interact: resolveInteractAction(p);                  break;
+		default: break;
+		}
+	}
+}
 
-		case ActionProposal::Move: {
+
+// Split out of the resolveActions switch. Each helper body is the
+// exact case body, wrapped in do/while(false) so in-body 'break;'
+// statements keep their original 'exit this case' semantics (now
+// 'exit this helper').
+void GameServer::resolveMoveAction(ActionProposal p) {
+	do {
 			Entity* e = m_world->entities.get(p.actorId);
 			if (!e) {
 				char buf[96];
@@ -130,10 +144,12 @@ void GameServer::resolveActions(float dt) {
 				e->onGround = false;
 			}
 
-			break;
-		}
+	} while (false);
+}
 
-		case ActionProposal::Relocate: {
+void GameServer::resolveRelocateAction(const ActionProposal& p,
+                                         std::unordered_set<EntityId>& nudgedThisTick) {
+	do {
 			Entity* actor = m_world->entities.get(p.actorId);
 			if (!actor) break;
 
@@ -368,10 +384,12 @@ void GameServer::resolveActions(float dt) {
 				}
 				break;
 			}
-			break;
-		}
+	} while (false);
+}
 
-		case ActionProposal::Convert: {
+void GameServer::resolveConvertAction(ActionProposal p,
+                                        std::unordered_set<EntityId>& nudgedThisTick) {
+	do {
 			Entity* actor = m_world->entities.get(p.actorId);
 			if (!actor) break;
 
@@ -651,10 +669,11 @@ void GameServer::resolveActions(float dt) {
 
 			if (actor->inventory && m_callbacks.onInventoryChange)
 				m_callbacks.onInventoryChange(actor->id(), *actor->inventory);
-			break;
-		}
+	} while (false);
+}
 
-		case ActionProposal::Interact: {
+void GameServer::resolveInteractAction(const ActionProposal& p) {
+	do {
 			auto& bp = p.blockPos;
 
 			BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
@@ -727,13 +746,7 @@ void GameServer::resolveActions(float dt) {
 				if (below == closedId || below == openId) setBlock(bp.x, bp.y-dy, bp.z, newId);
 				else break;
 			}
-			break;
-		}
-
-		default: break;
-
-		} // switch
-	} // for
-} // resolveActions
+	} while (false);
+}
 
 } // namespace civcraft

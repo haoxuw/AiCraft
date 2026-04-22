@@ -240,6 +240,13 @@ private:
 	void processEscapeKey();        // ESC: drag → dialog → inv → pause
 	void processTalkKey();          // T key: open dialog with NPC under cursor
 
+	// ── tickPlayer() helpers. The raw LMB/RMB/MMB event handling is each
+	//    hundreds of lines. Extracted so tickPlayer reads as an outline of
+	//    "movement → cooldowns → mouse buttons".
+	void processLmbInput(float dt);  // attack / dig / RTS box-select / wheel
+	void processRmbInput(float dt);  // inspect / place / drag-circle / wheel
+	void processMmbInput();          // rotate-or-eyedropper on held block
+
 	// ── Scene transitions ─────────────────────────────────────────────────
 	void enterMenu();
 	void enterPlaying();

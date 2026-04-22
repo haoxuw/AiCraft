@@ -614,608 +614,10 @@ void Game::tickPlayer(float dt) {
 		}
 	}
 
-	// LMB — FPS/TPS: swing (cone attack). RPG/RTS: click-move / box-select.
-	int lmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_LEFT);
-	bool lmbNow = (lmb == GLFW_PRESS);
-	bool rtsLike = (m_cam.mode == civcraft::CameraMode::RPG || rtsMode);
-
-	// RTS action wheel: modal. LMB picks a slice (or dismisses); cursor hover
-	// highlights. Slice labels and their behavior:
-	//   0 Gather / 1 Attack / 2 Mine — pause AI, walk to circle center, retain selection
-	//   3 Cancel — resume AI, clear selection (same as legacy RMB-click)
-	if (m_rtsWheel.active) {
-		const float kRIn  = 0.04f;
-		const float kROut = 0.14f;
-		const float kPi   = 3.14159265f;
-		double mxD, myD;
-		glfwGetCursorPos(m_window, &mxD, &myD);
-		float fbWf = (float)m_fbW, fbHf = (float)m_fbH;
-		float ndcX = fbWf > 0 ? ((float)(mxD / fbWf) * 2.0f - 1.0f) : 0.0f;
-		float ndcY = fbHf > 0 ? (1.0f - (float)(myD / fbHf) * 2.0f) : 0.0f;
-		float aspect = (fbHf > 0 ? (fbWf / fbHf) : 1.0f);
-		float dxn = ndcX - m_rtsWheel.centerNdc.x;
-		float dyn = (ndcY - m_rtsWheel.centerNdc.y) / (aspect > 0 ? aspect : 1.0f);
-		float dist = std::sqrt(dxn * dxn + dyn * dyn);
-		int hover = -1;
-		if (dist >= kRIn && dist <= kROut) {
-			float ang = std::atan2(dyn, dxn);
-			if (ang >= -kPi / 4 && ang <  kPi / 4)          hover = 1; // Attack (E)
-			else if (ang >=  kPi / 4 && ang < 3 * kPi / 4)  hover = 0; // Gather (N)
-			else if (ang >= -3 * kPi / 4 && ang < -kPi / 4) hover = 2; // Mine (S)
-			else                                            hover = 3; // Cancel (W)
-		}
-		m_rtsWheel.hoverSlice = hover;
-		m_rtsWheel.shiftQueue =
-			(glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS) ||
-			(glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
-
-		if (lmbNow && !m_lmbLast) {
-			int slice = hover;
-			// Shift held → queue this command after the current plan instead of
-			// replacing it. Cancel ignores shift (always clears everything).
-			bool shiftQueue =
-				(glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS) ||
-				(glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
-			if (slice == 3 || slice == -1) {
-				// Cancel slice or click-outside-wheel: legacy release path.
-				for (auto eid : m_rtsSelect.selected) {
-					m_server->sendCancelGoal(eid);
-					if (m_agentClient && eid != m_server->localPlayerId())
-						m_agentClient->resumeAgent(eid);
-					m_moveOrders.erase(eid);
-				}
-				std::printf("[vk-rts] wheel: %s %zu unit%s → default behavior\n",
-					slice == 3 ? "CANCEL" : "dismissed",
-					m_rtsSelect.selected.size(),
-					m_rtsSelect.selected.size() == 1 ? "" : "s");
-				m_rtsSelect.selected.clear();
-			} else {
-				// Gather/Attack/Mine: build a kind-specific Plan per agent and
-				// install via pushPlanOverride (clears any prior plan, resets
-				// the obey-pause timer). Selection is retained so the user can
-				// re-command or switch to Cancel. Selected players have no
-				// AgentClient — they fall back to the legacy walk-to-center.
-				const char* label = (slice == 0 ? "GATHER"
-				                   : slice == 1 ? "ATTACK" : "MINE");
-				glm::vec3 ctr = m_rtsWheel.circleCenterWorld;
-				float     rad = m_rtsWheel.circleRadiusWorld;
-
-				// Attack: pick one shared target (nearest non-humanoid Living
-				// inside the circle). Empty → fall back to walk-to-center,
-				// so the slice still does *something* even on empty terrain.
-				civcraft::EntityId attackTarget = civcraft::ENTITY_NONE;
-				if (slice == 1) {
-					float bestDist2 = rad * rad;
-					m_server->forEachEntity([&](civcraft::Entity& e) {
-						if (!e.def().isLiving()) return;
-						if (e.def().hasTag("humanoid")) return;
-						if (e.removed || e.hp() <= 0) return;
-						glm::vec3 d = e.position - ctr; d.y = 0;
-						float d2 = d.x * d.x + d.z * d.z;
-						if (d2 <= bestDist2) {
-							bestDist2 = d2;
-							attackTarget = e.id();
-						}
-					});
-				}
-
-				glm::ivec3 goalBlock{(int)std::floor(ctr.x),
-				                    (int)std::floor(ctr.y),
-				                    (int)std::floor(ctr.z)};
-				std::vector<civcraft::EntityId> playerEids;
-				std::vector<glm::ivec3>         playerStarts;
-				int handedToAgent = 0;
-
-				for (auto eid : m_rtsSelect.selected) {
-					civcraft::Entity* e = m_server->getEntity(eid);
-					if (!e) continue;
-					bool isPlayer = (eid == m_server->localPlayerId());
-					if (isPlayer || !m_agentClient) {
-						playerEids.push_back(eid);
-						playerStarts.push_back(glm::ivec3(
-							(int)std::floor(e->position.x),
-							(int)std::floor(e->position.y),
-							(int)std::floor(e->position.z)));
-						continue;
-					}
-
-					civcraft::Plan plan;
-					std::string    goalLabel;
-					if (slice == 0) {
-						auto step = civcraft::PlanStep::harvest(ctr);
-						step.gatherTypes  = {"leaves", "logs"};
-						step.gatherRadius = std::max(4.0f, std::min(rad, 12.0f));
-						plan.push_back(step);
-						goalLabel = "rts_gather";
-					} else if (slice == 2) {
-						auto step = civcraft::PlanStep::harvest(ctr);
-						step.gatherTypes  = {"stone", "cobblestone",
-						                    "granite", "marble", "sandstone"};
-						step.gatherRadius = std::max(4.0f, std::min(rad, 12.0f));
-						plan.push_back(step);
-						goalLabel = "rts_mine";
-					} else {
-						if (attackTarget != civcraft::ENTITY_NONE) {
-							plan.push_back(civcraft::PlanStep::move(ctr));
-							plan.push_back(civcraft::PlanStep::attack(attackTarget));
-							goalLabel = "rts_attack";
-						} else {
-							plan.push_back(civcraft::PlanStep::move(ctr));
-							goalLabel = "rts_patrol";
-						}
-					}
-					if (shiftQueue) {
-						m_agentClient->appendPlanOverride(eid, std::move(plan),
-						                                  std::move(goalLabel));
-					} else {
-						m_agentClient->pushPlanOverride(eid, std::move(plan),
-						                                std::move(goalLabel));
-					}
-					++handedToAgent;
-				}
-
-				if (!playerEids.empty()) {
-					m_rtsExec.planGroup(playerEids, playerStarts, goalBlock,
-						m_server->chunks(), m_server->blockRegistry(),
-						civcraft::CommandKind::Walk);
-					for (auto eid : playerEids)
-						m_moveOrders[eid] = {ctr, true};
-				}
-
-				std::printf("[vk-rts] wheel: %s%s %zu unit%s → (%.1f,%.1f,%.1f) "
-				            "r=%.1f (agents=%d players=%zu target=%lld)\n",
-					shiftQueue ? "+" : "",
-					label, m_rtsSelect.selected.size(),
-					m_rtsSelect.selected.size() == 1 ? "" : "s",
-					ctr.x, ctr.y, ctr.z, rad,
-					handedToAgent, playerEids.size(),
-					(long long)attackTarget);
-			}
-			m_rtsWheel = {};
-		}
-		m_lmbLast = lmbNow;
-		// Wheel is modal — skip all further LMB input processing this frame.
-		goto after_lmb_handling;
-	}
-
-	if (rtsMode && !m_uiWantsCursor) {
-		double mx, my;
-		glfwGetCursorPos(m_window, &mx, &my);
-		int ww, wh;
-		glfwGetWindowSize(m_window, &ww, &wh);
-		float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
-		float ndcY = 1.0f - (float)(my / wh) * 2.0f;
-
-		if (lmbNow && !m_lmbLast) {
-			m_rtsSelect.dragging = true;
-			m_rtsSelect.start = {ndcX, ndcY};
-			m_rtsSelect.end = {ndcX, ndcY};
-			m_rtsLongPress.active    = true;
-			m_rtsLongPress.startTime = glfwGetTime();
-			m_rtsLongPress.startNdc  = {ndcX, ndcY};
-		}
-		if (m_rtsSelect.dragging && lmbNow) {
-			m_rtsSelect.end = {ndcX, ndcY};
-			if (m_rtsLongPress.active) {
-				float dx = ndcX - m_rtsLongPress.startNdc.x;
-				float dy = ndcY - m_rtsLongPress.startNdc.y;
-				if (dx * dx + dy * dy > 0.0004f) m_rtsLongPress.active = false;
-			}
-		}
-
-		if (m_rtsSelect.dragging && !lmbNow) {
-			m_rtsSelect.dragging = false;
-			float x0 = std::min(m_rtsSelect.start.x, m_rtsSelect.end.x);
-			float x1 = std::max(m_rtsSelect.start.x, m_rtsSelect.end.x);
-			float y0 = std::min(m_rtsSelect.start.y, m_rtsSelect.end.y);
-			float y1 = std::max(m_rtsSelect.start.y, m_rtsSelect.end.y);
-			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
-
-			double holdSec = glfwGetTime() - m_rtsLongPress.startTime;
-			bool isBuildCmd = m_rtsLongPress.active && isClick
-			                  && holdSec >= kBuildHoldSec;
-			m_rtsLongPress.active = false;
-
-			if (isClick && !m_rtsSelect.selected.empty()) {
-				glm::mat4 invVP = glm::inverse(pickViewProj());
-				glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
-				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
-				glm::vec3 rayOrigin = glm::vec3(nearW);
-				glm::vec3 dir = glm::normalize(glm::vec3(farW) - rayOrigin);
-				auto hit = civcraft::raycastBlocks(m_server->chunks(), rayOrigin, dir, 200.0f);
-				if (hit) {
-					glm::vec3 center = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
-					civcraft::CommandKind kind = isBuildCmd
-						? civcraft::CommandKind::Build : civcraft::CommandKind::Walk;
-					std::vector<civcraft::EntityId> eids;
-					std::vector<glm::ivec3> starts;
-					for (auto eid : m_rtsSelect.selected) {
-						civcraft::Entity* e = m_server->getEntity(eid);
-						if (!e) continue;
-						eids.push_back(eid);
-						starts.push_back(glm::ivec3(
-							(int)std::floor(e->position.x),
-							(int)std::floor(e->position.y),
-							(int)std::floor(e->position.z)));
-					}
-					if (!eids.empty()) {
-						glm::ivec3 gi{(int)std::floor(center.x),
-						              (int)std::floor(center.y),
-						              (int)std::floor(center.z)};
-						m_rtsExec.planGroup(eids, starts, gi,
-							m_server->chunks(), m_server->blockRegistry(), kind);
-						std::printf("[vk-rts] %s order: %zu entities → (%.1f,%.1f,%.1f) hold=%.2fs\n",
-							isBuildCmd ? "BUILD" : "Move",
-							eids.size(), center.x, center.y, center.z, holdSec);
-						for (auto eid : eids) {
-							m_moveOrders[eid] = {center, true};
-							if (m_agentClient && eid != m_server->localPlayerId())
-								m_agentClient->pauseAgent(eid);
-						}
-					}
-				}
-			} else if (!isClick) {
-				// Shift-at-release: add to selection; no modifier: replace.
-				bool shiftHeld =
-					glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
-					glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-				std::unordered_set<civcraft::EntityId> existing;
-				if (shiftHeld)
-					existing.insert(m_rtsSelect.selected.begin(),
-					                m_rtsSelect.selected.end());
-				else
-					m_rtsSelect.selected.clear();
-				size_t added = 0;
-				glm::mat4 vp = pickViewProj();
-				m_server->forEachEntity([&](civcraft::Entity& e) {
-					if (!e.def().isLiving()) return;
-					if (!e.def().hasTag("humanoid")) return;
-					float cy = e.position.y + e.def().collision_box_max.y * 0.5f;
-					glm::vec3 anchor(e.position.x, cy, e.position.z);
-					glm::vec4 clip = vp * glm::vec4(anchor, 1.0f);
-					if (clip.w <= 0) return;
-					float sx = clip.x / clip.w;
-					float sy = clip.y / clip.w;
-					if (sx < x0 || sx > x1 || sy < y0 || sy > y1) return;
-					if (shiftHeld && existing.count(e.id())) return;
-					m_rtsSelect.selected.push_back(e.id());
-					added++;
-				});
-				if (added > 0)
-					std::printf("[vk-rts] %s %zu unit%s (total %zu)\n",
-						shiftHeld ? "added" : "selected", added,
-						added == 1 ? "" : "s", m_rtsSelect.selected.size());
-			}
-		}
-
-		// Drive commanded units, then clean up arrived/removed.
-		m_rtsExec.driveRemote(*m_server, m_server->localPlayerId());
-		std::vector<civcraft::EntityId> arrived;
-		for (auto& [eid, order] : m_moveOrders) {
-			if (!order.active || !m_server->getEntity(eid) || !m_rtsExec.has(eid))
-				arrived.push_back(eid);
-		}
-		for (auto eid : arrived) {
-			m_moveOrders.erase(eid);
-			if (m_agentClient && eid != m_server->localPlayerId())
-				m_agentClient->resumeAgent(eid);
-		}
-	} else if (!m_uiWantsCursor) {
-		if (rtsLike) {
-			// RPG/RTS: click-to-move on edge
-			if (lmbNow && !m_lmbLast)
-				clickToMove();
-		} else {
-			// FPS/TPS LMB: attack entity (if closer) or break block.
-			bool lmbEdge = (lmbNow && !m_lmbLast);
-			bool lmbHeld = (lmbNow && m_mouseCaptured);
-
-			if (lmbEdge || lmbHeld) {
-				glm::vec3 eye = m_cam.position;
-				glm::vec3 dir = m_cam.front();
-
-				// Entity attack priority. Held+CD so mash = hold (ARPG feel).
-				bool entityAttacked = false;
-				if ((lmbEdge || lmbHeld) && m_attackCD <= 0) {
-					std::vector<civcraft::RaycastEntity> ents;
-					civcraft::EntityId myId = m_server->localPlayerId();
-					m_server->forEachEntity([&](civcraft::Entity& e) {
-						if (!e.def().isLiving()) return;
-						ents.push_back({e.id(), e.typeId(), e.position,
-							e.def().collision_box_min, e.def().collision_box_max,
-							e.goalText, e.hasError});
-					});
-					auto eHit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
-					if (eHit) {
-						auto blockHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
-						bool entityCloser = !blockHit || eHit->distance <= blockHit->distance;
-						if (entityCloser) {
-							entityAttacked = true;
-							m_attackCD = kTune.attackCD;
-							auto* me = playerEntity();
-							if (me) {
-								Slash sw;
-								sw.center = me->position + glm::vec3(0, kTune.playerHeight * 0.6f, 0);
-								sw.dir    = playerForward();
-								m_slashes.push_back(sw);
-							}
-							m_handSwingT = 0.0f;
-							tryServerAttack();
-						}
-					}
-				}
-
-				// Block breaking (if no entity hit, break CD enforced).
-				if (!entityAttacked && m_breakCD <= 0) {
-					m_handSwingT = 0.0f;
-					if (m_adminMode) {
-						digInFront();
-						m_breakCD = 0.15f;
-					} else {
-						auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
-						if (hit) {
-							glm::ivec3 bp = hit->blockPos;
-							if (m_breaking.active && m_breaking.target == bp) {
-								m_breaking.hits++;
-							} else {
-								m_breaking.target = bp;
-								m_breaking.hits = 1;
-								m_breaking.active = true;
-							}
-							m_breaking.timer = 0;
-							m_breakCD = 0.25f;
-
-							FloatText ft;
-							ft.worldPos = glm::vec3(bp) + glm::vec3(0.5f, 1.2f, 0.5f);
-							ft.color    = glm::vec3(0.9f, 0.8f, 0.6f);
-							ft.text     = std::to_string(m_breaking.hits) + "/3";
-							ft.lifetime = 0.5f;
-							ft.rise     = 0.6f;
-							m_floaters.push_back(ft);
-
-							if (m_breaking.hits >= 3) {
-								digInFront();
-								m_breaking.active = false;
-								m_breaking.hits = 0;
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	m_lmbLast = lmbNow;
-after_lmb_handling:;
-
-	// RMB — FPS/TPS: inspect (edge) or place (held+CD). RPG/RTS: click action.
-	bool rmbPressed = false;
-	bool rmbIsHeld  = false;
-	{
-		int rmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT);
-		bool rmbNow = (rmb == GLFW_PRESS);
-		bool rtsLikeMode = (m_cam.mode == civcraft::CameraMode::RPG ||
-		                    m_cam.mode == civcraft::CameraMode::RTS);
-		if (rtsLikeMode) {
-			rmbPressed = m_rightClick.action;
-			m_rightClick.action = false;
-		} else {
-			bool rmbEdge = (rmbNow && !m_rmbLast && m_mouseCaptured);
-			rmbIsHeld    = (rmbNow && m_mouseCaptured);
-			rmbPressed   = rmbEdge;
-		}
-		m_rmbLast = rmbNow;
-	}
-
-	// RTS drag-command state machine. In RTS mode with a non-empty selection,
-	// RMB-hold-and-drag defines a ground circle; release opens the action wheel.
-	// Pure RMB-click (no drag) falls through to the legacy release-selection
-	// handler below, which cancels the selection and resumes AI — the same
-	// semantics as the Cancel slice.
-	if (m_cam.mode == civcraft::CameraMode::RTS
-	    && !m_rtsSelect.selected.empty()
-	    && !m_rtsWheel.active) {
-		bool rmbDown = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT)
-		               == GLFW_PRESS;
-		double mxD, myD;
-		glfwGetCursorPos(m_window, &mxD, &myD);
-		float fbWf = (float)m_fbW, fbHf = (float)m_fbH;
-		float ndcX = fbWf > 0 ? ((float)(mxD / fbWf) * 2.0f - 1.0f) : 0.0f;
-		float ndcY = fbHf > 0 ? (1.0f - (float)(myD / fbHf) * 2.0f) : 0.0f;
-		auto raycastGround = [&](float nx, float ny, glm::vec3& out) -> bool {
-			glm::mat4 invVP = glm::inverse(pickViewProj());
-			glm::vec4 nearW = invVP * glm::vec4(nx, ny, 0.0f, 1.0f); nearW /= nearW.w;
-			glm::vec4 farW  = invVP * glm::vec4(nx, ny, 1.0f, 1.0f); farW  /= farW.w;
-			glm::vec3 o = glm::vec3(nearW);
-			glm::vec3 d = glm::normalize(glm::vec3(farW) - o);
-			auto hit = civcraft::raycastBlocks(m_server->chunks(), o, d, 200.0f);
-			if (!hit) return false;
-			out = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
-			return true;
-		};
-		// Start drag on RMB press edge.
-		if (rmbDown && !m_rtsDragCmd.active) {
-			m_rtsDragCmd.active        = true;
-			m_rtsDragCmd.startNdc      = {ndcX, ndcY};
-			m_rtsDragCmd.currentNdc    = {ndcX, ndcY};
-			m_rtsDragCmd.hasStartWorld = raycastGround(ndcX, ndcY,
-			                                           m_rtsDragCmd.startWorld);
-			m_rtsDragCmd.currentWorld  = m_rtsDragCmd.startWorld;
-			m_rtsDragCmd.radiusWorld   = 0.0f;
-		}
-		// Track while held.
-		if (rmbDown && m_rtsDragCmd.active) {
-			m_rtsDragCmd.currentNdc = {ndcX, ndcY};
-			if (m_rtsDragCmd.hasStartWorld) {
-				glm::vec3 cur;
-				if (raycastGround(ndcX, ndcY, cur)) {
-					m_rtsDragCmd.currentWorld = cur;
-					float dx = cur.x - m_rtsDragCmd.startWorld.x;
-					float dz = cur.z - m_rtsDragCmd.startWorld.z;
-					float r  = std::sqrt(dx * dx + dz * dz);
-					// Hard cap — 16 blocks is already more than enough for any
-					// wheel command. Lets the ring stop growing past the cap
-					// while still tracking the cursor so the hover dot tracks.
-					const float kMaxRadius = 16.0f;
-					m_rtsDragCmd.radiusWorld = std::min(r, kMaxRadius);
-				}
-			}
-		}
-		// Release: open wheel on meaningful drag, else fall through as click.
-		if (!rmbDown && m_rtsDragCmd.active) {
-			float dxn = m_rtsDragCmd.currentNdc.x - m_rtsDragCmd.startNdc.x;
-			float dyn = m_rtsDragCmd.currentNdc.y - m_rtsDragCmd.startNdc.y;
-			bool dragged = (dxn * dxn + dyn * dyn) > 0.0004f
-			               && m_rtsDragCmd.hasStartWorld
-			               && m_rtsDragCmd.radiusWorld > 0.5f;
-			if (dragged) {
-				m_rtsWheel.active            = true;
-				m_rtsWheel.centerNdc         = m_rtsDragCmd.currentNdc;
-				m_rtsWheel.circleCenterWorld = m_rtsDragCmd.startWorld;
-				m_rtsWheel.circleRadiusWorld = std::max(m_rtsDragCmd.radiusWorld, 1.5f);
-				m_rtsWheel.hoverSlice        = -1;
-				// Suppress the legacy click-release path — wheel controls the fate now.
-				rmbPressed = false;
-				m_rightClick.action = false;
-			}
-			m_rtsDragCmd.active = false;
-		}
-	}
-	// RMB first takes precedence to release RTS-selected units back to their
-	// default behavior (works in any camera mode — you can box-select in RTS,
-	// switch to TPS, and still drop the group). Skips place/inspect when it fires.
-	if (rmbPressed && !m_rtsSelect.selected.empty() && !m_rtsWheel.active) {
-		for (auto eid : m_rtsSelect.selected) {
-			m_server->sendCancelGoal(eid);
-			if (m_agentClient && eid != m_server->localPlayerId())
-				m_agentClient->resumeAgent(eid);
-			m_moveOrders.erase(eid);
-		}
-		std::printf("[vk-rts] RMB released %zu unit%s → default behavior\n",
-			m_rtsSelect.selected.size(),
-			m_rtsSelect.selected.size() == 1 ? "" : "s");
-		m_rtsSelect.selected.clear();
-		rmbPressed = false;
-		rmbIsHeld  = false;
-	}
-	// Held-place fires every kTune.placeCD s while RMB held in FPS/TPS.
-	if (!rmbPressed && rmbIsHeld && m_placeCD <= 0) {
-		rmbPressed = true;
-	}
-	if (rmbPressed && m_breakCD <= 0) {
-		// Ray dir: cursor for RPG/RTS, camera forward otherwise.
-		glm::vec3 eye = m_cam.position;
-		glm::vec3 dir = m_cam.front();
-		if (m_cam.mode == civcraft::CameraMode::RPG ||
-		    m_cam.mode == civcraft::CameraMode::RTS) {
-			double mx, my;
-			glfwGetCursorPos(m_window, &mx, &my);
-			int ww = m_fbW, wh = m_fbH;
-			if (ww > 0 && wh > 0) {
-				float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
-				float ndcY = 1.0f - (float)(my / wh) * 2.0f;
-				glm::mat4 invVP = glm::inverse(viewProj());
-				glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
-				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
-				dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
-			}
-		}
-
-		// Entity inspect if closer than any block.
-		bool inspectTriggered = false;
-		{
-			std::vector<civcraft::RaycastEntity> ents;
-			civcraft::EntityId myId = m_server->localPlayerId();
-			m_server->forEachEntity([&](civcraft::Entity& e) {
-				if (!e.def().isLiving()) return;
-				ents.push_back({e.id(), e.typeId(), e.position,
-					e.def().collision_box_min, e.def().collision_box_max,
-					e.goalText, e.hasError});
-			});
-			auto eHit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
-			if (eHit) {
-				auto blockHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
-				bool entityCloser = !blockHit || eHit->distance < blockHit->distance;
-				if (entityCloser) {
-					m_inspectedEntity = eHit->entityId;
-					m_server->sendGetInventory(eHit->entityId);
-					inspectTriggered = true;
-				}
-			}
-		}
-
-		// Interact-first: doors, TNT, buttons. If the hit block isn't
-		// interactive, fall through to placeBlock(). An open door grazed
-		// along the ray counts as the interact target so you can click-close
-		// a door you're standing in front of.
-		if (!inspectTriggered) {
-			bool didInteract = false;
-			auto bHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
-			if (bHit) {
-				glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
-				BlockId bid = bHit->hasInteract ? bHit->interactBlockId : bHit->blockId;
-				const auto& bdef = m_server->blockRegistry().get(bid);
-				bool interactive = (bdef.mesh_type == civcraft::MeshType::Door
-				                 || bdef.mesh_type == civcraft::MeshType::DoorOpen
-				                 || bdef.string_id == civcraft::BlockType::TNT);
-				if (interactive) {
-					civcraft::ActionProposal p;
-					p.type     = civcraft::ActionProposal::Interact;
-					p.actorId  = m_server->localPlayerId();
-					p.blockPos = bp;
-					m_server->sendAction(p);
-					civcraft::GameLogger::instance().emit("ACTION",
-						"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
-					didInteract = true;
-				}
-			}
-			if (!didInteract) {
-				placeBlock();
-				m_placeCD = kTune.placeCD;
-			}
-		}
-	}
-
-	// MMB: rotate held block if it's rotatable, else eyedropper
-	// (pick block type without breaking). Context-sensitive so we
-	// keep both features without stealing a binding.
-	int mmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_MIDDLE);
-	bool mmbNow = (mmb == GLFW_PRESS);
-	if (mmbNow && !m_mmbLast && !m_uiWantsCursor) {
-		if (isHeldBlockRotatable()) {
-			cyclePlacementRotation();
-			m_mmbLast = mmbNow;
-			return;
-		}
-		glm::vec3 eye = m_cam.position;
-		glm::vec3 dir = m_cam.front();
-		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 16.0f);
-		if (hit) {
-			const auto& bdef = m_server->blockRegistry().get(hit->blockId);
-			// MMB eyedropper: select the hotbar slot that holds this block
-			// type (if any) so RMB will place it. Slots not carrying the
-			// item remain untouched; if no slot has it, selection stays put.
-			auto* me = playerEntity();
-			if (me && me->inventory) {
-				for (int s = 0; s < civcraft::Hotbar::SLOTS; s++) {
-					if (m_hotbar.get(s) == bdef.string_id &&
-					    me->inventory->count(bdef.string_id) > 0) {
-						m_hotbar.selected = s;
-						break;
-					}
-				}
-			}
-			FloatText ft;
-			ft.worldPos = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.4f, 0.5f);
-			ft.color    = glm::vec3(0.55f, 0.75f, 1.0f);
-			std::string name = bdef.string_id;
-			auto colon = name.find(':');
-			if (colon != std::string::npos) name = name.substr(colon + 1);
-			ft.text     = "PICK: " + name;
-			ft.lifetime = 0.6f;
-			m_floaters.push_back(ft);
-		}
-	}
-	m_mmbLast = mmbNow;
+	// Mouse-button event handlers — each is multi-hundred lines.
+	processLmbInput(dt);
+	processRmbInput(dt);
+	processMmbInput();
 }
 
 void Game::digInFront() {
@@ -1782,6 +1184,622 @@ void Game::processTalkKey() {
 		}
 	}
 	m_tKeyLast = tKey;
+}
+
+
+// Extracted from tickPlayer — see game_vk.h.
+void Game::processLmbInput(float dt) {
+	(void)dt;  // per-frame state via members
+	civcraft::Entity* me = playerEntity();
+	if (!me) return;
+	bool rtsMode = (m_cam.mode == civcraft::CameraMode::RTS);
+	// LMB — FPS/TPS: swing (cone attack). RPG/RTS: click-move / box-select.
+	int lmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_LEFT);
+	bool lmbNow = (lmb == GLFW_PRESS);
+	bool rtsLike = (m_cam.mode == civcraft::CameraMode::RPG || rtsMode);
+
+	// RTS action wheel: modal. LMB picks a slice (or dismisses); cursor hover
+	// highlights. Slice labels and their behavior:
+	//   0 Gather / 1 Attack / 2 Mine — pause AI, walk to circle center, retain selection
+	//   3 Cancel — resume AI, clear selection (same as legacy RMB-click)
+	if (m_rtsWheel.active) {
+		const float kRIn  = 0.04f;
+		const float kROut = 0.14f;
+		const float kPi   = 3.14159265f;
+		double mxD, myD;
+		glfwGetCursorPos(m_window, &mxD, &myD);
+		float fbWf = (float)m_fbW, fbHf = (float)m_fbH;
+		float ndcX = fbWf > 0 ? ((float)(mxD / fbWf) * 2.0f - 1.0f) : 0.0f;
+		float ndcY = fbHf > 0 ? (1.0f - (float)(myD / fbHf) * 2.0f) : 0.0f;
+		float aspect = (fbHf > 0 ? (fbWf / fbHf) : 1.0f);
+		float dxn = ndcX - m_rtsWheel.centerNdc.x;
+		float dyn = (ndcY - m_rtsWheel.centerNdc.y) / (aspect > 0 ? aspect : 1.0f);
+		float dist = std::sqrt(dxn * dxn + dyn * dyn);
+		int hover = -1;
+		if (dist >= kRIn && dist <= kROut) {
+			float ang = std::atan2(dyn, dxn);
+			if (ang >= -kPi / 4 && ang <  kPi / 4)          hover = 1; // Attack (E)
+			else if (ang >=  kPi / 4 && ang < 3 * kPi / 4)  hover = 0; // Gather (N)
+			else if (ang >= -3 * kPi / 4 && ang < -kPi / 4) hover = 2; // Mine (S)
+			else                                            hover = 3; // Cancel (W)
+		}
+		m_rtsWheel.hoverSlice = hover;
+		m_rtsWheel.shiftQueue =
+			(glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS) ||
+			(glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
+
+		if (lmbNow && !m_lmbLast) {
+			int slice = hover;
+			// Shift held → queue this command after the current plan instead of
+			// replacing it. Cancel ignores shift (always clears everything).
+			bool shiftQueue =
+				(glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS) ||
+				(glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
+			if (slice == 3 || slice == -1) {
+				// Cancel slice or click-outside-wheel: legacy release path.
+				for (auto eid : m_rtsSelect.selected) {
+					m_server->sendCancelGoal(eid);
+					if (m_agentClient && eid != m_server->localPlayerId())
+						m_agentClient->resumeAgent(eid);
+					m_moveOrders.erase(eid);
+				}
+				std::printf("[vk-rts] wheel: %s %zu unit%s → default behavior\n",
+					slice == 3 ? "CANCEL" : "dismissed",
+					m_rtsSelect.selected.size(),
+					m_rtsSelect.selected.size() == 1 ? "" : "s");
+				m_rtsSelect.selected.clear();
+			} else {
+				// Gather/Attack/Mine: build a kind-specific Plan per agent and
+				// install via pushPlanOverride (clears any prior plan, resets
+				// the obey-pause timer). Selection is retained so the user can
+				// re-command or switch to Cancel. Selected players have no
+				// AgentClient — they fall back to the legacy walk-to-center.
+				const char* label = (slice == 0 ? "GATHER"
+				                   : slice == 1 ? "ATTACK" : "MINE");
+				glm::vec3 ctr = m_rtsWheel.circleCenterWorld;
+				float     rad = m_rtsWheel.circleRadiusWorld;
+
+				// Attack: pick one shared target (nearest non-humanoid Living
+				// inside the circle). Empty → fall back to walk-to-center,
+				// so the slice still does *something* even on empty terrain.
+				civcraft::EntityId attackTarget = civcraft::ENTITY_NONE;
+				if (slice == 1) {
+					float bestDist2 = rad * rad;
+					m_server->forEachEntity([&](civcraft::Entity& e) {
+						if (!e.def().isLiving()) return;
+						if (e.def().hasTag("humanoid")) return;
+						if (e.removed || e.hp() <= 0) return;
+						glm::vec3 d = e.position - ctr; d.y = 0;
+						float d2 = d.x * d.x + d.z * d.z;
+						if (d2 <= bestDist2) {
+							bestDist2 = d2;
+							attackTarget = e.id();
+						}
+					});
+				}
+
+				glm::ivec3 goalBlock{(int)std::floor(ctr.x),
+				                    (int)std::floor(ctr.y),
+				                    (int)std::floor(ctr.z)};
+				std::vector<civcraft::EntityId> playerEids;
+				std::vector<glm::ivec3>         playerStarts;
+				int handedToAgent = 0;
+
+				for (auto eid : m_rtsSelect.selected) {
+					civcraft::Entity* e = m_server->getEntity(eid);
+					if (!e) continue;
+					bool isPlayer = (eid == m_server->localPlayerId());
+					if (isPlayer || !m_agentClient) {
+						playerEids.push_back(eid);
+						playerStarts.push_back(glm::ivec3(
+							(int)std::floor(e->position.x),
+							(int)std::floor(e->position.y),
+							(int)std::floor(e->position.z)));
+						continue;
+					}
+
+					civcraft::Plan plan;
+					std::string    goalLabel;
+					if (slice == 0) {
+						auto step = civcraft::PlanStep::harvest(ctr);
+						step.gatherTypes  = {"leaves", "logs"};
+						step.gatherRadius = std::max(4.0f, std::min(rad, 12.0f));
+						plan.push_back(step);
+						goalLabel = "rts_gather";
+					} else if (slice == 2) {
+						auto step = civcraft::PlanStep::harvest(ctr);
+						step.gatherTypes  = {"stone", "cobblestone",
+						                    "granite", "marble", "sandstone"};
+						step.gatherRadius = std::max(4.0f, std::min(rad, 12.0f));
+						plan.push_back(step);
+						goalLabel = "rts_mine";
+					} else {
+						if (attackTarget != civcraft::ENTITY_NONE) {
+							plan.push_back(civcraft::PlanStep::move(ctr));
+							plan.push_back(civcraft::PlanStep::attack(attackTarget));
+							goalLabel = "rts_attack";
+						} else {
+							plan.push_back(civcraft::PlanStep::move(ctr));
+							goalLabel = "rts_patrol";
+						}
+					}
+					if (shiftQueue) {
+						m_agentClient->appendPlanOverride(eid, std::move(plan),
+						                                  std::move(goalLabel));
+					} else {
+						m_agentClient->pushPlanOverride(eid, std::move(plan),
+						                                std::move(goalLabel));
+					}
+					++handedToAgent;
+				}
+
+				if (!playerEids.empty()) {
+					m_rtsExec.planGroup(playerEids, playerStarts, goalBlock,
+						m_server->chunks(), m_server->blockRegistry(),
+						civcraft::CommandKind::Walk);
+					for (auto eid : playerEids)
+						m_moveOrders[eid] = {ctr, true};
+				}
+
+				std::printf("[vk-rts] wheel: %s%s %zu unit%s → (%.1f,%.1f,%.1f) "
+				            "r=%.1f (agents=%d players=%zu target=%lld)\n",
+					shiftQueue ? "+" : "",
+					label, m_rtsSelect.selected.size(),
+					m_rtsSelect.selected.size() == 1 ? "" : "s",
+					ctr.x, ctr.y, ctr.z, rad,
+					handedToAgent, playerEids.size(),
+					(long long)attackTarget);
+			}
+			m_rtsWheel = {};
+		}
+		m_lmbLast = lmbNow;
+		// Wheel is modal — skip all further LMB input processing this frame.
+		return;
+	}
+
+	if (rtsMode && !m_uiWantsCursor) {
+		double mx, my;
+		glfwGetCursorPos(m_window, &mx, &my);
+		int ww, wh;
+		glfwGetWindowSize(m_window, &ww, &wh);
+		float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
+		float ndcY = 1.0f - (float)(my / wh) * 2.0f;
+
+		if (lmbNow && !m_lmbLast) {
+			m_rtsSelect.dragging = true;
+			m_rtsSelect.start = {ndcX, ndcY};
+			m_rtsSelect.end = {ndcX, ndcY};
+			m_rtsLongPress.active    = true;
+			m_rtsLongPress.startTime = glfwGetTime();
+			m_rtsLongPress.startNdc  = {ndcX, ndcY};
+		}
+		if (m_rtsSelect.dragging && lmbNow) {
+			m_rtsSelect.end = {ndcX, ndcY};
+			if (m_rtsLongPress.active) {
+				float dx = ndcX - m_rtsLongPress.startNdc.x;
+				float dy = ndcY - m_rtsLongPress.startNdc.y;
+				if (dx * dx + dy * dy > 0.0004f) m_rtsLongPress.active = false;
+			}
+		}
+
+		if (m_rtsSelect.dragging && !lmbNow) {
+			m_rtsSelect.dragging = false;
+			float x0 = std::min(m_rtsSelect.start.x, m_rtsSelect.end.x);
+			float x1 = std::max(m_rtsSelect.start.x, m_rtsSelect.end.x);
+			float y0 = std::min(m_rtsSelect.start.y, m_rtsSelect.end.y);
+			float y1 = std::max(m_rtsSelect.start.y, m_rtsSelect.end.y);
+			bool isClick = (x1 - x0 < 0.02f && y1 - y0 < 0.02f);
+
+			double holdSec = glfwGetTime() - m_rtsLongPress.startTime;
+			bool isBuildCmd = m_rtsLongPress.active && isClick
+			                  && holdSec >= kBuildHoldSec;
+			m_rtsLongPress.active = false;
+
+			if (isClick && !m_rtsSelect.selected.empty()) {
+				glm::mat4 invVP = glm::inverse(pickViewProj());
+				glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
+				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
+				glm::vec3 rayOrigin = glm::vec3(nearW);
+				glm::vec3 dir = glm::normalize(glm::vec3(farW) - rayOrigin);
+				auto hit = civcraft::raycastBlocks(m_server->chunks(), rayOrigin, dir, 200.0f);
+				if (hit) {
+					glm::vec3 center = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
+					civcraft::CommandKind kind = isBuildCmd
+						? civcraft::CommandKind::Build : civcraft::CommandKind::Walk;
+					std::vector<civcraft::EntityId> eids;
+					std::vector<glm::ivec3> starts;
+					for (auto eid : m_rtsSelect.selected) {
+						civcraft::Entity* e = m_server->getEntity(eid);
+						if (!e) continue;
+						eids.push_back(eid);
+						starts.push_back(glm::ivec3(
+							(int)std::floor(e->position.x),
+							(int)std::floor(e->position.y),
+							(int)std::floor(e->position.z)));
+					}
+					if (!eids.empty()) {
+						glm::ivec3 gi{(int)std::floor(center.x),
+						              (int)std::floor(center.y),
+						              (int)std::floor(center.z)};
+						m_rtsExec.planGroup(eids, starts, gi,
+							m_server->chunks(), m_server->blockRegistry(), kind);
+						std::printf("[vk-rts] %s order: %zu entities → (%.1f,%.1f,%.1f) hold=%.2fs\n",
+							isBuildCmd ? "BUILD" : "Move",
+							eids.size(), center.x, center.y, center.z, holdSec);
+						for (auto eid : eids) {
+							m_moveOrders[eid] = {center, true};
+							if (m_agentClient && eid != m_server->localPlayerId())
+								m_agentClient->pauseAgent(eid);
+						}
+					}
+				}
+			} else if (!isClick) {
+				// Shift-at-release: add to selection; no modifier: replace.
+				bool shiftHeld =
+					glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
+					glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+				std::unordered_set<civcraft::EntityId> existing;
+				if (shiftHeld)
+					existing.insert(m_rtsSelect.selected.begin(),
+					                m_rtsSelect.selected.end());
+				else
+					m_rtsSelect.selected.clear();
+				size_t added = 0;
+				glm::mat4 vp = pickViewProj();
+				m_server->forEachEntity([&](civcraft::Entity& e) {
+					if (!e.def().isLiving()) return;
+					if (!e.def().hasTag("humanoid")) return;
+					float cy = e.position.y + e.def().collision_box_max.y * 0.5f;
+					glm::vec3 anchor(e.position.x, cy, e.position.z);
+					glm::vec4 clip = vp * glm::vec4(anchor, 1.0f);
+					if (clip.w <= 0) return;
+					float sx = clip.x / clip.w;
+					float sy = clip.y / clip.w;
+					if (sx < x0 || sx > x1 || sy < y0 || sy > y1) return;
+					if (shiftHeld && existing.count(e.id())) return;
+					m_rtsSelect.selected.push_back(e.id());
+					added++;
+				});
+				if (added > 0)
+					std::printf("[vk-rts] %s %zu unit%s (total %zu)\n",
+						shiftHeld ? "added" : "selected", added,
+						added == 1 ? "" : "s", m_rtsSelect.selected.size());
+			}
+		}
+
+		// Drive commanded units, then clean up arrived/removed.
+		m_rtsExec.driveRemote(*m_server, m_server->localPlayerId());
+		std::vector<civcraft::EntityId> arrived;
+		for (auto& [eid, order] : m_moveOrders) {
+			if (!order.active || !m_server->getEntity(eid) || !m_rtsExec.has(eid))
+				arrived.push_back(eid);
+		}
+		for (auto eid : arrived) {
+			m_moveOrders.erase(eid);
+			if (m_agentClient && eid != m_server->localPlayerId())
+				m_agentClient->resumeAgent(eid);
+		}
+	} else if (!m_uiWantsCursor) {
+		if (rtsLike) {
+			// RPG/RTS: click-to-move on edge
+			if (lmbNow && !m_lmbLast)
+				clickToMove();
+		} else {
+			// FPS/TPS LMB: attack entity (if closer) or break block.
+			bool lmbEdge = (lmbNow && !m_lmbLast);
+			bool lmbHeld = (lmbNow && m_mouseCaptured);
+
+			if (lmbEdge || lmbHeld) {
+				glm::vec3 eye = m_cam.position;
+				glm::vec3 dir = m_cam.front();
+
+				// Entity attack priority. Held+CD so mash = hold (ARPG feel).
+				bool entityAttacked = false;
+				if ((lmbEdge || lmbHeld) && m_attackCD <= 0) {
+					std::vector<civcraft::RaycastEntity> ents;
+					civcraft::EntityId myId = m_server->localPlayerId();
+					m_server->forEachEntity([&](civcraft::Entity& e) {
+						if (!e.def().isLiving()) return;
+						ents.push_back({e.id(), e.typeId(), e.position,
+							e.def().collision_box_min, e.def().collision_box_max,
+							e.goalText, e.hasError});
+					});
+					auto eHit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
+					if (eHit) {
+						auto blockHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+						bool entityCloser = !blockHit || eHit->distance <= blockHit->distance;
+						if (entityCloser) {
+							entityAttacked = true;
+							m_attackCD = kTune.attackCD;
+							auto* me = playerEntity();
+							if (me) {
+								Slash sw;
+								sw.center = me->position + glm::vec3(0, kTune.playerHeight * 0.6f, 0);
+								sw.dir    = playerForward();
+								m_slashes.push_back(sw);
+							}
+							m_handSwingT = 0.0f;
+							tryServerAttack();
+						}
+					}
+				}
+
+				// Block breaking (if no entity hit, break CD enforced).
+				if (!entityAttacked && m_breakCD <= 0) {
+					m_handSwingT = 0.0f;
+					if (m_adminMode) {
+						digInFront();
+						m_breakCD = 0.15f;
+					} else {
+						auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+						if (hit) {
+							glm::ivec3 bp = hit->blockPos;
+							if (m_breaking.active && m_breaking.target == bp) {
+								m_breaking.hits++;
+							} else {
+								m_breaking.target = bp;
+								m_breaking.hits = 1;
+								m_breaking.active = true;
+							}
+							m_breaking.timer = 0;
+							m_breakCD = 0.25f;
+
+							FloatText ft;
+							ft.worldPos = glm::vec3(bp) + glm::vec3(0.5f, 1.2f, 0.5f);
+							ft.color    = glm::vec3(0.9f, 0.8f, 0.6f);
+							ft.text     = std::to_string(m_breaking.hits) + "/3";
+							ft.lifetime = 0.5f;
+							ft.rise     = 0.6f;
+							m_floaters.push_back(ft);
+
+							if (m_breaking.hits >= 3) {
+								digInFront();
+								m_breaking.active = false;
+								m_breaking.hits = 0;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	m_lmbLast = lmbNow;
+}
+
+void Game::processRmbInput(float dt) {
+	(void)dt;
+	// RMB — FPS/TPS: inspect (edge) or place (held+CD). RPG/RTS: click action.
+	bool rmbPressed = false;
+	bool rmbIsHeld  = false;
+	{
+		int rmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT);
+		bool rmbNow = (rmb == GLFW_PRESS);
+		bool rtsLikeMode = (m_cam.mode == civcraft::CameraMode::RPG ||
+		                    m_cam.mode == civcraft::CameraMode::RTS);
+		if (rtsLikeMode) {
+			rmbPressed = m_rightClick.action;
+			m_rightClick.action = false;
+		} else {
+			bool rmbEdge = (rmbNow && !m_rmbLast && m_mouseCaptured);
+			rmbIsHeld    = (rmbNow && m_mouseCaptured);
+			rmbPressed   = rmbEdge;
+		}
+		m_rmbLast = rmbNow;
+	}
+
+	// RTS drag-command state machine. In RTS mode with a non-empty selection,
+	// RMB-hold-and-drag defines a ground circle; release opens the action wheel.
+	// Pure RMB-click (no drag) falls through to the legacy release-selection
+	// handler below, which cancels the selection and resumes AI — the same
+	// semantics as the Cancel slice.
+	if (m_cam.mode == civcraft::CameraMode::RTS
+	    && !m_rtsSelect.selected.empty()
+	    && !m_rtsWheel.active) {
+		bool rmbDown = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT)
+		               == GLFW_PRESS;
+		double mxD, myD;
+		glfwGetCursorPos(m_window, &mxD, &myD);
+		float fbWf = (float)m_fbW, fbHf = (float)m_fbH;
+		float ndcX = fbWf > 0 ? ((float)(mxD / fbWf) * 2.0f - 1.0f) : 0.0f;
+		float ndcY = fbHf > 0 ? (1.0f - (float)(myD / fbHf) * 2.0f) : 0.0f;
+		auto raycastGround = [&](float nx, float ny, glm::vec3& out) -> bool {
+			glm::mat4 invVP = glm::inverse(pickViewProj());
+			glm::vec4 nearW = invVP * glm::vec4(nx, ny, 0.0f, 1.0f); nearW /= nearW.w;
+			glm::vec4 farW  = invVP * glm::vec4(nx, ny, 1.0f, 1.0f); farW  /= farW.w;
+			glm::vec3 o = glm::vec3(nearW);
+			glm::vec3 d = glm::normalize(glm::vec3(farW) - o);
+			auto hit = civcraft::raycastBlocks(m_server->chunks(), o, d, 200.0f);
+			if (!hit) return false;
+			out = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
+			return true;
+		};
+		// Start drag on RMB press edge.
+		if (rmbDown && !m_rtsDragCmd.active) {
+			m_rtsDragCmd.active        = true;
+			m_rtsDragCmd.startNdc      = {ndcX, ndcY};
+			m_rtsDragCmd.currentNdc    = {ndcX, ndcY};
+			m_rtsDragCmd.hasStartWorld = raycastGround(ndcX, ndcY,
+			                                           m_rtsDragCmd.startWorld);
+			m_rtsDragCmd.currentWorld  = m_rtsDragCmd.startWorld;
+			m_rtsDragCmd.radiusWorld   = 0.0f;
+		}
+		// Track while held.
+		if (rmbDown && m_rtsDragCmd.active) {
+			m_rtsDragCmd.currentNdc = {ndcX, ndcY};
+			if (m_rtsDragCmd.hasStartWorld) {
+				glm::vec3 cur;
+				if (raycastGround(ndcX, ndcY, cur)) {
+					m_rtsDragCmd.currentWorld = cur;
+					float dx = cur.x - m_rtsDragCmd.startWorld.x;
+					float dz = cur.z - m_rtsDragCmd.startWorld.z;
+					float r  = std::sqrt(dx * dx + dz * dz);
+					// Hard cap — 16 blocks is already more than enough for any
+					// wheel command. Lets the ring stop growing past the cap
+					// while still tracking the cursor so the hover dot tracks.
+					const float kMaxRadius = 16.0f;
+					m_rtsDragCmd.radiusWorld = std::min(r, kMaxRadius);
+				}
+			}
+		}
+		// Release: open wheel on meaningful drag, else fall through as click.
+		if (!rmbDown && m_rtsDragCmd.active) {
+			float dxn = m_rtsDragCmd.currentNdc.x - m_rtsDragCmd.startNdc.x;
+			float dyn = m_rtsDragCmd.currentNdc.y - m_rtsDragCmd.startNdc.y;
+			bool dragged = (dxn * dxn + dyn * dyn) > 0.0004f
+			               && m_rtsDragCmd.hasStartWorld
+			               && m_rtsDragCmd.radiusWorld > 0.5f;
+			if (dragged) {
+				m_rtsWheel.active            = true;
+				m_rtsWheel.centerNdc         = m_rtsDragCmd.currentNdc;
+				m_rtsWheel.circleCenterWorld = m_rtsDragCmd.startWorld;
+				m_rtsWheel.circleRadiusWorld = std::max(m_rtsDragCmd.radiusWorld, 1.5f);
+				m_rtsWheel.hoverSlice        = -1;
+				// Suppress the legacy click-release path — wheel controls the fate now.
+				rmbPressed = false;
+				m_rightClick.action = false;
+			}
+			m_rtsDragCmd.active = false;
+		}
+	}
+	// RMB first takes precedence to release RTS-selected units back to their
+	// default behavior (works in any camera mode — you can box-select in RTS,
+	// switch to TPS, and still drop the group). Skips place/inspect when it fires.
+	if (rmbPressed && !m_rtsSelect.selected.empty() && !m_rtsWheel.active) {
+		for (auto eid : m_rtsSelect.selected) {
+			m_server->sendCancelGoal(eid);
+			if (m_agentClient && eid != m_server->localPlayerId())
+				m_agentClient->resumeAgent(eid);
+			m_moveOrders.erase(eid);
+		}
+		std::printf("[vk-rts] RMB released %zu unit%s → default behavior\n",
+			m_rtsSelect.selected.size(),
+			m_rtsSelect.selected.size() == 1 ? "" : "s");
+		m_rtsSelect.selected.clear();
+		rmbPressed = false;
+		rmbIsHeld  = false;
+	}
+	// Held-place fires every kTune.placeCD s while RMB held in FPS/TPS.
+	if (!rmbPressed && rmbIsHeld && m_placeCD <= 0) {
+		rmbPressed = true;
+	}
+	if (rmbPressed && m_breakCD <= 0) {
+		// Ray dir: cursor for RPG/RTS, camera forward otherwise.
+		glm::vec3 eye = m_cam.position;
+		glm::vec3 dir = m_cam.front();
+		if (m_cam.mode == civcraft::CameraMode::RPG ||
+		    m_cam.mode == civcraft::CameraMode::RTS) {
+			double mx, my;
+			glfwGetCursorPos(m_window, &mx, &my);
+			int ww = m_fbW, wh = m_fbH;
+			if (ww > 0 && wh > 0) {
+				float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
+				float ndcY = 1.0f - (float)(my / wh) * 2.0f;
+				glm::mat4 invVP = glm::inverse(viewProj());
+				glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
+				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
+				dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
+			}
+		}
+
+		// Entity inspect if closer than any block.
+		bool inspectTriggered = false;
+		{
+			std::vector<civcraft::RaycastEntity> ents;
+			civcraft::EntityId myId = m_server->localPlayerId();
+			m_server->forEachEntity([&](civcraft::Entity& e) {
+				if (!e.def().isLiving()) return;
+				ents.push_back({e.id(), e.typeId(), e.position,
+					e.def().collision_box_min, e.def().collision_box_max,
+					e.goalText, e.hasError});
+			});
+			auto eHit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
+			if (eHit) {
+				auto blockHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+				bool entityCloser = !blockHit || eHit->distance < blockHit->distance;
+				if (entityCloser) {
+					m_inspectedEntity = eHit->entityId;
+					m_server->sendGetInventory(eHit->entityId);
+					inspectTriggered = true;
+				}
+			}
+		}
+
+		// Interact-first: doors, TNT, buttons. If the hit block isn't
+		// interactive, fall through to placeBlock(). An open door grazed
+		// along the ray counts as the interact target so you can click-close
+		// a door you're standing in front of.
+		if (!inspectTriggered) {
+			bool didInteract = false;
+			auto bHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+			if (bHit) {
+				glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
+				BlockId bid = bHit->hasInteract ? bHit->interactBlockId : bHit->blockId;
+				const auto& bdef = m_server->blockRegistry().get(bid);
+				bool interactive = (bdef.mesh_type == civcraft::MeshType::Door
+				                 || bdef.mesh_type == civcraft::MeshType::DoorOpen
+				                 || bdef.string_id == civcraft::BlockType::TNT);
+				if (interactive) {
+					civcraft::ActionProposal p;
+					p.type     = civcraft::ActionProposal::Interact;
+					p.actorId  = m_server->localPlayerId();
+					p.blockPos = bp;
+					m_server->sendAction(p);
+					civcraft::GameLogger::instance().emit("ACTION",
+						"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
+					didInteract = true;
+				}
+			}
+			if (!didInteract) {
+				placeBlock();
+				m_placeCD = kTune.placeCD;
+			}
+		}
+	}
+
+}
+
+void Game::processMmbInput() {
+	// MMB: rotate held block if it's rotatable, else eyedropper
+	// (pick block type without breaking). Context-sensitive so we
+	// keep both features without stealing a binding.
+	int mmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_MIDDLE);
+	bool mmbNow = (mmb == GLFW_PRESS);
+	if (mmbNow && !m_mmbLast && !m_uiWantsCursor) {
+		if (isHeldBlockRotatable()) {
+			cyclePlacementRotation();
+			m_mmbLast = mmbNow;
+			return;
+		}
+		glm::vec3 eye = m_cam.position;
+		glm::vec3 dir = m_cam.front();
+		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 16.0f);
+		if (hit) {
+			const auto& bdef = m_server->blockRegistry().get(hit->blockId);
+			// MMB eyedropper: select the hotbar slot that holds this block
+			// type (if any) so RMB will place it. Slots not carrying the
+			// item remain untouched; if no slot has it, selection stays put.
+			auto* me = playerEntity();
+			if (me && me->inventory) {
+				for (int s = 0; s < civcraft::Hotbar::SLOTS; s++) {
+					if (m_hotbar.get(s) == bdef.string_id &&
+					    me->inventory->count(bdef.string_id) > 0) {
+						m_hotbar.selected = s;
+						break;
+					}
+				}
+			}
+			FloatText ft;
+			ft.worldPos = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.4f, 0.5f);
+			ft.color    = glm::vec3(0.55f, 0.75f, 1.0f);
+			std::string name = bdef.string_id;
+			auto colon = name.find(':');
+			if (colon != std::string::npos) name = name.substr(colon + 1);
+			ft.text     = "PICK: " + name;
+			ft.lifetime = 0.6f;
+			m_floaters.push_back(ft);
+		}
+	}
+	m_mmbLast = mmbNow;
 }
 
 } // namespace civcraft::vk

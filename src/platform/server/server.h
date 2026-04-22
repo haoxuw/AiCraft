@@ -1090,6 +1090,16 @@ public:
 private:
 	void resolveActions(float dt);
 
+	// Per-action-type handlers. resolveActions drains the proposal queue
+	// and dispatches each entry here. Each takes the proposal + any
+	// tick-local state the dispatcher is accumulating (nudgedThisTick).
+	void resolveMoveAction    (ActionProposal p);
+	void resolveRelocateAction(const ActionProposal& p,
+	                            std::unordered_set<EntityId>& nudgedThisTick);
+	void resolveConvertAction (ActionProposal p,
+	                            std::unordered_set<EntityId>& nudgedThisTick);
+	void resolveInteractAction(const ActionProposal& p);
+
 	ActionStats m_actionStats;
 	TickProfile m_lastTickProfile;
 	std::unique_ptr<World> m_world;
