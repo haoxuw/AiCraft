@@ -66,7 +66,11 @@ namespace civcraft::net {
 // v8: S_REMOVE — trailing u8 `reason` (EntityRemoveReason). v7 clients still
 //     parse the id-only prefix; newer clients branch on reason for FX/SFX
 //     (puff particle + no death sound on owner_offline).
-static constexpr uint32_t PROTOCOL_VERSION = 8;
+// v9: ActionProposal.placeParam2 (u8, after Convert.convertInto). Client picks
+//     the orientation at placement time (Tab/MMB-scroll) instead of the
+//     server hardcoding it. Mixed-version chatter isn't supported — the
+//     field's position is load-bearing for rehydrating the Interact tail.
+static constexpr uint32_t PROTOCOL_VERSION = 9;
 
 // S_REMOVE trailing byte. Server writes it unconditionally (from v8); a v7
 // client stops reading after the entity id, so appending a byte is safe.
@@ -256,6 +260,7 @@ inline void serializeAction(WriteBuffer& buf, const ActionProposal& a) {
 	buf.writeI32(a.toCount);
 	writeContainer(buf, a.convertFrom);
 	writeContainer(buf, a.convertInto);
+	buf.writeU8(a.placeParam2);
 	// Interact
 	buf.writeIVec3(a.blockPos);
 	buf.writeI16(a.appearanceIdx);
@@ -294,6 +299,8 @@ inline ActionProposal deserializeAction(ReadBuffer& buf) {
 	a.toCount     = buf.readI32();
 	a.convertFrom = readContainer(buf);
 	a.convertInto = readContainer(buf);
+	if (!buf.hasMore()) return a;
+	a.placeParam2 = buf.readU8();
 	// Interact
 	if (!buf.hasMore()) return a;
 	a.blockPos = buf.readIVec3();

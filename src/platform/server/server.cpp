@@ -383,17 +383,38 @@ void GameServer::resolveActions(float dt) {
 			// the inventory nudge — the optimistic log-pickup still needs to
 			// be rolled back. Other codes are genuine bugs and stay loud.
 			//
-			// TODO(predicted-break snap-back): we don't re-emit onBlockChange
-			// on reject, so a player's optimistically-broken block would
-			// leave a phantom hole if rejected. Today the only reachable
-			// player reject is SourceBlockGone (block already AIR, prediction
-			// correct); other codes are config bugs. Revisit if that changes.
+			// If the Convert touched a block container (break OR place), also
+			// re-emit onBlockChange for that position with the current server
+			// state. A client that optimistically mutated the block locally
+			// (predictBlockBreak / predictBlockPlace) needs this snap-back
+			// otherwise it keeps a phantom block forever.
+			auto renudgeBlock = [&](const glm::ivec3& bp) {
+				if (!m_callbacks.onBlockChange) return;
+				BlockId bid = m_world->getBlock(bp.x, bp.y, bp.z);
+				ChunkPos cp = worldToChunk(bp.x, bp.y, bp.z);
+				Chunk* c = m_world->getChunk(cp);
+				uint8_t p2 = 0, app = 0;
+				if (c) {
+					int lx = ((bp.x % 16) + 16) % 16;
+					int ly = ((bp.y % 16) + 16) % 16;
+					int lz = ((bp.z % 16) + 16) % 16;
+					p2 = c->getParam2(lx, ly, lz);
+					app = c->getAppearance(lx, ly, lz);
+				}
+				m_callbacks.onBlockChange(
+					BlockChange{bp, bid, bid, p2, p2, app, app},
+					BroadcastPriority::High);
+			};
 			auto nudge = [&](ActionRejectCode code, const std::string& why) {
 				char detail[256];
 				std::snprintf(detail, sizeof(detail), "from=%s to=%s: %s",
 				              p.fromItem.c_str(), p.toItem.c_str(), why.c_str());
 				if (code != ActionRejectCode::SourceBlockGone)
 					logActionReject("Convert", p.actorId, rejectCodeName(code), detail);
+				if (p.convertFrom.kind == Container::Kind::Block)
+					renudgeBlock(p.convertFrom.pos);
+				if (p.convertInto.kind == Container::Kind::Block)
+					renudgeBlock(p.convertInto.pos);
 				if (nudgedThisTick.count(p.actorId)) return;
 				nudgedThisTick.insert(p.actorId);
 				if (actor->inventory && m_callbacks.onInventoryChange)
@@ -554,8 +575,15 @@ void GameServer::resolveActions(float dt) {
 				Chunk* c = m_world->getChunk(cp);
 				if (!c || !placedDef) break;  // rare race vs pre-check
 
-				// Door: auto-detect hinge from neighbors.
+				// param2 selection:
+				//   • Door  — auto-hinge from neighbors (ignores client param2).
+				//   • FourDir — honor client pick (Tab / MMB-scroll picks it).
+				//   • Everything else — 0.
 				uint8_t placeP2 = 0;
+				if (placedDef->param2type == Param2Type::FourDir &&
+				    placedDef->mesh_type != MeshType::Door) {
+					placeP2 = p.placeParam2 & 0x3;
+				}
 				if (placedDef->mesh_type == MeshType::Door) {
 					auto isSolidCube = [&](int nx, int ny, int nz) {
 						const BlockDef& nd = m_world->blocks.get(m_world->getBlock(nx, ny, nz));

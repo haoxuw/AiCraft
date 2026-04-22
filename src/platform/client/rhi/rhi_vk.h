@@ -45,9 +45,14 @@ public:
 	                const float* points,
 	                uint32_t pointCount) override;
 	void drawCrackOverlay(const SceneParams& scene,
-	                      const float blockPos[3],
+	                      const float aabbMin[3],
+	                      const float aabbMax[3],
 	                      int stage,
 	                      float time) override;
+	void drawGhostBox(const SceneParams& scene,
+	                  const float aabbMin[3],
+	                  const float aabbMax[3],
+	                  const float rgba[4]) override;
 	void drawUi2D(const float* vertsPosUV,
 	              uint32_t vertCount,
 	              int mode,
@@ -117,6 +122,7 @@ private:
 	bool ensureRibbonVertexCapacity(int frame, VkDeviceSize bytes);
 	bool createCrackOverlayPipeline();
 	bool createCrackOverlayCube();
+	bool createGhostBoxPipeline();
 	bool createUi2DResources();
 	bool uploadFontAtlas();
 	bool ensureUi2DVertexCapacity(int frame, VkDeviceSize bytes);
@@ -250,12 +256,18 @@ private:
 	VkDeviceSize m_ribbonVtxCursor[kFramesInFlight]{};  // bytes written this frame
 
 	// Block-break crack overlay. One static vertex buffer (unit cube, 36
-	// verts) shared across frames; each draw stamps it at the targeted
-	// block via push constants.
+	// verts) shared across frames; each draw stretches it to the target
+	// AABB pushed in PC and the frag shader computes procedural Voronoi
+	// cell-edge cracks per face.
 	VkPipelineLayout m_crackLayout = VK_NULL_HANDLE;
 	VkPipeline m_crackPipeline = VK_NULL_HANDLE;
 	VkBuffer m_crackCubeBuf = VK_NULL_HANDLE;
 	VkDeviceMemory m_crackCubeMem = VK_NULL_HANDLE;
+
+	// Ghost box (placement preview). Shares the crack cube VB; its own
+	// pipeline uses alpha blend + depth-test-less + no depth write.
+	VkPipelineLayout m_ghostLayout = VK_NULL_HANDLE;
+	VkPipeline m_ghostPipeline = VK_NULL_HANDLE;
 
 	// 2D UI / text. 512×192 R8 SDF atlas bound once. Per-frame cursor
 	// buffer (mirrors ribbon pattern). PC: { vec4 color; ivec4 mode }.

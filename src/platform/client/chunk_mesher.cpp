@@ -337,6 +337,85 @@ ChunkMesher::buildMeshFromSnapshot(const PaddedSnapshot& padded, ChunkPos cpos,
 				eq({wx(0,1),y5,wz(0,1)},{wx(0,1),y1,wz(0,1)},{wx(0,.5f),y1,wz(0,.5f)},{wx(0,.5f),y5,wz(0,.5f)}, rn(-1,0),  cs);
 				eq({wx(1,0),y0,wz(1,0)},{wx(1,0),y5,wz(1,0)},{wx(1,1),y5,wz(1,1)},{wx(1,1),y0,wz(1,1)}, rn(1,0),           cs);
 				eq({wx(1,.5f),y5,wz(1,.5f)},{wx(1,.5f),y1,wz(1,.5f)},{wx(1,1),y1,wz(1,1)},{wx(1,1),y5,wz(1,1)}, rn(1,0),   cs);
+			} else if (bdef.mesh_type == MeshType::Slab) {
+				uint8_t p2 = padded.param2[padIdx(lx, ly, lz)];
+				bool top = (p2 & 0x1) != 0;
+				float y0 = fy + (top ? 0.5f : 0.0f);
+				float y1 = fy + (top ? 1.0f : 0.5f);
+				emitBox(fx, y0, fz, fx+1, y1, fz+1,
+				        bdef.color_top, bdef.color_side, a);
+			} else if (bdef.mesh_type == MeshType::Pillar) {
+				uint8_t p2 = padded.param2[padIdx(lx, ly, lz)];
+				const float t = 0.25f;
+				switch (p2 % 3) {
+					case 0:  // Y-axis
+						emitBox(fx+t, fy,     fz+t, fx+1-t, fy+1,   fz+1-t,
+						        bdef.color_top, bdef.color_side, a); break;
+					case 1:  // X-axis
+						emitBox(fx,   fy+t,   fz+t, fx+1,   fy+1-t, fz+1-t,
+						        bdef.color_top, bdef.color_side, a); break;
+					case 2:  // Z-axis
+						emitBox(fx+t, fy+t,   fz,   fx+1-t, fy+1-t, fz+1,
+						        bdef.color_top, bdef.color_side, a); break;
+				}
+			} else if (bdef.mesh_type == MeshType::Trapdoor) {
+				uint8_t p2 = padded.param2[padIdx(lx, ly, lz)];
+				bool open = (p2 & 0x4) != 0;
+				if (!open) {
+					emitBox(fx, fy, fz, fx+1, fy+0.1f, fz+1,
+					        bdef.color_top, bdef.color_side, a);
+				} else switch (p2 & 0x3) {
+					case 0: emitBox(fx, fy, fz,      fx+1,    fy+1, fz+0.1f,
+					                bdef.color_top, bdef.color_side, a); break;
+					case 1: emitBox(fx+0.9f, fy, fz, fx+1,    fy+1, fz+1,
+					                bdef.color_top, bdef.color_side, a); break;
+					case 2: emitBox(fx, fy, fz+0.9f, fx+1,    fy+1, fz+1,
+					                bdef.color_top, bdef.color_side, a); break;
+					case 3: emitBox(fx, fy, fz,      fx+0.1f, fy+1, fz+1,
+					                bdef.color_top, bdef.color_side, a); break;
+				}
+			} else if (bdef.mesh_type == MeshType::Torch) {
+				uint8_t p2 = padded.param2[padIdx(lx, ly, lz)];
+				const float r = 0.07f;
+				const float len = 0.6f;
+				float x0,y0,z0,x1,y1,z1;
+				switch (p2 % 6) {
+					case 0:  x0=fx+0.5f-r; y0=fy;            z0=fz+0.5f-r;
+					         x1=fx+0.5f+r; y1=fy+len;        z1=fz+0.5f+r; break;
+					case 1:  x0=fx+0.65f;  y0=fy+0.2f;       z0=fz+0.5f-r;
+					         x1=fx+0.85f;  y1=fy+0.2f+len;   z1=fz+0.5f+r; break;
+					case 2:  x0=fx+0.15f;  y0=fy+0.2f;       z0=fz+0.5f-r;
+					         x1=fx+0.35f;  y1=fy+0.2f+len;   z1=fz+0.5f+r; break;
+					case 3:  x0=fx+0.5f-r; y0=fy+0.2f;       z0=fz+0.65f;
+					         x1=fx+0.5f+r; y1=fy+0.2f+len;   z1=fz+0.85f; break;
+					case 4:  x0=fx+0.5f-r; y0=fy+0.2f;       z0=fz+0.15f;
+					         x1=fx+0.5f+r; y1=fy+0.2f+len;   z1=fz+0.35f; break;
+					default: x0=fx+0.5f-r; y0=fy+1.0f-len;   z0=fz+0.5f-r;
+					         x1=fx+0.5f+r; y1=fy+1.0f;       z1=fz+0.5f+r; break;
+				}
+				emitBox(x0, y0, z0, x1, y1, z1,
+				        bdef.color_top, bdef.color_side, a);
+			} else if (bdef.mesh_type == MeshType::CornerStair) {
+				// Bottom slab + two upper quarters forming an L whose
+				// missing corner points at p2's direction.
+				uint8_t p2 = padded.param2[padIdx(lx, ly, lz)] & 0x3;
+				emitBox(fx, fy, fz, fx+1, fy+0.5f, fz+1,
+				        bdef.color_top, bdef.color_side, a);
+				float ax0,az0,ax1,az1, bx0,bz0,bx1,bz1;
+				switch (p2) {
+					case 0: ax0=0;    az0=0;    ax1=0.5f; az1=1;
+					        bx0=0.5f; bz0=0;    bx1=1;    bz1=0.5f; break;
+					case 1: ax0=0.5f; az0=0;    ax1=1;    az1=1;
+					        bx0=0;    bz0=0;    bx1=0.5f; bz1=0.5f; break;
+					case 2: ax0=0.5f; az0=0;    ax1=1;    az1=1;
+					        bx0=0;    bz0=0.5f; bx1=0.5f; bz1=1;    break;
+					default:ax0=0;    az0=0;    ax1=0.5f; az1=1;
+					        bx0=0.5f; bz0=0.5f; bx1=1;    bz1=1;    break;
+				}
+				emitBox(fx+ax0, fy+0.5f, fz+az0, fx+ax1, fy+1, fz+az1,
+				        bdef.color_top, bdef.color_side, a);
+				emitBox(fx+bx0, fy+0.5f, fz+bz0, fx+bx1, fy+1, fz+bz1,
+				        bdef.color_top, bdef.color_side, a);
 			} else if (bdef.mesh_type == MeshType::Door) {
 				emitBox(fx, fy, fz, fx+1, fy+1, fz+0.1f,
 				        bdef.color_top, bdef.color_side, a);

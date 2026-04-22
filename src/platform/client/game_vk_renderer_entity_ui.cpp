@@ -270,6 +270,78 @@ void EntityUiRenderer::renderRTSDragCommand() {
 	const float kPi = 3.14159265f;
 	float aspect = g.m_aspect > 0 ? g.m_aspect : 1.0f;
 
+	// Smart cursor hint — while selection exists and no drag/wheel is active,
+	// raycast under the cursor and show a one-word hint telling the player
+	// what a quick RMB-drag (or LMB action) will do. Helps differentiate the
+	// four wheel slices before the wheel even opens.
+	if (!g.m_rtsSelect.selected.empty()
+	    && !g.m_rtsDragCmd.active && !g.m_rtsWheel.active && g.m_server) {
+		double mxD, myD;
+		glfwGetCursorPos(g.m_window, &mxD, &myD);
+		float fbWf = (float)g.m_fbW, fbHf = (float)g.m_fbH;
+		if (fbWf > 0 && fbHf > 0) {
+			float ndcX = (float)(mxD / fbWf) * 2.0f - 1.0f;
+			float ndcY = 1.0f - (float)(myD / fbHf) * 2.0f;
+
+			// pickViewProj() — matches the raycasts elsewhere (no Y-flip).
+			glm::mat4 invVP = glm::inverse(g.pickViewProj());
+			glm::vec4 nW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nW /= nW.w;
+			glm::vec4 fW = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); fW /= fW.w;
+			glm::vec3 eye(nW);
+			glm::vec3 dir = glm::normalize(glm::vec3(fW) - glm::vec3(nW));
+
+			const char*  label = nullptr;
+			const float  kGatherCol[4] = {0.55f, 0.95f, 0.55f, 0.95f};
+			const float  kMineCol[4]   = {0.82f, 0.82f, 0.88f, 0.95f};
+			const float  kAttackCol[4] = {1.00f, 0.45f, 0.45f, 0.95f};
+			const float  kWalkCol[4]   = {0.98f, 0.78f, 0.24f, 0.85f};
+			const float* col = kWalkCol;
+
+			// Entities first — attack target wins over the block behind it.
+			std::vector<civcraft::RaycastEntity> ents;
+			g.m_server->forEachEntity([&](civcraft::Entity& e) {
+				if (!e.def().isLiving()) return;
+				if (e.def().hasTag("humanoid")) return;
+				if (e.removed || e.hp() <= 0) return;
+				ents.push_back({e.id(), e.typeId(), e.position,
+					e.def().collision_box_min, e.def().collision_box_max,
+					e.goalText, e.hasError});
+			});
+			auto hitEnt = civcraft::raycastEntities(ents, eye, dir, 48.0f,
+				g.m_server->localPlayerId());
+			if (hitEnt) {
+				label = "ATTACK";
+				col   = kAttackCol;
+			} else {
+				auto hit = civcraft::raycastBlocks(
+					g.m_server->chunks(), eye, dir, 48.0f);
+				if (hit) {
+					const auto& bdef =
+						g.m_server->blockRegistry().get(hit->blockId);
+					const std::string& id = bdef.string_id;
+					if (id == "leaves" || id == "logs" || id == "wood") {
+						label = "GATHER"; col = kGatherCol;
+					} else if (id == "stone"   || id == "cobblestone"
+					        || id == "granite" || id == "marble"
+					        || id == "sandstone") {
+						label = "MINE"; col = kMineCol;
+					} else {
+						label = "WALK"; col = kWalkCol;
+					}
+				}
+			}
+
+			if (label) {
+				float scale = 0.62f;
+				float charW = 0.018f * scale;
+				float w     = (float)std::strlen(label) * charW;
+				float lx    = ndcX - w * 0.5f;
+				float ly    = ndcY - 0.065f;
+				g.m_rhi->drawText2D(label, lx, ly, scale, col);
+			}
+		}
+	}
+
 	// Drag-in-progress ring — sampled around the world circle and raycast
 	// straight down to find ground height per sample, so the ring drapes
 	// over hills/valleys. Segments whose endpoints project off-screen or
@@ -324,6 +396,54 @@ void EntityUiRenderer::renderRTSDragCommand() {
 				(uint32_t)(verts.size() / 4), /*mode=*/1, ring);
 		}
 	}
+	// Path preview — dashed line from each selected unit to the circle center,
+	// so the player can see who will converge. Straight NDC line; not a real
+	// navmesh preview (cheap, and the ring itself already indicates terrain).
+	if (g.m_rtsDragCmd.active && g.m_rtsDragCmd.hasStartWorld
+	    && !g.m_rtsSelect.selected.empty() && g.m_server) {
+		glm::vec3 ndcCenter;
+		if (g.projectWorld(g.m_rtsDragCmd.startWorld + glm::vec3(0, 0.05f, 0),
+		                   ndcCenter)) {
+			const float thickness = 0.0024f;
+			const int   kDashes   = 8;
+			const float dashFrac  = 0.55f;  // solid fraction per dash cell
+			std::vector<float> verts;
+			for (auto eid : g.m_rtsSelect.selected) {
+				civcraft::Entity* e = g.m_server->getEntity(eid);
+				if (!e) continue;
+				glm::vec3 ndcUnit;
+				if (!g.projectWorld(e->position + glm::vec3(0, 0.10f, 0),
+				                    ndcUnit)) continue;
+				glm::vec2 a{ndcUnit.x, ndcUnit.y};
+				glm::vec2 b{ndcCenter.x, ndcCenter.y};
+				glm::vec2 d = b - a;
+				float L = glm::length(d);
+				if (L < 1e-4f) continue;
+				glm::vec2 t = d / L;
+				glm::vec2 n(-t.y, t.x);
+				glm::vec2 off = n * (thickness * 0.5f);
+				for (int k = 0; k < kDashes; k++) {
+					float u0 = (float)k / (float)kDashes;
+					float u1 = u0 + dashFrac / (float)kDashes;
+					glm::vec2 p0 = a + d * u0;
+					glm::vec2 p1 = a + d * u1;
+					glm::vec2 a0 = p0 - off, a1 = p0 + off;
+					glm::vec2 b0 = p1 - off, b1 = p1 + off;
+					const float seg[] = {
+						a0.x, a0.y, 0, 0,  b0.x, b0.y, 0, 0,  b1.x, b1.y, 0, 0,
+						a0.x, a0.y, 0, 0,  b1.x, b1.y, 0, 0,  a1.x, a1.y, 0, 0,
+					};
+					verts.insert(verts.end(), std::begin(seg), std::end(seg));
+				}
+			}
+			if (!verts.empty()) {
+				const float pathCol[4] = {0.98f, 0.78f, 0.24f, 0.55f};
+				g.m_rhi->drawUi2D(verts.data(),
+					(uint32_t)(verts.size() / 4), /*mode=*/1, pathCol);
+			}
+		}
+	}
+
 	// Cursor-endpoint dot — projected from the ground-anchored currentWorld,
 	// so it sits on the terrain where the cursor ray hit, not on the cursor
 	// sprite. Also renders during idle hover (no drag) when we have a world pt.
@@ -349,11 +469,13 @@ void EntityUiRenderer::renderRTSDragCommand() {
 		g.m_rhi->drawArc2D(cx, cy, 0.0f, kRIn,
 			0.0f, 2.0f * kPi, cap, aspect, 32);
 
+		// Shift-held → non-Cancel slices show "+GATHER" etc. signaling queue.
+		bool q = g.m_rtsWheel.shiftQueue;
 		struct Slice { float a0, a1; const char* label; float labelAng; };
 		const Slice slices[4] = {
-			{      kPi / 4,  3.0f * kPi / 4, "GATHER",  kPi / 2 }, // 0 N
-			{     -kPi / 4,         kPi / 4, "ATTACK",  0.0f    }, // 1 E
-			{ -3.0f * kPi / 4,     -kPi / 4, "MINE",   -kPi / 2 }, // 2 S
+			{      kPi / 4,  3.0f * kPi / 4, q ? "+GATHER" : "GATHER",  kPi / 2 }, // 0 N
+			{     -kPi / 4,         kPi / 4, q ? "+ATTACK" : "ATTACK",  0.0f    }, // 1 E
+			{ -3.0f * kPi / 4,     -kPi / 4, q ? "+MINE"   : "MINE",   -kPi / 2 }, // 2 S
 			{  3.0f * kPi / 4,  5.0f * kPi / 4, "CANCEL", kPi    }, // 3 W
 		};
 		for (int i = 0; i < 4; i++) {

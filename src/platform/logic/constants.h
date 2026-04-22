@@ -108,6 +108,11 @@ namespace BlockType {
 	constexpr const char* Fence        = "fence";
 	constexpr const char* Farmland     = "farmland";
 	constexpr const char* Stair        = "stair";
+	constexpr const char* Slab         = "slab";
+	constexpr const char* CornerStair  = "corner_stair";
+	constexpr const char* Pillar       = "pillar";
+	constexpr const char* Trapdoor     = "trapdoor";
+	constexpr const char* Torch        = "torch";
 	constexpr const char* Glass        = "glass";
 	constexpr const char* Door         = "door";
 	constexpr const char* DoorOpen     = "door_open";

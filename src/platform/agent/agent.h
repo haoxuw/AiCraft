@@ -195,6 +195,42 @@ public:
 		e.goalText = m_goalText;
 	}
 
+	// Multi-step manual override from the RTS wheel. Installs a full Plan in
+	// place of decide()'s output; tickPlan executes it like any decide()-
+	// produced plan. When the plan finishes naturally (finishPlan → needsDecide),
+	// control returns to Python AI. The pause timer only gates decide()
+	// dispatch, not the executor — long plans still run to completion.
+	void applyPlanOverride(Plan plan, std::string goalText, Entity& e) {
+		clearPlan();
+		m_plan                = std::move(plan);
+		m_goalText            = std::move(goalText);
+		m_overridePauseTimer  = kOverridePauseSec;
+		m_needsDecide         = false;
+		rebuildViz();
+		e.goalText = m_goalText;
+	}
+
+	// Shift-queue variant: append new steps to the end of the current plan
+	// without interrupting the step in flight. Refreshes the obey-pause so
+	// decide() stays suppressed across the extended plan. If no plan is
+	// running (or the current one is already finished), falls through to
+	// applyPlanOverride so the new steps become the active plan.
+	void appendPlanOverride(Plan plan, std::string goalText, Entity& e) {
+		if (m_plan.empty() || m_stepIndex >= (int)m_plan.size()) {
+			applyPlanOverride(std::move(plan), std::move(goalText), e);
+			return;
+		}
+		for (auto& s : plan) m_plan.push_back(std::move(s));
+		if (!goalText.empty()) {
+			if (!m_goalText.empty()) m_goalText += " → ";
+			m_goalText += goalText;
+		}
+		m_overridePauseTimer = kOverridePauseSec;
+		m_needsDecide        = false;
+		rebuildViz();
+		e.goalText = m_goalText;
+	}
+
 	// Control-mode entry: player is driving this entity. No compute until resume.
 	void pause(Entity& e) {
 		clearPlan();

@@ -61,10 +61,15 @@ public:
 		// sits ~+21 above, tower peak a few more. Pad generously so no block
 		// falls out. Anchor on ground height at center — works for both flat
 		// (constant surfaceY) and natural (variable) templates.
+		//
+		// Use worldToChunk for proper floor-division on negative Y — the old
+		// std::max(0, …) clamp dropped cy=-1 chunks when a footprint dipped
+		// to y=0..-1, so placeFoundation's stone writes landed out-of-chunk
+		// and terrain grass survived (W1 regression).
 		float gh = tmpl.surfaceHeight(world.seed(),
 		                              (float)rec.centerXZ.x, (float)rec.centerXZ.y);
-		int cy0 = std::max(0, ((int)std::floor(gh) - 12) / CHUNK_SIZE);
-		int cy1 = ((int)std::ceil(gh)  + 34) / CHUNK_SIZE;
+		int cy0 = worldToChunk(0, (int)std::floor(gh) - 12, 0).y;
+		int cy1 = worldToChunk(0, (int)std::ceil(gh)  + 34, 0).y;
 
 		int chunksStamped = 0;
 		for (int cy = cy0; cy <= cy1; cy++)

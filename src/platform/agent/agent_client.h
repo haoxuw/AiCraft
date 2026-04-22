@@ -162,6 +162,30 @@ public:
 		updateMembership(eid);
 	}
 
+	// RTS wheel slice commit → install a kind-specific Plan on the agent.
+	// Clears any prior plan (including a forever-pause set by pauseAgent) and
+	// runs the given Plan end-to-end; when it finishes, decide() takes over.
+	void pushPlanOverride(EntityId eid, Plan plan, std::string goalText) {
+		auto it = m_agents.find(eid);
+		if (it == m_agents.end()) return;
+		Entity* e = m_server.getEntity(eid);
+		if (!e) return;
+		it->second.applyPlanOverride(std::move(plan), std::move(goalText), *e);
+		updateMembership(eid);
+	}
+
+	// Shift-queue variant: append Plan steps to the end of the active plan
+	// without interrupting the step in flight. Falls back to replace semantics
+	// when no plan is active.
+	void appendPlanOverride(EntityId eid, Plan plan, std::string goalText) {
+		auto it = m_agents.find(eid);
+		if (it == m_agents.end()) return;
+		Entity* e = m_server.getEntity(eid);
+		if (!e) return;
+		it->second.appendPlanOverride(std::move(plan), std::move(goalText), *e);
+		updateMembership(eid);
+	}
+
 	void pauseAgent(EntityId eid) {
 		auto it = m_agents.find(eid);
 		if (it == m_agents.end()) return;

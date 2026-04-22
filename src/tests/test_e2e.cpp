@@ -1793,6 +1793,88 @@ static std::string w4_mob_spawn_anchors() {
 }
 
 // ================================================================
+// W5: House footprints keep a buffer gap — no touching walls, no
+// overlap. Without this, two houses painted at adjacent (cx,cz)
+// offsets would share a wall and look like one building.
+// ================================================================
+static std::string w5_house_footprints_have_buffer() {
+    auto srv = makeVillageServer();
+    auto& tmpl = srv->server()->world().getTemplate();
+    auto* ctmpl = dynamic_cast<const ConfigurableWorldTemplate*>(&tmpl);
+    if (!ctmpl) return "not ConfigurableWorldTemplate";
+    auto vc = ctmpl->villageCenter(srv->server()->world().seed());
+    const auto& houses = ctmpl->pyConfig().houses;
+    if (houses.size() < 2) return "";  // only one house → nothing to compare
+
+    constexpr int kMinBuffer = 3;  // blocks of walkable gap between footprints
+    for (size_t i = 0; i < houses.size(); i++) {
+        const auto& a = houses[i];
+        int ax0 = vc.x + a.cx, ax1 = ax0 + a.w;
+        int az0 = vc.y + a.cz, az1 = az0 + a.d;
+        for (size_t j = i + 1; j < houses.size(); j++) {
+            const auto& b = houses[j];
+            int bx0 = vc.x + b.cx, bx1 = bx0 + b.w;
+            int bz0 = vc.y + b.cz, bz1 = bz0 + b.d;
+            int gapX = std::max(bx0 - ax1, ax0 - bx1);
+            int gapZ = std::max(bz0 - az1, az0 - bz1);
+            int gap  = std::max(gapX, gapZ);  // Chebyshev: either axis clears
+            if (gap < kMinBuffer) {
+                char buf[192];
+                std::snprintf(buf, sizeof(buf),
+                    "house[%zu] %s(%d,%d) %dx%d and house[%zu] %s(%d,%d) %dx%d "
+                    "have gap=%d (< %d blocks)",
+                    i, a.type.empty() ? "h" : a.type.c_str(), a.cx, a.cz, a.w, a.d,
+                    j, b.type.empty() ? "h" : b.type.c_str(), b.cx, b.cz, b.w, b.d,
+                    gap, kMinBuffer);
+                return buf;
+            }
+        }
+    }
+    return "";
+}
+
+// ================================================================
+// W6: Spawned mobs keep ≥ (halfWidthA + halfWidthB) XZ gap. Without
+// reject-sampling the old ring spawner stacked mobs at the same
+// angle for high counts, producing stuck-inside-each-other clumps.
+// ================================================================
+static std::string w6_spawned_mobs_min_separation() {
+    auto srv = makeVillageServer();
+    EntityId pid = srv->localPlayerId();
+    struct Placed { EntityId id; std::string type; glm::vec2 xz; float hw; };
+    std::vector<Placed> living;
+
+    srv->forEachEntity([&](Entity& e) {
+        if (!e.def().isLiving() || e.removed) return;
+        if (e.id() == pid) return;
+        float hw = (e.def().collision_box_max.x - e.def().collision_box_min.x) * 0.5f;
+        living.push_back({e.id(), e.typeId(),
+                          {e.position.x, e.position.z}, hw});
+    });
+    if (living.size() < 2) return "";
+
+    for (size_t i = 0; i < living.size(); i++) {
+        for (size_t j = i + 1; j < living.size(); j++) {
+            const auto& a = living[i];
+            const auto& b = living[j];
+            float minSep = a.hw + b.hw;  // hard overlap threshold (no slack)
+            float dx = a.xz.x - b.xz.x, dz = a.xz.y - b.xz.y;
+            float d = std::sqrt(dx*dx + dz*dz);
+            if (d < minSep) {
+                char buf[224];
+                std::snprintf(buf, sizeof(buf),
+                    "%s#%u and %s#%u at xz (%.2f,%.2f)/(%.2f,%.2f) "
+                    "distance=%.3f < minSep=%.3f (overlap)",
+                    a.type.c_str(), a.id, b.type.c_str(), b.id,
+                    a.xz.x, a.xz.y, b.xz.x, b.xz.y, d, minSep);
+                return buf;
+            }
+        }
+    }
+    return "";
+}
+
+// ================================================================
 // B5: pathfind.py module loads cleanly
 // ================================================================
 static std::string b5_pathfind_module_loads() {
@@ -3292,6 +3374,8 @@ int main() {
 	run("W3: house interior has no buried terrain blocks",   w3_house_interior_no_buried_terrain);
 	run("W4: villagers near monument, animals in barn",      w4_mob_spawn_anchors);
 	run("W4b: species→default behavior mapping",             w4b_default_behaviors_per_species);
+	run("W5: house footprints have buffer between them",     w5_house_footprints_have_buffer);
+	run("W6: spawned mobs keep pairwise min-separation",     w6_spawned_mobs_min_separation);
 
 	printf("\n--- Client Reconciliation ---\n");
 	run("R1: owned mobs never go stale (no red lightbulb)", r1_no_stale_entities_in_steady_state);

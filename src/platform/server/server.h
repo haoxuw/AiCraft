@@ -410,32 +410,79 @@ public:
 			return eid;
 		};
 
-		auto spawnMob = [&](const MobSpawn& ms, float baseOffset) {
+		// Reject-sampling: guarantee pairwise XZ distance ≥ sum of half-widths
+		// + slack, so spawned mobs never clip on each other. Fixed-ring/grid
+		// was count-blind: two villagers at the same angle stacked on spawn.
+		// Per-seat RNG keeps the layout deterministic across replays.
+		std::vector<std::pair<glm::vec2, float>> placedXZ;
+		std::mt19937 spawnRng((uint32_t)(m_world->seed() * 2654435761u)
+		                      ^ (uint32_t)ownerSeat ^ 0x5afeb16du);
+		constexpr float kSpawnSlack = 0.15f;  // extra gap past collision sum
+
+		auto halfWidthOf = [&](const std::string& typeId) -> float {
+			const EntityDef* d = m_world->entities.getTypeDef(typeId);
+			if (!d) return 0.4f;
+			return (d->collision_box_max.x - d->collision_box_min.x) * 0.5f;
+		};
+
+		auto candidateOk = [&](glm::vec2 cand, float hw) -> bool {
+			for (auto& [p, ohw] : placedXZ) {
+				float minSep = hw + ohw + kSpawnSlack;
+				if ((cand.x - p.x)*(cand.x - p.x) + (cand.y - p.y)*(cand.y - p.y)
+				    < minSep * minSep) return false;
+			}
+			return true;
+		};
+
+		auto spawnMob = [&](const MobSpawn& ms) {
 			AnchorInfo a = resolveAnchor(ms.anchor);
 			float radius = (ms.radius > 0) ? ms.radius : a.defaultRadius;
+			float hw = halfWidthOf(ms.typeId);
+			float fixedY = a.fixedY;
+			std::uniform_real_distribution<float> angleD(0.0f, 6.28318530718f);
+			std::uniform_real_distribution<float> uniD(0.0f, 1.0f);
 			for (int m = 0; m < ms.count; m++) {
 				std::unordered_map<std::string, PropValue> extraProps;
-				float ex, ez;
-				float fixedY = a.fixedY;
-				if (a.inside) {
-					int slotIdx = barnSlot++;
-					int gx = slotIdx % 6;
-					int gz = (slotIdx / 6) % 4;
-					ex = a.cx + (gx - 2.5f) * radius;
-					ez = a.cz + (gz - 1.5f) * radius;
-				} else {
-					float angle = (float)m / (float)ms.count * 6.28318f + baseOffset;
-					ex = a.cx + std::cos(angle) * radius;
-					ez = a.cz + std::sin(angle) * radius;
+				glm::vec2 cand{a.cx, a.cz};
+				bool placed = false;
+				for (int widen = 0; widen < 4 && !placed; widen++) {
+					float r = radius * (1.0f + 0.4f * widen);
+					for (int attempt = 0; attempt < 96; attempt++) {
+						glm::vec2 c;
+						if (a.inside) {
+							// Barn: grid cell + jitter keeps species in their
+							// pens; rejection still honors pairwise distance.
+							int slot = barnSlot++;
+							int gx = slot % 6, gz = (slot / 6) % 4;
+							float jx = (uniD(spawnRng) - 0.5f) * 0.6f;
+							float jz = (uniD(spawnRng) - 0.5f) * 0.6f;
+							c = {a.cx + (gx - 2.5f) * r + jx,
+							     a.cz + (gz - 1.5f) * r + jz};
+						} else {
+							// Uniform in disk (sqrt for area-uniform) — avoids
+							// ring clumping when N×spacing > 2πr.
+							float ang = angleD(spawnRng);
+							float rr  = std::sqrt(uniD(spawnRng)) * r;
+							c = {a.cx + std::cos(ang) * rr,
+							     a.cz + std::sin(ang) * rr};
+						}
+						if (candidateOk(c, hw)) { cand = c; placed = true; break; }
+					}
 				}
-				spawnOne(ms, ex, ez, fixedY, std::move(extraProps));
+				if (!placed) {
+					printf("[Server] Spawn reject-sample exhausted for %s #%d — "
+					       "placing at anchor (mob will overlap)\n",
+					       ms.typeId.c_str(), m);
+				}
+				spawnOne(ms, cand.x, cand.y, fixedY, std::move(extraProps));
+				placedXZ.emplace_back(cand, hw);
 			}
 		};
 
 		int mobsBefore = (int)m_world->entities.count();
 		for (int i = 0; i < (int)mobList.size(); i++) {
 			if (mobList[i].count <= 0) continue;
-			spawnMob(mobList[i], (float)i);
+			spawnMob(mobList[i]);
 		}
 		int spawned = (int)m_world->entities.count() - mobsBefore;
 		printf("[Server] Spawned %d mobs for seat=%u\n", spawned, ownerSeat);
@@ -510,8 +557,18 @@ public:
 					for (auto& [item, count] : sit->second)
 						pe->inventory->add(item, count);
 				} else {
+					// First-time starter kit — covers every shape type so a
+					// new player can verify placement + rotation (R key /
+					// MMB+scroll) + ghost preview end-to-end without
+					// having to scrounge for each block first.
 					pe->inventory->add(BlockType::Stone, 10);
 					pe->inventory->add(BlockType::Wood, 10);
+					pe->inventory->add(BlockType::Stair,       16);
+					pe->inventory->add(BlockType::Slab,        16);
+					pe->inventory->add(BlockType::CornerStair, 16);
+					pe->inventory->add(BlockType::Pillar,      16);
+					pe->inventory->add(BlockType::Trapdoor,    8);
+					pe->inventory->add(BlockType::Torch,       8);
 					pe->inventory->add("sword", 1);
 					pe->inventory->add("shield", 1);
 					pe->inventory->add("potion", 3);

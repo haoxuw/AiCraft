@@ -92,6 +92,8 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/camera.cpp
 	src/platform/client/chunk_mesher.h
 	src/platform/client/chunk_mesher.cpp
+	src/platform/logic/block_shape.h
+	src/platform/logic/block_shape.cpp
 )
 
 # LLM sidecar client (HTTP/SSE → llama-server). Client-side only — server
@@ -134,6 +136,8 @@ set(VK_SHADER_SOURCES
 	${VK_SHADER_SRC_DIR}/ribbon.frag
 	${VK_SHADER_SRC_DIR}/crack_overlay.vert
 	${VK_SHADER_SRC_DIR}/crack_overlay.frag
+	${VK_SHADER_SRC_DIR}/ghost_box.vert
+	${VK_SHADER_SRC_DIR}/ghost_box.frag
 	${VK_SHADER_SRC_DIR}/text2d.vert
 	${VK_SHADER_SRC_DIR}/text2d.frag
 	${VK_SHADER_SRC_DIR}/chunk_terrain.vert

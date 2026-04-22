@@ -136,6 +136,15 @@ public:
 	// that don't use a LocalWorld can leave the default no-op in place.
 	virtual void predictBlockBreak(glm::ivec3 /*wpos*/) {}
 
+	// Client-side prediction: apply a placement locally (write the given
+	// block + fire the usual place callbacks). Mirrors predictBlockBreak.
+	// Server rejects snap back via the re-emitted onBlockChange that
+	// GameServer::resolveActions sends on Convert reject (see server.cpp).
+	virtual void predictBlockPlace(glm::ivec3 /*wpos*/,
+	                                BlockId /*bid*/,
+	                                uint8_t /*param2*/,
+	                                uint8_t /*appearance*/) {}
+
 	// Fired on S_INVENTORY apply — client re-populates hotbar/UI views.
 	virtual void setInventoryCallback(std::function<void(EntityId)> /*onInventoryUpdate*/) {}
 

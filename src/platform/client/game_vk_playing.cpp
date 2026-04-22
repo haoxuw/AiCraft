@@ -12,6 +12,7 @@
 #include "net/server_interface.h"
 #include "logic/physics.h"
 #include "logic/action.h"
+#include "logic/block_shape.h"
 #include "logic/material_values.h"
 #include "agent/agent_client.h"
 
@@ -286,6 +287,14 @@ void Game::processInput(float dt) {
 		m_invOpen = !m_invOpen;
 	m_tabLast = tabKey;
 
+	// R: cycle placement rotation for the held block. MMB+scroll does the
+	// same thing via onScroll (which reads m_placementParam2 through the
+	// same helper).
+	bool rKey = glfwGetKey(m_window, GLFW_KEY_R) == GLFW_PRESS;
+	if (rKey && !m_rKeyLast)
+		cyclePlacementRotation(+1);
+	m_rKeyLast = rKey;
+
 	// 1..9, 0: select hotbar slot. 0 is the rightmost slot (index 9).
 	{
 		int picked = -1;
@@ -301,6 +310,14 @@ void Game::processInput(float dt) {
 			if (!m_hotbarSavePath.empty())
 				m_hotbar.saveToFile(m_hotbarSavePath);
 		}
+	}
+
+	// Reset rotation when the player changes which hotbar slot is active.
+	// Each slot gets a fresh "0 = default" on switch; feels cleaner than
+	// remembering a per-slot rotation the player might have forgotten.
+	if (m_hotbar.selected != m_placementHotbarSlot) {
+		m_placementParam2     = 0;
+		m_placementHotbarSlot = m_hotbar.selected;
 	}
 
 	// Q: drop one of the currently held item (hotbar selection). Uses
@@ -727,9 +744,17 @@ void Game::tickPlayer(float dt) {
 			else                                            hover = 3; // Cancel (W)
 		}
 		m_rtsWheel.hoverSlice = hover;
+		m_rtsWheel.shiftQueue =
+			(glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS) ||
+			(glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
 
 		if (lmbNow && !m_lmbLast) {
 			int slice = hover;
+			// Shift held → queue this command after the current plan instead of
+			// replacing it. Cancel ignores shift (always clears everything).
+			bool shiftQueue =
+				(glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS) ||
+				(glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
 			if (slice == 3 || slice == -1) {
 				// Cancel slice or click-outside-wheel: legacy release path.
 				for (auto eid : m_rtsSelect.selected) {
@@ -818,8 +843,13 @@ void Game::tickPlayer(float dt) {
 							goalLabel = "rts_patrol";
 						}
 					}
-					m_agentClient->pushPlanOverride(eid, std::move(plan),
-					                                std::move(goalLabel));
+					if (shiftQueue) {
+						m_agentClient->appendPlanOverride(eid, std::move(plan),
+						                                  std::move(goalLabel));
+					} else {
+						m_agentClient->pushPlanOverride(eid, std::move(plan),
+						                                std::move(goalLabel));
+					}
 					++handedToAgent;
 				}
 
@@ -831,8 +861,9 @@ void Game::tickPlayer(float dt) {
 						m_moveOrders[eid] = {ctr, true};
 				}
 
-				std::printf("[vk-rts] wheel: %s %zu unit%s → (%.1f,%.1f,%.1f) "
+				std::printf("[vk-rts] wheel: %s%s %zu unit%s → (%.1f,%.1f,%.1f) "
 				            "r=%.1f (agents=%d players=%zu target=%lld)\n",
+					shiftQueue ? "+" : "",
 					label, m_rtsSelect.selected.size(),
 					m_rtsSelect.selected.size() == 1 ? "" : "s",
 					ctr.x, ctr.y, ctr.z, rad,
@@ -1119,7 +1150,12 @@ after_lmb_handling:;
 					m_rtsDragCmd.currentWorld = cur;
 					float dx = cur.x - m_rtsDragCmd.startWorld.x;
 					float dz = cur.z - m_rtsDragCmd.startWorld.z;
-					m_rtsDragCmd.radiusWorld = std::sqrt(dx * dx + dz * dz);
+					float r  = std::sqrt(dx * dx + dz * dz);
+					// Hard cap — 16 blocks is already more than enough for any
+					// wheel command. Lets the ring stop growing past the cap
+					// while still tracking the cursor so the hover dot tracks.
+					const float kMaxRadius = 16.0f;
+					m_rtsDragCmd.radiusWorld = std::min(r, kMaxRadius);
 				}
 			}
 		}
@@ -1316,31 +1352,28 @@ void Game::digInFront() {
 	// reachable Convert reject for a player break is SourceBlockGone —
 	// someone else broke it first, so predicted AIR is correct anyway.
 	m_server->predictBlockBreak(hit->blockPos);
+	syncRemeshBlock(hit->blockPos);
+}
 
-	// Same-frame remesh. Without it the predict is invisible for 1–3
-	// frames: processInput runs after streamServerChunks so the dirty flag
-	// misses this frame's Pass 2, and a mid-build worker's stale result
-	// would overwrite it next frame. A single 16³ chunk meshes sub-ms on
-	// the main thread. Stale worker results for cp get dropped via
-	// m_staleInflightMeshes in drainAsyncMeshes.
-	{
-		auto divDown = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
-		const int CS = civcraft::CHUNK_SIZE;
-		civcraft::ChunkPos cp = {
-			divDown(hit->blockPos.x, CS),
-			divDown(hit->blockPos.y, CS),
-			divDown(hit->blockPos.z, CS)
-		};
-		civcraft::ChunkMesher::PaddedSnapshot snap;
-		if (civcraft::ChunkMesher::snapshotPadded(m_server->chunks(), cp, snap)) {
-			auto built = civcraft::ChunkMesher::buildMeshFromSnapshot(
-				snap, cp, m_server->blockRegistry());
-			if (m_inFlightMesh.count(cp)) m_staleInflightMeshes.insert(cp);
-			civcraft::AsyncChunkMesher::Result r{cp, std::move(built.first), std::move(built.second)};
-			applyMeshResult(std::move(r));
-			m_serverDirtyChunks.erase(cp);
-		}
-	}
+// Shared by predictBlockBreak / predictBlockPlace. Same-frame rebuild of
+// the target chunk so the optimistic edit is visible on the click frame,
+// not 1–3 frames later. See the method comment in game_vk.h.
+void Game::syncRemeshBlock(glm::ivec3 wpos) {
+	auto divDown = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+	const int CS = civcraft::CHUNK_SIZE;
+	civcraft::ChunkPos cp = {
+		divDown(wpos.x, CS),
+		divDown(wpos.y, CS),
+		divDown(wpos.z, CS)
+	};
+	civcraft::ChunkMesher::PaddedSnapshot snap;
+	if (!civcraft::ChunkMesher::snapshotPadded(m_server->chunks(), cp, snap)) return;
+	auto built = civcraft::ChunkMesher::buildMeshFromSnapshot(
+		snap, cp, m_server->blockRegistry());
+	if (m_inFlightMesh.count(cp)) m_staleInflightMeshes.insert(cp);
+	civcraft::AsyncChunkMesher::Result r{cp, std::move(built.first), std::move(built.second)};
+	applyMeshResult(std::move(r));
+	m_serverDirtyChunks.erase(cp);
 }
 
 void Game::placeBlock() {
@@ -1372,7 +1405,8 @@ void Game::placeBlock() {
 	// potion) naturally no-op — the registry lookup fails.
 	const std::string& blockType = m_hotbar.mainHand(*me->inventory);
 	if (blockType.empty()) return;
-	if (!m_server->blockRegistry().find(blockType)) return;
+	const civcraft::BlockDef* placedDef = m_server->blockRegistry().find(blockType);
+	if (!placedDef) return;
 
 	civcraft::ActionProposal p;
 	p.actorId     = m_server->localPlayerId();
@@ -1382,9 +1416,47 @@ void Game::placeBlock() {
 	p.fromCount   = 1;
 	p.toCount     = 1;
 	p.convertInto = civcraft::Container::block(hit->placePos);
+	// Server honors placeParam2 for FourDir-rotatable blocks (Stair etc.).
+	// Doors ignore it — the server auto-hinges from neighbor walls.
+	p.placeParam2 = m_placementParam2;
 	m_server->sendAction(p);
-	civcraft::GameLogger::instance().emit("ACTION", "placed %s @(%d,%d,%d)",
-		blockType.c_str(), hit->placePos.x, hit->placePos.y, hit->placePos.z);
+	civcraft::GameLogger::instance().emit("ACTION", "placed %s @(%d,%d,%d) p2=%u",
+		blockType.c_str(), hit->placePos.x, hit->placePos.y, hit->placePos.z,
+		(unsigned)m_placementParam2);
+
+	// Client-side prediction — mirror of predictBlockBreak. Writes the
+	// placed block to LocalWorld and decrements inventory locally so the
+	// player sees the block + the new hotbar count on the same frame as
+	// the click. Server's Convert reject path re-emits onBlockChange for
+	// the target cell (see server.cpp resolveActions), so if this place
+	// is rejected the follow-up S_BLOCK snaps LocalWorld back to whatever
+	// the server actually has.
+	//
+	// Doors get a ~1 round-trip hinge flicker since the server picks the
+	// hinge from neighbor walls and we predict 0 — not a correctness issue.
+	civcraft::BlockId bid = m_server->blockRegistry().getId(blockType);
+	uint8_t predictP2 = (placedDef->param2type == civcraft::Param2Type::FourDir
+	                     && placedDef->mesh_type != civcraft::MeshType::Door)
+		? m_placementParam2 : 0;
+	m_server->predictBlockPlace(hit->placePos, bid, predictP2, /*appearance=*/0);
+	if (me->inventory) me->inventory->remove(blockType, 1);
+	syncRemeshBlock(hit->placePos);
+}
+
+// Cycle the next placement orientation (+1 forward, -1 backward) within
+// the held block's shape rotation count. Bound to R key and MMB+scroll.
+// No-op if held item isn't a block or the shape isn't rotatable.
+void Game::cyclePlacementRotation(int direction) {
+	auto* me = playerEntity();
+	if (!me || !me->inventory) return;
+	const std::string& held = m_hotbar.mainHand(*me->inventory);
+	if (held.empty()) return;
+	const civcraft::BlockDef* def = m_server->blockRegistry().find(held);
+	if (!def) return;
+	int n = civcraft::getBlockShape(def->mesh_type).rotationCount();
+	if (n <= 1) return;
+	int next = ((int)m_placementParam2 + direction + n) % n;
+	m_placementParam2 = (uint8_t)next;
 }
 
 void Game::clickToMove() {

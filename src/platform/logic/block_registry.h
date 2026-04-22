@@ -19,14 +19,20 @@ enum class BlockBehavior { Passive, Active };
 // Visual mesh shape (cube is default; non-cube emits explicit boxes in mesher).
 enum class MeshType {
 	Cube,
-	Stair,     // L-step; param2 FourDir = rise direction (0=+Z, 1=+X, 2=-Z, 3=-X)
-	Door,      // closed: thin panel on -Z, 0.1 thick
-	DoorOpen,  // open: rotated 90° to -X
-	Plant,     // decoration: Bezier blades/tufts emitted by the mesher.
-	           // color_side = base (root), color_top = tip. Non-solid cells sit
-	           // ON TOP of their supporting block. Worldgen places them on
-	           // specific surfaces (tall_grass on grass, cattail on sand near
-	           // water, etc.) — the mesh is generic; the placement is content.
+	Slab,         // half-height box; param2 bit 0 = top-half vs bottom-half
+	Stair,        // L-step; param2 FourDir = rise direction
+	CornerStair,  // L corner stair; param2 FourDir = exposed-corner compass dir
+	Pillar,       // thin square column; param2 bits 0-1 = axis 0=Y, 1=X, 2=Z
+	Trapdoor,     // horizontal door panel; param2 bits 0-1 = hinge edge,
+	              // bit 2 = top-half (1) / bottom-half (0) for "open"
+	Torch,        // thin central post; param2 0..4 = floor + 4 wall-lean dirs
+	Door,         // closed: thin panel on -Z, 0.1 thick
+	DoorOpen,     // open: rotated 90° to -X
+	Plant,        // decoration: Bezier blades/tufts emitted by the mesher.
+	              // color_side = base (root), color_top = tip. Non-solid cells
+	              // sit ON TOP of their supporting block. Worldgen places them
+	              // on specific surfaces (tall_grass on grass, cattail on sand
+	              // near water, etc.) — mesh is generic, placement is content.
 };
 
 // None = param2 unused; FourDir = bits 0-1 facing (0=+Z, 1=+X, 2=-Z, 3=-X).

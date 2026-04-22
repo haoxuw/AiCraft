@@ -163,10 +163,17 @@ public:
 	// polls m_server->pollWelcome() each frame.
 	bool beginConnectAs(const std::string& creatureType);
 
-	// Skip the main menu and drop straight into gameplay. Used by
-	// `--skip-menu` for headless/CI flows. Connects as the server's default
-	// playable (empty creatureType).
-	void skipMenu() { if (connectAs("")) enterPlaying(); }
+	// Skip the main menu and go straight to the Connecting loading screen
+	// (brass progress meter), then enterPlaying() once S_WELCOME arrives.
+	// Used by `--skip-menu` for `make game` and headless/CI flows. The async
+	// path is what production `make client` uses; unifying skip-menu onto it
+	// means world-prep shows the same progress UI instead of a frozen window.
+	void skipMenu() {
+		if (beginConnectAs("")) {
+			m_state = GameState::Menu;
+			m_menuScreen = MenuScreen::Connecting;
+		}
+	}
 
 	// Poll input, step sim, render one frame.
 	void runOneFrame(float dt, float wallTime);
@@ -276,6 +283,10 @@ private:
 	void digInFront();
 	// Server-mode block placement: raycast → place at adjacent air cell.
 	void placeBlock();
+	// Advance m_placementParam2 to the next valid orientation for the
+	// currently-held block. Bound to R key and MMB+scroll. No-op if the
+	// held item isn't a rotatable block.
+	void cyclePlacementRotation(int direction = +1);
 	// RPG / RTS click-to-move: raycast through cursor NDC → ground cell →
 	// sendSetGoal so the server's greedy steering walks us there. Uses the
 	// screen cursor in top-down modes (not the camera forward vector).
@@ -300,6 +311,13 @@ private:
 	void drainAsyncMeshes();
 	// Apply one finished mesh (create or update the GPU buffer).
 	void applyMeshResult(civcraft::AsyncChunkMesher::Result&& r);
+	// Synchronously rebuild the chunk containing `wpos` on the main thread
+	// and upload the fresh mesh. Called by predictBlockBreak/Place paths so
+	// the player's optimistic edit becomes visible on the same frame as
+	// the click instead of waiting for the async worker. Also flags any
+	// in-flight async job on that chunk as stale so its pre-predict result
+	// doesn't overwrite the fresh mesh when it lands.
+	void syncRemeshBlock(glm::ivec3 wpos);
 	// Pre-load chunks before the loading screen hands off to gameplay. Fills
 	// the entire render radius + vertical range so the first rendered frame
 	// already has a full horizon instead of popping in.
@@ -539,6 +557,13 @@ private:
 	bool         m_f11Last       = false;
 	bool         m_hLast         = false;   // H: handbook
 	bool         m_tKeyLast      = false;   // T: talk to NPC
+	bool         m_rKeyLast      = false;   // R: rotate block for placement
+
+	// Orientation the next placed block gets. Cycled by R key or MMB+scroll,
+	// modulo the held block's BlockShape::rotationCount(). Reset to 0 when
+	// the hotbar slot changes.
+	uint8_t      m_placementParam2 = 0;
+	int          m_placementHotbarSlot = -1;  // last slot seen; reset triggers on change
 
 	// RPG/RTS right-click orbit: hold+drag to orbit camera, quick click = action.
 	// wantCapture is set only while actively orbiting.
@@ -684,6 +709,9 @@ private:
 		glm::vec3 circleCenterWorld{0, 0, 0};
 		float     circleRadiusWorld = 0.0f;
 		int       hoverSlice        = -1;
+		// Shift-held this frame → slice commit will queue instead of replace.
+		// Tracked for display so the wheel can badge "+GATHER" etc.
+		bool      shiftQueue        = false;
 	} m_rtsWheel;
 
 	// Screen

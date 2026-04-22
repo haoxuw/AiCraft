@@ -71,6 +71,11 @@ struct ActionProposal {
 	int         toCount    = 1;
 	Container   convertFrom;             // where source is taken from (default = Self)
 	Container   convertInto;             // where result is placed (default = Self)
+	// For a Convert that places a block: the client-picked orientation byte.
+	// Server honors it for blocks whose Param2Type is FourDir (Stair etc.);
+	// auto-hinging shapes (Door, Fence, Wall) ignore it and compute their
+	// own param2 from neighbors. The low 2 bits pick one of 4 directions.
+	uint8_t     placeParam2 = 0;
 
 	// Interact: toggle block state (door/button/TNT)
 	glm::ivec3  blockPos   = {0, 0, 0};

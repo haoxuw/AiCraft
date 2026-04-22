@@ -373,6 +373,16 @@ public:
 		applyBlockWire(wpos.x, wpos.y, wpos.z, BLOCK_AIR, 0, 0);
 	}
 
+	// Place prediction — symmetric to predictBlockBreak. Writes the given
+	// block to LocalWorld and fires the place callback (door swing, place
+	// sound). Server's reject path re-emits onBlockChange so if the place
+	// is rejected the follow-up S_BLOCK snaps LocalWorld back to the real
+	// block state (usually AIR again).
+	void predictBlockPlace(glm::ivec3 wpos, BlockId bid,
+	                       uint8_t param2, uint8_t appearance) override {
+		applyBlockWire(wpos.x, wpos.y, wpos.z, bid, param2, appearance);
+	}
+
 	void setInventoryCallback(std::function<void(EntityId)> cb) override {
 		m_onInventoryUpdate = std::move(cb);
 	}

@@ -164,14 +164,28 @@ public:
 	                        const float* points,
 	                        uint32_t pointCount) = 0;
 
-	// Procedural Voronoi crack overlay for the targeted block. Renders a
-	// unit-cube quad around (blockPos.x, .y, .z); the frag shader computes
-	// a per-face crack pattern that grows with `stage` (0,1,2). Additive
-	// blend, depth test on / write off. `time` drives the pulse.
+	// Texture-based crack overlay for a block (or sub-AABB of a non-cube
+	// block). Renders a cube stretched to the given world-space AABB; the
+	// frag shader picks a face from the fragment's AABB-local position,
+	// computes face-UV, and samples a procedural crack atlas. `stage`
+	// (0,1,2) gates how much of the atlas is revealed; earlier-stage
+	// pixels stay visible so damage stacks. Additive blend, depth test on
+	// / write off. `time` drives the pulse.
 	virtual void drawCrackOverlay(const SceneParams& scene,
-	                              const float blockPos[3],
+	                              const float aabbMin[3],
+	                              const float aabbMax[3],
 	                              int stage,
 	                              float time) {}
+
+	// Translucent ghost box — placement preview. Renders a unit cube
+	// stretched to the AABB with alpha blend + depth test LESS + no depth
+	// write, so it's occluded by terrain correctly but doesn't block
+	// later draws. Used by the block-placement ghost preview (one call
+	// per sub-box of the held block's BlockShape).
+	virtual void drawGhostBox(const SceneParams& scene,
+	                          const float aabbMin[3],
+	                          const float aabbMax[3],
+	                          const float rgba[4]) {}
 
 	// NDC (+y up; VK flips Y internally). 4 floats/vertex {pos.xy, uv.xy}.
 	// Backend lazily enters the swapchain pass on first call each frame.

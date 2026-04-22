@@ -374,6 +374,11 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	block.attr("Fence")       = BlockType::Fence;
 	block.attr("Farmland")    = BlockType::Farmland;
 	block.attr("Stair")       = BlockType::Stair;
+	block.attr("Slab")        = BlockType::Slab;
+	block.attr("CornerStair") = BlockType::CornerStair;
+	block.attr("Pillar")      = BlockType::Pillar;
+	block.attr("Trapdoor")    = BlockType::Trapdoor;
+	block.attr("Torch")       = BlockType::Torch;
 	block.attr("Glass")       = BlockType::Glass;
 	block.attr("Door")        = BlockType::Door;
 	block.attr("DoorOpen")    = BlockType::DoorOpen;

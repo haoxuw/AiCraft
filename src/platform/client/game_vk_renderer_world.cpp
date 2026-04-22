@@ -15,6 +15,7 @@
 #include "client/raycast.h"
 #include "net/server_interface.h"
 #include "logic/action.h"
+#include "logic/block_shape.h"
 #include "logic/constants.h"
 #include "agent/agent_client.h"
 
@@ -924,18 +925,90 @@ void WorldRenderer::renderEffects(float wallTime) {
 	}
 
 	// ── Block break progress overlay ────────────────────────────────────
-	// Sci-fi "power stone charging up" cracks. The overlay is a unit-cube
-	// quad at the targeted block; a procedural Voronoi fragment shader
-	// computes amber→white-hot energy seams on each face, revealing more
-	// edges and pulsing faster with damage. See shaders/vk/crack_overlay.*
+	// BlockShape (logic/block_shape.h) owns the per-mesh_type logic for
+	// which AABB sub-boxes the overlay should stamp; adding a new block
+	// geometry means adding a new BlockShape subclass, not editing this
+	// renderer. Plants etc. return an empty list and are silently skipped.
 	if (g.m_breaking.active && g.m_breaking.hits > 0) {
+		const auto& bp = g.m_breaking.target;
+		civcraft::BlockId bid = g.m_server->chunks().getBlock(bp.x, bp.y, bp.z);
+		const civcraft::BlockDef& bdef = g.m_server->blockRegistry().get(bid);
+
+		// Fetch param2 for shapes that need it (Stair FourDir, doors, etc.).
+		auto divFloor = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+		auto modFloor = [](int a, int b) { return ((a % b) + b) % b; };
+		civcraft::ChunkPos cp{
+			divFloor(bp.x, civcraft::CHUNK_SIZE),
+			divFloor(bp.y, civcraft::CHUNK_SIZE),
+			divFloor(bp.z, civcraft::CHUNK_SIZE)};
+		auto* c = g.m_server->chunks().getChunkIfLoaded(cp);
+		uint8_t p2 = c ? c->getParam2(modFloor(bp.x, civcraft::CHUNK_SIZE),
+		                              modFloor(bp.y, civcraft::CHUNK_SIZE),
+		                              modFloor(bp.z, civcraft::CHUNK_SIZE))
+		               : 0;
+
+		std::vector<civcraft::SubBox> boxes;
+		// Crack overlay doesn't need neighbor info today — fence/wall
+		// shapes come later. Pass an empty mask.
+		civcraft::getBlockShape(bdef.mesh_type).emitSubBoxes(
+			bp, p2, civcraft::NeighborMask{}, boxes);
+
 		int stage = g.m_breaking.hits <= 1 ? 0 : g.m_breaking.hits == 2 ? 1 : 2;
-		float bp[3] = {
-			(float)g.m_breaking.target.x,
-			(float)g.m_breaking.target.y,
-			(float)g.m_breaking.target.z,
-		};
-		g.m_rhi->drawCrackOverlay(scene, bp, stage, wallTime);
+		for (const auto& b : boxes) {
+			g.m_rhi->drawCrackOverlay(scene, &b.min.x, &b.max.x, stage, wallTime);
+		}
+	}
+
+	// ── Block placement ghost preview ───────────────────────────────────
+	// When the player holds a placeable block, raycast forward and draw a
+	// translucent cube (or sub-cubes, for non-cube shapes) at the target
+	// cell rotated by the current m_placementParam2. Tint is green when
+	// the cell is empty + in reach, red when blocked. The renderer itself
+	// owns the raycast — placeBlock does its own raycast too, but racing
+	// them is fine because drawGhostBox just records the current frame's
+	// intent and placeBlock commits on click.
+	{
+		auto* me = g.playerEntity();
+		if (me && me->inventory) {
+			const std::string& held = g.m_hotbar.mainHand(*me->inventory);
+			const civcraft::BlockDef* hdef = held.empty()
+				? nullptr : g.m_server->blockRegistry().find(held);
+			if (hdef && hdef->mesh_type != civcraft::MeshType::Plant) {
+				glm::vec3 eye = g.m_cam.position;
+				glm::vec3 dir = g.m_cam.front();
+				if (g.m_cam.mode == civcraft::CameraMode::RPG ||
+				    g.m_cam.mode == civcraft::CameraMode::RTS) {
+					double mx, my;
+					glfwGetCursorPos(g.m_window, &mx, &my);
+					int ww = g.m_fbW, wh = g.m_fbH;
+					if (ww > 0 && wh > 0) {
+						float nx = (float)(mx / ww) * 2.0f - 1.0f;
+						float ny = 1.0f - (float)(my / wh) * 2.0f;
+						glm::mat4 ivp = glm::inverse(g.viewProj());
+						glm::vec4 nr = ivp * glm::vec4(nx, ny, 0.0f, 1.0f); nr /= nr.w;
+						glm::vec4 fr = ivp * glm::vec4(nx, ny, 1.0f, 1.0f); fr /= fr.w;
+						dir = glm::normalize(glm::vec3(fr) - glm::vec3(nr));
+					}
+				}
+				auto hit = civcraft::raycastBlocks(g.m_server->chunks(), eye, dir, 8.0f);
+				if (hit) {
+					glm::ivec3 pp = hit->placePos;
+					civcraft::BlockId existing = g.m_server->chunks().getBlock(pp.x, pp.y, pp.z);
+					bool blocked = (existing != civcraft::BLOCK_AIR);
+					std::vector<civcraft::SubBox> boxes;
+					civcraft::getBlockShape(hdef->mesh_type).emitSubBoxes(
+						pp, g.m_placementParam2, civcraft::NeighborMask{}, boxes);
+					// Green when placeable, red when blocked. Low alpha so the
+					// underlying world stays readable.
+					const float green[4] = {0.30f, 0.95f, 0.35f, 0.38f};
+					const float red  [4] = {0.95f, 0.28f, 0.22f, 0.38f};
+					const float* col = blocked ? red : green;
+					for (const auto& bx : boxes) {
+						g.m_rhi->drawGhostBox(scene, &bx.min.x, &bx.max.x, col);
+					}
+				}
+			}
+		}
 	}
 
 	// ── Block-break burst ───────────────────────────────────────────────

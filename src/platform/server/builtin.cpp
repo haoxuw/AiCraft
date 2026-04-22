@@ -146,6 +146,20 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	// Furniture
 	blocks.registerBlock({BT::Bed, "Bed", {0.62f,0.14f,0.14f},{0.55f,0.54f,0.57f},{0.60f,0.44f,0.24f}, true,false, "",1,0, "",SN::DigWood,SN::StepWood});
 	blocks.registerBlock({BT::Stair, "Stair", {0.68f,0.52f,0.30f},{0.60f,0.44f,0.24f},{0.60f,0.44f,0.24f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 0.5f, MeshType::Stair, Param2Type::FourDir});
+	// Slab — half-height wood block. param2 bit 0: top-half (1) / bottom-half (0).
+	// FourDir is a misnomer here — we only use the low bit — but it keeps the
+	// "server honors client-provided param2" branch in server.cpp small: any
+	// rotatable shape goes through the same path, regardless of rotation count.
+	blocks.registerBlock({BT::Slab, "Slab", {0.68f,0.52f,0.30f},{0.60f,0.44f,0.24f},{0.60f,0.44f,0.24f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 0.5f, MeshType::Slab, Param2Type::FourDir});
+	// Corner stair — L-footprint; param2 picks exposed-corner direction.
+	blocks.registerBlock({BT::CornerStair, "Corner Stair", {0.68f,0.52f,0.30f},{0.60f,0.44f,0.24f},{0.60f,0.44f,0.24f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 0.5f, MeshType::CornerStair, Param2Type::FourDir});
+	// Pillar — thin wood column; param2 picks axis (0=Y, 1=X, 2=Z).
+	blocks.registerBlock({BT::Pillar, "Pillar", {0.68f,0.52f,0.30f},{0.60f,0.44f,0.24f},{0.60f,0.44f,0.24f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 1.0f, MeshType::Pillar, Param2Type::FourDir});
+	// Trapdoor — horizontal panel; param2 bits 0-1 = hinge edge, bit 2 = open.
+	blocks.registerBlock({BT::Trapdoor, "Trapdoor", {0.60f,0.44f,0.24f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f}, true,false, "",64,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 0.1f, MeshType::Trapdoor, Param2Type::FourDir});
+	// Torch — thin post on a surface; param2 selects supporting face.
+	// No collision (collision_height=0), emissive in the future.
+	blocks.registerBlock({BT::Torch, "Torch", {0.95f,0.75f,0.20f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f}, false,false, "",64,8, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 0.0f, MeshType::Torch, Param2Type::FourDir});
 	blocks.registerBlock({BT::Door, "Door", {0.60f,0.44f,0.24f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f}, true,false, "",1,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 1.0f, MeshType::Door});
 	blocks.registerBlock({BT::DoorOpen, "Door (Open)", {0.60f,0.44f,0.24f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f}, false,false, BT::Door,1,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 0.0f, MeshType::DoorOpen});
 

@@ -23,6 +23,7 @@ State machine:
   any     -> SLEEP    when evening / night begins
 """
 import math
+import traceback
 
 from civcraft_engine import Move, scan_blocks, scan_entities
 from actions import StoreItem, DropItem
@@ -67,10 +68,26 @@ class WoodcutterBehavior(Behavior):
     # -- Top-level decide ----------------------------------------------------
 
     def decide(self, entity: SelfEntity, local_world: LocalWorld):
+        try:
+            return self._decide_inner(entity, local_world)
+        except Exception as e:
+            elog(entity.id, "decide CRASH pos=(%r,%r,%r) inv_cap=%r time=%r\n%s" % (
+                entity.x, entity.y, entity.z,
+                getattr(entity, "inventory_capacity", "??"),
+                getattr(local_world, "time", "??"),
+                traceback.format_exc()))
+            raise
+
+    def _decide_inner(self, entity: SelfEntity, local_world: LocalWorld):
         stats.inc("decide", entity.type)
+        prev_state = self._state
         self._update_state(entity, local_world)
 
         if self._state != self._prev_state:
+            elog(entity.id, "state %s -> %s (inv=%.1f cap=%.1f logs=%d)" % (
+                self._prev_state, self._state,
+                entity.inventory.total_value(), entity.inventory_capacity,
+                entity.inventory.count("logs")))
             self._nav.reset()
             self._chest_target = None
             self._prev_state = self._state
@@ -125,7 +142,17 @@ class WoodcutterBehavior(Behavior):
                 break
 
         if anchor is None:
+            elog(entity.id, "work: no anchor in %.0f blocks, searching" %
+                 self._work_radius)
             return self._search(entity, local_world, spd)
+
+        elog(entity.id, "work: anchor=(%d,%d,%d) self=(%.1f,%.1f,%.1f) "
+             "d=%.1f logs=%d" % (
+             int(anchor["x"]), int(anchor["y"]), int(anchor["z"]),
+             entity.x, entity.y, entity.z,
+             ((anchor["x"] + 0.5 - entity.x)**2 +
+              (anchor["z"] + 0.5 - entity.z)**2) ** 0.5,
+             entity.inventory.count("logs")))
 
         plan = [{
             "type": "harvest",
@@ -188,9 +215,13 @@ class WoodcutterBehavior(Behavior):
         dist_to_chest = math.sqrt(dx*dx + dy*dy + dz*dz)
 
         if dist_to_chest <= STORE_RANGE:
+            elog(entity.id, "deposit: StoreItem chest=%d logs=%d d=%.2f"
+                 % (eid, logs, dist_to_chest))
             stats.inc("deposit", entity.type)
             return StoreItem(eid), "Depositing logs"
 
+        elog(entity.id, "deposit: walking chest=%d d=%.2f logs=%d"
+             % (eid, dist_to_chest, logs))
         goal = (int(cx), int(cy), int(cz))
         action = self._nav.navigate(entity, local_world, goal, speed=spd)
         if action:
