@@ -58,6 +58,20 @@ void drawCenteredTitle(rhi::IRhi* r, const char* txt, float cx, float y,
 	r->drawTitle2D(txt, cx - wNdc * 0.5f, y, scale, color);
 }
 
+void writeText(rhi::IRhi* r, const char* txt, float x, float y,
+               float scale, const float color[4], TextAlign align) {
+	if (!txt || !*txt) return;
+	float anchorX = x;
+	if (align != TextAlign::Left) {
+		float wNdc = textWidthNdc(std::strlen(txt), scale);
+		if      (align == TextAlign::Center) anchorX = x - wNdc * 0.5f;
+		else /* Right */                     anchorX = x - wNdc;
+	}
+	// Always the title mode — that's the font the floaters use and what
+	// callers asked for: outlined, bloom-friendly, legible at any scale.
+	r->drawTitle2D(txt, anchorX, y, scale, color);
+}
+
 bool keyEdge(GLFWwindow* w, int key) {
 	static std::unordered_map<int, int> lastState;
 	int cur = glfwGetKey(w, key);

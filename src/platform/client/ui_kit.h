@@ -7,6 +7,7 @@
 #include "client/rhi/rhi.h"
 
 #include <cstddef>
+#include <string>
 
 struct GLFWwindow;
 
@@ -55,6 +56,24 @@ void drawCenteredText(rhi::IRhi* r, const char* txt, float cx, float y,
                       float scale, const float color[4]);
 void drawCenteredTitle(rhi::IRhi* r, const char* txt, float cx, float y,
                        float scale, const float color[4]);
+
+// Unified label drawer used by the panel surfaces (inventory, handbook,
+// stats readouts, tooltips). All text routes through drawTitle2D — the
+// same SDF mode the in-world floaters use ("+1 wood" pickups) — so the
+// panels get the same outlined, bloom-boosted glyphs at any scale.
+// `align`: 0 = left at x, 1 = centered around x, 2 = right anchored to x.
+enum class TextAlign { Left = 0, Center = 1, Right = 2 };
+void writeText(rhi::IRhi* r, const char* txt, float x, float y,
+               float scale, const float color[4],
+               TextAlign align = TextAlign::Left);
+
+// Overload for std::string callers (most inventory/handbook code
+// builds text via snprintf into a buffer or a std::string).
+inline void writeText(rhi::IRhi* r, const std::string& txt, float x, float y,
+                       float scale, const float color[4],
+                       TextAlign align = TextAlign::Left) {
+	writeText(r, txt.c_str(), x, y, scale, color, align);
+}
 
 // Returns true only on the frame a key transitions up→down. Shared
 // state across calls is keyed by GLFW keycode so this survives across

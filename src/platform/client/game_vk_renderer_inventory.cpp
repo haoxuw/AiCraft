@@ -361,7 +361,7 @@ void drawSlotFrame(rhi::IRhi* r, const SlotChromeArgs& a) {
 			const float badge[4] = {0.04f, 0.03f, 0.05f, 0.92f};
 			r->drawRect2D(chipX, chipY, chipW, chipH, badge);
 			const float wh[4] = {1.0f, 0.97f, 0.85f, 1.0f};
-			r->drawText2D(cnt, chipX + 0.004f, chipY + 0.005f, 0.62f, wh);
+			ui::writeText(r, cnt, chipX + 0.004f, chipY + 0.005f, 0.66f, wh);
 		}
 	}
 
@@ -369,8 +369,8 @@ void drawSlotFrame(rhi::IRhi* r, const SlotChromeArgs& a) {
 	if (a.keyLabel) {
 		const float keyDim   [4] = {0.55f, 0.50f, 0.42f, 0.80f};
 		const float keyBright[4] = {0.98f, 0.88f, 0.55f, 0.98f};
-		r->drawText2D(a.keyLabel, a.x + 0.006f, a.y + a.h - 0.028f,
-		              0.58f, a.selected ? keyBright : keyDim);
+		ui::writeText(r, a.keyLabel, a.x + 0.006f, a.y + a.h - 0.028f,
+		              0.62f, a.selected ? keyBright : keyDim);
 	}
 }
 } // namespace
@@ -602,14 +602,11 @@ void HudRenderer::renderInventoryPanel() {
 
 	const float titleCol[4] = {1.0f, 0.85f, 0.45f, 1.0f};
 	// Crude centering: title width in NDC ≈ 0.11 per character at scale 1.4 / aspect.
-	const char* titleStr = "INVENTORY";
-	float titleScale = 1.35f;
-	float titleCharW = 0.020f * titleScale / g.m_aspect;
-	float titleW = std::strlen(titleStr) * titleCharW;
-	r->drawTitle2D(titleStr,
-	               -titleW * 0.5f,
-	               titleY + 0.028f,
-	               titleScale, titleCol);
+	// Title + every other label in the panel go through ui::writeText, which
+	// routes to the same SDF mode the in-world floaters use — crisp, outlined,
+	// bloom-friendly at any scale.
+	ui::writeText(r, "INVENTORY", /*cx=*/0.0f, titleY + 0.028f,
+	              /*scale=*/1.35f, titleCol, ui::TextAlign::Center);
 
 	// ── Sort tabs (below title) ───────────────────────────────────────
 	const float tabY   = titleY - 0.065f;
@@ -646,13 +643,12 @@ void HudRenderer::renderInventoryPanel() {
 
 		const float labelCol[4]  = {0.94f, 0.88f, 0.70f, 1.0f};
 		const float labelDim [4] = {0.70f, 0.62f, 0.50f, 1.0f};
-		float labScale = 0.75f;
-		float labCharW = 0.013f * labScale / g.m_aspect;
-		float labW = std::strlen(tabs[i].label) * labCharW;
-		r->drawText2D(tabs[i].label,
-		              tx + tabW * 0.5f - labW * 0.5f,
+		ui::writeText(r, tabs[i].label,
+		              /*cx=*/tx + tabW * 0.5f,
 		              tabY + 0.014f,
-		              labScale, active ? labelCol : labelDim);
+		              /*scale=*/0.80f,
+		              active ? labelCol : labelDim,
+		              ui::TextAlign::Center);
 
 		// Click: cycle on this tab.
 		if (hover && g.m_mouseLPressed && !g.m_drag.active) {
@@ -670,12 +666,8 @@ void HudRenderer::renderInventoryPanel() {
 		              "%d items    %d stacks    %.1f mass",
 		              totalCount, (int)items.size(), mass);
 		const float dim[4] = {0.68f, 0.62f, 0.54f, 1.0f};
-		float statsScale = 0.68f;
-		float statsCharW = 0.013f * statsScale / g.m_aspect;
-		float statsW = std::strlen(stats) * statsCharW;
-		r->drawText2D(stats,
-		              -statsW * 0.5f, tabY - 0.040f,
-		              statsScale, dim);
+		ui::writeText(r, stats, /*cx=*/0.0f, tabY - 0.040f,
+		              /*scale=*/0.72f, dim, ui::TextAlign::Center);
 	}
 
 	// ── 8×6 Grid of slots ─────────────────────────────────────────────
@@ -739,12 +731,8 @@ void HudRenderer::renderInventoryPanel() {
 		              "Drag to hotbar %d    Drag out to drop    ESC / Tab to close    Q = drop held",
 		              (g.m_hotbar.selected + 1) % 10);
 		const float dim[4] = {0.58f, 0.52f, 0.46f, 1.0f};
-		float hScale = 0.62f;
-		float hCharW = 0.013f * hScale / g.m_aspect;
-		float hW = std::strlen(hint) * hCharW;
-		r->drawText2D(hint,
-		              -hW * 0.5f, panelY + 0.028f,
-		              hScale, dim);
+		ui::writeText(r, hint, /*cx=*/0.0f, panelY + 0.028f,
+		              /*scale=*/0.66f, dim, ui::TextAlign::Center);
 	}
 
 	// ── Drag ghost (follows cursor) ───────────────────────────────────
@@ -774,53 +762,63 @@ void HudRenderer::renderInventoryPanel() {
 			float chipY = gh.ndcY + 0.004f;
 			r->drawRect2D(chipX, chipY, chipW, chipH, badge);
 			const float wh[4] = {1.0f, 0.97f, 0.85f, 1.0f};
-			r->drawText2D(cnt, chipX + 0.004f, chipY + 0.005f, 0.62f, wh);
+			ui::writeText(r, cnt, chipX + 0.004f, chipY + 0.005f, 0.66f, wh);
 		}
 	}
 
-	// ── Hover tooltip (only when not dragging) ────────────────────────
-	if (!g.m_drag.active && g.m_hoverSlot >= 0) {
-		const auto& h = g.m_slotRectsLast[g.m_hoverSlot];
-		if (!h.itemId.empty() && h.count > 0) {
-			std::string raw = h.itemId;
-			auto colon = raw.find(':');
-			if (colon != std::string::npos) raw = raw.substr(colon + 1);
-			glm::vec4 rc = rarityColor(civcraft::getMaterialValue(raw));
+	// Hover tooltip (only when not dragging) — extracted.
+	renderInventoryTooltip();
+}
 
-			std::string name = prettify(h.itemId);
-			char line2[96];
-			std::snprintf(line2, sizeof(line2), "x%d    %.1f value",
-			              h.count, civcraft::getMaterialValue(raw));
+// Hover tooltip. Shows item name tinted by rarity + count + material
+// value on a warm parchment chip anchored near the cursor (flipped
+// to the other side if it would overflow the screen edge).
+void HudRenderer::renderInventoryTooltip() {
+	Game& g = game_;
+	if (g.m_drag.active || g.m_hoverSlot < 0) return;
+	const auto& h = g.m_slotRectsLast[g.m_hoverSlot];
+	if (h.itemId.empty() || h.count <= 0) return;
 
-			float sName = 0.78f, sMeta = 0.62f;
-			float nameCharW = 0.013f * sName / g.m_aspect;
-			float metaCharW = 0.013f * sMeta / g.m_aspect;
-			float nameW = name.size() * nameCharW;
-			float metaW = std::strlen(line2) * metaCharW;
-			float tipW = std::max(nameW, metaW) + 0.030f;
-			float tipH = 0.086f;
+	rhi::IRhi* r = g.m_rhi;
 
-			// Offset up-right from cursor, clamp to screen.
-			float tx = g.m_mouseNdcX + 0.020f;
-			float ty = g.m_mouseNdcY + 0.020f;
-			if (tx + tipW > 0.98f) tx = g.m_mouseNdcX - tipW - 0.020f;
-			if (ty + tipH > 0.98f) ty = g.m_mouseNdcY - tipH - 0.020f;
+	// Rarity color keys off the material-value table (same scale the
+	// handbook uses), using just the id-stem past the `ns:` prefix.
+	std::string raw = h.itemId;
+	auto colon = raw.find(':');
+	if (colon != std::string::npos) raw = raw.substr(colon + 1);
+	glm::vec4 rc = rarityColor(civcraft::getMaterialValue(raw));
 
-			const float tipShadow[4] = {0.0f, 0.0f, 0.0f, 0.55f};
-			const float tipFill  [4] = {0.09f, 0.07f, 0.06f, 0.98f};
-			const float tipBorder[4] = {0.55f, 0.40f, 0.18f, 1.0f};
-			r->drawRect2D(tx + 0.008f, ty - 0.008f, tipW, tipH, tipShadow);
-			r->drawRect2D(tx, ty, tipW, tipH, tipFill);
-			ui::drawOutline(r, tx, ty, tipW, tipH, 0.002f, tipBorder);
+	std::string name = prettify(h.itemId);
+	char line2[96];
+	std::snprintf(line2, sizeof(line2), "x%d    %.1f value",
+	              h.count, civcraft::getMaterialValue(raw));
 
-			const float nameColArr[4] = { rc.x, rc.y, rc.z, 1.0f };
-			const float metaCol[4]    = {0.70f, 0.64f, 0.54f, 1.0f};
-			r->drawText2D(name.c_str(), tx + 0.012f, ty + tipH - 0.030f,
-			              sName, nameColArr);
-			r->drawText2D(line2,         tx + 0.012f, ty + 0.014f,
-			              sMeta, metaCol);
-		}
-	}
+	const float sName = 0.82f, sMeta = 0.66f;
+	const float nameCharW = 0.013f * sName / g.m_aspect;
+	const float metaCharW = 0.013f * sMeta / g.m_aspect;
+	const float nameW = name.size() * nameCharW;
+	const float metaW = std::strlen(line2) * metaCharW;
+	const float tipW = std::max(nameW, metaW) + 0.030f;
+	const float tipH = 0.086f;
+
+	// Offset up-right from cursor; flip to the opposite side if the
+	// chip would overflow the screen edge.
+	float tx = g.m_mouseNdcX + 0.020f;
+	float ty = g.m_mouseNdcY + 0.020f;
+	if (tx + tipW > 0.98f) tx = g.m_mouseNdcX - tipW - 0.020f;
+	if (ty + tipH > 0.98f) ty = g.m_mouseNdcY - tipH - 0.020f;
+
+	const float tipShadow[4] = {0.0f, 0.0f, 0.0f, 0.55f};
+	const float tipFill  [4] = {0.09f, 0.07f, 0.06f, 0.98f};
+	const float tipBorder[4] = {0.55f, 0.40f, 0.18f, 1.0f};
+	r->drawRect2D(tx + 0.008f, ty - 0.008f, tipW, tipH, tipShadow);
+	r->drawRect2D(tx, ty, tipW, tipH, tipFill);
+	ui::drawOutline(r, tx, ty, tipW, tipH, 0.002f, tipBorder);
+
+	const float nameColArr[4] = { rc.x, rc.y, rc.z, 1.0f };
+	const float metaCol[4]    = {0.70f, 0.64f, 0.54f, 1.0f};
+	ui::writeText(r, name,  tx + 0.012f, ty + tipH - 0.030f, sName, nameColArr);
+	ui::writeText(r, line2, tx + 0.012f, ty + 0.014f,        sMeta, metaCol);
 }
 
 } // namespace civcraft::vk

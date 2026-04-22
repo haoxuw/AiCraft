@@ -52,6 +52,10 @@ public:
 	void renderInventoryPanel();
 private:
 	Game& game_;
+
+	// Sub-passes of renderInventoryPanel(). Kept private; the panel
+	// body drives which ones fire each frame.
+	void renderInventoryTooltip();   // hover tooltip (name + rarity + count)
 };
 
 class MenuRenderer {

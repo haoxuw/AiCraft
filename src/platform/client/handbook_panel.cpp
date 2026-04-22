@@ -370,7 +370,7 @@ void HandbookPanel::render(Game& g) {
 					label = e->name.empty() ? e->id : e->name;
 				}
 			}
-			R->drawText2D(label.c_str(), rowX + 0.016f, y, 0.70f, txt);
+			ui::writeText(R, label.c_str(), rowX + 0.016f, y, 0.70f, txt);
 
 			// In "All" views, a tiny right-aligned category tag disambiguates
 			// entries drawn from different underlying categories.
@@ -379,14 +379,14 @@ void HandbookPanel::render(Game& g) {
 				if (ei >= 0 && ei < (int)entries.size()) {
 					const std::string& c = entries[ei]->category;
 					float tw = ui::textWidthNdc(c.size(), 0.48f);
-					R->drawText2D(c.c_str(),
+					ui::writeText(R, c.c_str(),
 						rowX + rowW - tw - 0.010f,
 						y + 0.002f, 0.48f, kTextHint);
 				}
 			} else if (m_subCursor == 0 && rowIsVoice[i]) {
 				const char* c = "voice";
 				float tw = ui::textWidthNdc(std::strlen(c), 0.48f);
-				R->drawText2D(c, rowX + rowW - tw - 0.010f,
+				ui::writeText(R, c, rowX + rowW - tw - 0.010f,
 					y + 0.002f, 0.48f, kTextHint);
 			}
 
@@ -437,7 +437,7 @@ void HandbookPanel::render(Game& g) {
 	const char* hint =
 		"[Click] Select   [Left/Right] Group   [Up/Down] Entry   [Esc] Back";
 	float hintW = ui::textWidthNdc(std::strlen(hint), 0.65f);
-	R->drawText2D(hint, B.x + B.w - hintW - 0.028f, hintY, 0.65f, kTextDim);
+	ui::writeText(R, hint, B.x + B.w - hintW - 0.028f, hintY, 0.65f, kTextDim);
 
 	// ── Preview area: voice detail card ─────────────────────────────────
 	if (!selectedVoice.empty()) {
@@ -453,9 +453,9 @@ void HandbookPanel::render(Game& g) {
 		ui::drawShadowPanel(R, cardX, cardY, cardW, cardH,
 			cardShadow, cardFill, brass, 0.003f);
 
-		R->drawText2D(voice.c_str(), cardX + 0.022f,
+		ui::writeText(R, voice.c_str(), cardX + 0.022f,
 			cardY + cardH - 0.052f, 1.00f, kText);
-		R->drawText2D("voice : piper .onnx", cardX + 0.022f,
+		ui::writeText(R, "voice : piper .onnx", cardX + 0.022f,
 			cardY + cardH - 0.090f, 0.60f, kTextHint);
 
 		std::string sample = "Hello, traveller. This is the voice of " + voice + ".";
@@ -463,7 +463,7 @@ void HandbookPanel::render(Game& g) {
 		size_t maxChars = (size_t)((cardW - 0.044f) /
 			(ui::kCharWNdc * 0.65f));
 		if (line.size() > maxChars) line = line.substr(0, maxChars);
-		R->drawText2D(line.c_str(), cardX + 0.022f,
+		ui::writeText(R, line.c_str(), cardX + 0.022f,
 			cardY + cardH - 0.132f, 0.65f, kTextDim);
 
 		std::string users;
@@ -478,7 +478,7 @@ void HandbookPanel::render(Game& g) {
 		if (!users.empty()) {
 			std::string u = "used by: " + users;
 			if (u.size() > maxChars) u = u.substr(0, maxChars);
-			R->drawText2D(u.c_str(), cardX + 0.022f,
+			ui::writeText(R, u.c_str(), cardX + 0.022f,
 				cardY + cardH - 0.170f, 0.60f, kTextDim);
 		}
 
@@ -517,13 +517,13 @@ void HandbookPanel::render(Game& g) {
 
 		const char* nm = selected->name.empty()
 			? selected->id.c_str() : selected->name.c_str();
-		R->drawText2D(nm, cardX + 0.022f,
+		ui::writeText(R, nm, cardX + 0.022f,
 			cardY + cardH - 0.052f, 1.00f, kText);
 
 		char idBuf[160];
 		std::snprintf(idBuf, sizeof(idBuf), "%s : %s",
 			selected->category.c_str(), selected->id.c_str());
-		R->drawText2D(idBuf, cardX + 0.022f,
+		ui::writeText(R, idBuf, cardX + 0.022f,
 			cardY + cardH - 0.090f, 0.60f, kTextHint);
 
 		float fieldY = cardY + cardH - 0.132f;
@@ -532,7 +532,7 @@ void HandbookPanel::render(Game& g) {
 				(ui::kCharWNdc * 0.65f));
 			std::string desc = selected->description;
 			if (desc.size() > maxChars) desc = desc.substr(0, maxChars);
-			R->drawText2D(desc.c_str(), cardX + 0.022f,
+			ui::writeText(R, desc.c_str(), cardX + 0.022f,
 				fieldY, 0.65f, kTextDim);
 			fieldY -= 0.038f;
 		}
@@ -541,7 +541,7 @@ void HandbookPanel::render(Game& g) {
 			char sb[96];
 			std::snprintf(sb, sizeof(sb), "subcategory: %s",
 				selected->subcategory.c_str());
-			R->drawText2D(sb, cardX + 0.022f, fieldY, 0.60f, kTextDim);
+			ui::writeText(R, sb, cardX + 0.022f, fieldY, 0.60f, kTextDim);
 			fieldY -= 0.034f;
 		}
 
@@ -554,7 +554,7 @@ void HandbookPanel::render(Game& g) {
 			size_t maxChars = (size_t)((cardW - 0.044f) /
 				(ui::kCharWNdc * 0.60f));
 			if (t.size() > maxChars) t = t.substr(0, maxChars);
-			R->drawText2D(t.c_str(), cardX + 0.022f,
+			ui::writeText(R, t.c_str(), cardX + 0.022f,
 				fieldY, 0.60f, kTextDim);
 		}
 	}
