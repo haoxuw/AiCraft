@@ -164,6 +164,15 @@ public:
 	                        const float* points,
 	                        uint32_t pointCount) = 0;
 
+	// Procedural Voronoi crack overlay for the targeted block. Renders a
+	// unit-cube quad around (blockPos.x, .y, .z); the frag shader computes
+	// a per-face crack pattern that grows with `stage` (0,1,2). Additive
+	// blend, depth test on / write off. `time` drives the pulse.
+	virtual void drawCrackOverlay(const SceneParams& scene,
+	                              const float blockPos[3],
+	                              int stage,
+	                              float time) {}
+
 	// NDC (+y up; VK flips Y internally). 4 floats/vertex {pos.xy, uv.xy}.
 	// Backend lazily enters the swapchain pass on first call each frame.
 	// mode: 0=SDF text, 1=solid fill, 2=SDF title (fill+outline+glow).

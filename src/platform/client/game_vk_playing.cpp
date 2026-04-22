@@ -744,41 +744,100 @@ void Game::tickPlayer(float dt) {
 					m_rtsSelect.selected.size() == 1 ? "" : "s");
 				m_rtsSelect.selected.clear();
 			} else {
-				// Gather/Attack/Mine: pause AI and issue a Walk order to the
-				// circle center. Per-kind behavior differentiation is Phase C;
-				// for now all three commit the same Walk, so the UX pipeline
-				// works end-to-end. Selection is retained so the user can
-				// re-command or switch to Cancel.
+				// Gather/Attack/Mine: build a kind-specific Plan per agent and
+				// install via pushPlanOverride (clears any prior plan, resets
+				// the obey-pause timer). Selection is retained so the user can
+				// re-command or switch to Cancel. Selected players have no
+				// AgentClient — they fall back to the legacy walk-to-center.
 				const char* label = (slice == 0 ? "GATHER"
 				                   : slice == 1 ? "ATTACK" : "MINE");
 				glm::vec3 ctr = m_rtsWheel.circleCenterWorld;
-				glm::ivec3 goal{(int)std::floor(ctr.x),
-				                (int)std::floor(ctr.y),
-				                (int)std::floor(ctr.z)};
-				std::vector<civcraft::EntityId> eids;
-				std::vector<glm::ivec3> starts;
+				float     rad = m_rtsWheel.circleRadiusWorld;
+
+				// Attack: pick one shared target (nearest non-humanoid Living
+				// inside the circle). Empty → fall back to walk-to-center,
+				// so the slice still does *something* even on empty terrain.
+				civcraft::EntityId attackTarget = civcraft::ENTITY_NONE;
+				if (slice == 1) {
+					float bestDist2 = rad * rad;
+					m_server->forEachEntity([&](civcraft::Entity& e) {
+						if (!e.def().isLiving()) return;
+						if (e.def().hasTag("humanoid")) return;
+						if (e.removed || e.hp() <= 0) return;
+						glm::vec3 d = e.position - ctr; d.y = 0;
+						float d2 = d.x * d.x + d.z * d.z;
+						if (d2 <= bestDist2) {
+							bestDist2 = d2;
+							attackTarget = e.id();
+						}
+					});
+				}
+
+				glm::ivec3 goalBlock{(int)std::floor(ctr.x),
+				                    (int)std::floor(ctr.y),
+				                    (int)std::floor(ctr.z)};
+				std::vector<civcraft::EntityId> playerEids;
+				std::vector<glm::ivec3>         playerStarts;
+				int handedToAgent = 0;
+
 				for (auto eid : m_rtsSelect.selected) {
 					civcraft::Entity* e = m_server->getEntity(eid);
 					if (!e) continue;
-					eids.push_back(eid);
-					starts.push_back(glm::ivec3(
-						(int)std::floor(e->position.x),
-						(int)std::floor(e->position.y),
-						(int)std::floor(e->position.z)));
+					bool isPlayer = (eid == m_server->localPlayerId());
+					if (isPlayer || !m_agentClient) {
+						playerEids.push_back(eid);
+						playerStarts.push_back(glm::ivec3(
+							(int)std::floor(e->position.x),
+							(int)std::floor(e->position.y),
+							(int)std::floor(e->position.z)));
+						continue;
+					}
+
+					civcraft::Plan plan;
+					std::string    goalLabel;
+					if (slice == 0) {
+						auto step = civcraft::PlanStep::harvest(ctr);
+						step.gatherTypes  = {"leaves", "logs"};
+						step.gatherRadius = std::max(4.0f, std::min(rad, 12.0f));
+						plan.push_back(step);
+						goalLabel = "rts_gather";
+					} else if (slice == 2) {
+						auto step = civcraft::PlanStep::harvest(ctr);
+						step.gatherTypes  = {"stone", "cobblestone",
+						                    "granite", "marble", "sandstone"};
+						step.gatherRadius = std::max(4.0f, std::min(rad, 12.0f));
+						plan.push_back(step);
+						goalLabel = "rts_mine";
+					} else {
+						if (attackTarget != civcraft::ENTITY_NONE) {
+							plan.push_back(civcraft::PlanStep::move(ctr));
+							plan.push_back(civcraft::PlanStep::attack(attackTarget));
+							goalLabel = "rts_attack";
+						} else {
+							plan.push_back(civcraft::PlanStep::move(ctr));
+							goalLabel = "rts_patrol";
+						}
+					}
+					m_agentClient->pushPlanOverride(eid, std::move(plan),
+					                                std::move(goalLabel));
+					++handedToAgent;
 				}
-				if (!eids.empty()) {
-					m_rtsExec.planGroup(eids, starts, goal,
+
+				if (!playerEids.empty()) {
+					m_rtsExec.planGroup(playerEids, playerStarts, goalBlock,
 						m_server->chunks(), m_server->blockRegistry(),
 						civcraft::CommandKind::Walk);
-					for (auto eid : eids) {
+					for (auto eid : playerEids)
 						m_moveOrders[eid] = {ctr, true};
-						if (m_agentClient && eid != m_server->localPlayerId())
-							m_agentClient->pauseAgent(eid);
-					}
-					std::printf("[vk-rts] wheel: %s %zu unit%s → (%.1f,%.1f,%.1f) r=%.1f\n",
-						label, eids.size(), eids.size() == 1 ? "" : "s",
-						ctr.x, ctr.y, ctr.z, m_rtsWheel.circleRadiusWorld);
 				}
+
+				std::printf("[vk-rts] wheel: %s %zu unit%s → (%.1f,%.1f,%.1f) "
+				            "r=%.1f (agents=%d players=%zu target=%lld)\n",
+					label, m_rtsSelect.selected.size(),
+					m_rtsSelect.selected.size() == 1 ? "" : "s",
+					ctr.x, ctr.y, ctr.z, rad,
+					handedToAgent, playerEids.size(),
+					(long long)attackTarget);
 			}
 			m_rtsWheel = {};
 		}
@@ -973,17 +1032,6 @@ void Game::tickPlayer(float dt) {
 							}
 							m_breaking.timer = 0;
 							m_breakCD = 0.25f;
-
-							// Per-hit particle burst.
-							{
-								const auto& bdef = m_server->blockRegistry().get(hit->blockId);
-								HitEvent he;
-								he.pos   = glm::vec3(bp) + glm::vec3(0.5f);
-								he.color = bdef.color_top;
-								he.t     = 0;
-								he.active = true;
-								m_hitEvents.push_back(he);
-							}
 
 							FloatText ft;
 							ft.worldPos = glm::vec3(bp) + glm::vec3(0.5f, 1.2f, 0.5f);
@@ -1260,15 +1308,39 @@ void Game::digInFront() {
 	p.convertInto = civcraft::Container::ground();
 	m_server->sendAction(p);
 
-	// Client-side prediction: snap the block to AIR locally and fire the
-	// break callback right now. Without this, the player waits a full
-	// round-trip + remesh pipeline (~100ms+) to see their own click land.
-	// The chunk is re-meshed next frame via the dirty-set flagged by the
-	// callback. Server S_BLOCK will confirm (no-op) or correct (snap back).
-	// The break burst + sound + floater are emitted inside the callback;
-	// we deliberately don't fire them here so villager/TNT breaks (which
-	// arrive via S_BLOCK only) get the same VFX from one code path.
+	// Predict: snap to AIR in LocalWorld, fire VFX callback. Break burst +
+	// sound + floater live in the callback so villager/TNT breaks (S_BLOCK
+	// only) share the same path.
+	//
+	// TODO(reject snap-back): we stay optimistic on reject. The only
+	// reachable Convert reject for a player break is SourceBlockGone —
+	// someone else broke it first, so predicted AIR is correct anyway.
 	m_server->predictBlockBreak(hit->blockPos);
+
+	// Same-frame remesh. Without it the predict is invisible for 1–3
+	// frames: processInput runs after streamServerChunks so the dirty flag
+	// misses this frame's Pass 2, and a mid-build worker's stale result
+	// would overwrite it next frame. A single 16³ chunk meshes sub-ms on
+	// the main thread. Stale worker results for cp get dropped via
+	// m_staleInflightMeshes in drainAsyncMeshes.
+	{
+		auto divDown = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+		const int CS = civcraft::CHUNK_SIZE;
+		civcraft::ChunkPos cp = {
+			divDown(hit->blockPos.x, CS),
+			divDown(hit->blockPos.y, CS),
+			divDown(hit->blockPos.z, CS)
+		};
+		civcraft::ChunkMesher::PaddedSnapshot snap;
+		if (civcraft::ChunkMesher::snapshotPadded(m_server->chunks(), cp, snap)) {
+			auto built = civcraft::ChunkMesher::buildMeshFromSnapshot(
+				snap, cp, m_server->blockRegistry());
+			if (m_inFlightMesh.count(cp)) m_staleInflightMeshes.insert(cp);
+			civcraft::AsyncChunkMesher::Result r{cp, std::move(built.first), std::move(built.second)};
+			applyMeshResult(std::move(r));
+			m_serverDirtyChunks.erase(cp);
+		}
+	}
 }
 
 void Game::placeBlock() {
@@ -1414,13 +1486,6 @@ void Game::tickCombat(float dt) {
 		m_slashes.end());
 
 	if (m_hitmarkerTimer > 0) m_hitmarkerTimer -= dt;
-
-	// Hit particle lifetime.
-	for (auto& he : m_hitEvents) he.t += dt;
-	m_hitEvents.erase(
-		std::remove_if(m_hitEvents.begin(), m_hitEvents.end(),
-			[](const HitEvent& h){ return h.t > 0.4f; }),
-		m_hitEvents.end());
 
 	// Block-break debris: integrate gravity + drag per part, cull the burst
 	// once its lifetime is up. Drag (0.88^frame at 60Hz) keeps the spray

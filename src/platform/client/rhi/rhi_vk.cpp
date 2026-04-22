@@ -71,6 +71,8 @@ bool VkRhi::init(const InitInfo& info) {
 	if (!createSkyPipeline()) return false;
 	if (!createParticlePipeline()) return false;
 	if (!createRibbonPipeline()) return false;
+	if (!createCrackOverlayPipeline()) return false;
+	if (!createCrackOverlayCube()) return false;
 	if (!createOffscreenRenderPass()) return false;
 	if (!createOffscreen()) return false;
 	if (!createCompositeResources()) return false;
@@ -3063,6 +3065,185 @@ void VkRhi::drawRibbon(const SceneParams& scene, const float* points, uint32_t p
 	vkCmdDraw(cb, (uint32_t)vertCount, 1, 0, 0);
 }
 
+// Crack overlay pipeline: procedural Voronoi cracks on a unit cube.
+// Depth-test on / write off + additive blend + backface culling (only
+// front-facing cube triangles contribute, so we don't double-stamp).
+bool VkRhi::createCrackOverlayPipeline() {
+	auto vsCode = readFile("shaders/vk/crack_overlay.vert.spv");
+	auto fsCode = readFile("shaders/vk/crack_overlay.frag.spv");
+	if (vsCode.empty() || fsCode.empty()) return false;
+	VkShaderModule vs = makeModule(m_device, vsCode);
+	VkShaderModule fs = makeModule(m_device, fsCode);
+
+	VkPipelineShaderStageCreateInfo stages[2]{};
+	stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	stages[0].module = vs; stages[0].pName = "main";
+	stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	stages[1].module = fs; stages[1].pName = "main";
+
+	// 3 floats/vertex: local cube corner in [0,1]^3.
+	VkVertexInputBindingDescription bind{};
+	bind.binding = 0; bind.stride = sizeof(float)*3; bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+	VkVertexInputAttributeDescription attr{};
+	attr.location = 0; attr.binding = 0;
+	attr.format = VK_FORMAT_R32G32B32_SFLOAT; attr.offset = 0;
+
+	VkPipelineVertexInputStateCreateInfo vi{};
+	vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &bind;
+	vi.vertexAttributeDescriptionCount = 1; vi.pVertexAttributeDescriptions = &attr;
+
+	VkPipelineInputAssemblyStateCreateInfo ia{};
+	ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+	ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+	VkPipelineViewportStateCreateInfo vpState{};
+	vpState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+	vpState.viewportCount = 1; vpState.scissorCount = 1;
+
+	VkPipelineRasterizationStateCreateInfo rs{};
+	rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+	rs.polygonMode = VK_POLYGON_MODE_FILL;
+	// No cull — with the cube inflated just outside the block, double-
+	// stamping front + back faces costs almost nothing (shader discards
+	// non-crack fragments) and sidesteps any winding-convention bugs.
+	rs.cullMode = VK_CULL_MODE_NONE;
+	rs.lineWidth = 1.0f;
+
+	VkPipelineMultisampleStateCreateInfo ms{};
+	ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+	ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	// Test on, write off. Terrain at the same depth would z-fight, so the
+	// shader offsets fragments slightly toward the camera (see .vert).
+	VkPipelineDepthStencilStateCreateInfo ds{};
+	ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+	ds.depthTestEnable = VK_TRUE;
+	ds.depthWriteEnable = VK_FALSE;
+	ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+	VkPipelineColorBlendAttachmentState cba{};
+	cba.blendEnable = VK_TRUE;
+	cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+	cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+	cba.colorBlendOp = VK_BLEND_OP_ADD;
+	cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+	cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+	cba.alphaBlendOp = VK_BLEND_OP_ADD;
+	cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+	                   | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	VkPipelineColorBlendStateCreateInfo cb{};
+	cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+	cb.attachmentCount = 1; cb.pAttachments = &cba;
+
+	VkDynamicState dyn[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkPipelineDynamicStateCreateInfo dynState{};
+	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
+
+	// PC: viewProj(64) + blockPos(16: xyz + stage) + params(16: time + rsvd) = 96B.
+	VkPushConstantRange pcr{};
+	pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+	pcr.size = sizeof(float) * (16 + 4 + 4);
+	VkPipelineLayoutCreateInfo plci{};
+	plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	plci.pushConstantRangeCount = 1; plci.pPushConstantRanges = &pcr;
+	if (vkCreatePipelineLayout(m_device, &plci, nullptr, &m_crackLayout) != VK_SUCCESS)
+		return false;
+
+	VkGraphicsPipelineCreateInfo gpci{};
+	gpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+	gpci.stageCount = 2; gpci.pStages = stages;
+	gpci.pVertexInputState = &vi;
+	gpci.pInputAssemblyState = &ia;
+	gpci.pViewportState = &vpState;
+	gpci.pRasterizationState = &rs;
+	gpci.pMultisampleState = &ms;
+	gpci.pDepthStencilState = &ds;
+	gpci.pColorBlendState = &cb;
+	gpci.pDynamicState = &dynState;
+	gpci.layout = m_crackLayout;
+	gpci.renderPass = m_renderPass;
+
+	VkResult r = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gpci, nullptr, &m_crackPipeline);
+	vkDestroyShaderModule(m_device, vs, nullptr);
+	vkDestroyShaderModule(m_device, fs, nullptr);
+	return r == VK_SUCCESS;
+}
+
+// Static unit-cube vertex buffer. 12 tris × 3 verts = 36 verts, each a
+// vec3 in [0,1]^3. CCW winding when viewed from outside the cube.
+bool VkRhi::createCrackOverlayCube() {
+	static const float V[36 * 3] = {
+		// +X face (x=1, CCW from outside)
+		1,0,0, 1,0,1, 1,1,1,   1,0,0, 1,1,1, 1,1,0,
+		// -X face (x=0)
+		0,0,0, 0,1,0, 0,1,1,   0,0,0, 0,1,1, 0,0,1,
+		// +Y face (y=1)
+		0,1,0, 1,1,0, 1,1,1,   0,1,0, 1,1,1, 0,1,1,
+		// -Y face (y=0)
+		0,0,0, 0,0,1, 1,0,1,   0,0,0, 1,0,1, 1,0,0,
+		// +Z face (z=1)
+		0,0,1, 0,1,1, 1,1,1,   0,0,1, 1,1,1, 1,0,1,
+		// -Z face (z=0)
+		0,0,0, 1,0,0, 1,1,0,   0,0,0, 1,1,0, 0,1,0,
+	};
+	VkBufferCreateInfo bci{};
+	bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bci.size = sizeof(V);
+	bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	if (vkCreateBuffer(m_device, &bci, nullptr, &m_crackCubeBuf) != VK_SUCCESS) return false;
+
+	VkMemoryRequirements mr;
+	vkGetBufferMemoryRequirements(m_device, m_crackCubeBuf, &mr);
+	VkMemoryAllocateInfo mai{};
+	mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	mai.allocationSize = mr.size;
+	mai.memoryTypeIndex = findMemType(mr.memoryTypeBits,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	if (vkAllocateMemory(m_device, &mai, nullptr, &m_crackCubeMem) != VK_SUCCESS) return false;
+	vkBindBufferMemory(m_device, m_crackCubeBuf, m_crackCubeMem, 0);
+	void* mapped = nullptr;
+	vkMapMemory(m_device, m_crackCubeMem, 0, sizeof(V), 0, &mapped);
+	std::memcpy(mapped, V, sizeof(V));
+	vkUnmapMemory(m_device, m_crackCubeMem);
+	return true;
+}
+
+void VkRhi::drawCrackOverlay(const SceneParams& scene, const float blockPos[3],
+                              int stage, float time) {
+	if (!m_frameActive || !m_crackPipeline || !m_crackCubeBuf) return;
+	ensureMainPass();
+
+	VkCommandBuffer cb = m_cmdBufs[m_frame];
+	VkViewport vp{};
+	vp.width = (float)m_swapExtent.width;
+	vp.height = (float)m_swapExtent.height;
+	vp.minDepth = 0.0f; vp.maxDepth = 1.0f;
+	VkRect2D sc{{0,0}, m_swapExtent};
+	vkCmdSetViewport(cb, 0, 1, &vp);
+	vkCmdSetScissor(cb, 0, 1, &sc);
+
+	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_crackPipeline);
+
+	// Pack push constants: mat4 viewProj + vec4 blockPos(xyz + stage) + vec4 params(time + rsvd).
+	float pc[16 + 4 + 4];
+	std::memcpy(pc, scene.viewProj, sizeof(float) * 16);
+	pc[16] = blockPos[0]; pc[17] = blockPos[1]; pc[18] = blockPos[2];
+	pc[19] = (float)stage;
+	pc[20] = time; pc[21] = 0.0f; pc[22] = 0.0f; pc[23] = 0.0f;
+	vkCmdPushConstants(cb, m_crackLayout,
+		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+		sizeof(pc), pc);
+
+	VkDeviceSize off = 0;
+	vkCmdBindVertexBuffers(cb, 0, 1, &m_crackCubeBuf, &off);
+	vkCmdDraw(cb, 36, 1, 0, 0);
+}
+
 // 2D UI / text pipeline. One-time: 512×192 R8 SDF atlas + font sampler set.
 // Per-frame: persistent-mapped VB with byte cursor (reset in beginFrame),
 // appended by each drawUi2D. Runs in the swapchain pass.
@@ -3750,6 +3931,10 @@ void VkRhi::shutdown() {
 		if (m_ribbonVtxBuf[f]) vkDestroyBuffer(m_device, m_ribbonVtxBuf[f], nullptr);
 		if (m_ribbonVtxMem[f]) vkFreeMemory(m_device, m_ribbonVtxMem[f], nullptr);
 	}
+	if (m_crackPipeline) vkDestroyPipeline(m_device, m_crackPipeline, nullptr);
+	if (m_crackLayout) vkDestroyPipelineLayout(m_device, m_crackLayout, nullptr);
+	if (m_crackCubeBuf) vkDestroyBuffer(m_device, m_crackCubeBuf, nullptr);
+	if (m_crackCubeMem) vkFreeMemory(m_device, m_crackCubeMem, nullptr);
 	// 2D UI / text resources.
 	if (m_uiPipeline) vkDestroyPipeline(m_device, m_uiPipeline, nullptr);
 	if (m_uiLayout) vkDestroyPipelineLayout(m_device, m_uiLayout, nullptr);

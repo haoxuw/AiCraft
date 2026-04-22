@@ -44,6 +44,10 @@ public:
 	void drawRibbon(const SceneParams& scene,
 	                const float* points,
 	                uint32_t pointCount) override;
+	void drawCrackOverlay(const SceneParams& scene,
+	                      const float blockPos[3],
+	                      int stage,
+	                      float time) override;
 	void drawUi2D(const float* vertsPosUV,
 	              uint32_t vertCount,
 	              int mode,
@@ -111,6 +115,8 @@ private:
 	bool ensureParticleInstanceCapacity(int frame, VkDeviceSize bytes);
 	bool createRibbonPipeline();
 	bool ensureRibbonVertexCapacity(int frame, VkDeviceSize bytes);
+	bool createCrackOverlayPipeline();
+	bool createCrackOverlayCube();
 	bool createUi2DResources();
 	bool uploadFontAtlas();
 	bool ensureUi2DVertexCapacity(int frame, VkDeviceSize bytes);
@@ -242,6 +248,14 @@ private:
 	void* m_ribbonVtxMapped[kFramesInFlight]{};
 	VkDeviceSize m_ribbonVtxCap[kFramesInFlight]{};
 	VkDeviceSize m_ribbonVtxCursor[kFramesInFlight]{};  // bytes written this frame
+
+	// Block-break crack overlay. One static vertex buffer (unit cube, 36
+	// verts) shared across frames; each draw stamps it at the targeted
+	// block via push constants.
+	VkPipelineLayout m_crackLayout = VK_NULL_HANDLE;
+	VkPipeline m_crackPipeline = VK_NULL_HANDLE;
+	VkBuffer m_crackCubeBuf = VK_NULL_HANDLE;
+	VkDeviceMemory m_crackCubeMem = VK_NULL_HANDLE;
 
 	// 2D UI / text. 512×192 R8 SDF atlas bound once. Per-frame cursor
 	// buffer (mirrors ribbon pattern). PC: { vec4 color; ivec4 mode }.

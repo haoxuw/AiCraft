@@ -612,6 +612,12 @@ void Game::drainAsyncMeshes() {
 	constexpr size_t kMaxUploadsPerFrame = 8;
 	m_asyncMesher->drain(
 		[this](civcraft::AsyncChunkMesher::Result&& r) {
+			// Sync remesh beat us to it — worker snapshot is pre-predict,
+			// uploading would un-break the block.
+			if (m_staleInflightMeshes.erase(r.cp)) {
+				m_inFlightMesh.erase(r.cp);
+				return;
+			}
 			applyMeshResult(std::move(r));
 		},
 		kMaxUploadsPerFrame);
@@ -758,6 +764,7 @@ void Game::shutdown() {
 	// Any results still in the queue are discarded — shutting down.
 	m_asyncMesher.reset();
 	m_inFlightMesh.clear();
+	m_staleInflightMeshes.clear();
 	m_audio.shutdown();
 	for (auto& kv : m_chunkMeshes) {
 		if (kv.second != rhi::IRhi::kInvalidMesh) m_rhi->destroyMesh(kv.second);

@@ -363,6 +363,9 @@ private:
 	// Pass 2 from double-enqueuing and lets dirty events wait for the in-flight
 	// build to land before re-queueing.
 	std::unordered_set<civcraft::ChunkPos, civcraft::ChunkPosHash> m_inFlightMesh;
+	// cp flagged here has a newer sync-built mesh than the in-flight worker
+	// job; drainAsyncMeshes drops the stale result instead of overwriting.
+	std::unordered_set<civcraft::ChunkPos, civcraft::ChunkPosHash> m_staleInflightMeshes;
 	// Worker pool lives as long as Game. Constructed lazily once the server
 	// handshake is done and the BlockRegistry is known. Destroyed in
 	// shutdown() before the server reference goes away.
@@ -419,15 +422,6 @@ private:
 		glm::vec3 late{1.4f,1.0f,0.4f};
 	};
 	std::vector<Slash> m_slashes;
-
-	// Mining hit event — particle burst at block face per swing.
-	struct HitEvent {
-		glm::vec3 pos{};
-		glm::vec3 color{1,1,1};
-		float     t = 0;
-		bool      active = false;
-	};
-	std::vector<HitEvent> m_hitEvents;
 
 	// Block-break burst (Minecraft-style). Two concepts share one struct so
 	// they're cleaned up together:
@@ -784,7 +778,6 @@ private:
 		std::vector<float> ribbons;
 		std::vector<float> hitParts;
 		std::vector<float> spinParts;
-		std::vector<float> crackParts;
 		std::vector<float> doorVerts;
 		std::vector<civcraft::RaycastEntity> ents;
 	} m_scratch;

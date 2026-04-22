@@ -924,114 +924,27 @@ void WorldRenderer::renderEffects(float wallTime) {
 	}
 
 	// ── Block break progress overlay ────────────────────────────────────
-	// Dark crack-mark particles on each face of the block, progressively
-	// denser through 3 stages.
+	// Sci-fi "power stone charging up" cracks. The overlay is a unit-cube
+	// quad at the targeted block; a procedural Voronoi fragment shader
+	// computes amber→white-hot energy seams on each face, revealing more
+	// edges and pulsing faster with damage. See shaders/vk/crack_overlay.*
 	if (g.m_breaking.active && g.m_breaking.hits > 0) {
-		float progress = (float)g.m_breaking.hits / 3.0f;
-		glm::vec3 bpf = glm::vec3(g.m_breaking.target);
-
-		// Crack positions in (u,v) face-local coords [0,1]. Each stage
-		// adds more marks for a progressively shattered look.
-		static const float cracks[][2] = {
-			// Stage 1 (0–4): initial fracture from center
-			{0.50f,0.52f}, {0.18f,0.85f}, {0.80f,0.22f}, {0.82f,0.70f}, {0.28f,0.73f},
-			// Stage 2 (5–9): branches spread
-			{0.25f,0.15f}, {0.05f,0.28f}, {0.60f,0.90f}, {0.45f,0.38f}, {0.90f,0.55f},
-			// Stage 3 (10–17): dense fracture network
-			{0.95f,0.10f}, {0.10f,0.05f}, {0.40f,0.95f}, {0.72f,0.95f},
-			{0.15f,0.45f}, {0.85f,0.85f}, {0.35f,0.65f}, {0.65f,0.15f},
+		int stage = g.m_breaking.hits <= 1 ? 0 : g.m_breaking.hits == 2 ? 1 : 2;
+		float bp[3] = {
+			(float)g.m_breaking.target.x,
+			(float)g.m_breaking.target.y,
+			(float)g.m_breaking.target.z,
 		};
-		static const int stageEnd[] = {5, 10, 18};
-		int stage = (progress < 0.34f) ? 0 : (progress < 0.67f) ? 1 : 2;
-		int numMarks = stageEnd[stage];
-
-		// Map (u,v) to 3D for each of 6 cube faces with slight offset
-		// to avoid z-fighting with the block surface.
-		auto facePoint = [](int face, float u, float v) -> glm::vec3 {
-			switch (face) {
-			case 0: return {u,     v,     1.002f};   // front  z=1
-			case 1: return {1-u,   v,    -0.002f};   // back   z=0
-			case 2: return {1.002f, v,    1-u};       // right  x=1
-			case 3: return {-0.002f,v,    u};         // left   x=0
-			case 4: return {u,     1.002f, v};        // top    y=1
-			case 5: return {u,    -0.002f, 1-v};      // bottom y=0
-			default: return {u, v, 0};
-			}
-		};
-
-		// Near-black, large, near-opaque marks — matches the instant-break
-		// burst so progressive cracks read as "visible black cracks" at any
-		// stage, not faint grey dots that disappear against dark textures.
-		auto& crackParts = g.m_scratch.crackParts;
-		crackParts.clear();
-		float alpha = 0.85f + progress * 0.13f;  // 0.85 → 0.98
-		float size  = 0.07f + progress * 0.03f;  // 0.07 → 0.10
-		for (int face = 0; face < 6; face++) {
-			for (int m = 0; m < numMarks; m++) {
-				glm::vec3 fp = facePoint(face, cracks[m][0], cracks[m][1]);
-				glm::vec3 p = bpf + fp;
-				crackParts.push_back(p.x); crackParts.push_back(p.y); crackParts.push_back(p.z);
-				crackParts.push_back(size);
-				crackParts.push_back(0.04f); crackParts.push_back(0.03f); crackParts.push_back(0.02f);
-				crackParts.push_back(alpha);
-			}
-		}
-		int total = numMarks * 6;
-		g.m_rhi->drawParticles(scene, crackParts.data(), (uint32_t)total);
+		g.m_rhi->drawCrackOverlay(scene, bp, stage, wallTime);
 	}
 
 	// ── Block-break burst ───────────────────────────────────────────────
-	// Two-part effect: a black crack flash stamped on the block's ghost cube
-	// (the "break animation" the user sees — block is already gone), plus
-	// the flying debris pre-integrated in tickCombat. Reuses the same
-	// face-crack (u,v) layout as the progressive-break overlay above for
-	// visual consistency.
-	static const float kBurstCracks[][2] = {
-		// Full stage-3 density, 18 marks/face, applied at full strength for
-		// an instant break (no progressive phase to build up).
-		{0.50f,0.52f}, {0.18f,0.85f}, {0.80f,0.22f}, {0.82f,0.70f}, {0.28f,0.73f},
-		{0.25f,0.15f}, {0.05f,0.28f}, {0.60f,0.90f}, {0.45f,0.38f}, {0.90f,0.55f},
-		{0.95f,0.10f}, {0.10f,0.05f}, {0.40f,0.95f}, {0.72f,0.95f},
-		{0.15f,0.45f}, {0.85f,0.85f}, {0.35f,0.65f}, {0.65f,0.15f},
-	};
-	auto burstFacePoint = [](int face, float u, float v) -> glm::vec3 {
-		switch (face) {
-		case 0: return {u,     v,     1.002f};
-		case 1: return {1-u,   v,    -0.002f};
-		case 2: return {1.002f, v,    1-u};
-		case 3: return {-0.002f,v,    u};
-		case 4: return {u,     1.002f, v};
-		case 5: return {u,    -0.002f, 1-v};
-		default: return {u, v, 0};
-		}
-	};
-
+	// Flying debris — integrated in tickCombat, emitted here with fade.
+	// The charge-up glow on the block itself lives in the progress overlay
+	// above; once the block is gone, only the puff remains.
 	for (const auto& b : g.m_breakBursts) {
 		float age = b.t / Game::BreakBurst::kDuration;
 		if (age >= 1.0f) continue;
-
-		// Crack flash — stationary on the ghost cube, fades out over the
-		// first kCrackDuration. Larger + darker than the debris so it reads
-		// as cracks, not just "more particles".
-		if (b.t < Game::BreakBurst::kCrackDuration) {
-			float crackAge = b.t / Game::BreakBurst::kCrackDuration;
-			float crackFade = 1.0f - crackAge * crackAge;  // ease-out
-			auto& cracks = g.m_scratch.crackParts;
-			cracks.clear();
-			constexpr int kMarks = 18;
-			float size = 0.08f;
-			for (int face = 0; face < 6; face++) {
-				for (int m = 0; m < kMarks; m++) {
-					glm::vec3 fp = burstFacePoint(face, kBurstCracks[m][0], kBurstCracks[m][1]);
-					glm::vec3 p = b.origin + fp;
-					cracks.push_back(p.x); cracks.push_back(p.y); cracks.push_back(p.z);
-					cracks.push_back(size);
-					cracks.push_back(0.04f); cracks.push_back(0.03f); cracks.push_back(0.02f);
-					cracks.push_back(0.95f * crackFade);
-				}
-			}
-			g.m_rhi->drawParticles(scene, cracks.data(), (uint32_t)(kMarks * 6));
-		}
 
 		// Flying debris — integrated in tickCombat, emitted here with fade.
 		auto& parts = g.m_scratch.hitParts;
@@ -1044,29 +957,6 @@ void WorldRenderer::renderEffects(float wallTime) {
 			parts.push_back(fade);
 		}
 		g.m_rhi->drawParticles(scene, parts.data(), (uint32_t)b.parts.size());
-	}
-
-	// ── Mining hit event particles (burst per swing) ────────────────────
-	for (const auto& he : g.m_hitEvents) {
-		float age = he.t / 0.4f;
-		if (age > 1.0f) continue;
-		int n = 8;
-		auto& hitParts = g.m_scratch.hitParts;
-		hitParts.clear();
-		for (int i = 0; i < n; i++) {
-			float seed = (float)i;
-			float dx = std::sin(seed * 17.3f + he.pos.x) * 0.5f * age;
-			float dy = std::cos(seed * 23.7f + he.pos.y) * 0.4f * age + 0.3f * age;
-			float dz = std::sin(seed * 31.1f + he.pos.z) * 0.5f * age;
-			glm::vec3 p = he.pos + glm::vec3(dx, dy, dz);
-			float fade = 1.0f - age;
-			float sz = 0.06f + 0.02f * (1.0f - age);
-			hitParts.push_back(p.x); hitParts.push_back(p.y); hitParts.push_back(p.z);
-			hitParts.push_back(sz);
-			hitParts.push_back(he.color.x); hitParts.push_back(he.color.y); hitParts.push_back(he.color.z);
-			hitParts.push_back(fade * 0.9f);
-		}
-		g.m_rhi->drawParticles(scene, hitParts.data(), (uint32_t)n);
 	}
 
 	// ── Move target marker: spinning triangle hovering above the target.

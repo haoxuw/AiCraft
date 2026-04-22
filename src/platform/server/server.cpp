@@ -382,6 +382,12 @@ void GameServer::resolveActions(float dt) {
 			// the block update arrives, so skip the noisy stderr log but keep
 			// the inventory nudge — the optimistic log-pickup still needs to
 			// be rolled back. Other codes are genuine bugs and stay loud.
+			//
+			// TODO(predicted-break snap-back): we don't re-emit onBlockChange
+			// on reject, so a player's optimistically-broken block would
+			// leave a phantom hole if rejected. Today the only reachable
+			// player reject is SourceBlockGone (block already AIR, prediction
+			// correct); other codes are config bugs. Revisit if that changes.
 			auto nudge = [&](ActionRejectCode code, const std::string& why) {
 				char detail[256];
 				std::snprintf(detail, sizeof(detail), "from=%s to=%s: %s",

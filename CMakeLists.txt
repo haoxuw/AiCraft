@@ -132,6 +132,8 @@ set(VK_SHADER_SOURCES
 	${VK_SHADER_SRC_DIR}/particle.frag
 	${VK_SHADER_SRC_DIR}/ribbon.vert
 	${VK_SHADER_SRC_DIR}/ribbon.frag
+	${VK_SHADER_SRC_DIR}/crack_overlay.vert
+	${VK_SHADER_SRC_DIR}/crack_overlay.frag
 	${VK_SHADER_SRC_DIR}/text2d.vert
 	${VK_SHADER_SRC_DIR}/text2d.frag
 	${VK_SHADER_SRC_DIR}/chunk_terrain.vert
