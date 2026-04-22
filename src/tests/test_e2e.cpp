@@ -2915,6 +2915,103 @@ static std::string s08_removeclient_reason_owner_offline() {
 	return "";
 }
 
+// S9 (Phase 4 regression): VillageStamper actually paints house walls.
+//
+// Catches the bug the user reported as "I can't see the buildings anymore":
+// the footprint was force-loaded and the stamper logged "stamped N chunks",
+// but generateVillageInChunk silently no-op'd, so the village amounted to
+// just terrain + monument + chests — no walls, no roofs. Entity-level checks
+// (T25 = spawn near center; T07 = villagers spawn) all still passed.
+//
+// Invariant: for every non-barn house in the template, the four wall corners
+// at floorY+2 (well above any reasonable ground hillock, inside the first
+// story) must be non-AIR. `generateHouse` writes wallB / glassB / doorB at
+// those cells depending on dx/dz; all three are solid block ids, so "AIR"
+// at a corner means the paint pass didn't execute over that chunk.
+static std::string s09_village_houses_painted_near_spawn() {
+	auto ts = makeVillageServer();
+	GameServer* srv = ts->server();
+	if (!srv) return "no server";
+
+	auto& tmpl   = srv->world().getTemplate();
+	auto& cfg    = tmpl.pyConfig();
+	if (!cfg.hasVillage) return "village template has no village";
+	if (cfg.houses.empty()) return "village template has no houses";
+
+	const VillageRecord* rec = srv->villages().findBySeat(1);
+	if (!rec) return "seat 1 has no village record after addClient";
+	glm::ivec2 vc = rec->centerXZ;
+	int seed = 42;
+
+	BlockId airId = srv->world().blocks.getId(BlockType::Air);
+
+	int housesChecked = 0;
+	for (const auto& h : cfg.houses) {
+		if (h.type == "barn") continue;  // barn uses a different block layout
+		housesChecked++;
+
+		int hcx = vc.x + h.cx;
+		int hcz = vc.y + h.cz;
+		int floorY =
+			(int)std::round(tmpl.surfaceHeight(seed, (float)hcx, (float)hcz)) + 1;
+		// Rescan corners + center so one unlucky hillock doesn't skew floorY;
+		// generateHouse uses footprint-max ground, so match that.
+		int maxGY = INT_MIN;
+		for (int dx = 0; dx < h.w; dx++)
+			for (int dz = 0; dz < h.d; dz++) {
+				int y = (int)std::round(
+					tmpl.surfaceHeight(seed, (float)(hcx+dx), (float)(hcz+dz)));
+				if (y > maxGY) maxGY = y;
+			}
+		floorY = maxGY + 1;
+
+		struct Corner { int dx, dz; const char* name; };
+		Corner corners[4] = {
+			{0,       0,       "NW"},
+			{h.w - 1, 0,       "NE"},
+			{0,       h.d - 1, "SW"},
+			{h.w - 1, h.d - 1, "SE"},
+		};
+		for (auto& c : corners) {
+			int wx = hcx + c.dx;
+			int wz = hcz + c.dz;
+			int wy = floorY + 2;  // inside first story, above any ground lip
+			BlockId bid = srv->world().getBlock(wx, wy, wz);
+			if (bid == airId) {
+				return std::string("house (") + std::to_string(h.cx) + ","
+				     + std::to_string(h.cz) + ") wall corner " + c.name
+				     + " at (" + std::to_string(wx) + "," + std::to_string(wy)
+				     + "," + std::to_string(wz)
+				     + ") is AIR — stamper didn't paint";
+			}
+		}
+	}
+	if (housesChecked == 0) return "no non-barn houses in template to check";
+
+	// Also assert the nearest house corner is within render distance of spawn.
+	// Stamping-but-unreachable would be just as invisible as not-stamping.
+	glm::vec3 spawn = srv->spawnPos();
+	float bestDist2 = 1e12f;
+	for (const auto& h : cfg.houses) {
+		if (h.type == "barn") continue;
+		for (int cx : {0, h.w - 1}) for (int cz : {0, h.d - 1}) {
+			float dx = (float)(vc.x + h.cx + cx) - spawn.x;
+			float dz = (float)(vc.y + h.cz + cz) - spawn.z;
+			float d2 = dx*dx + dz*dz;
+			if (d2 < bestDist2) bestDist2 = d2;
+		}
+	}
+	// preload_radius_chunks=16 → 256 blocks. 96 blocks is a conservative
+	// "visible within a couple of chunks" bound; village.py puts a house
+	// corner ≤60 blocks from spawn by construction.
+	float bestDist = std::sqrt(bestDist2);
+	if (bestDist > 96.0f) {
+		return "nearest house corner is " + std::to_string((int)bestDist)
+		     + " blocks from spawn (expected ≤96)";
+	}
+	return "";
+}
+
 // V1 (Phase 4): three sequential sitings land ≥ kMinDistance apart pairwise.
 // The siter's contract is "≥ min from nearest already-registered village" —
 // we verify the stronger pairwise invariant holds because each siting runs
@@ -3216,6 +3313,7 @@ int main() {
 	run("S6: living spawn requires Prop::Owner",           s06_living_spawn_requires_owner);
 	run("S7: disconnect→snapshot→rejoin→restore",          s07_disconnect_snapshot_rejoin_restore);
 	run("S8: removeClient tags reason=OwnerOffline",       s08_removeclient_reason_owner_offline);
+	run("S9: village houses painted + within render dist", s09_village_houses_painted_near_spawn);
 
 	printf("\n--- Village Registry + Siter ---\n");
 	run("V1: three sequential sitings are pairwise ≥256 apart", v01_three_sitings_spaced);
