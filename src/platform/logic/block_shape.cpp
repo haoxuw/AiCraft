@@ -28,7 +28,7 @@ public:
 };
 
 // ── Half-height slab. param2 bit 0: 1 = top half, 0 = bottom half.
-// Two rotation states so MMB/R flips between them during placement.
+// Top vs bottom is picked Minecraft-style from the click location.
 class SlabShape : public BlockShape {
 public:
 	int rotationCount() const override { return 2; }

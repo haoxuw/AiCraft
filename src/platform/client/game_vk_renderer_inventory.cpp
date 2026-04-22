@@ -30,6 +30,8 @@
 #include "client/game_vk.h"
 #include "client/ui_kit.h"
 
+#include <unordered_set>
+
 #include "client/box_model_flatten.h"
 #include "client/box_model.h"
 #include "logic/artifact_registry.h"
@@ -83,6 +85,73 @@ static std::string prettify(const std::string& id) {
 // so callers don't unpack SlotRect fields.
 static bool rectContains(const Game::SlotRect& r, float x, float y) {
 	return ui::rectContainsNdc(r.ndcX, r.ndcY, r.ndcW, r.ndcH, x, y);
+}
+
+// Log a one-time warning for a missing item model. The set stores the
+// item ids we've already complained about so the stderr isn't spammed
+// once per slot per frame.
+static void warnMissingOnce(std::unordered_set<std::string>& seen,
+                             const std::string& itemId,
+                             const std::string& stem) {
+	if (!seen.insert(itemId).second) return;
+	std::fprintf(stderr,
+		"[vk-game] [inventory] missing model for '%s' — "
+		"rendering question-mark placeholder. "
+		"Add artifacts/models/base/%s.py to fix.\n",
+		itemId.c_str(), stem.c_str());
+}
+
+// Five-box '?' glyph in item-local space. Units are fractions of one
+// slot's world height (0.44 of the slot). Shared layout so future tweaks
+// happen in one place.
+struct QmPart { glm::vec3 offset; glm::vec3 halfSize; };
+static constexpr QmPart kQmParts[] = {
+	{{-0.18f,  0.35f, 0}, {0.14f, 0.06f, 0.14f}},  // hook top
+	{{ 0.18f,  0.22f, 0}, {0.06f, 0.14f, 0.14f}},  // hook right
+	{{ 0.00f,  0.05f, 0}, {0.14f, 0.06f, 0.14f}},  // hook mid
+	{{ 0.00f, -0.08f, 0}, {0.06f, 0.14f, 0.14f}},  // vertical stem
+	{{ 0.00f, -0.28f, 0}, {0.08f, 0.08f, 0.14f}},  // dot
+};
+static constexpr glm::vec3 kQmColor{0.95f, 0.25f, 0.90f};  // magenta
+
+// Emit a slow-spinning magenta '?' into the flat box-model buffer for
+// one slot whose model wasn't found. Factored out because the inline
+// version was ~30 lines of camera/math bookkeeping in the middle of
+// renderInventoryItems3D.
+static void emitQuestionMarkPlaceholder(std::vector<float>& boxes,
+                                         const Game::SlotRect& s,
+                                         float wallTime,
+                                         glm::vec3 camPos, glm::vec3 camFwd,
+                                         glm::vec3 camRight, glm::vec3 camUp,
+                                         float halfW, float halfH, float d) {
+	// Fit the glyph inside the slot's smaller dimension.
+	float slotWH = std::min(s.ndcW * halfW, s.ndcH * halfH);
+	float cx = s.ndcX + s.ndcW * 0.5f;
+	float cy = s.ndcY + s.ndcH * 0.5f;
+	glm::vec3 centerW = camPos + camFwd * d
+	                  + camRight * (cx * halfW)
+	                  + camUp    * (cy * halfH);
+
+	// Slow spin around world-up — local XZ rotates, Y stays.
+	float spin = wallTime * 0.8f;
+	glm::vec3 localX = camRight * std::cos(spin) - camFwd * std::sin(spin);
+	glm::vec3 localY = camUp;
+	glm::vec3 localZ = camRight * std::sin(spin) + camFwd * std::cos(spin);
+	float sc = slotWH * 0.44f;   // glyph-local → world scale
+
+	for (const auto& part : kQmParts) {
+		glm::vec3 size = part.halfSize * 2.0f * sc;
+		glm::vec3 pos  = centerW
+		               + (localX * part.offset.x + localY * part.offset.y
+		                + localZ * part.offset.z) * sc;
+		glm::mat4 m(1.0f);
+		m[0] = glm::vec4(localX * size.x, 0.0f);
+		m[1] = glm::vec4(localY * size.y, 0.0f);
+		m[2] = glm::vec4(localZ * size.z, 0.0f);
+		m[3] = glm::vec4(pos - 0.5f * (glm::vec3(m[0]) + glm::vec3(m[1])
+		                             + glm::vec3(m[2])), 1.0f);
+		detail::emitBox(boxes, m, kQmColor);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -153,6 +222,10 @@ void HudRenderer::renderInventoryItems3D() {
 	}
 
 	// Pass 2: items.
+	// Per-process set of item ids that already warned about missing model,
+	// so the log doesn't spam once per frame for each of 40 slots.
+	static std::unordered_set<std::string> kMissingWarned;
+
 	for (const auto& s : slots) {
 		if (s.itemId.empty() || s.count <= 0) continue;
 
@@ -162,7 +235,13 @@ void HudRenderer::renderInventoryItems3D() {
 		auto it = g.m_models.find(stem);
 		if (it == g.m_models.end()) {
 			it = g.m_models.find(s.itemId);
-			if (it == g.m_models.end()) continue;
+		}
+		if (it == g.m_models.end()) {
+			warnMissingOnce(kMissingWarned, s.itemId, stem);
+			emitQuestionMarkPlaceholder(boxes, s, g.m_wallTime,
+			                             camPos, camFwd, camRight, camUp,
+			                             halfW, halfH, d);
+			continue;
 		}
 
 		float slotCx = s.ndcX + s.ndcW * 0.5f;

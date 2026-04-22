@@ -995,9 +995,12 @@ void WorldRenderer::renderEffects(float wallTime) {
 					glm::ivec3 pp = hit->placePos;
 					civcraft::BlockId existing = g.m_server->chunks().getBlock(pp.x, pp.y, pp.z);
 					bool blocked = (existing != civcraft::BLOCK_AIR);
+					// Same param2 the click will use — preview matches the
+					// actual placement exactly.
+					uint8_t p2 = g.placementParam2ForHeld(*hdef);
 					std::vector<civcraft::SubBox> boxes;
 					civcraft::getBlockShape(hdef->mesh_type).emitSubBoxes(
-						pp, g.m_placementParam2, civcraft::NeighborMask{}, boxes);
+						pp, p2, civcraft::NeighborMask{}, boxes);
 					// Green when placeable, red when blocked. Low alpha so the
 					// underlying world stays readable.
 					const float green[4] = {0.30f, 0.95f, 0.35f, 0.38f};

@@ -287,12 +287,11 @@ void Game::processInput(float dt) {
 		m_invOpen = !m_invOpen;
 	m_tabLast = tabKey;
 
-	// R: cycle placement rotation for the held block. MMB+scroll does the
-	// same thing via onScroll (which reads m_placementParam2 through the
-	// same helper).
+	// R: rotate held block. MMB click also cycles (see LMB/MMB section
+	// below); the two bindings share cyclePlacementRotation().
 	bool rKey = glfwGetKey(m_window, GLFW_KEY_R) == GLFW_PRESS;
 	if (rKey && !m_rKeyLast)
-		cyclePlacementRotation(+1);
+		cyclePlacementRotation();
 	m_rKeyLast = rKey;
 
 	// 1..9, 0: select hotbar slot. 0 is the rightmost slot (index 9).
@@ -312,9 +311,8 @@ void Game::processInput(float dt) {
 		}
 	}
 
-	// Reset rotation when the player changes which hotbar slot is active.
-	// Each slot gets a fresh "0 = default" on switch; feels cleaner than
-	// remembering a per-slot rotation the player might have forgotten.
+	// Reset placement rotation whenever the active hotbar slot changes
+	// so switching between blocks doesn't inherit a stale param2.
 	if (m_hotbar.selected != m_placementHotbarSlot) {
 		m_placementParam2     = 0;
 		m_placementHotbarSlot = m_hotbar.selected;
@@ -1274,10 +1272,17 @@ after_lmb_handling:;
 		}
 	}
 
-	// MMB: eyedropper (pick block type without breaking).
+	// MMB: rotate held block if it's rotatable, else eyedropper
+	// (pick block type without breaking). Context-sensitive so we
+	// keep both features without stealing a binding.
 	int mmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_MIDDLE);
 	bool mmbNow = (mmb == GLFW_PRESS);
 	if (mmbNow && !m_mmbLast && !m_uiWantsCursor) {
+		if (isHeldBlockRotatable()) {
+			cyclePlacementRotation();
+			m_mmbLast = mmbNow;
+			return;
+		}
 		glm::vec3 eye = m_cam.position;
 		glm::vec3 dir = m_cam.front();
 		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 16.0f);
@@ -1416,13 +1421,14 @@ void Game::placeBlock() {
 	p.fromCount   = 1;
 	p.toCount     = 1;
 	p.convertInto = civcraft::Container::block(hit->placePos);
-	// Server honors placeParam2 for FourDir-rotatable blocks (Stair etc.).
-	// Doors ignore it — the server auto-hinges from neighbor walls.
-	p.placeParam2 = m_placementParam2;
+	// R key / MMB click cycles m_placementParam2 for rotatable blocks;
+	// non-rotatable ones always ship 0. Server honors it for FourDir
+	// rotatable blocks; doors ignore it and auto-hinge from neighbors.
+	p.placeParam2 = placementParam2ForHeld(*placedDef);
 	m_server->sendAction(p);
 	civcraft::GameLogger::instance().emit("ACTION", "placed %s @(%d,%d,%d) p2=%u",
 		blockType.c_str(), hit->placePos.x, hit->placePos.y, hit->placePos.z,
-		(unsigned)m_placementParam2);
+		(unsigned)p.placeParam2);
 
 	// Client-side prediction — mirror of predictBlockBreak. Writes the
 	// placed block to LocalWorld and decrements inventory locally so the
@@ -1435,28 +1441,42 @@ void Game::placeBlock() {
 	// Doors get a ~1 round-trip hinge flicker since the server picks the
 	// hinge from neighbor walls and we predict 0 — not a correctness issue.
 	civcraft::BlockId bid = m_server->blockRegistry().getId(blockType);
-	uint8_t predictP2 = (placedDef->param2type == civcraft::Param2Type::FourDir
-	                     && placedDef->mesh_type != civcraft::MeshType::Door)
-		? m_placementParam2 : 0;
+	uint8_t predictP2 = (placedDef->mesh_type != civcraft::MeshType::Door)
+		? p.placeParam2 : 0;
 	m_server->predictBlockPlace(hit->placePos, bid, predictP2, /*appearance=*/0);
 	if (me->inventory) me->inventory->remove(blockType, 1);
 	syncRemeshBlock(hit->placePos);
 }
 
-// Cycle the next placement orientation (+1 forward, -1 backward) within
-// the held block's shape rotation count. Bound to R key and MMB+scroll.
-// No-op if held item isn't a block or the shape isn't rotatable.
-void Game::cyclePlacementRotation(int direction) {
+// Fetch the BlockDef for the currently-held hotbar item, or null if
+// the hotbar is empty / the item isn't a registered block. Shared by
+// rotation helpers so the hotbar lookup isn't open-coded three times.
+const civcraft::BlockDef* Game::heldBlockDef() {
 	auto* me = playerEntity();
-	if (!me || !me->inventory) return;
+	if (!me || !me->inventory) return nullptr;
 	const std::string& held = m_hotbar.mainHand(*me->inventory);
-	if (held.empty()) return;
-	const civcraft::BlockDef* def = m_server->blockRegistry().find(held);
+	if (held.empty()) return nullptr;
+	return m_server->blockRegistry().find(held);
+}
+
+bool Game::isHeldBlockRotatable() {
+	const civcraft::BlockDef* def = heldBlockDef();
+	if (!def) return false;
+	return civcraft::getBlockShape(def->mesh_type).rotationCount() > 1;
+}
+
+void Game::cyclePlacementRotation() {
+	const civcraft::BlockDef* def = heldBlockDef();
 	if (!def) return;
 	int n = civcraft::getBlockShape(def->mesh_type).rotationCount();
 	if (n <= 1) return;
-	int next = ((int)m_placementParam2 + direction + n) % n;
-	m_placementParam2 = (uint8_t)next;
+	m_placementParam2 = (uint8_t)((m_placementParam2 + 1) % n);
+}
+
+uint8_t Game::placementParam2ForHeld(const civcraft::BlockDef& def) const {
+	int n = civcraft::getBlockShape(def.mesh_type).rotationCount();
+	if (n <= 1) return 0;
+	return (uint8_t)(m_placementParam2 % n);
 }
 
 void Game::clickToMove() {

@@ -944,13 +944,6 @@ void Game::onScroll(double xoff, double yoff) {
 	(void)xoff;
 	if (m_state != GameState::Playing) return;
 	float y = (float)yoff;
-	// MMB held + scroll cycles placement rotation (consumes the scroll so
-	// hotbar/zoom don't also react). Works in every camera mode.
-	if (y != 0.0f &&
-	    glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS) {
-		cyclePlacementRotation(y > 0 ? +1 : -1);
-		return;
-	}
 	// Scroll cycles the hotbar slot in FPS (no camera zoom there). Down = next.
 	if (m_cam.mode == civcraft::CameraMode::FirstPerson && y != 0.0f) {
 		int step = y > 0 ? -1 : 1;

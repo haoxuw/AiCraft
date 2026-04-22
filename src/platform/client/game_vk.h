@@ -283,10 +283,22 @@ private:
 	void digInFront();
 	// Server-mode block placement: raycast → place at adjacent air cell.
 	void placeBlock();
-	// Advance m_placementParam2 to the next valid orientation for the
-	// currently-held block. Bound to R key and MMB+scroll. No-op if the
-	// held item isn't a rotatable block.
-	void cyclePlacementRotation(int direction = +1);
+	// Cycle m_placementParam2 forward by one within the held block's
+	// rotationCount(). No-op if the held item isn't a rotatable block.
+	// Bound to R key and MMB click (MMB falls through to eyedropper
+	// when rotationCount == 1).
+	void cyclePlacementRotation();
+	// True when the currently-selected hotbar item resolves to a
+	// BlockDef whose shape has rotationCount > 1. Drives the MMB
+	// router (rotate vs eyedropper) and the ghost preview.
+	bool isHeldBlockRotatable();
+	// Return the param2 the held block should be placed with, clamped
+	// modulo its rotationCount. Used by placeBlock and the ghost preview.
+	uint8_t placementParam2ForHeld(const civcraft::BlockDef& def) const;
+	// BlockDef for the currently-held hotbar item, or null if empty or
+	// the held item isn't a registered block. Private hotbar+registry
+	// lookup shared by the rotation helpers.
+	const civcraft::BlockDef* heldBlockDef();
 	// RPG / RTS click-to-move: raycast through cursor NDC → ground cell →
 	// sendSetGoal so the server's greedy steering walks us there. Uses the
 	// screen cursor in top-down modes (not the camera forward vector).
@@ -557,13 +569,13 @@ private:
 	bool         m_f11Last       = false;
 	bool         m_hLast         = false;   // H: handbook
 	bool         m_tKeyLast      = false;   // T: talk to NPC
-	bool         m_rKeyLast      = false;   // R: rotate block for placement
+	bool         m_rKeyLast      = false;   // R: rotate held block
 
-	// Orientation the next placed block gets. Cycled by R key or MMB+scroll,
-	// modulo the held block's BlockShape::rotationCount(). Reset to 0 when
-	// the hotbar slot changes.
+	// Orientation the next placed block gets. Cycled by R key or MMB
+	// click (MMB click on a non-rotatable item keeps its eyedropper
+	// behavior). Reset to 0 when the hotbar slot changes.
 	uint8_t      m_placementParam2 = 0;
-	int          m_placementHotbarSlot = -1;  // last slot seen; reset triggers on change
+	int          m_placementHotbarSlot = -1;
 
 	// RPG/RTS right-click orbit: hold+drag to orbit camera, quick click = action.
 	// wantCapture is set only while actively orbiting.

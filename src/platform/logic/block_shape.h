@@ -52,9 +52,9 @@ public:
 	virtual ~BlockShape() = default;
 
 	// How many distinct rotation states this shape supports. 1 = not
-	// rotatable. Used by the placement UI so Tab / MMB-scroll cycles
+	// rotatable. Used by the placement UI so R / MMB-click cycle only
 	// through exactly the shape's valid states. Auto-rotating shapes
-	// (fence, door) that derive param2 from neighbors also return 1 —
+	// (door, fence, wall) that derive param2 from neighbors return 1 —
 	// the player doesn't pick their rotation.
 	virtual int rotationCount() const { return 1; }
 
