@@ -820,6 +820,28 @@ private:
 		}
 	}
 
+	// Clear the volume a building is about to occupy, so that a pre-existing
+	// tree (logs, leaves) or any terrain block inside the envelope gets
+	// overwritten with AIR *before* the structure generator writes its walls.
+	// Without this, generateHouse/generateBarn only stamp the blocks they
+	// care about and stray tree blocks persist inside the interior — visible
+	// as "a tree in the barn" and a trap for villager pathing (the executor
+	// picks those blocks as harvest anchors and wedges against walls).
+	//
+	// Widens Z by 1 on each side to cover the gable roof overhang that
+	// both generateHouse and generateBarn emit at dz=-1 and dz=h.d.
+	void clearBuildingEnvelope(const GenCtx& ctx,
+	                           int hcx, int hcz, int w, int d,
+	                           int yMin, int yMax) const {
+		for (int y = yMin; y <= yMax; y++) {
+			for (int dx = 0; dx < w; dx++) {
+				for (int dz = -1; dz <= d; dz++) {
+					ctx.set(hcx + dx, y, hcz + dz, BLOCK_AIR);
+				}
+			}
+		}
+	}
+
 	void generateHouse(const GenCtx& ctx, int seed,
 	                   BlockId wallB, BlockId roofB, BlockId floorB, BlockId stairB,
 	                   BlockId glassB, BlockId doorB, BlockId stoneB,
@@ -1055,6 +1077,19 @@ private:
 			auto [minGY, maxGY] = footprintHeightRange(seed, hcx, hcz, h.w, h.d);
 			int floorY = maxGY + 1;
 			placeFoundation(ctx, seed, stoneB, hcx, hcz, h.w, h.d, floorY, minGY);
+
+			// Clear the interior + roof volume BEFORE any structure writes,
+			// so pre-existing trees inside the footprint can't survive as
+			// stray logs/leaves inside a wall or under a roof.
+			int roofLayers = (h.w + 2) / 2;
+			int envelopeTop;
+			if (h.type == "barn") {
+				constexpr int kBarnBodyH = 9;   // matches generateBarn's barnH
+				envelopeTop = floorY + kBarnBodyH + roofLayers;
+			} else {
+				envelopeTop = floorY + m_py.storyHeight * h.stories + roofLayers;
+			}
+			clearBuildingEnvelope(ctx, hcx, hcz, h.w, h.d, floorY, envelopeTop);
 
 			if (h.type == "barn") {
 				BlockId hRoofB = (!h.roofBlock.empty()) ? blocks.getId(h.roofBlock) : roofB;
