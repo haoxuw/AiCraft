@@ -64,6 +64,15 @@ class WoodcutterBehavior(Behavior):
         self._nav             = Navigator()
         self._chest_target    = None   # (eid, x, y, z) cache for current deposit trip
         self._prev_state      = None
+        # Unreachable-anchor blacklist. Populated when the villager picks the
+        # same anchor for N consecutive ticks without getting closer OR
+        # collecting anything — the executor's walk step is wedged and no
+        # retry will help. Cleared every time WORK state is entered fresh.
+        self._failed_anchors     = set()
+        self._last_anchor_key    = None
+        self._last_anchor_dist   = None
+        self._last_logs_at_work  = None
+        self._stuck_ticks        = 0
 
     # -- Top-level decide ----------------------------------------------------
 
@@ -90,6 +99,15 @@ class WoodcutterBehavior(Behavior):
                 entity.inventory.count("logs")))
             self._nav.reset()
             self._chest_target = None
+            # Fresh WORK cycle: clear the blacklist so trees that failed
+            # last trip (different position, different terrain) get another
+            # chance after deposit.
+            if self._state == self.WORK:
+                self._failed_anchors.clear()
+                self._last_anchor_key   = None
+                self._last_anchor_dist  = None
+                self._last_logs_at_work = None
+                self._stuck_ticks       = 0
             self._prev_state = self._state
 
         if self._state == self.SLEEP:
@@ -109,10 +127,15 @@ class WoodcutterBehavior(Behavior):
         elif self._state == self.SLEEP and is_day:
             self._state = self.WORK
 
-        cap  = entity.inventory_capacity
-        full = not entity.inventory.can_accept("logs", 1, cap)
+        # Gate on `logs >= collect_goal`, NOT on `not can_accept(...)`.
+        # Humanoids have `inventory_capacity = inf` (intentional, so players
+        # never see "Inventory full"), which makes `can_accept` always True
+        # and DEPOSIT unreachable. The collect_goal gate is both correct for
+        # civilian villagers and robust to the inf-cap design.
+        logs_held = entity.inventory.count("logs")
+        ready_to_deposit = logs_held >= self._collect_goal
         empty = entity.inventory.total_value() <= 0
-        if self._state == self.WORK and full:
+        if self._state == self.WORK and ready_to_deposit:
             self._state = self.DEPOSIT
         elif self._state == self.DEPOSIT and empty:
             self._state = self.WORK
@@ -125,34 +148,87 @@ class WoodcutterBehavior(Behavior):
 
     # -- State: Work ---------------------------------------------------------
 
+    # Consecutive no-progress ticks before an anchor is blacklisted.
+    # A decide tick is ~0.5–1s for woodcutters, so 3 ticks ≈ 2–4s of
+    # no motion + no chop, which is comfortably past Navigator arrival
+    # jitter but short enough to abandon a wedged spot quickly.
+    _STUCK_TICK_LIMIT = 3
+
     def _work(self, entity: SelfEntity, local_world: LocalWorld):
         spd    = entity.walk_speed
         origin = (entity.x, entity.y, entity.z)
 
-        # One scan per tier, stop at the first hit — we only need a
-        # *navigation anchor*, not an enumeration of blocks. The executor
-        # will scan the local volume itself once the villager arrives.
+        # Scan multiple candidates per tier so we can skip anchors the
+        # executor has already failed on. `max_results=16` is enough to
+        # route around a single unreachable tree without walking 80 blocks
+        # of forest looking for the 17th.
         anchor = None
         for tier in self.GATHER_PRIORITY:
             stats.inc("scan_blocks")
             hits = scan_blocks(tier, near=origin,
-                               max_dist=self._work_radius, max_results=1)
-            if hits:
-                anchor = hits[0]
+                               max_dist=self._work_radius, max_results=16)
+            for h in hits:
+                key = (int(h["x"]), int(h["y"]), int(h["z"]))
+                if key in self._failed_anchors:
+                    continue
+                anchor = h
+                break
+            if anchor is not None:
                 break
 
         if anchor is None:
-            elog(entity.id, "work: no anchor in %.0f blocks, searching" %
-                 self._work_radius)
+            # Either nothing in range, or every candidate is blacklisted.
+            # Reset the blacklist so the villager can retry after wandering
+            # to a new spot — terrain can change (trees grow, holes fill),
+            # and the stuck trigger will re-blacklist if still unreachable.
+            if self._failed_anchors:
+                elog(entity.id, "work: all %d candidates blacklisted, "
+                     "resetting and wandering" % len(self._failed_anchors))
+                self._failed_anchors.clear()
+            else:
+                elog(entity.id, "work: no anchor in %.0f blocks, searching" %
+                     self._work_radius)
+            return self._search(entity, local_world, spd)
+
+        anchor_key = (int(anchor["x"]), int(anchor["y"]), int(anchor["z"]))
+        dist = ((anchor["x"] + 0.5 - entity.x)**2 +
+                (anchor["z"] + 0.5 - entity.z)**2) ** 0.5
+        logs = entity.inventory.count("logs")
+
+        # Stuck detector: same anchor, not getting closer, not chopping.
+        if anchor_key == self._last_anchor_key:
+            got_closer = (self._last_anchor_dist is None or
+                          dist < self._last_anchor_dist - 0.2)
+            chopped = (self._last_logs_at_work is not None and
+                       logs > self._last_logs_at_work)
+            if not (got_closer or chopped):
+                self._stuck_ticks += 1
+            else:
+                self._stuck_ticks = 0
+        else:
+            self._stuck_ticks = 0
+
+        self._last_anchor_key   = anchor_key
+        self._last_anchor_dist  = dist
+        self._last_logs_at_work = logs
+
+        if self._stuck_ticks >= self._STUCK_TICK_LIMIT:
+            elog(entity.id, "work: blacklisting unreachable anchor=(%d,%d,%d) "
+                 "after %d stuck ticks (d=%.1f, logs=%d)" % (
+                 anchor_key[0], anchor_key[1], anchor_key[2],
+                 self._stuck_ticks, dist, logs))
+            self._failed_anchors.add(anchor_key)
+            self._stuck_ticks     = 0
+            self._last_anchor_key = None
+            # Wander — not idle. A stuck villager in a pit needs to
+            # physically displace; otherwise the next scan returns the
+            # same cluster of nearby-but-overhead trees.
             return self._search(entity, local_world, spd)
 
         elog(entity.id, "work: anchor=(%d,%d,%d) self=(%.1f,%.1f,%.1f) "
              "d=%.1f logs=%d" % (
              int(anchor["x"]), int(anchor["y"]), int(anchor["z"]),
-             entity.x, entity.y, entity.z,
-             ((anchor["x"] + 0.5 - entity.x)**2 +
-              (anchor["z"] + 0.5 - entity.z)**2) ** 0.5,
-             entity.inventory.count("logs")))
+             entity.x, entity.y, entity.z, dist, logs))
 
         plan = [{
             "type": "harvest",
