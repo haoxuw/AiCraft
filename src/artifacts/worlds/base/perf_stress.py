@@ -7,8 +7,8 @@ The client's AgentClient owns every mob on the solo-play side, so `agent`
 and `chunks` probes stay lively too.
 
 Launch:
-    make perf_fps    PERF_TEMPLATE=6
-    make perf_server PERF_TEMPLATE=6
+    make perf_fps    PERF_TEMPLATE=5
+    make perf_server PERF_TEMPLATE=5
 """
 
 world = {
@@ -62,7 +62,6 @@ world = {
     "mobs": [
         {"type": "villager", "count": 100, "radius": 40, "spawn_at": "monument",
          "props": {
-             "collect_goal": 3,
              "work_radius":  60.0,
          }},
     ],

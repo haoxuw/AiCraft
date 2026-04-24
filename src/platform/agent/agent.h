@@ -24,16 +24,23 @@
 
 #include "logic/entity.h"
 #include "logic/action.h"
+#include "logic/constants.h"       // BlockType strings for WorldView classification
 #include "net/server_interface.h"
-#include "server/behavior.h"
-#include "server/python_bridge.h"  // BehaviorHandle
+#include "agent/behavior.h"
+#include "python/python_bridge.h"  // BehaviorHandle
 #include "agent/outcome.h"
+#include "agent/pathfind.h"        // WorldView, DoorOracle, GridPlanner
+#include "client/path_executor.h"  // Navigator (facade over unified PathExecutor)
+#include "agent/pathlog.h"         // PATHLOG(...) — gated by CIVCRAFT_PATHFINDING_DEBUG
 #include "debug/move_stuck_log.h"
+#include "debug/entity_log.h"      // still pulled in for logMoveStuck paths
 
 #include <glm/glm.hpp>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -61,6 +68,44 @@ struct PlanProgress {
 	float overridePauseTimer = 0.0f;
 };
 
+// ServerInterface-backed WorldView for the per-agent Navigator. Block passability
+// mirrors the Python bridge (BridgeWorldView): non-solid blocks and door-likes
+// are walkable; the DoorOracle handles the Interact-on-closed-door handshake.
+class AgentServerWorldView : public WorldView {
+public:
+	void setServer(ServerInterface* s) { m_server = s; }
+	bool isSolid(glm::ivec3 p) const override {
+		if (!m_server) return false;
+		BlockId id = m_server->chunks().getBlock(p.x, p.y, p.z);
+		const BlockDef& def = m_server->blockRegistry().get(id);
+		if (!def.solid) return false;
+		const std::string& sid = def.string_id;
+		if (sid == BlockType::Door)     return false;
+		if (sid == BlockType::DoorOpen) return false;
+		if (sid == BlockType::Trapdoor) return false;
+		return true;
+	}
+private:
+	ServerInterface* m_server = nullptr;
+};
+
+class AgentServerDoorOracle : public DoorOracle {
+public:
+	void setServer(ServerInterface* s) { m_server = s; }
+	bool isClosedDoor(glm::ivec3 p) const override {
+		if (!m_server) return false;
+		BlockId id = m_server->chunks().getBlock(p.x, p.y, p.z);
+		return m_server->blockRegistry().get(id).string_id == BlockType::Door;
+	}
+	bool isOpenDoor(glm::ivec3 p) const override {
+		if (!m_server) return false;
+		BlockId id = m_server->chunks().getBlock(p.x, p.y, p.z);
+		return m_server->blockRegistry().get(id).string_id == BlockType::DoorOpen;
+	}
+private:
+	ServerInterface* m_server = nullptr;
+};
+
 class Agent {
 public:
 	// What the scheduler should dispatch for this agent on its next visit.
@@ -79,6 +124,11 @@ public:
 	// Per-agent rate limit for react(signal). Load-bearing: without this,
 	// a chatty signal source can pin an agent to React and starve Decide.
 	static constexpr float kReactCooldownSec   = 0.5f;
+	// Consecutive Failed_* plan outcomes before we promote the next failure
+	// to Failed_GaveUp. Python's decide() branches on that state to route
+	// into the town-center complaint / idle pipeline instead of producing
+	// another plan that will fail. Reset on any Success outcome.
+	static constexpr int   kFailStreakGiveUp   = 5;
 
 	Agent(EntityId eid, std::string behaviorId, BehaviorHandle handle)
 		: m_eid(eid),
@@ -101,6 +151,8 @@ public:
 	const PlanViz& viz() const { return m_viz; }
 	bool           hasPlan() const { return !m_plan.empty(); }
 	const std::string& goalText() const { return m_goalText; }
+	ExecState      execState() const { return m_execState; }
+	int            failStreak() const { return m_failStreak; }
 
 	PlanProgress progress() const {
 		PlanProgress p;
@@ -170,9 +222,38 @@ public:
 		m_goalText     = std::move(goalText);
 		m_watch        = StepWatch{};
 		m_needsDecide  = false;          // we have a plan now
+		m_execLoggedFirstWaypoint = false;
+		// Plan installed — executor hasn't ticked yet, so leave execState at
+		// PlanRequested. The first evaluateStep / applyStep will flip it to
+		// the concrete mode (Walking / Harvesting / DirectApproach / …).
+		m_execState = ExecState::PlanRequested;
 		e.goalText     = m_goalText;
 		e.hasError     = false;
 		e.errorText.clear();
+		// Lifecycle hook #3 — plan received (Python decide → Plan reaches this
+		// process). Pairs with the per-step dump below so one scroll shows the
+		// full shape of the new plan.
+		PATHLOG(m_eid,
+			"pathfind: planReceived steps=%zu goal=\"%s\" prevState=%s",
+			m_plan.size(), m_goalText.c_str(), toString(m_execState));
+		PATHLOG(m_eid,
+			"trigger: onDecideResult steps=%zu goal=\"%s\"",
+			m_plan.size(), m_goalText.c_str());
+		for (size_t i = 0; i < m_plan.size(); ++i) {
+			const PlanStep& s = m_plan[i];
+			const char* t =
+				(s.type == PlanStep::Move)     ? "Move"     :
+				(s.type == PlanStep::Harvest)  ? "Harvest"  :
+				(s.type == PlanStep::Attack)   ? "Attack"   :
+				(s.type == PlanStep::Relocate) ? "Relocate" :
+				(s.type == PlanStep::Interact) ? "Interact" : "?";
+			PATHLOG(m_eid,
+				"trigger:   step[%zu] type=%s target=(%.1f,%.1f,%.1f) "
+				"candidates=%zu useNav=%d item=\"%s\" countGoal=%d",
+				i, t, s.targetPos.x, s.targetPos.y, s.targetPos.z,
+				s.candidates.size(), s.useNavigator ? 1 : 0,
+				s.itemId.c_str(), s.countGoal);
+		}
 		rebuildViz();
 	}
 
@@ -181,7 +262,9 @@ public:
 		e.goalText    = "ERROR: " + err.substr(0, 60);
 		e.hasError    = true;
 		e.errorText   = err;
-		setNeedsDecide(StepOutcome::Failed, "decide_error");
+		setNeedsDecide(StepOutcome::Failed, "decide_error",
+		               /*goalTextForOutcome*/ {}, /*stepTypeRaw*/ 0,
+		               ExecState::Failed_DecideError);
 	}
 
 	// Player click on owned NPC → one-shot Move, arm obey-pause.
@@ -249,19 +332,24 @@ public:
 		setNeedsDecide(StepOutcome::Success, "interrupt:resume");
 	}
 
-	// External interrupt (network-layer S_INTERRUPT).
+	// External interrupt (network-layer S_INTERRUPT). The `reason` string is
+	// informational — it lands in the trigger log line — but the plan ends
+	// with Failed_Interrupted regardless of what sent the signal.
 	void onInterrupt(const std::string& reason) {
-		interruptPlan(reason);
+		PATHLOG(m_eid, "trigger: onInterrupt reason=\"%s\"", reason.c_str());
+		interruptPlan(ExecState::Failed_Interrupted);
 	}
 
 	// World event broadcast (AgentClient::onWorldEvent).
 	void onWorldEvent(const std::string& kind) {
-		interruptPlan(kind);
+		PATHLOG(m_eid, "trigger: onWorldEvent kind=\"%s\"", kind.c_str());
+		interruptPlan(ExecState::Failed_Interrupted);
 	}
 
 	// ── Signal handling ───────────────────────────────────────────────────
 	void onSignal(std::string kind,
 	              std::vector<std::pair<std::string, std::string>> payload) {
+		PATHLOG(m_eid, "trigger: onSignal kind=\"%s\"", kind.c_str());
 		// Latest-wins: fresher signals overwrite older ones.
 		m_dirtyKind    = std::move(kind);
 		m_dirtyPayload = std::move(payload);
@@ -283,9 +371,12 @@ public:
 	void scanForInterrupts(Entity& e) {
 		int curHp = e.hp();
 		bool hpDropped = (m_prevHp > 0 && curHp < m_prevHp);
+		if (hpDropped) {
+			PATHLOG(m_eid, "trigger: hpDrop prev=%d cur=%d", m_prevHp, curHp);
+		}
 		m_prevHp = curHp;
 		if (m_plan.empty()) return;
-		if (hpDropped) interruptPlan("hp");
+		if (hpDropped) interruptPlan(ExecState::Failed_Interrupted);
 	}
 
 	// ── Per-tick plan driver ──────────────────────────────────────────────
@@ -314,7 +405,7 @@ public:
 		if (step.type == PlanStep::Attack) {
 			Entity* t = server.getEntity(step.targetEntity);
 			if (!t || t->removed) {
-				interruptPlan("target_gone");
+				interruptPlan(ExecState::Failed_TargetGone);
 				return;
 			}
 		}
@@ -324,7 +415,7 @@ public:
 		if (step.type == PlanStep::Move && step.anchorEntityId != ENTITY_NONE) {
 			Entity* t = server.getEntity(step.anchorEntityId);
 			if (!t || t->removed || t->hp() <= 0) {
-				interruptPlan("anchor_gone");
+				interruptPlan(ExecState::Failed_AnchorGone);
 				return;
 			}
 		}
@@ -373,6 +464,20 @@ private:
 		float       progress      = 0.0f;
 		int         prevTargetHP  = 0;
 		std::string failReason;
+		// Paired with failReason — the specific ExecState variant to transition
+		// into when this step fails. Set at the same site as failReason so
+		// finishPlan doesn't have to string-match to recover the category.
+		// Defaults to Failed_Unknown as a safe catch-all.
+		ExecState   failExecState = ExecState::Failed_Unknown;
+
+		// Navigator is the sole arrival/failure authority for useNavigator=true
+		// Move steps — Agent no longer runs its own "dist < kArriveEps" check
+		// for them. applyMove sets navArrived on NavTickResult::Arrived and
+		// navFailed on NavTickResult::Failed; evaluateMove resolves the step
+		// accordingly on the next call. Direct-steer Move (useNavigator=false)
+		// still owns its own arrival check since no Executor is involved.
+		bool        navArrived    = false;
+		bool        navFailed     = false;
 
 		// Harvest-only: per-step candidate cycling and count gate. `activeIdx`
 		// is the current slot in step.candidates; `anchorFailed` marks slots
@@ -401,13 +506,90 @@ private:
 	};
 
 	// The single chokepoint for requesting a decide.
+	//
+	// `stateHint` is the *provisional* terminal ExecState — the call site's
+	// best guess at why the prior plan ended (Failed_NavNoPath, Failed_TargetGone,
+	// Failed_Interrupted, …). Callers pass PlanRequested (the default) when
+	// the agent is simply asking for its next plan without a failure, e.g.
+	// on resume or first-time discovery.
+	//
+	// Responsibilities, in order:
+	//   1. Repetitive-decide (churn) diagnostic — fires when setNeedsDecide
+	//      is re-entered within 1s of the prior call.
+	//   2. Fail-streak maintenance — any isFailed(stateHint) increments
+	//      m_failStreak; a non-failure stateHint resets it. When the streak
+	//      crosses kFailStreakGiveUp, the state is promoted to Failed_GaveUp
+	//      so Python's decide() routes into the town-center complaint path
+	//      (see task #62) instead of retrying a doomed plan.
+	//   3. Publish to LastOutcome + set m_needsDecide.
 	void setNeedsDecide(StepOutcome outcome, std::string reason,
 	                    std::string goalTextForOutcome = {},
-	                    int stepTypeRaw = 0) {
+	                    int stepTypeRaw = 0,
+	                    ExecState stateHint = ExecState::PlanRequested) {
+		const char* outName =
+			(outcome == StepOutcome::Success)    ? "Success" :
+			(outcome == StepOutcome::Failed)     ? "Failed"  :
+			(outcome == StepOutcome::InProgress) ? "InProgress" : "?";
+		// (1) Repetitive-decide detector — uses steady_clock so we don't need
+		// dt plumbed into Agent.
+		auto now = std::chrono::steady_clock::now();
+		float gapSec = m_lastSetNeedsDecideAt.time_since_epoch().count() == 0
+			? 1e9f
+			: std::chrono::duration<float>(now - m_lastSetNeedsDecideAt).count();
+		if (gapSec < 1.0f) {
+			PATHLOG(m_eid,
+				"pathfind: decideChurn gap=%.3fs prevState=%s prevOutcome=%s "
+				"prevReason=\"%s\" prevGoal=\"%s\" prevStreak=%d -> "
+				"newOutcome=%s newReason=\"%s\" newStateHint=%s",
+				gapSec,
+				toString(m_execState),
+				(m_lastOutcome.outcome == StepOutcome::Success) ? "Success" :
+				(m_lastOutcome.outcome == StepOutcome::Failed)  ? "Failed"  :
+				(m_lastOutcome.outcome == StepOutcome::InProgress) ? "InProgress" : "?",
+				m_lastOutcome.reason.c_str(),
+				m_goalText.c_str(),
+				m_failStreak,
+				outName, reason.c_str(),
+				toString(stateHint));
+		}
+		m_lastSetNeedsDecideAt = now;
+
+		// (2) Fail-streak bookkeeping. isFailed() covers every Failed_* variant.
+		// Non-failure states (PlanRequested, Arrived, etc.) reset the streak —
+		// the agent has made real progress.
+		ExecState nextState = stateHint;
+		if (isFailed(nextState)) {
+			m_failStreak++;
+			if (m_failStreak >= kFailStreakGiveUp
+			    && nextState != ExecState::Failed_GaveUp) {
+				PATHLOG(m_eid,
+					"pathfind: giveUp streak=%d promoted \"%s\" -> Failed_GaveUp",
+					m_failStreak, toString(nextState));
+				nextState = ExecState::Failed_GaveUp;
+			}
+		} else {
+			if (m_failStreak != 0) {
+				PATHLOG(m_eid,
+					"pathfind: failStreak reset (was %d, new state %s)",
+					m_failStreak, toString(nextState));
+			}
+			m_failStreak = 0;
+		}
+
+		PATHLOG(m_eid,
+			"trigger: setNeedsDecide outcome=%s reason=\"%s\" stepType=%d "
+			"state=%s streak=%d",
+			outName, reason.c_str(), stepTypeRaw,
+			toString(nextState), m_failStreak);
+
+		// (3) Publish.
+		m_execState = nextState;
 		m_lastOutcome.outcome     = outcome;
 		m_lastOutcome.reason      = std::move(reason);
 		m_lastOutcome.goalText    = std::move(goalTextForOutcome);
 		m_lastOutcome.stepTypeRaw = stepTypeRaw;
+		m_lastOutcome.execState   = m_execState;
+		m_lastOutcome.failStreak  = m_failStreak;
 		m_needsDecide = true;
 	}
 
@@ -420,29 +602,55 @@ private:
 			lastType    = m_plan[idx].type;
 			wasAnchored = m_plan[idx].anchorEntityId != ENTITY_NONE;
 		}
+		// Failed plans carry their specific reason state via m_watch, set
+		// right next to the failReason string at the evaluator/applier site.
+		// Success plans advance the agent to PlanRequested (awaiting the next
+		// decide) and reset the fail-streak in setNeedsDecide.
+		ExecState nextState = (outcome == StepOutcome::Failed)
+			? m_watch.failExecState
+			: ExecState::PlanRequested;
+		const char* outName =
+			(outcome == StepOutcome::Success)    ? "Success" :
+			(outcome == StepOutcome::Failed)     ? "Failed"  :
+			(outcome == StepOutcome::InProgress) ? "InProgress" : "?";
+		PATHLOG(m_eid,
+			"trigger: finishPlan outcome=%s reason=\"%s\" state=%s "
+			"stepIdx=%d/%zu",
+			outName, reason.c_str(), toString(nextState),
+			m_stepIndex, m_plan.size());
 		// Decide is async → zero velocity to prevent drift past target.
 		// Skip for anchored Moves: the next re-decide reinstalls velocity
 		// within one tick, so braking only creates stutter.
 		if (lastType == PlanStep::Move && outcome == StepOutcome::Success
 		    && !wasAnchored) {
 			if (Entity* e = server.getEntity(m_eid))
-				sendStopMove(*e, server);
+				sendStopMove(*e, server, "plan-end-brake");
 		}
 		std::string goalText = m_goalText;
 		clearPlan();
 		setNeedsDecide(outcome, std::move(reason),
-		               std::move(goalText), (int)lastType);
+		               std::move(goalText), (int)lastType, nextState);
 	}
 
-	void interruptPlan(const std::string& reason) {
+	// The enum IS the reason — we derive the "interrupt:<name>" string from
+	// toString(state) so Python's last_reason stays populated without the
+	// caller having to keep two parallel labels in sync. StepOutcome stays
+	// Success to match the legacy "interrupt:*" contract (Python branches on
+	// the reason prefix, not outcome=failed), but the streak/give-up logic
+	// DOES treat isFailed(state) as a real failure — "target disappeared
+	// five times in a row" is exactly what give-up exists to catch.
+	void interruptPlan(ExecState state) {
 		if (m_plan.empty()) return;
 		PlanStep::Type lastType =
 			m_plan[std::min(m_stepIndex, (int)m_plan.size() - 1)].type;
 		std::string goalText = m_goalText;
+		PATHLOG(m_eid,
+			"trigger: interruptPlan state=%s stepIdx=%d/%zu goal=\"%s\"",
+			toString(state), m_stepIndex, m_plan.size(), goalText.c_str());
 		clearPlan();
 		setNeedsDecide(StepOutcome::Success,
-		               "interrupt:" + reason,
-		               std::move(goalText), (int)lastType);
+		               std::string("interrupt:") + toString(state),
+		               std::move(goalText), (int)lastType, state);
 	}
 
 	void clearPlan() {
@@ -451,11 +659,15 @@ private:
 		m_watch     = StepWatch{};
 		m_viz.waypoints.clear();
 		m_viz.hasAction = false;
+		clearNavigator();
 	}
 
 	void advanceStep() {
+		PATHLOG(m_eid, "trigger: advanceStep %d -> %d (planSize=%zu)",
+			m_stepIndex, m_stepIndex + 1, m_plan.size());
 		m_stepIndex++;
 		m_watch = StepWatch{};
+		clearNavigator();
 	}
 
 	// ── Step evaluators ──────────────────────────────────────────────────
@@ -471,13 +683,14 @@ private:
 	}
 
 	StepOutcome evaluateMove(PlanStep& step, Entity& e, float dt) {
-		glm::vec3 delta = step.targetPos - e.position;
-		delta.y = 0;
-		float dist = glm::length(delta);
+		// Terminal signals from applyMove — the Navigator is the sole arrival
+		// authority for useNavigator Move steps. Checked first so we don't
+		// double-count "close enough" vs. "Executor said Arrived".
+		if (m_watch.navFailed)  return StepOutcome::Failed;
+		if (m_watch.navArrived) return StepOutcome::Success;
 
-		// Anchored Move: applyMove re-aims every tick. Only holdTime (the
-		// re-decide cadence) completes the step — arrival is meaningless
-		// for a moving target.
+		// Anchored Move: chase/flee a moving target — arrival is meaningless;
+		// holdTime (the re-decide cadence) is what completes the step.
 		if (step.anchorEntityId != ENTITY_NONE) {
 			float hold = step.holdTime > 0.0f ? step.holdTime
 			                                  : kDefaultIdleHoldSec;
@@ -486,39 +699,47 @@ private:
 			return StepOutcome::InProgress;
 		}
 
+		// Intent-driven idle vs. walk. speed==0 means "stand here" — no Navigator
+		// is involved, the behavior is asking for an in-place timeout.
 		if (!m_watch.modeDetected) {
 			m_watch.modeDetected = true;
-			// Intent-driven: speed == 0 means "stand here" (behaviors emit
-			// Move(self.x,y,z) to idle), speed > 0 means "walk to target".
-			// Distance alone can't distinguish — a Navigator waypoint that
-			// happens to land within 1.5 blocks (last cell of a short plan,
-			// or a door cell inside the kDoorReachXZ ring) would otherwise
-			// stall the walk for kDefaultIdleHoldSec=30s.
 			m_watch.isIdleHold   = (step.speed <= 0.0f);
 		}
 
-		float effectiveHold = step.holdTime > 0.0f
-			? step.holdTime
-			: (m_watch.isIdleHold ? kDefaultIdleHoldSec : 0.0f);
-
 		if (m_watch.isIdleHold) {
+			float hold = step.holdTime > 0.0f ? step.holdTime : kDefaultIdleHoldSec;
 			m_watch.progress += dt;
-			if (m_watch.progress >= effectiveHold) return StepOutcome::Success;
+			if (m_watch.progress >= hold) return StepOutcome::Success;
 			return StepOutcome::InProgress;
 		}
 
-		if (dist < kArriveEps) return StepOutcome::Success;
-		if (effectiveHold > 0.0f) {
-			m_watch.progress += dt;
-			if (m_watch.progress >= effectiveHold) return StepOutcome::Success;
+		// Walking. Two arrival owners depending on the route:
+		//   useNavigator=true  — Executor owns it; navArrived above is the signal.
+		//   useNavigator=false — direct steer (no Executor), Agent owns arrival.
+		if (!step.useNavigator) {
+			glm::vec3 delta = step.targetPos - e.position;
+			delta.y = 0;
+			float dist = glm::length(delta);
+			if (dist < kArriveEps) return StepOutcome::Success;
+			if (step.holdTime > 0.0f) {
+				m_watch.progress += dt;
+				if (m_watch.progress >= step.holdTime) return StepOutcome::Success;
+			}
 		}
 
+		// Stuck detection applies to both routes.
 		float horiz = std::sqrt(e.velocity.x * e.velocity.x +
 		                        e.velocity.z * e.velocity.z);
 		if (horiz < kStillEps) {
 			m_watch.stillAccum += dt;
 			if (m_watch.stillAccum > kStuckSeconds) {
-				m_watch.failReason = "stuck";
+				m_watch.failReason    = "stuck";
+				// Distinguish nav-driven stalls (pathed, then clamped) from
+				// direct-steer stalls (no nav, stuck against a wall) so decide
+				// can pick different recovery.
+				m_watch.failExecState = step.useNavigator
+					? ExecState::Failed_NavStuck
+					: ExecState::Failed_DirectStuck;
 				return StepOutcome::Failed;
 			}
 		} else {
@@ -528,6 +749,9 @@ private:
 	}
 
 	StepOutcome evaluateHarvest(PlanStep& step, Entity& e, float dt) {
+		// Navigator bailed on every candidate — fail the step.
+		if (m_watch.navFailed) return StepOutcome::Failed;
+
 		// Stuck-outside-range: measured against the *active* anchor (which may
 		// have been swapped by applyHarvest after a previous wedge). Once the
 		// villager is within reach they stand still while chopping, so the
@@ -541,6 +765,12 @@ private:
 			if (horiz < kStillEps) {
 				m_watch.stillAccum += dt;
 				if (m_watch.stillAccum > kStuckSeconds) {
+					PATHLOG(m_eid,
+						"trigger: harvestStillTimeout stillAccum=%.2f "
+						"pos=(%.2f,%.2f,%.2f) anchor=(%.1f,%.1f,%.1f) dist=%.2f",
+						m_watch.stillAccum,
+						e.position.x, e.position.y, e.position.z,
+						anchor.x, anchor.y, anchor.z, glm::length(delta));
 					// Multi-anchor path: blacklist this index and let
 					// applyHarvest pick the next. Keeps the plan alive so
 					// Python isn't pinged every 2s of wedging.
@@ -549,7 +779,10 @@ private:
 						m_watch.stillAccum = 0;
 						return StepOutcome::InProgress;
 					}
-					m_watch.failReason = "stuck";
+					m_watch.failReason    = "stuck";
+					m_watch.failExecState = step.useNavigator
+						? ExecState::Failed_NavStuck
+						: ExecState::Failed_DirectStuck;
 					return StepOutcome::Failed;
 				}
 			} else m_watch.stillAccum = 0;
@@ -574,11 +807,20 @@ private:
 		if (m_watch.harvestAnchorFailed.size() != step.candidates.size())
 			m_watch.harvestAnchorFailed.assign(step.candidates.size(), false);
 		int& i = m_watch.harvestActiveIdx;
+		int oldIdx = i;
 		if (i >= 0 && i < (int)step.candidates.size())
 			m_watch.harvestAnchorFailed[i] = true;
 		for (i = i + 1; i < (int)step.candidates.size(); ++i) {
-			if (!m_watch.harvestAnchorFailed[i]) return true;
+			if (!m_watch.harvestAnchorFailed[i]) {
+				PATHLOG(m_eid,
+					"trigger: harvestAnchor idx=%d -> %d (of %zu)",
+					oldIdx, i, step.candidates.size());
+				return true;
+			}
 		}
+		PATHLOG(m_eid,
+			"trigger: harvestAnchor exhausted (was idx=%d of %zu)",
+			oldIdx, step.candidates.size());
 		return false;
 	}
 
@@ -604,6 +846,26 @@ private:
 
 	// ── Step appliers ────────────────────────────────────────────────────
 	void applyStep(PlanStep& step, Entity& e, ServerInterface& server) {
+		auto kindName = [](PlanStep::Type t) {
+			switch (t) {
+				case PlanStep::Move:     return "Move";
+				case PlanStep::Harvest:  return "Harvest";
+				case PlanStep::Attack:   return "Attack";
+				case PlanStep::Relocate: return "Relocate";
+				case PlanStep::Interact: return "Interact";
+			}
+			return "?";
+		};
+		PATHLOG(m_eid,
+			"tick: stepIdx=%d/%zu kind=%s useNavigator=%d "
+			"target=(%.2f,%.2f,%.2f) anchor=%d pos=(%.2f,%.2f,%.2f) "
+			"entVel=(%.2f,%.2f,%.2f)",
+			m_stepIndex, m_plan.size(), kindName(step.type),
+			step.useNavigator ? 1 : 0,
+			step.targetPos.x, step.targetPos.y, step.targetPos.z,
+			(int)step.anchorEntityId,
+			e.position.x, e.position.y, e.position.z,
+			e.velocity.x, e.velocity.y, e.velocity.z);
 		switch (step.type) {
 		case PlanStep::Move:     applyMove(step, e, server); break;
 		case PlanStep::Harvest:  applyHarvest(step, e, server); break;
@@ -618,7 +880,7 @@ private:
 		if (step.anchorEntityId != ENTITY_NONE) {
 			Entity* t = server.getEntity(step.anchorEntityId);
 			if (!t || t->removed || t->hp() <= 0) {
-				sendStopMove(e, server);
+				sendStopMove(e, server, "anchor-target-gone");
 				return;
 			}
 			glm::vec3 to = t->position - e.position;
@@ -628,23 +890,46 @@ private:
 			float ring = flee ? step.keepAway : step.keepWithin;
 			bool stop = flee ? (hLen >= ring) : (hLen <= ring);
 			if (stop || hLen < 0.01f) {
-				sendStopMove(e, server);
+				sendStopMove(e, server, "anchor-in-range");
 				return;
 			}
+			// Chase/flee tracks a moving target — A* would re-plan every tick
+			// as the target drifts, so keep straight-line steer here even when
+			// useNavigator is set. Python opts into true pathfind by emitting
+			// a fixed-target Move with no anchorEntityId.
 			float sign = flee ? -1.0f : 1.0f;
 			glm::vec3 dir = {sign * to.x / hLen, 0, sign * to.z / hLen};
-			sendMove(e, dir * speed, server);
+			sendMove(e, dir * speed, server, flee ? "anchor-flee" : "anchor-chase");
 			return;
 		}
+
+		if (step.useNavigator) {
+			NavTickResult r = navigateApproach(
+				e, resolveNavGoal(step.targetPos, step, server), server);
+			if (r == NavTickResult::Failed) {
+				m_watch.failReason = m_navigator
+					? ("nav: " + m_navigator->failureReason())
+					: std::string("nav failed");
+				m_watch.failExecState = ExecState::Failed_NavNoPath;
+				m_watch.navFailed     = true;
+				clearNavigator();
+			} else if (r == NavTickResult::Arrived) {
+				// Executor owns arrival: evaluateMove reads this next tick.
+				m_watch.navArrived = true;
+				clearNavigator();
+			}
+			return;
+		}
+
 		glm::vec3 dir = step.targetPos - e.position;
 		dir.y = 0;
 		float dist = glm::length(dir);
 		if (dist < kArriveEps) {
-			sendStopMove(e, server);
+			sendStopMove(e, server, "move-arrived");
 			return;
 		}
 		dir /= dist;
-		sendMove(e, dir * speed, server);
+		sendMove(e, dir * speed, server, "move-straight");
 	}
 
 	void applyHarvest(PlanStep& step, Entity& e, ServerInterface& server) {
@@ -667,6 +952,9 @@ private:
 			int gained = e.inventory->count(step.itemId) -
 			             m_watch.harvestStartItemCount;
 			if (gained >= step.countGoal) {
+				PATHLOG(m_eid,
+					"trigger: countGoal hit item=%s gained=%d goal=%d",
+					step.itemId.c_str(), gained, step.countGoal);
 				advanceStep();
 				if (m_stepIndex >= (int)m_plan.size())
 					finishPlan(StepOutcome::Success, std::string{}, server);
@@ -681,12 +969,50 @@ private:
 		glm::vec3 delta = anchor - e.position;
 		delta.y = 0;
 		float dist = glm::length(delta);
-		if (dist > kReachHarvest) {
+
+		if (step.useNavigator) {
+			// A*-driven approach: target cell is the anchor's floor cell. On
+			// failure, blacklist the current anchor and rotate — same contract
+			// as the stuck-timer path in evaluateHarvest.
+			if (dist > kReachHarvest) {
+				glm::ivec3 goalCell = resolveNavGoal(anchor, step, server);
+				NavTickResult r = navigateApproach(e, goalCell, server);
+				if (r == NavTickResult::Failed) {
+					PATHLOG(m_eid,
+						"trigger: navApproach Failed anchor=(%.1f,%.1f,%.1f) "
+						"reason=\"%s\"",
+						anchor.x, anchor.y, anchor.z,
+						m_navigator ? m_navigator->failureReason().c_str() : "");
+					clearNavigator();
+					if (!step.candidates.empty() &&
+					    advanceHarvestAnchor(step)) {
+						return;
+					}
+					m_watch.failReason = m_navigator
+						? ("nav: " + m_navigator->failureReason())
+						: std::string("nav failed");
+					m_watch.failExecState = ExecState::Failed_NavNoPath;
+					m_watch.navFailed     = true;
+					return;
+				}
+				if (r == NavTickResult::Walking) return;
+				// Arrived — fall through into the cooldown+scan phases.
+				PATHLOG(m_eid,
+					"trigger: navApproach Arrived anchor=(%.1f,%.1f,%.1f) "
+					"pos=(%.2f,%.2f,%.2f)",
+					anchor.x, anchor.y, anchor.z,
+					e.position.x, e.position.y, e.position.z);
+			} else {
+				sendStopMove(e, server, "harvest-in-range-nav");
+				clearNavigator();
+			}
+		} else if (dist > kReachHarvest) {
 			glm::vec3 dir = glm::normalize(delta);
-			sendMove(e, dir * e.def().walk_speed, server);
+			sendMove(e, dir * e.def().walk_speed, server, "harvest-straight");
 			return;
+		} else {
+			sendStopMove(e, server, "harvest-in-range");
 		}
-		sendStopMove(e, server);
 
 		// Phase 2 — cooldown gate. Cooldown lives on the agent (not the step)
 		// so a mid-plan re-decide can't grant a free swing.
@@ -704,6 +1030,12 @@ private:
 		}
 
 		if (!hit) {
+			PATHLOG(m_eid,
+				"trigger: harvest no-hit pos=(%.1f,%.1f,%.1f) radius=%.1f "
+				"types=%zu candidates=%zu",
+				e.position.x, e.position.y, e.position.z,
+				step.gatherRadius, step.gatherTypes.size(),
+				step.candidates.size());
 			// Nothing left in this anchor's local sphere. If candidates
 			// remain, rotate to the next; otherwise the step concludes and
 			// decide() picks up (DEPOSIT, wander, …).
@@ -736,6 +1068,12 @@ private:
 		p.convertFrom = Container::block(targetBlock);
 		p.convertInto = Container::self();
 		server.sendAction(p);
+
+		PATHLOG(m_eid,
+			"trigger: chop swing target=(%d,%d,%d) from=%s -> %s cooldown=%.2f",
+			targetBlock.x, targetBlock.y, targetBlock.z,
+			fromItem.c_str(), outItem.c_str(),
+			step.chopCooldown > 0.0f ? step.chopCooldown : 1.0f);
 
 		// Default 1s if Python didn't specify. Positive number required or
 		// the executor would re-swing every tick.
@@ -786,9 +1124,9 @@ private:
 		float dist = glm::length(delta);
 		if (dist > kReachAttack) {
 			glm::vec3 dir = glm::normalize(delta);
-			sendMove(e, dir * e.def().walk_speed, server);
+			sendMove(e, dir * e.def().walk_speed, server, "attack-chase");
 		} else {
-			sendStopMove(e, server);
+			sendStopMove(e, server, "attack-in-range");
 			// TODO: melee-damage Convert.
 		}
 	}
@@ -813,8 +1151,336 @@ private:
 		server.sendAction(p);
 	}
 
+	// ── Navigator-driven approach (Python useNavigator=true) ──────────────
+	// Shared by applyMove/applyHarvest. One tick: ensures the per-agent
+	// Navigator is live, (re-)asserts the goal cell, dispatches the next
+	// primitive (Move along a waypoint / Interact on a closed door), and
+	// returns the terminal status when the plan resolves. Returns Walking
+	// during normal progress; caller acts on Arrived/Failed.
+	enum class NavTickResult { Walking, Arrived, Failed };
+
+	NavTickResult navigateApproach(Entity& e, glm::ivec3 goalCell,
+	                               ServerInterface& server) {
+		if (!m_navigator) {
+			m_navWorldView = std::make_unique<AgentServerWorldView>();
+			m_navDoors     = std::make_unique<AgentServerDoorOracle>();
+			m_navWorldView->setServer(&server);
+			m_navDoors->setServer(&server);
+			m_navigator = std::make_unique<Navigator>(
+				*m_navWorldView, m_navDoors.get());
+			m_navLastGoal    = glm::ivec3(INT_MIN);
+			m_navPrevStatus  = Navigator::Status::Idle;
+		}
+
+		// Navigator::setGoal is a no-op when the cell matches the active plan;
+		// guarding with a cached cell avoids the cost for the 99% steady case.
+		if (goalCell != m_navLastGoal) {
+			bool hadActivePlan = m_navigator->hasGoal()
+			                    && m_navLastGoal != glm::ivec3(INT_MIN);
+			// Lifecycle hook #5 — route replacement. Only fires when a
+			// non-sentinel prior goal is being overwritten; the first-time
+			// setGoal on a fresh Navigator falls through to pathfind-start.
+			if (hadActivePlan) {
+				PATHLOG(m_eid,
+					"pathfind: replaceRoute oldGoal=(%d,%d,%d) "
+					"newGoal=(%d,%d,%d) oldStatus=%s execState=%s "
+					"pathSteps=%zu",
+					m_navLastGoal.x, m_navLastGoal.y, m_navLastGoal.z,
+					goalCell.x, goalCell.y, goalCell.z,
+					[](Navigator::Status s) {
+						switch (s) {
+							case Navigator::Status::Idle:        return "Idle";
+							case Navigator::Status::Planning:    return "Planning";
+							case Navigator::Status::Walking:     return "Walking";
+							case Navigator::Status::OpeningDoor: return "OpeningDoor";
+							case Navigator::Status::Arrived:     return "Arrived";
+							case Navigator::Status::Failed:      return "Failed";
+						}
+						return "?";
+					}(m_navPrevStatus),
+					toString(m_execState),
+					m_navigator->pathStepCount());
+			}
+			// Lifecycle hook #1 — pathfinding start. Every setGoal is a
+			// fresh A*; log it with enough context to correlate the plan
+			// that pops out on the next tick.
+			PATHLOG(m_eid,
+				"pathfind: start goal=(%d,%d,%d) from=(%.2f,%.2f,%.2f) "
+				"entCell=(%d,%d,%d)",
+				goalCell.x, goalCell.y, goalCell.z,
+				e.position.x, e.position.y, e.position.z,
+				(int)std::floor(e.position.x),
+				(int)std::floor(e.position.y),
+				(int)std::floor(e.position.z));
+			PATHLOG(m_eid,
+				"nav: setGoal goal=(%d,%d,%d) from=(%.2f,%.2f,%.2f) "
+				"entCell=(%d,%d,%d)",
+				goalCell.x, goalCell.y, goalCell.z,
+				e.position.x, e.position.y, e.position.z,
+				(int)std::floor(e.position.x),
+				(int)std::floor(e.position.y),
+				(int)std::floor(e.position.z));
+			m_navigator->setGoal(goalCell);
+			m_navLastGoal   = goalCell;
+			m_navPrevStatus = Navigator::Status::Planning;
+			m_execState     = ExecState::Planning;
+			m_execLoggedFirstWaypoint = false;
+		}
+
+		Navigator::Step step = m_navigator->tick(e.position);
+		Navigator::Status st = m_navigator->status();
+
+		// Single source of truth for F3 viz: mirror what the PathExecutor is
+		// actually walking. Without this, rebuildViz's placeholder (the
+		// Harvest step's targetPos, which is the leaf block midair) would
+		// keep the dashes pointing at a cell no one can stand in. Sync every
+		// tick so the drawn path collapses as cells are consumed, and the
+		// post-arrival empty path naturally clears the dashes.
+		{
+			const Path& p = m_navigator->path();
+			m_viz.waypoints.clear();
+			m_viz.waypoints.reserve(p.steps.size());
+			for (const Waypoint& w : p.steps) {
+				m_viz.waypoints.emplace_back(
+					(float)w.pos.x + 0.5f,
+					(float)w.pos.y + 0.5f,
+					(float)w.pos.z + 0.5f);
+			}
+		}
+
+		// Transition trace: fires at most a handful of times per plan
+		// (Idle→Planning→Walking↔OpeningDoor→Arrived|Failed).
+		if (st != m_navPrevStatus) {
+			auto name = [](Navigator::Status s) -> const char* {
+				switch (s) {
+					case Navigator::Status::Idle:        return "Idle";
+					case Navigator::Status::Planning:    return "Planning";
+					case Navigator::Status::Walking:     return "Walking";
+					case Navigator::Status::OpeningDoor: return "OpeningDoor";
+					case Navigator::Status::Arrived:     return "Arrived";
+					case Navigator::Status::Failed:      return "Failed";
+				}
+				return "?";
+			};
+			if (st == Navigator::Status::Walking) {
+				PATHLOG(m_eid,
+					"nav: %s -> Walking steps=%zu partial=%d next=(%.2f,%.2f,%.2f)",
+					name(m_navPrevStatus),
+					m_navigator->pathStepCount(),
+					m_navigator->pathPartial() ? 1 : 0,
+					step.moveTarget.x, step.moveTarget.y, step.moveTarget.z);
+				const Path& pth = m_navigator->path();
+				for (size_t i = 0; i < pth.steps.size(); ++i) {
+					const Waypoint& w = pth.steps[i];
+					const char* kindName =
+						(w.kind == MoveKind::Walk)    ? "Walk"    :
+						(w.kind == MoveKind::Jump)    ? "Jump"    :
+						(w.kind == MoveKind::Descend) ? "Descend" : "?";
+					PATHLOG(m_eid,
+						"nav: waypoint[%zu/%zu] (%d,%d,%d) %s",
+						i + 1, pth.steps.size(),
+						w.pos.x, w.pos.y, w.pos.z, kindName);
+				}
+			} else if (st == Navigator::Status::Failed) {
+				PATHLOG(m_eid,
+					"nav: %s -> Failed steps=%zu partial=%d reason=\"%s\"",
+					name(m_navPrevStatus),
+					m_navigator->pathStepCount(),
+					m_navigator->pathPartial() ? 1 : 0,
+					m_navigator->failureReason().c_str());
+				if (m_navigator->pathStepCount() == 0) {
+					logStartCellDiagnostic(e, server);
+				}
+			} else if (st == Navigator::Status::Arrived) {
+				PATHLOG(m_eid,
+					"nav: %s -> Arrived at (%.2f,%.2f,%.2f)",
+					name(m_navPrevStatus),
+					e.position.x, e.position.y, e.position.z);
+			} else {
+				PATHLOG(m_eid, "nav: %s -> %s",
+					name(m_navPrevStatus), name(st));
+			}
+			m_navPrevStatus = st;
+		}
+
+		// Heartbeat: while Walking, dump the full remaining plan every ~1s so
+		// the log captures whether the plan is stable across ticks or being
+		// churned. On a stable plan the same waypoints reappear each second
+		// with the cursor creeping forward; a re-plan shows different cells.
+		if (st == Navigator::Status::Walking) {
+			auto nowTp = std::chrono::steady_clock::now();
+			auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
+				nowTp - m_navLastWalkLog).count();
+			if (m_navLastWalkLog.time_since_epoch().count() == 0 ||
+			    since >= 1000) {
+				m_navLastWalkLog = nowTp;
+				const Path& pth = m_navigator->path();
+				PATHLOG(m_eid,
+					"nav: walking pos=(%.2f,%.2f,%.2f) goal=(%d,%d,%d) "
+					"steps=%zu partial=%d next=(%.2f,%.2f,%.2f)",
+					e.position.x, e.position.y, e.position.z,
+					m_navLastGoal.x, m_navLastGoal.y, m_navLastGoal.z,
+					pth.steps.size(),
+					m_navigator->pathPartial() ? 1 : 0,
+					step.moveTarget.x, step.moveTarget.y, step.moveTarget.z);
+				for (size_t i = 0; i < pth.steps.size(); ++i) {
+					const Waypoint& w = pth.steps[i];
+					const char* kindName =
+						(w.kind == MoveKind::Walk)    ? "Walk"    :
+						(w.kind == MoveKind::Jump)    ? "Jump"    :
+						(w.kind == MoveKind::Descend) ? "Descend" : "?";
+					PATHLOG(m_eid,
+						"nav: walking waypoint[%zu/%zu] (%d,%d,%d) %s",
+						i + 1, pth.steps.size(),
+						w.pos.x, w.pos.y, w.pos.z, kindName);
+				}
+			}
+		} else {
+			m_navLastWalkLog = {};
+		}
+
+		if (st == Navigator::Status::Failed) {
+			sendStopMove(e, server, "nav-failed");
+			return NavTickResult::Failed;
+		}
+		if (st == Navigator::Status::Arrived) {
+			sendStopMove(e, server, "nav-arrived");
+			return NavTickResult::Arrived;
+		}
+
+		if (step.kind == Navigator::Step::Move) {
+			glm::vec3 delta = step.moveTarget - e.position;
+			delta.y = 0;
+			float dist = glm::length(delta);
+			if (dist < 0.01f) {
+				sendStopMove(e, server, "nav-near-waypoint");
+				return NavTickResult::Walking;
+			}
+			glm::vec3 dir = delta / dist;
+			sendMove(e, dir * e.def().walk_speed, server, "nav-waypoint");
+		} else if (step.kind == Navigator::Step::Interact) {
+			ActionProposal p;
+			p.type          = ActionProposal::Interact;
+			p.actorId       = m_eid;
+			p.blockPos      = step.interactPos;
+			p.appearanceIdx = -1;  // legacy toggle (door)
+			server.sendAction(p);
+			sendStopMove(e, server, "nav-interact");
+		} else {
+			sendStopMove(e, server, "nav-unknown");
+		}
+		return NavTickResult::Walking;
+	}
+
+	// Diagnostic — fired when A* returns steps=0 from the entity's feet cell.
+	// Physics can hold the entity in cells whose neighbors aren't standable
+	// under the planner's floor-solid + head/body-air contract (half-blocks,
+	// fences, water, sunken terrain). Logs the entity's cell and, for each of
+	// 12 candidate neighbors (walk/jump/descend × 4 cardinals), whether the
+	// three standability sub-conditions hold. Gives us the concrete reason an
+	// entity is un-planable from its current spot without stepping through A*.
+	void logStartCellDiagnostic(Entity& e, ServerInterface& server) {
+		auto isSolid = [&](int x, int y, int z) {
+			return server.blockRegistry()
+				.get(server.chunks().getBlock(x, y, z)).solid;
+		};
+		glm::ivec3 c{
+			(int)std::floor(e.position.x),
+			(int)std::floor(e.position.y),
+			(int)std::floor(e.position.z)};
+		PATHLOG(m_eid,
+			"nav: start-diag cell=(%d,%d,%d) pos=(%.2f,%.2f,%.2f) "
+			"floor=%d body=%d head=%d headroom=%d",
+			c.x, c.y, c.z,
+			e.position.x, e.position.y, e.position.z,
+			isSolid(c.x, c.y - 1, c.z) ? 1 : 0,
+			isSolid(c.x, c.y,     c.z) ? 1 : 0,
+			isSolid(c.x, c.y + 1, c.z) ? 1 : 0,
+			isSolid(c.x, c.y + 2, c.z) ? 1 : 0);
+		const int DX[4] = {1,-1,0,0};
+		const int DZ[4] = {0,0,1,-1};
+		const char* DN[4] = {"+x","-x","+z","-z"};
+		for (int i = 0; i < 4; i++) {
+			int nx = c.x + DX[i], nz = c.z + DZ[i];
+			auto stand = [&](int y) {
+				bool floorSolid = isSolid(nx, y - 1, nz);
+				bool bodyAir    = !isSolid(nx, y,     nz);
+				bool headAir    = !isSolid(nx, y + 1, nz);
+				return std::make_tuple(floorSolid, bodyAir, headAir);
+			};
+			auto [wF, wB, wH] = stand(c.y);       // Walk
+			auto [jF, jB, jH] = stand(c.y + 1);   // Jump
+			auto [dF, dB, dH] = stand(c.y - 1);   // Descend
+			PATHLOG(m_eid,
+				"nav: start-diag %s walk=%d%d%d jump=%d%d%d descend=%d%d%d",
+				DN[i],
+				wF?1:0, wB?1:0, wH?1:0,
+				jF?1:0, jB?1:0, jH?1:0,
+				dF?1:0, dB?1:0, dH?1:0);
+		}
+	}
+
+	// Drop any active Navigator plan — called when a step ends so the next
+	// Move/Harvest doesn't inherit stale goal-cell cache.
+	void clearNavigator() {
+		if (m_navigator) m_navigator->clear();
+		m_navLastGoal = glm::ivec3(INT_MIN);
+	}
+
+	// Pick the Navigator's goal cell for a given anchor. Default: floor(anchor).
+	// With step.ignoreHeight, walk the (x, z) column downward from the anchor
+	// Y, skip past any tree / canopy solids until we cross into an air gap,
+	// then find the first ground surface below that gap and return the air
+	// cell directly above it. Woodcutter uses this so an overhead leaf
+	// becomes "walk to the root of the tree"; the gatherRadius sphere still
+	// reaches the canopy from ground level. Falls back to floor(anchor) when
+	// no ground is found (mid-air leaf over a void — next candidate rotates).
+	glm::ivec3 resolveNavGoal(glm::vec3 anchor, const PlanStep& step,
+	                          ServerInterface& server) const {
+		glm::ivec3 cell{
+			(int)std::floor(anchor.x),
+			(int)std::floor(anchor.y),
+			(int)std::floor(anchor.z)};
+		if (!step.ignoreHeight) return cell;
+
+		auto isSolid = [&](int x, int y, int z) {
+			return server.blockRegistry()
+				.get(server.chunks().getBlock(x, y, z)).solid;
+		};
+		constexpr int kMaxProbe = 64;
+		int yMin = cell.y - kMaxProbe;
+		int y    = cell.y;
+		while (y >= yMin && isSolid(cell.x, y, cell.z)) y--;  // skip canopy
+		while (y >= yMin && !isSolid(cell.x, y, cell.z)) y--; // fall to ground
+		glm::ivec3 resolved = (y >= yMin)
+			? glm::ivec3(cell.x, y + 1, cell.z) : cell;
+		// Dedupe: applyHarvest calls this every tick with the same anchor;
+		// only log the first time we observe a given (anchor → ground) pair
+		// on this agent to keep the trace readable.
+		if (resolved != cell &&
+		    (m_navLastResolvedAnchor != cell ||
+		     m_navLastResolvedCell   != resolved)) {
+			PATHLOG(m_eid,
+				"nav: resolveNavGoal anchor=(%d,%d,%d) -> ground=(%d,%d,%d)",
+				cell.x, cell.y, cell.z,
+				resolved.x, resolved.y, resolved.z);
+			m_navLastResolvedAnchor = cell;
+			m_navLastResolvedCell   = resolved;
+		}
+		return resolved;
+	}
+
 	// ── Move emission + stuck telemetry ──────────────────────────────────
-	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server) {
+	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server,
+	              const char* source) {
+		PATHLOG(m_eid,
+			"steer: source=%s vel=(%.2f,%.2f,%.2f) pos=(%.2f,%.2f,%.2f) "
+			"entVel=(%.2f,%.2f,%.2f)",
+			source ? source : "?",
+			vel.x, vel.y, vel.z,
+			e.position.x, e.position.y, e.position.z,
+			e.velocity.x, e.velocity.y, e.velocity.z);
+
 		e.velocity.x = vel.x;
 		e.velocity.z = vel.z;
 
@@ -866,8 +1532,8 @@ private:
 		server.sendAction(p);
 	}
 
-	void sendStopMove(Entity& e, ServerInterface& server) {
-		sendMove(e, {0, 0, 0}, server);
+	void sendStopMove(Entity& e, ServerInterface& server, const char* source) {
+		sendMove(e, {0, 0, 0}, server, source);
 	}
 
 	void rebuildViz() {
@@ -925,6 +1591,47 @@ private:
 	// Seconds until the next harvest swing is allowed. Lives on the agent,
 	// not on PlanStep, so a re-plan mid-chop doesn't grant a free swing.
 	float     m_chopCooldown        = 0.0f;
+
+	// A* Navigator — lazy-constructed on first step with useNavigator=true.
+	// Lifetime: WorldView holds a ServerInterface*, Navigator holds a
+	// const WorldView&. Both are unique_ptr so addresses stay stable after
+	// construction — required because Navigator captures the WorldView by ref.
+	std::unique_ptr<AgentServerWorldView>  m_navWorldView;
+	std::unique_ptr<AgentServerDoorOracle> m_navDoors;
+	std::unique_ptr<Navigator>             m_navigator;
+	glm::ivec3                             m_navLastGoal{INT_MIN};
+	Navigator::Status                      m_navPrevStatus = Navigator::Status::Idle;
+	// resolveNavGoal dedupe — the caller invokes per-tick; we only want to
+	// log a line when the (anchor, resolved) pair actually changes.
+	mutable glm::ivec3                     m_navLastResolvedAnchor{INT_MIN};
+	mutable glm::ivec3                     m_navLastResolvedCell  {INT_MIN};
+
+	// Coarse execution state. Advanced at each transition point so the
+	// repetitive-decide log can report what the entity was doing when the
+	// prior plan ended. Always compiled in (used by UI/logs/gates, not just
+	// by PATHLOG). See outcome.h for the enum.
+	ExecState m_execState = ExecState::Idle;
+
+	// For the decide-churn detector: wall-clock timestamp of the most recent
+	// setNeedsDecide call. steady_clock so we don't need dt plumbed in.
+	std::chrono::steady_clock::time_point m_lastSetNeedsDecideAt{};
+
+	// First-waypoint-execute dedupe: the executor tick fires every frame but
+	// we only want one "exec start" log line per installed plan.
+	bool m_execLoggedFirstWaypoint = false;
+
+	// Heartbeat timer for the periodic "nav: walking" waypoint dump — fires
+	// roughly once per second while status==Walking. Confirms the plan is
+	// stable (remains the same across ticks) and surfaces how far along the
+	// cursor has advanced. Uses steady_clock so we don't need dt plumbing.
+	std::chrono::steady_clock::time_point m_navLastWalkLog{};
+
+	// Count of consecutive Failed_* plan outcomes. setNeedsDecide increments
+	// on any isFailed(stateHint), resets on a non-failure state. At
+	// kFailStreakGiveUp, setNeedsDecide promotes the next failure to
+	// Failed_GaveUp — decide() is expected to route that into the town-
+	// center complaint path instead of retrying another doomed plan.
+	int m_failStreak = 0;
 };
 
 } // namespace civcraft

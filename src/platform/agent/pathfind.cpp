@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <queue>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -144,7 +145,31 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 		rev.push_back({decode(cur), it->second.kind});
 		cur = it->second.prev;
 	}
-	out.steps.assign(rev.rbegin(), rev.rend());
+	std::vector<Waypoint> raw(rev.rbegin(), rev.rend());
+
+	// Collinear-Walk compression. A 56-block straight corridor ships 1 waypoint
+	// (the end), not 56. Rule: keep wp[i] iff it is the last, or its kind is
+	// not Walk, or the next step's kind is not Walk (preserve the "takeoff"
+	// anchor before a Jump/Descend), or the XZ step direction changes from the
+	// preceding to the following step. PathExecutor now pops from the front
+	// and drives straight to the next kept center — fewer cells ⇒ no cursor
+	// jitter + readable F3 viz.
+	out.steps.reserve(raw.size());
+	for (size_t i = 0; i < raw.size(); ++i) {
+		if (i + 1 == raw.size()) { out.steps.push_back(raw[i]); continue; }
+		const Waypoint& w  = raw[i];
+		const Waypoint& nx = raw[i + 1];
+		if (w.kind  != MoveKind::Walk) { out.steps.push_back(w); continue; }
+		if (nx.kind != MoveKind::Walk) { out.steps.push_back(w); continue; }
+		// Compare incoming vs outgoing XZ direction. "Incoming" for i==0 uses
+		// `start` as the anchor so the very first cell only survives when it
+		// changes heading (usually it doesn't — drop it).
+		glm::ivec3 pv = (i == 0) ? start : raw[i - 1].pos;
+		int inX  = w.pos.x  - pv.x,  inZ  = w.pos.z  - pv.z;
+		int outX = nx.pos.x - w.pos.x, outZ = nx.pos.z - w.pos.z;
+		if (inX != outX || inZ != outZ) { out.steps.push_back(w); continue; }
+		// collinear Walk run — drop this step
+	}
 	if (auto it = gScore.find(bestSeen); it != gScore.end()) out.cost = it->second;
 	return out;
 }
@@ -336,152 +361,8 @@ bool GridPlanner::pathInvalidatedBy(const Path& path,
 	return false;
 }
 
-PathExecutor::Intent PathExecutor::tick(const glm::vec3& entityPos,
-                                        const WorldView& /*world*/,
-                                        const DoorOracle* doors) {
-	// Waypoint arrive tolerance. Block-center snap means we never need sub-block
-	// precision; 1.3 keeps us loose enough to skip through diagonal seams without
-	// ping-ponging between adjacent cells.
-	constexpr float kArriveXZ = 1.3f;
-	constexpr float kArriveY  = 1.0f;
-	// Fire the Interact once the door cell is within this ring, so a large-gait
-	// entity doesn't overshoot and wedge against the closed leaf.
-	constexpr float kDoorReachXZ = 2.0f;
-	// How far ahead along a straight corridor we aim. Agent::kArriveEps=1.5
-	// triggers a 30s idle-hold when a Move target lands within 1.5 blocks,
-	// so returning the immediate next waypoint (distXZ 1.3–~2.3) stalls the
-	// entity for 30s between every 1-block hop. Aiming at the far end of a
-	// straight, door-free, flat run keeps Move.dist well outside kArriveEps
-	// and lets the server's collide-and-slide physics walk continuously
-	// between decide()s.
-	constexpr int kLookAhead = 6;
-
-	// Advance cursor past any already-arrived waypoints.
-	while (m_cursor < (int)m_path.steps.size()) {
-		const Waypoint& wp = m_path.steps[m_cursor];
-		glm::vec3 center{wp.pos.x + 0.5f, (float)wp.pos.y, wp.pos.z + 0.5f};
-		float dx = entityPos.x - center.x;
-		float dz = entityPos.z - center.z;
-		float dy = entityPos.y - center.y;
-		if (std::sqrt(dx*dx + dz*dz) < kArriveXZ && std::abs(dy) < kArriveY) {
-			m_cursor++;
-			continue;
-		}
-		break;
-	}
-	if (m_cursor >= (int)m_path.steps.size()) return Intent{};
-
-	const Waypoint& cur = m_path.steps[m_cursor];
-	glm::vec3 curCenter{cur.pos.x + 0.5f, (float)cur.pos.y, cur.pos.z + 0.5f};
-	float cdx = entityPos.x - curCenter.x;
-	float cdz = entityPos.z - curCenter.z;
-	float curDistXZ = std::sqrt(cdx*cdx + cdz*cdz);
-
-	// Door gating at the *current* cursor cell (never look past a door).
-	if (doors && doors->isClosedDoor(cur.pos)) {
-		if (curDistXZ < kDoorReachXZ) {
-			m_waitOpen = true;
-			Intent i;
-			i.kind = Intent::Interact;
-			i.target = curCenter;
-			i.interactPos = cur.pos;
-			return i;
-		}
-		return Intent{Intent::Move, curCenter, {}};
-	}
-	if (m_waitOpen) {
-		if (doors && doors->isOpenDoor(cur.pos)) {
-			m_waitOpen = false;
-		} else {
-			return Intent{Intent::Move, curCenter, {}};
-		}
-	}
-
-	// Look-ahead along a straight, flat, door-free run. Stop at any direction
-	// change, Y change, or door (open or closed) so the server's straight-line
-	// velocity doesn't cut through walls or skip a door-open handshake.
-	int targetIdx = m_cursor;
-	glm::ivec2 runDir{0, 0};
-	for (int k = 1; k < kLookAhead; ++k) {
-		int next = m_cursor + k;
-		if (next >= (int)m_path.steps.size()) break;
-		const Waypoint& np = m_path.steps[next];
-		const Waypoint& pv = m_path.steps[next - 1];
-		if (np.pos.y != pv.pos.y) break;
-		if (doors && (doors->isClosedDoor(np.pos) || doors->isOpenDoor(np.pos))) break;
-		glm::ivec2 step{np.pos.x - pv.pos.x, np.pos.z - pv.pos.z};
-		if (runDir.x == 0 && runDir.y == 0) runDir = step;
-		else if (step != runDir) break;
-		targetIdx = next;
-	}
-
-	const Waypoint& target = m_path.steps[targetIdx];
-	glm::vec3 center{target.pos.x + 0.5f, (float)target.pos.y, target.pos.z + 0.5f};
-	return Intent{Intent::Move, center, {}};
-}
-
-// ── Navigator ──────────────────────────────────────────────────────────────
-// Plan-cache policy: one plan per goal cell. Setting an identical goal is a
-// no-op so behaviors can re-assert the destination every decide() tick
-// without paying A* cost.
-bool Navigator::setGoal(glm::ivec3 g) {
-	if (m_hasGoal && g == m_goal && !m_exec.done()) return m_status != Status::Blocked;
-	m_goal = g;
-	m_hasGoal = true;
-	m_status = Status::Planning;
-
-	// Feet cell of the entity at plan time is unknown here — caller passes
-	// start via setGoal is awkward. We defer planning to the first tick where
-	// we know entityPos. Store only the goal; tick() computes start cell.
-	m_path = {};
-	m_exec.clear();
-	return true;
-}
-
-Navigator::Step Navigator::tick(const glm::vec3& entityPos) {
-	Step out;
-	if (!m_hasGoal) { m_status = Status::Idle; return out; }
-
-	// Lazy plan: first tick after setGoal, or after Blocked/invalidation.
-	// A partial path is still executed — for goals inside solid blocks (chests,
-	// monuments, any "interact-with" target) the planner can never stand on
-	// the goal cell, so partial=true is the norm. Walking to the best-seen
-	// standable neighbor is what the caller actually wants; they check range
-	// on arrival and issue Interact/Store/etc. Only empty paths block.
-	if (m_path.steps.empty()) {
-		glm::ivec3 start{
-			(int)std::floor(entityPos.x),
-			(int)std::floor(entityPos.y),
-			(int)std::floor(entityPos.z)};
-		m_path = m_planner.plan(start, m_goal);
-		if (m_path.steps.empty()) {
-			m_status = Status::Blocked;
-			return out;
-		}
-		m_exec.setPath(m_path);
-	}
-
-	if (m_exec.done()) {
-		m_status = Status::Arrived;
-		m_hasGoal = false;
-		return out;
-	}
-
-	auto intent = m_exec.tick(entityPos, m_world, m_doors);
-	if (intent.kind == PathExecutor::Intent::Move) {
-		m_status = Status::Walking;
-		out.kind = Step::Move;
-		out.moveTarget = intent.target;
-	} else if (intent.kind == PathExecutor::Intent::Interact) {
-		m_status = Status::OpeningDoor;
-		out.kind = Step::Interact;
-		out.moveTarget  = intent.target;
-		out.interactPos = intent.interactPos;
-	} else {
-		m_status = Status::Arrived;
-		m_hasGoal = false;
-	}
-	return out;
-}
+// PathExecutor::tick and Navigator impls moved to client/path_executor.cpp.
+// Only the planner-side (GridPlanner, FlowField, pathInvalidatedBy) lives
+// here now.
 
 } // namespace civcraft

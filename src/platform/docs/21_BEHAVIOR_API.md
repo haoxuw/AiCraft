@@ -67,10 +67,10 @@ Typed pydantic object. All fields are read-only.
 | `entity.on_ground` | bool | Whether standing on solid ground |
 | `entity.inventory` | InventoryView | Read-only inventory snapshot |
 
-**Custom server-assigned props** (work_radius, collect_goal, …):
+**Custom server-assigned props** (work_radius, chop_period, …):
 ```python
 entity.get("work_radius", 80.0)   # float, with default
-entity.get("collect_goal", 5)     # int, with default
+entity.get("chop_period", 0.5)    # float, with default
 ```
 
 **Inventory:**

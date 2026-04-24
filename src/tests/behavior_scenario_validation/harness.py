@@ -1,7 +1,7 @@
 """Test harness — launches civcraft-server, waits for ready, connects observer.
 
 Usage:
-    with GameHarness(template=2, seed=100) as game:
+    with GameHarness(template=1, seed=100) as game:
         game.wait_for_entities(timeout=30)
         # ... assertions on game.observer.entities ...
 """
@@ -31,7 +31,7 @@ def _find_free_port():
 class GameHarness:
     """Manages a civcraft-server process and an observer TCP connection."""
 
-    def __init__(self, template=2, seed=100, port=None, spawn_agent_host=False):
+    def __init__(self, template=1, seed=100, port=None, spawn_agent_host=False):
         self.template = template
         self.seed = seed
         self.port = port or _find_free_port()

@@ -209,9 +209,13 @@ The woodcutter demonstrates the full inventory cycle:
 ```
 
 Key properties set at spawn (see `server.h` initWorld):
-- `collect_goal` — logs to collect before depositing (default 5)
 - `work_radius` — max scan_blocks distance for trees (default 80)
 - `chop_period` — seconds between chop actions (default 0.5)
+
+Woodcutter no longer uses `collect_goal`. The DEPOSIT gate is
+`not inventory.can_accept("logs", 1, inventory_capacity)` — the body is
+full when one more log wouldn't fit. `inventory_capacity == max_hp ==
+material_value` for every Living (villager=20 → ~5 logs).
 
 ---
 

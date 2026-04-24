@@ -11,30 +11,35 @@ High-level vs inner loop:
   type present, chop the nearest hit, repeat. Prioritization is enforced by
   the executor: logs are never chopped while any leaf exists in range.
 
+  Capacity is the universal rule across the game: inventory_capacity ==
+  max_hp == material_value. A villager's body is worth 20; it carries 20
+  value worth of items. Collect until maxed, then haul to the chest.
+
 Behavior-local tuning (class defaults, overridable via __init__):
-  COLLECT_GOAL  — logs to collect before depositing (default 5)
   WORK_RADIUS   — max radius to search for trees (default 80)
   CHEST_RADIUS  — max radius to search for chests (default 120)
 
 State machine:
   SLEEP   -> WORK     when morning / afternoon begins
-  WORK    -> DEPOSIT  when inventory is full
+  WORK    -> DEPOSIT  when one more log wouldn't fit
   DEPOSIT -> WORK     when inventory is empty after depositing
   any     -> SLEEP    when evening / night begins
 """
 import math
 import traceback
 
-from civcraft_engine import Move, Navigator, scan_blocks, scan_entities
+from civcraft_engine import Move, Navigator, material_value, scan_blocks, scan_entities
 from actions import StoreItem, DropItem
 from behavior_base import Behavior
 from entity_log import log as elog
 from local_world import SelfEntity, LocalWorld
 from stats import stats
 
-STORE_RANGE  = 3.0   # must be <= server-side StoreItem range (5.0 blocks).
-                     # Larger than Navigator's arrive radius (1.5) so the
-                     # villager doesn't get stuck idling next to the chest.
+STORE_RANGE  = 5.0   # matches server-side StoreItem range. The slack (vs
+                     # Navigator's arrive radius 1.5) covers cases where the
+                     # planner's partial path stops just outside a wall with
+                     # the chest one block inside — wall(1) + chest_offset(1)
+                     # + collision(0.5) + heuristic_trap slack fits in 5.
 CHOP_COOLDOWN = 1.0  # seconds between swings (executor-enforced)
 GATHER_RADIUS = 6.0  # executor scans this sphere around the villager each swing
 
@@ -45,7 +50,6 @@ class WoodcutterBehavior(Behavior):
     WORK    = "work"
     DEPOSIT = "deposit"
 
-    COLLECT_GOAL = 5
     WORK_RADIUS  = 80.0
     CHEST_RADIUS = 120.0
 
@@ -55,10 +59,14 @@ class WoodcutterBehavior(Behavior):
     # Override on a subclass to change what a villager prefers.
     GATHER_PRIORITY = ["leaves", "logs"]
 
-    def __init__(self, collect_goal: int = COLLECT_GOAL,
-                 work_radius: float = WORK_RADIUS):
+    # Humanoids route movement through the A* Navigator instead of straight-line
+    # steering — they can't cleanly wall-hug past chests, doors, or tight gaps.
+    # Subclasses (or a future EntityDef flag) can flip this off for simpler
+    # mobs. Used to set `use_navigator` on emitted Move / harvest PlanSteps.
+    USE_NAVIGATOR = True
+
+    def __init__(self, work_radius: float = WORK_RADIUS):
         self._state           = self.SLEEP
-        self._collect_goal    = collect_goal
         self._work_radius     = work_radius
         self._nav             = Navigator()
         self._chest_target    = None   # (eid, x, y, z) cache for current deposit trip
@@ -108,15 +116,16 @@ class WoodcutterBehavior(Behavior):
         elif self._state == self.SLEEP and is_day:
             self._state = self.WORK
 
-        # Gate on `logs >= collect_goal`, NOT on `not can_accept(...)`.
-        # Humanoids have `inventory_capacity = inf` (intentional, so players
-        # never see "Inventory full"), which makes `can_accept` always True
-        # and DEPOSIT unreachable. The collect_goal gate is both correct for
-        # civilian villagers and robust to the inf-cap design.
-        logs_held = entity.inventory.count("logs")
-        ready_to_deposit = logs_held >= self._collect_goal
+        # Capacity-based deposit gate: once one more log wouldn't fit, the
+        # body is "full enough" and we haul. inventory_capacity == max_hp ==
+        # material_value for every living — the rule is uniform, humanoids
+        # no longer exempt. Leaves picked up during chopping count toward
+        # the total, so the exact log count at DEPOSIT varies (4–5 for a
+        # villager body of 20). That's fine: always collect until maxed.
+        full = not entity.inventory.can_accept(
+            "logs", 1, entity.inventory_capacity)
         empty = entity.inventory.total_value() <= 0
-        if self._state == self.WORK and ready_to_deposit:
+        if self._state == self.WORK and full:
             self._state = self.DEPOSIT
         elif self._state == self.DEPOSIT and empty:
             self._state = self.WORK
@@ -140,10 +149,24 @@ class WoodcutterBehavior(Behavior):
         origin = (entity.x, entity.y, entity.z)
         logs   = entity.inventory.count("logs")
 
-        # Scan the highest-priority tier with any hits and hand the whole list
-        # to the executor. The executor owns "which anchor to stand at next"
-        # — this function just declares where trees exist and how many logs
-        # we still need.
+        # Count goal for this decide cycle: derive from remaining capacity so
+        # the executor only loops until the body is (roughly) full. "Roughly"
+        # because leaves that get swept up during the harvest also consume
+        # capacity — the Python-side WORK→DEPOSIT gate re-checks can_accept
+        # on the next decide() anyway.
+        remaining_cap = max(0.0, entity.inventory_capacity - entity.inventory.total_value())
+        logs_that_fit = max(1, int(remaining_cap / material_value("logs")))
+
+        # Scan each gather tier and keep the highest-priority one that has any
+        # hits. The executor owns "which anchor to stand at next" — this
+        # function just declares where harvestable blocks exist and how many
+        # logs we still need.
+        #
+        # No Y filter: chopping is intentionally infinite-height. A villager
+        # can work its way up a tall tree by standing on the trunk it just
+        # broke, so overhead leaves/logs are legitimate targets — the
+        # executor's per-swing gather_radius sphere does the real reachability
+        # check at chop time.
         candidates = []
         for tier in self.GATHER_PRIORITY:
             stats.inc("scan_blocks")
@@ -155,34 +178,22 @@ class WoodcutterBehavior(Behavior):
                 break
 
         if not candidates:
-            elog(entity.id, "work: no anchor in %.0f blocks, searching" %
-                 self._work_radius)
-            return self._search(entity, local_world, spd)
-
-        # Overhead-only filter: the executor cycles candidates that are
-        # *wedged horizontally* but can't help with "stuck in a pit, trunk
-        # is 6 blocks up". If every candidate is overhead, the villager
-        # must physically escape first — wander, then re-scan next decide.
-        _MAX_Y_DELTA = 3  # approx. jump + climb height
-        reachable = [h for h in candidates
-                     if abs(h["y"] - entity.y) <= _MAX_Y_DELTA]
-        if not reachable:
             elog(entity.id,
-                 "work: %d candidates all overhead (|dy|>%d), wandering" %
-                 (len(candidates), _MAX_Y_DELTA))
+                 "work: no tree in %.0f blocks, searching"
+                 % self._work_radius)
             return self._search(entity, local_world, spd)
-        candidates = reachable
 
-        # Log the primary candidate for telemetry parity with the legacy line
-        # (tests grep for `work: anchor=...`); fall-back slots aren't logged
-        # Python-side because the executor picks them.
-        primary = candidates[0]
-        dist = ((primary["x"] + 0.5 - entity.x)**2 +
-                (primary["z"] + 0.5 - entity.z)**2) ** 0.5
+        # Candidates are the *hit* cells (leaf / log — often midair for leaves).
+        # The C++ executor walks down the column to find the standable ground
+        # under each hit when `ignore_height` is set, so decide() never needs
+        # the chunk loaded to probe terrain — the server always has it.
+        primary_hit = candidates[0]
+        dist = ((primary_hit["x"] + 0.5 - entity.x)**2 +
+                (primary_hit["z"] + 0.5 - entity.z)**2) ** 0.5
         elog(entity.id,
-             "work: anchor=(%d,%d,%d) self=(%.1f,%.1f,%.1f) "
+             "work: hit=(%d,%d,%d) self=(%.1f,%.1f,%.1f) "
              "d=%.1f logs=%d candidates=%d" % (
-             int(primary["x"]), int(primary["y"]), int(primary["z"]),
+             int(primary_hit["x"]), int(primary_hit["y"]), int(primary_hit["z"]),
              entity.x, entity.y, entity.z, dist, logs, len(candidates)))
 
         plan = [{
@@ -195,10 +206,14 @@ class WoodcutterBehavior(Behavior):
             "chop_cooldown": CHOP_COOLDOWN,
             # Let the executor keep chopping until we've collected the
             # remaining quota, so we don't ping decide() between every swing.
-            "count_goal": max(1, self._collect_goal - logs),
+            "count_goal": logs_that_fit,
             # Conservative capacity gate: if one more log fits, everything
             # else in the priority list fits too (logs are the heaviest).
             "item": "logs",
+            # Route approach via A* Navigator (humanoids).
+            "use_navigator": self.USE_NAVIGATOR,
+            # Navigate to the root, not the leaf cell.
+            "ignore_height": True,
         }]
         return plan, "Chopping trees"
 
@@ -206,6 +221,11 @@ class WoodcutterBehavior(Behavior):
         tx, ty, tz = self.wander_target(entity, radius=20)
         self._nav.set_goal(int(tx), int(ty), int(tz))
         action = self._nav.next_action(entity)
+        if self._nav.status() == "failed":
+            reason = self._nav.failure_reason() or "no valid path"
+            elog(entity.id, "search: nav failed — %s" % reason)
+            return (Move(entity.x, entity.y, entity.z),
+                    "No path while searching — %s" % reason, 10.0)
         action.speed = spd
         return action, "Searching for trees"
 
@@ -257,7 +277,14 @@ class WoodcutterBehavior(Behavior):
              % (eid, dist_to_chest, logs))
         self._nav.set_goal(int(cx), int(cy), int(cz))
         action = self._nav.next_action(entity)
-        if self._nav.status() == "blocked":
-            return Move(entity.x, entity.y, entity.z), "Waiting near chest"
+        if self._nav.status() == "failed":
+            reason = self._nav.failure_reason() or "no valid path"
+            elog(entity.id, "deposit: nav failed — %s" % reason)
+            # Drop the cached chest so the next cycle re-scans; stand in place
+            # and show the failure as the goal text. Coords in `reason` are
+            # clickable in the Inspect panel.
+            self._chest_target = None
+            return (Move(entity.x, entity.y, entity.z),
+                    "Can't reach chest — %s" % reason, 10.0)
         action.speed = spd
         return action, "Carrying logs to chest"

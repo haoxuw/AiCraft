@@ -14,7 +14,7 @@
 #include "server/test_server.h"
 #include "server/village_siter.h"
 #include "server/world_template.h"
-#include "server/python_bridge.h"
+#include "python/python_bridge.h"
 #include "server/world_accessibility.h"
 #include "server/client_manager.h"
 #include "client/entity_reconciler.h"
@@ -46,13 +46,15 @@ struct Result {
 
 static std::vector<Result> g_results;
 
-// shared templates (flat=0, village=1)
+// shared templates (village=0, flat sandbox=1).
+// "Flat sandbox" reuses test_dog.py — genuinely flat, no village, no trees.
+// Tests strip its single dog via wgc.mobs.clear() to get a pristine arena.
 static std::vector<std::shared_ptr<WorldTemplate>> g_templates;
 
 static void initTemplates() {
 	g_templates = {
-		std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/flat.py"),
 		std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/village.py"),
+		std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/test_dog.py"),
 	};
 }
 
@@ -77,20 +79,21 @@ static void run(const char* name, std::function<std::string()> fn) {
 // Test helpers
 // ================================================================
 
-// Create a flat-world TestServer and connect one client.
+// Create a flat-sandbox TestServer (test_dog template, mobs cleared) and
+// connect one client. Used by physics/pickup tests that need pristine flat
+// ground with no village structures or trees in the way.
 static std::unique_ptr<TestServer> makeFlatServer() {
 	auto srv = std::make_unique<TestServer>(g_templates);
 	WorldGenConfig wgc;
-	// Flat world: templateIndex=0, no mob spawning
 	wgc.mobs.clear();
-	srv->createGame(42, 0, wgc);
+	srv->createGame(42, 1, wgc);
 	return srv;
 }
 
 // Create a village world server with default mob config.
 static std::unique_ptr<TestServer> makeVillageServer() {
 	auto srv = std::make_unique<TestServer>(g_templates);
-	srv->createGame(42, 1, WorldGenConfig{});
+	srv->createGame(42, 0, WorldGenConfig{});
 	return srv;
 }
 
@@ -3208,7 +3211,7 @@ static std::string s06_living_spawn_requires_owner() {
 static std::string s05_worldgen_no_mobs_without_client() {
 	ServerConfig cfg;
 	cfg.seed = 42;
-	cfg.templateIndex = 1;           // village template — the worst case
+	cfg.templateIndex = 0;           // village template — the worst case
 	GameServer srv;
 	srv.init(cfg, g_templates);
 	// Mirror main.cpp/TestServer: load artifacts so entity defs match runtime.

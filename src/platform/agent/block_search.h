@@ -6,7 +6,7 @@
 #include "logic/chunk.h"
 #include "logic/block_registry.h"
 #include "logic/constants.h"
-#include "server/behavior.h"  // BlockSample
+#include "agent/behavior.h"  // BlockSample
 
 #include <algorithm>
 #include <functional>

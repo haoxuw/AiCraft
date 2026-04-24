@@ -24,7 +24,7 @@ TIMEOUT_WORK_CYCLE = 180   # seconds for woodcutter to complete at least one cho
 @pytest.fixture(scope="module")
 def game():
     """Start a game server for the entire test module."""
-    with GameHarness(template=2, seed=100) as g:
+    with GameHarness(template=1, seed=100) as g:
         g.wait_for_entities(min_count=3, timeout=TIMEOUT_STARTUP)
         g.wait_for_type(VILLAGER_TYPE, timeout=TIMEOUT_STARTUP)
         # Let agents start up and begin deciding

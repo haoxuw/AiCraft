@@ -30,10 +30,9 @@
 
 #include "net/server_interface.h"
 #include "server/behavior_store.h"
-#include "server/behavior.h"
-#include "server/python_bridge.h"
+#include "agent/behavior.h"
+#include "python/python_bridge.h"
 #include "agent/agent.h"
-#include "agent/behavior_executor.h"  // gatherNearby (used elsewhere)
 #include "agent/decide_worker.h"
 
 #include <algorithm>
@@ -53,10 +52,80 @@ namespace civcraft {
 
 class AgentClient {
 public:
-	AgentClient(ServerInterface& server, BehaviorStore& behaviors)
-		: m_server(server), m_behaviors(behaviors), m_rng(std::random_device{}()) {
-		std::printf("[Agent] AgentClient constructed — behavior store initialized=%d\n",
-			(int)m_behaviors.isInitialized());
+	// Runtime knobs plumbed in from the process that owns the AgentClient
+	// (usually the Vulkan game client at game_vk.cpp). Every field has a
+	// production default; callers override via CLI flags in client/main.cpp.
+	struct Config {
+		// Minimum gap between back-to-back Decide dispatches for the SAME
+		// agent. The user requirement: "can't re-trigger decide more frequent
+		// than game tick Hz" — so 1/60 ≈ 0.017s is the hard floor. The
+		// default (0.1s) adds headroom so normal replans don't saturate the
+		// worker thread for every NPC.
+		float decideBaseCooldownSec = 0.10f;
+
+		// Ceiling for the exponential-backoff curve. After enough consecutive
+		// Failed_* outcomes (see Agent::kFailStreakGiveUp) the state is
+		// promoted to Failed_GaveUp anyway, so this cap really only matters
+		// for streak values that haven't hit the threshold yet.
+		float decideMaxCooldownSec  = 10.00f;
+
+		// cooldown(streak) = min(base * pow(backoffBase, streak), max).
+		// Backoff base of 2 doubles the wait each failure: 0.1→0.2→0.4→0.8→…
+		// Set to 1.0 to disable exponential growth and use the floor always.
+		float decideBackoffBase     = 2.00f;
+	};
+
+	// The pacer sits between needsCompute()=Decide and actual dispatch. One
+	// entry per agent: the wall-clock time of its last Decide dispatch. The
+	// next dispatch is gated on `now - lastDispatch >= cooldown(failStreak)`,
+	// where cooldown grows exponentially with the agent's current fail-streak.
+	// This is orthogonal to m_decideBackoff (which only fires on Python
+	// exceptions); DecidePacer paces *every* decide, healthy or failing.
+	class DecidePacer {
+	public:
+		explicit DecidePacer(Config cfg) : m_cfg(cfg) {}
+
+		// Returns true if the agent's last dispatch is still inside its
+		// per-failStreak cooldown window. Callers should `continue` past the
+		// agent when this returns true.
+		bool inCooldown(EntityId eid, float now, int failStreak) const {
+			auto it = m_lastDispatch.find(eid);
+			if (it == m_lastDispatch.end()) return false;
+			return (now - it->second) < cooldownFor(failStreak);
+		}
+
+		// Called after a successful dispatch. Pairs with inCooldown.
+		void noteDispatch(EntityId eid, float now) {
+			m_lastDispatch[eid] = now;
+		}
+
+		// Drop on agent removal so the map doesn't grow unbounded.
+		void forget(EntityId eid) { m_lastDispatch.erase(eid); }
+
+		// Exposed for diagnostics: the cooldown an agent with this streak
+		// would face. Used by the repetitive-decide log line.
+		float cooldownFor(int failStreak) const {
+			float cd = m_cfg.decideBaseCooldownSec *
+				std::pow(m_cfg.decideBackoffBase, (float)std::max(0, failStreak));
+			return std::min(cd, m_cfg.decideMaxCooldownSec);
+		}
+
+	private:
+		Config                              m_cfg;
+		std::unordered_map<EntityId, float> m_lastDispatch;
+	};
+
+	AgentClient(ServerInterface& server, BehaviorStore& behaviors, Config cfg)
+		: m_server(server), m_behaviors(behaviors),
+		  m_cfg(cfg), m_decidePacer(cfg),
+		  m_rng(std::random_device{}()) {
+		std::printf("[Agent] AgentClient constructed — behavior store initialized=%d "
+			"decideBase=%.3fs max=%.2fs backoffBase=%.2f pathfind_debug=%d\n",
+			(int)m_behaviors.isInitialized(),
+			m_cfg.decideBaseCooldownSec,
+			m_cfg.decideMaxCooldownSec,
+			m_cfg.decideBackoffBase,
+			CIVCRAFT_PATHFINDING_DEBUG_ENABLED);
 		std::fflush(stdout);
 		m_decideWorker.start();
 	}
@@ -312,6 +381,7 @@ private:
 				m_enteredAt.erase(it->first);
 				m_decideGen.erase(it->first);
 				m_decideBackoff.forget(it->first);
+				m_decidePacer.forget(it->first);
 				it = m_agents.erase(it);
 			} else {
 				++it;
@@ -447,6 +517,18 @@ private:
 			// repeat on identical inputs. Cooldown elapses → we retry.
 			if (m_decideBackoff.inCooldown(eid, m_time)) continue;
 
+			// General pacing gate: even a healthy agent can't re-dispatch
+			// Decide faster than the configured floor; a failing agent
+			// cools down exponentially with its streak so a bug that would
+			// otherwise churn at game-tick Hz decays into a slow poll
+			// (eventually bounded by kFailStreakGiveUp → Failed_GaveUp →
+			// complain-at-town-center). React is "right now" by design and
+			// bypasses the pacer — signals must land the same tick they fire.
+			if (wanted == Agent::ComputeKind::Decide &&
+			    m_decidePacer.inCooldown(eid, m_time, agent.failStreak())) {
+				continue;
+			}
+
 			Entity* e = m_server.getEntity(eid);
 			if (!e || e->removed) continue;
 
@@ -459,6 +541,8 @@ private:
 			m_lastDecidesRun++;
 			dispatchWorker(agent, *e, wanted);
 			agent.markDispatched(wanted, m_time);
+			if (wanted == Agent::ComputeKind::Decide)
+				m_decidePacer.noteDispatch(eid, m_time);
 			updateMembership(eid);
 		}
 
@@ -868,8 +952,10 @@ private:
 	BehaviorStore&   m_behaviors;
 	std::unordered_map<EntityId, Agent> m_agents;
 
+	Config                    m_cfg;            // constructor copy of runtime knobs
 	RetryBackoff<std::string> m_loadBackoff;    // behavior-id → load-failure backoff
 	RetryBackoff<EntityId>    m_decideBackoff;  // entity-id  → decide/react runtime-error backoff
+	DecidePacer               m_decidePacer;    // per-entity decide-dispatch cadence + fail-streak backoff
 
 	// Scheduling: needy-set + rotating cursor.
 	std::set<EntityId>                    m_needy;

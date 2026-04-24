@@ -32,7 +32,7 @@
 #include "agent/agent_client.h"
 #include "debug/perf_registry.h"
 #include "server/behavior_store.h"
-#include "server/python_bridge.h"
+#include "python/python_bridge.h"
 
 #include <unordered_set>
 
@@ -78,7 +78,7 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	m_behaviorStore = std::make_unique<civcraft::BehaviorStore>();
 	m_behaviorStore->init("artifacts/behaviors");
 	m_agentClient = std::make_unique<civcraft::AgentClient>(
-		*m_server, *m_behaviorStore);
+		*m_server, *m_behaviorStore, m_agentCfg);
 	if (auto* net = dynamic_cast<civcraft::NetworkServer*>(m_server)) {
 		civcraft::AgentClient* ac = m_agentClient.get();
 		net->setInterruptHandlers(
@@ -388,6 +388,38 @@ void Game::shutdown() {
 void Game::pushNotification(const std::string& text, glm::vec3 color, float lifetime) {
 	while (m_notifs.size() >= 6) m_notifs.erase(m_notifs.begin());
 	m_notifs.push_back({text, color, 0.0f, lifetime});
+}
+
+// Inspect-panel coord hyperlinks: click a (x,y,z) in an entity's Goal line
+// and the camera flies to that spot with a ground marker. ESC restores the
+// prior pose. Re-clicking while already peeking just re-aims without
+// stacking — single-slot save.
+void Game::enterCoordPeek(glm::ivec3 target) {
+	if (!m_peekActive) {
+		m_peekSavedCam = std::make_unique<civcraft::Camera>(m_cam);
+		m_peekActive   = true;
+	}
+	m_peekTarget = target;
+
+	// RTS-style bird's-eye over the target cell — most legible across the
+	// four camera modes and keeps the marker cube in frame.
+	glm::vec3 center{target.x + 0.5f, (float)target.y + 0.5f, target.z + 0.5f};
+	m_cam.mode         = civcraft::CameraMode::RTS;
+	m_cam.rtsCenter    = center;
+	m_cam.rtsHeight    = 10.0f;
+	m_cam.rtsHeightTarget = 10.0f;
+	m_cam.rtsAngle     = 55.0f;
+	m_cam.rtsOrbitYaw  = -90.0f;
+	m_cam.rtsPanVel    = {0, 0, 0};
+	m_cam.resetMouseTracking();
+}
+
+void Game::exitCoordPeek() {
+	if (!m_peekActive) return;
+	if (m_peekSavedCam) m_cam = *m_peekSavedCam;
+	m_peekSavedCam.reset();
+	m_peekActive = false;
+	m_cam.resetMouseTracking();
 }
 
 bool Game::connectAs(const std::string& creatureType) {

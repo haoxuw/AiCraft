@@ -108,6 +108,20 @@ void EntityUiRenderer::renderEntityInspect() {
 		y -= 0.032f;
 	};
 
+	// Shared peek-input bundle — rebuilt per frame, reused by every
+	// peekable-text row so the Game-dependency stays concentrated here.
+	ui::PeekableTextInput peekIn{
+		g.m_mouseNdcX, g.m_mouseNdcY, g.m_mouseLPressed,
+		[&g](glm::ivec3 c) { g.enterCoordPeek(c); }
+	};
+	auto rowKV_peekable = [&](const char* k, const std::string& value,
+	                          const float baseCol[4]) {
+		r->drawText2D(k, bodyX, y, 0.70f, kTextDim);
+		ui::drawPeekableText(r, peekIn, bodyX + labelW, y, 0.70f,
+		                     value, baseCol);
+		y -= 0.032f;
+	};
+
 	char buf[256];
 
 	// ── Vitals ────────────────────────────────────────────────────────
@@ -139,6 +153,18 @@ void EntityUiRenderer::renderEntityInspect() {
 		e->position.x, e->position.y, e->position.z);
 	rowKV("Position", buf, kText);
 
+	// Home — clickable peek target. No per-entity home tracking yet, so this
+	// is the floored current position: always present on every Inspect and
+	// serves as the manual-peek handle. When owned-entity home coords land,
+	// swap this to the tracked value.
+	{
+		std::string home = "(" + std::to_string((int)std::floor(e->position.x))
+		                 + ", " + std::to_string((int)std::floor(e->position.y))
+		                 + ", " + std::to_string((int)std::floor(e->position.z))
+		                 + ")";
+		rowKV_peekable("Home", home, kText);
+	}
+
 	std::snprintf(buf, sizeof(buf), "%s", e->typeId().c_str());
 	rowKV("Type", buf, kText);
 
@@ -153,9 +179,9 @@ void EntityUiRenderer::renderEntityInspect() {
 		if (e->goalText.empty()) {
 			rowKV("Goal", "(pending)", kTextDim);
 		} else {
-			const float ok[4] = {0.55f, 0.95f, 0.55f, 1.0f};
-			rowKV("Goal", e->goalText.c_str(),
-				e->hasError ? kDanger : ok);
+			const float ok[4]    = {0.55f, 0.95f, 0.55f, 1.0f};
+			const float* baseCol = e->hasError ? kDanger : ok;
+			rowKV_peekable("Goal", e->goalText, baseCol);
 		}
 		if (e->hasError && !e->errorText.empty()) {
 			std::snprintf(buf, sizeof(buf), "Error: %s", e->errorText.c_str());

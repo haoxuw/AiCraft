@@ -97,7 +97,7 @@ public:
 	// window keeps pumping events while S_WELCOME is in flight (blocking in
 	// the click handler triggers "App not responding"). Web still needs it
 	// because WebSocket handshakes require event-loop frames.
-	bool beginConnect(int /*seed*/ = 42, int /*templateIndex*/ = 1) override {
+	bool beginConnect(int /*seed*/ = 42, int /*templateIndex*/ = 0) override {
 		printf("[Net] Connecting to %s:%d ...\n", m_host.c_str(), m_port);
 		if (!m_tcp.connect(m_host.c_str(), m_port)) {
 			printf("[Net] beginConnect failed for %s:%d\n", m_host.c_str(), m_port);

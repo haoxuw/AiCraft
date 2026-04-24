@@ -129,7 +129,7 @@ struct ServerCallbacks {
 
 struct ServerConfig {
 	int seed = 42;
-	int templateIndex = 1;  // VillageWorld (has trees)
+	int templateIndex = 0;  // VillageWorld (has trees)
 	int port = 7777;
 	float hpRegenInterval = ServerTuning::hpRegenInterval;
 	WorldGenConfig worldGenConfig;
@@ -319,10 +319,18 @@ public:
 			}
 		}
 		// Client-chosen villager override (Rule 1: client hosts the world, decides
-		// population). Replaces the template villager count; other mobs untouched.
+		// population). Debug use: strips ALL non-villager mobs so the log is a
+		// clean single-species trace — no dogs/cats/bees churning DECIDE lines
+		// while you're debugging one villager's path. Template villager count
+		// becomes `n` regardless of the original value.
 		if (const char* vc = std::getenv("CIVCRAFT_VILLAGERS")) {
 			int n = std::atoi(vc);
 			if (n > 0) {
+				mobList.erase(std::remove_if(mobList.begin(), mobList.end(),
+					[](const MobSpawn& m) {
+						return m.typeId != "villager" &&
+						       m.typeId != "base:villager";
+					}), mobList.end());
 				bool found = false;
 				for (auto& m : mobList) {
 					if (m.typeId == "villager" || m.typeId == "base:villager") {
@@ -330,8 +338,12 @@ public:
 						found = true;
 					}
 				}
-				if (found)
-					printf("[Server] CIVCRAFT_VILLAGERS=%d — villager count overridden\n", n);
+				if (!found) {
+					mobList.push_back({"villager", n, wgc.mobSpawnRadius,
+					                   SpawnAnchor::VillageCenter, 0.0f, {}});
+				}
+				printf("[Server] CIVCRAFT_VILLAGERS=%d — non-villager mobs "
+				       "stripped for clean debug log\n", n);
 			}
 		}
 

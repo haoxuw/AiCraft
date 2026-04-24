@@ -11,8 +11,9 @@
 #include "server/test_server.h"
 #include "server/world_template.h"
 #include "server/world.h"
-#include "server/python_bridge.h"
+#include "python/python_bridge.h"
 #include "agent/pathfind.h"
+#include "client/path_executor.h"
 #include "logic/entity.h"
 #include "logic/chunk.h"
 #include "logic/block_registry.h"
@@ -954,12 +955,14 @@ static std::string p10_narrow_tunnel_still_passes() {
 		return b;
 	}
 
-	// Must pass through the gap cell (sx+3, sy, sz) — no other way across.
-	bool threadedGap = false;
-	for (auto& wp : path.steps) {
-		if (wp.pos.x == sx + 3 && wp.pos.z == sz) { threadedGap = true; break; }
-	}
-	if (!threadedGap) return "path found, but did not traverse the 1-wide gap";
+	// The wall at x=sx+3 spans z=sz-5..sz+5 with exactly one gap at z=sz, and
+	// start/goal sit on opposite sides — so `!path.partial` above is proof
+	// the planner threaded the gap. Post-compression the gap cell itself is
+	// dropped (collinear Walk), but the only standable crossing is at z=sz,
+	// and the final waypoint must be the goal on the far side.
+	const Waypoint& last = path.steps.back();
+	if (last.pos != goalCell)
+		return "path found, but did not terminate at goal (did not thread gap?)";
 
 	printf("\n    tunnel path steps=%zu cost=%.2f (penalty=%.2f)\n",
 	       path.steps.size(), path.cost, planner.config().wallClearancePenalty);
@@ -1032,6 +1035,334 @@ static std::string p11_perf_scaling() {
 	return "";
 }
 
+// ── P12 — PathExecutor must not flip moveTarget 180° between ticks ─────
+//
+// The invariant: for any sensible path, driving an entity via
+// `vel = normalize(PathExecutor::tick(...).target - pos) * walk_speed`
+// must never produce a direction vector that reverses more than 120°
+// from one agent tick to the next. A 180° reversal is the "spin in
+// place" symptom observed in /tmp/civcraft_entity_2407.log — the
+// entity gets pushed back and forth across a waypoint center it's
+// already inside.
+//
+// We don't hard-code any single path. Instead, we run the same invariant
+// against a family of synthetic shapes (straight / L / staircase of
+// turns / real recorded plan), using realistic entity coasting between
+// agent ticks. The coast is what exposes the bug: with no overshoot
+// an entity never crosses a cell center, so cursor advance is trivial.
+struct AirWorld : WorldView {
+	bool isSolid(glm::ivec3 p) const override { return p.y < 0; }
+};
+
+// Run one scenario: drive PathExecutor over `path` for at most maxTicks
+// agent ticks, coasting at walk_speed between decisions. Reports (tick,
+// prevRow, flipRow, worstDot). If no flip occurs, firstFlipT == -1.
+struct FlipReport {
+	int       firstFlipT = -1;
+	float     worstDot   = 2.0f;
+	int       totalTicks = 0;
+	glm::vec3 prevPos{}, prevTarget{};
+	glm::vec2 prevDir{};
+	glm::vec3 flipPos{}, flipTarget{};
+	glm::vec2 flipDir{};
+};
+
+static FlipReport runScenario(const Path& path, glm::vec3 startPos,
+                              int physPerAgent = 2, int maxTicks = 2000) {
+	FlipReport rep;
+	AirWorld world;
+	(void)world;  // No-op for AirWorld — unified PathExecutor doesn't consult it.
+	constexpr EntityId kTestEid = 42;
+	PathExecutor exec;
+	exec.setPath(kTestEid, path);
+
+	constexpr float speed  = 2.5f;
+	constexpr float physDt = 1.0f / 60.0f;
+	const float     agentDt = physDt * physPerAgent;
+
+	// Build a y-for-x lookup from the path so coasting keeps entity Y
+	// near waypoint Y (the kArriveY=1.0 guard is real physics, not the
+	// bug under test — a falling entity will naturally line up with the
+	// floor). Use the nearest same-plane waypoint's Y.
+	auto nearestY = [&](glm::vec3 p) {
+		int bestIdx = 0;
+		float bestD2 = 1e30f;
+		for (size_t i = 0; i < path.steps.size(); ++i) {
+			float dx = p.x - (path.steps[i].pos.x + 0.5f);
+			float dz = p.z - (path.steps[i].pos.z + 0.5f);
+			float d2 = dx*dx + dz*dz;
+			if (d2 < bestD2) { bestD2 = d2; bestIdx = (int)i; }
+		}
+		return (float)path.steps[bestIdx].pos.y;
+	};
+
+	glm::vec3 pos = startPos;
+	glm::vec3 vel{0, 0, 0};
+	glm::vec2 prevDir{0, 0};
+	glm::vec3 prevPos{}, prevTarget{};
+	bool havePrev = false;
+
+	// Pop-front model — no cursor state; record the remaining waypoint count
+	// instead so the flip dump still shows which waypoint the executor was
+	// driving toward.
+	struct TickLog {
+		int t = -1;
+		int remaining = -1;
+		glm::vec3 pos{}, target{};
+		glm::vec2 dir{};
+		bool nearWaypoint = false;
+	};
+	constexpr int kWindow = 8;
+	TickLog window[kWindow];
+	int winHead = 0;
+	auto pushLog = [&](const TickLog& e) {
+		window[winHead] = e;
+		winHead = (winHead + 1) % kWindow;
+	};
+	bool dumped = false;
+	auto dumpWindow = [&](int flipT) {
+		if (dumped) return; dumped = true;
+		printf("\n      ── tick trace (last %d ticks before flip@%d) ──\n",
+		       kWindow, flipT);
+		for (int k = 0; k < kWindow; ++k) {
+			const TickLog& e = window[(winHead + k) % kWindow];
+			if (e.t < 0) continue;
+			printf("      t=%4d rem=%3d pos=(%7.3f,%7.3f) tgt=(%6.2f,%6.2f)"
+			       " dir=(%+6.3f,%+6.3f)%s\n",
+			       e.t, e.remaining,
+			       e.pos.x, e.pos.z,
+			       e.target.x, e.target.z,
+			       e.dir.x, e.dir.y,
+			       e.nearWaypoint ? "  near" : "");
+		}
+		printf("      remaining waypoints:");
+		int dumpN = std::min((int)exec.path(kTestEid).steps.size(), 8);
+		for (int i = 0; i < dumpN; ++i) {
+			const auto& w = exec.path(kTestEid).steps[i];
+			printf(" %d:(%d,%d,%d)%s", i, w.pos.x, w.pos.y, w.pos.z,
+			       i == 0 ? "*" : "");
+		}
+		printf("\n");
+	};
+
+	for (int t = 0; t < maxTicks && !exec.done(kTestEid); ++t) {
+		pos.x += vel.x * agentDt;
+		pos.z += vel.z * agentDt;
+		pos.y  = nearestY(pos);
+
+		auto intent = exec.tick(kTestEid, pos);
+		auto mkLog = [&](int tt, glm::vec3 p, glm::vec3 tg, glm::vec2 d, bool near) {
+			return TickLog{tt, (int)exec.path(kTestEid).steps.size(), p, tg, d, near};
+		};
+		if (intent.kind != PathExecutor::Intent::Move) {
+			vel = glm::vec3(0);
+			continue;
+		}
+		glm::vec2 delta{intent.target.x - pos.x, intent.target.z - pos.z};
+		float len = std::sqrt(delta.x*delta.x + delta.y*delta.y);
+		if (len < 0.01f) {
+			// `nav-near-waypoint` tick in agent.h — velocity zeroed for
+			// this frame. Don't reset havePrev: a flip can straddle it.
+			vel = glm::vec3(0);
+			pushLog(mkLog(t, pos, intent.target, {0,0}, true));
+			continue;
+		}
+		glm::vec2 dir = delta / len;
+
+		if (havePrev) {
+			float dot = prevDir.x*dir.x + prevDir.y*dir.y;
+			if (dot < rep.worstDot) rep.worstDot = dot;
+			if (dot < -0.5f && rep.firstFlipT < 0) {
+				rep.firstFlipT = t;
+				rep.prevPos    = prevPos;
+				rep.prevTarget = prevTarget;
+				rep.prevDir    = prevDir;
+				rep.flipPos    = pos;
+				rep.flipTarget = intent.target;
+				rep.flipDir    = dir;
+				pushLog(mkLog(t, pos, intent.target, dir, false));
+				dumpWindow(t);
+			}
+		}
+		if (!dumped) pushLog(mkLog(t, pos, intent.target, dir, false));
+		prevDir    = dir;
+		prevPos    = pos;
+		prevTarget = intent.target;
+		havePrev   = true;
+
+		vel.x = dir.x * speed;
+		vel.z = dir.y * speed;
+		rep.totalTicks = t + 1;
+	}
+	return rep;
+}
+
+static Path makeStraightPath(int fromX, int toX, int y, int z) {
+	Path p;
+	int step = fromX < toX ? 1 : -1;
+	for (int x = fromX; x != toX + step; x += step)
+		p.steps.push_back({{x, y, z}, MoveKind::Walk});
+	return p;
+}
+
+static Path makeLPath() {
+	// Walk west then north — turn at the elbow is where overshoot is likely.
+	Path p;
+	for (int x = 10; x >= 0;  --x) p.steps.push_back({{x, 0, 0}, MoveKind::Walk});
+	for (int z = -1; z >= -10; --z) p.steps.push_back({{0, 0, z}, MoveKind::Walk});
+	return p;
+}
+
+static Path makeZigzagPath() {
+	// Alternating 2-cell N-W segments — forces look-ahead to break at
+	// every other waypoint.
+	Path p;
+	int x = 10, z = 0;
+	for (int i = 0; i < 10; ++i) {
+		p.steps.push_back({{x,   0, z}, MoveKind::Walk});
+		p.steps.push_back({{x-1, 0, z}, MoveKind::Walk});
+		x -= 1;
+		p.steps.push_back({{x, 0, z-1}, MoveKind::Walk});
+		z -= 1;
+	}
+	return p;
+}
+
+// Exact 86-waypoint plan from /tmp/civcraft_entity_2407.log's heartbeat.
+static Path makeRecordedPath() {
+	const glm::ivec3 wps[] = {
+		{13,1,-42},{12,0,-42},{11,0,-42},{11,0,-41},{10,0,-41},{9,0,-41},
+		{9,0,-40},{9,0,-39},{9,0,-38},{8,0,-38},{8,0,-37},{7,0,-37},
+		{6,0,-37},{5,0,-37},{4,0,-37},{3,0,-37},{2,0,-37},{1,0,-37},
+		{0,0,-37},{-1,0,-37},{-2,0,-37},{-3,0,-37},{-3,0,-36},{-4,0,-36},
+		{-5,0,-36},{-6,0,-36},{-7,0,-36},{-8,0,-36},{-9,0,-36},{-10,0,-36},
+		{-11,0,-36},{-12,0,-36},{-13,0,-36},{-13,0,-35},{-14,0,-35},
+		{-14,0,-34},{-15,0,-34},{-15,0,-33},{-16,0,-33},{-17,0,-33},
+		{-17,0,-32},{-18,0,-32},{-18,0,-31},{-18,0,-30},{-19,0,-30},
+		{-19,0,-29},{-20,0,-29},{-21,0,-29},{-22,0,-29},{-22,0,-28},
+		{-23,0,-28},{-23,0,-27},{-23,0,-26},{-23,0,-25},{-23,0,-24},
+		{-23,0,-23},{-23,0,-22},{-23,0,-21},{-23,0,-20},{-23,0,-19},
+		{-24,0,-19},{-25,0,-19},{-26,0,-19},{-27,0,-19},{-28,0,-19},
+		{-29,0,-19},{-29,0,-18},{-29,0,-17},{-29,0,-16},{-29,0,-15},
+		{-30,0,-15},{-31,1,-15},{-32,1,-15},{-33,1,-15},{-34,1,-15},
+		{-35,1,-15},{-36,1,-15},{-37,1,-15},{-38,1,-15},{-39,1,-15},
+		{-40,1,-15},{-41,1,-15},{-42,1,-15},{-42,1,-14},{-42,1,-13},
+		{-42,1,-12},
+	};
+	Path p;
+	for (size_t i = 0; i < sizeof(wps)/sizeof(wps[0]); ++i) {
+		MoveKind k = MoveKind::Walk;
+		if (i > 0 && wps[i].y < wps[i-1].y)      k = MoveKind::Descend;
+		else if (i > 0 && wps[i].y > wps[i-1].y) k = MoveKind::Jump;
+		p.steps.push_back({wps[i], k});
+	}
+	return p;
+}
+
+static std::string p12_no_opposite_movetargets() {
+	struct Case { const char* name; Path path; glm::vec3 start; };
+	std::vector<Case> cases = {
+		{"straight-west",   makeStraightPath(10, -10, 0,  0), {10.5f, 0.0f,  0.5f}},
+		{"straight-east",   makeStraightPath(-10, 10, 0,  5), {-9.5f, 0.0f,  5.5f}},
+		{"L-turn",          makeLPath(),                      {10.5f, 0.0f,  0.5f}},
+		{"zigzag",          makeZigzagPath(),                 {10.5f, 0.0f,  0.5f}},
+		{"recorded-2407",   makeRecordedPath(),               {14.07f, 1.01f, -41.43f}},
+	};
+
+	int failed = 0;
+	std::string firstError;
+	for (auto& c : cases) {
+		FlipReport r = runScenario(c.path, c.start);
+		printf("\n    %-16s ticks=%d worstDot=%+.3f",
+		       c.name, r.totalTicks, r.worstDot);
+		if (r.firstFlipT >= 0) {
+			printf("  FLIP@%d\n", r.firstFlipT);
+			printf("      prev: pos=(%7.3f,%7.3f) tgt=(%6.2f,%6.2f) "
+			       "dir=(%+6.3f,%+6.3f)\n",
+			       r.prevPos.x, r.prevPos.z,
+			       r.prevTarget.x, r.prevTarget.z,
+			       r.prevDir.x, r.prevDir.y);
+			printf("      flip: pos=(%7.3f,%7.3f) tgt=(%6.2f,%6.2f) "
+			       "dir=(%+6.3f,%+6.3f)\n",
+			       r.flipPos.x, r.flipPos.z,
+			       r.flipTarget.x, r.flipTarget.z,
+			       r.flipDir.x, r.flipDir.y);
+			if (firstError.empty()) {
+				char buf[300];
+				snprintf(buf, sizeof(buf),
+					"[%s] direction flipped >120° at tick %d "
+					"(worstDot=%.3f)",
+					c.name, r.firstFlipT, r.worstDot);
+				firstError = buf;
+			}
+			failed++;
+		} else {
+			printf("  OK\n");
+		}
+	}
+	printf("\n    %d/%zu scenarios OK\n",
+	       (int)cases.size() - failed, cases.size());
+	return firstError;
+}
+
+// ── P13 — Half-plane retire: teleport past the front must not stall ────
+// Drives entity to (0.5), then teleports forward to (4.5) in a single tick
+// — the front three waypoints were skipped without the entity ever entering
+// their arrive ring. The executor must recognize that those cells are now
+// "behind" the entity (projected along segment direction) and pop them,
+// otherwise the next Move target points backward.
+//
+// This covers collision push-out, clientPos snap-back, and any out-of-band
+// shove that can leave the entity outside every remaining cell's arrive
+// disk. The scenario intentionally picks a jump size (4 cells) bigger than
+// the arrive radius so a single-cell pop can't hide the bug.
+static std::string p13_teleport_past_front() {
+	constexpr EntityId kEid = 77;
+	Path p;
+	for (int x = 0; x <= 10; ++x) p.steps.push_back({{x, 0, 0}, MoveKind::Walk});
+
+	PathExecutor exec;
+	exec.setPath(kEid, p);
+
+	// First tick anchors at the start cell.
+	glm::vec3 pos{0.5f, 0, 0.5f};
+	auto intent = exec.tick(kEid, pos);
+	if (intent.kind != PathExecutor::Intent::Move)
+		return "tick 0: expected Move intent, got None";
+
+	// Teleport: entity jumps 4 cells forward in a single tick. Cells 1..3
+	// were skipped — the entity was never inside their arrive ring.
+	pos = glm::vec3{4.5f, 0, 0.5f};
+	intent = exec.tick(kEid, pos);
+	if (intent.kind != PathExecutor::Intent::Move)
+		return "tick 1: expected Move intent, got None";
+
+	// Direction from entity to target must point +x (forward along path). A
+	// -x result means the front is still cell 1 (3 blocks behind), which is
+	// exactly the stall case the half-plane retire is meant to catch.
+	float dx = intent.target.x - pos.x;
+	printf("    after tp(+4): pos=%.2f tgt=%.2f dx=%+.2f remaining=%zu\n",
+	       pos.x, intent.target.x, dx, exec.path(kEid).steps.size());
+	if (dx < 0.0f) {
+		char b[200];
+		snprintf(b, sizeof(b),
+			"front cell is behind entity (tgt=%.2f, pos=%.2f, dx=%+.2f) — "
+			"half-plane retire failed", intent.target.x, pos.x, dx);
+		return b;
+	}
+	// Path should have shrunk: cells 0..4 (entity sits on 4) pop, so at most
+	// 6 remain.
+	size_t rem = exec.path(kEid).steps.size();
+	if (rem > 6) {
+		char b[160];
+		snprintf(b, sizeof(b),
+			"path did not shrink enough after teleport: remaining=%zu (want ≤ 6)",
+			rem);
+		return b;
+	}
+	return "";
+}
+
 } // namespace civcraft::test
 
 int main() {
@@ -1065,6 +1396,10 @@ int main() {
 
 	printf("\n--- Perf scaling (N=1..1000) ---\n");
 	run("P11: planGroup time at scale                 ", p11_perf_scaling);
+
+	printf("\n--- PathExecutor direction stability ---\n");
+	run("P12: no opposite moveTargets back-to-back    ", p12_no_opposite_movetargets);
+	run("P13: half-plane retire on teleport-forward   ", p13_teleport_past_front);
 
 	int failed = 0;
 	for (auto& r : g_results) if (!r.passed) failed++;

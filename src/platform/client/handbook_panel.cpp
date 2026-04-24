@@ -276,6 +276,19 @@ void HandbookPanel::render(Game& g) {
 	grp = &GR[m_groupCursor];
 	m_subCursor = std::clamp(m_subCursor, 0, (int)grp->subs.size() - 1);
 
+	// < > arrow affordances flanking the group label. Keyboard L/R still works,
+	// but without a visible click target mouse users had no way to discover
+	// the other groups (Voices lives under Modding — the user-reported blocker).
+	{
+		const float arrowW = 0.040f;
+		const float arrowH = 0.046f;
+		const float arrowY = groupY - arrowH * 0.45f;
+		const float leftX  = L.x + 0.022f;
+		const float rightX = L.x + L.w - 0.022f - arrowW;
+		if (drawButton(R, leftX,  arrowY, arrowW, arrowH, "<", 0.90f, mx, my, mClick)) bumpGroup(-1);
+		if (drawButton(R, rightX, arrowY, arrowW, arrowH, ">", 0.90f, mx, my, mClick)) bumpGroup(+1);
+	}
+
 	ui::drawCenteredText(R, grp->label, groupCx, groupY, 0.90f, kText);
 
 	char countBuf[64];

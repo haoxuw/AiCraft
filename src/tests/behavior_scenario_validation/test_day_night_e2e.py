@@ -17,7 +17,7 @@ TIMEOUT_STARTUP = 30
 
 @pytest.fixture(scope="module")
 def game():
-    with GameHarness(template=2, seed=300) as g:
+    with GameHarness(template=1, seed=300) as g:
         g.wait_for_entities(min_count=3, timeout=TIMEOUT_STARTUP)
         g.observer.poll(duration=3.0)
         yield g

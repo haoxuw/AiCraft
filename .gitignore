@@ -53,3 +53,6 @@ src/builtin/
 # Local LLM sidecar — llama.cpp source + model weights, never committed.
 # Populated by `make llm_setup`; purge with `make llm_clean`.
 /llm/
+
+# Vendored CEF binary distribution — 1.4 GB extracted, populated by make cef_setup.
+/third_party/cef/

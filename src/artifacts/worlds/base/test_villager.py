@@ -9,7 +9,7 @@ very close to the villager's house.
 
 Launch:
     make test-villager                       # singleplayer shortcut
-    ./build/civcraft-server --template 4     # dedicated
+    ./build/civcraft-server --template 3     # dedicated
 """
 
 world = {
@@ -73,7 +73,6 @@ world = {
         # woodcutter behavior discovers chests via scan_entities("chest").
         {"type": "villager", "count": 1, "radius": 3, "spawn_at": "monument",
          "props": {
-            "collect_goal": 3,
             "work_radius":  40.0,
         }},
         {"type": "dog",      "count": 1, "radius": 10},

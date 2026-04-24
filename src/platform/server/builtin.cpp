@@ -186,9 +186,12 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		def.max_hp = (int)getMaterialValue(id);
 		def.playable = true;
 		def.pickup_range = 1.5f;
-		// Playable entities carry unlimited — players never hit "Inventory full"
-		// while looting. NPCs (animal lambda below) remain capped by body value.
-		def.inventory_capacity = std::numeric_limits<float>::infinity();
+		// One rule for every living thing: inventory_capacity == max_hp ==
+		// material_value. A body can carry items whose total value equals its
+		// own. Humanoids are not exempt — players DO hit "Inventory full" when
+		// they try to cram a sword's worth of loot into a chicken's body, and
+		// that's fine.
+		def.inventory_capacity = getMaterialValue(id);
 		def.default_props = {
 			{PR::HP, def.max_hp}, {PR::Hunger, 20.0f},
 			{PR::Age, 0.0f}, {PR::WalkDistance, 0.0f},

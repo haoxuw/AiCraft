@@ -5,8 +5,8 @@
 
 #include "logic/types.h"
 #include "logic/entity.h"
-#include "server/behavior.h"            // Plan, PlanStep
-#include "server/python_bridge.h"       // BehaviorHandle, NearbyEntity, EntitySnapshot
+#include "agent/behavior.h"             // Plan, PlanStep
+#include "python/python_bridge.h"       // BehaviorHandle, NearbyEntity, EntitySnapshot
 #include "agent/outcome.h"              // LastOutcome, StepOutcome
 #include <atomic>
 #include <condition_variable>
@@ -132,6 +132,8 @@ private:
 					std::move(req.scanEntities),
 					std::move(req.scanAnnotations),
 					outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason,
+					toString(req.lastOutcome.execState),
+					req.lastOutcome.failStreak,
 					std::move(req.appearanceQuery));
 			}
 

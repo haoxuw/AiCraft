@@ -1141,6 +1141,8 @@ void Game::processEscapeKey() {
 			m_rtsDragCmd = {};
 		} else if (m_drag.active) {
 			m_drag = {};
+		} else if (m_peekActive) {
+			exitCoordPeek();
 		} else if (m_dialogPanel.isOpen()) {
 			m_dialogPanel.close();
 		} else if (m_invOpen) {

@@ -3,7 +3,7 @@
 // Server-owned Markov chain. Broadcasts (kind, intensity, wind) via S_WEATHER.
 // Rule 5: visuals are client-side, this file knows nothing about rendering.
 
-#include "server/python_bridge.h"
+#include "python/python_bridge.h"
 #include <cmath>
 #include <cstdint>
 #include <random>

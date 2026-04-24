@@ -33,7 +33,7 @@ public:
 	// frame, so the window keeps pumping events instead of freezing for the
 	// seconds the server spends streaming prep chunks. Default falls back to
 	// the blocking createGame() for interfaces that don't need it.
-	virtual bool beginConnect(int seed = 42, int templateIndex = 1) {
+	virtual bool beginConnect(int seed = 42, int templateIndex = 0) {
 		return createGame(seed, templateIndex);
 	}
 	virtual bool pollWelcome() { return isConnected(); }

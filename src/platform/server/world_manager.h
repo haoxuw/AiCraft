@@ -14,7 +14,7 @@ struct WorldInfo {
 	std::string name;
 	std::string path;       // "saves/my_village"
 	std::string templateName;
-	int templateIndex = 1;
+	int templateIndex = 0;
 	int seed = 42;
 	std::string gameMode;
 	std::string lastPlayed;

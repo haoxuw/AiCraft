@@ -22,7 +22,7 @@ class AgentManager {
 public:
 	struct Config {
 		int seed = 42;
-		int templateIndex = 1;
+		int templateIndex = 0;
 		int port = 0;            // 0 = auto-pick in [7800, 7900)
 		int villagersOverride = 0;  // >0 → CIVCRAFT_VILLAGERS=N inherited by server
 		float simSpeed = 1.0f;   // >0; passed to spawned server as --sim-speed

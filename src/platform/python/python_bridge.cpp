@@ -1,7 +1,8 @@
-#include "server/python_bridge.h"
+#include "python/python_bridge.h"
 #include "server/structure_blueprint.h"
 #include "logic/material_values.h"
 #include "agent/pathfind.h"
+#include "client/path_executor.h"  // Navigator — bound to Python below
 #include <fstream>
 #include <iterator>
 
@@ -437,10 +438,15 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		             case Navigator::Status::Walking:     return "walking";
 		             case Navigator::Status::OpeningDoor: return "opening_door";
 		             case Navigator::Status::Arrived:     return "arrived";
-		             case Navigator::Status::Blocked:     return "blocked";
+		             case Navigator::Status::Failed:      return "failed";
 		         }
 		         return "unknown";
 		     })
+		.def("failure_reason",
+		     [](const Navigator& n) { return n.failureReason(); },
+		     "Human-readable reason when status()=='failed'. "
+		     "Always contains a (x, y, z) coordinate substring so Inspect "
+		     "panel hyperlinks can parse it. Empty when not failed.")
 		// Advance one tick from `self`. Returns a single PyAction:
 		//   walking / approaching door → Move to next waypoint center
 		//   adjacent to closed door    → Interact at door cell (opens it)
@@ -601,6 +607,8 @@ static void buildPyWorld(const EntitySnapshot& self,
                          const std::string& lastOutcome,
                          const std::string& lastGoal,
                          const std::string& lastReason,
+                         const std::string& lastState,
+                         int                lastFailStreak,
                          void* localWorldClsRaw, void* selfEntityClsRaw,
                          py::object& outSelfEntity,
                          py::object& outLocalWorld) {
@@ -638,9 +646,11 @@ static void buildPyWorld(const EntitySnapshot& self,
 	pyWorld["blocks"] = py::list();
 	pyWorld["dt"] = dt; pyWorld["time"] = timeOfDay;
 	pyWorld["goal"] = py::none();
-	pyWorld["last_outcome"] = lastOutcome;
-	pyWorld["last_goal"]    = lastGoal;
-	pyWorld["last_reason"]  = lastReason;
+	pyWorld["last_outcome"]     = lastOutcome;
+	pyWorld["last_goal"]        = lastGoal;
+	pyWorld["last_reason"]      = lastReason;
+	pyWorld["last_state"]       = lastState;        // ExecState::toString()
+	pyWorld["last_fail_streak"] = lastFailStreak;   // consecutive Failed_* count
 
 	py::object& LocalWorldCls = *static_cast<py::object*>(localWorldClsRaw);
 	py::object& SelfEntityCls = *static_cast<py::object*>(selfEntityClsRaw);
@@ -700,6 +710,8 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
                                const std::string& lastOutcome,
                                const std::string& lastGoal,
                                const std::string& lastReason,
+                               const std::string& lastState,
+                               int                lastFailStreak,
                                AppearanceQueryFn appearanceQueryFn) {
 	// Runs on DecideWorker's thread.
 	py::gil_scoped_acquire gil;
@@ -735,6 +747,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 		py::object pySelfEntity, pyLocalWorld;
 		buildPyWorld(self, nearby, dt, timeOfDay,
 		             lastOutcome, lastGoal, lastReason,
+		             lastState, lastFailStreak,
 		             m_localWorldClass, m_selfEntityClass,
 		             pySelfEntity, pyLocalWorld);
 
@@ -801,6 +814,7 @@ bool PythonBridge::callReact(BehaviorHandle handle,
 		py::object pySelfEntity, pyLocalWorld;
 		buildPyWorld(self, nearby, dt, timeOfDay,
 		             "none", "", "signal:" + signalKind,
+		             /*lastState*/ "Idle", /*lastFailStreak*/ 0,
 		             m_localWorldClass, m_selfEntityClass,
 		             pySelfEntity, pyLocalWorld);
 
@@ -890,6 +904,10 @@ static bool parsePyResult(const py::object& result, Plan& outPlan,
 					step.keepWithin = d["keep_within"].cast<float>();
 				if (d.contains("keep_away") && !d["keep_away"].is_none())
 					step.keepAway = d["keep_away"].cast<float>();
+				if (d.contains("use_navigator") && !d["use_navigator"].is_none())
+					step.useNavigator = d["use_navigator"].cast<bool>();
+				if (d.contains("ignore_height") && !d["ignore_height"].is_none())
+					step.ignoreHeight = d["ignore_height"].cast<bool>();
 				outPlan.push_back(step);
 			} else if (stype == "harvest") {
 				// Two input shapes, both land in the same PlanStep:
@@ -931,6 +949,10 @@ static bool parsePyResult(const py::object& result, Plan& outPlan,
 					step.itemId = d["item"].cast<std::string>();
 				if (d.contains("count_goal") && !d["count_goal"].is_none())
 					step.countGoal = d["count_goal"].cast<int>();
+				if (d.contains("use_navigator") && !d["use_navigator"].is_none())
+					step.useNavigator = d["use_navigator"].cast<bool>();
+				if (d.contains("ignore_height") && !d["ignore_height"].is_none())
+					step.ignoreHeight = d["ignore_height"].cast<bool>();
 				outPlan.push_back(step);
 			} else if (stype == "attack") {
 				outPlan.push_back(PlanStep::attack(d["entity_id"].cast<EntityId>()));

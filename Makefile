@@ -161,13 +161,13 @@ profiler: game-build
 
 # Minimal isolation worlds for focused behavior testing.
 test-dog: game-build
-	$(call launch,--template 3)
+	$(call launch,--template 2)
 
 test-villager: game-build
-	$(call launch,--template 4)
+	$(call launch,--template 3)
 
 test-chicken: game-build
-	$(call launch,--template 5)
+	$(call launch,--template 4)
 
 # Isolated single-villager behavior smoke: 1 villager, village world, 4× sim,
 # hidden window, tee event stream to /tmp/civcraft_game.log. Use for
@@ -302,9 +302,9 @@ test_e2e: build pathfinding_test
 # to /tmp/civcraft_perf_{client,server}_<ts>.txt into a percent-breakdown
 # table. Overrides:
 #   PERF_DURATION=120  sample window (seconds)
-#   PERF_TEMPLATE=6    world template index (6 = perf_stress, 100 villagers)
+#   PERF_TEMPLATE=5    world template index (5 = perf_stress, 100 villagers)
 PERF_DURATION ?= 60
-PERF_TEMPLATE ?= 1
+PERF_TEMPLATE ?= 0
 PERF_REPORT_PY := src/platform/debug/perf_report.py
 
 define run_perf_session

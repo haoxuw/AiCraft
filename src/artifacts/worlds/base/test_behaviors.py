@@ -69,7 +69,6 @@ world = {
     # Minimal set for testing.
     "mobs": [
         {"type": "villager", "count": 1, "radius": 5, "props": {
-            "collect_goal": 3,          # deposit after 3 logs instead of 5
             "work_radius":  40.0,       # pin search radius for deterministic drift tests
         }},
         {"type": "pig",      "count": 1, "radius": 10},

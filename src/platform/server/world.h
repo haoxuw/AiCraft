@@ -45,7 +45,7 @@ public:
 	// WorldTemplate::preferredSpawn(). Players spawn facing +Z.
 	glm::vec3 spawnPoint{0.f, 0.f, 0.f};
 
-	World(int seed = 42, std::shared_ptr<WorldTemplate> tmpl = nullptr, int templateIndex = 1)
+	World(int seed = 42, std::shared_ptr<WorldTemplate> tmpl = nullptr, int templateIndex = 0)
 		: m_seed(seed), m_templateIndex(templateIndex),
 		  m_template(tmpl ? tmpl : std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/village.py")) {
 		registerAllBuiltins(blocks, entities);
@@ -402,7 +402,7 @@ private:
 	}
 
 	int m_seed;
-	int m_templateIndex = 1;
+	int m_templateIndex = 0;
 	std::shared_ptr<WorldTemplate> m_template;
 	std::mutex m_mutex;
 	std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_chunks;

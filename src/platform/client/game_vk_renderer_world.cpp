@@ -636,6 +636,37 @@ void WorldRenderer::renderWorld(float wallTime) {
 		}
 	}
 
+	// ── Coord-peek marker — pulsing cyan pillar above the peeked cell ───
+	// Rendered whenever the Inspect panel's coord hyperlink has flown the
+	// camera here. ESC clears.
+	if (g.m_peekActive) {
+		auto& hl = g.m_scratch.hlBoxes;
+		hl.clear();
+		glm::vec3 bp(g.m_peekTarget.x, g.m_peekTarget.y, g.m_peekTarget.z);
+		glm::vec3 col(0.35f, 0.80f, 1.00f);   // cyan — matches Inspect link
+		// Pulsing amplitude so the marker reads as "active" even from far.
+		float pulse = 0.5f + 0.5f * std::sin(g.m_wallTime * 4.0f);
+		float eh    = 0.008f + 0.004f * pulse;
+		// 4 vertical pillars (block corners) × 6-block tall beam.
+		float beamH = 6.0f;
+		glm::vec3 tallY(eh * 2, beamH, eh * 2);
+		auto push = [&](glm::vec3 corner, glm::vec3 size) {
+			civcraft::emitAABox(hl, corner, size, col);
+		};
+		push({bp.x - eh,           bp.y,           bp.z - eh},           tallY);
+		push({bp.x + 1.0f - eh,    bp.y,           bp.z - eh},           tallY);
+		push({bp.x - eh,           bp.y,           bp.z + 1.0f - eh},    tallY);
+		push({bp.x + 1.0f - eh,    bp.y,           bp.z + 1.0f - eh},    tallY);
+		// Ground ring — flat outline on the cell itself.
+		glm::vec3 lenX(1.0f, eh * 2, eh * 2);
+		glm::vec3 lenZ(eh * 2, eh * 2, 1.0f);
+		push({bp.x,       bp.y,       bp.z - eh},        lenX);
+		push({bp.x,       bp.y,       bp.z + 1.0f - eh}, lenX);
+		push({bp.x - eh,  bp.y,       bp.z},             lenZ);
+		push({bp.x + 1.0f - eh, bp.y, bp.z},             lenZ);
+		g.m_rhi->drawBoxModel(scene, hl.data(), (uint32_t)(hl.size() / 19));
+	}
+
 	// Door swing animations — hinged-panel sweep over the chunk mesh pipeline.
 	if (!g.m_doorAnims.empty()) {
 		constexpr float kDuration = 0.25f;
@@ -1205,26 +1236,28 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 			}
 		};
 
-		// Build path: unit → flow trace cells → formation slot. Returns the
-		// destination point for the triangle marker. If no flow field is up
-		// yet, degrades to a two-point line to the raw target.
+		// Build path: unit → remaining cell centers → formation slot. Reads
+		// the per-entity Path directly from the executor (shrinks as cells
+		// are consumed). Degrades to a two-point line when the entity has
+		// no plan yet (async still running, or builder-mode direct steer).
 		auto buildRtsPath = [&](civcraft::Entity& e, glm::vec3 fallback,
 		                        std::vector<glm::vec3>& path) -> glm::vec3 {
 			path.push_back(e.position + glm::vec3(0, kYLift, 0));
 			glm::vec3 dest = fallback;
-			if (g.m_rtsExec.field()) {
-				glm::ivec3 cell{
-					(int)std::floor(e.position.x),
-					(int)std::floor(e.position.y),
-					(int)std::floor(e.position.z)};
-				auto trace = g.m_rtsExec.traceFlow(cell, 64);
-				for (auto& p : trace)
-					path.push_back(p + glm::vec3(0, kYLift, 0));
+			if (g.m_rtsExec.has(e.id())) {
+				const civcraft::Path& p = g.m_rtsExec.path(e.id());
+				for (const auto& w : p.steps) {
+					path.push_back(glm::vec3{w.pos.x + 0.5f,
+					                         (float)w.pos.y + kYLift,
+					                         w.pos.z + 0.5f});
+				}
 				auto slot = g.m_rtsExec.formationSlot(e.id());
 				if (slot)
 					dest = glm::vec3{slot->x + 0.5f, (float)slot->y + 0.3f, slot->z + 0.5f};
-				else if (!trace.empty())
-					dest = trace.back();
+				else if (!p.steps.empty()) {
+					const auto& last = p.steps.back();
+					dest = glm::vec3{last.pos.x + 0.5f, (float)last.pos.y, last.pos.z + 0.5f};
+				}
 			}
 			if (path.size() < 2)
 				path.push_back(dest + glm::vec3(0, kYLift, 0));
@@ -1257,7 +1290,7 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 			const glm::vec3 agentColB(0.25f, 0.55f, 0.15f); // olive
 
 			// Every RTS-commanded entity not already drawn above.
-			if (g.m_rtsExec.field()) {
+			if (g.m_rtsExec.size() > 0) {
 				g.m_server->forEachEntity([&](civcraft::Entity& e) {
 					if (!g.m_rtsExec.has(e.id())) return;
 					if (rtsDrawn.count(e.id())) return;

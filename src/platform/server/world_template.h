@@ -6,7 +6,7 @@
 #include "logic/constants.h"
 #include "server/noise.h"
 #include "server/world_gen_config.h"
-#include "server/python_bridge.h"
+#include "python/python_bridge.h"
 #include "server/world_accessibility.h"
 #include <string>
 #include <cmath>
@@ -61,7 +61,8 @@ public:
 };
 
 // Driven by a Python config: flat or Perlin terrain, optional village,
-// spawn portal, trees. FlatWorldTemplate/VillageWorldTemplate are aliases.
+// spawn portal, trees. The single concrete WorldTemplate — every world
+// (village, test_*, perf_stress) is just a different artifacts/worlds/*.py.
 class ConfigurableWorldTemplate : public WorldTemplate {
 public:
 	explicit ConfigurableWorldTemplate(const std::string& pyPath) {

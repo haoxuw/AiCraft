@@ -9,7 +9,7 @@
 #include "server/builtin.h"
 #include "net/net_socket.h"
 #include "net/net_protocol.h"
-#include "server/python_bridge.h"
+#include "python/python_bridge.h"
 #include "logic/artifact_registry.h"
 #include "debug/perf_registry.h"
 #include <cstdio>
@@ -131,9 +131,9 @@ void printServerUsage(const char* prog) {
 	       "  --port PORT       Listen port (default 7777)\n"
 	       "  --world PATH      Load saved world from PATH\n"
 	       "  --seed N          World seed (default 42)\n"
-	       "  --template N      World template: 0=flat, 1=village, 2=test_behaviors,\n"
-	       "                    3=test_dog, 4=test_villager, 5=test_chicken,\n"
-	       "                    6=perf_stress (100 villagers) (default 1)\n"
+	       "  --template N      World template: 0=village, 1=test_behaviors,\n"
+	       "                    2=test_dog, 3=test_villager, 4=test_chicken,\n"
+	       "                    5=perf_stress (100 villagers) (default 0)\n"
 	       "  --sim-speed N     Sim-time multiplier (default 1; 4 = 4× faster sim)\n"
 	       "  --help, -h        Show this help\n", prog);
 }
@@ -187,7 +187,6 @@ FILE* openServerLog(int port) {
 std::vector<std::shared_ptr<civcraft::WorldTemplate>> buildWorldTemplates() {
 	using T = civcraft::ConfigurableWorldTemplate;
 	return {
-		std::make_shared<T>("artifacts/worlds/base/flat.py"),
 		std::make_shared<T>("artifacts/worlds/base/village.py"),
 		std::make_shared<T>("artifacts/worlds/base/test_behaviors.py"),
 		std::make_shared<T>("artifacts/worlds/base/test_dog.py"),

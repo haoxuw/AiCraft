@@ -44,7 +44,7 @@ struct ActionProposal {
 	Type     type    = Move;
 	EntityId actorId = ENTITY_NONE;
 
-	// Move: velocity set by client (behavior_executor computes from target pos)
+	// Move: velocity set by client (PathExecutor computes from target pos)
 	glm::vec3 desiredVel  = {0, 0, 0};  // also: toss direction for Relocate with Ground dest
 	bool      jump        = false;
 	bool      sprint      = false;

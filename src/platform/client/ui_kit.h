@@ -7,7 +7,10 @@
 #include "client/rhi/rhi.h"
 
 #include <cstddef>
+#include <functional>
 #include <string>
+
+#include <glm/glm.hpp>
 
 struct GLFWwindow;
 
@@ -79,6 +82,48 @@ inline void writeText(rhi::IRhi* r, const std::string& txt, float x, float y,
 // state across calls is keyed by GLFW keycode so this survives across
 // translation units.
 bool keyEdge(GLFWwindow* w, int key);
+
+// ── Peekable text ─────────────────────────────────────────────────────
+// Generic "text with clickable (x,y,z) coordinate hyperlinks" primitive.
+// Any UI surface (entity inspect, dialog scrollback, notification ticker,
+// dev overlay) can pass its goal/message text through this to get
+// hover-tinted, underlined, click-dispatched coord links without knowing
+// about Game internals — the caller supplies an onCoordClick callback
+// that handles the peek side-effect.
+//
+// Coord format: parenthesised signed ints with comma separators and
+// optional spaces, e.g. `(-13, 5, 14)` or `(0,0,0)`. Matched substrings
+// are replaced inline with a cyan, underlined span; unmatched text
+// renders with baseCol.
+
+struct CoordMatch {
+	size_t     begin;   // byte offset of '(' in source string
+	size_t     end;     // byte offset just past ')'
+	glm::ivec3 coord;
+};
+
+// Finds the next "(x, y, z)" substring at or after `from`. Returns true
+// and fills `out` on match; false if no coord found through end of `s`.
+bool findCoord(const std::string& s, size_t from, CoordMatch& out);
+
+// Per-frame input + callback bundle. Built by the caller (Game or similar)
+// once per frame and passed to every drawPeekableText call. Decouples the
+// renderer from Game — the callback owns click semantics.
+struct PeekableTextInput {
+	float mouseNdcX     = 0.0f;
+	float mouseNdcY     = 0.0f;
+	bool  mouseLPressed = false;
+	std::function<void(glm::ivec3)> onCoordClick;
+};
+
+// Renders `value` starting at (x, y) with `scale`, tinting coord substrings
+// as click-to-peek hyperlinks. Non-coord text uses `baseCol`. Returns the
+// NDC width the full string consumed (useful when laying out inline).
+// Coord color palette is fixed (cyan + hover brighten) to keep link
+// affordance recognisable across surfaces.
+float drawPeekableText(rhi::IRhi* r, const PeekableTextInput& in,
+                       float x, float y, float scale,
+                       const std::string& value, const float baseCol[4]);
 
 // Shared palette. Keep menus / tooltips / overlays consistent.
 namespace color {

@@ -42,7 +42,6 @@ living = {
 
     # Behavior props (woodcutter reads these)
     "work_radius": 80.0,
-    "collect_goal": 5,
 
     # LLM chat persona — press T while looking at this villager to open a
     # dialog box. Routed to a locally-run llama-server (see `make llm_setup`).

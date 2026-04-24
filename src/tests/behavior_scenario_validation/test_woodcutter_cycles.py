@@ -1,6 +1,6 @@
 """E2E test — villager completes a gather→deposit cycle without stalling.
 
-Regressions this catches (all seen live in `make game` template=1):
+Regressions this catches (all seen live in `make game` template=0):
 
   1. Fall-in-hole stall — villager chops lower leaves/logs, falls into the
      resulting air pocket, the remaining trunk is now > GATHER_RADIUS
@@ -8,15 +8,16 @@ Regressions this catches (all seen live in `make game` template=1):
      anchor. Villager's goal says "Chopping trees" indefinitely, but logs
      count never grows and y stays below 2.
 
-  2. Never-deposit stall — humanoids register with
-     inventory_capacity=infinity (for player looting), and the woodcutter's
-     `_update_state` gates DEPOSIT on `not inventory.can_accept(...)`, which
-     is never true for inf cap. Villager chops forever without a single
-     StoreItem action.
+  2. Never-deposit stall — the old regression was that humanoids had
+     inventory_capacity=infinity, so the woodcutter's
+     `not inventory.can_accept(...)` gate never flipped and DEPOSIT was
+     unreachable. That exemption is gone: every Living now has a finite
+     cap == material_value == max_hp (villager=20, fits ~5 logs), and this
+     test guards against anyone re-introducing the inf-cap shortcut.
 
-The previous version of this test used template=2 (test_behaviors arena) and
+The previous version of this test used template=1 (test_behaviors arena) and
 observer-only state tracking. Neither reproduces the `make game` bug:
-template=2 arenas don't stamp a village, and the observer's seat consumes
+test_behaviors arenas don't stamp a village, and the observer's seat consumes
 seat 1 so the agent-host lands in seat 2 where its villagers are outside
 the observer's proximity filter.
 
@@ -114,14 +115,15 @@ class TestWoodcutterGatherCycle:
     """Village world, agent-host drives seat-2 villagers. Assertions read
     the elog files the agent writes for its owned entities."""
 
-    # Template 1 (village), seed 42 is the exact `make game` default combo
+    # Template 0 (village), seed 42 is the exact `make game` default combo
     # where the stall reproduces. Observer takes seat 1; agent-host lands
     # in seat 2. The village stamp is deterministic per (seed, seat).
-    TEMPLATE = 1
+    TEMPLATE = 0
     SEED     = 42
     # 180s covers a full cycle: ~30s blacklist-churn past the wedged spawn
-    # trees, ~30s chopping to collect_goal=5, ~60s walking to the nearest
-    # seat-1 village chest (often 60–90 blocks away), ~1s StoreItem.
+    # trees, ~30s chopping until capacity-full (~5 logs for a villager body
+    # of 20), ~60s walking to the nearest seat-1 village chest (often
+    # 60–90 blocks away), ~1s StoreItem.
     RUN_SECONDS = 180.0
 
     @pytest.fixture(scope="class")
@@ -160,33 +162,35 @@ class TestWoodcutterGatherCycle:
         )
 
     def test_deposit_state_is_reachable(self, game):
-        """Regression: humanoids register with inventory_capacity=inf, and
-        the old `full = not can_accept(...)` gate never flipped to True,
-        so the villager's state machine never left WORK. The fix is to
-        gate the transition on `logs >= collect_goal`, which is robust to
-        the inf-cap design.
+        """Regression: the old inf-cap exemption for humanoids made the
+        WORK→DEPOSIT gate (`full = not can_accept(...)`) never flip, so the
+        state machine never left WORK. Capacity is finite for every Living
+        now, and this assertion guards against the shortcut coming back.
 
-        This test only checks the state-machine transition, not the
-        physical StoreItem — chest-approach pathing is a separate concern
-        (the chest may sit inside a house with walls the navigator can't
-        penetrate). If at least one villager emitted a `work -> deposit`
-        transition, the inf-cap regression is closed."""
+        Only checks the state-machine transition, not the physical
+        StoreItem — chest-approach pathing is a separate concern (the chest
+        may sit inside a house with walls the navigator can't penetrate).
+        At least one villager emitting `work -> deposit` is enough."""
         summaries = self._villager_summaries()
         if not summaries:
             pytest.skip("no villagers observed (upstream failure)")
 
         inf_caps = [eid for eid, s in summaries if s["inf_cap"]]
+        if inf_caps:
+            pytest.fail(
+                f"Villagers {inf_caps} report inventory_capacity=inf — the "
+                f"humanoid exemption is back. Every Living must have a finite "
+                f"cap == material_value == max_hp."
+            )
+
         transitioned = [eid for eid, s in summaries
                         if any(t[1] == "work" and t[2] == "deposit"
                                for t in s["states"])]
-
-        if inf_caps and not transitioned:
-            pytest.fail(
-                f"Villagers {inf_caps} report inventory_capacity=inf and NONE "
-                f"of {[e for e,_ in summaries]} ever transitioned "
-                f"work -> deposit in {self.RUN_SECONDS}s. "
-                f"DEPOSIT state is unreachable — the inf-cap gate is back."
-            )
+        assert transitioned, (
+            f"None of {[e for e,_ in summaries]} ever transitioned "
+            f"work -> deposit in {self.RUN_SECONDS}s — DEPOSIT state is "
+            f"unreachable."
+        )
 
     def test_villagers_actually_chopped(self, game):
         """At least one villager must have held ≥ 1 log at some point.

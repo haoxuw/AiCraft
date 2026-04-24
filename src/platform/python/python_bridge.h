@@ -6,7 +6,7 @@
 
 #include "logic/entity.h"
 #include "logic/action.h"
-#include "server/behavior.h"
+#include "agent/behavior.h"
 #include <string>
 #include <memory>
 #include <functional>
@@ -184,6 +184,10 @@ public:
 	// converted to a single-step Plan for backward compat.
 	// lastOutcome/lastGoal/lastReason describe the previous plan (event-driven
 	// loop); see python/local_world.py for exposed fields.
+	// lastState is ExecState::toString() — enum-stable (no string-parsing) so
+	// decide() can branch on e.g. "Failed_GaveUp" → go complain at the town
+	// center instead of retrying a doomed plan. lastFailStreak is the number
+	// of consecutive Failed_* outcomes (reset on Success).
 	Plan callDecide(BehaviorHandle handle,
 	                const EntitySnapshot& self,
 	                const std::vector<NearbyEntity>& nearby,
@@ -197,6 +201,8 @@ public:
 	                const std::string& lastOutcome = "none",
 	                const std::string& lastGoal    = "",
 	                const std::string& lastReason  = "",
+	                const std::string& lastState   = "Idle",
+	                int                lastFailStreak = 0,
 	                AppearanceQueryFn appearanceQueryFn = nullptr);
 
 	// Signal-driven react path. Mirrors callDecide but invokes

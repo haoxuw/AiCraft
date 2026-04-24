@@ -17,7 +17,7 @@ namespace civcraft {
 struct WorldMetadata {
 	std::string name;
 	int seed = 42;
-	int templateIndex = 1;
+	int templateIndex = 0;
 	std::string templateName = "Village";
 	std::string gameMode = "playing";
 	float worldTime = 0.30f;

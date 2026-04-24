@@ -133,7 +133,7 @@ class SelfEntity(BaseModel):
     """Full state of the entity running this behavior.
 
     Standard engine attributes are typed fields. Server-assigned custom
-    props (work_radius, collect_goal, …) are accessed via .get(prop,
+    props (work_radius, chop_period, …) are accessed via .get(prop,
     default) — they vary per entity type and are set by server spawn logic.
 
     Usage
@@ -239,6 +239,11 @@ class LocalWorld(BaseModel):
     last_reason:  str = ""    # e.g. "stuck", "target_gone",
                               # "interrupt:hp", "interrupt:proximity",
                               # "interrupt:time_of_day"
+
+    # ExecState::toString() — see src/platform/agent/outcome.h for the full
+    # enum. Prefer this over string-matching last_reason when branching.
+    last_state:       str = "Idle"
+    last_fail_streak: int = 0    # consecutive Failed_* outcomes, reset on Success
 
     # Spatial indices — built in model_post_init, not exposed as pydantic fields
     _by_type:     dict[str, list[Nearby]]     = PrivateAttr(default_factory=dict)
@@ -354,4 +359,6 @@ class LocalWorld(BaseModel):
             last_outcome=raw.get("last_outcome", "none"),
             last_goal=raw.get("last_goal", ""),
             last_reason=raw.get("last_reason", ""),
+            last_state=raw.get("last_state", "Idle"),
+            last_fail_streak=int(raw.get("last_fail_streak", 0)),
         )

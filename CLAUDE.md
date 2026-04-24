@@ -145,7 +145,7 @@ src/artifacts/          Python game content — hot-loadable, no rebuild needed
   behaviors/  Creature AI: decide() functions
   living/     EntityDef: stats, model, behavior
   items/  blocks/  effects/  actions/  resources/  structures/  models/  annotations/
-  worlds/     World templates (flat, village)
+  worlds/     World templates (village + test_*/perf_stress arenas)
 ```
 
 ## Game identity

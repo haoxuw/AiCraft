@@ -11,6 +11,12 @@ if(CIVCRAFT_PERF)
 	message(STATUS "CIVCRAFT_PERF: enabled (perf instrumentation compiled in)")
 endif()
 
+option(CIVCRAFT_PATHFINDING_DEBUG "Enable pathfinding lifecycle logging via PATHLOG(...)" OFF)
+if(CIVCRAFT_PATHFINDING_DEBUG)
+	add_compile_definitions(CIVCRAFT_PATHFINDING_DEBUG)
+	message(STATUS "CIVCRAFT_PATHFINDING_DEBUG: enabled (PATHLOG expands to entityLog)")
+endif()
+
 # CivCraft is a native C++ voxel sandbox. All code lives under src/:
 #
 #   src/platform/logic/    Pure data types (entity, chunk, inventory, …) — no deps
@@ -67,20 +73,21 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/server/server.h
 	src/platform/server/server.cpp
 	src/platform/server/entity_manager.h
-	src/platform/server/behavior.h
+	src/platform/agent/behavior.h
 	src/platform/server/behavior_store.h
 	src/platform/server/chunk_gen_service.h
 	src/platform/server/chunk_gen_service.cpp
 	src/platform/server/client_manager.h
-	src/platform/server/pathfind.h
-	src/platform/server/python_bridge.h
-	src/platform/server/python_bridge.cpp
+	src/platform/python/python_bridge.h
+	src/platform/python/python_bridge.cpp
 	src/platform/server/server_tuning.h
 	src/platform/server/test_server.h
 	src/platform/server/builtin.h
 	src/platform/server/builtin.cpp
 	src/platform/agent/pathfind.h
 	src/platform/agent/pathfind.cpp
+	src/platform/client/path_executor.h
+	src/platform/client/path_executor.cpp
 )
 
 set(PLATFORM_CLIENT_SOURCES

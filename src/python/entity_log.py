@@ -22,8 +22,11 @@ def log(entity_id: int, msg: str) -> None:
     f = _files.get(entity_id)
     if f is None:
         path = os.path.join(_LOG_DIR, f"civcraft_entity_{entity_id}.log")
-        # Truncate on first use this process; line-buffered so tail works.
-        f = open(path, "w", buffering=1)
+        # Open O_APPEND so our writes share the kernel's atomic-append offset
+        # with the C++ side (entity_log.h), which also writes to this path.
+        # The C++ side owns truncation — it unlinks the file on first use per
+        # process, and its navigator trace fires before Python decide() runs.
+        f = open(path, "a", buffering=1)
         _files[entity_id] = f
     ts = time.strftime("%H:%M:%S")
     f.write(f"[{ts}] {msg}\n")

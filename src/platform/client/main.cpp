@@ -11,6 +11,7 @@
 #include "logic/artifact_registry.h"
 #include "client/process_manager.h"
 #include "client/game_vk.h"
+#include "agent/agent_client.h"
 #include "debug/perf_registry.h"
 
 #include <ctime>
@@ -88,9 +89,10 @@ int main(int argc, char** argv) {
 	bool logOnly     = false;
 	std::string host = "127.0.0.1"; // --host: server hostname
 	int  port = 0;                  // --port: server port (0 = spawn local)
-	int  templateIndex = 1;         // --template: world template (default village)
+	int  templateIndex = 0;         // --template: world template (default village)
 	int  villagersOverride = 0;     // --villagers: override villager count (0 = leave template as-is)
 	float simSpeed = 1.0f;          // --sim-speed: server sim multiplier (1=real, 4=4× faster)
+	civcraft::AgentClient::Config agentCfg;  // DecidePacer cooldown knobs
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
 			printf("civcraft-ui-vk - Vulkan-native CivCraft client\n\n"
@@ -101,9 +103,12 @@ int main(int argc, char** argv) {
 			       "  --log-only        Hidden window + echo events to stdout\n"
 			       "  --host HOST       Server hostname (default 127.0.0.1)\n"
 			       "  --port PORT       Server port (omit to spawn local server)\n"
-			       "  --template N      World template (0=flat 1=village 5=test_chicken)\n"
+			       "  --template N      World template (0=village 1=test_behaviors 4=test_chicken)\n"
 			       "  --villagers N     Spawn N villagers (override template count; local server only)\n"
 			       "  --sim-speed N     Sim-time multiplier (default 1; 4 = 4× faster; local server only)\n"
+			       "  --decide-base-cooldown SEC  Base Decide dispatch cooldown (default 0.10s)\n"
+			       "  --decide-max-cooldown SEC   Max cooldown after repeated failures (default 10s)\n"
+			       "  --decide-backoff-base N     Exponential backoff base (default 2.0)\n"
 			       "  --debug-behavior  Isolated single-villager log-only smoke\n"
 			       "                    (shorthand for --skip-menu --log-only --template 1\n"
 			       "                     --villagers 1 --sim-speed 4). See\n"
@@ -127,13 +132,19 @@ int main(int argc, char** argv) {
 		else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) templateIndex = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--villagers") == 0 && i + 1 < argc) villagersOverride = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--sim-speed") == 0 && i + 1 < argc) simSpeed = (float)std::atof(argv[++i]);
+		else if (strcmp(argv[i], "--decide-base-cooldown") == 0 && i + 1 < argc)
+			agentCfg.decideBaseCooldownSec = (float)std::atof(argv[++i]);
+		else if (strcmp(argv[i], "--decide-max-cooldown") == 0 && i + 1 < argc)
+			agentCfg.decideMaxCooldownSec = (float)std::atof(argv[++i]);
+		else if (strcmp(argv[i], "--decide-backoff-base") == 0 && i + 1 < argc)
+			agentCfg.decideBackoffBase = (float)std::atof(argv[++i]);
 		else if (strcmp(argv[i], "--debug-behavior") == 0) {
 			// Compose the isolated-villager debug preset. See the testing-plan
 			// skill for what each piece buys you; this shorthand just keeps
 			// the happy-path command short.
 			skipMenu = true;
 			logOnly = true;
-			templateIndex = 1;         // village
+			templateIndex = 1;         // test_behaviors (walled arena, dense trees)
 			if (villagersOverride <= 0) villagersOverride = 1;
 			if (simSpeed == 1.0f)       simSpeed = 4.0f;
 		}
@@ -198,6 +209,7 @@ int main(int argc, char** argv) {
 	civcraft::vk::Game game;
 	game.setServer(net.get());  // must precede init()
 	game.setPendingConnect(42, templateIndex);  // seed+template used on character-select confirm
+	game.setAgentConfig(agentCfg);              // DecidePacer knobs — must precede init()
 	if (!game.init(rhi.get(), win)) {
 		fprintf(stderr, "game.init failed\n");
 		return 1;

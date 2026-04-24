@@ -94,7 +94,10 @@ public:
 		return v;
 	}
 
-	// capacity <= 0 means "no carry allowed". +infinity = unlimited (players).
+	// capacity <= 0 means "no carry allowed". +infinity still short-circuits
+	// to "always fits" for the rare unlimited-bin case (e.g. ground pile).
+	// Every Living now has a finite capacity == material_value == max_hp;
+	// humanoids are no longer exempt.
 	bool canAccept(const std::string& itemId, int count, float capacity) const {
 		if (capacity <= 0.0f) return false;
 		if (std::isinf(capacity)) return true;

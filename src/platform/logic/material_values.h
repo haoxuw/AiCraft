@@ -18,7 +18,7 @@ inline float getMaterialValue(const std::string& typeId) {
 		{"gravel",     1.0f},
 		{"wood",       4.0f},
 		{"logs",      4.0f},
-		{"leaves",     0.1f},
+		{"leaves",     1.0f},
 		{"planks",     2.0f},
 		{"stairs",     2.0f},
 		{"chest",      6.0f},

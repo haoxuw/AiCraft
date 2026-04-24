@@ -91,6 +91,22 @@ struct PlanStep {
 	// runs dry) until it has collected `countGoal` of `itemId`.
 	int       countGoal      = 1;
 
+	// Move/Harvest: when true, the executor routes the approach through the
+	// A* Navigator (waypoint-by-waypoint, door-aware) instead of straight-line
+	// velocity steering. Python behaviors flip this per-step — humanoids want
+	// navigate so they don't wall-hug into inventories; pigs/chickens keep the
+	// cheap steer. Failure semantics: Navigator::Failed on a Move step fails
+	// the step (decide() handles the complaint); on a Harvest step, the stuck
+	// anchor is blacklisted and the executor advances to the next candidate.
+	bool      useNavigator   = false;
+
+	// Harvest/Move: when true, the Navigator goal ignores the anchor's Y and
+	// instead targets the standable ground cell directly below the XZ column
+	// (first solid, then the air cell above it). Woodcutter sets this so an
+	// overhead leaf becomes "walk to the root of the tree" — the chop sphere
+	// then reaches up into the canopy from ground level.
+	bool      ignoreHeight   = false;
+
 	static PlanStep move(glm::vec3 pos, float spd = 2.0f, float hold = 0.0f) {
 		PlanStep s; s.type = Move; s.targetPos = pos; s.speed = spd;
 		s.holdTime = hold; return s;

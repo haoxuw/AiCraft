@@ -23,7 +23,7 @@
 #include "client/debug_triggers.h"
 #include "client/dialog_panel.h"
 #include "client/entity_raycast.h"
-#include "client/rts_executor.h"
+#include "client/path_executor.h"
 #include "logic/artifact_registry.h"
 #include "llm/llm_client.h"
 #include "llm/llm_sidecar.h"
@@ -47,6 +47,7 @@
 #include "client/hotbar.h"
 #include "client/lan_browser.h"
 #include "client/screen_shell.h"
+#include "agent/agent_client.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -150,6 +151,12 @@ public:
 	// until the user picks a character (or skipMenu fires).
 	void setPendingConnect(int seed, int templateIndex) {
 		m_pendingSeed = seed; m_pendingTemplate = templateIndex;
+	}
+
+	// Seed the AgentClient knobs before it's constructed (happens inside
+	// init()). No-op for defaults; CLI flags in client/main.cpp populate it.
+	void setAgentConfig(const civcraft::AgentClient::Config& cfg) {
+		m_agentCfg = cfg;
 	}
 
 	// Send C_HELLO with the chosen creatureType (empty ⇒ server-default).
@@ -374,6 +381,11 @@ private:
 	// down before the server interface goes away.
 	std::unique_ptr<civcraft::BehaviorStore> m_behaviorStore;
 	std::unique_ptr<civcraft::AgentClient>   m_agentClient;
+	// Populated from CLI flags before the AgentClient is constructed — see
+	// client/main.cpp `--decide-base-cooldown` / `--decide-max-cooldown` /
+	// `--decide-backoff-base`. Stays at struct defaults when the flags are
+	// absent so release builds behave identically to before the knob landed.
+	civcraft::AgentClient::Config m_agentCfg;
 
 	// Menu
 	float        m_menuTitleT = 0.0f;
@@ -714,7 +726,7 @@ private:
 		glm::vec2 startNdc{0, 0};
 	} m_rtsLongPress;
 	static constexpr float kBuildHoldSec = 1.0f;
-	civcraft::RtsExecutor m_rtsExec;
+	civcraft::PathExecutor m_rtsExec;
 	struct MoveOrder { glm::vec3 target; bool active; };
 	std::unordered_map<civcraft::EntityId, MoveOrder> m_moveOrders;
 
@@ -800,6 +812,17 @@ private:
 
 	// Entity inspection (right-click on entity in RPG/RTS, or Shift+RMB in FPS/TPS)
 	civcraft::EntityId m_inspectedEntity = 0;
+
+	// ── Coord peek (click a (x,y,z) link in Inspect to fly the camera there) ─
+	// Single-slot save: entering stacks the current m_cam onto m_peekSavedCam
+	// and retargets it at m_peekTarget. ESC pops (restores + clears marker).
+	// Nested peeks are not supported — re-clicking just re-aims.
+	bool                          m_peekActive = false;
+	glm::ivec3                    m_peekTarget{0};
+	std::unique_ptr<civcraft::Camera> m_peekSavedCam;
+
+	void enterCoordPeek(glm::ivec3 target);
+	void exitCoordPeek();
 
 	// ── NPC dialog (local LLM) ───────────────────────────────────────────
 	// Lazily initialised on the first T-key press (so the sidecar health
