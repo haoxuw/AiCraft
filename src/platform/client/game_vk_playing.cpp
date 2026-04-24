@@ -97,8 +97,9 @@ void Game::processInput(float dt) {
 		const char* names[] = {"FPS", "TPS", "RPG", "RTS"};
 		const char* name = names[(int)m_cam.mode];
 		std::printf("[vk-game] camera → %s\n", name);
-		pushNotification(std::string("Camera: ") + name,
-		                 glm::vec3(0.85f, 0.92f, 1.0f), 1.6f);
+		// Mode name now lives in the HUD status strip (bottom-left), so the
+		// transient toast would be redundant. Keep the first-time control
+		// hint below — that's the only thing mode-switching teaches.
 		// First entry to this mode — show key hints.
 		unsigned bit = 1u << (int)m_cam.mode;
 		if (!(m_modeHintsShown & bit)) {
@@ -137,13 +138,41 @@ void Game::processInput(float dt) {
 		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 		if (hit) {
 			glm::ivec3 bp = hit->hasInteract ? hit->interactPos : hit->blockPos;
-			civcraft::ActionProposal p;
-			p.type     = civcraft::ActionProposal::Interact;
-			p.actorId  = m_server->localPlayerId();
-			p.blockPos = bp;
-			m_server->sendAction(p);
-			civcraft::GameLogger::instance().emit("ACTION",
-				"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
+
+			// Chest: a UI action, not a server action — the chest Structure
+			// entity's inventory already rides the normal S_INVENTORY broadcast
+			// path. Find the matching entity by block position and open the
+			// side-by-side inventory panel.
+			auto& blocks = m_server->blockRegistry();
+			const auto& bdef = blocks.get(m_server->chunks().getBlock(bp.x, bp.y, bp.z));
+			if (bdef.string_id == civcraft::BlockType::Chest) {
+				civcraft::EntityId chestEid = 0;
+				m_server->forEachEntity([&](civcraft::Entity& e) {
+					if (chestEid) return;
+					if (e.typeId() != civcraft::StructureName::Chest) return;
+					int ex = (int)std::floor(e.position.x);
+					int ey = (int)std::floor(e.position.y);
+					int ez = (int)std::floor(e.position.z);
+					if (ex == bp.x && ey == bp.y && ez == bp.z) chestEid = e.id();
+				});
+				if (chestEid) {
+					m_invOther = chestEid;
+					m_invOpen  = true;
+					civcraft::GameLogger::instance().emit("ACTION",
+						"open chest #%u @(%d,%d,%d)", chestEid, bp.x, bp.y, bp.z);
+				} else {
+					civcraft::GameLogger::instance().emit("WARN",
+						"chest block @(%d,%d,%d) has no Structure entity", bp.x, bp.y, bp.z);
+				}
+			} else {
+				civcraft::ActionProposal p;
+				p.type     = civcraft::ActionProposal::Interact;
+				p.actorId  = m_server->localPlayerId();
+				p.blockPos = bp;
+				m_server->sendAction(p);
+				civcraft::GameLogger::instance().emit("ACTION",
+					"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
+			}
 		}
 	}
 	m_eLast = eKey;
@@ -820,7 +849,9 @@ void Game::clickToMove() {
 
 	std::printf("[vk-game] click-to-move → (%.1f, %.1f, %.1f)\n",
 	            target.x, target.y, target.z);
-	m_server->sendSetGoal(m_server->localPlayerId(), target);
+	// Direct-drive: virtual joystick loop (drivePlayerTick) steers toward
+	// m_moveOrderTarget, client-side physics + reconciliation handle the rest.
+	// No server RPC — nav is client-only now (civcraft_engine.Navigator).
 	m_hasMoveOrder    = true;
 	m_moveOrderTarget = target;
 }
@@ -1236,9 +1267,9 @@ void Game::processLmbInput(float dt) {
 				(glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS) ||
 				(glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
 			if (slice == 3 || slice == -1) {
-				// Cancel slice or click-outside-wheel: legacy release path.
+				// Cancel slice or click-outside-wheel: clear any client-side plan
+				// and let the agent's default behavior resume.
 				for (auto eid : m_rtsSelect.selected) {
-					m_server->sendCancelGoal(eid);
 					if (m_agentClient && eid != m_server->localPlayerId())
 						m_agentClient->resumeAgent(eid);
 					m_moveOrders.erase(eid);
@@ -1666,7 +1697,6 @@ void Game::processRmbInput(float dt) {
 	// switch to TPS, and still drop the group). Skips place/inspect when it fires.
 	if (rmbPressed && !m_rtsSelect.selected.empty() && !m_rtsWheel.active) {
 		for (auto eid : m_rtsSelect.selected) {
-			m_server->sendCancelGoal(eid);
 			if (m_agentClient && eid != m_server->localPlayerId())
 				m_agentClient->resumeAgent(eid);
 			m_moveOrders.erase(eid);

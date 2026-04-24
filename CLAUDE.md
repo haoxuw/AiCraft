@@ -110,54 +110,13 @@ contains the word "civcraft") and SIGTERMs your own bash, silently skipping the
 rest of the chained command. Use exact-name matching:
 `pgrep -x civcraft-ui-vk | xargs kill` (and the same for `civcraft-server`).
 
-**Screenshots** — written by the Vulkan client on request:
-- `touch /tmp/civcraft_screenshot_request` → immediate screenshot → `/tmp/civcraft_screenshot_N.ppm`
-- **F2** in-game: manual screenshot
-
-**Visual QA without an interactive window:**
-```bash
-# Items: FPS/TPS/RPG/RTS + on-ground shots
-make item_views ITEM=base:sword
-# or: ./build/civcraft-ui-vk --skip-menu --debug-scenario item_views --debug-item base:sword
-
-# Characters: 6-angle orbit (front/three_q/side/back/top/rts)
-make character_views CHARACTER=base:pig
-# or: ./build/civcraft-ui-vk --skip-menu --debug-scenario character_views --debug-character base:pig
-
-# Full sweep across all characters × clips:
-make animation_sweep    # writes /tmp/anim_review/<char>/<clip>.png
-```
-
-Both write `/tmp/debug_N_<suffix>.ppm` and auto-exit. See `.claude/skills/refine-model-and-animation/SKILL.md` for the full iteration loop.
-
-**Behavioral QA without a window (headless log mode):**
-
-Use this instead of screenshots when you need to verify *what creatures are
-deciding and doing*, not what the world looks like. The log is a WoW-style
-combat/event stream derived entirely from the TCP state stream (Rule 5
-compliant — no server-side logging).
-
-```bash
-./build/civcraft-ui-vk --skip-menu --log-only      # singleplayer, hidden window
-./build/civcraft-ui-vk --log-only --host H --port P # attach to remote server
-# Streams events to stdout AND /tmp/civcraft_game.log (truncated on start;
-# prior session preserved as /tmp/civcraft_game.log.prev)
-```
-
-In GUI mode the same log is also written to `/tmp/civcraft_game.log` and viewable
-from **Main Menu → Game Log** and the pause menu. One source of truth; Claude
-reads the file.
-
-
-**Verification recipe for behavior/AI/pathfinding work** (preferred over screenshots):
-```bash
-make build && pgrep -x civcraft-ui-vk | xargs -r kill; sleep 0.5 && \
-  ./build/civcraft-ui-vk --skip-menu --log-only &
-sleep 10 && pgrep -x civcraft-ui-vk | xargs -r kill
-# then Read /tmp/civcraft_game.log — grep for DECIDE/ACTION/COMBAT
-```
-
-Use screenshots only when the bug is visual (rendering, animation, UI).
+**Debug modes, CLI flags, perf knobs, log file map → `.claude/skills/testing-plan/SKILL.md`.**
+That skill is the single source of truth for `--debug-behavior`, `--log-only`,
+`--sim-speed`, `--villagers`, `--template`, `make debug_villager`,
+`make character_views`, `make item_views`, `make animation_sweep`,
+`make perf_fps`, `make perf_server`, and screenshots (F2 /
+`/tmp/civcraft_screenshot_request`). Use screenshots only when the bug is
+visual (rendering, animation, UI); otherwise prefer log-only.
 
 ## Source structure (detail)
 

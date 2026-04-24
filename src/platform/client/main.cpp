@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
 	int  port = 0;                  // --port: server port (0 = spawn local)
 	int  templateIndex = 1;         // --template: world template (default village)
 	int  villagersOverride = 0;     // --villagers: override villager count (0 = leave template as-is)
+	float simSpeed = 1.0f;          // --sim-speed: server sim multiplier (1=real, 4=4× faster)
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
 			printf("civcraft-ui-vk - Vulkan-native CivCraft client\n\n"
@@ -101,7 +102,12 @@ int main(int argc, char** argv) {
 			       "  --host HOST       Server hostname (default 127.0.0.1)\n"
 			       "  --port PORT       Server port (omit to spawn local server)\n"
 			       "  --template N      World template (0=flat 1=village 5=test_chicken)\n"
-		       "  --villagers N     Spawn N villagers (override template count; local server only)\n\n"
+			       "  --villagers N     Spawn N villagers (override template count; local server only)\n"
+			       "  --sim-speed N     Sim-time multiplier (default 1; 4 = 4× faster; local server only)\n"
+			       "  --debug-behavior  Isolated single-villager log-only smoke\n"
+			       "                    (shorthand for --skip-menu --log-only --template 1\n"
+			       "                     --villagers 1 --sim-speed 4). See\n"
+			       "                     .claude/skills/testing-plan/SKILL.md\n\n"
 			       "In-game:\n"
 			       "  WASD        move         LMB          attack / click-to-move\n"
 			       "  SPACE       jump         Mouse move   look\n"
@@ -120,6 +126,17 @@ int main(int argc, char** argv) {
 		else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) port = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) templateIndex = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--villagers") == 0 && i + 1 < argc) villagersOverride = std::atoi(argv[++i]);
+		else if (strcmp(argv[i], "--sim-speed") == 0 && i + 1 < argc) simSpeed = (float)std::atof(argv[++i]);
+		else if (strcmp(argv[i], "--debug-behavior") == 0) {
+			// Compose the isolated-villager debug preset. See the testing-plan
+			// skill for what each piece buys you; this shorthand just keeps
+			// the happy-path command short.
+			skipMenu = true;
+			logOnly = true;
+			templateIndex = 1;         // village
+			if (villagersOverride <= 0) villagersOverride = 1;
+			if (simSpeed == 1.0f)       simSpeed = 4.0f;
+		}
 	}
 
 	civcraft::GameLogger::instance().init(/*echoStdout=*/logOnly);
@@ -162,6 +179,7 @@ int main(int argc, char** argv) {
 			cfg.templateIndex = templateIndex;
 			cfg.execDir = execDir;
 			cfg.villagersOverride = villagersOverride;
+			cfg.simSpeed = simSpeed;
 			connectPort = agentMgr.launchServer(cfg);
 			if (connectPort < 0) {
 				fprintf(stderr, "[vk] failed to launch civcraft-server\n");

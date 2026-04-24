@@ -218,18 +218,169 @@ void HudRenderer::renderHUD() {
 		g.m_rhi->drawTitle2D(f.text.c_str(), x, ndc.y, scale, rgba);
 	}
 
-	// ── FPS + position readout (bottom-left) ────────────────────────────
+	// ── Persistent status strip (bottom-left) ───────────────────────────
+	// Three stacked rows so a new player can always see: how much HP they
+	// have, which camera mode they're in, and what's in their hand. The
+	// FPS/pos line stays at the bottom as diag info.
 	{
-		char buf[128];
-		auto* fpsMe = g.playerEntity();
-		glm::vec3 fpsPos = fpsMe ? fpsMe->position : glm::vec3(0);
-		std::snprintf(buf, sizeof(buf), "%.0f fps  |  %.0f %.0f %.0f  |  %zu ent  %zu chk",
-			g.m_fpsDisplay,
-			fpsPos.x, fpsPos.y, fpsPos.z,
-			g.m_server->entityCount(),
-			g.m_chunkMeshes.size());
-		const float dim[4] = {0.45f, 0.42f, 0.50f, 0.65f};
-		g.m_rhi->drawText2D(buf, -0.96f, -0.99f, 0.55f, dim);
+		auto* me = g.playerEntity();
+
+		// Row: HP bar with numeric overlay. Drawn first so the bar sits
+		// above the other rows.
+		if (me) {
+			int hp = me->hp();
+			int max = me->def().max_hp > 0 ? me->def().max_hp : 100;
+			float frac = glm::clamp((float)hp / (float)max, 0.0f, 1.0f);
+
+			const float barX = -0.96f;
+			const float barY = -0.90f;
+			const float barW = 0.22f;
+			const float barH = 0.022f;
+
+			const float back[4] = {0.05f, 0.04f, 0.05f, 0.70f};
+			g.m_rhi->drawRect2D(barX, barY, barW, barH, back);
+			// Fill color shifts red as HP drops.
+			float fillR = 0.85f;
+			float fillG = 0.25f + 0.55f * frac;
+			float fillB = 0.20f;
+			const float fill[4] = {fillR, fillG, fillB, 0.92f};
+			g.m_rhi->drawRect2D(barX, barY, barW * frac, barH, fill);
+			const float edge[4] = {0.0f, 0.0f, 0.0f, 0.55f};
+			g.m_rhi->drawRect2D(barX,                  barY, barW, 0.0022f, edge);
+			g.m_rhi->drawRect2D(barX,                  barY + barH - 0.0022f, barW, 0.0022f, edge);
+			g.m_rhi->drawRect2D(barX,                  barY, 0.0022f, barH, edge);
+			g.m_rhi->drawRect2D(barX + barW - 0.0022f, barY, 0.0022f, barH, edge);
+
+			char hpBuf[32];
+			std::snprintf(hpBuf, sizeof(hpBuf), "HP %d / %d", hp, max);
+			const float hpText[4] = {1.0f, 0.95f, 0.90f, 0.95f};
+			g.m_rhi->drawText2D(hpBuf, barX + 0.008f,
+				barY + barH * 0.5f - kCharHNdc * 0.60f * 0.5f,
+				0.60f, hpText);
+		}
+
+		// Row: camera-mode badge + held item. Always visible so a mode
+		// switch is unambiguous — the transient toast is just the "what
+		// each button does" reminder.
+		{
+			const char* modeNames[] = {"FPS", "TPS", "RPG", "RTS"};
+			const char* modeName = modeNames[(int)g.m_cam.mode];
+			const std::string& held = g.m_hotbar.get(g.m_hotbar.selected);
+			const char* heldName = held.empty() ? "bare hands" : held.c_str();
+
+			char buf[128];
+			std::snprintf(buf, sizeof(buf), "%s  |  %s", modeName, heldName);
+			const float c[4] = {0.85f, 0.82f, 0.72f, 0.85f};
+			g.m_rhi->drawText2D(buf, -0.96f, -0.945f, 0.60f, c);
+		}
+
+		// Row: FPS / pos / counts (original diag line, now dimmed).
+		{
+			char buf[128];
+			glm::vec3 fpsPos = me ? me->position : glm::vec3(0);
+			std::snprintf(buf, sizeof(buf), "%.0f fps  |  %.0f %.0f %.0f  |  %zu ent  %zu chk",
+				g.m_fpsDisplay,
+				fpsPos.x, fpsPos.y, fpsPos.z,
+				g.m_server->entityCount(),
+				g.m_chunkMeshes.size());
+			const float dim[4] = {0.45f, 0.42f, 0.50f, 0.65f};
+			g.m_rhi->drawText2D(buf, -0.96f, -0.99f, 0.55f, dim);
+		}
+	}
+
+	// ── F1 controls overlay (held) ──────────────────────────────────────
+	// Keys per camera mode are taught as a one-shot toast the first time
+	// you switch into the mode. Hold F1 to re-read — works regardless of
+	// whether the player already saw the toast.
+	if (glfwGetKey(g.m_window, GLFW_KEY_F1) == GLFW_PRESS) {
+		struct Binding { const char* key; const char* action; };
+		// Shared binds (top of every screen) are listed once so each
+		// mode table only has to describe its specifics.
+		static const Binding shared[] = {
+			{"WASD",    "Move"},
+			{"Space",   "Jump"},
+			{"Shift",   "Sprint"},
+			{"Tab",     "Inventory"},
+			{"H",       "Handbook"},
+			{"T",       "Talk to NPC (look at)"},
+			{"V",       "Cycle camera"},
+			{"E",       "Interact"},
+			{"F2",      "Screenshot"},
+			{"F3",      "Debug overlay"},
+			{"Esc",     "Pause"},
+		};
+		static const Binding fpsTps[] = {
+			{"Mouse",   "Look"},
+			{"LMB",     "Attack"},
+			{"RMB",     "Place / use"},
+			{"Scroll",  "Hotbar slot"},
+		};
+		static const Binding rpg[] = {
+			{"RMB-drag","Orbit camera"},
+			{"LMB-tile","Move here"},
+			{"LMB-drag","Box-select"},
+		};
+		static const Binding rts[] = {
+			{"WASD",    "Pan camera"},
+			{"RMB-drag","Orbit camera"},
+			{"LMB-drag","Box-select"},
+			{"LMB-hold","Build mode"},
+		};
+		const Binding* modeTable = shared; // placeholder
+		int modeCount = 0;
+		const char* modeLabel = "";
+		switch ((int)g.m_cam.mode) {
+			case 0: modeTable = fpsTps; modeCount = (int)(sizeof(fpsTps)/sizeof(*fpsTps)); modeLabel = "FPS"; break;
+			case 1: modeTable = fpsTps; modeCount = (int)(sizeof(fpsTps)/sizeof(*fpsTps)); modeLabel = "TPS"; break;
+			case 2: modeTable = rpg;    modeCount = (int)(sizeof(rpg)   /sizeof(*rpg));    modeLabel = "RPG"; break;
+			case 3: modeTable = rts;    modeCount = (int)(sizeof(rts)   /sizeof(*rts));    modeLabel = "RTS"; break;
+		}
+		const int sharedCount = (int)(sizeof(shared)/sizeof(*shared));
+		const int totalRows   = sharedCount + 1 /*sep*/ + modeCount;
+
+		const float rowH = 0.036f;
+		const float panelW = 0.46f;
+		const float panelH = rowH * totalRows + 0.10f;
+		const float px = -panelW * 0.5f;
+		const float py = -panelH * 0.5f;
+
+		const float scrim[4] = {0.0f, 0.0f, 0.0f, 0.55f};
+		g.m_rhi->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, scrim);
+		const float fill[4]   = {0.08f, 0.07f, 0.06f, 0.96f};
+		const float brass[4]  = {0.72f, 0.54f, 0.22f, 1.0f};
+		g.m_rhi->drawRect2D(px, py, panelW, panelH, fill);
+		g.m_rhi->drawRect2D(px, py, panelW, 0.003f, brass);
+		g.m_rhi->drawRect2D(px, py + panelH - 0.003f, panelW, 0.003f, brass);
+		g.m_rhi->drawRect2D(px, py, 0.003f, panelH, brass);
+		g.m_rhi->drawRect2D(px + panelW - 0.003f, py, 0.003f, panelH, brass);
+
+		char title[64];
+		std::snprintf(title, sizeof(title), "Controls — %s", modeLabel);
+		const float titleC[4] = {1.0f, 0.88f, 0.48f, 1.0f};
+		float titleW = (float)std::strlen(title) * kCharWNdc * 1.0f;
+		g.m_rhi->drawText2D(title, -titleW * 0.5f,
+			py + panelH - 0.058f, 1.0f, titleC);
+
+		const float colKeyX = px + 0.024f;
+		const float colActX = px + 0.16f;
+		const float txt[4]  = {0.90f, 0.87f, 0.80f, 1.0f};
+		const float key[4]  = {0.98f, 0.80f, 0.35f, 1.0f};
+		const float dim[4]  = {0.55f, 0.52f, 0.48f, 1.0f};
+
+		float y = py + panelH - 0.10f;
+		for (int i = 0; i < sharedCount; ++i) {
+			g.m_rhi->drawText2D(shared[i].key,    colKeyX, y, 0.70f, key);
+			g.m_rhi->drawText2D(shared[i].action, colActX, y, 0.70f, txt);
+			y -= rowH;
+		}
+		// Separator row.
+		g.m_rhi->drawText2D("— mode —", colKeyX, y, 0.60f, dim);
+		y -= rowH;
+		for (int i = 0; i < modeCount; ++i) {
+			g.m_rhi->drawText2D(modeTable[i].key,    colKeyX, y, 0.70f, key);
+			g.m_rhi->drawText2D(modeTable[i].action, colActX, y, 0.70f, txt);
+			y -= rowH;
+		}
 	}
 }
 

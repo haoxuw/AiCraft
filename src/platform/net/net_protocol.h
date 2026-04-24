@@ -15,9 +15,6 @@
  * ─────────────
  * C_ACTION        0x0001  ActionProposal (move / block / attack …)
  * C_HELLO         0x0003  GUI client hello  [u32 version][str uuid][str name][str skin]
- * C_SET_GOAL      0x0008  [u32 entityId][f32 x][f32 y][f32 z]
- * C_CANCEL_GOAL   0x0009  [u32 entityId]
- * C_SET_GOAL_GROUP 0x000B [f32 x][f32 y][f32 z][u32 count][u32 eid...]
  * C_GET_INVENTORY 0x000D  [u32 entityId]
  * C_QUIT          0x000E  []  — graceful disconnect; server runs full cleanup
  * C_HEARTBEAT     0x000F  []  — liveness ping; resets server-side idle timer
@@ -82,9 +79,8 @@ enum MsgType : uint32_t {
 	// Client → Server
 	C_ACTION          = 0x0001,
 	C_HELLO           = 0x0003,  // [u32 version][str uuid][str displayName][str creatureType]
-	C_SET_GOAL        = 0x0008,  // [u32 entityId][f32 x][f32 y][f32 z]
-	C_CANCEL_GOAL     = 0x0009,  // [u32 entityId]
-	C_SET_GOAL_GROUP  = 0x000B,  // [f32 x][f32 y][f32 z][u32 count][u32 eid...]
+	// 0x0008 / 0x0009 / 0x000B retired — navigation is client-side
+	// (civcraft_engine.Navigator). Retained as gaps so wire numbers stay stable.
 	C_GET_INVENTORY   = 0x000D,  // [u32 entityId] — request entity inventory snapshot
 	C_QUIT            = 0x000E,  // []  — graceful disconnect (client leaving); server runs full cleanup
 	C_HEARTBEAT       = 0x000F,  // []  — keepalive ping; resets server's per-client idle timer

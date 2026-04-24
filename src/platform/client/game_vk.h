@@ -125,11 +125,10 @@ struct FloatText {
 // ── Game ──────────────────────────────────────────────────────────────────
 enum class GameState { Menu, Loading, Playing, GameMenu, Dead };
 
-// Sub-screens within the Menu state. Main → Singleplayer/Multiplayer/Settings.
-// Stage C will flesh out Singleplayer (world list + create-world) and
-// Multiplayer (LAN/Saved/Direct-Connect tabs); today they're placeholders
-// that delegate to the existing auto-spawn-and-join flow.
-enum class MenuScreen : uint8_t { Main, Singleplayer, CharacterSelect, Connecting, Multiplayer, Handbook, Settings };
+// Sub-screens within the Menu state. Main → CharacterSelect (singleplayer) or
+// Multiplayer → CharacterSelect → Connecting → Playing. Multiplayer has its
+// own LAN-browser screen; singleplayer jumps straight to character pick.
+enum class MenuScreen : uint8_t { Main, CharacterSelect, Connecting, Multiplayer, Handbook, Settings };
 
 class Game {
 public:
@@ -319,8 +318,8 @@ private:
 	// lookup shared by the rotation helpers.
 	const civcraft::BlockDef* heldBlockDef();
 	// RPG / RTS click-to-move: raycast through cursor NDC → ground cell →
-	// sendSetGoal so the server's greedy steering walks us there. Uses the
-	// screen cursor in top-down modes (not the camera forward vector).
+	// install a client-side move order that the virtual-joystick tick drives
+	// toward. Uses the screen cursor in top-down modes (not the camera forward).
 	void clickToMove();
 
 	// Server-mode combat: cone-pick nearest entity → Convert proposal.

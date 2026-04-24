@@ -18,7 +18,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test perf_fps perf_server llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test perf_fps perf_server llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -168,6 +168,24 @@ test-villager: game-build
 
 test-chicken: game-build
 	$(call launch,--template 5)
+
+# Isolated single-villager behavior smoke: 1 villager, village world, 4× sim,
+# hidden window, tee event stream to /tmp/civcraft_game.log. Use for
+# behavior/pathfinding/decision iteration — see the testing-plan skill.
+# DURATION=N (seconds) ends the run early; default is unbounded.
+DEBUG_DURATION ?=
+debug_villager: game-build
+	@-pgrep -x civcraft-ui-vk  2>/dev/null | xargs -r kill ; true
+	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill ; true
+	@sleep 1
+	@echo "[debug_villager] --debug-behavior (1 villager, sim-speed 4, log-only)"
+	@echo "[debug_villager] log: /tmp/civcraft_game.log (prior run kept as .prev)"
+	@cd $(GAME_BUILD_DIR) && { \
+	    $(if $(DEBUG_DURATION),timeout $(DEBUG_DURATION) )./civcraft-ui-vk --debug-behavior; \
+	    rc=$$?; \
+	    $(if $(DEBUG_DURATION),[ $$rc -eq 124 ] && rc=0;) \
+	    exit $$rc; \
+	 }
 
 # ── Visual QA scenarios ─────────────────────────────────────
 CHARACTER := base:pig

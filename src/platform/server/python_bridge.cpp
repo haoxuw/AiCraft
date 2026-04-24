@@ -1,6 +1,7 @@
 #include "server/python_bridge.h"
 #include "server/structure_blueprint.h"
 #include "logic/material_values.h"
+#include "agent/pathfind.h"
 #include <fstream>
 #include <iterator>
 
@@ -381,6 +382,95 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	block.attr("Portal")      = BlockType::Portal;
 	block.attr("ArcaneStone") = BlockType::ArcaneStone;
 	block.attr("SpawnPoint")  = BlockType::SpawnPoint;
+
+	// ── Navigator (client-side A* over voxel grid) ─────────────────────
+	// World oracle reuses the per-call s_blockQueryFn so no extra callback
+	// plumbing is needed. Doors are deliberately treated as *non-solid* at
+	// plan time: the PathExecutor gates on closed doors and emits Interact
+	// when adjacent, so the planner can freely route through doorways.
+	struct BridgeWorldView : WorldView {
+		bool isSolid(glm::ivec3 p) const override {
+			if (!s_blockQueryFn) return false;
+			const std::string& id = s_blockQueryFn(p.x, p.y, p.z);
+			if (id == BlockType::Air)      return false;
+			if (id == BlockType::Water)    return false;
+			if (id == BlockType::Door)     return false;
+			if (id == BlockType::DoorOpen) return false;
+			if (id == BlockType::Trapdoor) return false;
+			if (id == BlockType::Torch)    return false;
+			if (id == BlockType::Wheat)    return false;
+			if (id == BlockType::WheatSeeds) return false;
+			return true;
+		}
+	};
+	struct BridgeDoorOracle : DoorOracle {
+		bool isClosedDoor(glm::ivec3 p) const override {
+			return s_blockQueryFn && s_blockQueryFn(p.x, p.y, p.z) == BlockType::Door;
+		}
+		bool isOpenDoor(glm::ivec3 p) const override {
+			return s_blockQueryFn && s_blockQueryFn(p.x, p.y, p.z) == BlockType::DoorOpen;
+		}
+	};
+	// Module-level singletons — BridgeWorldView/Oracle are stateless; the
+	// block query they read is rebound per callDecide() via s_blockQueryFn.
+	static BridgeWorldView  kBridgeView;
+	static BridgeDoorOracle kBridgeDoors;
+
+	py::class_<Navigator>(m, "Navigator")
+		.def(py::init([]() {
+			return new Navigator(kBridgeView, &kBridgeDoors);
+		}))
+		.def("set_goal",
+		     [](Navigator& n, int x, int y, int z) {
+		         return n.setGoal({x, y, z});
+		     },
+		     py::arg("x"), py::arg("y"), py::arg("z"),
+		     "Plan a path to the block at (x,y,z). Re-asserting the same "
+		     "goal is a no-op (the plan is cached).")
+		.def("clear",   &Navigator::clear,   "Abandon the current goal and path.")
+		.def("has_goal",&Navigator::hasGoal, "True while a plan is active.")
+		.def("status",
+		     [](const Navigator& n) {
+		         switch (n.status()) {
+		             case Navigator::Status::Idle:        return "idle";
+		             case Navigator::Status::Planning:    return "planning";
+		             case Navigator::Status::Walking:     return "walking";
+		             case Navigator::Status::OpeningDoor: return "opening_door";
+		             case Navigator::Status::Arrived:     return "arrived";
+		             case Navigator::Status::Blocked:     return "blocked";
+		         }
+		         return "unknown";
+		     })
+		// Advance one tick from `self`. Returns a single PyAction:
+		//   walking / approaching door → Move to next waypoint center
+		//   adjacent to closed door    → Interact at door cell (opens it)
+		//   arrived or blocked         → Idle  (caller picks a new goal)
+		.def("next_action",
+		     [](Navigator& n, py::object selfEntity) {
+		         float ex = py::getattr(selfEntity, "x").cast<float>();
+		         float ey = py::getattr(selfEntity, "y").cast<float>();
+		         float ez = py::getattr(selfEntity, "z").cast<float>();
+		         auto step = n.tick({ex, ey, ez});
+		         PyAction a;
+		         if (step.kind == Navigator::Step::Move) {
+		             a.type = "move";
+		             a.x = step.moveTarget.x;
+		             a.y = step.moveTarget.y;
+		             a.z = step.moveTarget.z;
+		             a.speed = 2.0f;
+		         } else if (step.kind == Navigator::Step::Interact) {
+		             a.type = "interact";
+		             a.x = (float)step.interactPos.x;
+		             a.y = (float)step.interactPos.y;
+		             a.z = (float)step.interactPos.z;
+		             a.appearance_idx = -1;  // legacy toggle
+		         } else {
+		             a.type = "idle";
+		         }
+		         return a;
+		     },
+		     py::arg("self_entity"),
+		     "Advance one tick toward the goal. Returns Move/Interact/Idle.");
 }
 
 static PythonBridge s_bridge;
@@ -802,8 +892,30 @@ static bool parsePyResult(const py::object& result, Plan& outPlan,
 					step.keepAway = d["keep_away"].cast<float>();
 				outPlan.push_back(step);
 			} else if (stype == "harvest") {
-				PlanStep step = PlanStep::harvest(
-					{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()});
+				// Two input shapes, both land in the same PlanStep:
+				//   legacy:   { x, y, z, gather_types, ... }
+				//   multi:    { candidates: [{x,y,z}, ...], count_goal, ... }
+				// x/y/z are optional when `candidates` is provided; the first
+				// candidate becomes targetPos so legacy readers (viz,
+				// evaluate-before-init) still work.
+				PlanStep step;
+				step.type = PlanStep::Harvest;
+				if (d.contains("candidates") && !d["candidates"].is_none()) {
+					for (auto& c : d["candidates"].cast<py::list>()) {
+						py::dict cd = py::cast<py::dict>(c);
+						step.candidates.push_back({
+							cd["x"].cast<float>(),
+							cd["y"].cast<float>(),
+							cd["z"].cast<float>()});
+					}
+					if (!step.candidates.empty())
+						step.targetPos = step.candidates[0];
+				}
+				if (d.contains("x") && !d["x"].is_none())
+					step.targetPos = {
+						d["x"].cast<float>(),
+						d["y"].cast<float>(),
+						d["z"].cast<float>()};
 				// Priority-ordered gather types (index 0 = highest). The
 				// executor scans the local volume each tick and chops the
 				// first tier that has a hit in gatherRadius.
@@ -817,6 +929,8 @@ static bool parsePyResult(const py::object& result, Plan& outPlan,
 					step.chopCooldown = d["chop_cooldown"].cast<float>();
 				if (d.contains("item") && !d["item"].is_none())
 					step.itemId = d["item"].cast<std::string>();
+				if (d.contains("count_goal") && !d["count_goal"].is_none())
+					step.countGoal = d["count_goal"].cast<int>();
 				outPlan.push_back(step);
 			} else if (stype == "attack") {
 				outPlan.push_back(PlanStep::attack(d["entity_id"].cast<EntityId>()));

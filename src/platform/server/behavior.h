@@ -76,6 +76,21 @@ struct PlanStep {
 	// same plan can pace differently (fast leaves, slow stone).
 	float     chopCooldown   = 0.0f;
 
+	// Harvest: optional list of candidate anchors to try in order. Empty =
+	// single-anchor mode (executor walks to targetPos). When non-empty, the
+	// executor walks to candidates[0]; if it wedges there (stuck-timer fires)
+	// or no block of gatherTypes exists within gatherRadius of it, the
+	// executor blacklists that index internally and advances to the next
+	// candidate. This moves the "which tree to try next" loop out of
+	// decide() — Python declares where trees are, the executor picks one.
+	std::vector<glm::vec3> candidates;
+
+	// Harvest: chops needed before the step concludes Success. Default 1
+	// preserves legacy single-swing behavior. Setting this above 1 lets the
+	// executor chop across multiple candidates (cycling when the local sphere
+	// runs dry) until it has collected `countGoal` of `itemId`.
+	int       countGoal      = 1;
+
 	static PlanStep move(glm::vec3 pos, float spd = 2.0f, float hold = 0.0f) {
 		PlanStep s; s.type = Move; s.targetPos = pos; s.speed = spd;
 		s.holdTime = hold; return s;

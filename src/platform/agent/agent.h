@@ -373,6 +373,15 @@ private:
 		float       progress      = 0.0f;
 		int         prevTargetHP  = 0;
 		std::string failReason;
+
+		// Harvest-only: per-step candidate cycling and count gate. `activeIdx`
+		// is the current slot in step.candidates; `anchorFailed` marks slots
+		// that wedged or exhausted their local sphere. `startItemCount` is
+		// inventory[step.itemId] at step entry; countGoal progress is measured
+		// as (now - start). All reset by advanceStep()'s m_watch = {}.
+		int               harvestActiveIdx     = 0;
+		std::vector<bool> harvestAnchorFailed;
+		int               harvestStartItemCount = -1;
 	};
 
 	struct DecideRateTracker {
@@ -479,7 +488,13 @@ private:
 
 		if (!m_watch.modeDetected) {
 			m_watch.modeDetected = true;
-			m_watch.isIdleHold   = (dist < kArriveEps);
+			// Intent-driven: speed == 0 means "stand here" (behaviors emit
+			// Move(self.x,y,z) to idle), speed > 0 means "walk to target".
+			// Distance alone can't distinguish — a Navigator waypoint that
+			// happens to land within 1.5 blocks (last cell of a short plan,
+			// or a door cell inside the kDoorReachXZ ring) would otherwise
+			// stall the walk for kDefaultIdleHoldSec=30s.
+			m_watch.isIdleHold   = (step.speed <= 0.0f);
 		}
 
 		float effectiveHold = step.holdTime > 0.0f
@@ -513,11 +528,12 @@ private:
 	}
 
 	StepOutcome evaluateHarvest(PlanStep& step, Entity& e, float dt) {
-		// Stuck-outside-range: the executor's only "target" is the gather
-		// anchor (targetPos). Once the villager is within reach of the
-		// anchor they stand still while chopping, so the "not moving" check
-		// only fires before arrival.
-		glm::vec3 delta = step.targetPos - e.position;
+		// Stuck-outside-range: measured against the *active* anchor (which may
+		// have been swapped by applyHarvest after a previous wedge). Once the
+		// villager is within reach they stand still while chopping, so the
+		// "not moving" check only fires before arrival.
+		glm::vec3 anchor = activeHarvestAnchor(step);
+		glm::vec3 delta = anchor - e.position;
 		delta.y = 0;
 		if (glm::length(delta) > kReachHarvest + 2.0f) {
 			float horiz = std::sqrt(e.velocity.x * e.velocity.x +
@@ -525,12 +541,45 @@ private:
 			if (horiz < kStillEps) {
 				m_watch.stillAccum += dt;
 				if (m_watch.stillAccum > kStuckSeconds) {
+					// Multi-anchor path: blacklist this index and let
+					// applyHarvest pick the next. Keeps the plan alive so
+					// Python isn't pinged every 2s of wedging.
+					if (!step.candidates.empty() &&
+					    advanceHarvestAnchor(step)) {
+						m_watch.stillAccum = 0;
+						return StepOutcome::InProgress;
+					}
 					m_watch.failReason = "stuck";
 					return StepOutcome::Failed;
 				}
 			} else m_watch.stillAccum = 0;
 		}
 		return StepOutcome::InProgress;
+	}
+
+	// Harvest helpers: active anchor = candidates[activeIdx] if the step has
+	// candidates, else the legacy single-anchor targetPos.
+	glm::vec3 activeHarvestAnchor(const PlanStep& step) const {
+		if (step.candidates.empty()) return step.targetPos;
+		int idx = std::min((int)m_watch.harvestActiveIdx,
+		                   (int)step.candidates.size() - 1);
+		return step.candidates[std::max(0, idx)];
+	}
+
+	// Mark the current anchor failed and move to the next un-failed slot.
+	// Returns true if a fresh anchor was selected, false if the list is
+	// exhausted (caller should end the step).
+	bool advanceHarvestAnchor(PlanStep& step) {
+		if (step.candidates.empty()) return false;
+		if (m_watch.harvestAnchorFailed.size() != step.candidates.size())
+			m_watch.harvestAnchorFailed.assign(step.candidates.size(), false);
+		int& i = m_watch.harvestActiveIdx;
+		if (i >= 0 && i < (int)step.candidates.size())
+			m_watch.harvestAnchorFailed[i] = true;
+		for (i = i + 1; i < (int)step.candidates.size(); ++i) {
+			if (!m_watch.harvestAnchorFailed[i]) return true;
+		}
+		return false;
 	}
 
 	StepOutcome evaluateAttack(PlanStep& /*step*/, Entity& /*e*/, float /*dt*/) {
@@ -599,10 +648,37 @@ private:
 	}
 
 	void applyHarvest(PlanStep& step, Entity& e, ServerInterface& server) {
-		// Phase 1 — navigate to the gather anchor. The anchor is just "where
-		// to stand"; the executor scans the surrounding volume for actual
-		// targets once in range.
-		glm::vec3 delta = step.targetPos - e.position;
+		// Phase 0 — lazy init. Baseline the inventory count for the count-goal
+		// gate, and size the per-candidate failed-mask to match the step.
+		if (m_watch.harvestStartItemCount < 0) {
+			m_watch.harvestStartItemCount =
+				(e.inventory && !step.itemId.empty())
+					? e.inventory->count(step.itemId) : 0;
+			if (!step.candidates.empty())
+				m_watch.harvestAnchorFailed.assign(
+					step.candidates.size(), false);
+		}
+
+		// Phase 0.5 — count-goal early exit. Once the plan has collected
+		// `countGoal` of `itemId`, the step concludes; decide() re-runs and
+		// typically transitions to DEPOSIT. countGoal == 1 preserves legacy
+		// single-swing semantics.
+		if (step.countGoal > 1 && e.inventory && !step.itemId.empty()) {
+			int gained = e.inventory->count(step.itemId) -
+			             m_watch.harvestStartItemCount;
+			if (gained >= step.countGoal) {
+				advanceStep();
+				if (m_stepIndex >= (int)m_plan.size())
+					finishPlan(StepOutcome::Success, std::string{}, server);
+				return;
+			}
+		}
+
+		// Phase 1 — navigate to the active anchor. With a candidate list the
+		// "active" anchor is whatever index we haven't blacklisted yet;
+		// evaluateHarvest trips the stuck-timer and advances on wedge.
+		glm::vec3 anchor = activeHarvestAnchor(step);
+		glm::vec3 delta = anchor - e.position;
 		delta.y = 0;
 		float dist = glm::length(delta);
 		if (dist > kReachHarvest) {
@@ -628,9 +704,12 @@ private:
 		}
 
 		if (!hit) {
-			// Nothing to gather in any tier within radius → step complete.
-			// decide() will re-run and either pick a new anchor or transition
-			// to the next state (DEPOSIT, etc.).
+			// Nothing left in this anchor's local sphere. If candidates
+			// remain, rotate to the next; otherwise the step concludes and
+			// decide() picks up (DEPOSIT, wander, …).
+			if (!step.candidates.empty() && advanceHarvestAnchor(step)) {
+				return;
+			}
 			advanceStep();
 			if (m_stepIndex >= (int)m_plan.size())
 				finishPlan(StepOutcome::Success, std::string{}, server);

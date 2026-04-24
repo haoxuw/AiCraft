@@ -105,6 +105,17 @@ private:
 	Config            m_cfg;
 };
 
+// Optional door oracle. Executor queries these only when the next waypoint
+// cell is solid — planner already marked it passable, so a solid hit means
+// it's a door (or similar interactive). Returning true for `isClosedDoor`
+// makes the executor emit a one-shot Interact; `isOpenDoor` lets it fall
+// through as walkable without opening anything.
+struct DoorOracle {
+	virtual ~DoorOracle() = default;
+	virtual bool isClosedDoor(glm::ivec3 p) const = 0;
+	virtual bool isOpenDoor  (glm::ivec3 p) const = 0;
+};
+
 // Per-agent cursor driver. Doors: [Mineflayer] observe-and-interact.
 class PathExecutor {
 public:
@@ -119,14 +130,60 @@ public:
 	bool done() const    { return m_cursor >= (int)m_path.steps.size(); }
 
 	// [Mineflayer] approach → observe door → interact adjacent → wait open → step.
-	// Must only toggle doors when adjacent (avoids remote-toggle); must hold
-	// after Interact until door observed open (prevents physics-wedging).
-	Intent tick(const glm::vec3& entityPos, const WorldView& world);
+	// Pass a DoorOracle to enable auto-open behavior; nullptr = legacy (no doors).
+	Intent tick(const glm::vec3& entityPos, const WorldView& world,
+	            const DoorOracle* doors = nullptr);
 
 private:
 	Path m_path;
 	int  m_cursor   = 0;
 	bool m_waitOpen = false;  // emitted Interact, awaiting door-open observation
+};
+
+// Scripting-friendly facade: wraps GridPlanner + PathExecutor behind a single
+// stateful object. Python behaviors use this; native code can still reach the
+// lower-level primitives directly.
+class Navigator {
+public:
+	enum class Status : uint8_t { Idle, Planning, Walking, OpeningDoor, Arrived, Blocked };
+
+	struct Step {
+		enum Kind { None, Move, Interact } kind = None;
+		glm::vec3  moveTarget  = {0,0,0};     // world-space cell center
+		glm::ivec3 interactPos = {0,0,0};     // door cell to toggle
+	};
+
+	Navigator(const WorldView& world, const DoorOracle* doors = nullptr)
+		: m_world(world), m_doors(doors), m_planner(world) {}
+
+	// Start (or re-plan) to the block at `goal`. Re-planning only fires if the
+	// goal cell differs from the active plan's goal — cheap call-every-tick.
+	// Returns false if planner gave up (partial or empty path).
+	bool setGoal(glm::ivec3 goal);
+
+	// Advance one tick. Returns the step to take (Move/Interact/None). When
+	// status() == Arrived or Blocked, the caller should pick a new goal.
+	Step tick(const glm::vec3& entityPos);
+
+	void   clear()           { m_exec.clear(); m_hasGoal = false; m_status = Status::Idle; }
+	bool   hasGoal() const   { return m_hasGoal; }
+	Status status() const    { return m_status; }
+	glm::ivec3 goal() const  { return m_goal; }
+
+	// Replan trigger — drop the cached plan on block changes in the corridor.
+	bool invalidatedBy(glm::ivec3 changedBlock) const {
+		return m_hasGoal && m_planner.pathInvalidatedBy(m_path, changedBlock);
+	}
+
+private:
+	const WorldView&  m_world;
+	const DoorOracle* m_doors;
+	GridPlanner       m_planner;
+	PathExecutor      m_exec;
+	Path              m_path;
+	glm::ivec3        m_goal{0};
+	bool              m_hasGoal = false;
+	Status            m_status  = Status::Idle;
 };
 
 } // namespace civcraft

@@ -16,7 +16,6 @@
 #include "server/world_template.h"
 #include "server/python_bridge.h"
 #include "server/world_accessibility.h"
-#include "server/pathfind.h"
 #include "server/client_manager.h"
 #include "client/entity_reconciler.h"
 #include "agent/block_search.h"
@@ -1874,34 +1873,8 @@ static std::string w6_spawned_mobs_min_separation() {
     return "";
 }
 
-// ================================================================
-// B5: pathfind.py module loads cleanly
-// ================================================================
-static std::string b5_pathfind_module_loads() {
-    // Load pathfind.py as a standalone module (not as a behavior)
-    std::ifstream f("python/pathfind.py");
-    if (!f) return "cannot open python/pathfind.py";
-    std::ostringstream ss; ss << f.rdbuf();
-    std::string src = ss.str();
-
-    // Wrap it in a minimal behavior that imports and uses Navigator
-    std::string behaviorSrc = src + R"(
-from civcraft_engine import Move
-from behavior_base import Behavior
-
-class PathfindTestBehavior(Behavior):
-    def __init__(self):
-        self._nav = Navigator()
-    def decide(self, entity, world):
-        return Move(entity.x, entity.y, entity.z), "pathfind loaded"
-)";
-
-    std::string loadErr;
-    auto handle = pythonBridge().loadBehavior(behaviorSrc, loadErr);
-    if (handle < 0) return "loadBehavior failed: " + loadErr;
-    pythonBridge().unloadBehavior(handle);
-    return "";
-}
+// B5 (pathfind.py module load test) removed — pathfind.py deleted; Navigator
+// is a civcraft_engine binding now, covered by Phase D tests.
 
 // ================================================================
 // C2: block_search prefers the NEAREST non-empty chunk.
@@ -1998,6 +1971,10 @@ static std::string c2_scan_blocks_prefers_nearest_chunk() {
 	return "";
 }
 
+// NAV1–NAV6 deleted: server-side nav has been removed. Pathfinding lives in
+// src/platform/agent/pathfind.{h,cpp} (GridPlanner + PathExecutor) and is
+// exercised by test_pathfinding.cpp against a pure ChunkSource, no server.
+#if 0
 // ================================================================
 // NAV1: Single entity walks toward goal on flat ground, arrives
 // ================================================================
@@ -2323,6 +2300,7 @@ static std::string nav6_blocked_by_tall_wall() {
 
 	return "";
 }
+#endif // NAV1–NAV6 disabled (server-side nav removed)
 
 // ================================================================
 // M1–M4: Camera Mode Movement Tests (client prediction + server)
@@ -3355,18 +3333,12 @@ int main() {
 	printf("\n--- Behavior ---\n");
 	run("B2: all behavior files load cleanly",               b2_all_behaviors_load_cleanly);
 	run("B4: StoreItem transfers inventory to chest block",   b4_store_item_server_validation);
-	run("B5: pathfind.py module loads cleanly",              b5_pathfind_module_loads);
 
 	printf("\n--- Block Search ---\n");
 	run("C2: scan_blocks prefers nearest non-empty chunk",   c2_scan_blocks_prefers_nearest_chunk);
 
-	printf("\n--- Server Navigation ---\n");
-	run("NAV1: single entity walks to goal on flat ground",  nav1_single_entity_walks_to_goal);
-	run("NAV2: group formation assigns different goals",     nav2_group_formation);
-	run("NAV3: entity dodges around a wall",                 nav3_dodge_around_wall);
-	run("NAV4: entity in box never gives up",                nav4_never_gives_up);
-	run("NAV5: entity climbs 1-block step-ups",             nav5_step_up_climbing);
-	run("NAV6: entity blocked by 2-block wall",             nav6_blocked_by_tall_wall);
+	// Server-side navigation tests removed — nav moved to client (agent/pathfind.{h,cpp}),
+	// covered by test_pathfinding.cpp.
 
 	printf("\n--- World Generation ---\n");
 	run("W1: foundation columns are stone (not dirt/grass)", w1_foundation_is_stone);

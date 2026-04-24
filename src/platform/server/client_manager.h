@@ -1182,33 +1182,8 @@ private:
 		// C_RESYNC_CHUNK removed — was agent-only; PlayerClient uses chunk streaming
 
 		// C_AGENT_HELLO removed — agents run inside PlayerClient now
-		case net::C_SET_GOAL: {
-			uint32_t eid = rb.readU32();
-			glm::vec3 gp = {rb.readF32(), rb.readF32(), rb.readF32()};
-			if (!m_server.canClientControl(cid, eid)) break;
-			Entity* e = m_server.world().entities.get(eid);
-			if (e) e->nav.setGoal(gp);
-			break;
-		}
-		case net::C_SET_GOAL_GROUP: {
-			glm::vec3 gp = {rb.readF32(), rb.readF32(), rb.readF32()};
-			uint32_t count = rb.readU32();
-			std::vector<Entity*> group;
-			for (uint32_t i = 0; i < count; i++) {
-				uint32_t eid = rb.readU32();
-				if (!m_server.canClientControl(cid, eid)) continue;
-				Entity* e = m_server.world().entities.get(eid);
-				if (e) group.push_back(e);
-			}
-			planGroupFormation(gp, group);
-			break;
-		}
-		case net::C_CANCEL_GOAL: {
-			uint32_t eid = rb.readU32();
-			Entity* e = m_server.world().entities.get(eid);
-			if (e) { e->nav.clear(); e->velocity = {0, 0, 0}; }
-			break;
-		}
+		// C_SET_GOAL / C_SET_GOAL_GROUP / C_CANCEL_GOAL removed — navigation
+		// now runs client-side via civcraft_engine.Navigator (Rule 4/5).
 		case net::C_QUIT: {
 			markDisconnect(cid, "client quit");
 			break;

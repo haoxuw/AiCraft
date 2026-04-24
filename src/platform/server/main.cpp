@@ -134,6 +134,7 @@ void printServerUsage(const char* prog) {
 	       "  --template N      World template: 0=flat, 1=village, 2=test_behaviors,\n"
 	       "                    3=test_dog, 4=test_villager, 5=test_chicken,\n"
 	       "                    6=perf_stress (100 villagers) (default 1)\n"
+	       "  --sim-speed N     Sim-time multiplier (default 1; 4 = 4× faster sim)\n"
 	       "  --help, -h        Show this help\n", prog);
 }
 
@@ -159,6 +160,10 @@ ServerCliArgs parseServerArgs(int argc, char** argv) {
 		}
 		else if (strcmp(argv[i], "--world")    == 0 && i + 1 < argc) {
 			out.worldPath = argv[++i]; out.interactive = false;
+		}
+		else if (strcmp(argv[i], "--sim-speed") == 0 && i + 1 < argc) {
+			float s = (float)atof(argv[++i]);
+			if (s > 0.0f) civcraft::ServerTuning::simSpeed = s;
 		}
 	}
 	return out;
@@ -338,8 +343,14 @@ int main(int argc, char** argv) {
 	clients.setPort(args.config.port);
 	server.setCallbacks(makeServerCallbacks(clients));
 
-	const float TICK_RATE = civcraft::ServerTuning::tickRate;
-	const double TICK_BUDGET_MS = TICK_RATE * 1000.0;  // 16.67ms @ 60tps
+	// Main-loop pacing: how often a tick fires on the wall clock. At
+	// simSpeed=1 this is 1/60s = 16.67ms. At simSpeed=4 it's 1/240s, so
+	// four ticks fire per real-60Hz cycle and sim time advances 4× faster.
+	// The sim dt passed into server.tick() stays ServerTuning::tickRate
+	// (1/60) so physics, timers, and broadcast intervals are unchanged in
+	// sim-time.
+	const float TICK_RATE = civcraft::ServerTuning::tickIntervalRealSec();
+	const double TICK_BUDGET_MS = TICK_RATE * 1000.0;
 	auto lastTime = std::chrono::steady_clock::now();
 	float accumulator = 0;
 	int tickCount = 0;
@@ -430,11 +441,17 @@ int main(int argc, char** argv) {
 			fflush(stdout);
 			accumulator = kMaxBacklog;
 		}
+		// Sim dt fed into server.tick() is the fixed sim-second-per-tick
+		// (1/60), *not* the wall-clock pacing TICK_RATE. At simSpeed>1
+		// ticks fire more often on the wall clock but each still advances
+		// 1/60 sim-seconds, so physics, timers, and broadcast cadences are
+		// identical in sim-time.
+		const float SIM_DT = civcraft::ServerTuning::tickRate;
 		while (accumulator >= TICK_RATE) {
 			// Log + advance on exception so one bad tick doesn't silently
 			// kill the server or hot-spin on a permanently broken tick.
 			try {
-				server.tick(TICK_RATE);
+				server.tick(SIM_DT);
 			} catch (const std::exception& ex) {
 				fprintf(stdout, "[ServerCrash] tick threw std::exception: %s\n", ex.what());
 				fflush(stdout);

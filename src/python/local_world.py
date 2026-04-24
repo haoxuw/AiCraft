@@ -223,7 +223,7 @@ class LocalWorld(BaseModel):
     dt:       float                    # seconds since last decide()
     blocks:   list[BlockView]  = Field(default_factory=list)
     entities: list[EntityView] = Field(default_factory=list)
-    goal:     Optional[dict]   = None  # {"x","y","z"} from C_SET_GOAL, or None
+    goal:     Optional[dict]   = None  # {"x","y","z"} client-issued target, or None
 
     # Outcome of the previous plan (event-driven decide loop).
     # decide() is called only when the previous plan ended or was

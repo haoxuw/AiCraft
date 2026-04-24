@@ -155,6 +155,18 @@ void HandbookPanel::render(Game& g) {
 
 	grp = &GR[m_groupCursor];
 
+	// Q/E — cycle sub-filter within the current group. Brackets also work for
+	// anyone who's internalised `[`/`]` as prev/next from other tools.
+	auto bumpSub = [&](int delta) {
+		int n = (int)grp->subs.size();
+		if (n <= 1) return;
+		m_subCursor   = (m_subCursor + delta + n) % n;
+		m_entryCursor = 0;
+		m_entryScroll = 0;
+	};
+	if (ui::keyEdge(W, GLFW_KEY_Q)            || ui::keyEdge(W, GLFW_KEY_LEFT_BRACKET))  bumpSub(-1);
+	if (ui::keyEdge(W, GLFW_KEY_E)            || ui::keyEdge(W, GLFW_KEY_RIGHT_BRACKET)) bumpSub(+1);
+
 	// ── Build entry list for the current (group, sub) ───────────────────
 	// Each item is either a real ArtifactEntry (living/item/block/…) or a
 	// synthetic voice name. We keep them in two parallel vectors so the
@@ -260,19 +272,6 @@ void HandbookPanel::render(Game& g) {
 	// Banner sits below the title strip (titleH 0.080 + 0.016 top pad).
 	const float groupY = L.y + L.h - 0.112f - 0.054f;
 	const float groupCx = L.x + L.w * 0.5f;
-
-	const float arrowW = 0.040f;
-	const float arrowH = 0.046f;
-	const float arrowY = groupY - 0.008f;
-
-	if (drawButton(R, L.x + 0.024f, arrowY, arrowW, arrowH,
-	               "<", 0.95f, mx, my, mClick)) {
-		bumpGroup(-1);
-	}
-	if (drawButton(R, L.x + L.w - 0.024f - arrowW, arrowY,
-	               arrowW, arrowH, ">", 0.95f, mx, my, mClick)) {
-		bumpGroup(+1);
-	}
 
 	grp = &GR[m_groupCursor];
 	m_subCursor = std::clamp(m_subCursor, 0, (int)grp->subs.size() - 1);
@@ -435,7 +434,7 @@ void HandbookPanel::render(Game& g) {
 
 	const float hintY = B.y + B.h * 0.5f - ui::kCharHNdc * 0.65f * 0.5f;
 	const char* hint =
-		"[Click] Select   [Left/Right] Group   [Up/Down] Entry   [Esc] Back";
+		"[Left/Right] Group   [Q/E] Filter   [Up/Down] Entry   [Esc] Back";
 	float hintW = ui::textWidthNdc(std::strlen(hint), 0.65f);
 	ui::writeText(R, hint, B.x + B.w - hintW - 0.028f, hintY, 0.65f, kTextDim);
 

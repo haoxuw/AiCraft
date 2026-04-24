@@ -11,7 +11,6 @@
 #include "logic/constants.h"
 #include "logic/physics.h"
 #include "server/world_template.h"
-#include "server/pathfind.h"
 #include "server/structure_blueprint.h"
 #include "server/structure_block_cacher.h"
 #include "server/weather.h"
@@ -846,9 +845,6 @@ public:
 			});
 		}
 
-		updateNavigation(dt, m_world->entities);
-		markPhase(m_lastTickProfile.navigationMs);
-
 		// Also purges removed entities.
 		m_world->entities.stepPhysics(dt, solidFn);
 		markPhase(m_lastTickProfile.physicsMs);
@@ -976,7 +972,6 @@ public:
 
 			m_world->entities.forEach([&](Entity& e) {
 				if (!e.def().isLiving()) return;
-				if (e.nav.active) return;  // nav handles its own stuck
 
 				EntityId id = e.id();
 				auto it = m_lastPositions.find(id);

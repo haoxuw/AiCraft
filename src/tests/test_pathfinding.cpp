@@ -259,6 +259,11 @@ static std::string p01_harness_smoke() {
 	return "";
 }
 
+// P02/P03/P06/P09 deleted: they drove a live entity via `e->nav.setGoal()`,
+// which was server-side greedy steering. Server nav has been removed —
+// navigation is client-only (agent/pathfind.{h,cpp} + civcraft_engine.Navigator),
+// and the end-to-end drive is exercised from the client smoke run instead.
+#if 0
 // ── P02: walk 10 blocks in a straight line on open ground ──────────────
 static std::string p02_walk_straight_line_open() {
 	auto srv = makeTestArena();
@@ -418,6 +423,8 @@ static std::string p03_s_maze() {
 	}
 	return "";
 }
+
+#endif // end of disabled P02/P03 (server-nav drives)
 
 // ── P04: stairs-up — planner unit test for the Jump primitive ──────────
 // Builds a 3-step staircase at +X (each step one block higher than the
@@ -595,6 +602,7 @@ static std::string p05_bug_trap_plan() {
 	return "";
 }
 
+#if 0
 // ── P06: bug-trap integration — planner + executor drive live entity ──
 // Same bug-trap layout as P05, but instead of asserting on the planned
 // path, we actually drive the player entity through it:
@@ -688,6 +696,8 @@ static std::string p06_bug_trap_drive() {
 	}
 	return "";
 }
+
+#endif // end of disabled P06 (server-nav drive)
 
 // ── P07: planBatch — reverse-Dijkstra from one shared goal to N starts ─
 // RTS group-command scenario: three units scattered at different cells,
@@ -809,6 +819,7 @@ static std::string p08_path_invalidation() {
 	return "";
 }
 
+#if 0
 // ── P09: plan+drive past a long wall (mirrors client-side RTS execution) ──
 // Plans once with GridPlanner, then each tick lets PathExecutor feed the
 // next waypoint into a short-range nav goal — the same shape the client's
@@ -895,6 +906,8 @@ static std::string p09_plan_drive_past_wall() {
 	}
 	return "";
 }
+
+#endif // end of disabled P09 (server-nav drive)
 
 // P10 — a 1-wide tunnel "] [" with walls on both sides forces the planner
 // through a narrow passage even with wallClearancePenalty > 0. Verifies
@@ -1033,18 +1046,13 @@ int main() {
 	printf("--- Harness ---\n");
 	run("P01: harness smoke (player stays on floor)", p01_harness_smoke);
 
-	printf("\n--- Open ground ---\n");
-	run("P02: walk 10 blocks straight on open ground", p02_walk_straight_line_open);
-
-	printf("\n--- Obstacles (expected FAIL on greedy) ---\n");
-	run("P03: S-maze (two offset walls)               ", p03_s_maze);
+	// P02/P03/P06/P09 dropped: they drove entities via server-side nav
+	// (`e->nav.setGoal()`), now removed. End-to-end drive moves to the
+	// client smoke run + civcraft_engine.Navigator tests (Phase D).
 
 	printf("\n--- Planner (GridPlanner::plan unit test) ---\n");
 	run("P04: stairs-up plan (3 Jumps)                ", p04_stairs_up_plan);
 	run("P05: bug-trap plan (concave pocket, detour)  ", p05_bug_trap_plan);
-
-	printf("\n--- Planner + Executor (live entity integration) ---\n");
-	run("P06: bug-trap drive (plan+exec drives NPC)   ", p06_bug_trap_drive);
 
 	printf("\n--- Batch planning (RTS group command, SupCom2-style) ---\n");
 	run("P07: planBatch — shared goal, 3 starts       ", p07_plan_batch_shared_goal);
@@ -1052,8 +1060,7 @@ int main() {
 	printf("\n--- Replan triggers ---\n");
 	run("P08: pathInvalidatedBy corridor detection    ", p08_path_invalidation);
 
-	printf("\n--- RTS integration (real click-to-move code path) ---\n");
-	run("P09: plan + drive past wall                   ", p09_plan_drive_past_wall);
+	printf("\n--- RTS planner tunnels ---\n");
 	run("P10: narrow ] [ tunnel (penalty>0)            ", p10_narrow_tunnel_still_passes);
 
 	printf("\n--- Perf scaling (N=1..1000) ---\n");

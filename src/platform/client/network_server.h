@@ -283,30 +283,6 @@ public:
 		net::sendMessage(m_tcp.fd(), net::C_GET_INVENTORY, wb);
 	}
 
-	void sendSetGoal(EntityId eid, glm::vec3 pos) override {
-		if (!m_connected) return;
-		net::WriteBuffer wb;
-		wb.writeU32(eid);
-		wb.writeF32(pos.x); wb.writeF32(pos.y); wb.writeF32(pos.z);
-		net::sendMessage(m_tcp.fd(), net::C_SET_GOAL, wb);
-	}
-
-	void sendSetGoalGroup(glm::vec3 pos, const std::vector<EntityId>& eids) override {
-		if (!m_connected || eids.empty()) return;
-		net::WriteBuffer wb;
-		wb.writeF32(pos.x); wb.writeF32(pos.y); wb.writeF32(pos.z);
-		wb.writeU32((uint32_t)eids.size());
-		for (auto eid : eids) wb.writeU32(eid);
-		net::sendMessage(m_tcp.fd(), net::C_SET_GOAL_GROUP, wb);
-	}
-
-	void sendCancelGoal(EntityId eid) override {
-		if (!m_connected) return;
-		net::WriteBuffer wb;
-		wb.writeU32(eid);
-		net::sendMessage(m_tcp.fd(), net::C_CANCEL_GOAL, wb);
-	}
-
 	void sendProximity(const std::vector<EntityId>& eids) override {
 		(void)eids; // C_PROXIMITY removed — agents run inside PlayerClient now
 	}

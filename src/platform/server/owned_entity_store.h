@@ -30,9 +30,6 @@ struct OwnedEntitySnapshot {
 	// Mirrors entities.bin shape.
 	std::vector<std::pair<std::string, int>>         items;
 	std::vector<std::pair<std::string, std::string>> equipment;
-	// Preserved so a mid-journey dog resumes instead of warping home.
-	bool        navActive = false;
-	glm::vec3   navLongGoal{0};
 };
 
 class OwnedEntityStore {
@@ -102,8 +99,6 @@ private:
 					s.equipment.push_back({equipSlotName((WearSlot)i), eq});
 			}
 		}
-		s.navActive   = e.nav.active;
-		s.navLongGoal = e.nav.longGoal;
 		return s;
 	}
 
@@ -133,7 +128,6 @@ private:
 				}
 			}
 		}
-		if (s.navActive) e->nav.setGoal(s.navLongGoal);
 		return true;
 	}
 

@@ -278,8 +278,10 @@ inline bool saveWorld(GameServer& server, const std::string& savePath, const Wor
 			for (auto& [id, cnt] : s.items) { wb.writeString(id); wb.writeI32(cnt); }
 			wb.writeU8((uint8_t)s.equipment.size());
 			for (auto& [slot, id] : s.equipment) { wb.writeString(slot); wb.writeString(id); }
-			wb.writeBool(s.navActive);
-			wb.writeVec3(s.navLongGoal);
+			// v1 trailer kept for on-disk back-compat: nav state was [bool][vec3];
+			// always write zeros now so older builds can still load new saves.
+			wb.writeBool(false);
+			wb.writeVec3(glm::vec3(0));
 		};
 		for (auto& [seatId, snaps] : server.ownedEntities().all()) {
 			if (snaps.empty() || seatId == SEAT_NONE) continue;
@@ -677,8 +679,10 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 						std::string id   = rb.readString();
 						s.equipment.push_back({slot, id});
 					}
-					s.navActive   = rb.hasMore() ? rb.readBool() : false;
-					s.navLongGoal = rb.hasMore() ? rb.readVec3() : glm::vec3(0);
+					// Skip legacy nav trailer (bool + vec3) if present; navigation
+					// is client-side now, nothing to restore from it.
+					if (rb.hasMore()) (void)rb.readBool();
+					if (rb.hasMore()) (void)rb.readVec3();
 					snaps.push_back(std::move(s));
 				}
 				totalSnaps += (uint32_t)snaps.size();

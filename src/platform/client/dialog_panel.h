@@ -67,6 +67,10 @@ public:
 		m_session  = std::make_unique<civcraft::llm::LlmSession>(client, sysIt->second, temp);
 		m_target   = target;
 		m_npcName  = npcName;
+		{
+			auto vIt = artifact.fields.find("dialog_voice");
+			m_voiceName = (vIt != artifact.fields.end()) ? vIt->second : std::string();
+		}
 		m_greeting = std::move(greeting);
 		m_input.clear();
 		m_display.clear();
@@ -101,6 +105,7 @@ public:
 		m_session.reset();
 		m_input.clear();
 		m_display.clear();
+		m_voiceName.clear();
 		m_audio = nullptr;
 		m_whisper = nullptr;
 		m_tts = nullptr;
@@ -411,7 +416,16 @@ public:
 		const float titleCol[4] = {1.0f, 0.85f, 0.45f, 1.0f};
 		std::string title = m_npcName.empty() ? std::string("Talk") : m_npcName;
 		ui::drawCenteredTitle(r, title.c_str(),
-			0.0f, titleY + 0.018f, 0.95f, titleCol);
+			0.0f, titleY + 0.022f, 0.95f, titleCol);
+		// Voice tag under the name — tells the player which piper voice is
+		// currently routed, so the TTS flavor isn't a mystery.
+		if (!m_voiceName.empty()) {
+			const float voiceCol[4] = {0.70f, 0.65f, 0.55f, 0.85f};
+			std::string voiceLine = std::string("voice: ") + m_voiceName;
+			float vw = (float)voiceLine.size() * ui::kCharWNdc * 0.45f;
+			r->drawText2D(voiceLine.c_str(),
+				-vw * 0.5f, titleY + 0.005f, 0.45f, voiceCol);
+		}
 		// Speaking indicator — small green dot in the title bar while TTS
 		// is mid-flight. Approximate subtitle sync: while this is lit, the
 		// newest sentence in history is being synthesized or is queued for
@@ -595,6 +609,7 @@ private:
 	bool                                         m_open = false;
 	EntityId                                     m_target = 0;
 	std::string                                  m_npcName;
+	std::string                                  m_voiceName;   // artifact's `dialog_voice` field, shown in title bar
 	std::string                                  m_greeting;
 	std::string                                  m_input;
 	std::vector<Line>                            m_display;

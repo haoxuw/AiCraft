@@ -207,29 +207,6 @@ public:
 	bool onGround = false;
 	bool skipPhysics = false;  // clientPos accepted — client already ran physics
 
-	// Server-side click-to-move nav state (C_SET_GOAL / C_SET_GOAL_GROUP).
-	struct NavState {
-		bool active = false;
-		glm::vec3 longGoal  = {0, 0, 0};  // formation-adjusted destination
-		glm::vec3 shortGoal = {0, 0, 0};  // steering target (differs when dodging)
-
-		float stuckTimer = 0.0f;
-		glm::vec3 stuckCheckPos = {0, 0, 0};
-
-		float dodgeTimer = 0.0f;
-		int   dodgeSign  = 0;      // -1=left, +1=right, 0=straight
-
-		void clear() {
-			active = false; dodgeTimer = 0; dodgeSign = 0; stuckTimer = 0;
-		}
-		void setGoal(glm::vec3 g) {
-			active = true; longGoal = g; shortGoal = g;
-			dodgeTimer = 0; dodgeSign = 0; stuckTimer = 0;
-			stuckCheckPos = {0, 0, 0};
-		}
-	};
-	NavState nav;
-
 	bool removed = false;
 	bool removalBroadcast = false;  // S_REMOVE sent
 	uint8_t removalReason = 0;      // EntityRemovalReason wire value; set by whoever set `removed`

@@ -48,10 +48,8 @@ public:
 	virtual void sendAction(const ActionProposal& action) = 0;
 	virtual void sendGetInventory(EntityId eid) {}
 
-	// Server-side click-to-move (RPG/RTS).
-	virtual void sendSetGoal(EntityId eid, glm::vec3 pos) {}
-	virtual void sendSetGoalGroup(glm::vec3 pos, const std::vector<EntityId>& eids) {}
-	virtual void sendCancelGoal(EntityId eid) {}
+	// Click-to-move and RTS group commands run client-side now — behaviors emit
+	// Move actions via civcraft_engine.Move / .Navigator; no server RPC.
 
 	// Triggers NPC re-decide when listed eids enter player proximity.
 	virtual void sendProximity(const std::vector<EntityId>& eids) {}

@@ -25,12 +25,11 @@ State machine:
 import math
 import traceback
 
-from civcraft_engine import Move, scan_blocks, scan_entities
+from civcraft_engine import Move, Navigator, scan_blocks, scan_entities
 from actions import StoreItem, DropItem
 from behavior_base import Behavior
 from entity_log import log as elog
 from local_world import SelfEntity, LocalWorld
-from pathfind import Navigator
 from stats import stats
 
 STORE_RANGE  = 3.0   # must be <= server-side StoreItem range (5.0 blocks).
@@ -64,15 +63,6 @@ class WoodcutterBehavior(Behavior):
         self._nav             = Navigator()
         self._chest_target    = None   # (eid, x, y, z) cache for current deposit trip
         self._prev_state      = None
-        # Unreachable-anchor blacklist. Populated when the villager picks the
-        # same anchor for N consecutive ticks without getting closer OR
-        # collecting anything — the executor's walk step is wedged and no
-        # retry will help. Cleared every time WORK state is entered fresh.
-        self._failed_anchors     = set()
-        self._last_anchor_key    = None
-        self._last_anchor_dist   = None
-        self._last_logs_at_work  = None
-        self._stuck_ticks        = 0
 
     # -- Top-level decide ----------------------------------------------------
 
@@ -97,17 +87,8 @@ class WoodcutterBehavior(Behavior):
                 self._prev_state, self._state,
                 entity.inventory.total_value(), entity.inventory_capacity,
                 entity.inventory.count("logs")))
-            self._nav.reset()
+            self._nav.clear()
             self._chest_target = None
-            # Fresh WORK cycle: clear the blacklist so trees that failed
-            # last trip (different position, different terrain) get another
-            # chance after deposit.
-            if self._state == self.WORK:
-                self._failed_anchors.clear()
-                self._last_anchor_key   = None
-                self._last_anchor_dist  = None
-                self._last_logs_at_work = None
-                self._stuck_ticks       = 0
             self._prev_state = self._state
 
         if self._state == self.SLEEP:
@@ -148,96 +129,73 @@ class WoodcutterBehavior(Behavior):
 
     # -- State: Work ---------------------------------------------------------
 
-    # Consecutive no-progress ticks before an anchor is blacklisted.
-    # A decide tick is ~0.5–1s for woodcutters, so 3 ticks ≈ 2–4s of
-    # no motion + no chop, which is comfortably past Navigator arrival
-    # jitter but short enough to abandon a wedged spot quickly.
-    _STUCK_TICK_LIMIT = 3
+    # How many candidate anchors to hand the executor per decide cycle.
+    # Executor cycles them in order, blacklisting wedged or picked-clean
+    # slots. 16 is plenty to route around a cluster of unreachable trees
+    # without walking 80 blocks of forest looking for the 17th.
+    _CANDIDATE_LIMIT = 16
 
     def _work(self, entity: SelfEntity, local_world: LocalWorld):
         spd    = entity.walk_speed
         origin = (entity.x, entity.y, entity.z)
+        logs   = entity.inventory.count("logs")
 
-        # Scan multiple candidates per tier so we can skip anchors the
-        # executor has already failed on. `max_results=16` is enough to
-        # route around a single unreachable tree without walking 80 blocks
-        # of forest looking for the 17th.
-        anchor = None
+        # Scan the highest-priority tier with any hits and hand the whole list
+        # to the executor. The executor owns "which anchor to stand at next"
+        # — this function just declares where trees exist and how many logs
+        # we still need.
+        candidates = []
         for tier in self.GATHER_PRIORITY:
             stats.inc("scan_blocks")
             hits = scan_blocks(tier, near=origin,
-                               max_dist=self._work_radius, max_results=16)
-            for h in hits:
-                key = (int(h["x"]), int(h["y"]), int(h["z"]))
-                if key in self._failed_anchors:
-                    continue
-                anchor = h
-                break
-            if anchor is not None:
+                               max_dist=self._work_radius,
+                               max_results=self._CANDIDATE_LIMIT)
+            if hits:
+                candidates = hits
                 break
 
-        if anchor is None:
-            # Either nothing in range, or every candidate is blacklisted.
-            # Reset the blacklist so the villager can retry after wandering
-            # to a new spot — terrain can change (trees grow, holes fill),
-            # and the stuck trigger will re-blacklist if still unreachable.
-            if self._failed_anchors:
-                elog(entity.id, "work: all %d candidates blacklisted, "
-                     "resetting and wandering" % len(self._failed_anchors))
-                self._failed_anchors.clear()
-            else:
-                elog(entity.id, "work: no anchor in %.0f blocks, searching" %
-                     self._work_radius)
+        if not candidates:
+            elog(entity.id, "work: no anchor in %.0f blocks, searching" %
+                 self._work_radius)
             return self._search(entity, local_world, spd)
 
-        anchor_key = (int(anchor["x"]), int(anchor["y"]), int(anchor["z"]))
-        dist = ((anchor["x"] + 0.5 - entity.x)**2 +
-                (anchor["z"] + 0.5 - entity.z)**2) ** 0.5
-        logs = entity.inventory.count("logs")
-
-        # Stuck detector: same anchor, not getting closer, not chopping.
-        if anchor_key == self._last_anchor_key:
-            got_closer = (self._last_anchor_dist is None or
-                          dist < self._last_anchor_dist - 0.2)
-            chopped = (self._last_logs_at_work is not None and
-                       logs > self._last_logs_at_work)
-            if not (got_closer or chopped):
-                self._stuck_ticks += 1
-            else:
-                self._stuck_ticks = 0
-        else:
-            self._stuck_ticks = 0
-
-        self._last_anchor_key   = anchor_key
-        self._last_anchor_dist  = dist
-        self._last_logs_at_work = logs
-
-        if self._stuck_ticks >= self._STUCK_TICK_LIMIT:
-            elog(entity.id, "work: blacklisting unreachable anchor=(%d,%d,%d) "
-                 "after %d stuck ticks (d=%.1f, logs=%d)" % (
-                 anchor_key[0], anchor_key[1], anchor_key[2],
-                 self._stuck_ticks, dist, logs))
-            self._failed_anchors.add(anchor_key)
-            self._stuck_ticks     = 0
-            self._last_anchor_key = None
-            # Wander — not idle. A stuck villager in a pit needs to
-            # physically displace; otherwise the next scan returns the
-            # same cluster of nearby-but-overhead trees.
+        # Overhead-only filter: the executor cycles candidates that are
+        # *wedged horizontally* but can't help with "stuck in a pit, trunk
+        # is 6 blocks up". If every candidate is overhead, the villager
+        # must physically escape first — wander, then re-scan next decide.
+        _MAX_Y_DELTA = 3  # approx. jump + climb height
+        reachable = [h for h in candidates
+                     if abs(h["y"] - entity.y) <= _MAX_Y_DELTA]
+        if not reachable:
+            elog(entity.id,
+                 "work: %d candidates all overhead (|dy|>%d), wandering" %
+                 (len(candidates), _MAX_Y_DELTA))
             return self._search(entity, local_world, spd)
+        candidates = reachable
 
-        elog(entity.id, "work: anchor=(%d,%d,%d) self=(%.1f,%.1f,%.1f) "
-             "d=%.1f logs=%d" % (
-             int(anchor["x"]), int(anchor["y"]), int(anchor["z"]),
-             entity.x, entity.y, entity.z, dist, logs))
+        # Log the primary candidate for telemetry parity with the legacy line
+        # (tests grep for `work: anchor=...`); fall-back slots aren't logged
+        # Python-side because the executor picks them.
+        primary = candidates[0]
+        dist = ((primary["x"] + 0.5 - entity.x)**2 +
+                (primary["z"] + 0.5 - entity.z)**2) ** 0.5
+        elog(entity.id,
+             "work: anchor=(%d,%d,%d) self=(%.1f,%.1f,%.1f) "
+             "d=%.1f logs=%d candidates=%d" % (
+             int(primary["x"]), int(primary["y"]), int(primary["z"]),
+             entity.x, entity.y, entity.z, dist, logs, len(candidates)))
 
         plan = [{
             "type": "harvest",
-            "x": float(anchor["x"]) + 0.5,
-            "y": float(anchor["y"]) + 0.5,
-            "z": float(anchor["z"]) + 0.5,
+            "candidates": [{"x": float(h["x"]) + 0.5,
+                            "y": float(h["y"]) + 0.5,
+                            "z": float(h["z"]) + 0.5} for h in candidates],
             "gather_types": list(self.GATHER_PRIORITY),
             "gather_radius": GATHER_RADIUS,
             "chop_cooldown": CHOP_COOLDOWN,
+            # Let the executor keep chopping until we've collected the
+            # remaining quota, so we don't ping decide() between every swing.
+            "count_goal": max(1, self._collect_goal - logs),
             # Conservative capacity gate: if one more log fits, everything
             # else in the priority list fits too (logs are the heaviest).
             "item": "logs",
@@ -246,11 +204,10 @@ class WoodcutterBehavior(Behavior):
 
     def _search(self, entity: SelfEntity, local_world: LocalWorld, spd: float):
         tx, ty, tz = self.wander_target(entity, radius=20)
-        goal = (int(tx), int(ty), int(tz))
-        action = self._nav.navigate(entity, local_world, goal, speed=spd)
-        if action:
-            return action, "Searching for trees"
-        return Move(tx, ty, tz, speed=spd), "Searching for trees"
+        self._nav.set_goal(int(tx), int(ty), int(tz))
+        action = self._nav.next_action(entity)
+        action.speed = spd
+        return action, "Searching for trees"
 
     # -- State: Deposit ------------------------------------------------------
 
@@ -279,7 +236,7 @@ class WoodcutterBehavior(Behavior):
         # (Re)acquire the nearest chest. Re-scan if the cached one vanished.
         if self._chest_target is None:
             self._chest_target = self._find_chest(entity)
-            self._nav.reset()
+            self._nav.clear()
 
         if self._chest_target is None:
             elog(entity.id, "no chest in %.0f blocks, dropping %d logs"
@@ -298,8 +255,9 @@ class WoodcutterBehavior(Behavior):
 
         elog(entity.id, "deposit: walking chest=%d d=%.2f logs=%d"
              % (eid, dist_to_chest, logs))
-        goal = (int(cx), int(cy), int(cz))
-        action = self._nav.navigate(entity, local_world, goal, speed=spd)
-        if action:
-            return action, "Carrying logs to chest"
-        return Move(entity.x, entity.y, entity.z), "Waiting near chest"
+        self._nav.set_goal(int(cx), int(cy), int(cz))
+        action = self._nav.next_action(entity)
+        if self._nav.status() == "blocked":
+            return Move(entity.x, entity.y, entity.z), "Waiting near chest"
+        action.speed = spd
+        return action, "Carrying logs to chest"

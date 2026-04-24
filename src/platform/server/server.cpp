@@ -570,6 +570,32 @@ void GameServer::resolveConvertAction(ActionProposal p,
 						}
 					}
 				}
+
+				// Chest block → Chest entity: not a StructureCacher anchor, so
+				// find by typeId + position. Spill its inventory as ItemEntities
+				// and despawn the entity.
+				const BlockDef& brokenDef = m_world->blocks.get(bid);
+				if (brokenDef.string_id == BlockType::Chest) {
+					for (Entity* ce : m_world->entities.getByType(StructureName::Chest)) {
+						int ex = (int)std::floor(ce->position.x);
+						int ey = (int)std::floor(ce->position.y);
+						int ez = (int)std::floor(ce->position.z);
+						if (ex != bp.x || ey != bp.y || ez != bp.z) continue;
+						if (ce->inventory) {
+							glm::vec3 dropPos = glm::vec3(bp) + glm::vec3(0.5f, 0.3f, 0.5f);
+							for (auto& [itemId, cnt] : ce->inventory->items()) {
+								m_world->entities.spawn(ItemName::ItemEntity, dropPos,
+									{{Prop::ItemType, itemId}, {Prop::Count, cnt}, {Prop::Age, 0.0f}});
+							}
+							ce->inventory->clear();
+							if (m_callbacks.onInventoryChange)
+								m_callbacks.onInventoryChange(ce->id(), *ce->inventory);
+						}
+						ce->removed = true;
+						ce->removalReason = (uint8_t)EntityRemovalReason::Despawned;
+						break;
+					}
+				}
 			} else if (p.fromItem == "hp") {
 				int hp = actor->hp();
 				actor->setHp(std::max(hp - p.fromCount, 0));
@@ -648,6 +674,13 @@ void GameServer::resolveConvertAction(ActionProposal p,
 
 				if (placedDef->behavior == BlockBehavior::Active)
 					m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
+
+				// Chest block → spawn the matching Structure entity so it owns
+				// a fresh inventory. Mirrors the village-gen chest pairing.
+				if (placedDef->string_id == BlockType::Chest) {
+					glm::vec3 blockCenter = glm::vec3(pp) + glm::vec3(0.5f);
+					m_world->entities.spawn(StructureName::Chest, blockCenter, {});
+				}
 			} else if (p.toItem == "hp") {
 				int hp = actor->hp();
 				if (hp < actor->def().max_hp)

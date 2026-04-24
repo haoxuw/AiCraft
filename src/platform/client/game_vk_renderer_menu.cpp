@@ -166,7 +166,7 @@ void MenuRenderer::renderMenu() {
 		};
 		int picked = drawMenuList(in, items, cursor,
 			0.0f, 0.46f, 0.090f, 0.50f);
-		if (picked == 0) g.m_menuScreen = MenuScreen::Singleplayer;
+		if (picked == 0) g.m_menuScreen = MenuScreen::CharacterSelect;
 		else if (picked == 1) g.m_menuScreen = MenuScreen::Multiplayer;
 		else if (picked == 2) {
 			g.m_handbook.reset();
@@ -177,27 +177,6 @@ void MenuRenderer::renderMenu() {
 
 		if (!g.m_lastDeathReason.empty())
 			ui::drawCenteredText(R, g.m_lastDeathReason.c_str(), 0.0f, -0.78f, 0.70f, kDanger);
-		break;
-	}
-	case MenuScreen::Singleplayer: {
-		drawMenuFrame(R, -0.36f, -0.32f, 0.72f, 0.82f, "Your Worlds");
-		ui::drawCenteredText(R, "(world list coming in Stage C)",
-			0.0f, 0.20f, 0.72f, kTextHint);
-
-		static int cursor = 0;
-		std::vector<std::string> items = {
-			"START VILLAGE WORLD", "BACK"
-		};
-		int picked = drawMenuList(in, items, cursor,
-			0.0f, 0.04f, 0.100f, 0.56f);
-		if (picked == 0) {
-			g.m_connectError.clear();
-			g.m_menuScreen = MenuScreen::CharacterSelect;
-			cursor = 0;
-		} else if (picked == 1) {
-			g.m_menuScreen = MenuScreen::Main;
-			cursor = 0;
-		}
 		break;
 	}
 	case MenuScreen::CharacterSelect: {
@@ -267,7 +246,7 @@ void MenuRenderer::renderMenu() {
 		if (drawMenuList(in, backItems, backCursor,
 		                 btnX + btnW * 0.5f, btnY + btnH,
 		                 btnH, btnW) == 0) {
-			g.m_menuScreen = MenuScreen::Singleplayer;
+			g.m_menuScreen = MenuScreen::Main;
 		}
 
 		// Right-aligned hint strip: navigation + action.

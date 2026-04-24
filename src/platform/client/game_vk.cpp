@@ -1179,7 +1179,7 @@ void Game::registerDebugTriggers() {
 		float tx = 0, ty = 0, tz = 0;
 		if (sscanf(line.c_str(), "%f %f %f", &tx, &ty, &tz) >= 3) {
 			glm::vec3 target(tx, ty, tz);
-			m_server->sendSetGoal(m_server->localPlayerId(), target);
+			// Direct-drive: virtual joystick tick steers toward the target.
 			m_hasMoveOrder    = true;
 			m_moveOrderTarget = target;
 			std::printf("[vk-game] [trigger] goto (%.1f,%.1f,%.1f)\n", tx, ty, tz);
