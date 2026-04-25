@@ -144,6 +144,16 @@ void GameServer::resolveMoveAction(ActionProposal p) {
 				e->onGround = false;
 			}
 
+			// Phase 3: wake the actor whenever this Move imparts motion.
+			// Stop-moves (desiredVel ≈ 0, no jump) skip — entity stays
+			// settled. Lets idle-but-not-yet-asleep mobs continue to
+			// sleep through their first tick of "still standing".
+			float vmag2 = p.desiredVel.x*p.desiredVel.x
+			            + p.desiredVel.y*p.desiredVel.y
+			            + p.desiredVel.z*p.desiredVel.z;
+			if (vmag2 > 0.0001f || p.jump || p.hasClientPos)
+				m_world->entities.wake(*e);
+
 	} while (false);
 }
 
@@ -554,6 +564,8 @@ void GameServer::resolveConvertAction(ActionProposal p,
 				c->set(lx, ly, lz, BLOCK_AIR);
 				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{bp, bid, BLOCK_AIR, oldP2, 0, oldApp, 0},
 					BroadcastPriority::High);
+				// Phase 3: a removed block can let entities above it fall.
+				m_world->entities.wakeAt({bp.x + 0.5f, bp.y + 0.5f, bp.z + 0.5f}, 3.0f);
 
 				// Structure damage: remove entity if anchor destroyed.
 				EntityId sid = m_structureCacher.lookup(bp);
@@ -671,6 +683,8 @@ void GameServer::resolveConvertAction(ActionProposal p,
 				       ((pp.z % 16) + 16) % 16, placedBid, placeP2);
 				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pp, BLOCK_AIR, placedBid, 0, placeP2, 0, 0},
 					BroadcastPriority::High);
+				// Phase 3: a placed block may need to push entities out of it.
+				m_world->entities.wakeAt({pp.x + 0.5f, pp.y + 0.5f, pp.z + 0.5f}, 3.0f);
 
 				if (placedDef->behavior == BlockBehavior::Active)
 					m_world->setBlockState(pp.x, pp.y, pp.z, placedDef->default_state);
@@ -765,6 +779,10 @@ void GameServer::resolveInteractAction(const ActionProposal& p) {
 				glm::ivec3 pos{x, y, z};
 				if (m_callbacks.onBlockChange) m_callbacks.onBlockChange(BlockChange{pos, oldId, id, p2, p2, oldApp, 0},
 					BroadcastPriority::High);
+				// Phase 3: door toggle clears/re-blocks a corridor — wake any
+				// entity in the doorway so its physics step picks up the new
+				// solid (and Navigator's interact handshake unblocks).
+				m_world->entities.wakeAt({x + 0.5f, y + 0.5f, z + 0.5f}, 3.0f);
 			};
 
 			setBlock(bp.x, bp.y, bp.z, newId);

@@ -540,6 +540,11 @@ int main(int argc, char** argv) {
 				// filter (or the active list is out of sync with m_entities).
 				PERF_RECORD_MS("server.entities.physics_active_count",
 				               (double)server.world().entities.physicsActiveCount());
+				// Phase 3 wake churn — wakeups per tick. Healthy: << active
+				// count (wakes are events). Pathological: ≈ active count
+				// every tick (sleep criterion is too tight, entities thrash).
+				PERF_RECORD_MS("server.entities.wakeups_per_tick",
+				               (double)server.world().entities.consumeWakeupsThisTick());
 				PERF_RECORD_MS("server.chunks.loaded_count",
 				               (double)server.world().loadedChunkCount());
 			}

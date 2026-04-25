@@ -206,6 +206,11 @@ public:
 	bool hasError = false;
 	bool onGround = false;
 	bool skipPhysics = false;  // clientPos accepted — client already ran physics
+	// Phase 3 sleep/wake — stepPhysics stops walking this entity when it
+	// settles (vel≈0 ∧ onGround) and removes it from the active set.
+	// EntityManager::wake() flips it back true and re-pushes; sources are
+	// Move resolution + onBlockChange + spawn.
+	bool physicsAwake = true;
 
 	bool removed = false;
 	bool removalBroadcast = false;  // S_REMOVE sent

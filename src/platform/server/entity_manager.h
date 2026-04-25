@@ -252,6 +252,19 @@ public:
 				}
 			}
 
+			// Phase 3 sleep — settled entities drop out of the working set.
+			// onGround AND vel² < ε in all 3 axes. Living wake on Move action;
+			// any entity wakes on a nearby block change. ε² is set well below
+			// what the physics floor (gravity * dt) settles to so we don't
+			// thrash on the ground tick where vel.y = -tiny.
+			constexpr float kSleepVelEps2 = 0.0001f;   // 0.01 m/s, sq
+			float vmag2 = e.velocity.x * e.velocity.x
+			            + e.velocity.y * e.velocity.y
+			            + e.velocity.z * e.velocity.z;
+			if (e.onGround && vmag2 < kSleepVelEps2) {
+				e.physicsAwake = false;
+				continue;   // drop from active set
+			}
 			m_physicsActive[writeIdx++] = eptr;
 		}
 		m_physicsActive.resize(writeIdx);
@@ -269,6 +282,38 @@ public:
 	// that the working set tracks living+item count, not total.
 	size_t physicsActiveCount() const { return m_physicsActive.size(); }
 
+	// Phase 3 sleep/wake. Sleeping entities are out of m_physicsActive;
+	// these helpers re-add them. Idempotent on already-awake entities and
+	// no-op for structures (which never participate). Wake sources:
+	//   * Move action resolution → wake actor (server.cpp::resolveMoveAction).
+	//   * onBlockChange callback → wakeAt(blockPos, ~3) for nearby fall/push.
+	//   * spawn() — already pushes, physicsAwake defaults true.
+	void wake(Entity& e) {
+		if (e.physicsAwake)        return;
+		if (e.def().isStructure()) return;
+		e.physicsAwake = true;
+		m_physicsActive.push_back(&e);
+		++m_wakeupsThisTick;
+	}
+	void wakeAt(glm::vec3 center, float radius) {
+		float r2 = radius * radius;
+		for (auto& [id, ent] : m_entities) {
+			if (ent->removed)            continue;
+			if (ent->physicsAwake)       continue;
+			if (ent->def().isStructure())continue;
+			glm::vec3 d = ent->position - center;
+			if (d.x*d.x + d.y*d.y + d.z*d.z <= r2) wake(*ent);
+		}
+	}
+	// Sampled per-tick by main.cpp; resets each tick. Counts wake() hits
+	// so we can spot churn (high wakeups + small active set = sleep
+	// criterion is too tight, entities are toggling).
+	uint32_t consumeWakeupsThisTick() {
+		uint32_t v = m_wakeupsThisTick;
+		m_wakeupsThisTick = 0;
+		return v;
+	}
+
 	void forEach(std::function<void(Entity&)> fn) {
 		for (auto& [id, e] : m_entities)
 			if (!e->removed) fn(*e);
@@ -285,6 +330,7 @@ private:
 	std::unordered_map<std::string, EntityDef> m_typeDefs;
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
 	std::vector<Entity*>                                  m_physicsActive;
+	uint32_t                                              m_wakeupsThisTick = 0;
 	EntityId m_nextId = 1;
 };
 
