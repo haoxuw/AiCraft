@@ -6,17 +6,19 @@ NEW CONTRACT (Plan-based)
 -------------------------
     decide(entity: SelfEntity, local_world: LocalWorld) → (plan, goal_str)
 
-    plan      — a list of PlanStep dicts, each with a "type" key:
-                  {"type": "move", "x": ..., "y": ..., "z": ...}
-                  {"type": "harvest", "x": ..., "y": ..., "z": ...}
-                  {"type": "attack", "entity_id": ...}
-                  {"type": "relocate", "from": Container, "to": Container,
-                   "item": "logs", "count": 1}
+    plan      — a list of strongly-typed plan_steps.* Pydantic models:
+                  HarvestStep(candidates=[Vec3(...), ...],
+                              gather_types=["logs"], item="logs")
+                  AttackStep(entity_id=...)
+                  RelocateStep(item="logs", count=1)
+                All movement is implicit — plan steps resolve their own
+                target (nearest candidate, target entity, chest) and the
+                executor walks there. There is no "move to coordinate"
+                primitive; for one-off movement use Move(...) PyAction.
     goal_str  — non-empty human-readable string (shown above entity's head).
 
-    The old single-action return (Move(...), goal) is DEPRECATED.
-    Behaviors should return a list of plan steps that the AgentClient
-    executes sequentially.
+    The old single-action return (Move(...), goal) is still supported for
+    idle / wander / follow — see the PyAction path below.
 
 Event-driven loop
 -----------------
@@ -41,16 +43,20 @@ Event-driven loop
 Example
 -------
     from behavior_base import Behavior
+    from civcraft_engine import Move
+    from plan_steps import HarvestStep, Vec3
 
     class WoodcutterBehavior(Behavior):
         def decide(self, entity, local_world):
-            tree = local_world.get("logs", max_dist=40)
-            if tree:
-                return [
-                    {"type": "move", "x": tree.x, "y": tree.y, "z": tree.z},
-                    {"type": "harvest", "x": tree.x, "y": tree.y, "z": tree.z},
-                ], "Chopping wood"
-            return [{"type": "move", **self._wander_target(entity)}], "Wandering"
+            trees = local_world.all("logs", max_dist=40)
+            if trees:
+                return [HarvestStep(
+                    candidates=[Vec3(x=t.x, y=t.y, z=t.z) for t in trees],
+                    gather_types=["logs"],
+                    item="logs",
+                )], "Chopping wood"
+            tx, ty, tz = self.wander_target(entity)
+            return Move(int(tx), int(ty), int(tz), use_navigator=True), "Wandering"
 """
 
 import math
@@ -115,12 +121,11 @@ class Behavior:
         Returns
         -------
         (plan, goal_str) where:
-            plan = list of PlanStep dicts, e.g.:
-                [{"type": "move", "x": 10, "y": 4, "z": 20}]
-                [{"type": "move", ...}, {"type": "harvest", "x": 5, "y": 4, "z": 8}]
-                [{"type": "attack", "entity_id": 42}]
-                [{"type": "relocate", "from": Self(), "to": Block(x,y,z),
-                  "item": "logs", "count": 1}]
+            plan = list of plan_steps.* Pydantic models, e.g.:
+                [HarvestStep(candidates=[...], gather_types=["logs"],
+                             item="logs")]
+                [AttackStep(entity_id=42)]
+                [RelocateStep(item="logs", count=1)]
             goal_str = non-empty human-readable string
         """
         raise NotImplementedError(

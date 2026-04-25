@@ -57,16 +57,6 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 		return dHoriz + (float)dy;
 	};
 
-	// Entity is 2 cells tall: floor solid, body + head air.
-	auto standable = [&](glm::ivec3 p) {
-		if (!m_world.isSolid({p.x, p.y - 1, p.z})) return false;
-		if ( m_world.isSolid(p))                   return false;
-		if ( m_world.isSolid({p.x, p.y + 1, p.z})) return false;
-		return true;
-	};
-
-	static const glm::ivec3 DIRS[4] = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1}};
-
 	std::priority_queue<OpenEntry>      open;
 	std::unordered_map<int64_t, float>  gScore;
 	std::unordered_map<int64_t, CameFrom> cameFrom;
@@ -110,26 +100,19 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 			}
 		};
 
-		// Wall-clearance cost bump: prefer routes with breathing room.
-		auto wallPenalty = [&](glm::ivec3 c) {
-			if (m_cfg.wallClearancePenalty <= 0) return 0.0f;
-			int walls = 0;
-			for (auto nd : DIRS) if (m_world.isSolid(c + nd)) walls++;
-			return m_cfg.wallClearancePenalty * (float)walls;
-		};
-
 		const bool headroom = !m_world.isSolid({p.x, p.y + 2, p.z});
-		for (auto d : DIRS) {
+		for (auto d : CARDINAL_DIRS) {
 			glm::ivec3 w = p + d;
-			if (standable(w)) relax(w, MoveKind::Walk, 1.0f + wallPenalty(w));
+			if (isStandable(m_world, w))
+				relax(w, MoveKind::Walk, 1.0f + wallClearancePenalty(w));
 
 			if (headroom) {
 				glm::ivec3 j = p + d + glm::ivec3(0, 1, 0);
-				if (standable(j)) relax(j, MoveKind::Jump, m_cfg.jumpCost);
+				if (isStandable(m_world, j)) relax(j, MoveKind::Jump, m_cfg.jumpCost);
 			}
 
 			glm::ivec3 dsc = p + d + glm::ivec3(0, -1, 0);
-			if (standable(dsc)) relax(dsc, MoveKind::Descend, m_cfg.descendCost);
+			if (isStandable(m_world, dsc)) relax(dsc, MoveKind::Descend, m_cfg.descendCost);
 		}
 	}
 
@@ -181,15 +164,6 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 	std::vector<Path> out(starts.size());
 	if (starts.empty()) return out;
 
-	auto standable = [&](glm::ivec3 p) {
-		if (!m_world.isSolid({p.x, p.y - 1, p.z})) return false;
-		if ( m_world.isSolid(p))                   return false;
-		if ( m_world.isSolid({p.x, p.y + 1, p.z})) return false;
-		return true;
-	};
-
-	static const glm::ivec3 DIRS[4] = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1}};
-
 	std::priority_queue<OpenEntry>        open;
 	std::unordered_map<int64_t, float>    gScore;
 	std::unordered_map<int64_t, CameFrom> cameFrom;
@@ -220,7 +194,7 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 		float      gCur = itG->second;
 
 		auto relax = [&](glm::ivec3 pred, MoveKind fwdKind, float fwdCost) {
-			if (!standable(pred)) return;
+			if (!isStandable(m_world, pred)) return;
 			const int64_t kP = encode(pred);
 			float tentative = gCur + fwdCost;
 			auto it = gScore.find(kP);
@@ -233,15 +207,10 @@ std::vector<Path> GridPlanner::planBatch(const std::vector<glm::ivec3>& starts,
 		};
 
 		// Penalty applied to destination c (matches plan()'s forward behaviour).
-		float walkPenalty = 0.0f;
-		if (m_cfg.wallClearancePenalty > 0) {
-			int walls = 0;
-			for (auto nd : DIRS) if (m_world.isSolid(c + nd)) walls++;
-			walkPenalty = m_cfg.wallClearancePenalty * (float)walls;
-		}
+		const float walkPenalty = wallClearancePenalty(c);
 
 		// Forward moves landing on c: Walk(pred=c-d), Jump(pred=c-d-up), Descend(pred=c-d+up).
-		for (auto d : DIRS) {
+		for (auto d : CARDINAL_DIRS) {
 			relax(c - d,                            MoveKind::Walk,    1.0f + walkPenalty);
 			relax(c - d - glm::ivec3(0, 1, 0),      MoveKind::Jump,    m_cfg.jumpCost);
 			relax(c - d + glm::ivec3(0, 1, 0),      MoveKind::Descend, m_cfg.descendCost);
@@ -278,15 +247,6 @@ FlowField GridPlanner::planFlowField(glm::ivec3 goal,
 	FlowField field;
 	field.goal = goal;
 
-	auto standable = [&](glm::ivec3 p) {
-		if (!m_world.isSolid({p.x, p.y - 1, p.z})) return false;
-		if ( m_world.isSolid(p))                   return false;
-		if ( m_world.isSolid({p.x, p.y + 1, p.z})) return false;
-		return true;
-	};
-
-	static const glm::ivec3 DIRS[4] = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1}};
-
 	std::priority_queue<OpenEntry>     open;
 	std::unordered_map<int64_t, float> gScore;
 
@@ -319,7 +279,7 @@ FlowField GridPlanner::planFlowField(glm::ivec3 goal,
 		float      gCur = itG->second;
 
 		auto relax = [&](glm::ivec3 pred, MoveKind fwdKind, float fwdCost) {
-			if (!standable(pred)) return;
+			if (!isStandable(m_world, pred)) return;
 			const int64_t kP = encode(pred);
 			float tentative = gCur + fwdCost;
 			auto it = gScore.find(kP);
@@ -330,14 +290,9 @@ FlowField GridPlanner::planFlowField(glm::ivec3 goal,
 			}
 		};
 
-		float walkPenalty = 0.0f;
-		if (m_cfg.wallClearancePenalty > 0) {
-			int walls = 0;
-			for (auto nd : DIRS) if (m_world.isSolid(c + nd)) walls++;
-			walkPenalty = m_cfg.wallClearancePenalty * (float)walls;
-		}
+		const float walkPenalty = wallClearancePenalty(c);
 
-		for (auto d : DIRS) {
+		for (auto d : CARDINAL_DIRS) {
 			relax(c - d,                            MoveKind::Walk,    1.0f + walkPenalty);
 			relax(c - d - glm::ivec3(0, 1, 0),      MoveKind::Jump,    m_cfg.jumpCost);
 			relax(c - d + glm::ivec3(0, 1, 0),      MoveKind::Descend, m_cfg.descendCost);

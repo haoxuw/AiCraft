@@ -10,11 +10,12 @@
 //     RTS group commands. Each tracked entity gets its own pop-front Path
 //     queue; group commands are sugar around GridPlanner::planBatch + N
 //     setPath() calls.
-//   * Pop-front arrival with a half-plane retire test: cells that the entity
-//     has projected past (along the segment to the next cell) are popped even
-//     if the entity never entered the cell's arrive ring. This covers
-//     physics-overshoot, collision shove, and teleport-forward without
-//     stalling on a waypoint that's now behind the entity.
+//   * Pop-front arrival with strict in-cell containment: the entity must
+//     actually enter each waypoint's XZ cell to retire it — no arrive ring,
+//     no segment projection. A scan-forward per tick pops every waypoint up
+//     through the deepest one the entity is currently inside, which handles
+//     both normal single-cell advance AND multi-cell overshoot (teleport,
+//     collision push-out, clientPos snap-back) in one pass.
 //   * Doors are first-class. A DoorOracle installed at construction is
 //     consulted for every tracked entity, so RTS units don't treat closed
 //     doors as walls.
@@ -47,23 +48,30 @@
 
 namespace civcraft {
 
+// Unified WorldView — works on both sides (server via World, client via
+// LocalWorld), since both implement ChunkSource. Doors/trapdoors are treated
+// as walkable at plan time; DoorOracle handles the Interact handshake on
+// closed doors, trapdoors walk through as-is.
 // Unloaded chunks report !isSolid (air), matching GridPlanner's expectation.
-struct ClientChunkWorldView : public WorldView {
+struct ChunkWorldView : public WorldView {
 	ChunkSource&         chunks;
 	const BlockRegistry& blocks;
-	ClientChunkWorldView(ChunkSource& c, const BlockRegistry& b) : chunks(c), blocks(b) {}
+	ChunkWorldView(ChunkSource& c, const BlockRegistry& b) : chunks(c), blocks(b) {}
 	bool isSolid(glm::ivec3 p) const override {
-		return blocks.get(chunks.getBlock(p.x, p.y, p.z)).solid;
+		const BlockDef& def = blocks.get(chunks.getBlock(p.x, p.y, p.z));
+		if (!def.solid) return false;
+		if (def.mesh_type == MeshType::Door)     return false;
+		if (def.mesh_type == MeshType::DoorOpen) return false;
+		if (def.mesh_type == MeshType::Trapdoor) return false;
+		return true;
 	}
 };
 
-// Door oracle for client-side path execution. Identifies a door cell by the
-// block's mesh_type (matches server-side AgentServerDoorOracle semantics but
-// reads straight off ChunkSource instead of ServerInterface).
-struct ClientChunkDoorOracle : public DoorOracle {
+// Door oracle — identifies a door cell by mesh_type.
+struct ChunkDoorOracle : public DoorOracle {
 	ChunkSource&         chunks;
 	const BlockRegistry& blocks;
-	ClientChunkDoorOracle(ChunkSource& c, const BlockRegistry& b) : chunks(c), blocks(b) {}
+	ChunkDoorOracle(ChunkSource& c, const BlockRegistry& b) : chunks(c), blocks(b) {}
 	bool isClosedDoor(glm::ivec3 p) const override {
 		return blocks.get(chunks.getBlock(p.x, p.y, p.z)).mesh_type == MeshType::Door;
 	}
@@ -72,18 +80,67 @@ struct ClientChunkDoorOracle : public DoorOracle {
 	}
 };
 
+// Rotate `cur` toward `des` in XZ by at most `maxRad` radians. Used to
+// cap per-tick velocity-heading change so waypoint pops don't snap the
+// direction. Zero `cur` snaps to `des` (first tick). Returns unit XZ.
+inline glm::vec3 rotateTowardXZ(glm::vec3 cur, glm::vec3 des, float maxRad) {
+	cur.y = 0; des.y = 0;
+	float cl2 = cur.x * cur.x + cur.z * cur.z;
+	float dl2 = des.x * des.x + des.z * des.z;
+	if (dl2 < 1e-8f) return {0, 0, 0};            // no desired heading
+	glm::vec3 d = des / std::sqrt(dl2);
+	if (cl2 < 1e-8f) return d;                     // first tick — snap
+	glm::vec3 c = cur / std::sqrt(cl2);
+	float dot  = c.x * d.x + c.z * d.z;
+	if (dot >  1.0f) dot =  1.0f;
+	if (dot < -1.0f) dot = -1.0f;
+	float ang = std::acos(dot);
+	if (ang <= maxRad) return d;                   // target within cap
+	float crossY = c.x * d.z - c.z * d.x;           // rotation sign
+	float sign   = (crossY >= 0.0f) ? 1.0f : -1.0f;
+	float sn     = std::sin(maxRad) * sign;
+	float cs     = std::cos(maxRad);
+	return { c.x * cs - c.z * sn, 0, c.x * sn + c.z * cs };
+}
+
 // Walk: cancel if unreachable. Build (long-press): enter experimental builder
 // mode (Phase 1 jump-climb; Phase 2+ stack blocks to bridge gaps).
 enum class CommandKind { Walk, Build };
 
 class PathExecutor {
 public:
-	// Arrival ring on a Walk waypoint. Tight enough that a cell pops before
-	// the entity steps out of it at 2.5 blk/s; the half-plane test below
-	// catches anything a single-tick step misses.
-	static constexpr float kArriveRadius = 0.9f;
-	static constexpr float kArriveY      = 1.0f;
+	// Waypoint pop: entity must reach within kMagnetRadius of cell center.
+	// Tight radius + turn-rate-capped velocity keep the entity on the
+	// planned path instead of cutting corners. kArriveRadius is retained
+	// only for formation-slot arrival (steerTargetFor), not waypoint pops.
+	static constexpr float kMagnetRadius = 0.15f;  // waypoint pop
+	static constexpr float kArriveRadius = 0.9f;   // slot arrival only
+	static constexpr float kArriveY      = 1.0f;   // waypoint Y tolerance
 	static constexpr float kDoorReachXZ  = 2.0f;
+
+	// Per-tick XZ direction-change cap. ~10°/tick @ 60 Hz → 90° corner
+	// takes ~9 ticks, keeping dv/dt smooth across pops.
+	static constexpr float kMaxTurnRate      = 10.0f;
+	static constexpr float kMaxTurnPerTick60 = 0.17f;
+
+	// Wall-slide: deflect toward the best standable cardinal neighbour when
+	// the desired XZ direction would clip a solid cell. Hysteresis keeps
+	// the chosen side sticky across ticks (no flicker).
+	static constexpr float kSlideRadius     = 0.30f;   // entity AABB half-width
+	static constexpr float kSlideLookahead  = 0.15f;   // begin slide before contact
+	static constexpr float kSlideHysteresis = 0.30f;   // sticky-side score bonus
+
+	// Stall pop — fires when movement drops below kStallRadius for
+	// kStallTicks in a row (boxed-in / dynamic blockage).
+	static constexpr float kStallRadius = 0.10f;
+	static constexpr int   kStallTicks  = 30;     // ~0.5 s at 60 Hz
+	// Probe the forward cell for a closed door before the 30-tick pop
+	// eats the waypoint. Collinear-Walk compression drops doors on
+	// straight corridors, so the front-waypoint check can't see them.
+	static constexpr int   kDoorScanTicks   = 8;   // ~0.13 s at 60 Hz
+	// BlockChange broadcast lags ~1 tick; an un-gated loop would re-
+	// Interact the door we just opened and toggle it closed again.
+	static constexpr int   kInteractCooldownTicks = 15;  // ~0.25 s at 60 Hz
 
 	struct Intent {
 		enum Kind { None, Move, Interact } kind = None;
@@ -104,6 +161,9 @@ public:
 	explicit PathExecutor(const DoorOracle* doors) : m_doors(doors) {}
 
 	void setDoorOracle(const DoorOracle* doors) { m_doors = doors; }
+	// Optional — enables wall-slide in tick(). Null = slide is a no-op, which
+	// matches test harnesses that plan over an AirWorld.
+	void setWorldView(const WorldView* world) { m_world = world; }
 
 	// ── Per-entity primitive ──────────────────────────────────────────
 	// Install a Path for one entity. Overwrites any existing path. Clearing
@@ -158,12 +218,24 @@ private:
 	struct Unit {
 		Path              path;
 		bool              waitOpen = false;   // door handshake
-		// RTS-only fields. Slot is set by planGroup so formation viz can
+		// Group-command fields. Slot is set by planGroup so formation viz can
 		// read it; arrived gates steerTargetFor so the player-side loop knows
 		// to stop issuing Moves.
 		glm::ivec3        formationSlot{INT_MIN, INT_MIN, INT_MIN};
 		bool              arrived = false;
 		BuilderUnitState  builder;
+		// Stall detector — wall-slide pops front if the entity can't make
+		// progress on the current waypoint.
+		glm::vec3         stallLastPos{0, 0, 0};
+		int               stallTicks = 0;
+		// Wall-slide hysteresis — last cardinal offset we steered around on
+		// (keyed by ±X / ±Z), so the next obstructed tick prefers the same
+		// side. {0,0,0} = no active slide.
+		glm::ivec3        slideLockDir{0, 0, 0};
+		// Smoothed XZ heading last emitted — fed back into rotateTowardXZ
+		// next tick so desiredVel stays C¹-continuous across pops.
+		glm::vec3         lastMoveDir{0, 0, 0};
+		int               interactCooldown = 0;
 	};
 
 	struct PendingPlan {
@@ -179,6 +251,7 @@ private:
 
 	std::unordered_map<EntityId, Unit> m_units;
 	const DoorOracle*                  m_doors       = nullptr;
+	const WorldView*                   m_world       = nullptr;
 	std::shared_ptr<PendingPlan>       m_pending;
 	CommandKind                        m_kind        = CommandKind::Walk;
 	bool                               m_builderMode = false;
@@ -187,6 +260,10 @@ private:
 		return {w.pos.x + 0.5f, (float)w.pos.y, w.pos.z + 0.5f};
 	}
 	bool reached(const Waypoint& w, const glm::vec3& pos) const;
+	// Deflect `target` toward the best standable cardinal neighbour when the
+	// straight-line approach would clip a wall. No-op when m_world is unset.
+	glm::vec3 slideAroundObstacle(const glm::vec3& pos, glm::vec3 target,
+	                              Unit& u) const;
 	bool builderTickFor(EntityId eid, const glm::vec3& pos,
 	                    const glm::vec3& dirXZ, const WorldView& view);
 	static std::vector<glm::ivec3> buildFormationGoals(
@@ -265,5 +342,17 @@ private:
 	Status            m_status  = Status::Idle;
 	std::string       m_failureReason;
 };
+
+inline const char* toString(Navigator::Status s) {
+	switch (s) {
+		case Navigator::Status::Idle:        return "Idle";
+		case Navigator::Status::Planning:    return "Planning";
+		case Navigator::Status::Walking:     return "Walking";
+		case Navigator::Status::OpeningDoor: return "OpeningDoor";
+		case Navigator::Status::Arrived:     return "Arrived";
+		case Navigator::Status::Failed:      return "Failed";
+	}
+	return "?";
+}
 
 }  // namespace civcraft

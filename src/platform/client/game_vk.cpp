@@ -277,6 +277,100 @@ void Game::preloadVisibleChunks() {
 		m_chunkMeshes.size(), (long long)elapsed, m_inFlightMesh.size());
 }
 
+void Game::updateLoadingGate(float dt) {
+	using Id = LoadingGate::Id;
+	using Clock = std::chrono::steady_clock;
+
+	// Phase 1 — handshake. Welcome is a one-shot flip; we don't animate it
+	// because the underlying signal is already binary.
+	m_loadingGate.set(Id::Welcome,
+		(m_server && m_server->pollWelcome()) ? 1.0f : 0.0f);
+
+	// Phase 2 — world prepare. preparingProgress() is the server's own
+	// 0..1 report across S_PREPARING messages; S_READY clamps us to 1.0.
+	if (m_server && m_server->isServerReady()) {
+		m_loadingGate.set(Id::WorldPrepared, 1.0f);
+	} else if (m_server) {
+		float p = m_server->preparingProgress();
+		m_loadingGate.set(Id::WorldPrepared, p < 0.0f ? 0.0f : p);
+	}
+
+	// Phase 3 — terrain / mesher quiesced. The normal streamServerChunks
+	// that runs once per rendered frame caps uploads at 8 chunks, which at
+	// 60 FPS only drains ~480 chunks/s — much slower than the old blocking
+	// preload. While still on the loading screen we spend up to 8 ms per
+	// frame pumping the network + mesher so terrain fills in fast without
+	// freezing the UI (render + gate update still run after this returns).
+	// Bails the moment there's nothing more to do, so a small map doesn't
+	// burn the whole budget.
+	if (m_server && m_server->pollWelcome() &&
+	    m_loadingGate.phases[Id::ChunksLoaded].progress < 1.0f) {
+		const auto budgetEnd = Clock::now() + std::chrono::milliseconds(8);
+		size_t lastMeshed = m_chunkMeshes.size();
+		while (Clock::now() < budgetEnd) {
+			m_server->tick(0.0f);
+			streamServerChunks();
+			drainAsyncMeshes();
+			if (m_inFlightMesh.empty() &&
+			    m_serverDirtyChunks.empty() &&
+			    m_chunkMeshes.size() == lastMeshed)
+				break;
+			lastMeshed = m_chunkMeshes.size();
+		}
+	}
+
+	// Show live streaming progress: meshedDone / (meshedDone + pending).
+	// meshedDone is the count of real mesh handles (total entries minus
+	// in-flight placeholders); pending sums in-flight + server-dirty chunks.
+	// The ratio is self-normalizing — it climbs smoothly as the mesher
+	// catches up, and landing at 1.0 coincides with nothing left to do.
+	// Peak-pinned so the bar never slides back when new dirty chunks show
+	// up late (block edits mid-load, neighbor remeshes, etc.).
+	size_t totalEntries = m_chunkMeshes.size();
+	size_t inFlight     = m_inFlightMesh.size();
+	size_t dirty        = m_serverDirtyChunks.size();
+	size_t meshedDone   = (totalEntries > inFlight) ? totalEntries - inFlight : 0;
+	size_t denom        = meshedDone + inFlight + dirty;
+	float streamFrac    = (denom == 0) ? 0.0f : (float)meshedDone / (float)denom;
+	m_chunkStreamPeak = std::max(m_chunkStreamPeak, streamFrac);
+
+	// Quiesce check is the authoritative "done" signal — progression only
+	// resolves to true 1.0 once growth stalls AND nothing is pending. Until
+	// then we cap the displayed bar at 0.98 so the user never sees a
+	// premature 100% that then lingers waiting for the quiesce timer.
+	constexpr float kChunkQuiesceSec = 0.4f;
+	constexpr size_t kMinMeshedChunks = 8;
+	bool pending = (inFlight > 0) || (dirty > 0);
+	if (meshedDone != m_chunkMeshesLastSeen || pending ||
+	    meshedDone < kMinMeshedChunks) {
+		m_chunkMeshesLastSeen = meshedDone;
+		m_chunkQuiesceAccum   = 0.0f;
+	} else {
+		m_chunkQuiesceAccum += dt;
+	}
+	bool quiesced = (m_chunkQuiesceAccum >= kChunkQuiesceSec);
+	m_loadingGate.set(Id::ChunksLoaded,
+		quiesced ? 1.0f : std::min(m_chunkStreamPeak, 0.98f));
+
+	// Phase 4 — every owned NPC has had its first decide. Until the agent
+	// client's discoverEntities runs we can't trust the agent count, so
+	// progress sits at 0 until then. Zero-agent worlds resolve to 1.0 as
+	// soon as discovery confirms there's nothing to wait for. The executor
+	// is held off during this phase (see setExecutorEnabled(false) on
+	// beginConnect), so decide can still run but no entity actually moves.
+	if (m_agentClient) {
+		auto ip = m_agentClient->initProgress();
+		if (!ip.discoveryRan) {
+			m_loadingGate.set(Id::AgentsSettled, 0.0f);
+		} else if (ip.totalAgents == 0) {
+			m_loadingGate.set(Id::AgentsSettled, 1.0f);
+		} else {
+			m_loadingGate.set(Id::AgentsSettled,
+				(float)ip.settledAgents / (float)ip.totalAgents);
+		}
+	}
+}
+
 void Game::streamServerChunks() {
 	// Sweep a render-radius box around the player's current chunk, enqueueing
 	// snapshots for any chunk we haven't meshed yet. The worker pool runs
@@ -450,6 +544,17 @@ bool Game::beginConnectAs(const std::string& creatureType) {
 	}
 	m_connecting = true;
 	m_connectStartTime = m_wallTime;
+	// Fresh attempt → clear any progress from a previous run so the
+	// checklist starts empty.
+	m_loadingGate.reset();
+	m_chunkQuiesceAccum   = 0.0f;
+	m_chunkMeshesLastSeen = 0;
+	m_chunkStreamPeak     = 0.0f;
+
+	// Freeze the world: during the Connecting loading screen we still let
+	// decide() run (so plans are ready), but no entity actually moves or
+	// picks things up until enterPlaying() re-enables the executor.
+	if (m_agentClient) m_agentClient->setExecutorEnabled(false);
 	return true;
 }
 
@@ -465,6 +570,10 @@ void Game::enterMenu() {
 
 void Game::enterPlaying() {
 	m_state = GameState::Playing;
+	// Unfreeze the world on the same tick the gameplay HUD comes up — the
+	// loading screen held the executor off so NPCs stayed put during warmup;
+	// enable it now so the first Playing frame sees live entities.
+	if (m_agentClient) m_agentClient->setExecutorEnabled(true);
 	// Hotbar persistence path, keyed by spawn seed so two worlds on the same
 	// machine don't share a layout. Flushed on every drag and on shutdown.
 	{
@@ -646,9 +755,29 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_lanBrowser.tick(wallTime);
 	streamServerChunks();
 	m_frameProbe.mark("chunks");
-	if (m_agentClient && m_state == GameState::Playing)
+	// Tick the agent client during gameplay AND during the Connecting loading
+	// screen once the server welcome has landed — that lets every owned NPC
+	// burn through its first decide while the loading screen is still up,
+	// instead of all firing together on the first frame of Playing (which
+	// used to drop FPS for a few seconds right after the handoff).
+	bool warmingUp = (m_state == GameState::Menu &&
+	                  m_menuScreen == MenuScreen::Connecting &&
+	                  m_server && m_server->pollWelcome());
+	if (m_agentClient && (m_state == GameState::Playing || warmingUp))
 		m_agentClient->tick(dt);
 	m_frameProbe.mark("agent");
+
+	// Data-driven loading screen: each Connecting-screen frame refreshes the
+	// per-phase progress bars, and the gate decides when to hand off.
+	if (m_state == GameState::Menu &&
+	    m_menuScreen == MenuScreen::Connecting &&
+	    m_connecting) {
+		updateLoadingGate(dt);
+		if (m_loadingGate.allDone()) {
+			m_connecting = false;
+			enterPlaying();
+		}
+	}
 
 	// Event detection — derive DECIDE / COMBAT / DEATH from entity deltas.
 	{
@@ -908,6 +1037,25 @@ void Game::runOneFrame(float dt, float wallTime) {
 				}
 				h->record(ms);
 			}
+
+			// Population gauges — what was on screen this frame. fx3d /
+			// world / chunks costs scale with these, so correlate with
+			// client.phase.* p99 to attribute blow-ups.
+			//   * particles vector holds 8 floats per particle (XYZ size RGBA);
+			//     it's cleared at the top of next frame's renderEffects, so
+			//     reading here captures THIS frame's pushes.
+			//   * meshed = total mesh entries minus in-flight placeholders.
+			size_t particleCount = m_scratch.particles.size() / 8;
+			size_t inFlight      = m_inFlightMesh.size();
+			size_t totalEntries  = m_chunkMeshes.size();
+			size_t meshed        = (totalEntries > inFlight)
+			                       ? totalEntries - inFlight : 0;
+			PERF_RECORD_MS("client.fx3d.particle_count",  (double)particleCount);
+			PERF_RECORD_MS("client.chunks.mesh_count",    (double)meshed);
+			PERF_RECORD_MS("client.chunks.inflight_count",(double)inFlight);
+			if (m_server)
+				PERF_RECORD_MS("client.entities.known_count",
+				               (double)m_server->entityCount());
 		}
 #endif
 		if (totalMs > m_frameProbe.spikeMs && !m_frameProbe.sections.empty()) {

@@ -12,7 +12,7 @@ import math
 model = {
     "id": "chicken",
     "height": 0.7,
-    "scale": 1.25,
+    "scale": 1.43,
     "walk_speed": 9.0,
     "idle_bob": 0.005,
     "walk_bob": 0.015,

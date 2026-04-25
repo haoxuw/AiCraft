@@ -33,24 +33,16 @@ except ImportError:
     print("Missing dependencies. Run:  pip install fastapi uvicorn", file=sys.stderr)
     sys.exit(1)
 
-# ── Protocol constants (must match net_protocol.h / action.h) ─────────────────
+# ── Protocol constants ────────────────────────────────────────────────────────
+# Generated from net_protocol.h + action.h by tools/gen_protocol_py.py.
+# Do not hardcode wire constants here — edit the C++ headers and regenerate.
 
-C_ACTION         = 0x0001
-C_HELLO          = 0x0003
-PROTOCOL_VERSION = 2
-ENTITY_NONE      = 0
-
-S_WELCOME        = 0x1001
-S_ENTITY         = 0x1002
-S_REMOVE         = 0x1004
-S_ERROR          = 0x100B
-
-# ActionProposal::Type enum order (must match action.h)
-TYPE_MOVE            = 0
-TYPE_RELOCATE        = 1
-TYPE_CONVERT  = 2
-TYPE_INTERACT  = 3
-TYPE_RELOAD_BEHAVIOR = 4
+from protocol_constants import (
+    PROTOCOL_VERSION, ENTITY_NONE,
+    C_ACTION, C_HELLO,
+    S_WELCOME, S_ENTITY, S_REMOVE, S_ERROR,
+    TYPE_MOVE, TYPE_RELOCATE, TYPE_CONVERT, TYPE_INTERACT,
+)
 
 # ── Binary helpers (mirrors net_protocol.h WriteBuffer) ──────────────────────
 
@@ -149,8 +141,6 @@ def serialize_action(p: dict) -> bytes:
     buf += _bool(p.get("convert_to_block",     False))
     buf += _bool(p.get("convert_direct",       True))
     buf += _u32(p.get("convert_from_entity",   ENTITY_NONE))
-    # ReloadBehavior ──────────────────────────────────────────────────────────
-    buf += _str(p.get("behavior_source", ""))
     return buf
 
 
@@ -363,11 +353,6 @@ class InteractRequest(BaseModel):
     block_y:  int = Field(..., description="Block Y coordinate")
     block_z:  int = Field(..., description="Block Z coordinate")
 
-class ReloadBehaviorRequest(BaseModel):
-    actor_id:        int  = Field(0,   description="Entity whose behavior to replace (0 = own)")
-    entity_id:       int  = Field(0,   description="Target entity ID (overrides actor_id if non-zero)")
-    behavior_source: str  = Field(..., description="Full Python source code of the new behavior")
-
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.post(
@@ -503,30 +488,6 @@ def action_interact(req: InteractRequest):
         p["actor_id"] = conn.resolve_actor(req.actor_id or None)
         conn.send_action(p)
         return {"sent": "Interact", "actor_id": p["actor_id"]}
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-
-
-@app.post(
-    "/action/reload_behavior",
-    summary="ReloadBehavior — hot-swap an Creatures's Python behavior",
-    tags=["Actions"],
-)
-def action_reload_behavior(req: ReloadBehaviorRequest):
-    """
-    Replaces the Python behavior source code for the target entity without
-    restarting the agent process.
-
-    Set `entity_id` to the Creatures's entity ID. The server forwards the new
-    source to the agent client that owns that entity.
-    """
-    try:
-        p = req.model_dump()
-        p["type"] = TYPE_RELOAD_BEHAVIOR
-        target = req.entity_id if req.entity_id else req.actor_id
-        p["actor_id"] = conn.resolve_actor(target or None)
-        conn.send_action(p)
-        return {"sent": "ReloadBehavior", "actor_id": p["actor_id"]}
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 

@@ -319,41 +319,79 @@ void MenuRenderer::renderMenu() {
 		break;
 	}
 	case MenuScreen::Connecting: {
-		drawMenuFrame(R, -0.40f, -0.18f, 0.80f, 0.50f, "Entering World");
+		// Taller frame — the per-phase checklist lives below the title and
+		// above the aggregate bar, so the old 0.50 height wasn't enough.
+		drawMenuFrame(R, -0.42f, -0.34f, 0.84f, 0.72f, "Entering World");
 		int dots = (int)(g.m_wallTime * 2.0f) % 4;
 		const char* dotStr[] = {"", ".", "..", "..."};
-		float pct = g.m_server ? g.m_server->preparingProgress() : -1.0f;
-		char buf[64];
-		if (pct >= 0.0f)
-			std::snprintf(buf, sizeof(buf), "Streaming world%s  %.0f%%",
-			              dotStr[dots], pct * 100.0f);
-		else
-			std::snprintf(buf, sizeof(buf), "Streaming world%s", dotStr[dots]);
-		ui::drawCenteredText(R, buf, 0.0f, 0.14f, 0.90f, kText);
+		char title[64];
+		std::snprintf(title, sizeof(title), "Warming up world%s",
+		              dotStr[dots]);
+		ui::drawCenteredText(R, title, 0.0f, 0.26f, 0.95f, kText);
 
-		// Progress meter — brass fill on dark bg, centered under the text.
+		// Data-driven checklist — one row per LoadingGate phase. The gate
+		// is updated once per frame by Game::updateLoadingGate(), so this
+		// block only needs to *render* the current snapshot; the main loop
+		// owns the Playing handoff.
+		constexpr float kRowLeftX = -0.34f;
+		constexpr float kRowWidth = 0.68f;
+		constexpr float kRowH     = 0.048f;
+		constexpr float kRowGap   = 0.010f;
+		const size_t nPhases = g.m_loadingGate.phases.size();
+		float rowY = 0.18f;
+		const float kRowBg[4]     = {0.08f, 0.08f, 0.10f, 0.75f};
+		const float kRowBorder[4] = {0.35f, 0.27f, 0.14f, 0.75f};
+		const float kRowFill[4]   = {0.96f, 0.82f, 0.40f, 0.90f};
+		const float kRowDone[4]   = {0.40f, 0.82f, 0.40f, 0.95f};
+		for (size_t i = 0; i < nPhases; ++i) {
+			const auto& ph = g.m_loadingGate.phases[i];
+			float frac = std::min(1.0f, ph.progress);
+			const float* fill = (frac >= 1.0f) ? kRowDone : kRowFill;
+			ui::drawMeter(R, kRowLeftX, rowY - kRowH,
+			              kRowWidth, kRowH, frac,
+			              fill, kRowBg, kRowBorder);
+			const char* tick = (frac >= 1.0f) ? "[x] " : "[ ] ";
+			char line[80];
+			if (frac >= 1.0f)
+				std::snprintf(line, sizeof(line), "%s%s", tick, ph.label);
+			else
+				std::snprintf(line, sizeof(line), "%s%s  %.0f%%",
+				              tick, ph.label, frac * 100.0f);
+			R->drawText2D(line,
+			              kRowLeftX + 0.012f,
+			              rowY - kRowH + kRowH * 0.5f - ui::kCharHNdc * 0.65f * 0.5f,
+			              0.65f,
+			              (frac >= 1.0f) ? kText : kTextDim);
+			rowY -= (kRowH + kRowGap);
+		}
+
+		// Aggregate bar — mean of every phase, so users still have a single
+		// "how far along are we" cue under the checklist.
 		constexpr float kBarX = -0.30f;
-		constexpr float kBarY = 0.02f;
 		constexpr float kBarW = 0.60f;
 		constexpr float kBarH = 0.040f;
+		float barY = rowY - 0.015f;
 		const float kBarFill[4]   = {0.96f, 0.82f, 0.40f, 1.0f};
 		const float kBarBg[4]     = {0.08f, 0.08f, 0.10f, 0.80f};
 		const float kBarBorder[4] = {0.50f, 0.38f, 0.20f, 0.95f};
-		float frac = (pct < 0.0f) ? 0.0f : std::min(1.0f, pct);
-		ui::drawMeter(R, kBarX, kBarY, kBarW, kBarH, frac,
+		ui::drawMeter(R, kBarX, barY, kBarW, kBarH,
+		              g.m_loadingGate.aggregate(),
 		              kBarFill, kBarBg, kBarBorder);
 
-		ui::drawCenteredText(R, "[Esc] Cancel", 0.0f, -0.08f, 0.70f, kTextDim);
+		ui::drawCenteredText(R, "[Esc] Cancel", 0.0f, barY - 0.06f,
+		                     0.70f, kTextDim);
 
-		if (g.m_server && g.m_server->pollWelcome()) {
-			g.m_connecting = false;
-			g.enterPlaying();
-		} else if (g.m_server && !g.m_server->isConnected()) {
+		// Bail-out paths — lost connection / welcome timeout. The normal
+		// allDone() → enterPlaying() transition runs in Game::runOneFrame
+		// so input (F2, hotbar seed, etc.) and the world tick already have
+		// the gate wired into them; this block only handles the sad cases.
+		if (g.m_server && !g.m_server->isConnected()) {
 			const std::string& err = g.m_server->lastError();
 			g.m_connectError = err.empty() ? "connection lost" : err;
 			g.m_connecting = false;
 			g.m_menuScreen = MenuScreen::CharacterSelect;
-		} else if (g.m_wallTime - g.m_connectStartTime > 60.0f) {
+		} else if (!g.m_server->pollWelcome() &&
+		           g.m_wallTime - g.m_connectStartTime > 60.0f) {
 			if (g.m_server) g.m_server->disconnect();
 			g.m_connectError = "timeout waiting for welcome (60s)";
 			g.m_connecting = false;

@@ -2,7 +2,7 @@
 #include "server/structure_blueprint.h"
 #include "logic/material_values.h"
 #include "agent/pathfind.h"
-#include "client/path_executor.h"  // Navigator — bound to Python below
+#include "debug/entity_log.h"
 #include <fstream>
 #include <iterator>
 
@@ -95,6 +95,11 @@ struct PyAction {
 	EntityId    anchor_entity_id = ENTITY_NONE;
 	float       keep_within      = 0.0f;
 	float       keep_away        = 0.0f;
+
+	// Move: when true, applyMove routes via the C++ Agent's A* Navigator
+	// instead of straight-line steering. Opt-in per behavior — the engine
+	// doesn't know which Python mods want pathfinding.
+	bool        use_navigator    = false;
 };
 
 // Per-call state, set before callDecide(). Agent is single-threaded.
@@ -142,6 +147,11 @@ static py::list runScan(const ScanFn& scanFn, const std::string& typeId,
 
 PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	m.doc() = "CivCraft engine bridge — exposes world view to Python behaviors";
+
+	// Server-enforced max distance for inventory store/take (matches
+	// world_gen_config::storeRange default). Python behaviors use this as the
+	// pre-emptive gate before emitting StoreItem vs Move-to-chest.
+	m.attr("STORE_RANGE") = 2.0f;
 
 	py::class_<PyEntityInfo>(m, "EntityInfo")
 		.def_readonly("id", &PyEntityInfo::id)
@@ -193,7 +203,8 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		// Move anchor
 		.def_readwrite("anchor_entity_id", &PyAction::anchor_entity_id)
 		.def_readwrite("keep_within",      &PyAction::keep_within)
-		.def_readwrite("keep_away",        &PyAction::keep_away);
+		.def_readwrite("keep_away",        &PyAction::keep_away)
+		.def_readwrite("use_navigator",    &PyAction::use_navigator);
 
 	// Only write primitives the server accepts. High-level helpers
 	// (BreakBlock, StoreItem, PickupItem, DropItem) wrap these in python/actions.py.
@@ -201,19 +212,24 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 		PyAction a; a.type = "idle"; return a;
 	});
 	m.def("Move", [](float x, float y, float z, float speed,
-	                 EntityId anchor, float keep_within, float keep_away) {
+	                 EntityId anchor, float keep_within, float keep_away,
+	                 bool use_navigator) {
 		PyAction a; a.type = "move"; a.x = x; a.y = y; a.z = z; a.speed = speed;
 		a.anchor_entity_id = anchor;
 		a.keep_within = keep_within;
 		a.keep_away   = keep_away;
+		a.use_navigator = use_navigator;
 		return a;
 	}, py::arg("x"), py::arg("y"), py::arg("z"), py::arg("speed") = 2.0f,
 	   py::arg("anchor") = ENTITY_NONE,
 	   py::arg("keep_within") = 0.0f,
 	   py::arg("keep_away")   = 0.0f,
+	   py::arg("use_navigator") = false,
 	   "Move toward (x,y,z). When `anchor` is a live entity id, the server "
 	   "re-aims each tick: `keep_within` chases and stops inside the ring; "
-	   "`keep_away` flees and stops once farther than the ring. Pick one.");
+	   "`keep_away` flees and stops once farther than the ring. Pick one. "
+	   "`use_navigator=True` routes via A* (humanoids); leave false for "
+	   "cheap straight-line steering (pigs/chickens).");
 	m.def("Relocate", [](PyContainer relocate_from, PyContainer relocate_to,
 	                     const std::string& item_id, int count, const std::string& equip_slot) {
 		PyAction a; a.type = "relocate";
@@ -239,6 +255,15 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	}, py::arg("item_id"),
 	   "Lookup material value for an item/block. Single source of truth "
 	   "is src/shared/material_values.h — never hardcode values in Python.");
+
+	// Per-entity behavior log at /tmp/civcraft_entity_<id>.log. Single source
+	// of truth is debug/entity_log.h — identical consecutive messages are
+	// aggregated into one [first..last xN] summary; flushed at shutdown.
+	m.def("entity_log", [](EntityId eid, const std::string& msg) {
+		civcraft::entityLog(eid, "%s", msg.c_str());
+	}, py::arg("entity_id"), py::arg("msg"),
+	   "Append a line to /tmp/civcraft_entity_<id>.log. Repeated identical "
+	   "messages are folded into a summary row.");
 
 	m.def("Interact", [](int x, int y, int z, int appearance) {
 		PyAction a;
@@ -384,99 +409,8 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	block.attr("ArcaneStone") = BlockType::ArcaneStone;
 	block.attr("SpawnPoint")  = BlockType::SpawnPoint;
 
-	// ── Navigator (client-side A* over voxel grid) ─────────────────────
-	// World oracle reuses the per-call s_blockQueryFn so no extra callback
-	// plumbing is needed. Doors are deliberately treated as *non-solid* at
-	// plan time: the PathExecutor gates on closed doors and emits Interact
-	// when adjacent, so the planner can freely route through doorways.
-	struct BridgeWorldView : WorldView {
-		bool isSolid(glm::ivec3 p) const override {
-			if (!s_blockQueryFn) return false;
-			const std::string& id = s_blockQueryFn(p.x, p.y, p.z);
-			if (id == BlockType::Air)      return false;
-			if (id == BlockType::Water)    return false;
-			if (id == BlockType::Door)     return false;
-			if (id == BlockType::DoorOpen) return false;
-			if (id == BlockType::Trapdoor) return false;
-			if (id == BlockType::Torch)    return false;
-			if (id == BlockType::Wheat)    return false;
-			if (id == BlockType::WheatSeeds) return false;
-			return true;
-		}
-	};
-	struct BridgeDoorOracle : DoorOracle {
-		bool isClosedDoor(glm::ivec3 p) const override {
-			return s_blockQueryFn && s_blockQueryFn(p.x, p.y, p.z) == BlockType::Door;
-		}
-		bool isOpenDoor(glm::ivec3 p) const override {
-			return s_blockQueryFn && s_blockQueryFn(p.x, p.y, p.z) == BlockType::DoorOpen;
-		}
-	};
-	// Module-level singletons — BridgeWorldView/Oracle are stateless; the
-	// block query they read is rebound per callDecide() via s_blockQueryFn.
-	static BridgeWorldView  kBridgeView;
-	static BridgeDoorOracle kBridgeDoors;
-
-	py::class_<Navigator>(m, "Navigator")
-		.def(py::init([]() {
-			return new Navigator(kBridgeView, &kBridgeDoors);
-		}))
-		.def("set_goal",
-		     [](Navigator& n, int x, int y, int z) {
-		         return n.setGoal({x, y, z});
-		     },
-		     py::arg("x"), py::arg("y"), py::arg("z"),
-		     "Plan a path to the block at (x,y,z). Re-asserting the same "
-		     "goal is a no-op (the plan is cached).")
-		.def("clear",   &Navigator::clear,   "Abandon the current goal and path.")
-		.def("has_goal",&Navigator::hasGoal, "True while a plan is active.")
-		.def("status",
-		     [](const Navigator& n) {
-		         switch (n.status()) {
-		             case Navigator::Status::Idle:        return "idle";
-		             case Navigator::Status::Planning:    return "planning";
-		             case Navigator::Status::Walking:     return "walking";
-		             case Navigator::Status::OpeningDoor: return "opening_door";
-		             case Navigator::Status::Arrived:     return "arrived";
-		             case Navigator::Status::Failed:      return "failed";
-		         }
-		         return "unknown";
-		     })
-		.def("failure_reason",
-		     [](const Navigator& n) { return n.failureReason(); },
-		     "Human-readable reason when status()=='failed'. "
-		     "Always contains a (x, y, z) coordinate substring so Inspect "
-		     "panel hyperlinks can parse it. Empty when not failed.")
-		// Advance one tick from `self`. Returns a single PyAction:
-		//   walking / approaching door → Move to next waypoint center
-		//   adjacent to closed door    → Interact at door cell (opens it)
-		//   arrived or blocked         → Idle  (caller picks a new goal)
-		.def("next_action",
-		     [](Navigator& n, py::object selfEntity) {
-		         float ex = py::getattr(selfEntity, "x").cast<float>();
-		         float ey = py::getattr(selfEntity, "y").cast<float>();
-		         float ez = py::getattr(selfEntity, "z").cast<float>();
-		         auto step = n.tick({ex, ey, ez});
-		         PyAction a;
-		         if (step.kind == Navigator::Step::Move) {
-		             a.type = "move";
-		             a.x = step.moveTarget.x;
-		             a.y = step.moveTarget.y;
-		             a.z = step.moveTarget.z;
-		             a.speed = 2.0f;
-		         } else if (step.kind == Navigator::Step::Interact) {
-		             a.type = "interact";
-		             a.x = (float)step.interactPos.x;
-		             a.y = (float)step.interactPos.y;
-		             a.z = (float)step.interactPos.z;
-		             a.appearance_idx = -1;  // legacy toggle
-		         } else {
-		             a.type = "idle";
-		         }
-		         return a;
-		     },
-		     py::arg("self_entity"),
-		     "Advance one tick toward the goal. Returns Move/Interact/Idle.");
+	// Pathfinding: behaviors emit Move(..., use_navigator=True) and the C++
+	// Agent's navigateApproach drives the A*. No Python-facing Navigator.
 }
 
 static PythonBridge s_bridge;
@@ -624,26 +558,34 @@ static void buildPyWorld(const EntitySnapshot& self,
 		pyNearby.append(info);
 	}
 
-	py::dict pySelf;
+	// Custom server-assigned props (work_radius, chop_period, …) go under a
+	// dedicated "props" key so extra="forbid" on SelfEntity catches typos
+	// without blocking the dynamic per-type prop bag.
+	py::dict pyProps;
 	for (auto& [key, val] : self.props) {
-		if (auto* s = std::get_if<std::string>(&val)) pySelf[key.c_str()] = *s;
-		else if (auto* i = std::get_if<int>(&val))     pySelf[key.c_str()] = *i;
-		else if (auto* f = std::get_if<float>(&val))   pySelf[key.c_str()] = *f;
-		else if (auto* b = std::get_if<bool>(&val))    pySelf[key.c_str()] = *b;
+		if (auto* s = std::get_if<std::string>(&val)) pyProps[key.c_str()] = *s;
+		else if (auto* i = std::get_if<int>(&val))     pyProps[key.c_str()] = *i;
+		else if (auto* f = std::get_if<float>(&val))   pyProps[key.c_str()] = *f;
+		else if (auto* b = std::get_if<bool>(&val))    pyProps[key.c_str()] = *b;
 	}
+	py::dict pyInvItems;
+	for (auto& [itemId, count] : self.inventory)
+		pyInvItems[itemId.c_str()] = count;
+	py::dict pyInv;
+	pyInv["items"] = pyInvItems;
+
+	py::dict pySelf;
 	pySelf["id"] = self.id; pySelf["type"] = self.typeId;
 	pySelf["x"] = self.position.x; pySelf["y"] = self.position.y; pySelf["z"] = self.position.z;
 	pySelf["yaw"] = self.yaw; pySelf["hp"] = self.hp;
 	pySelf["walk_speed"] = self.walkSpeed; pySelf["on_ground"] = self.onGround;
 	pySelf["inventory_capacity"] = self.inventoryCapacity;
-	py::dict pyInv;
-	for (auto& [itemId, count] : self.inventory)
-		pyInv[itemId.c_str()] = count;
 	pySelf["inventory"] = pyInv;
+	pySelf["props"]    = pyProps;
 
 	py::dict pyWorld;
-	pyWorld["nearby"] = pyNearby;
-	pyWorld["blocks"] = py::list();
+	pyWorld["entities"] = pyNearby;
+	pyWorld["blocks"]   = py::list();
 	pyWorld["dt"] = dt; pyWorld["time"] = timeOfDay;
 	pyWorld["goal"] = py::none();
 	pyWorld["last_outcome"]     = lastOutcome;
@@ -651,6 +593,13 @@ static void buildPyWorld(const EntitySnapshot& self,
 	pyWorld["last_reason"]      = lastReason;
 	pyWorld["last_state"]       = lastState;        // ExecState::toString()
 	pyWorld["last_fail_streak"] = lastFailStreak;   // consecutive Failed_* count
+	// Navigation failure classification — matches isNavFailed() in outcome.h
+	// so Python never has to enumerate Failed_Nav* string variants itself.
+	pyWorld["last_nav_failed"]  =
+		lastState == "Failed_NavNoPath"   ||
+		lastState == "Failed_NavStuck"    ||
+		lastState == "Failed_DirectStuck" ||
+		lastState == "Failed_GaveUp";
 
 	py::object& LocalWorldCls = *static_cast<py::object*>(localWorldClsRaw);
 	py::object& SelfEntityCls = *static_cast<py::object*>(selfEntityClsRaw);
@@ -673,6 +622,7 @@ static PlanStep pyActionToPlanStep(const PyAction& pa) {
 		s.anchorEntityId = pa.anchor_entity_id;
 		s.keepWithin     = pa.keep_within;
 		s.keepAway       = pa.keep_away;
+		s.useNavigator   = pa.use_navigator;
 		return s;
 	}
 	if (pa.type == "convert") {
@@ -884,83 +834,56 @@ static bool parsePyResult(const py::object& result, Plan& outPlan,
 		return true;  // Idle.
 	}
 	if (py::isinstance<py::list>(first)) {
-		// PlanStep dict schema:
-		//   move:     {type, x, y, z, speed, hold?}
-		//   harvest:  {type, x, y, z}
-		//   attack:   {type, entity_id}
-		//   relocate: {type, from, to, item, count}
+		// Plan steps are Pydantic models from src/python/plan_steps.py. Every
+		// optional field has a default, so the bridge reads d["field"]
+		// unconditionally — no .contains() guards needed.
 		for (auto& item : first.cast<py::list>()) {
-			py::dict d = item.cast<py::dict>();
+			if (!py::hasattr(item, "model_dump")) {
+				errorOut = "plan step must be a plan_steps.* Pydantic model";
+				return false;
+			}
+			py::dict d = item.attr("model_dump")().cast<py::dict>();
 			std::string stype = d["type"].cast<std::string>();
-			float hold = d.contains("hold") && !d["hold"].is_none()
-				? d["hold"].cast<float>() : 0.0f;
-			if (stype == "move") {
-				PlanStep step = PlanStep::move(
-					{d["x"].cast<float>(), d["y"].cast<float>(), d["z"].cast<float>()},
-					 d["speed"].cast<float>(), hold);
-				if (d.contains("anchor") && !d["anchor"].is_none())
-					step.anchorEntityId = d["anchor"].cast<EntityId>();
-				if (d.contains("keep_within") && !d["keep_within"].is_none())
-					step.keepWithin = d["keep_within"].cast<float>();
-				if (d.contains("keep_away") && !d["keep_away"].is_none())
-					step.keepAway = d["keep_away"].cast<float>();
-				if (d.contains("use_navigator") && !d["use_navigator"].is_none())
-					step.useNavigator = d["use_navigator"].cast<bool>();
-				if (d.contains("ignore_height") && !d["ignore_height"].is_none())
-					step.ignoreHeight = d["ignore_height"].cast<bool>();
-				outPlan.push_back(step);
-			} else if (stype == "harvest") {
-				// Two input shapes, both land in the same PlanStep:
-				//   legacy:   { x, y, z, gather_types, ... }
-				//   multi:    { candidates: [{x,y,z}, ...], count_goal, ... }
-				// x/y/z are optional when `candidates` is provided; the first
-				// candidate becomes targetPos so legacy readers (viz,
-				// evaluate-before-init) still work.
+			float hold = d["hold"].cast<float>();
+			if (stype == "harvest") {
+				// Python declares: where harvestable blocks exist
+				// (`candidates`), priority-ordered block types to chop
+				// (`gather_types`), and the capacity-gate `item` (typically
+				// the heaviest target). The executor walks to a candidate,
+				// scans a gatherRadius sphere each swing, and keeps chopping
+				// until the inventory can't accept one more of `item` — at
+				// which point the step ends and decide() switches to DEPOSIT.
 				PlanStep step;
 				step.type = PlanStep::Harvest;
-				if (d.contains("candidates") && !d["candidates"].is_none()) {
-					for (auto& c : d["candidates"].cast<py::list>()) {
-						py::dict cd = py::cast<py::dict>(c);
-						step.candidates.push_back({
-							cd["x"].cast<float>(),
-							cd["y"].cast<float>(),
-							cd["z"].cast<float>()});
-					}
-					if (!step.candidates.empty())
-						step.targetPos = step.candidates[0];
+				step.holdTime = hold;
+				for (auto& c : d["candidates"].cast<py::list>()) {
+					py::dict cd = py::cast<py::dict>(c);
+					step.candidates.push_back({
+						cd["x"].cast<float>(),
+						cd["y"].cast<float>(),
+						cd["z"].cast<float>()});
 				}
-				if (d.contains("x") && !d["x"].is_none())
-					step.targetPos = {
-						d["x"].cast<float>(),
-						d["y"].cast<float>(),
-						d["z"].cast<float>()};
-				// Priority-ordered gather types (index 0 = highest). The
-				// executor scans the local volume each tick and chops the
-				// first tier that has a hit in gatherRadius.
-				if (d.contains("gather_types") && !d["gather_types"].is_none()) {
-					for (auto& t : d["gather_types"].cast<py::list>())
-						step.gatherTypes.push_back(t.cast<std::string>());
-				}
-				if (d.contains("gather_radius") && !d["gather_radius"].is_none())
-					step.gatherRadius = d["gather_radius"].cast<float>();
-				if (d.contains("chop_cooldown") && !d["chop_cooldown"].is_none())
-					step.chopCooldown = d["chop_cooldown"].cast<float>();
-				if (d.contains("item") && !d["item"].is_none())
-					step.itemId = d["item"].cast<std::string>();
-				if (d.contains("count_goal") && !d["count_goal"].is_none())
-					step.countGoal = d["count_goal"].cast<int>();
-				if (d.contains("use_navigator") && !d["use_navigator"].is_none())
-					step.useNavigator = d["use_navigator"].cast<bool>();
-				if (d.contains("ignore_height") && !d["ignore_height"].is_none())
-					step.ignoreHeight = d["ignore_height"].cast<bool>();
+				if (!step.candidates.empty())
+					step.targetPos = step.candidates[0];
+				for (auto& t : d["gather_types"].cast<py::list>())
+					step.gatherTypes.push_back(t.cast<std::string>());
+				step.itemId       = d["item"].cast<std::string>();
+				step.useNavigator = d["use_navigator"].cast<bool>();
+				step.ignoreHeight = d["ignore_height"].cast<bool>();
+				// gatherRadius + chopCooldown fall back to PlanStep defaults
+				// (see behavior.h) — the executor owns those tunables.
 				outPlan.push_back(step);
 			} else if (stype == "attack") {
-				outPlan.push_back(PlanStep::attack(d["entity_id"].cast<EntityId>()));
+				PlanStep step = PlanStep::attack(d["entity_id"].cast<EntityId>());
+				step.holdTime = hold;
+				outPlan.push_back(step);
 			} else if (stype == "relocate") {
-				outPlan.push_back(PlanStep::relocate(
+				PlanStep step = PlanStep::relocate(
 					Container::self(), Container::self(),
 					d["item"].cast<std::string>(),
-					d["count"].cast<int>()));
+					d["count"].cast<int>());
+				step.holdTime = hold;
+				outPlan.push_back(step);
 			} else {
 				errorOut = "Unknown PlanStep type: " + stype;
 				return false;

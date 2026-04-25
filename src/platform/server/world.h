@@ -74,6 +74,12 @@ public:
 		return m_chunks.count(pos) > 0;
 	}
 
+	// Perf telemetry — loaded chunk count sampled each tick.
+	size_t loadedChunkCount() {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		return m_chunks.size();
+	}
+
 	// Meshing lookup — avoids generating chunks outside render range.
 	Chunk* getChunkIfLoaded(ChunkPos pos) override {
 		std::lock_guard<std::mutex> lock(m_mutex);

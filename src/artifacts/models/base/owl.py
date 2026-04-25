@@ -9,7 +9,7 @@ import math
 model = {
     "id": "owl",
     "height": 0.5,
-    "scale": 1.0,
+    "scale": 2.0,
     "walk_speed": 3.0,
     "idle_bob": 0.010,
     "walk_bob": 0.020,

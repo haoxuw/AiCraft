@@ -9,7 +9,7 @@ import math
 model = {
     "id": "raccoon",
     "height": 0.55,
-    "scale": 1.0,
+    "scale": 1.82,
     "walk_speed": 5.5,
     "idle_bob": 0.007,
     "walk_bob": 0.025,

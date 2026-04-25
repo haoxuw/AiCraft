@@ -55,7 +55,7 @@ class BlockView(BaseModel):
     `kind` is "block" for normal blocks and "annotation" for block decorators
     (flowers, moss, …) exposed via the same query API. See shared/annotation.h.
     """
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra='forbid')
 
     x: int
     y: int
@@ -70,7 +70,7 @@ class EntityView(BaseModel):
 
     From the agent's entity cache, updated on S_ENTITY broadcasts.
     """
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra='forbid')
 
     id: int
     type: str    # e.g. "chicken", "villager"
@@ -95,7 +95,7 @@ Nearby = Union[BlockView, EntityView]
 
 class InventoryView(BaseModel):
     """Read-only snapshot of an entity's inventory."""
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra='forbid')
 
     items: dict[str, int] = Field(default_factory=dict)
 
@@ -143,7 +143,10 @@ class SelfEntity(BaseModel):
         entity.inventory.count("logs")
         entity.get("work_radius", 80.0)    # custom server prop
     """
-    model_config = ConfigDict(frozen=True)
+    # frozen=True: immutable per-tick view. extra='forbid' so a C++-side
+    # key typo surfaces as a ValidationError instead of silently dropping
+    # the field.
+    model_config = ConfigDict(frozen=True, extra='forbid')
 
     id:         int
     type:    str
@@ -157,8 +160,8 @@ class SelfEntity(BaseModel):
     on_ground:  bool
     inventory:  InventoryView
 
-    # All raw props from C++ — used by .get() for custom server-assigned values.
-    # Includes standard fields too (id, x, y, …) which is fine for a trusted source.
+    # Server-assigned custom props (work_radius, chop_period, …). Dynamic
+    # per entity type — set by spawn logic on the C++ side.
     props: dict[str, Any] = Field(default_factory=dict)
 
     def get(self, prop: str, default=None):
@@ -167,25 +170,7 @@ class SelfEntity(BaseModel):
 
     @classmethod
     def _from_raw(cls, raw: dict) -> "SelfEntity":
-        """Construct from C++ bridge dict with full pydantic validation.
-
-        Pydantic coerces types (e.g. "5" → 5 for int fields), so even if
-        C++ passes string-encoded values they're converted to the right type.
-        """
-        return cls(
-            id         = raw["id"],
-            type    = raw["type"],
-            x          = raw["x"],
-            y          = raw["y"],
-            z          = raw["z"],
-            yaw        = raw["yaw"],
-            hp         = raw["hp"],
-            walk_speed = raw["walk_speed"],
-            inventory_capacity = raw.get("inventory_capacity", 0.0),
-            on_ground  = raw["on_ground"],
-            inventory  = InventoryView(items=dict(raw.get("inventory", {}))),
-            props=raw,
-        )
+        return cls.model_validate(raw)
 
 
 # ── LocalWorld ────────────────────────────────────────────────────────────────
@@ -217,7 +202,9 @@ class LocalWorld(BaseModel):
         world.time                              # 0.0–1.0 day fraction
         world.dt                                # frame delta seconds
     """
-    model_config = ConfigDict(frozen=False)   # private attr mutation needs non-frozen
+    # extra='forbid' so a C++-side key typo raises at load. frozen=False
+    # because model_post_init mutates private attrs (spatial index).
+    model_config = ConfigDict(frozen=False, extra='forbid')
 
     time:     float                    # 0.0 (midnight) – 1.0 (next midnight)
     dt:       float                    # seconds since last decide()
@@ -244,6 +231,11 @@ class LocalWorld(BaseModel):
     # enum. Prefer this over string-matching last_reason when branching.
     last_state:       str = "Idle"
     last_fail_streak: int = 0    # consecutive Failed_* outcomes, reset on Success
+
+    # Navigation-layer failure flag (computed in C++ via isNavFailed); true
+    # when the last step ended in NavNoPath / NavStuck / DirectStuck / GaveUp.
+    # Use this instead of matching last_state strings in behaviors.
+    last_nav_failed:  bool = False
 
     # Spatial indices — built in model_post_init, not exposed as pydantic fields
     _by_type:     dict[str, list[Nearby]]     = PrivateAttr(default_factory=dict)
@@ -329,36 +321,4 @@ class LocalWorld(BaseModel):
 
     @classmethod
     def _from_raw(cls, raw: dict) -> "LocalWorld":
-        """Construct from C++ bridge dict with full pydantic validation.
-        Pydantic coerces string→int/float as needed.
-        """
-        blocks = [
-            BlockView(
-                x=b["x"], y=b["y"], z=b["z"],
-                type=b["type"],
-                distance=b["distance"],
-            )
-            for b in raw.get("blocks", [])
-        ]
-        entities = [
-            EntityView(
-                id=e["id"], type=e["type"],
-                kind=e.get("kind", "living"),
-                x=e["x"], y=e["y"], z=e["z"],
-                distance=e["distance"], hp=e["hp"],
-                tags=list(e.get("tags", [])),
-            )
-            for e in raw.get("nearby", [])
-        ]
-        return cls(
-            time=raw["time"],
-            dt=raw["dt"],
-            blocks=blocks,
-            entities=entities,
-            goal=raw.get("goal"),
-            last_outcome=raw.get("last_outcome", "none"),
-            last_goal=raw.get("last_goal", ""),
-            last_reason=raw.get("last_reason", ""),
-            last_state=raw.get("last_state", "Idle"),
-            last_fail_streak=int(raw.get("last_fail_streak", 0)),
-        )
+        return cls.model_validate(raw)

@@ -26,7 +26,9 @@
 #include "logic/action.h"
 #include "logic/constants.h"       // BlockType strings for WorldView classification
 #include "net/server_interface.h"
+#include "agent/actions.h"         // ActionHandler hierarchy + actionFor()
 #include "agent/behavior.h"
+#include "agent/jitter.h"          // per-agent frustration + RNG
 #include "python/python_bridge.h"  // BehaviorHandle
 #include "agent/outcome.h"
 #include "agent/pathfind.h"        // WorldView, DoorOracle, GridPlanner
@@ -68,44 +70,6 @@ struct PlanProgress {
 	float overridePauseTimer = 0.0f;
 };
 
-// ServerInterface-backed WorldView for the per-agent Navigator. Block passability
-// mirrors the Python bridge (BridgeWorldView): non-solid blocks and door-likes
-// are walkable; the DoorOracle handles the Interact-on-closed-door handshake.
-class AgentServerWorldView : public WorldView {
-public:
-	void setServer(ServerInterface* s) { m_server = s; }
-	bool isSolid(glm::ivec3 p) const override {
-		if (!m_server) return false;
-		BlockId id = m_server->chunks().getBlock(p.x, p.y, p.z);
-		const BlockDef& def = m_server->blockRegistry().get(id);
-		if (!def.solid) return false;
-		const std::string& sid = def.string_id;
-		if (sid == BlockType::Door)     return false;
-		if (sid == BlockType::DoorOpen) return false;
-		if (sid == BlockType::Trapdoor) return false;
-		return true;
-	}
-private:
-	ServerInterface* m_server = nullptr;
-};
-
-class AgentServerDoorOracle : public DoorOracle {
-public:
-	void setServer(ServerInterface* s) { m_server = s; }
-	bool isClosedDoor(glm::ivec3 p) const override {
-		if (!m_server) return false;
-		BlockId id = m_server->chunks().getBlock(p.x, p.y, p.z);
-		return m_server->blockRegistry().get(id).string_id == BlockType::Door;
-	}
-	bool isOpenDoor(glm::ivec3 p) const override {
-		if (!m_server) return false;
-		BlockId id = m_server->chunks().getBlock(p.x, p.y, p.z);
-		return m_server->blockRegistry().get(id).string_id == BlockType::DoorOpen;
-	}
-private:
-	ServerInterface* m_server = nullptr;
-};
-
 class Agent {
 public:
 	// What the scheduler should dispatch for this agent on its next visit.
@@ -133,7 +97,8 @@ public:
 	Agent(EntityId eid, std::string behaviorId, BehaviorHandle handle)
 		: m_eid(eid),
 		  m_behaviorId(std::move(behaviorId)),
-		  m_handle(handle) {
+		  m_handle(handle),
+		  m_jitter(eid) {
 		// First-time discovery acts like a Success outcome with reason
 		// "discovery"; Python's callDecide maps this to outcome="success".
 		m_lastOutcome.outcome = StepOutcome::Success;
@@ -178,6 +143,7 @@ public:
 
 	bool reactInFlight()  const { return m_reactInFlight; }
 	bool decideInFlight() const { return m_decideInFlight; }
+	bool firstDecideDone() const { return m_firstDecideDone; }
 
 	const LastOutcome& lastOutcome() const { return m_lastOutcome; }
 
@@ -222,6 +188,7 @@ public:
 		m_goalText     = std::move(goalText);
 		m_watch        = StepWatch{};
 		m_needsDecide  = false;          // we have a plan now
+		m_firstDecideDone = true;
 		m_execLoggedFirstWaypoint = false;
 		// Plan installed — executor hasn't ticked yet, so leave execState at
 		// PlanRequested. The first evaluateStep / applyStep will flip it to
@@ -249,10 +216,10 @@ public:
 				(s.type == PlanStep::Interact) ? "Interact" : "?";
 			PATHLOG(m_eid,
 				"trigger:   step[%zu] type=%s target=(%.1f,%.1f,%.1f) "
-				"candidates=%zu useNav=%d item=\"%s\" countGoal=%d",
+				"candidates=%zu useNav=%d item=\"%s\"",
 				i, t, s.targetPos.x, s.targetPos.y, s.targetPos.z,
 				s.candidates.size(), s.useNavigator ? 1 : 0,
-				s.itemId.c_str(), s.countGoal);
+				s.itemId.c_str());
 		}
 		rebuildViz();
 	}
@@ -442,7 +409,7 @@ public:
 		StepOutcome outcome = evaluateStep(step, *e, dt);
 		switch (outcome) {
 		case StepOutcome::InProgress:
-			applyStep(step, *e, server);
+			actionFor(step.type).apply(step, *e, *this, server);
 			break;
 		case StepOutcome::Success:
 			advanceStep();
@@ -456,6 +423,17 @@ public:
 	}
 
 private:
+	// Action handlers live in agent/actions.cpp and need deep access to
+	// m_watch / m_jitter / m_navigator / m_chopCooldown / advanceStep()
+	// to do their work. They are part of the same component as Agent, not
+	// arms-length consumers — direct friend access beats a side-channel
+	// proxy struct.
+	friend class MoveAction;
+	friend class HarvestAction;
+	friend class AttackAction;
+	friend class RelocateAction;
+	friend class InteractAction;
+
 	struct StepWatch {
 		bool        initialized   = false;
 		bool        modeDetected  = false;
@@ -479,14 +457,11 @@ private:
 		bool        navArrived    = false;
 		bool        navFailed     = false;
 
-		// Harvest-only: per-step candidate cycling and count gate. `activeIdx`
-		// is the current slot in step.candidates; `anchorFailed` marks slots
-		// that wedged or exhausted their local sphere. `startItemCount` is
-		// inventory[step.itemId] at step entry; countGoal progress is measured
-		// as (now - start). All reset by advanceStep()'s m_watch = {}.
+		// Harvest-only: per-step candidate cycling. `activeIdx` is the current
+		// slot in step.candidates; `anchorFailed` marks slots that wedged or
+		// exhausted their local sphere. Reset by advanceStep()'s m_watch = {}.
 		int               harvestActiveIdx     = 0;
 		std::vector<bool> harvestAnchorFailed;
-		int               harvestStartItemCount = -1;
 	};
 
 	struct DecideRateTracker {
@@ -602,6 +577,13 @@ private:
 			lastType    = m_plan[idx].type;
 			wasAnchored = m_plan[idx].anchorEntityId != ENTITY_NONE;
 		}
+		// Any plan that ended in Success tells the executor "this line of
+		// attempts is paying off" — reset frustration so the next plan
+		// starts deterministic again. Failed plans keep whatever
+		// temperature the handlers already bumped in.
+		if (outcome == StepOutcome::Success && m_jitter.cool()) {
+			PATHLOG(m_eid, "trigger: frustration cool (plan success)");
+		}
 		// Failed plans carry their specific reason state via m_watch, set
 		// right next to the failReason string at the evaluator/applier site.
 		// Success plans advance the agent to PlanRequested (awaiting the next
@@ -670,489 +652,32 @@ private:
 		clearNavigator();
 	}
 
-	// ── Step evaluators ──────────────────────────────────────────────────
+	// ── Step dispatch ────────────────────────────────────────────────────
+	// Per-type ActionHandlers live in agent/actions.cpp. evaluateStep reads
+	// state (decides if the step is Success/Failed/InProgress); applyStep
+	// takes action (sends ActionProposals, drives the Navigator). Handlers
+	// are friends of Agent so they can reach m_watch / m_navigator /
+	// m_jitter / m_chopCooldown without a side-channel proxy.
 	StepOutcome evaluateStep(PlanStep& step, Entity& e, float dt) {
-		switch (step.type) {
-		case PlanStep::Move:     return evaluateMove(step, e, dt);
-		case PlanStep::Harvest:  return evaluateHarvest(step, e, dt);
-		case PlanStep::Attack:   return evaluateAttack(step, e, dt);
-		case PlanStep::Relocate: return evaluateRelocate(step, e, dt);
-		case PlanStep::Interact: return evaluateInteract(step, e, dt);
-		}
-		return StepOutcome::Success;
+		return actionFor(step.type).evaluate(step, e, *this, dt);
 	}
 
-	StepOutcome evaluateMove(PlanStep& step, Entity& e, float dt) {
-		// Terminal signals from applyMove — the Navigator is the sole arrival
-		// authority for useNavigator Move steps. Checked first so we don't
-		// double-count "close enough" vs. "Executor said Arrived".
-		if (m_watch.navFailed)  return StepOutcome::Failed;
-		if (m_watch.navArrived) return StepOutcome::Success;
-
-		// Anchored Move: chase/flee a moving target — arrival is meaningless;
-		// holdTime (the re-decide cadence) is what completes the step.
-		if (step.anchorEntityId != ENTITY_NONE) {
-			float hold = step.holdTime > 0.0f ? step.holdTime
-			                                  : kDefaultIdleHoldSec;
-			m_watch.progress += dt;
-			if (m_watch.progress >= hold) return StepOutcome::Success;
-			return StepOutcome::InProgress;
-		}
-
-		// Intent-driven idle vs. walk. speed==0 means "stand here" — no Navigator
-		// is involved, the behavior is asking for an in-place timeout.
-		if (!m_watch.modeDetected) {
-			m_watch.modeDetected = true;
-			m_watch.isIdleHold   = (step.speed <= 0.0f);
-		}
-
-		if (m_watch.isIdleHold) {
-			float hold = step.holdTime > 0.0f ? step.holdTime : kDefaultIdleHoldSec;
-			m_watch.progress += dt;
-			if (m_watch.progress >= hold) return StepOutcome::Success;
-			return StepOutcome::InProgress;
-		}
-
-		// Walking. Two arrival owners depending on the route:
-		//   useNavigator=true  — Executor owns it; navArrived above is the signal.
-		//   useNavigator=false — direct steer (no Executor), Agent owns arrival.
-		if (!step.useNavigator) {
-			glm::vec3 delta = step.targetPos - e.position;
-			delta.y = 0;
-			float dist = glm::length(delta);
-			if (dist < kArriveEps) return StepOutcome::Success;
-			if (step.holdTime > 0.0f) {
-				m_watch.progress += dt;
-				if (m_watch.progress >= step.holdTime) return StepOutcome::Success;
-			}
-		}
-
-		// Stuck detection applies to both routes.
-		float horiz = std::sqrt(e.velocity.x * e.velocity.x +
-		                        e.velocity.z * e.velocity.z);
-		if (horiz < kStillEps) {
-			m_watch.stillAccum += dt;
-			if (m_watch.stillAccum > kStuckSeconds) {
-				m_watch.failReason    = "stuck";
-				// Distinguish nav-driven stalls (pathed, then clamped) from
-				// direct-steer stalls (no nav, stuck against a wall) so decide
-				// can pick different recovery.
-				m_watch.failExecState = step.useNavigator
-					? ExecState::Failed_NavStuck
-					: ExecState::Failed_DirectStuck;
-				return StepOutcome::Failed;
-			}
-		} else {
-			m_watch.stillAccum = 0;
-		}
-		return StepOutcome::InProgress;
-	}
-
-	StepOutcome evaluateHarvest(PlanStep& step, Entity& e, float dt) {
-		// Navigator bailed on every candidate — fail the step.
-		if (m_watch.navFailed) return StepOutcome::Failed;
-
-		// Stuck-outside-range: measured against the *active* anchor (which may
-		// have been swapped by applyHarvest after a previous wedge). Once the
-		// villager is within reach they stand still while chopping, so the
-		// "not moving" check only fires before arrival.
-		glm::vec3 anchor = activeHarvestAnchor(step);
-		glm::vec3 delta = anchor - e.position;
-		delta.y = 0;
-		if (glm::length(delta) > kReachHarvest + 2.0f) {
-			float horiz = std::sqrt(e.velocity.x * e.velocity.x +
-			                        e.velocity.z * e.velocity.z);
-			if (horiz < kStillEps) {
-				m_watch.stillAccum += dt;
-				if (m_watch.stillAccum > kStuckSeconds) {
-					PATHLOG(m_eid,
-						"trigger: harvestStillTimeout stillAccum=%.2f "
-						"pos=(%.2f,%.2f,%.2f) anchor=(%.1f,%.1f,%.1f) dist=%.2f",
-						m_watch.stillAccum,
-						e.position.x, e.position.y, e.position.z,
-						anchor.x, anchor.y, anchor.z, glm::length(delta));
-					// Multi-anchor path: blacklist this index and let
-					// applyHarvest pick the next. Keeps the plan alive so
-					// Python isn't pinged every 2s of wedging.
-					if (!step.candidates.empty() &&
-					    advanceHarvestAnchor(step)) {
-						m_watch.stillAccum = 0;
-						return StepOutcome::InProgress;
-					}
-					m_watch.failReason    = "stuck";
-					m_watch.failExecState = step.useNavigator
-						? ExecState::Failed_NavStuck
-						: ExecState::Failed_DirectStuck;
-					return StepOutcome::Failed;
-				}
-			} else m_watch.stillAccum = 0;
-		}
-		return StepOutcome::InProgress;
-	}
-
-	// Harvest helpers: active anchor = candidates[activeIdx] if the step has
-	// candidates, else the legacy single-anchor targetPos.
-	glm::vec3 activeHarvestAnchor(const PlanStep& step) const {
-		if (step.candidates.empty()) return step.targetPos;
-		int idx = std::min((int)m_watch.harvestActiveIdx,
-		                   (int)step.candidates.size() - 1);
-		return step.candidates[std::max(0, idx)];
-	}
-
-	// Mark the current anchor failed and move to the next un-failed slot.
-	// Returns true if a fresh anchor was selected, false if the list is
-	// exhausted (caller should end the step).
-	bool advanceHarvestAnchor(PlanStep& step) {
-		if (step.candidates.empty()) return false;
-		if (m_watch.harvestAnchorFailed.size() != step.candidates.size())
-			m_watch.harvestAnchorFailed.assign(step.candidates.size(), false);
-		int& i = m_watch.harvestActiveIdx;
-		int oldIdx = i;
-		if (i >= 0 && i < (int)step.candidates.size())
-			m_watch.harvestAnchorFailed[i] = true;
-		for (i = i + 1; i < (int)step.candidates.size(); ++i) {
-			if (!m_watch.harvestAnchorFailed[i]) {
-				PATHLOG(m_eid,
-					"trigger: harvestAnchor idx=%d -> %d (of %zu)",
-					oldIdx, i, step.candidates.size());
-				return true;
-			}
-		}
-		PATHLOG(m_eid,
-			"trigger: harvestAnchor exhausted (was idx=%d of %zu)",
-			oldIdx, step.candidates.size());
-		return false;
-	}
-
-	StepOutcome evaluateAttack(PlanStep& /*step*/, Entity& /*e*/, float /*dt*/) {
-		return StepOutcome::InProgress;
-	}
-
-	StepOutcome evaluateRelocate(PlanStep& /*s*/, Entity& /*e*/, float /*dt*/) {
-		if (!m_watch.modeDetected) {
-			m_watch.modeDetected = true;
-			return StepOutcome::InProgress;
-		}
-		return StepOutcome::Success;
-	}
-
-	StepOutcome evaluateInteract(PlanStep& /*s*/, Entity& /*e*/, float /*dt*/) {
-		if (!m_watch.modeDetected) {
-			m_watch.modeDetected = true;
-			return StepOutcome::InProgress;
-		}
-		return StepOutcome::Success;
-	}
-
-	// ── Step appliers ────────────────────────────────────────────────────
 	void applyStep(PlanStep& step, Entity& e, ServerInterface& server) {
-		auto kindName = [](PlanStep::Type t) {
-			switch (t) {
-				case PlanStep::Move:     return "Move";
-				case PlanStep::Harvest:  return "Harvest";
-				case PlanStep::Attack:   return "Attack";
-				case PlanStep::Relocate: return "Relocate";
-				case PlanStep::Interact: return "Interact";
-			}
-			return "?";
-		};
 		PATHLOG(m_eid,
 			"tick: stepIdx=%d/%zu kind=%s useNavigator=%d "
 			"target=(%.2f,%.2f,%.2f) anchor=%d pos=(%.2f,%.2f,%.2f) "
 			"entVel=(%.2f,%.2f,%.2f)",
-			m_stepIndex, m_plan.size(), kindName(step.type),
+			m_stepIndex, m_plan.size(), toString(step.type),
 			step.useNavigator ? 1 : 0,
 			step.targetPos.x, step.targetPos.y, step.targetPos.z,
 			(int)step.anchorEntityId,
 			e.position.x, e.position.y, e.position.z,
 			e.velocity.x, e.velocity.y, e.velocity.z);
-		switch (step.type) {
-		case PlanStep::Move:     applyMove(step, e, server); break;
-		case PlanStep::Harvest:  applyHarvest(step, e, server); break;
-		case PlanStep::Attack:   applyAttack(step, e, server); break;
-		case PlanStep::Relocate: applyRelocate(step, server); break;
-		case PlanStep::Interact: applyInteract(step, server); break;
-		}
-	}
-
-	void applyMove(PlanStep& step, Entity& e, ServerInterface& server) {
-		float speed = step.speed > 0 ? step.speed : e.def().walk_speed;
-		if (step.anchorEntityId != ENTITY_NONE) {
-			Entity* t = server.getEntity(step.anchorEntityId);
-			if (!t || t->removed || t->hp() <= 0) {
-				sendStopMove(e, server, "anchor-target-gone");
-				return;
-			}
-			glm::vec3 to = t->position - e.position;
-			to.y = 0;
-			float hLen = glm::length(to);
-			bool flee = step.keepAway > 0.0f;
-			float ring = flee ? step.keepAway : step.keepWithin;
-			bool stop = flee ? (hLen >= ring) : (hLen <= ring);
-			if (stop || hLen < 0.01f) {
-				sendStopMove(e, server, "anchor-in-range");
-				return;
-			}
-			// Chase/flee tracks a moving target — A* would re-plan every tick
-			// as the target drifts, so keep straight-line steer here even when
-			// useNavigator is set. Python opts into true pathfind by emitting
-			// a fixed-target Move with no anchorEntityId.
-			float sign = flee ? -1.0f : 1.0f;
-			glm::vec3 dir = {sign * to.x / hLen, 0, sign * to.z / hLen};
-			sendMove(e, dir * speed, server, flee ? "anchor-flee" : "anchor-chase");
-			return;
-		}
-
-		if (step.useNavigator) {
-			NavTickResult r = navigateApproach(
-				e, resolveNavGoal(step.targetPos, step, server), server);
-			if (r == NavTickResult::Failed) {
-				m_watch.failReason = m_navigator
-					? ("nav: " + m_navigator->failureReason())
-					: std::string("nav failed");
-				m_watch.failExecState = ExecState::Failed_NavNoPath;
-				m_watch.navFailed     = true;
-				clearNavigator();
-			} else if (r == NavTickResult::Arrived) {
-				// Executor owns arrival: evaluateMove reads this next tick.
-				m_watch.navArrived = true;
-				clearNavigator();
-			}
-			return;
-		}
-
-		glm::vec3 dir = step.targetPos - e.position;
-		dir.y = 0;
-		float dist = glm::length(dir);
-		if (dist < kArriveEps) {
-			sendStopMove(e, server, "move-arrived");
-			return;
-		}
-		dir /= dist;
-		sendMove(e, dir * speed, server, "move-straight");
-	}
-
-	void applyHarvest(PlanStep& step, Entity& e, ServerInterface& server) {
-		// Phase 0 — lazy init. Baseline the inventory count for the count-goal
-		// gate, and size the per-candidate failed-mask to match the step.
-		if (m_watch.harvestStartItemCount < 0) {
-			m_watch.harvestStartItemCount =
-				(e.inventory && !step.itemId.empty())
-					? e.inventory->count(step.itemId) : 0;
-			if (!step.candidates.empty())
-				m_watch.harvestAnchorFailed.assign(
-					step.candidates.size(), false);
-		}
-
-		// Phase 0.5 — count-goal early exit. Once the plan has collected
-		// `countGoal` of `itemId`, the step concludes; decide() re-runs and
-		// typically transitions to DEPOSIT. countGoal == 1 preserves legacy
-		// single-swing semantics.
-		if (step.countGoal > 1 && e.inventory && !step.itemId.empty()) {
-			int gained = e.inventory->count(step.itemId) -
-			             m_watch.harvestStartItemCount;
-			if (gained >= step.countGoal) {
-				PATHLOG(m_eid,
-					"trigger: countGoal hit item=%s gained=%d goal=%d",
-					step.itemId.c_str(), gained, step.countGoal);
-				advanceStep();
-				if (m_stepIndex >= (int)m_plan.size())
-					finishPlan(StepOutcome::Success, std::string{}, server);
-				return;
-			}
-		}
-
-		// Phase 1 — navigate to the active anchor. With a candidate list the
-		// "active" anchor is whatever index we haven't blacklisted yet;
-		// evaluateHarvest trips the stuck-timer and advances on wedge.
-		glm::vec3 anchor = activeHarvestAnchor(step);
-		glm::vec3 delta = anchor - e.position;
-		delta.y = 0;
-		float dist = glm::length(delta);
-
-		if (step.useNavigator) {
-			// A*-driven approach: target cell is the anchor's floor cell. On
-			// failure, blacklist the current anchor and rotate — same contract
-			// as the stuck-timer path in evaluateHarvest.
-			if (dist > kReachHarvest) {
-				glm::ivec3 goalCell = resolveNavGoal(anchor, step, server);
-				NavTickResult r = navigateApproach(e, goalCell, server);
-				if (r == NavTickResult::Failed) {
-					PATHLOG(m_eid,
-						"trigger: navApproach Failed anchor=(%.1f,%.1f,%.1f) "
-						"reason=\"%s\"",
-						anchor.x, anchor.y, anchor.z,
-						m_navigator ? m_navigator->failureReason().c_str() : "");
-					clearNavigator();
-					if (!step.candidates.empty() &&
-					    advanceHarvestAnchor(step)) {
-						return;
-					}
-					m_watch.failReason = m_navigator
-						? ("nav: " + m_navigator->failureReason())
-						: std::string("nav failed");
-					m_watch.failExecState = ExecState::Failed_NavNoPath;
-					m_watch.navFailed     = true;
-					return;
-				}
-				if (r == NavTickResult::Walking) return;
-				// Arrived — fall through into the cooldown+scan phases.
-				PATHLOG(m_eid,
-					"trigger: navApproach Arrived anchor=(%.1f,%.1f,%.1f) "
-					"pos=(%.2f,%.2f,%.2f)",
-					anchor.x, anchor.y, anchor.z,
-					e.position.x, e.position.y, e.position.z);
-			} else {
-				sendStopMove(e, server, "harvest-in-range-nav");
-				clearNavigator();
-			}
-		} else if (dist > kReachHarvest) {
-			glm::vec3 dir = glm::normalize(delta);
-			sendMove(e, dir * e.def().walk_speed, server, "harvest-straight");
-			return;
-		} else {
-			sendStopMove(e, server, "harvest-in-range");
-		}
-
-		// Phase 2 — cooldown gate. Cooldown lives on the agent (not the step)
-		// so a mid-plan re-decide can't grant a free swing.
-		if (m_chopCooldown > 0.0f) return;
-
-		// Phase 3 — prioritized local scan. For each tier (index 0 = highest),
-		// find the nearest non-AIR block matching the tier's type within
-		// gatherRadius of the entity. First tier with a hit wins — this is
-		// what enforces "don't chop a log while a leaf exists nearby".
-		std::optional<glm::ivec3> hit;
-		for (const std::string& typeName : step.gatherTypes) {
-			hit = findNearestBlockOfType(
-				typeName, e.position, step.gatherRadius, server);
-			if (hit) break;
-		}
-
-		if (!hit) {
-			PATHLOG(m_eid,
-				"trigger: harvest no-hit pos=(%.1f,%.1f,%.1f) radius=%.1f "
-				"types=%zu candidates=%zu",
-				e.position.x, e.position.y, e.position.z,
-				step.gatherRadius, step.gatherTypes.size(),
-				step.candidates.size());
-			// Nothing left in this anchor's local sphere. If candidates
-			// remain, rotate to the next; otherwise the step concludes and
-			// decide() picks up (DEPOSIT, wander, …).
-			if (!step.candidates.empty() && advanceHarvestAnchor(step)) {
-				return;
-			}
-			advanceStep();
-			if (m_stepIndex >= (int)m_plan.size())
-				finishPlan(StepOutcome::Success, std::string{}, server);
-			return;
-		}
-
-		glm::ivec3 targetBlock = *hit;
-
-		// Convert's from/to match the block we're actually chopping —
-		// step.itemId is a capacity-gate hint only (see applyStep), NOT the
-		// output id, otherwise mixed leaves+logs plans trip ValueConservation.
-		const BlockDef& bdef = server.blockRegistry().get(
-			server.chunks().getBlock(targetBlock.x, targetBlock.y, targetBlock.z));
-		std::string fromItem = bdef.string_id;
-		std::string outItem  = bdef.drop.empty() ? fromItem : bdef.drop;
-
-		ActionProposal p;
-		p.type = ActionProposal::Convert;
-		p.actorId    = m_eid;
-		p.fromItem   = fromItem;
-		p.fromCount  = 1;
-		p.toItem     = outItem;
-		p.toCount    = step.itemCount > 0 ? step.itemCount : 1;
-		p.convertFrom = Container::block(targetBlock);
-		p.convertInto = Container::self();
-		server.sendAction(p);
-
-		PATHLOG(m_eid,
-			"trigger: chop swing target=(%d,%d,%d) from=%s -> %s cooldown=%.2f",
-			targetBlock.x, targetBlock.y, targetBlock.z,
-			fromItem.c_str(), outItem.c_str(),
-			step.chopCooldown > 0.0f ? step.chopCooldown : 1.0f);
-
-		// Default 1s if Python didn't specify. Positive number required or
-		// the executor would re-swing every tick.
-		m_chopCooldown = step.chopCooldown > 0.0f ? step.chopCooldown : 1.0f;
-	}
-
-	// Sphere-scan for the nearest block matching `typeName` around `origin`.
-	// Returns nullopt if the name is unknown or no match exists in range.
-	// Walks an axis-aligned cube around origin (radius-bounded) and early-
-	// accepts on a distance check — the cube's ~2x volume vs. a sphere is
-	// a cheap way to avoid per-cell sqrt before knowing the candidate id.
-	std::optional<glm::ivec3> findNearestBlockOfType(
-		const std::string& typeName, const glm::vec3& origin,
-		float radius, ServerInterface& server) {
-		BlockId wantId = server.blockRegistry().getId(typeName);
-		if (wantId == BLOCK_AIR) return std::nullopt;  // unknown name
-
-		int r = (int)std::ceil(radius);
-		int cx = (int)std::floor(origin.x);
-		int cy = (int)std::floor(origin.y);
-		int cz = (int)std::floor(origin.z);
-
-		auto& chunks = server.chunks();
-		float bestDistSq = radius * radius;
-		std::optional<glm::ivec3> best;
-
-		for (int dx = -r; dx <= r; ++dx)
-		for (int dy = -r; dy <= r; ++dy)
-		for (int dz = -r; dz <= r; ++dz) {
-			int x = cx + dx, y = cy + dy, z = cz + dz;
-			if (chunks.getBlock(x, y, z) != wantId) continue;
-			glm::vec3 c(x + 0.5f, y + 0.5f, z + 0.5f);
-			glm::vec3 d = c - origin;
-			float dsq = d.x*d.x + d.y*d.y + d.z*d.z;
-			if (dsq < bestDistSq) {
-				bestDistSq = dsq;
-				best = glm::ivec3(x, y, z);
-			}
-		}
-		return best;
-	}
-
-	void applyAttack(PlanStep& step, Entity& e, ServerInterface& server) {
-		Entity* target = server.getEntity(step.targetEntity);
-		if (!target || target->removed) return;
-		glm::vec3 delta = target->position - e.position;
-		delta.y = 0;
-		float dist = glm::length(delta);
-		if (dist > kReachAttack) {
-			glm::vec3 dir = glm::normalize(delta);
-			sendMove(e, dir * e.def().walk_speed, server, "attack-chase");
-		} else {
-			sendStopMove(e, server, "attack-in-range");
-			// TODO: melee-damage Convert.
-		}
-	}
-
-	void applyRelocate(PlanStep& step, ServerInterface& server) {
-		ActionProposal p;
-		p.type = ActionProposal::Relocate;
-		p.actorId = m_eid;
-		p.relocateFrom = step.relocateFrom;
-		p.relocateTo = step.relocateTo;
-		p.itemId = step.itemId;
-		p.itemCount = step.itemCount;
-		server.sendAction(p);
-	}
-
-	void applyInteract(PlanStep& step, ServerInterface& server) {
-		ActionProposal p;
-		p.type          = ActionProposal::Interact;
-		p.actorId       = m_eid;
-		p.blockPos      = glm::ivec3(step.targetPos);
-		p.appearanceIdx = step.appearanceIdx;
-		server.sendAction(p);
+		actionFor(step.type).apply(step, e, *this, server);
 	}
 
 	// ── Navigator-driven approach (Python useNavigator=true) ──────────────
-	// Shared by applyMove/applyHarvest. One tick: ensures the per-agent
+	// Shared by MoveAction / HarvestAction. One tick: ensures the per-agent
 	// Navigator is live, (re-)asserts the goal cell, dispatches the next
 	// primitive (Move along a waypoint / Interact on a closed door), and
 	// returns the terminal status when the plan resolves. Returns Walking
@@ -1162,10 +687,10 @@ private:
 	NavTickResult navigateApproach(Entity& e, glm::ivec3 goalCell,
 	                               ServerInterface& server) {
 		if (!m_navigator) {
-			m_navWorldView = std::make_unique<AgentServerWorldView>();
-			m_navDoors     = std::make_unique<AgentServerDoorOracle>();
-			m_navWorldView->setServer(&server);
-			m_navDoors->setServer(&server);
+			m_navWorldView = std::make_unique<ChunkWorldView>(
+				server.chunks(), server.blockRegistry());
+			m_navDoors = std::make_unique<ChunkDoorOracle>(
+				server.chunks(), server.blockRegistry());
 			m_navigator = std::make_unique<Navigator>(
 				*m_navWorldView, m_navDoors.get());
 			m_navLastGoal    = glm::ivec3(INT_MIN);
@@ -1187,17 +712,7 @@ private:
 					"pathSteps=%zu",
 					m_navLastGoal.x, m_navLastGoal.y, m_navLastGoal.z,
 					goalCell.x, goalCell.y, goalCell.z,
-					[](Navigator::Status s) {
-						switch (s) {
-							case Navigator::Status::Idle:        return "Idle";
-							case Navigator::Status::Planning:    return "Planning";
-							case Navigator::Status::Walking:     return "Walking";
-							case Navigator::Status::OpeningDoor: return "OpeningDoor";
-							case Navigator::Status::Arrived:     return "Arrived";
-							case Navigator::Status::Failed:      return "Failed";
-						}
-						return "?";
-					}(m_navPrevStatus),
+					toString(m_navPrevStatus),
 					toString(m_execState),
 					m_navigator->pathStepCount());
 			}
@@ -1251,40 +766,25 @@ private:
 		// Transition trace: fires at most a handful of times per plan
 		// (Idle→Planning→Walking↔OpeningDoor→Arrived|Failed).
 		if (st != m_navPrevStatus) {
-			auto name = [](Navigator::Status s) -> const char* {
-				switch (s) {
-					case Navigator::Status::Idle:        return "Idle";
-					case Navigator::Status::Planning:    return "Planning";
-					case Navigator::Status::Walking:     return "Walking";
-					case Navigator::Status::OpeningDoor: return "OpeningDoor";
-					case Navigator::Status::Arrived:     return "Arrived";
-					case Navigator::Status::Failed:      return "Failed";
-				}
-				return "?";
-			};
 			if (st == Navigator::Status::Walking) {
 				PATHLOG(m_eid,
 					"nav: %s -> Walking steps=%zu partial=%d next=(%.2f,%.2f,%.2f)",
-					name(m_navPrevStatus),
+					toString(m_navPrevStatus),
 					m_navigator->pathStepCount(),
 					m_navigator->pathPartial() ? 1 : 0,
 					step.moveTarget.x, step.moveTarget.y, step.moveTarget.z);
 				const Path& pth = m_navigator->path();
 				for (size_t i = 0; i < pth.steps.size(); ++i) {
 					const Waypoint& w = pth.steps[i];
-					const char* kindName =
-						(w.kind == MoveKind::Walk)    ? "Walk"    :
-						(w.kind == MoveKind::Jump)    ? "Jump"    :
-						(w.kind == MoveKind::Descend) ? "Descend" : "?";
 					PATHLOG(m_eid,
 						"nav: waypoint[%zu/%zu] (%d,%d,%d) %s",
 						i + 1, pth.steps.size(),
-						w.pos.x, w.pos.y, w.pos.z, kindName);
+						w.pos.x, w.pos.y, w.pos.z, toString(w.kind));
 				}
 			} else if (st == Navigator::Status::Failed) {
 				PATHLOG(m_eid,
 					"nav: %s -> Failed steps=%zu partial=%d reason=\"%s\"",
-					name(m_navPrevStatus),
+					toString(m_navPrevStatus),
 					m_navigator->pathStepCount(),
 					m_navigator->pathPartial() ? 1 : 0,
 					m_navigator->failureReason().c_str());
@@ -1294,11 +794,11 @@ private:
 			} else if (st == Navigator::Status::Arrived) {
 				PATHLOG(m_eid,
 					"nav: %s -> Arrived at (%.2f,%.2f,%.2f)",
-					name(m_navPrevStatus),
+					toString(m_navPrevStatus),
 					e.position.x, e.position.y, e.position.z);
 			} else {
 				PATHLOG(m_eid, "nav: %s -> %s",
-					name(m_navPrevStatus), name(st));
+					toString(m_navPrevStatus), toString(st));
 			}
 			m_navPrevStatus = st;
 		}
@@ -1325,14 +825,10 @@ private:
 					step.moveTarget.x, step.moveTarget.y, step.moveTarget.z);
 				for (size_t i = 0; i < pth.steps.size(); ++i) {
 					const Waypoint& w = pth.steps[i];
-					const char* kindName =
-						(w.kind == MoveKind::Walk)    ? "Walk"    :
-						(w.kind == MoveKind::Jump)    ? "Jump"    :
-						(w.kind == MoveKind::Descend) ? "Descend" : "?";
 					PATHLOG(m_eid,
 						"nav: walking waypoint[%zu/%zu] (%d,%d,%d) %s",
 						i + 1, pth.steps.size(),
-						w.pos.x, w.pos.y, w.pos.z, kindName);
+						w.pos.x, w.pos.y, w.pos.z, toString(w.kind));
 				}
 			}
 		} else {
@@ -1356,7 +852,11 @@ private:
 				sendStopMove(e, server, "nav-near-waypoint");
 				return NavTickResult::Walking;
 			}
-			glm::vec3 dir = delta / dist;
+			glm::vec3 desired = delta / dist;
+			// Cap per-tick rotation so pops don't snap the heading.
+			glm::vec3 dir = rotateTowardXZ(m_lastMoveDir, desired,
+			                               PathExecutor::kMaxTurnPerTick60);
+			m_lastMoveDir = dir;
 			sendMove(e, dir * e.def().walk_speed, server, "nav-waypoint");
 		} else if (step.kind == Navigator::Step::Interact) {
 			ActionProposal p;
@@ -1534,6 +1034,7 @@ private:
 
 	void sendStopMove(Entity& e, ServerInterface& server, const char* source) {
 		sendMove(e, {0, 0, 0}, server, source);
+		m_lastMoveDir = glm::vec3(0);   // next nav leg snaps to new heading
 	}
 
 	void rebuildViz() {
@@ -1556,6 +1057,7 @@ private:
 	EntityId       m_eid;
 	std::string    m_behaviorId;
 	BehaviorHandle m_handle = -1;
+	Jitter         m_jitter;
 
 	Plan        m_plan;
 	int         m_stepIndex = 0;
@@ -1565,10 +1067,19 @@ private:
 
 	int m_prevHp = 0;
 
+	// Smoothed XZ heading last sent in a nav-waypoint Move — fed back into
+	// rotateTowardXZ next tick so desiredVel stays C¹-continuous on pops.
+	glm::vec3 m_lastMoveDir{0, 0, 0};
+
 	// Schedule flags.
 	bool        m_needsDecide    = false;
 	bool        m_reactInFlight  = false;
 	bool        m_decideInFlight = false;
+	// Flips true the first time onDecideResult lands (plan OR no-op). Loading
+	// screen reads this per agent to know when every owned NPC has had a real
+	// first thought; the game only hands off to Playing once the whole fleet
+	// has settled, so the first rendered frame isn't under decide load.
+	bool        m_firstDecideDone = false;
 	LastOutcome m_lastOutcome;
 
 	// Player-override gate.
@@ -1593,11 +1104,11 @@ private:
 	float     m_chopCooldown        = 0.0f;
 
 	// A* Navigator — lazy-constructed on first step with useNavigator=true.
-	// Lifetime: WorldView holds a ServerInterface*, Navigator holds a
-	// const WorldView&. Both are unique_ptr so addresses stay stable after
-	// construction — required because Navigator captures the WorldView by ref.
-	std::unique_ptr<AgentServerWorldView>  m_navWorldView;
-	std::unique_ptr<AgentServerDoorOracle> m_navDoors;
+	// WorldView/Oracle hold ChunkSource& + BlockRegistry& refs into the
+	// ServerInterface; unique_ptr keeps their addresses stable because
+	// Navigator captures the WorldView by ref.
+	std::unique_ptr<ChunkWorldView>  m_navWorldView;
+	std::unique_ptr<ChunkDoorOracle> m_navDoors;
 	std::unique_ptr<Navigator>             m_navigator;
 	glm::ivec3                             m_navLastGoal{INT_MIN};
 	Navigator::Status                      m_navPrevStatus = Navigator::Status::Idle;

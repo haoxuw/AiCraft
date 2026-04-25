@@ -572,17 +572,12 @@ public:
 					// new player can verify placement + rotation (R key /
 					// MMB+scroll) + ghost preview end-to-end without
 					// having to scrounge for each block first.
-					pe->inventory->add(BlockType::Stone, 10);
-					pe->inventory->add(BlockType::Wood, 10);
-					pe->inventory->add(BlockType::Stair,       16);
-					pe->inventory->add(BlockType::Slab,        16);
-					pe->inventory->add(BlockType::CornerStair, 16);
-					pe->inventory->add(BlockType::Pillar,      16);
-					pe->inventory->add(BlockType::Trapdoor,    8);
-					pe->inventory->add(BlockType::Torch,       8);
+					pe->inventory->add(BlockType::Slab,        1);
+					pe->inventory->add(BlockType::Pillar,      1);
+					pe->inventory->add(BlockType::Trapdoor,    1);
+					pe->inventory->add(BlockType::Torch,       1);
 					pe->inventory->add("sword", 1);
 					pe->inventory->add("shield", 1);
-					pe->inventory->add("potion", 3);
 				}
 			}
 		}

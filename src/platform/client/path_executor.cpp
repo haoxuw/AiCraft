@@ -14,8 +14,13 @@ namespace civcraft {
 void PathExecutor::setPath(EntityId eid, Path p) {
 	Unit& u   = m_units[eid];
 	u.path    = std::move(p);
-	u.waitOpen = false;
-	u.arrived  = false;
+	u.waitOpen     = false;
+	u.arrived      = false;
+	u.stallTicks   = 0;
+	u.stallLastPos = glm::vec3(-1e9f);   // sentinel — first tick treats as "moved"
+	u.slideLockDir = glm::ivec3(0);
+	u.lastMoveDir  = glm::vec3(0);       // first smoothed-dir call snaps
+	u.interactCooldown = 0;
 }
 
 void PathExecutor::cancel(EntityId eid) {
@@ -39,63 +44,146 @@ const Path& PathExecutor::path(EntityId eid) const {
 	return it->second.path;
 }
 
+// Reached = entity is within kMagnetRadius of waypoint center (XZ) and
+// within kArriveY on Y (slack for Jump/Descend lift/land).
 bool PathExecutor::reached(const Waypoint& w, const glm::vec3& pos) const {
-	glm::vec3 c = centerOf(w);
-	float dx = pos.x - c.x;
-	float dy = pos.y - c.y;
-	float dz = pos.z - c.z;
-	if (std::abs(dy) >= kArriveY) return false;
-	return (dx * dx + dz * dz) < (kArriveRadius * kArriveRadius);
+	if (std::abs(pos.y - (float)w.pos.y) >= kArriveY) return false;
+	float dx = pos.x - ((float)w.pos.x + 0.5f);
+	float dz = pos.z - ((float)w.pos.z + 0.5f);
+	return (dx * dx + dz * dz) < (kMagnetRadius * kMagnetRadius);
 }
 
-// Pop-front cell-consumer. Each tick, retire any waypoint the entity has
-// either (a) entered the arrive ring of, or (b) projected past along the
-// segment to the next cell. Condition (b) — the half-plane retire — rescues
-// the executor from a stall when physics overshoot or an out-of-band shove
-// (collision push-out, clientPos snap-back, teleport) lands the entity
-// outside every remaining cell's arrive ring. Without (b), the front cell
-// ends up behind the entity and the next Move target points backward.
-//
-// Reached-check is intentionally simple and symmetric: any cell the entity
-// is currently inside (or past) is "done" and gets popped. Unlike the old
-// cursor model, a stale front can't strand the drive target on a cell that's
-// behind us — as soon as we've passed it, it's gone.
-//
-// Door cells block the pop: we need to emit Interact and let the server
-// open it before stepping through. The wait-open flag is cleared when the
-// cell behind us finally pops (door handshake complete).
+// If a straight line to the waypoint would clip a solid ±X/±Z neighbour,
+// deflect toward the open cardinal cell whose offset best projects onto
+// the desired heading. Hysteresis keeps the chosen side sticky so we
+// don't flicker. All 4 blocked → leave target alone; stall pop handles it.
+glm::vec3 PathExecutor::slideAroundObstacle(const glm::vec3& pos,
+                                            glm::vec3 target,
+                                            Unit& u) const {
+	if (!m_world) return target;
+
+	float dx = target.x - pos.x;
+	float dz = target.z - pos.z;
+	float len2 = dx * dx + dz * dz;
+	if (len2 < 1e-6f) return target;
+
+	const glm::ivec3 feet{
+		(int)std::floor(pos.x),
+		(int)std::floor(pos.y),
+		(int)std::floor(pos.z)};
+	auto wallCol = [&](glm::ivec3 c) {
+		return m_world->isSolid(c) ||
+		       m_world->isSolid({c.x, c.y + 1, c.z});
+	};
+
+	// Obstructed = the AABB edge + lookahead has crossed the plane of an
+	// adjacent solid cell along either axis of desired travel.
+	bool obstructed = false;
+	if (dx > 0 && pos.x + kSlideRadius + kSlideLookahead >= (float)(feet.x + 1)
+	           && wallCol({feet.x + 1, feet.y, feet.z})) obstructed = true;
+	else if (dx < 0 && pos.x - kSlideRadius - kSlideLookahead <= (float)feet.x
+	           && wallCol({feet.x - 1, feet.y, feet.z})) obstructed = true;
+	if (!obstructed) {
+		if (dz > 0 && pos.z + kSlideRadius + kSlideLookahead >= (float)(feet.z + 1)
+		           && wallCol({feet.x, feet.y, feet.z + 1})) obstructed = true;
+		else if (dz < 0 && pos.z - kSlideRadius - kSlideLookahead <= (float)feet.z
+		           && wallCol({feet.x, feet.y, feet.z - 1})) obstructed = true;
+	}
+	if (!obstructed) { u.slideLockDir = glm::ivec3(0); return target; }
+
+	// Score each standable cardinal neighbour by its projection onto the
+	// desired direction; add the hysteresis bonus to whichever side we
+	// committed to last tick so we stick with it unless another side is a
+	// significantly better alignment with the new heading.
+	float len = std::sqrt(len2);
+	float idx = dx / len, idz = dz / len;
+	glm::ivec3 bestOff{0, 0, 0};
+	float      bestScore = -2.0f;
+	for (auto o : CARDINAL_DIRS) {
+		if (!isStandable(*m_world, feet + o)) continue;
+		float score = (float)o.x * idx + (float)o.z * idz;
+		if (o == u.slideLockDir) score += kSlideHysteresis;
+		if (score > bestScore) { bestScore = score; bestOff = o; }
+	}
+	if (bestOff == glm::ivec3(0)) return target;   // boxed in — stall pop handles it
+	u.slideLockDir = bestOff;
+	return { pos.x + (float)bestOff.x * len,
+	         target.y,
+	         pos.z + (float)bestOff.z * len };
+}
+
+// Pop-front consumer. A waypoint retires only when reached() (kMagnetRadius
+// around its center). Scan-forward finds the deepest reached waypoint and
+// pops up through it — a single pass handles normal advance AND multi-
+// cell overshoot (teleport, snap-back, push-out). Closed doors stop the
+// scan: the Interact handshake gates entry.
 PathExecutor::Intent PathExecutor::tick(EntityId eid,
                                         const glm::vec3& entityPos) {
 	auto it = m_units.find(eid);
 	if (it == m_units.end()) return Intent{};
 	Unit& u = it->second;
 
-	while (!u.path.steps.empty()) {
-		const Waypoint& front = u.path.steps.front();
-		if (m_doors && m_doors->isClosedDoor(front.pos)) break;
+	if (u.interactCooldown > 0) --u.interactCooldown;
 
-		bool pop = reached(front, entityPos);
-		if (!pop && u.path.steps.size() >= 2) {
-			// Half-plane retire: have we projected past `front` along the
-			// segment `front → next`? Only tests when both cells share a y-
-			// plane — a y-change (Jump/Descend) needs feet alignment, not
-			// projection, so stick to the arrive-ring check there.
-			const Waypoint& next = u.path.steps[1];
-			if (next.pos.y == front.pos.y) {
-				glm::vec3 fc = centerOf(front);
-				glm::vec3 nc = centerOf(next);
-				float sx = nc.x - fc.x;
-				float sz = nc.z - fc.z;
-				float rx = entityPos.x - fc.x;
-				float rz = entityPos.z - fc.z;
-				// Strict > 0: exactly on the plane is still "at the cell,"
-				// let the arrive-ring handle it next tick.
-				if (sx * rx + sz * rz > 0.0f) pop = true;
+	// Two stall thresholds: kDoorScanTicks probes for a closed door
+	// ahead; kStallTicks pops the front waypoint. Both reset on move.
+	bool stallTripped = false;
+	if (!u.path.steps.empty()) {
+		float sdx = entityPos.x - u.stallLastPos.x;
+		float sdz = entityPos.z - u.stallLastPos.z;
+		if (sdx * sdx + sdz * sdz > kStallRadius * kStallRadius) {
+			u.stallTicks   = 0;
+			u.stallLastPos = entityPos;
+		} else if (++u.stallTicks >= kStallTicks) {
+			u.path.steps.erase(u.path.steps.begin());
+			u.stallTicks   = 0;
+			u.stallLastPos = entityPos;
+			u.waitOpen     = false;
+			u.slideLockDir = glm::ivec3(0);
+		} else if (u.stallTicks >= kDoorScanTicks) {
+			stallTripped = true;
+		}
+	}
+
+	// Doors are 2-block columns — probe feet and head height of the
+	// dominant-axis forward cell.
+	if (stallTripped && m_doors && u.interactCooldown == 0
+	    && !u.path.steps.empty()) {
+		glm::vec3 toward = centerOf(u.path.steps.front()) - entityPos;
+		toward.y = 0;
+		glm::ivec3 step{0, 0, 0};
+		if (std::abs(toward.x) >= std::abs(toward.z))
+			step.x = toward.x >= 0 ? 1 : -1;
+		else
+			step.z = toward.z >= 0 ? 1 : -1;
+		glm::ivec3 feet{
+			(int)std::floor(entityPos.x),
+			(int)std::floor(entityPos.y),
+			(int)std::floor(entityPos.z)};
+		for (int dy = 0; dy <= 1; ++dy) {
+			glm::ivec3 probe = feet + step + glm::ivec3(0, dy, 0);
+			if (m_doors->isClosedDoor(probe)) {
+				u.waitOpen         = true;
+				u.interactCooldown = kInteractCooldownTicks;
+				Intent i;
+				i.kind        = Intent::Interact;
+				i.target      = {probe.x + 0.5f, (float)probe.y, probe.z + 0.5f};
+				i.interactPos = probe;
+				return i;
 			}
 		}
-		if (!pop) break;
+	}
 
-		u.path.steps.erase(u.path.steps.begin());
+	// Deepest reached waypoint (closed doors stop the scan — entry gated
+	// by Interact handshake).
+	size_t lastReached = (size_t)-1;
+	for (size_t i = 0; i < u.path.steps.size(); ++i) {
+		if (m_doors && m_doors->isClosedDoor(u.path.steps[i].pos)) break;
+		if (reached(u.path.steps[i], entityPos)) lastReached = i;
+	}
+	if (lastReached != (size_t)-1) {
+		u.path.steps.erase(u.path.steps.begin(),
+		                   u.path.steps.begin() + lastReached + 1);
 		u.waitOpen = false;
 	}
 
@@ -105,19 +193,24 @@ PathExecutor::Intent PathExecutor::tick(EntityId eid,
 	glm::vec3 center = centerOf(front);
 
 	// Door at the front: approach → Interact inside reach → wait for open →
-	// step through (the pop loop above will retire the cell next tick once
-	// the door flips to open).
+	// step through (the pop loop above retires the cell once the door
+	// flips). Cooldown guards against re-toggling across the BlockChange
+	// broadcast lag.
 	if (m_doors && m_doors->isClosedDoor(front.pos)) {
 		float cdx = entityPos.x - center.x;
 		float cdz = entityPos.z - center.z;
 		float curDistXZ = std::sqrt(cdx * cdx + cdz * cdz);
 		if (curDistXZ < kDoorReachXZ) {
 			u.waitOpen = true;
-			Intent i;
-			i.kind        = Intent::Interact;
-			i.target      = center;
-			i.interactPos = front.pos;
-			return i;
+			if (u.interactCooldown == 0) {
+				u.interactCooldown = kInteractCooldownTicks;
+				Intent i;
+				i.kind        = Intent::Interact;
+				i.target      = center;
+				i.interactPos = front.pos;
+				return i;
+			}
+			return Intent{Intent::Move, center, {}};
 		}
 		return Intent{Intent::Move, center, {}};
 	}
@@ -126,6 +219,12 @@ PathExecutor::Intent PathExecutor::tick(EntityId eid,
 		else return Intent{Intent::Move, center, {}};
 	}
 
+	// Wall-slide only on Walk hops; Jump/Descend need precise y-alignment and
+	// cross air cells that the cardinal-neighbour probes misread as obstacles.
+	if (front.kind == MoveKind::Walk)
+		center = slideAroundObstacle(entityPos, center, u);
+	else
+		u.slideLockDir = glm::ivec3(0);
 	return Intent{Intent::Move, center, {}};
 }
 
@@ -140,7 +239,7 @@ void PathExecutor::planGroup(const std::vector<EntityId>& entityIds,
 	using clk = std::chrono::steady_clock;
 	auto t0 = clk::now();
 
-	ClientChunkWorldView view(chunks, blocks);
+	ChunkWorldView view(chunks, blocks);
 	auto slots = buildFormationGoals(goal, (int)entityIds.size(), view);
 	auto t1 = clk::now();
 
@@ -171,7 +270,7 @@ void PathExecutor::planGroup(const std::vector<EntityId>& entityIds,
 
 	std::packaged_task<std::vector<Path>()> task(
 		[&chunks, &blocks, slots, starts]() {
-			ClientChunkWorldView v(chunks, blocks);
+			ChunkWorldView v(chunks, blocks);
 			GridPlanner planner(v);
 			// planBatch: one A*-over-reverse-Dijkstra sweep, O(1) reconstruction
 			// per start. N=1 is fine; still runs on the worker thread.
@@ -287,7 +386,7 @@ void PathExecutor::driveRemote(ServerInterface& server, EntityId excludedId,
                                float walkSpeedFallback, float jumpVelocity) {
 	poll();
 
-	ClientChunkWorldView view(server.chunks(), server.blockRegistry());
+	ChunkWorldView view(server.chunks(), server.blockRegistry());
 	std::vector<EntityId> done;
 	for (auto& [eid, u] : m_units) {
 		if (eid == excludedId) continue;
@@ -305,6 +404,10 @@ void PathExecutor::driveRemote(ServerInterface& server, EntityId excludedId,
 		float len = std::sqrt(d.x * d.x + d.z * d.z);
 		if (len < 0.001f) continue;
 		d /= len;
+
+		// C¹-smooth heading — cap per-tick rotation (60 Hz preset, no dt here).
+		d = rotateTowardXZ(u.lastMoveDir, d, kMaxTurnPerTick60);
+		u.lastMoveDir = d;
 
 		bool wantsJump = false;
 		if (m_builderMode) wantsJump = builderTickFor(eid, e->position, d, view);
@@ -403,18 +506,12 @@ std::vector<glm::ivec3> PathExecutor::buildFormationGoals(
 	int rows    = (n + cols - 1) / cols;
 	int offZ    = (rows - 1) * spacing / 2;
 
-	auto standable = [&](glm::ivec3 p) {
-		if (!view.isSolid({p.x, p.y - 1, p.z})) return false;
-		if ( view.isSolid(p))                   return false;
-		if ( view.isSolid({p.x, p.y + 1, p.z})) return false;
-		return true;
-	};
 	auto snapY = [&](glm::ivec3 p) -> glm::ivec3 {
 		for (int dy = 0; dy <= 4; dy++) {
 			glm::ivec3 up{p.x, p.y + dy, p.z};
-			if (standable(up)) return up;
+			if (isStandable(view, up)) return up;
 			glm::ivec3 dn{p.x, p.y - dy, p.z};
-			if (standable(dn)) return dn;
+			if (isStandable(view, dn)) return dn;
 		}
 		return p;
 	};
@@ -430,7 +527,9 @@ std::vector<glm::ivec3> PathExecutor::buildFormationGoals(
 // ─── Navigator ─────────────────────────────────────────────────────────────
 
 Navigator::Navigator(const WorldView& world, const DoorOracle* doors)
-	: m_world(world), m_doors(doors), m_planner(world), m_exec(doors) {}
+	: m_world(world), m_doors(doors), m_planner(world), m_exec(doors) {
+	m_exec.setWorldView(&world);
+}
 
 void Navigator::clear() {
 	m_exec.cancel(kSelfEid);
@@ -493,11 +592,6 @@ Navigator::Step Navigator::tick(const glm::vec3& entityPos) {
 		// the original start if every candidate is solid (let A* report Failed
 		// with a coherent reason).
 		if (m_world.isSolid(start)) {
-			auto standable = [&](glm::ivec3 p) {
-				return  m_world.isSolid({p.x, p.y - 1, p.z}) &&
-				       !m_world.isSolid(p) &&
-				       !m_world.isSolid({p.x, p.y + 1, p.z});
-			};
 			float fx = entityPos.x - (float)start.x;
 			float fz = entityPos.z - (float)start.z;
 			int   dx = (fx >= 0.5f) ? +1 : -1;
@@ -510,7 +604,7 @@ Navigator::Step Navigator::tick(const glm::vec3& entityPos) {
 			glm::ivec3 bestAir = start;
 			bool       haveAir = false;
 			for (auto c : cands) {
-				if (standable(c))                   { start = c; haveAir = true; break; }
+				if (isStandable(m_world, c))        { start = c; haveAir = true; break; }
 				if (!haveAir && !m_world.isSolid(c)){ bestAir = c; haveAir = true; }
 			}
 			if (m_world.isSolid(start) && haveAir) start = bestAir;

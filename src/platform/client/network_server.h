@@ -230,17 +230,6 @@ public:
 			}
 		}
 
-		// Pre-join waiting tick. Throttle to 1Hz; fires while we're still
-		// before the "player entity arrived" milestone. Stops printing once
-		// the player entity exists — the arrival line is emitted elsewhere.
-		if (!getEntity(m_localPlayerId) && msgCount > 0) {
-			m_waitLogTimer += dt;
-			if (m_waitLogTimer >= 1.0f) {
-				m_waitLogTimer = 0;
-				printf("[Net] waiting for player entity — t=%.1fs, %zu entities, %zu chunks\n",
-					m_uptime, m_entities.size(), m_world.chunkCount());
-			}
-		}
 
 		m_diagTimer += dt;
 		if (m_diagTimer >= 30.0f) {
@@ -1030,7 +1019,6 @@ private:
 	EntityDef m_defaultDef;
 
 	float m_diagTimer = 0;
-	float m_waitLogTimer = 0;
 	int m_totalMsgCount = 0;
 	float m_uptime = 0;
 	// Per-entity new-entity spam is replaced with a periodic stats line; we

@@ -377,7 +377,6 @@ void WorldRenderer::renderWorld(float wallTime) {
 		const glm::vec3 grass(0.36f, 0.58f, 0.22f);
 		const glm::vec3 grassDk(0.28f, 0.46f, 0.18f);
 		const glm::vec3 dirt (0.42f, 0.30f, 0.20f);
-		const glm::vec3 stone(0.48f, 0.48f, 0.50f);
 		const glm::vec3 bark (0.32f, 0.22f, 0.14f);
 		const glm::vec3 leaf (0.22f, 0.44f, 0.18f);
 		const glm::vec3 leafLt(0.30f, 0.55f, 0.22f);
@@ -427,26 +426,38 @@ void WorldRenderer::renderWorld(float wallTime) {
 		emitTree(-5.0f,  7.0f, 1.0f);
 		emitTree(-9.0f,  1.0f, 0.8f);
 
-		// Scattered flower/stone accents — tiny boxes on the grass.
-		const glm::vec3 red(0.90f, 0.28f, 0.20f);
-		const glm::vec3 yel(0.95f, 0.85f, 0.25f);
-		const glm::vec3 blu(0.30f, 0.45f, 0.90f);
-		struct Accent { float x, z; glm::vec3 c; };
-		const Accent accents[] = {
-			{ 2.5f,  1.5f, red}, { 3.5f,  2.5f, yel}, { -2.5f, 3.5f, blu},
-			{-3.5f, -2.5f, yel}, { 1.0f, -3.5f, red}, {  4.0f,-2.5f, blu},
-			{-4.0f,  0.5f, yel}, {-1.5f,  4.5f, red},
+		// Three mascots — dog, cat, bee — animate on the grass instead of
+		// scattered flower blocks. Models are drawn through the same
+		// appendBoxModel path that renders live NPCs, so they breathe / walk
+		// / hover. Yaws are picked so each faces the orbiting menu camera
+		// most of the time; the bee hovers 1 block above ground.
+		struct Mascot {
+			const char* key;
+			float       x, y, z;
+			float       yaw;
+			const char* clip;
 		};
-		for (const auto& a : accents) {
-			civcraft::emitAABox(charBoxes,
-				glm::vec3(a.x - 0.15f, 1.0f, a.z - 0.15f),
-				glm::vec3(0.30f, 0.40f, 0.30f), a.c);
+		const Mascot mascots[] = {
+			{"dog",  2.5f, 1.0f,  2.5f,   0.0f, ""   },
+			{"cat", -2.5f, 1.0f, -2.0f,  90.0f, ""   },
+			{"bee",  0.0f, 2.5f, -3.5f, 180.0f, "fly"},
+		};
+		for (const auto& m : mascots) {
+			auto mit = g.m_models.find(m.key);
+			if (mit == g.m_models.end()) continue;
+			civcraft::AnimState anim{};
+			anim.time         = g.m_wallTime;
+			anim.currentClip  = m.clip;
+			// Small idle sway — a touch of walkDistance drives leg/wing loops
+			// when the model defines a walk cycle.
+			anim.walkDistance = g.m_wallTime * 1.2f;
+			anim.speed        = 0.5f;
+			// Bee bobs up and down; dog/cat stay planted.
+			glm::vec3 pos(m.x, m.y, m.z);
+			if (std::string_view(m.key) == "bee")
+				pos.y += 0.25f * std::sin(g.m_wallTime * 2.2f);
+			civcraft::appendBoxModel(charBoxes, mit->second, pos, m.yaw, anim);
 		}
-		// A small rock cluster — visual interest in the open.
-		civcraft::emitAABox(charBoxes, glm::vec3(2.5f, 1.0f, -6.5f),
-			glm::vec3(1.3f, 0.6f, 1.0f), stone);
-		civcraft::emitAABox(charBoxes, glm::vec3(3.0f, 1.5f, -6.0f),
-			glm::vec3(0.8f, 0.5f, 0.7f), stone);
 	}
 
 	// ScreenShell preview — inject the shell's current previewId at a fixed
@@ -1244,14 +1255,14 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 		                        std::vector<glm::vec3>& path) -> glm::vec3 {
 			path.push_back(e.position + glm::vec3(0, kYLift, 0));
 			glm::vec3 dest = fallback;
-			if (g.m_rtsExec.has(e.id())) {
-				const civcraft::Path& p = g.m_rtsExec.path(e.id());
+			if (g.m_pathExec.has(e.id())) {
+				const civcraft::Path& p = g.m_pathExec.path(e.id());
 				for (const auto& w : p.steps) {
 					path.push_back(glm::vec3{w.pos.x + 0.5f,
 					                         (float)w.pos.y + kYLift,
 					                         w.pos.z + 0.5f});
 				}
-				auto slot = g.m_rtsExec.formationSlot(e.id());
+				auto slot = g.m_pathExec.formationSlot(e.id());
 				if (slot)
 					dest = glm::vec3{slot->x + 0.5f, (float)slot->y + 0.3f, slot->z + 0.5f};
 				else if (!p.steps.empty()) {
@@ -1290,9 +1301,9 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 			const glm::vec3 agentColB(0.25f, 0.55f, 0.15f); // olive
 
 			// Every RTS-commanded entity not already drawn above.
-			if (g.m_rtsExec.size() > 0) {
+			if (g.m_pathExec.size() > 0) {
 				g.m_server->forEachEntity([&](civcraft::Entity& e) {
-					if (!g.m_rtsExec.has(e.id())) return;
+					if (!g.m_pathExec.has(e.id())) return;
 					if (rtsDrawn.count(e.id())) return;
 					std::vector<glm::vec3> path;
 					path.reserve(16);

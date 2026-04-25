@@ -434,11 +434,31 @@ int main(int argc, char** argv) {
 		// stalls harder and never recovers. Cap at 5 ticks of backlog;
 		// anything beyond is simulation-time we willfully drop.
 		const float kMaxBacklog = TICK_RATE * 5.0f;
+		// Aggregate backlog-drop events: the guard fires every frame while the
+		// sim is catching up, so per-frame prints swamp the log. Sum over a
+		// wall-clock window and emit one compact line at window end.
+		static double   s_backlogDroppedTicks = 0.0;
+		static uint64_t s_backlogDropFrames   = 0;
+		static float    s_backlogWindow       = 0.0f;
+		constexpr float kBacklogLogPeriod     = 5.0f; // seconds
 		if (accumulator > kMaxBacklog) {
-			fprintf(stdout, "[Server] accumulator %.3fs > %.3fs — dropping %.0f tick(s) of backlog\n",
-			        accumulator, kMaxBacklog, (accumulator - kMaxBacklog) / TICK_RATE);
-			fflush(stdout);
+			s_backlogDroppedTicks += (accumulator - kMaxBacklog) / TICK_RATE;
+			s_backlogDropFrames   += 1;
 			accumulator = kMaxBacklog;
+		}
+		s_backlogWindow += dt;
+		if (s_backlogWindow >= kBacklogLogPeriod && s_backlogDropFrames > 0) {
+			fprintf(stdout, "[Server] backlog: dropped %.0f ticks over %llu frame(s) in %.1fs\n",
+			        s_backlogDroppedTicks,
+			        (unsigned long long)s_backlogDropFrames,
+			        s_backlogWindow);
+			fflush(stdout);
+			s_backlogDroppedTicks = 0.0;
+			s_backlogDropFrames   = 0;
+			s_backlogWindow       = 0.0f;
+		} else if (s_backlogWindow >= kBacklogLogPeriod) {
+			// No drops this window — reset silently so a future drop emits promptly.
+			s_backlogWindow = 0.0f;
 		}
 		// Sim dt fed into server.tick() is the fixed sim-second-per-tick
 		// (1/60), *not* the wall-clock pacing TICK_RATE. At simSpeed>1
@@ -497,6 +517,26 @@ int main(int argc, char** argv) {
 				PERF_RECORD_MS("server.tick.stuck_ms",       p.stuckDetectionMs);
 				PERF_COUNT("server.ticks.total");
 				if (perTickMs > TICK_BUDGET_MS) PERF_COUNT("server.ticks.over_budget");
+
+				// Population gauges — single pass. Physics cost scales
+				// with these, so correlate metric growth against perTickMs
+				// when a long session slows down.
+				int total = 0, living = 0, items = 0, owned = 0, moving = 0;
+				server.world().entities.forEach([&](civcraft::Entity& e) {
+					++total;
+					if (e.def().isLiving())                ++living;
+					if (e.typeId() == civcraft::ItemName::ItemEntity) ++items;
+					if (e.getProp<int>(civcraft::Prop::Owner, 0) != 0) ++owned;
+					float vx = e.velocity.x, vz = e.velocity.z;
+					if (vx*vx + vz*vz > 0.0025f)           ++moving;
+				});
+				PERF_RECORD_MS("server.entities.total_count",  (double)total);
+				PERF_RECORD_MS("server.entities.living_count", (double)living);
+				PERF_RECORD_MS("server.entities.item_count",   (double)items);
+				PERF_RECORD_MS("server.entities.owned_count",  (double)owned);
+				PERF_RECORD_MS("server.entities.moving_count", (double)moving);
+				PERF_RECORD_MS("server.chunks.loaded_count",
+				               (double)server.world().loadedChunkCount());
 			}
 		}
 #endif
@@ -537,6 +577,19 @@ int main(int argc, char** argv) {
 			PERF_COUNT("server.frames.total");
 			if (fp.totalMs > SLOW_FRAME_MS) PERF_COUNT("server.frames.slow_16ms");
 			if (fp.totalMs > 33.3)          PERF_COUNT("server.frames.dropped_33ms");
+
+			// Broadcast volume — per-frame (broadcastState fires at 20 Hz,
+			// so most frames will record zeros). Correlate with
+			// server.frame.broadcast_ms to see whether slow broadcasts are
+			// payload-bound or client-count-bound.
+			const auto& bcs = clients.broadcastStats();
+			PERF_RECORD_MS("server.broadcast.entity_sends_per_frame",
+			               (double)bcs.sEntity);
+			PERF_RECORD_MS("server.broadcast.entity_bytes_per_frame",
+			               (double)bcs.entityBytes);
+			PERF_RECORD_MS("server.broadcast.entity_suppressed_per_frame",
+			               (double)bcs.entityDeltaSuppressed);
+			clients.resetBroadcastStats();
 		}
 
 		if (perfTimer >= PERF_LOG_INTERVAL) {

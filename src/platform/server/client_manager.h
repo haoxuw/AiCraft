@@ -468,7 +468,10 @@ public:
 				? net::EntityState{}   // irrelevant; diff uses isFirst path
 				: it->second;
 			uint32_t mask = net::diffEntityState(prev, es, isFirst);
-			if (mask == 0) return;  // nothing changed — skip broadcast
+			if (mask == 0) {
+				m_broadcastStats.entityDeltaSuppressed++;
+				return;
+			}
 
 			net::WriteBuffer wb;
 			net::serializeEntityStateDelta(wb, es, mask);
@@ -479,6 +482,7 @@ public:
 			}
 			client.lastSentEntity[e.id()] = es;
 			m_broadcastStats.sEntity++;
+			m_broadcastStats.entityBytes += wb.size();
 			return;
 		}
 
@@ -490,6 +494,7 @@ public:
 			return;
 		}
 		m_broadcastStats.sEntity++;
+		m_broadcastStats.entityBytes += wb.size();
 	}
 
 	// Perception-scoped entity broadcast + chunk streaming.
@@ -718,10 +723,18 @@ public:
 	// main_server.cpp [ServerAlive] log reads these to confirm server is pushing,
 	// not just receiving. Reset externally.
 	struct BroadcastStats {
-		int sEntity    = 0;
-		int sBlock     = 0;
-		int sRemove    = 0;
-		int sInventory = 0;
+		int      sEntity           = 0;
+		int      sBlock            = 0;
+		int      sRemove           = 0;
+		int      sInventory        = 0;
+		// Bytes across all S_ENTITY / S_ENTITY_DELTA payloads sent in the
+		// current window (resolution: whatever caller resets on). Does not
+		// include the 5-byte MsgHeader.
+		uint64_t entityBytes       = 0;
+		// Entities skipped because delta mask == 0 (nothing changed since
+		// last send). Large ratio of suppressed:sEntity = healthy; near 0 =
+		// either all entities are moving or the baseline cache is broken.
+		uint64_t entityDeltaSuppressed = 0;
 	};
 	const BroadcastStats& broadcastStats() const { return m_broadcastStats; }
 	void resetBroadcastStats() { m_broadcastStats = {}; }

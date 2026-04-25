@@ -138,33 +138,7 @@ void Game::processInput(float dt) {
 		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 		if (hit) {
 			glm::ivec3 bp = hit->hasInteract ? hit->interactPos : hit->blockPos;
-
-			// Chest: a UI action, not a server action — the chest Structure
-			// entity's inventory already rides the normal S_INVENTORY broadcast
-			// path. Find the matching entity by block position and open the
-			// side-by-side inventory panel.
-			auto& blocks = m_server->blockRegistry();
-			const auto& bdef = blocks.get(m_server->chunks().getBlock(bp.x, bp.y, bp.z));
-			if (bdef.string_id == civcraft::BlockType::Chest) {
-				civcraft::EntityId chestEid = 0;
-				m_server->forEachEntity([&](civcraft::Entity& e) {
-					if (chestEid) return;
-					if (e.typeId() != civcraft::StructureName::Chest) return;
-					int ex = (int)std::floor(e.position.x);
-					int ey = (int)std::floor(e.position.y);
-					int ez = (int)std::floor(e.position.z);
-					if (ex == bp.x && ey == bp.y && ez == bp.z) chestEid = e.id();
-				});
-				if (chestEid) {
-					m_invOther = chestEid;
-					m_invOpen  = true;
-					civcraft::GameLogger::instance().emit("ACTION",
-						"open chest #%u @(%d,%d,%d)", chestEid, bp.x, bp.y, bp.z);
-				} else {
-					civcraft::GameLogger::instance().emit("WARN",
-						"chest block @(%d,%d,%d) has no Structure entity", bp.x, bp.y, bp.z);
-				}
-			} else {
+			if (!tryOpenChestAt(bp)) {
 				civcraft::ActionProposal p;
 				p.type     = civcraft::ActionProposal::Interact;
 				p.actorId  = m_server->localPlayerId();
@@ -213,10 +187,14 @@ void Game::processInput(float dt) {
 	// T: talk to humanoid NPC under cursor / crosshair.
 	processTalkKey();
 
-	// Tab: toggle inventory.
+	// Tab: toggle inventory. Closes the chest pane too — Tab is the "own
+	// inventory" binding; if the chest is open, tapping Tab means "clear
+	// the whole panel", not "clear chest pane only".
 	bool tabKey = glfwGetKey(m_window, GLFW_KEY_TAB) == GLFW_PRESS;
-	if (tabKey && !m_tabLast)
+	if (tabKey && !m_tabLast) {
 		m_invOpen = !m_invOpen;
+		if (!m_invOpen) m_invOther = 0;
+	}
 	m_tabLast = tabKey;
 
 	// R: rotate held block. MMB click also cycles (see LMB/MMB section
@@ -251,25 +229,49 @@ void Game::processInput(float dt) {
 	}
 
 	// Q: drop one of the currently held item (hotbar selection). Uses
-	// TYPE_RELOCATE (Self → Ground) — no new action type needed.
+	// TYPE_RELOCATE (Self → Ground) — no new action type needed. Tap
+	// drops 1; holding past kQInitialDelay auto-repeats at kQRepeatInterval
+	// so a long press empties the stack.
+	constexpr float kQInitialDelay   = 0.30f;  // pause before auto-repeat kicks in
+	constexpr float kQRepeatInterval = 0.08f;  // ~12 Hz while held
 	bool qKey = glfwGetKey(m_window, GLFW_KEY_Q) == GLFW_PRESS;
-	if (qKey && !m_qLast) {
+	auto dropOneHeld = [&]() {
 		civcraft::Entity* me = playerEntity();
-		if (me && me->inventory) {
-			const std::string& held = m_hotbar.mainHand(*me->inventory);
-			if (!held.empty()) {
-				civcraft::ActionProposal p;
-				p.type        = civcraft::ActionProposal::Relocate;
-				p.actorId     = m_server->localPlayerId();
-				p.relocateFrom = civcraft::Container::self();
-				p.relocateTo   = civcraft::Container::ground();
-				p.itemId      = held;
-				p.itemCount   = 1;
-				m_server->sendAction(p);
-				civcraft::GameLogger::instance().emit("ACTION",
-					"drop %s x1", held.c_str());
+		if (!me || !me->inventory) return;
+		const std::string& held = m_hotbar.mainHand(*me->inventory);
+		if (held.empty()) return;
+		civcraft::ActionProposal p;
+		p.type         = civcraft::ActionProposal::Relocate;
+		p.actorId      = m_server->localPlayerId();
+		p.relocateFrom = civcraft::Container::self();
+		p.relocateTo   = civcraft::Container::ground();
+		p.itemId       = held;
+		p.itemCount    = 1;
+		m_server->sendAction(p);
+		civcraft::GameLogger::instance().emit("ACTION",
+			"drop %s x1", held.c_str());
+	};
+	if (qKey) {
+		if (!m_qLast) {
+			dropOneHeld();
+			m_qHoldTime    = 0.0f;
+			m_qRepeatAccum = 0.0f;
+		} else {
+			m_qHoldTime += dt;
+			if (m_qHoldTime >= kQInitialDelay) {
+				m_qRepeatAccum += dt;
+				// Loop in case a huge dt spans several repeat intervals (not
+				// typical — 60 fps gives dt≈16ms, well under 80ms — but keep
+				// the math correct rather than assume one drop per frame).
+				while (m_qRepeatAccum >= kQRepeatInterval) {
+					m_qRepeatAccum -= kQRepeatInterval;
+					dropOneHeld();
+				}
 			}
 		}
+	} else {
+		m_qHoldTime    = 0.0f;
+		m_qRepeatAccum = 0.0f;
 	}
 	m_qLast = qKey;
 
@@ -370,7 +372,7 @@ void Game::tickPlayer(float dt) {
 		civcraft::EntityId pid = m_server->localPlayerId();
 		auto pit = m_moveOrders.find(pid);
 		if (pit != m_moveOrders.end() && pit->second.active) {
-			auto wp = m_rtsExec.steerTargetFor(pid, me->position);
+			auto wp = m_pathExec.steerTargetFor(pid, me->position);
 			glm::vec3 steer = wp ? *wp : pit->second.target;
 			glm::vec3 toTarget = steer - me->position;
 			toTarget.y = 0;
@@ -379,7 +381,7 @@ void Game::tickPlayer(float dt) {
 			finalDelta.y = 0;
 			if (glm::length(finalDelta) < 1.0f) {
 				m_moveOrders.erase(pit);
-				m_rtsExec.cancel(pid);
+				m_pathExec.cancel(pid);
 			} else if (dist > 0.01f) {
 				mv = toTarget / dist;
 			}
@@ -1146,7 +1148,8 @@ void Game::processEscapeKey() {
 		} else if (m_dialogPanel.isOpen()) {
 			m_dialogPanel.close();
 		} else if (m_invOpen) {
-			m_invOpen = false;
+			m_invOpen  = false;
+			m_invOther = 0;
 		} else if (m_inspectedEntity != 0) {
 			m_inspectedEntity = 0;
 		} else if (m_handbookOpen) {
@@ -1367,7 +1370,7 @@ void Game::processLmbInput(float dt) {
 				}
 
 				if (!playerEids.empty()) {
-					m_rtsExec.planGroup(playerEids, playerStarts, goalBlock,
+					m_pathExec.planGroup(playerEids, playerStarts, goalBlock,
 						m_server->chunks(), m_server->blockRegistry(),
 						civcraft::CommandKind::Walk);
 					for (auto eid : playerEids)
@@ -1454,7 +1457,7 @@ void Game::processLmbInput(float dt) {
 						glm::ivec3 gi{(int)std::floor(center.x),
 						              (int)std::floor(center.y),
 						              (int)std::floor(center.z)};
-						m_rtsExec.planGroup(eids, starts, gi,
+						m_pathExec.planGroup(eids, starts, gi,
 							m_server->chunks(), m_server->blockRegistry(), kind);
 						std::printf("[vk-rts] %s order: %zu entities → (%.1f,%.1f,%.1f) hold=%.2fs\n",
 							isBuildCmd ? "BUILD" : "Move",
@@ -1501,10 +1504,10 @@ void Game::processLmbInput(float dt) {
 		}
 
 		// Drive commanded units, then clean up arrived/removed.
-		m_rtsExec.driveRemote(*m_server, m_server->localPlayerId());
+		m_pathExec.driveRemote(*m_server, m_server->localPlayerId());
 		std::vector<civcraft::EntityId> arrived;
 		for (auto& [eid, order] : m_moveOrders) {
-			if (!order.active || !m_server->getEntity(eid) || !m_rtsExec.has(eid))
+			if (!order.active || !m_server->getEntity(eid) || !m_pathExec.has(eid))
 				arrived.push_back(eid);
 		}
 		for (auto eid : arrived) {
@@ -1599,11 +1602,44 @@ void Game::processLmbInput(float dt) {
 	m_lmbLast = lmbNow;
 }
 
+bool Game::tryOpenChestAt(glm::ivec3 bp) {
+	auto& blocks = m_server->blockRegistry();
+	const auto& bdef = blocks.get(m_server->chunks().getBlock(bp.x, bp.y, bp.z));
+	if (bdef.string_id != civcraft::BlockType::Chest) return false;
+
+	civcraft::EntityId chestEid = 0;
+	m_server->forEachEntity([&](civcraft::Entity& e) {
+		if (chestEid) return;
+		if (e.typeId() != civcraft::StructureName::Chest) return;
+		int ex = (int)std::floor(e.position.x);
+		int ey = (int)std::floor(e.position.y);
+		int ez = (int)std::floor(e.position.z);
+		if (ex == bp.x && ey == bp.y && ez == bp.z) chestEid = e.id();
+	});
+	if (!chestEid) {
+		civcraft::GameLogger::instance().emit("WARN",
+			"chest block @(%d,%d,%d) has no Structure entity", bp.x, bp.y, bp.z);
+		return false;
+	}
+	m_invOther = chestEid;
+	m_invOpen  = true;
+	// Ask the server for the chest's current items so the pane shows a
+	// fresh snapshot even if no broadcast has happened since last login.
+	m_server->sendGetInventory(chestEid);
+	civcraft::GameLogger::instance().emit("ACTION",
+		"open chest #%u @(%d,%d,%d)", chestEid, bp.x, bp.y, bp.z);
+	return true;
+}
+
 void Game::processRmbInput(float dt) {
 	(void)dt;
 	// RMB — FPS/TPS: inspect (edge) or place (held+CD). RPG/RTS: click action.
-	bool rmbPressed = false;
-	bool rmbIsHeld  = false;
+	// Door/TNT interact uses release-edge instead of press-edge: hold-RMB used
+	// to spam Interact every frame (the interactive branch never set m_placeCD)
+	// and you'd hear the door open/close at frame rate.
+	bool rmbPressed     = false;   // press-edge / held-synth — drives place + chest + inspect
+	bool rmbReleaseEdge = false;   // release-edge in FPS/TPS — drives door/TNT interact
+	bool rmbIsHeld      = false;
 	{
 		int rmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT);
 		bool rmbNow = (rmb == GLFW_PRESS);
@@ -1614,6 +1650,7 @@ void Game::processRmbInput(float dt) {
 			m_rightClick.action = false;
 		} else {
 			bool rmbEdge = (rmbNow && !m_rmbLast && m_mouseCaptured);
+			rmbReleaseEdge = (!rmbNow && m_rmbLast && m_mouseCaptured);
 			rmbIsHeld    = (rmbNow && m_mouseCaptured);
 			rmbPressed   = rmbEdge;
 		}
@@ -1710,8 +1747,42 @@ void Game::processRmbInput(float dt) {
 		rmbPressed = false;
 		rmbIsHeld  = false;
 	}
-	// Held-place fires every kTune.placeCD s while RMB held in FPS/TPS.
-	if (!rmbPressed && rmbIsHeld && m_placeCD <= 0) {
+	// Release-edge interact: if RMB was latched on a door/TNT, fire one Interact
+	// now and clear. Re-raycast and require the same target so dragging off
+	// the door before lifting cancels the interact (matches click semantics).
+	if (rmbReleaseEdge && m_rmbInteractPending) {
+		glm::vec3 eye = m_cam.position;
+		glm::vec3 dir = m_cam.front();
+		auto bHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+		if (bHit) {
+			glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
+			if (bp == m_rmbInteractTarget) {
+				BlockId bid = bHit->hasInteract ? bHit->interactBlockId : bHit->blockId;
+				const auto& bdef = m_server->blockRegistry().get(bid);
+				bool stillInteractive =
+					(bdef.mesh_type == civcraft::MeshType::Door
+					 || bdef.mesh_type == civcraft::MeshType::DoorOpen
+					 || bdef.string_id == civcraft::BlockType::TNT);
+				if (stillInteractive) {
+					civcraft::ActionProposal p;
+					p.type     = civcraft::ActionProposal::Interact;
+					p.actorId  = m_server->localPlayerId();
+					p.blockPos = bp;
+					m_server->sendAction(p);
+					civcraft::GameLogger::instance().emit("ACTION",
+						"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
+				}
+			}
+		}
+		m_rmbInteractPending = false;
+	}
+	// Any release clears the latch unconditionally — covers the "drag away
+	// then lift" path where the re-raycast missed.
+	if (rmbReleaseEdge) m_rmbInteractPending = false;
+
+	// Held-place fires every kTune.placeCD s while RMB held in FPS/TPS, unless
+	// the latch is armed (don't try to place over a door we're about to toggle).
+	if (!rmbPressed && rmbIsHeld && m_placeCD <= 0 && !m_rmbInteractPending) {
 		rmbPressed = true;
 	}
 	if (rmbPressed && m_breakCD <= 0) {
@@ -1756,32 +1827,47 @@ void Game::processRmbInput(float dt) {
 			}
 		}
 
-		// Interact-first: doors, TNT, buttons. If the hit block isn't
-		// interactive, fall through to placeBlock(). An open door grazed
-		// along the ray counts as the interact target so you can click-close
-		// a door you're standing in front of.
+		// Chest-first, interact-second, then place. Chest opens the side-by-
+		// side inventory panel (UI action, no server message). Doors/TNT/
+		// buttons go through Interact. Anything else falls to placeBlock().
 		if (!inspectTriggered) {
-			bool didInteract = false;
+			bool consumed = false;
 			auto bHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 			if (bHit) {
 				glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
 				BlockId bid = bHit->hasInteract ? bHit->interactBlockId : bHit->blockId;
 				const auto& bdef = m_server->blockRegistry().get(bid);
-				bool interactive = (bdef.mesh_type == civcraft::MeshType::Door
-				                 || bdef.mesh_type == civcraft::MeshType::DoorOpen
-				                 || bdef.string_id == civcraft::BlockType::TNT);
-				if (interactive) {
-					civcraft::ActionProposal p;
-					p.type     = civcraft::ActionProposal::Interact;
-					p.actorId  = m_server->localPlayerId();
-					p.blockPos = bp;
-					m_server->sendAction(p);
-					civcraft::GameLogger::instance().emit("ACTION",
-						"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
-					didInteract = true;
+				if (tryOpenChestAt(bp)) {
+					consumed = true;
+				} else {
+					bool interactive = (bdef.mesh_type == civcraft::MeshType::Door
+					                 || bdef.mesh_type == civcraft::MeshType::DoorOpen
+					                 || bdef.string_id == civcraft::BlockType::TNT);
+					if (interactive) {
+						// Arm the latch — actual Interact fires on release-edge
+						// above. Only the initial press-edge arms, not the
+						// held-synth, so a hold over the door doesn't repeatedly
+						// re-arm with stale targets.
+						if (m_cam.mode == civcraft::CameraMode::FirstPerson
+						 || m_cam.mode == civcraft::CameraMode::ThirdPerson) {
+							m_rmbInteractPending = true;
+							m_rmbInteractTarget  = bp;
+						} else {
+							// RPG/RTS already use release-derived m_rightClick.action
+							// — fire inline as before.
+							civcraft::ActionProposal p;
+							p.type     = civcraft::ActionProposal::Interact;
+							p.actorId  = m_server->localPlayerId();
+							p.blockPos = bp;
+							m_server->sendAction(p);
+							civcraft::GameLogger::instance().emit("ACTION",
+								"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
+						}
+						consumed = true;
+					}
 				}
 			}
-			if (!didInteract) {
+			if (!consumed) {
 				placeBlock();
 				m_placeCD = kTune.placeCD;
 			}

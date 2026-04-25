@@ -11,7 +11,7 @@ import math
 model = {
     "id": "dog",
     "height": 0.7,
-    "scale": 1.25,
+    "scale": 1.43,
     "walk_speed": 5.0,
     "idle_bob": 0.006,
     "walk_bob": 0.025,

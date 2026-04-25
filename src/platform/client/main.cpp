@@ -12,6 +12,7 @@
 #include "client/process_manager.h"
 #include "client/game_vk.h"
 #include "agent/agent_client.h"
+#include "debug/entity_log.h"
 #include "debug/perf_registry.h"
 
 #include <ctime>
@@ -87,11 +88,16 @@ int main(int argc, char** argv) {
 	bool noValidation = false;
 	bool skipMenu    = false;
 	bool logOnly     = false;
+	bool debugBehaviorMode = false;   // --debug-behavior: dump per-entity log list at exit
 	std::string host = "127.0.0.1"; // --host: server hostname
 	int  port = 0;                  // --port: server port (0 = spawn local)
 	int  templateIndex = 0;         // --template: world template (default village)
 	int  villagersOverride = 0;     // --villagers: override villager count (0 = leave template as-is)
 	float simSpeed = 1.0f;          // --sim-speed: server sim multiplier (1=real, 4=4× faster)
+	// --terminate-after: seconds; ≤0 = run forever. After the deadline the
+	// main loop exits naturally — same path as the menu's Quit button — so
+	// game.shutdown(), client perf dump, and server save all fire as usual.
+	float terminateAfterSec = 0.0f;
 	civcraft::AgentClient::Config agentCfg;  // DecidePacer cooldown knobs
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -106,6 +112,8 @@ int main(int argc, char** argv) {
 			       "  --template N      World template (0=village 1=test_behaviors 4=test_chicken)\n"
 			       "  --villagers N     Spawn N villagers (override template count; local server only)\n"
 			       "  --sim-speed N     Sim-time multiplier (default 1; 4 = 4× faster; local server only)\n"
+			       "  --terminate-after SEC  Self-quit after SEC seconds via the Quit-button path\n"
+			       "                         (perf summary + save fire normally; ≤0 = run forever)\n"
 			       "  --decide-base-cooldown SEC  Base Decide dispatch cooldown (default 0.10s)\n"
 			       "  --decide-max-cooldown SEC   Max cooldown after repeated failures (default 10s)\n"
 			       "  --decide-backoff-base N     Exponential backoff base (default 2.0)\n"
@@ -132,6 +140,7 @@ int main(int argc, char** argv) {
 		else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) templateIndex = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--villagers") == 0 && i + 1 < argc) villagersOverride = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--sim-speed") == 0 && i + 1 < argc) simSpeed = (float)std::atof(argv[++i]);
+		else if (strcmp(argv[i], "--terminate-after") == 0 && i + 1 < argc) terminateAfterSec = (float)std::atof(argv[++i]);
 		else if (strcmp(argv[i], "--decide-base-cooldown") == 0 && i + 1 < argc)
 			agentCfg.decideBaseCooldownSec = (float)std::atof(argv[++i]);
 		else if (strcmp(argv[i], "--decide-max-cooldown") == 0 && i + 1 < argc)
@@ -147,6 +156,7 @@ int main(int argc, char** argv) {
 			templateIndex = 1;         // test_behaviors (walled arena, dense trees)
 			if (villagersOverride <= 0) villagersOverride = 1;
 			if (simSpeed == 1.0f)       simSpeed = 4.0f;
+			debugBehaviorMode = true;
 		}
 	}
 
@@ -229,6 +239,7 @@ int main(int argc, char** argv) {
 	constexpr double kFrameBudgetSec = 1.0 / 200.0;
 	auto t0 = std::chrono::steady_clock::now();
 	auto tPrev = t0;
+	bool terminationLogged = false;
 	while (!glfwWindowShouldClose(win) && !game.shouldQuit() && !g_sigQuit.load()) {
 		glfwPollEvents();
 		auto tNow = std::chrono::steady_clock::now();
@@ -238,6 +249,18 @@ int main(int argc, char** argv) {
 		if (dt > 0.1f) dt = 0.1f;
 
 		float wallTime = std::chrono::duration<float>(tNow - t0).count();
+
+		// --terminate-after deadline. Break out of the loop the same way
+		// the Quit menu does so post-loop cleanup (perf dump, save) runs.
+		if (terminateAfterSec > 0.0f && wallTime >= terminateAfterSec) {
+			if (!terminationLogged) {
+				std::fprintf(stderr,
+					"[main] --terminate-after %.1fs reached; quitting cleanly.\n",
+					terminateAfterSec);
+				terminationLogged = true;
+			}
+			break;
+		}
 
 		game.runOneFrame(dt, wallTime);
 
@@ -254,6 +277,16 @@ int main(int argc, char** argv) {
 	rhi->shutdown();
 	glfwDestroyWindow(win);
 	glfwTerminate();
+
+	if (debugBehaviorMode) {
+		// Flush any buffered "[first..last xN] msg" summaries to disk, then tell
+		// the caller where to grep. See .claude/skills/testing-plan/SKILL.md.
+		civcraft::entityLogFlushAll();
+		auto files = civcraft::entityLogProducedFiles();
+		std::fprintf(stderr, "\n[debug-behavior] produced per-entity logs (%zu):\n",
+		             files.size());
+		for (const auto& p : files) std::fprintf(stderr, "  %s\n", p.c_str());
+	}
 
 #ifdef CIVCRAFT_PERF
 	// End-of-session client perf dump. Mirrors the server's format so

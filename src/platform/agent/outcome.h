@@ -94,6 +94,17 @@ inline bool isGaveUp(ExecState s) {
 	return s == ExecState::Failed_GaveUp;
 }
 
+// Navigation-layer failures — the entity couldn't *reach* its goal. Distinct
+// from TargetGone / AnchorGone (target disappeared) and HarvestExhausted
+// (reached but nothing to do). Python behaviors branch on this to back off
+// their movement target; exposed as LocalWorld.last_nav_failed.
+inline bool isNavFailed(ExecState s) {
+	return s == ExecState::Failed_NavNoPath
+	    || s == ExecState::Failed_NavStuck
+	    || s == ExecState::Failed_DirectStuck
+	    || s == ExecState::Failed_GaveUp;
+}
+
 struct LastOutcome {
 	StepOutcome  outcome     = StepOutcome::Success;
 	std::string  goalText;

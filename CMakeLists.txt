@@ -86,6 +86,9 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/server/builtin.cpp
 	src/platform/agent/pathfind.h
 	src/platform/agent/pathfind.cpp
+	src/platform/agent/actions.h
+	src/platform/agent/actions.cpp
+	src/platform/agent/jitter.h
 	src/platform/client/path_executor.h
 	src/platform/client/path_executor.cpp
 )

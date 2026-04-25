@@ -20,12 +20,37 @@ struct WorldView {
 	virtual bool isSolid(glm::ivec3 p) const = 0;
 };
 
+// 4-cardinal XZ neighbours. Shared by A* expansion (pathfind.cpp) and
+// executor-side neighbour scoring (path_executor.cpp). Single source of truth
+// so Walk/Jump/Descend primitives stay aligned across planner and executor.
+static constexpr glm::ivec3 CARDINAL_DIRS[4] = {
+	{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}
+};
+
+// Entity is 2 cells tall: floor solid, body + head air. Every planner
+// expansion, executor side-step, and start-cell correction uses this exact
+// three-cell check — do not reimplement it inline.
+inline bool isStandable(const WorldView& w, glm::ivec3 p) {
+	return  w.isSolid({p.x, p.y - 1, p.z}) &&
+	       !w.isSolid(p) &&
+	       !w.isSolid({p.x, p.y + 1, p.z});
+}
+
 // Adjacent-cell primitives (subset of [Baritone] MovementType).
 enum class MoveKind : uint8_t {
 	Walk,
 	Jump,
 	Descend,
 };
+
+inline const char* toString(MoveKind k) {
+	switch (k) {
+		case MoveKind::Walk:    return "Walk";
+		case MoveKind::Jump:    return "Jump";
+		case MoveKind::Descend: return "Descend";
+	}
+	return "?";
+}
 
 struct Waypoint {
 	glm::ivec3 pos;
@@ -102,6 +127,17 @@ public:
 	bool pathInvalidatedBy(const Path& path, glm::ivec3 changedBlock) const;
 
 private:
+	// Count CARDINAL_DIRS neighbours of `cell` that are solid, scaled by the
+	// config weight. Zero when wallClearancePenalty≤0 (disabled). Used
+	// identically in plan() forward and planBatch()/planFlowField() reverse —
+	// keep it as a member so the three A* variants stay aligned.
+	float wallClearancePenalty(glm::ivec3 cell) const {
+		if (m_cfg.wallClearancePenalty <= 0.0f) return 0.0f;
+		int walls = 0;
+		for (auto d : CARDINAL_DIRS) if (m_world.isSolid(cell + d)) walls++;
+		return m_cfg.wallClearancePenalty * (float)walls;
+	}
+
 	const WorldView& m_world;
 	Config            m_cfg;
 };

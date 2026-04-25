@@ -469,16 +469,55 @@ void HudRenderer::renderInventoryPanel() {
 			if (!g.m_hotbarSavePath.empty())
 				g.m_hotbar.saveToFile(g.m_hotbarSavePath);
 		};
+		// Server clamps RELOCATE to 64 per action; send the whole stack in
+		// one request and let the server cap. A single tick caps the
+		// transfer count; the user can drag again for the remainder.
+		auto sendStoreToOther = [&]() {
+			if (g.m_invOther == 0) return;
+			civcraft::ActionProposal p;
+			p.type         = civcraft::ActionProposal::Relocate;
+			p.actorId      = g.m_server->localPlayerId();
+			p.relocateFrom = civcraft::Container::self();
+			p.relocateTo   = civcraft::Container::entity(g.m_invOther);
+			p.itemId       = g.m_drag.itemId;
+			p.itemCount    = g.m_drag.count;
+			g.m_server->sendAction(p);
+		};
+		auto sendTakeFromOther = [&]() {
+			if (g.m_invOther == 0) return;
+			civcraft::ActionProposal p;
+			p.type         = civcraft::ActionProposal::Relocate;
+			p.actorId      = g.m_server->localPlayerId();
+			p.relocateFrom = civcraft::Container::entity(g.m_invOther);
+			p.relocateTo   = civcraft::Container::self();
+			p.itemId       = g.m_drag.itemId;
+			p.itemCount    = g.m_drag.count;
+			g.m_server->sendAction(p);
+		};
 		if (tgt && tgt->kind == K::Hotbar) {
 			if (g.m_drag.srcKind == K::Hotbar) {
 				std::string a = g.m_hotbar.get(g.m_drag.srcIndex);
 				std::string b = g.m_hotbar.get(tgt->index);
 				g.m_hotbar.set(g.m_drag.srcIndex, b);
 				g.m_hotbar.set(tgt->index, a);
+			} else if (g.m_drag.srcKind == K::Other) {
+				// Take from chest, then alias the hotbar slot to the item so
+				// the newly-acquired stack is immediately wieldable.
+				sendTakeFromOther();
+				g.m_hotbar.set(tgt->index, g.m_drag.itemId);
 			} else {
 				g.m_hotbar.set(tgt->index, g.m_drag.itemId);
 			}
 			saveHotbar();
+		} else if (tgt && tgt->kind == K::Other) {
+			// Store from Self → chest. Hotbar source is just a display alias
+			// over the player's inventory, so it routes the same way.
+			if (g.m_drag.srcKind == K::Inventory || g.m_drag.srcKind == K::Hotbar)
+				sendStoreToOther();
+			// Other → Other: no-op (chest is counter-based).
+		} else if (tgt && tgt->kind == K::Inventory
+		           && g.m_drag.srcKind == K::Other) {
+			sendTakeFromOther();
 		} else if (!tgt) {
 			if (g.m_drag.srcKind == K::Hotbar) {
 				g.m_hotbar.clear(g.m_drag.srcIndex);
@@ -494,6 +533,9 @@ void HudRenderer::renderInventoryPanel() {
 				p.itemCount    = 1;
 				g.m_server->sendAction(p);
 			}
+			// Other → void: no-op — dropping the chest's own contents to the
+			// ground from the UI would be surprising. Drag to the player
+			// pane first, then to void.
 		}
 		// Inv → Inv: no-op (counter-based; physical position is meaningless).
 
@@ -534,10 +576,14 @@ void HudRenderer::renderInventoryPanel() {
 	// ── Panel geometry ────────────────────────────────────────────────
 	// Parchment dimensions in NDC. Fixed NDC width scales with aspect (wider
 	// screens show a wider panel but cells stay square-ish). Height fixed.
-	const float panelW = 1.40f;                      // ~70% of screen
-	const float panelH = 1.60f;                      // ~80% of screen
-	const float panelX = -panelW * 0.5f;
-	const float panelY = -panelH * 0.5f;
+	// When a chest is open we split the screen: player pane sits to the
+	// left, chest pane (renderOtherInventoryPane) mirrors it to the right.
+	const bool  twoPane = (g.m_invOther != 0);
+	const float panelW  = twoPane ? 0.96f : 1.40f;   // ~48% vs ~70% of screen
+	const float panelH  = 1.60f;                     // ~80% of screen
+	const float panelX  = twoPane ? (-panelW - 0.02f) : -panelW * 0.5f;
+	const float panelY  = -panelH * 0.5f;
+	const float panelCx = panelX + panelW * 0.5f;    // pane x-centre for text
 
 	// Shadow (offset down-right), outer dark frame, warm panel fill,
 	// inner highlight at top.
@@ -605,14 +651,14 @@ void HudRenderer::renderInventoryPanel() {
 	// Title + every other label in the panel go through ui::writeText, which
 	// routes to the same SDF mode the in-world floaters use — crisp, outlined,
 	// bloom-friendly at any scale.
-	ui::writeText(r, "INVENTORY", /*cx=*/0.0f, titleY + 0.028f,
+	ui::writeText(r, "INVENTORY", /*cx=*/panelCx, titleY + 0.028f,
 	              /*scale=*/1.35f, titleCol, ui::TextAlign::Center);
 
 	// ── Sort tabs (below title) ───────────────────────────────────────
 	const float tabY   = titleY - 0.065f;
 	const float tabH   = 0.050f;
 	const float tabGap = 0.010f;
-	const float tabW   = 0.20f;
+	const float tabW   = twoPane ? 0.16f : 0.20f;
 	struct Tab { const char* label; Game::InvSort mode; };
 	const Tab tabs[3] = {
 		{ "By Name",  Game::InvSort::ByName  },
@@ -620,7 +666,7 @@ void HudRenderer::renderInventoryPanel() {
 		{ "By Count", Game::InvSort::ByCount },
 	};
 	float tabsTotalW = 3 * tabW + 2 * tabGap;
-	float tabsX0 = -tabsTotalW * 0.5f;
+	float tabsX0 = panelCx - tabsTotalW * 0.5f;
 	for (int i = 0; i < 3; i++) {
 		float tx = tabsX0 + i * (tabW + tabGap);
 		bool active = (g.m_invSort == tabs[i].mode);
@@ -666,7 +712,7 @@ void HudRenderer::renderInventoryPanel() {
 		              "%d items    %d stacks    %.1f mass",
 		              totalCount, (int)items.size(), mass);
 		const float dim[4] = {0.68f, 0.62f, 0.54f, 1.0f};
-		ui::writeText(r, stats, /*cx=*/0.0f, tabY - 0.040f,
+		ui::writeText(r, stats, /*cx=*/panelCx, tabY - 0.040f,
 		              /*scale=*/0.72f, dim, ui::TextAlign::Center);
 	}
 
@@ -683,7 +729,7 @@ void HudRenderer::renderInventoryPanel() {
 	float cellW = cellH / g.m_aspect;
 	// If cells are too narrow for the panel, widen them while keeping square-ish.
 	float gridW = cellW * kInvCols + cellPad * (kInvCols - 1);
-	float gridX0 = -gridW * 0.5f;
+	float gridX0 = panelCx - gridW * 0.5f;
 	float gridY0 = gridBottomY + (gridH - (cellH * kInvRows + cellPad * (kInvRows - 1)));
 
 	int maxVisible = kInvCols * kInvRows;
@@ -727,13 +773,22 @@ void HudRenderer::renderInventoryPanel() {
 	// ── Footer hint ───────────────────────────────────────────────────
 	{
 		char hint[200];
-		std::snprintf(hint, sizeof(hint),
-		              "Drag to hotbar %d    Drag out to drop    ESC / Tab to close    Q = drop held",
-		              (g.m_hotbar.selected + 1) % 10);
+		if (twoPane) {
+			std::snprintf(hint, sizeof(hint),
+			              "Drag items between panes to store / take    ESC / Tab to close");
+		} else {
+			std::snprintf(hint, sizeof(hint),
+			              "Drag to hotbar %d    Drag out to drop    ESC / Tab to close    Q = drop held",
+			              (g.m_hotbar.selected + 1) % 10);
+		}
 		const float dim[4] = {0.58f, 0.52f, 0.46f, 1.0f};
-		ui::writeText(r, hint, /*cx=*/0.0f, panelY + 0.028f,
+		ui::writeText(r, hint, /*cx=*/panelCx, panelY + 0.028f,
 		              /*scale=*/0.66f, dim, ui::TextAlign::Center);
 	}
+
+	// ── Chest / NPC pane (right side when m_invOther is set) ──────────
+	// Drawn before the drag ghost so the ghost floats over both panes.
+	renderOtherInventoryPane();
 
 	// ── Drag ghost (follows cursor) ───────────────────────────────────
 	if (g.m_drag.active) {
@@ -819,6 +874,148 @@ void HudRenderer::renderInventoryTooltip() {
 	const float metaCol[4]    = {0.70f, 0.64f, 0.54f, 1.0f};
 	ui::writeText(r, name,  tx + 0.012f, ty + tipH - 0.030f, sName, nameColArr);
 	ui::writeText(r, line2, tx + 0.012f, ty + 0.014f,        sMeta, metaCol);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Chest / container pane — mirrors the player panel (same chrome + grid
+// geometry) but anchored to the right side of the screen, titled from the
+// other entity's display name, and records SlotRect{kind=Other} entries
+// so drag-drop routes take/store through the server (Self ↔ Entity).
+// ─────────────────────────────────────────────────────────────────────────
+void HudRenderer::renderOtherInventoryPane() {
+	Game& g = game_;
+	if (g.m_invOther == 0) return;
+
+	civcraft::Entity* other = g.m_server->getEntity(g.m_invOther);
+	if (!other || !other->inventory) return;
+
+	rhi::IRhi* r = g.m_rhi;
+
+	// Mirror the player pane: same width/height so the two panes line up.
+	// panelX places the pane to the right of the player pane (which lives
+	// at -panelW - 0.02) with the same 0.02 gap.
+	const float panelW  = 0.96f;
+	const float panelH  = 1.60f;
+	const float panelX  = 0.02f;
+	const float panelY  = -panelH * 0.5f;
+	const float panelCx = panelX + panelW * 0.5f;
+
+	const float gridReserveTop    = 0.300f;
+	const float gridReserveBottom = 0.090f;
+	const float gridReserveSide   = 0.045f;
+	const float gridBandTopY      = panelY + panelH - gridReserveTop;
+	const float gridBandBotY      = panelY + gridReserveBottom;
+	const float gridBandLeftX     = panelX + gridReserveSide;
+	const float gridBandRightX    = panelX + panelW - gridReserveSide;
+	const float gridBandW         = gridBandRightX - gridBandLeftX;
+	const float gridBandH         = gridBandTopY   - gridBandBotY;
+
+	// Chrome — identical palette to the player pane for visual parity.
+	const float shadow [4] = {0.00f, 0.00f, 0.00f, 0.40f};
+	const float frameOut[4]= {0.08f, 0.06f, 0.04f, 0.98f};
+	const float fill   [4] = {0.11f, 0.09f, 0.08f, 0.96f};
+	const float brass  [4] = {0.65f, 0.48f, 0.20f, 1.00f};
+	const float brassHi[4] = {0.95f, 0.78f, 0.35f, 1.00f};
+
+	r->drawRect2D(panelX + 0.015f, panelY - 0.020f, panelW, panelH, shadow);
+	{
+		float ft = 0.008f;
+		ui::drawOutline(r, panelX - ft, panelY - ft,
+			panelW + 2 * ft, panelH + 2 * ft, ft, frameOut);
+	}
+	r->drawRect2D(panelX, gridBandTopY, panelW, gridReserveTop, fill);
+	r->drawRect2D(panelX, panelY,       panelW, gridReserveBottom, fill);
+	r->drawRect2D(panelX,         gridBandBotY, gridReserveSide, gridBandH, fill);
+	r->drawRect2D(gridBandRightX, gridBandBotY, gridReserveSide, gridBandH, fill);
+	{
+		float t = 0.003f;
+		float off = 0.010f;
+		float bx = panelX + off, by = panelY + off;
+		float bw = panelW - off * 2, bh = panelH - off * 2;
+		ui::drawOutline(r, bx, by, bw, bh, t, brass);
+		r->drawRect2D(bx + t, by + bh - t - 0.002f, bw - 2 * t, 0.002f, brassHi);
+		r->drawRect2D(gridBandLeftX - t, gridBandBotY, t, gridBandH, brass);
+		r->drawRect2D(gridBandRightX,    gridBandBotY, t, gridBandH, brass);
+		r->drawRect2D(gridBandLeftX - t, gridBandTopY, gridBandW + 2 * t, t, brass);
+		r->drawRect2D(gridBandLeftX - t, gridBandBotY - t, gridBandW + 2 * t, t, brass);
+	}
+	(void)gridBandW;
+
+	// Title — entity display name, upper-cased, or "CHEST" fallback.
+	const float titleY = panelY + panelH - 0.13f;
+	const float titleStrip[4] = {0.16f, 0.12f, 0.09f, 0.95f};
+	r->drawRect2D(panelX + 0.018f, titleY, panelW - 0.036f, 0.10f, titleStrip);
+
+	std::string title = other->def().display_name;
+	if (title.empty()) title = "Chest";
+	for (auto& c : title) c = (char)toupper((unsigned char)c);
+	const float titleCol[4] = {1.0f, 0.85f, 0.45f, 1.0f};
+	ui::writeText(r, title, panelCx, titleY + 0.028f,
+	              1.35f, titleCol, ui::TextAlign::Center);
+
+	// Stats row.
+	auto otherItems = other->inventory->items();
+	std::sort(otherItems.begin(), otherItems.end(),
+	          [](const auto& a, const auto& b){ return a.first < b.first; });
+	{
+		char stats[160];
+		int totalCount = 0;
+		for (auto& p : otherItems) totalCount += p.second;
+		float mass = other->inventory->totalValue();
+		std::snprintf(stats, sizeof(stats),
+		              "%d items    %d stacks    %.1f mass",
+		              totalCount, (int)otherItems.size(), mass);
+		const float dim[4] = {0.68f, 0.62f, 0.54f, 1.0f};
+		ui::writeText(r, stats, panelCx, titleY - 0.040f - 0.065f,
+		              0.72f, dim, ui::TextAlign::Center);
+	}
+
+	// Grid — identical geometry to the player pane.
+	const float gridTop     = gridBandTopY - 0.010f;
+	const float gridBottomY = gridBandBotY + 0.010f;
+	const float gridH       = gridTop - gridBottomY;
+
+	const float cellPad = 0.008f;
+	float cellH = (gridH - cellPad * (kInvRows - 1)) / kInvRows;
+	if (cellH > 0.14f) cellH = 0.14f;
+	float cellW = cellH / g.m_aspect;
+	float gridW = cellW * kInvCols + cellPad * (kInvCols - 1);
+	float gridX0 = panelCx - gridW * 0.5f;
+	float gridY0 = gridBottomY + (gridH - (cellH * kInvRows + cellPad * (kInvRows - 1)));
+
+	for (int row = 0; row < kInvRows; row++) {
+		for (int col = 0; col < kInvCols; col++) {
+			int idx = row * kInvCols + col;
+			float cx = gridX0 + col * (cellW + cellPad);
+			float cy = gridY0 + (kInvRows - 1 - row) * (cellH + cellPad);
+
+			std::string slotId;
+			int         slotCount = 0;
+			if (idx < (int)otherItems.size()) {
+				slotId    = otherItems[idx].first;
+				slotCount = otherItems[idx].second;
+			}
+
+			Game::SlotRect sr;
+			sr.ndcX = cx; sr.ndcY = cy; sr.ndcW = cellW; sr.ndcH = cellH;
+			sr.itemId = slotId;
+			sr.count  = slotCount;
+			sr.selected = false;
+			sr.kind  = Game::SlotRect::Kind::Other;
+			sr.index = idx;
+			g.m_slotRectsThis.push_back(sr);
+
+			bool hover = false;
+			if (g.m_hoverSlot >= 0 && g.m_hoverSlot < (int)g.m_slotRectsLast.size()) {
+				const auto& h = g.m_slotRectsLast[g.m_hoverSlot];
+				hover = (h.kind == Game::SlotRect::Kind::Other && h.index == idx);
+			}
+
+			SlotChromeArgs a{cx, cy, cellW, cellH,
+			                 &slotId, slotCount, false, hover, nullptr};
+			drawSlotFrame(r, a);
+		}
+	}
 }
 
 } // namespace civcraft::vk

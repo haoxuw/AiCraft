@@ -18,7 +18,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test perf_fps perf_server llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test perf_fps perf_server flamegraph llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -76,35 +76,79 @@ PERF_REPORT := /tmp/civcraft_perf_report.txt
 # non-frame-pointer-friendly optimization levels). --call-graph dwarf keeps
 # stacks accurate at modest recording overhead (<5% in our framework).
 define run_under_perf
-	cd $(GAME_BUILD_DIR) && \
+	cd $(GAME_BUILD_DIR) && { \
 	paranoid=$$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo 99); \
-	if ! command -v perf >/dev/null 2>&1 || [ "$$paranoid" -gt 2 ]; then \
-	    if ! command -v perf >/dev/null 2>&1; then \
-	        echo "[make] perf not on PATH — falling back to bare run."; \
-	        echo "[make]   install with:  sudo apt install linux-tools-generic"; \
-	    else \
-	        echo "[make] kernel.perf_event_paranoid=$$paranoid (>2) — falling back to bare run."; \
-	        echo "[make]   enable with:   sudo sysctl kernel.perf_event_paranoid=2"; \
-	    fi; \
+	can_perf=1; \
+	if ! command -v perf >/dev/null 2>&1; then \
+	    echo "[make] perf not on PATH — falling back to bare run."; \
+	    echo "[make]   install with:  sudo apt install linux-tools-generic"; \
+	    can_perf=0; \
+	elif [ "$$paranoid" -gt 2 ]; then \
+	    echo "[make] kernel.perf_event_paranoid=$$paranoid (>2) — falling back to bare run."; \
+	    echo "[make]   enable with:   sudo sysctl kernel.perf_event_paranoid=2"; \
+	    can_perf=0; \
+	fi; \
+	if [ "$$can_perf" = "0" ]; then \
 	    echo "[make]   for crash-debug:  make game GDB=1"; \
 	    echo "[make] launching bare — log: $(GAME_LOG)"; \
 	    ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG); \
-	    exit $${PIPESTATUS[0]}; \
-	fi; \
-	rm -f $(PERF_DATA); \
-	echo "[make] launching under perf — data: $(PERF_DATA), log: $(GAME_LOG)"; \
-	perf record -F 99 --call-graph dwarf -o $(PERF_DATA) \
-	    -- ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG); \
-	echo; echo "=========== perf report (top-30) ==========="; \
-	perf report --stdio --no-children -g none -i $(PERF_DATA) 2>/dev/null | head -60 | tee $(PERF_REPORT); \
-	if command -v flamegraph.pl >/dev/null && command -v stackcollapse-perf.pl >/dev/null; then \
-	    perf script -i $(PERF_DATA) | stackcollapse-perf.pl | flamegraph.pl > /tmp/civcraft_flamegraph.svg && \
-	    echo "[make] flamegraph → /tmp/civcraft_flamegraph.svg"; \
 	else \
-	    echo "[make] flamegraph.pl not in PATH — install FlameGraph to get /tmp/civcraft_flamegraph.svg:"; \
-	    echo "         git clone https://github.com/brendangregg/FlameGraph ~/FlameGraph"; \
-	    echo "         export PATH=\$$PATH:~/FlameGraph"; \
-	fi
+	    rm -f $(PERF_DATA); \
+	    echo "[make] launching under perf — data: $(PERF_DATA), log: $(GAME_LOG)"; \
+	    perf record -F 99 --call-graph dwarf -o $(PERF_DATA) \
+	        -- ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG); \
+	    echo; echo "=========== perf report (top-30) ==========="; \
+	    perf report --stdio --no-children -g none -i $(PERF_DATA) 2>/dev/null | head -60 | tee $(PERF_REPORT); \
+	    if command -v flamegraph.pl >/dev/null && command -v stackcollapse-perf.pl >/dev/null; then \
+	        ts=$$(date '+%Y%m%d_%H%M%S'); \
+	        perf script -i $(PERF_DATA) 2>/dev/null | stackcollapse-perf.pl > /tmp/civcraft_folded.txt && \
+	        flamegraph.pl --title="civcraft combined $$ts" < /tmp/civcraft_folded.txt \
+	            > /tmp/civcraft_flamegraph_combined_$$ts.svg && \
+	        grep '^civcraft-ui-vk;'  /tmp/civcraft_folded.txt | \
+	            flamegraph.pl --title="civcraft-ui-vk (client) $$ts" \
+	            > /tmp/civcraft_flamegraph_client_$$ts.svg && \
+	        grep '^civcraft-server;' /tmp/civcraft_folded.txt | \
+	            flamegraph.pl --title="civcraft-server (server) $$ts" \
+	            > /tmp/civcraft_flamegraph_server_$$ts.svg && \
+	        rm -f /tmp/civcraft_folded.txt && \
+	        ln -sf /tmp/civcraft_flamegraph_combined_$$ts.svg /tmp/civcraft_flamegraph.svg && \
+	        ln -sf /tmp/civcraft_flamegraph_client_$$ts.svg   /tmp/civcraft_flamegraph_client.svg && \
+	        ln -sf /tmp/civcraft_flamegraph_server_$$ts.svg   /tmp/civcraft_flamegraph_server.svg; \
+	    else \
+	        echo "[make] flamegraph.pl not in PATH — install FlameGraph to get /tmp/civcraft_flamegraph*.svg:"; \
+	        echo "         git clone https://github.com/brendangregg/FlameGraph ~/FlameGraph"; \
+	        echo "         export PATH=\$$PATH:~/FlameGraph"; \
+	    fi; \
+	fi; \
+	echo; echo "=========== make game artifacts ==========="; \
+	for f in $$(ls -t /tmp/civcraft_perf_client_*.txt 2>/dev/null | head -1); do \
+	    echo "  perf summary (client):  $$f"; \
+	done; \
+	for f in $$(ls -t /tmp/civcraft_perf_server_*.txt 2>/dev/null | head -1); do \
+	    echo "  perf summary (server):  $$f"; \
+	done; \
+	for f in $$(ls -t /tmp/civcraft_flamegraph_client_*.svg 2>/dev/null | head -1); do \
+	    echo "  flamegraph (client):    $$f"; \
+	done; \
+	for f in $$(ls -t /tmp/civcraft_flamegraph_server_*.svg 2>/dev/null | head -1); do \
+	    echo "  flamegraph (server):    $$f"; \
+	done; \
+	for f in $$(ls -t /tmp/civcraft_flamegraph_combined_*.svg 2>/dev/null | head -1); do \
+	    echo "  flamegraph (combined):  $$f"; \
+	done; \
+	if ls /tmp/civcraft_flamegraph_*_*.svg >/dev/null 2>&1; then \
+	    echo "                          (also: /tmp/civcraft_flamegraph_{client,server,combined}.svg → newest)"; \
+	    echo "                          inspect older runs:  make flamegraph N=2"; \
+	fi; \
+	[ -f $(PERF_DATA) ]   && echo "  perf record data:       $(PERF_DATA)"; \
+	[ -f $(PERF_REPORT) ] && echo "  perf top-30 report:     $(PERF_REPORT)"; \
+	[ -f $(GAME_LOG) ]    && echo "  game stdout/stderr log: $(GAME_LOG)"; \
+	count=$$(ls /tmp/civcraft_entity_*.log 2>/dev/null | wc -l); \
+	if [ "$$count" -gt 0 ]; then \
+	    echo "  entity logs ($$count files):"; \
+	    ls -1 /tmp/civcraft_entity_*.log | sed 's/^/    /'; \
+	fi; \
+	}
 endef
 
 # Common wrapper: $(call run_under_gdb, <extra civcraft-ui-vk args>)
@@ -154,7 +198,7 @@ endef
 endif
 
 game: game-build
-	$(call launch,$(if $(GAME_VILLAGERS),--villagers $(GAME_VILLAGERS)) $(if $(GAME_PORT),--port $(GAME_PORT)))
+	$(call launch,$(if $(GAME_VILLAGERS),--villagers $(GAME_VILLAGERS)) $(if $(GAME_PORT),--port $(GAME_PORT)) $(if $(TERMINATE_AFTER_S),--terminate-after $(TERMINATE_AFTER_S)))
 
 profiler: game-build
 	$(call launch,--profiler $(if $(GAME_PORT),--port $(GAME_PORT)))
@@ -174,12 +218,14 @@ test-chicken: game-build
 # behavior/pathfinding/decision iteration — see the testing-plan skill.
 # DURATION=N (seconds) ends the run early; default is unbounded.
 DEBUG_DURATION ?=
-debug_villager: game-build
+debug_villager: debug_villager-reconfigure game-build
 	@-pgrep -x civcraft-ui-vk  2>/dev/null | xargs -r kill ; true
 	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill ; true
 	@sleep 1
+	@rm -f /tmp/civcraft_entity_*.log
 	@echo "[debug_villager] --debug-behavior (1 villager, sim-speed 4, log-only)"
 	@echo "[debug_villager] log: /tmp/civcraft_game.log (prior run kept as .prev)"
+	@echo "[debug_villager] per-entity logs: /tmp/civcraft_entity_<id>.log (cleared on launch)"
 	@cd $(GAME_BUILD_DIR) && { \
 	    $(if $(DEBUG_DURATION),timeout $(DEBUG_DURATION) )./civcraft-ui-vk --debug-behavior; \
 	    rc=$$?; \
@@ -343,6 +389,50 @@ perf_server: game-build
 	echo "[perf_server] parsing $$dump"; echo; \
 	python3 $(PERF_REPORT_PY) server "$$dump"
 
+# Open Nth most-recent flamegraph(s) from /tmp. N=1 (default) → newest run;
+# N=2 → run before that; etc. Lists every flamegraph on disk when nothing
+# matches so the user can see what's there.
+#
+# `make flamegraph` is the same as N=1. Positional digit also works
+# (`make flamegraph 2`) via the same trick `make game N` uses.
+ifeq ($(firstword $(MAKECMDGOALS)),flamegraph)
+  FLAME_ARG := $(word 2,$(MAKECMDGOALS))
+  FLAME_N := $(shell echo "$(FLAME_ARG)" | grep -E '^[0-9]+$$')
+  ifneq ($(FLAME_N),)
+    .PHONY: $(FLAME_N)
+    $(FLAME_N):
+	@:
+  endif
+endif
+
+flamegraph:
+	@n=$${N:-$(if $(FLAME_N),$(FLAME_N),1)}; \
+	cli=$$(ls -t /tmp/civcraft_flamegraph_client_*.svg 2>/dev/null | sed -n "$${n}p"); \
+	srv=$$(ls -t /tmp/civcraft_flamegraph_server_*.svg 2>/dev/null | sed -n "$${n}p"); \
+	cmb=$$(ls -t /tmp/civcraft_flamegraph_combined_*.svg 2>/dev/null | sed -n "$${n}p"); \
+	if [ -z "$$cli" ] && [ -z "$$srv" ] && [ -z "$$cmb" ]; then \
+	    echo "[flamegraph] run #$$n not found."; \
+	    total=$$(ls /tmp/civcraft_flamegraph_client_*.svg 2>/dev/null | wc -l); \
+	    if [ "$$total" -gt 0 ]; then \
+	        echo "[flamegraph] $$total run(s) on disk (newest first):"; \
+	        ls -lt /tmp/civcraft_flamegraph_client_*.svg | sed 's/^/  /'; \
+	    else \
+	        echo "[flamegraph] no flamegraphs on /tmp — run \`make game\` first."; \
+	    fi; \
+	    exit 1; \
+	fi; \
+	echo "[flamegraph] run #$$n:"; \
+	[ -n "$$cli" ] && echo "  client:   $$cli"; \
+	[ -n "$$srv" ] && echo "  server:   $$srv"; \
+	[ -n "$$cmb" ] && echo "  combined: $$cmb"; \
+	if command -v xdg-open >/dev/null 2>&1; then \
+	    [ -n "$$cli" ] && xdg-open "$$cli" >/dev/null 2>&1 & \
+	    [ -n "$$srv" ] && xdg-open "$$srv" >/dev/null 2>&1 & \
+	    wait; \
+	else \
+	    echo "[flamegraph] xdg-open not on PATH — open the SVGs manually in a browser."; \
+	fi
+
 build: configure
 	cmake --build $(BUILD_DIR) -j$(PAR)
 
@@ -359,7 +449,16 @@ game-build: game-configure
 
 game-configure:
 	@if [ ! -f $(GAME_BUILD_DIR)/CMakeCache.txt ]; then \
-		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DCIVCRAFT_PERF=ON; \
+		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DCIVCRAFT_PERF=ON -DCIVCRAFT_PATHFINDING_DEBUG=ON; \
+	fi
+
+# debug_villager needs PATHLOG compiled in so per-entity logs capture the
+# navigator lifecycle. Force a reconfigure if the existing cache was built
+# without it — cheap when the flag is already set.
+debug_villager-reconfigure:
+	@if ! grep -q "CIVCRAFT_PATHFINDING_DEBUG:BOOL=ON" $(GAME_BUILD_DIR)/CMakeCache.txt 2>/dev/null; then \
+		echo "[debug_villager] enabling CIVCRAFT_PATHFINDING_DEBUG on $(GAME_BUILD_DIR)"; \
+		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DCIVCRAFT_PERF=ON -DCIVCRAFT_PATHFINDING_DEBUG=ON; \
 	fi
 
 clean:

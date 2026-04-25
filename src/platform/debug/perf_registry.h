@@ -162,16 +162,18 @@ inline std::string formatSummary(const char* title, double elapsedSec) {
 	out += line;
 
 	if (!reg.histograms().empty()) {
+		// Unit lives in the metric suffix (_ms, _count, _bytes). The column
+		// header stays unit-agnostic so mixed-unit dumps don't mislabel.
 		std::snprintf(line, sizeof(line),
-			"%-28s %8s %8s %8s %8s %8s %8s %8s %8s\n",
-			"metric (ms)", "count", "avg", "min", "max",
+			"%-32s %8s %10s %10s %10s %10s %10s %10s %10s\n",
+			"metric", "samples", "avg", "min", "max",
 			"p50", "p95", "p99", "p99.9");
 		out += line;
 
 		for (const auto& [name, h] : reg.histograms()) {
 			if (h.count() == 0) continue;
 			std::snprintf(line, sizeof(line),
-				"%-28s %8llu %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f\n",
+				"%-32s %8llu %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f\n",
 				name.c_str(),
 				(unsigned long long)h.count(),
 				h.avg(), h.min(), h.max(),

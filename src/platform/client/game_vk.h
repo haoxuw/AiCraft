@@ -53,6 +53,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <memory>
@@ -131,6 +133,50 @@ enum class GameState { Menu, Loading, Playing, GameMenu, Dead };
 // own LAN-browser screen; singleplayer jumps straight to character pick.
 enum class MenuScreen : uint8_t { Main, CharacterSelect, Connecting, Multiplayer, Handbook, Settings };
 
+// Data-driven readiness gate for the Connecting screen. Each phase reports a
+// 0..1 progress; the loading screen only hands off to Playing once every phase
+// hits 1.0. Adding/removing a phase is a single-line edit — the renderer walks
+// the array in order, so new checkboxes appear automatically.
+//
+// Phases must be independent — none is allowed to block another. updateLoadingGate
+// refreshes them all every frame from whatever state is currently available,
+// so the whole handoff happens as soon as the slowest signal resolves, not in
+// sequence.
+struct LoadingGate {
+	struct Phase {
+		const char* label    = "";
+		float       progress = 0.0f;   // clamped 0..1
+	};
+	enum Id : uint8_t {
+		Welcome,          // S_HELLO / pollWelcome()
+		WorldPrepared,    // S_PREPARING 0..100% → S_READY
+		ChunksLoaded,     // mesher quiesced within render radius
+		AgentsSettled,    // AgentClient: every owned NPC finished its first decide
+		kCount
+	};
+	std::array<Phase, kCount> phases = {{
+		{"Server handshake"},
+		{"World preparing"},
+		{"Loading terrain"},
+		{"Waking up villagers"},
+	}};
+	// Reset when entering a fresh Connecting flow so retries don't inherit the
+	// previous run's "done" flags.
+	void reset() { for (auto& p : phases) p.progress = 0.0f; }
+	void set(Id id, float pct) {
+		phases[id].progress = std::clamp(pct, 0.0f, 1.0f);
+	}
+	bool allDone() const {
+		for (auto& p : phases) if (p.progress < 1.0f) return false;
+		return true;
+	}
+	float aggregate() const {
+		float s = 0.0f;
+		for (auto& p : phases) s += p.progress;
+		return s / (float)phases.size();
+	}
+};
+
 class Game {
 public:
 	Game();
@@ -145,7 +191,21 @@ public:
 
 	// Server connection (required — civcraft-ui-vk has no local demo world).
 	// Non-owning — caller keeps the server alive. Must be called before init().
-	void setServer(civcraft::ServerInterface* s) { m_server = s; }
+	void setServer(civcraft::ServerInterface* s) {
+		m_server = s;
+		// Build a stable WorldView bound to the server's chunks + block
+		// registry and hand it to the path executor for wall-slide probing.
+		// Doing this here (not on every driveRemote) keeps the executor's
+		// probe paths branch-free on the hot tick.
+		if (s) {
+			m_pathWorldView = std::make_unique<civcraft::ChunkWorldView>(
+				s->chunks(), s->blockRegistry());
+			m_pathExec.setWorldView(m_pathWorldView.get());
+		} else {
+			m_pathExec.setWorldView(nullptr);
+			m_pathWorldView.reset();
+		}
+	}
 
 	// Remember which world to connect to; actual handshake is deferred
 	// until the user picks a character (or skipMenu fires).
@@ -252,6 +312,12 @@ private:
 	void processLmbInput(float dt);  // attack / dig / RTS box-select / wheel
 	void processRmbInput(float dt);  // inspect / place / drag-circle / wheel
 	void processMmbInput();          // rotate-or-eyedropper on held block
+
+	// If `bp` holds a Chest block, locate the matching Structure entity,
+	// open the inventory panel with m_invOther pointed at it, and return
+	// true. Returns false if the block isn't a chest (caller falls through
+	// to the normal interact/place path). Shared by the E key and RMB.
+	bool tryOpenChestAt(glm::ivec3 bp);
 
 	// ── Scene transitions ─────────────────────────────────────────────────
 	void enterMenu();
@@ -360,6 +426,12 @@ private:
 	// already has a full horizon instead of popping in.
 	void preloadVisibleChunks();
 
+	// Recompute every LoadingGate phase from the current server / agent /
+	// client state. Called once per frame while we're sitting on the
+	// Connecting menu screen; the renderer reads m_loadingGate and the main
+	// loop calls enterPlaying() when allDone() returns true.
+	void updateLoadingGate(float dt);
+
 	// The entity the player is currently controlling. Returns nullptr if
 	// the server hasn't delivered the entity yet. ALL player position,
 	// velocity, and HP reads go through here — no dual state.
@@ -402,6 +474,17 @@ private:
 	std::string  m_connectError;        // last handshake error, displayed on CharacterSelect
 	bool         m_connecting = false;  // true while awaiting S_WELCOME
 	float        m_connectStartTime = 0.0f; // m_wallTime when beginConnect fired; timeout at +60s
+	// Data-driven readiness gate for Connecting → Playing handoff. Each phase
+	// publishes 0..1 progress; updateLoadingGate() recomputes every frame.
+	LoadingGate  m_loadingGate;
+	// Chunk-quiesce tracker — watches m_chunkMeshes.size() during the loading
+	// phase. When it stops growing for m_chunkQuiesceWindow AND there's nothing
+	// pending, ChunksLoaded hits 1.0.
+	float        m_chunkQuiesceAccum   = 0.0f;
+	size_t       m_chunkMeshesLastSeen = 0;
+	// Peak streaming fraction (meshed / (meshed+pending)) seen so far. Pinned
+	// at peak so the bar never regresses when new dirty chunks arrive late.
+	float        m_chunkStreamPeak     = 0.0f;
 	// Shared chrome for immersive preview screens (CharacterSelect, Handbook).
 	// Holds the previewed artifact id, clip, cover-toggle state, and layout
 	// constants. Camera pin (game_vk.cpp) and world injection
@@ -588,6 +671,11 @@ private:
 	bool         m_mouseCaptured = false;
 	bool         m_lmbLast       = false;
 	bool         m_rmbLast       = false;
+	// FPS/TPS RMB-over-interactive: press latches the target; release fires
+	// the Interact once. Without this, the held-place synthesis spams a
+	// fresh Interact every frame and the door open/closes at frame rate.
+	bool         m_rmbInteractPending    = false;
+	glm::ivec3   m_rmbInteractTarget     = {0, 0, 0};
 	bool         m_mmbLast       = false;
 	bool         m_spaceLast     = false;
 	bool         m_escLast       = false;
@@ -682,6 +770,10 @@ private:
 	bool             m_invOpen = false;
 	bool             m_tabLast = false;
 	bool             m_qLast   = false;
+	// Hold-Q auto-repeat. Tap = 1 drop; hold past kQInitialDelay starts
+	// auto-repeating at kQRepeatInterval so Q can empty a stack.
+	float            m_qHoldTime   = 0.0f;  // seconds held this press
+	float            m_qRepeatAccum = 0.0f; // seconds since last auto-drop
 	civcraft::EntityId m_invOther = 0;
 	InvSort          m_invSort = InvSort::ByName;
 
@@ -726,7 +818,10 @@ private:
 		glm::vec2 startNdc{0, 0};
 	} m_rtsLongPress;
 	static constexpr float kBuildHoldSec = 1.0f;
-	civcraft::PathExecutor m_rtsExec;
+	// Unified path executor — drives NPC follow-to-slot for RTS commands and
+	// possessed-player click-to-move through the same pop-front cell queue.
+	civcraft::PathExecutor                       m_pathExec;
+	std::unique_ptr<civcraft::ChunkWorldView>    m_pathWorldView;
 	struct MoveOrder { glm::vec3 target; bool active; };
 	std::unordered_map<civcraft::EntityId, MoveOrder> m_moveOrders;
 

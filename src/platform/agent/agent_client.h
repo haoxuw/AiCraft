@@ -136,18 +136,29 @@ public:
 		m_decideWorker.stop();
 	}
 
+	// Loading-screen gate — when false, decide still runs (agents discover,
+	// plans land, bookkeeping stays fresh) but phaseExecute / phaseAutoPickup
+	// / emitMovementSignals are skipped so no entity actually moves or picks
+	// anything up. The flag is flipped back on exactly once, the tick before
+	// the loading screen hands off to Playing, so the world unfreezes in
+	// lockstep with the first rendered gameplay frame.
+	void setExecutorEnabled(bool on) { m_executorEnabled = on; }
+	bool executorEnabled() const      { return m_executorEnabled; }
+
 	void tick(float dt) {
 		using Clock = std::chrono::steady_clock;
 		m_time += dt;
 		auto t0 = Clock::now();
 		discoverEntities();
-		phaseAutoPickup();
+		if (m_executorEnabled) phaseAutoPickup();
 		auto t1 = Clock::now();
 		phaseDecide();
 		drainWorkerResults();
 		auto t2 = Clock::now();
-		phaseExecute(dt);
-		emitMovementSignals();
+		if (m_executorEnabled) {
+			phaseExecute(dt);
+			emitMovementSignals();
+		}
 		scanInterrupts(dt);
 		auto t3 = Clock::now();
 		auto ms = [](Clock::duration d) {
@@ -219,6 +230,25 @@ public:
 	template<typename Fn>
 	void forEachAgent(Fn&& fn) const {
 		for (auto& [eid, agent] : m_agents) fn(eid, agent.viz());
+	}
+
+	// Loading-screen readiness report. `discoveryRan` flips true after the
+	// first real discoverEntities() pass (seat granted, entity snapshot seen);
+	// `totalAgents` / `settledAgents` describe the owned NPC fleet's progress
+	// through its first decide. Written data-driven so the loading gate can
+	// render a live count without touching AgentClient internals.
+	struct InitProgress {
+		bool discoveryRan  = false;
+		int  totalAgents   = 0;
+		int  settledAgents = 0;
+	};
+	InitProgress initProgress() const {
+		InitProgress ip;
+		ip.discoveryRan = m_discoveryRanOnce;
+		ip.totalAgents  = (int)m_agents.size();
+		for (const auto& [eid, agent] : m_agents)
+			if (agent.firstDecideDone()) ip.settledAgents++;
+		return ip;
 	}
 
 	// ── External callbacks (network + UI) ────────────────────────────────
@@ -320,61 +350,49 @@ private:
 	}
 
 	// ── discoverEntities ─────────────────────────────────────────────────
+	// Register new Living entities owned by our seat; drop agents whose
+	// entity vanished or changed hands. No routine log — only warns on
+	// orphaned Living (owner=0 or missing BehaviorId), which is a
+	// spawn-attribution bug per docs/28_SEATS_AND_OWNERSHIP.md P6.
 	void discoverEntities() {
-		m_discoveryTimer += 0.05f;
-		if (m_discoveryTimer < 2.0f && !m_agents.empty()) return;
+		m_discoveryTimer += 1.0f / 60.0f;
+		if (m_discoveryTimer < kDiscoverPeriodSec && !m_agents.empty()) return;
 		m_discoveryTimer = 0;
 
 		EntityId myEid  = m_server.localPlayerId();
 		uint32_t mySeat = m_server.localSeatId();
-		if (myEid == ENTITY_NONE) {
-			agentDiagnostic(true, "no localPlayerId yet");
-			return;
-		}
-		if (mySeat == 0) {
-			agentDiagnostic(true, "no seat granted yet");
-			return;
-		}
+		if (myEid == ENTITY_NONE) { warnRateLimited("handshake: no localPlayerId yet"); return; }
+		if (mySeat == 0)          { warnRateLimited("handshake: no seat granted yet"); return; }
+		m_discoveryRanOnce = true;
 
-		int total = 0, skipSelf = 0, skipNonLiving = 0, skipRemoved = 0;
-		int skipNoBid = 0, skipAlreadyAgent = 0, skipNotOwnedByUs = 0, registered = 0;
-		int ownedBySomeoneElse = 0, ownedByNobody = 0;
-		std::unordered_map<std::string, int> byTypeNonLiving, byTypeRemoved;
-		std::unordered_map<std::string, int> byTypeNoBid, byTypeDup;
-		std::unordered_map<std::string, int> byTypeNotMine, byTypeRegistered;
+		std::unordered_map<std::string, int> orphanedOwner, orphanedBid;
 
 		m_server.forEachEntity([&](Entity& e) {
-			total++;
-			if (e.id() == myEid) { skipSelf++; return; }
-			if (!e.def().isLiving()) { byTypeNonLiving[e.typeId()]++; skipNonLiving++; return; }
-			if (e.removed) { byTypeRemoved[e.typeId()]++; skipRemoved++; return; }
+			if (e.id() == myEid) return;
+			// Hottest steady-state branch first: already adopted → single hash lookup.
+			if (m_agents.count(e.id())) return;
+			if (!e.def().isLiving() || e.removed) return;
+
 			std::string bid = e.getProp<std::string>(Prop::BehaviorId, "");
-			if (bid.empty()) { byTypeNoBid[e.typeId()]++; skipNoBid++; return; }
-			if (m_agents.count(e.id())) { byTypeDup[e.typeId()]++; skipAlreadyAgent++; return; }
+			if (bid.empty())      { orphanedBid[e.typeId()]++; return; }
 			int ownerSeat = e.getProp<int>(Prop::Owner, 0);
-			if (ownerSeat != (int)mySeat) {
-				byTypeNotMine[e.typeId()]++;
-				skipNotOwnedByUs++;
-				if (ownerSeat == 0) ownedByNobody++;
-				else                ownedBySomeoneElse++;
-				return;
-			}
+			if (ownerSeat == 0)   { orphanedOwner[e.typeId()]++; return; }
+			if (ownerSeat != (int)mySeat) return;
 
 			BehaviorHandle h = loadBehaviorForEntity(bid);
-			auto [ait, _ins] = m_agents.emplace(
-				e.id(), Agent(e.id(), bid, h));
-			// Agent constructor marks m_needsDecide=true (discovery);
-			// enrolment in m_needy happens via updateMembership here.
-			if (h >= 0) {
-				byTypeRegistered[e.typeId()]++;
-				registered++;
-				updateMembership(e.id());
-			}
+			auto [ait, _ins] = m_agents.emplace(e.id(), Agent(e.id(), bid, h));
+			if (h >= 0) updateMembership(e.id());
 		});
 
+		// GC: drop agents whose entity is gone, removed, or no longer ours.
+		// The owner-flip arm is what makes future taming/gifting correct —
+		// the old seat's AgentClient releases here, the new seat's client
+		// adopts on its next sweep.
 		for (auto it = m_agents.begin(); it != m_agents.end(); ) {
 			Entity* e = m_server.getEntity(it->first);
-			if (!e || e->removed) {
+			bool drop = !e || e->removed
+			         || e->getProp<int>(Prop::Owner, 0) != (int)mySeat;
+			if (drop) {
 				if (it->second.handle() >= 0)
 					pythonBridge().unloadBehavior(it->second.handle());
 				m_needy.erase(it->first);
@@ -388,50 +406,38 @@ private:
 			}
 		}
 
-		// "type×N,type×N" — sorted desc by count, first 6 types, "+K more" suffix.
-		auto fmtTypes = [](const std::unordered_map<std::string,int>& m) {
-			if (m.empty()) return std::string{};
+		if (!orphanedOwner.empty() || !orphanedBid.empty())
+			warnOrphans(orphanedOwner, orphanedBid);
+	}
+
+	void warnRateLimited(const std::string& what) {
+		if (m_time - m_lastWarnTime < kWarnIntervalSec) return;
+		m_lastWarnTime = m_time;
+		std::printf("[Agent] %s\n", what.c_str());
+		std::fflush(stdout);
+	}
+
+	void warnOrphans(const std::unordered_map<std::string,int>& byOwner,
+	                 const std::unordered_map<std::string,int>& byBid) {
+		if (m_time - m_lastWarnTime < kWarnIntervalSec) return;
+		m_lastWarnTime = m_time;
+		auto fmt = [](const std::unordered_map<std::string,int>& m) {
 			std::vector<std::pair<std::string,int>> v(m.begin(), m.end());
 			std::sort(v.begin(), v.end(), [](auto& a, auto& b){
 				if (a.second != b.second) return a.second > b.second;
 				return a.first < b.first;
 			});
-			std::string out = "[";
-			size_t n = std::min<size_t>(v.size(), 6);
-			for (size_t i = 0; i < n; i++) {
+			std::string out;
+			for (size_t i = 0; i < v.size(); i++) {
 				if (i) out += ",";
 				out += v[i].first + "×" + std::to_string(v[i].second);
 			}
-			if (v.size() > n)
-				out += ",+" + std::to_string(v.size() - n) + " more";
-			out += "]";
 			return out;
 		};
-
-		std::string msg = "myEid=" + std::to_string((unsigned)myEid)
-			+ " seat=" + std::to_string(mySeat)
-			+ " seen=" + std::to_string(total)
-			+ " agents=" + std::to_string(m_agents.size()) + fmtTypes(byTypeDup)
-			+ " (+" + std::to_string(registered) + " new" + fmtTypes(byTypeRegistered) + ")"
-			+ " skip[self=" + std::to_string(skipSelf)
-			+ " nonLiving=" + std::to_string(skipNonLiving) + fmtTypes(byTypeNonLiving)
-			+ " removed=" + std::to_string(skipRemoved) + fmtTypes(byTypeRemoved)
-			+ " noBid=" + std::to_string(skipNoBid) + fmtTypes(byTypeNoBid)
-			+ " notMine=" + std::to_string(skipNotOwnedByUs) + fmtTypes(byTypeNotMine)
-			+ "(nobody=" + std::to_string(ownedByNobody)
-			+ ",other=" + std::to_string(ownedBySomeoneElse) + ")]";
-		// `dup` is folded into `agents[...]` above — same entities, same types.
-		agentDiagnostic(m_agents.empty(), msg);
-	}
-
-	void agentDiagnostic(bool zeroAgents, const std::string& what) {
-		constexpr float kHealthySec = 10.0f;
-		constexpr float kStuckSec   = 1.0f;
-		m_diagLogAccum += 2.0f;
-		float threshold = zeroAgents ? kStuckSec : kHealthySec;
-		if (m_diagLogAccum < threshold) return;
-		m_diagLogAccum = 0;
-		std::printf("[Agent] discover: %s\n", what.c_str());
+		std::printf("[Agent] orphaned Living (spawn-attribution bug)");
+		if (!byOwner.empty()) std::printf(" owner=0[%s]", fmt(byOwner).c_str());
+		if (!byBid.empty())   std::printf(" noBid[%s]",   fmt(byBid).c_str());
+		std::printf("\n");
 		std::fflush(stdout);
 	}
 
@@ -966,8 +972,20 @@ private:
 	float            m_time              = 0;
 	float            m_autoPickupTimer   = 0.0f;
 	float            m_discoveryTimer    = 100.0f;
+	// Flips true after the first discoverEntities() pass actually executes
+	// (i.e. myEid + seat arrived). Loading-screen "agents settled" waits on
+	// this — before the first discovery, m_agents may be empty for reasons
+	// that don't mean the world is quiet (handshake still in flight).
+	bool             m_discoveryRanOnce  = false;
+	// Loading-screen executor gate. Defaults true so existing callers don't
+	// change. Game flips this off during Connecting, and back on exactly one
+	// tick before enterPlaying() hands control to the gameplay HUD.
+	bool             m_executorEnabled   = true;
 	int              m_lastDecidesRun    = 0;
-	float            m_diagLogAccum      = 0.0f;
+	// Fires immediately on the first orphan/handshake warn (m_time starts at 0).
+	float            m_lastWarnTime      = -1e6f;
+	static constexpr float kDiscoverPeriodSec = 5.0f;
+	static constexpr float kWarnIntervalSec   = 15.0f;
 	float            m_starvationLogAccum = 0.0f;
 	float            m_lockPerfAccum     = 0.0f;
 

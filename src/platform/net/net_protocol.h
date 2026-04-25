@@ -75,6 +75,9 @@ static constexpr uint32_t PROTOCOL_VERSION = 9;
 // so the server tick loop can record a reason without depending on net/.
 using EntityRemoveReason = EntityRemovalReason;
 
+// When adding/renaming an entry here (or bumping PROTOCOL_VERSION above),
+// regenerate the Python mirror so action_proxy.py and the scenario tests
+// keep the same wire numbers:   python3 tools/gen_protocol_py.py
 enum MsgType : uint32_t {
 	// Client → Server
 	C_ACTION          = 0x0001,

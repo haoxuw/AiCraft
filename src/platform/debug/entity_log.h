@@ -1,11 +1,22 @@
 #pragma once
 
 // Per-entity log at /tmp/civcraft_entity_<id>.log. Line-buffered for `tail -f`.
-// Truncates on first open per process (not per-session).
-// Mirrors python/entity_log.py.
+// Single source of truth — Python behaviors call civcraft_engine.entity_log()
+// which routes here via python_bridge.cpp. Shell callers (smoke scripts,
+// `make game`) clear the files before launch; we never truncate at the API
+// level.
+//
+// Aggregation: identical consecutive messages from a tight loop (e.g. a 10 Hz
+// navigator tick logging the same "walking target=…" every frame) are folded
+// into one summary row:
+//     [HH:MM:SS..HH:MM:SS xN] msg
+// The first occurrence prints immediately so a `tail -f` shows progress; the
+// summary line is emitted when the message changes (or at shutdown via
+// entityLogFlushAll()).
 
 #include "logic/types.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
@@ -13,63 +24,127 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace civcraft {
 
-// Shared lock protects both the file-handle map AND the actual writes: C++
-// builds the whole line in a stack buffer then does ONE fwrite (atomic w.r.t.
-// other C++ threads). Files are opened O_APPEND ("a" mode) so that separate
-// FDs — e.g. Python's entity_log.log() pointing at the same path — can't
-// clobber each other's offsets. We do NOT unlink/truncate here: Python's
-// decide() opens the file during the first agent tick, which often happens
-// *before* C++ navigateApproach logs — a C++ unlink would orphan Python's
-// FD to a zombie inode and silently drop every subsequent Python log line.
-// Shell callers (smoke scripts, `make game`) clear /tmp/civcraft_entity_*.log
-// before launch.
-inline std::FILE* entityLogFile(EntityId eid) {
-	static std::mutex mu;
-	static std::unordered_map<EntityId, std::FILE*> files;
-	std::lock_guard<std::mutex> lk(mu);
-	auto it = files.find(eid);
-	if (it != files.end()) return it->second;
+namespace detail {
 
+struct EntityLogState {
+	std::FILE* file        = nullptr;
+	std::string pendingMsg;        // Last written message (awaiting more of the same).
+	int         pendingCount = 0;   // >=1 when pendingMsg is valid.
+	char        firstTs[16]   = "";
+	char        lastTs[16]    = "";
+};
+
+inline std::mutex& entityLogMutex() {
+	static std::mutex mu;
+	return mu;
+}
+
+inline std::unordered_map<EntityId, EntityLogState>& entityLogStates() {
+	static std::unordered_map<EntityId, EntityLogState> m;
+	return m;
+}
+
+inline EntityLogState& openState(EntityId eid) {
+	auto& states = entityLogStates();
+	auto  it     = states.find(eid);
+	if (it != states.end()) return it->second;
+
+	EntityLogState s{};
 	char path[128];
 	std::snprintf(path, sizeof(path), "/tmp/civcraft_entity_%u.log", eid);
-	std::FILE* f = std::fopen(path, "a");    // O_APPEND: kernel-atomic writes
-	if (!f) return nullptr;
-	std::setvbuf(f, nullptr, _IOLBF, 0);
-	files[eid] = f;
-	return f;
+	s.file = std::fopen(path, "a");    // O_APPEND: kernel-atomic writes.
+	if (s.file) std::setvbuf(s.file, nullptr, _IOLBF, 0);
+	return states.emplace(eid, s).first->second;
+}
+
+// Caller holds entityLogMutex().
+inline void flushPending(EntityLogState& s) {
+	if (s.pendingCount <= 1 || !s.file) {
+		s.pendingCount = 0;
+		s.pendingMsg.clear();
+		return;
+	}
+	std::fprintf(s.file, "[%s..%s x%d] %s\n",
+	             s.firstTs, s.lastTs, s.pendingCount, s.pendingMsg.c_str());
+	s.pendingCount = 0;
+	s.pendingMsg.clear();
+}
+
+} // namespace detail
+
+// Back-compat accessor for call sites that want the raw FILE* (diagnostic
+// dumps that bypass aggregation). Prefer entityLog() for normal use.
+inline std::FILE* entityLogFile(EntityId eid) {
+	std::lock_guard<std::mutex> lk(detail::entityLogMutex());
+	return detail::openState(eid).file;
 }
 
 inline void entityLog(EntityId eid, const char* fmt, ...) {
-	std::FILE* f = entityLogFile(eid);
-	if (!f) return;
-
 	std::time_t t = std::time(nullptr);
 	std::tm lt{};
 	localtime_r(&t, &lt);
 	char ts[16];
 	std::strftime(ts, sizeof(ts), "%H:%M:%S", &lt);
 
-	char line[768];
-	int  n = std::snprintf(line, sizeof(line), "[%s] ", ts);
-	if (n < 0 || (size_t)n >= sizeof(line)) return;
-
+	char msg[640];
 	va_list ap;
 	va_start(ap, fmt);
-	int m = std::vsnprintf(line + n, sizeof(line) - n, fmt, ap);
+	int m = std::vsnprintf(msg, sizeof(msg), fmt, ap);
 	va_end(ap);
 	if (m < 0) return;
 
-	size_t len = (size_t)n + (size_t)m;
-	if (len >= sizeof(line) - 1) len = sizeof(line) - 2;
-	line[len]     = '\n';
-	line[len + 1] = '\0';
+	std::lock_guard<std::mutex> lk(detail::entityLogMutex());
+	auto& s = detail::openState(eid);
+	if (!s.file) return;
 
-	static std::mutex writeMu;
-	std::lock_guard<std::mutex> lk(writeMu);
-	std::fwrite(line, 1, len + 1, f);
+	// Aggregate identical consecutive messages: bump the counter and extend
+	// the timestamp range instead of writing another copy to disk.
+	if (s.pendingCount > 0 && s.pendingMsg == msg) {
+		s.pendingCount++;
+		std::snprintf(s.lastTs, sizeof(s.lastTs), "%s", ts);
+		return;
+	}
+
+	// Different message — flush the prior aggregate (if it repeated), then
+	// print the new line once and start buffering it.
+	detail::flushPending(s);
+	std::fprintf(s.file, "[%s] %s\n", ts, msg);
+	s.pendingMsg = msg;
+	s.pendingCount = 1;
+	std::snprintf(s.firstTs, sizeof(s.firstTs), "%s", ts);
+	std::snprintf(s.lastTs,  sizeof(s.lastTs),  "%s", ts);
+}
+
+// Call on clean shutdown so any buffered "[first..last xN]" summary reaches
+// disk. Best-effort: tests and the game-loop exit paths drive this.
+inline void entityLogFlushAll() {
+	std::lock_guard<std::mutex> lk(detail::entityLogMutex());
+	for (auto& kv : detail::entityLogStates()) {
+		detail::flushPending(kv.second);
+		if (kv.second.file) std::fflush(kv.second.file);
+	}
+}
+
+// Return absolute paths of every per-entity log file this process has opened.
+// `--debug-behavior` dumps this list at exit so the caller knows where to grep.
+inline std::vector<std::string> entityLogProducedFiles() {
+	std::lock_guard<std::mutex> lk(detail::entityLogMutex());
+	std::vector<EntityId> ids;
+	ids.reserve(detail::entityLogStates().size());
+	for (auto& kv : detail::entityLogStates()) ids.push_back(kv.first);
+	std::sort(ids.begin(), ids.end());
+	std::vector<std::string> out;
+	out.reserve(ids.size());
+	for (EntityId e : ids) {
+		char path[128];
+		std::snprintf(path, sizeof(path), "/tmp/civcraft_entity_%u.log", (unsigned)e);
+		out.emplace_back(path);
+	}
+	return out;
 }
 
 } // namespace civcraft

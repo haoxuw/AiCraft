@@ -216,6 +216,11 @@ public:
 	}
 
 	// Phase 4: explicit-center variant used by the per-seat VillageStamper.
+	// Chest sits near the interior center — (w/2-1, d/2-1) inside the
+	// footprint. Offset dodges the table at (w/2+1, d/2) and the bed at
+	// (2, d-2/3), and keeps ≥3 blocks from any wall so villagers have to
+	// walk inside (past the door on the -Z wall) to deposit instead of
+	// reaching through a wall from outside.
 	std::vector<glm::vec3> houseChestPositionsAt(int seed, glm::ivec2 vc) const {
 		if (!m_py.hasVillage || m_py.houses.empty()) return {};
 		std::vector<glm::vec3> chests;
@@ -223,8 +228,8 @@ public:
 			if (h.type == "barn") continue;
 			int hcx = vc.x + h.cx, hcz = vc.y + h.cz;
 			int floorY = structureFloorY(seed, hcx, hcz, h.w, h.d);
-			float hx = (float)(hcx + h.w - 3);
-			float hz = (float)(hcz + 1);
+			float hx = (float)(hcx + h.w / 2 - 1);
+			float hz = (float)(hcz + h.d / 2 - 1);
 			chests.push_back({hx, (float)floorY, hz});
 		}
 		return chests;
@@ -970,7 +975,11 @@ private:
 		}
 
 		if (!isMainHouse && chestB != BLOCK_AIR) {
-			ctx.set(hcx + h.w - 3, floorY, hcz + 1, chestB);
+			// Must match houseChestPositionsAt — that's where server.h spawns
+			// the chest entity for the main house; all houses use the same
+			// interior-center coordinate so every villager's deposit target
+			// sits in the same relative spot.
+			ctx.set(hcx + h.w / 2 - 1, floorY, hcz + h.d / 2 - 1, chestB);
 		}
 
 		{

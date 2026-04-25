@@ -1363,6 +1363,136 @@ static std::string p13_teleport_past_front() {
 	return "";
 }
 
+// ── P14 — Closed door off-path (regression) ───────────────────────────────
+// Collinear-Walk compression drops intermediate waypoints on a straight
+// corridor, so a closed door mid-corridor is never a Path step. The
+// executor must detect it on its own. Asserts ≥1 Interact aimed at the
+// door column, entity passes through, emits stay under the cooldown cap.
+static std::string p14_closed_door_straight_corridor() {
+	struct MutableDoor {
+		glm::ivec3 feet;
+		bool       open = false;
+	};
+	struct FakeWorld : public WorldView {
+		const MutableDoor* door;
+		explicit FakeWorld(const MutableDoor* d) : door(d) {}
+		bool isSolid(glm::ivec3 p) const override {
+			if (p.y <= -1) return true;
+			// Doors always non-solid to the planner (matches ChunkWorldView);
+			// physics collision is modeled separately in the sim loop.
+			return false;
+		}
+	};
+	struct FakeDoors : public DoorOracle {
+		const MutableDoor* door;
+		explicit FakeDoors(const MutableDoor* d) : door(d) {}
+		bool isClosedDoor(glm::ivec3 p) const override {
+			if (door->open) return false;
+			return p == door->feet
+			    || p == door->feet + glm::ivec3(0, 1, 0);
+		}
+		bool isOpenDoor(glm::ivec3 p) const override {
+			if (!door->open) return false;
+			return p == door->feet
+			    || p == door->feet + glm::ivec3(0, 1, 0);
+		}
+	};
+
+	MutableDoor door{glm::ivec3{5, 0, 0}, /*open=*/false};
+	FakeWorld   world(&door);
+	FakeDoors   doors(&door);
+	GridPlanner planner(world);
+
+	Path path = planner.plan({0, 0, 0}, {10, 0, 0});
+	if (path.partial || path.steps.empty())
+		return "planner failed to find path across closed-door corridor";
+
+	printf("\n    plan: steps=%zu partial=%d\n",
+	       path.steps.size(), path.partial ? 1 : 0);
+	bool doorInPath = false;
+	for (const auto& w : path.steps) {
+		printf("      wp (%d,%d,%d) %s\n",
+		       w.pos.x, w.pos.y, w.pos.z, toString(w.kind));
+		if (w.pos == door.feet) doorInPath = true;
+	}
+
+	constexpr EntityId kEid = 99;
+	PathExecutor exec(&doors);
+	exec.setWorldView(&world);
+	exec.setPath(kEid, path);
+
+	glm::vec3 pos{0.5f, 0.0f, 0.5f};
+	int        interactEmits        = 0;
+	int        firstInteractTick    = -1;
+	glm::ivec3 interactTarget{INT_MIN, INT_MIN, INT_MIN};
+	int        ticksUsed            = 0;
+
+	for (int t = 0; t < 600; ++t) {
+		ticksUsed = t;
+		auto intent = exec.tick(kEid, pos);
+
+		if (intent.kind == PathExecutor::Intent::Interact) {
+			if (firstInteractTick < 0) firstInteractTick = t;
+			interactEmits++;
+			interactTarget = intent.interactPos;
+			door.open = !door.open;   // server-side toggle
+			continue;
+		}
+		if (intent.kind == PathExecutor::Intent::None) break;
+
+		glm::vec3 d = intent.target - pos;
+		d.y = 0;
+		float len = std::sqrt(d.x * d.x + d.z * d.z);
+		if (len > 1e-6f) {
+			glm::vec3 stepVec = d / len * 0.1f;
+			glm::vec3 next = pos + stepVec;
+			if (!door.open && next.x > (float)door.feet.x - 0.01f)
+				next.x = (float)door.feet.x - 0.01f;
+			pos = next;
+		}
+		if (pos.x >= (float)door.feet.x + 1.0f) break;
+	}
+
+	printf("    sim: pos=(%.2f,%.2f,%.2f) ticks=%d interactEmits=%d "
+	       "firstInteract@%d doorOpen=%d remaining=%zu\n",
+	       pos.x, pos.y, pos.z, ticksUsed, interactEmits,
+	       firstInteractTick, door.open ? 1 : 0,
+	       exec.path(kEid).steps.size());
+	printf("    door in waypoints: %s  (compression: %s)\n",
+	       doorInPath ? "YES" : "NO",
+	       doorInPath ? "preserved" : "dropped — executor-scan case");
+
+	if (interactEmits < 1) {
+		return "executor never emitted Interact — stall-scan regressed";
+	}
+	if (interactTarget != door.feet
+	    && interactTarget != door.feet + glm::ivec3(0, 1, 0)) {
+		char buf[160];
+		snprintf(buf, sizeof(buf),
+			"Interact targeted (%d,%d,%d), expected door column at (%d,%d,%d)",
+			interactTarget.x, interactTarget.y, interactTarget.z,
+			door.feet.x, door.feet.y, door.feet.z);
+		return buf;
+	}
+	if (pos.x < (float)door.feet.x + 1.0f) {
+		char buf[160];
+		snprintf(buf, sizeof(buf),
+			"entity did not pass the door cell: final x=%.2f (want ≥ %.2f)",
+			pos.x, (float)door.feet.x + 1.0f);
+		return buf;
+	}
+	// Upper-bound spam: at most one emit per cooldown window.
+	int cap = 1 + ticksUsed / PathExecutor::kInteractCooldownTicks;
+	if (interactEmits > cap) {
+		char buf[160];
+		snprintf(buf, sizeof(buf),
+			"Interact spam: %d emits in %d ticks (cooldown cap %d)",
+			interactEmits, ticksUsed, cap);
+		return buf;
+	}
+	return "";
+}
+
 } // namespace civcraft::test
 
 int main() {
@@ -1400,6 +1530,9 @@ int main() {
 	printf("\n--- PathExecutor direction stability ---\n");
 	run("P12: no opposite moveTargets back-to-back    ", p12_no_opposite_movetargets);
 	run("P13: half-plane retire on teleport-forward   ", p13_teleport_past_front);
+
+	printf("\n--- Door handling ---\n");
+	run("P14: stall-scan opens off-path closed door   ", p14_closed_door_straight_corridor);
 
 	int failed = 0;
 	for (auto& r : g_results) if (!r.passed) failed++;

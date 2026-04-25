@@ -9,7 +9,7 @@ import math
 model = {
     "id": "beaver",
     "height": 0.5,
-    "scale": 1.0,
+    "scale": 2.0,
     "walk_speed": 3.5,
     "idle_bob": 0.005,
     "walk_bob": 0.020,

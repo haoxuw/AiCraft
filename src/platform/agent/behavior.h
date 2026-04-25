@@ -2,6 +2,11 @@
 
 // Plan-based AI data types. Python decide() returns Plan (vector<PlanStep>);
 // AgentClient executes step by step. Also NearbyEntity + BlockSample scan results.
+//
+// PlanStep is a bridge-contract mirror of the Pydantic models in
+// src/python/plan_steps.py — Python is authoritative, C++ parses in
+// python_bridge.cpp::parsePyResult(). When adding/renaming a field on either
+// side, update the other or the scenario tests will catch it.
 
 #include "logic/action.h"
 #include "logic/entity.h"
@@ -85,12 +90,6 @@ struct PlanStep {
 	// decide() — Python declares where trees are, the executor picks one.
 	std::vector<glm::vec3> candidates;
 
-	// Harvest: chops needed before the step concludes Success. Default 1
-	// preserves legacy single-swing behavior. Setting this above 1 lets the
-	// executor chop across multiple candidates (cycling when the local sphere
-	// runs dry) until it has collected `countGoal` of `itemId`.
-	int       countGoal      = 1;
-
 	// Move/Harvest: when true, the executor routes the approach through the
 	// A* Navigator (waypoint-by-waypoint, door-aware) instead of straight-line
 	// velocity steering. Python behaviors flip this per-step — humanoids want
@@ -130,5 +129,16 @@ struct PlanStep {
 };
 
 using Plan = std::vector<PlanStep>;
+
+inline const char* toString(PlanStep::Type t) {
+	switch (t) {
+		case PlanStep::Move:     return "Move";
+		case PlanStep::Harvest:  return "Harvest";
+		case PlanStep::Attack:   return "Attack";
+		case PlanStep::Relocate: return "Relocate";
+		case PlanStep::Interact: return "Interact";
+	}
+	return "?";
+}
 
 } // namespace civcraft

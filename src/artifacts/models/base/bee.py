@@ -9,7 +9,7 @@ import math
 model = {
     "id": "bee",
     "height": 0.25,
-    "scale": 1.0,
+    "scale": 4.0,
     "walk_speed": 4.0,
     "idle_bob": 0.025,    # strong hover wobble
     "walk_bob": 0.015,

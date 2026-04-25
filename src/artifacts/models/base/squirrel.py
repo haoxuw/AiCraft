@@ -9,7 +9,7 @@ import math
 model = {
     "id": "squirrel",
     "height": 0.3,
-    "scale": 1.0,
+    "scale": 3.33,
     "walk_speed": 10.0,
     "idle_bob": 0.006,
     "walk_bob": 0.020,

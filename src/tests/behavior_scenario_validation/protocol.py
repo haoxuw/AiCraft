@@ -7,31 +7,23 @@ just tracks server state for test assertions.
 Wire format: [u32 msg_type][u32 payload_length][payload bytes]
 """
 
+import os
 import socket
 import struct
+import sys
 import time
 import uuid
 
-# Message types (must match src/shared/net_protocol.h)
-C_HELLO         = 0x0003
-S_WELCOME       = 0x1001
-S_ENTITY        = 0x1002
-S_REMOVE        = 0x1004
-S_TIME          = 0x1005
-S_BLOCK         = 0x1006
-S_INVENTORY     = 0x1007
-S_CHUNK         = 0x1003
-S_CHUNK_Z       = 0x100F
-S_CHUNK_EVICT   = 0x100E
-S_CHUNK_INFO    = 0x1010
-S_CHUNK_INFO_DELTA = 0x1011
-S_ASSIGN_ENTITY = 0x1008
-S_REVOKE_ENTITY = 0x1009
-S_RELOAD_BEHAVIOR = 0x100A
-S_ERROR         = 0x100B
-S_PROXIMITY     = 0x1012
-
-PROTOCOL_VERSION = 2
+# Generated from net_protocol.h + action.h by tools/gen_protocol_py.py.
+# Do not hardcode wire constants here — edit the C++ headers and regenerate.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "src", "python"))
+from protocol_constants import (  # noqa: E402
+    PROTOCOL_VERSION,
+    C_HELLO,
+    S_WELCOME, S_ENTITY, S_REMOVE, S_TIME, S_INVENTORY, S_ERROR,
+)
 
 
 class ReadBuffer:

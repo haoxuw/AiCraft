@@ -39,7 +39,11 @@ struct WorldGenConfig {
 	std::unordered_map<std::string, std::vector<std::pair<std::string, int>>> startingItems;
 
 	float pickupRange = 16.0f;  // server-wide max pickup distance (blocks)
-	float storeRange  = 5.0f;   // max distance for inventory store/take
+	float storeRange  = 2.0f;   // max distance for inventory store/take —
+	                             // tight enough that villagers must walk
+	                             // inside a house (past the door) to deposit
+	                             // into the centered chest, not reach through
+	                             // a wall.
 };
 
 inline SpawnAnchor parseSpawnAnchor(const std::string& s) {

@@ -56,6 +56,11 @@ private:
 	// Sub-passes of renderInventoryPanel(). Kept private; the panel
 	// body drives which ones fire each frame.
 	void renderInventoryTooltip();   // hover tooltip (name + rarity + count)
+
+	// Second pane (chest / NPC inventory) shown next to the player panel
+	// when Game::m_invOther is set. Records SlotRect{kind=Other} entries
+	// so the drag-drop hit-tester can resolve take/store transfers.
+	void renderOtherInventoryPane();
 };
 
 class MenuRenderer {
