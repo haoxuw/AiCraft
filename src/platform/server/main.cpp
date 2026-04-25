@@ -535,6 +535,11 @@ int main(int argc, char** argv) {
 				PERF_RECORD_MS("server.entities.item_count",   (double)items);
 				PERF_RECORD_MS("server.entities.owned_count",  (double)owned);
 				PERF_RECORD_MS("server.entities.moving_count", (double)moving);
+				// Phase 1 working set — should track living+item, not total.
+				// Divergence would mean structures slipped past the spawn-time
+				// filter (or the active list is out of sync with m_entities).
+				PERF_RECORD_MS("server.entities.physics_active_count",
+				               (double)server.world().entities.physicsActiveCount());
 				PERF_RECORD_MS("server.chunks.loaded_count",
 				               (double)server.world().loadedChunkCount());
 			}
