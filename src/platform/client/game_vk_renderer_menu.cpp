@@ -159,7 +159,7 @@ void drawLoadingBar(rhi::IRhi* R, const LoadingScreen& ls, float wallTime) {
 		int dots = (int)(wallTime * 2.0f) % 4;
 		const char* dotStr[] = {"", ".", "..", "..."};
 		char line[64];
-		std::snprintf(line, sizeof(line), "Warming up world%s", dotStr[dots]);
+		std::snprintf(line, sizeof(line), "Loading Your World");
 		ui::drawCenteredText(R, line,
 		                     0.0f, kBarY + kBarH + 0.024f, 0.80f, kText);
 	}

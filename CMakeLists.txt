@@ -203,6 +203,8 @@ add_executable(civcraft-ui-vk
 	src/platform/client/handbook_panel.cpp
 	src/platform/client/loading_screen.h
 	src/platform/client/loading_screen.cpp
+	src/platform/client/menu_plaza.h
+	src/platform/client/menu_plaza.cpp
 	src/platform/client/ui_kit.h
 	src/platform/client/ui_kit.cpp
 	src/platform/client/rhi/rhi.h

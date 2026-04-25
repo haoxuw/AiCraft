@@ -35,8 +35,8 @@ public:
 
 	// TPS/RPG/RTS share 45° look-down; mode switch feels like zoom, not teleport.
 	// All three use "camera looks +x at yaw=0" (see updateRTS position formula).
-	float orbitDistance = 12.0f;
-	float orbitDistanceTarget = 12.0f;
+	float orbitDistance = 16.0f;
+	float orbitDistanceTarget = 16.0f;
 	float orbitYaw = -90.0f;
 	float orbitPitch = 45.0f;
 

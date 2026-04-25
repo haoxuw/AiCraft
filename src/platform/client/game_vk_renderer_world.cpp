@@ -420,37 +420,25 @@ void WorldRenderer::renderWorld(float wallTime) {
 		emitTree(-5.0f,  7.0f, 1.0f);
 		emitTree(-9.0f,  1.0f, 0.8f);
 
-		// Three mascots — dog, cat, bee — animate on the grass instead of
-		// scattered flower blocks. Models are drawn through the same
-		// appendBoxModel path that renders live NPCs, so they breathe / walk
-		// / hover. Yaws are picked so each faces the orbiting menu camera
-		// most of the time; the bee hovers 1 block above ground.
-		struct Mascot {
-			const char* key;
-			float       x, y, z;
-			float       yaw;
-			const char* clip;
-		};
-		const Mascot mascots[] = {
-			{"dog",  2.5f, 1.0f,  2.5f,   0.0f, ""   },
-			{"cat", -2.5f, 1.0f, -2.0f,  90.0f, ""   },
-			{"bee",  0.0f, 2.5f, -3.5f, 180.0f, "fly"},
-		};
-		for (const auto& m : mascots) {
-			auto mit = g.m_models.find(m.key);
-			if (mit == g.m_models.end()) continue;
-			civcraft::AnimState anim{};
-			anim.time         = g.m_wallTime;
-			anim.currentClip  = m.clip;
-			// Small idle sway — a touch of walkDistance drives leg/wing loops
-			// when the model defines a walk cycle.
-			anim.walkDistance = g.m_wallTime * 1.2f;
-			anim.speed        = 0.5f;
-			// Bee bobs up and down; dog/cat stay planted.
-			glm::vec3 pos(m.x, m.y, m.z);
-			if (std::string_view(m.key) == "bee")
-				pos.y += 0.25f * std::sin(g.m_wallTime * 2.2f);
-			civcraft::appendBoxModel(charBoxes, mit->second, pos, m.yaw, anim);
+		// Three mascots — dog, cat, bee — pulled live from the in-process
+		// menu plaza (client/menu_plaza.h). Each is a real Entity with
+		// real physics + a real Plan from Python decide_plan(), so they
+		// wander/idle naturally. Anim fly-clip routing for the bee
+		// matches the in-game flyer_wander goalText convention.
+		if (g.m_menuPlaza && g.m_menuPlaza->ready()) {
+			g.m_menuPlaza->forEachMascot([&](const civcraft::Entity& e) {
+				auto mit = g.m_models.find(e.typeId());
+				if (mit == g.m_models.end()) return;
+				civcraft::AnimState anim{};
+				anim.time         = g.m_wallTime;
+				anim.walkDistance = g.m_wallTime * 1.2f;
+				const float speedXZ = std::sqrt(e.velocity.x * e.velocity.x +
+				                                 e.velocity.z * e.velocity.z);
+				anim.speed = speedXZ;
+				if (e.def().gravity_scale <= 0.0f) anim.currentClip = "fly";
+				civcraft::appendBoxModel(charBoxes, mit->second,
+				                         e.position, e.yaw, anim);
+			});
 		}
 	}
 

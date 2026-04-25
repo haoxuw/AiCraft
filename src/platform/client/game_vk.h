@@ -47,6 +47,7 @@
 #include "client/hotbar.h"
 #include "client/lan_browser.h"
 #include "client/loading_screen.h"
+#include "client/menu_plaza.h"
 #include "client/screen_shell.h"
 #include "agent/agent_client.h"
 
@@ -419,6 +420,10 @@ private:
 	// down before the server interface goes away.
 	std::unique_ptr<civcraft::BehaviorStore> m_behaviorStore;
 	std::unique_ptr<civcraft::AgentClient>   m_agentClient;
+	// In-process menu plaza — 3 mascots wandering on a tiny client-only
+	// world. Ticked while m_state == Menu; idle once the user enters the
+	// real game. See client/menu_plaza.h for the Rule 3 exception note.
+	std::unique_ptr<MenuPlaza>               m_menuPlaza;
 	// Populated from CLI flags before the AgentClient is constructed — see
 	// client/main.cpp `--decide-base-cooldown` / `--decide-max-cooldown` /
 	// `--decide-backoff-base`. Stays at struct defaults when the flags are

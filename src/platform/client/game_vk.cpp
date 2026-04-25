@@ -114,6 +114,12 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	m_models = civcraft::model_loader::loadAllModels("artifacts");
 	std::printf("[vk-game] Loaded %zu box models\n", m_models.size());
 
+	// In-process menu plaza — 3 mascots wandering on a tiny client-only
+	// world that the menu camera looks at. Init order is load-bearing:
+	// pythonBridge + behaviorStore + artifactRegistry must already exist.
+	m_menuPlaza = std::make_unique<MenuPlaza>();
+	m_menuPlaza->init(m_artifactRegistry, *m_behaviorStore);
+
 	// Spatial audio. loadSoundsFrom walks resources/sounds/*/*.ogg|wav and
 	// registers each subdirectory as a sound-group name (step_grass,
 	// dig_stone, door_open, hit_sword, …). Non-fatal on failure — the game
@@ -749,6 +755,12 @@ void Game::runOneFrame(float dt, float wallTime) {
 	                  m_server && m_server->pollWelcome());
 	if (m_agentClient && (m_state == GameState::Playing || warmingUp))
 		m_agentClient->tick(dt);
+	// Menu plaza only ticks while the user is on a menu screen. Once they
+	// hit Play and we transition to GameState::Playing the plaza freezes
+	// (its entities continue to exist but stop deciding/moving) — at that
+	// point the renderer also stops drawing them, so it's invisible.
+	if (m_menuPlaza && m_state == GameState::Menu)
+		m_menuPlaza->tickFrame(dt);
 	m_frameProbe.mark("agent");
 
 	// Loading screen: refresh signals, then hand off once ready and the

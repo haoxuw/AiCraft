@@ -49,9 +49,12 @@ void Camera::processMouse(GLFWwindow* window) {
 		player.yaw = lookYaw;
 		break;
 	case CameraMode::ThirdPerson:
-		orbitYaw += dx; orbitPitch -= dy;
-		orbitPitch = std::clamp(orbitPitch, -60.0f, 85.0f);
-		// player.yaw is driven by gameplay.cpp turn logic (faces movement direction).
+		// Fortnite-style: mouse drives the aim ray exactly like FPS.
+		// Camera position is derived from the look direction in
+		// updateThirdPerson — no orbit angle anymore.
+		lookYaw += dx; lookPitch += dy;
+		lookPitch = std::clamp(lookPitch, -60.0f, 60.0f);
+		player.yaw = lookYaw;
 		break;
 	case CameraMode::RPG:
 		godOrbitYaw += dx;
@@ -118,22 +121,21 @@ void Camera::updateFirstPerson(GLFWwindow* window, float dt) {
 void Camera::updateThirdPerson(GLFWwindow* window, float dt) {
 	orbitDistance += (orbitDistanceTarget - orbitDistance) * std::min(dt * 10.0f, 1.0f);
 
-	float yaw = glm::radians(orbitYaw);
-	float pitch = glm::radians(orbitPitch);
-
-	glm::vec3 offset(
-		-cos(yaw) * cos(pitch) * orbitDistance,
-		sin(pitch) * orbitDistance,
-		-sin(yaw) * cos(pitch) * orbitDistance
-	);
-
 	float smoothedFeetY = smoothVertical(player.feetPos.y, dt);
-	glm::vec3 target(player.feetPos.x, smoothedFeetY + player.eyeHeight * 0.8f, player.feetPos.z);
-	position = target + offset;
+	glm::vec3 charCenter(player.feetPos.x, smoothedFeetY + player.eyeHeight * 0.8f, player.feetPos.z);
 
-	glm::vec3 dir = glm::normalize(target - position);
-	lookYaw = glm::degrees(atan2(dir.z, dir.x));
-	lookPitch = glm::degrees(asin(dir.y));
+	// Fortnite-style: lookYaw/Pitch already set by mouse (FPS-style aim).
+	// Camera sits BEHIND (along horizontal forward) and ABOVE the character,
+	// so the character renders in the lower-middle of the screen and the
+	// crosshair lands wherever the player is aiming. Position uses
+	// horizontal-forward only — the camera's height stays constant when
+	// you tilt up/down to aim.
+	glm::vec3 camFront = front();
+	glm::vec3 camFwdH = glm::normalize(glm::vec3(camFront.x, 0.0f, camFront.z));
+
+	constexpr float kHeightOffset = 2.0f;   // bigger → character drops further down on screen
+	position = charCenter - camFwdH * orbitDistance + glm::vec3(0, kHeightOffset, 0);
+	// lookYaw/lookPitch already correct from processMouse; no recomputation.
 }
 
 void Camera::updateRPGPosition(float dt) {

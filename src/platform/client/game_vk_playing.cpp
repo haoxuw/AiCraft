@@ -247,6 +247,21 @@ void Game::processInput(float dt) {
 		p.relocateTo   = civcraft::Container::ground();
 		p.itemId       = held;
 		p.itemCount    = 1;
+
+		// FPS/TPS: throw along the camera aim ray (character chest →
+		// crosshair) so the item lands where you're looking, not where
+		// the body happens to be facing. RPG/RTS leave desiredVel = 0
+		// and the server falls back to facing-direction default.
+		if (m_cam.mode == civcraft::CameraMode::FirstPerson ||
+		    m_cam.mode == civcraft::CameraMode::ThirdPerson) {
+			constexpr float kAimDistance = 20.0f;   // any far point on the aim ray
+			constexpr float kThrowSpeed  = 5.0f;    // matches server default magnitude
+			glm::vec3 origin   = me->position + glm::vec3(0, 1.2f, 0);
+			glm::vec3 aimPoint = m_cam.position + m_cam.front() * kAimDistance;
+			glm::vec3 dir = glm::normalize(aimPoint - origin);
+			p.desiredVel = dir * kThrowSpeed;
+		}
+
 		m_server->sendAction(p);
 		civcraft::GameLogger::instance().emit("ACTION",
 			"drop %s x1", held.c_str());
@@ -549,12 +564,14 @@ void Game::tickPlayer(float dt) {
 	if (m_onGround && moveLen > 0.001f)
 		m_walkDist += speed * dt;
 
-	// Body yaw. FPS: snap to camera. TPS/RPG/RTS: lerp to velocity direction
-	// so character faces the way they're moving, not the camera.
+	// Body yaw. FPS/TPS: snap to camera (character faces aim direction,
+	// Fortnite-style). RPG/RTS: lerp to velocity direction so the character
+	// faces the way they're moving, not the camera.
 	{
 		float targetYaw;
 		bool haveTarget = true;
-		if (m_cam.mode == civcraft::CameraMode::FirstPerson) {
+		if (m_cam.mode == civcraft::CameraMode::FirstPerson ||
+		    m_cam.mode == civcraft::CameraMode::ThirdPerson) {
 			targetYaw = glm::radians(m_cam.lookYaw);
 		} else {
 			glm::vec2 hv(me->velocity.x, me->velocity.z);
