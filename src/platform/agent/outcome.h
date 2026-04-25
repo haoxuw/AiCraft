@@ -52,7 +52,7 @@ enum class ExecState {
 	Failed_Unknown,          // Fallback when the site can't attribute more precisely
 };
 
-inline const char* toString(ExecState s) {
+constexpr const char* toString(ExecState s) {
 	switch (s) {
 		case ExecState::Idle:                   return "Idle";
 		case ExecState::PlanRequested:          return "PlanRequested";
@@ -82,7 +82,7 @@ inline const char* toString(ExecState s) {
 // Range check — all Failed_* variants are contiguous after Arrived. Callers
 // use this to classify whether the previous plan ended in failure without
 // enumerating every variant.
-inline bool isFailed(ExecState s) {
+constexpr bool isFailed(ExecState s) {
 	return s >= ExecState::Failed_NavNoPath && s <= ExecState::Failed_Unknown;
 }
 
@@ -90,7 +90,7 @@ inline bool isFailed(ExecState s) {
 // (player interaction, world change, new signal) could revive it. Callers
 // use this to decide whether to route the agent into the town-center
 // complaint pipeline rather than spin on decide retries.
-inline bool isGaveUp(ExecState s) {
+constexpr bool isGaveUp(ExecState s) {
 	return s == ExecState::Failed_GaveUp;
 }
 
@@ -98,7 +98,7 @@ inline bool isGaveUp(ExecState s) {
 // from TargetGone / AnchorGone (target disappeared) and HarvestExhausted
 // (reached but nothing to do). Python behaviors branch on this to back off
 // their movement target; exposed as LocalWorld.last_nav_failed.
-inline bool isNavFailed(ExecState s) {
+constexpr bool isNavFailed(ExecState s) {
 	return s == ExecState::Failed_NavNoPath
 	    || s == ExecState::Failed_NavStuck
 	    || s == ExecState::Failed_DirectStuck

@@ -49,15 +49,9 @@ inline void emitHeldItem(std::vector<float>& out,
 	root = glm::rotate(root, glm::radians(eqt.rotation.x), glm::vec3(1, 0, 0));
 	root = glm::rotate(root, glm::radians(eqt.rotation.z), glm::vec3(0, 0, 1));
 
-	float es = eqt.scale;
-	bool hasEquip = (eqt.rotation != glm::vec3(0)
-	                 || eqt.offset   != glm::vec3(0)
-	                 || eqt.scale    != 1.0f);
-	if (!hasEquip) {
-		float mh = std::max(itemModel.totalHeight * itemModel.modelScale, 0.1f);
-		es = std::min(0.35f / mh, 0.5f);
-	}
-	root = glm::scale(root, glm::vec3(es * hi.scale));
+	// Render at the item's intrinsic modelScale (matches ground + inventory).
+	// hi.scale is a per-instance runtime knob (e.g. blocks shrink in hand).
+	if (hi.scale != 1.0f) root = glm::scale(root, glm::vec3(hi.scale));
 
 	float itemScale = itemModel.modelScale;
 	for (const auto& part : itemModel.parts) {

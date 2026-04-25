@@ -606,7 +606,7 @@ void Game::tickPlayer(float dt) {
 				         sid.find("ice")   != std::string::npos) snd = "step_snow";
 				else snd = "step_dirt";
 			}
-			m_audio.play(snd, me->position, 0.35f);
+			m_audio.play(snd, me->position, 0.09f);
 		}
 		if (!walking) m_lastWalkStep = stepIdx;  // reset phase on stop
 	}

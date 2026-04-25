@@ -285,17 +285,12 @@ void WorldRenderer::renderWorld(float wallTime) {
 
 				auto imIt = g.m_models.find(modelKey);
 				if (imIt != g.m_models.end()) {
-					// Height-normalize to ~0.35 blocks so drops read as pickups.
-					civcraft::BoxModel m = imIt->second;
-					float mh = std::max(m.totalHeight * m.modelScale, 0.1f);
-					float worldScale = 0.35f / mh;
-					for (auto& part : m.parts) {
-						part.offset *= worldScale;
-						part.halfSize *= worldScale;
-					}
+					// Render at the model's intrinsic size — matches in-hand.
+					// Modelers control absolute size via the model's `scale`
+					// (and `equip.scale`, folded into modelScale at load time).
 					civcraft::AnimState anim{};
 					anim.time = g.m_wallTime;
-					civcraft::appendBoxModel(charBoxes, m,
+					civcraft::appendBoxModel(charBoxes, imIt->second,
 					    e.position + glm::vec3(ox, bob + bounce + 0.3f, oz),
 					    spinYawDeg, anim);
 				} else {

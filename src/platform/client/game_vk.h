@@ -46,6 +46,7 @@
 #include "client/handbook_panel.h"
 #include "client/hotbar.h"
 #include "client/lan_browser.h"
+#include "client/loading_screen.h"
 #include "client/screen_shell.h"
 #include "agent/agent_client.h"
 
@@ -133,49 +134,7 @@ enum class GameState { Menu, Loading, Playing, GameMenu, Dead };
 // own LAN-browser screen; singleplayer jumps straight to character pick.
 enum class MenuScreen : uint8_t { Main, CharacterSelect, Connecting, Multiplayer, Handbook, Settings };
 
-// Data-driven readiness gate for the Connecting screen. Each phase reports a
-// 0..1 progress; the loading screen only hands off to Playing once every phase
-// hits 1.0. Adding/removing a phase is a single-line edit — the renderer walks
-// the array in order, so new checkboxes appear automatically.
-//
-// Phases must be independent — none is allowed to block another. updateLoadingGate
-// refreshes them all every frame from whatever state is currently available,
-// so the whole handoff happens as soon as the slowest signal resolves, not in
-// sequence.
-struct LoadingGate {
-	struct Phase {
-		const char* label    = "";
-		float       progress = 0.0f;   // clamped 0..1
-	};
-	enum Id : uint8_t {
-		Welcome,          // S_HELLO / pollWelcome()
-		WorldPrepared,    // S_PREPARING 0..100% → S_READY
-		ChunksLoaded,     // mesher quiesced within render radius
-		AgentsSettled,    // AgentClient: every owned NPC finished its first decide
-		kCount
-	};
-	std::array<Phase, kCount> phases = {{
-		{"Server handshake"},
-		{"World preparing"},
-		{"Loading terrain"},
-		{"Waking up villagers"},
-	}};
-	// Reset when entering a fresh Connecting flow so retries don't inherit the
-	// previous run's "done" flags.
-	void reset() { for (auto& p : phases) p.progress = 0.0f; }
-	void set(Id id, float pct) {
-		phases[id].progress = std::clamp(pct, 0.0f, 1.0f);
-	}
-	bool allDone() const {
-		for (auto& p : phases) if (p.progress < 1.0f) return false;
-		return true;
-	}
-	float aggregate() const {
-		float s = 0.0f;
-		for (auto& p : phases) s += p.progress;
-		return s / (float)phases.size();
-	}
-};
+// LoadingGate + LoadingScreen live in client/loading_screen.h.
 
 class Game {
 public:
@@ -426,11 +385,18 @@ private:
 	// already has a full horizon instead of popping in.
 	void preloadVisibleChunks();
 
-	// Recompute every LoadingGate phase from the current server / agent /
-	// client state. Called once per frame while we're sitting on the
-	// Connecting menu screen; the renderer reads m_loadingGate and the main
-	// loop calls enterPlaying() when allDone() returns true.
+	// Gather loading signals (welcome / world-prepare / chunk stream+quiesce /
+	// agent init) and push them into m_loading. Called once per frame on the
+	// Connecting menu screen; the renderer reads m_loading directly and the
+	// main loop calls enterPlaying() once m_loading.ready() plus a dismiss
+	// click/key edge fires.
 	void updateLoadingGate(float dt);
+
+	// Helpers broken out of updateLoadingGate — each owns one chunk-stream
+	// concern and is only meant to be called from the loading-gate path.
+	void  pumpChunkStream();                 // 8ms net + mesher burst
+	float computeChunkStreamFrac();          // peak-pinned meshed / total
+	bool  updateChunkQuiesce(float dt);      // true once growth has stalled
 
 	// The entity the player is currently controlling. Returns nullptr if
 	// the server hasn't delivered the entity yet. ALL player position,
@@ -474,9 +440,9 @@ private:
 	std::string  m_connectError;        // last handshake error, displayed on CharacterSelect
 	bool         m_connecting = false;  // true while awaiting S_WELCOME
 	float        m_connectStartTime = 0.0f; // m_wallTime when beginConnect fired; timeout at +60s
-	// Data-driven readiness gate for Connecting → Playing handoff. Each phase
-	// publishes 0..1 progress; updateLoadingGate() recomputes every frame.
-	LoadingGate  m_loadingGate;
+	// Connecting → Playing handoff controller (gate + smoothing + sticky
+	// ready + any-key dismiss). Fed per-frame by updateLoadingGate().
+	LoadingScreen m_loading;
 	// Chunk-quiesce tracker — watches m_chunkMeshes.size() during the loading
 	// phase. When it stops growing for m_chunkQuiesceWindow AND there's nothing
 	// pending, ChunksLoaded hits 1.0.

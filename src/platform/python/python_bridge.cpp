@@ -21,6 +21,7 @@ Plan PythonBridge::callDecide(BehaviorHandle, const EntitySnapshot&,
                                BlockQueryFn, ScanBlocksFn, ScanEntitiesFn,
                                ScanAnnotationsFn, const std::string&,
                                const std::string&, const std::string&,
+                               ExecState, int,
                                AppearanceQueryFn) {
 	err = "Python not available in web build"; return {};
 }
@@ -541,7 +542,7 @@ static void buildPyWorld(const EntitySnapshot& self,
                          const std::string& lastOutcome,
                          const std::string& lastGoal,
                          const std::string& lastReason,
-                         const std::string& lastState,
+                         ExecState          lastState,
                          int                lastFailStreak,
                          void* localWorldClsRaw, void* selfEntityClsRaw,
                          py::object& outSelfEntity,
@@ -591,15 +592,11 @@ static void buildPyWorld(const EntitySnapshot& self,
 	pyWorld["last_outcome"]     = lastOutcome;
 	pyWorld["last_goal"]        = lastGoal;
 	pyWorld["last_reason"]      = lastReason;
-	pyWorld["last_state"]       = lastState;        // ExecState::toString()
-	pyWorld["last_fail_streak"] = lastFailStreak;   // consecutive Failed_* count
-	// Navigation failure classification — matches isNavFailed() in outcome.h
-	// so Python never has to enumerate Failed_Nav* string variants itself.
-	pyWorld["last_nav_failed"]  =
-		lastState == "Failed_NavNoPath"   ||
-		lastState == "Failed_NavStuck"    ||
-		lastState == "Failed_DirectStuck" ||
-		lastState == "Failed_GaveUp";
+	pyWorld["last_state"]       = toString(lastState);  // stringify once for display
+	pyWorld["last_fail_streak"] = lastFailStreak;       // consecutive Failed_* count
+	// Canonical predicate lives in outcome.h — adding a Failed_Nav* variant
+	// only touches the enum + isNavFailed(); the bridge follows automatically.
+	pyWorld["last_nav_failed"]  = isNavFailed(lastState);
 
 	py::object& LocalWorldCls = *static_cast<py::object*>(localWorldClsRaw);
 	py::object& SelfEntityCls = *static_cast<py::object*>(selfEntityClsRaw);
@@ -660,7 +657,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
                                const std::string& lastOutcome,
                                const std::string& lastGoal,
                                const std::string& lastReason,
-                               const std::string& lastState,
+                               ExecState          lastState,
                                int                lastFailStreak,
                                AppearanceQueryFn appearanceQueryFn) {
 	// Runs on DecideWorker's thread.
@@ -764,7 +761,7 @@ bool PythonBridge::callReact(BehaviorHandle handle,
 		py::object pySelfEntity, pyLocalWorld;
 		buildPyWorld(self, nearby, dt, timeOfDay,
 		             "none", "", "signal:" + signalKind,
-		             /*lastState*/ "Idle", /*lastFailStreak*/ 0,
+		             ExecState::Idle, /*lastFailStreak*/ 0,
 		             m_localWorldClass, m_selfEntityClass,
 		             pySelfEntity, pyLocalWorld);
 

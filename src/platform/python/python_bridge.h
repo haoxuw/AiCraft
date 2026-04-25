@@ -7,6 +7,7 @@
 #include "logic/entity.h"
 #include "logic/action.h"
 #include "agent/behavior.h"
+#include "agent/outcome.h"
 #include <string>
 #include <memory>
 #include <functional>
@@ -183,11 +184,11 @@ public:
 	// GIL-safe (caller must NOT hold it). Old (action, goal_str) tuples are
 	// converted to a single-step Plan for backward compat.
 	// lastOutcome/lastGoal/lastReason describe the previous plan (event-driven
-	// loop); see python/local_world.py for exposed fields.
-	// lastState is ExecState::toString() — enum-stable (no string-parsing) so
-	// decide() can branch on e.g. "Failed_GaveUp" → go complain at the town
-	// center instead of retrying a doomed plan. lastFailStreak is the number
-	// of consecutive Failed_* outcomes (reset on Success).
+	// loop); see python/local_world.py for exposed fields. lastState is the
+	// typed ExecState enum — bridge stringifies once for display and calls
+	// isNavFailed() for the bool, so adding a Failed_* variant only touches
+	// outcome.h. lastFailStreak is the number of consecutive Failed_* outcomes
+	// (reset on Success).
 	Plan callDecide(BehaviorHandle handle,
 	                const EntitySnapshot& self,
 	                const std::vector<NearbyEntity>& nearby,
@@ -201,7 +202,7 @@ public:
 	                const std::string& lastOutcome = "none",
 	                const std::string& lastGoal    = "",
 	                const std::string& lastReason  = "",
-	                const std::string& lastState   = "Idle",
+	                ExecState          lastState   = ExecState::Idle,
 	                int                lastFailStreak = 0,
 	                AppearanceQueryFn appearanceQueryFn = nullptr);
 

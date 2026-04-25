@@ -132,7 +132,7 @@ private:
 					std::move(req.scanEntities),
 					std::move(req.scanAnnotations),
 					outcomeStr, req.lastOutcome.goalText, req.lastOutcome.reason,
-					toString(req.lastOutcome.execState),
+					req.lastOutcome.execState,
 					req.lastOutcome.failStreak,
 					std::move(req.appearanceQuery));
 			}

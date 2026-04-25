@@ -269,6 +269,13 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 		if (auto* v = dictGet(ed, "scale"))    m.equip.scale = (float)v->getNum(1.0);
 	}
 
+	// Fold equip.scale into modelScale so the model has one authoritative
+	// size that applies in every render context (hand, ground, inventory).
+	// equip.offset/rotation stay equip-only — they position/orient the item
+	// against the wielder's hand and don't make sense for ground/inventory.
+	m.modelScale *= m.equip.scale;
+	m.equip.scale = 1.0f;
+
 	if (auto* v = dictGet(d, "hand_r"))  m.handR  = toVec3(v->list);
 	if (auto* v = dictGet(d, "hand_l"))  m.handL  = toVec3(v->list);
 	if (auto* v = dictGet(d, "pivot_r")) m.pivotR = toVec3(v->list);

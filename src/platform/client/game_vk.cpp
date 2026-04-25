@@ -278,69 +278,73 @@ void Game::preloadVisibleChunks() {
 }
 
 void Game::updateLoadingGate(float dt) {
-	using Id = LoadingGate::Id;
-	using Clock = std::chrono::steady_clock;
+	// Signals are gathered here and pushed into m_loading; the screen object
+	// owns all the policy (smoothing, sticky, monotone, dismiss).
+	m_loading.setWelcome(m_server && m_server->pollWelcome());
 
-	// Phase 1 — handshake. Welcome is a one-shot flip; we don't animate it
-	// because the underlying signal is already binary.
-	m_loadingGate.set(Id::Welcome,
-		(m_server && m_server->pollWelcome()) ? 1.0f : 0.0f);
-
-	// Phase 2 — world prepare. preparingProgress() is the server's own
-	// 0..1 report across S_PREPARING messages; S_READY clamps us to 1.0.
 	if (m_server && m_server->isServerReady()) {
-		m_loadingGate.set(Id::WorldPrepared, 1.0f);
+		m_loading.setWorldPrepared(1.0f);
 	} else if (m_server) {
 		float p = m_server->preparingProgress();
-		m_loadingGate.set(Id::WorldPrepared, p < 0.0f ? 0.0f : p);
+		m_loading.setWorldPrepared(p < 0.0f ? 0.0f : p);
 	}
 
-	// Phase 3 — terrain / mesher quiesced. The normal streamServerChunks
-	// that runs once per rendered frame caps uploads at 8 chunks, which at
-	// 60 FPS only drains ~480 chunks/s — much slower than the old blocking
-	// preload. While still on the loading screen we spend up to 8 ms per
-	// frame pumping the network + mesher so terrain fills in fast without
-	// freezing the UI (render + gate update still run after this returns).
-	// Bails the moment there's nothing more to do, so a small map doesn't
-	// burn the whole budget.
-	if (m_server && m_server->pollWelcome() &&
-	    m_loadingGate.phases[Id::ChunksLoaded].progress < 1.0f) {
-		const auto budgetEnd = Clock::now() + std::chrono::milliseconds(8);
-		size_t lastMeshed = m_chunkMeshes.size();
-		while (Clock::now() < budgetEnd) {
-			m_server->tick(0.0f);
-			streamServerChunks();
-			drainAsyncMeshes();
-			if (m_inFlightMesh.empty() &&
-			    m_serverDirtyChunks.empty() &&
-			    m_chunkMeshes.size() == lastMeshed)
-				break;
-			lastMeshed = m_chunkMeshes.size();
-		}
+	pumpChunkStream();
+	m_loading.setChunkProgress(computeChunkStreamFrac(), updateChunkQuiesce(dt));
+
+	if (m_agentClient) {
+		auto ip = m_agentClient->initProgress();
+		m_loading.setAgentProgress(ip.discoveryRan, ip.totalAgents,
+		                           ip.settledAgents, dt);
 	}
 
-	// Show live streaming progress: meshedDone / (meshedDone + pending).
-	// meshedDone is the count of real mesh handles (total entries minus
-	// in-flight placeholders); pending sums in-flight + server-dirty chunks.
-	// The ratio is self-normalizing — it climbs smoothly as the mesher
-	// catches up, and landing at 1.0 coincides with nothing left to do.
-	// Peak-pinned so the bar never slides back when new dirty chunks show
-	// up late (block edits mid-load, neighbor remeshes, etc.).
+	m_loading.tick();
+}
+
+// Pump network + mesher up to 8 ms during the Connecting screen so terrain
+// fills in fast without freezing the UI. Bails as soon as there's nothing
+// more to do so a small map doesn't burn the whole budget.
+void Game::pumpChunkStream() {
+	using Clock = std::chrono::steady_clock;
+	if (!(m_server && m_server->pollWelcome())) return;
+	if (m_loading.gate().phases[LoadingGate::ChunksLoaded].progress >= 1.0f) return;
+	const auto budgetEnd = Clock::now() + std::chrono::milliseconds(8);
+	size_t lastMeshed = m_chunkMeshes.size();
+	while (Clock::now() < budgetEnd) {
+		m_server->tick(0.0f);
+		streamServerChunks();
+		drainAsyncMeshes();
+		if (m_inFlightMesh.empty() &&
+		    m_serverDirtyChunks.empty() &&
+		    m_chunkMeshes.size() == lastMeshed)
+			break;
+		lastMeshed = m_chunkMeshes.size();
+	}
+}
+
+// meshedDone / (meshedDone + pending), pinned at peak so the bar never
+// slides back when new dirty chunks show up late.
+float Game::computeChunkStreamFrac() {
 	size_t totalEntries = m_chunkMeshes.size();
 	size_t inFlight     = m_inFlightMesh.size();
 	size_t dirty        = m_serverDirtyChunks.size();
 	size_t meshedDone   = (totalEntries > inFlight) ? totalEntries - inFlight : 0;
 	size_t denom        = meshedDone + inFlight + dirty;
-	float streamFrac    = (denom == 0) ? 0.0f : (float)meshedDone / (float)denom;
-	m_chunkStreamPeak = std::max(m_chunkStreamPeak, streamFrac);
+	float frac          = (denom == 0) ? 0.0f : (float)meshedDone / (float)denom;
+	m_chunkStreamPeak   = std::max(m_chunkStreamPeak, frac);
+	return m_chunkStreamPeak;
+}
 
-	// Quiesce check is the authoritative "done" signal — progression only
-	// resolves to true 1.0 once growth stalls AND nothing is pending. Until
-	// then we cap the displayed bar at 0.98 so the user never sees a
-	// premature 100% that then lingers waiting for the quiesce timer.
-	constexpr float kChunkQuiesceSec = 0.4f;
-	constexpr size_t kMinMeshedChunks = 8;
-	bool pending = (inFlight > 0) || (dirty > 0);
+// True once mesh growth has stalled for kChunkQuiesceSec with nothing
+// pending — the authoritative "terrain done" signal.
+bool Game::updateChunkQuiesce(float dt) {
+	constexpr float  kChunkQuiesceSec  = 0.4f;
+	constexpr size_t kMinMeshedChunks  = 8;
+	size_t totalEntries = m_chunkMeshes.size();
+	size_t inFlight     = m_inFlightMesh.size();
+	size_t dirty        = m_serverDirtyChunks.size();
+	size_t meshedDone   = (totalEntries > inFlight) ? totalEntries - inFlight : 0;
+	bool   pending      = (inFlight > 0) || (dirty > 0);
 	if (meshedDone != m_chunkMeshesLastSeen || pending ||
 	    meshedDone < kMinMeshedChunks) {
 		m_chunkMeshesLastSeen = meshedDone;
@@ -348,27 +352,7 @@ void Game::updateLoadingGate(float dt) {
 	} else {
 		m_chunkQuiesceAccum += dt;
 	}
-	bool quiesced = (m_chunkQuiesceAccum >= kChunkQuiesceSec);
-	m_loadingGate.set(Id::ChunksLoaded,
-		quiesced ? 1.0f : std::min(m_chunkStreamPeak, 0.98f));
-
-	// Phase 4 — every owned NPC has had its first decide. Until the agent
-	// client's discoverEntities runs we can't trust the agent count, so
-	// progress sits at 0 until then. Zero-agent worlds resolve to 1.0 as
-	// soon as discovery confirms there's nothing to wait for. The executor
-	// is held off during this phase (see setExecutorEnabled(false) on
-	// beginConnect), so decide can still run but no entity actually moves.
-	if (m_agentClient) {
-		auto ip = m_agentClient->initProgress();
-		if (!ip.discoveryRan) {
-			m_loadingGate.set(Id::AgentsSettled, 0.0f);
-		} else if (ip.totalAgents == 0) {
-			m_loadingGate.set(Id::AgentsSettled, 1.0f);
-		} else {
-			m_loadingGate.set(Id::AgentsSettled,
-				(float)ip.settledAgents / (float)ip.totalAgents);
-		}
-	}
+	return m_chunkQuiesceAccum >= kChunkQuiesceSec;
 }
 
 void Game::streamServerChunks() {
@@ -546,10 +530,10 @@ bool Game::beginConnectAs(const std::string& creatureType) {
 	m_connectStartTime = m_wallTime;
 	// Fresh attempt → clear any progress from a previous run so the
 	// checklist starts empty.
-	m_loadingGate.reset();
-	m_chunkQuiesceAccum   = 0.0f;
-	m_chunkMeshesLastSeen = 0;
-	m_chunkStreamPeak     = 0.0f;
+	m_loading.reset();
+	m_chunkQuiesceAccum    = 0.0f;
+	m_chunkMeshesLastSeen  = 0;
+	m_chunkStreamPeak      = 0.0f;
 
 	// Freeze the world: during the Connecting loading screen we still let
 	// decide() run (so plans are ready), but no entity actually moves or
@@ -767,13 +751,13 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_agentClient->tick(dt);
 	m_frameProbe.mark("agent");
 
-	// Data-driven loading screen: each Connecting-screen frame refreshes the
-	// per-phase progress bars, and the gate decides when to hand off.
+	// Loading screen: refresh signals, then hand off once ready and the
+	// player acknowledges with any key / click.
 	if (m_state == GameState::Menu &&
 	    m_menuScreen == MenuScreen::Connecting &&
 	    m_connecting) {
 		updateLoadingGate(dt);
-		if (m_loadingGate.allDone()) {
+		if (m_loading.ready() && m_loading.pollDismiss(m_window)) {
 			m_connecting = false;
 			enterPlaying();
 		}

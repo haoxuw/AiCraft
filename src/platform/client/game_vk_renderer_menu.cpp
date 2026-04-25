@@ -134,6 +134,40 @@ int drawMenuList(const MenuListInput& in,
 	return activated;
 }
 
+// Bottom-anchored loading bar plus the warmup / ready label. Drawn over
+// the live 3D world — no centered panel, so the view stays clear.
+void drawLoadingBar(rhi::IRhi* R, const LoadingScreen& ls, float wallTime) {
+	const bool  ready = ls.ready();
+	const float frac  = ready ? 1.0f : ls.aggregateDisplay();
+
+	constexpr float kBarW = 0.60f;
+	constexpr float kBarH = 0.022f;
+	constexpr float kBarX = -kBarW * 0.5f;
+	constexpr float kBarY = -0.92f;
+	const float kBarFill[4]   = {0.96f, 0.82f, 0.40f, 1.0f};
+	const float kBarDone[4]   = {0.40f, 0.82f, 0.40f, 1.0f};
+	const float kBarBg[4]     = {0.08f, 0.08f, 0.10f, 0.80f};
+	const float kBarBorder[4] = {0.50f, 0.38f, 0.20f, 0.95f};
+	ui::drawMeter(R, kBarX, kBarY, kBarW, kBarH, frac,
+	              ready ? kBarDone : kBarFill, kBarBg, kBarBorder);
+
+	if (ready) {
+		const float kReady[4] = {1.00f, 0.88f, 0.48f, 1.00f};
+		ui::drawCenteredText(R, "Press any key to start",
+		                     0.0f, kBarY + kBarH + 0.028f, 1.00f, kReady);
+	} else {
+		int dots = (int)(wallTime * 2.0f) % 4;
+		const char* dotStr[] = {"", ".", "..", "..."};
+		char line[64];
+		std::snprintf(line, sizeof(line), "Warming up world%s", dotStr[dots]);
+		ui::drawCenteredText(R, line,
+		                     0.0f, kBarY + kBarH + 0.024f, 0.80f, kText);
+	}
+
+	ui::drawCenteredText(R, "[Esc] Cancel", 0.0f, kBarY - 0.040f,
+	                     0.65f, kTextDim);
+}
+
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────
@@ -319,72 +353,9 @@ void MenuRenderer::renderMenu() {
 		break;
 	}
 	case MenuScreen::Connecting: {
-		// Taller frame — the per-phase checklist lives below the title and
-		// above the aggregate bar, so the old 0.50 height wasn't enough.
-		drawMenuFrame(R, -0.42f, -0.34f, 0.84f, 0.72f, "Entering World");
-		int dots = (int)(g.m_wallTime * 2.0f) % 4;
-		const char* dotStr[] = {"", ".", "..", "..."};
-		char title[64];
-		std::snprintf(title, sizeof(title), "Warming up world%s",
-		              dotStr[dots]);
-		ui::drawCenteredText(R, title, 0.0f, 0.26f, 0.95f, kText);
+		drawLoadingBar(R, g.m_loading, g.m_wallTime);
 
-		// Data-driven checklist — one row per LoadingGate phase. The gate
-		// is updated once per frame by Game::updateLoadingGate(), so this
-		// block only needs to *render* the current snapshot; the main loop
-		// owns the Playing handoff.
-		constexpr float kRowLeftX = -0.34f;
-		constexpr float kRowWidth = 0.68f;
-		constexpr float kRowH     = 0.048f;
-		constexpr float kRowGap   = 0.010f;
-		const size_t nPhases = g.m_loadingGate.phases.size();
-		float rowY = 0.18f;
-		const float kRowBg[4]     = {0.08f, 0.08f, 0.10f, 0.75f};
-		const float kRowBorder[4] = {0.35f, 0.27f, 0.14f, 0.75f};
-		const float kRowFill[4]   = {0.96f, 0.82f, 0.40f, 0.90f};
-		const float kRowDone[4]   = {0.40f, 0.82f, 0.40f, 0.95f};
-		for (size_t i = 0; i < nPhases; ++i) {
-			const auto& ph = g.m_loadingGate.phases[i];
-			float frac = std::min(1.0f, ph.progress);
-			const float* fill = (frac >= 1.0f) ? kRowDone : kRowFill;
-			ui::drawMeter(R, kRowLeftX, rowY - kRowH,
-			              kRowWidth, kRowH, frac,
-			              fill, kRowBg, kRowBorder);
-			const char* tick = (frac >= 1.0f) ? "[x] " : "[ ] ";
-			char line[80];
-			if (frac >= 1.0f)
-				std::snprintf(line, sizeof(line), "%s%s", tick, ph.label);
-			else
-				std::snprintf(line, sizeof(line), "%s%s  %.0f%%",
-				              tick, ph.label, frac * 100.0f);
-			R->drawText2D(line,
-			              kRowLeftX + 0.012f,
-			              rowY - kRowH + kRowH * 0.5f - ui::kCharHNdc * 0.65f * 0.5f,
-			              0.65f,
-			              (frac >= 1.0f) ? kText : kTextDim);
-			rowY -= (kRowH + kRowGap);
-		}
-
-		// Aggregate bar — mean of every phase, so users still have a single
-		// "how far along are we" cue under the checklist.
-		constexpr float kBarX = -0.30f;
-		constexpr float kBarW = 0.60f;
-		constexpr float kBarH = 0.040f;
-		float barY = rowY - 0.015f;
-		const float kBarFill[4]   = {0.96f, 0.82f, 0.40f, 1.0f};
-		const float kBarBg[4]     = {0.08f, 0.08f, 0.10f, 0.80f};
-		const float kBarBorder[4] = {0.50f, 0.38f, 0.20f, 0.95f};
-		ui::drawMeter(R, kBarX, barY, kBarW, kBarH,
-		              g.m_loadingGate.aggregate(),
-		              kBarFill, kBarBg, kBarBorder);
-
-		ui::drawCenteredText(R, "[Esc] Cancel", 0.0f, barY - 0.06f,
-		                     0.70f, kTextDim);
-
-		// Bail-out paths — lost connection / welcome timeout. The normal
-		// allDone() → enterPlaying() transition runs in Game::runOneFrame
-		// so input (F2, hotbar seed, etc.) and the world tick already have
-		// the gate wired into them; this block only handles the sad cases.
+		// Bail-outs — lost connection / welcome timeout.
 		if (g.m_server && !g.m_server->isConnected()) {
 			const std::string& err = g.m_server->lastError();
 			g.m_connectError = err.empty() ? "connection lost" : err;
