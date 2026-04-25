@@ -8,12 +8,15 @@
 #include <cstdio>
 #include <cstring>
 
+#include "client/action_icon.h"
 #include "client/box_model_flatten.h"
 #include "client/model_loader.h"
 #include "client/network_server.h"
 #include "client/raycast.h"
 #include "net/server_interface.h"
 #include "logic/action.h"
+#include "logic/block_registry.h"
+#include "logic/constants.h"
 
 namespace civcraft::vk {
 
@@ -137,41 +140,40 @@ void HudRenderer::renderHUD() {
 		auto bHit = civcraft::raycastBlocks(g.m_server->chunks(), eye, dir, 6.0f);
 
 		glm::vec3 anchor;
-		std::string prompt;
-		glm::vec3 color{0.95f, 0.90f, 0.55f};
+		bool      hasIcon = false;
+		ActionIconKind kind = ActionIconKind::Move;
 		if (eHit && (!bHit || eHit->distance <= bHit->distance)) {
+			// Hit a living entity → AttackAction would fire on LMB.
 			if (auto* e = g.m_server->getEntity(eHit->entityId))
 				anchor = e->position + glm::vec3(0, 2.6f, 0);
-			prompt = "[LMB] Attack";
-			color = {1.0f, 0.55f, 0.45f};
+			kind = ActionIconKind::Attack;
+			hasIcon = true;
 		} else if (bHit) {
+			// Hit a block → classify by its declared shape + exact type id,
+			// not substring matching. Doors / trapdoors read off MeshType
+			// (the same enum the mesher uses); TNT / Chest test the
+			// canonical BlockType string constant for exact equality.
 			glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
 			const auto& bdef = g.m_server->blockRegistry().get(
 				g.m_server->chunks().getBlock(bp.x, bp.y, bp.z));
-			const std::string& sid = bdef.string_id;
-			bool isChest   = sid.find("chest")  != std::string::npos;
-			bool isDoor    = sid.find("door")   != std::string::npos;
-			bool isButton  = sid.find("button") != std::string::npos;
-			bool isLever   = sid.find("lever")  != std::string::npos;
-			bool isTnt     = sid.find("tnt")    != std::string::npos;
 			anchor = glm::vec3(bp) + glm::vec3(0.5f, 1.25f, 0.5f);
-			if (isChest)       prompt = "[E] Open";
-			else if (isDoor)   prompt = "[E] Toggle";
-			else if (isButton) prompt = "[E] Press";
-			else if (isLever)  prompt = "[E] Flip";
-			else if (isTnt)    prompt = "[E] Ignite";
-			else               prompt = "[LMB] Mine";
-			if (isChest || isDoor || isButton || isLever || isTnt)
-				color = {0.55f, 0.95f, 0.70f};
+			const bool isDoorMesh =
+				bdef.mesh_type == civcraft::MeshType::Door     ||
+				bdef.mesh_type == civcraft::MeshType::DoorOpen ||
+				bdef.mesh_type == civcraft::MeshType::Trapdoor;
+			if      (bdef.string_id == civcraft::BlockType::Chest) kind = ActionIconKind::Relocate;
+			else if (bdef.string_id == civcraft::BlockType::TNT)   kind = ActionIconKind::Interact;
+			else if (isDoorMesh)                                    kind = ActionIconKind::Interact;
+			else                                                    kind = ActionIconKind::Harvest;
+			hasIcon = true;
 		}
-		if (!prompt.empty()) {
+		if (hasIcon) {
 			glm::vec3 ndc;
 			if (g.projectWorld(anchor, ndc)) {
-				float scale = 0.85f;
-				float rawW = prompt.size() * kCharWNdc * scale;
-				float x = ndc.x - rawW * 0.5f;
-				float rgba[4] = { color.x, color.y, color.z, 0.92f };
-				g.m_rhi->drawText2D(prompt.c_str(), x, ndc.y, scale, rgba);
+				constexpr float kHalfSize = 0.038f;
+				drawActionIcon(g.m_rhi, kind,
+				               ndc.x, ndc.y, kHalfSize, g.m_aspect,
+				               defaultIconColor(kind));
 			}
 		}
 	}

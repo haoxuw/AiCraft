@@ -187,6 +187,8 @@ endfunction()
 # Singleplayer spawns civcraft-server as a child and connects via localhost TCP.
 # --host/--port pre-fills the join form for network play.
 add_executable(civcraft-ui-vk
+	src/platform/client/action_icon.h
+	src/platform/client/action_icon.cpp
 	src/platform/client/main.cpp
 	src/platform/client/game_vk.h
 	src/platform/client/game_vk.cpp
