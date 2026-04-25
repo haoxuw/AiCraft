@@ -1,10 +1,10 @@
 """behavior_base.py — Base class for all entity AI behaviors.
 
-Every behavior inherits from Behavior and overrides decide().
+Every behavior inherits from Behavior and overrides decide_plan().
 
 NEW CONTRACT (Plan-based)
 -------------------------
-    decide(entity: SelfEntity, local_world: LocalWorld) → (plan, goal_str)
+    decide_plan(entity: SelfEntity, local_world: LocalWorld) → (plan, goal_str)
 
     plan      — a list of strongly-typed plan_steps.* Pydantic models:
                   HarvestStep(candidates=[Vec3(...), ...],
@@ -22,7 +22,7 @@ NEW CONTRACT (Plan-based)
 
 Event-driven loop
 -----------------
-    decide() is called ONLY when the previous plan terminates or is
+    decide_plan() is called ONLY when the previous plan terminates or is
     interrupted — not on a polling timer. The plan executor runs each
     frame and classifies each step as InProgress/Success/Failed from
     observable world state. Terminal outcomes enqueue a re-decide.
@@ -31,14 +31,14 @@ Event-driven loop
     targets are automatically "sticky" — no need to cache them in self.
 
     local_world.last_outcome / last_goal / last_reason describe why the
-    previous plan ended, so decide() can branch:
+    previous plan ended, so decide_plan() can branch:
 
       last_outcome == "success" — plan finished normally
       last_outcome == "failed"  — plan aborted; last_reason gives detail
                                   ("stuck", "target_gone",
                                    "interrupt:hp", "interrupt:proximity",
                                    "interrupt:time_of_day")
-      last_outcome == "none"    — first decide() for this entity
+      last_outcome == "none"    — first decide_plan() for this entity
 
 Example
 -------
@@ -47,7 +47,7 @@ Example
     from plan_steps import HarvestStep, Vec3
 
     class WoodcutterBehavior(Behavior):
-        def decide(self, entity, local_world):
+        def decide_plan(self, entity, local_world):
             trees = local_world.all("logs", max_dist=40)
             if trees:
                 return [HarvestStep(
@@ -68,21 +68,21 @@ from stats import stats
 class Behavior:
     """Abstract base for all entity behaviors.
 
-    Subclasses must implement decide(entity, local_world) → (plan, goal_str).
+    Subclasses must implement decide_plan(entity, local_world) → (plan, goal_str).
     """
 
     def react(self, entity: SelfEntity, local_world: LocalWorld, signal):
         """Handle an out-of-band event signal (threat_nearby, …).
 
         Called by AgentClient when a notable world event is detected near
-        this entity. Return the same shape as decide() to override the
+        this entity. Return the same shape as decide_plan() to override the
         current plan, or None to ignore the signal and let the existing
         plan keep running.
 
         Parameters
         ----------
         entity, local_world
-            Same as decide() — a fresh snapshot at the moment the signal
+            Same as decide_plan() — a fresh snapshot at the moment the signal
             fired.
         signal : types.SimpleNamespace
             signal.kind    — str, one of signals.THREAT_NEARBY, …
@@ -91,14 +91,14 @@ class Behavior:
         Returns
         -------
         (action, goal_str[, duration])  — override current plan, or
-        list of plan-step dicts            same shape as decide()
+        list of plan-step dicts            same shape as decide_plan()
         None                            — keep current plan
 
         Default implementation ignores every signal.
         """
         return None
 
-    def decide(self, entity: SelfEntity, local_world: LocalWorld) -> tuple:
+    def decide_plan(self, entity: SelfEntity, local_world: LocalWorld) -> tuple:
         """Called at ~4 Hz. Must return (plan: list[dict], goal: str).
 
         Parameters
@@ -129,7 +129,7 @@ class Behavior:
             goal_str = non-empty human-readable string
         """
         raise NotImplementedError(
-            f"{type(self).__name__} must implement decide(entity, local_world) → (plan, goal)"
+            f"{type(self).__name__} must implement decide_plan(entity, local_world) → (plan, goal)"
         )
 
     # ── Time-of-day helpers ───────────────────────────────────────────────────

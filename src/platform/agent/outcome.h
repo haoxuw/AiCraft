@@ -46,7 +46,7 @@ enum class ExecState {
 	Failed_TargetGone,       // Target entity disappeared (died, despawned, removed)
 	Failed_AnchorGone,       // Anchor block (resource/structure) no longer present
 	Failed_HarvestExhausted, // Reached target, nothing harvestable in range
-	Failed_DecideError,      // Python decide() raised or returned invalid plan
+	Failed_DecideError,      // Python decide_plan() raised or returned invalid plan
 	Failed_Interrupted,      // Interrupt signal (hp drop, react) aborted plan mid-step
 	Failed_GaveUp,           // Fail streak exceeded threshold — don't retry until rescued
 	Failed_Unknown,          // Fallback when the site can't attribute more precisely

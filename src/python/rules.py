@@ -53,10 +53,10 @@ class Action:
     """Base for rule actions.
 
     `run(entity, world, ctx)` returns `(plan_or_action, goal_str[, duration])`
-    in the same shape as a legacy `decide()` return — or `None` to decline
+    in the same shape as a legacy `decide_plan()` return — or `None` to decline
     (letting RulesBehavior try the next matching rule).
 
-    Optional `tick(dt)` runs every decide() for time-accumulated state
+    Optional `tick(dt)` runs every decide_plan() for time-accumulated state
     (cooldowns). It is called on every rule's action, not just the one
     that fired, so cooldowns drain whether or not the action ran.
     """
@@ -66,7 +66,7 @@ class Action:
 
 def init_home(entity, ctx):
     """Resolve home position: ctx cache, else the entity's first-observed
-    position. Cached in ctx so later rules in the same decide() see it.
+    position. Cached in ctx so later rules in the same decide_plan() see it.
 
     Villagers/NPCs no longer receive server-assigned home_x/home_z props —
     "home" is just "where the entity first woke up".
@@ -80,7 +80,7 @@ def init_home(entity, ctx):
 
 
 class RulesBehavior(Behavior):
-    """Behavior that evaluates a rule list each decide().
+    """Behavior that evaluates a rule list each decide_plan().
 
     Subclass sets `self.rules = [(Condition, Action), ...]` in __init__.
 
@@ -93,7 +93,7 @@ class RulesBehavior(Behavior):
         self.ctx = {}
         self.rules = []
 
-    def decide(self, entity, world):
+    def decide_plan(self, entity, world):
         dt = world.dt
         for _cond, action in self.rules:
             if hasattr(action, "tick"):

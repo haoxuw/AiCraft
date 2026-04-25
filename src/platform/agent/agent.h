@@ -100,7 +100,7 @@ public:
 		  m_handle(handle),
 		  m_jitter(eid) {
 		// First-time discovery acts like a Success outcome with reason
-		// "discovery"; Python's callDecide maps this to outcome="success".
+		// "discovery"; Python's callDecidePlan maps this to outcome="success".
 		m_lastOutcome.outcome = StepOutcome::Success;
 		m_lastOutcome.reason  = "discovery";
 		m_needsDecide         = true;
@@ -197,7 +197,7 @@ public:
 		e.goalText     = m_goalText;
 		e.hasError     = false;
 		e.errorText.clear();
-		// Lifecycle hook #3 — plan received (Python decide → Plan reaches this
+		// Lifecycle hook #3 — plan received (Python decide_plan → Plan reaches this
 		// process). Pairs with the per-step dump below so one scroll shows the
 		// full shape of the new plan.
 		PATHLOG(m_eid,
@@ -246,7 +246,7 @@ public:
 	}
 
 	// Multi-step manual override from the RTS wheel. Installs a full Plan in
-	// place of decide()'s output; tickPlan executes it like any decide()-
+	// place of decide_plan()'s output; executePlan executes it like any decide_plan()-
 	// produced plan. When the plan finishes naturally (finishPlan → needsDecide),
 	// control returns to Python AI. The pause timer only gates decide()
 	// dispatch, not the executor — long plans still run to completion.
@@ -347,7 +347,7 @@ public:
 	}
 
 	// ── Per-tick plan driver ──────────────────────────────────────────────
-	void tickPlan(float dt, ServerInterface& server) {
+	void executePlan(float dt, ServerInterface& server) {
 		if (m_plan.empty()) return;
 
 		Entity* e = server.getEntity(m_eid);

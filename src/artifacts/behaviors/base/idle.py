@@ -18,7 +18,7 @@ from stats import stats
 
 class IdleBehavior(Behavior):
 
-    def decide(self, entity: SelfEntity, local_world: LocalWorld):
+    def decide_plan(self, entity: SelfEntity, local_world: LocalWorld):
         stats.inc("decide", entity.type)
         return Move(entity.x, entity.y, entity.z), "Idle"
 
@@ -28,7 +28,7 @@ class IdleBehavior(Behavior):
 # from civcraft_engine import Move
 #
 # class IdleBehavior(Behavior):
-#     def decide(self, entity: "SelfEntity", local_world: "LocalWorld"):
+#     def decide_plan(self, entity: "SelfEntity", local_world: "LocalWorld"):
 #         pig = local_world.get("pig", max_dist=20)
 #         if pig:
 #             if pig.distance > 2:

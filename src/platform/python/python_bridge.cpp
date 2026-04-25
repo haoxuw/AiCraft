@@ -15,7 +15,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) 
 	err = "Python not available in web build";
 	return -1;
 }
-Plan PythonBridge::callDecide(BehaviorHandle, const EntitySnapshot&,
+Plan PythonBridge::callDecidePlan(BehaviorHandle, const EntitySnapshot&,
                                const std::vector<NearbyEntity>&,
                                float, float, std::string&, std::string& err,
                                BlockQueryFn, ScanBlocksFn, ScanEntitiesFn,
@@ -103,7 +103,7 @@ struct PyAction {
 	bool        use_navigator    = false;
 };
 
-// Per-call state, set before callDecide(). Agent is single-threaded.
+// Per-call state, set before callDecidePlan(). Agent is single-threaded.
 static std::function<std::string(int,int,int)> s_blockQueryFn;
 static std::function<int(int,int,int)>         s_appearanceQueryFn;
 
@@ -534,7 +534,7 @@ except NameError: pass
 }
 
 // Builds the pydantic SelfEntity + LocalWorld from a snapshot. Shared by
-// callDecide and callReact so the two entry points see identical world
+// callDecidePlan and callReact so the two entry points see identical world
 // state. GIL must be held.
 static void buildPyWorld(const EntitySnapshot& self,
                          const std::vector<NearbyEntity>& nearby,
@@ -644,7 +644,7 @@ static PlanStep pyActionToPlanStep(const PyAction& pa) {
 	return PlanStep::move({pa.x, pa.y, pa.z}, 0.0f);
 }
 
-Plan PythonBridge::callDecide(BehaviorHandle handle,
+Plan PythonBridge::callDecidePlan(BehaviorHandle handle,
                                const EntitySnapshot& self,
                                const std::vector<NearbyEntity>& nearby,
                                float dt, float timeOfDay,
@@ -663,7 +663,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 	// Runs on DecideWorker's thread.
 	py::gil_scoped_acquire gil;
 
-	// Per-call callbacks; GIL serializes callDecide so static state is safe.
+	// Per-call callbacks; GIL serializes callDecidePlan so static state is safe.
 	s_blockQueryFn   = blockQueryFn ? std::move(blockQueryFn)
 	                                : [](int,int,int){ return std::string("air"); };
 	s_appearanceQueryFn = appearanceQueryFn ? std::move(appearanceQueryFn)
@@ -698,7 +698,7 @@ Plan PythonBridge::callDecide(BehaviorHandle handle,
 		             m_localWorldClass, m_selfEntityClass,
 		             pySelfEntity, pyLocalWorld);
 
-		py::object result = instance.attr("decide")(pySelfEntity, pyLocalWorld);
+		py::object result = instance.attr("decide_plan")(pySelfEntity, pyLocalWorld);
 
 		Plan plan; bool firstIsNone = false;
 		if (!parsePyResult(result, plan, goalOut, errorOut, firstIsNone))
@@ -730,7 +730,7 @@ bool PythonBridge::callReact(BehaviorHandle handle,
 	// Runs on DecideWorker's thread.
 	py::gil_scoped_acquire gil;
 
-	// Same static-state protocol as callDecide — GIL serializes this.
+	// Same static-state protocol as callDecidePlan — GIL serializes this.
 	s_blockQueryFn   = blockQueryFn ? std::move(blockQueryFn)
 	                                : [](int,int,int){ return std::string("air"); };
 	s_appearanceQueryFn = appearanceQueryFn ? std::move(appearanceQueryFn)
@@ -918,7 +918,7 @@ void PythonBridge::unloadBehavior(BehaviorHandle handle) {
 
 // PythonBehavior::decide — REMOVED
 // The old Behavior class hierarchy (PythonBehavior, IdleFallbackBehavior) has been
-// deleted. AgentClient now calls Python decide() directly via PythonBridge.
+// deleted. AgentClient now calls Python decide_plan() directly via PythonBridge.
 
 // Loads artifacts/worlds/*.py via pybind11.
 bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {

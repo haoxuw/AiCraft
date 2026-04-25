@@ -1,7 +1,7 @@
 #pragma once
 
 // CPython via pybind11. Owns interpreter lifecycle; loads behaviors + world
-// configs + structure blueprints from Python artifacts. callDecide() returns
+// configs + structure blueprints from Python artifacts. callDecidePlan() returns
 // a Plan and is GIL-safe (callers must NOT hold the GIL).
 
 #include "logic/entity.h"
@@ -189,7 +189,7 @@ public:
 	// isNavFailed() for the bool, so adding a Failed_* variant only touches
 	// outcome.h. lastFailStreak is the number of consecutive Failed_* outcomes
 	// (reset on Success).
-	Plan callDecide(BehaviorHandle handle,
+	Plan callDecidePlan(BehaviorHandle handle,
 	                const EntitySnapshot& self,
 	                const std::vector<NearbyEntity>& nearby,
 	                float dt, float timeOfDay,
@@ -206,8 +206,8 @@ public:
 	                int                lastFailStreak = 0,
 	                AppearanceQueryFn appearanceQueryFn = nullptr);
 
-	// Signal-driven react path. Mirrors callDecide but invokes
-	// Behavior.react(entity, world, signal) instead of decide(). Returns
+	// Signal-driven react path. Mirrors callDecidePlan but invokes
+	// Behavior.react(entity, world, signal) instead of decide_plan(). Returns
 	// true when react returned a plan (outPlan/goalOut populated), false
 	// when react returned None (signal ignored, existing plan keeps
 	// running). errorOut is non-empty on Python exception.

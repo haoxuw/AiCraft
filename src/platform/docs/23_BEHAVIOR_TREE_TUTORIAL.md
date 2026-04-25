@@ -173,7 +173,7 @@ The visual tree compiles to Python code like:
 from civcraft_engine import Idle, Wander, Follow, Flee, DropItem
 import random as _rng
 
-def decide(self, world):
+def decide_plan(self, world):
     if any((e["category"] == "player" or e["type"] == "base:cat")
            and e["distance"] < 5.0 for e in world["nearby"]):
         if any((e["category"] == "player" or e["type"] == "base:cat")

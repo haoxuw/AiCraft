@@ -74,7 +74,7 @@ Each Client is ONE process containing:
 ```
 Phase 1 — DECIDE (for agents needing a new plan):
   +------------------+
-  | Python decide()  |  -> Returns a Plan (list of steps)
+  | Python decide_plan() | -> Returns a Plan (list of steps)
   | sees: entity,    |
   | local_world      |  Plan = [Move(A), Move(B), Harvest(tree), Move(chest), Relocate(logs)]
   +------------------+

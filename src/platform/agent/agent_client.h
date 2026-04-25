@@ -7,7 +7,7 @@
 //   2. phaseAutoPickup    — engine-level convenience (humanoid grab nearby items)
 //   3. phaseDecide        — round-robin scan of m_needy → dispatch to worker
 //   4. drainWorkerResults — install completed Plans on the right Agent
-//   5. phaseExecute       — Agent.tickPlan: evaluate + apply current step
+//   5. phaseExecute       — Agent.executePlan: evaluate + apply current step
 //   6. emitMovementSignals — threat_nearby signal fan-in
 //   7. scanInterrupts     — tick timers, HP-drop, refresh membership
 //
@@ -789,7 +789,7 @@ private:
 	// ── phaseExecute — drives every Agent's plan one step ────────────────
 	void phaseExecute(float dt) {
 		for (auto& [eid, agent] : m_agents) {
-			agent.tickPlan(dt, m_server);
+			agent.executePlan(dt, m_server);
 			updateMembership(eid);
 		}
 	}

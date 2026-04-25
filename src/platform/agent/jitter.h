@@ -8,7 +8,7 @@
 // attempt; a touch of randomness lets the next tick hit something subtly
 // different without changing the high-level plan.
 //
-// Not exposed to Python. Python decide() is deterministic from its inputs;
+// Not exposed to Python. Python decide_plan() is deterministic from its inputs;
 // jitter is strictly an executor-layer concern.
 //
 // State

@@ -8,7 +8,7 @@ Server  GlobalWorld (C++, authoritative)
 Agent   LocalWorld (Python, cached subset)
   │
   ▼
-Behavior.decide(entity: SelfEntity, world: LocalWorld) → (action, goal)
+Behavior.decide_plan(entity: SelfEntity, world: LocalWorld) → (action, goal)
 
 GlobalWorld is owned entirely by the server (C++). It is never exposed to
 Python. LocalWorld is rebuilt each tick from the agent's C++ caches:
@@ -22,7 +22,7 @@ Staleness policy
 LocalWorld may be outdated — a block the agent sees might already be gone;
 an entity might have moved. This is expected and acceptable. The server
 validates every ActionProposal and rejects impossible ones (SourceBlockGone,
-EntityGone, …). Behaviors recover on the next decide() tick.
+EntityGone, …). Behaviors recover on the next decide_plan() tick.
 
 Performance
 ───────────
@@ -207,22 +207,22 @@ class LocalWorld(BaseModel):
     model_config = ConfigDict(frozen=False, extra='forbid')
 
     time:     float                    # 0.0 (midnight) – 1.0 (next midnight)
-    dt:       float                    # seconds since last decide()
+    dt:       float                    # seconds since last decide_plan()
     blocks:   list[BlockView]  = Field(default_factory=list)
     entities: list[EntityView] = Field(default_factory=list)
     goal:     Optional[dict]   = None  # {"x","y","z"} client-issued target, or None
 
-    # Outcome of the previous plan (event-driven decide loop).
-    # decide() is called only when the previous plan ended or was
+    # Outcome of the previous plan (event-driven decide_plan loop).
+    # decide_plan() is called only when the previous plan ended or was
     # interrupted; this field carries the "why" so a behavior can
     # branch (e.g. Failed("stuck") → pick a different target).
     #
     # last_outcome is one of:
     #   "success" — plan finished normally
     #   "failed"  — plan aborted; last_reason describes it
-    #   "none"    — this is the first decide() for the entity
+    #   "none"    — this is the first decide_plan() for the entity
     last_outcome: str = "none"
-    last_goal:    str = ""    # previous decide()'s goal string
+    last_goal:    str = ""    # previous decide_plan()'s goal string
     last_reason:  str = ""    # e.g. "stuck", "target_gone",
                               # "interrupt:hp", "interrupt:proximity",
                               # "interrupt:time_of_day"
@@ -264,7 +264,7 @@ class LocalWorld(BaseModel):
         """Return the block type string at world position (x, y, z).
 
         Queries the agent's local chunk cache via the C++ bridge.
-        Valid only inside decide(). Returns 'base:air' for unloaded positions.
+        Valid only inside decide_plan(). Returns 'base:air' for unloaded positions.
         Primarily used by pathfinding helpers (see python/pathfind.py).
         """
         from civcraft_engine import get_block as _gb

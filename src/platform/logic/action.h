@@ -1,7 +1,7 @@
 #pragma once
 
 // Rule 3: Objects NEVER mutate world directly — submit ActionProposals, server resolves.
-// FPS input, RTS clicks, and Python decide() all produce the same proposals.
+// FPS input, RTS clicks, and Python decide_plan() all produce the same proposals.
 
 #include "logic/entity.h"
 #include <glm/glm.hpp>

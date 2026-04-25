@@ -3,11 +3,11 @@
 ## Overview
 
 Every creature in CivCraft has a behavior defined as a Python file. The behavior's
-`decide()` method is called 4 times per second and returns `(action, goal_str)`.
+`decide_plan()` method is called 4 times per second and returns `(action, goal_str)`.
 
 **Behaviors run on the agent CLIENT, not the server.**
 Each Creatures has its own `civcraft-agent` process. The agent reads its `LocalWorld`
-cache (nearby entities, nearby blocks from loaded chunks), runs `decide()`, and
+cache (nearby entities, nearby blocks from loaded chunks), runs `decide_plan()`, and
 sends the resulting `ActionProposal` over TCP. The server validates and executes.
 
 This means:
@@ -28,7 +28,7 @@ Server  GlobalWorld (C++, authoritative)
 Agent   LocalWorld (Python, cached subset — may be stale, that's fine)
   │
   ▼
-Behavior.decide(entity: SelfEntity, local_world: LocalWorld) → (action, goal_str)
+Behavior.decide_plan(entity: SelfEntity, local_world: LocalWorld) → (action, goal_str)
 ```
 
 `LocalWorld` is a pydantic object rebuilt each tick from the agent's C++ caches.
@@ -43,7 +43,7 @@ from civcraft_engine import Idle, MoveTo, Convert, StoreItem, Interact
 from behavior_base import Behavior
 
 class MyBehavior(Behavior):
-    def decide(self, entity, local_world):
+    def decide_plan(self, entity, local_world):
         # entity : SelfEntity  — this creature's full state
         # local_world  : LocalWorld  — what this creature can currently perceive
         # Returns: (action, goal_str)
@@ -112,7 +112,7 @@ local_world.nearest("hostile", max_dist=12)
 
 ```python
 local_world.time   # float, 0.0–1.0 day fraction (0.0 = midnight, 0.5 = noon)
-local_world.dt     # float, seconds since last decide() (~0.25 s)
+local_world.dt     # float, seconds since last decide_plan() (~0.25 s)
 ```
 
 ### Raw lists (for complex queries)
@@ -190,7 +190,7 @@ block_id = get_block(x, y, z)   # e.g. "base:trunk", "base:air"
 ```
 
 `get_block` probes the agent's local chunk cache. It is **not** one of the four action
-types and cannot change local_world state.  Call it freely inside `decide()` for pathfinding
+types and cannot change local_world state.  Call it freely inside `decide_plan()` for pathfinding
 or environment sensing.
 
 ### Write actions — the four server primitives
@@ -247,7 +247,7 @@ class GuardDogBehavior(Behavior):
     def __init__(self):
         self._home = None
 
-    def decide(self, entity, local_world):
+    def decide_plan(self, entity, local_world):
         self._home = self.init_home(entity, self._home)
         spd = entity.walk_speed
 

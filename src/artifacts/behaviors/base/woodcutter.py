@@ -51,9 +51,9 @@ class WoodcutterBehavior(Behavior):
         self._chest_target    = None   # (eid, x, y, z) cache for current deposit trip
         self._prev_state      = None
 
-    # -- Top-level decide ----------------------------------------------------
+    # -- Top-level decide_plan ----------------------------------------------
 
-    def decide(self, entity: SelfEntity, local_world: LocalWorld):
+    def decide_plan(self, entity: SelfEntity, local_world: LocalWorld):
         try:
             return self._decide_inner(entity, local_world)
         except Exception:

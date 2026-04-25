@@ -1,6 +1,6 @@
 #pragma once
 
-// Plan-based AI data types. Python decide() returns Plan (vector<PlanStep>);
+// Plan-based AI data types. Python decide_plan() returns Plan (vector<PlanStep>);
 // AgentClient executes step by step. Also NearbyEntity + BlockSample scan results.
 //
 // PlanStep is a bridge-contract mirror of the Pydantic models in

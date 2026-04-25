@@ -28,7 +28,7 @@
 #include "logic/material_values.h"
 // AgentClient now lives inside the player client (server stopped spawning
 // civcraft-agent processes). Pulling these in lets civcraft-ui-vk drive
-// every NPC the server hands us via in-process Python decide().
+// every NPC the server hands us via in-process Python decide_plan().
 #include "agent/agent_client.h"
 #include "debug/perf_registry.h"
 #include "server/behavior_store.h"
@@ -89,7 +89,7 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 				ac->onWorldEvent(kind, payload);
 			});
 	}
-	std::printf("[vk-game] agent client up — Python decide() will run in-process\n");
+	std::printf("[vk-game] agent client up — Python decide_plan() will run in-process\n");
 
 	// Async chunk mesher — worker pool sized to leave main/net/agent room.
 	// Min 2 workers, max 6 (diminishing returns past that; queue rarely deep).

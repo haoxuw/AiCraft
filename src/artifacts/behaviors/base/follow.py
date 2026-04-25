@@ -23,10 +23,10 @@ class FollowBehavior(RulesBehavior):
         # Param reads happen at __init__ time, so each entity instance
         # captures its own prop values. This is fine because AgentClient
         # creates one Behavior instance per entity.
-        # (`entity.get(...)` needs a live entity — resolved in decide().)
+        # (`entity.get(...)` needs a live entity — resolved in decide_plan().)
         self.rules = []
 
-    def decide(self, entity, world):
+    def decide_plan(self, entity, world):
         # Lazy rule build so we can read entity props.
         if not self.rules:
             preset = entity.get("follow_range", "near")
@@ -49,4 +49,4 @@ class FollowBehavior(RulesBehavior):
                                                     plan_duration=30.0,
                                                     message="Sniffing around")),
             ]
-        return super().decide(entity, world)
+        return super().decide_plan(entity, world)

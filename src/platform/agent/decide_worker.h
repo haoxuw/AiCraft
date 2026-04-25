@@ -1,6 +1,6 @@
 #pragma once
 
-// Runs Python decide() on a background thread. Generation counter filters stale
+// Runs Python decide_plan() on a background thread. Generation counter filters stale
 // results after interrupts. Callbacks read ChunkStore unlocked (visual-only race ok).
 
 #include "logic/types.h"
@@ -125,7 +125,7 @@ private:
 				if (req.lastOutcome.outcome == StepOutcome::Success) outcomeStr = "success";
 				else if (req.lastOutcome.outcome == StepOutcome::Failed) outcomeStr = "failed";
 
-				res.plan = pythonBridge().callDecide(
+				res.plan = pythonBridge().callDecidePlan(
 					req.handle, req.self, req.nearby, req.dt,
 					req.worldTime, res.goalText, res.error,
 					std::move(req.blockQuery), std::move(req.scanBlocks),
