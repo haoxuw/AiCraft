@@ -190,6 +190,13 @@ public:
 			if (e.hasProp(Prop::Age))
 				e.setProp(Prop::Age, e.getProp<float>(Prop::Age) + dt);
 
+			// Static structures (chests, trees, monuments) don't move and never
+			// will. Each one was paying ~1.9µs/tick on a moveAndCollide pass
+			// that does nothing — measured 6.3ms physics avg with 3300 entities
+			// and zero of them in motion. Living and ItemEntity still flow
+			// through the physics block so gravity/collision/despawn work.
+			if (def.isStructure()) continue;
+
 			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
 			if (hSpeed > 0.01f) {
 				float dist = e.getProp<float>(Prop::WalkDistance, 0.0f);
