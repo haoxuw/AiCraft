@@ -114,6 +114,14 @@ public:
 				       typeId.c_str(), (unsigned)id);
 		}
 		m_entities[id] = std::move(entity);
+		// Working set for stepPhysics — Living + Item only. Structures
+		// never move and never enter this list, so the per-tick walk is
+		// O(active) not O(world). unordered_map's reference stability
+		// guarantees the raw pointer survives rehash; only erase()
+		// invalidates it, and stepPhysics compacts the active list
+		// before any erase fires.
+		Entity* raw = m_entities[id].get();
+		if (!def->isStructure()) m_physicsActive.push_back(raw);
 		return id;
 	}
 
@@ -177,25 +185,18 @@ public:
 	}
 
 	void stepPhysics(float dt, const BlockSolidFn& isSolid) {
-		for (auto it = m_entities.begin(); it != m_entities.end(); ) {
-			if (it->second->removed) {
-				it = m_entities.erase(it);
-			} else ++it;
-		}
-
-		for (auto& [id, entity] : m_entities) {
-			auto& e = *entity;
+		// Walk only the active set — structures were never added to it.
+		// Compact in place so removed entries drop out without invalidating
+		// pointers we still need below for the m_entities erase pass.
+		size_t writeIdx = 0;
+		for (size_t readIdx = 0; readIdx < m_physicsActive.size(); ++readIdx) {
+			Entity* eptr = m_physicsActive[readIdx];
+			if (eptr->removed) continue;
+			Entity& e = *eptr;
 			const auto& def = e.def();
 
 			if (e.hasProp(Prop::Age))
 				e.setProp(Prop::Age, e.getProp<float>(Prop::Age) + dt);
-
-			// Static structures (chests, trees, monuments) don't move and never
-			// will. Each one was paying ~1.9µs/tick on a moveAndCollide pass
-			// that does nothing — measured 6.3ms physics avg with 3300 entities
-			// and zero of them in motion. Living and ItemEntity still flow
-			// through the physics block so gravity/collision/despawn work.
-			if (def.isStructure()) continue;
 
 			float hSpeed = std::sqrt(e.velocity.x * e.velocity.x + e.velocity.z * e.velocity.z);
 			if (hSpeed > 0.01f) {
@@ -250,8 +251,23 @@ public:
 						e.removalReason = (uint8_t)EntityRemovalReason::Despawned;
 				}
 			}
+
+			m_physicsActive[writeIdx++] = eptr;
+		}
+		m_physicsActive.resize(writeIdx);
+
+		// Now safe to deallocate — every dangling pointer has been compacted
+		// out of m_physicsActive in the loop above.
+		for (auto it = m_entities.begin(); it != m_entities.end(); ) {
+			if (it->second->removed) {
+				it = m_entities.erase(it);
+			} else ++it;
 		}
 	}
+
+	// Phase 2 instrumentation — main.cpp records this per tick to validate
+	// that the working set tracks living+item count, not total.
+	size_t physicsActiveCount() const { return m_physicsActive.size(); }
 
 	void forEach(std::function<void(Entity&)> fn) {
 		for (auto& [id, e] : m_entities)
@@ -268,6 +284,7 @@ public:
 private:
 	std::unordered_map<std::string, EntityDef> m_typeDefs;
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
+	std::vector<Entity*>                                  m_physicsActive;
 	EntityId m_nextId = 1;
 };
 
