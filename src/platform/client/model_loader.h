@@ -199,8 +199,6 @@ inline const Value* dictGet(const Dict& d, const std::string& key) {
 inline BoxModel dictToBoxModel(const Dict& d) {
 	BoxModel m;
 
-	if (auto* v = dictGet(d, "height"))    m.totalHeight = (float)v->getNum(1.0);
-	if (auto* v = dictGet(d, "scale"))     m.modelScale = (float)v->getNum(1.0);
 	if (auto* v = dictGet(d, "walk_speed")) m.walkCycleSpeed = (float)v->getNum(8.0);
 	if (auto* v = dictGet(d, "idle_bob"))  m.idleBobAmount = (float)v->getNum(0.01);
 	if (auto* v = dictGet(d, "walk_bob"))  m.walkBobAmount = (float)v->getNum(0.03);
@@ -266,15 +264,7 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 		auto& ed = equipDict->dict;
 		if (auto* v = dictGet(ed, "offset"))   m.equip.offset = toVec3(v->list);
 		if (auto* v = dictGet(ed, "rotation")) m.equip.rotation = toVec3(v->list);
-		if (auto* v = dictGet(ed, "scale"))    m.equip.scale = (float)v->getNum(1.0);
 	}
-
-	// Fold equip.scale into modelScale so the model has one authoritative
-	// size that applies in every render context (hand, ground, inventory).
-	// equip.offset/rotation stay equip-only — they position/orient the item
-	// against the wielder's hand and don't make sense for ground/inventory.
-	m.modelScale *= m.equip.scale;
-	m.equip.scale = 1.0f;
 
 	if (auto* v = dictGet(d, "hand_r"))  m.handR  = toVec3(v->list);
 	if (auto* v = dictGet(d, "hand_l"))  m.handL  = toVec3(v->list);

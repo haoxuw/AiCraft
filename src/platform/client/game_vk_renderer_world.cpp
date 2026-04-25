@@ -286,8 +286,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 				auto imIt = g.m_models.find(modelKey);
 				if (imIt != g.m_models.end()) {
 					// Render at the model's intrinsic size — matches in-hand.
-					// Modelers control absolute size via the model's `scale`
-					// (and `equip.scale`, folded into modelScale at load time).
+					// Sizes are absolute world-block units in the artifact.
 					civcraft::AnimState anim{};
 					anim.time = g.m_wallTime;
 					civcraft::appendBoxModel(charBoxes, imIt->second,

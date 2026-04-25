@@ -5,14 +5,8 @@ The earliest stage of wheat growth.
 
 model = {
     "id": "wheat_seeds",
-    "height": 0.2,
-    "equip": {
-        "rotation": [10, 15, 0],    # tilt slightly so the cluster reads from above
-        "offset": [0, -0.06, -0.02],
-        "scale": 1.0,               # seeds are tiny — keep at full to make them visible
-    },
+    "equip": {"rotation": [10.0, 15.0, 0.0], "offset": [0.0, -0.06, -0.02]},
     "parts": [
-        # Small green sprouts
-        {"offset": [0, 0.04, 0], "size": [0.10, 0.08, 0.10], "color": [0.35, 0.58, 0.22, 1]},
-    ]
+        {"offset": [0.0, 0.06, 0.0], "size": [0.15, 0.12, 0.15], "color": [0.35, 0.58, 0.22, 1.0]},
+    ],
 }

@@ -44,13 +44,10 @@ struct AnimClip {
 struct EquipTransform {
 	glm::vec3 offset = {0, 0, 0};
 	glm::vec3 rotation = {0, 0, 0};    // Euler degrees (X,Y,Z)
-	float scale = 1.0f;
 };
 
 struct BoxModel {
 	std::vector<BodyPart> parts;
-	float totalHeight = 1.0f;
-	float modelScale = 1.0f;
 	float walkCycleSpeed = 8.0f;  // radians per meter traveled
 	float idleBobSpeed = 1.5f;
 	float idleBobAmount = 0.01f;

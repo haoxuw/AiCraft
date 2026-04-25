@@ -5,19 +5,10 @@ A tool for digging dirt, sand, and gravel.
 
 model = {
     "id": "wood_shovel",
-    "height": 1.0,
-    # Held in hand: rotated so tool head points forward
-    "equip": {
-        "rotation": [-25, 0, -10],
-        "offset": [0.02, 0.0, -0.05],
-        "scale": 0.75,
-    },
+    "equip": {"rotation": [-25.0, 0.0, -10.0], "offset": [0.02, 0.0, -0.05]},
     "parts": [
-        # Handle — long brown stick
-        {"offset": [0, 0.22, 0], "size": [0.06, 0.60, 0.06], "color": [0.50, 0.35, 0.15, 1]},
-        # Blade — flat rounded shovel head
-        {"offset": [0, 0.56, 0], "size": [0.14, 0.16, 0.04], "color": [0.55, 0.55, 0.58, 1]},
-        # Blade tip — slightly narrower at bottom
-        {"offset": [0, 0.50, 0], "size": [0.10, 0.04, 0.04], "color": [0.48, 0.48, 0.52, 1]},
-    ]
+        {"offset": [0.0, 0.165, 0.0], "size": [0.045, 0.45, 0.045], "color": [0.5, 0.35, 0.15, 1.0]},
+        {"offset": [0.0, 0.42, 0.0], "size": [0.105, 0.12, 0.03], "color": [0.55, 0.55, 0.58, 1.0]},
+        {"offset": [0.0, 0.375, 0.0], "size": [0.075, 0.03, 0.03], "color": [0.48, 0.48, 0.52, 1.0]},
+    ],
 }

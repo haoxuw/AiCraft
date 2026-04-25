@@ -3,6 +3,9 @@
 // Flatten BoxModel + AnimState into 19 floats per box (mat4 + rgb) for
 // instanced drawBoxModel.
 // Instance format: mat4 model (column-major, [0,1]^3 → world) + vec3 rgb.
+//
+// All sizes are in absolute world-block units. There is no model-level
+// scale: artifacts express geometry directly via part offset/size.
 
 #include "client/box_model.h"
 #include <glm/glm.hpp>
@@ -26,36 +29,33 @@ inline void emitBox(std::vector<float>& out, const glm::mat4& m,
 
 // Maps unit cube [0,1]^3 to world-space oriented box for `part`.
 inline glm::mat4 partUnitCubeToWorld(const glm::mat4& partMat,
-                                     const BodyPart& part, float s) {
-	glm::mat4 m = glm::translate(partMat, (part.offset - part.halfSize) * s);
-	return glm::scale(m, part.halfSize * 2.0f * s);
+                                     const BodyPart& part) {
+	glm::mat4 m = glm::translate(partMat, part.offset - part.halfSize);
+	return glm::scale(m, part.halfSize * 2.0f);
 }
 
 // Anchor item at gripPos, apply EquipTransform (Y-X-Z rotation order).
 inline void emitHeldItem(std::vector<float>& out,
                          const HeldItem& hi,
                          const glm::mat4& handFrame,
-                         const glm::vec3& gripPos,
-                         float parentScale) {
+                         const glm::vec3& gripPos) {
 	if (!hi.model) return;
 	const BoxModel& itemModel = *hi.model;
 
 	glm::mat4 root = handFrame;
-	root = glm::translate(root, gripPos * parentScale);
+	root = glm::translate(root, gripPos);
 
 	const EquipTransform& eqt = itemModel.equip;
-	root = glm::translate(root, eqt.offset * parentScale);
+	root = glm::translate(root, eqt.offset);
 	root = glm::rotate(root, glm::radians(eqt.rotation.y), glm::vec3(0, 1, 0));
 	root = glm::rotate(root, glm::radians(eqt.rotation.x), glm::vec3(1, 0, 0));
 	root = glm::rotate(root, glm::radians(eqt.rotation.z), glm::vec3(0, 0, 1));
 
-	// Render at the item's intrinsic modelScale (matches ground + inventory).
 	// hi.scale is a per-instance runtime knob (e.g. blocks shrink in hand).
 	if (hi.scale != 1.0f) root = glm::scale(root, glm::vec3(hi.scale));
 
-	float itemScale = itemModel.modelScale;
 	for (const auto& part : itemModel.parts) {
-		glm::mat4 m = partUnitCubeToWorld(root, part, itemScale);
+		glm::mat4 m = partUnitCubeToWorld(root, part);
 		emitBox(out, m, glm::vec3(part.color));
 	}
 }
@@ -76,7 +76,6 @@ inline void appendBoxModel(std::vector<float>& out,
                            const HeldItems* held = nullptr,
                            const glm::mat4* rootOverride = nullptr) {
 	constexpr float TWO_PI = 6.28318530718f;
-	float s = model.modelScale;
 
 	float walkPhase = anim.walkDistance * model.walkCycleSpeed;
 	float speedFactor = std::min(anim.speed / 6.0f, 1.0f);
@@ -85,13 +84,13 @@ inline void appendBoxModel(std::vector<float>& out,
 	float walkBob = 0.0f;
 	if (smoothSpeed > 0.05f) {
 		float rawBob = std::abs(std::sin(walkPhase));
-		walkBob = rawBob * rawBob * model.walkBobAmount * smoothSpeed * s;
+		walkBob = rawBob * rawBob * model.walkBobAmount * smoothSpeed;
 	}
 	float idleBob = 0.0f;
 	if (smoothSpeed < 0.1f && !anim.suppressIdleBob) {
 		float idleBlend = 1.0f - smoothSpeed / 0.1f;
 		idleBob = std::sin(anim.time * model.idleBobSpeed) * model.idleBobAmount
-		          * idleBlend * s;
+		          * idleBlend;
 	}
 
 	glm::mat4 root;
@@ -157,37 +156,37 @@ inline void appendBoxModel(std::vector<float>& out,
 				(std::abs(anim.armPitch) > 0.1f || std::abs(anim.armYaw) > 0.1f);
 			if (!clipOv && anim.attackPhase > 0.001f && hasPlayerMeleeAngles) {
 				if (part.name == "right_hand") {
-					partMat = glm::translate(partMat, part.pivot * s);
+					partMat = glm::translate(partMat, part.pivot);
 					partMat = glm::rotate(partMat, glm::radians(anim.armPitch), part.swingAxis);
 					partMat = glm::rotate(partMat, glm::radians(anim.armYaw),   glm::vec3(0, 1, 0));
 					if (std::abs(anim.armRoll) > 0.01f) {
 						partMat = glm::rotate(partMat, glm::radians(anim.armRoll),
 						                      glm::vec3(0, -1, 0));
 					}
-					partMat = glm::translate(partMat, -part.pivot * s);
+					partMat = glm::translate(partMat, -part.pivot);
 					doSwing = false;
 				} else if (part.name == "left_hand") {
-					partMat = glm::translate(partMat, part.pivot * s);
+					partMat = glm::translate(partMat, part.pivot);
 					partMat = glm::rotate(partMat, glm::radians(anim.leftArmPitch),
 					                      part.swingAxis);
 					partMat = glm::rotate(partMat, glm::radians(anim.leftArmYaw),
 					                      glm::vec3(0, 1, 0));
-					partMat = glm::translate(partMat, -part.pivot * s);
+					partMat = glm::translate(partMat, -part.pivot);
 					doSwing = false;
 				} else if (part.name == "torso") {
-					partMat = glm::translate(partMat, part.pivot * s);
+					partMat = glm::translate(partMat, part.pivot);
 					partMat = glm::rotate(partMat, glm::radians(anim.torsoYaw),
 					                      glm::vec3(0, 1, 0));
-					partMat = glm::translate(partMat, -part.pivot * s);
+					partMat = glm::translate(partMat, -part.pivot);
 				} else if (part.name == "left_leg" || part.name == "right_leg") {
 					doSwing = false;
 				}
 			}
 
 			if (doSwing) {
-				partMat = glm::translate(partMat, part.pivot * s);
+				partMat = glm::translate(partMat, part.pivot);
 				partMat = glm::rotate(partMat, angle, swingAxis);
-				partMat = glm::translate(partMat, -part.pivot * s);
+				partMat = glm::translate(partMat, -part.pivot);
 			}
 		}
 
@@ -202,19 +201,19 @@ inline void appendBoxModel(std::vector<float>& out,
 
 		if (part.isHead
 		    && (std::abs(anim.lookYaw) > 0.001f || std::abs(anim.lookPitch) > 0.001f)) {
-			partMat = glm::translate(partMat, model.headPivot * s);
+			partMat = glm::translate(partMat, model.headPivot);
 			partMat = glm::rotate(partMat, anim.lookYaw,   glm::vec3(0, 1, 0));
 			partMat = glm::rotate(partMat, anim.lookPitch, glm::vec3(1, 0, 0));
-			partMat = glm::translate(partMat, -model.headPivot * s);
+			partMat = glm::translate(partMat, -model.headPivot);
 		}
 
-		glm::mat4 finalMat = detail::partUnitCubeToWorld(partMat, part, s);
+		glm::mat4 finalMat = detail::partUnitCubeToWorld(partMat, part);
 		detail::emitBox(out, finalMat, glm::vec3(part.color));
 	}
 
 	if (held) {
-		if (gotRightHand) detail::emitHeldItem(out, held->rightHand, rightHandFrame, model.handR, s);
-		if (gotLeftHand)  detail::emitHeldItem(out, held->leftHand,  leftHandFrame,  model.handL, s);
+		if (gotRightHand) detail::emitHeldItem(out, held->rightHand, rightHandFrame, model.handR);
+		if (gotLeftHand)  detail::emitHeldItem(out, held->leftHand,  leftHandFrame,  model.handL);
 	}
 }
 

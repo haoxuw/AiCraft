@@ -25,89 +25,33 @@ import math
 
 model = {
     "id": "pig",
-    "height": 0.9,
-    "scale": 1.25,
+    "head_pivot": [0.0, 0.6875, -0.3125],
     "walk_speed": 7.0,
-    "head_pivot": [0, 0.55, -0.25],
     "parts": [
-        # ═══ BODY — saturated pink ═══
-        {"name": "torso", "role": "body",
-         "offset": [0, 0.45, 0], "size": [0.60, 0.50, 0.80], "color": [0.88, 0.70, 0.62, 1]},
-        # Lighter belly patch
-        {"role": "belly",
-         "offset": [0, 0.23, 0], "size": [0.58, 0.08, 0.76], "color": [0.95, 0.82, 0.76, 1]},
-
-
-        # ═══ GOLDEN BANDANA ═══
-        {"role": "bandana", "offset": [0, 0.56, -0.22], "size": [0.62, 0.08, 0.22], "color": [0.92, 0.68, 0.18, 1]},
-        {"role": "bandana", "offset": [-0.32, 0.56, -0.22], "size": [0.08, 0.06, 0.10], "color": [0.92, 0.68, 0.18, 1]},
-
-        # ═══ HEAD ═══
-        {"name": "head", "head": True, "role": "body",
-         "offset": [0, 0.55, -0.45], "size": [0.44, 0.40, 0.40], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-
-        # Simple dot eyes (no whites — keeps the pig friendly, not creepy)
-        {"head": True,
-         "offset": [-0.11, 0.60, -0.655], "size": [0.03, 0.03, 0.01], "color": [0.12, 0.08, 0.08, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-        {"head": True,
-         "offset": [ 0.11, 0.60, -0.655], "size": [0.03, 0.03, 0.01], "color": [0.12, 0.08, 0.08, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-
-        # Snout (deep rose)
-        {"head": True, "role": "snout",
-         "offset": [0, 0.48, -0.64], "size": [0.24, 0.16, 0.10], "color": [0.72, 0.48, 0.42, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-        # Nostrils
-        {"head": True,
-         "offset": [-0.06, 0.48, -0.691], "size": [0.04, 0.05, 0.01], "color": [0.04, 0.03, 0.03, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-        {"head": True,
-         "offset": [ 0.06, 0.48, -0.691], "size": [0.04, 0.05, 0.01], "color": [0.04, 0.03, 0.03, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-
-        # Ears — outer (pink) + inner (darker rose)
-        {"head": True, "role": "body",
-         "offset": [-0.18, 0.72, -0.42], "size": [0.12, 0.10, 0.16], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-        {"head": True, "role": "ear_in",
-         "offset": [-0.18, 0.705, -0.41], "size": [0.06, 0.06, 0.10], "color": [0.58, 0.38, 0.35, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-        {"head": True, "role": "body",
-         "offset": [ 0.18, 0.72, -0.42], "size": [0.12, 0.10, 0.16], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-        {"head": True, "role": "ear_in",
-         "offset": [ 0.18, 0.705, -0.41], "size": [0.06, 0.06, 0.10], "color": [0.58, 0.38, 0.35, 1],
-         "pivot": [0, 0.55, -0.25], "swing_axis": [1,0,0], "amplitude": 8, "speed": 0.5},
-
-        # ═══ LEGS (pink + dark hoof cap) ═══
-        {"role": "body", "offset": [-0.18, 0.18, -0.25], "size": [0.14, 0.24, 0.14], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [-0.18, 0.30, -0.25], "swing_axis": [1,0,0], "amplitude": 30, "phase": 0},
-        {"role": "hoof", "offset": [-0.18, 0.04, -0.25], "size": [0.15, 0.06, 0.15], "color": [0.18, 0.11, 0.08, 1],
-         "pivot": [-0.18, 0.30, -0.25], "swing_axis": [1,0,0], "amplitude": 30, "phase": 0},
-
-        {"role": "body", "offset": [ 0.18, 0.18, -0.25], "size": [0.14, 0.24, 0.14], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [ 0.18, 0.30, -0.25], "swing_axis": [1,0,0], "amplitude": 30, "phase": math.pi},
-        {"role": "hoof", "offset": [ 0.18, 0.04, -0.25], "size": [0.15, 0.06, 0.15], "color": [0.18, 0.11, 0.08, 1],
-         "pivot": [ 0.18, 0.30, -0.25], "swing_axis": [1,0,0], "amplitude": 30, "phase": math.pi},
-
-        {"role": "body", "offset": [-0.18, 0.18, 0.25], "size": [0.14, 0.24, 0.14], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [-0.18, 0.30, 0.25], "swing_axis": [1,0,0], "amplitude": 30, "phase": math.pi},
-        {"role": "hoof", "offset": [-0.18, 0.04, 0.25], "size": [0.15, 0.06, 0.15], "color": [0.18, 0.11, 0.08, 1],
-         "pivot": [-0.18, 0.30, 0.25], "swing_axis": [1,0,0], "amplitude": 30, "phase": math.pi},
-
-        {"role": "body", "offset": [ 0.18, 0.18, 0.25], "size": [0.14, 0.24, 0.14], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [ 0.18, 0.30, 0.25], "swing_axis": [1,0,0], "amplitude": 30, "phase": 0},
-        {"role": "hoof", "offset": [ 0.18, 0.04, 0.25], "size": [0.15, 0.06, 0.15], "color": [0.18, 0.11, 0.08, 1],
-         "pivot": [ 0.18, 0.30, 0.25], "swing_axis": [1,0,0], "amplitude": 30, "phase": 0},
-
-        # ═══ CURLY TAIL (3-voxel spiral) ═══
-        {"role": "body", "offset": [0,    0.55, 0.43], "size": [0.07, 0.07, 0.08], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [0, 0.50, 0.40], "swing_axis": [0,1,0], "amplitude": 15, "speed": 2},
-        {"role": "body", "offset": [0.05, 0.62, 0.47], "size": [0.06, 0.06, 0.06], "color": [0.88, 0.70, 0.62, 1],
-         "pivot": [0, 0.50, 0.40], "swing_axis": [0,1,0], "amplitude": 18, "speed": 2},
-        {"role": "tail_tip", "offset": [0,    0.68, 0.44], "size": [0.05, 0.05, 0.05], "color": [0.68, 0.42, 0.38, 1],
-         "pivot": [0, 0.50, 0.40], "swing_axis": [0,1,0], "amplitude": 22, "speed": 2},
-    ]
+        {"name": "torso", "role": "body", "offset": [0.0, 0.5625, 0.0], "size": [0.75, 0.625, 1.0], "color": [0.88, 0.7, 0.62, 1.0]},
+        {"role": "belly", "offset": [0.0, 0.2875, 0.0], "size": [0.725, 0.1, 0.95], "color": [0.95, 0.82, 0.76, 1.0]},
+        {"role": "bandana", "offset": [0.0, 0.7, -0.275], "size": [0.775, 0.1, 0.275], "color": [0.92, 0.68, 0.18, 1.0]},
+        {"role": "bandana", "offset": [-0.4, 0.7, -0.275], "size": [0.1, 0.075, 0.125], "color": [0.92, 0.68, 0.18, 1.0]},
+        {"name": "head", "role": "body", "offset": [0.0, 0.6875, -0.5625], "size": [0.55, 0.5, 0.5], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"offset": [-0.1375, 0.75, -0.8188], "size": [0.0375, 0.0375, 0.0125], "color": [0.12, 0.08, 0.08, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"offset": [0.1375, 0.75, -0.8188], "size": [0.0375, 0.0375, 0.0125], "color": [0.12, 0.08, 0.08, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"role": "snout", "offset": [0.0, 0.6, -0.8], "size": [0.3, 0.2, 0.125], "color": [0.72, 0.48, 0.42, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"offset": [-0.075, 0.6, -0.8637], "size": [0.05, 0.0625, 0.0125], "color": [0.04, 0.03, 0.03, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"offset": [0.075, 0.6, -0.8637], "size": [0.05, 0.0625, 0.0125], "color": [0.04, 0.03, 0.03, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"role": "body", "offset": [-0.225, 0.9, -0.525], "size": [0.15, 0.125, 0.2], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"role": "ear_in", "offset": [-0.225, 0.8812, -0.5125], "size": [0.075, 0.075, 0.125], "color": [0.58, 0.38, 0.35, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"role": "body", "offset": [0.225, 0.9, -0.525], "size": [0.15, 0.125, 0.2], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"role": "ear_in", "offset": [0.225, 0.8812, -0.5125], "size": [0.075, 0.075, 0.125], "color": [0.58, 0.38, 0.35, 1.0], "pivot": [0.0, 0.6875, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 8, "speed": 0.5, "head": True},
+        {"role": "body", "offset": [-0.225, 0.225, -0.3125], "size": [0.175, 0.3, 0.175], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [-0.225, 0.375, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 30, "phase": 0},
+        {"role": "hoof", "offset": [-0.225, 0.05, -0.3125], "size": [0.1875, 0.075, 0.1875], "color": [0.18, 0.11, 0.08, 1.0], "pivot": [-0.225, 0.375, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 30, "phase": 0},
+        {"role": "body", "offset": [0.225, 0.225, -0.3125], "size": [0.175, 0.3, 0.175], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [0.225, 0.375, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 30, "phase": 3.1416},
+        {"role": "hoof", "offset": [0.225, 0.05, -0.3125], "size": [0.1875, 0.075, 0.1875], "color": [0.18, 0.11, 0.08, 1.0], "pivot": [0.225, 0.375, -0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 30, "phase": 3.1416},
+        {"role": "body", "offset": [-0.225, 0.225, 0.3125], "size": [0.175, 0.3, 0.175], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [-0.225, 0.375, 0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 30, "phase": 3.1416},
+        {"role": "hoof", "offset": [-0.225, 0.05, 0.3125], "size": [0.1875, 0.075, 0.1875], "color": [0.18, 0.11, 0.08, 1.0], "pivot": [-0.225, 0.375, 0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 30, "phase": 3.1416},
+        {"role": "body", "offset": [0.225, 0.225, 0.3125], "size": [0.175, 0.3, 0.175], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [0.225, 0.375, 0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 30, "phase": 0},
+        {"role": "hoof", "offset": [0.225, 0.05, 0.3125], "size": [0.1875, 0.075, 0.1875], "color": [0.18, 0.11, 0.08, 1.0], "pivot": [0.225, 0.375, 0.3125], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 30, "phase": 0},
+        {"role": "body", "offset": [0.0, 0.6875, 0.5375], "size": [0.0875, 0.0875, 0.1], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [0.0, 0.625, 0.5], "swing_axis": [0.0, 1.0, 0.0], "amplitude": 15, "speed": 2},
+        {"role": "body", "offset": [0.0625, 0.775, 0.5875], "size": [0.075, 0.075, 0.075], "color": [0.88, 0.7, 0.62, 1.0], "pivot": [0.0, 0.625, 0.5], "swing_axis": [0.0, 1.0, 0.0], "amplitude": 18, "speed": 2},
+        {"role": "tail_tip", "offset": [0.0, 0.85, 0.55], "size": [0.0625, 0.0625, 0.0625], "color": [0.68, 0.42, 0.38, 1.0], "pivot": [0.0, 0.625, 0.5], "swing_axis": [0.0, 1.0, 0.0], "amplitude": 22, "speed": 2},
+    ],
 }

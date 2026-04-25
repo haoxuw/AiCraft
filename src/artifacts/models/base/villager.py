@@ -18,153 +18,79 @@ import math
 
 model = {
     "id": "villager",
-    "height": 2.0,
-    "scale": 1.0,
-    "walk_speed": 2.0,
-    "idle_bob": 0.012,
+    "head_pivot": [0.0, 1.5, 0.0],
+    "hand_r": [0.5, 0.72, -0.14],
+    "hand_l": [-0.5, 0.72, -0.14],
+    "pivot_r": [0.37, 1.4, 0.0],
+    "pivot_l": [-0.37, 1.4, 0.0],
     "walk_bob": 0.05,
-    "hand_r":  [ 0.50,  0.72, -0.14],
-    "hand_l":  [-0.50,  0.72, -0.14],
-    "pivot_r": [ 0.37,  1.40,  0.00],
-    "pivot_l": [-0.37,  1.40,  0.00],
-
-    # Head tracking pivot (base of helm / neck joint)
-    "head_pivot": [0, 1.50, 0],
-
+    "idle_bob": 0.012,
+    "walk_speed": 2.0,
     "parts": [
-        # Head (texture provides face + hair -- must be parts[0])
-        {"name": "head", "head": True,
-         "offset": [0, 1.75, 0], "size": [0.50, 0.50, 0.50], "color": [0.85, 0.70, 0.55, 1],
-         "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 4, "phase": 0, "speed": 2},
-        # Helm visor slot (dark horizontal band)
-        {"head": True,
-         "offset": [0, 1.76, -0.255], "size": [0.32, 0.06, 0.01], "color": [0.10, 0.10, 0.12, 1],
-         "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 4, "phase": 0, "speed": 2},
-        # Glowing blue eyes in visor slot
-        {"head": True,
-         "offset": [-0.08, 1.76, -0.262], "size": [0.04, 0.03, 0.01], "color": [0.55, 0.78, 0.95, 1],
-         "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 4, "phase": 0, "speed": 2},
-        {"head": True,
-         "offset": [ 0.08, 1.76, -0.262], "size": [0.04, 0.03, 0.01], "color": [0.55, 0.78, 0.95, 1],
-         "pivot": [0, 1.5, 0], "swing_axis": [1, 0, 0], "amplitude": 4, "phase": 0, "speed": 2},
-        # Torso (Y-axis counter-twist)
-        {"name": "torso",
-         "offset": [0, 1.08, 0], "size": [0.50, 0.64, 0.30], "color": [0.18, 0.32, 0.72, 1],
-         "pivot": [0, 1.08, 0], "swing_axis": [0, 1, 0], "amplitude": 4, "phase": math.pi, "speed": 1},
-        # Chestplate
-        {"offset": [0, 1.12, -0.14], "size": [0.44, 0.52, 0.04], "color": [0.55, 0.58, 0.62, 1]},
-        # Chestplate emblem
-        {"offset": [0, 1.18, -0.17], "size": [0.10, 0.10, 0.02], "color": [0.80, 0.70, 0.20, 1]},
-        # Gorget (narrower in z than torso to avoid coplanar z faces)
-        {"offset": [0, 1.39, 0], "size": [0.46, 0.08, 0.28], "color": [0.55, 0.58, 0.62, 1]},
-        # Belt
-        {"offset": [0, 0.76, 0], "size": [0.52, 0.08, 0.32], "color": [0.35, 0.25, 0.15, 1]},
-        # Belt buckle
-        {"offset": [0, 0.76, -0.15], "size": [0.08, 0.06, 0.04], "color": [0.80, 0.70, 0.20, 1]},
-
-        # Left pauldron
-        {"name": "left_upper_arm",
-         "offset": [-0.37, 1.38, 0], "size": [0.28, 0.12, 0.28], "color": [0.55, 0.58, 0.62, 1],
-         "pivot": [-0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
-        # Left arm
-        {"name": "left_upper_arm",
-         "offset": [-0.37, 1.08, 0], "size": [0.20, 0.56, 0.20], "color": [0.12, 0.22, 0.55, 1],
-         "pivot": [-0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
-        # Left gauntlet
-        {"name": "left_forearm",
-         "offset": [-0.37, 0.86, 0], "size": [0.24, 0.18, 0.24], "color": [0.38, 0.40, 0.45, 1],
-         "pivot": [-0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
-        # Left hand
-        {"name": "left_hand",
-         "offset": [-0.37, 0.77, 0], "size": [0.16, 0.10, 0.16], "color": [0.85, 0.70, 0.55, 1],
-         "pivot": [-0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
-        # Right pauldron
-        {"name": "right_upper_arm",
-         "offset": [0.37, 1.38, 0], "size": [0.28, 0.12, 0.28], "color": [0.55, 0.58, 0.62, 1],
-         "pivot": [0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
-        # Right arm
-        {"name": "right_upper_arm",
-         "offset": [0.37, 1.08, 0], "size": [0.20, 0.56, 0.20], "color": [0.12, 0.22, 0.55, 1],
-         "pivot": [0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
-        # Right gauntlet
-        {"name": "right_forearm",
-         "offset": [0.37, 0.86, 0], "size": [0.24, 0.18, 0.24], "color": [0.38, 0.40, 0.45, 1],
-         "pivot": [0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
-        # Right hand
-        {"name": "right_hand",
-         "offset": [0.37, 0.77, 0], "size": [0.16, 0.10, 0.16], "color": [0.85, 0.70, 0.55, 1],
-         "pivot": [0.37, 1.40, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
-
-        # Cape (gentle sway)
-        {"offset": [0, 0.95, 0.20], "size": [0.44, 0.76, 0.06], "color": [0.14, 0.25, 0.60, 1],
-         "pivot": [0, 1.35, 0.18], "swing_axis": [1, 0, 0], "amplitude": 10, "phase": 0, "speed": 1.2},
-
-        # Left leg
-        {"name": "left_leg",
-         "offset": [-0.13, 0.40, 0], "size": [0.22, 0.48, 0.22], "color": [0.18, 0.18, 0.28, 1],
-         "pivot": [-0.13, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
-        # Left shin guard
-        {"name": "left_leg",
-         "offset": [-0.13, 0.38, -0.12], "size": [0.16, 0.28, 0.04], "color": [0.38, 0.40, 0.45, 1],
-         "pivot": [-0.13, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
-        # Left boot
-        {"name": "left_leg",
-         "offset": [-0.13, 0.10, 0], "size": [0.24, 0.20, 0.26], "color": [0.30, 0.22, 0.14, 1],
-         "pivot": [-0.13, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": 0, "speed": 1},
-        # Right leg
-        {"name": "right_leg",
-         "offset": [0.13, 0.40, 0], "size": [0.22, 0.48, 0.22], "color": [0.18, 0.18, 0.28, 1],
-         "pivot": [0.13, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
-        # Right shin guard
-        {"name": "right_leg",
-         "offset": [0.13, 0.38, -0.12], "size": [0.16, 0.28, 0.04], "color": [0.38, 0.40, 0.45, 1],
-         "pivot": [0.13, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
-        # Right boot
-        {"name": "right_leg",
-         "offset": [0.13, 0.10, 0], "size": [0.24, 0.20, 0.26], "color": [0.30, 0.22, 0.14, 1],
-         "pivot": [0.13, 0.70, 0], "swing_axis": [1, 0, 0], "amplitude": 50, "phase": math.pi, "speed": 1},
+        {"name": "head", "offset": [0.0, 1.75, 0.0], "size": [0.5, 0.5, 0.5], "color": [0.85, 0.7, 0.55, 1.0], "pivot": [0.0, 1.5, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 4, "phase": 0, "speed": 2, "head": True},
+        {"offset": [0.0, 1.76, -0.255], "size": [0.32, 0.06, 0.01], "color": [0.1, 0.1, 0.12, 1.0], "pivot": [0.0, 1.5, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 4, "phase": 0, "speed": 2, "head": True},
+        {"offset": [-0.08, 1.76, -0.262], "size": [0.04, 0.03, 0.01], "color": [0.55, 0.78, 0.95, 1.0], "pivot": [0.0, 1.5, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 4, "phase": 0, "speed": 2, "head": True},
+        {"offset": [0.08, 1.76, -0.262], "size": [0.04, 0.03, 0.01], "color": [0.55, 0.78, 0.95, 1.0], "pivot": [0.0, 1.5, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 4, "phase": 0, "speed": 2, "head": True},
+        {"name": "torso", "offset": [0.0, 1.08, 0.0], "size": [0.5, 0.64, 0.3], "color": [0.18, 0.32, 0.72, 1.0], "pivot": [0.0, 1.08, 0.0], "swing_axis": [0.0, 1.0, 0.0], "amplitude": 4, "phase": 3.1416, "speed": 1},
+        {"offset": [0.0, 1.12, -0.14], "size": [0.44, 0.52, 0.04], "color": [0.55, 0.58, 0.62, 1.0]},
+        {"offset": [0.0, 1.18, -0.17], "size": [0.1, 0.1, 0.02], "color": [0.8, 0.7, 0.2, 1.0]},
+        {"offset": [0.0, 1.39, 0.0], "size": [0.46, 0.08, 0.28], "color": [0.55, 0.58, 0.62, 1.0]},
+        {"offset": [0.0, 0.76, 0.0], "size": [0.52, 0.08, 0.32], "color": [0.35, 0.25, 0.15, 1.0]},
+        {"offset": [0.0, 0.76, -0.15], "size": [0.08, 0.06, 0.04], "color": [0.8, 0.7, 0.2, 1.0]},
+        {"name": "left_upper_arm", "offset": [-0.37, 1.38, 0.0], "size": [0.28, 0.12, 0.28], "color": [0.55, 0.58, 0.62, 1.0], "pivot": [-0.37, 1.4, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 3.1416, "speed": 1},
+        {"name": "left_upper_arm", "offset": [-0.37, 1.08, 0.0], "size": [0.2, 0.56, 0.2], "color": [0.12, 0.22, 0.55, 1.0], "pivot": [-0.37, 1.4, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 3.1416, "speed": 1},
+        {"name": "left_forearm", "offset": [-0.37, 0.86, 0.0], "size": [0.24, 0.18, 0.24], "color": [0.38, 0.4, 0.45, 1.0], "pivot": [-0.37, 1.4, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 3.1416, "speed": 1},
+        {"name": "left_hand", "offset": [-0.37, 0.77, 0.0], "size": [0.16, 0.1, 0.16], "color": [0.85, 0.7, 0.55, 1.0], "pivot": [-0.37, 1.4, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 3.1416, "speed": 1},
+        {"name": "right_upper_arm", "offset": [0.37, 1.38, 0.0], "size": [0.28, 0.12, 0.28], "color": [0.55, 0.58, 0.62, 1.0], "pivot": [0.37, 1.4, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 0, "speed": 1},
+        {"name": "right_upper_arm", "offset": [0.37, 1.08, 0.0], "size": [0.2, 0.56, 0.2], "color": [0.12, 0.22, 0.55, 1.0], "pivot": [0.37, 1.4, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 0, "speed": 1},
+        {"name": "right_forearm", "offset": [0.37, 0.86, 0.0], "size": [0.24, 0.18, 0.24], "color": [0.38, 0.4, 0.45, 1.0], "pivot": [0.37, 1.4, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 0, "speed": 1},
+        {"name": "right_hand", "offset": [0.37, 0.77, 0.0], "size": [0.16, 0.1, 0.16], "color": [0.85, 0.7, 0.55, 1.0], "pivot": [0.37, 1.4, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 0, "speed": 1},
+        {"offset": [0.0, 0.95, 0.2], "size": [0.44, 0.76, 0.06], "color": [0.14, 0.25, 0.6, 1.0], "pivot": [0.0, 1.35, 0.18], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 10, "phase": 0, "speed": 1.2},
+        {"name": "left_leg", "offset": [-0.13, 0.4, 0.0], "size": [0.22, 0.48, 0.22], "color": [0.18, 0.18, 0.28, 1.0], "pivot": [-0.13, 0.7, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 0, "speed": 1},
+        {"name": "left_leg", "offset": [-0.13, 0.38, -0.12], "size": [0.16, 0.28, 0.04], "color": [0.38, 0.4, 0.45, 1.0], "pivot": [-0.13, 0.7, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 0, "speed": 1},
+        {"name": "left_leg", "offset": [-0.13, 0.1, 0.0], "size": [0.24, 0.2, 0.26], "color": [0.3, 0.22, 0.14, 1.0], "pivot": [-0.13, 0.7, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 0, "speed": 1},
+        {"name": "right_leg", "offset": [0.13, 0.4, 0.0], "size": [0.22, 0.48, 0.22], "color": [0.18, 0.18, 0.28, 1.0], "pivot": [0.13, 0.7, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 3.1416, "speed": 1},
+        {"name": "right_leg", "offset": [0.13, 0.38, -0.12], "size": [0.16, 0.28, 0.04], "color": [0.38, 0.4, 0.45, 1.0], "pivot": [0.13, 0.7, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 3.1416, "speed": 1},
+        {"name": "right_leg", "offset": [0.13, 0.1, 0.0], "size": [0.24, 0.2, 0.26], "color": [0.3, 0.22, 0.14, 1.0], "pivot": [0.13, 0.7, 0.0], "swing_axis": [1.0, 0.0, 0.0], "amplitude": 50, "phase": 3.1416, "speed": 1},
     ],
-
-    # ═══════════════ NAMED ANIMATION CLIPS ═══════════════
-    # Shared humanoid clip vocabulary.
     "clips": {
         "attack": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 60, "bias":  30, "speed": 3.0, "phase": 0},
-            "torso":           {"axis": [0, 1, 0], "amp": 10, "speed": 3.0, "phase": 0},
+            "right_upper_arm": {"axis": [1.0, 0.0, 0.0], "amp": 60, "phase": 0, "bias": 30, "speed": 3.0},
+            "right_forearm": {"axis": [1.0, 0.0, 0.0], "amp": 60, "phase": 0, "bias": 30, "speed": 3.0},
+            "right_hand": {"axis": [1.0, 0.0, 0.0], "amp": 60, "phase": 0, "bias": 30, "speed": 3.0},
+            "torso": {"axis": [0.0, 1.0, 0.0], "amp": 10, "phase": 0, "speed": 3.0},
         },
         "chop": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 35, "bias":  70, "speed": 1.2, "phase": 0},
-            "torso":           {"axis": [0, 1, 0], "amp": 8,  "speed": 1.2, "phase": 0},
+            "right_upper_arm": {"axis": [1.0, 0.0, 0.0], "amp": 35, "phase": 0, "bias": 70, "speed": 1.2},
+            "right_forearm": {"axis": [1.0, 0.0, 0.0], "amp": 35, "phase": 0, "bias": 70, "speed": 1.2},
+            "right_hand": {"axis": [1.0, 0.0, 0.0], "amp": 35, "phase": 0, "bias": 70, "speed": 1.2},
+            "torso": {"axis": [0.0, 1.0, 0.0], "amp": 8, "phase": 0, "speed": 1.2},
         },
         "mine": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
-            "right_forearm":   {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
-            "right_hand":      {"axis": [1, 0, 0], "amp": 40, "bias":  60, "speed": 1.4, "phase": 0},
-            "torso":           {"axis": [0, 1, 0], "amp": 6,  "speed": 1.4, "phase": 0},
+            "right_upper_arm": {"axis": [1.0, 0.0, 0.0], "amp": 40, "phase": 0, "bias": 60, "speed": 1.4},
+            "right_forearm": {"axis": [1.0, 0.0, 0.0], "amp": 40, "phase": 0, "bias": 60, "speed": 1.4},
+            "right_hand": {"axis": [1.0, 0.0, 0.0], "amp": 40, "phase": 0, "bias": 60, "speed": 1.4},
+            "torso": {"axis": [0.0, 1.0, 0.0], "amp": 6, "phase": 0, "speed": 1.4},
         },
         "wave": {
-            "right_upper_arm": {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 2.0, "phase": 0},
-            "right_forearm":   {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 2.0, "phase": 0},
-            "right_hand":      {"axis": [0, 0, 1], "amp": 20, "bias": 130, "speed": 2.0, "phase": 0},
+            "right_upper_arm": {"axis": [0.0, 0.0, 1.0], "amp": 20, "phase": 0, "bias": 130, "speed": 2.0},
+            "right_forearm": {"axis": [0.0, 0.0, 1.0], "amp": 20, "phase": 0, "bias": 130, "speed": 2.0},
+            "right_hand": {"axis": [0.0, 0.0, 1.0], "amp": 20, "phase": 0, "bias": 130, "speed": 2.0},
         },
         "dance": {
-            "right_upper_arm": {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.5, "phase": 0},
-            "right_forearm":   {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.5, "phase": 0},
-            "right_hand":      {"axis": [0, 0, 1], "amp": 35, "bias":  80, "speed": 1.5, "phase": 0},
-            "left_upper_arm":  {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.5, "phase": math.pi},
-            "left_forearm":    {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.5, "phase": math.pi},
-            "left_hand":       {"axis": [0, 0, 1], "amp": 35, "bias": -80, "speed": 1.5, "phase": math.pi},
-            "torso":           {"axis": [0, 1, 0], "amp": 15, "speed": 1.5, "phase": 0},
-            "head":            {"axis": [0, 1, 0], "amp": 12, "speed": 1.5, "phase": 1.5708},
+            "right_upper_arm": {"axis": [0.0, 0.0, 1.0], "amp": 35, "phase": 0, "bias": 80, "speed": 1.5},
+            "right_forearm": {"axis": [0.0, 0.0, 1.0], "amp": 35, "phase": 0, "bias": 80, "speed": 1.5},
+            "right_hand": {"axis": [0.0, 0.0, 1.0], "amp": 35, "phase": 0, "bias": 80, "speed": 1.5},
+            "left_upper_arm": {"axis": [0.0, 0.0, 1.0], "amp": 35, "phase": 3.1416, "bias": -80, "speed": 1.5},
+            "left_forearm": {"axis": [0.0, 0.0, 1.0], "amp": 35, "phase": 3.1416, "bias": -80, "speed": 1.5},
+            "left_hand": {"axis": [0.0, 0.0, 1.0], "amp": 35, "phase": 3.1416, "bias": -80, "speed": 1.5},
+            "torso": {"axis": [0.0, 1.0, 0.0], "amp": 15, "phase": 0, "speed": 1.5},
+            "head": {"axis": [0.0, 1.0, 0.0], "amp": 12, "phase": 1.5708, "speed": 1.5},
         },
         "sleep": {
-            "right_upper_arm": {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
-            "left_upper_arm":  {"axis": [1, 0, 0], "amp": 0, "bias": 0, "speed": 0.5, "phase": 0},
-            "torso":           {"axis": [1, 0, 0], "amp": 2, "bias": 0, "speed": 0.5, "phase": 0},
+            "right_upper_arm": {"axis": [1.0, 0.0, 0.0], "amp": 0, "phase": 0, "bias": 0, "speed": 0.5},
+            "left_upper_arm": {"axis": [1.0, 0.0, 0.0], "amp": 0, "phase": 0, "bias": 0, "speed": 0.5},
+            "torso": {"axis": [1.0, 0.0, 0.0], "amp": 2, "phase": 0, "bias": 0, "speed": 0.5},
         },
     },
 }

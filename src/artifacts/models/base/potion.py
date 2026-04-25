@@ -6,19 +6,10 @@ Red = health, Blue = mana, Green = speed.
 
 model = {
     "id": "potion",
-    "height": 0.5,
-    # Held upright in hand
-    "equip": {
-        "rotation": [-10, 0, 0],
-        "offset": [0, 0.0, -0.03],
-        "scale": 0.65,
-    },
+    "equip": {"rotation": [-10.0, 0.0, 0.0], "offset": [0.0, 0.0, -0.03]},
     "parts": [
-        # Bottle body — round, colored glass
-        {"offset": [0, 0.12, 0], "size": [0.12, 0.20, 0.12], "color": [0.80, 0.20, 0.30, 1]},
-        # Neck — narrow
-        {"offset": [0, 0.24, 0], "size": [0.06, 0.08, 0.06], "color": [0.70, 0.15, 0.20, 1]},
-        # Cork — brown cap
-        {"offset": [0, 0.29, 0], "size": [0.08, 0.04, 0.08], "color": [0.50, 0.45, 0.35, 1]},
-    ]
+        {"offset": [0.0, 0.078, 0.0], "size": [0.078, 0.13, 0.078], "color": [0.8, 0.2, 0.3, 1.0]},
+        {"offset": [0.0, 0.156, 0.0], "size": [0.039, 0.052, 0.039], "color": [0.7, 0.15, 0.2, 1.0]},
+        {"offset": [0.0, 0.1885, 0.0], "size": [0.052, 0.026, 0.052], "color": [0.5, 0.45, 0.35, 1.0]},
+    ],
 }

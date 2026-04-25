@@ -5,20 +5,11 @@ Deploys automatically during a fall to slow descent. Red fabric.
 
 model = {
     "id": "parachute",
-    "height": 0.4,
-    "equip": {
-        "rotation": [0, 0, 0],
-        "offset": [0, 0.02, 0.02],
-        "scale": 0.9,
-    },
+    "equip": {"rotation": [0.0, 0.0, 0.0], "offset": [0.0, 0.02, 0.02]},
     "parts": [
-        # Main pack — folded red fabric
-        {"offset": [0, 0.14, 0], "size": [0.16, 0.22, 0.08], "color": [0.85, 0.25, 0.20, 1]},
-        # Flap — top cover
-        {"offset": [0, 0.26, 0], "size": [0.18, 0.03, 0.10], "color": [0.75, 0.20, 0.16, 1]},
-        # Buckle — center clasp
-        {"offset": [0, 0.14, 0.04], "size": [0.04, 0.04, 0.02], "color": [0.55, 0.50, 0.40, 1]},
-        # Strap — webbing
-        {"offset": [0, 0.08, 0.04], "size": [0.12, 0.02, 0.02], "color": [0.25, 0.22, 0.20, 1]},
-    ]
+        {"offset": [0.0, 0.126, 0.0], "size": [0.144, 0.198, 0.072], "color": [0.85, 0.25, 0.2, 1.0]},
+        {"offset": [0.0, 0.234, 0.0], "size": [0.162, 0.027, 0.09], "color": [0.75, 0.2, 0.16, 1.0]},
+        {"offset": [0.0, 0.126, 0.036], "size": [0.036, 0.036, 0.018], "color": [0.55, 0.5, 0.4, 1.0]},
+        {"offset": [0.0, 0.072, 0.036], "size": [0.108, 0.018, 0.018], "color": [0.25, 0.22, 0.2, 1.0]},
+    ],
 }

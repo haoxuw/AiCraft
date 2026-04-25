@@ -254,18 +254,16 @@ void HudRenderer::renderInventoryItems3D() {
 
 		civcraft::BoxModel m = it->second;
 
-		// Uniform world-blocks → slot factor: every item shares the same
-		// scale so a tiny pebble looks small next to a big sword. A
-		// 1-block item exactly fills the slot height; smaller items
-		// proportionally smaller. Outliers > 1 block are capped so they
-		// don't visibly poke out of the slot.
-		float s0 = m.modelScale;
+		// Per-item auto-fit: scale each item so its longest axis fills
+		// 70% of the slot, regardless of true world size. The inventory
+		// slot is a UI container, not the world — readability beats
+		// physical accuracy here.
 		float minX =  1e9f, maxX = -1e9f;
 		float minY =  1e9f, maxY = -1e9f;
 		float minZ =  1e9f, maxZ = -1e9f;
 		for (auto& part : m.parts) {
-			glm::vec3 o = part.offset   * s0;
-			glm::vec3 hs= part.halfSize * s0;
+			glm::vec3 o  = part.offset;
+			glm::vec3 hs = part.halfSize;
 			minX = std::min(minX, o.x - hs.x); maxX = std::max(maxX, o.x + hs.x);
 			minY = std::min(minY, o.y - hs.y); maxY = std::max(maxY, o.y + hs.y);
 			minZ = std::min(minZ, o.z - hs.z); maxZ = std::max(maxZ, o.z + hs.z);
@@ -274,10 +272,7 @@ void HudRenderer::renderInventoryItems3D() {
 		float dy = std::max(maxY - minY, 0.01f);
 		float dz = std::max(maxZ - minZ, 0.01f);
 		float maxDim = std::max(dy, std::max(dx, dz));
-		float scale = slotWorldH;                   // 1 block = 1 slot
-		float maxAllowed = slotWorldH * 0.9f;
-		if (maxDim * scale > maxAllowed)
-			scale = maxAllowed / maxDim;
+		float scale = (slotWorldH * 0.70f) / maxDim;
 		for (auto& part : m.parts) {
 			part.offset   *= scale;
 			part.halfSize *= scale;
