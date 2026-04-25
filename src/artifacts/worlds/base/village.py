@@ -138,12 +138,14 @@ world = {
         {"type": "chicken",       "count": 2, "radius": 3, "spawn_at": "barn"},
         {"type": "brave_chicken", "count": 1, "radius": 3, "spawn_at": "barn"},
 
-        # Altar animals — wander near the portal
-        {"type": "squirrel", "count": 2, "radius": 6, "spawn_at": "portal"},
-        {"type": "raccoon",  "count": 2, "radius": 8, "spawn_at": "portal"},
-        {"type": "beaver",   "count": 1, "radius": 8, "spawn_at": "portal"},
+        # Wildlife scatters around the village interior — keep the gateway
+        # corridor clear so the player walks out into open ground, not a
+        # cluster of squirrels.
+        {"type": "squirrel", "count": 2, "radius": 14, "spawn_at": "monument"},
+        {"type": "raccoon",  "count": 2, "radius": 16, "spawn_at": "monument"},
+        {"type": "beaver",   "count": 1, "radius": 16, "spawn_at": "monument"},
         # Flyers — hover at their spawn Y (gravity_scale=0 in C++)
-        {"type": "bee",      "count": 3, "radius": 4, "spawn_at": "portal", "y_offset": 1},
+        {"type": "bee",      "count": 3, "radius": 12, "spawn_at": "monument", "y_offset": 4},
         # Owl roosts on top of the barn. spawn_at=barn anchors XZ inside the
         # footprint; y_offset=11 clears the 9-high walls + roof. Radius is
         # small so the inside-grid slot lands near barn center, well within

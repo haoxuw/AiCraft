@@ -1071,11 +1071,7 @@ private:
 		BlockId chestB  = blocks.getId(BlockType::Chest);
 		BlockId stairB  = blocks.getId(BlockType::Stair);
 		BlockId glassB  = blocks.getId(BlockType::Glass);
-		// Stamp doors in the open state so villagers can path through on
-		// first approach (closed-door collision would wedge the Navigator
-		// until someone toggled it). Same param2 layout as Door — DoorOpen's
-		// mesher reads the same hinge bit (bit 2).
-		BlockId doorB   = blocks.getId(BlockType::DoorOpen);
+		BlockId doorB   = blocks.getId(BlockType::Door);
 		if (stairB == BLOCK_AIR) stairB = floorB;
 		if (glassB == BLOCK_AIR) glassB = BLOCK_AIR;  // → open hole
 		if (doorB  == BLOCK_AIR) doorB  = BLOCK_AIR;  // → open hole

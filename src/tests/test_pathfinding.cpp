@@ -1434,7 +1434,8 @@ static std::string p14_closed_door_straight_corridor() {
 		if (intent.kind == PathExecutor::Intent::Interact) {
 			if (firstInteractTick < 0) firstInteractTick = t;
 			interactEmits++;
-			interactTarget = intent.interactPos;
+			if (!intent.interactPos.empty())
+				interactTarget = intent.interactPos.front();
 			door.open = !door.open;   // server-side toggle
 			continue;
 		}
@@ -1493,6 +1494,132 @@ static std::string p14_closed_door_straight_corridor() {
 	return "";
 }
 
+// ── P15 — Multi-slab door: open whole cluster + auto-close on exit ────────
+// 2-wide doorway at x=5 (cells (5,0,0) and (5,0,1), each 2 blocks tall).
+// Asserts: (a) the open Interact carries both feet-level slabs in the
+// cluster, (b) a *second* Interact fires after the entity walks past and
+// distance to every slab exceeds kDoorCloseDistance, (c) that close
+// Interact also targets both slabs, (d) the door ends the sim closed.
+static std::string p15_multi_slab_open_and_autoclose() {
+	struct Doors2Wide {
+		glm::ivec3 a, b;          // feet cells of the two slabs
+		bool       open = false;
+	};
+	struct FakeWorld : public WorldView {
+		bool isSolid(glm::ivec3 p) const override { return p.y <= -1; }
+	};
+	struct FakeDoors : public DoorOracle {
+		const Doors2Wide* d;
+		explicit FakeDoors(const Doors2Wide* x) : d(x) {}
+		bool isPart(glm::ivec3 p) const {
+			return p == d->a || p == d->a + glm::ivec3(0, 1, 0)
+			    || p == d->b || p == d->b + glm::ivec3(0, 1, 0);
+		}
+		bool isClosedDoor(glm::ivec3 p) const override {
+			return !d->open && isPart(p);
+		}
+		bool isOpenDoor(glm::ivec3 p) const override {
+			return d->open && isPart(p);
+		}
+	};
+
+	Doors2Wide doors{ glm::ivec3{5, 0, 0}, glm::ivec3{5, 0, 1}, /*open=*/false };
+	FakeWorld   world;
+	FakeDoors   oracle(&doors);
+	GridPlanner planner(world);
+
+	Path path = planner.plan({0, 0, 0}, {10, 0, 0});
+	if (path.partial || path.steps.empty())
+		return "planner failed across 2-wide door corridor";
+
+	printf("\n    plan: steps=%zu partial=%d (door cluster: %s + %s)\n",
+	       path.steps.size(), path.partial ? 1 : 0,
+	       "(5,0,0)", "(5,0,1)");
+
+	constexpr EntityId kEid = 99;
+	PathExecutor exec(&oracle);
+	exec.setWorldView(&world);
+	exec.setPath(kEid, path);
+
+	glm::vec3 pos{0.5f, 0.0f, 0.5f};
+	int    openEmits = 0, closeEmits = 0;
+	int    openTick = -1, closeTick = -1;
+	size_t openCluster = 0, closeCluster = 0;
+	bool   bothInOpen = false, bothInClose = false;
+	int    ticksUsed = 0;
+
+	auto bothSlabsCovered = [&](const std::vector<glm::ivec3>& v) {
+		bool a = false, b = false;
+		for (auto& p : v) {
+			if (p == doors.a || p == doors.a + glm::ivec3(0, 1, 0)) a = true;
+			if (p == doors.b || p == doors.b + glm::ivec3(0, 1, 0)) b = true;
+		}
+		return a && b;
+	};
+
+	for (int t = 0; t < 2400; ++t) {
+		ticksUsed = t;
+		auto intent = exec.tick(kEid, pos);
+
+		if (intent.kind == PathExecutor::Intent::Interact) {
+			if (!doors.open) {
+				openEmits++;
+				if (openTick < 0) openTick = t;
+				openCluster = intent.interactPos.size();
+				bothInOpen  = bothSlabsCovered(intent.interactPos);
+				doors.open  = true;            // server-side toggle
+			} else {
+				closeEmits++;
+				if (closeTick < 0) closeTick = t;
+				closeCluster = intent.interactPos.size();
+				bothInClose  = bothSlabsCovered(intent.interactPos);
+				doors.open   = false;
+			}
+			continue;
+		}
+		if (intent.kind == PathExecutor::Intent::None) break;
+
+		glm::vec3 d = intent.target - pos;
+		d.y = 0;
+		float len = std::sqrt(d.x * d.x + d.z * d.z);
+		if (len > 1e-6f) {
+			glm::vec3 stepVec = d / len * 0.1f;
+			glm::vec3 next    = pos + stepVec;
+			// Closed-door wall ONLY applies on approach. Once the entity
+			// has crossed the door cell once, a re-close behind it must
+			// not snap it backward — that's the auto-close case under test.
+			if (!doors.open && pos.x < (float)doors.a.x
+			    && next.x > (float)doors.a.x - 0.01f)
+				next.x = (float)doors.a.x - 0.01f;
+			pos = next;
+		}
+	}
+
+	printf("    sim: pos=(%.2f,%.2f,%.2f) ticks=%d "
+	       "openEmits=%d@t%d cluster=%zu both=%d  "
+	       "closeEmits=%d@t%d cluster=%zu both=%d  doorOpen=%d\n",
+	       pos.x, pos.y, pos.z, ticksUsed,
+	       openEmits, openTick, openCluster, bothInOpen ? 1 : 0,
+	       closeEmits, closeTick, closeCluster, bothInClose ? 1 : 0,
+	       doors.open ? 1 : 0);
+
+	if (openEmits == 0)
+		return "no open Interact emitted";
+	if (openCluster < 2)
+		return "open cluster < 2 — second slab not BFS'd";
+	if (!bothInOpen)
+		return "open cluster missing one of the 2-wide slabs";
+	if (closeEmits == 0)
+		return "no close Interact after entity walked past — auto-close regressed";
+	if (closeCluster < 2)
+		return "close cluster < 2 — second slab not in openedDoors";
+	if (!bothInClose)
+		return "close cluster missing one of the 2-wide slabs";
+	if (doors.open)
+		return "door left open at sim end";
+	return "";
+}
+
 } // namespace civcraft::test
 
 int main() {
@@ -1533,6 +1660,7 @@ int main() {
 
 	printf("\n--- Door handling ---\n");
 	run("P14: stall-scan opens off-path closed door   ", p14_closed_door_straight_corridor);
+	run("P15: 2-wide door open cluster + auto-close   ", p15_multi_slab_open_and_autoclose);
 
 	int failed = 0;
 	for (auto& r : g_results) if (!r.passed) failed++;

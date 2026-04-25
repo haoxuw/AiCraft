@@ -141,11 +141,22 @@ public:
 	// BlockChange broadcast lags ~1 tick; an un-gated loop would re-
 	// Interact the door we just opened and toggle it closed again.
 	static constexpr int   kInteractCooldownTicks = 15;  // ~0.25 s at 60 Hz
+	// Connected-door BFS — flood-fill horizontal cardinals from the seed
+	// slab so a 2-wide / 4-wide / L-shaped door opens as one unit. Capped
+	// to keep the search bounded under pathological layouts.
+	static constexpr int   kDoorClusterMaxCells = 8;
+	// Auto-close: once entity is this far (XZ) from every previously-
+	// opened slab, fire a closing Interact so the door doesn't sit open.
+	static constexpr float kDoorCloseDistance   = 1.6f;
 
 	struct Intent {
 		enum Kind { None, Move, Interact } kind = None;
 		glm::vec3  target      = {0, 0, 0};
-		glm::ivec3 interactPos = {0, 0, 0};
+		// All connected door slabs to toggle in this Interact. A double-door
+		// (or wider) emits ≥2 entries; the agent fires one ActionProposal per
+		// cell so the whole set opens together. Single-slab doors → size 1.
+		// Vertical stack propagation stays server-side.
+		std::vector<glm::ivec3> interactPos;
 	};
 
 	// Disable to make Build fall back to Walk. Phase 1 = jump-climb only.
@@ -236,6 +247,10 @@ private:
 		// next tick so desiredVel stays C¹-continuous across pops.
 		glm::vec3         lastMoveDir{0, 0, 0};
 		int               interactCooldown = 0;
+		// Slabs we toggled open ourselves — auto-close once we've stepped
+		// far enough away (kDoorCloseDistance). Cleared on the closing
+		// Interact, on cancel, and on a fresh setPath.
+		std::vector<glm::ivec3> openedDoors;
 	};
 
 	struct PendingPlan {
@@ -260,6 +275,10 @@ private:
 		return {w.pos.x + 0.5f, (float)w.pos.y, w.pos.z + 0.5f};
 	}
 	bool reached(const Waypoint& w, const glm::vec3& pos) const;
+	// BFS the connected closed-door cluster (4-cardinal horizontal,
+	// same Y) starting at `seed`. Always includes seed. Capped at
+	// kDoorClusterMaxCells.
+	std::vector<glm::ivec3> findConnectedDoorSlabs(glm::ivec3 seed) const;
 	// Deflect `target` toward the best standable cardinal neighbour when the
 	// straight-line approach would clip a wall. No-op when m_world is unset.
 	glm::vec3 slideAroundObstacle(const glm::vec3& pos, glm::vec3 target,
@@ -288,7 +307,8 @@ public:
 	struct Step {
 		enum Kind { None, Move, Interact } kind = None;
 		glm::vec3  moveTarget  = {0, 0, 0};     // world-space cell center
-		glm::ivec3 interactPos = {0, 0, 0};     // door cell to toggle
+		// Connected door slabs to toggle (≥1 — multi for double/wide doors).
+		std::vector<glm::ivec3> interactPos;
 	};
 
 	Navigator(const WorldView& world, const DoorOracle* doors = nullptr);

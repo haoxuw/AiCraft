@@ -859,12 +859,16 @@ private:
 			m_lastMoveDir = dir;
 			sendMove(e, dir * e.def().walk_speed, server, "nav-waypoint");
 		} else if (step.kind == Navigator::Step::Interact) {
-			ActionProposal p;
-			p.type          = ActionProposal::Interact;
-			p.actorId       = m_eid;
-			p.blockPos      = step.interactPos;
-			p.appearanceIdx = -1;  // legacy toggle (door)
-			server.sendAction(p);
+			// One Interact per connected door slab — server fans toggle
+			// vertically through the pillar; we cover the horizontal cluster.
+			for (auto pos : step.interactPos) {
+				ActionProposal p;
+				p.type          = ActionProposal::Interact;
+				p.actorId       = m_eid;
+				p.blockPos      = pos;
+				p.appearanceIdx = -1;  // legacy toggle (door)
+				server.sendAction(p);
+			}
 			sendStopMove(e, server, "nav-interact");
 		} else {
 			sendStopMove(e, server, "nav-unknown");

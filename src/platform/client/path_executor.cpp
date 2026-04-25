@@ -21,6 +21,7 @@ void PathExecutor::setPath(EntityId eid, Path p) {
 	u.slideLockDir = glm::ivec3(0);
 	u.lastMoveDir  = glm::vec3(0);       // first smoothed-dir call snaps
 	u.interactCooldown = 0;
+	u.openedDoors.clear();
 }
 
 void PathExecutor::cancel(EntityId eid) {
@@ -112,6 +113,32 @@ glm::vec3 PathExecutor::slideAroundObstacle(const glm::vec3& pos,
 	         pos.z + (float)bestOff.z * len };
 }
 
+// BFS the closed-door cluster horizontally from `seed`. Same Y plane,
+// 4-cardinal neighbours; the server's resolveInteractAction fans the
+// resulting toggle vertically through the door pillar (dy ±8). Cap
+// keeps the search bounded.
+std::vector<glm::ivec3> PathExecutor::findConnectedDoorSlabs(
+		glm::ivec3 seed) const {
+	std::vector<glm::ivec3> out;
+	if (!m_doors) return out;
+	out.push_back(seed);
+	size_t head = 0;
+	while (head < out.size() && (int)out.size() < kDoorClusterMaxCells) {
+		glm::ivec3 c = out[head++];
+		const glm::ivec3 nbrs[4] = {
+			{c.x + 1, c.y, c.z}, {c.x - 1, c.y, c.z},
+			{c.x, c.y, c.z + 1}, {c.x, c.y, c.z - 1}};
+		for (auto n : nbrs) {
+			if (!m_doors->isClosedDoor(n)) continue;
+			bool seen = false;
+			for (auto p : out) if (p == n) { seen = true; break; }
+			if (!seen) out.push_back(n);
+			if ((int)out.size() >= kDoorClusterMaxCells) break;
+		}
+	}
+	return out;
+}
+
 // Pop-front consumer. A waypoint retires only when reached() (kMagnetRadius
 // around its center). Scan-forward finds the deepest reached waypoint and
 // pops up through it — a single pass handles normal advance AND multi-
@@ -124,6 +151,38 @@ PathExecutor::Intent PathExecutor::tick(EntityId eid,
 	Unit& u = it->second;
 
 	if (u.interactCooldown > 0) --u.interactCooldown;
+
+	// Auto-close: once we're ≥ kDoorCloseDistance from every slab we
+	// opened ourselves, toggle them shut on the way out. We re-check
+	// isOpenDoor so a second entity walking through doesn't get its
+	// door slammed by stale state.
+	if (!u.openedDoors.empty() && u.interactCooldown == 0) {
+		float minDist2 = 1e30f;
+		for (auto& d : u.openedDoors) {
+			float dx = entityPos.x - ((float)d.x + 0.5f);
+			float dz = entityPos.z - ((float)d.z + 0.5f);
+			float r2 = dx * dx + dz * dz;
+			if (r2 < minDist2) minDist2 = r2;
+		}
+		if (minDist2 > kDoorCloseDistance * kDoorCloseDistance) {
+			std::vector<glm::ivec3> stillOpen;
+			if (m_doors) {
+				for (auto& d : u.openedDoors)
+					if (m_doors->isOpenDoor(d)) stillOpen.push_back(d);
+			}
+			u.openedDoors.clear();
+			if (!stillOpen.empty()) {
+				u.interactCooldown = kInteractCooldownTicks;
+				Intent i;
+				i.kind        = Intent::Interact;
+				i.target      = {(float)stillOpen[0].x + 0.5f,
+				                 (float)stillOpen[0].y,
+				                 (float)stillOpen[0].z + 0.5f};
+				i.interactPos = std::move(stillOpen);
+				return i;
+			}
+		}
+	}
 
 	// Two stall thresholds: kDoorScanTicks probes for a closed door
 	// ahead; kStallTicks pops the front waypoint. Both reset on move.
@@ -168,7 +227,8 @@ PathExecutor::Intent PathExecutor::tick(EntityId eid,
 				Intent i;
 				i.kind        = Intent::Interact;
 				i.target      = {probe.x + 0.5f, (float)probe.y, probe.z + 0.5f};
-				i.interactPos = probe;
+				i.interactPos = findConnectedDoorSlabs(probe);
+				u.openedDoors = i.interactPos;
 				return i;
 			}
 		}
@@ -207,7 +267,8 @@ PathExecutor::Intent PathExecutor::tick(EntityId eid,
 				Intent i;
 				i.kind        = Intent::Interact;
 				i.target      = center;
-				i.interactPos = front.pos;
+				i.interactPos = findConnectedDoorSlabs(front.pos);
+				u.openedDoors = i.interactPos;
 				return i;
 			}
 			return Intent{Intent::Move, center, {}};
@@ -640,7 +701,7 @@ Navigator::Step Navigator::tick(const glm::vec3& entityPos) {
 		m_status        = Status::OpeningDoor;
 		out.kind        = Step::Interact;
 		out.moveTarget  = intent.target;
-		out.interactPos = intent.interactPos;
+		out.interactPos = std::move(intent.interactPos);
 	} else {
 		m_status  = Status::Arrived;
 		m_hasGoal = false;
