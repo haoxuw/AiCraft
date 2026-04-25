@@ -691,8 +691,11 @@ private:
 				server.chunks(), server.blockRegistry());
 			m_navDoors = std::make_unique<ChunkDoorOracle>(
 				server.chunks(), server.blockRegistry());
+			m_navProx = std::make_unique<ServerEntityProximityOracle>(
+				server, m_eid);
 			m_navigator = std::make_unique<Navigator>(
 				*m_navWorldView, m_navDoors.get());
+			m_navigator->setEntityProximityOracle(m_navProx.get());
 			m_navLastGoal    = glm::ivec3(INT_MIN);
 			m_navPrevStatus  = Navigator::Status::Idle;
 		}
@@ -1111,8 +1114,9 @@ private:
 	// WorldView/Oracle hold ChunkSource& + BlockRegistry& refs into the
 	// ServerInterface; unique_ptr keeps their addresses stable because
 	// Navigator captures the WorldView by ref.
-	std::unique_ptr<ChunkWorldView>  m_navWorldView;
-	std::unique_ptr<ChunkDoorOracle> m_navDoors;
+	std::unique_ptr<ChunkWorldView>             m_navWorldView;
+	std::unique_ptr<ChunkDoorOracle>            m_navDoors;
+	std::unique_ptr<ServerEntityProximityOracle> m_navProx;
 	std::unique_ptr<Navigator>             m_navigator;
 	glm::ivec3                             m_navLastGoal{INT_MIN};
 	Navigator::Status                      m_navPrevStatus = Navigator::Status::Idle;

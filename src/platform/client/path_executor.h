@@ -80,6 +80,39 @@ struct ChunkDoorOracle : public DoorOracle {
 	}
 };
 
+// Server-backed proximity oracle — iterates live entities to answer the
+// auto-close politeness check. Cells are doorway block cells; we compare
+// against each entity's XZ. Y is ignored (a doorway is conceptually a 2D
+// gap on the map even though slabs span 2 blocks vertically).
+//
+// `ownerEid` is the real entity id of whoever owns this oracle (i.e. the
+// NPC whose Navigator we belong to). Navigator hands the executor a
+// kSelfEid sentinel internally, so the `selfId` arg from the executor is
+// not the right "self" to exclude — we ignore it and exclude `ownerEid`.
+// In multi-unit RTS mode (different code path) the executor passes real
+// ids, but RTS doesn't currently install a proximity oracle.
+struct ServerEntityProximityOracle : public EntityProximityOracle {
+	ServerInterface& server;
+	EntityId         ownerEid;
+	ServerEntityProximityOracle(ServerInterface& s, EntityId e)
+		: server(s), ownerEid(e) {}
+	bool entityNearAny(const std::vector<glm::ivec3>& cells, float radius,
+	                   EntityId /*selfFromExec*/) const override {
+		const float r2 = radius * radius;
+		bool hit = false;
+		server.forEachEntity([&](Entity& e) {
+			if (hit) return;
+			if (e.id() == ownerEid) return;
+			for (auto& c : cells) {
+				float dx = e.position.x - ((float)c.x + 0.5f);
+				float dz = e.position.z - ((float)c.z + 0.5f);
+				if (dx * dx + dz * dz < r2) { hit = true; return; }
+			}
+		});
+		return hit;
+	}
+};
+
 // Rotate `cur` toward `des` in XZ by at most `maxRad` radians. Used to
 // cap per-tick velocity-heading change so waypoint pops don't snap the
 // direction. Zero `cur` snaps to `des` (first tick). Returns unit XZ.
@@ -148,6 +181,10 @@ public:
 	// Auto-close: once entity is this far (XZ) from every previously-
 	// opened slab, fire a closing Interact so the door doesn't sit open.
 	static constexpr float kDoorCloseDistance   = 1.6f;
+	// Don't close if anyone else is standing within this radius of the
+	// doorway — closing in someone's face is rude. Buffer of ~0.5 over
+	// the largest typical entity AABB half-width keeps us conservative.
+	static constexpr float kDoorPolitenessRadius = 1.5f;
 
 	struct Intent {
 		enum Kind { None, Move, Interact } kind = None;
@@ -175,6 +212,9 @@ public:
 	// Optional — enables wall-slide in tick(). Null = slide is a no-op, which
 	// matches test harnesses that plan over an AirWorld.
 	void setWorldView(const WorldView* world) { m_world = world; }
+	// Optional — enables auto-close politeness check. Null = skip the check
+	// (close fires whenever distance threshold is met).
+	void setEntityProximityOracle(const EntityProximityOracle* o) { m_entities = o; }
 
 	// ── Per-entity primitive ──────────────────────────────────────────
 	// Install a Path for one entity. Overwrites any existing path. Clearing
@@ -267,6 +307,7 @@ private:
 	std::unordered_map<EntityId, Unit> m_units;
 	const DoorOracle*                  m_doors       = nullptr;
 	const WorldView*                   m_world       = nullptr;
+	const EntityProximityOracle*       m_entities    = nullptr;
 	std::shared_ptr<PendingPlan>       m_pending;
 	CommandKind                        m_kind        = CommandKind::Walk;
 	bool                               m_builderMode = false;
@@ -323,6 +364,11 @@ public:
 	Step tick(const glm::vec3& entityPos);
 
 	void   clear();
+	// Optional politeness oracle for the auto-close path — see
+	// PathExecutor::setEntityProximityOracle.
+	void   setEntityProximityOracle(const EntityProximityOracle* o) {
+		m_exec.setEntityProximityOracle(o);
+	}
 	bool   hasGoal() const   { return m_hasGoal; }
 	Status status() const    { return m_status; }
 	glm::ivec3 goal() const  { return m_goal; }

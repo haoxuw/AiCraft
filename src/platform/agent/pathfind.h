@@ -153,6 +153,17 @@ struct DoorOracle {
 	virtual bool isOpenDoor  (glm::ivec3 p) const = 0;
 };
 
+// Optional proximity oracle. Used by PathExecutor's auto-close path to
+// avoid slamming a door in another entity's face: returns true if any
+// entity (other than `selfId`) is within `radius` (XZ) of any of the
+// queried block-cell centers.
+struct EntityProximityOracle {
+	virtual ~EntityProximityOracle() = default;
+	virtual bool entityNearAny(const std::vector<glm::ivec3>& cells,
+	                           float radius,
+	                           EntityId selfId) const = 0;
+};
+
 // PathExecutor and Navigator moved to client/path_executor.h — one unified
 // class serves both single-entity NPC nav and multi-entity RTS group commands.
 // This header keeps only the planner-side types (WorldView, GridPlanner, Path,

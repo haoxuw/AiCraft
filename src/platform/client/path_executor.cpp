@@ -155,7 +155,9 @@ PathExecutor::Intent PathExecutor::tick(EntityId eid,
 	// Auto-close: once we're ≥ kDoorCloseDistance from every slab we
 	// opened ourselves, toggle them shut on the way out. We re-check
 	// isOpenDoor so a second entity walking through doesn't get its
-	// door slammed by stale state.
+	// door slammed by stale state. Politeness gate: if another entity
+	// is within kDoorPolitenessRadius of the doorway, defer — keep
+	// openedDoors set so we retry next tick once they've moved.
 	if (!u.openedDoors.empty() && u.interactCooldown == 0) {
 		float minDist2 = 1e30f;
 		for (auto& d : u.openedDoors) {
@@ -165,21 +167,25 @@ PathExecutor::Intent PathExecutor::tick(EntityId eid,
 			if (r2 < minDist2) minDist2 = r2;
 		}
 		if (minDist2 > kDoorCloseDistance * kDoorCloseDistance) {
-			std::vector<glm::ivec3> stillOpen;
-			if (m_doors) {
-				for (auto& d : u.openedDoors)
-					if (m_doors->isOpenDoor(d)) stillOpen.push_back(d);
-			}
-			u.openedDoors.clear();
-			if (!stillOpen.empty()) {
-				u.interactCooldown = kInteractCooldownTicks;
-				Intent i;
-				i.kind        = Intent::Interact;
-				i.target      = {(float)stillOpen[0].x + 0.5f,
-				                 (float)stillOpen[0].y,
-				                 (float)stillOpen[0].z + 0.5f};
-				i.interactPos = std::move(stillOpen);
-				return i;
+			bool blocked = m_entities && m_entities->entityNearAny(
+				u.openedDoors, kDoorPolitenessRadius, eid);
+			if (!blocked) {
+				std::vector<glm::ivec3> stillOpen;
+				if (m_doors) {
+					for (auto& d : u.openedDoors)
+						if (m_doors->isOpenDoor(d)) stillOpen.push_back(d);
+				}
+				u.openedDoors.clear();
+				if (!stillOpen.empty()) {
+					u.interactCooldown = kInteractCooldownTicks;
+					Intent i;
+					i.kind        = Intent::Interact;
+					i.target      = {(float)stillOpen[0].x + 0.5f,
+					                 (float)stillOpen[0].y,
+					                 (float)stillOpen[0].z + 0.5f};
+					i.interactPos = std::move(stillOpen);
+					return i;
+				}
 			}
 		}
 	}

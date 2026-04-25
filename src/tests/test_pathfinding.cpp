@@ -1620,6 +1620,169 @@ static std::string p15_multi_slab_open_and_autoclose() {
 	return "";
 }
 
+// ── P16 — Auto-close politeness: don't slam in someone else's face ────────
+// Same 2-wide doorway as P15. After entity walks through, a *second*
+// entity stands at the doorway. The auto-close must DEFER while that
+// blocker is present, then fire as soon as the blocker steps away.
+// Asserts: (1) no close while blocker is within kDoorPolitenessRadius,
+// (2) close fires within ~1 cooldown window after blocker leaves,
+// (3) door ends closed.
+static std::string p16_autoclose_waits_for_blocker() {
+	struct Doors2Wide { glm::ivec3 a, b; bool open = false; };
+	struct FakeWorld  : public WorldView {
+		bool isSolid(glm::ivec3 p) const override { return p.y <= -1; }
+	};
+	struct FakeDoors : public DoorOracle {
+		const Doors2Wide* d;
+		explicit FakeDoors(const Doors2Wide* x) : d(x) {}
+		bool isPart(glm::ivec3 p) const {
+			return p == d->a || p == d->a + glm::ivec3(0, 1, 0)
+			    || p == d->b || p == d->b + glm::ivec3(0, 1, 0);
+		}
+		bool isClosedDoor(glm::ivec3 p) const override { return !d->open && isPart(p); }
+		bool isOpenDoor  (glm::ivec3 p) const override { return  d->open && isPart(p); }
+	};
+	// Blocker position is mutated by the sim — when it's "present" we
+	// place it right in the doorway; "absent" we move it far away so
+	// the radius check is unambiguously clear.
+	struct MutableBlocker { glm::vec3 pos{1000.f, 0.f, 1000.f}; };
+	struct FakeProx : public EntityProximityOracle {
+		const MutableBlocker* b;
+		explicit FakeProx(const MutableBlocker* x) : b(x) {}
+		bool entityNearAny(const std::vector<glm::ivec3>& cells, float radius,
+		                   EntityId /*self*/) const override {
+			float r2 = radius * radius;
+			for (auto& c : cells) {
+				float dx = b->pos.x - ((float)c.x + 0.5f);
+				float dz = b->pos.z - ((float)c.z + 0.5f);
+				if (dx * dx + dz * dz < r2) return true;
+			}
+			return false;
+		}
+	};
+
+	Doors2Wide      doors{ glm::ivec3{5, 0, 0}, glm::ivec3{5, 0, 1}, false };
+	FakeWorld       world;
+	FakeDoors       oracle(&doors);
+	MutableBlocker  blocker;
+	FakeProx        prox(&blocker);
+	GridPlanner     planner(world);
+
+	Path path = planner.plan({0, 0, 0}, {10, 0, 0});
+	if (path.partial || path.steps.empty())
+		return "planner failed across 2-wide door corridor";
+
+	constexpr EntityId kEid = 99;
+	PathExecutor exec(&oracle);
+	exec.setWorldView(&world);
+	exec.setEntityProximityOracle(&prox);
+	exec.setPath(kEid, path);
+
+	glm::vec3 pos{0.5f, 0.0f, 0.5f};
+	int  closeEmits = 0;
+	int  closeTick  = -1;
+	int  blockerArrivedAt = -1;
+	int  blockerLeftAt    = -1;
+	bool blockerPresent = false;
+	int  closeAttemptsWhileBlocked = 0;
+	int  ticksUsed = 0;
+
+	for (int t = 0; t < 2400; ++t) {
+		ticksUsed = t;
+
+		// Mid-sim event sequence: as soon as the entity has cleared the
+		// door cell, plant a blocker at the doorway. Hold for 200 ticks
+		// (well over the 15-tick cooldown so we can confirm DEFERRAL,
+		// not just luck of timing). Then move the blocker far away so
+		// the close should fire shortly after.
+		if (!blockerPresent && pos.x > (float)doors.a.x + 0.5f
+		    && doors.open && closeTick < 0) {
+			blocker.pos = { (float)doors.a.x + 0.5f, 0.0f,
+			                (float)doors.a.z + 0.5f };
+			blockerPresent  = true;
+			blockerArrivedAt = t;
+		}
+		if (blockerPresent && blockerArrivedAt >= 0
+		    && t - blockerArrivedAt > 200) {
+			blocker.pos = {1000.0f, 0.0f, 1000.0f};
+			blockerLeftAt = t;
+			blockerPresent = false;
+		}
+
+		auto intent = exec.tick(kEid, pos);
+
+		if (intent.kind == PathExecutor::Intent::Interact) {
+			if (!doors.open) {
+				doors.open = true;     // open
+			} else {
+				if (closeTick < 0) closeTick = t;
+				closeEmits++;
+				doors.open = false;
+			}
+			continue;
+		}
+
+		// Hidden bookkeeping: count *attempted* close windows while blocked.
+		// A "close attempt" is when interactCooldown==0 + entity is past the
+		// door + door is open. The executor checks all this internally; we
+		// approximate from outside by counting eligible ticks.
+		if (blockerPresent && doors.open
+		    && pos.x > (float)doors.a.x + (float)PathExecutor::kDoorCloseDistance + 0.5f) {
+			closeAttemptsWhileBlocked++;
+		}
+
+		if (intent.kind == PathExecutor::Intent::None) {
+			// If we've finished walking but the close hasn't fired yet
+			// (e.g. blocker still standing there), let the executor keep
+			// ticking. setPath is exhausted but openedDoors stays set.
+			if (closeTick < 0) continue;
+			break;
+		}
+
+		glm::vec3 d = intent.target - pos;
+		d.y = 0;
+		float len = std::sqrt(d.x * d.x + d.z * d.z);
+		if (len > 1e-6f) {
+			glm::vec3 stepVec = d / len * 0.1f;
+			glm::vec3 next    = pos + stepVec;
+			if (!doors.open && pos.x < (float)doors.a.x
+			    && next.x > (float)doors.a.x - 0.01f)
+				next.x = (float)doors.a.x - 0.01f;
+			pos = next;
+		}
+	}
+
+	printf("    sim: pos=(%.2f,%.2f,%.2f) ticks=%d "
+	       "blockerArrived@%d blockerLeft@%d closeAttemptsWhileBlocked=%d "
+	       "closeEmits=%d closeTick=%d doorOpen=%d\n",
+	       pos.x, pos.y, pos.z, ticksUsed,
+	       blockerArrivedAt, blockerLeftAt, closeAttemptsWhileBlocked,
+	       closeEmits, closeTick, doors.open ? 1 : 0);
+
+	if (blockerArrivedAt < 0)
+		return "test setup: blocker was never planted";
+	if (closeAttemptsWhileBlocked < 5)
+		return "test setup: not enough eligible close-attempt ticks while blocked";
+	if (closeTick >= 0 && blockerLeftAt < 0)
+		return "close fired before blocker was even removed — politeness gate failed";
+	if (closeTick >= 0 && closeTick < blockerLeftAt)
+		return "close fired while blocker was still present — politeness gate failed";
+	if (closeEmits == 0)
+		return "close never fired even after blocker left";
+	if (doors.open)
+		return "door left open at sim end";
+	// Sanity: close should fire within ~2 cooldown windows of the blocker leaving.
+	int latency = closeTick - blockerLeftAt;
+	if (latency > 2 * PathExecutor::kInteractCooldownTicks + 5) {
+		char buf[160];
+		snprintf(buf, sizeof(buf),
+			"close-after-clear latency too high: %d ticks (cap %d)",
+			latency, 2 * PathExecutor::kInteractCooldownTicks + 5);
+		return buf;
+	}
+	return "";
+}
+
 } // namespace civcraft::test
 
 int main() {
@@ -1661,6 +1824,7 @@ int main() {
 	printf("\n--- Door handling ---\n");
 	run("P14: stall-scan opens off-path closed door   ", p14_closed_door_straight_corridor);
 	run("P15: 2-wide door open cluster + auto-close   ", p15_multi_slab_open_and_autoclose);
+	run("P16: auto-close defers for blocker in doorway", p16_autoclose_waits_for_blocker);
 
 	int failed = 0;
 	for (auto& r : g_results) if (!r.passed) failed++;
