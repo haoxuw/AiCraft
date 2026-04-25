@@ -136,9 +136,16 @@ define run_under_perf
 	for f in $$(ls -t /tmp/civcraft_flamegraph_combined_*.svg 2>/dev/null | head -1); do \
 	    echo "  flamegraph (combined):  $$f"; \
 	done; \
-	if ls /tmp/civcraft_flamegraph_*_*.svg >/dev/null 2>&1; then \
+	if ls -t /tmp/civcraft_flamegraph_client_*.svg >/dev/null 2>&1; then \
 	    echo "                          (also: /tmp/civcraft_flamegraph_{client,server,combined}.svg → newest)"; \
 	    echo "                          inspect older runs:  make flamegraph N=2"; \
+	elif [ "$$can_perf" = "0" ]; then \
+	    echo "  flamegraph:             SKIPPED — bare run, perf record disabled (see [make] note above)"; \
+	    if [ "$$paranoid" -gt 2 ]; then \
+	        echo "                          fix:  sudo sysctl kernel.perf_event_paranoid=2"; \
+	    fi; \
+	else \
+	    echo "  flamegraph:             SKIPPED — flamegraph.pl/stackcollapse-perf.pl not on PATH"; \
 	fi; \
 	[ -f $(PERF_DATA) ]   && echo "  perf record data:       $(PERF_DATA)"; \
 	[ -f $(PERF_REPORT) ] && echo "  perf top-30 report:     $(PERF_REPORT)"; \
