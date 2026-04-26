@@ -352,9 +352,14 @@ bbmodel:
 server: build
 	cd $(BUILD_DIR) && ./solarium-server --port $(PORT)
 
-# GUI client: shows menu with "Start game" and "Join a game" tabs
+# GUI client (production-style: no perf record, no gdb).
+#   bare       → CEF main menu (Singleplayer / Multiplayer / Handbook / Settings / Quit)
+#   HOST=X PORT=N → menu boots straight to the character picker with the
+#                   network transport pre-targeted at that server, so the
+#                   next character pick connects to it.
 client: build
-	cd $(BUILD_DIR) && ./solarium-ui-vk$(if $(HOST), --host $(HOST) --port $(PORT),)
+	cd $(BUILD_DIR) && \
+	$(if $(HOST),SOLARIUM_BOOT_PAGE=chars )./solarium-ui-vk --cef-menu$(if $(HOST), --host $(HOST) --port $(PORT),)
 
 stop:
 	@-pgrep -x solarium-ui-vk 2>/dev/null | xargs -r kill ; true
