@@ -213,6 +213,8 @@ public:
 	// Read-only access for the CEF menu page builder, which renders the
 	// playable list into the character-select HTML at startup.
 	const solarium::ArtifactRegistry& artifactRegistry() const { return m_artifactRegistry; }
+	const solarium::LanBrowser&       lanBrowser()       const { return m_lanBrowser; }
+	solarium::ServerInterface*        server()                 { return m_server; }
 
 	// Poll input, step sim, render one frame.
 	void runOneFrame(float dt, float wallTime);

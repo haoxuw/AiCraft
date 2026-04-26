@@ -422,31 +422,201 @@ int main(int argc, char** argv) {
 			return html;
 		};
 
-		auto placeholderPage = [&](const std::string& title,
-		                            const std::string& body) -> std::string {
-			return "data:text/html,<html><head><style>" + kCss +
+		// HTML-escape the bare minimum: ", <, >, &, %, '. We pass URLs as
+		// data: with a leading "data:text/html," so any '%' that isn't part
+		// of a percent-escape will look malformed. URL-encoding inline:
+		auto enc = [](const std::string& s) -> std::string {
+			std::string o; o.reserve(s.size() + 16);
+			for (char c : s) {
+				switch (c) {
+					case '"': o += "&quot;"; break;
+					case '<': o += "&lt;";   break;
+					case '>': o += "&gt;";   break;
+					case '&': o += "&amp;";  break;
+					case '\'':o += "&#39;";  break;
+					case '%': o += "%25";    break;  // data: URL escape
+					default:  o += c;
+				}
+			}
+			return o;
+		};
+
+		auto settingsPage = [&]() -> std::string {
+			std::string html = "data:text/html,<html><head><style>" + kCss +
+				"table{border-collapse:collapse;margin-bottom:32px}"
+				"td{padding:8px 24px;font-size:18px;letter-spacing:1px;"
+				"border-bottom:1px solid rgba(184,136,56,0.25)}"
+				"td:first-child{color:%23b88838;text-align:right;width:200px}"
+				"td:last-child{color:%23f0e0c0;font-family:monospace}"
 				"</style></head><body>"
-				"<h1>" + title + "</h1>"
-				"<div class='tag'>" + body + "</div>"
+				"<h1>Settings</h1>"
+				"<div class='tag'>Controls reference</div>"
+				"<table>";
+			struct KV { const char* k; const char* v; };
+			static const KV kvs[] = {
+				{"Move",           "WASD"},        {"Jump",           "Space"},
+				{"Sprint",         "Shift"},       {"Look",           "Mouse"},
+				{"Attack / Place", "LMB / RMB"},   {"Drop",           "Q"},
+				{"Inventory",      "Tab"},         {"Handbook",       "H"},
+				{"Camera",         "V"},           {"Pause",          "Esc"},
+				{"Debug / Tuning", "F3 / F6"},     {"Screenshot",     "F2"},
+			};
+			for (auto& kv : kvs)
+				html += std::string("<tr><td>") + kv.k + "</td><td>" + kv.v + "</td></tr>";
+			html += "</table>"
 				"<button class='btn back' onclick=\"send('back')\">Back</button>"
 				"<div class='version'>v0.2.0 / CEF 146</div>" + kJs +
 				"</body></html>";
+			return html;
 		};
 
-		// Captured by ref in the action callback below.
-		static std::string sMain   = mainPage();
-		static std::string sChar   = charSelectPage();
-		static std::string sMulti  = placeholderPage("Multiplayer", "LAN browser coming soon");
-		static std::string sHand   = placeholderPage("Handbook", "Handbook moving to HTML soon");
-		static std::string sSett   = placeholderPage("Settings", "Controls + tuning coming soon");
+		// Handbook is rebuilt fresh each click — the artifact registry is
+		// stable but the CSS extras + layout choices are easier to iterate
+		// when not cached. JS-driven category tabs avoid round-tripping to
+		// C++ for in-page filtering.
+		auto handbookPage = [&]() -> std::string {
+			struct Group { const char* label; std::vector<const char*> cats; };
+			static const Group groups[] = {
+				{"Creatures", {"living"}},
+				{"Items",     {"item", "effect", "resource"}},
+				{"World",     {"block", "structure", "annotation", "world"}},
+				{"Gameplay",  {"behavior"}},
+				{"Modding",   {"model"}},
+			};
+			std::string html = "data:text/html,<html><head><style>" + kCss +
+				"h1{font-size:48px;letter-spacing:6px;margin-top:24px}"
+				"body{justify-content:flex-start;padding-top:40px;height:auto;min-height:100vh;"
+				"box-sizing:border-box}"
+				".hb-tabs{display:flex;gap:8px;margin:0 0 24px}"
+				".hb-tab{padding:8px 18px;font-size:14px;letter-spacing:2px;"
+				"background:rgba(26,18,11,0.78);color:%23b88838;border:1px solid %23b88838;"
+				"cursor:pointer;font-family:inherit;text-transform:uppercase}"
+				".hb-tab.on{background:rgba(94,67,30,0.92);color:%23f3c44c}"
+				".hb-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));"
+				"gap:12px;width:90%%;max-width:1100px}"
+				".hb-card{background:rgba(26,18,11,0.78);border:1px solid %23b88838;"
+				"padding:14px 18px}"
+				".hb-card h3{margin:0 0 6px;color:%23f3c44c;font-size:18px;letter-spacing:2px}"
+				".hb-card .cat{font-size:11px;color:%23b88838;letter-spacing:2px;text-transform:uppercase}"
+				".hb-card p{margin:8px 0 0;font-size:13px;line-height:1.4;opacity:0.85}"
+				".hb-empty{opacity:0.5;font-style:italic;margin:40px}"
+				"</style></head><body>"
+				"<h1>Handbook</h1>"
+				"<div class='hb-tabs'>";
+			for (size_t i = 0; i < std::size(groups); ++i) {
+				html += "<div class='hb-tab" + std::string(i == 0 ? " on" : "") +
+				        "' data-grp='" + std::to_string(i) +
+				        "' onclick=\"hbtab(" + std::to_string(i) + ")\">" +
+				        groups[i].label + "</div>";
+			}
+			html += "</div>";
+			for (size_t i = 0; i < std::size(groups); ++i) {
+				html += "<div class='hb-list' id='hbg" + std::to_string(i) +
+				        "' style='display:" + (i == 0 ? "grid" : "none") + "'>";
+				int count = 0;
+				for (const char* cat : groups[i].cats) {
+					std::vector<const solarium::ArtifactEntry*> entries;
+					for (auto* e : game.artifactRegistry().byCategory(cat))
+						entries.push_back(e);
+					std::sort(entries.begin(), entries.end(),
+						[](const solarium::ArtifactEntry* a, const solarium::ArtifactEntry* b){
+							return a->name < b->name;
+						});
+					for (auto* e : entries) {
+						html += "<div class='hb-card'><span class='cat'>" + enc(cat) + "</span>"
+						        "<h3>" + enc(e->name.empty() ? e->id : e->name) + "</h3>";
+						if (!e->description.empty())
+							html += "<p>" + enc(e->description) + "</p>";
+						html += "</div>";
+						count++;
+					}
+				}
+				if (count == 0) html += "<div class='hb-empty'>No entries.</div>";
+				html += "</div>";
+			}
+			html += "<button class='btn back' onclick=\"send('back')\">Back</button>"
+				"<div class='version'>v0.2.0 / CEF 146</div>"
+				"<script>"
+				"function hbtab(i){"
+				"document.querySelectorAll('.hb-tab').forEach((t,j)=>t.classList.toggle('on',j==i));"
+				"document.querySelectorAll('.hb-list').forEach((l,j)=>l.style.display=j==i?'grid':'none');"
+				"}"
+				"function send(a){window.cefQuery({request:'action:'+a,onSuccess:()=>{},onFailure:()=>{}});}"
+				"</script>"
+				"</body></html>";
+			return html;
+		};
+
+		// kCss captured by value because this lambda is invoked from the
+		// action callback long after this scope returns — a `[&]` capture
+		// would dangle and produce a corrupted data: URL (we hit this).
+		auto multiplayerPage = [kCss, kJs, &game]() -> std::string {
+			std::string html = "data:text/html,<html><head><style>" + kCss +
+				".srv{display:flex;justify-content:space-between;align-items:center;"
+				"width:480px;padding:14px 24px;margin:6px 0;"
+				"background:rgba(26,18,11,0.78);border:1px solid %23b88838;"
+				"color:%23f3c44c;font-size:16px;letter-spacing:1px;"
+				"font-family:monospace;cursor:pointer;"
+				"transition:background 0.15s,transform 0.15s}"
+				".srv:hover{background:rgba(94,67,30,0.92);transform:scale(1.02)}"
+				".srv .ip{color:%23f3c44c}"
+				".srv .pl{color:%23b88838;font-size:13px}"
+				".empty{opacity:0.5;font-style:italic;margin:24px 0}"
+				"</style></head><body>"
+				"<h1>Multiplayer</h1>"
+				"<div class='tag'>";
+			if (!game.lanBrowser().listening()) {
+				html += "Could not bind UDP 7778 — try --host HOST --port PORT";
+			} else {
+				const auto& srvs = game.lanBrowser().servers();
+				if (srvs.empty()) {
+					html += "Scanning UDP 7778…";
+				} else {
+					char hdr[64];
+					std::snprintf(hdr, sizeof(hdr), "%zu LAN server%s",
+						srvs.size(), srvs.size() == 1 ? "" : "s");
+					html += hdr;
+				}
+			}
+			html += "</div>";
+			for (const auto& s : game.lanBrowser().servers()) {
+				char row[160];
+				std::snprintf(row, sizeof(row),
+					"<div class='srv' onclick=\"send('join:%s:%d')\">"
+					"<span class='ip'>%s:%d</span>"
+					"<span class='pl'>%d player%s</span></div>",
+					s.ip.c_str(), s.port,
+					s.ip.c_str(), s.port,
+					s.humans, s.humans == 1 ? "" : "s");
+				html += row;
+			}
+			html += "<button class='btn' onclick=\"send('multiplayer')\">Refresh</button>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>"
+				"<div class='version'>v0.2.0 / CEF 146</div>" + kJs +
+				"</body></html>";
+			return html;
+		};
+
+		// Captured by ref in the action callback. Static so they live across
+		// lambda invocations. Built once at startup; multiplayer is rebuilt
+		// per click below to pick up new LAN servers.
+		static std::string sMain = mainPage();
+		static std::string sChar = charSelectPage();
+		static std::string sHand = handbookPage();
+		static std::string sSett = settingsPage();
 
 		if (cefUrl.empty()) cefUrl = sMain;
 
 		cefHost = std::make_unique<solarium::vk::CefHost>(fbw, fbh);
 		game.setCefMenuActive(true);
 		auto* hostRaw = cefHost.get();
-		cefHost->setActionCallback([win, &game, hostRaw](const std::string& action) {
+		// multiplayerPage is captured by value so the lambda owns its own
+		// copy — local 'multiplayerPage' in this block goes out of scope
+		// once init returns. Same for the enc helper inside it.
+		cefHost->setActionCallback(
+			[win, &game, hostRaw, multiplayerPage](const std::string& action) {
 			std::printf("[cef] action: %s\n", action.c_str());
+			using MS = solarium::vk::MenuScreen;
 			if (action == "quit") {
 				glfwSetWindowShouldClose(win, GLFW_TRUE);
 			} else if (action == "back") {
@@ -454,7 +624,8 @@ int main(int argc, char** argv) {
 			} else if (action == "singleplayer") {
 				hostRaw->loadUrl(sChar);
 			} else if (action == "multiplayer") {
-				hostRaw->loadUrl(sMulti);
+				// Rebuild fresh each click — picks up newly-discovered LAN servers.
+				hostRaw->loadUrl(multiplayerPage());
 			} else if (action == "handbook") {
 				hostRaw->loadUrl(sHand);
 			} else if (action == "settings") {
@@ -464,8 +635,25 @@ int main(int argc, char** argv) {
 				// dismiss CEF so the world becomes visible.
 				std::string id = action.substr(5);
 				if (game.beginConnectAs(id)) {
-					game.setMenuScreen(solarium::vk::MenuScreen::Connecting);
+					game.setMenuScreen(MS::Connecting);
 					game.setCefMenuActive(false);
+				}
+			} else if (action.rfind("join:", 0) == 0) {
+				// "join:192.168.1.5:7777" — re-target the network transport
+				// at the chosen LAN server, then go to character select so
+				// the player picks who to join as. ServerInterface's actual
+				// type is NetworkServer here (singleplayer spawn path);
+				// dynamic_cast lets us call setTarget() without leaking the
+				// concrete type into the menu code.
+				const std::string rest = action.substr(5);
+				auto colon = rest.rfind(':');
+				if (colon != std::string::npos) {
+					std::string ip = rest.substr(0, colon);
+					int port = std::atoi(rest.substr(colon + 1).c_str());
+					if (auto* net = dynamic_cast<solarium::NetworkServer*>(game.server())) {
+						net->setTarget(ip, port);
+						hostRaw->loadUrl(sChar);
+					}
 				}
 			}
 		});
