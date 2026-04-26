@@ -4,7 +4,7 @@
 #include <cstring>
 #include <fstream>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 namespace {
 
@@ -104,4 +104,4 @@ bool read_region(const std::string& path, VoxelRegion& region, std::string* erro
 	return true;
 }
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

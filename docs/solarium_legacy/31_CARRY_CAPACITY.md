@@ -23,7 +23,7 @@ These values already drive the server's `Convert` value-conservation check
 carry capacity.
 
 **Never hardcode values in Python.** Behaviors that need a value call
-`civcraft_engine.material_value(item_id)`, which binds directly to
+`solarium_engine.material_value(item_id)`, which binds directly to
 `getMaterialValue()` in C++.
 
 ---
@@ -76,7 +76,7 @@ entity.inventory.can_accept("base:logs", 1, entity.inventory_capacity)
 ```
 
 `InventoryView.can_accept` internally calls
-`civcraft_engine.material_value()` — no value table in Python.
+`solarium_engine.material_value()` — no value table in Python.
 
 ---
 

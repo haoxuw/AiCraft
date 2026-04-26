@@ -1,6 +1,6 @@
 #version 450
 
-// Per-vertex chunk mesh — emitted by CivCraft's chunk_mesher (and any port
+// Per-vertex chunk mesh — emitted by Solarium's chunk_mesher (and any port
 // thereof). 13 floats per vertex, no instancing.
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inColor;

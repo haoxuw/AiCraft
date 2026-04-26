@@ -14,7 +14,7 @@ State machine:
 import math
 import traceback
 
-from civcraft_engine import (Move, Relocate, Ground, STORE_RANGE,
+from solarium_engine import (Move, Relocate, Ground, STORE_RANGE,
                              material_value, scan_blocks, scan_entities,
                              entity_log as elog)
 from actions import StoreItem

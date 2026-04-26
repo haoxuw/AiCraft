@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <cstdint>
 
-namespace civcraft {
+namespace solarium {
 
 // ─── Per-entity primitive ──────────────────────────────────────────────────
 
@@ -715,4 +715,4 @@ Navigator::Step Navigator::tick(const glm::vec3& entityPos) {
 	return out;
 }
 
-}  // namespace civcraft
+}  // namespace solarium

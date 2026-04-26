@@ -8,7 +8,7 @@
 #include <vector>
 #include <functional>
 
-namespace civcraft {
+namespace solarium {
 
 class TestServer {
 public:
@@ -85,4 +85,4 @@ private:
 	EntityId m_playerId = ENTITY_NONE;
 };
 
-} // namespace civcraft
+} // namespace solarium

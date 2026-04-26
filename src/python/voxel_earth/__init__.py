@@ -1,4 +1,4 @@
-"""voxel_earth — port of ryanhlewis/VoxelEarth pipeline for CivCraft.
+"""voxel_earth — port of ryanhlewis/VoxelEarth pipeline for Solarium.
 
 Pipeline stages
 ───────────────
@@ -10,7 +10,7 @@ Pipeline stages
 
 Cache layout under ~/.voxel/ — see cache.py.
 
-Per CivCraft rules:
+Per Solarium rules:
   - Server owns world state (Rule 3): placement runs server-side only.
   - Block palette is an artifact (Rule 1): see artifacts/blocks/voxel_earth_palette.py.
   - No new ActionProposal type (Rule 0): /visit triggers a server RPC, not an action.

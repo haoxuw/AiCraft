@@ -74,7 +74,7 @@ main()
 ## File Structure
 
 ```
-CivCraft/
+Solarium/
   CMakeLists.txt
   src/
     main.cpp                 -- entry point, game loop

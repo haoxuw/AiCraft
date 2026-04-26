@@ -1,5 +1,5 @@
 // Dedicated headless server; accepts TCP clients.
-// Usage: ./civcraft-server [--world PATH] [--port N] [--template N]
+// Usage: ./solarium-server [--world PATH] [--port N] [--template N]
 
 #include "server/server.h"
 #include "server/client_manager.h"
@@ -30,10 +30,10 @@ static void signalHandler(int) {
 	// ready-file cleanup happens after main loop exits.
 }
 
-static void interactiveWorldSelect(civcraft::ServerConfig& config,
+static void interactiveWorldSelect(solarium::ServerConfig& config,
                                     std::string& worldPath,
-                                    const std::vector<std::shared_ptr<civcraft::WorldTemplate>>& templates) {
-	civcraft::WorldManager mgr;
+                                    const std::vector<std::shared_ptr<solarium::WorldTemplate>>& templates) {
+	solarium::WorldManager mgr;
 	mgr.setSavesDir("saves");
 	mgr.refresh();
 
@@ -41,7 +41,7 @@ static void interactiveWorldSelect(civcraft::ServerConfig& config,
 
 	printf("\n");
 	printf("  ┌─────────────────────────────────┐\n");
-	printf("  │       CIVCRAFT SERVER          │\n");
+	printf("  │       SOLARIUM SERVER          │\n");
 	printf("  └─────────────────────────────────┘\n\n");
 
 	if (!worlds.empty()) {
@@ -117,7 +117,7 @@ namespace {
 
 // Parsed CLI state, passed around by value.
 struct ServerCliArgs {
-	civcraft::ServerConfig config;
+	solarium::ServerConfig config;
 	std::string            worldPath;
 	bool                   interactive = true;
 	int                    logPort     = 7777;
@@ -126,7 +126,7 @@ struct ServerCliArgs {
 // Print --help text and exit(0). Kept as a function so both the arg
 // parser and the help-flag check share one source for the usage string.
 void printServerUsage(const char* prog) {
-	printf("CivCraft — dedicated server\n\n"
+	printf("Solarium — dedicated server\n\n"
 	       "Usage: %s [options]\n"
 	       "  --port PORT       Listen port (default 7777)\n"
 	       "  --world PATH      Load saved world from PATH\n"
@@ -163,7 +163,7 @@ ServerCliArgs parseServerArgs(int argc, char** argv) {
 		}
 		else if (strcmp(argv[i], "--sim-speed") == 0 && i + 1 < argc) {
 			float s = (float)atof(argv[++i]);
-			if (s > 0.0f) civcraft::ServerTuning::simSpeed = s;
+			if (s > 0.0f) solarium::ServerTuning::simSpeed = s;
 		}
 	}
 	return out;
@@ -173,7 +173,7 @@ ServerCliArgs parseServerArgs(int argc, char** argv) {
 // close at shutdown; nullptr if open failed.
 FILE* openServerLog(int port) {
 	char logPath[256];
-	snprintf(logPath, sizeof(logPath), "/tmp/civcraft_log_%d.log", port);
+	snprintf(logPath, sizeof(logPath), "/tmp/solarium_log_%d.log", port);
 	FILE* f = fopen(logPath, "w");
 	if (f) {
 		setvbuf(f, nullptr, _IONBF, 0);
@@ -184,8 +184,8 @@ FILE* openServerLog(int port) {
 
 // Build the ordered template list the world-select + save-load code
 // indexes by integer. One place to register a new template.
-std::vector<std::shared_ptr<civcraft::WorldTemplate>> buildWorldTemplates() {
-	using T = civcraft::ConfigurableWorldTemplate;
+std::vector<std::shared_ptr<solarium::WorldTemplate>> buildWorldTemplates() {
+	using T = solarium::ConfigurableWorldTemplate;
 	return {
 		std::make_shared<T>("artifacts/worlds/base/village.py"),
 		std::make_shared<T>("artifacts/worlds/base/test_behaviors.py"),
@@ -199,13 +199,13 @@ std::vector<std::shared_ptr<civcraft::WorldTemplate>> buildWorldTemplates() {
 
 // Initialise GameServer from either a saved world on disk or a fresh
 // template. Returns true on success; server is usable on return.
-bool initServerFromArgs(civcraft::GameServer& server,
+bool initServerFromArgs(solarium::GameServer& server,
                          const ServerCliArgs& args,
-                         const std::vector<std::shared_ptr<civcraft::WorldTemplate>>& templates) {
+                         const std::vector<std::shared_ptr<solarium::WorldTemplate>>& templates) {
 	if (!args.worldPath.empty() &&
 	    std::filesystem::exists(args.worldPath + "/world.json")) {
 		printf("[Server] Loading world from %s\n", args.worldPath.c_str());
-		if (civcraft::loadWorld(server, args.worldPath, templates)) return true;
+		if (solarium::loadWorld(server, args.worldPath, templates)) return true;
 		printf("[Server] Failed to load world, creating new\n");
 	}
 	server.init(args.config, templates);
@@ -214,19 +214,19 @@ bool initServerFromArgs(civcraft::GameServer& server,
 
 // Read artifact metadata (feature tags, living stats, annotation
 // spawn rules) and hand them to the server. Runs once after init.
-void applyArtifactData(civcraft::GameServer& server) {
-	civcraft::ArtifactRegistry artifacts;
+void applyArtifactData(solarium::GameServer& server) {
+	solarium::ArtifactRegistry artifacts;
 	artifacts.loadAll("artifacts");
 	server.mergeArtifactTags(artifacts.livingTags());
 	server.applyLivingStats(artifacts.livingStats());
 
 	for (auto* e : artifacts.byCategory("annotation")) {
-		civcraft::World::AnnotationSpawnRule rule;
+		solarium::World::AnnotationSpawnRule rule;
 		rule.typeId = e->id;
 		if (auto sIt = e->fields.find("slot"); sIt != e->fields.end()) {
-			if      (sIt->second == "top")    rule.slot = civcraft::AnnotationSlot::Top;
-			else if (sIt->second == "bottom") rule.slot = civcraft::AnnotationSlot::Bottom;
-			else if (sIt->second == "around") rule.slot = civcraft::AnnotationSlot::Around;
+			if      (sIt->second == "top")    rule.slot = solarium::AnnotationSlot::Top;
+			else if (sIt->second == "bottom") rule.slot = solarium::AnnotationSlot::Bottom;
+			else if (sIt->second == "around") rule.slot = solarium::AnnotationSlot::Around;
 		}
 		if (auto chIt = e->fields.find("spawn_chance"); chIt != e->fields.end())
 			rule.chance = (float)std::atof(chIt->second.c_str());
@@ -249,19 +249,19 @@ void applyArtifactData(civcraft::GameServer& server) {
 // Build the block/entity/inventory broadcast callbacks that bridge
 // GameServer mutations → ClientManager wire messages. One place to
 // tweak serialisation formats.
-civcraft::ServerCallbacks makeServerCallbacks(civcraft::ClientManager& clients) {
-	civcraft::ServerCallbacks cbs;
-	cbs.onBlockChange = [&clients](const civcraft::BlockChange& bc,
-	                                civcraft::BroadcastPriority pri) {
+solarium::ServerCallbacks makeServerCallbacks(solarium::ClientManager& clients) {
+	solarium::ServerCallbacks cbs;
+	cbs.onBlockChange = [&clients](const solarium::BlockChange& bc,
+	                                solarium::BroadcastPriority pri) {
 		clients.onBlockChanged(bc, pri);
 	};
-	cbs.onEntityRemove = [&clients](civcraft::EntityId id, uint8_t reason) {
+	cbs.onEntityRemove = [&clients](solarium::EntityId id, uint8_t reason) {
 		clients.broadcastEntityRemove(id,
-			(civcraft::net::EntityRemoveReason)reason);
+			(solarium::net::EntityRemoveReason)reason);
 	};
-	cbs.onInventoryChange = [&clients](civcraft::EntityId id,
-	                                     const civcraft::Inventory& inv) {
-		civcraft::net::WriteBuffer wb;
+	cbs.onInventoryChange = [&clients](solarium::EntityId id,
+	                                     const solarium::Inventory& inv) {
+		solarium::net::WriteBuffer wb;
 		wb.writeU32(id);
 		auto items = inv.items();
 		wb.writeU32((uint32_t)items.size());
@@ -270,29 +270,29 @@ civcraft::ServerCallbacks makeServerCallbacks(civcraft::ClientManager& clients) 
 			wb.writeI32(count);
 		}
 		uint8_t equipCount = 0;
-		for (int i = 0; i < civcraft::WEAR_SLOT_COUNT; i++)
-			if (!inv.equipped((civcraft::WearSlot)i).empty()) equipCount++;
+		for (int i = 0; i < solarium::WEAR_SLOT_COUNT; i++)
+			if (!inv.equipped((solarium::WearSlot)i).empty()) equipCount++;
 		wb.writeU8(equipCount);
-		for (int i = 0; i < civcraft::WEAR_SLOT_COUNT; i++) {
-			const auto& eid = inv.equipped((civcraft::WearSlot)i);
+		for (int i = 0; i < solarium::WEAR_SLOT_COUNT; i++) {
+			const auto& eid = inv.equipped((solarium::WearSlot)i);
 			if (!eid.empty()) {
-				wb.writeString(civcraft::equipSlotName((civcraft::WearSlot)i));
+				wb.writeString(solarium::equipSlotName((solarium::WearSlot)i));
 				wb.writeString(eid);
 			}
 		}
-		clients.broadcastToAll(civcraft::net::S_INVENTORY, wb);
+		clients.broadcastToAll(solarium::net::S_INVENTORY, wb);
 	};
 	return cbs;
 }
 
 // Persist the current world to disk if the user specified --world.
 // Runs once during shutdown.
-void saveWorldIfNeeded(civcraft::GameServer& server,
+void saveWorldIfNeeded(solarium::GameServer& server,
                         const ServerCliArgs& args,
-                        const std::vector<std::shared_ptr<civcraft::WorldTemplate>>& templates) {
+                        const std::vector<std::shared_ptr<solarium::WorldTemplate>>& templates) {
 	if (args.worldPath.empty()) return;
 	printf("[Server] Saving world to %s...\n", args.worldPath.c_str());
-	civcraft::WorldMetadata meta;
+	solarium::WorldMetadata meta;
 	meta.name          = args.worldPath.substr(args.worldPath.rfind('/') + 1);
 	meta.seed          = args.config.seed;
 	meta.templateIndex = args.config.templateIndex;
@@ -300,7 +300,7 @@ void saveWorldIfNeeded(civcraft::GameServer& server,
 	meta.version       = 1;
 	if (args.config.templateIndex < (int)templates.size())
 		meta.templateName = templates[args.config.templateIndex]->name();
-	civcraft::saveWorld(server, args.worldPath, meta);
+	solarium::saveWorld(server, args.worldPath, meta);
 }
 
 }  // namespace
@@ -313,19 +313,19 @@ int main(int argc, char** argv) {
 
 	ServerCliArgs args = parseServerArgs(argc, argv);
 	FILE* logFile = openServerLog(args.logPort);
-	printf("=== CivCraft Dedicated Server ===\n");
+	printf("=== Solarium Dedicated Server ===\n");
 
-	civcraft::pythonBridge().init("python");
+	solarium::pythonBridge().init("python");
 
 	auto templates = buildWorldTemplates();
 	if (args.interactive && isatty(fileno(stdin)))
 		interactiveWorldSelect(args.config, args.worldPath, templates);
 
-	civcraft::GameServer server;
+	solarium::GameServer server;
 	initServerFromArgs(server, args, templates);
 	applyArtifactData(server);
 
-	civcraft::net::TcpServer listener;
+	solarium::net::TcpServer listener;
 	if (!listener.listen(args.config.port)) {
 		printf("[Server] Failed to start listener on port %d\n", args.config.port);
 		return 1;
@@ -336,10 +336,10 @@ int main(int argc, char** argv) {
 	printf("[Server] Press Ctrl+C to save and stop.\n");
 
 	// Readiness file for launchers.
-	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/civcraft_ready_%d", args.config.port);
+	snprintf(g_readyPath, sizeof(g_readyPath), "/tmp/solarium_ready_%d", args.config.port);
 	if (FILE* f = fopen(g_readyPath, "w")) fclose(f);
 
-	civcraft::ClientManager clients(server);
+	solarium::ClientManager clients(server);
 	clients.setPort(args.config.port);
 	server.setCallbacks(makeServerCallbacks(clients));
 
@@ -349,16 +349,16 @@ int main(int argc, char** argv) {
 	// The sim dt passed into server.tick() stays ServerTuning::tickRate
 	// (1/60) so physics, timers, and broadcast intervals are unchanged in
 	// sim-time.
-	const float TICK_RATE = civcraft::ServerTuning::tickIntervalRealSec();
+	const float TICK_RATE = solarium::ServerTuning::tickIntervalRealSec();
 	const double TICK_BUDGET_MS = TICK_RATE * 1000.0;
 	auto lastTime = std::chrono::steady_clock::now();
 	float accumulator = 0;
 	int tickCount = 0;
 	float statusTimer = 0;
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 	int slowTickCount = 0;
 	double worstTickMs = 0.0;
-	civcraft::GameServer::TickProfile worstProfile{};
+	solarium::GameServer::TickProfile worstProfile{};
 	float perfTimer = 0.0f;
 	constexpr float PERF_LOG_INTERVAL = 5.0f;
 
@@ -387,7 +387,7 @@ int main(int argc, char** argv) {
 		lastTime = now;
 		accumulator += dt;
 		statusTimer += dt;
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		// Flip recording on the first frame after the first client is READY.
 		// perfSessionStart anchors "now" so the exit summary's elapsed clock
 		// starts at handshake, not process start.
@@ -466,7 +466,7 @@ int main(int argc, char** argv) {
 		// ticks fire more often on the wall clock but each still advances
 		// 1/60 sim-seconds, so physics, timers, and broadcast cadences are
 		// identical in sim-time.
-		const float SIM_DT = civcraft::ServerTuning::tickRate;
+		const float SIM_DT = solarium::ServerTuning::tickRate;
 		while (accumulator >= TICK_RATE) {
 			// Log + advance on exception so one bad tick doesn't silently
 			// kill the server or hot-spin on a permanently broken tick.
@@ -484,12 +484,12 @@ int main(int argc, char** argv) {
 			ticksThisFrame++;
 		}
 		[[maybe_unused]] auto tickEnd = std::chrono::steady_clock::now();
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		fp.tickMs = std::chrono::duration<double, std::milli>(tickEnd - tickStart).count();
 		phaseStart = tickEnd;
 #endif
 
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		if (ticksThisFrame > 0) {
 			double tickMs = std::chrono::duration<double, std::milli>(tickEnd - tickStart).count();
 			double perTickMs = tickMs / ticksThisFrame;
@@ -523,11 +523,11 @@ int main(int argc, char** argv) {
 				// with these, so correlate metric growth against perTickMs
 				// when a long session slows down.
 				int total = 0, living = 0, items = 0, owned = 0, moving = 0;
-				server.world().entities.forEach([&](civcraft::Entity& e) {
+				server.world().entities.forEach([&](solarium::Entity& e) {
 					++total;
 					if (e.def().isLiving())                ++living;
-					if (e.typeId() == civcraft::ItemName::ItemEntity) ++items;
-					if (e.getProp<int>(civcraft::Prop::Owner, 0) != 0) ++owned;
+					if (e.typeId() == solarium::ItemName::ItemEntity) ++items;
+					if (e.getProp<int>(solarium::Prop::Owner, 0) != 0) ++owned;
 					float vx = e.velocity.x, vz = e.velocity.z;
 					if (vx*vx + vz*vz > 0.0025f)           ++moving;
 				});
@@ -562,7 +562,7 @@ int main(int argc, char** argv) {
 		clients.logStatus(statusTimer, tickCount, logFile);
 		markPhase(fp.statusLogMs);
 
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		fp.totalMs = std::chrono::duration<double, std::milli>(
 			std::chrono::steady_clock::now() - frameStart).count();
 		if (fp.totalMs > SLOW_FRAME_MS) {
@@ -678,7 +678,7 @@ int main(int argc, char** argv) {
 	// Let AgentManager::findFreePort() reuse this port.
 	if (g_readyPath[0]) std::remove(g_readyPath);
 
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 	// End-of-session perf dump. Structured block to stderr + a timestamped
 	// file so `make game` can surface the summary after the client exits.
 	// Skip entirely if no client ever reached READY — nothing was recorded,
@@ -687,11 +687,11 @@ int main(int argc, char** argv) {
 		double elapsed = std::chrono::duration<double>(
 			std::chrono::steady_clock::now().time_since_epoch()).count()
 			- perfSessionStart;
-		std::string summary = civcraft::perf::formatSummary(
-			"CIVCRAFT SERVER PERF", elapsed);
+		std::string summary = solarium::perf::formatSummary(
+			"SOLARIUM SERVER PERF", elapsed);
 
 		// Highlight the top-p99 tick phase so the bottleneck is obvious.
-		auto [topName, topV] = civcraft::perf::topByP99({
+		auto [topName, topV] = solarium::perf::topByP99({
 			"server.tick.resolve_ms",
 			"server.tick.nav_ms",
 			"server.tick.physics_ms",
@@ -715,7 +715,7 @@ int main(int argc, char** argv) {
 		std::time_t tt = std::time(nullptr);
 		std::strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", std::localtime(&tt));
 		char path[96];
-		std::snprintf(path, sizeof(path), "/tmp/civcraft_perf_server_%s.txt", ts);
+		std::snprintf(path, sizeof(path), "/tmp/solarium_perf_server_%s.txt", ts);
 		if (FILE* f = std::fopen(path, "w")) {
 			std::fputs(summary.c_str(), f);
 			std::fputs(blline, f);
@@ -726,6 +726,6 @@ int main(int argc, char** argv) {
 #endif
 
 	printf("[Server] Shut down.\n");
-	civcraft::pythonBridge().shutdown();
+	solarium::pythonBridge().shutdown();
 	return 0;
 }

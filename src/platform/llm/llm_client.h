@@ -24,7 +24,7 @@
 #include <deque>
 #include <cstdint>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 struct ChatMessage {
 	std::string role;    // "system" | "user" | "assistant"
@@ -88,4 +88,4 @@ private:
 	std::atomic<uint64_t>   m_nextId{1};
 };
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

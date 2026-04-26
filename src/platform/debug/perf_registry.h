@@ -18,7 +18,7 @@
 //
 // ── Zero-cost in production ────────────────────────────────────────────────
 // `ScopedTimer` and the PERF_* macros collapse to a no-op `do{}while(0)` when
-// CIVCRAFT_PERF is not defined. The Registry types remain compilable so
+// SOLARIUM_PERF is not defined. The Registry types remain compilable so
 // callers can still reference the header unconditionally (e.g. for a dump
 // function) but no hot-path cost is incurred.
 
@@ -31,7 +31,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft::perf {
+namespace solarium::perf {
 
 class Histogram {
 public:
@@ -144,7 +144,7 @@ private:
 };
 
 // Format the registry as a structured human-readable block. The caller chooses
-// a heading (e.g. "CIVCRAFT CLIENT PERF" vs "SERVER PERF") and an elapsed
+// a heading (e.g. "SOLARIUM CLIENT PERF" vs "SERVER PERF") and an elapsed
 // time so we can print "frames/sec avg" etc.
 //
 // Output layout:
@@ -212,7 +212,7 @@ inline std::pair<std::string, double> topByP99(
 	return { best, bestV };
 }
 
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 
 // RAII wall-clock sampler. On scope exit, records elapsed ms into a named
 // histogram. Pointer storage + indirection is deliberate: the Registry
@@ -234,7 +234,7 @@ private:
 	std::chrono::steady_clock::time_point m_start;
 };
 
-#else // !CIVCRAFT_PERF
+#else // !SOLARIUM_PERF
 
 // Prod builds: trivial no-op so headers remain self-consistent.
 class ScopedTimer {
@@ -244,20 +244,20 @@ public:
 
 #endif
 
-} // namespace civcraft::perf
+} // namespace solarium::perf
 
 // ── Macros — use these at call sites so prod builds stay zero-cost ─────────
-#ifdef CIVCRAFT_PERF
-  #define CIVCRAFT_PERF_CAT_(a,b) a##b
-  #define CIVCRAFT_PERF_CAT(a,b)  CIVCRAFT_PERF_CAT_(a,b)
+#ifdef SOLARIUM_PERF
+  #define SOLARIUM_PERF_CAT_(a,b) a##b
+  #define SOLARIUM_PERF_CAT(a,b)  SOLARIUM_PERF_CAT_(a,b)
   #define PERF_SCOPE(name) \
-    ::civcraft::perf::ScopedTimer CIVCRAFT_PERF_CAT(_civ_pt_, __LINE__)(name)
+    ::solarium::perf::ScopedTimer SOLARIUM_PERF_CAT(_civ_pt_, __LINE__)(name)
   #define PERF_RECORD_MS(name, ms) \
-    ::civcraft::perf::Registry::instance().histogram(name).record(ms)
+    ::solarium::perf::Registry::instance().histogram(name).record(ms)
   #define PERF_COUNT(name) \
-    ::civcraft::perf::Registry::instance().counter(name).inc()
+    ::solarium::perf::Registry::instance().counter(name).inc()
   #define PERF_COUNT_BY(name, n) \
-    ::civcraft::perf::Registry::instance().counter(name).inc(n)
+    ::solarium::perf::Registry::instance().counter(name).inc(n)
 #else
   #define PERF_SCOPE(name)         do { (void)sizeof(name); } while(0)
   #define PERF_RECORD_MS(name, ms) do { (void)sizeof(name); (void)sizeof(ms); } while(0)

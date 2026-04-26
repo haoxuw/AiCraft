@@ -34,7 +34,7 @@
 #include "agent/pathfind.h"        // WorldView, DoorOracle, GridPlanner
 #include "agent/separation.h"      // applySeparation() — soft entity-vs-entity push
 #include "client/path_executor.h"  // Navigator (facade over unified PathExecutor)
-#include "agent/pathlog.h"         // PATHLOG(...) — gated by CIVCRAFT_PATHFINDING_DEBUG
+#include "agent/pathlog.h"         // PATHLOG(...) — gated by SOLARIUM_PATHFINDING_DEBUG
 #include "debug/move_stuck_log.h"
 #include "debug/entity_log.h"      // still pulled in for logMoveStuck paths
 
@@ -49,7 +49,7 @@
 #include <utility>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 // Visualisation snapshot — read by the world renderer to draw waypoint dashes
 // and the action target marker.
@@ -1189,4 +1189,4 @@ private:
 	int m_failStreak = 0;
 };
 
-} // namespace civcraft
+} // namespace solarium

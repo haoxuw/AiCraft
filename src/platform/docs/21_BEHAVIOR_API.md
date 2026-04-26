@@ -2,11 +2,11 @@
 
 ## Overview
 
-Every creature in CivCraft has a behavior defined as a Python file. The behavior's
+Every creature in Solarium has a behavior defined as a Python file. The behavior's
 `decide_plan()` method is called 4 times per second and returns `(action, goal_str)`.
 
 **Behaviors run on the agent CLIENT, not the server.**
-Each Creatures has its own `civcraft-agent` process. The agent reads its `LocalWorld`
+Each Creatures has its own `solarium-agent` process. The agent reads its `LocalWorld`
 cache (nearby entities, nearby blocks from loaded chunks), runs `decide_plan()`, and
 sends the resulting `ActionProposal` over TCP. The server validates and executes.
 
@@ -39,7 +39,7 @@ Stale data is tolerated — the server rejects invalid actions and behaviors rec
 ## Function Signature
 
 ```python
-from civcraft_engine import Idle, MoveTo, Convert, StoreItem, Interact
+from solarium_engine import Idle, MoveTo, Convert, StoreItem, Interact
 from behavior_base import Behavior
 
 class MyBehavior(Behavior):
@@ -185,7 +185,7 @@ the entity's head and in the inspect panel.
 ### Read query — `get_block` (agent-side only, never sent to server)
 
 ```python
-from civcraft_engine import get_block
+from solarium_engine import get_block
 block_id = get_block(x, y, z)   # e.g. "base:trunk", "base:air"
 ```
 
@@ -196,7 +196,7 @@ or environment sensing.
 ### Write actions — the four server primitives
 
 ```python
-from civcraft_engine import MoveTo, Relocate, Convert, Interact
+from solarium_engine import MoveTo, Relocate, Convert, Interact
 from actions import StoreItem, PickupItem, DropItem, BreakBlock  # Python wrappers
 ```
 
@@ -240,7 +240,7 @@ return MoveTo(entity.x + dx/d * 12, entity.y, entity.z + dz/d * 12, speed=spd), 
 
 ```python
 """Guard dog — follows nearest player, chases away cats."""
-from civcraft_engine import Idle, MoveTo
+from solarium_engine import Idle, MoveTo
 from behavior_base import Behavior
 
 class GuardDogBehavior(Behavior):

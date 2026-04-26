@@ -3,7 +3,7 @@
 #include <string>
 #include <cstdint>
 
-namespace civcraft {
+namespace solarium {
 
 // Render-only block adornment: no collision, no slot use; ≤1 per block.
 // Slot: Top (flowers), Bottom (stalactites), Around (vines/moss).
@@ -21,4 +21,4 @@ struct Annotation {
 	bool empty() const { return typeId.empty(); }
 };
 
-} // namespace civcraft
+} // namespace solarium

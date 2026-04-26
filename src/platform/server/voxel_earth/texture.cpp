@@ -9,7 +9,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 void Texture::sample(float u, float v, uint8_t out[4]) const {
 	if (empty()) {
@@ -71,4 +71,4 @@ bool decode_image(const EmbeddedImage& src, Texture& out, std::string* error) {
 	return true;
 }
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

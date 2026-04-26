@@ -11,7 +11,7 @@
 // moved to WorldRenderer / HudRenderer / MenuRenderer / PanelRenderer /
 // EntityUiRenderer — see game_vk_renderers.h.
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 glm::mat4 Game::viewProj() const {
 	glm::mat4 proj = m_cam.projectionMatrix(m_aspect);
@@ -46,4 +46,4 @@ bool Game::projectWorld(const glm::vec3& world, glm::vec3& out) const {
 	return true;
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

@@ -1,5 +1,5 @@
 #pragma once
-// GameLogger — WoW-style event log. Tees to /tmp/civcraft_game.log (line-buffered;
+// GameLogger — WoW-style event log. Tees to /tmp/solarium_game.log (line-buffered;
 // prior → .log.prev), an in-memory ring buffer (menu viewer), and stdout when --log-only.
 // Event derivation lives in game.cpp/network_server.h; this class is a pure sink.
 
@@ -17,7 +17,7 @@
 #include <unistd.h>
 #endif
 
-namespace civcraft {
+namespace solarium {
 
 class GameLogger {
 public:
@@ -33,8 +33,8 @@ public:
 		m_echoStdout = echoStdout;
 		namespace fs = std::filesystem;
 		fs::path tmp = fs::temp_directory_path();
-		m_path = (tmp / "civcraft_game.log").string();
-		fs::path prev = tmp / "civcraft_game.log.prev";
+		m_path = (tmp / "solarium_game.log").string();
+		fs::path prev = tmp / "solarium_game.log.prev";
 		std::error_code ec;
 		if (fs::exists(m_path, ec)) {
 			fs::remove(prev, ec);
@@ -44,7 +44,7 @@ public:
 		if (m_file) setvbuf(m_file, nullptr, _IOLBF, 0);
 		m_initialized = true;
 		char hdr[128];
-		snprintf(hdr, sizeof(hdr), "=== civcraft session pid=%d ===", (int)getpid());
+		snprintf(hdr, sizeof(hdr), "=== solarium session pid=%d ===", (int)getpid());
 		if (m_file) { std::fputs(hdr, m_file); std::fputc('\n', m_file); }
 		if (m_echoStdout) { std::fputs(hdr, stdout); std::fputc('\n', stdout); }
 	}
@@ -112,4 +112,4 @@ private:
 	std::deque<std::string> m_buf;
 };
 
-} // namespace civcraft
+} // namespace solarium

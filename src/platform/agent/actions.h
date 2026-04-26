@@ -30,7 +30,7 @@
 #include <optional>
 #include <string>
 
-namespace civcraft {
+namespace solarium {
 
 class Agent;  // fwd — defined in agent.h, friended by handlers via Agent.
 
@@ -132,4 +132,4 @@ public:
 // have a handler registered here.
 ActionHandler& actionFor(PlanStep::Type t);
 
-} // namespace civcraft
+} // namespace solarium

@@ -5,10 +5,10 @@
 #include "include/cef_render_process_handler.h"
 #include "include/wrapper/cef_message_router.h"
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // CefApp lives in the browser process AND each subprocess (re-exec'd
-// civcraft-cef-subprocess). OnBeforeCommandLineProcessing fires before each
+// solarium-cef-subprocess). OnBeforeCommandLineProcessing fires before each
 // process initializes its child Chromium, giving us one place to inject
 // switches without touching the actual main() args.
 //
@@ -63,4 +63,4 @@ private:
 
 CefRefPtr<CefApp> makeOsrApp() { return new OsrApp(); }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

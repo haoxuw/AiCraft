@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <string>
 
-namespace civcraft {
+namespace solarium {
 
 struct ChunkInfo {
 	struct Entry {
@@ -57,4 +57,4 @@ struct ChunkInfo {
 	}
 };
 
-} // namespace civcraft
+} // namespace solarium

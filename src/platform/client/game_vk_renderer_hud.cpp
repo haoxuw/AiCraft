@@ -18,7 +18,7 @@
 #include "logic/block_registry.h"
 #include "logic/constants.h"
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ─────────────────────────────────────────────────────────────────────────
 // HUD — lightbulbs, HP bars, player HP, crosshair
@@ -51,8 +51,8 @@ void HudRenderer::renderHUD() {
 	// Crosshair — screen-center in both FPS and TPS (over-the-shoulder
 	// shooter style). Hidden in RPG/RTS (cursor is a world ray, not a
 	// screen-center reticle).
-	if (g.m_cam.mode == civcraft::CameraMode::FirstPerson ||
-	    g.m_cam.mode == civcraft::CameraMode::ThirdPerson) {
+	if (g.m_cam.mode == solarium::CameraMode::FirstPerson ||
+	    g.m_cam.mode == solarium::CameraMode::ThirdPerson) {
 		float cx = 0.0f, cy = 0.0f;
 		// Hitmarker flash: orange on damage, red on kill shot
 		glm::vec4 chColor = kCrosshair;
@@ -78,7 +78,7 @@ void HudRenderer::renderHUD() {
 	// visible in normal play since it's how you tell NPCs apart at a glance.
 	{
 		EntityId myId = g.m_server->localPlayerId();
-		g.m_server->forEachEntity([&](civcraft::Entity& e) {
+		g.m_server->forEachEntity([&](solarium::Entity& e) {
 			if (e.id() == myId) return;
 			if (!e.def().isLiving()) return;
 			glm::vec3 anchor = e.position + glm::vec3(0, 2.1f, 0);
@@ -122,22 +122,22 @@ void HudRenderer::renderHUD() {
 	// at in FPS/TPS. Modern games surface the action to the target, not
 	// just a static tutorial bar. Hidden if any UI owns the cursor.
 	if (!g.m_uiWantsCursor &&
-	    (g.m_cam.mode == civcraft::CameraMode::FirstPerson ||
-	     g.m_cam.mode == civcraft::CameraMode::ThirdPerson)) {
+	    (g.m_cam.mode == solarium::CameraMode::FirstPerson ||
+	     g.m_cam.mode == solarium::CameraMode::ThirdPerson)) {
 		glm::vec3 eye = g.m_cam.position;
 		glm::vec3 dir = g.m_cam.front();
 		EntityId myId = g.m_server->localPlayerId();
 
 		auto& ents = g.m_scratch.ents;
 		ents.clear();
-		g.m_server->forEachEntity([&](civcraft::Entity& e) {
+		g.m_server->forEachEntity([&](solarium::Entity& e) {
 			if (!e.def().isLiving()) return;
 			ents.push_back({e.id(), e.typeId(), e.position,
 				e.def().collision_box_min, e.def().collision_box_max,
 				e.goalText, e.hasError});
 		});
-		auto eHit = civcraft::raycastEntities(ents, eye, dir, 12.0f, myId);
-		auto bHit = civcraft::raycastBlocks(g.m_server->chunks(), eye, dir, 6.0f);
+		auto eHit = solarium::raycastEntities(ents, eye, dir, 12.0f, myId);
+		auto bHit = solarium::raycastBlocks(g.m_server->chunks(), eye, dir, 6.0f);
 
 		glm::vec3 anchor;
 		bool      hasIcon = false;
@@ -158,11 +158,11 @@ void HudRenderer::renderHUD() {
 				g.m_server->chunks().getBlock(bp.x, bp.y, bp.z));
 			anchor = glm::vec3(bp) + glm::vec3(0.5f, 1.25f, 0.5f);
 			const bool isDoorMesh =
-				bdef.mesh_type == civcraft::MeshType::Door     ||
-				bdef.mesh_type == civcraft::MeshType::DoorOpen ||
-				bdef.mesh_type == civcraft::MeshType::Trapdoor;
-			if      (bdef.string_id == civcraft::BlockType::Chest) kind = ActionIconKind::Relocate;
-			else if (bdef.string_id == civcraft::BlockType::TNT)   kind = ActionIconKind::Interact;
+				bdef.mesh_type == solarium::MeshType::Door     ||
+				bdef.mesh_type == solarium::MeshType::DoorOpen ||
+				bdef.mesh_type == solarium::MeshType::Trapdoor;
+			if      (bdef.string_id == solarium::BlockType::Chest) kind = ActionIconKind::Relocate;
+			else if (bdef.string_id == solarium::BlockType::TNT)   kind = ActionIconKind::Interact;
 			else if (isDoorMesh)                                    kind = ActionIconKind::Interact;
 			else                                                    kind = ActionIconKind::Harvest;
 			hasIcon = true;
@@ -386,4 +386,4 @@ void HudRenderer::renderHUD() {
 	}
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

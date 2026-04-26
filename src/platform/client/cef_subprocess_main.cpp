@@ -1,6 +1,6 @@
 // CEF subprocess shim.
 //
-// civcraft-ui-vk passes this binary's path as CefSettings.browser_subprocess_path
+// solarium-ui-vk passes this binary's path as CefSettings.browser_subprocess_path
 // so Chromium's renderer/GPU/utility children don't re-enter the main game
 // (Python init, Vulkan, GLFW window, LLM sidecars). The shim does exactly
 // one thing: hand argv to CefExecuteProcess and return its exit code.
@@ -23,14 +23,14 @@
 
 // Diagnostic: dump our inherited FD table + argv to a per-pid file so we can
 // see what Chromium is asking us to find at the time we're forked. Gated on
-// CIVCRAFT_CEF_FD_DEBUG=1 to avoid I/O during normal operation. Each line:
+// SOLARIUM_CEF_FD_DEBUG=1 to avoid I/O during normal operation. Each line:
 // "fd <N> -> <readlink target>". Argv is stamped at the top of the file.
 namespace {
 void dumpFdTable(int argc, char* argv[]) {
 	// Unconditional during the FD-7 investigation. Toggle off later by
-	// re-introducing a CIVCRAFT_CEF_FD_DEBUG env-var gate.
+	// re-introducing a SOLARIUM_CEF_FD_DEBUG env-var gate.
 	char path[64];
-	std::snprintf(path, sizeof(path), "/tmp/civcraft_cef_fd_%d.txt", (int)getpid());
+	std::snprintf(path, sizeof(path), "/tmp/solarium_cef_fd_%d.txt", (int)getpid());
 	FILE* fp = std::fopen(path, "w");
 	if (!fp) return;
 	std::fprintf(fp, "pid=%d ppid=%d argc=%d\n", (int)getpid(), (int)getppid(), argc);
@@ -60,6 +60,6 @@ int main(int argc, char* argv[]) {
 	// our dump's fopen/opendir consumed those slots. Subprocess must keep
 	// FDs untouched until CefExecuteProcess takes over.
 	CefMainArgs main_args(argc, argv);
-	CefRefPtr<CefApp> app = civcraft::vk::makeOsrApp();
+	CefRefPtr<CefApp> app = solarium::vk::makeOsrApp();
 	return CefExecuteProcess(main_args, app, nullptr);
 }

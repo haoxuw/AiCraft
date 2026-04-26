@@ -15,7 +15,7 @@
 #include <vector>
 #include <string>
 
-namespace civcraft {
+namespace solarium {
 
 struct NearbyEntity {
 	EntityId id;
@@ -141,4 +141,4 @@ inline const char* toString(PlanStep::Type t) {
 	return "?";
 }
 
-} // namespace civcraft
+} // namespace solarium

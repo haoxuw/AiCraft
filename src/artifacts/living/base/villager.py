@@ -1,6 +1,6 @@
 """Villager — industrious humanoid that chops wood and builds.
 
-Every living thing in CivCraft uses the same `living = {...}` schema.
+Every living thing in Solarium uses the same `living = {...}` schema.
 Fork this file to make your own humanoid — change `stats`, `behavior`,
 `features`, or `model` and add a new entry under artifacts/living/base/.
 

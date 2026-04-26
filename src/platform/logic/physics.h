@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace civcraft {
+namespace solarium {
 
 struct MoveResult {
 	glm::vec3 position;
@@ -215,4 +215,4 @@ inline MoveResult moveAndCollide(const BlockSolidFn& isSolid,
 	return result;
 }
 
-} // namespace civcraft
+} // namespace solarium

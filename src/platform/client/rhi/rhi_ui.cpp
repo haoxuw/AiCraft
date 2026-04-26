@@ -8,7 +8,7 @@
 #include <cstring>
 #include <vector>
 
-namespace civcraft::rhi {
+namespace solarium::rhi {
 
 // NDC glyph size. 1.0 scale ≈ 24 px on 900p.
 static constexpr float kCharW = 0.018f;
@@ -108,4 +108,4 @@ void IRhi::drawArc2D(float cx, float cy, float r_inner, float r_outer,
 	         /*mode=*/1, rgba);
 }
 
-} // namespace civcraft::rhi
+} // namespace solarium::rhi

@@ -10,7 +10,7 @@ Actions with internal state (cooldowns, timers) implement `tick(dt)`.
 """
 import math
 import random
-from civcraft_engine import Move, Convert, Ground, Self
+from solarium_engine import Move, Convert, Ground, Self
 from rules import Action, init_home
 
 

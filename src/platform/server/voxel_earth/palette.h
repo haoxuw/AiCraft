@@ -1,6 +1,6 @@
 #pragma once
 
-// Voxel RGB → CivCraft block-id (nearest colour in plain RGB).
+// Voxel RGB → Solarium block-id (nearest colour in plain RGB).
 //
 // Phase 4 keeps this hardcoded. Per Rule 1, this is a candidate for moving
 // into src/artifacts/blocks/ as data the modder can override; the follow-up
@@ -13,7 +13,7 @@
 #include <array>
 #include <cstdint>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 struct PaletteEntry {
 	const char* type_id;   // BlockType::* string
@@ -65,4 +65,4 @@ inline BlockId nearest_block_id(const ResolvedPalette& pal,
 	return (id == BLOCK_AIR) ? pal.fallback : id;
 }
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

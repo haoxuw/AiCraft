@@ -25,7 +25,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 // One axis-aligned sub-volume of a block, in world coordinates. A full
 // cube is a single SubBox spanning (bc, bc+1). A stair is two SubBoxes.
@@ -76,4 +76,4 @@ public:
 // type — never null; unknown types fall back to an empty shape.
 const BlockShape& getBlockShape(MeshType mt);
 
-}  // namespace civcraft
+}  // namespace solarium

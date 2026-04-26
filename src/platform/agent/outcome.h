@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-namespace civcraft {
+namespace solarium {
 
 // Handed to next decide() so Python can branch on outcome.
 enum class StepOutcome {
@@ -114,4 +114,4 @@ struct LastOutcome {
 	int          failStreak  = 0;            // consecutive Failed_* outcomes; reset on Success
 };
 
-} // namespace civcraft
+} // namespace solarium

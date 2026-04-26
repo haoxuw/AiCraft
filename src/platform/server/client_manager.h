@@ -26,7 +26,7 @@
 #include <unistd.h>
 #include <cmath>
 
-namespace civcraft {
+namespace solarium {
 
 // Preparing clients have no playerId — skip broadcast (ownerId==0 would
 // match every unowned entity).
@@ -70,7 +70,7 @@ struct ClientSession {
 	ChunkPos                                  lastChunkPos = {0, 0, 0};
 	std::unordered_set<ChunkPos, ChunkPosHash> sentChunks;
 
-	// Persistent UUID sent in C_HELLO (from ~/.civcraft/client_id.json). Kept
+	// Persistent UUID sent in C_HELLO (from ~/.solarium/client_id.json). Kept
 	// pristine so SeatRegistry lookups stay stable even after `name` gets
 	// reshaped for display.
 	std::string clientUuid;
@@ -329,11 +329,11 @@ public:
 			m_clients[h.cid] = std::move(it->second);
 			m_pendingClients.erase(it);
 			net::ReadBuffer rb(h.payload.data(), h.payload.size());
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 			auto t0 = std::chrono::steady_clock::now();
 #endif
 			handleMessage(h.cid, m_clients[h.cid], h.type, rb);
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 			double ms = std::chrono::duration<double, std::milli>(
 				std::chrono::steady_clock::now() - t0).count();
 			if (ms > 5.0)
@@ -356,11 +356,11 @@ public:
 				// needs no handler logic.
 				client.noteActivity();
 				net::ReadBuffer rb(payload.data(), payload.size());
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 				auto t0 = std::chrono::steady_clock::now();
 #endif
 				handleMessage(cid, client, hdr.type, rb);
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 				double ms = std::chrono::duration<double, std::milli>(
 					std::chrono::steady_clock::now() - t0).count();
 				if (ms > 5.0)
@@ -702,8 +702,8 @@ public:
 		int humans = (int)m_clients.size();
 
 		char msg[64];
-		snprintf(msg, sizeof(msg), "CIVCRAFT %d %d", m_port, humans);
-		m_announceUdp.broadcast(msg, (int)strlen(msg), CIVCRAFT_DISCOVER_PORT);
+		snprintf(msg, sizeof(msg), "SOLARIUM %d %d", m_port, humans);
+		m_announceUdp.broadcast(msg, (int)strlen(msg), SOLARIUM_DISCOVER_PORT);
 	}
 
 	void disconnectAll() {
@@ -1007,11 +1007,11 @@ private:
 	void finalizePreparingImpl(ClientSession& client) {
 		const std::string& creatureType = client.pendingCreatureType;
 
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		auto t_add0 = std::chrono::steady_clock::now();
 #endif
 		EntityId eid = m_server.addClient(client.id, client.seatId, creatureType);
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		double add_ms = std::chrono::duration<double, std::milli>(
 			std::chrono::steady_clock::now() - t_add0).count();
 		if (add_ms > 5.0)
@@ -1196,7 +1196,7 @@ private:
 
 		// C_AGENT_HELLO removed — agents run inside PlayerClient now
 		// C_SET_GOAL / C_SET_GOAL_GROUP / C_CANCEL_GOAL removed — navigation
-		// now runs client-side via civcraft_engine.Navigator (Rule 4/5).
+		// now runs client-side via solarium_engine.Navigator (Rule 4/5).
 		case net::C_QUIT: {
 			markDisconnect(cid, "client quit");
 			break;
@@ -1352,4 +1352,4 @@ private:
 	float m_announceTimer = 0.0f;
 };
 
-} // namespace civcraft
+} // namespace solarium

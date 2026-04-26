@@ -8,11 +8,11 @@
 #include <glm/vec3.hpp>
 #include <string>
 
-namespace civcraft {
+namespace solarium {
 
 struct AppearanceEntry {
 	glm::vec3 tint{1.f, 1.f, 1.f};  // multiplied into the block's face colors
 	std::string pattern;            // optional named pattern (empty = solid)
 };
 
-} // namespace civcraft
+} // namespace solarium

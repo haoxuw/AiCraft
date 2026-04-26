@@ -5,7 +5,7 @@
 #include "logic/material_values.h"
 #include <limits>
 
-namespace civcraft {
+namespace solarium {
 
 void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	namespace BT = BlockType;
@@ -336,4 +336,4 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	}
 }
 
-} // namespace civcraft
+} // namespace solarium

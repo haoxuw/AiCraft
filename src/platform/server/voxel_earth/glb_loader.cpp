@@ -9,7 +9,7 @@
 #include <cstring>
 #include <fstream>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 namespace {
 
@@ -125,4 +125,4 @@ bool load_glb(const std::string& path, Glb& out, std::string* error) {
 	return true;
 }
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

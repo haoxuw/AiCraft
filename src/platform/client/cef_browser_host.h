@@ -36,7 +36,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 class CefHost {
 public:
@@ -100,4 +100,4 @@ private:
 	ActionCallback            m_actionCb;
 };
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

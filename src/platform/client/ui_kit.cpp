@@ -5,7 +5,7 @@
 #include <cstring>
 #include <unordered_map>
 
-namespace civcraft::vk::ui {
+namespace solarium::vk::ui {
 
 namespace color {
 const float kBrass[4]     = { 0.96f, 0.82f, 0.40f, 1.00f };
@@ -151,4 +151,4 @@ float drawPeekableText(rhi::IRhi* r, const PeekableTextInput& in,
 	return xCur - x;
 }
 
-} // namespace civcraft::vk::ui
+} // namespace solarium::vk::ui

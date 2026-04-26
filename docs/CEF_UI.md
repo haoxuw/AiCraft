@@ -55,7 +55,7 @@ For automation, the binary takes:
 | ------------------------------------------------- | ------------------------------------------------------- |
 | `src/platform/client/cef_app.{h,cpp}`             | `CefApp` shared by browser + subprocess: command-line switches, renderer-side `CefMessageRouter` lifecycle |
 | `src/platform/client/cef_browser_host.{h,cpp}`    | `CefHost` class — owns one OSR browser, surfaces pixels, mouse forwarding, action callback |
-| `src/platform/client/cef_subprocess_main.cpp`     | `civcraft-cef-subprocess` binary: bare `CefExecuteProcess` shim |
+| `src/platform/client/cef_subprocess_main.cpp`     | `solarium-cef-subprocess` binary: bare `CefExecuteProcess` shim |
 | `src/platform/client/main.cpp`                    | `CefInitialize`, host creation, action wiring (Quit / Singleplayer), `--cef-*` flags |
 | `src/platform/client/rhi/rhi_vk.{h,cpp}`          | `blitCefImage`, `recordCefUpload`, `recordCefOverlay`, sampled image + pipeline |
 | `src/platform/shaders/vk/cef_overlay.{vert,frag}` | Fullscreen triangle + texture sample with premul alpha  |
@@ -65,12 +65,12 @@ For automation, the binary takes:
 ## Process layout
 
 ```
-civcraft-ui-vk            ← parent: Vulkan, GLFW, Python, audio, server-spawner
+solarium-ui-vk            ← parent: Vulkan, GLFW, Python, audio, server-spawner
   └─ libcef.so            ← linked, calls CefInitialize, owns BrowserSide
        │ posix_spawn (--no-zygote)
-       └─ civcraft-cef-subprocess --type=gpu-process    ← child
-       └─ civcraft-cef-subprocess --type=renderer       ← child (one per browser)
-       └─ civcraft-cef-subprocess --type=utility …      ← child (network, storage)
+       └─ solarium-cef-subprocess --type=gpu-process    ← child
+       └─ solarium-cef-subprocess --type=renderer       ← child (one per browser)
+       └─ solarium-cef-subprocess --type=utility …      ← child (network, storage)
 ```
 
 The subprocess is a separate binary so renderer/GPU/utility children don't re-enter
@@ -97,7 +97,7 @@ Blend mode is **premul-alpha** (`srcColorBlendFactor=ONE`,
 `dstColorBlendFactor=ONE_MINUS_SRC_ALPHA`). Required because CEF outputs premul when
 `background_color` has alpha=0.
 
-The `RUNPATH=/usr/lib/x86_64-linux-gnu:$ORIGIN` on `civcraft-ui-vk` ensures system
+The `RUNPATH=/usr/lib/x86_64-linux-gnu:$ORIGIN` on `solarium-ui-vk` ensures system
 NVIDIA `libvulkan.so.1` wins over Chromium's bundled SwiftShader copy that ships
 next to `libcef.so`. The SwiftShader libs are kept (CEF's GPU subprocess needs them
 as fallback rasterizer); the main game just doesn't pick them up.
@@ -123,9 +123,9 @@ the same `OnQuery` dispatch by adding more `if (action == ...)` branches.
 CMake: `find_package(CEF REQUIRED)` from `third_party/cef/cmake/`, then both targets
 link `libcef_dll_wrapper` + `libcef.so`. Two `add_executable` targets:
 
-- `civcraft-ui-vk` — the parent; links CEF + does everything else.
-- `civcraft-cef-subprocess` — tiny binary; links CEF + nothing else; written into
-  `$<TARGET_FILE_DIR:civcraft-ui-vk>` so they're peers at runtime.
+- `solarium-ui-vk` — the parent; links CEF + does everything else.
+- `solarium-cef-subprocess` — tiny binary; links CEF + nothing else; written into
+  `$<TARGET_FILE_DIR:solarium-ui-vk>` so they're peers at runtime.
 
 `POST_BUILD` copies `CEF_BINARY_FILES` (libcef.so, chrome-sandbox, snapshot bin,
 SwiftShader) and `CEF_RESOURCE_FILES` (.pak, icudtl.dat, locales/) into the binary
@@ -145,7 +145,7 @@ directory. CEF needs to find them as siblings of `libcef.so`.
    window; user perceives it as a normal title screen warm-up.
 5. **GameLogger init order is load-bearing** — must run *after* `CefInitialize` so it
    doesn't take FD 3, which Chromium's posix_spawn dup2 actions need free. See
-   comment in `main.cpp` near `civcraft::GameLogger::instance().init(...)`.
+   comment in `main.cpp` near `solarium::GameLogger::instance().init(...)`.
 6. **Native main-menu UI is suppressed via flag, not deleted.** Sub-screens
    (Multiplayer, Settings, Handbook) still draw via the dismiss-to-native fallback
    path. Removal blocked on CEF replacements — see `CEF_LEGACY_CLEANUP.md`.

@@ -1,4 +1,4 @@
-# CivCraft - Architecture Diagram
+# Solarium - Architecture Diagram
 
 Two process types: **WorldServer** and **Client** (PlayerClient + AgentClient in one binary).
 

@@ -36,7 +36,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft::test {
+namespace solarium::test {
 
 struct Result { std::string name; bool passed; std::string msg; };
 static std::vector<Result> g_results;
@@ -424,10 +424,10 @@ static std::string s15_wall_vs_pair() {
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
-} // namespace civcraft::test
+} // namespace solarium::test
 
 int main() {
-	using namespace civcraft::test;
+	using namespace solarium::test;
 	std::printf("\n=== applySeparation scenarios ===\n");
 
 	run("S1  alone-no-walls",           s1_alone_no_walls);

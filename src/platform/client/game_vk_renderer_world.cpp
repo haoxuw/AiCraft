@@ -19,7 +19,7 @@
 #include "logic/constants.h"
 #include "agent/agent_client.h"
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ─────────────────────────────────────────────────────────────────────────
 // Rendering — world, entities, effects, HUD
@@ -97,10 +97,10 @@ void smoothAngleDeg(float& state, float target, float dt, float tau,
 // Fill an AnimState for a remote mob and return its body yaw. Living entities
 // get head tracking (±45° cap, overflow rolls into body yaw); non-living
 // entities face e.yaw and don't track the head. Matches EntityDrawer::draw.
-void fillMobAnim(const civcraft::Entity& e, float globalTime,
-                 civcraft::AnimState& anim, float& bodyYawOut) {
+void fillMobAnim(const solarium::Entity& e, float globalTime,
+                 solarium::AnimState& anim, float& bodyYawOut) {
 	float speed = glm::length(glm::vec2(e.velocity.x, e.velocity.z));
-	anim.walkDistance = e.getProp<float>(civcraft::Prop::WalkDistance, 0.0f);
+	anim.walkDistance = e.getProp<float>(solarium::Prop::WalkDistance, 0.0f);
 	anim.speed        = speed;
 	anim.time         = globalTime;
 	anim.currentClip  = pickClip(e.goalText);
@@ -135,7 +135,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 	// Menu force-lights the backdrop to a bright mid-morning regardless of
 	// the live server's time-of-day — the main-menu scene (trees, plaza,
 	// character preview) shouldn't be a black silhouette at dawn/dusk.
-	if (g.m_state == civcraft::vk::GameState::Menu) {
+	if (g.m_state == solarium::vk::GameState::Menu) {
 		tod = 0.42f;  // mid-morning: sun well above horizon, warm slant light
 	}
 	float sunAngle = tod * 6.2831853f - 1.5707963f;   // 2π·tod − π/2
@@ -170,14 +170,14 @@ void WorldRenderer::renderWorld(float wallTime) {
 	// Build entity box stream once per frame — shared by shadow + lit passes.
 	// Each box is 19 floats: {mat4 model, r, g, b}. Python BoxModel
 	// definitions (model_loader::loadAllModels) are flattened through
-	// civcraft::appendBoxModel — walk/idle/clip/head-track animation runs here.
+	// solarium::appendBoxModel — walk/idle/clip/head-track animation runs here.
 	auto& charBoxes = g.m_scratch.charBoxes;
 	charBoxes.clear();
 
 	// Model-key resolution — character_skin prop wins; otherwise EntityDef.model
 	// (stripped of its .py extension) with deterministic variant selection
 	// from the entity id.
-	auto resolveModelKey = [&](const civcraft::Entity& e) -> std::string {
+	auto resolveModelKey = [&](const solarium::Entity& e) -> std::string {
 		std::string skin = e.getProp<std::string>("character_skin", std::string{});
 		std::string key;
 		if (!skin.empty()) {
@@ -188,7 +188,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 			auto dot = key.rfind('.');
 			if (dot != std::string::npos) key = key.substr(0, dot);
 		}
-		int n = civcraft::model_loader::countVariants(g.m_models, key);
+		int n = solarium::model_loader::countVariants(g.m_models, key);
 		if (n > 0) {
 			uint64_t h = (uint64_t)e.id() * 2654435761u;
 			return key + "#" + std::to_string((int)(h % (uint64_t)n));
@@ -197,7 +197,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 	};
 
 	auto resolveItemModel = [&](const std::string& itemId)
-	    -> const civcraft::BoxModel* {
+	    -> const solarium::BoxModel* {
 		if (itemId.empty()) return nullptr;
 		std::string key = itemId;
 		auto colon = key.find(':');
@@ -207,10 +207,10 @@ void WorldRenderer::renderWorld(float wallTime) {
 	};
 
 	// Local player body — skip in FPS so the body doesn't eclipse the camera.
-	if (me && g.m_cam.mode != civcraft::CameraMode::FirstPerson) {
+	if (me && g.m_cam.mode != solarium::CameraMode::FirstPerson) {
 		auto pit = g.m_models.find(resolveModelKey(*me));
 		if (pit != g.m_models.end()) {
-			civcraft::AnimState anim{};
+			solarium::AnimState anim{};
 			anim.walkDistance = g.m_walkDist;
 			{
 				// Smooth speed → walk-cycle clip blending doesn't snap on
@@ -224,15 +224,15 @@ void WorldRenderer::renderWorld(float wallTime) {
 			anim.time         = g.m_wallTime;
 
 			// Held items: hotbar selection → main hand, offhand equip → other.
-			civcraft::HeldItems held;
-			civcraft::HeldItem mainItem;
+			solarium::HeldItems held;
+			solarium::HeldItem mainItem;
 			mainItem.model = me->inventory
 			    ? resolveItemModel(g.m_hotbar.mainHand(*me->inventory))
 			    : nullptr;
-			civcraft::HeldItem offItem;
+			solarium::HeldItem offItem;
 			offItem.model = me->inventory
 			    ? resolveItemModel(me->inventory->equipped(
-			          civcraft::WearSlot::Offhand))
+			          solarium::WearSlot::Offhand))
 			    : nullptr;
 			bool offhandRight = me->inventory
 			    && me->inventory->offhandInRightHand();
@@ -244,7 +244,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 
 			glm::vec3 bodyPos(me->position.x, visualPlayerY(me->position.y),
 			                  me->position.z);
-			civcraft::appendBoxModel(charBoxes, pit->second, bodyPos,
+			solarium::appendBoxModel(charBoxes, pit->second, bodyPos,
 			                         glm::degrees(g.m_playerBodyYaw),
 			                         anim, &held);
 		}
@@ -257,19 +257,19 @@ void WorldRenderer::renderWorld(float wallTime) {
 	//   Living    → Python model via resolveModelKey + fillMobAnim.
 	{
 		EntityId myId = g.m_server->localPlayerId();
-		auto hasActiveAnim = [&](civcraft::EntityId eid) {
+		auto hasActiveAnim = [&](solarium::EntityId eid) {
 			for (const auto& a : g.m_pickupAnims)
 				if (a.itemId == eid) return true;
 			return false;
 		};
-		g.m_server->forEachEntity([&](civcraft::Entity& e) {
+		g.m_server->forEachEntity([&](solarium::Entity& e) {
 			if (e.id() == myId) return;
 			const auto& def = e.def();
 			if (def.isStructure()) return;
 			if (def.isItem()) {
 				if (hasActiveAnim(e.id())) return;
 				std::string itemType =
-				    e.getProp<std::string>(civcraft::Prop::ItemType);
+				    e.getProp<std::string>(solarium::Prop::ItemType);
 				std::string modelKey = itemType;
 				auto colon = modelKey.find(':');
 				if (colon != std::string::npos)
@@ -287,9 +287,9 @@ void WorldRenderer::renderWorld(float wallTime) {
 				if (imIt != g.m_models.end()) {
 					// Render at the model's intrinsic size — matches in-hand.
 					// Sizes are absolute world-block units in the artifact.
-					civcraft::AnimState anim{};
+					solarium::AnimState anim{};
 					anim.time = g.m_wallTime;
-					civcraft::appendBoxModel(charBoxes, imIt->second,
+					solarium::appendBoxModel(charBoxes, imIt->second,
 					    e.position + glm::vec3(ox, bob + bounce + 0.3f, oz),
 					    spinYawDeg, anim);
 				} else {
@@ -301,7 +301,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 					glm::vec3 foot  = def.collision_box_min;
 					glm::vec3 center = e.position + foot + size * 0.5f
 					                 + glm::vec3(ox, bob + bounce, oz);
-					civcraft::emitAABox(charBoxes,
+					solarium::emitAABox(charBoxes,
 					                    center - size * 0.5f, size, color);
 				}
 				return;
@@ -312,7 +312,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 			auto mit = g.m_models.find(mkey);
 			if (mit == g.m_models.end()) return;
 
-			civcraft::AnimState anim{};
+			solarium::AnimState anim{};
 			float bodyYaw;
 			fillMobAnim(e, g.m_wallTime, anim, bodyYaw);
 
@@ -327,7 +327,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 			anim.speed = sm.speed;
 			bodyYaw    = sm.bodyYawDeg;
 
-			civcraft::appendBoxModel(charBoxes, mit->second,
+			solarium::appendBoxModel(charBoxes, mit->second,
 			                         e.position, bodyYaw, anim);
 		});
 
@@ -335,7 +335,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 		// grows unbounded as mobs respawn with fresh ids.
 		for (auto it = g.m_entityAnimSmooth.begin();
 		     it != g.m_entityAnimSmooth.end(); ) {
-			civcraft::Entity* ent = g.m_server->getEntity(it->first);
+			solarium::Entity* ent = g.m_server->getEntity(it->first);
 			if (!ent || ent->removed) it = g.m_entityAnimSmooth.erase(it);
 			else                      ++it;
 		}
@@ -356,7 +356,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 				            - ie->def().collision_box_min;
 				size = s * scale;
 			}
-			civcraft::emitAABox(charBoxes,
+			solarium::emitAABox(charBoxes,
 			                    drawPos - size * 0.5f, size, a.color);
 		}
 	}
@@ -367,7 +367,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 	// menu camera orbits (0, 1.6, 0) so this fills the frame. CharacterSelect
 	// reuses the same plaza so the previewed character stands on the grass
 	// instead of floating in sky.
-	if (g.m_state == civcraft::vk::GameState::Menu) {
+	if (g.m_state == solarium::vk::GameState::Menu) {
 		const glm::vec3 grass(0.36f, 0.58f, 0.22f);
 		const glm::vec3 grassDk(0.28f, 0.46f, 0.18f);
 		const glm::vec3 dirt (0.42f, 0.30f, 0.20f);
@@ -380,10 +380,10 @@ void WorldRenderer::renderWorld(float wallTime) {
 			for (int x = -16; x < 16; ++x) {
 				// Gentle checker variation so it's not a flat color.
 				const glm::vec3& g0 = ((x + z) & 1) ? grass : grassDk;
-				civcraft::emitAABox(charBoxes,
+				solarium::emitAABox(charBoxes,
 					glm::vec3((float)x, 0.0f, (float)z),
 					glm::vec3(1.0f, 1.0f, 1.0f), g0);
-				civcraft::emitAABox(charBoxes,
+				solarium::emitAABox(charBoxes,
 					glm::vec3((float)x, -1.0f, (float)z),
 					glm::vec3(1.0f, 1.0f, 1.0f), dirt);
 			}
@@ -393,7 +393,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 		// camera focus so the orbit frames them.
 		auto emitTree = [&](float cx, float cz, float scale) {
 			float trunkH = 4.0f * scale;
-			civcraft::emitAABox(charBoxes,
+			solarium::emitAABox(charBoxes,
 				glm::vec3(cx - 0.5f, 1.0f, cz - 0.5f),
 				glm::vec3(1.0f, trunkH, 1.0f), bark);
 			// Canopy: 5×3×5 leaf cluster, slightly jagged.
@@ -405,7 +405,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 						// trim corners on top/bottom layers
 						if (ly != 1 && std::abs(lx) + std::abs(lz) > rad) continue;
 						const glm::vec3& lc = ((lx + lz + ly) & 1) ? leaf : leafLt;
-						civcraft::emitAABox(charBoxes,
+						solarium::emitAABox(charBoxes,
 							glm::vec3(cx + lx - 0.5f,
 							          cyBase + (float)ly,
 							          cz + lz - 0.5f),
@@ -426,17 +426,17 @@ void WorldRenderer::renderWorld(float wallTime) {
 		// wander/idle naturally. Anim fly-clip routing for the bee
 		// matches the in-game flyer_wander goalText convention.
 		if (g.m_menuPlaza && g.m_menuPlaza->ready()) {
-			g.m_menuPlaza->forEachMascot([&](const civcraft::Entity& e) {
+			g.m_menuPlaza->forEachMascot([&](const solarium::Entity& e) {
 				auto mit = g.m_models.find(e.typeId());
 				if (mit == g.m_models.end()) return;
-				civcraft::AnimState anim{};
+				solarium::AnimState anim{};
 				anim.time         = g.m_wallTime;
 				anim.walkDistance = g.m_wallTime * 1.2f;
 				const float speedXZ = std::sqrt(e.velocity.x * e.velocity.x +
 				                                 e.velocity.z * e.velocity.z);
 				anim.speed = speedXZ;
 				if (e.def().gravity_scale <= 0.0f) anim.currentClip = "fly";
-				civcraft::appendBoxModel(charBoxes, mit->second,
+				solarium::appendBoxModel(charBoxes, mit->second,
 				                         e.position, e.yaw, anim);
 			});
 		}
@@ -447,12 +447,12 @@ void WorldRenderer::renderWorld(float wallTime) {
 	// inside the shell's preview area. Used by CharacterSelect, Connecting,
 	// and (later) Handbook. Model rotates slowly on a turntable; the shell's
 	// yaw/pitch add user-drag offsets on top.
-	if (g.m_state == civcraft::vk::GameState::Menu
-	    && (g.m_menuScreen == civcraft::vk::MenuScreen::CharacterSelect
-	        || g.m_menuScreen == civcraft::vk::MenuScreen::Connecting
-	        || g.m_menuScreen == civcraft::vk::MenuScreen::Handbook)
+	if (g.m_state == solarium::vk::GameState::Menu
+	    && (g.m_menuScreen == solarium::vk::MenuScreen::CharacterSelect
+	        || g.m_menuScreen == solarium::vk::MenuScreen::Connecting
+	        || g.m_menuScreen == solarium::vk::MenuScreen::Handbook)
 	    && !g.m_shell.previewId.empty()) {
-		const civcraft::ArtifactEntry* entry =
+		const solarium::ArtifactEntry* entry =
 		    g.m_artifactRegistry.findById(g.m_shell.previewId);
 		if (entry) {
 			std::string key;
@@ -463,12 +463,12 @@ void WorldRenderer::renderWorld(float wallTime) {
 			if (dot != std::string::npos) key = key.substr(0, dot);
 			auto it = g.m_models.find(key);
 			if (it != g.m_models.end()) {
-				civcraft::AnimState anim{};
+				solarium::AnimState anim{};
 				anim.time = g.m_wallTime;
 				anim.currentClip = g.m_shell.previewClip.empty()
 				    ? "mine" : g.m_shell.previewClip;
 				float spinYaw = g.m_wallTime * 30.0f + g.m_shell.previewYaw;
-				civcraft::appendBoxModel(charBoxes, it->second,
+				solarium::appendBoxModel(charBoxes, it->second,
 				                         glm::vec3(0.0f, 1.0f, 0.0f),
 				                         spinYaw, anim);
 			}
@@ -484,7 +484,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 	if (sunStr > 0.05f) {
 		Frustum shadowFr;
 		shadowFr.setFromVP(shadowVP);
-		const float CS = (float)civcraft::CHUNK_SIZE;
+		const float CS = (float)solarium::CHUNK_SIZE;
 		for (const auto& kv : g.m_chunkMeshes) {
 			if (kv.second == rhi::IRhi::kInvalidMesh) continue;
 			glm::vec3 mn(kv.first.x * CS, kv.first.y * CS, kv.first.z * CS);
@@ -557,7 +557,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 	// typically drops draw calls from ~2000 to ~200-400.
 	Frustum viewFr;
 	viewFr.setFromVP(vp);
-	const float CS = (float)civcraft::CHUNK_SIZE;
+	const float CS = (float)solarium::CHUNK_SIZE;
 	const float kCullDistSq = (fogFar + CS * 2.0f) * (fogFar + CS * 2.0f);
 	glm::vec3 camPos = g.m_cam.position;
 	for (const auto& kv : g.m_chunkMeshes) {
@@ -581,8 +581,8 @@ void WorldRenderer::renderWorld(float wallTime) {
 	{
 		glm::vec3 rayEye = g.m_cam.position;
 		glm::vec3 rayDir = g.m_cam.front();
-		if (g.m_cam.mode == civcraft::CameraMode::RPG ||
-		    g.m_cam.mode == civcraft::CameraMode::RTS) {
+		if (g.m_cam.mode == solarium::CameraMode::RPG ||
+		    g.m_cam.mode == solarium::CameraMode::RTS) {
 			double mx, my;
 			glfwGetCursorPos(g.m_window, &mx, &my);
 			int ww = g.m_fbW, wh = g.m_fbH;
@@ -595,7 +595,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 				rayDir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
 			}
 		}
-		auto hlHit = civcraft::raycastBlocks(g.m_server->chunks(), rayEye, rayDir, 6.0f);
+		auto hlHit = solarium::raycastBlocks(g.m_server->chunks(), rayEye, rayDir, 6.0f);
 		if (hlHit && !g.m_uiWantsCursor) {
 			glm::vec3 bp = glm::vec3(hlHit->blockPos);
 			float eh = 0.005f;    // edge half-thickness
@@ -607,7 +607,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 			auto& hl = g.m_scratch.hlBoxes;
 			hl.clear();
 			auto push = [&](glm::vec3 corner, glm::vec3 size) {
-				civcraft::emitAABox(hl, corner, size, col);
+				solarium::emitAABox(hl, corner, size, col);
 			};
 			// 4 edges along X (bottom + top rails)
 			push({bp.x+in,   bp.y+in-eh, bp.z+in-eh},   len);
@@ -644,7 +644,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 		float beamH = 6.0f;
 		glm::vec3 tallY(eh * 2, beamH, eh * 2);
 		auto push = [&](glm::vec3 corner, glm::vec3 size) {
-			civcraft::emitAABox(hl, corner, size, col);
+			solarium::emitAABox(hl, corner, size, col);
 		};
 		push({bp.x - eh,           bp.y,           bp.z - eh},           tallY);
 		push({bp.x + 1.0f - eh,    bp.y,           bp.z - eh},           tallY);
@@ -773,13 +773,13 @@ void WorldRenderer::renderEffects(float wallTime) {
 		// ChunkSource lookup is cheap (hash into loaded chunks) and prevents
 		// raindrops from streaking through the floor at the cost of one
 		// getBlock() call per particle.
-		civcraft::ChunkSource& cs = g.m_server->chunks();
-		const civcraft::BlockRegistry& reg = cs.blockRegistry();
+		solarium::ChunkSource& cs = g.m_server->chunks();
+		const solarium::BlockRegistry& reg = cs.blockRegistry();
 		auto insideSolid = [&](const glm::vec3& p) -> bool {
 			int bx = (int)std::floor(p.x);
 			int by = (int)std::floor(p.y);
 			int bz = (int)std::floor(p.z);
-			civcraft::BlockId bid = cs.getBlock(bx, by, bz);
+			solarium::BlockId bid = cs.getBlock(bx, by, bz);
 			if (bid == 0) return false;
 			return reg.get(bid).solid;
 		};
@@ -862,8 +862,8 @@ void WorldRenderer::renderEffects(float wallTime) {
 	// GrowthStage property once the server-side growth loop lands.
 	if (g.m_server) {
 		glm::vec3 eyeP = g.m_cam.position;
-		g.m_server->forEachEntity([&](civcraft::Entity& e) {
-			if (e.typeId() != civcraft::StructureName::Monument) return;
+		g.m_server->forEachEntity([&](solarium::Entity& e) {
+			if (e.typeId() != solarium::StructureName::Monument) return;
 			glm::vec3 anchor = e.position;
 			// Cull by distance — the render radius matches view range so we
 			// don't emit 200 particles per frame for a monument five chunks
@@ -872,7 +872,7 @@ void WorldRenderer::renderEffects(float wallTime) {
 			float dist2 = d.x*d.x + d.y*d.y + d.z*d.z;
 			if (dist2 > 240.0f * 240.0f) return;
 
-			int stage = e.getProp<int>(civcraft::Prop::GrowthStage);
+			int stage = e.getProp<int>(solarium::Prop::GrowthStage);
 			if (stage <= 0) stage = 18;
 			// Flame drifts from the deck up past the trident crown. Kept
 			// sparse — subtle glow, not a pyre.
@@ -970,27 +970,27 @@ void WorldRenderer::renderBreakEffects(float wallTime) {
 	// renderer. Plants etc. return an empty list and are silently skipped.
 	if (g.m_breaking.active && g.m_breaking.hits > 0) {
 		const auto& bp = g.m_breaking.target;
-		civcraft::BlockId bid = g.m_server->chunks().getBlock(bp.x, bp.y, bp.z);
-		const civcraft::BlockDef& bdef = g.m_server->blockRegistry().get(bid);
+		solarium::BlockId bid = g.m_server->chunks().getBlock(bp.x, bp.y, bp.z);
+		const solarium::BlockDef& bdef = g.m_server->blockRegistry().get(bid);
 
 		// Fetch param2 for shapes that need it (Stair FourDir, doors, etc.).
 		auto divFloor = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 		auto modFloor = [](int a, int b) { return ((a % b) + b) % b; };
-		civcraft::ChunkPos cp{
-			divFloor(bp.x, civcraft::CHUNK_SIZE),
-			divFloor(bp.y, civcraft::CHUNK_SIZE),
-			divFloor(bp.z, civcraft::CHUNK_SIZE)};
+		solarium::ChunkPos cp{
+			divFloor(bp.x, solarium::CHUNK_SIZE),
+			divFloor(bp.y, solarium::CHUNK_SIZE),
+			divFloor(bp.z, solarium::CHUNK_SIZE)};
 		auto* c = g.m_server->chunks().getChunkIfLoaded(cp);
-		uint8_t p2 = c ? c->getParam2(modFloor(bp.x, civcraft::CHUNK_SIZE),
-		                              modFloor(bp.y, civcraft::CHUNK_SIZE),
-		                              modFloor(bp.z, civcraft::CHUNK_SIZE))
+		uint8_t p2 = c ? c->getParam2(modFloor(bp.x, solarium::CHUNK_SIZE),
+		                              modFloor(bp.y, solarium::CHUNK_SIZE),
+		                              modFloor(bp.z, solarium::CHUNK_SIZE))
 		               : 0;
 
-		std::vector<civcraft::SubBox> boxes;
+		std::vector<solarium::SubBox> boxes;
 		// Crack overlay doesn't need neighbor info today — fence/wall
 		// shapes come later. Pass an empty mask.
-		civcraft::getBlockShape(bdef.mesh_type).emitSubBoxes(
-			bp, p2, civcraft::NeighborMask{}, boxes);
+		solarium::getBlockShape(bdef.mesh_type).emitSubBoxes(
+			bp, p2, solarium::NeighborMask{}, boxes);
 
 		int stage = g.m_breaking.hits <= 1 ? 0 : g.m_breaking.hits == 2 ? 1 : 2;
 		for (const auto& b : boxes) {
@@ -1010,13 +1010,13 @@ void WorldRenderer::renderBreakEffects(float wallTime) {
 		auto* me = g.playerEntity();
 		if (me && me->inventory) {
 			const std::string& held = g.m_hotbar.mainHand(*me->inventory);
-			const civcraft::BlockDef* hdef = held.empty()
+			const solarium::BlockDef* hdef = held.empty()
 				? nullptr : g.m_server->blockRegistry().find(held);
-			if (hdef && hdef->mesh_type != civcraft::MeshType::Plant) {
+			if (hdef && hdef->mesh_type != solarium::MeshType::Plant) {
 				glm::vec3 eye = g.m_cam.position;
 				glm::vec3 dir = g.m_cam.front();
-				if (g.m_cam.mode == civcraft::CameraMode::RPG ||
-				    g.m_cam.mode == civcraft::CameraMode::RTS) {
+				if (g.m_cam.mode == solarium::CameraMode::RPG ||
+				    g.m_cam.mode == solarium::CameraMode::RTS) {
 					double mx, my;
 					glfwGetCursorPos(g.m_window, &mx, &my);
 					int ww = g.m_fbW, wh = g.m_fbH;
@@ -1029,17 +1029,17 @@ void WorldRenderer::renderBreakEffects(float wallTime) {
 						dir = glm::normalize(glm::vec3(fr) - glm::vec3(nr));
 					}
 				}
-				auto hit = civcraft::raycastBlocks(g.m_server->chunks(), eye, dir, 8.0f);
+				auto hit = solarium::raycastBlocks(g.m_server->chunks(), eye, dir, 8.0f);
 				if (hit) {
 					glm::ivec3 pp = hit->placePos;
-					civcraft::BlockId existing = g.m_server->chunks().getBlock(pp.x, pp.y, pp.z);
-					bool blocked = (existing != civcraft::BLOCK_AIR);
+					solarium::BlockId existing = g.m_server->chunks().getBlock(pp.x, pp.y, pp.z);
+					bool blocked = (existing != solarium::BLOCK_AIR);
 					// Same param2 the click will use — preview matches the
 					// actual placement exactly.
 					uint8_t p2 = g.placementParam2ForHeld(*hdef);
-					std::vector<civcraft::SubBox> boxes;
-					civcraft::getBlockShape(hdef->mesh_type).emitSubBoxes(
-						pp, p2, civcraft::NeighborMask{}, boxes);
+					std::vector<solarium::SubBox> boxes;
+					solarium::getBlockShape(hdef->mesh_type).emitSubBoxes(
+						pp, p2, solarium::NeighborMask{}, boxes);
 					// Green when placeable, red when blocked. Low alpha so the
 					// underlying world stays readable.
 					const float green[4] = {0.30f, 0.95f, 0.35f, 0.38f};
@@ -1138,13 +1138,13 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 	// each selected unit's head. Reads as "this unit is under my command"
 	// from any camera angle, unlike the small ground ring which gets
 	// occluded by terrain and squashed from overhead.
-	if (g.m_cam.mode == civcraft::CameraMode::RTS && !g.m_rtsSelect.selected.empty()) {
+	if (g.m_cam.mode == solarium::CameraMode::RTS && !g.m_rtsSelect.selected.empty()) {
 		auto& spinParts = g.m_scratch.spinParts;
 		spinParts.clear();
 		const glm::vec3 selCol(1.0f, 0.95f, 0.30f);
 		float spin = wallTime * 2.5f;
 		for (auto eid : g.m_rtsSelect.selected) {
-			civcraft::Entity* e = g.m_server->getEntity(eid);
+			solarium::Entity* e = g.m_server->getEntity(eid);
 			if (!e) continue;
 			float topY = e->position.y + e->def().collision_box_max.y + 0.7f;
 			glm::vec3 c(e->position.x, topY, e->position.z);
@@ -1233,12 +1233,12 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 		// the per-entity Path directly from the executor (shrinks as cells
 		// are consumed). Degrades to a two-point line when the entity has
 		// no plan yet (async still running, or builder-mode direct steer).
-		auto buildRtsPath = [&](civcraft::Entity& e, glm::vec3 fallback,
+		auto buildRtsPath = [&](solarium::Entity& e, glm::vec3 fallback,
 		                        std::vector<glm::vec3>& path) -> glm::vec3 {
 			path.push_back(e.position + glm::vec3(0, kYLift, 0));
 			glm::vec3 dest = fallback;
 			if (g.m_pathExec.has(e.id())) {
-				const civcraft::Path& p = g.m_pathExec.path(e.id());
+				const solarium::Path& p = g.m_pathExec.path(e.id());
 				for (const auto& w : p.steps) {
 					path.push_back(glm::vec3{w.pos.x + 0.5f,
 					                         (float)w.pos.y + kYLift,
@@ -1258,13 +1258,13 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 		};
 
 		// Always-on RTS move orders (red/blue).
-		std::unordered_set<civcraft::EntityId> rtsDrawn;
-		if (g.m_cam.mode == civcraft::CameraMode::RTS && !g.m_moveOrders.empty()) {
+		std::unordered_set<solarium::EntityId> rtsDrawn;
+		if (g.m_cam.mode == solarium::CameraMode::RTS && !g.m_moveOrders.empty()) {
 			const glm::vec3 colA(1.00f, 0.15f, 0.15f);
 			const glm::vec3 colB(0.20f, 0.45f, 1.00f);
 			for (const auto& [eid, mo] : g.m_moveOrders) {
 				if (!mo.active) continue;
-				civcraft::Entity* e = g.m_server->getEntity(eid);
+				solarium::Entity* e = g.m_server->getEntity(eid);
 				if (!e) continue;
 				std::vector<glm::vec3> path;
 				path.reserve(16);
@@ -1284,7 +1284,7 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 
 			// Every RTS-commanded entity not already drawn above.
 			if (g.m_pathExec.size() > 0) {
-				g.m_server->forEachEntity([&](civcraft::Entity& e) {
+				g.m_server->forEachEntity([&](solarium::Entity& e) {
 					if (!g.m_pathExec.has(e.id())) return;
 					if (rtsDrawn.count(e.id())) return;
 					std::vector<glm::vec3> path;
@@ -1299,11 +1299,11 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 			// Every autonomous agent with Python waypoints.
 			if (g.m_agentClient) {
 				g.m_agentClient->forEachAgent(
-					[&](civcraft::EntityId eid,
-					    const civcraft::PlanViz& viz) {
+					[&](solarium::EntityId eid,
+					    const solarium::PlanViz& viz) {
 					if (viz.waypoints.empty()) return;
 					if (rtsDrawn.count(eid)) return;
-					civcraft::Entity* a = g.m_server->getEntity(eid);
+					solarium::Entity* a = g.m_server->getEntity(eid);
 					if (!a) return;
 					std::vector<glm::vec3> path;
 					path.reserve(viz.waypoints.size() + 1);
@@ -1326,4 +1326,4 @@ void WorldRenderer::renderSelectionMarkers(float wallTime) {
 	// box-model if/when needed.
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

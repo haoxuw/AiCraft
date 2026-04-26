@@ -1,4 +1,4 @@
-# CivCraft -- Web Client Design
+# Solarium -- Web Client Design
 
 Dual-target architecture: same C++ source builds natively (Linux/Mac/Win) and as WebAssembly for browsers. Both connect to the same server.
 
@@ -8,7 +8,7 @@ Dual-target architecture: same C++ source builds natively (Linux/Mac/Win) and as
 
 ```
                     ┌─────────────────────────────────────┐
-                    │         CivCraft Server (C++)         │
+                    │         Solarium Server (C++)         │
                     │                                     │
                     │   World ─ Physics ─ Behaviors       │
                     │   Action Queue ─ Entity Manager     │
@@ -54,7 +54,7 @@ emcmake cmake -B build-web \
   -DCMAKE_BUILD_TYPE=Release \
   -DAGENTWORLD_TARGET=web
 cmake --build build-web -j$(nproc)
-# Outputs: civcraft.html, civcraft.js, civcraft.wasm, civcraft.data
+# Outputs: solarium.html, solarium.js, solarium.wasm, solarium.data
 ```
 
 ### CMake target detection
@@ -173,13 +173,13 @@ Browsers cannot open raw TCP sockets. Two options:
 
 **Option A: WebSocket proxy (simple)**
 ```
-Browser ──WebSocket──► Proxy (ws→tcp) ──TCP──► CivCraft Server
+Browser ──WebSocket──► Proxy (ws→tcp) ──TCP──► Solarium Server
 ```
 A lightweight proxy (e.g., `websockify`) converts WebSocket to TCP. Server unchanged.
 
 **Option B: Native WebSocket support in server (better)**
 ```
-Browser ──WebSocket──► CivCraft Server (listens on both TCP and WS)
+Browser ──WebSocket──► Solarium Server (listens on both TCP and WS)
 ```
 Server accepts both TCP (native clients) and WebSocket (browser clients) on different ports. Same binary protocol over both transports.
 
@@ -293,22 +293,22 @@ The web client is a static site:
 ```
 dist/
   index.html          ← entry point
-  civcraft.js          ← Emscripten glue
-  civcraft.wasm        ← compiled game (~3-5MB)
-  civcraft.data        ← bundled shaders + config (~100KB)
+  solarium.js          ← Emscripten glue
+  solarium.wasm        ← compiled game (~3-5MB)
+  solarium.data        ← bundled shaders + config (~100KB)
 ```
 
 Host on any CDN (Cloudflare Pages, Vercel, S3). No server-side rendering needed.
 
 ### Global server
 
-Run the dedicated CivCraft server on a cloud VM:
+Run the dedicated Solarium server on a cloud VM:
 ```bash
-./civcraft-server --port 7777 --ws-port 8080
+./solarium-server --port 7777 --ws-port 8080
 ```
 
-Browser clients connect via WebSocket to `wss://play.civcraft.io:8080`.
-Native clients connect via TCP to `play.civcraft.io:7777`.
+Browser clients connect via WebSocket to `wss://play.solarium.io:8080`.
+Native clients connect via TCP to `play.solarium.io:7777`.
 Both use the same binary protocol.
 
 ---

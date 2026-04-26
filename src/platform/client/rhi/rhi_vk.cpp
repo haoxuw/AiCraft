@@ -11,7 +11,7 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 
-namespace civcraft::rhi {
+namespace solarium::rhi {
 
 namespace {
 
@@ -89,7 +89,7 @@ bool VkRhi::createInstance(const char* appName) {
 	app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	app.pApplicationName = appName;
 	app.applicationVersion = VK_MAKE_VERSION(0, 2, 0);
-	app.pEngineName = "civcraft-rhi";
+	app.pEngineName = "solarium-rhi";
 	app.engineVersion = VK_MAKE_VERSION(0, 2, 0);
 	app.apiVersion = VK_API_VERSION_1_2;
 
@@ -4495,4 +4495,4 @@ void VkRhi::shutdown() {
 	if (m_instance) vkDestroyInstance(m_instance, nullptr);
 }
 
-} // namespace civcraft::rhi
+} // namespace solarium::rhi

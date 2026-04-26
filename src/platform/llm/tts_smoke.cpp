@@ -1,6 +1,6 @@
 // Tiny standalone smoke test for TtsClient. Spawns piper via TtsSidecar,
 // synthesises one utterance, prints the resulting WAV path. Build:
-//   cmake --build build --target civcraft-tts-smoke
+//   cmake --build build --target solarium-tts-smoke
 
 #include "llm/tts_client.h"
 #include "llm/tts_sidecar.h"
@@ -11,12 +11,12 @@
 #include <string>
 
 int main(int argc, char** argv) {
-	civcraft::llm::TtsSidecar::Paths paths;
-	if (!civcraft::llm::TtsSidecar::probe(paths)) {
+	solarium::llm::TtsSidecar::Paths paths;
+	if (!solarium::llm::TtsSidecar::probe(paths)) {
 		std::fprintf(stderr, "[tts-smoke] no piper/voice found — run make tts_setup\n");
 		return 2;
 	}
-	civcraft::llm::TtsSidecar sidecar;
+	solarium::llm::TtsSidecar sidecar;
 	if (!sidecar.start(paths)) {
 		std::fprintf(stderr, "[tts-smoke] sidecar failed to start\n");
 		return 2;
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
 		: "Hello traveller, welcome to the village. The weather is fair today.";
 	std::fprintf(stderr, "[tts-smoke] speaking: %s\n", text.c_str());
 
-	civcraft::llm::TtsClient client(&sidecar);
+	solarium::llm::TtsClient client(&sidecar);
 	std::mutex mtx;
 	std::condition_variable cv;
 	bool done = false;

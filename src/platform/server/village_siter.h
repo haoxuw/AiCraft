@@ -20,7 +20,7 @@
 #include <random>
 #include <glm/glm.hpp>
 
-namespace civcraft {
+namespace solarium {
 
 struct VillageSiterConfig {
 	// Pair chosen so every seat still has ≥ 2× perception radius of breathing
@@ -89,4 +89,4 @@ private:
 	}
 };
 
-} // namespace civcraft
+} // namespace solarium

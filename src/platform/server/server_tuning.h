@@ -2,7 +2,7 @@
 
 // Server tuning constants. All magic numbers live here.
 
-namespace civcraft::ServerTuning {
+namespace solarium::ServerTuning {
 	constexpr float spawnHeightOffset    = 1.5f;
 
 	// Stuck detection

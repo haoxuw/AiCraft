@@ -13,7 +13,7 @@
 #include <vector>
 #include <filesystem>
 
-namespace civcraft {
+namespace solarium {
 
 namespace model_loader {
 
@@ -408,4 +408,4 @@ inline int countVariants(const std::unordered_map<std::string, BoxModel>& models
 }
 
 } // namespace model_loader
-} // namespace civcraft
+} // namespace solarium

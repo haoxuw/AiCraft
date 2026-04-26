@@ -1,9 +1,9 @@
 #pragma once
 
 // In-process menu plaza — a tiny chunk-backed world that lives entirely
-// inside civcraft-ui-vk. Spawns 3 mascots (dog/cat/bee) as real Entity
+// inside solarium-ui-vk. Spawns 3 mascots (dog/cat/bee) as real Entity
 // records running real Agent::executePlan against real Plans returned by
-// Python decide_plan(). No TCP, no civcraft-server. The menu/loading
+// Python decide_plan(). No TCP, no solarium-server. The menu/loading
 // screens render this plaza so the camera looks at live wandering
 // mascots instead of statically-posed boxes.
 //
@@ -31,11 +31,11 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 class ArtifactRegistry;
-} // namespace civcraft
+} // namespace solarium
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // Tiny ChunkSource backing the menu plaza — a 32×32 grass slab over a
 // dirt layer, generated once at construction and never modified.
@@ -131,4 +131,4 @@ private:
 	bool                                 m_ready   = false;
 };
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

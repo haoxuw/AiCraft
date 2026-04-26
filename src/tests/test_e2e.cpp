@@ -32,7 +32,7 @@
 #include <sstream>
 #include <unordered_set>
 
-namespace civcraft::test {
+namespace solarium::test {
 
 // ================================================================
 // Test infrastructure
@@ -1877,7 +1877,7 @@ static std::string w6_spawned_mobs_min_separation() {
 }
 
 // B5 (pathfind.py module load test) removed — pathfind.py deleted; Navigator
-// is a civcraft_engine binding now, covered by Phase D tests.
+// is a solarium_engine binding now, covered by Phase D tests.
 
 // ================================================================
 // C2: block_search prefers the NEAREST non-empty chunk.
@@ -3259,16 +3259,16 @@ static std::string s03_loadEntry_preserves_high_water() {
 // Main
 // ================================================================
 
-} // namespace civcraft::test
+} // namespace solarium::test
 
 int main() {
-	using namespace civcraft;
-	using namespace civcraft::test;
+	using namespace solarium;
+	using namespace solarium::test;
 
 	// Initialize Python so world templates and behaviors can load from artifacts/
 	pythonBridge().init("python");
 
-	printf("\n=== CivCraft E2E Tests ===\n\n");
+	printf("\n=== Solarium E2E Tests ===\n\n");
 	initTemplates();
 
 	printf("--- Player Basics ---\n");

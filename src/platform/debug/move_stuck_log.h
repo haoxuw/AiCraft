@@ -1,6 +1,6 @@
 #pragma once
 
-// MoveStuck logging → /tmp/civcraft_entity_<id>.log. Per-entity cooldown
+// MoveStuck logging → /tmp/solarium_entity_<id>.log. Per-entity cooldown
 // shared across detection sites (clamp/stuck/snap) prevents log flooding.
 
 #include "logic/types.h"
@@ -13,7 +13,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace civcraft {
+namespace solarium {
 
 // Cross-site: a Clamp log silences an Agent-Stuck log for the same eid during the window.
 constexpr double kMoveStuckCooldownSec = 600.0;
@@ -38,4 +38,4 @@ inline void logMoveStuck(EntityId eid, const char* tag,
 		tag, reason, detail ? detail : "");
 }
 
-} // namespace civcraft
+} // namespace solarium

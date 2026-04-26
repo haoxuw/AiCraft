@@ -1,5 +1,5 @@
 #pragma once
-// Structured crash report → /tmp/civcraft_crash.log + stderr + GameLogger, then abort.
+// Structured crash report → /tmp/solarium_crash.log + stderr + GameLogger, then abort.
 
 #include "client/game_logger.h"
 #include <cstdarg>
@@ -9,14 +9,14 @@
 #include <string>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 class CrashLog {
 public:
 	explicit CrashLog(const std::string& title)
 		: m_title(title) {
 		m_lines.reserve(32);
-		line("==== CIVCRAFT CRASH ====");
+		line("==== SOLARIUM CRASH ====");
 		line("title: %s", title.c_str());
 	}
 
@@ -48,7 +48,7 @@ public:
 
 	[[noreturn]] void abort() {
 		std::string path =
-			(std::filesystem::temp_directory_path() / "civcraft_crash.log").string();
+			(std::filesystem::temp_directory_path() / "solarium_crash.log").string();
 		if (FILE* f = std::fopen(path.c_str(), "w")) {
 			for (auto& l : m_lines) {
 				std::fputs(l.c_str(), f);
@@ -70,7 +70,7 @@ public:
 	// Soft-crash variant: writes report but does not abort.
 	void dump() {
 		std::string path =
-			(std::filesystem::temp_directory_path() / "civcraft_crash.log").string();
+			(std::filesystem::temp_directory_path() / "solarium_crash.log").string();
 		if (FILE* f = std::fopen(path.c_str(), "w")) {
 			for (auto& l : m_lines) {
 				std::fputs(l.c_str(), f);
@@ -85,4 +85,4 @@ private:
 	std::vector<std::string> m_lines;
 };
 
-} // namespace civcraft
+} // namespace solarium

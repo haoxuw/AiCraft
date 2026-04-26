@@ -1,12 +1,12 @@
 #pragma once
 
 // TtsSidecar — auto-spawns piper (https://github.com/rhasspy/piper) as a
-// child of civcraft-ui-vk so `make game` brings up TTS for NPC dialog.
+// child of solarium-ui-vk so `make game` brings up TTS for NPC dialog.
 //
 // Unlike llama-server / whisper-server, piper has no HTTP mode. Instead:
 //   * We launch it once with --json-input and pipe its stdin/stdout.
 //   * Each synthesis request is one JSON line:
-//       {"text": "...", "output_file": "/tmp/civcraft_piper_<N>.wav"}
+//       {"text": "...", "output_file": "/tmp/solarium_piper_<N>.wav"}
 //     Piper writes the WAV and emits the path + duration on stdout.
 //   * The client-side TtsClient (follow-up file) watches the output file
 //     (or the stdout line) and hands the WAV to miniaudio.
@@ -29,7 +29,7 @@
 #include <unistd.h>
 #include <vector>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 class TtsSidecar {
 public:
@@ -109,7 +109,7 @@ public:
 			dup2(outPipe[1], STDOUT_FILENO);
 			// Errors and "diagnostic" info still go to a file so the parent
 			// pipe isn't polluted with load-time noise.
-			int errFd = open("/tmp/civcraft_piper.log",
+			int errFd = open("/tmp/solarium_piper.log",
 			                 O_WRONLY | O_CREAT | O_TRUNC, 0644);
 			if (errFd >= 0) { dup2(errFd, STDERR_FILENO); ::close(errFd); }
 			::close(inPipe[0]);  ::close(inPipe[1]);
@@ -135,7 +135,7 @@ public:
 
 		std::printf("[tts-sidecar] spawned piper pid=%d voice=%s\n", (int)pid,
 		            std::filesystem::path(paths.voiceOnnx).filename().string().c_str());
-		std::printf("[tts-sidecar] log: /tmp/civcraft_piper.log\n");
+		std::printf("[tts-sidecar] log: /tmp/solarium_piper.log\n");
 		return true;
 	}
 
@@ -172,4 +172,4 @@ private:
 	int   m_stdoutFd = -1;
 };
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

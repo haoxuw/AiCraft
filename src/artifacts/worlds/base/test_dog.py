@@ -9,7 +9,7 @@ one behavior at a time.
 
 Launch:
     make test-dog                # singleplayer shortcut
-    ./build/civcraft-server --template 2   # dedicated
+    ./build/solarium-server --template 2   # dedicated
 """
 
 world = {

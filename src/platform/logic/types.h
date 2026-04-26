@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace civcraft {
+namespace solarium {
 
 // Kept out of server.h so non-server TUs can depend on it.
 using ClientId = uint32_t;
@@ -62,4 +62,4 @@ inline ChunkPos worldToChunk(int wx, int wy, int wz) {
 	};
 }
 
-} // namespace civcraft
+} // namespace solarium

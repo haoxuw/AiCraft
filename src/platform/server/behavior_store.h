@@ -10,7 +10,7 @@
 #include <sstream>
 #include <filesystem>
 
-namespace civcraft {
+namespace solarium {
 
 class BehaviorStore {
 public:
@@ -35,4 +35,4 @@ private:
 	std::string m_basePath;
 };
 
-} // namespace civcraft
+} // namespace solarium

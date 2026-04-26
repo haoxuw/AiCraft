@@ -11,9 +11,9 @@
 // these kinds and calls drawActionIcon(...). Move is drawn at the
 // click-to-move cursor; the rest are drawn at the world anchor.
 
-namespace civcraft::rhi { class IRhi; }
+namespace solarium::rhi { class IRhi; }
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 enum class ActionIconKind {
 	Move,       // walkable ground click target
@@ -34,4 +34,4 @@ void drawActionIcon(rhi::IRhi* rhi, ActionIconKind kind,
                     float cx, float cy, float halfSize, float aspect,
                     const float rgba[4]);
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

@@ -1,6 +1,6 @@
-"""Minimal CivCraft TCP protocol client for E2E test observation.
+"""Minimal Solarium TCP protocol client for E2E test observation.
 
-Connects to a civcraft-server, sends C_HELLO to join as an observer player,
+Connects to a solarium-server, sends C_HELLO to join as an observer player,
 and receives entity/inventory/time broadcasts. Does NOT render or simulate —
 just tracks server state for test assertions.
 
@@ -134,7 +134,7 @@ def parse_inventory(rb: ReadBuffer) -> InventoryState:
 
 
 class ObserverClient:
-    """TCP client that connects to civcraft-server and tracks game state."""
+    """TCP client that connects to solarium-server and tracks game state."""
 
     def __init__(self):
         self.sock = None

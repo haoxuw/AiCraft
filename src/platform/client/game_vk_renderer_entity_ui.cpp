@@ -16,7 +16,7 @@
 #include "agent/agent_client.h"
 #include "logic/entity.h"
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ─────────────────────────────────────────────────────────────────────────
 // Entity inspect card — custom-drawn detail panel. Opens when the player
@@ -34,7 +34,7 @@ void drawKV(rhi::IRhi* r, float x, float y, float labelW,
 	r->drawText2D(value, x + labelW, y, 0.70f, valueCol);
 }
 
-std::string prettyName(const civcraft::Entity& e) {
+std::string prettyName(const solarium::Entity& e) {
 	std::string n = e.def().display_name;
 	if (n.empty()) {
 		n = e.typeId();
@@ -50,7 +50,7 @@ std::string prettyName(const civcraft::Entity& e) {
 
 void EntityUiRenderer::renderEntityInspect() {
 	Game& g = game_;
-	civcraft::Entity* e = g.m_server->getEntity(g.m_inspectedEntity);
+	solarium::Entity* e = g.m_server->getEntity(g.m_inspectedEntity);
 	if (!e) { g.m_inspectedEntity = 0; return; }
 
 	rhi::IRhi* r = g.m_rhi;
@@ -170,7 +170,7 @@ void EntityUiRenderer::renderEntityInspect() {
 
 	// Behavior + Goal
 	if (e->def().isLiving()) {
-		std::string bid = e->getProp<std::string>(civcraft::Prop::BehaviorId, "");
+		std::string bid = e->getProp<std::string>(solarium::Prop::BehaviorId, "");
 		if (bid.empty())
 			rowKV("Behavior", "(none — missing in artifact)", kDanger);
 		else
@@ -203,10 +203,10 @@ void EntityUiRenderer::renderEntityInspect() {
 				if (viz->hasAction) {
 					const char* t = "Move";
 					switch (viz->actionType) {
-						case civcraft::PlanStep::Move:     t = "Move"; break;
-						case civcraft::PlanStep::Harvest:  t = "Harvest"; break;
-						case civcraft::PlanStep::Attack:   t = "Attack"; break;
-						case civcraft::PlanStep::Relocate: t = "Relocate"; break;
+						case solarium::PlanStep::Move:     t = "Move"; break;
+						case solarium::PlanStep::Harvest:  t = "Harvest"; break;
+						case solarium::PlanStep::Attack:   t = "Attack"; break;
+						case solarium::PlanStep::Relocate: t = "Relocate"; break;
 					}
 					std::snprintf(buf, sizeof(buf), "%s @ %.1f, %.1f, %.1f",
 						t, viz->actionPos.x, viz->actionPos.y, viz->actionPos.z);
@@ -228,7 +228,7 @@ void EntityUiRenderer::renderEntityInspect() {
 	// ── Ownership ─────────────────────────────────────────────────────
 	y -= 0.010f;
 	sectionHeader("Ownership");
-	int ownerSeat = e->getProp<int>(civcraft::Prop::Owner, 0);
+	int ownerSeat = e->getProp<int>(solarium::Prop::Owner, 0);
 	uint32_t mySeat = g.m_server->localSeatId();
 	const float okCol[4] = {0.55f, 0.95f, 0.55f, 1.0f};
 	if (mySeat != 0 && ownerSeat == (int)mySeat)
@@ -263,10 +263,10 @@ void EntityUiRenderer::renderEntityInspect() {
 // ─────────────────────────────────────────────────────────────────────────
 void EntityUiRenderer::renderRTSSelect() {
 	Game& g = game_;
-	if (g.m_cam.mode != civcraft::CameraMode::RTS) return;
+	if (g.m_cam.mode != solarium::CameraMode::RTS) return;
 
 	for (auto eid : g.m_rtsSelect.selected) {
-		civcraft::Entity* e = g.m_server->getEntity(eid);
+		solarium::Entity* e = g.m_server->getEntity(eid);
 		if (!e) continue;
 		glm::vec3 ndc;
 		if (!g.projectWorld(e->position + glm::vec3(0, 0.1f, 0), ndc)) continue;
@@ -292,7 +292,7 @@ void EntityUiRenderer::renderRTSSelect() {
 // ─────────────────────────────────────────────────────────────────────────
 void EntityUiRenderer::renderRTSDragCommand() {
 	Game& g = game_;
-	if (g.m_cam.mode != civcraft::CameraMode::RTS) return;
+	if (g.m_cam.mode != solarium::CameraMode::RTS) return;
 	const float kPi = 3.14159265f;
 	float aspect = g.m_aspect > 0 ? g.m_aspect : 1.0f;
 
@@ -324,8 +324,8 @@ void EntityUiRenderer::renderRTSDragCommand() {
 			const float* col = kWalkCol;
 
 			// Entities first — attack target wins over the block behind it.
-			std::vector<civcraft::RaycastEntity> ents;
-			g.m_server->forEachEntity([&](civcraft::Entity& e) {
+			std::vector<solarium::RaycastEntity> ents;
+			g.m_server->forEachEntity([&](solarium::Entity& e) {
 				if (!e.def().isLiving()) return;
 				if (e.def().hasTag("humanoid")) return;
 				if (e.removed || e.hp() <= 0) return;
@@ -333,13 +333,13 @@ void EntityUiRenderer::renderRTSDragCommand() {
 					e.def().collision_box_min, e.def().collision_box_max,
 					e.goalText, e.hasError});
 			});
-			auto hitEnt = civcraft::raycastEntities(ents, eye, dir, 48.0f,
+			auto hitEnt = solarium::raycastEntities(ents, eye, dir, 48.0f,
 				g.m_server->localPlayerId());
 			if (hitEnt) {
 				label = "ATTACK";
 				col   = kAttackCol;
 			} else {
-				auto hit = civcraft::raycastBlocks(
+				auto hit = solarium::raycastBlocks(
 					g.m_server->chunks(), eye, dir, 48.0f);
 				if (hit) {
 					const auto& bdef =
@@ -386,7 +386,7 @@ void EntityUiRenderer::renderRTSDragCommand() {
 			float a  = (2.0f * kPi * (float)i) / (float)N;
 			float wx = cx + r * std::cos(a);
 			float wz = cz + r * std::sin(a);
-			auto hit = civcraft::raycastBlocks(
+			auto hit = solarium::raycastBlocks(
 				chunks, glm::vec3(wx, 256.0f, wz),
 				glm::vec3(0.0f, -1.0f, 0.0f), 300.0f);
 			if (!hit) continue;
@@ -435,7 +435,7 @@ void EntityUiRenderer::renderRTSDragCommand() {
 			const float dashFrac  = 0.55f;  // solid fraction per dash cell
 			std::vector<float> verts;
 			for (auto eid : g.m_rtsSelect.selected) {
-				civcraft::Entity* e = g.m_server->getEntity(eid);
+				solarium::Entity* e = g.m_server->getEntity(eid);
 				if (!e) continue;
 				glm::vec3 ndcUnit;
 				if (!g.projectWorld(e->position + glm::vec3(0, 0.10f, 0),
@@ -536,4 +536,4 @@ void EntityUiRenderer::renderRTSDragCommand() {
 	}
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

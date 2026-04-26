@@ -30,7 +30,7 @@ All of the below are just Relocate or Convert with common arguments preset.
 They exist only in Python — the C++ bridge does not know about them.
 """
 
-from civcraft_engine import Relocate, Convert, Self, Ground, Entity, Block
+from solarium_engine import Relocate, Convert, Self, Ground, Entity, Block
 
 
 def BreakBlock(x, y, z):

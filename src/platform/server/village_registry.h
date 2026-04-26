@@ -17,7 +17,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 
-namespace civcraft {
+namespace solarium {
 
 using VillageId = uint32_t;
 constexpr VillageId VILLAGE_NONE = 0;
@@ -89,4 +89,4 @@ private:
 	VillageId                  m_nextId = 1;  // 0 is the sentinel
 };
 
-} // namespace civcraft
+} // namespace solarium

@@ -1,4 +1,4 @@
-# CivCraft - World
+# Solarium - World
 
 The World is the top-level container. It holds every Object, tracks time, and is the single argument passed to every Action.
 

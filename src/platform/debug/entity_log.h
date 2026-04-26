@@ -1,7 +1,7 @@
 #pragma once
 
-// Per-entity log at /tmp/civcraft_entity_<id>.log. Line-buffered for `tail -f`.
-// Single source of truth — Python behaviors call civcraft_engine.entity_log()
+// Per-entity log at /tmp/solarium_entity_<id>.log. Line-buffered for `tail -f`.
+// Single source of truth — Python behaviors call solarium_engine.entity_log()
 // which routes here via python_bridge.cpp. Shell callers (smoke scripts,
 // `make game`) clear the files before launch; we never truncate at the API
 // level.
@@ -26,7 +26,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 namespace detail {
 
@@ -55,7 +55,7 @@ inline EntityLogState& openState(EntityId eid) {
 
 	EntityLogState s{};
 	char path[128];
-	std::snprintf(path, sizeof(path), "/tmp/civcraft_entity_%u.log", eid);
+	std::snprintf(path, sizeof(path), "/tmp/solarium_entity_%u.log", eid);
 	s.file = std::fopen(path, "a");    // O_APPEND: kernel-atomic writes.
 	if (s.file) std::setvbuf(s.file, nullptr, _IOLBF, 0);
 	return states.emplace(eid, s).first->second;
@@ -141,10 +141,10 @@ inline std::vector<std::string> entityLogProducedFiles() {
 	out.reserve(ids.size());
 	for (EntityId e : ids) {
 		char path[128];
-		std::snprintf(path, sizeof(path), "/tmp/civcraft_entity_%u.log", (unsigned)e);
+		std::snprintf(path, sizeof(path), "/tmp/solarium_entity_%u.log", (unsigned)e);
 		out.emplace_back(path);
 	}
 	return out;
 }
 
-} // namespace civcraft
+} // namespace solarium

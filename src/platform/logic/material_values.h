@@ -6,7 +6,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace civcraft {
+namespace solarium {
 
 inline float getMaterialValue(const std::string& typeId) {
 	static const std::unordered_map<std::string, float> s_values = {
@@ -58,4 +58,4 @@ inline float getMaterialValue(const std::string& typeId) {
 	return (it != s_values.end()) ? it->second : 1.0f;
 }
 
-} // namespace civcraft
+} // namespace solarium

@@ -140,7 +140,7 @@ the server validates and executes it. All wrappers are in `python/actions.py`:
 
 ```python
 from actions import PickupItem, DropItem, StoreItem, TakeItem, BreakBlock
-from civcraft_engine import Relocate, Convert, Self, Ground, Entity, Block
+from solarium_engine import Relocate, Convert, Self, Ground, Entity, Block
 
 # Pick up item entity from ground
 PickupItem(entity_id)

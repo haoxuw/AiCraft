@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace civcraft {
+namespace solarium {
 
 // Hash-based value noise (seed-independent, reproducible).
 inline float hashFloat(int x, int z) {
@@ -91,4 +91,4 @@ inline float terrainHeight(int seed, float x, float z) {
 	return naturalTerrainHeight(seed, x, z);
 }
 
-} // namespace civcraft
+} // namespace solarium

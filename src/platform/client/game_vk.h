@@ -1,11 +1,11 @@
 #pragma once
 
-// Vulkan-native CivCraft client — built on top of the RHI.
+// Vulkan-native Solarium client — built on top of the RHI.
 //
-// Always connects to a civcraft-server over TCP. main.cpp spawns a local
+// Always connects to a solarium-server over TCP. main.cpp spawns a local
 // server if no --port is supplied.
 //
-// Systems (all talk to civcraft::rhi::IRhi):
+// Systems (all talk to solarium::rhi::IRhi):
 //   * GameState machine — MENU → PLAYING → PAUSED → DEAD → MENU.
 //   * Server-streamed chunked voxel world via ChunkMesher.
 //   * Server entities rendered as box-model silhouettes (humanoid / quad /
@@ -33,7 +33,7 @@
 #include "llm/whisper_client.h"
 #include "llm/whisper_sidecar.h"
 
-// CivCraft chunk plumbing — civcraft-ui-vk now stores its world in real
+// Solarium chunk plumbing — solarium-ui-vk now stores its world in real
 // 16³ Chunks and meshes them through ChunkMesher rather than streaming a
 // flat instance buffer. Pulling the headers in here means Game.h can hold
 // per-chunk MeshHandles directly; only the .cpp needs ChunkMesher.
@@ -67,19 +67,19 @@
 
 struct GLFWwindow;
 
-namespace civcraft {
+namespace solarium {
 	struct Entity;
 	class ServerInterface;
 	class AgentClient;
 	class BehaviorStore;
 }
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ── Tuning ────────────────────────────────────────────────────────────────
 // Keep tuning numbers at the top of the header so all systems can see the
 // same values. Follows the "Rule 1 / no-hardcoded-magic" spirit — if this
-// were the real CivCraft we'd load these from Python.
+// were the real Solarium we'd load these from Python.
 struct Tuning {
 	// Physics
 	float gravity       = -20.0f;
@@ -149,16 +149,16 @@ public:
 	bool init(rhi::IRhi* rhi, GLFWwindow* window);
 	void shutdown();
 
-	// Server connection (required — civcraft-ui-vk has no local demo world).
+	// Server connection (required — solarium-ui-vk has no local demo world).
 	// Non-owning — caller keeps the server alive. Must be called before init().
-	void setServer(civcraft::ServerInterface* s) {
+	void setServer(solarium::ServerInterface* s) {
 		m_server = s;
 		// Build a stable WorldView bound to the server's chunks + block
 		// registry and hand it to the path executor for wall-slide probing.
 		// Doing this here (not on every driveRemote) keeps the executor's
 		// probe paths branch-free on the hot tick.
 		if (s) {
-			m_pathWorldView = std::make_unique<civcraft::ChunkWorldView>(
+			m_pathWorldView = std::make_unique<solarium::ChunkWorldView>(
 				s->chunks(), s->blockRegistry());
 			m_pathExec.setWorldView(m_pathWorldView.get());
 		} else {
@@ -175,7 +175,7 @@ public:
 
 	// Seed the AgentClient knobs before it's constructed (happens inside
 	// init()). No-op for defaults; CLI flags in client/main.cpp populate it.
-	void setAgentConfig(const civcraft::AgentClient::Config& cfg) {
+	void setAgentConfig(const solarium::AgentClient::Config& cfg) {
 		m_agentCfg = cfg;
 	}
 
@@ -262,7 +262,7 @@ private:
 	// ── init() helpers (see game_vk.cpp). Factored out so init() reads
 	//    as a short outline — each helper is one bounded sub-stage. ────
 	void setupServerCallbacks();    // S_BLOCK / S_INVENTORY / S_REMOVE
-	void registerDebugTriggers();   // /tmp/civcraft_vk_*_request hooks
+	void registerDebugTriggers();   // /tmp/solarium_vk_*_request hooks
 	void initAiSidecars();          // LLM / Whisper / TTS sidecar spawns
 
 	// ── processInput() helpers. Each returns control to processInput so
@@ -351,11 +351,11 @@ private:
 	bool isHeldBlockRotatable();
 	// Return the param2 the held block should be placed with, clamped
 	// modulo its rotationCount. Used by placeBlock and the ghost preview.
-	uint8_t placementParam2ForHeld(const civcraft::BlockDef& def) const;
+	uint8_t placementParam2ForHeld(const solarium::BlockDef& def) const;
 	// BlockDef for the currently-held hotbar item, or null if empty or
 	// the held item isn't a registered block. Private hotbar+registry
 	// lookup shared by the rotation helpers.
-	const civcraft::BlockDef* heldBlockDef();
+	const solarium::BlockDef* heldBlockDef();
 	// RPG / RTS click-to-move: raycast through cursor NDC → ground cell →
 	// install a client-side move order that the virtual-joystick tick drives
 	// toward. Uses the screen cursor in top-down modes (not the camera forward).
@@ -375,11 +375,11 @@ private:
 	// (under ChunkSource's invariants) and enqueue an async mesh build. The
 	// worker pool runs ChunkMesher::buildMeshFromSnapshot; the result is picked
 	// up by drainAsyncMeshes() and applied via createChunkMesh/updateChunkMesh.
-	void enqueueMeshBuild(civcraft::ChunkPos cp);
+	void enqueueMeshBuild(solarium::ChunkPos cp);
 	// Drain worker results and upload verts to the RHI. Main-thread only.
 	void drainAsyncMeshes();
 	// Apply one finished mesh (create or update the GPU buffer).
-	void applyMeshResult(civcraft::AsyncChunkMesher::Result&& r);
+	void applyMeshResult(solarium::AsyncChunkMesher::Result&& r);
 	// Synchronously rebuild the chunk containing `wpos` on the main thread
 	// and upload the fresh mesh. Called by predictBlockBreak/Place paths so
 	// the player's optimistic edit becomes visible on the same frame as
@@ -408,7 +408,7 @@ private:
 	// The entity the player is currently controlling. Returns nullptr if
 	// the server hasn't delivered the entity yet. ALL player position,
 	// velocity, and HP reads go through here — no dual state.
-	civcraft::Entity* playerEntity();
+	solarium::Entity* playerEntity();
 
 	// XZ forward vector from the camera's look yaw (pitch is camera-only).
 	glm::vec3 playerForward() const;
@@ -418,14 +418,14 @@ private:
 	GLFWwindow*  m_window = nullptr;
 	GameState    m_state  = GameState::Menu;
 	bool         m_shouldQuit = false;
-	civcraft::ServerInterface* m_server = nullptr;  // non-owning; always set
-	// Agents run inside this process now (server stopped spawning civcraft-agent
+	solarium::ServerInterface* m_server = nullptr;  // non-owning; always set
+	// Agents run inside this process now (server stopped spawning solarium-agent
 	// children). One BehaviorStore + one AgentClient drives every NPC the
 	// server hands us. unique_ptr so we can defer construction until after the
 	// server handshake (BehaviorStore needs Python initialized) and tear them
 	// down before the server interface goes away.
-	std::unique_ptr<civcraft::BehaviorStore> m_behaviorStore;
-	std::unique_ptr<civcraft::AgentClient>   m_agentClient;
+	std::unique_ptr<solarium::BehaviorStore> m_behaviorStore;
+	std::unique_ptr<solarium::AgentClient>   m_agentClient;
 	// In-process menu plaza — 3 mascots wandering on a tiny client-only
 	// world. Ticked while m_state == Menu; idle once the user enters the
 	// real game. See client/menu_plaza.h for the Rule 3 exception note.
@@ -434,15 +434,15 @@ private:
 	// client/main.cpp `--decide-base-cooldown` / `--decide-max-cooldown` /
 	// `--decide-backoff-base`. Stays at struct defaults when the flags are
 	// absent so release builds behave identically to before the knob landed.
-	civcraft::AgentClient::Config m_agentCfg;
+	solarium::AgentClient::Config m_agentCfg;
 
 	// Menu
 	float        m_menuTitleT = 0.0f;
 	std::string  m_lastDeathReason;
 	MenuScreen   m_menuScreen = MenuScreen::Main;
-	// Listens on UDP 7778 for civcraft-server LAN broadcasts. Ticked every
+	// Listens on UDP 7778 for solarium-server LAN broadcasts. Ticked every
 	// frame while in the Menu state; populates the Multiplayer screen list.
-	civcraft::LanBrowser m_lanBrowser;
+	solarium::LanBrowser m_lanBrowser;
 
 	// World to request on the pending C_HELLO handshake. main.cpp fills these
 	// before init(); CharacterSelect passes them into createGame().
@@ -474,22 +474,22 @@ private:
 	// renderShadowsChunkMesh once per frame. A dig() invalidates the chunk
 	// (and its face-adjacent neighbors), Game re-meshes them, and we call
 	// updateChunkMesh in place so the handle stays valid.
-	std::unordered_map<civcraft::ChunkPos, rhi::IRhi::MeshHandle,
-	                   civcraft::ChunkPosHash> m_chunkMeshes;
+	std::unordered_map<solarium::ChunkPos, rhi::IRhi::MeshHandle,
+	                   solarium::ChunkPosHash> m_chunkMeshes;
 	// Chunks the server has marked dirty (initial delivery or block change).
 	// Drained by streamServerChunks() each frame.
-	std::unordered_set<civcraft::ChunkPos, civcraft::ChunkPosHash> m_serverDirtyChunks;
+	std::unordered_set<solarium::ChunkPos, solarium::ChunkPosHash> m_serverDirtyChunks;
 	// Chunks currently queued on the async mesher worker pool. Keeps Pass 1/
 	// Pass 2 from double-enqueuing and lets dirty events wait for the in-flight
 	// build to land before re-queueing.
-	std::unordered_set<civcraft::ChunkPos, civcraft::ChunkPosHash> m_inFlightMesh;
+	std::unordered_set<solarium::ChunkPos, solarium::ChunkPosHash> m_inFlightMesh;
 	// cp flagged here has a newer sync-built mesh than the in-flight worker
 	// job; drainAsyncMeshes drops the stale result instead of overwriting.
-	std::unordered_set<civcraft::ChunkPos, civcraft::ChunkPosHash> m_staleInflightMeshes;
+	std::unordered_set<solarium::ChunkPos, solarium::ChunkPosHash> m_staleInflightMeshes;
 	// Worker pool lives as long as Game. Constructed lazily once the server
 	// handshake is done and the BlockRegistry is known. Destroyed in
 	// shutdown() before the server reference goes away.
-	std::unique_ptr<civcraft::AsyncChunkMesher> m_asyncMesher;
+	std::unique_ptr<solarium::AsyncChunkMesher> m_asyncMesher;
 	// Per-frame scratch so we don't realloc the 13-float interleaved buffer.
 	std::vector<float> m_meshUploadScratch;
 	std::vector<FloatText> m_floaters;
@@ -587,7 +587,7 @@ private:
 	//      retries.
 	// Duration of the arc comes from the picker's EntityDef::pickup_fly_duration.
 	struct PickupAnim {
-		civcraft::EntityId itemId = 0;
+		solarium::EntityId itemId = 0;
 		glm::vec3 startPos{0};
 		glm::vec3 color{1};
 		std::string itemType;
@@ -605,7 +605,7 @@ private:
 		float       age = 0.0f;       // seconds since Relocate sent
 		bool        deniedShown = false;
 	};
-	std::unordered_map<civcraft::EntityId, PickupRequest> m_pickupRequests;
+	std::unordered_map<solarium::EntityId, PickupRequest> m_pickupRequests;
 	// Tuning. kPickupWait = grace period before we assume the server rejected.
 	// kPickupCooldown = total time an entry lingers, blocking re-requests.
 	static constexpr float kPickupWait     = 0.5f;
@@ -690,11 +690,11 @@ private:
 
 	// F3 debug overlay. Env-var init lets headless screenshots boot with F3 on.
 	bool         m_showDebug = []{
-		const char* v = std::getenv("CIVCRAFT_DEBUG_F3");
+		const char* v = std::getenv("SOLARIUM_DEBUG_F3");
 		return v && std::atoi(v) != 0;
 	}();
 
-	// Per-frame section timings — feeds CIVCRAFT_PERF histograms and the
+	// Per-frame section timings — feeds SOLARIUM_PERF histograms and the
 	// [perf-spike] console line when a frame busts spikeMs.
 	struct FrameProbe {
 		using clock = std::chrono::steady_clock;
@@ -725,7 +725,7 @@ private:
 	// Perf-session anchor: wall-time (seconds since epoch) of the first frame
 	// spent in Playing state. Zero until then, which also makes the exit
 	// summary a no-op if the user quits from the main menu. Only read in
-	// CIVCRAFT_PERF builds but kept unconditional to avoid ABI divergence.
+	// SOLARIUM_PERF builds but kept unconditional to avoid ABI divergence.
 	double m_perfSessionStart = 0.0;
 public:
 	double perfSessionStart() const { return m_perfSessionStart; }
@@ -734,14 +734,14 @@ private:
 	// H handbook panel
 	bool         m_handbookOpen = false;
 	HandbookPanel m_handbook;
-	civcraft::ArtifactRegistry m_artifactRegistry;
+	solarium::ArtifactRegistry m_artifactRegistry;
 
 	// ── Hotbar + Inventory UI ────────────────────────────────────────────
 	// Hotbar: 10-slot alias over the player's inventory. The selected slot's
 	// itemId becomes the main-hand model. Drag layout persists to
 	// m_hotbarSavePath; `mergeFrom` runs on every S_INVENTORY so drag edits
 	// survive pickups.
-	civcraft::Hotbar m_hotbar;
+	solarium::Hotbar m_hotbar;
 	std::string      m_hotbarSavePath;  // set after login; empty before.
 	bool             m_hotbarSeeded = false;  // false until first S_INVENTORY.
 
@@ -754,7 +754,7 @@ private:
 	// auto-repeating at kQRepeatInterval so Q can empty a stack.
 	float            m_qHoldTime   = 0.0f;  // seconds held this press
 	float            m_qRepeatAccum = 0.0f; // seconds since last auto-drop
-	civcraft::EntityId m_invOther = 0;
+	solarium::EntityId m_invOther = 0;
 	InvSort          m_invSort = InvSort::ByName;
 
 	// Cached slot rects — 2D pass records, 3D pass (next frame) reads. The
@@ -783,14 +783,14 @@ private:
 	// startup via model_loader::loadAllModels. Keyed by model stem (e.g.
 	// "pig", "sword"). Used by the box-model flattener to render oriented
 	// parts with walk/clip/held-item animation.
-	std::unordered_map<std::string, civcraft::BoxModel> m_models;
+	std::unordered_map<std::string, solarium::BoxModel> m_models;
 
 	// RTS box selection + long-press (Walk vs Build command)
 	struct RTSSelection {
 		bool dragging = false;
 		glm::vec2 start{0, 0};
 		glm::vec2 end{0, 0};
-		std::vector<civcraft::EntityId> selected;
+		std::vector<solarium::EntityId> selected;
 	} m_rtsSelect;
 	struct RTSLongPress {
 		bool   active    = false;
@@ -800,10 +800,10 @@ private:
 	static constexpr float kBuildHoldSec = 1.0f;
 	// Unified path executor — drives NPC follow-to-slot for RTS commands and
 	// possessed-player click-to-move through the same pop-front cell queue.
-	civcraft::PathExecutor                       m_pathExec;
-	std::unique_ptr<civcraft::ChunkWorldView>    m_pathWorldView;
+	solarium::PathExecutor                       m_pathExec;
+	std::unique_ptr<solarium::ChunkWorldView>    m_pathWorldView;
 	struct MoveOrder { glm::vec3 target; bool active; };
-	std::unordered_map<civcraft::EntityId, MoveOrder> m_moveOrders;
+	std::unordered_map<solarium::EntityId, MoveOrder> m_moveOrders;
 
 	// RTS drag-command: in RTS mode with a non-empty selection, hold RMB and
 	// drag on the ground to define a circle; on release, a 4-slice wheel
@@ -851,14 +851,14 @@ private:
 		float bodyYawDeg  = 0.0f;     // smoothed body yaw (degrees)
 		bool  initialized = false;
 	};
-	std::unordered_map<civcraft::EntityId, EntityAnimSmooth> m_entityAnimSmooth;
+	std::unordered_map<solarium::EntityId, EntityAnimSmooth> m_entityAnimSmooth;
 	// Player uses the existing m_playerBodyYaw lerp for yaw; only speed needs
 	// its own trail here.
 	float        m_playerAnimSpeed     = 0.0f;
 	bool         m_playerAnimSpeedInit = false;
 
 	// Camera — uses the shared Camera class (FPS/TPS/RPG/RTS modes).
-	civcraft::Camera m_cam;
+	solarium::Camera m_cam;
 
 	// Admin mode (F12 toggle, F11 fly in admin)
 	bool         m_adminMode = false;
@@ -881,12 +881,12 @@ private:
 
 	// GameLogger state tracking — detect deltas across frames for DECIDE,
 	// COMBAT, DEATH, INV categories.
-	std::unordered_map<civcraft::EntityId, std::string> m_entityGoals;
-	std::unordered_map<civcraft::EntityId, int>         m_prevEntityHP;
-	std::unordered_map<civcraft::EntityId, std::unordered_map<std::string,int>> m_prevInv;
+	std::unordered_map<solarium::EntityId, std::string> m_entityGoals;
+	std::unordered_map<solarium::EntityId, int>         m_prevEntityHP;
+	std::unordered_map<solarium::EntityId, std::unordered_map<std::string,int>> m_prevInv;
 
 	// Entity inspection (right-click on entity in RPG/RTS, or Shift+RMB in FPS/TPS)
-	civcraft::EntityId m_inspectedEntity = 0;
+	solarium::EntityId m_inspectedEntity = 0;
 
 	// ── Coord peek (click a (x,y,z) link in Inspect to fly the camera there) ─
 	// Single-slot save: entering stacks the current m_cam onto m_peekSavedCam
@@ -894,7 +894,7 @@ private:
 	// Nested peeks are not supported — re-clicking just re-aims.
 	bool                          m_peekActive = false;
 	glm::ivec3                    m_peekTarget{0};
-	std::unique_ptr<civcraft::Camera> m_peekSavedCam;
+	std::unique_ptr<solarium::Camera> m_peekSavedCam;
 
 	void enterCoordPeek(glm::ivec3 target);
 	void exitCoordPeek();
@@ -903,23 +903,23 @@ private:
 	// Lazily initialised on the first T-key press (so the sidecar health
 	// probe doesn't block boot). The panel + session are client-only —
 	// server has no idea dialog is happening (Rule 5).
-	std::unique_ptr<civcraft::llm::LlmClient>     m_llmClient;
-	std::unique_ptr<civcraft::llm::WhisperClient> m_whisperClient; // STT over HTTP to whisper-server
-	std::unique_ptr<civcraft::AudioCapture>       m_audioCapture;  // mic, s16 mono 16 kHz
-	std::unique_ptr<civcraft::llm::TtsVoiceMux>   m_ttsMux;        // lazily spawns 1 piper per distinct voice
-	std::unique_ptr<civcraft::llm::LlmSidecar>    m_llmSidecar;    // child llama-server, spawned in init()
-	std::unique_ptr<civcraft::llm::WhisperSidecar> m_whisperSidecar; // child whisper-server (STT), port 8081
+	std::unique_ptr<solarium::llm::LlmClient>     m_llmClient;
+	std::unique_ptr<solarium::llm::WhisperClient> m_whisperClient; // STT over HTTP to whisper-server
+	std::unique_ptr<solarium::AudioCapture>       m_audioCapture;  // mic, s16 mono 16 kHz
+	std::unique_ptr<solarium::llm::TtsVoiceMux>   m_ttsMux;        // lazily spawns 1 piper per distinct voice
+	std::unique_ptr<solarium::llm::LlmSidecar>    m_llmSidecar;    // child llama-server, spawned in init()
+	std::unique_ptr<solarium::llm::WhisperSidecar> m_whisperSidecar; // child whisper-server (STT), port 8081
 	DialogPanel                                   m_dialogPanel;
 	std::vector<uint32_t>                         m_charQueue;     // drained each input tick
 	std::vector<int>                              m_keyQueue;      // GLFW key codes (press only)
 
 	// File-based debug triggers (compiled out in Release via NDEBUG).
-	civcraft::DebugTriggers m_debugTriggers;
+	solarium::DebugTriggers m_debugTriggers;
 
 	// Audio — miniaudio-backed spatial sound. All sounds are derived
 	// client-side from the TCP stream (Rule 5). Listener follows the camera
 	// each frame in tickPlayer.
-	civcraft::AudioManager m_audio;
+	solarium::AudioManager m_audio;
 	int   m_lastWalkStep    = 0;  // integer floor of m_walkDist at last footstep
 	float m_footstepCooldown = 0.0f;
 
@@ -935,8 +935,8 @@ private:
 		std::vector<float> hitParts;
 		std::vector<float> spinParts;
 		std::vector<float> doorVerts;
-		std::vector<civcraft::RaycastEntity> ents;
+		std::vector<solarium::RaycastEntity> ents;
 	} m_scratch;
 };
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

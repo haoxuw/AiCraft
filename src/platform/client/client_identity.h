@@ -1,6 +1,6 @@
 #pragma once
 
-// Persistent client identity. UUID lives in ~/.civcraft/client_id.json and
+// Persistent client identity. UUID lives in ~/.solarium/client_id.json and
 // survives across launches so the server can map this machine back to the same
 // Seat. See docs/28_SEATS_AND_OWNERSHIP.md.
 //
@@ -20,15 +20,15 @@
 #include <sstream>
 #include <string>
 
-namespace civcraft {
+namespace solarium {
 
 namespace detail {
 
 inline std::filesystem::path identityDir() {
 	const char* home = std::getenv("HOME");
-	if (home && *home) return std::filesystem::path(home) / ".civcraft";
+	if (home && *home) return std::filesystem::path(home) / ".solarium";
 	// Fallback — /tmp is per-user ok for dev, visible-but-not-secret.
-	return std::filesystem::path("/tmp") / ".civcraft";
+	return std::filesystem::path("/tmp") / ".solarium";
 }
 
 inline std::filesystem::path identityFile() {
@@ -103,4 +103,4 @@ inline std::string loadOrCreateClientUuid() {
 	return uuid;
 }
 
-} // namespace civcraft
+} // namespace solarium

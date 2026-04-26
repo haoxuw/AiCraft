@@ -49,7 +49,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 class AgentClient {
 public:
@@ -126,7 +126,7 @@ public:
 			m_cfg.decideBaseCooldownSec,
 			m_cfg.decideMaxCooldownSec,
 			m_cfg.decideBackoffBase,
-			CIVCRAFT_PATHFINDING_DEBUG_ENABLED);
+			SOLARIUM_PATHFINDING_DEBUG_ENABLED);
 		std::fflush(stdout);
 		m_decideWorker.start();
 	}
@@ -1086,4 +1086,4 @@ private:
 	float                                  m_reactSepPhaseAccum = 0.0f;
 };
 
-} // namespace civcraft
+} // namespace solarium

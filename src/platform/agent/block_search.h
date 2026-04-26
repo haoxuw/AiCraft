@@ -16,7 +16,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 
-namespace civcraft::block_search {
+namespace solarium::block_search {
 
 // Per-chunk census: count per block type. run() is templated on the value type.
 struct ChunkCensus {
@@ -98,4 +98,4 @@ inline std::vector<BlockSample> run(const Options& opt,
 	return result;
 }
 
-} // namespace civcraft::block_search
+} // namespace solarium::block_search

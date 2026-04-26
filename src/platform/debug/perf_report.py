@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Turn a formatSummary() dump (/tmp/civcraft_perf_{client,server}_*.txt) into
+# Turn a formatSummary() dump (/tmp/solarium_perf_{client,server}_*.txt) into
 # a per-phase breakdown table showing avg-ms, % of the enclosing total, and
 # p99. Driven by `make perf_fps` / `make perf_server`.
 

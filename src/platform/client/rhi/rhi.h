@@ -6,13 +6,13 @@ struct GLFWwindow;   // fwd-decl: avoid pulling backend headers
 
 #include <cstdint>
 
-namespace civcraft::rhi {
+namespace solarium::rhi {
 
 struct InitInfo {
 	GLFWwindow* window = nullptr;
 	int width = 0;
 	int height = 0;
-	const char* appName = "civcraft";
+	const char* appName = "solarium";
 	bool enableValidation = true;
 };
 
@@ -215,4 +215,4 @@ public:
 // One backend compiled per binary.
 IRhi* createRhi();
 
-} // namespace civcraft::rhi
+} // namespace solarium::rhi

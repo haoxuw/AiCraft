@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 struct Texture {
 	int                  width  = 0;
@@ -27,4 +27,4 @@ struct Texture {
 // (format == "rgba8") is passed through untouched. Returns false on failure.
 bool decode_image(const EmbeddedImage& src, Texture& out, std::string* error = nullptr);
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

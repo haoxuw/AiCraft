@@ -46,7 +46,7 @@
 #include <vector>
 #include <string>
 
-namespace civcraft::net {
+namespace solarium::net {
 
 // C_HELLO version; server picks S_CHUNK vs S_CHUNK_Z. Bump on wire changes.
 // v3: adds S_WEATHER.
@@ -83,7 +83,7 @@ enum MsgType : uint32_t {
 	C_ACTION          = 0x0001,
 	C_HELLO           = 0x0003,  // [u32 version][str uuid][str displayName][str creatureType]
 	// 0x0008 / 0x0009 / 0x000B retired — navigation is client-side
-	// (civcraft_engine.Navigator). Retained as gaps so wire numbers stay stable.
+	// (solarium_engine.Navigator). Retained as gaps so wire numbers stay stable.
 	C_GET_INVENTORY   = 0x000D,  // [u32 entityId] — request entity inventory snapshot
 	C_QUIT            = 0x000E,  // []  — graceful disconnect (client leaving); server runs full cleanup
 	C_HEARTBEAT       = 0x000F,  // []  — keepalive ping; resets server's per-client idle timer
@@ -551,4 +551,4 @@ inline void mergeEntityDeltaFields(ReadBuffer& buf, uint32_t mask, EntityState& 
 
 // ChunkInfo wire protocol removed — agents share PlayerClient's chunk cache
 
-} // namespace civcraft::net
+} // namespace solarium::net

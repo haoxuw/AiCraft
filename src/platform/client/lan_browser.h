@@ -2,8 +2,8 @@
 
 // LAN server discovery.
 //
-// civcraft-server broadcasts "CIVCRAFT <port> <humans>" on
-// CIVCRAFT_DISCOVER_PORT (UDP 7778) every 2s (client_manager.h :: announceOnLAN).
+// solarium-server broadcasts "SOLARIUM <port> <humans>" on
+// SOLARIUM_DISCOVER_PORT (UDP 7778) every 2s (client_manager.h :: announceOnLAN).
 // This header-only class binds that port, drains packets non-blocking each tick,
 // and maintains a short list of live servers for the Multiplayer menu.
 
@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 class LanBrowser {
 public:
@@ -34,21 +34,21 @@ public:
 			// SO_REUSEPORT in UdpSocket::open lets several clients on the same
 			// machine co-bind; a bind failure still leaves us usable (servers()
 			// just stays empty and listening() reports false).
-			if (!m_udp.open(CIVCRAFT_DISCOVER_PORT, false)) {
+			if (!m_udp.open(SOLARIUM_DISCOVER_PORT, false)) {
 				if (!m_warned) {
 					std::printf("[LAN] Failed to bind UDP %d for discovery\n",
-						CIVCRAFT_DISCOVER_PORT);
+						SOLARIUM_DISCOVER_PORT);
 					m_warned = true;
 				}
 				return;
 			}
-			std::printf("[LAN] Listening on UDP %d\n", CIVCRAFT_DISCOVER_PORT);
+			std::printf("[LAN] Listening on UDP %d\n", SOLARIUM_DISCOVER_PORT);
 		}
 
 		net::UdpSocket::Packet pkt;
 		while (m_udp.tryRecv(pkt)) {
 			int port = 0, humans = 0;
-			if (std::sscanf(pkt.data.c_str(), "CIVCRAFT %d %d", &port, &humans) != 2)
+			if (std::sscanf(pkt.data.c_str(), "SOLARIUM %d %d", &port, &humans) != 2)
 				continue;
 			if (port <= 0 || port > 65535) continue;
 
@@ -80,4 +80,4 @@ private:
 	bool m_warned = false;
 };
 
-} // namespace civcraft
+} // namespace solarium

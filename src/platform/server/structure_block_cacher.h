@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 class StructureBlockCacher {
 public:
@@ -78,4 +78,4 @@ private:
 	std::unordered_set<PackedPos>                        m_anchorPositions;
 };
 
-} // namespace civcraft
+} // namespace solarium

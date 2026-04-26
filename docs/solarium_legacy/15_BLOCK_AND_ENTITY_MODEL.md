@@ -1,4 +1,4 @@
-# CivCraft - Block & Entity Model
+# Solarium - Block & Entity Model
 
 How the world stores everything: blocks in a compact grid, entities as full objects, and the bridge between them for active blocks.
 

@@ -9,7 +9,7 @@
 #include <vector>
 #include <mutex>
 
-namespace civcraft {
+namespace solarium {
 
 // Container: any item-holding storage (entity inventory, block, ground, self).
 // Used by Relocate (from/to) and Convert (source/destination).
@@ -125,4 +125,4 @@ private:
 	std::vector<ActionProposal> m_pending;
 };
 
-} // namespace civcraft
+} // namespace solarium

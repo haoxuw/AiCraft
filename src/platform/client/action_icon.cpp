@@ -4,7 +4,7 @@
 
 #include <cmath>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 namespace {
 
@@ -146,4 +146,4 @@ void drawActionIcon(rhi::IRhi* rhi, ActionIconKind kind,
 	}
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

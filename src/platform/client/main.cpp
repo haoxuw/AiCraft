@@ -1,6 +1,6 @@
-// civcraft-ui-vk entry point. Owns GLFW window + RHI; pumps one frame per loop.
+// solarium-ui-vk entry point. Owns GLFW window + RHI; pumps one frame per loop.
 // Game logic + input live in game_vk.cpp. If --port is omitted we spawn a local
-// civcraft-server and connect to it over TCP (singleplayer uses the same code
+// solarium-server and connect to it over TCP (singleplayer uses the same code
 // path as multiplayer — Rule: no in-process shortcut).
 
 #include "client/rhi/rhi.h"
@@ -36,9 +36,9 @@
 namespace {
 
 struct Shell {
-	civcraft::rhi::IRhi*       rhi = nullptr;
-	civcraft::vk::Game*        game = nullptr;
-	civcraft::vk::CefHost*     cef = nullptr;  // optional; null when --cef-menu absent
+	solarium::rhi::IRhi*       rhi = nullptr;
+	solarium::vk::Game*        game = nullptr;
+	solarium::vk::CefHost*     cef = nullptr;  // optional; null when --cef-menu absent
 	std::atomic<bool>*         cefActive = nullptr;  // gates mouse forwarding
 };
 
@@ -78,7 +78,7 @@ void mouseBtnCb(GLFWwindow* w, int button, int action, int /*mods*/) {
 }
 
 // Ctrl-C in the terminal running `make game` used to orphan child processes
-// (civcraft-server, llama-server) because the default SIGTERM/SIGINT handler
+// (solarium-server, llama-server) because the default SIGTERM/SIGINT handler
 // kills us without running destructors. Flip a flag the main loop polls so
 // we exit cleanly and Game::shutdown() reaps every child.
 std::atomic<bool> g_sigQuit{false};
@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
 
 	// Resolve execDir from argv[0] BEFORE chdir, then chdir into it so
 	// shader paths resolve regardless of invocation cwd. execDir also lets
-	// AgentManager find civcraft-server once we've chdir'd.
+	// AgentManager find solarium-server once we've chdir'd.
 	std::string execDir;
 	{
 		std::string exe(argv[0]);
@@ -127,12 +127,12 @@ int main(int argc, char** argv) {
 	// main loop exits naturally — same path as the menu's Quit button — so
 	// game.shutdown(), client perf dump, and server save all fire as usual.
 	float terminateAfterSec = 0.0f;
-	civcraft::AgentClient::Config agentCfg;  // DecidePacer cooldown knobs
+	solarium::AgentClient::Config agentCfg;  // DecidePacer cooldown knobs
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			printf("civcraft-ui-vk - Vulkan-native CivCraft client\n\n"
-			       "Always connects to civcraft-server. If --port is omitted, spawns\n"
-			       "a local civcraft-server subprocess (village world, seed 42).\n\n"
+			printf("solarium-ui-vk - Vulkan-native Solarium client\n\n"
+			       "Always connects to solarium-server. If --port is omitted, spawns\n"
+			       "a local solarium-server subprocess (village world, seed 42).\n\n"
 			       "  --no-validation   Disable VK_LAYER_KHRONOS_validation\n"
 			       "  --skip-menu       Jump straight into gameplay\n"
 			       "  --log-only        Hidden window + echo events to stdout\n"
@@ -200,7 +200,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	// CRITICAL: GameLogger init opens /tmp/civcraft_game.log at FD 3. Chromium
+	// CRITICAL: GameLogger init opens /tmp/solarium_game.log at FD 3. Chromium
 	// expects FDs 3 and 4 to be free at CefInitialize so its child FD layout
 	// (--field-trial-handle=3, --metrics-shmem-handle=4) lands at the right
 	// slots. Holding FD 3 here causes the subprocess GlobalDescriptors lookup
@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
 	// children with dup2 actions on these FDs, and any unexpected open
 	// file descriptor in this slot (3, 4, 7) breaks the handoff.
 	{
-		FILE* fp = std::fopen("/tmp/civcraft_cef_parent_fds.txt", "w");
+		FILE* fp = std::fopen("/tmp/solarium_cef_parent_fds.txt", "w");
 		if (fp) {
 			std::fprintf(fp, "pid=%d\n", (int)getpid());
 			DIR* d = opendir("/proc/self/fd");
@@ -237,15 +237,15 @@ int main(int argc, char** argv) {
 	// created on demand by gameplay code (handbook, dialog, future menus).
 	// `--cef-menu` only gates whether we *create* a browser at startup.
 	//
-	// browser_subprocess_path points at our companion ./civcraft-cef-subprocess
-	// binary so renderer/GPU/utility children don't re-enter civcraft-ui-vk
+	// browser_subprocess_path points at our companion ./solarium-cef-subprocess
+	// binary so renderer/GPU/utility children don't re-enter solarium-ui-vk
 	// (which would re-init Python, GLFW, audio, the LLM sidecars).
 	//
 	// root_cache_path MUST be set to a unique per-app directory. Without it,
 	// Chromium uses ~/.config/cef_user_data which collides with any other
 	// CEF or Chromium instance — the second instance hits the user-data-dir
 	// singleton lock and CefInitialize silently fails. We use the build dir.
-	std::unique_ptr<civcraft::vk::CefHost> cefHost;
+	std::unique_ptr<solarium::vk::CefHost> cefHost;
 	bool cefInitOk = false;
 	{
 		CefMainArgs cefMain(argc, argv);
@@ -259,14 +259,14 @@ int main(int argc, char** argv) {
 		// GLFW/Vulkan/Python). Multi-threaded sidesteps that entirely.
 		cs.multi_threaded_message_loop = true;
 		cs.log_severity = LOGSEVERITY_WARNING;
-		CefString(&cs.log_file) = "/tmp/civcraft_cef.log";
-		std::string subPath = execDir + "/civcraft-cef-subprocess";
+		CefString(&cs.log_file) = "/tmp/solarium_cef.log";
+		std::string subPath = execDir + "/solarium-cef-subprocess";
 		CefString(&cs.browser_subprocess_path) = subPath;
 		std::string cachePath = execDir + "/cef_cache";
 		std::filesystem::create_directories(cachePath);
 		CefString(&cs.root_cache_path) = cachePath;
 
-		CefRefPtr<CefApp> app = civcraft::vk::makeOsrApp();
+		CefRefPtr<CefApp> app = solarium::vk::makeOsrApp();
 		cefInitOk = CefInitialize(cefMain, cs, app,
 		                          /*windows_sandbox_info=*/nullptr);
 		if (!cefInitOk) {
@@ -279,42 +279,42 @@ int main(int argc, char** argv) {
 
 	// Now safe to open log files; CEF has already snapshotted the FD layout
 	// it needs for child processes.
-	civcraft::GameLogger::instance().init(/*echoStdout=*/logOnly);
+	solarium::GameLogger::instance().init(/*echoStdout=*/logOnly);
 
 	if (!glfwInit()) { fprintf(stderr, "glfwInit failed\n"); return 1; }
 	if (!glfwVulkanSupported()) { fprintf(stderr, "no vulkan\n"); glfwTerminate(); return 1; }
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	if (logOnly) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-	GLFWwindow* win = glfwCreateWindow(1280, 800, "CivCraft (Vulkan)", nullptr, nullptr);
+	GLFWwindow* win = glfwCreateWindow(1280, 800, "Solarium (Vulkan)", nullptr, nullptr);
 	if (!win) { glfwTerminate(); return 1; }
 
 	int fbw = 0, fbh = 0;
 	glfwGetFramebufferSize(win, &fbw, &fbh);
 
-	std::unique_ptr<civcraft::rhi::IRhi> rhi(civcraft::rhi::createRhi());
-	civcraft::rhi::InitInfo ii;
+	std::unique_ptr<solarium::rhi::IRhi> rhi(solarium::rhi::createRhi());
+	solarium::rhi::InitInfo ii;
 	ii.window = win; ii.width = fbw; ii.height = fbh;
-	ii.appName = "civcraft-ui-vk";
+	ii.appName = "solarium-ui-vk";
 	ii.enableValidation = !noValidation;
 	if (!rhi->init(ii)) return 1;
 
-	// Spawn a civcraft-server (if --port absent) and connect over TCP, handing
+	// Spawn a solarium-server (if --port absent) and connect over TCP, handing
 	// the NetworkServer to Game BEFORE init() so chunks stream from the server
 	// rather than being generated client-side.
-	civcraft::AgentManager agentMgr;
-	civcraft::LocalWorld localWorld;
+	solarium::AgentManager agentMgr;
+	solarium::LocalWorld localWorld;
 	{
-		civcraft::ArtifactRegistry artifacts;
+		solarium::ArtifactRegistry artifacts;
 		artifacts.loadAll("artifacts");
 		localWorld.entityDefs().mergeArtifactTags(artifacts.livingTags());
 		localWorld.entityDefs().applyLivingStats(artifacts.livingStats());
 	}
-	std::unique_ptr<civcraft::NetworkServer> net;
+	std::unique_ptr<solarium::NetworkServer> net;
 	{
 		int connectPort = port;
 		if (connectPort <= 0) {
-			civcraft::AgentManager::Config cfg;
+			solarium::AgentManager::Config cfg;
 			cfg.seed = 42;
 			cfg.templateIndex = templateIndex;
 			cfg.execDir = execDir;
@@ -322,20 +322,20 @@ int main(int argc, char** argv) {
 			cfg.simSpeed = simSpeed;
 			connectPort = agentMgr.launchServer(cfg);
 			if (connectPort < 0) {
-				fprintf(stderr, "[vk] failed to launch civcraft-server\n");
+				fprintf(stderr, "[vk] failed to launch solarium-server\n");
 				return 1;
 			}
 		}
-		net = std::make_unique<civcraft::NetworkServer>(host, connectPort, localWorld);
+		net = std::make_unique<solarium::NetworkServer>(host, connectPort, localWorld);
 		// Handshake (C_HELLO) is deferred until the menu's character-select
 		// completes — we need the chosen creatureType before sending HELLO.
 		// --skip-menu calls Game::skipMenu() which connects immediately as
 		// the server-default playable.
-		printf("[vk] civcraft-server ready at %s:%d (awaiting character pick)\n",
+		printf("[vk] solarium-server ready at %s:%d (awaiting character pick)\n",
 		       host.c_str(), connectPort);
 	}
 
-	civcraft::vk::Game game;
+	solarium::vk::Game game;
 	game.setServer(net.get());  // must precede init()
 	game.setPendingConnect(42, templateIndex);  // seed+template used on character-select confirm
 	game.setAgentConfig(agentCfg);              // DecidePacer knobs — must precede init()
@@ -374,7 +374,7 @@ int main(int argc, char** argv) {
 				".version{position:fixed;bottom:20px;right:30px;font-size:13px;opacity:0.6;"
 				"text-shadow:0 1px 3px rgba(0,0,0,0.85)}"
 				"</style></head><body>"
-				"<h1>CivCraft</h1>"
+				"<h1>Solarium</h1>"
 				"<div class='tag'>A voxel sandbox civilization</div>"
 				"<button class='btn' onclick=\"send('singleplayer')\">Singleplayer</button>"
 				"<button class='btn' onclick=\"send('multiplayer')\">Multiplayer</button>"
@@ -388,7 +388,7 @@ int main(int argc, char** argv) {
 				"}</script>"
 				"</body></html>";
 		}
-		cefHost = std::make_unique<civcraft::vk::CefHost>(fbw, fbh);
+		cefHost = std::make_unique<solarium::vk::CefHost>(fbw, fbh);
 		// CEF overlay is replacing the native menu UI for this run.
 		game.setCefMenuActive(true);
 		cefHost->setActionCallback([win, &game,
@@ -516,14 +516,14 @@ int main(int argc, char** argv) {
 	if (debugBehaviorMode) {
 		// Flush any buffered "[first..last xN] msg" summaries to disk, then tell
 		// the caller where to grep. See .claude/skills/testing-plan/SKILL.md.
-		civcraft::entityLogFlushAll();
-		auto files = civcraft::entityLogProducedFiles();
+		solarium::entityLogFlushAll();
+		auto files = solarium::entityLogProducedFiles();
 		std::fprintf(stderr, "\n[debug-behavior] produced per-entity logs (%zu):\n",
 		             files.size());
 		for (const auto& p : files) std::fprintf(stderr, "  %s\n", p.c_str());
 	}
 
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 	// End-of-session client perf dump. Mirrors the server's format so
 	// `make game` surfaces both after quit. Skipped if no Playing frame was
 	// ever recorded (game.perfSessionStart() == 0) — saves menu-only runs
@@ -534,10 +534,10 @@ int main(int argc, char** argv) {
 			double elapsed = std::chrono::duration<double>(
 				std::chrono::steady_clock::now().time_since_epoch()).count()
 				- anchor;
-			std::string summary = civcraft::perf::formatSummary(
-				"CIVCRAFT CLIENT PERF", elapsed);
+			std::string summary = solarium::perf::formatSummary(
+				"SOLARIUM CLIENT PERF", elapsed);
 
-			auto [topName, topV] = civcraft::perf::topByP99({
+			auto [topName, topV] = solarium::perf::topByP99({
 				"client.phase.net",     "client.phase.chunks",
 				"client.phase.agent",   "client.phase.events",
 				"client.phase.sim",     "client.phase.gpuWait",
@@ -560,7 +560,7 @@ int main(int argc, char** argv) {
 			std::strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", std::localtime(&tt));
 			char path[96];
 			std::snprintf(path, sizeof(path),
-				"/tmp/civcraft_perf_client_%s.txt", ts);
+				"/tmp/solarium_perf_client_%s.txt", ts);
 			if (FILE* f = std::fopen(path, "w")) {
 				std::fputs(summary.c_str(), f);
 				std::fputs(blline, f);

@@ -17,14 +17,14 @@
 #include "agent/agent_client.h"
 #include "agent/separation.h"
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 void Game::clampCameraCollision() {
 	// FPS: camera inside player capsule — nothing to clamp.
-	if (m_cam.mode == civcraft::CameraMode::FirstPerson) return;
+	if (m_cam.mode == solarium::CameraMode::FirstPerson) return;
 
 	// RTS: commander view flies through walls by design; clamp would jerk it.
-	if (m_cam.mode == civcraft::CameraMode::RTS) return;
+	if (m_cam.mode == solarium::CameraMode::RTS) return;
 
 	// Orbit target (TPS/RPG head anchor).
 	float feetY = m_cam.smoothedFeetPos().y;
@@ -37,8 +37,8 @@ void Game::clampCameraCollision() {
 	if (dist < 0.05f) return;
 	glm::vec3 dir = delta / dist;
 
-	auto clampAgainst = [&](civcraft::ChunkSource& src) {
-		auto hit = civcraft::raycastBlocks(src, target, dir, dist);
+	auto clampAgainst = [&](solarium::ChunkSource& src) {
+		auto hit = solarium::raycastBlocks(src, target, dir, dist);
 		if (!hit) return;
 		const float kAirGap = 0.2f;
 		float tHit = hit->distance;
@@ -122,8 +122,8 @@ void Game::processInput(float dt) {
 	if (eKey && !m_eLast) {
 		glm::vec3 eye = m_cam.position;
 		glm::vec3 dir = m_cam.front();
-		if (m_cam.mode == civcraft::CameraMode::RPG ||
-		    m_cam.mode == civcraft::CameraMode::RTS) {
+		if (m_cam.mode == solarium::CameraMode::RPG ||
+		    m_cam.mode == solarium::CameraMode::RTS) {
 			double mx, my;
 			glfwGetCursorPos(m_window, &mx, &my);
 			int ww = m_fbW, wh = m_fbH;
@@ -136,16 +136,16 @@ void Game::processInput(float dt) {
 				dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
 			}
 		}
-		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+		auto hit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 		if (hit) {
 			glm::ivec3 bp = hit->hasInteract ? hit->interactPos : hit->blockPos;
 			if (!tryOpenChestAt(bp)) {
-				civcraft::ActionProposal p;
-				p.type     = civcraft::ActionProposal::Interact;
+				solarium::ActionProposal p;
+				p.type     = solarium::ActionProposal::Interact;
 				p.actorId  = m_server->localPlayerId();
 				p.blockPos = bp;
 				m_server->sendAction(p);
-				civcraft::GameLogger::instance().emit("ACTION",
+				solarium::GameLogger::instance().emit("ACTION",
 					"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
 			}
 		}
@@ -237,15 +237,15 @@ void Game::processInput(float dt) {
 	constexpr float kQRepeatInterval = 0.08f;  // ~12 Hz while held
 	bool qKey = glfwGetKey(m_window, GLFW_KEY_Q) == GLFW_PRESS;
 	auto dropOneHeld = [&]() {
-		civcraft::Entity* me = playerEntity();
+		solarium::Entity* me = playerEntity();
 		if (!me || !me->inventory) return;
 		const std::string& held = m_hotbar.mainHand(*me->inventory);
 		if (held.empty()) return;
-		civcraft::ActionProposal p;
-		p.type         = civcraft::ActionProposal::Relocate;
+		solarium::ActionProposal p;
+		p.type         = solarium::ActionProposal::Relocate;
 		p.actorId      = m_server->localPlayerId();
-		p.relocateFrom = civcraft::Container::self();
-		p.relocateTo   = civcraft::Container::ground();
+		p.relocateFrom = solarium::Container::self();
+		p.relocateTo   = solarium::Container::ground();
 		p.itemId       = held;
 		p.itemCount    = 1;
 
@@ -253,8 +253,8 @@ void Game::processInput(float dt) {
 		// crosshair) so the item lands where you're looking, not where
 		// the body happens to be facing. RPG/RTS leave desiredVel = 0
 		// and the server falls back to facing-direction default.
-		if (m_cam.mode == civcraft::CameraMode::FirstPerson ||
-		    m_cam.mode == civcraft::CameraMode::ThirdPerson) {
+		if (m_cam.mode == solarium::CameraMode::FirstPerson ||
+		    m_cam.mode == solarium::CameraMode::ThirdPerson) {
 			constexpr float kAimDistance = 20.0f;   // any far point on the aim ray
 			constexpr float kThrowSpeed  = 5.0f;    // matches server default magnitude
 			glm::vec3 origin   = me->position + glm::vec3(0, 1.2f, 0);
@@ -264,7 +264,7 @@ void Game::processInput(float dt) {
 		}
 
 		m_server->sendAction(p);
-		civcraft::GameLogger::instance().emit("ACTION",
+		solarium::GameLogger::instance().emit("ACTION",
 			"drop %s x1", held.c_str());
 	};
 	if (qKey) {
@@ -298,11 +298,11 @@ void Game::processInput(float dt) {
 	m_uiWantsCursor = m_handbookOpen || m_inspectedEntity != 0 || m_showTuning
 	                || m_invOpen || m_dialogPanel.isOpen();
 
-	bool wantCapture = (m_cam.mode == civcraft::CameraMode::FirstPerson ||
-	                    m_cam.mode == civcraft::CameraMode::ThirdPerson);
+	bool wantCapture = (m_cam.mode == solarium::CameraMode::FirstPerson ||
+	                    m_cam.mode == solarium::CameraMode::ThirdPerson);
 
-	if (m_cam.mode == civcraft::CameraMode::RPG ||
-	    m_cam.mode == civcraft::CameraMode::RTS) {
+	if (m_cam.mode == solarium::CameraMode::RPG ||
+	    m_cam.mode == solarium::CameraMode::RTS) {
 		bool rmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
 		if (rmb && !m_rightClick.held) {
 			m_rightClick.held = true;
@@ -311,7 +311,7 @@ void Game::processInput(float dt) {
 		}
 		// RTS drag-command steals RMB-drag from camera orbit when a selection
 		// exists: selected units = command mode; empty selection = camera mode.
-		bool commandDrag = (m_cam.mode == civcraft::CameraMode::RTS
+		bool commandDrag = (m_cam.mode == solarium::CameraMode::RTS
 		                    && !m_rtsSelect.selected.empty());
 		if (rmb && m_rightClick.held && !m_rightClick.orbiting && !commandDrag) {
 			double cx, cy;
@@ -351,8 +351,8 @@ void Game::processInput(float dt) {
 	} else {
 		m_cam.resetMouseTracking();
 		switch (m_cam.mode) {
-		case civcraft::CameraMode::RPG: m_cam.updateRPGPosition(dt); break;
-		case civcraft::CameraMode::RTS: m_cam.updateRTS(m_window, dt); break;
+		case solarium::CameraMode::RPG: m_cam.updateRPGPosition(dt); break;
+		case solarium::CameraMode::RTS: m_cam.updateRTS(m_window, dt); break;
 		default: break;
 		}
 	}
@@ -362,16 +362,16 @@ void Game::processInput(float dt) {
 
 void Game::tickPlayer(float dt) {
 	if (!m_window) return;
-	civcraft::Entity* me = playerEntity();
+	solarium::Entity* me = playerEntity();
 	if (!me) return;
 
 	// RTS: WASD pans camera, not player. Player walks only when box-selected
 	// + issued a group Move order (Rule 2). Local steering uses steerTargetFor
 	// over the client-prediction path.
-	bool rtsMode = (m_cam.mode == civcraft::CameraMode::RTS);
+	bool rtsMode = (m_cam.mode == solarium::CameraMode::RTS);
 
 	glm::vec3 fwd, right;
-	if (m_cam.mode == civcraft::CameraMode::RPG) {
+	if (m_cam.mode == solarium::CameraMode::RPG) {
 		fwd   = m_cam.godCameraForward();
 		right = m_cam.godCameraRight();
 	} else {
@@ -385,7 +385,7 @@ void Game::tickPlayer(float dt) {
 		if (glfwGetKey(m_window, GLFW_KEY_A) == GLFW_PRESS) mv -= right;
 		if (glfwGetKey(m_window, GLFW_KEY_D) == GLFW_PRESS) mv += right;
 	} else {
-		civcraft::EntityId pid = m_server->localPlayerId();
+		solarium::EntityId pid = m_server->localPlayerId();
 		auto pit = m_moveOrders.find(pid);
 		if (pit != m_moveOrders.end() && pit->second.active) {
 			auto wp = m_pathExec.steerTargetFor(pid, me->position);
@@ -411,8 +411,8 @@ void Game::tickPlayer(float dt) {
 	// Sprint FOV punch — FPS/TPS only (RPG/RTS keep fixed FOV).
 	{
 		bool sprinting = boost && moveLen > 0.001f &&
-		    (m_cam.mode == civcraft::CameraMode::FirstPerson ||
-		     m_cam.mode == civcraft::CameraMode::ThirdPerson);
+		    (m_cam.mode == solarium::CameraMode::FirstPerson ||
+		     m_cam.mode == solarium::CameraMode::ThirdPerson);
 		const float kTarget = sprinting ? 6.0f : 0.0f;
 		// up 7/s (~0.15s), down 4/s (~0.25s).
 		float rate = kTarget > m_sprintFovBoost ? 7.0f : 4.0f;
@@ -462,12 +462,12 @@ void Game::tickPlayer(float dt) {
 	{
 		auto& chunks = m_server->chunks();
 		auto& blocks = m_server->blockRegistry();
-		civcraft::BlockSolidFn isSolid = [&](int x, int y, int z) -> float {
+		solarium::BlockSolidFn isSolid = [&](int x, int y, int z) -> float {
 			const auto& bd = blocks.get(chunks.getBlock(x, y, z));
 			return bd.solid ? bd.collision_height : 0.0f;
 		};
 
-		civcraft::MoveParams mp = civcraft::makeMoveParams(
+		solarium::MoveParams mp = solarium::makeMoveParams(
 			def.collision_box_min, def.collision_box_max,
 			def.gravity_scale, def.isLiving(), m_flyMode);
 		// Cap ground-snap to slab height so 1-block drops fall with gravity
@@ -477,12 +477,12 @@ void Game::tickPlayer(float dt) {
 		int fx = (int)std::floor(me->position.x);
 		int fy = (int)std::floor(me->position.y) - 1;
 		int fz = (int)std::floor(me->position.z);
-		civcraft::ChunkPos fp = { fx >> 4, fy >> 4, fz >> 4 };
+		solarium::ChunkPos fp = { fx >> 4, fy >> 4, fz >> 4 };
 		bool feetReady = chunks.getChunkIfLoaded(fp) != nullptr;
 
 		// Build Move proposal (horizontal from input, Y filled later).
-		civcraft::ActionProposal a;
-		a.type         = civcraft::ActionProposal::Move;
+		solarium::ActionProposal a;
+		a.type         = solarium::ActionProposal::Move;
 		a.actorId      = m_server->localPlayerId();
 		a.desiredVel   = { moveDir.x * speed, 0, moveDir.z * speed };
 
@@ -494,17 +494,17 @@ void Game::tickPlayer(float dt) {
 		float playerIntentSq = a.desiredVel.x * a.desiredVel.x
 		                     + a.desiredVel.z * a.desiredVel.z;
 		if (playerIntentSq > 0.04f) {
-			auto neighbors = civcraft::gatherSepNeighbors(*m_server, *me, 8.0f);
-			civcraft::SepStats stats;
-			a.desiredVel = civcraft::applySeparation(
+			auto neighbors = solarium::gatherSepNeighbors(*m_server, *me, 8.0f);
+			solarium::SepStats stats;
+			a.desiredVel = solarium::applySeparation(
 				m_server->localPlayerId(), me->position, a.desiredVel,
-				civcraft::sepRadiusOf(def),
+				solarium::sepRadiusOf(def),
 				walkSpeed,
-				civcraft::sepHeightOf(def),
+				solarium::sepHeightOf(def),
 				mp.stepHeight,
 				neighbors, isSolid, m_playerSepDvPrev,
-				civcraft::SepConfig{}, &stats);
-			civcraft::recordSepPerf(stats);
+				solarium::SepConfig{}, &stats);
+			solarium::recordSepPerf(stats);
 		} else {
 			m_playerSepDvPrev = {0.0f, 0.0f};
 		}
@@ -540,7 +540,7 @@ void Game::tickPlayer(float dt) {
 			glm::vec3 prePos = me->position;
 			glm::vec3 preVel = me->velocity;
 			bool preOnGround = m_onGround;
-			auto r = civcraft::moveAndCollide(isSolid, me->position, localVel, dt, mp, m_onGround);
+			auto r = solarium::moveAndCollide(isSolid, me->position, localVel, dt, mp, m_onGround);
 			me->position = r.position;
 			me->velocity = r.velocity;
 			m_onGround   = r.onGround;
@@ -561,7 +561,7 @@ void Game::tickPlayer(float dt) {
 			}
 
 			// If stuck in a block, revert so server runs auth physics this tick.
-			bool clientPosInvalid = civcraft::isPositionBlocked(
+			bool clientPosInvalid = solarium::isPositionBlocked(
 				isSolid, me->position, mp.halfWidth, mp.height);
 			if (clientPosInvalid) {
 				me->position = prePos;
@@ -597,8 +597,8 @@ void Game::tickPlayer(float dt) {
 	{
 		float targetYaw;
 		bool haveTarget = true;
-		if (m_cam.mode == civcraft::CameraMode::FirstPerson ||
-		    m_cam.mode == civcraft::CameraMode::ThirdPerson) {
+		if (m_cam.mode == solarium::CameraMode::FirstPerson ||
+		    m_cam.mode == solarium::CameraMode::ThirdPerson) {
 			targetYaw = glm::radians(m_cam.lookYaw);
 		} else {
 			glm::vec2 hv(me->velocity.x, me->velocity.z);
@@ -634,7 +634,7 @@ void Game::tickPlayer(float dt) {
 			int fx = (int)std::floor(me->position.x);
 			int fy = (int)std::floor(me->position.y) - 1;
 			int fz = (int)std::floor(me->position.z);
-			civcraft::BlockId bid = m_server->chunks().getBlock(fx, fy, fz);
+			solarium::BlockId bid = m_server->chunks().getBlock(fx, fy, fz);
 			const auto& bdef = m_server->blockRegistry().get(bid);
 			std::string snd = bdef.sound_footstep;
 			if (snd.empty()) {
@@ -699,8 +699,8 @@ void Game::digInFront() {
 	if (!m_rhi) return;
 	glm::vec3 eye = m_cam.position;
 	glm::vec3 dir = m_cam.front();
-	if (m_cam.mode == civcraft::CameraMode::RPG ||
-	    m_cam.mode == civcraft::CameraMode::RTS) {
+	if (m_cam.mode == solarium::CameraMode::RPG ||
+	    m_cam.mode == solarium::CameraMode::RTS) {
 		double mx, my;
 		glfwGetCursorPos(m_window, &mx, &my);
 		int ww = m_fbW, wh = m_fbH;
@@ -714,19 +714,19 @@ void Game::digInFront() {
 		}
 	}
 	auto& chunks = m_server->chunks();
-	auto hit = civcraft::raycastBlocks(chunks, eye, dir, 16.0f);
+	auto hit = solarium::raycastBlocks(chunks, eye, dir, 16.0f);
 	if (!hit) return;
 	const auto& reg = m_server->blockRegistry();
 	const auto& bdef = reg.get(hit->blockId);
-	civcraft::ActionProposal p;
+	solarium::ActionProposal p;
 	p.actorId     = m_server->localPlayerId();
-	p.type        = civcraft::ActionProposal::Convert;
+	p.type        = solarium::ActionProposal::Convert;
 	p.fromItem    = bdef.string_id;
 	p.toItem      = bdef.drop.empty() ? bdef.string_id : bdef.drop;
 	p.fromCount   = 1;
 	p.toCount     = 1;
-	p.convertFrom = civcraft::Container::block(hit->blockPos);
-	p.convertInto = civcraft::Container::ground();
+	p.convertFrom = solarium::Container::block(hit->blockPos);
+	p.convertInto = solarium::Container::ground();
 	m_server->sendAction(p);
 
 	// Predict: snap to AIR in LocalWorld, fire VFX callback. Break burst +
@@ -745,18 +745,18 @@ void Game::digInFront() {
 // not 1–3 frames later. See the method comment in game_vk.h.
 void Game::syncRemeshBlock(glm::ivec3 wpos) {
 	auto divDown = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
-	const int CS = civcraft::CHUNK_SIZE;
-	civcraft::ChunkPos cp = {
+	const int CS = solarium::CHUNK_SIZE;
+	solarium::ChunkPos cp = {
 		divDown(wpos.x, CS),
 		divDown(wpos.y, CS),
 		divDown(wpos.z, CS)
 	};
-	civcraft::ChunkMesher::PaddedSnapshot snap;
-	if (!civcraft::ChunkMesher::snapshotPadded(m_server->chunks(), cp, snap)) return;
-	auto built = civcraft::ChunkMesher::buildMeshFromSnapshot(
+	solarium::ChunkMesher::PaddedSnapshot snap;
+	if (!solarium::ChunkMesher::snapshotPadded(m_server->chunks(), cp, snap)) return;
+	auto built = solarium::ChunkMesher::buildMeshFromSnapshot(
 		snap, cp, m_server->blockRegistry());
 	if (m_inFlightMesh.count(cp)) m_staleInflightMeshes.insert(cp);
-	civcraft::AsyncChunkMesher::Result r{cp, std::move(built.first), std::move(built.second)};
+	solarium::AsyncChunkMesher::Result r{cp, std::move(built.first), std::move(built.second)};
 	applyMeshResult(std::move(r));
 	m_serverDirtyChunks.erase(cp);
 }
@@ -764,8 +764,8 @@ void Game::syncRemeshBlock(glm::ivec3 wpos) {
 void Game::placeBlock() {
 	glm::vec3 eye = m_cam.position;
 	glm::vec3 dir = m_cam.front();
-	if (m_cam.mode == civcraft::CameraMode::RPG ||
-	    m_cam.mode == civcraft::CameraMode::RTS) {
+	if (m_cam.mode == solarium::CameraMode::RPG ||
+	    m_cam.mode == solarium::CameraMode::RTS) {
 		double mx, my;
 		glfwGetCursorPos(m_window, &mx, &my);
 		int ww = m_fbW, wh = m_fbH;
@@ -779,7 +779,7 @@ void Game::placeBlock() {
 		}
 	}
 	auto& chunks = m_server->chunks();
-	auto hit = civcraft::raycastBlocks(chunks, eye, dir, 8.0f);
+	auto hit = solarium::raycastBlocks(chunks, eye, dir, 8.0f);
 	if (!hit) return;
 
 	auto* me = playerEntity();
@@ -790,23 +790,23 @@ void Game::placeBlock() {
 	// potion) naturally no-op — the registry lookup fails.
 	const std::string& blockType = m_hotbar.mainHand(*me->inventory);
 	if (blockType.empty()) return;
-	const civcraft::BlockDef* placedDef = m_server->blockRegistry().find(blockType);
+	const solarium::BlockDef* placedDef = m_server->blockRegistry().find(blockType);
 	if (!placedDef) return;
 
-	civcraft::ActionProposal p;
+	solarium::ActionProposal p;
 	p.actorId     = m_server->localPlayerId();
-	p.type        = civcraft::ActionProposal::Convert;
+	p.type        = solarium::ActionProposal::Convert;
 	p.fromItem    = blockType;
 	p.toItem      = blockType;
 	p.fromCount   = 1;
 	p.toCount     = 1;
-	p.convertInto = civcraft::Container::block(hit->placePos);
+	p.convertInto = solarium::Container::block(hit->placePos);
 	// R key / MMB click cycles m_placementParam2 for rotatable blocks;
 	// non-rotatable ones always ship 0. Server honors it for FourDir
 	// rotatable blocks; doors ignore it and auto-hinge from neighbors.
 	p.placeParam2 = placementParam2ForHeld(*placedDef);
 	m_server->sendAction(p);
-	civcraft::GameLogger::instance().emit("ACTION", "placed %s @(%d,%d,%d) p2=%u",
+	solarium::GameLogger::instance().emit("ACTION", "placed %s @(%d,%d,%d) p2=%u",
 		blockType.c_str(), hit->placePos.x, hit->placePos.y, hit->placePos.z,
 		(unsigned)p.placeParam2);
 
@@ -820,8 +820,8 @@ void Game::placeBlock() {
 	//
 	// Doors get a ~1 round-trip hinge flicker since the server picks the
 	// hinge from neighbor walls and we predict 0 — not a correctness issue.
-	civcraft::BlockId bid = m_server->blockRegistry().getId(blockType);
-	uint8_t predictP2 = (placedDef->mesh_type != civcraft::MeshType::Door)
+	solarium::BlockId bid = m_server->blockRegistry().getId(blockType);
+	uint8_t predictP2 = (placedDef->mesh_type != solarium::MeshType::Door)
 		? p.placeParam2 : 0;
 	m_server->predictBlockPlace(hit->placePos, bid, predictP2, /*appearance=*/0);
 	if (me->inventory) me->inventory->remove(blockType, 1);
@@ -831,7 +831,7 @@ void Game::placeBlock() {
 // Fetch the BlockDef for the currently-held hotbar item, or null if
 // the hotbar is empty / the item isn't a registered block. Shared by
 // rotation helpers so the hotbar lookup isn't open-coded three times.
-const civcraft::BlockDef* Game::heldBlockDef() {
+const solarium::BlockDef* Game::heldBlockDef() {
 	auto* me = playerEntity();
 	if (!me || !me->inventory) return nullptr;
 	const std::string& held = m_hotbar.mainHand(*me->inventory);
@@ -840,21 +840,21 @@ const civcraft::BlockDef* Game::heldBlockDef() {
 }
 
 bool Game::isHeldBlockRotatable() {
-	const civcraft::BlockDef* def = heldBlockDef();
+	const solarium::BlockDef* def = heldBlockDef();
 	if (!def) return false;
-	return civcraft::getBlockShape(def->mesh_type).rotationCount() > 1;
+	return solarium::getBlockShape(def->mesh_type).rotationCount() > 1;
 }
 
 void Game::cyclePlacementRotation() {
-	const civcraft::BlockDef* def = heldBlockDef();
+	const solarium::BlockDef* def = heldBlockDef();
 	if (!def) return;
-	int n = civcraft::getBlockShape(def->mesh_type).rotationCount();
+	int n = solarium::getBlockShape(def->mesh_type).rotationCount();
 	if (n <= 1) return;
 	m_placementParam2 = (uint8_t)((m_placementParam2 + 1) % n);
 }
 
-uint8_t Game::placementParam2ForHeld(const civcraft::BlockDef& def) const {
-	int n = civcraft::getBlockShape(def.mesh_type).rotationCount();
+uint8_t Game::placementParam2ForHeld(const solarium::BlockDef& def) const {
+	int n = solarium::getBlockShape(def.mesh_type).rotationCount();
 	if (n <= 1) return 0;
 	return (uint8_t)(m_placementParam2 % n);
 }
@@ -878,7 +878,7 @@ void Game::clickToMove() {
 	glm::vec3 rayDir = glm::normalize(glm::vec3(far4) - rayOrigin);
 
 	auto& chunks = m_server->chunks();
-	auto hit = civcraft::raycastBlocks(chunks, rayOrigin, rayDir, 200.0f);
+	auto hit = solarium::raycastBlocks(chunks, rayOrigin, rayDir, 200.0f);
 	if (!hit) return;
 
 	// Goal on top of hit block (y+1 is walkable).
@@ -897,7 +897,7 @@ void Game::clickToMove() {
 	            target.x, target.y, target.z);
 	// Direct-drive: virtual joystick loop (drivePlayerTick) steers toward
 	// m_moveOrderTarget, client-side physics + reconciliation handle the rest.
-	// No server RPC — nav is client-only now (civcraft_engine.Navigator).
+	// No server RPC — nav is client-only now (solarium_engine.Navigator).
 	m_hasMoveOrder    = true;
 	m_moveOrderTarget = target;
 }
@@ -907,15 +907,15 @@ bool Game::tryServerAttack() {
 	if (!me) return false;
 	glm::vec3 from = me->position + glm::vec3(0, kTune.playerHeight * 0.6f, 0);
 	glm::vec3 fwd  = playerForward();
-	civcraft::EntityId myId = m_server->localPlayerId();
+	solarium::EntityId myId = m_server->localPlayerId();
 
 	// Swing whoosh fires on every attempt; hit sound comes from HP-delta
 	// detector (Rule 5: effects derived from broadcast stream).
 	m_audio.play("sword_swing", me->position, 0.5f);
 
-	civcraft::Entity* best = nullptr;
+	solarium::Entity* best = nullptr;
 	float bestDist = kTune.attackRange + 0.01f;
-	m_server->forEachEntity([&](civcraft::Entity& e) {
+	m_server->forEachEntity([&](solarium::Entity& e) {
 		if (e.id() == myId || e.removed || !e.alive()) return;
 		glm::vec3 toXZ = e.position - from;
 		toXZ.y = 0;
@@ -927,10 +927,10 @@ bool Game::tryServerAttack() {
 	});
 	if (!best) return false;
 
-	civcraft::ActionProposal p;
+	solarium::ActionProposal p;
 	p.actorId     = myId;
-	p.type        = civcraft::ActionProposal::Convert;
-	p.convertFrom = civcraft::Container::entity(best->id());
+	p.type        = solarium::ActionProposal::Convert;
+	p.convertFrom = solarium::Container::entity(best->id());
 	p.fromItem    = "hp";
 	p.fromCount   = kTune.attackDmg;
 	p.toItem      = "";
@@ -1037,7 +1037,7 @@ void Game::tickFloaters(float dt) {
 // within kPickupWait, emit one "Pickup denied" floater and hold the cooldown
 // so we don't re-send.
 void Game::updatePickups(float dt) {
-	civcraft::Entity* pe = playerEntity();
+	solarium::Entity* pe = playerEntity();
 	if (!pe || !m_server) return;
 	const auto& pdef = pe->def();
 	if (pdef.pickup_range <= 0.0f) return;
@@ -1066,8 +1066,8 @@ void Game::updatePickups(float dt) {
 	// with entity still present → one denial floater; kPickupCooldown → expire.
 	for (auto it = m_pickupRequests.begin(); it != m_pickupRequests.end(); ) {
 		it->second.age += dt;
-		civcraft::EntityId eid = it->first;
-		civcraft::Entity*  check = m_server->getEntity(eid);
+		solarium::EntityId eid = it->first;
+		solarium::Entity*  check = m_server->getEntity(eid);
 		bool gone = !check || check->removed;
 
 		if (gone && !it->second.deniedShown) {
@@ -1097,11 +1097,11 @@ void Game::updatePickups(float dt) {
 	}
 
 	// Scan for new in-range items and send one Relocate each.
-	auto hasAnim = [this](civcraft::EntityId eid) {
+	auto hasAnim = [this](solarium::EntityId eid) {
 		for (const auto& a : m_pickupAnims) if (a.itemId == eid) return true;
 		return false;
 	};
-	m_server->forEachEntity([&](civcraft::Entity& e) {
+	m_server->forEachEntity([&](solarium::Entity& e) {
 		if (!e.def().isItem()) return;
 		if (e.removed) return;
 		if (m_pickupRequests.count(e.id())) return;  // cooldown-gated
@@ -1109,8 +1109,8 @@ void Game::updatePickups(float dt) {
 		float dist = glm::length(e.position - pe->position);
 		if (dist >= pdef.pickup_range) return;
 
-		std::string itemType = e.getProp<std::string>(civcraft::Prop::ItemType);
-		int count = e.getProp<int>(civcraft::Prop::Count, 1);
+		std::string itemType = e.getProp<std::string>(solarium::Prop::ItemType);
+		int count = e.getProp<int>(solarium::Prop::Count, 1);
 		const auto* bdef = m_server->blockRegistry().find(itemType);
 		glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.8f, 0.5f, 0.2f);
 
@@ -1132,10 +1132,10 @@ void Game::updatePickups(float dt) {
 			return;
 		}
 
-		civcraft::ActionProposal p;
-		p.type         = civcraft::ActionProposal::Relocate;
+		solarium::ActionProposal p;
+		p.type         = solarium::ActionProposal::Relocate;
 		p.actorId      = m_server->controlledEntityId();
-		p.relocateFrom = civcraft::Container::entity(e.id());
+		p.relocateFrom = solarium::Container::entity(e.id());
 		m_server->sendAction(p);
 
 		PickupRequest req;
@@ -1214,8 +1214,8 @@ void Game::processTalkKey() {
 	if (tKey && !m_tKeyLast && !m_dialogPanel.isOpen() && m_server) {
 		glm::vec3 eye = m_cam.position;
 		glm::vec3 dir = m_cam.front();
-		if (m_cam.mode == civcraft::CameraMode::RPG ||
-		    m_cam.mode == civcraft::CameraMode::RTS) {
+		if (m_cam.mode == solarium::CameraMode::RPG ||
+		    m_cam.mode == solarium::CameraMode::RTS) {
 			double mx, my;
 			glfwGetCursorPos(m_window, &mx, &my);
 			if (m_fbW > 0 && m_fbH > 0) {
@@ -1227,27 +1227,27 @@ void Game::processTalkKey() {
 				dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
 			}
 		}
-		std::vector<civcraft::RaycastEntity> ents;
-		civcraft::EntityId myId = m_server->localPlayerId();
-		m_server->forEachEntity([&](civcraft::Entity& e) {
+		std::vector<solarium::RaycastEntity> ents;
+		solarium::EntityId myId = m_server->localPlayerId();
+		m_server->forEachEntity([&](solarium::Entity& e) {
 			if (!e.def().isLiving()) return;
 			if (!e.def().hasTag("humanoid")) return;
 			ents.push_back({e.id(), e.typeId(), e.position,
 				e.def().collision_box_min, e.def().collision_box_max,
 				e.goalText, e.hasError});
 		});
-		auto hit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
+		auto hit = solarium::raycastEntities(ents, eye, dir, 20.0f, myId);
 		if (hit) {
 			const auto* art = m_artifactRegistry.findById(hit->typeId);
 			if (art) {
 				if (!m_llmClient) {
-					m_llmClient = std::make_unique<civcraft::llm::LlmClient>(
+					m_llmClient = std::make_unique<solarium::llm::LlmClient>(
 						"127.0.0.1", 8080);
 				}
 				std::string name = art->name.empty() ? hit->typeId : art->name;
 				// Resolve this NPC's preferred voice (artifact field
 				// `dialog_voice`; empty/missing → mux picks default).
-				civcraft::llm::TtsClient* voice = nullptr;
+				solarium::llm::TtsClient* voice = nullptr;
 				if (m_ttsMux) {
 					std::string v;
 					auto vIt = art->fields.find("dialog_voice");
@@ -1270,13 +1270,13 @@ void Game::processTalkKey() {
 // Extracted from tickPlayer — see game_vk.h.
 void Game::processLmbInput(float dt) {
 	(void)dt;  // per-frame state via members
-	civcraft::Entity* me = playerEntity();
+	solarium::Entity* me = playerEntity();
 	if (!me) return;
-	bool rtsMode = (m_cam.mode == civcraft::CameraMode::RTS);
+	bool rtsMode = (m_cam.mode == solarium::CameraMode::RTS);
 	// LMB — FPS/TPS: swing (cone attack). RPG/RTS: click-move / box-select.
 	int lmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_LEFT);
 	bool lmbNow = (lmb == GLFW_PRESS);
-	bool rtsLike = (m_cam.mode == civcraft::CameraMode::RPG || rtsMode);
+	bool rtsLike = (m_cam.mode == solarium::CameraMode::RPG || rtsMode);
 
 	// RTS action wheel: modal. LMB picks a slice (or dismisses); cursor hover
 	// highlights. Slice labels and their behavior:
@@ -1342,10 +1342,10 @@ void Game::processLmbInput(float dt) {
 				// Attack: pick one shared target (nearest non-humanoid Living
 				// inside the circle). Empty → fall back to walk-to-center,
 				// so the slice still does *something* even on empty terrain.
-				civcraft::EntityId attackTarget = civcraft::ENTITY_NONE;
+				solarium::EntityId attackTarget = solarium::ENTITY_NONE;
 				if (slice == 1) {
 					float bestDist2 = rad * rad;
-					m_server->forEachEntity([&](civcraft::Entity& e) {
+					m_server->forEachEntity([&](solarium::Entity& e) {
 						if (!e.def().isLiving()) return;
 						if (e.def().hasTag("humanoid")) return;
 						if (e.removed || e.hp() <= 0) return;
@@ -1361,12 +1361,12 @@ void Game::processLmbInput(float dt) {
 				glm::ivec3 goalBlock{(int)std::floor(ctr.x),
 				                    (int)std::floor(ctr.y),
 				                    (int)std::floor(ctr.z)};
-				std::vector<civcraft::EntityId> playerEids;
+				std::vector<solarium::EntityId> playerEids;
 				std::vector<glm::ivec3>         playerStarts;
 				int handedToAgent = 0;
 
 				for (auto eid : m_rtsSelect.selected) {
-					civcraft::Entity* e = m_server->getEntity(eid);
+					solarium::Entity* e = m_server->getEntity(eid);
 					if (!e) continue;
 					bool isPlayer = (eid == m_server->localPlayerId());
 					if (isPlayer || !m_agentClient) {
@@ -1378,28 +1378,28 @@ void Game::processLmbInput(float dt) {
 						continue;
 					}
 
-					civcraft::Plan plan;
+					solarium::Plan plan;
 					std::string    goalLabel;
 					if (slice == 0) {
-						auto step = civcraft::PlanStep::harvest(ctr);
+						auto step = solarium::PlanStep::harvest(ctr);
 						step.gatherTypes  = {"leaves", "logs"};
 						step.gatherRadius = std::max(4.0f, std::min(rad, 12.0f));
 						plan.push_back(step);
 						goalLabel = "rts_gather";
 					} else if (slice == 2) {
-						auto step = civcraft::PlanStep::harvest(ctr);
+						auto step = solarium::PlanStep::harvest(ctr);
 						step.gatherTypes  = {"stone", "cobblestone",
 						                    "granite", "marble", "sandstone"};
 						step.gatherRadius = std::max(4.0f, std::min(rad, 12.0f));
 						plan.push_back(step);
 						goalLabel = "rts_mine";
 					} else {
-						if (attackTarget != civcraft::ENTITY_NONE) {
-							plan.push_back(civcraft::PlanStep::move(ctr));
-							plan.push_back(civcraft::PlanStep::attack(attackTarget));
+						if (attackTarget != solarium::ENTITY_NONE) {
+							plan.push_back(solarium::PlanStep::move(ctr));
+							plan.push_back(solarium::PlanStep::attack(attackTarget));
 							goalLabel = "rts_attack";
 						} else {
-							plan.push_back(civcraft::PlanStep::move(ctr));
+							plan.push_back(solarium::PlanStep::move(ctr));
 							goalLabel = "rts_patrol";
 						}
 					}
@@ -1416,7 +1416,7 @@ void Game::processLmbInput(float dt) {
 				if (!playerEids.empty()) {
 					m_pathExec.planGroup(playerEids, playerStarts, goalBlock,
 						m_server->chunks(), m_server->blockRegistry(),
-						civcraft::CommandKind::Walk);
+						solarium::CommandKind::Walk);
 					for (auto eid : playerEids)
 						m_moveOrders[eid] = {ctr, true};
 				}
@@ -1481,15 +1481,15 @@ void Game::processLmbInput(float dt) {
 				glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
 				glm::vec3 rayOrigin = glm::vec3(nearW);
 				glm::vec3 dir = glm::normalize(glm::vec3(farW) - rayOrigin);
-				auto hit = civcraft::raycastBlocks(m_server->chunks(), rayOrigin, dir, 200.0f);
+				auto hit = solarium::raycastBlocks(m_server->chunks(), rayOrigin, dir, 200.0f);
 				if (hit) {
 					glm::vec3 center = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
-					civcraft::CommandKind kind = isBuildCmd
-						? civcraft::CommandKind::Build : civcraft::CommandKind::Walk;
-					std::vector<civcraft::EntityId> eids;
+					solarium::CommandKind kind = isBuildCmd
+						? solarium::CommandKind::Build : solarium::CommandKind::Walk;
+					std::vector<solarium::EntityId> eids;
 					std::vector<glm::ivec3> starts;
 					for (auto eid : m_rtsSelect.selected) {
-						civcraft::Entity* e = m_server->getEntity(eid);
+						solarium::Entity* e = m_server->getEntity(eid);
 						if (!e) continue;
 						eids.push_back(eid);
 						starts.push_back(glm::ivec3(
@@ -1518,7 +1518,7 @@ void Game::processLmbInput(float dt) {
 				bool shiftHeld =
 					glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
 					glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-				std::unordered_set<civcraft::EntityId> existing;
+				std::unordered_set<solarium::EntityId> existing;
 				if (shiftHeld)
 					existing.insert(m_rtsSelect.selected.begin(),
 					                m_rtsSelect.selected.end());
@@ -1526,7 +1526,7 @@ void Game::processLmbInput(float dt) {
 					m_rtsSelect.selected.clear();
 				size_t added = 0;
 				glm::mat4 vp = pickViewProj();
-				m_server->forEachEntity([&](civcraft::Entity& e) {
+				m_server->forEachEntity([&](solarium::Entity& e) {
 					if (!e.def().isLiving()) return;
 					if (!e.def().hasTag("humanoid")) return;
 					float cy = e.position.y + e.def().collision_box_max.y * 0.5f;
@@ -1549,7 +1549,7 @@ void Game::processLmbInput(float dt) {
 
 		// Drive commanded units, then clean up arrived/removed.
 		m_pathExec.driveRemote(*m_server, m_server->localPlayerId());
-		std::vector<civcraft::EntityId> arrived;
+		std::vector<solarium::EntityId> arrived;
 		for (auto& [eid, order] : m_moveOrders) {
 			if (!order.active || !m_server->getEntity(eid) || !m_pathExec.has(eid))
 				arrived.push_back(eid);
@@ -1576,17 +1576,17 @@ void Game::processLmbInput(float dt) {
 				// Entity attack priority. Held+CD so mash = hold (ARPG feel).
 				bool entityAttacked = false;
 				if ((lmbEdge || lmbHeld) && m_attackCD <= 0) {
-					std::vector<civcraft::RaycastEntity> ents;
-					civcraft::EntityId myId = m_server->localPlayerId();
-					m_server->forEachEntity([&](civcraft::Entity& e) {
+					std::vector<solarium::RaycastEntity> ents;
+					solarium::EntityId myId = m_server->localPlayerId();
+					m_server->forEachEntity([&](solarium::Entity& e) {
 						if (!e.def().isLiving()) return;
 						ents.push_back({e.id(), e.typeId(), e.position,
 							e.def().collision_box_min, e.def().collision_box_max,
 							e.goalText, e.hasError});
 					});
-					auto eHit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
+					auto eHit = solarium::raycastEntities(ents, eye, dir, 20.0f, myId);
 					if (eHit) {
-						auto blockHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+						auto blockHit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 						bool entityCloser = !blockHit || eHit->distance <= blockHit->distance;
 						if (entityCloser) {
 							entityAttacked = true;
@@ -1611,7 +1611,7 @@ void Game::processLmbInput(float dt) {
 						digInFront();
 						m_breakCD = 0.15f;
 					} else {
-						auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+						auto hit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 						if (hit) {
 							glm::ivec3 bp = hit->blockPos;
 							if (m_breaking.active && m_breaking.target == bp) {
@@ -1649,19 +1649,19 @@ void Game::processLmbInput(float dt) {
 bool Game::tryOpenChestAt(glm::ivec3 bp) {
 	auto& blocks = m_server->blockRegistry();
 	const auto& bdef = blocks.get(m_server->chunks().getBlock(bp.x, bp.y, bp.z));
-	if (bdef.string_id != civcraft::BlockType::Chest) return false;
+	if (bdef.string_id != solarium::BlockType::Chest) return false;
 
-	civcraft::EntityId chestEid = 0;
-	m_server->forEachEntity([&](civcraft::Entity& e) {
+	solarium::EntityId chestEid = 0;
+	m_server->forEachEntity([&](solarium::Entity& e) {
 		if (chestEid) return;
-		if (e.typeId() != civcraft::StructureName::Chest) return;
+		if (e.typeId() != solarium::StructureName::Chest) return;
 		int ex = (int)std::floor(e.position.x);
 		int ey = (int)std::floor(e.position.y);
 		int ez = (int)std::floor(e.position.z);
 		if (ex == bp.x && ey == bp.y && ez == bp.z) chestEid = e.id();
 	});
 	if (!chestEid) {
-		civcraft::GameLogger::instance().emit("WARN",
+		solarium::GameLogger::instance().emit("WARN",
 			"chest block @(%d,%d,%d) has no Structure entity", bp.x, bp.y, bp.z);
 		return false;
 	}
@@ -1670,7 +1670,7 @@ bool Game::tryOpenChestAt(glm::ivec3 bp) {
 	// Ask the server for the chest's current items so the pane shows a
 	// fresh snapshot even if no broadcast has happened since last login.
 	m_server->sendGetInventory(chestEid);
-	civcraft::GameLogger::instance().emit("ACTION",
+	solarium::GameLogger::instance().emit("ACTION",
 		"open chest #%u @(%d,%d,%d)", chestEid, bp.x, bp.y, bp.z);
 	return true;
 }
@@ -1687,8 +1687,8 @@ void Game::processRmbInput(float dt) {
 	{
 		int rmb = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT);
 		bool rmbNow = (rmb == GLFW_PRESS);
-		bool rtsLikeMode = (m_cam.mode == civcraft::CameraMode::RPG ||
-		                    m_cam.mode == civcraft::CameraMode::RTS);
+		bool rtsLikeMode = (m_cam.mode == solarium::CameraMode::RPG ||
+		                    m_cam.mode == solarium::CameraMode::RTS);
 		if (rtsLikeMode) {
 			rmbPressed = m_rightClick.action;
 			m_rightClick.action = false;
@@ -1706,7 +1706,7 @@ void Game::processRmbInput(float dt) {
 	// Pure RMB-click (no drag) falls through to the legacy release-selection
 	// handler below, which cancels the selection and resumes AI — the same
 	// semantics as the Cancel slice.
-	if (m_cam.mode == civcraft::CameraMode::RTS
+	if (m_cam.mode == solarium::CameraMode::RTS
 	    && !m_rtsSelect.selected.empty()
 	    && !m_rtsWheel.active) {
 		bool rmbDown = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT)
@@ -1722,7 +1722,7 @@ void Game::processRmbInput(float dt) {
 			glm::vec4 farW  = invVP * glm::vec4(nx, ny, 1.0f, 1.0f); farW  /= farW.w;
 			glm::vec3 o = glm::vec3(nearW);
 			glm::vec3 d = glm::normalize(glm::vec3(farW) - o);
-			auto hit = civcraft::raycastBlocks(m_server->chunks(), o, d, 200.0f);
+			auto hit = solarium::raycastBlocks(m_server->chunks(), o, d, 200.0f);
 			if (!hit) return false;
 			out = glm::vec3(hit->blockPos) + glm::vec3(0.5f, 1.0f, 0.5f);
 			return true;
@@ -1797,23 +1797,23 @@ void Game::processRmbInput(float dt) {
 	if (rmbReleaseEdge && m_rmbInteractPending) {
 		glm::vec3 eye = m_cam.position;
 		glm::vec3 dir = m_cam.front();
-		auto bHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+		auto bHit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 		if (bHit) {
 			glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
 			if (bp == m_rmbInteractTarget) {
 				BlockId bid = bHit->hasInteract ? bHit->interactBlockId : bHit->blockId;
 				const auto& bdef = m_server->blockRegistry().get(bid);
 				bool stillInteractive =
-					(bdef.mesh_type == civcraft::MeshType::Door
-					 || bdef.mesh_type == civcraft::MeshType::DoorOpen
-					 || bdef.string_id == civcraft::BlockType::TNT);
+					(bdef.mesh_type == solarium::MeshType::Door
+					 || bdef.mesh_type == solarium::MeshType::DoorOpen
+					 || bdef.string_id == solarium::BlockType::TNT);
 				if (stillInteractive) {
-					civcraft::ActionProposal p;
-					p.type     = civcraft::ActionProposal::Interact;
+					solarium::ActionProposal p;
+					p.type     = solarium::ActionProposal::Interact;
 					p.actorId  = m_server->localPlayerId();
 					p.blockPos = bp;
 					m_server->sendAction(p);
-					civcraft::GameLogger::instance().emit("ACTION",
+					solarium::GameLogger::instance().emit("ACTION",
 						"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
 				}
 			}
@@ -1833,8 +1833,8 @@ void Game::processRmbInput(float dt) {
 		// Ray dir: cursor for RPG/RTS, camera forward otherwise.
 		glm::vec3 eye = m_cam.position;
 		glm::vec3 dir = m_cam.front();
-		if (m_cam.mode == civcraft::CameraMode::RPG ||
-		    m_cam.mode == civcraft::CameraMode::RTS) {
+		if (m_cam.mode == solarium::CameraMode::RPG ||
+		    m_cam.mode == solarium::CameraMode::RTS) {
 			double mx, my;
 			glfwGetCursorPos(m_window, &mx, &my);
 			int ww = m_fbW, wh = m_fbH;
@@ -1851,17 +1851,17 @@ void Game::processRmbInput(float dt) {
 		// Entity inspect if closer than any block.
 		bool inspectTriggered = false;
 		{
-			std::vector<civcraft::RaycastEntity> ents;
-			civcraft::EntityId myId = m_server->localPlayerId();
-			m_server->forEachEntity([&](civcraft::Entity& e) {
+			std::vector<solarium::RaycastEntity> ents;
+			solarium::EntityId myId = m_server->localPlayerId();
+			m_server->forEachEntity([&](solarium::Entity& e) {
 				if (!e.def().isLiving()) return;
 				ents.push_back({e.id(), e.typeId(), e.position,
 					e.def().collision_box_min, e.def().collision_box_max,
 					e.goalText, e.hasError});
 			});
-			auto eHit = civcraft::raycastEntities(ents, eye, dir, 20.0f, myId);
+			auto eHit = solarium::raycastEntities(ents, eye, dir, 20.0f, myId);
 			if (eHit) {
-				auto blockHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+				auto blockHit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 				bool entityCloser = !blockHit || eHit->distance < blockHit->distance;
 				if (entityCloser) {
 					m_inspectedEntity = eHit->entityId;
@@ -1876,7 +1876,7 @@ void Game::processRmbInput(float dt) {
 		// buttons go through Interact. Anything else falls to placeBlock().
 		if (!inspectTriggered) {
 			bool consumed = false;
-			auto bHit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+			auto bHit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
 			if (bHit) {
 				glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
 				BlockId bid = bHit->hasInteract ? bHit->interactBlockId : bHit->blockId;
@@ -1884,27 +1884,27 @@ void Game::processRmbInput(float dt) {
 				if (tryOpenChestAt(bp)) {
 					consumed = true;
 				} else {
-					bool interactive = (bdef.mesh_type == civcraft::MeshType::Door
-					                 || bdef.mesh_type == civcraft::MeshType::DoorOpen
-					                 || bdef.string_id == civcraft::BlockType::TNT);
+					bool interactive = (bdef.mesh_type == solarium::MeshType::Door
+					                 || bdef.mesh_type == solarium::MeshType::DoorOpen
+					                 || bdef.string_id == solarium::BlockType::TNT);
 					if (interactive) {
 						// Arm the latch — actual Interact fires on release-edge
 						// above. Only the initial press-edge arms, not the
 						// held-synth, so a hold over the door doesn't repeatedly
 						// re-arm with stale targets.
-						if (m_cam.mode == civcraft::CameraMode::FirstPerson
-						 || m_cam.mode == civcraft::CameraMode::ThirdPerson) {
+						if (m_cam.mode == solarium::CameraMode::FirstPerson
+						 || m_cam.mode == solarium::CameraMode::ThirdPerson) {
 							m_rmbInteractPending = true;
 							m_rmbInteractTarget  = bp;
 						} else {
 							// RPG/RTS already use release-derived m_rightClick.action
 							// — fire inline as before.
-							civcraft::ActionProposal p;
-							p.type     = civcraft::ActionProposal::Interact;
+							solarium::ActionProposal p;
+							p.type     = solarium::ActionProposal::Interact;
 							p.actorId  = m_server->localPlayerId();
 							p.blockPos = bp;
 							m_server->sendAction(p);
-							civcraft::GameLogger::instance().emit("ACTION",
+							solarium::GameLogger::instance().emit("ACTION",
 								"interact @(%d,%d,%d)", bp.x, bp.y, bp.z);
 						}
 						consumed = true;
@@ -1934,7 +1934,7 @@ void Game::processMmbInput() {
 		}
 		glm::vec3 eye = m_cam.position;
 		glm::vec3 dir = m_cam.front();
-		auto hit = civcraft::raycastBlocks(m_server->chunks(), eye, dir, 16.0f);
+		auto hit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 16.0f);
 		if (hit) {
 			const auto& bdef = m_server->blockRegistry().get(hit->blockId);
 			// MMB eyedropper: select the hotbar slot that holds this block
@@ -1942,7 +1942,7 @@ void Game::processMmbInput() {
 			// item remain untouched; if no slot has it, selection stays put.
 			auto* me = playerEntity();
 			if (me && me->inventory) {
-				for (int s = 0; s < civcraft::Hotbar::SLOTS; s++) {
+				for (int s = 0; s < solarium::Hotbar::SLOTS; s++) {
 					if (m_hotbar.get(s) == bdef.string_id &&
 					    me->inventory->count(bdef.string_id) > 0) {
 						m_hotbar.selected = s;
@@ -1964,4 +1964,4 @@ void Game::processMmbInput() {
 	m_mmbLast = mmbNow;
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

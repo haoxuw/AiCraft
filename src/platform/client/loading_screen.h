@@ -5,7 +5,7 @@
 
 struct GLFWwindow;
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // Data-driven readiness gate. Each phase publishes a 0..1 progress; the
 // screen only hands off once every phase hits 1.0. Adding or removing a
@@ -70,4 +70,4 @@ private:
 	int m_lastMouse = 0;
 };
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

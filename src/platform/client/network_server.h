@@ -28,7 +28,7 @@
 #include <vector>
 #include <utility>
 
-namespace civcraft {
+namespace solarium {
 
 class NetworkServer : public ServerInterface {
 public:
@@ -370,7 +370,7 @@ public:
 	void setDisplayName(const std::string& name) { m_displayName = name; }
 	void setCreatureType(const std::string& type) override { m_creatureType = type; }
 
-	// Repoint at a different civcraft-server before reconnecting. Only safe
+	// Repoint at a different solarium-server before reconnecting. Only safe
 	// while disconnected — the Multiplayer menu calls this after the user
 	// picks a LAN-discovered server, then CharacterSelect drives the handshake.
 	void setTarget(const std::string& host, int port) {
@@ -1059,4 +1059,4 @@ private:
 	std::vector<QueuedMsg> m_pending;
 };
 
-} // namespace civcraft
+} // namespace solarium

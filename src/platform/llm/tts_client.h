@@ -28,7 +28,7 @@
 
 #include <unistd.h>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 class TtsClient {
 public:
@@ -191,4 +191,4 @@ private:
 	std::deque<Request>     m_queue;
 };
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

@@ -22,7 +22,7 @@ seat 1 so the agent-host lands in seat 2 where its villagers are outside
 the observer's proximity filter.
 
 Data source: the agent-host's per-entity elog files at
-`/tmp/civcraft_entity_<id>.log`, plus the top-level `/tmp/civcraft_game.log`
+`/tmp/solarium_entity_<id>.log`, plus the top-level `/tmp/solarium_game.log`
 for DECIDE goal broadcasts. These are written by the Python behaviors and
 the DECIDE broadcaster regardless of seat visibility.
 """
@@ -37,8 +37,8 @@ from .harness import GameHarness
 
 # Where the woodcutter's elog() calls land, and where the combat-log style
 # DECIDE broadcaster writes its stream. Both are truncated on client start.
-ENTITY_LOG_GLOB = "/tmp/civcraft_entity_{eid}.log"
-GAME_LOG_PATH   = "/tmp/civcraft_game.log"
+ENTITY_LOG_GLOB = "/tmp/solarium_entity_{eid}.log"
+GAME_LOG_PATH   = "/tmp/solarium_game.log"
 
 
 def _find_villager_ids(game_log_path):
@@ -130,7 +130,7 @@ class TestWoodcutterGatherCycle:
     def game(self):
         # Wipe any stale elog / game log so we only see this run.
         for p in list(os.listdir("/tmp")):
-            if p.startswith("civcraft_entity_") and p.endswith(".log"):
+            if p.startswith("solarium_entity_") and p.endswith(".log"):
                 try: os.remove(os.path.join("/tmp", p))
                 except OSError: pass
         for p in (GAME_LOG_PATH, GAME_LOG_PATH + ".prev"):

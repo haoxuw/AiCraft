@@ -43,7 +43,7 @@ Event-driven loop
 Example
 -------
     from behavior_base import Behavior
-    from civcraft_engine import Move
+    from solarium_engine import Move
     from plan_steps import HarvestStep, Vec3
 
     class WoodcutterBehavior(Behavior):

@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace civcraft {
+namespace solarium {
 
 struct EntityHit {
 	EntityId entityId;
@@ -82,4 +82,4 @@ inline std::optional<EntityHit> raycastEntities(
 	return closest;
 }
 
-} // namespace civcraft
+} // namespace solarium

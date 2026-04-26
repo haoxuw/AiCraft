@@ -15,7 +15,7 @@
 #include <sstream>
 #include <algorithm>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 namespace {
 
@@ -392,4 +392,4 @@ void LlmClient::runRequest(Request& req) {
 	}
 }
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

@@ -1,4 +1,4 @@
-# CivCraft — Iterative Debugging Guide
+# Solarium — Iterative Debugging Guide
 
 This guide explains how to run, screenshot, and iterate on the game without
 going through the menu each time.
@@ -7,13 +7,13 @@ going through the menu each time.
 
 ```bash
 # Singleplayer, survival, skips main menu entirely
-./build/civcraft-ui --skip-menu
+./build/solarium-ui --skip-menu
 
 # Singleplayer, with F3 debug overlay on by default (press F3 in-game)
-./build/civcraft-ui --skip-menu
+./build/solarium-ui --skip-menu
 
 # Network client (also skips menu — auto-joins server directly)
-./build/civcraft-ui --host 127.0.0.1 --port 7777
+./build/solarium-ui --host 127.0.0.1 --port 7777
 
 # Dedicated server + client in one step (from Makefile)
 make game                    # server on random port + client auto-joins, skips menu
@@ -22,14 +22,14 @@ make game GAME_PORT=7890     # same, on a fixed port
 
 ## Automated screenshot pipeline
 
-The game writes a screenshot to `/tmp/civcraft_auto_screenshot.ppm`
+The game writes a screenshot to `/tmp/solarium_auto_screenshot.ppm`
 **3 seconds after connecting to a world** (survival or creative).
 
 Convert and read:
 ```bash
 python3 -c "
 from PIL import Image
-img = Image.open('/tmp/civcraft_auto_screenshot.ppm')
+img = Image.open('/tmp/solarium_auto_screenshot.ppm')
 img.save('/tmp/shot.png')
 print(img.size)
 "
@@ -37,7 +37,7 @@ print(img.size)
 
 Press **F2** in-game to take a manual screenshot:
 ```bash
-ls /tmp/civcraft_screenshot_*.ppm
+ls /tmp/solarium_screenshot_*.ppm
 ```
 
 ## Iterative HUD / rendering development loop
@@ -45,27 +45,27 @@ ls /tmp/civcraft_screenshot_*.ppm
 ```bash
 # Edit hud.cpp (or any source file)
 cmake --build build -j$(nproc) && \
-  pkill -f "build/civcraft-ui" ; sleep 0.5 && \
-  ./build/civcraft-ui --skip-menu &
+  pkill -f "build/solarium-ui" ; sleep 0.5 && \
+  ./build/solarium-ui --skip-menu &
 sleep 4
 python3 -c "
 from PIL import Image
-Image.open('/tmp/civcraft_auto_screenshot.ppm').save('/tmp/shot.png')
+Image.open('/tmp/solarium_auto_screenshot.ppm').save('/tmp/shot.png')
 "
 # Claude can then read /tmp/shot.png directly
 ```
 
 Or one-liner restart loop:
 ```bash
-pkill -f "build/civcraft-ui"; cmake --build build -j$(nproc) && \
-  DISPLAY=:1 ./build/civcraft-ui --skip-menu &
+pkill -f "build/solarium-ui"; cmake --build build -j$(nproc) && \
+  DISPLAY=:1 ./build/solarium-ui --skip-menu &
 ```
 
 ## In-game shortcuts
 
 | Key     | Action                          |
 |---------|---------------------------------|
-| F2      | Screenshot → /tmp/civcraft_screenshot_N.ppm |
+| F2      | Screenshot → /tmp/solarium_screenshot_N.ppm |
 | F3      | Toggle debug overlay (FPS, XYZ, chunk, etc.) |
 | F12     | Toggle admin/survival mode      |
 | V       | Cycle camera mode (FPS→TPS→RPG→RTS) |
@@ -91,19 +91,19 @@ from PIL import Image
 import subprocess, time
 
 # Rebuild
-subprocess.run(["cmake", "--build", "build", "-j4"], cwd="/home/haoxuw/workspace/CivCraft")
+subprocess.run(["cmake", "--build", "build", "-j4"], cwd="/home/haoxuw/workspace/Solarium")
 
 # Kill old + launch new (headless-friendly)
-subprocess.Popen(["pkill", "-f", "build/civcraft-ui"])
+subprocess.Popen(["pkill", "-f", "build/solarium-ui"])
 time.sleep(0.5)
 import os
 env = {**os.environ, "DISPLAY": ":1"}
-subprocess.Popen(["./build/civcraft-ui", "--skip-menu"], env=env,
-                 cwd="/home/haoxuw/workspace/CivCraft")
+subprocess.Popen(["./build/solarium-ui", "--skip-menu"], env=env,
+                 cwd="/home/haoxuw/workspace/Solarium")
 
 # Wait for auto-screenshot
 time.sleep(4.5)
-img = Image.open("/tmp/civcraft_auto_screenshot.ppm")
+img = Image.open("/tmp/solarium_auto_screenshot.ppm")
 img.save("/tmp/shot.png")
 # Now Claude can read /tmp/shot.png
 ```

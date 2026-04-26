@@ -5,24 +5,24 @@ GAME_BUILD_DIR := build-perf
 # in ConfigurableWorldTemplate::generate is fixed (recursive generateChunk
 # via getBlock in initWorld's lambda — SIGSEGVs in Release, hangs silently in
 # RelWithDebInfo). Once that's resolved, flip `make client`/`make server` to
-# Release and `make game` to RelWithDebInfo+CIVCRAFT_PERF=ON for representative
+# Release and `make game` to RelWithDebInfo+SOLARIUM_PERF=ON for representative
 # perf numbers.
 BUILD_TYPE := Debug
 HOST :=
 PORT := 7777
 GAME_PORT :=
-GAME := civcraft
+GAME := solarium
 
 # Parallelism for cmake --build. Defaults to HALF the core count so a build
 # doesn't pin the machine / trigger OOM on big templated sources. Override on
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken toronto world debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test perf_fps perf_server flamegraph llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean cef_setup cef_clean cef_demo demo
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken toronto world debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox solarium crafter bbmodel sample pathfinding_test perf_fps perf_server flamegraph llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean cef_setup cef_clean cef_demo demo
 
-# ── Native (CivCraft) ───────────────────────────────────────
+# ── Native (Solarium) ───────────────────────────────────────
 #
-# CivCraft is a native Vulkan C++ voxel sandbox.
+# Solarium is a native Vulkan C++ voxel sandbox.
 #
 # Quick reference:
 #   make game                 Singleplayer under perf record (dev/profiling default)
@@ -41,12 +41,12 @@ PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 #   Terminal 1: make server PORT=7777
 #   Terminal 2: make client HOST=127.0.0.1 PORT=7777
 
-civcraft: game
+solarium: game
 
 # `make game N` → spawn N villagers. Captures the first positional arg after
 # `game` when it's all digits, stamps it into GAME_VILLAGERS, and registers
 # the digit-word as a no-op phony target so make doesn't bail on "no rule to
-# make target '100'". Pure client-side — the client sets CIVCRAFT_VILLAGERS
+# make target '100'". Pure client-side — the client sets SOLARIUM_VILLAGERS
 # in the env inherited by the spawned server.
 ifeq ($(firstword $(MAKECMDGOALS)),game)
   GAME_ARG := $(word 2,$(MAKECMDGOALS))
@@ -68,9 +68,9 @@ endif
 # Escape hatches:
 #   make game GDB=1    — wrap under gdb (crash-debug mode; no perf record)
 #   make game PROFILE=none — run bare binary (no gdb, no perf)
-GAME_LOG  := /tmp/civcraft_game_run.log
-PERF_DATA := /tmp/civcraft.perf.data
-PERF_REPORT := /tmp/civcraft_perf_report.txt
+GAME_LOG  := /tmp/solarium_game_run.log
+PERF_DATA := /tmp/solarium.perf.data
+PERF_REPORT := /tmp/solarium_perf_report.txt
 
 # perf samples at 99 Hz with call graphs (DWARF unwinder — works on our
 # non-frame-pointer-friendly optimization levels). --call-graph dwarf keeps
@@ -91,53 +91,53 @@ define run_under_perf
 	if [ "$$can_perf" = "0" ]; then \
 	    echo "[make]   for crash-debug:  make game GDB=1"; \
 	    echo "[make] launching bare — log: $(GAME_LOG)"; \
-	    ./civcraft-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG); \
+	    ./solarium-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG); \
 	else \
 	    rm -f $(PERF_DATA); \
 	    echo "[make] launching under perf — data: $(PERF_DATA), log: $(GAME_LOG)"; \
 	    perf record -F 99 --call-graph dwarf -o $(PERF_DATA) \
-	        -- ./civcraft-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG); \
+	        -- ./solarium-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG); \
 	    echo; echo "=========== perf report (top-30) ==========="; \
 	    perf report --stdio --no-children -g none -i $(PERF_DATA) 2>/dev/null | head -60 | tee $(PERF_REPORT); \
 	    if command -v flamegraph.pl >/dev/null && command -v stackcollapse-perf.pl >/dev/null; then \
 	        ts=$$(date '+%Y%m%d_%H%M%S'); \
-	        perf script -i $(PERF_DATA) 2>/dev/null | stackcollapse-perf.pl > /tmp/civcraft_folded.txt && \
-	        flamegraph.pl --title="civcraft combined $$ts" < /tmp/civcraft_folded.txt \
-	            > /tmp/civcraft_flamegraph_combined_$$ts.svg && \
-	        grep '^civcraft-ui-vk;'  /tmp/civcraft_folded.txt | \
-	            flamegraph.pl --title="civcraft-ui-vk (client) $$ts" \
-	            > /tmp/civcraft_flamegraph_client_$$ts.svg && \
-	        grep '^civcraft-server;' /tmp/civcraft_folded.txt | \
-	            flamegraph.pl --title="civcraft-server (server) $$ts" \
-	            > /tmp/civcraft_flamegraph_server_$$ts.svg && \
-	        rm -f /tmp/civcraft_folded.txt && \
-	        ln -sf /tmp/civcraft_flamegraph_combined_$$ts.svg /tmp/civcraft_flamegraph.svg && \
-	        ln -sf /tmp/civcraft_flamegraph_client_$$ts.svg   /tmp/civcraft_flamegraph_client.svg && \
-	        ln -sf /tmp/civcraft_flamegraph_server_$$ts.svg   /tmp/civcraft_flamegraph_server.svg; \
+	        perf script -i $(PERF_DATA) 2>/dev/null | stackcollapse-perf.pl > /tmp/solarium_folded.txt && \
+	        flamegraph.pl --title="solarium combined $$ts" < /tmp/solarium_folded.txt \
+	            > /tmp/solarium_flamegraph_combined_$$ts.svg && \
+	        grep '^solarium-ui-vk;'  /tmp/solarium_folded.txt | \
+	            flamegraph.pl --title="solarium-ui-vk (client) $$ts" \
+	            > /tmp/solarium_flamegraph_client_$$ts.svg && \
+	        grep '^solarium-server;' /tmp/solarium_folded.txt | \
+	            flamegraph.pl --title="solarium-server (server) $$ts" \
+	            > /tmp/solarium_flamegraph_server_$$ts.svg && \
+	        rm -f /tmp/solarium_folded.txt && \
+	        ln -sf /tmp/solarium_flamegraph_combined_$$ts.svg /tmp/solarium_flamegraph.svg && \
+	        ln -sf /tmp/solarium_flamegraph_client_$$ts.svg   /tmp/solarium_flamegraph_client.svg && \
+	        ln -sf /tmp/solarium_flamegraph_server_$$ts.svg   /tmp/solarium_flamegraph_server.svg; \
 	    else \
-	        echo "[make] flamegraph.pl not in PATH — install FlameGraph to get /tmp/civcraft_flamegraph*.svg:"; \
+	        echo "[make] flamegraph.pl not in PATH — install FlameGraph to get /tmp/solarium_flamegraph*.svg:"; \
 	        echo "         git clone https://github.com/brendangregg/FlameGraph ~/FlameGraph"; \
 	        echo "         export PATH=\$$PATH:~/FlameGraph"; \
 	    fi; \
 	fi; \
 	echo; echo "=========== make game artifacts ==========="; \
-	for f in $$(ls -t /tmp/civcraft_perf_client_*.txt 2>/dev/null | head -1); do \
+	for f in $$(ls -t /tmp/solarium_perf_client_*.txt 2>/dev/null | head -1); do \
 	    echo "  perf summary (client):  $$f"; \
 	done; \
-	for f in $$(ls -t /tmp/civcraft_perf_server_*.txt 2>/dev/null | head -1); do \
+	for f in $$(ls -t /tmp/solarium_perf_server_*.txt 2>/dev/null | head -1); do \
 	    echo "  perf summary (server):  $$f"; \
 	done; \
-	for f in $$(ls -t /tmp/civcraft_flamegraph_client_*.svg 2>/dev/null | head -1); do \
+	for f in $$(ls -t /tmp/solarium_flamegraph_client_*.svg 2>/dev/null | head -1); do \
 	    echo "  flamegraph (client):    $$f"; \
 	done; \
-	for f in $$(ls -t /tmp/civcraft_flamegraph_server_*.svg 2>/dev/null | head -1); do \
+	for f in $$(ls -t /tmp/solarium_flamegraph_server_*.svg 2>/dev/null | head -1); do \
 	    echo "  flamegraph (server):    $$f"; \
 	done; \
-	for f in $$(ls -t /tmp/civcraft_flamegraph_combined_*.svg 2>/dev/null | head -1); do \
+	for f in $$(ls -t /tmp/solarium_flamegraph_combined_*.svg 2>/dev/null | head -1); do \
 	    echo "  flamegraph (combined):  $$f"; \
 	done; \
-	if ls -t /tmp/civcraft_flamegraph_client_*.svg >/dev/null 2>&1; then \
-	    echo "                          (also: /tmp/civcraft_flamegraph_{client,server,combined}.svg → newest)"; \
+	if ls -t /tmp/solarium_flamegraph_client_*.svg >/dev/null 2>&1; then \
+	    echo "                          (also: /tmp/solarium_flamegraph_{client,server,combined}.svg → newest)"; \
 	    echo "                          inspect older runs:  make flamegraph N=2"; \
 	elif [ "$$can_perf" = "0" ]; then \
 	    echo "  flamegraph:             SKIPPED — bare run, perf record disabled (see [make] note above)"; \
@@ -150,15 +150,15 @@ define run_under_perf
 	[ -f $(PERF_DATA) ]   && echo "  perf record data:       $(PERF_DATA)"; \
 	[ -f $(PERF_REPORT) ] && echo "  perf top-30 report:     $(PERF_REPORT)"; \
 	[ -f $(GAME_LOG) ]    && echo "  game stdout/stderr log: $(GAME_LOG)"; \
-	count=$$(ls /tmp/civcraft_entity_*.log 2>/dev/null | wc -l); \
+	count=$$(ls /tmp/solarium_entity_*.log 2>/dev/null | wc -l); \
 	if [ "$$count" -gt 0 ]; then \
 	    echo "  entity logs ($$count files):"; \
-	    ls -1 /tmp/civcraft_entity_*.log | sed 's/^/    /'; \
+	    ls -1 /tmp/solarium_entity_*.log | sed 's/^/    /'; \
 	fi; \
 	}
 endef
 
-# Common wrapper: $(call run_under_gdb, <extra civcraft-ui-vk args>)
+# Common wrapper: $(call run_under_gdb, <extra solarium-ui-vk args>)
 define run_under_gdb
 	cd $(GAME_BUILD_DIR) && \
 	echo "[make] launching under gdb — log: $(GAME_LOG)" && \
@@ -178,14 +178,14 @@ define run_under_gdb
 	    -ex 'disassemble' \
 	    -ex 'info registers' \
 	    -ex 'quit' \
-	    --args ./civcraft-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG)
+	    --args ./solarium-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG)
 endef
 
 # Bare invocation for PROFILE=none.
 define run_bare
 	cd $(GAME_BUILD_DIR) && \
 	echo "[make] launching bare — log: $(GAME_LOG)" && \
-	./civcraft-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG)
+	./solarium-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG)
 endef
 
 # Router: GDB=1 → gdb wrapper; PROFILE=none → bare; else → perf record.
@@ -211,7 +211,7 @@ game: game-build
 # Click Singleplayer/Multiplayer/Settings to dismiss the overlay (reveals
 # native UI underneath). Click Quit to exit.
 cef_demo: game-build
-	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --cef-menu 2>&1 | tee $(GAME_LOG)
+	cd $(GAME_BUILD_DIR) && ./solarium-ui-vk --cef-menu 2>&1 | tee $(GAME_LOG)
 
 # Primary demo entry point. CEF HTML menu overlays the live menu plaza;
 # clicking Singleplayer drives the engine's normal Connecting→Playing flow.
@@ -236,7 +236,7 @@ test-chicken: game-build
 # First-time setup (one-off):
 #   python -m voxel_earth set-key <YOUR_GOOGLE_MAPS_KEY>
 #   python -m voxel_earth download --location "Toronto" --radius 100
-#   ./build/civcraft-voxel-bake --glb-dir ~/.voxel/google/glb \
+#   ./build/solarium-voxel-bake --glb-dir ~/.voxel/google/glb \
 #                                --out     ~/.voxel/regions/toronto/blocks.bin
 # Then: `make toronto` (or its alias `make world`).
 toronto: game-build
@@ -250,20 +250,20 @@ toronto: game-build
 world: toronto
 
 # Isolated single-villager behavior smoke: 1 villager, village world, 4× sim,
-# hidden window, tee event stream to /tmp/civcraft_game.log. Use for
+# hidden window, tee event stream to /tmp/solarium_game.log. Use for
 # behavior/pathfinding/decision iteration — see the testing-plan skill.
 # DURATION=N (seconds) ends the run early; default is unbounded.
 DEBUG_DURATION ?=
 debug_villager: debug_villager-reconfigure game-build
-	@-pgrep -x civcraft-ui-vk  2>/dev/null | xargs -r kill ; true
-	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-ui-vk  2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-server 2>/dev/null | xargs -r kill ; true
 	@sleep 1
-	@rm -f /tmp/civcraft_entity_*.log
+	@rm -f /tmp/solarium_entity_*.log
 	@echo "[debug_villager] --debug-behavior (1 villager, sim-speed 4, log-only)"
-	@echo "[debug_villager] log: /tmp/civcraft_game.log (prior run kept as .prev)"
-	@echo "[debug_villager] per-entity logs: /tmp/civcraft_entity_<id>.log (cleared on launch)"
+	@echo "[debug_villager] log: /tmp/solarium_game.log (prior run kept as .prev)"
+	@echo "[debug_villager] per-entity logs: /tmp/solarium_entity_<id>.log (cleared on launch)"
 	@cd $(GAME_BUILD_DIR) && { \
-	    $(if $(DEBUG_DURATION),timeout $(DEBUG_DURATION) )./civcraft-ui-vk --debug-behavior; \
+	    $(if $(DEBUG_DURATION),timeout $(DEBUG_DURATION) )./solarium-ui-vk --debug-behavior; \
 	    rc=$$?; \
 	    $(if $(DEBUG_DURATION),[ $$rc -eq 124 ] && rc=0;) \
 	    exit $$rc; \
@@ -275,15 +275,15 @@ ITEM      := base:sword
 CLIP      :=
 
 character_views: build
-	cd $(BUILD_DIR) && ./civcraft-ui-vk --skip-menu --cef-menu \
+	cd $(BUILD_DIR) && ./solarium-ui-vk --skip-menu --cef-menu \
 	    --debug-scenario character_views --debug-character $(CHARACTER) \
 	    $(if $(CLIP),--debug-clip $(CLIP))
 
 item_views: build
-	cd $(BUILD_DIR) && ./civcraft-ui-vk --skip-menu --cef-menu \
+	cd $(BUILD_DIR) && ./solarium-ui-vk --skip-menu --cef-menu \
 	    --debug-scenario item_views --debug-item $(ITEM)
 
-SAMPLE_DIR := /tmp/civcraft_samples
+SAMPLE_DIR := /tmp/solarium_samples
 sample: build
 	@src/model_editor/capture_samples.sh $(BUILD_DIR) $(SAMPLE_DIR)
 
@@ -302,15 +302,15 @@ HAND_sleep  :=
 animation_sweep: build
 	@rm -rf /tmp/anim_review
 	@mkdir -p /tmp/anim_review
-	@pgrep -x civcraft-server 2>/dev/null | xargs -r kill -9 ; true
+	@pgrep -x solarium-server 2>/dev/null | xargs -r kill -9 ; true
 	@for char in $(CHARS); do \
 	  for clip in $(CLIPS); do \
 	    hand_var=HAND_$$clip; \
 	    hand=$$(eval echo \$$$$hand_var); \
 	    echo "=== $$char / $$clip$${hand:+ +$$hand} ==="; \
-	    pgrep -x civcraft-server 2>/dev/null | xargs -r kill -9 ; \
+	    pgrep -x solarium-server 2>/dev/null | xargs -r kill -9 ; \
 	    rm -f /tmp/debug_*.ppm; \
-	    ( cd $(BUILD_DIR) && timeout 30 ./civcraft-ui-vk --skip-menu --cef-menu \
+	    ( cd $(BUILD_DIR) && timeout 30 ./solarium-ui-vk --skip-menu --cef-menu \
 	      --debug-scenario character_views --debug-character base:$$char \
 	      --debug-clip $$clip \
 	      $${hand:+--debug-hand-item $$hand} ) >/dev/null 2>&1 || true; \
@@ -350,38 +350,38 @@ bbmodel:
 
 # Dedicated server (interactive world select, or --world/--seed/--template flags)
 server: build
-	cd $(BUILD_DIR) && ./civcraft-server --port $(PORT)
+	cd $(BUILD_DIR) && ./solarium-server --port $(PORT)
 
 # GUI client: shows menu with "Start game" and "Join a game" tabs
 client: build
-	cd $(BUILD_DIR) && ./civcraft-ui-vk$(if $(HOST), --host $(HOST) --port $(PORT),)
+	cd $(BUILD_DIR) && ./solarium-ui-vk$(if $(HOST), --host $(HOST) --port $(PORT),)
 
 stop:
-	@-pgrep -x civcraft-ui-vk 2>/dev/null | xargs -r kill ; true
-	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill ; true
-	@-pgrep -x civcraft-agent 2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-ui-vk 2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-server 2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-agent 2>/dev/null | xargs -r kill ; true
 	@sleep 1
-	@echo "All civcraft processes stopped."
+	@echo "All solarium processes stopped."
 
 killservers:
-	@echo "Looking for civcraft server processes..."
-	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill && echo "Killed." || echo "No servers running."
+	@echo "Looking for solarium server processes..."
+	@-pgrep -x solarium-server 2>/dev/null | xargs -r kill && echo "Killed." || echo "No servers running."
 
-# Headless E2E gameplay tests (CivCraft)
+# Headless E2E gameplay tests (Solarium)
 pathfinding_test: build
 	@echo "[pathfinding_test] Running headless pathfinding tests..."
-	cd $(BUILD_DIR) && ./civcraft-test-pathfinding
+	cd $(BUILD_DIR) && ./solarium-test-pathfinding
 	@echo "[pathfinding_test] Done."
 
 test_e2e: build pathfinding_test
 	@echo "[test_e2e] Running headless gameplay tests..."
-	cd $(BUILD_DIR) && ./civcraft-test
+	cd $(BUILD_DIR) && ./solarium-test
 	@echo "[test_e2e] Done."
 
 # ── Perf breakdown tables ──────────────────────────────────────────────
-# Spin a civcraft-ui-vk session (which auto-spawns a civcraft-server),
+# Spin a solarium-ui-vk session (which auto-spawns a solarium-server),
 # wait PERF_DURATION seconds, then parse the histograms each binary writes
-# to /tmp/civcraft_perf_{client,server}_<ts>.txt into a percent-breakdown
+# to /tmp/solarium_perf_{client,server}_<ts>.txt into a percent-breakdown
 # table. Overrides:
 #   PERF_DURATION=120  sample window (seconds)
 #   PERF_TEMPLATE=5    world template index (5 = perf_stress, 100 villagers)
@@ -390,25 +390,25 @@ PERF_TEMPLATE ?= 0
 PERF_REPORT_PY := src/platform/debug/perf_report.py
 
 define run_perf_session
-	@-pgrep -x civcraft-ui-vk  2>/dev/null | xargs -r kill ; true
-	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-ui-vk  2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-server 2>/dev/null | xargs -r kill ; true
 	@sleep 1
-	@echo "[$(1)] running civcraft-ui-vk (template=$(PERF_TEMPLATE)) for $(PERF_DURATION)s..."
+	@echo "[$(1)] running solarium-ui-vk (template=$(PERF_TEMPLATE)) for $(PERF_DURATION)s..."
 	@cd $(GAME_BUILD_DIR) && timeout $(PERF_DURATION) \
-	    ./civcraft-ui-vk --skip-menu --cef-menu --log-only --template $(PERF_TEMPLATE) \
-	    > /tmp/civcraft_perf_$(1).stdout 2> /tmp/civcraft_perf_$(1).stderr ; \
+	    ./solarium-ui-vk --skip-menu --cef-menu --log-only --template $(PERF_TEMPLATE) \
+	    > /tmp/solarium_perf_$(1).stdout 2> /tmp/solarium_perf_$(1).stderr ; \
 	    true
-	@-pgrep -x civcraft-ui-vk  2>/dev/null | xargs -r kill ; true
-	@-pgrep -x civcraft-server 2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-ui-vk  2>/dev/null | xargs -r kill ; true
+	@-pgrep -x solarium-server 2>/dev/null | xargs -r kill ; true
 	@sleep 1
 endef
 
 perf_fps: game-build
 	$(call run_perf_session,fps)
-	@dump=$$(ls -t /tmp/civcraft_perf_client_*.txt 2>/dev/null | head -1); \
+	@dump=$$(ls -t /tmp/solarium_perf_client_*.txt 2>/dev/null | head -1); \
 	if [ -z "$$dump" ]; then \
 	    echo "[perf_fps] no client dump — session may have crashed pre-Playing."; \
-	    echo "[perf_fps] see /tmp/civcraft_perf_fps.stderr"; \
+	    echo "[perf_fps] see /tmp/solarium_perf_fps.stderr"; \
 	    exit 1; \
 	fi; \
 	echo "[perf_fps] parsing $$dump"; echo; \
@@ -416,10 +416,10 @@ perf_fps: game-build
 
 perf_server: game-build
 	$(call run_perf_session,server)
-	@dump=$$(ls -t /tmp/civcraft_perf_server_*.txt 2>/dev/null | head -1); \
+	@dump=$$(ls -t /tmp/solarium_perf_server_*.txt 2>/dev/null | head -1); \
 	if [ -z "$$dump" ]; then \
 	    echo "[perf_server] no server dump — session may have crashed early."; \
-	    echo "[perf_server] see /tmp/civcraft_perf_server.stderr"; \
+	    echo "[perf_server] see /tmp/solarium_perf_server.stderr"; \
 	    exit 1; \
 	fi; \
 	echo "[perf_server] parsing $$dump"; echo; \
@@ -443,15 +443,15 @@ endif
 
 flamegraph:
 	@n=$${N:-$(if $(FLAME_N),$(FLAME_N),1)}; \
-	cli=$$(ls -t /tmp/civcraft_flamegraph_client_*.svg 2>/dev/null | sed -n "$${n}p"); \
-	srv=$$(ls -t /tmp/civcraft_flamegraph_server_*.svg 2>/dev/null | sed -n "$${n}p"); \
-	cmb=$$(ls -t /tmp/civcraft_flamegraph_combined_*.svg 2>/dev/null | sed -n "$${n}p"); \
+	cli=$$(ls -t /tmp/solarium_flamegraph_client_*.svg 2>/dev/null | sed -n "$${n}p"); \
+	srv=$$(ls -t /tmp/solarium_flamegraph_server_*.svg 2>/dev/null | sed -n "$${n}p"); \
+	cmb=$$(ls -t /tmp/solarium_flamegraph_combined_*.svg 2>/dev/null | sed -n "$${n}p"); \
 	if [ -z "$$cli" ] && [ -z "$$srv" ] && [ -z "$$cmb" ]; then \
 	    echo "[flamegraph] run #$$n not found."; \
-	    total=$$(ls /tmp/civcraft_flamegraph_client_*.svg 2>/dev/null | wc -l); \
+	    total=$$(ls /tmp/solarium_flamegraph_client_*.svg 2>/dev/null | wc -l); \
 	    if [ "$$total" -gt 0 ]; then \
 	        echo "[flamegraph] $$total run(s) on disk (newest first):"; \
-	        ls -lt /tmp/civcraft_flamegraph_client_*.svg | sed 's/^/  /'; \
+	        ls -lt /tmp/solarium_flamegraph_client_*.svg | sed 's/^/  /'; \
 	    else \
 	        echo "[flamegraph] no flamegraphs on /tmp — run \`make game\` first."; \
 	    fi; \
@@ -485,16 +485,16 @@ game-build: game-configure
 
 game-configure:
 	@if [ ! -f $(GAME_BUILD_DIR)/CMakeCache.txt ]; then \
-		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DCIVCRAFT_PERF=ON -DCIVCRAFT_PATHFINDING_DEBUG=ON; \
+		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DSOLARIUM_PERF=ON -DSOLARIUM_PATHFINDING_DEBUG=ON; \
 	fi
 
 # debug_villager needs PATHLOG compiled in so per-entity logs capture the
 # navigator lifecycle. Force a reconfigure if the existing cache was built
 # without it — cheap when the flag is already set.
 debug_villager-reconfigure:
-	@if ! grep -q "CIVCRAFT_PATHFINDING_DEBUG:BOOL=ON" $(GAME_BUILD_DIR)/CMakeCache.txt 2>/dev/null; then \
-		echo "[debug_villager] enabling CIVCRAFT_PATHFINDING_DEBUG on $(GAME_BUILD_DIR)"; \
-		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DCIVCRAFT_PERF=ON -DCIVCRAFT_PATHFINDING_DEBUG=ON; \
+	@if ! grep -q "SOLARIUM_PATHFINDING_DEBUG:BOOL=ON" $(GAME_BUILD_DIR)/CMakeCache.txt 2>/dev/null; then \
+		echo "[debug_villager] enabling SOLARIUM_PATHFINDING_DEBUG on $(GAME_BUILD_DIR)"; \
+		cmake -B $(GAME_BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DSOLARIUM_PERF=ON -DSOLARIUM_PATHFINDING_DEBUG=ON; \
 	fi
 
 clean:
@@ -522,7 +522,7 @@ jukebox: download_music
 #
 # `make llm_setup` builds llama.cpp and downloads ONE permissively-licensed
 # chat model into llm/models/. `make llm_server` starts the sidecar on
-# 127.0.0.1:8080 — civcraft-ui-vk's DialogPanel connects here when you press
+# 127.0.0.1:8080 — solarium-ui-vk's DialogPanel connects here when you press
 # [T] on a humanoid NPC.
 #
 # Weights are NOT checked into source. Override model choice via LLM_MODEL=.
@@ -610,8 +610,8 @@ llm_clean:
 #
 # `make cef_setup` downloads the minimal CEF binary distribution into
 # third_party/cef/. The directory is gitignored (~1.4 GB extracted, 290 MB
-# tarball). civcraft-ui-vk links libcef.so + libcef_dll_wrapper, and CEF's
-# subprocess children re-exec ./civcraft-cef-subprocess (built alongside).
+# tarball). solarium-ui-vk links libcef.so + libcef_dll_wrapper, and CEF's
+# subprocess children re-exec ./solarium-cef-subprocess (built alongside).
 #
 # Linux x64 only today. macOS/Windows tarballs differ + need helper-app
 # bundles — see docs/CEF_UI_PLAN.md §2.
@@ -648,7 +648,7 @@ cef_clean:
 # ── Whisper.cpp sidecar (speech-to-text for dialog input) ───────────────────
 #
 # `make whisper_setup` builds whisper.cpp's HTTP server binary and downloads
-# one ggml model into llm/whisper_models/. civcraft-ui-vk auto-spawns the
+# one ggml model into llm/whisper_models/. solarium-ui-vk auto-spawns the
 # sidecar on 127.0.0.1:8081 — hold [Y] in the dialog panel to push-to-talk.
 #
 #   WHISPER_MODEL=tiny   ~75 MB  — fastest, fine for short dialog (default)
@@ -719,7 +719,7 @@ whisper_stop:
 # ── Piper sidecar (text-to-speech for NPC voice) ────────────────────────────
 #
 # Piper is a small, fast neural TTS (MIT, Rhasspy). We download a prebuilt
-# binary + one voice model, and civcraft-ui-vk spawns it in "JSON stdin →
+# binary + one voice model, and solarium-ui-vk spawns it in "JSON stdin →
 # WAV-file" mode so each utterance gets a predictable output path.
 #
 #   TTS_VOICE=amy     en_US, female, medium   (~60 MB) — default
@@ -773,13 +773,13 @@ tts_setup:
 	else \
 		echo "[tts] voice $(VOICE_FILE) already present — skipping"; \
 	fi
-	@echo "[tts] setup done. Piper launches on demand inside civcraft-ui-vk."
+	@echo "[tts] setup done. Piper launches on demand inside solarium-ui-vk."
 
 tts_server:
 	@if [ ! -x $(PIPER_DIR)/piper ]; then \
 		echo "[tts] piper not present — run 'make tts_setup' first" >&2; exit 1; \
 	fi
-	@echo "[tts] piper is spawned inside civcraft-ui-vk. For a CLI smoke test:"
+	@echo "[tts] piper is spawned inside solarium-ui-vk. For a CLI smoke test:"
 	@echo "      echo 'hello world' | $(PIPER_DIR)/piper --model $(PIPER_VOICES)/$(VOICE_FILE).onnx --output_file /tmp/piper_test.wav"
 
 tts_stop:

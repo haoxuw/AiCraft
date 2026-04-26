@@ -101,7 +101,7 @@ std::vector<VillageRecord> villages;
 
 ### Client Identity (client-side, local)
 
-Stored in `~/.civcraft/client_id.json`:
+Stored in `~/.solarium/client_id.json`:
 ```json
 {
   "client_id": "550e8400-e29b-41d4-a716-446655440000",

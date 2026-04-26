@@ -27,7 +27,7 @@ Dead once CEF is default (delete the bodies, keep nothing):
 - `MenuRenderer::renderMenu()` — the legacy 5-button main menu, all sub-screens
   (Main, CharacterSelect, Multiplayer, Handbook, Settings, Connecting).
 - `drawLoadingBar()` (file-static) — only called from `renderMenu()`'s Connecting case.
-- `drawCenteredTitle("CIVCRAFT", …)` at line 192 — replaced by HTML `<h1>`.
+- `drawCenteredTitle("SOLARIUM", …)` at line 192 — replaced by HTML `<h1>`.
 
 ### `src/platform/client/loading_screen.{h,cpp}` 🔴
 
@@ -41,7 +41,7 @@ loading view (TBD) will own it. Removal entails:
 - Remove the LoadingScreen reference from the `drawLoadingBar()` signature (already
   removed if `renderMenu` is gone).
 - Drop `#include "client/loading_screen.h"` from `game_vk.h`.
-- Remove from `CMakeLists.txt` `civcraft-ui-vk` source list.
+- Remove from `CMakeLists.txt` `solarium-ui-vk` source list.
 
 ### `src/platform/client/menu_plaza.{h,cpp}` 🟢
 

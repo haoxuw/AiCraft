@@ -1,4 +1,4 @@
-# CivCraft - Player Coding System
+# Solarium - Player Coding System
 
 The defining feature: players write Python code inside the game to create new Objects and Actions, test them locally, then upload them to become real in the shared world.
 
@@ -112,10 +112,10 @@ Players CANNOT create:
 ### What the API Exposes
 
 ```python
-# civcraft.api -- the ONLY module players interact with
+# solarium.api -- the ONLY module players interact with
 
 # Base classes (extend these)
-from civcraft.api import (
+from solarium.api import (
     PassiveObject, ActiveObject, LivingObject,
     PlayerObject, MobObject, NPCObject,
     FluidObject, EffectObject, ItemEntity,
@@ -123,10 +123,10 @@ from civcraft.api import (
 )
 
 # Metadata
-from civcraft.api import ObjectMeta, ActionMeta
+from solarium.api import ObjectMeta, ActionMeta
 
 # Types
-from civcraft.api import (
+from solarium.api import (
     Vec3, BlockPos, EntityId,
     Attribute, Inventory, ItemStack,
     SoundSet, LootTable, LootEntry,
@@ -134,7 +134,7 @@ from civcraft.api import (
 )
 
 # WorldView (passed to step/execute, NOT instantiable)
-from civcraft.api import WorldView
+from solarium.api import WorldView
 
 # Utilities (safe subset)
 import math

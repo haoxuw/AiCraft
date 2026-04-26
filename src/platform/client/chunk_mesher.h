@@ -10,7 +10,7 @@
 #include <vector>
 #include <array>
 
-namespace civcraft {
+namespace solarium {
 
 // 13 floats / 52 bytes — MUST match shaders/vk/chunk_terrain.vert locations 0..6.
 struct ChunkVertex {
@@ -58,4 +58,4 @@ private:
 	PaddedSnapshot m_padded;
 };
 
-} // namespace civcraft
+} // namespace solarium

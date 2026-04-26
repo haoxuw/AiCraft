@@ -128,7 +128,7 @@ client. The server sets velocity each tick toward the goal; obstacles are
 resolved by `moveAndCollide`'s step-up + slide-along-wall behavior.
 
 For more complex paths (through doors, around houses), Python nav
-(`src/CivCraft/python/pathfind.py`) runs on NPC agent clients, not on the
+(`src/Solarium/python/pathfind.py`) runs on NPC agent clients, not on the
 player.
 
 ---
@@ -205,10 +205,10 @@ Python + chunk-streaming pipelines are all alive.
 Use the log-driven verification path (CLAUDE.md §Iterative Development):
 
 ```bash
-./build/civcraft-ui --skip-menu --log-only
+./build/solarium-ui --skip-menu --log-only
 # or for VK:
-./build/civcraft-ui-vk --skip-menu --server --no-validation
-# then grep /tmp/civcraft_game.log for DECIDE / ACTION / COMBAT
+./build/solarium-ui-vk --skip-menu --server --no-validation
+# then grep /tmp/solarium_game.log for DECIDE / ACTION / COMBAT
 ```
 
 A healthy village should emit DECIDE deltas from villagers every few
@@ -265,7 +265,7 @@ Features that are *planned* but not part of the core-gameplay ship gate:
 - Splash screens, settings menu, difficulty selection.
 
 These are Phase 4+ work; they must not block Phase 3 parity between
-`civcraft-ui` (GL) and `civcraft-ui-vk` (Vulkan).
+`solarium-ui` (GL) and `solarium-ui-vk` (Vulkan).
 
 ---
 
@@ -278,4 +278,4 @@ These are Phase 4+ work; they must not block Phase 3 parity between
 - `src/platform/client/camera.h` — shared Camera class (all four modes)
 - `src/platform/client/gameplay_movement.cpp` — WASD + click-to-move + RTS
 - `src/platform/server/pathfind.h` — server-side greedy steering for players
-- `src/CivCraft/python/pathfind.py` — Python A\* for NPCs
+- `src/Solarium/python/pathfind.py` — Python A\* for NPCs

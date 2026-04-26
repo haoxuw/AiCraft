@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Export a CivCraft Python model → Blockbench .bbmodel (JSON).
+"""Export a Solarium Python model → Blockbench .bbmodel (JSON).
 
 Geometry round-trips via bbmodel_import.py. Things Blockbench does not
 model (per-part RGBA colors, sinusoidal clip parameters, hand/pivot
 attachment points, head flag) are preserved elsewhere:
-  - Colors are stashed in a `civcraft` custom field on each element so
+  - Colors are stashed in a `solarium` custom field on each element so
     the importer can recover them. Blockbench itself ignores unknown
     fields but does round-trip them on save.
   - Clips, hand_r/l, pivot_r/l, height, scale, etc. are re-read from
@@ -59,10 +59,10 @@ def rgba_to_int_color(rgba: list[float]) -> int:
 
 
 def part_to_element(idx: int, part: dict) -> dict:
-    """Convert one CivCraft part dict to a Blockbench cuboid element."""
+    """Convert one Solarium part dict to a Blockbench cuboid element."""
     offset = part["offset"]
     size = part["size"]
-    # CivCraft size = full extents; Blockbench from/to = corner positions.
+    # Solarium size = full extents; Blockbench from/to = corner positions.
     half = [size[0] / 2, size[1] / 2, size[2] / 2]
     frm = [offset[0] - half[0], offset[1] - half[1], offset[2] - half[2]]
     to = [offset[0] + half[0], offset[1] + half[1], offset[2] + half[2]]
@@ -71,14 +71,14 @@ def part_to_element(idx: int, part: dict) -> dict:
 
     name = part.get("name") or f"part_{idx}"
 
-    # Preserve the full CivCraft part dict in a custom field so the
+    # Preserve the full Solarium part dict in a custom field so the
     # importer can recover color / swing / head flag verbatim if the
     # modder hasn't touched those. Blockbench round-trips unknown keys.
-    civcraft_meta = {k: v for k, v in part.items() if k not in ("offset", "size", "pivot")}
+    solarium_meta = {k: v for k, v in part.items() if k not in ("offset", "size", "pivot")}
     # Track whether the original .py omitted `pivot` so the importer can
     # preserve byte-identical round-trip for static parts that rely on the
     # C++ loader's (0,0,0) default.
-    civcraft_meta["_had_pivot"] = "pivot" in part
+    solarium_meta["_had_pivot"] = "pivot" in part
 
     return {
         "name": name,
@@ -101,7 +101,7 @@ def part_to_element(idx: int, part: dict) -> dict:
         "type": "cube",
         "uuid": str(uuid.uuid4()),
         # Non-Blockbench extension — preserved on round-trip:
-        "civcraft": civcraft_meta,
+        "solarium": solarium_meta,
     }
 
 
@@ -131,7 +131,7 @@ def export(py_path: Path, out_path: Path) -> None:
         "textures": [],
         "animations": [],
         # Top-level extension: everything we can't put in elements.
-        "civcraft": {
+        "solarium": {
             "id": model.get("id"),
             "height": model.get("height"),
             "scale": model.get("scale"),

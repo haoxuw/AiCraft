@@ -16,7 +16,7 @@
 #include <thread>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 struct DecideRequest {
 	// Decide = normal plan-completion / first-time discovery path.
@@ -153,4 +153,4 @@ private:
 	std::deque<DecideResult>  m_results;
 };
 
-} // namespace civcraft
+} // namespace solarium

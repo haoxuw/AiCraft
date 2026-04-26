@@ -15,7 +15,7 @@
 #include "server/structure_block_cacher.h"
 #include "server/weather.h"
 #include "logic/block_registry.h"
-// Must precede `namespace civcraft {` — system headers can't land inside.
+// Must precede `namespace solarium {` — system headers can't land inside.
 #include "server/owned_entity_store.h"
 #include "server/seat_registry.h"
 #include "server/village_registry.h"
@@ -34,7 +34,7 @@
 #include <mutex>
 #include <random>
 
-namespace civcraft {
+namespace solarium {
 
 // ClientId lives in shared/types.h.
 
@@ -157,18 +157,18 @@ public:
 		m_hpRegenInterval = config.hpRegenInterval;
 		m_worldTime = 0.26f;  // just past sunrise
 		// World template decides the starting season (e.g. village starts in
-		// autumn so trees open colored). CIVCRAFT_DEBUG_DAY still overrides.
+		// autumn so trees open colored). SOLARIUM_DEBUG_DAY still overrides.
 		m_dayCount  = (uint32_t)std::max(0, tmpl->pyConfig().startingDay);
-		if (const char* d = std::getenv("CIVCRAFT_DEBUG_DAY")) {
+		if (const char* d = std::getenv("SOLARIUM_DEBUG_DAY")) {
 			m_dayCount = (uint32_t)std::max(0, std::atoi(d));
 		}
-		// CIVCRAFT_DEBUG_TOD=0.0..1.0 pins time of day at init.
-		// CIVCRAFT_FREEZE_TIME=1 stops the clock — useful for HUD screenshots.
-		if (const char* t = std::getenv("CIVCRAFT_DEBUG_TOD")) {
+		// SOLARIUM_DEBUG_TOD=0.0..1.0 pins time of day at init.
+		// SOLARIUM_FREEZE_TIME=1 stops the clock — useful for HUD screenshots.
+		if (const char* t = std::getenv("SOLARIUM_DEBUG_TOD")) {
 			float v = std::atof(t);
 			m_worldTime = v - std::floor(v);
 		}
-		if (const char* f = std::getenv("CIVCRAFT_FREEZE_TIME")) {
+		if (const char* f = std::getenv("SOLARIUM_FREEZE_TIME")) {
 			m_freezeTime = (std::atoi(f) != 0);
 		}
 		// Rule 1: Python-configurable; default 1200s / 20min.
@@ -310,12 +310,12 @@ public:
 				mobList.push_back({mc.type, mc.count, mc.radius,
 					parseSpawnAnchor(mc.spawnAt), mc.yOffset, mc.props});
 		}
-		// Perf stress hook: CIVCRAFT_STRESS_MULT multiplies every count.
-		if (const char* sm = std::getenv("CIVCRAFT_STRESS_MULT")) {
+		// Perf stress hook: SOLARIUM_STRESS_MULT multiplies every count.
+		if (const char* sm = std::getenv("SOLARIUM_STRESS_MULT")) {
 			int mult = std::max(1, std::atoi(sm));
 			if (mult > 1) {
 				for (auto& m : mobList) m.count *= mult;
-				printf("[Server] CIVCRAFT_STRESS_MULT=%d applied to mob spawns\n", mult);
+				printf("[Server] SOLARIUM_STRESS_MULT=%d applied to mob spawns\n", mult);
 			}
 		}
 		// Client-chosen villager override (Rule 1: client hosts the world, decides
@@ -323,7 +323,7 @@ public:
 		// clean single-species trace — no dogs/cats/bees churning DECIDE lines
 		// while you're debugging one villager's path. Template villager count
 		// becomes `n` regardless of the original value.
-		if (const char* vc = std::getenv("CIVCRAFT_VILLAGERS")) {
+		if (const char* vc = std::getenv("SOLARIUM_VILLAGERS")) {
 			int n = std::atoi(vc);
 			if (n > 0) {
 				mobList.erase(std::remove_if(mobList.begin(), mobList.end(),
@@ -342,7 +342,7 @@ public:
 					mobList.push_back({"villager", n, wgc.mobSpawnRadius,
 					                   SpawnAnchor::VillageCenter, 0.0f, {}});
 				}
-				printf("[Server] CIVCRAFT_VILLAGERS=%d — non-villager mobs "
+				printf("[Server] SOLARIUM_VILLAGERS=%d — non-villager mobs "
 				       "stripped for clean debug log\n", n);
 			}
 		}
@@ -815,7 +815,7 @@ public:
 	}
 
 	void tick(float dt) {
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		using Clock = std::chrono::steady_clock;
 		auto phaseStart = Clock::now();
 		auto tickStart = phaseStart;
@@ -1018,7 +1018,7 @@ public:
 		}
 		markPhase(m_lastTickProfile.stuckDetectionMs);
 
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		m_lastTickProfile.totalMs =
 			std::chrono::duration<double, std::milli>(Clock::now() - tickStart).count();
 #endif
@@ -1110,7 +1110,7 @@ private:
 	float m_worldTime = 0.30f;
 	uint32_t m_dayCount = 0;         // integer days elapsed (drives season)
 	int   m_dayLengthTicks = 1200;   // seeded from WorldPyConfig
-	bool  m_freezeTime = false;      // CIVCRAFT_FREEZE_TIME=1 stops the clock
+	bool  m_freezeTime = false;      // SOLARIUM_FREEZE_TIME=1 stops the clock
 	WeatherController m_weather;     // Markov chain (global)
 	float m_activeBlockTimer = 0;
 	float m_stuckTimer = 0;
@@ -1151,4 +1151,4 @@ private:
 	std::unordered_map<ClientId, ClientState> m_clients;
 };
 
-} // namespace civcraft
+} // namespace solarium

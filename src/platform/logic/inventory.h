@@ -9,7 +9,7 @@
 
 #include "material_values.h"
 
-namespace civcraft {
+namespace solarium {
 
 // Main hand = hotbar selection, not a slot.
 enum class WearSlot {
@@ -147,4 +147,4 @@ private:
 	bool m_offhandRight = false;
 };
 
-} // namespace civcraft
+} // namespace solarium

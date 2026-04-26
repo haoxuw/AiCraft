@@ -8,7 +8,7 @@
 // this struct holds what the player can tune at creation time plus per-creature
 // behavior/starting-item overrides.
 
-namespace civcraft {
+namespace solarium {
 
 // WorldTemplate resolves these to coords at init.
 enum class SpawnAnchor {
@@ -53,4 +53,4 @@ inline SpawnAnchor parseSpawnAnchor(const std::string& s) {
 	return SpawnAnchor::VillageCenter;
 }
 
-} // namespace civcraft
+} // namespace solarium

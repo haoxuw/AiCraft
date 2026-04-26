@@ -1,7 +1,7 @@
 // Bakes a directory of cached Photorealistic 3D Tiles GLBs into a single
 // VoxelRegion file (~/.voxel/regions/<name>/blocks.bin).
 //
-//   civcraft-voxel-bake --glb-dir <dir> --out <region.bin>
+//   solarium-voxel-bake --glb-dir <dir> --out <region.bin>
 //                       [--voxel-size 1.0]
 //                       [--origin x,y,z]
 //
@@ -27,7 +27,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace ve = civcraft::voxel_earth;
+namespace ve = solarium::voxel_earth;
 namespace fs = std::filesystem;
 
 struct Args {

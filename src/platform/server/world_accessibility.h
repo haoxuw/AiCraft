@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace civcraft {
+namespace solarium {
 
 struct NavViolation {
 	glm::ivec3  pos;
@@ -171,4 +171,4 @@ inline std::unordered_set<glm::ivec3, IVec3Hash, IVec3Eq> floodReachable(
 	return visited;
 }
 
-} // namespace civcraft
+} // namespace solarium

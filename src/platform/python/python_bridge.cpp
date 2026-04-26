@@ -8,7 +8,7 @@
 
 #ifdef __EMSCRIPTEN__
 // Web/WASM stub — Python is server-only, everything returns safe defaults.
-namespace civcraft {
+namespace solarium {
 bool PythonBridge::init(const std::string&) { return false; }
 void PythonBridge::shutdown() {}
 BehaviorHandle PythonBridge::loadBehavior(const std::string&, std::string& err) {
@@ -42,7 +42,7 @@ bool loadWeatherSchedule(const std::string&, WeatherPyConfig&) { return false; }
 bool loadStructureBlueprint(const std::string&, StructureBlueprint&) { return false; }
 std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 	const Entity&, const std::function<std::string(int,int,int)>&) const { return std::nullopt; }
-} // namespace civcraft
+} // namespace solarium
 #else
 // Native build — full pybind11.
 #include <pybind11/embed.h>
@@ -51,7 +51,7 @@ std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 
 namespace py = pybind11;
 
-namespace civcraft {
+namespace solarium {
 
 struct PyEntityInfo {
 	EntityId id;
@@ -146,8 +146,8 @@ static py::list runScan(const ScanFn& scanFn, const std::string& typeId,
 	return result;
 }
 
-PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
-	m.doc() = "CivCraft engine bridge — exposes world view to Python behaviors";
+PYBIND11_EMBEDDED_MODULE(solarium_engine, m) {
+	m.doc() = "Solarium engine bridge — exposes world view to Python behaviors";
 
 	// Server-enforced max distance for inventory store/take (matches
 	// world_gen_config::storeRange default). Python behaviors use this as the
@@ -257,13 +257,13 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	   "Lookup material value for an item/block. Single source of truth "
 	   "is src/shared/material_values.h — never hardcode values in Python.");
 
-	// Per-entity behavior log at /tmp/civcraft_entity_<id>.log. Single source
+	// Per-entity behavior log at /tmp/solarium_entity_<id>.log. Single source
 	// of truth is debug/entity_log.h — identical consecutive messages are
 	// aggregated into one [first..last xN] summary; flushed at shutdown.
 	m.def("entity_log", [](EntityId eid, const std::string& msg) {
-		civcraft::entityLog(eid, "%s", msg.c_str());
+		solarium::entityLog(eid, "%s", msg.c_str());
 	}, py::arg("entity_id"), py::arg("msg"),
-	   "Append a line to /tmp/civcraft_entity_<id>.log. Repeated identical "
+	   "Append a line to /tmp/solarium_entity_<id>.log. Repeated identical "
 	   "messages are folded into a summary row.");
 
 	m.def("Interact", [](int x, int y, int z, int appearance) {
@@ -492,7 +492,7 @@ BehaviorHandle PythonBridge::loadBehavior(const std::string& sourceCode, std::st
 		// Isolated namespace per behavior (one per entity instance).
 		py::dict ns;
 
-		py::exec("from civcraft_engine import *", ns);
+		py::exec("from solarium_engine import *", ns);
 		py::exec("from actions import *", ns);
 		py::exec("from behavior_base import Behavior", ns);
 
@@ -1323,5 +1323,5 @@ std::optional<BlockSlot> StructureBlueprintManager::firstMissingBlock(
 	return std::nullopt;
 }
 
-} // namespace civcraft
+} // namespace solarium
 #endif // __EMSCRIPTEN__

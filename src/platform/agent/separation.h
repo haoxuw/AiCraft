@@ -24,7 +24,7 @@
 #include <cstdlib>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 struct SepNeighbor {
 	EntityId  eid    = ENTITY_NONE;
@@ -340,7 +340,7 @@ inline glm::vec3 computeReactKick(
 	return {v.x, 0.0f, v.y};
 }
 
-// Drain a SepStats into the perf registry. Zero-cost when CIVCRAFT_PERF is off.
+// Drain a SepStats into the perf registry. Zero-cost when SOLARIUM_PERF is off.
 inline void recordSepPerf(const SepStats& s) {
 	PERF_COUNT_BY("client.steering.separation_pairs",   s.pairsConsidered);
 	PERF_COUNT_BY("client.steering.separation_emit",    s.pairsEmit);
@@ -388,4 +388,4 @@ inline std::vector<SepNeighbor> gatherSepNeighbors(
 	return out;
 }
 
-} // namespace civcraft
+} // namespace solarium

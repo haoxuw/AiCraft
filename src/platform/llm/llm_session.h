@@ -18,7 +18,7 @@
 #include <mutex>
 #include <cstdint>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 class LlmSession {
 public:
@@ -137,4 +137,4 @@ private:
 	uint64_t                 m_generation = 0;
 };
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

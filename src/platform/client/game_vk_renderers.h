@@ -16,7 +16,7 @@
 // declarations in Game give them private access; method bodies prefix all
 // Game members/methods through a local `Game& g = game_;` alias.
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 class Game;
 
@@ -93,4 +93,4 @@ private:
 	Game& game_;
 };
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

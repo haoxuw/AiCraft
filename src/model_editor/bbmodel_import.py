@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import a Blockbench .bbmodel back into a CivCraft Python model.
+"""Import a Blockbench .bbmodel back into a Solarium Python model.
 
 Merges the geometry edited in Blockbench (part positions, sizes, pivots,
 added/removed parts) with the original .py's non-Blockbench fields
@@ -10,7 +10,7 @@ Merge strategy, in order:
      original .py, we rebuild that part from the .bbmodel geometry
      but keep the original part's color / swing_axis / amplitude /
      phase / speed / head flag.
-  2. If the element has our `civcraft` extension dict (written by
+  2. If the element has our `solarium` extension dict (written by
      bbmodel_export.py), we read color/swing/head from there when
      there is no name-match in the original .py — useful for parts
      the modder duplicated or renamed.
@@ -26,7 +26,7 @@ Usage:
     src/model_editor/bbmodel_import.py <in.bbmodel> <out.py> --base <original.py>
 
 If --base is omitted, the importer looks for a .py at the path recorded
-in the bbmodel's civcraft.source_file field.
+in the bbmodel's solarium.source_file field.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def load_base_model(path: Path | None) -> dict | None:
 
 
 def element_to_part(elem: dict, base_by_name: dict) -> dict:
-    """Rebuild one CivCraft part from a Blockbench element."""
+    """Rebuild one Solarium part from a Blockbench element."""
     frm = elem["from"]
     to = elem["to"]
     # Blockbench from/to are corners; we want center + full size.
@@ -65,12 +65,12 @@ def element_to_part(elem: dict, base_by_name: dict) -> dict:
         "color", "swing_axis", "amplitude", "phase", "speed", "head", "role",
     )
     base_part = base_by_name.get(name) if name else None
-    civcraft_meta = elem.get("civcraft") or {}
+    solarium_meta = elem.get("solarium") or {}
 
     # Emit pivot unless the original .py explicitly omitted it (and no
     # base match gives us one) — the C++ loader defaults absent pivot to
     # (0,0,0), which is semantically distinct from pivot=offset.
-    had_pivot = civcraft_meta.get("_had_pivot")
+    had_pivot = solarium_meta.get("_had_pivot")
     base_had_pivot = base_part and "pivot" in base_part
     if had_pivot is None or had_pivot or base_had_pivot:
         part["pivot"] = list(base_part["pivot"]) if base_had_pivot else list(origin)
@@ -78,8 +78,8 @@ def element_to_part(elem: dict, base_by_name: dict) -> dict:
     for key in preserved_keys:
         if base_part and key in base_part:
             part[key] = base_part[key]
-        elif key in civcraft_meta:
-            part[key] = civcraft_meta[key]
+        elif key in solarium_meta:
+            part[key] = solarium_meta[key]
 
     # Fallback color so a brand-new part isn't invisible.
     if "color" not in part:
@@ -171,7 +171,7 @@ def import_bb(bb_path: Path, out_path: Path, base_path: Path | None) -> None:
 
     # If no explicit base was passed, try the source path we stamped on export.
     if base_path is None:
-        recorded = (bb.get("civcraft") or {}).get("source_file")
+        recorded = (bb.get("solarium") or {}).get("source_file")
         if recorded:
             cand = Path(recorded)
             if cand.is_file():
@@ -201,7 +201,7 @@ def import_bb(bb_path: Path, out_path: Path, base_path: Path | None) -> None:
 
     new_parts = [element_to_part(uuid_to_elem[u], base_by_name) for u in flat]
 
-    bb_civcraft = bb.get("civcraft") or {}
+    bb_solarium = bb.get("solarium") or {}
     out_model: dict = {}
     for k in ("id", "height", "scale", "walk_speed", "idle_bob", "walk_bob",
               "hand_r", "hand_l", "pivot_r", "pivot_l", "head_pivot"):
@@ -209,14 +209,14 @@ def import_bb(bb_path: Path, out_path: Path, base_path: Path | None) -> None:
         # stash. Never write None.
         if k in base_model and base_model[k] is not None:
             out_model[k] = base_model[k]
-        elif bb_civcraft.get(k) is not None:
-            out_model[k] = bb_civcraft[k]
+        elif bb_solarium.get(k) is not None:
+            out_model[k] = bb_solarium[k]
 
     out_model["parts"] = new_parts
     if base_model.get("clips"):
         out_model["clips"] = base_model["clips"]
-    elif bb_civcraft.get("clips"):
-        out_model["clips"] = bb_civcraft["clips"]
+    elif bb_solarium.get("clips"):
+        out_model["clips"] = bb_solarium["clips"]
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(emit_model(out_model))

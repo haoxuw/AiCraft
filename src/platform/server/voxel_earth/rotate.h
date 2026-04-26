@@ -21,7 +21,7 @@
 
 #include <array>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 // Convenience: each tile's own ECEF translation as origin. For multi-tile
 // regions, the orchestrator picks ONE origin (e.g. the first tile's) and
@@ -32,4 +32,4 @@ std::array<double, 3> origin_from_root(const Glb& glb);
 // meters around `origin`, +Y is geodetic up, and root TRS is identity.
 void rotate_to_local_enu(Glb& glb, const std::array<double, 3>& origin);
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 namespace {
 
@@ -320,4 +320,4 @@ bool GridPlanner::pathInvalidatedBy(const Path& path,
 // Only the planner-side (GridPlanner, FlowField, pathInvalidatedBy) lives
 // here now.
 
-} // namespace civcraft
+} // namespace solarium

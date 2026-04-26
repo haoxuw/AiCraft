@@ -9,7 +9,7 @@
 #include <memory>
 #include <unordered_map>
 
-namespace civcraft {
+namespace solarium {
 
 // Snapshot interpolation for remote entities.
 //
@@ -175,4 +175,4 @@ private:
 	float m_clientTime = 0.0f;
 };
 
-} // namespace civcraft
+} // namespace solarium

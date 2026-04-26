@@ -12,7 +12,7 @@
 #include <string>
 #include <fstream>
 
-namespace civcraft {
+namespace solarium {
 
 class Hotbar {
 public:
@@ -113,4 +113,4 @@ private:
 	std::array<std::string, SLOTS> m_slots{};
 };
 
-} // namespace civcraft
+} // namespace solarium

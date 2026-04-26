@@ -23,7 +23,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 class TtsVoiceMux {
 public:
@@ -113,4 +113,4 @@ private:
 	std::unordered_map<std::string, Slot> m_slots;
 };
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

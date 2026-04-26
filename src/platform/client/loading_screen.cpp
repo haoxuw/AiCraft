@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ── LoadingGate ───────────────────────────────────────────────────────
 
@@ -112,4 +112,4 @@ bool LoadingScreen::pollDismiss(GLFWwindow* w) {
 	return any;
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

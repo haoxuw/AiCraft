@@ -101,7 +101,7 @@ A Python function that decides what a creature does each tick. Reads the world (
 
 ```python
 # artifacts/behaviors/base/wander.py
-from civcraft_engine import MoveTo
+from solarium_engine import MoveTo
 from behavior_base import Behavior
 
 class WanderBehavior(Behavior):
@@ -256,7 +256,7 @@ item = {
 
 ## Behavior Available Actions
 
-What a behavior's `decide()` can return (import from `civcraft_engine`):
+What a behavior's `decide()` can return (import from `solarium_engine`):
 
 | Action | Parameters | Description |
 |--------|-----------|-------------|
@@ -282,8 +282,8 @@ The `Behavior` base class provides a `wander_target(entity, radius)` helper.
 A single server may host hundreds of players and NPCs. AI behaviors, pathfinding,
 and decision-making are computationally expensive. If the server ran AI for every
 creature, it would become the bottleneck. Instead, each NPC gets its own headless
-`civcraft-agent` process that runs Python `decide()`, and the server only validates
-the resulting intents. The GUI client (`civcraft-ui`) does NOT run Python — it only
+`solarium-agent` process that runs Python `decide()`, and the server only validates
+the resulting intents. The GUI client (`solarium-ui`) does NOT run Python — it only
 renders and forwards player input.
 
 ```
@@ -298,7 +298,7 @@ renders and forwards player input.
            │ loaded by each agent client
            ▼
 ┌──────────────────────────────────────────┐   ┌──────────────────────────────┐
-│  AGENT CLIENT (civcraft-agent)           │   │  GUI CLIENT (civcraft-ui)    │
+│  AGENT CLIENT (solarium-agent)           │   │  GUI CLIENT (solarium-ui)    │
 │  one process per NPC — headless, Python  │   │  C++ + renderer, NO Python   │
 │                                          │   │                              │
 │  Runs behavior decide() for its entity   │   │  Renders world from server   │

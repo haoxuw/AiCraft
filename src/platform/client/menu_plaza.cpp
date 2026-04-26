@@ -9,7 +9,7 @@
 #include <cmath>
 #include <cstdio>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ─── PlazaChunks ─────────────────────────────────────────────────────────
 
@@ -320,4 +320,4 @@ std::string MenuPlaza::queryBlockTypeAt(int x, int y, int z) {
 	return bd.string_id;
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

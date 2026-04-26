@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 namespace {
 
@@ -113,4 +113,4 @@ void rotate_to_local_enu(Glb& glb, const std::array<double, 3>& origin) {
 	};
 }
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

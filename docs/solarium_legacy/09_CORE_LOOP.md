@@ -1,4 +1,4 @@
-# CivCraft - Core Loop & Conceptual Separation
+# Solarium - Core Loop & Conceptual Separation
 
 > **DESIGN SKETCH — uses non-existent class names** (`WanderTo`, `FleeFrom`,
 > `Place`, etc.) that do not match the actual Python API. See

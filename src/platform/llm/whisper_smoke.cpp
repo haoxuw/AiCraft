@@ -1,6 +1,6 @@
 // Tiny standalone smoke test for WhisperClient. Reads a WAV from argv[1],
 // submits it to whisper-server on :8081, prints the transcript. Built only
-// on demand via `cmake --build build --target civcraft-whisper-smoke`.
+// on demand via `cmake --build build --target solarium-whisper-smoke`.
 
 #include "llm/whisper_client.h"
 
@@ -22,10 +22,10 @@ int main(int argc, char** argv) {
 	std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), {});
 	std::fprintf(stderr, "[smoke] %zu bytes → whisper-server\n", bytes.size());
 
-	civcraft::llm::WhisperClient::Config cfg;
+	solarium::llm::WhisperClient::Config cfg;
 	cfg.host = "127.0.0.1";
 	cfg.port = 8081;
-	civcraft::llm::WhisperClient client(cfg);
+	solarium::llm::WhisperClient client(cfg);
 
 	std::mutex mtx;
 	std::condition_variable cv;

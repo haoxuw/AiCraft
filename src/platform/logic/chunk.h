@@ -5,7 +5,7 @@
 #include <array>
 #include <memory>
 
-namespace civcraft {
+namespace solarium {
 
 // A Chunk is in one of two modes (see docs/22_APPEARANCE.md § Chunk compression):
 //
@@ -185,4 +185,4 @@ private:
 	bool m_dirty = true;
 };
 
-} // namespace civcraft
+} // namespace solarium

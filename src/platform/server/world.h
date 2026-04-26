@@ -19,7 +19,7 @@
 #include <random>
 #include <cstdint>
 
-namespace civcraft {
+namespace solarium {
 
 // World-scale: how many real-world meters one block edge represents. Used by
 // any system that needs to convert engine units (blocks/s, blocks) into a
@@ -427,4 +427,4 @@ private:
 	std::mutex m_pendingMutex;
 };
 
-} // namespace civcraft
+} // namespace solarium

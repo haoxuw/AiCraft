@@ -15,7 +15,7 @@
 #include <cstdio>
 #include <algorithm>
 
-namespace civcraft {
+namespace solarium {
 
 struct ArtifactEntry {
 	std::string id;           // e.g. "pig"
@@ -554,4 +554,4 @@ private:
 	std::vector<ArtifactEntry> m_entries;
 };
 
-} // namespace civcraft
+} // namespace solarium

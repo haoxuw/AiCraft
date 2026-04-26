@@ -12,7 +12,7 @@
 #include <cstdio>
 #include <ctime>
 
-namespace civcraft {
+namespace solarium {
 
 struct WorldMetadata {
 	std::string name;
@@ -745,4 +745,4 @@ inline bool loadWorld(GameServer& server, const std::string& savePath,
 	return true;
 }
 
-} // namespace civcraft
+} // namespace solarium

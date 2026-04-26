@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 class Game;
 
@@ -60,4 +60,4 @@ private:
 	std::chrono::steady_clock::time_point m_lastVoiceSampleTime{};
 };
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

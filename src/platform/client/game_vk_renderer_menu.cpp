@@ -15,7 +15,7 @@
 #include "logic/artifact_registry.h"
 #include "net/server_interface.h"
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // Phase-1 menus: custom-drawn, text-only. Arrow keys / WS move the
 // highlight, Enter/Space activate, Esc backs out. Shared primitives live
@@ -207,7 +207,7 @@ void MenuRenderer::renderGameMenu() {
 		else if (picked == 2) g.enterMenu();
 		else if (picked == 3) g.m_shouldQuit = true;
 	} else {
-		auto lines = civcraft::GameLogger::instance().snapshot();
+		auto lines = solarium::GameLogger::instance().snapshot();
 		const float logX = -0.82f, logW = 1.64f;
 		const float logY = -0.40f, logH = 1.00f;
 		const float logBg[4] = {0.02f, 0.02f, 0.03f, 0.92f};
@@ -272,4 +272,4 @@ void MenuRenderer::renderDeath() {
 	else if (picked == 1) g.enterMenu();
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

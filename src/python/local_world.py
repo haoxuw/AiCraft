@@ -32,7 +32,7 @@ index after model_construct(). At 4 Hz this overhead is negligible.
 
 Scale (future work)
 ───────────────────
-Current: 1 civcraft-agent process per entity (one Python interpreter each).
+Current: 1 solarium-agent process per entity (one Python interpreter each).
 For large deployments, migrate to multi-entity agent processes: one process
 handles a batch of entities sharing one interpreter. LocalWorld is designed
 to be compatible — each entity gets its own instance per tick.
@@ -106,19 +106,19 @@ class InventoryView(BaseModel):
     def total_value(self) -> float:
         """Sum of material values across all items.
 
-        Uses civcraft_engine.material_value() — single source of truth in
+        Uses solarium_engine.material_value() — single source of truth in
         src/shared/material_values.h. Never hardcode values in Python.
         """
-        from civcraft_engine import material_value
+        from solarium_engine import material_value
         return sum(material_value(k) * v for k, v in self.items.items() if v > 0)
 
     def can_accept(self, item_id: str, count: int, capacity: float) -> bool:
         """Would adding (item × count) keep total value ≤ capacity?
 
         Mirrors C++ Inventory::canAccept (shared/inventory.h) — same logic,
-        same values (via civcraft_engine.material_value).
+        same values (via solarium_engine.material_value).
         """
-        from civcraft_engine import material_value
+        from solarium_engine import material_value
         if capacity <= 0:
             return False
         return self.total_value() + material_value(item_id) * count <= capacity + 1e-4
@@ -267,7 +267,7 @@ class LocalWorld(BaseModel):
         Valid only inside decide_plan(). Returns 'base:air' for unloaded positions.
         Primarily used by pathfinding helpers (see python/pathfind.py).
         """
-        from civcraft_engine import get_block as _gb
+        from solarium_engine import get_block as _gb
         return _gb(int(x), int(y), int(z))
 
     # ── Spatial queries ───────────────────────────────────────────────────────
@@ -294,7 +294,7 @@ class LocalWorld(BaseModel):
         # Fresh-scan annotations every call (cheap: one C++ hash lookup per
         # loaded chunk in the search box). Callers get a unified block/ann list.
         try:
-            from civcraft_engine import scan_annotations as _sa
+            from solarium_engine import scan_annotations as _sa
             md = 80.0 if max_dist is None else float(max_dist)
             anns = _sa(type, None, md, 64)
             for a in anns:

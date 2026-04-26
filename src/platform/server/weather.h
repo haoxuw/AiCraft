@@ -9,7 +9,7 @@
 #include <random>
 #include <string>
 
-namespace civcraft {
+namespace solarium {
 
 struct WeatherState {
 	std::string kind      = "clear";   // WeatherPyConfig::Kind::name
@@ -137,4 +137,4 @@ private:
 	}
 };
 
-} // namespace civcraft
+} // namespace solarium

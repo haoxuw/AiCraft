@@ -12,7 +12,7 @@
 #include "net/server_interface.h"
 #include "logic/action.h"
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ─────────────────────────────────────────────────────────────────────────
 // F3 debug overlay — custom-drawn text column (top-left)
@@ -31,7 +31,7 @@ void PanelRenderer::renderDebugOverlay() {
 	snprintf(buf, sizeof(buf), "FPS: %.0f", fps);
 	g.m_rhi->drawText2D(buf, x, y, 0.65f, fpsCol); y -= step;
 
-	civcraft::Entity* me = g.playerEntity();
+	solarium::Entity* me = g.playerEntity();
 	if (me) {
 		snprintf(buf, sizeof(buf), "XYZ: %.1f / %.1f / %.1f",
 			me->position.x, me->position.y, me->position.z);
@@ -66,7 +66,7 @@ void PanelRenderer::renderDebugOverlay() {
 
 	glm::vec3 eye = g.m_cam.position;
 	glm::vec3 dir = g.m_cam.front();
-	auto hit = civcraft::raycastBlocks(g.m_server->chunks(), eye, dir, 10.0f);
+	auto hit = solarium::raycastBlocks(g.m_server->chunks(), eye, dir, 10.0f);
 	if (hit) {
 		auto& bdef = g.m_server->blockRegistry()
 			.get(g.m_server->chunks().getBlock(
@@ -83,7 +83,7 @@ void PanelRenderer::renderDebugOverlay() {
 		g.m_rhi->drawText2D(buf, x, y, 0.60f, orange); y -= step;
 	}
 
-	if (g.m_cam.mode == civcraft::CameraMode::RTS) {
+	if (g.m_cam.mode == solarium::CameraMode::RTS) {
 		size_t activeWaypoints = 0;
 		for (const auto& [eid, mo] : g.m_moveOrders)
 			if (mo.active) activeWaypoints++;
@@ -230,4 +230,4 @@ void PanelRenderer::renderHandbook() {
 	g.m_handbook.render(g);
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

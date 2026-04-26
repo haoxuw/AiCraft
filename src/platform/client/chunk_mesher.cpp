@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace civcraft {
+namespace solarium {
 
 // Stable per-blade hash. Used to seed the random position / angle / height
 // of each blade within a grass cell so blades appear scattered but stay
@@ -563,4 +563,4 @@ ChunkMesher::buildMeshFromSnapshot(const PaddedSnapshot& padded, ChunkPos cpos,
 	return {verts, tVerts};
 }
 
-} // namespace civcraft
+} // namespace solarium

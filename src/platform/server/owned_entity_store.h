@@ -18,7 +18,7 @@
 #include <vector>
 #include <cstdio>
 
-namespace civcraft {
+namespace solarium {
 
 // Dead NPCs + unknown types dropped at snapshot, not restore.
 struct OwnedEntitySnapshot {
@@ -134,4 +134,4 @@ private:
 	Map m_snapshots;  // SeatId → NPCs
 };
 
-} // namespace civcraft
+} // namespace solarium

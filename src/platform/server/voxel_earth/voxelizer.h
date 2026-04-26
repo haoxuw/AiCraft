@@ -22,7 +22,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 struct Voxel {
 	uint16_t x, y, z;     // grid coords [0, grid.x)
@@ -52,4 +52,4 @@ VoxelGrid voxelize(const Glb& glb,
                    const Texture& texture,
                    const VoxelizeOptions& opts = {});
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

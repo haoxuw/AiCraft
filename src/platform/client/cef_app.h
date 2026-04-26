@@ -1,7 +1,7 @@
 #pragma once
 
-// Tiny CefApp implementation shared by the browser process (civcraft-ui-vk)
-// and every Chromium subprocess (civcraft-cef-subprocess). The same factory
+// Tiny CefApp implementation shared by the browser process (solarium-ui-vk)
+// and every Chromium subprocess (solarium-cef-subprocess). The same factory
 // runs in both so command-line switches (ANGLE backend, GPU compositing
 // toggle) propagate everywhere.
 //
@@ -10,10 +10,10 @@
 
 #include "include/cef_app.h"
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // Returns a new instance each call — caller transfers ownership to CEF
 // (CefRefPtr handles the refcount).
 CefRefPtr<CefApp> makeOsrApp();
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

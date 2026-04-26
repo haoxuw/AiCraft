@@ -47,7 +47,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ─────────────────────────────────────────────────────────────────────────
 // Geometry — kept local so the hotbar and inventory panel share one source
@@ -252,7 +252,7 @@ void HudRenderer::renderInventoryItems3D() {
 
 		float slotWorldH = s.ndcH * halfH;
 
-		civcraft::BoxModel m = it->second;
+		solarium::BoxModel m = it->second;
 
 		// Per-item auto-fit: scale each item so its longest axis fills
 		// 70% of the slot, regardless of true world size. The inventory
@@ -279,7 +279,7 @@ void HudRenderer::renderInventoryItems3D() {
 		}
 		float cy = (minY + maxY) * 0.5f * scale;
 
-		civcraft::AnimState anim{};
+		solarium::AnimState anim{};
 		anim.time = g.m_wallTime;
 		anim.suppressIdleBob = true;
 		float rpm     = s.selected ? 80.0f : 32.0f;
@@ -298,7 +298,7 @@ void HudRenderer::renderInventoryItems3D() {
 		root = glm::rotate(root, glm::radians(-slowSpin - 90.0f), glm::vec3(0, 1, 0));
 		root = glm::translate(root, glm::vec3(0.0f, -cy, 0.0f));
 
-		civcraft::appendBoxModel(boxes, m, glm::vec3(0.0f), 0.0f, anim, nullptr, &root);
+		solarium::appendBoxModel(boxes, m, glm::vec3(0.0f), 0.0f, anim, nullptr, &root);
 	}
 
 	if (boxes.empty()) return;
@@ -382,7 +382,7 @@ void drawSlotFrame(rhi::IRhi* r, const SlotChromeArgs& a) {
 // ─────────────────────────────────────────────────────────────────────────
 void HudRenderer::renderHotbarBar() {
 	Game& g = game_;
-	civcraft::Entity* me = g.m_server->getEntity(g.m_server->localPlayerId());
+	solarium::Entity* me = g.m_server->getEntity(g.m_server->localPlayerId());
 	if (!me || !me->inventory) return;
 
 	const float slotW = kHotbarH / g.m_aspect;
@@ -429,7 +429,7 @@ void HudRenderer::renderInventoryPanel() {
 		return;
 	}
 
-	civcraft::Entity* me = g.m_server->getEntity(g.m_server->localPlayerId());
+	solarium::Entity* me = g.m_server->getEntity(g.m_server->localPlayerId());
 	if (!me || !me->inventory) return;
 
 	rhi::IRhi* r = g.m_rhi;
@@ -476,22 +476,22 @@ void HudRenderer::renderInventoryPanel() {
 		// transfer count; the user can drag again for the remainder.
 		auto sendStoreToOther = [&]() {
 			if (g.m_invOther == 0) return;
-			civcraft::ActionProposal p;
-			p.type         = civcraft::ActionProposal::Relocate;
+			solarium::ActionProposal p;
+			p.type         = solarium::ActionProposal::Relocate;
 			p.actorId      = g.m_server->localPlayerId();
-			p.relocateFrom = civcraft::Container::self();
-			p.relocateTo   = civcraft::Container::entity(g.m_invOther);
+			p.relocateFrom = solarium::Container::self();
+			p.relocateTo   = solarium::Container::entity(g.m_invOther);
 			p.itemId       = g.m_drag.itemId;
 			p.itemCount    = g.m_drag.count;
 			g.m_server->sendAction(p);
 		};
 		auto sendTakeFromOther = [&]() {
 			if (g.m_invOther == 0) return;
-			civcraft::ActionProposal p;
-			p.type         = civcraft::ActionProposal::Relocate;
+			solarium::ActionProposal p;
+			p.type         = solarium::ActionProposal::Relocate;
 			p.actorId      = g.m_server->localPlayerId();
-			p.relocateFrom = civcraft::Container::entity(g.m_invOther);
-			p.relocateTo   = civcraft::Container::self();
+			p.relocateFrom = solarium::Container::entity(g.m_invOther);
+			p.relocateTo   = solarium::Container::self();
 			p.itemId       = g.m_drag.itemId;
 			p.itemCount    = g.m_drag.count;
 			g.m_server->sendAction(p);
@@ -526,11 +526,11 @@ void HudRenderer::renderInventoryPanel() {
 				saveHotbar();
 			} else if (g.m_drag.srcKind == K::Inventory) {
 				// Drop one to the world (TYPE_RELOCATE Self → Ground).
-				civcraft::ActionProposal p;
-				p.type         = civcraft::ActionProposal::Relocate;
+				solarium::ActionProposal p;
+				p.type         = solarium::ActionProposal::Relocate;
 				p.actorId      = g.m_server->localPlayerId();
-				p.relocateFrom = civcraft::Container::self();
-				p.relocateTo   = civcraft::Container::ground();
+				p.relocateFrom = solarium::Container::self();
+				p.relocateTo   = solarium::Container::ground();
 				p.itemId       = g.m_drag.itemId;
 				p.itemCount    = 1;
 				g.m_server->sendAction(p);
@@ -553,8 +553,8 @@ void HudRenderer::renderInventoryPanel() {
 				std::string ra = a.first, rb = b.first;
 				auto ca = ra.find(':'); if (ca != std::string::npos) ra = ra.substr(ca+1);
 				auto cb = rb.find(':'); if (cb != std::string::npos) rb = rb.substr(cb+1);
-				float va = civcraft::getMaterialValue(ra);
-				float vb = civcraft::getMaterialValue(rb);
+				float va = solarium::getMaterialValue(ra);
+				float vb = solarium::getMaterialValue(rb);
 				if (va != vb) return va > vb;
 				return a.first < b.first;
 			});
@@ -843,12 +843,12 @@ void HudRenderer::renderInventoryTooltip() {
 	std::string raw = h.itemId;
 	auto colon = raw.find(':');
 	if (colon != std::string::npos) raw = raw.substr(colon + 1);
-	glm::vec4 rc = rarityColor(civcraft::getMaterialValue(raw));
+	glm::vec4 rc = rarityColor(solarium::getMaterialValue(raw));
 
 	std::string name = prettify(h.itemId);
 	char line2[96];
 	std::snprintf(line2, sizeof(line2), "x%d    %.1f value",
-	              h.count, civcraft::getMaterialValue(raw));
+	              h.count, solarium::getMaterialValue(raw));
 
 	const float sName = 0.82f, sMeta = 0.66f;
 	const float nameCharW = 0.013f * sName / g.m_aspect;
@@ -888,7 +888,7 @@ void HudRenderer::renderOtherInventoryPane() {
 	Game& g = game_;
 	if (g.m_invOther == 0) return;
 
-	civcraft::Entity* other = g.m_server->getEntity(g.m_invOther);
+	solarium::Entity* other = g.m_server->getEntity(g.m_invOther);
 	if (!other || !other->inventory) return;
 
 	rhi::IRhi* r = g.m_rhi;
@@ -1020,4 +1020,4 @@ void HudRenderer::renderOtherInventoryPane() {
 	}
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

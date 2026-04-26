@@ -8,7 +8,7 @@
 #include <cstdlib>
 
 int main() {
-	civcraft::llm::TtsVoiceMux mux;
+	solarium::llm::TtsVoiceMux mux;
 	if (!mux.init()) {
 		std::fprintf(stderr, "[mux-smoke] no voices found — run make tts_setup\n");
 		return 2;

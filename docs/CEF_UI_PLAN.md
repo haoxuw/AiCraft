@@ -14,7 +14,7 @@ The current UI pipeline is `rhi::IRhi::drawText2D` + `drawRect2D` on top
 of an 8×8 bitmap font baked to a 512×192 SDF atlas. That's sufficient
 for the HUD, but:
 
-1. **Typography collapses at title sizes.** "CIVCRAFT" at scale 3.4×
+1. **Typography collapses at title sizes.** "SOLARIUM" at scale 3.4×
    upscales a 32px-per-glyph source to ~100px on screen — inherent
    chunkiness no shader fixes.
 2. **UI code is hand-rolled per surface.** Every panel (handbook, dialog,
@@ -38,20 +38,20 @@ desktop voxel sandbox.
 
 ### 1.1 Process layout
 
-CEF is multi-process by design. The game's `civcraft-ui-vk` becomes
+CEF is multi-process by design. The game's `solarium-ui-vk` becomes
 CEF's **browser process**. CEF spawns child processes (renderer, GPU,
 utility) that re-exec the same binary with different command-line flags;
 `main()` hands control to `CefExecuteProcess` early and only continues
 into our game loop when we're the browser process.
 
 ```
-civcraft-ui-vk (browser)  ← our main() after CefExecuteProcess returns
-├── civcraft-ui-vk --type=renderer   (Chromium renderer per BrowserHost)
-├── civcraft-ui-vk --type=gpu-process
-└── civcraft-ui-vk --type=utility
+solarium-ui-vk (browser)  ← our main() after CefExecuteProcess returns
+├── solarium-ui-vk --type=renderer   (Chromium renderer per BrowserHost)
+├── solarium-ui-vk --type=gpu-process
+└── solarium-ui-vk --type=utility
 ```
 
-A dedicated sub-process executable (`civcraft-cef-subprocess`) is
+A dedicated sub-process executable (`solarium-cef-subprocess`) is
 cleaner on Linux — avoids sandbox-init coupling with our giant main
 binary. We'll start with the shared-binary pattern and split if it
 causes issues.
@@ -123,7 +123,7 @@ enum later if it causes typos.
 
 ```
 build-perf/
-├── civcraft-ui-vk          (browser process binary — also used as sub)
+├── solarium-ui-vk          (browser process binary — also used as sub)
 ├── libcef.so               (from cef_binary)
 ├── cef_100_percent.pak     (CEF resources)
 ├── cef_200_percent.pak
@@ -211,11 +211,11 @@ game:
 ```cmake
 add_subdirectory(${cef_SOURCE_DIR}/libcef_dll
                  ${cef_BINARY_DIR}/libcef_dll)
-target_link_libraries(civcraft-ui-vk PRIVATE
+target_link_libraries(solarium-ui-vk PRIVATE
     ${cef_SOURCE_DIR}/Release/libcef.so
     libcef_dll_wrapper
 )
-target_include_directories(civcraft-ui-vk PRIVATE ${cef_SOURCE_DIR})
+target_include_directories(solarium-ui-vk PRIVATE ${cef_SOURCE_DIR})
 ```
 
 ### 2.3 Runtime layout
@@ -227,7 +227,7 @@ Existing POST_BUILD steps already copy `artifacts/`, `resources/`,
 
 ### 2.4 Binary size impact
 
-- Before: `civcraft-ui-vk` is ~40 MB stripped.
+- Before: `solarium-ui-vk` is ~40 MB stripped.
 - After: plus `libcef.so` ~120 MB + resources ~40 MB = ~200 MB of
   additional distribution. Acceptable for a desktop game.
 
@@ -251,8 +251,8 @@ previous one's smoke test passes.
       - forwards GLFW mouse/keyboard when focused
 - [ ] Draw the overlay texture as a fullscreen quad in a new `web_overlay.vert/frag`.
 - [ ] Load a stub `civ://ui/menu/index.html` that just renders
-      `<h1>Hello CivCraft</h1>`.
-- **Proof:** screenshot of the menu scene with HTML "Hello CivCraft"
+      `<h1>Hello Solarium</h1>`.
+- **Proof:** screenshot of the menu scene with HTML "Hello Solarium"
   composited over it. Keyboard focus toggles between game and HTML.
 
 ### Phase 2 — JS↔C++ bridge (1–2 days)
@@ -266,7 +266,7 @@ previous one's smoke test passes.
 - [ ] Schema versioning: every payload carries a `"v":1` field so we
       can evolve without re-launching CEF.
 - **Proof:** HTML button click triggers a native printf in
-  `/tmp/civcraft_game.log`; native tick pushes an HP change into JS
+  `/tmp/solarium_game.log`; native tick pushes an HP change into JS
   that updates the DOM.
 
 ### Phase 3 — Main menu + character select (2–3 days)

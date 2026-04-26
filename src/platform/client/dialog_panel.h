@@ -31,7 +31,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 class DialogPanel {
 public:
@@ -45,12 +45,12 @@ public:
 	// `audio`+`whisper` are optional (push-to-talk); `tts`+`audioOut` are
 	// optional (voice playback of NPC replies).
 	bool open(EntityId target, const std::string& npcName,
-	          const civcraft::ArtifactEntry& artifact,
-	          civcraft::llm::LlmClient& client,
-	          civcraft::AudioCapture* audio = nullptr,
-	          civcraft::llm::WhisperClient* whisper = nullptr,
-	          civcraft::llm::TtsClient* tts = nullptr,
-	          civcraft::AudioManager* audioOut = nullptr) {
+	          const solarium::ArtifactEntry& artifact,
+	          solarium::llm::LlmClient& client,
+	          solarium::AudioCapture* audio = nullptr,
+	          solarium::llm::WhisperClient* whisper = nullptr,
+	          solarium::llm::TtsClient* tts = nullptr,
+	          solarium::AudioManager* audioOut = nullptr) {
 		auto sysIt = artifact.fields.find("dialog_system_prompt");
 		if (sysIt == artifact.fields.end() || sysIt->second.empty()) return false;
 
@@ -64,7 +64,7 @@ public:
 		auto gIt = artifact.fields.find("dialog_greeting");
 		if (gIt != artifact.fields.end()) greeting = gIt->second;
 
-		m_session  = std::make_unique<civcraft::llm::LlmSession>(client, sysIt->second, temp);
+		m_session  = std::make_unique<solarium::llm::LlmSession>(client, sysIt->second, temp);
 		m_target   = target;
 		m_npcName  = npcName;
 		{
@@ -300,7 +300,7 @@ public:
 		// to finish synthesizing.
 		drainVoiceQueue();
 		auto snap = m_session ? m_session->snapshot()
-		                      : civcraft::llm::LlmSession::Snapshot{};
+		                      : solarium::llm::LlmSession::Snapshot{};
 
 		// Count committed assistant turns. While streaming, the current turn
 		// is NOT yet in history — it's in snap.partial.
@@ -524,7 +524,7 @@ private:
 		using namespace ui::color;
 
 		// Compose drawable lines from committed history + live stream.
-		auto snap = m_session ? m_session->snapshot() : civcraft::llm::LlmSession::Snapshot{};
+		auto snap = m_session ? m_session->snapshot() : solarium::llm::LlmSession::Snapshot{};
 		std::vector<Line> lines = m_display;
 
 		// Walk committed LLM history, appending anything past what m_display
@@ -613,12 +613,12 @@ private:
 	std::string                                  m_greeting;
 	std::string                                  m_input;
 	std::vector<Line>                            m_display;
-	std::unique_ptr<civcraft::llm::LlmSession>   m_session;
+	std::unique_ptr<solarium::llm::LlmSession>   m_session;
 	int                                          m_caretFrames = 0;
 
 	// Push-to-talk state. Borrowed pointers — owned by Game.
-	civcraft::AudioCapture*                      m_audio   = nullptr;
-	civcraft::llm::WhisperClient*                m_whisper = nullptr;
+	solarium::AudioCapture*                      m_audio   = nullptr;
+	solarium::llm::WhisperClient*                m_whisper = nullptr;
 	bool                                         m_sttRecording = false;
 	std::string                                  m_sttStatus;      // main-thread only
 	mutable std::mutex                           m_sttMtx;         // guards m_sttResult + m_sttPending
@@ -626,8 +626,8 @@ private:
 	bool                                         m_sttPending = false;
 
 	// TTS sentence-chunk streaming state. Borrowed pointers — owned by Game.
-	civcraft::llm::TtsClient*                    m_tts      = nullptr;
-	civcraft::AudioManager*                      m_audioOut = nullptr;
+	solarium::llm::TtsClient*                    m_tts      = nullptr;
+	solarium::AudioManager*                      m_audioOut = nullptr;
 	size_t                                       m_ttsTurnCount   = 0;  // assistant turns seen so far
 	size_t                                       m_ttsSpokenChars = 0;  // index into current turn
 	mutable std::mutex                           m_ttsMtx;
@@ -641,4 +641,4 @@ private:
 	static constexpr size_t kMaxInputChars = 200;
 };
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

@@ -5,7 +5,7 @@
 #include <glm/glm.hpp>
 #include <optional>
 
-namespace civcraft {
+namespace solarium {
 
 struct RayHit {
 	glm::ivec3 blockPos;   // first solid block (pass-through open doors)
@@ -73,4 +73,4 @@ inline std::optional<RayHit> raycastBlocks(ChunkSource& world, glm::vec3 origin,
 	return std::nullopt;
 }
 
-} // namespace civcraft
+} // namespace solarium

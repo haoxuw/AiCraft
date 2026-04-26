@@ -21,7 +21,7 @@ Usage:
 Conditions combine with `&`, `|`, `~`.
 """
 
-from civcraft_engine import Move
+from solarium_engine import Move
 from behavior_base import Behavior
 
 

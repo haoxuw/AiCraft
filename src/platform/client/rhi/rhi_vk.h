@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft::rhi {
+namespace solarium::rhi {
 
 class VkRhi : public IRhi {
 public:
@@ -389,4 +389,4 @@ private:
 	std::vector<PersistentMesh> m_chunkMeshPending[kFramesInFlight];
 };
 
-} // namespace civcraft::rhi
+} // namespace solarium::rhi

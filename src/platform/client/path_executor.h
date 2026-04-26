@@ -46,7 +46,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 // Unified WorldView — works on both sides (server via World, client via
 // LocalWorld), since both implement ChunkSource. Doors/trapdoors are treated
@@ -421,4 +421,4 @@ inline const char* toString(Navigator::Status s) {
 	return "?";
 }
 
-}  // namespace civcraft
+}  // namespace solarium

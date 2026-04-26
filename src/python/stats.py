@@ -33,7 +33,7 @@ class Stats:
         """Print a formatted summary to stderr."""
         if not self._counters:
             return
-        print("\n=== CivCraft Agent Stats ===", file=sys.stderr)
+        print("\n=== Solarium Agent Stats ===", file=sys.stderr)
         # Sort categories alphabetically for stable output
         for cat in sorted(self._counters):
             total = self._counters[cat]

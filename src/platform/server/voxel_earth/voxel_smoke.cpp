@@ -2,8 +2,8 @@
 // Photorealistic 3D Tile (e.g. ~/.voxel/google/glb/<obb-sha>.glb) and prints
 // mesh stats. Built on demand via:
 //
-//   cmake --build build -j1 --target civcraft-voxel-smoke
-//   ./build/civcraft-voxel-smoke ~/.voxel/google/glb/<sha>.glb
+//   cmake --build build -j1 --target solarium-voxel-smoke
+//   ./build/solarium-voxel-smoke ~/.voxel/google/glb/<sha>.glb
 
 #include "server/voxel_earth/glb_loader.h"
 #include "server/voxel_earth/rotate.h"
@@ -15,7 +15,7 @@
 #include <cstdlib>
 #include <limits>
 
-namespace ve = civcraft::voxel_earth;
+namespace ve = solarium::voxel_earth;
 
 static void print_bbox(const ve::Glb& g, const char* label) {
 	float min_x =  std::numeric_limits<float>::infinity();

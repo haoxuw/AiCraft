@@ -9,7 +9,7 @@
 #include <array>
 #include <shared_mutex>
 
-namespace civcraft {
+namespace solarium {
 
 // Aggregated lock-perf snapshot. Zero-valued for sources that don't lock.
 struct ChunkLockStats {
@@ -77,4 +77,4 @@ public:
 	virtual void unloadDistantChunks(ChunkPos center, int keepRadius) { (void)center; (void)keepRadius; }
 };
 
-} // namespace civcraft
+} // namespace solarium

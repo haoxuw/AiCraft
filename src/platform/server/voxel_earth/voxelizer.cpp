@@ -7,7 +7,7 @@
 #include <limits>
 #include <unordered_map>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 namespace {
 
@@ -255,4 +255,4 @@ VoxelGrid voxelize(const Glb& glb, const Texture& texture, const VoxelizeOptions
 	return grid;
 }
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

@@ -14,7 +14,7 @@
 #include <cmath>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 namespace detail {
 
@@ -225,4 +225,4 @@ inline void emitAABox(std::vector<float>& out,
 	detail::emitBox(out, m, color);
 }
 
-} // namespace civcraft
+} // namespace solarium

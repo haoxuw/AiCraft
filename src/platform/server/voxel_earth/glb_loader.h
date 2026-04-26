@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 struct Vec3 { float x, y, z; };
 struct Vec2 { float u, v; };
@@ -47,4 +47,4 @@ struct Glb {
 // pretransform vertices — root node TRS is left for the next stage to apply.
 bool load_glb(const std::string& path, Glb& out, std::string* error = nullptr);
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

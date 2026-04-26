@@ -15,7 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 class World;
 
@@ -27,7 +27,7 @@ public:
 		std::vector<uint8_t> message; // framed S_CHUNK/S_CHUNK_Z
 	};
 
-	// numWorkers == 0 → max(1, hardware_concurrency()-1). Env CIVCRAFT_CHUNK_WORKERS overrides.
+	// numWorkers == 0 → max(1, hardware_concurrency()-1). Env SOLARIUM_CHUNK_WORKERS overrides.
 	ChunkGenService(World& world, int numWorkers = 0);
 	~ChunkGenService();
 
@@ -71,4 +71,4 @@ private:
 	std::atomic<bool> m_stop{false};
 };
 
-} // namespace civcraft
+} // namespace solarium

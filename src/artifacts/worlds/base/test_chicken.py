@@ -9,7 +9,7 @@ Walk toward a chicken and strafe — it should curve away from you rather than
 sprinting to one fixed spot.
 
 Launch:
-    ./build/civcraft-ui-vk --skip-menu --template 4
+    ./build/solarium-ui-vk --skip-menu --template 4
 """
 
 world = {

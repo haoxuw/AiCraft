@@ -1,4 +1,4 @@
-# CivCraft - Feasibility: C++ Server Embedding Hot-Reloadable Python
+# Solarium - Feasibility: C++ Server Embedding Hot-Reloadable Python
 
 **Question**: Can a C++ server embed Python, run player-written Objects and Actions, and hot-reload Python code DURING gameplay without restarting?
 
@@ -32,7 +32,7 @@ This is not experimental. Major production software does exactly this.
 |                                                 |
 |  At startup:                                   |
 |    Py_Initialize()                             |
-|    Load civcraft.api module                     |
+|    Load solarium.api module                     |
 |    Load built-in objects/actions from .py files|
 |                                                 |
 |  During gameplay:                              |
@@ -59,7 +59,7 @@ This is not experimental. Major production software does exactly this.
 namespace py = pybind11;
 
 // Expose C++ WorldView to Python
-PYBIND11_EMBEDDED_MODULE(civcraft_native, m) {
+PYBIND11_EMBEDDED_MODULE(solarium_native, m) {
     py::class_<WorldView>(m, "WorldView")
         .def("get_block", &WorldView::get_block)
         .def("set_block", &WorldView::set_block)

@@ -16,8 +16,8 @@
 //     r, g, b, a = uint8
 //
 // Coords are integer voxel cells, with the implicit understanding that one
-// cell maps to one CivCraft block. The world template (next phase) chooses
-// where in CivCraft world space the region's (0,0,0) lands, by adding a
+// cell maps to one Solarium block. The world template (next phase) chooses
+// where in Solarium world space the region's (0,0,0) lands, by adding a
 // translation offset before lookup.
 
 #include <array>
@@ -26,7 +26,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft::voxel_earth {
+namespace solarium::voxel_earth {
 
 struct VoxelRecord {
 	int32_t x, y, z;
@@ -52,4 +52,4 @@ struct VoxelRegion {
 bool write_region(const std::string& path, const VoxelRegion& region, std::string* error = nullptr);
 bool read_region (const std::string& path, VoxelRegion& region,        std::string* error = nullptr);
 
-}  // namespace civcraft::voxel_earth
+}  // namespace solarium::voxel_earth

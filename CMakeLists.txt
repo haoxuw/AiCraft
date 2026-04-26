@@ -5,23 +5,23 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(CIVCRAFT_PERF "Enable server perf instrumentation (frame/tick/handler timing)" OFF)
-if(CIVCRAFT_PERF)
-	add_compile_definitions(CIVCRAFT_PERF)
-	message(STATUS "CIVCRAFT_PERF: enabled (perf instrumentation compiled in)")
+option(SOLARIUM_PERF "Enable server perf instrumentation (frame/tick/handler timing)" OFF)
+if(SOLARIUM_PERF)
+	add_compile_definitions(SOLARIUM_PERF)
+	message(STATUS "SOLARIUM_PERF: enabled (perf instrumentation compiled in)")
 endif()
 
-option(CIVCRAFT_PATHFINDING_DEBUG "Enable pathfinding lifecycle logging via PATHLOG(...)" OFF)
-if(CIVCRAFT_PATHFINDING_DEBUG)
-	add_compile_definitions(CIVCRAFT_PATHFINDING_DEBUG)
-	message(STATUS "CIVCRAFT_PATHFINDING_DEBUG: enabled (PATHLOG expands to entityLog)")
+option(SOLARIUM_PATHFINDING_DEBUG "Enable pathfinding lifecycle logging via PATHLOG(...)" OFF)
+if(SOLARIUM_PATHFINDING_DEBUG)
+	add_compile_definitions(SOLARIUM_PATHFINDING_DEBUG)
+	message(STATUS "SOLARIUM_PATHFINDING_DEBUG: enabled (PATHLOG expands to entityLog)")
 endif()
 
-# CivCraft is a native C++ voxel sandbox. All code lives under src/:
+# Solarium is a native C++ voxel sandbox. All code lives under src/:
 #
 #   src/platform/logic/    Pure data types (entity, chunk, inventory, …) — no deps
 #   src/platform/net/      TCP protocol
-#   src/platform/server/   Authoritative simulation + CivCraft world gen + content
+#   src/platform/server/   Authoritative simulation + Solarium world gen + content
 #   src/platform/agent/    Agent client runtime (Python-embedded AI)
 #   src/platform/client/   Vulkan client (game loop, rendering, input)
 #   src/python/            Python behaviors + helpers (copied into $BUILD_DIR)
@@ -202,7 +202,7 @@ add_custom_target(vk_shaders DEPENDS ${VK_SPV_OUTPUTS})
 
 # Reusable asset-staging helper. Called after every exe that needs python/
 # artifacts/ at CWD (either for embedded Python or for the child
-# civcraft-server process it spawns).
+# solarium-server process it spawns).
 function(stage_runtime_assets target)
 	add_custom_command(TARGET ${target} POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -215,9 +215,9 @@ function(stage_runtime_assets target)
 endfunction()
 
 # === GUI client (Vulkan) ===
-# Singleplayer spawns civcraft-server as a child and connects via localhost TCP.
+# Singleplayer spawns solarium-server as a child and connects via localhost TCP.
 # --host/--port pre-fills the join form for network play.
-add_executable(civcraft-ui-vk
+add_executable(solarium-ui-vk
 	src/platform/client/action_icon.h
 	src/platform/client/action_icon.cpp
 	src/platform/client/main.cpp
@@ -252,44 +252,44 @@ add_executable(civcraft-ui-vk
 	${PLATFORM_SERVER_SOURCES}
 	${PLATFORM_LLM_SOURCES}
 )
-target_include_directories(civcraft-ui-vk PRIVATE ${GAME_INCLUDE_DIRS} ${CEF_ROOT})
-target_compile_definitions(civcraft-ui-vk PRIVATE AICRAFT_RHI_VK)
-target_link_libraries(civcraft-ui-vk PRIVATE
+target_include_directories(solarium-ui-vk PRIVATE ${GAME_INCLUDE_DIRS} ${CEF_ROOT})
+target_compile_definitions(solarium-ui-vk PRIVATE AICRAFT_RHI_VK)
+target_link_libraries(solarium-ui-vk PRIVATE
 	glfw glm::glm Vulkan::Vulkan
 	Python3::Python pybind11::embed
 	libzstd_static
 	libcef_dll_wrapper
 	"${CEF_BINARY_DIR_RELEASE}/libcef.so"
 )
-add_dependencies(civcraft-ui-vk vk_shaders)
+add_dependencies(solarium-ui-vk vk_shaders)
 
-add_custom_command(TARGET civcraft-ui-vk POST_BUILD
+add_custom_command(TARGET solarium-ui-vk POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${VK_SHADER_OUT_DIR} $<TARGET_FILE_DIR:civcraft-ui-vk>/shaders/vk
+		${VK_SHADER_OUT_DIR} $<TARGET_FILE_DIR:solarium-ui-vk>/shaders/vk
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_SOURCE_DIR}/src/platform/fonts $<TARGET_FILE_DIR:civcraft-ui-vk>/fonts
-	COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/resources $<TARGET_FILE_DIR:civcraft-ui-vk>/
+		${CMAKE_SOURCE_DIR}/src/platform/fonts $<TARGET_FILE_DIR:solarium-ui-vk>/fonts
+	COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/resources $<TARGET_FILE_DIR:solarium-ui-vk>/
 )
-stage_runtime_assets(civcraft-ui-vk)
+stage_runtime_assets(solarium-ui-vk)
 
-# CEF runtime files must sit alongside civcraft-ui-vk: libcef.so itself plus
+# CEF runtime files must sit alongside solarium-ui-vk: libcef.so itself plus
 # Chromium's GPU-process fallback ICD (libvk_swiftshader.so + libvulkan.so.1
 # + vk_swiftshader_icd.json). Without the SwiftShader bundle, OnPaint fires
 # but every buffer is empty — Chromium's GPU subprocess can't initialize a
 # rasterizer. Side-effect: this directory now ships its own libvulkan.so.1
 # that would shadow our system NVIDIA driver unless the RUNPATH below is set
 # correctly.
-COPY_FILES(civcraft-ui-vk "${CEF_BINARY_FILES}"
-	"${CEF_BINARY_DIR_RELEASE}" "$<TARGET_FILE_DIR:civcraft-ui-vk>")
-COPY_FILES(civcraft-ui-vk "${CEF_RESOURCE_FILES}"
-	"${CEF_RESOURCE_DIR}" "$<TARGET_FILE_DIR:civcraft-ui-vk>")
+COPY_FILES(solarium-ui-vk "${CEF_BINARY_FILES}"
+	"${CEF_BINARY_DIR_RELEASE}" "$<TARGET_FILE_DIR:solarium-ui-vk>")
+COPY_FILES(solarium-ui-vk "${CEF_RESOURCE_FILES}"
+	"${CEF_RESOURCE_DIR}" "$<TARGET_FILE_DIR:solarium-ui-vk>")
 
 # RUNPATH order matters: ld searches it left-to-right before ld.so.cache.
 # We list /usr/lib/x86_64-linux-gnu first so libvulkan.so.1 resolves to the
-# system NVIDIA driver (what civcraft-ui-vk's renderer needs), not the
+# system NVIDIA driver (what solarium-ui-vk's renderer needs), not the
 # SwiftShader copy that ships next to libcef.so. $ORIGIN stays in the path
 # so libcef.so + its non-Vulkan peers still load.
-set_target_properties(civcraft-ui-vk PROPERTIES
+set_target_properties(solarium-ui-vk PROPERTIES
 	BUILD_RPATH   "/usr/lib/x86_64-linux-gnu:\$ORIGIN"
 	INSTALL_RPATH "/usr/lib/x86_64-linux-gnu:\$ORIGIN"
 	BUILD_WITH_INSTALL_RPATH TRUE
@@ -297,109 +297,109 @@ set_target_properties(civcraft-ui-vk PROPERTIES
 
 # === CEF subprocess shim ===
 # Chromium re-execs the binary path passed in CefSettings.browser_subprocess_path
-# for every renderer/GPU/utility child. If we used civcraft-ui-vk for that,
+# for every renderer/GPU/utility child. If we used solarium-ui-vk for that,
 # each child would re-init Python/GLFW/audio/LLM. Instead we ship a tiny binary
 # whose only job is to call CefExecuteProcess and return.
-add_executable(civcraft-cef-subprocess
+add_executable(solarium-cef-subprocess
 	src/platform/client/cef_subprocess_main.cpp
 	src/platform/client/cef_app.h
 	src/platform/client/cef_app.cpp
 )
-target_include_directories(civcraft-cef-subprocess PRIVATE ${CEF_ROOT} ${GAME_INCLUDE_DIRS})
-target_link_libraries(civcraft-cef-subprocess PRIVATE
+target_include_directories(solarium-cef-subprocess PRIVATE ${CEF_ROOT} ${GAME_INCLUDE_DIRS})
+target_link_libraries(solarium-cef-subprocess PRIVATE
 	libcef_dll_wrapper
 	"${CEF_BINARY_DIR_RELEASE}/libcef.so"
 )
 # Subprocess sits in the same directory as the main binary so a single
 # rpath of $ORIGIN finds libcef.so for both. Force the same TARGET_FILE_DIR
 # and pin rpath to keep the SwiftShader libs (if anyone re-adds them) from
-# hijacking our Vulkan, same as civcraft-ui-vk above.
-set_target_properties(civcraft-cef-subprocess PROPERTIES
-	RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:civcraft-ui-vk>"
+# hijacking our Vulkan, same as solarium-ui-vk above.
+set_target_properties(solarium-cef-subprocess PROPERTIES
+	RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:solarium-ui-vk>"
 	BUILD_RPATH   "\$ORIGIN"
 	INSTALL_RPATH "\$ORIGIN"
 	BUILD_WITH_INSTALL_RPATH TRUE
 )
-add_dependencies(civcraft-ui-vk civcraft-cef-subprocess)
+add_dependencies(solarium-ui-vk solarium-cef-subprocess)
 
 # === Dedicated server (headless) ===
-add_executable(civcraft-server
+add_executable(solarium-server
 	src/platform/server/main.cpp
 	${PLATFORM_SERVER_SOURCES}
 )
-target_include_directories(civcraft-server PRIVATE ${GAME_INCLUDE_DIRS})
-target_link_libraries(civcraft-server PRIVATE
+target_include_directories(solarium-server PRIVATE ${GAME_INCLUDE_DIRS})
+target_link_libraries(solarium-server PRIVATE
 	glm::glm
 	Python3::Python pybind11::embed
 	libzstd_static
 )
-stage_runtime_assets(civcraft-server)
+stage_runtime_assets(solarium-server)
 
 # === Headless E2E test runner ===
-add_executable(civcraft-test
+add_executable(solarium-test
 	src/tests/test_e2e.cpp
 	${PLATFORM_SERVER_SOURCES}
 )
-target_include_directories(civcraft-test PRIVATE ${GAME_INCLUDE_DIRS})
-target_link_libraries(civcraft-test PRIVATE
+target_include_directories(solarium-test PRIVATE ${GAME_INCLUDE_DIRS})
+target_link_libraries(solarium-test PRIVATE
 	glm::glm
 	Python3::Python pybind11::embed
 	libzstd_static
 )
-stage_runtime_assets(civcraft-test)
+stage_runtime_assets(solarium-test)
 
 # === Pathfinding regression tests ===
-add_executable(civcraft-test-pathfinding
+add_executable(solarium-test-pathfinding
 	src/tests/test_pathfinding.cpp
 	${PLATFORM_SERVER_SOURCES}
 )
-target_include_directories(civcraft-test-pathfinding PRIVATE ${GAME_INCLUDE_DIRS})
-target_link_libraries(civcraft-test-pathfinding PRIVATE
+target_include_directories(solarium-test-pathfinding PRIVATE ${GAME_INCLUDE_DIRS})
+target_link_libraries(solarium-test-pathfinding PRIVATE
 	glm::glm
 	Python3::Python pybind11::embed
 	libzstd_static
 )
-stage_runtime_assets(civcraft-test-pathfinding)
+stage_runtime_assets(solarium-test-pathfinding)
 
 # === Separation regression tests ===
 # Pure-function tests for src/platform/agent/separation.h. No TestServer —
 # scenarios drive applySeparation with curated inputs and assert outputs.
-add_executable(civcraft-test-separation
+add_executable(solarium-test-separation
 	src/tests/test_separation.cpp
 )
-target_include_directories(civcraft-test-separation PRIVATE ${GAME_INCLUDE_DIRS})
-target_link_libraries(civcraft-test-separation PRIVATE
+target_include_directories(solarium-test-separation PRIVATE ${GAME_INCLUDE_DIRS})
+target_link_libraries(solarium-test-separation PRIVATE
 	glm::glm
 )
 
 # === Whisper smoke test (phase-2 STT) ===
 # Tiny one-shot: WAV → whisper-server → stdout. Not shipped; only for
 # verifying WhisperClient outside the GUI client.
-add_executable(civcraft-whisper-smoke
+add_executable(solarium-whisper-smoke
 	src/platform/llm/whisper_smoke.cpp
 	src/platform/llm/whisper_client.h
 	src/platform/llm/whisper_client.cpp
 )
-target_include_directories(civcraft-whisper-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+target_include_directories(solarium-whisper-smoke PRIVATE ${GAME_INCLUDE_DIRS})
 
 # === Piper/TTS smoke test (phase-3) ===
 # Spawns piper, synthesises one sentence, prints the output WAV path.
-add_executable(civcraft-tts-smoke
+add_executable(solarium-tts-smoke
 	src/platform/llm/tts_smoke.cpp
 	src/platform/llm/tts_client.h
 	src/platform/llm/tts_sidecar.h
 )
-target_include_directories(civcraft-tts-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+target_include_directories(solarium-tts-smoke PRIVATE ${GAME_INCLUDE_DIRS})
 
 # === Voice mux resolution test (phase-4) ===
 # Asserts dialog_voice → .onnx routing; does not spawn any piper child.
-add_executable(civcraft-mux-smoke
+add_executable(solarium-mux-smoke
 	src/platform/llm/mux_smoke.cpp
 	src/platform/llm/tts_voice_mux.h
 	src/platform/llm/tts_client.h
 	src/platform/llm/tts_sidecar.h
 )
-target_include_directories(civcraft-mux-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+target_include_directories(solarium-mux-smoke PRIVATE ${GAME_INCLUDE_DIRS})
 
 # === Voxel Earth GLB loader smoke test (phase-2) ===
 # Loads one cached Photorealistic 3D Tile and prints mesh stats. Verifies
@@ -417,27 +417,27 @@ set(VOXEL_EARTH_SOURCES
 	src/platform/server/voxel_earth/region.cpp
 )
 
-add_executable(civcraft-voxel-smoke
+add_executable(solarium-voxel-smoke
 	src/platform/server/voxel_earth/voxel_smoke.cpp
 	${VOXEL_EARTH_SOURCES}
 )
-target_include_directories(civcraft-voxel-smoke PRIVATE
+target_include_directories(solarium-voxel-smoke PRIVATE
 	${GAME_INCLUDE_DIRS}
 	${CMAKE_SOURCE_DIR}/third_party/stb
 )
-target_link_libraries(civcraft-voxel-smoke PRIVATE assimp::assimp)
+target_link_libraries(solarium-voxel-smoke PRIVATE assimp::assimp)
 
 # === Voxel Earth bake CLI (phase-4) ===
 # Reads ~/.voxel/google/glb/*.glb, voxelizes them under a shared ECEF origin,
 # writes a single VEAR-format region file ready for in-server lookup.
-add_executable(civcraft-voxel-bake
+add_executable(solarium-voxel-bake
 	src/platform/server/voxel_earth/voxel_bake.cpp
 	${VOXEL_EARTH_SOURCES}
 )
-target_include_directories(civcraft-voxel-bake PRIVATE
+target_include_directories(solarium-voxel-bake PRIVATE
 	${GAME_INCLUDE_DIRS}
 	${CMAKE_SOURCE_DIR}/third_party/stb
 )
-target_link_libraries(civcraft-voxel-bake PRIVATE assimp::assimp)
-target_include_directories(civcraft-voxel-smoke PRIVATE ${GAME_INCLUDE_DIRS})
-target_link_libraries(civcraft-voxel-smoke PRIVATE assimp::assimp)
+target_link_libraries(solarium-voxel-bake PRIVATE assimp::assimp)
+target_include_directories(solarium-voxel-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+target_link_libraries(solarium-voxel-smoke PRIVATE assimp::assimp)

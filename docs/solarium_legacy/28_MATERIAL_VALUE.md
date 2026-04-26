@@ -111,28 +111,28 @@ Value effect: none.
 
 ### Woodcutter chops a tree
 ```python
-from civcraft_engine import Convert, Block, Ground
+from solarium_engine import Convert, Block, Ground
 # value: 4.0 (trunk) → 4.0 (dropped trunk item) ✓
 Convert(convert_from=Block(tx, ty, tz), convert_into=Ground())
 ```
 
 ### Chicken lays an egg (spending HP)
 ```python
-from civcraft_engine import Convert
+from solarium_engine import Convert
 # value: 2.0 (2 HP × 1.0) → 1.0 (1 egg × 1.0) ✓ (decrease allowed)
 Convert("hp", 2, "base:egg", 1)
 ```
 
 ### Eat apple (healing HP)
 ```python
-from civcraft_engine import Convert
+from solarium_engine import Convert
 # value: 2.0 (1 apple × 2.0) → 2.0 (2 HP × 1.0) ✓
 Convert("base:apple", 1, "hp", 2)
 ```
 
 ### Attack (destroying HP — value decreases)
 ```python
-from civcraft_engine import Convert, Entity
+from solarium_engine import Convert, Entity
 # value: 5.0 (5 HP) → 0 (destroy) ✓ (decrease allowed)
 Convert("hp", 5, "", 0, convert_from=Entity(target_id))
 ```

@@ -20,7 +20,7 @@
 #include <cmath>
 #include <cstdio>
 
-namespace civcraft {
+namespace solarium {
 
 class VillageStamper {
 public:
@@ -87,4 +87,4 @@ public:
 	}
 };
 
-} // namespace civcraft
+} // namespace solarium

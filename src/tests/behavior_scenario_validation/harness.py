@@ -1,4 +1,4 @@
-"""Test harness — launches civcraft-server, waits for ready, connects observer.
+"""Test harness — launches solarium-server, waits for ready, connects observer.
 
 Usage:
     with GameHarness(template=1, seed=100) as game:
@@ -18,8 +18,8 @@ from .protocol import ObserverClient
 # __file__ = <root>/src/tests/behavior_scenario_validation/harness.py → 4 dirnames.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 BUILD_DIR = os.path.join(REPO_ROOT, "build")
-SERVER_BIN = os.path.join(BUILD_DIR, "civcraft-server")
-CLIENT_BIN = os.path.join(BUILD_DIR, "civcraft-ui-vk")
+SERVER_BIN = os.path.join(BUILD_DIR, "solarium-server")
+CLIENT_BIN = os.path.join(BUILD_DIR, "solarium-ui-vk")
 
 
 def _find_free_port():
@@ -29,7 +29,7 @@ def _find_free_port():
 
 
 class GameHarness:
-    """Manages a civcraft-server process and an observer TCP connection."""
+    """Manages a solarium-server process and an observer TCP connection."""
 
     def __init__(self, template=1, seed=100, port=None, spawn_agent_host=False):
         self.template = template
@@ -55,7 +55,7 @@ class GameHarness:
                 f"Run: cmake --build build -j$(nproc)"
             )
 
-        ready_path = f"/tmp/civcraft_ready_{self.port}"
+        ready_path = f"/tmp/solarium_ready_{self.port}"
         # Clean stale ready file
         try:
             os.remove(ready_path)
@@ -69,7 +69,7 @@ class GameHarness:
             "--template", str(self.template),
             "--seed", str(self.seed),
         ]
-        server_log = f"/tmp/civcraft_test_server_{self.port}.log"
+        server_log = f"/tmp/solarium_test_server_{self.port}.log"
         self._server_log_path = server_log
         self._server_log_f = open(server_log, "wb")
         self.server_proc = subprocess.Popen(
@@ -113,7 +113,7 @@ class GameHarness:
                     f"Client binary not found: {CLIENT_BIN}\n"
                     f"Run: cmake --build build -j$(nproc)"
                 )
-            agent_log = f"/tmp/civcraft_agent_host_{self.port}.log"
+            agent_log = f"/tmp/solarium_agent_host_{self.port}.log"
             self.agent_host_proc = subprocess.Popen(
                 [CLIENT_BIN, "--log-only",
                  "--host", "127.0.0.1", "--port", str(self.port)],

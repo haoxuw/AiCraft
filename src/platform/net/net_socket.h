@@ -15,7 +15,7 @@
 #include <cstring>
 #include <cstdio>
 
-namespace civcraft::net {
+namespace solarium::net {
 
 inline void setNonBlocking(int fd) {
 	int flags = fcntl(fd, F_GETFL, 0);
@@ -274,4 +274,4 @@ private:
 	int m_fd = -1;
 };
 
-} // namespace civcraft::net
+} // namespace solarium::net

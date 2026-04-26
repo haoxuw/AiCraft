@@ -8,7 +8,7 @@
 #include <memory>
 #include <thread>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 // ── RenderHandler ────────────────────────────────────────────────────────────
 // CEF calls GetViewRect to learn the canvas size and OnPaint with a BGRA
@@ -48,7 +48,7 @@ public:
 		for (int i = 0; i < width * height * 4 && !nonEmpty; ++i)
 			if (src[i] != 0) nonEmpty = true;
 
-		const char* path = "/tmp/civcraft_cef_paint.ppm";
+		const char* path = "/tmp/solarium_cef_paint.ppm";
 		if (FILE* fp = std::fopen(path, "wb")) {
 			std::fprintf(fp, "P6\n%d %d\n255\n", width, height);
 			std::vector<uint8_t> rgb((size_t)width * height * 3);
@@ -274,4 +274,4 @@ uint64_t CefHost::snapshotPixels(std::vector<uint8_t>& out,
 	return m_frameCounter.load();
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

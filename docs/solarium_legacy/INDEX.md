@@ -1,4 +1,4 @@
-# CivCraft docs — index
+# Solarium docs — index
 
 Start here: read [`00_OVERVIEW.md`](00_OVERVIEW.md) before any gameplay change.
 The mandatory design rules (four action types, Python-is-game, server-authoritative,

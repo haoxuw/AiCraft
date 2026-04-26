@@ -10,7 +10,7 @@ Ideas to try:
   - Patrol between two positions
   - Build a simple structure automatically
 """
-from civcraft_engine import Move
+from solarium_engine import Move
 from behavior_base import Behavior
 from local_world import SelfEntity, LocalWorld
 from stats import stats
@@ -25,7 +25,7 @@ class IdleBehavior(Behavior):
 
 # -- Example: uncomment to auto-follow nearest pig --
 #
-# from civcraft_engine import Move
+# from solarium_engine import Move
 #
 # class IdleBehavior(Behavior):
 #     def decide_plan(self, entity: "SelfEntity", local_world: "LocalWorld"):

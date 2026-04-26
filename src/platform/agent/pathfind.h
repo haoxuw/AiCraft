@@ -11,7 +11,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace civcraft {
+namespace solarium {
 
 // [Baritone] IPlayerContext — planner is chunk/server agnostic.
 struct WorldView {
@@ -169,4 +169,4 @@ struct EntityProximityOracle {
 // This header keeps only the planner-side types (WorldView, GridPlanner, Path,
 // DoorOracle, FlowField, MoveKind, Waypoint) that have no client-side deps.
 
-} // namespace civcraft
+} // namespace solarium

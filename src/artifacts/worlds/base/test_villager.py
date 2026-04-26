@@ -9,7 +9,7 @@ very close to the villager's house.
 
 Launch:
     make test-villager                       # singleplayer shortcut
-    ./build/civcraft-server --template 3     # dedicated
+    ./build/solarium-server --template 3     # dedicated
 """
 
 world = {

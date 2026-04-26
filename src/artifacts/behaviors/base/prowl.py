@@ -15,7 +15,7 @@ Parameters (set via entity dict, all optional):
   home_radius   — max wander distance from home (default 25)
 """
 import random
-from civcraft_engine import Move
+from solarium_engine import Move
 from behavior_base import Behavior
 from local_world import SelfEntity, LocalWorld
 from stats import stats

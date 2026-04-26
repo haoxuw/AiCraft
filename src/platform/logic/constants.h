@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstdint>
 
-namespace civcraft {
+namespace solarium {
 
 enum class EntityKind {
 	Living,    // moves, HP, inventory (players, NPCs, animals)
@@ -162,7 +162,7 @@ namespace Sound {
 	constexpr const char* StepSnow     = "step_snow";
 }
 
-constexpr int CIVCRAFT_DISCOVER_PORT = 7778;
+constexpr int SOLARIUM_DISCOVER_PORT = 7778;
 
 // ── Calendar ─────────────────────────────────────────────────────────
 // Four-section day — matches src/python/conditions_lib.py exactly so
@@ -219,4 +219,4 @@ inline const char* seasonName(Season s) {
 	}
 }
 
-} // namespace civcraft
+} // namespace solarium

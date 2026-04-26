@@ -16,7 +16,7 @@
 #include <unordered_map>
 #include <cstdio>
 
-namespace civcraft {
+namespace solarium {
 
 // A structure placed by worldgen (e.g. a tree trunk) that the server should
 // also spawn as an entity. Collected during chunk generation, drained after
@@ -1405,4 +1405,4 @@ private:
 	}
 };
 
-} // namespace civcraft
+} // namespace solarium

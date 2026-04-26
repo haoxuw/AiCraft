@@ -18,7 +18,7 @@
 #include <thread>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 class AsyncChunkMesher {
 public:
@@ -124,4 +124,4 @@ private:
 	std::vector<Result> m_results;
 };
 
-} // namespace civcraft
+} // namespace solarium

@@ -16,7 +16,7 @@
 #include <algorithm>
 #include <glm/trigonometric.hpp>
 
-namespace civcraft {
+namespace solarium {
 
 class EntityManager {
 public:
@@ -336,4 +336,4 @@ private:
 	EntityId m_nextId = 1;
 };
 
-} // namespace civcraft
+} // namespace solarium

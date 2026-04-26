@@ -29,7 +29,7 @@
 #include <memory>
 #include <algorithm>
 
-namespace civcraft::test {
+namespace solarium::test {
 
 struct Result { std::string name; bool passed; std::string msg; };
 static std::vector<Result> g_results;
@@ -262,7 +262,7 @@ static std::string p01_harness_smoke() {
 
 // P02/P03/P06/P09 deleted: they drove a live entity via `e->nav.setGoal()`,
 // which was server-side greedy steering. Server nav has been removed —
-// navigation is client-only (agent/pathfind.{h,cpp} + civcraft_engine.Navigator),
+// navigation is client-only (agent/pathfind.{h,cpp} + solarium_engine.Navigator),
 // and the end-to-end drive is exercised from the client smoke run instead.
 #if 0
 // ── P02: walk 10 blocks in a straight line on open ground ──────────────
@@ -1041,7 +1041,7 @@ static std::string p11_perf_scaling() {
 // `vel = normalize(PathExecutor::tick(...).target - pos) * walk_speed`
 // must never produce a direction vector that reverses more than 120°
 // from one agent tick to the next. A 180° reversal is the "spin in
-// place" symptom observed in /tmp/civcraft_entity_2407.log — the
+// place" symptom observed in /tmp/solarium_entity_2407.log — the
 // entity gets pushed back and forth across a waypoint center it's
 // already inside.
 //
@@ -1228,7 +1228,7 @@ static Path makeZigzagPath() {
 	return p;
 }
 
-// Exact 86-waypoint plan from /tmp/civcraft_entity_2407.log's heartbeat.
+// Exact 86-waypoint plan from /tmp/solarium_entity_2407.log's heartbeat.
 static Path makeRecordedPath() {
 	const glm::ivec3 wps[] = {
 		{13,1,-42},{12,0,-42},{11,0,-42},{11,0,-41},{10,0,-41},{9,0,-41},
@@ -1783,15 +1783,15 @@ static std::string p16_autoclose_waits_for_blocker() {
 	return "";
 }
 
-} // namespace civcraft::test
+} // namespace solarium::test
 
 int main() {
-	using namespace civcraft;
-	using namespace civcraft::test;
+	using namespace solarium;
+	using namespace solarium::test;
 
 	pythonBridge().init("python");
 
-	printf("\n=== CivCraft Pathfinding Tests ===\n\n");
+	printf("\n=== Solarium Pathfinding Tests ===\n\n");
 	initTemplates();
 
 	printf("--- Harness ---\n");
@@ -1799,7 +1799,7 @@ int main() {
 
 	// P02/P03/P06/P09 dropped: they drove entities via server-side nav
 	// (`e->nav.setGoal()`), now removed. End-to-end drive moves to the
-	// client smoke run + civcraft_engine.Navigator tests (Phase D).
+	// client smoke run + solarium_engine.Navigator tests (Phase D).
 
 	printf("\n--- Planner (GridPlanner::plan unit test) ---\n");
 	run("P04: stairs-up plan (3 Jumps)                ", p04_stairs_up_plan);

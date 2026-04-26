@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace civcraft::rhi {
+namespace solarium::rhi {
 
 // 96 glyphs (ASCII 32..127), 8 rows × 8 bits each.
 inline constexpr uint8_t FONT_8X8[96][8] = {
@@ -172,4 +172,4 @@ inline void generateUiFontAtlas(std::vector<uint8_t>& out) {
 	}
 }
 
-} // namespace civcraft::rhi
+} // namespace solarium::rhi

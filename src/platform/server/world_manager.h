@@ -8,7 +8,7 @@
 #include <filesystem>
 #include <algorithm>
 
-namespace civcraft {
+namespace solarium {
 
 struct WorldInfo {
 	std::string name;
@@ -110,4 +110,4 @@ private:
 	std::vector<WorldInfo> m_worlds;
 };
 
-} // namespace civcraft
+} // namespace solarium

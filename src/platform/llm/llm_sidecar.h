@@ -10,7 +10,7 @@
 //                  can show a clear "run `make llm_setup`" notification if
 //                  the user skipped the one-time download.
 //   start()      — fork + execv; stdout/stderr redirected to
-//                  /tmp/civcraft_llm.log so llama-server chatter doesn't
+//                  /tmp/solarium_llm.log so llama-server chatter doesn't
 //                  drown the game log. Non-blocking — model load takes
 //                  several seconds, but LlmClient::health() polls for ready.
 //   stop()       — SIGTERM → wait → SIGKILL fallback. Called on shutdown.
@@ -31,7 +31,7 @@
 #include <unistd.h>
 #include <vector>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 class LlmSidecar {
 public:
@@ -98,7 +98,7 @@ public:
 		if (pid == 0) {
 			// Child — redirect stdio to the log file so the game console
 			// stays readable. llama-server is chatty on startup.
-			int fd = open("/tmp/civcraft_llm.log",
+			int fd = open("/tmp/solarium_llm.log",
 			              O_WRONLY | O_CREAT | O_TRUNC, 0644);
 			if (fd >= 0) {
 				dup2(fd, STDOUT_FILENO);
@@ -122,7 +122,7 @@ public:
 		std::printf("[llm-sidecar] spawned llama-server pid=%d port=%d model=%s\n",
 		            (int)pid, port,
 		            std::filesystem::path(paths.model).filename().string().c_str());
-		std::printf("[llm-sidecar] sidecar log: /tmp/civcraft_llm.log\n");
+		std::printf("[llm-sidecar] sidecar log: /tmp/solarium_llm.log\n");
 		return true;
 	}
 
@@ -152,4 +152,4 @@ private:
 	int   m_port = 0;
 };
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

@@ -13,7 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 namespace {
 
@@ -188,7 +188,7 @@ bool WhisperClient::runRequest(const Request& r, std::string* text, std::string*
 	}
 
 	// multipart/form-data body — two parts: `file` and `response_format`.
-	const std::string boundary = "----CivCraftBoundary7bKq9pM2";
+	const std::string boundary = "----SolariumBoundary7bKq9pM2";
 
 	std::string preFile;
 	preFile += "--" + boundary + "\r\n";
@@ -293,4 +293,4 @@ bool WhisperClient::runRequest(const Request& r, std::string* text, std::string*
 	return true;
 }
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

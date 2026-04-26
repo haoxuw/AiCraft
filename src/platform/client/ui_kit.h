@@ -14,7 +14,7 @@
 
 struct GLFWwindow;
 
-namespace civcraft::vk::ui {
+namespace solarium::vk::ui {
 
 // Character cell metrics — match rhi_ui.cpp (kCharWNdc, kCharHNdc).
 constexpr float kCharWNdc = 0.018f;
@@ -139,4 +139,4 @@ extern const float kRowBg[4];      // unselected list row
 extern const float kSelBg[4];      // selected list row
 }
 
-} // namespace civcraft::vk::ui
+} // namespace solarium::vk::ui

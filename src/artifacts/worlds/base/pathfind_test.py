@@ -5,7 +5,7 @@ Each pathfinding subtest places its own obstacles (walls, buildings, pits)
 via direct chunk writes after world creation, so the arena must start
 completely empty and predictable.
 
-Not intended for human play. Loaded only by civcraft-test-pathfinding.
+Not intended for human play. Loaded only by solarium-test-pathfinding.
 """
 
 world = {

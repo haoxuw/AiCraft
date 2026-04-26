@@ -13,7 +13,7 @@
 #include <string_view>
 #include <thread>
 
-// CivCraft chunk + mesher — civcraft-ui-vk now stores its world in real
+// Solarium chunk + mesher — solarium-ui-vk now stores its world in real
 // 16³ Chunks and renders them via ChunkMesher feeding the RHI's
 // chunk-mesh pipeline (validates the path that the full Phase 3
 // renderer.cpp port will use).
@@ -27,7 +27,7 @@
 #include "logic/action.h"
 #include "logic/material_values.h"
 // AgentClient now lives inside the player client (server stopped spawning
-// civcraft-agent processes). Pulling these in lets civcraft-ui-vk drive
+// solarium-agent processes). Pulling these in lets solarium-ui-vk drive
 // every NPC the server hands us via in-process Python decide_plan().
 #include "agent/agent_client.h"
 #include "debug/perf_registry.h"
@@ -36,7 +36,7 @@
 
 #include <unordered_set>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 Tuning kTune;
 
@@ -45,7 +45,7 @@ Tuning kTune;
 // Player entity access (unified — no dual state)
 // ─────────────────────────────────────────────────────────────────────────
 
-civcraft::Entity* Game::playerEntity() {
+solarium::Entity* Game::playerEntity() {
 	return m_server ? m_server->getEntity(m_server->localPlayerId()) : nullptr;
 }
 
@@ -73,16 +73,16 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	// Wire up S_BLOCK / S_INVENTORY / S_REMOVE side-effect callbacks.
 	setupServerCallbacks();
 
-	if (!civcraft::pythonBridge().init("python"))
+	if (!solarium::pythonBridge().init("python"))
 		std::printf("[vk-game] WARN: Python bridge init failed; NPCs won't decide()\n");
-	m_behaviorStore = std::make_unique<civcraft::BehaviorStore>();
+	m_behaviorStore = std::make_unique<solarium::BehaviorStore>();
 	m_behaviorStore->init("artifacts/behaviors");
-	m_agentClient = std::make_unique<civcraft::AgentClient>(
+	m_agentClient = std::make_unique<solarium::AgentClient>(
 		*m_server, *m_behaviorStore, m_agentCfg);
-	if (auto* net = dynamic_cast<civcraft::NetworkServer*>(m_server)) {
-		civcraft::AgentClient* ac = m_agentClient.get();
+	if (auto* net = dynamic_cast<solarium::NetworkServer*>(m_server)) {
+		solarium::AgentClient* ac = m_agentClient.get();
 		net->setInterruptHandlers(
-			[ac](civcraft::EntityId eid, const std::string& reason) {
+			[ac](solarium::EntityId eid, const std::string& reason) {
 				ac->onInterrupt(eid, reason);
 			},
 			[ac](const std::string& kind, const std::string& payload) {
@@ -97,7 +97,7 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		unsigned hw = std::thread::hardware_concurrency();
 		int workers = hw > 0 ? std::max(2, (int)hw / 2 - 1) : 2;
 		if (workers > 6) workers = 6;
-		m_asyncMesher = std::make_unique<civcraft::AsyncChunkMesher>(
+		m_asyncMesher = std::make_unique<solarium::AsyncChunkMesher>(
 			m_server->blockRegistry(), workers);
 		std::printf("[vk-game] async chunk mesher: %d worker%s\n",
 			workers, workers == 1 ? "" : "s");
@@ -111,7 +111,7 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	// Load Python-defined BoxModels (one .py per creature/item under
 	// artifacts/models/) — sword has 14 parts, pig has legs, beaver has
 	// a tail, etc.
-	m_models = civcraft::model_loader::loadAllModels("artifacts");
+	m_models = solarium::model_loader::loadAllModels("artifacts");
 	std::printf("[vk-game] Loaded %zu box models\n", m_models.size());
 
 	// In-process menu plaza — 3 mascots wandering on a tiny client-only
@@ -135,10 +135,10 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 
 	enterMenu();
 
-	// Debug hook for UI iteration: CIVCRAFT_BOOT_MENU=character lands directly
+	// Debug hook for UI iteration: SOLARIUM_BOOT_MENU=character lands directly
 	// on CharacterSelect with the first registered playable preselected, so
 	// screenshots of that layout can be taken without scripted keyboard input.
-	if (const char* boot = std::getenv("CIVCRAFT_BOOT_MENU")) {
+	if (const char* boot = std::getenv("SOLARIUM_BOOT_MENU")) {
 		std::string s = boot;
 		if (s == "character" || s == "characterselect") {
 			m_menuScreen = MenuScreen::CharacterSelect;
@@ -168,12 +168,12 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	return true;
 }
 
-void Game::enqueueMeshBuild(civcraft::ChunkPos cp) {
+void Game::enqueueMeshBuild(solarium::ChunkPos cp) {
 	if (!m_asyncMesher) return;
 	// Snapshot on the main thread — ChunkSource's live data is only safe to
 	// read here. Workers then mesh from the immutable copy.
-	auto snap = std::make_unique<civcraft::ChunkMesher::PaddedSnapshot>();
-	if (!civcraft::ChunkMesher::snapshotPadded(m_server->chunks(), cp, *snap))
+	auto snap = std::make_unique<solarium::ChunkMesher::PaddedSnapshot>();
+	if (!solarium::ChunkMesher::snapshotPadded(m_server->chunks(), cp, *snap))
 		return;  // center chunk not loaded yet — retry next frame
 	// Mark tracked: Pass 1 dedupes on m_chunkMeshes.count(), Pass 2 dedupes
 	// on m_inFlightMesh. kInvalidMesh placeholder gets overwritten when the
@@ -185,7 +185,7 @@ void Game::enqueueMeshBuild(civcraft::ChunkPos cp) {
 	m_asyncMesher->enqueue(cp, std::move(snap));
 }
 
-void Game::applyMeshResult(civcraft::AsyncChunkMesher::Result&& r) {
+void Game::applyMeshResult(solarium::AsyncChunkMesher::Result&& r) {
 	m_inFlightMesh.erase(r.cp);
 	auto& opaque = r.opaque;
 	(void)r.transparent;  // no glass/water streams yet
@@ -230,7 +230,7 @@ void Game::drainAsyncMeshes() {
 	// translate into a burst of createChunkMesh/updateChunkMesh calls.
 	constexpr size_t kMaxUploadsPerFrame = 8;
 	m_asyncMesher->drain(
-		[this](civcraft::AsyncChunkMesher::Result&& r) {
+		[this](solarium::AsyncChunkMesher::Result&& r) {
 			// Sync remesh beat us to it — worker snapshot is pre-predict,
 			// uploading would un-break the block.
 			if (m_staleInflightMeshes.erase(r.cp)) {
@@ -378,24 +378,24 @@ void Game::streamServerChunks() {
 	drainAsyncMeshes();
 
 	auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
-	const int CS = civcraft::CHUNK_SIZE;
+	const int CS = solarium::CHUNK_SIZE;
 	auto* me = playerEntity();
 	glm::vec3 pPos = me ? me->position : m_cam.position;
-	civcraft::ChunkPos center = {
+	solarium::ChunkPos center = {
 		div((int)std::floor(pPos.x), CS),
 		div((int)std::floor(pPos.y), CS),
 		div((int)std::floor(pPos.z), CS)
 	};
 
 	// ── Pass 1: mesh any fresh server chunks in range, closest-first ──
-	struct Pending { civcraft::ChunkPos cp; int distSq; };
+	struct Pending { solarium::ChunkPos cp; int distSq; };
 	std::vector<Pending> pending;
 	pending.reserve(128);
 	auto& src = m_server->chunks();
 	for (int dy = -kRenderChunkVertical; dy <= kRenderChunkVertical; dy++)
 		for (int dz = -kRenderChunkRadius; dz <= kRenderChunkRadius; dz++)
 			for (int dx = -kRenderChunkRadius; dx <= kRenderChunkRadius; dx++) {
-				civcraft::ChunkPos cp = {center.x + dx, center.y + dy, center.z + dz};
+				solarium::ChunkPos cp = {center.x + dx, center.y + dy, center.z + dz};
 				// Tracked (sentinel or real mesh) or in-flight → skip.
 				if (m_chunkMeshes.count(cp)) continue;
 				if (!src.getChunkIfLoaded(cp)) continue;  // server hasn't sent it yet
@@ -410,9 +410,9 @@ void Game::streamServerChunks() {
 		enqueueMeshBuild(p.cp);
 		// Meshing this chunk can affect face-cull continuity on its
 		// neighbors (their cross-border faces may now be hidden or exposed).
-		for (auto& d : std::initializer_list<civcraft::ChunkPos>{
+		for (auto& d : std::initializer_list<solarium::ChunkPos>{
 				{ 1,0,0},{-1,0,0},{0, 1,0},{0,-1,0},{0,0, 1},{0,0,-1} }) {
-			civcraft::ChunkPos np = {p.cp.x + d.x, p.cp.y + d.y, p.cp.z + d.z};
+			solarium::ChunkPos np = {p.cp.x + d.x, p.cp.y + d.y, p.cp.z + d.z};
 			if (m_chunkMeshes.count(np)) m_serverDirtyChunks.insert(np);
 		}
 		built++;
@@ -422,7 +422,7 @@ void Game::streamServerChunks() {
 	int remeshed = 0;
 	for (auto it = m_serverDirtyChunks.begin();
 	     it != m_serverDirtyChunks.end() && remeshed < kMaxRemeshPerFrame; ) {
-		const civcraft::ChunkPos cp = *it;
+		const solarium::ChunkPos cp = *it;
 		// Not GPU-resident yet — Pass 1 owns it.
 		if (!m_chunkMeshes.count(cp)) {
 			it = m_serverDirtyChunks.erase(it);
@@ -480,7 +480,7 @@ void Game::pushNotification(const std::string& text, glm::vec3 color, float life
 // stacking — single-slot save.
 void Game::enterCoordPeek(glm::ivec3 target) {
 	if (!m_peekActive) {
-		m_peekSavedCam = std::make_unique<civcraft::Camera>(m_cam);
+		m_peekSavedCam = std::make_unique<solarium::Camera>(m_cam);
 		m_peekActive   = true;
 	}
 	m_peekTarget = target;
@@ -488,7 +488,7 @@ void Game::enterCoordPeek(glm::ivec3 target) {
 	// RTS-style bird's-eye over the target cell — most legible across the
 	// four camera modes and keeps the marker cube in frame.
 	glm::vec3 center{target.x + 0.5f, (float)target.y + 0.5f, target.z + 0.5f};
-	m_cam.mode         = civcraft::CameraMode::RTS;
+	m_cam.mode         = solarium::CameraMode::RTS;
 	m_cam.rtsCenter    = center;
 	m_cam.rtsHeight    = 10.0f;
 	m_cam.rtsHeightTarget = 10.0f;
@@ -568,7 +568,7 @@ void Game::enterPlaying() {
 	// machine don't share a layout. Flushed on every drag and on shutdown.
 	{
 		char buf[128];
-		std::snprintf(buf, sizeof(buf), "/tmp/civcraft_hotbar_%d.txt",
+		std::snprintf(buf, sizeof(buf), "/tmp/solarium_hotbar_%d.txt",
 		              m_pendingSeed);
 		m_hotbarSavePath = buf;
 	}
@@ -592,7 +592,7 @@ void Game::enterPlaying() {
 	m_flyMode = false;
 	// Init camera in FPS by default (most games start here). V cycles to TPS/RPG/RTS.
 	glm::vec3 spawnPos = m_server->spawnPos();
-	m_cam.mode = civcraft::CameraMode::FirstPerson;
+	m_cam.mode = solarium::CameraMode::FirstPerson;
 	m_cam.player.feetPos = spawnPos;
 	// Village world places the monument in +Z from spawn (village.offset_z=45).
 	// Yaw convention: forward = (cos(yaw), 0, sin(yaw)) — +Z ⇒ 90°. Sync every
@@ -611,15 +611,15 @@ void Game::enterPlaying() {
 	m_cam.resetSmoothing();
 	m_cam.resetMouseTracking();
 	if (m_window) {
-		bool needCapture = (m_cam.mode == civcraft::CameraMode::FirstPerson ||
-		                    m_cam.mode == civcraft::CameraMode::ThirdPerson);
+		bool needCapture = (m_cam.mode == solarium::CameraMode::FirstPerson ||
+		                    m_cam.mode == solarium::CameraMode::ThirdPerson);
 		glfwSetInputMode(m_window, GLFW_CURSOR,
 			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 		m_mouseCaptured = needCapture;
 	}
 
 	// First-time FPS hint — shown once per session when the player spawns in.
-	m_modeHintsShown |= 1u << (int)civcraft::CameraMode::FirstPerson;
+	m_modeHintsShown |= 1u << (int)solarium::CameraMode::FirstPerson;
 	pushNotification(
 		"WASD move · mouse look · LMB attack · RMB place · Q drop · V=camera",
 		glm::vec3(0.75f, 0.82f, 0.92f), 4.0f);
@@ -650,8 +650,8 @@ void Game::closeGameMenu() {
 	if (m_state != GameState::GameMenu) return;
 	m_state = GameState::Playing;
 	if (m_window) {
-		bool needCapture = (m_cam.mode == civcraft::CameraMode::FirstPerson ||
-		                    m_cam.mode == civcraft::CameraMode::ThirdPerson);
+		bool needCapture = (m_cam.mode == solarium::CameraMode::FirstPerson ||
+		                    m_cam.mode == solarium::CameraMode::ThirdPerson);
 		glfwSetInputMode(m_window, GLFW_CURSOR,
 			needCapture ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 		m_mouseCaptured = needCapture;
@@ -689,7 +689,7 @@ void Game::onScroll(double xoff, double yoff) {
 	if (m_state != GameState::Playing) return;
 	float y = (float)yoff;
 	// Scroll cycles the hotbar slot in FPS (no camera zoom there). Down = next.
-	if (m_cam.mode == civcraft::CameraMode::FirstPerson && y != 0.0f) {
+	if (m_cam.mode == solarium::CameraMode::FirstPerson && y != 0.0f) {
 		int step = y > 0 ? -1 : 1;
 		int n = (m_hotbar.selected + step + Hotbar::SLOTS) % Hotbar::SLOTS;
 		m_hotbar.selected = n;
@@ -697,15 +697,15 @@ void Game::onScroll(double xoff, double yoff) {
 		return;
 	}
 	switch (m_cam.mode) {
-	case civcraft::CameraMode::FirstPerson:
+	case solarium::CameraMode::FirstPerson:
 		break;
-	case civcraft::CameraMode::ThirdPerson:
+	case solarium::CameraMode::ThirdPerson:
 		m_cam.orbitDistanceTarget = std::clamp(m_cam.orbitDistanceTarget - y, 2.0f, 20.0f);
 		break;
-	case civcraft::CameraMode::RPG:
+	case solarium::CameraMode::RPG:
 		m_cam.godDistanceTarget = std::clamp(m_cam.godDistanceTarget - y * 2.0f, 3.0f, 50.0f);
 		break;
-	case civcraft::CameraMode::RTS:
+	case solarium::CameraMode::RTS:
 		// Zoom pivots around rtsCenter (screen center).
 		m_cam.pendingRtsZoom += y;
 		break;
@@ -777,8 +777,8 @@ void Game::runOneFrame(float dt, float wallTime) {
 
 	// Event detection — derive DECIDE / COMBAT / DEATH from entity deltas.
 	{
-		std::unordered_set<civcraft::EntityId> seen;
-		m_server->forEachEntity([&](civcraft::Entity& e) {
+		std::unordered_set<solarium::EntityId> seen;
+		m_server->forEachEntity([&](solarium::Entity& e) {
 			seen.insert(e.id());
 
 			// DECIDE: goal-text change
@@ -790,7 +790,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 					auto col = typeName.find(':');
 					if (col != std::string::npos) typeName = typeName.substr(col + 1);
 					if (!typeName.empty()) typeName[0] = (char)toupper((unsigned char)typeName[0]);
-					civcraft::GameLogger::instance().emit("DECIDE",
+					solarium::GameLogger::instance().emit("DECIDE",
 						"%s #%u: %s", typeName.c_str(), e.id(), e.goalText.c_str());
 				}
 			}
@@ -805,7 +805,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 					std::string eName = e.def().display_name.empty()
 						? e.typeId() : e.def().display_name;
 					if (dying) {
-						civcraft::GameLogger::instance().emit("DEATH", "%s #%u died",
+						solarium::GameLogger::instance().emit("DEATH", "%s #%u died",
 							eName.c_str(), e.id());
 						// Death blow — heavier hit sound at the dying entity.
 						m_audio.play("hit_sword", e.position, 0.9f);
@@ -816,7 +816,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 							pushNotification(buf, glm::vec3(1.0f, 0.70f, 0.25f), 4.0f);
 						}
 					} else {
-						civcraft::GameLogger::instance().emit("COMBAT",
+						solarium::GameLogger::instance().emit("COMBAT",
 							"%s #%u took %d damage (%d→%d)",
 							eName.c_str(), e.id(), dmg, hpIt->second, curHP);
 						// Big hits get the sword slice, light hits the punch.
@@ -976,14 +976,14 @@ void Game::runOneFrame(float dt, float wallTime) {
 		bool f2Now = glfwGetKey(m_window, GLFW_KEY_F2) == GLFW_PRESS;
 		bool take = (f2Now && !f2Held);
 #ifndef NDEBUG
-		if (!take && std::filesystem::exists("/tmp/civcraft_screenshot_request")) {
-			std::filesystem::remove("/tmp/civcraft_screenshot_request");
+		if (!take && std::filesystem::exists("/tmp/solarium_screenshot_request")) {
+			std::filesystem::remove("/tmp/solarium_screenshot_request");
 			take = true;
 		}
 #endif
 		if (take) {
 			static int shotN = 0;
-			auto path = "/tmp/civcraft_vk_screenshot_" + std::to_string(shotN++) + ".ppm";
+			auto path = "/tmp/solarium_vk_screenshot_" + std::to_string(shotN++) + ".ppm";
 			if (m_rhi->screenshot(path.c_str()))
 				std::printf("[vk] wrote %s\n", path.c_str());
 		}
@@ -1002,7 +1002,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		double totalMs = std::chrono::duration<double, std::milli>(
 			m_frameProbe.last - m_frameProbe.frameStart).count();
 
-#ifdef CIVCRAFT_PERF
+#ifdef SOLARIUM_PERF
 		// Session-long histograms + counters. Scoped to Playing *and* server
 		// ready so main-menu, loading screens, and the pre-S_READY window
 		// (chunks still streaming, player entity not yet pushed) don't
@@ -1024,13 +1024,13 @@ void Game::runOneFrame(float dt, float wallTime) {
 			// mark() is always called with string literals so identity is
 			// stable, and we avoid reallocating the "client.phase.<name>"
 			// key every frame.
-			static std::unordered_map<const char*, civcraft::perf::Histogram*> phaseCache;
+			static std::unordered_map<const char*, solarium::perf::Histogram*> phaseCache;
 			for (auto& [name, ms] : m_frameProbe.sections) {
 				auto& h = phaseCache[name];
 				if (!h) {
 					char key[64];
 					std::snprintf(key, sizeof(key), "client.phase.%s", name);
-					h = &civcraft::perf::Registry::instance().histogram(key);
+					h = &solarium::perf::Registry::instance().histogram(key);
 				}
 				h->record(ms);
 			}
@@ -1072,12 +1072,12 @@ void Game::runOneFrame(float dt, float wallTime) {
 
 void Game::setupServerCallbacks() {
 	m_server->setEffectCallbacks(
-		[this](civcraft::ChunkPos cp) { m_serverDirtyChunks.insert(cp); },
+		[this](solarium::ChunkPos cp) { m_serverDirtyChunks.insert(cp); },
 		[this](glm::vec3 pos, const std::string& blockName) {
 			char buf[160];
 			snprintf(buf, sizeof(buf), "broke %s @(%d,%d,%d)",
 				blockName.c_str(), (int)pos.x, (int)pos.y, (int)pos.z);
-			civcraft::GameLogger::instance().emit("ACTION", "%s", buf);
+			solarium::GameLogger::instance().emit("ACTION", "%s", buf);
 			FloatText ft;
 			ft.worldPos = pos + glm::vec3(0.5f, 1.5f, 0.5f);
 			ft.color    = glm::vec3(0.85f, 0.75f, 0.55f);
@@ -1106,7 +1106,7 @@ void Game::setupServerCallbacks() {
 			// full per-face shader for particles, so one color is the closest
 			// cheap match. Fires on BOTH player prediction and server-
 			// observed breaks (villager chops, TNT) — one path, no duplicates.
-			const civcraft::BlockDef* bdef = m_server->blockRegistry().find(blockName);
+			const solarium::BlockDef* bdef = m_server->blockRegistry().find(blockName);
 			glm::vec3 color = bdef ? bdef->color_top : glm::vec3(0.6f, 0.5f, 0.4f);
 			spawnBreakBurst(pos + glm::vec3(0.5f), color);
 		},
@@ -1150,15 +1150,15 @@ void Game::setupServerCallbacks() {
 				}
 				if (h < 1) h = 1;
 				// Hinge bit lives in param2 bit 2 (matches chunk_mesher.cpp:217).
-				civcraft::ChunkPos cp = {
-					(base.x >= 0 ? base.x / civcraft::CHUNK_SIZE : (base.x - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE),
-					(base.y >= 0 ? base.y / civcraft::CHUNK_SIZE : (base.y - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE),
-					(base.z >= 0 ? base.z / civcraft::CHUNK_SIZE : (base.z - civcraft::CHUNK_SIZE + 1) / civcraft::CHUNK_SIZE)
+				solarium::ChunkPos cp = {
+					(base.x >= 0 ? base.x / solarium::CHUNK_SIZE : (base.x - solarium::CHUNK_SIZE + 1) / solarium::CHUNK_SIZE),
+					(base.y >= 0 ? base.y / solarium::CHUNK_SIZE : (base.y - solarium::CHUNK_SIZE + 1) / solarium::CHUNK_SIZE),
+					(base.z >= 0 ? base.z / solarium::CHUNK_SIZE : (base.z - solarium::CHUNK_SIZE + 1) / solarium::CHUNK_SIZE)
 				};
-				civcraft::Chunk* ch = chunks.getChunk(cp);
-				int lx = ((base.x % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
-				int ly = ((base.y % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
-				int lz = ((base.z % civcraft::CHUNK_SIZE) + civcraft::CHUNK_SIZE) % civcraft::CHUNK_SIZE;
+				solarium::Chunk* ch = chunks.getChunk(cp);
+				int lx = ((base.x % solarium::CHUNK_SIZE) + solarium::CHUNK_SIZE) % solarium::CHUNK_SIZE;
+				int ly = ((base.y % solarium::CHUNK_SIZE) + solarium::CHUNK_SIZE) % solarium::CHUNK_SIZE;
+				int lz = ((base.z % solarium::CHUNK_SIZE) + solarium::CHUNK_SIZE) % solarium::CHUNK_SIZE;
 				uint8_t p2 = ch ? ch->getParam2(lx, ly, lz) : 0;
 				DoorAnim da;
 				da.basePos    = base;
@@ -1182,9 +1182,9 @@ void Game::setupServerCallbacks() {
 				m_audio.play("place_stone", worldPos, 0.5f);
 		}
 	);
-	m_server->setInventoryCallback([this](civcraft::EntityId eid) {
+	m_server->setInventoryCallback([this](solarium::EntityId eid) {
 		if (!m_server) return;
-		civcraft::Entity* ent = m_server->getEntity(eid);
+		solarium::Entity* ent = m_server->getEntity(eid);
 		if (!ent || !ent->inventory) return;
 		auto prevIt = m_prevInv.find(eid);
 		bool seedingFirstSnapshot = (prevIt == m_prevInv.end());
@@ -1202,7 +1202,7 @@ void Game::setupServerCallbacks() {
 			if (it != prev.end()) was = it->second;
 			if (cnt != was) {
 				int delta = cnt - was;
-				civcraft::GameLogger::instance().emit("INV",
+				solarium::GameLogger::instance().emit("INV",
 					"%s #%u %s %s x%d",
 					typeName.c_str(), eid,
 					seedingFirstSnapshot ? "Restored" :
@@ -1226,7 +1226,7 @@ void Game::setupServerCallbacks() {
 		}
 		for (auto& [iid, was] : prev) {
 			if (cur.find(iid) == cur.end() && was != 0) {
-				civcraft::GameLogger::instance().emit("INV",
+				solarium::GameLogger::instance().emit("INV",
 					"%s #%u Dropped %s x%d",
 					typeName.c_str(), eid, iid.c_str(), was);
 			}
@@ -1256,8 +1256,8 @@ void Game::setupServerCallbacks() {
 	// disconnecting friend's mobs fade quietly. Died/Despawned fall through;
 	// death SFX, if any, should live on the attacker path, not here.
 	m_server->setEntityRemoveCallback(
-		[this](civcraft::EntityId /*eid*/, glm::vec3 pos, uint8_t reason) {
-			if (reason == (uint8_t)civcraft::EntityRemovalReason::OwnerOffline) {
+		[this](solarium::EntityId /*eid*/, glm::vec3 pos, uint8_t reason) {
+			if (reason == (uint8_t)solarium::EntityRemovalReason::OwnerOffline) {
 				spawnBreakBurst(pos + glm::vec3(0.0f, 0.8f, 0.0f),
 				                glm::vec3(0.85f, 0.88f, 0.95f));
 			}
@@ -1269,62 +1269,62 @@ void Game::setupServerCallbacks() {
 
 void Game::registerDebugTriggers() {
 	// Register file-based debug triggers (no-op in Release builds).
-	m_debugTriggers.addTrigger("/tmp/civcraft_respawn_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_respawn_request", [this] {
 		if (m_state == GameState::Dead) respawn();
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_dig_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_dig_request", [this] {
 		digInFront();
 	});
 	// Debug: break the nearest non-spawn_point solid block below the player.
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_dig_feet_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_dig_feet_request", [this] {
 		auto* me = playerEntity();
 		if (!me) { std::fprintf(stderr, "[vk-debug] dig_feet: no player\n"); return; }
 		auto& reg = m_server->blockRegistry();
 		glm::ivec3 bp{(int)std::floor(me->position.x),
 		              (int)std::floor(me->position.y) - 1,
 		              (int)std::floor(me->position.z)};
-		civcraft::BlockId bid = civcraft::BLOCK_AIR;
+		solarium::BlockId bid = solarium::BLOCK_AIR;
 		for (int dy = 0; dy < 6; dy++) {
 			glm::ivec3 cand = bp - glm::ivec3(0, dy, 0);
-			civcraft::BlockId cbid = m_server->chunks().getBlock(cand.x, cand.y, cand.z);
+			solarium::BlockId cbid = m_server->chunks().getBlock(cand.x, cand.y, cand.z);
 			const auto& cdef = reg.get(cbid);
-			if (cbid != civcraft::BLOCK_AIR && cdef.string_id != "spawn_point") {
+			if (cbid != solarium::BLOCK_AIR && cdef.string_id != "spawn_point") {
 				bp = cand; bid = cbid; break;
 			}
 		}
 		const auto& bdef = reg.get(bid);
 		std::fprintf(stderr, "[vk-debug] dig_feet: target=(%d,%d,%d) bid=%u id=%s drop=%s\n",
 			bp.x, bp.y, bp.z, bid, bdef.string_id.c_str(), bdef.drop.c_str());
-		if (bid == civcraft::BLOCK_AIR) return;
-		civcraft::ActionProposal p;
+		if (bid == solarium::BLOCK_AIR) return;
+		solarium::ActionProposal p;
 		p.actorId     = m_server->localPlayerId();
-		p.type        = civcraft::ActionProposal::Convert;
+		p.type        = solarium::ActionProposal::Convert;
 		p.fromItem    = bdef.string_id;
 		p.toItem      = bdef.drop.empty() ? bdef.string_id : bdef.drop;
 		p.fromCount   = 1;
 		p.toCount     = 1;
-		p.convertFrom = civcraft::Container::block(bp);
-		p.convertInto = civcraft::Container::ground();
+		p.convertFrom = solarium::Container::block(bp);
+		p.convertInto = solarium::Container::ground();
 		m_server->sendAction(p);
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_attack_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_attack_request", [this] {
 		auto* me = playerEntity(); if (!me) return;
 		glm::vec3 from = me->position + glm::vec3(0, kTune.playerHeight * 0.6f, 0);
 		m_slashes.push_back({ from, playerForward() });
 		if (!tryServerAttack())
 			std::printf("[vk-game] [trigger] swing — no target in cone\n");
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_camera_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_camera_request", [this] {
 		m_cam.cycleMode();
 		const char* names[] = {"FPS", "ThirdPerson", "RPG", "RTS"};
 		std::printf("[vk-game] [trigger] camera → %s\n", names[(int)m_cam.mode]);
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_lookup_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_lookup_request", [this] {
 		m_cam.lookPitch  = 55.0f;   // FPS / ThirdPerson free-look
 		m_cam.orbitPitch = -40.0f;  // TPS orbit (negative = view aims up)
 		std::printf("[vk-game] [trigger] look up (lookPitch=55, orbitPitch=-40)\n");
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_face_east_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_face_east_request", [this] {
 		m_cam.lookYaw    = 0.0f;    // +X (toward sunrise)
 		m_cam.lookPitch  = 35.0f;   // horizon slightly low, most of frame = sky + clouds
 		m_cam.orbitYaw   = 0.0f;
@@ -1332,32 +1332,32 @@ void Game::registerDebugTriggers() {
 		m_cam.resetSmoothing();
 		std::printf("[vk-game] [trigger] face east (sunrise view)\n");
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_noon_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_noon_request", [this] {
 		if (m_server) {
 			// no client-side setter; this only works in the single-process test
 			// scenario — cast through if available, else noop
 			std::printf("[vk-game] [trigger] noon request — set time is server-side\n");
 		}
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_place_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_place_request", [this] {
 		placeBlock();
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_admin_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_admin_request", [this] {
 		m_adminMode = !m_adminMode;
 		if (!m_adminMode) m_flyMode = false;
 		std::printf("[vk-game] [trigger] admin mode %s\n", m_adminMode ? "ON" : "OFF");
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_fly_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_fly_request", [this] {
 		if (m_adminMode) {
 			m_flyMode = !m_flyMode;
 			std::printf("[vk-game] [trigger] fly mode %s\n", m_flyMode ? "ON" : "OFF");
 		}
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_pause_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_pause_request", [this] {
 		if (m_state == GameState::Playing) openGameMenu();
 		else if (m_state == GameState::GameMenu) closeGameMenu();
 	});
-	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_goto_request", [this](const std::string& line) {
+	m_debugTriggers.addPayloadTrigger("/tmp/solarium_vk_goto_request", [this](const std::string& line) {
 		float tx = 0, ty = 0, tz = 0;
 		if (sscanf(line.c_str(), "%f %f %f", &tx, &ty, &tz) >= 3) {
 			glm::vec3 target(tx, ty, tz);
@@ -1367,18 +1367,18 @@ void Game::registerDebugTriggers() {
 			std::printf("[vk-game] [trigger] goto (%.1f,%.1f,%.1f)\n", tx, ty, tz);
 		}
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_ascend_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_ascend_request", [this] {
 		auto* me = playerEntity();
 		if (m_flyMode && me) {
 			me->position.y += 5.0f;
 			std::printf("[vk-game] [trigger] ascend +5 → y=%.1f\n", me->position.y);
 		}
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_handbook_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_handbook_request", [this] {
 		m_handbookOpen = !m_handbookOpen;
 		std::printf("[vk-game] [trigger] handbook %s\n", m_handbookOpen ? "OPEN" : "CLOSED");
 	});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_inventory_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_inventory_request", [this] {
 		m_invOpen = !m_invOpen;
 		std::printf("[vk-game] [trigger] inventory %s\n", m_invOpen ? "OPEN" : "CLOSED");
 	});
@@ -1386,7 +1386,7 @@ void Game::registerDebugTriggers() {
 	// drop on hotbar slot `to` (0..9). Format: "<from_inv_idx> <to_hotbar_idx>".
 	// No LMB events are synthesized — we call into the hotbar directly since
 	// this is a dev shortcut for screenshot verification.
-	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_cursor_request",
+	m_debugTriggers.addPayloadTrigger("/tmp/solarium_vk_cursor_request",
 		[this](const std::string& line) {
 			float x, y;
 			if (sscanf(line.c_str(), "%f %f", &x, &y) == 2) {
@@ -1395,14 +1395,14 @@ void Game::registerDebugTriggers() {
 				std::printf("[vk-game] [trigger] cursor=(%.2f,%.2f)\n", x, y);
 			}
 		});
-	m_debugTriggers.addTrigger("/tmp/civcraft_vk_tuning_request", [this] {
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_tuning_request", [this] {
 		m_showTuning = !m_showTuning;
 		std::printf("[vk-game] [trigger] tuning %s\n", m_showTuning ? "OPEN" : "CLOSED");
 	});
-	m_debugTriggers.addPayloadTrigger("/tmp/civcraft_vk_inspect_request", [this](const std::string& line) {
+	m_debugTriggers.addPayloadTrigger("/tmp/solarium_vk_inspect_request", [this](const std::string& line) {
 		int eid = 0;
 		if (sscanf(line.c_str(), "%d", &eid) == 1 && eid > 0) {
-			m_inspectedEntity = (civcraft::EntityId)eid;
+			m_inspectedEntity = (solarium::EntityId)eid;
 			std::printf("[vk-game] [trigger] inspect entity #%d\n", eid);
 		}
 	});
@@ -1416,9 +1416,9 @@ void Game::initAiSidecars() {
 	// only on the input side or silent NPCs on the output side). Client-only
 	// (Rule 5); server never sees any of these processes.
 	{
-		civcraft::llm::LlmSidecar::Paths lp;
-		if (civcraft::llm::LlmSidecar::probe(lp)) {
-			m_llmSidecar = std::make_unique<civcraft::llm::LlmSidecar>();
+		solarium::llm::LlmSidecar::Paths lp;
+		if (solarium::llm::LlmSidecar::probe(lp)) {
+			m_llmSidecar = std::make_unique<solarium::llm::LlmSidecar>();
 			if (!m_llmSidecar->start(lp)) {
 				std::fprintf(stderr, "[vk-game] llm sidecar failed to start; NPC dialog disabled\n");
 				m_llmSidecar.reset();
@@ -1428,9 +1428,9 @@ void Game::initAiSidecars() {
 			            "Run 'make llm_setup' to enable.\n");
 		}
 
-		civcraft::llm::WhisperSidecar::Paths wp;
-		if (civcraft::llm::WhisperSidecar::probe(wp)) {
-			m_whisperSidecar = std::make_unique<civcraft::llm::WhisperSidecar>();
+		solarium::llm::WhisperSidecar::Paths wp;
+		if (solarium::llm::WhisperSidecar::probe(wp)) {
+			m_whisperSidecar = std::make_unique<solarium::llm::WhisperSidecar>();
 			if (!m_whisperSidecar->start(wp)) {
 				std::fprintf(stderr, "[vk-game] whisper sidecar failed to start; STT disabled\n");
 				m_whisperSidecar.reset();
@@ -1439,15 +1439,15 @@ void Game::initAiSidecars() {
 				// If the mic is missing (headless box), we still leave the HTTP
 				// client around so future device hotplug could work — but
 				// DialogPanel gates push-to-talk on AudioCapture::isReady().
-				m_audioCapture = std::make_unique<civcraft::AudioCapture>();
+				m_audioCapture = std::make_unique<solarium::AudioCapture>();
 				if (!m_audioCapture->init()) {
 					std::fprintf(stderr, "[vk-game] mic init failed; push-to-talk disabled\n");
 					m_audioCapture.reset();
 				}
-				civcraft::llm::WhisperClient::Config wc;
+				solarium::llm::WhisperClient::Config wc;
 				wc.host = "127.0.0.1";
 				wc.port = 8081;
-				m_whisperClient = std::make_unique<civcraft::llm::WhisperClient>(wc);
+				m_whisperClient = std::make_unique<solarium::llm::WhisperClient>(wc);
 			}
 		} else {
 			std::printf("[vk-game] no whisper-server/model found — STT disabled. "
@@ -1457,7 +1457,7 @@ void Game::initAiSidecars() {
 		// TTS voice mux: one piper child per distinct `dialog_voice` value.
 		// We don't eagerly spawn any here — the first NPC conversation will
 		// instantiate its voice on demand.
-		m_ttsMux = std::make_unique<civcraft::llm::TtsVoiceMux>();
+		m_ttsMux = std::make_unique<solarium::llm::TtsVoiceMux>();
 		if (!m_ttsMux->init()) {
 			std::printf("[vk-game] no piper/voice found — NPC voice disabled. "
 			            "Run 'make tts_setup' to enable.\n");
@@ -1475,4 +1475,4 @@ void Game::initAiSidecars() {
 }
 
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

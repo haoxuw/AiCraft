@@ -14,7 +14,7 @@
 #include <functional>
 #include <filesystem>
 
-namespace civcraft {
+namespace solarium {
 
 class Entity; // shared/entity.h
 
@@ -81,4 +81,4 @@ private:
 	std::unordered_map<std::string, StructureBlueprint> m_blueprints;
 };
 
-} // namespace civcraft
+} // namespace solarium

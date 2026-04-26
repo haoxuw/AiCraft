@@ -1,4 +1,4 @@
-# CivCraft - C++ Server
+# Solarium - C++ Server
 
 The server is the single source of truth. It owns the World, runs the tick loop, embeds Python for hot-loading Objects and Actions, and synchronizes state to all clients.
 
@@ -8,7 +8,7 @@ The server is the single source of truth. It owns the World, runs the tick loop,
 
 ```
 +====================================================================+
-|                        CivCraft C++ Server                           |
+|                        Solarium C++ Server                           |
 +====================================================================+
 |                                                                      |
 |  +--------------------+   +--------------------+   +--------------+ |
@@ -230,7 +230,7 @@ public:
 
 private:
     py::scoped_interpreter m_interpreter;
-    py::module_ m_civcraft_module;
+    py::module_ m_solarium_module;
     std::unordered_map<std::string, py::object> m_object_types;
     std::unordered_map<std::string, py::object> m_action_types;
     SandboxValidator m_sandbox;
@@ -310,7 +310,7 @@ private:
   |    (AST analysis)         |
   |                           |
   |  ALLOW:                   |
-  |    - civcraft.api imports  |
+  |    - solarium.api imports  |
   |    - math, random         |
   |    - typing, dataclasses  |
   |    - Pydantic             |
@@ -431,7 +431,7 @@ Layer 4: Process Isolation (future)
 # src/server/sandbox/validator.py (runs inside embedded Python)
 
 ALLOWED_IMPORTS = {
-    "civcraft.api",          # the game API
+    "solarium.api",          # the game API
     "math",
     "random",
     "typing",
@@ -517,7 +517,7 @@ These systems run in optimized C++ for performance:
 # server.toml
 
 [server]
-name = "My CivCraft World"
+name = "My Solarium World"
 port = 30000
 max_players = 32
 tick_rate = 20                    # Hz (ticks per second)
@@ -564,7 +564,7 @@ abm_time_budget = 0.2           # fraction of interval
 ## 9. Directory Layout
 
 ```
-civcraft-server/
+solarium-server/
   src/
     server/
       main.cpp                   # Entry point
@@ -599,7 +599,7 @@ civcraft-server/
       constants.h                # MAP_BLOCKSIZE, DTIME_LIMIT, etc.
       chunk.h                    # Chunk data structure
   python/
-    civcraft/
+    solarium/
       api/
         __init__.py              # Public API re-exports
         objects.py               # PassiveObject, ActiveObject, LivingObject, ...

@@ -14,7 +14,7 @@
 
 struct ma_engine;
 
-namespace civcraft {
+namespace solarium {
 
 class AudioManager {
 public:
@@ -123,4 +123,4 @@ private:
 	void registerDefaultGroups(const std::string& basePath);
 };
 
-} // namespace civcraft
+} // namespace solarium

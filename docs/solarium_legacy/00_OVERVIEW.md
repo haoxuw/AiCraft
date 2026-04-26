@@ -1,4 +1,4 @@
-# CivCraft — Architecture Overview
+# Solarium — Architecture Overview
 
 ## Game Design
 
@@ -120,7 +120,7 @@ Python (the game)                    C++ (the engine)
 
 Three separate process types. Same architecture in singleplayer and multiplayer.
 
-### Server (`civcraft-server`)
+### Server (`solarium-server`)
 
 Headless. **NO Python, NO OpenGL.** Owns all world state.
 
@@ -130,7 +130,7 @@ Headless. **NO Python, NO OpenGL.** Owns all world state.
 - **Auto-spawns agent client processes** for Creatures entities (via `ClientManager`)
 - Perception-scoped: each client only receives state within 64 blocks
 
-### Player Client (`civcraft`)
+### Player Client (`solarium`)
 
 GUI. **OpenGL, NO Python.**
 
@@ -139,7 +139,7 @@ GUI. **OpenGL, NO Python.**
 - Connects to server via TCP (localhost in singleplayer, remote in MP)
 - In singleplayer: `AgentManager` launches the server process first
 
-### Agent Client (`civcraft-agent`)
+### Agent Client (`solarium-agent`)
 
 Headless. **Python + pybind11, NO OpenGL.**
 
@@ -152,10 +152,10 @@ Headless. **Python + pybind11, NO OpenGL.**
 
 ```
 1. Player clicks "Play"
-2. AgentManager (GUI) fork+execs civcraft-server on localhost
+2. AgentManager (GUI) fork+execs solarium-server on localhost
 3. GUI connects to server as a regular player client
 4. Server's ClientManager detects Creatures entities with BehaviorId
-5. Server fork+execs one civcraft-agent per Creatures entity
+5. Server fork+execs one solarium-agent per Creatures entity
 6. Each agent connects back to server, receives S_ASSIGN_ENTITY
 7. Agents run Python AI, entities start moving
 ```
@@ -276,9 +276,9 @@ artifacts/          Python game content (hot-loadable)
 
 | Binary | Links | Purpose |
 |--------|-------|---------|
-| `civcraft` | shared + client + game + OpenGL | Player client (GUI) |
-| `civcraft-server` | shared + server + content + Python | Server + agent spawner |
-| `civcraft-agent` | shared + agent + content + Python | Agent client (headless) |
+| `solarium` | shared + client + game + OpenGL | Player client (GUI) |
+| `solarium-server` | shared + server + content + Python | Server + agent spawner |
+| `solarium-agent` | shared + agent + content + Python | Agent client (headless) |
 
 ## Build & Run
 

@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 struct BodyPart {
 	std::string name;         // targetable by animation clip overrides
@@ -104,4 +104,4 @@ struct AnimState {
 	bool suppressIdleBob = false;
 };
 
-} // namespace civcraft
+} // namespace solarium

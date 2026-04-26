@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 using SeatId = uint32_t;
 constexpr SeatId SEAT_NONE = 0;
@@ -59,4 +59,4 @@ private:
 	SeatId  m_nextSeatId = 1; // 0 is sentinel
 };
 
-} // namespace civcraft
+} // namespace solarium

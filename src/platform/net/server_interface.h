@@ -1,7 +1,7 @@
 #pragma once
 
 // Abstract server access. Only impl is NetworkServer (TCP) — singleplayer spawns
-// civcraft-server as a child and localhost-TCPs; no in-process shortcut.
+// solarium-server as a child and localhost-TCPs; no in-process shortcut.
 
 #include "logic/types.h"
 #include "logic/chunk_source.h"
@@ -17,7 +17,7 @@
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
-namespace civcraft {
+namespace solarium {
 
 class ServerInterface {
 public:
@@ -49,7 +49,7 @@ public:
 	virtual void sendGetInventory(EntityId eid) {}
 
 	// Click-to-move and RTS group commands run client-side now — behaviors emit
-	// Move actions via civcraft_engine.Move / .Navigator; no server RPC.
+	// Move actions via solarium_engine.Move / .Navigator; no server RPC.
 
 	// Triggers NPC re-decide when listed eids enter player proximity.
 	virtual void sendProximity(const std::vector<EntityId>& eids) {}
@@ -154,4 +154,4 @@ public:
 		std::function<void(EntityId, glm::vec3 /*pos*/, uint8_t /*reason*/)> /*cb*/) {}
 };
 
-} // namespace civcraft
+} // namespace solarium

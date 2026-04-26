@@ -1,6 +1,6 @@
 """E2E woodcutter behavior test — real server, real agents, real physics.
 
-Launches civcraft-server with the test_behaviors template, waits for the
+Launches solarium-server with the test_behaviors template, waits for the
 woodcutter villager to go through its full work cycle:
   1. Find and walk to trees
   2. Chop trunk/leaves blocks

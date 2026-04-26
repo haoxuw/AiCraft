@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 namespace {
 
@@ -572,4 +572,4 @@ void HandbookPanel::render(Game& g) {
 	}
 }
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

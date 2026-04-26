@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CivCraft Action Proxy — HTTP → TCP bridge with Swagger UI.
+Solarium Action Proxy — HTTP → TCP bridge with Swagger UI.
 
 Connects to the game server as a player client, then exposes every
 ActionProposal type as a documented REST endpoint.
@@ -276,9 +276,9 @@ conn = Connection()
 # ── FastAPI setup ─────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="CivCraft Action API",
+    title="Solarium Action API",
     description=(
-        "HTTP → TCP proxy for the CivCraft game server.\n\n"
+        "HTTP → TCP proxy for the Solarium game server.\n\n"
         "**Read vs Write**\n"
         "- `GET` endpoints are **read-only** — they return state without sending anything to the server.\n"
         "- `POST /action/*` endpoints are **write actions** — they send an `ActionProposal` over TCP "
@@ -661,7 +661,7 @@ def metadata():
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="CivCraft Action Proxy with Swagger UI")
+    parser = argparse.ArgumentParser(description="Solarium Action Proxy with Swagger UI")
     parser.add_argument("--server-host", default="127.0.0.1", help="Game server host (default: 127.0.0.1)")
     parser.add_argument("--server-port", default=7777, type=int, help="Game server port (default: 7777)")
     parser.add_argument("--proxy-port",  default=8088, type=int, help="HTTP proxy port (default: 8088)")

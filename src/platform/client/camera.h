@@ -3,7 +3,7 @@
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
 
-namespace civcraft {
+namespace solarium {
 
 enum class CameraMode {
 	FirstPerson,
@@ -105,4 +105,4 @@ private:
 	bool m_rtsBookmarkKeyPrev[4] = {false, false, false, false};
 };
 
-} // namespace civcraft
+} // namespace solarium

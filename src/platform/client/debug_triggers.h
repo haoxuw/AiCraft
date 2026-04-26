@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 class DebugTriggers {
 public:
@@ -49,4 +49,4 @@ private:
 	std::vector<Entry> m_triggers;
 };
 
-} // namespace civcraft
+} // namespace solarium

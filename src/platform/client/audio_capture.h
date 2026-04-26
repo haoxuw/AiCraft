@@ -21,7 +21,7 @@
 #include <mutex>
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 class AudioCapture {
 public:
@@ -73,4 +73,4 @@ private:
 	static constexpr uint32_t kChannels   = 1;
 };
 
-} // namespace civcraft
+} // namespace solarium

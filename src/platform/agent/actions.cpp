@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace civcraft {
+namespace solarium {
 
 // ── MoveAction ──────────────────────────────────────────────────────────
 
@@ -457,4 +457,4 @@ ActionHandler& actionFor(PlanStep::Type t) {
 	std::abort();  // unreachable: every enum variant must have a handler
 }
 
-} // namespace civcraft
+} // namespace solarium

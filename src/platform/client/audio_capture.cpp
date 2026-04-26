@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace civcraft {
+namespace solarium {
 
 namespace {
 
@@ -149,4 +149,4 @@ std::vector<uint8_t> AudioCapture::drainAsWav() {
 	return wav;
 }
 
-} // namespace civcraft
+} // namespace solarium

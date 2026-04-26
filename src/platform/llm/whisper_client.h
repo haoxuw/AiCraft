@@ -21,7 +21,7 @@
 #include <thread>
 #include <vector>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 class WhisperClient {
 public:
@@ -60,4 +60,4 @@ private:
 	std::deque<Request> m_queue;
 };
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

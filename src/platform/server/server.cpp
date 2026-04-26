@@ -4,7 +4,7 @@
 #include <cassert>
 #include <cmath>
 
-namespace civcraft {
+namespace solarium {
 
 // Rule 0: the server accepts exactly four primitives. High-level intents
 // (follow, flee, attack, pathfind, …) are resolved entirely on the agent
@@ -800,4 +800,4 @@ void GameServer::resolveInteractAction(const ActionProposal& p) {
 	} while (false);
 }
 
-} // namespace civcraft
+} // namespace solarium

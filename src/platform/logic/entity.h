@@ -12,7 +12,7 @@
 #include <memory>
 #include <cstdint>
 
-namespace civcraft {
+namespace solarium {
 
 // Why an entity disappeared. Wire-stable values (S_REMOVE trailing byte, v8):
 // the client branches on this to pick the right FX/SFX. Kept here in logic/ so
@@ -225,4 +225,4 @@ private:
 	std::set<std::string> m_dirty;
 };
 
-} // namespace civcraft
+} // namespace solarium

@@ -13,7 +13,7 @@
 
 #include "logic/block_shape.h"
 
-namespace civcraft {
+namespace solarium {
 
 namespace {
 
@@ -242,4 +242,4 @@ const BlockShape& getBlockShape(MeshType mt) {
 	return kNull;
 }
 
-}  // namespace civcraft
+}  // namespace solarium

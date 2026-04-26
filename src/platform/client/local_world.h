@@ -20,7 +20,7 @@
 #include <vector>
 #include <utility>
 
-namespace civcraft {
+namespace solarium {
 
 // LocalWorld chunk-store rule (see docs/10_CLIENT_SERVER_PHYSICS.md):
 //   * Writers (S_CHUNK / S_BLOCK / S_CHUNK_EVICT / S_ANNOTATION_SET) run on
@@ -195,4 +195,4 @@ private:
 	EntityManager m_entityDefs;
 };
 
-} // namespace civcraft
+} // namespace solarium

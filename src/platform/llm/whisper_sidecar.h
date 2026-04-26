@@ -1,11 +1,11 @@
 #pragma once
 
 // WhisperSidecar — auto-spawns whisper.cpp's `whisper-server` as a child of
-// civcraft-ui-vk so `make game` brings up STT for the dialog panel.
+// solarium-ui-vk so `make game` brings up STT for the dialog panel.
 //
 // Mirror of LlmSidecar (llm_sidecar.h). Same lifecycle:
 //   probe()  — find binary + ggml model on disk
-//   start()  — fork+execv, stdio → /tmp/civcraft_whisper.log, isolated pgrp
+//   start()  — fork+execv, stdio → /tmp/solarium_whisper.log, isolated pgrp
 //   stop()   — SIGTERM → wait → SIGKILL fallback
 //
 // Runs on port 8081 (LLM is 8080, piper is 8082). HTTP API:
@@ -24,7 +24,7 @@
 #include <unistd.h>
 #include <vector>
 
-namespace civcraft::llm {
+namespace solarium::llm {
 
 class WhisperSidecar {
 public:
@@ -82,7 +82,7 @@ public:
 			return false;
 		}
 		if (pid == 0) {
-			int fd = open("/tmp/civcraft_whisper.log",
+			int fd = open("/tmp/solarium_whisper.log",
 			              O_WRONLY | O_CREAT | O_TRUNC, 0644);
 			if (fd >= 0) {
 				dup2(fd, STDOUT_FILENO);
@@ -103,7 +103,7 @@ public:
 		std::printf("[whisper-sidecar] spawned whisper-server pid=%d port=%d model=%s\n",
 		            (int)pid, port,
 		            std::filesystem::path(paths.model).filename().string().c_str());
-		std::printf("[whisper-sidecar] log: /tmp/civcraft_whisper.log\n");
+		std::printf("[whisper-sidecar] log: /tmp/solarium_whisper.log\n");
 		return true;
 	}
 
@@ -133,4 +133,4 @@ private:
 	int   m_port = 0;
 };
 
-} // namespace civcraft::llm
+} // namespace solarium::llm

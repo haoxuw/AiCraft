@@ -20,7 +20,7 @@
 #include <cstring>
 #include <string>
 
-namespace civcraft::vk {
+namespace solarium::vk {
 
 struct ScreenShell {
 	struct Rect { float x, y, w, h; };
@@ -108,4 +108,4 @@ struct ScreenShell {
 	}
 };
 
-} // namespace civcraft::vk
+} // namespace solarium::vk

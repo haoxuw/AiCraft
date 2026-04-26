@@ -26,7 +26,7 @@
 #include <cmath>
 #include <random>
 
-namespace civcraft {
+namespace solarium {
 
 class Jitter {
 public:
@@ -117,4 +117,4 @@ private:
 	float        m_personality = 0.0f;
 };
 
-} // namespace civcraft
+} // namespace solarium

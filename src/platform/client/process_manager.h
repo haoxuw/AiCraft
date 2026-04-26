@@ -1,6 +1,6 @@
 #pragma once
 
-// Spawns civcraft-server for singleplayer; GUI then connects over localhost.
+// Spawns solarium-server for singleplayer; GUI then connects over localhost.
 // AI agent processes are spawned by the server itself via ClientManager.
 
 #include <string>
@@ -16,7 +16,7 @@
 #include <netinet/in.h>
 #include <filesystem>
 
-namespace civcraft {
+namespace solarium {
 
 class AgentManager {
 public:
@@ -24,7 +24,7 @@ public:
 		int seed = 42;
 		int templateIndex = 0;
 		int port = 0;            // 0 = auto-pick in [7800, 7900)
-		int villagersOverride = 0;  // >0 → CIVCRAFT_VILLAGERS=N inherited by server
+		int villagersOverride = 0;  // >0 → SOLARIUM_VILLAGERS=N inherited by server
 		float simSpeed = 1.0f;   // >0; passed to spawned server as --sim-speed
 		std::string worldPath;   // empty = new world
 		std::string execDir;
@@ -37,7 +37,7 @@ public:
 		m_port = (cfg.port > 0) ? cfg.port : findFreePort();
 		if (m_port < 0) return -1;
 
-		std::string serverBin = cfg.execDir + "/civcraft-server";
+		std::string serverBin = cfg.execDir + "/solarium-server";
 		if (!std::filesystem::exists(serverBin)) {
 			printf("[AgentManager] Server binary not found: %s\n", serverBin.c_str());
 			return -1;
@@ -56,10 +56,10 @@ public:
 
 		// Client-chosen villager override: env var inherits across fork() into
 		// the spawned server, which reads it in spawnMobsForClient (mirrors
-		// the existing CIVCRAFT_STRESS_MULT pattern). Keeps the server host
+		// the existing SOLARIUM_STRESS_MULT pattern). Keeps the server host
 		// agnostic — the client decides the population.
 		if (cfg.villagersOverride > 0) {
-			setenv("CIVCRAFT_VILLAGERS",
+			setenv("SOLARIUM_VILLAGERS",
 			       std::to_string(cfg.villagersOverride).c_str(), 1);
 		}
 
@@ -78,7 +78,7 @@ public:
 		}
 
 		char readyPath[64];
-		snprintf(readyPath, sizeof(readyPath), "/tmp/civcraft_ready_%d", m_port);
+		snprintf(readyPath, sizeof(readyPath), "/tmp/solarium_ready_%d", m_port);
 		// 30s covers cold-start world gen on slower machines / first-run
 		// without Python bytecode cache. The live path hits this in well
 		// under 1s once warmed up.
@@ -114,7 +114,7 @@ public:
 
 		if (m_port > 0) {
 			char readyPath[64];
-			snprintf(readyPath, sizeof(readyPath), "/tmp/civcraft_ready_%d", m_port);
+			snprintf(readyPath, sizeof(readyPath), "/tmp/solarium_ready_%d", m_port);
 			std::remove(readyPath);
 		}
 
@@ -181,7 +181,7 @@ private:
 			close(fd);
 			if (free) {
 				char stale[64];
-				snprintf(stale, sizeof(stale), "/tmp/civcraft_ready_%d", p);
+				snprintf(stale, sizeof(stale), "/tmp/solarium_ready_%d", p);
 				std::remove(stale);
 				return p;
 			}
@@ -193,4 +193,4 @@ private:
 	pid_t m_serverPid = 0;
 };
 
-} // namespace civcraft
+} // namespace solarium
