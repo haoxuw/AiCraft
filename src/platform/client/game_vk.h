@@ -222,6 +222,10 @@ public:
 	// preview (camera reverts to ambient orbit).
 	void               setPreviewId(const std::string& id) { m_shell.previewId = id; }
 	const std::string& previewId() const                   { return m_shell.previewId; }
+	// Animation clip name (e.g. "wave", "dance", "mine"). Empty falls back
+	// to "mine" in WorldRenderer. Set per screen so char-select can wave
+	// while handbook can hold a static "mine" pose.
+	void               setPreviewClip(const std::string& c) { m_shell.previewClip = c; }
 
 	// Poll input, step sim, render one frame.
 	void runOneFrame(float dt, float wallTime);

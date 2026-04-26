@@ -925,6 +925,7 @@ int main(int argc, char** argv) {
 				cefUrl = sHand; game.setMenuScreen(MS::Handbook);
 			} else if (boot && std::string(boot) == "chars") {
 				cefUrl = sChar; game.setMenuScreen(MS::CharacterSelect);
+				game.setPreviewClip("wave");
 				// Mirror what the "singleplayer" action does so beginConnectAs
 				// has a previewId to commit when the user clicks Begin Game.
 				for (auto* e : game.artifactRegistry().byCategory("living")) {
@@ -970,12 +971,16 @@ int main(int argc, char** argv) {
 			} else if (action == "back") {
 				game.setMenuScreen(MS::Main);
 				game.setPreviewId("");
+				game.setPreviewClip("");
 				hostRaw->loadUrl(sMain);
 			} else if (action == "singleplayer") {
 				// Open char-select with a default preview so the plaza shows
 				// a model immediately (no "blank picker" flicker). The page's
 				// JS marks the first row as `.on`; we mirror that here.
+				// "wave" animation makes the preview feel alive vs. static
+				// mining pose.
 				game.setMenuScreen(MS::CharacterSelect);
+				game.setPreviewClip("wave");
 				if (!firstPlayableId.empty())
 					game.setPreviewId(firstPlayableId);
 				hostRaw->loadUrl(sChar);
@@ -983,11 +988,13 @@ int main(int argc, char** argv) {
 				// Rebuild fresh each click — picks up newly-discovered LAN servers.
 				hostRaw->loadUrl(multiplayerPage());
 			} else if (action == "handbook") {
+				// Hand the camera pin a screen we treat as preview-style; the
+				// JS-side render() fires a pick: for the first entry on load
+				// to seed shell.previewId. Clear previewClip so the static
+				// "mine" pose is used (reads more like an encyclopedia entry
+				// than the lively wave on char-select).
 				game.setMenuScreen(MS::Handbook);
-				if (FILE* fp = std::fopen("/tmp/solarium_cef_hb_url.txt", "w")) {
-					std::fwrite(sHand.data(), 1, sHand.size(), fp);
-					std::fclose(fp);
-				}
+				game.setPreviewClip("");
 				hostRaw->loadUrl(sHand);
 			} else if (action == "settings") {
 				hostRaw->loadUrl(sSett);
