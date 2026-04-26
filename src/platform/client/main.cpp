@@ -396,6 +396,10 @@ int main(int argc, char** argv) {
 			"window.cefQuery({request:'action:'+a,onSuccess:()=>{},onFailure:()=>{}});"
 			"}</script>";
 
+		// Bottom-right version label, identical across every page.
+		const std::string kVersion =
+			"<div class='version'>v0.2.0 / CEF 146</div>";
+
 		// HTML-escape the bare minimum: ", <, >, &, %, ', #. Pages are passed
 		// as `data:text/html,<…>` so any '%' that isn't part of a percent-
 		// escape will look malformed — URL-encode it explicitly. Use `&apos;`
@@ -428,8 +432,8 @@ int main(int argc, char** argv) {
 				"<button class='btn' onclick=\"send('multiplayer')\">Multiplayer</button>"
 				"<button class='btn' onclick=\"send('handbook')\">Handbook</button>"
 				"<button class='btn' onclick=\"send('settings')\">Settings</button>"
-				"<button class='btn' onclick=\"send('quit')\">Quit</button>"
-				"<div class='version'>v0.2.0 / CEF 146</div>" + kJs +
+				"<button class='btn' onclick=\"send('quit')\">Quit</button>" +
+				kVersion + kJs +
 				"</body></html>";
 		};
 
@@ -567,8 +571,8 @@ int main(int argc, char** argv) {
 				"<button onclick=\"send('back')\">Back</button>"
 				"</div></aside>"
 				"<main class='detail'>"
-				"<div class='detail-card' id='card'></div></main>"
-				"<div class='version'>v0.2.0 / CEF 146</div>"
+				"<div class='detail-card' id='card'></div></main>" +
+				kVersion +
 				"<script>"
 				"const ENTRIES={";
 			for (size_t i = 0; i < playables.size(); ++i) {
@@ -622,9 +626,9 @@ int main(int argc, char** argv) {
 			};
 			for (auto& kv : kvs)
 				html += std::string("<tr><td>") + kv.k + "</td><td>" + kv.v + "</td></tr>";
-			html += "</table>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>"
-				"<div class='version'>v0.2.0 / CEF 146</div>" + kJs +
+			html += std::string("</table>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>") +
+				kVersion + kJs +
 				"</body></html>";
 			return html;
 		};
@@ -776,8 +780,8 @@ int main(int argc, char** argv) {
 				"<button onclick=\"send('back')\">Back</button>"
 				"</div></aside>"
 				"<main class='detail'>"
-				"<div class='detail-card' id='card'></div></main>"
-				"<div class='version'>v0.2.0 / CEF 146</div>"
+				"<div class='detail-card' id='card'></div></main>" +
+				kVersion +
 				"<script>const ENTRIES={";
 			for (size_t i = 0; i < items.size(); ++i) {
 				const auto& it = items[i];
@@ -842,15 +846,9 @@ int main(int argc, char** argv) {
 				"while(n&&n.classList.contains('sb-row')){"
 				"if(n.style.display!=='none')any=true;n=n.nextElementSibling;}"
 				"h.style.display=any?'':'none';});}"
-				"setTimeout(function(){"
-				"try{const f=document.querySelector('.sb-row');"
-				"if(!f){document.getElementById('card').innerHTML="
-				"'<h2>NO ROW</h2>';return;}"
-				"f.classList.add('on');lastKey=f.dataset.key;"
-				"render(f.dataset.key);send('pick:'+f.dataset.id);"
-				"}catch(e){document.getElementById('card').innerHTML="
-				"'<h2>INIT ERR</h2><div class=desc>'+e.message+'</div>';}"
-				"},50);"
+				"const _f=document.querySelector('.sb-row');"
+				"if(_f){_f.classList.add('on');lastKey=_f.dataset.key;"
+				"render(_f.dataset.key);send('pick:'+_f.dataset.id);}"
 				"</script>"
 				"</body></html>";
 			return html;
@@ -859,7 +857,7 @@ int main(int argc, char** argv) {
 		// kCss captured by value because this lambda is invoked from the
 		// action callback long after this scope returns — a `[&]` capture
 		// would dangle and produce a corrupted data: URL (we hit this).
-		auto multiplayerPage = [kCss, kJs, &game]() -> std::string {
+		auto multiplayerPage = [kCss, kJs, kVersion, &game]() -> std::string {
 			std::string html = "data:text/html,<html><head><style>" + kCss +
 				".srv{display:flex;justify-content:space-between;align-items:center;"
 				"width:480px;padding:14px 24px;margin:6px 0;"
@@ -899,9 +897,9 @@ int main(int argc, char** argv) {
 					s.humans, s.humans == 1 ? "" : "s");
 				html += row;
 			}
-			html += "<button class='btn' onclick=\"send('multiplayer')\">Refresh</button>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>"
-				"<div class='version'>v0.2.0 / CEF 146</div>" + kJs +
+			html += std::string("<button class='btn' onclick=\"send('multiplayer')\">Refresh</button>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>") +
+				kVersion + kJs +
 				"</body></html>";
 			return html;
 		};
