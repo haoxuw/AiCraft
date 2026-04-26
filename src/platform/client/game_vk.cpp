@@ -921,7 +921,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_worldRenderer.renderWorld(wallTime);
 		m_worldRenderer.renderEffects(wallTime);
 		// Skip native menu UI when CEF overlay is providing the menu.
-		if (!m_cefMenuActive) m_menuRenderer.renderMenu();
+		if (!cefMenuActive()) m_menuRenderer.renderMenu();
 	} else if (m_state == GameState::Playing) {
 		m_worldRenderer.renderWorld(wallTime);
 		m_frameProbe.mark("world");

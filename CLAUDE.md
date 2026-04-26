@@ -13,10 +13,10 @@ src/config/        Runtime config (controls.yaml — copied into build dir)
 src/resources/     Shipped assets (textures, sounds, models)
 src/tests/         test_e2e.cpp, test_pathfinding.cpp, behavior_scenario_validation/
 src/model_editor/  Authoring tooling (modelcrafter, bbmodel_export/import, capture_samples.sh)
-docs/civcraft_legacy/  Game design docs (overview, actions, physics, inventory, …)
+docs/solarium_legacy/  Game design docs (overview, actions, physics, inventory, …)
 ```
 
-**Read `docs/civcraft_legacy/00_OVERVIEW.md` before making ANY gameplay changes.**
+**Read `docs/solarium_legacy/00_OVERVIEW.md` before making ANY gameplay changes.**
 For engine/protocol/behavior-API details see `src/platform/docs/` (14_ARCHITECTURE_DIAGRAM.md, 21_BEHAVIOR_API.md, 04_SERVER.md, 06_NETWORKING.md).
 
 ## Mandatory Design Rules
@@ -73,7 +73,7 @@ the engine (physics, networking, rendering).**
 
 ### Rule 6: Unified Physics, One Source of Truth
 
-**See `docs/civcraft_legacy/10_CLIENT_SERVER_PHYSICS.md`.**
+**See `docs/solarium_legacy/10_CLIENT_SERVER_PHYSICS.md`.**
 
 - **One tick loop, No dual state**
 - **LocalWorld** (`platform/client/local_world.h`) is the client's single chunk
@@ -83,7 +83,7 @@ the engine (physics, networking, rendering).**
 
 ## Architecture
 
-Singleplayer: `civcraft-ui-vk` spawns `civcraft-server` as a child process then connects
+Singleplayer: `solarium-ui-vk` spawns `solarium-server` as a child process then connects
 via localhost TCP. There is no in-process shortcut.
 
 ## Build & Run
@@ -94,7 +94,7 @@ make game                         # singleplayer via build-perf/  (spawns server
 make game GAME_PORT=7890          # singleplayer on a fixed port
 make server PORT=7777             # dedicated server (interactive world select)
 make client HOST=X PORT=N         # GUI client → menu or pre-filled join
-make stop                         # kill all civcraft-* processes (exact-name match)
+make stop                         # kill all solarium-* processes (exact-name match)
 make test_e2e                     # headless gameplay + pathfinding tests
 make proxy                        # HTTP→TCP action proxy w/ Swagger UI on :8088
 
@@ -105,17 +105,17 @@ cmake --build build -j1
 
 ## Iterative Development
 
-**Don't `pkill -f civcraft`** — it matches the shell's own command line (which
-contains the word "civcraft") and SIGTERMs your own bash, silently skipping the
+**Don't `pkill -f solarium`** — it matches the shell's own command line (which
+contains the word "solarium") and SIGTERMs your own bash, silently skipping the
 rest of the chained command. Use exact-name matching:
-`pgrep -x civcraft-ui-vk | xargs kill` (and the same for `civcraft-server`).
+`pgrep -x solarium-ui-vk | xargs kill` (and the same for `solarium-server`).
 
 **Debug modes, CLI flags, perf knobs, log file map → `.claude/skills/testing-plan/SKILL.md`.**
 That skill is the single source of truth for `--debug-behavior`, `--log-only`,
 `--sim-speed`, `--villagers`, `--template`, `make debug_villager`,
 `make character_views`, `make item_views`, `make animation_sweep`,
 `make perf_fps`, `make perf_server`, and screenshots (F2 /
-`/tmp/civcraft_screenshot_request`). Use screenshots only when the bug is
+`/tmp/solarium_screenshot_request`). Use screenshots only when the bug is
 visual (rendering, animation, UI); otherwise prefer log-only.
 
 ## Source structure (detail)
@@ -137,8 +137,8 @@ src/platform/
   fonts/  docs/  engine-level assets + architecture docs
 
 src/tests/
-  test_e2e.cpp          Headless gameplay tests → civcraft-test (uses TestServer)
-  test_pathfinding.cpp  Pathfinding regression  → civcraft-test-pathfinding
+  test_e2e.cpp          Headless gameplay tests → solarium-test (uses TestServer)
+  test_pathfinding.cpp  Pathfinding regression  → solarium-test-pathfinding
   behavior_scenario_validation/  Scenario-driven behavior checks
 
 src/artifacts/          Python game content — hot-loadable, no rebuild needed
@@ -150,7 +150,7 @@ src/artifacts/          Python game content — hot-loadable, no rebuild needed
 
 ## Game identity
 
-**This game is called CivCraft.** Players can mod ANYTHING and EVERYTHING. Every
+**This game is called Solarium.** Players can mod ANYTHING and EVERYTHING. Every
 creature, behavior, item, block, world, and effect is defined in Python artifacts MODs
 
 Every feature decision must ask: *"Can a modder override this from Python?"*

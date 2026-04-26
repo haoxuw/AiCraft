@@ -1,4 +1,4 @@
-# CivCraft Camera Modes — Detailed Design
+# Solarium Camera Modes — Detailed Design
 
 Four modes, cycled by **V**: FPS → TPS → RPG → RTS → FPS. One `Camera` struct
 (`src/platform/client/camera.h`) owns all four. Each frame `processInput()`
@@ -121,7 +121,7 @@ exploration, cinematic combat, animation critique.
 - **Gap (important):** camera collision with terrain. If a chunk sits
   between `target` and orbit position, raycast along the offset, clamp
   `orbitDistance` to `hit_distance - 0.3`. No pop-through. Use existing
-  raycast from `src/CivCraft/client/raycast.h`. Restore to target distance
+  raycast from `src/platform/client/raycast.h`. Restore to target distance
   smoothly (ease-in 10/s) once clear.
 - **Gap:** occlusion fade — if camera is *inside* an entity's bounding box
   (e.g. player standing under an overhang), fade own-player render to 30%
@@ -347,7 +347,7 @@ back to desired distance (10/s, same as the scroll-zoom lerp).
    `orbitDistance` / `godDistance` in the offset calc with
    `m_effectiveOrbit` / `m_effectiveGod`, which each frame eases toward
    `clampDistanceByTerrain(target, dirOutward, requested)`.
-4. Raycast reuses `src/CivCraft/client/raycast.h` (existing chunk raycast).
+4. Raycast reuses `src/platform/client/raycast.h` (existing chunk raycast).
    **Important:** `raycastBlocks` is the primary block ray — it already
    treats open doors as pass-through after the door fix (see `raycast.h`
    open-door design). We want identical pass-through here: camera should
@@ -479,7 +479,7 @@ On MMB press, start a 0.3s ease from current `rtsCenter` to
 ### 7. RTS shadow-map scale
 
 **Root cause**
-The shadow pass (in `src/CivCraft/client/renderer.cpp`) uses a fixed
+The shadow pass (in `src/platform/client/game_vk_renderer_world.cpp`) uses a fixed
 orthographic half-extent tuned for FPS/TPS viewing distances (~40 blocks).
 In RTS at `rtsHeight = 80`, visible ground extends ~140 blocks along the
 view axis — but shadows cut off at ~40, leaving a hard "no shadow" line
@@ -494,7 +494,7 @@ other modes, use the current fixed value.
 1. `camera.h` — add `float desiredShadowHalfExtent() const`. FPS/TPS/RPG
    return current constant (e.g. 48); RTS returns
    `max(48, rtsHeight * 1.5f)`.
-2. `src/CivCraft/client/renderer.cpp` — in the shadow pass setup, read
+2. `src/platform/client/game_vk_renderer_world.cpp` — in the shadow pass setup, read
    `camera.desiredShadowHalfExtent()` and pass to `glm::ortho`.
 3. Shadow map resolution may need to grow proportionally to avoid
    blurry far shadows. Option: adaptive — increase resolution (1024 →
@@ -579,7 +579,7 @@ changes — Rule 3 preserved.
 - `src/platform/client/entity_drawer.cpp` — own-player alpha multiply.
 - `src/platform/client/model.cpp` / model fragment shader — alpha uniform
   + blend enable when α<1 (if not already supported).
-- `src/CivCraft/client/renderer.cpp` — shadow half-extent from camera.
+- `src/platform/client/game_vk_renderer_world.cpp` — shadow half-extent from camera.
 - `src/platform/client/game_render.cpp` — inject `World*` into camera
   once per frame for terrain-collision raycast.
 - `src/platform/client/gameplay_movement.cpp` — use `Camera::aimOrigin()`

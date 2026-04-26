@@ -1,4 +1,4 @@
-# CivCraft Build Log
+# Solarium Build Log
 
 Visual progression of the engine, screenshot per version.
 

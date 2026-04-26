@@ -203,8 +203,12 @@ public:
 
 	// While true, skip drawing the native bitmap-font menu UI — the CEF HTML
 	// overlay (composited in the RHI) is providing the menu instead.
-	void setCefMenuActive(bool on) { m_cefMenuActive = on; }
-	bool cefMenuActive() const { return m_cefMenuActive; }
+	void setCefMenuActive(bool on) { m_cefMenuActive.store(on); }
+	bool cefMenuActive() const { return m_cefMenuActive.load(); }
+
+	// CEF action callback uses this to jump from the CEF main title to a
+	// native sub-screen (CharacterSelect / Multiplayer / Handbook / Settings).
+	void setMenuScreen(MenuScreen s) { m_menuScreen = s; }
 
 	// Poll input, step sim, render one frame.
 	void runOneFrame(float dt, float wallTime);
@@ -315,7 +319,9 @@ private:
 	WorldRenderer     m_worldRenderer    { *this };
 	HudRenderer       m_hudRenderer      { *this };
 	MenuRenderer      m_menuRenderer     { *this };
-	bool              m_cefMenuActive    = false;
+	// atomic so the CEF action callback (CEF UI thread) and main thread can
+	// write/read without a race — flag flips on every menu/sub-screen jump.
+	std::atomic<bool> m_cefMenuActive    {false};
 	PanelRenderer     m_panelRenderer    { *this };
 	EntityUiRenderer  m_entityUiRenderer { *this };
 

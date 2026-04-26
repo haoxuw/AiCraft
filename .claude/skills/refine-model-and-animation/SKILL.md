@@ -74,14 +74,14 @@ Amplitude: 65° feels natural; 40° is too subtle, 90° is too dramatic.
 **Items** — FPS/TPS/RPG/RTS + ground:
 ```bash
 make item_views ITEM=base:sword
-# or: ./build/civcraft --skip-menu --debug-scenario item_views --debug-item base:sword
+# or: ./build/solarium-ui-vk --skip-menu --debug-scenario item_views --debug-item base:sword
 ```
 Produces `/tmp/debug_N_{fps,tps,rpg,rts,ground}.ppm`.
 
 **Characters** — 6-angle orbit (front, three-quarter, side, back, top, RTS):
 ```bash
 make character_views CHARACTER=base:pig
-# or: ./build/civcraft --skip-menu --debug-scenario character_views --debug-character base:pig
+# or: ./build/solarium-ui-vk --skip-menu --debug-scenario character_views --debug-character base:pig
 ```
 Produces `/tmp/debug_N_{front,three_q,side,back,top,rts}.ppm`. The scenario
 overrides the local player's `character_skin` prop, so any model in
@@ -102,7 +102,7 @@ for s in ['fps','tps','rpg','rts','ground']:
 
 For animation frames:
 ```bash
-./build/civcraft --skip-menu --debug-scenario animation --debug-item base:sword
+./build/solarium-ui-vk --skip-menu --debug-scenario animation --debug-item base:sword
 ```
 
 ### Step 2 — Analyse
@@ -152,22 +152,22 @@ float fpScale = fpEs * 0.72f;
 
 ```bash
 cmake --build build -j$(($(nproc)/2)) && \
-./build/civcraft --skip-menu --debug-scenario item_views --debug-item base:sword
+./build/solarium-ui-vk --skip-menu --debug-scenario item_views --debug-item base:sword
 ```
 
 Re-read the screenshots. Repeat until satisfied.
 
 > **Python-only edits don't rebuild.** If you only edited a model `.py` file,
-> the `civcraft` target won't relink, so the CMake `POST_BUILD copy_directory
-> src/CivCraft/artifacts → build/artifacts` step doesn't fire and the game
+> the `solarium-ui-vk` target won't relink, so the CMake `POST_BUILD copy_directory
+> src/artifacts → build/artifacts` step doesn't fire and the game
 > reads the **stale cached model**. Two fixes:
 >
 > ```bash
 > # Fast: sync just the edited file
-> cp src/CivCraft/artifacts/models/base/pig.py build/artifacts/models/base/pig.py
+> cp src/artifacts/models/base/pig.py build/artifacts/models/base/pig.py
 >
 > # Or: force a relink so POST_BUILD re-copies everything
-> touch src/CivCraft/main.cpp && cmake --build build -j$(($(nproc)/2))
+> touch src/platform/client/main.cpp && cmake --build build -j$(($(nproc)/2))
 > ```
 >
 > Symptom when you forget: edits "have no effect." You'll blame shaders,
@@ -239,11 +239,11 @@ Rather than eyeballing every part, run the validator:
 
 ```bash
 # All base models
-python3 src/CivCraft/tools/check_zfight.py
+python3 tools/check_zfight.py
 
 # Just the characters, stricter tolerance (exact coplanar only)
-python3 src/CivCraft/tools/check_zfight.py --tolerance 0.003 \
-    src/CivCraft/artifacts/models/base/{cat,pig,dog,chicken,skeleton,knight,mage,villager,player,giant,crewmate}.py
+python3 tools/check_zfight.py --tolerance 0.003 \
+    src/artifacts/models/base/{cat,pig,dog,chicken,skeleton,knight,mage,villager,player,giant,crewmate}.py
 ```
 
 The tool reports every pair of **same-direction coplanar faces** whose parts
@@ -309,7 +309,7 @@ Register in `src/development/debug_capture.h`:
 
 Run with:
 ```bash
-./build/civcraft --skip-menu --debug-scenario my_scenario --debug-item base:sword
+./build/solarium-ui-vk --skip-menu --debug-scenario my_scenario --debug-item base:sword
 ```
 
 ---
@@ -318,7 +318,7 @@ Run with:
 
 ```
 src/platform/development/scenario.h              ← IScenario interface + ScenarioCallbacks
-src/CivCraft/development/
+src/platform/development/
   debug_capture.h                                 ← coordinator; registers scenarios
   item_views_scenario.h                           ← fps/tps/rpg/rts/ground shots for items
   animation_scenario.h                            ← progressive swing-frame capture

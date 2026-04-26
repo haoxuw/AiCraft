@@ -174,11 +174,216 @@ void drawLoadingBar(rhi::IRhi* R, const LoadingScreen& ls, float wallTime) {
 // Main menu (pre-game)
 // ─────────────────────────────────────────────────────────────────────
 void MenuRenderer::renderMenu() {
-	// Gutted in CEF migration: the main menu, character select, multiplayer
-	// browser, settings, handbook, and connecting/loading UI are now driven
-	// by the CEF HTML overlay (see docs/CEF_UI.md). Game::m_cefMenuActive
-	// also short-circuits the call site, but we no-op here as defense in
-	// depth so future paths can't accidentally re-summon the bitmap menu.
+	// CEF owns the main title + connecting/loading; this function only renders
+	// legacy panels CEF doesn't have HTML replacements for: CharacterSelect,
+	// Multiplayer (LAN browser), Handbook, Settings. Game::m_cefMenuActive
+	// gates the call site, so we only get here when CEF has been dismissed.
+	Game& g = game_;
+	rhi::IRhi* R = g.m_rhi;
+	MenuListInput in{R, g.m_window, g.m_mouseNdcX, g.m_mouseNdcY, g.m_mouseLReleased};
+
+	// ESC: from any sub-screen, hand control back to the CEF main title.
+	bool escPressed = ui::keyEdge(g.m_window, GLFW_KEY_ESCAPE);
+	if (escPressed && g.m_menuScreen != MenuScreen::Main) {
+		if (g.m_menuScreen == MenuScreen::Connecting) {
+			if (g.m_server) g.m_server->disconnect();
+			g.m_connecting = false;
+		}
+		g.m_menuScreen = MenuScreen::Main;
+		g.setCefMenuActive(true);
+		return;
+	}
+
+	switch (g.m_menuScreen) {
+	case MenuScreen::Main:
+	case MenuScreen::Connecting:
+		return;  // CEF-owned
+
+	case MenuScreen::CharacterSelect: {
+		g.m_shell.title = "Choose Your Character";
+		g.m_shell.drawChrome(R);
+
+		struct PlayableItem { std::string id, name; };
+		std::vector<PlayableItem> playables;
+		for (auto* e : g.m_artifactRegistry.byCategory("living")) {
+			auto it = e->fields.find("playable");
+			if (it == e->fields.end()) continue;
+			if (it->second != "True" && it->second != "true") continue;
+			playables.push_back({e->id, e->name});
+		}
+		std::sort(playables.begin(), playables.end(),
+			[](const PlayableItem& a, const PlayableItem& b) { return a.name < b.name; });
+
+		auto L = g.m_shell.leftBar();
+		const float listRowH = 0.070f;
+		const float listTop  = L.y + L.h - 0.115f - listRowH - 0.020f;
+		const float listCx   = L.x + L.w * 0.5f;
+		const float listRowW = L.w - 0.060f;
+
+		if (playables.empty()) {
+			ui::drawCenteredText(R, "No playable livings registered.",
+				listCx, listTop - 0.04f, 0.85f, kDanger);
+		} else {
+			std::vector<std::string> names;
+			names.reserve(playables.size());
+			for (auto& p : playables) names.push_back(p.name);
+			static int cursor = 0;
+			int picked = drawMenuList(in, names, cursor,
+				listCx, listTop, listRowH, listRowW);
+			if (cursor >= 0 && cursor < (int)playables.size())
+				g.m_shell.previewId = playables[cursor].id;
+			if (picked >= 0 && picked < (int)playables.size()) {
+				if (g.beginConnectAs(playables[picked].id))
+					g.m_menuScreen = MenuScreen::Connecting;
+			}
+		}
+		if (!g.m_connectError.empty())
+			ui::drawCenteredText(R, g.m_connectError.c_str(),
+				listCx, L.y + 0.050f, 0.65f, kDanger);
+
+		auto B = g.m_shell.bottomBar();
+		const float btnW = 0.18f, btnH = B.h - 0.040f;
+		const float btnX = B.x + 0.020f, btnY = B.y + (B.h - btnH) * 0.5f;
+		static int backCursor = 0;
+		std::vector<std::string> backItems = { "BACK" };
+		if (drawMenuList(in, backItems, backCursor,
+		                 btnX + btnW * 0.5f, btnY + btnH, btnH, btnW) == 0) {
+			g.m_menuScreen = MenuScreen::Main;
+			g.setCefMenuActive(true);
+		}
+		const float hintY = B.y + B.h * 0.5f - ui::kCharHNdc * 0.60f * 0.5f;
+		const char* navHint = "[Up/Down] Select   [Enter] Play   [Esc] Back";
+		float hintW = ui::textWidthNdc(std::strlen(navHint), 0.65f);
+		R->drawText2D(navHint, B.x + B.w - hintW - 0.028f, hintY, 0.65f, kTextDim);
+
+		if (!g.m_shell.previewId.empty()) {
+			const ArtifactEntry* entry = g.m_artifactRegistry.findById(g.m_shell.previewId);
+			if (entry) {
+				auto P = g.m_shell.previewArea();
+				const float cardW = 0.44f, cardH = 0.36f;
+				const float cardX = P.x + 0.040f, cardY = P.y + 0.030f;
+				const float cardFill[4]   = {0.07f, 0.06f, 0.06f, 0.72f};
+				const float cardShadow[4] = {0.00f, 0.00f, 0.00f, 0.40f};
+				const float brass[4]      = {0.72f, 0.54f, 0.22f, 0.90f};
+				ui::drawShadowPanel(R, cardX, cardY, cardW, cardH,
+				                    cardShadow, cardFill, brass, 0.003f);
+				ui::drawCenteredText(R, entry->name.c_str(),
+					cardX + cardW * 0.5f, cardY + cardH - 0.062f, 0.95f, kText);
+
+				struct StatRow { const char* label; const char* key; };
+				static const StatRow kRows[] = {
+					{"STR", "stats_strength"}, {"STA", "stats_stamina"},
+					{"AGI", "stats_agility"},  {"INT", "stats_intelligence"},
+				};
+				constexpr float kBarMax = 5.0f;
+				const float kBarFill[4]   = {0.96f, 0.82f, 0.40f, 1.0f};
+				const float kBarBg[4]     = {0.08f, 0.08f, 0.10f, 0.75f};
+				const float kBarBorder[4] = {0.50f, 0.38f, 0.20f, 0.90f};
+				float rowY = cardY + cardH - 0.138f;
+				const float rowStep = 0.058f, labelX = cardX + 0.034f;
+				const float barX = cardX + 0.108f, barW = cardW - 0.208f, barH = 0.024f;
+				for (auto& row : kRows) {
+					auto it = entry->fields.find(row.key);
+					float frac = 0.0f; int val = 0;
+					if (it != entry->fields.end()) {
+						try { val = std::stoi(it->second); } catch (...) { val = 0; }
+						frac = std::min(1.0f, (float)val / kBarMax);
+					}
+					R->drawText2D(row.label, labelX, rowY, 0.60f, kText);
+					ui::drawMeter(R, barX, rowY, barW, barH, frac,
+					              kBarFill, kBarBg, kBarBorder);
+					char num[8];
+					std::snprintf(num, sizeof(num), "%d", val);
+					R->drawText2D(num, barX + barW + 0.013f, rowY, 0.60f, kTextDim);
+					rowY -= rowStep;
+				}
+			}
+		}
+		break;
+	}
+
+	case MenuScreen::Multiplayer: {
+		drawMenuFrame(R, -0.50f, -0.60f, 1.00f, 1.12f, "LAN Servers");
+		const auto& servers = g.m_lanBrowser.servers();
+		if (!g.m_lanBrowser.listening()) {
+			ui::drawCenteredText(R, "Could not bind UDP 7778 for discovery.",
+				0.0f, 0.34f, 0.80f, kDanger);
+			ui::drawCenteredText(R, "Fall back to: solarium-ui-vk --host HOST --port PORT",
+				0.0f, 0.26f, 0.65f, kTextHint);
+		} else if (servers.empty()) {
+			ui::drawCenteredText(R, "Scanning for servers...",
+				0.0f, 0.34f, 0.90f, kText);
+			ui::drawCenteredText(R, "Servers broadcast every 2s on UDP 7778.",
+				0.0f, 0.26f, 0.65f, kTextHint);
+		} else {
+			char hdr[64];
+			std::snprintf(hdr, sizeof(hdr), "%zu server%s found",
+				servers.size(), servers.size() == 1 ? "" : "s");
+			ui::drawCenteredText(R, hdr, 0.0f, 0.34f, 0.80f, kTextDim);
+		}
+		std::vector<std::string> items;
+		items.reserve(servers.size() + 1);
+		for (const auto& s : servers) {
+			char row[128];
+			std::snprintf(row, sizeof(row), "%s:%d   (%d player%s)",
+				s.ip.c_str(), s.port, s.humans, s.humans == 1 ? "" : "s");
+			items.emplace_back(row);
+		}
+		items.emplace_back("BACK");
+		static int cursor = 0;
+		int picked = drawMenuList(in, items, cursor, 0.0f, 0.18f, 0.085f, 0.84f);
+		int backIdx = (int)items.size() - 1;
+		if (picked == backIdx) {
+			g.m_menuScreen = MenuScreen::Main;
+			g.setCefMenuActive(true);
+			cursor = 0;
+		} else if (picked >= 0 && picked < (int)servers.size()) {
+			const auto& chosen = servers[picked];
+			if (auto* net = dynamic_cast<solarium::NetworkServer*>(g.m_server)) {
+				net->setTarget(chosen.ip, chosen.port);
+				g.m_connectError.clear();
+				g.m_menuScreen = MenuScreen::CharacterSelect;
+				cursor = 0;
+			} else {
+				g.m_connectError = "client has no network transport";
+			}
+		}
+		break;
+	}
+
+	case MenuScreen::Handbook:
+		g.m_handbook.render(g);
+		break;
+
+	case MenuScreen::Settings: {
+		drawMenuFrame(R, -0.40f, -0.42f, 0.80f, 1.00f, "Controls");
+		struct KV { const char* k; const char* v; };
+		const KV kvs[] = {
+			{"Move",           "WASD"},        {"Jump",           "Space"},
+			{"Sprint",         "Shift"},       {"Look",           "Mouse"},
+			{"Attack / Place", "LMB / RMB"},   {"Drop",           "Q"},
+			{"Inventory",      "Tab"},         {"Handbook",       "H"},
+			{"Camera",         "V"},           {"Pause",          "Esc"},
+			{"Debug / Tuning", "F3 / F6"},     {"Screenshot",     "F2"},
+		};
+		float y = 0.40f;
+		for (const auto& kv : kvs) {
+			char buf[96];
+			std::snprintf(buf, sizeof(buf), "%-16s %s", kv.k, kv.v);
+			ui::drawCenteredText(R, buf, 0.0f, y, 0.75f, kText);
+			y -= 0.040f;
+		}
+		static int cursor = 0;
+		std::vector<std::string> items = { "BACK" };
+		int picked = drawMenuList(in, items, cursor, 0.0f, -0.24f, 0.100f, 0.40f);
+		if (picked == 0) {
+			g.m_menuScreen = MenuScreen::Main;
+			g.setCefMenuActive(true);
+			cursor = 0;
+		}
+		break;
+	}
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────

@@ -530,7 +530,7 @@ lets you change *how*). Worth including in the replacement spec.
 - **`CreatureConfig`** — per-creature `{typeId, behaviorId,
   customBehavior, startItems}`.
 - **`BehaviorCompiler`** — emits Python `decide(self, world)` from the
-  tree. Emits `from civcraft_engine import Idle, Wander, MoveTo,
+  tree. Emits `from solarium_engine import Idle, Wander, MoveTo,
   Follow, Flee, BreakBlock, DropItem`. Round-trips cleanly.
 
 ### UI (`BehaviorExprEditor`)
@@ -644,7 +644,7 @@ lets you change *how*). Worth including in the replacement spec.
 ## 5. Replacement tech notes
 
 - **Parallel binary**: per `vulkan_migration.md`, the new Handbook
-  ships inside `civcraft-ui-vk` alongside the GL `civcraft-ui` until
+  ships inside `solarium-ui-vk` alongside the GL `solarium-ui` until
   parity is proven. Both exist.
 - **Toolkit decision**: the Handbook is the biggest UI surface in the
   game. Staying on ImGui gives us reuse across both binaries and keeps

@@ -39,7 +39,6 @@ struct Shell {
 	solarium::rhi::IRhi*       rhi = nullptr;
 	solarium::vk::Game*        game = nullptr;
 	solarium::vk::CefHost*     cef = nullptr;  // optional; null when --cef-menu absent
-	std::atomic<bool>*         cefActive = nullptr;  // gates mouse forwarding
 };
 
 void resizeCb(GLFWwindow* w, int width, int height) {
@@ -65,12 +64,12 @@ void keyCb(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) {
 // Route GLFW pointer input to CEF only while the overlay is active.
 void cursorPosCb(GLFWwindow* w, double x, double y) {
 	auto* s = (Shell*)glfwGetWindowUserPointer(w);
-	if (s && s->cef && s->cefActive && s->cefActive->load())
+	if (s && s->cef && s->game && s->game->cefMenuActive())
 		s->cef->sendMouseMove((int)x, (int)y);
 }
 void mouseBtnCb(GLFWwindow* w, int button, int action, int /*mods*/) {
 	auto* s = (Shell*)glfwGetWindowUserPointer(w);
-	if (!s || !s->cef || !s->cefActive || !s->cefActive->load()) return;
+	if (!s || !s->cef || !s->game || !s->game->cefMenuActive()) return;
 	int b = (button == GLFW_MOUSE_BUTTON_RIGHT) ? 2
 	       : (button == GLFW_MOUSE_BUTTON_MIDDLE) ? 1 : 0;
 	double x, y; glfwGetCursorPos(w, &x, &y);
@@ -117,7 +116,7 @@ int main(int argc, char** argv) {
 	int  cefClickX = -1, cefClickY = -1;  // --cef-click=X,Y: synthetic click 1s after hover
 	// Toggled false by the action callback to dismiss the overlay so the user
 	// sees the native menu/game underneath (demos the bridge controlling state).
-	std::atomic<bool> cefOverlayActive{true};
+	// (cefOverlayActive removed — game.cefMenuActive() is the sole gate.)
 	std::string host = "127.0.0.1"; // --host: server hostname
 	int  port = 0;                  // --port: server port (0 = spawn local)
 	int  templateIndex = 0;         // --template: world template (default village)
@@ -378,6 +377,7 @@ int main(int argc, char** argv) {
 				"<div class='tag'>A voxel sandbox civilization</div>"
 				"<button class='btn' onclick=\"send('singleplayer')\">Singleplayer</button>"
 				"<button class='btn' onclick=\"send('multiplayer')\">Multiplayer</button>"
+				"<button class='btn' onclick=\"send('handbook')\">Handbook</button>"
 				"<button class='btn' onclick=\"send('settings')\">Settings</button>"
 				"<button class='btn' onclick=\"send('quit')\">Quit</button>"
 				"<div id='s' style='margin-top:24px;font-size:16px;color:%23b88838;letter-spacing:2px;min-height:20px;text-shadow:0 1px 3px rgba(0,0,0,0.85)'></div>"
@@ -391,20 +391,26 @@ int main(int argc, char** argv) {
 		cefHost = std::make_unique<solarium::vk::CefHost>(fbw, fbh);
 		// CEF overlay is replacing the native menu UI for this run.
 		game.setCefMenuActive(true);
-		cefHost->setActionCallback([win, &game,
-		                            &cefOverlayActive = cefOverlayActive](
+		cefHost->setActionCallback([win, &game](
 		                              const std::string& action) {
+			using MS = solarium::vk::MenuScreen;
 			std::printf("[cef] action: %s\n", action.c_str());
+			MS target = MS::Main;
+			bool dismiss = false;
 			if (action == "quit") {
 				glfwSetWindowShouldClose(win, GLFW_TRUE);
+				return;
 			} else if (action == "singleplayer") {
-				// Kick the engine into its Connecting → Playing flow.
-				game.skipMenu();
-				cefOverlayActive.store(false);
-				game.setCefMenuActive(false);
-			} else if (action == "multiplayer" || action == "settings") {
-				// Stub: hand off to native UI underneath.
-				cefOverlayActive.store(false);
+				target = MS::CharacterSelect; dismiss = true;
+			} else if (action == "multiplayer") {
+				target = MS::Multiplayer;     dismiss = true;
+			} else if (action == "handbook") {
+				target = MS::Handbook;        dismiss = true;
+			} else if (action == "settings") {
+				target = MS::Settings;        dismiss = true;
+			}
+			if (dismiss) {
+				game.setMenuScreen(target);
 				game.setCefMenuActive(false);
 			}
 		});
@@ -414,7 +420,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	Shell shell{ rhi.get(), &game, cefHost.get(), &cefOverlayActive };
+	Shell shell{ rhi.get(), &game, cefHost.get() };
 	glfwSetWindowUserPointer(win, &shell);
 	glfwSetFramebufferSizeCallback(win, resizeCb);
 	glfwSetScrollCallback(win, scrollCb);
@@ -455,10 +461,12 @@ int main(int argc, char** argv) {
 		}
 
 		// CEF: stage latest pixels while the overlay is active; otherwise
-		// disable RHI overlay drawing.
+		// disable RHI overlay drawing. Single source of truth is
+		// game.cefMenuActive() (atomic) — flipped by CEF action callback
+		// (dismiss) and by native ESC handlers (re-show on return to Main).
 		if (cefHost) {
 			static int kick = 0;
-			if (cefOverlayActive.load()) {
+			if (game.cefMenuActive()) {
 				if (++kick % 30 == 0) cefHost->invalidate();
 				static std::vector<uint8_t> cefBuf;
 				int cw = 0, ch = 0;
