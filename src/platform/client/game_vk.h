@@ -216,6 +216,13 @@ public:
 	const solarium::LanBrowser&       lanBrowser()       const { return m_lanBrowser; }
 	solarium::ServerInterface*        server()                 { return m_server; }
 
+	// Preview on the menu plaza. When set + menuScreen is CharacterSelect /
+	// Connecting / Handbook, the world renderer injects this artifact's model
+	// at world (0,1,0) and the camera pins to face it. Empty string means no
+	// preview (camera reverts to ambient orbit).
+	void               setPreviewId(const std::string& id) { m_shell.previewId = id; }
+	const std::string& previewId() const                   { return m_shell.previewId; }
+
 	// Poll input, step sim, render one frame.
 	void runOneFrame(float dt, float wallTime);
 
