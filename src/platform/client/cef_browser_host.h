@@ -63,6 +63,11 @@ public:
 	// Useful as a kick when the first frames arrive empty.
 	void invalidate();
 
+	// Navigate the main frame to a new URL (data: or file: or scheme).
+	// Used to switch between menu pages (main → character-select → playing)
+	// without tearing down the browser. No-op until OnAfterCreated has fired.
+	void loadUrl(const std::string& url);
+
 	// Forward GLFW input to the browser. (x,y) are pixel coords inside the
 	// view. mouseLeave=true issues an OnMouseMove with leaveBoundary=true.
 	void sendMouseMove(int x, int y, bool mouseLeave = false);

@@ -210,6 +210,10 @@ public:
 	// native sub-screen (CharacterSelect / Multiplayer / Handbook / Settings).
 	void setMenuScreen(MenuScreen s) { m_menuScreen = s; }
 
+	// Read-only access for the CEF menu page builder, which renders the
+	// playable list into the character-select HTML at startup.
+	const solarium::ArtifactRegistry& artifactRegistry() const { return m_artifactRegistry; }
+
 	// Poll input, step sim, render one frame.
 	void runOneFrame(float dt, float wallTime);
 

@@ -348,30 +348,36 @@ int main(int argc, char** argv) {
 	// directly in a data: URL so the smoke path needs no server, no asset
 	// staging, and no civ:// scheme handler — those come in phase 2.
 	if (cefMenu && cefInitOk) {
-		if (cefUrl.empty()) {
-			// Body is transparent so the game (menu plaza, loading screen,
-			// gameplay) shows through. A subtle dark vignette behind the
-			// title + buttons keeps text readable without obscuring the scene.
-			cefUrl =
-				"data:text/html,"
-				"<html><head><style>"
-				"html,body{margin:0;height:100vh;background:transparent;"
-				"color:%23f0e0c0;font-family:Georgia,serif;"
-				"display:flex;flex-direction:column;align-items:center;justify-content:center}"
-				"body{background:radial-gradient(ellipse at center,"
-				"rgba(16,8,10,0.55) 0%%,rgba(16,8,10,0) 60%%)}"
-				"h1{color:%23f3c44c;font-size:96px;letter-spacing:10px;margin:0;"
-				"text-shadow:0 4px 24px rgba(0,0,0,0.85),0 0 18px rgba(243,196,76,0.35)}"
-				".tag{font-size:18px;letter-spacing:4px;opacity:0.85;margin:8px 0 60px;"
-				"text-transform:uppercase;text-shadow:0 2px 6px rgba(0,0,0,0.85)}"
-				".btn{display:block;width:280px;margin:8px 0;padding:14px 0;font-size:20px;"
-				"background:rgba(26,18,11,0.78);color:%23f3c44c;"
-				"border:1px solid %23b88838;font-family:inherit;cursor:pointer;"
-				"letter-spacing:3px;backdrop-filter:blur(2px);"
-				"transition:background 0.15s,transform 0.15s}"
-				".btn:hover{background:rgba(94,67,30,0.92);transform:scale(1.02)}"
-				".version{position:fixed;bottom:20px;right:30px;font-size:13px;opacity:0.6;"
-				"text-shadow:0 1px 3px rgba(0,0,0,0.85)}"
+		// Inline HTML for each menu page. CEF stays active across pages —
+		// loadUrl() navigates between them rather than dismissing. Only when
+		// the player picks a character (action "play:<id>") do we dismiss
+		// the overlay so the loading screen / world becomes visible.
+		const std::string kCss =
+			"html,body{margin:0;height:100vh;background:transparent;"
+			"color:%23f0e0c0;font-family:Georgia,serif;"
+			"display:flex;flex-direction:column;align-items:center;justify-content:center}"
+			"body{background:radial-gradient(ellipse at center,"
+			"rgba(16,8,10,0.55) 0%%,rgba(16,8,10,0) 60%%)}"
+			"h1{color:%23f3c44c;font-size:72px;letter-spacing:8px;margin:0 0 8px;"
+			"text-shadow:0 4px 24px rgba(0,0,0,0.85),0 0 18px rgba(243,196,76,0.35)}"
+			".tag{font-size:16px;letter-spacing:4px;opacity:0.85;margin:0 0 40px;"
+			"text-transform:uppercase;text-shadow:0 2px 6px rgba(0,0,0,0.85)}"
+			".btn{display:block;width:280px;margin:6px 0;padding:12px 0;font-size:18px;"
+			"background:rgba(26,18,11,0.78);color:%23f3c44c;"
+			"border:1px solid %23b88838;font-family:inherit;cursor:pointer;"
+			"letter-spacing:2px;backdrop-filter:blur(2px);"
+			"transition:background 0.15s,transform 0.15s}"
+			".btn:hover{background:rgba(94,67,30,0.92);transform:scale(1.02)}"
+			".back{margin-top:32px;width:160px;font-size:14px;opacity:0.85}"
+			".version{position:fixed;bottom:20px;right:30px;font-size:13px;opacity:0.6;"
+			"text-shadow:0 1px 3px rgba(0,0,0,0.85)}";
+		const std::string kJs =
+			"<script>function send(a){"
+			"window.cefQuery({request:'action:'+a,onSuccess:()=>{},onFailure:()=>{}});"
+			"}</script>";
+
+		auto mainPage = [&]() -> std::string {
+			return "data:text/html,<html><head><style>" + kCss +
 				"</style></head><body>"
 				"<h1>Solarium</h1>"
 				"<div class='tag'>A voxel sandbox civilization</div>"
@@ -380,38 +386,87 @@ int main(int argc, char** argv) {
 				"<button class='btn' onclick=\"send('handbook')\">Handbook</button>"
 				"<button class='btn' onclick=\"send('settings')\">Settings</button>"
 				"<button class='btn' onclick=\"send('quit')\">Quit</button>"
-				"<div id='s' style='margin-top:24px;font-size:16px;color:%23b88838;letter-spacing:2px;min-height:20px;text-shadow:0 1px 3px rgba(0,0,0,0.85)'></div>"
-				"<div class='version'>v0.2.0 / CEF 146</div>"
-				"<script>function send(a){"
-				"document.getElementById('s').textContent='action: '+a;"
-				"window.cefQuery({request:'action:'+a,onSuccess:()=>{},onFailure:()=>{}});"
-				"}</script>"
+				"<div class='version'>v0.2.0 / CEF 146</div>" + kJs +
 				"</body></html>";
-		}
+		};
+
+		auto charSelectPage = [&]() -> std::string {
+			std::string html = "data:text/html,<html><head><style>" + kCss +
+				".btn{width:340px}.btn small{display:block;font-size:12px;"
+				"opacity:0.65;margin-top:4px;letter-spacing:1px}"
+				"</style></head><body>"
+				"<h1>Choose Character</h1>"
+				"<div class='tag'>Pick your role in the realm</div>";
+			struct PlayableItem { std::string id, name, desc; };
+			std::vector<PlayableItem> playables;
+			for (auto* e : game.artifactRegistry().byCategory("living")) {
+				auto it = e->fields.find("playable");
+				if (it == e->fields.end()) continue;
+				if (it->second != "True" && it->second != "true") continue;
+				std::string desc;
+				auto dit = e->fields.find("description");
+				if (dit != e->fields.end()) desc = dit->second;
+				playables.push_back({e->id, e->name.empty() ? e->id : e->name, desc});
+			}
+			std::sort(playables.begin(), playables.end(),
+				[](const PlayableItem& a, const PlayableItem& b){return a.name < b.name;});
+			for (auto& p : playables) {
+				html += "<button class='btn' onclick=\"send('play:" + p.id + "')\">"
+				      + p.name;
+				if (!p.desc.empty()) html += "<small>" + p.desc + "</small>";
+				html += "</button>";
+			}
+			html += "<button class='btn back' onclick=\"send('back')\">Back</button>";
+			html += "<div class='version'>v0.2.0 / CEF 146</div>" + kJs;
+			html += "</body></html>";
+			return html;
+		};
+
+		auto placeholderPage = [&](const std::string& title,
+		                            const std::string& body) -> std::string {
+			return "data:text/html,<html><head><style>" + kCss +
+				"</style></head><body>"
+				"<h1>" + title + "</h1>"
+				"<div class='tag'>" + body + "</div>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>"
+				"<div class='version'>v0.2.0 / CEF 146</div>" + kJs +
+				"</body></html>";
+		};
+
+		// Captured by ref in the action callback below.
+		static std::string sMain   = mainPage();
+		static std::string sChar   = charSelectPage();
+		static std::string sMulti  = placeholderPage("Multiplayer", "LAN browser coming soon");
+		static std::string sHand   = placeholderPage("Handbook", "Handbook moving to HTML soon");
+		static std::string sSett   = placeholderPage("Settings", "Controls + tuning coming soon");
+
+		if (cefUrl.empty()) cefUrl = sMain;
+
 		cefHost = std::make_unique<solarium::vk::CefHost>(fbw, fbh);
-		// CEF overlay is replacing the native menu UI for this run.
 		game.setCefMenuActive(true);
-		cefHost->setActionCallback([win, &game](
-		                              const std::string& action) {
-			using MS = solarium::vk::MenuScreen;
+		auto* hostRaw = cefHost.get();
+		cefHost->setActionCallback([win, &game, hostRaw](const std::string& action) {
 			std::printf("[cef] action: %s\n", action.c_str());
-			MS target = MS::Main;
-			bool dismiss = false;
 			if (action == "quit") {
 				glfwSetWindowShouldClose(win, GLFW_TRUE);
-				return;
+			} else if (action == "back") {
+				hostRaw->loadUrl(sMain);
 			} else if (action == "singleplayer") {
-				target = MS::CharacterSelect; dismiss = true;
+				hostRaw->loadUrl(sChar);
 			} else if (action == "multiplayer") {
-				target = MS::Multiplayer;     dismiss = true;
+				hostRaw->loadUrl(sMulti);
 			} else if (action == "handbook") {
-				target = MS::Handbook;        dismiss = true;
+				hostRaw->loadUrl(sHand);
 			} else if (action == "settings") {
-				target = MS::Settings;        dismiss = true;
-			}
-			if (dismiss) {
-				game.setMenuScreen(target);
-				game.setCefMenuActive(false);
+				hostRaw->loadUrl(sSett);
+			} else if (action.rfind("play:", 0) == 0) {
+				// "play:guy" — pick character, kick into Connecting flow,
+				// dismiss CEF so the world becomes visible.
+				std::string id = action.substr(5);
+				if (game.beginConnectAs(id)) {
+					game.setMenuScreen(solarium::vk::MenuScreen::Connecting);
+					game.setCefMenuActive(false);
+				}
 			}
 		});
 		if (!cefHost->start(cefUrl)) {

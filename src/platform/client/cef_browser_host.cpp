@@ -241,6 +241,12 @@ void CefHost::invalidate() {
 	if (m_browser) m_browser->GetHost()->Invalidate(PET_VIEW);
 }
 
+void CefHost::loadUrl(const std::string& url) {
+	if (!m_browser) return;
+	auto frame = m_browser->GetMainFrame();
+	if (frame) frame->LoadURL(url);
+}
+
 void CefHost::sendMouseMove(int x, int y, bool mouseLeave) {
 	if (!m_browser) return;
 	CefMouseEvent ev;
