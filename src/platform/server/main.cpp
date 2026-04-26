@@ -193,6 +193,7 @@ std::vector<std::shared_ptr<civcraft::WorldTemplate>> buildWorldTemplates() {
 		std::make_shared<T>("artifacts/worlds/base/test_villager.py"),
 		std::make_shared<T>("artifacts/worlds/base/test_chicken.py"),
 		std::make_shared<T>("artifacts/worlds/base/perf_stress.py"),
+		std::make_shared<T>("artifacts/worlds/base/toronto.py"),   // --template 6
 	};
 }
 

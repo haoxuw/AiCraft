@@ -21,8 +21,17 @@ struct WorldPyConfig {
 	std::string name;
 	std::string description;
 
-	std::string terrainType      = "natural";  // "flat" | "natural"
+	std::string terrainType      = "natural";  // "flat" | "natural" | "voxel_earth"
 	float surfaceY               = 4.0f;       // flat only
+
+	// voxel_earth only: absolute path to a baked VEAR region file (see
+	// civcraft-voxel-bake). Coords inside the file are voxel cells = 1 block.
+	std::string voxelEarthRegion;
+	// World-block offset added when looking up voxels. lets you shift the
+	// region's (0,0,0) anywhere in CivCraft world space.
+	int voxelEarthOffsetX        = 0;
+	int voxelEarthOffsetY        = 60;   // park ground around y=60 by default
+	int voxelEarthOffsetZ        = 0;
 
 	float continentScale         = 0.004f;
 	float continentAmplitude     = 18.0f;

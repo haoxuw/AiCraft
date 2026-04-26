@@ -58,6 +58,17 @@ public:
 	              int mode,
 	              const float rgba[4]) override;
 
+	void blitCefImage(const uint8_t* bgra, int width, int height) override;
+
+private:
+	// Per-frame helpers: upload runs OUTSIDE the render pass (transfer op),
+	// overlayDraw runs INSIDE it (sampled-image fullscreen quad with alpha
+	// blend). Both no-op if no CEF blit is pending or the image isn't ready.
+	bool ensureCefResources();
+	void recordCefUpload(VkCommandBuffer cb);
+	void recordCefOverlay(VkCommandBuffer cb);
+public:
+
 	MeshHandle createVoxelMesh(const float* instances,
 	                           uint32_t instanceCount) override;
 	void       updateVoxelMesh(MeshHandle mesh,
@@ -285,6 +296,33 @@ private:
 	void* m_uiVtxMapped[kFramesInFlight]{};
 	VkDeviceSize m_uiVtxCap[kFramesInFlight]{};
 	VkDeviceSize m_uiVtxCursor[kFramesInFlight]{};
+
+	// CEF overlay: sampled BGRA image + per-FIF staging + alpha-blend pipeline.
+	VkBuffer              m_cefStaging[kFramesInFlight]{};
+	VkDeviceMemory        m_cefStagingMem[kFramesInFlight]{};
+	void*                 m_cefStagingMapped[kFramesInFlight]{};
+	VkDeviceSize          m_cefStagingCap[kFramesInFlight]{};
+	int                   m_cefBlitW = 0;
+	int                   m_cefBlitH = 0;
+	bool                  m_cefBlitPending = false;
+	bool                  m_cefOverlayEnabled = false;
+
+	// Sampled image used by the overlay draw. Allocated lazily on first
+	// blit; recreated when dimensions change.
+	VkImage               m_cefImage = VK_NULL_HANDLE;
+	VkDeviceMemory        m_cefImageMem = VK_NULL_HANDLE;
+	VkImageView           m_cefImageView = VK_NULL_HANDLE;
+	VkSampler             m_cefSampler = VK_NULL_HANDLE;
+	int                   m_cefImageW = 0;
+	int                   m_cefImageH = 0;
+	VkImageLayout         m_cefImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+	// Single descriptor set + pipeline for the cef_overlay shader.
+	VkDescriptorSetLayout m_cefDescLayout = VK_NULL_HANDLE;
+	VkDescriptorPool      m_cefDescPool = VK_NULL_HANDLE;
+	VkDescriptorSet       m_cefDescSet = VK_NULL_HANDLE;
+	VkPipelineLayout      m_cefPipeLayout = VK_NULL_HANDLE;
+	VkPipeline            m_cefPipeline = VK_NULL_HANDLE;
 	// Deferred-destroy for any per-frame buffer that was replaced by a
 	// grow (UI vtx, box-shadow inst, particle inst, ribbon vtx). The old
 	// buffer may still be bound to this frame's cmdbuf via an earlier

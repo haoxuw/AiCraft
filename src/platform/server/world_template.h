@@ -8,8 +8,11 @@
 #include "server/world_gen_config.h"
 #include "python/python_bridge.h"
 #include "server/world_accessibility.h"
+#include "server/voxel_earth/palette.h"
+#include "server/voxel_earth/region.h"
 #include <string>
 #include <cmath>
+#include <memory>
 #include <unordered_map>
 #include <cstdio>
 
@@ -75,6 +78,25 @@ public:
 		m_tp.detailAmplitude    = m_py.detailAmplitude;
 		m_tp.microScale         = m_py.microScale;
 		m_tp.microAmplitude     = m_py.microAmplitude;
+
+		// Eager-load voxel_earth region (one read per world). The same template
+		// instance is reused for every chunk request, so this stays cached.
+		if (m_py.terrainType == "voxel_earth" && !m_py.voxelEarthRegion.empty()) {
+			m_region = std::make_unique<voxel_earth::VoxelRegion>();
+			std::string err;
+			if (voxel_earth::read_region(m_py.voxelEarthRegion, *m_region, &err)) {
+				m_region->build_index();
+				printf("[VoxelEarth] loaded %s — %zu voxels, bbox(%d,%d,%d)..(%d,%d,%d)\n",
+				       m_py.voxelEarthRegion.c_str(),
+				       m_region->voxels.size(),
+				       m_region->bbox_min[0], m_region->bbox_min[1], m_region->bbox_min[2],
+				       m_region->bbox_max[0], m_region->bbox_max[1], m_region->bbox_max[2]);
+			} else {
+				printf("[VoxelEarth] failed to load region '%s': %s\n",
+				       m_py.voxelEarthRegion.c_str(), err.c_str());
+				m_region.reset();
+			}
+		}
 	}
 
 	std::string name()        const override { return m_py.name.empty() ? "World" : m_py.name; }
@@ -84,12 +106,41 @@ public:
 
 	float surfaceHeight(int seed, float x, float z) const override {
 		if (m_py.terrainType == "flat") return m_py.surfaceY;
+		if (m_py.terrainType == "voxel_earth") return (float)m_py.voxelEarthOffsetY;
 		return naturalTerrainHeight(seed, x, z, m_tp);
 	}
 
 	glm::vec3 preferredSpawn(int seed) const override {
 		// Portal world: spawn at platform (groundY + kPlatH), arch-interior center.
 		// Portal-less: directly on top of bare spawn block.
+		if (m_py.terrainType == "voxel_earth") {
+			// Drop the player on the ground 15 blocks east of the tallest voxel
+			// column — that's the foot of whatever the dominant landmark is in
+			// this bake (CN Tower for Toronto, etc.). Falls back to region
+			// center if no region is loaded.
+			if (!m_region || m_region->voxels.empty()) {
+				return { (float)m_py.voxelEarthOffsetX + 0.5f,
+				         (float)(m_py.voxelEarthOffsetY + 80),
+				         (float)m_py.voxelEarthOffsetZ + 0.5f };
+			}
+			int top_x = 0, top_z = 0, top_y = m_region->bbox_min[1];
+			for (const auto& v : m_region->voxels) {
+				if (static_cast<int>(v.y) > top_y) {
+					top_y = v.y; top_x = v.x; top_z = v.z;
+				}
+			}
+			const int spawn_rx = top_x + 15;   // 15m offset from the tower
+			const int spawn_rz = top_z;
+			int ground_ry = m_region->bbox_min[1];
+			for (int y = m_region->bbox_max[1]; y >= m_region->bbox_min[1]; --y) {
+				if (m_region->lookup(spawn_rx, y, spawn_rz)) { ground_ry = y; break; }
+			}
+			return {
+				(float)(m_py.voxelEarthOffsetX + spawn_rx) + 0.5f,
+				(float)(m_py.voxelEarthOffsetY + ground_ry + 2),
+				(float)(m_py.voxelEarthOffsetZ + spawn_rz) + 0.5f,
+			};
+		}
 		float gY, sx, sz;
 		if (m_py.terrainType == "flat") {
 			gY = m_py.surfaceY;
@@ -255,6 +306,12 @@ public:
 	void generate(Chunk& chunk, ChunkPos cpos, int seed,
 	              const BlockRegistry& blocks,
 	              std::vector<PendingStructureSpawn>* pendingSpawns = nullptr) override {
+		// Voxel-earth chunks read straight from the baked region; no Perlin,
+		// no village stamping. Bedrock (stone) below the region floor, air above.
+		if (m_py.terrainType == "voxel_earth" && m_region) {
+			generateVoxelEarthChunk(chunk, cpos, blocks);
+			return;
+		}
 		BlockId bStone  = blocks.getId(BlockType::Stone);
 		BlockId bDirt   = blocks.getId(BlockType::Dirt);
 		BlockId bGrass  = blocks.getId(BlockType::Grass);
@@ -544,6 +601,40 @@ public:
 private:
 	WorldPyConfig m_py;
 	TerrainParams m_tp;
+
+	// voxel_earth state — null when terrainType != "voxel_earth".
+	std::unique_ptr<voxel_earth::VoxelRegion> m_region;
+	mutable voxel_earth::ResolvedPalette       m_palette;
+	mutable bool                               m_paletteResolved = false;
+
+	void generateVoxelEarthChunk(Chunk& chunk, ChunkPos cpos, const BlockRegistry& blocks) const {
+		if (!m_paletteResolved) {
+			m_palette.resolve(blocks);
+			m_paletteResolved = true;
+		}
+		const BlockId bStone = blocks.getId(BlockType::Stone);
+		const int ox = cpos.x * CHUNK_SIZE;
+		const int oy = cpos.y * CHUNK_SIZE;
+		const int oz = cpos.z * CHUNK_SIZE;
+		const int floor_y = m_py.voxelEarthOffsetY + m_region->bbox_min[1];
+		for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
+			for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
+				for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
+					const int wx = ox + lx;
+					const int wy = oy + ly;
+					const int wz = oz + lz;
+					// Below the region: solid stone so the player has ground to stand on.
+					if (wy < floor_y) { chunk.set(lx, ly, lz, bStone); continue; }
+					const int rx = wx - m_py.voxelEarthOffsetX;
+					const int ry = wy - m_py.voxelEarthOffsetY;
+					const int rz = wz - m_py.voxelEarthOffsetZ;
+					const auto* v = m_region->lookup(rx, ry, rz);
+					if (!v) continue;  // air
+					chunk.set(lx, ly, lz, voxel_earth::nearest_block_id(m_palette, v->r, v->g, v->b));
+				}
+			}
+		}
+	}
 
 	float groundHeight(int seed, float x, float z) const {
 		if (m_py.terrainType == "flat") return m_py.surfaceY;

@@ -920,7 +920,8 @@ void Game::runOneFrame(float dt, float wallTime) {
 		}
 		m_worldRenderer.renderWorld(wallTime);
 		m_worldRenderer.renderEffects(wallTime);
-		m_menuRenderer.renderMenu();
+		// Skip native menu UI when CEF overlay is providing the menu.
+		if (!m_cefMenuActive) m_menuRenderer.renderMenu();
 	} else if (m_state == GameState::Playing) {
 		m_worldRenderer.renderWorld(wallTime);
 		m_frameProbe.mark("world");
@@ -1054,7 +1055,12 @@ void Game::runOneFrame(float dt, float wallTime) {
 				               (double)m_server->entityCount());
 		}
 #endif
-		if (totalMs > m_frameProbe.spikeMs && !m_frameProbe.sections.empty()) {
+		// Same gate as the histograms above — spikes during menu/loading/
+		// pre-S_READY are expected (chunk streaming, mesh upload bursts) and
+		// just spam the console.
+		bool perfActive = m_state == GameState::Playing
+		                  && m_server && m_server->isServerReady();
+		if (perfActive && totalMs > m_frameProbe.spikeMs && !m_frameProbe.sections.empty()) {
 			char line[512]; int n = 0;
 			n += std::snprintf(line + n, sizeof(line) - n, "[perf-spike] %.1fms", totalMs);
 			for (auto& [name, ms] : m_frameProbe.sections)

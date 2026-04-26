@@ -18,7 +18,7 @@ GAME := civcraft
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test perf_fps perf_server flamegraph llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken toronto world debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox civcraft crafter bbmodel sample pathfinding_test perf_fps perf_server flamegraph llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean cef_setup cef_clean cef_demo demo
 
 # ── Native (CivCraft) ───────────────────────────────────────
 #
@@ -207,6 +207,18 @@ endif
 game: game-build
 	$(call launch,$(if $(GAME_VILLAGERS),--villagers $(GAME_VILLAGERS)) $(if $(GAME_PORT),--port $(GAME_PORT)) $(if $(TERMINATE_AFTER_S),--terminate-after $(TERMINATE_AFTER_S)))
 
+# Visible-window demo of the CEF HTML menu. No --log-only, no --skip-menu.
+# Click Singleplayer/Multiplayer/Settings to dismiss the overlay (reveals
+# native UI underneath). Click Quit to exit.
+cef_demo: game-build
+	cd $(GAME_BUILD_DIR) && ./civcraft-ui-vk --cef-menu 2>&1 | tee $(GAME_LOG)
+
+# Primary demo entry point. CEF HTML menu overlays the live menu plaza;
+# clicking Singleplayer drives the engine's normal Connecting→Playing flow.
+# Quit closes the window cleanly. Same as cef_demo today; the alias is
+# intended to stay stable as the demo grows.
+demo: cef_demo
+
 profiler: game-build
 	$(call launch,--profiler $(if $(GAME_PORT),--port $(GAME_PORT)))
 
@@ -219,6 +231,23 @@ test-villager: game-build
 
 test-chicken: game-build
 	$(call launch,--template 4)
+
+# Voxel Earth demo: walk around a baked slab of Toronto.
+# First-time setup (one-off):
+#   python -m voxel_earth set-key <YOUR_GOOGLE_MAPS_KEY>
+#   python -m voxel_earth download --location "Toronto" --radius 100
+#   ./build/civcraft-voxel-bake --glb-dir ~/.voxel/google/glb \
+#                                --out     ~/.voxel/regions/toronto/blocks.bin
+# Then: `make toronto` (or its alias `make world`).
+toronto: game-build
+	@if [ ! -f $(HOME)/.voxel/regions/toronto/blocks.bin ]; then \
+	  echo "[toronto] missing $(HOME)/.voxel/regions/toronto/blocks.bin"; \
+	  echo "          run the bake recipe at the top of the toronto: target."; \
+	  exit 1; \
+	fi
+	$(call launch,--template 6)
+
+world: toronto
 
 # Isolated single-villager behavior smoke: 1 villager, village world, 4× sim,
 # hidden window, tee event stream to /tmp/civcraft_game.log. Use for
@@ -576,6 +605,45 @@ llm_stop:
 
 llm_clean:
 	rm -rf $(LLM_DIR)
+
+# ── Chromium Embedded Framework (CEF) ──────────────────────────────────────
+#
+# `make cef_setup` downloads the minimal CEF binary distribution into
+# third_party/cef/. The directory is gitignored (~1.4 GB extracted, 290 MB
+# tarball). civcraft-ui-vk links libcef.so + libcef_dll_wrapper, and CEF's
+# subprocess children re-exec ./civcraft-cef-subprocess (built alongside).
+#
+# Linux x64 only today. macOS/Windows tarballs differ + need helper-app
+# bundles — see docs/CEF_UI_PLAN.md §2.
+CEF_DIR     := third_party/cef
+CEF_CACHE   := $(GAME_BUILD_DIR)/_cef_cache
+CEF_VERSION := 146.0.12+g6214c8e+chromium-146.0.7680.179
+CEF_TARBALL := cef_binary_$(CEF_VERSION)_linux64_minimal.tar.bz2
+CEF_URL     := https://cef-builds.spotifycdn.com/$(subst +,%2B,$(CEF_TARBALL))
+CEF_SHA1    := b35f2607b5b9cd91550920c3f8cf04b46e319195
+
+cef_setup:
+	@if [ -f $(CEF_DIR)/Release/libcef.so ]; then \
+		echo "[cef] already extracted at $(CEF_DIR) — skipping"; exit 0; \
+	fi
+	@mkdir -p $(CEF_CACHE) $(CEF_DIR)
+	@if [ ! -f $(CEF_CACHE)/cef.tar.bz2 ]; then \
+		echo "[cef] downloading minimal binary distribution ($(CEF_VERSION))…"; \
+		curl -L --fail --progress-bar -o $(CEF_CACHE)/cef.tar.bz2.part "$(CEF_URL)" \
+		  && mv $(CEF_CACHE)/cef.tar.bz2.part $(CEF_CACHE)/cef.tar.bz2; \
+	else \
+		echo "[cef] tarball already cached — skipping download"; \
+	fi
+	@echo "[cef] verifying SHA1…"
+	@echo "$(CEF_SHA1)  $(CEF_CACHE)/cef.tar.bz2" | sha1sum -c - \
+		|| (echo "[cef] SHA1 mismatch — delete $(CEF_CACHE)/cef.tar.bz2 and retry" >&2; exit 1)
+	@echo "[cef] extracting into $(CEF_DIR)/ (1.4 GB, takes ~30 s)…"
+	@tar -xjf $(CEF_CACHE)/cef.tar.bz2 -C $(CEF_DIR) --strip-components=1
+	@echo "[cef] setup done. Re-configure with 'make configure'."
+
+cef_clean:
+	rm -rf $(CEF_DIR) $(CEF_CACHE)
+	@echo "[cef] removed $(CEF_DIR) and tarball cache."
 
 # ── Whisper.cpp sidecar (speech-to-text for dialog input) ───────────────────
 #

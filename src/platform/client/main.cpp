@@ -11,9 +11,13 @@
 #include "logic/artifact_registry.h"
 #include "client/process_manager.h"
 #include "client/game_vk.h"
+#include "client/cef_browser_host.h"
+#include "client/cef_app.h"
 #include "agent/agent_client.h"
 #include "debug/entity_log.h"
 #include "debug/perf_registry.h"
+
+#include "include/cef_app.h"
 
 #include <ctime>
 
@@ -22,6 +26,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -31,8 +36,10 @@
 namespace {
 
 struct Shell {
-	civcraft::rhi::IRhi* rhi = nullptr;
-	civcraft::vk::Game*  game = nullptr;
+	civcraft::rhi::IRhi*       rhi = nullptr;
+	civcraft::vk::Game*        game = nullptr;
+	civcraft::vk::CefHost*     cef = nullptr;  // optional; null when --cef-menu absent
+	std::atomic<bool>*         cefActive = nullptr;  // gates mouse forwarding
 };
 
 void resizeCb(GLFWwindow* w, int width, int height) {
@@ -53,6 +60,21 @@ void charCb(GLFWwindow* w, unsigned int codepoint) {
 void keyCb(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) {
 	auto* s = (Shell*)glfwGetWindowUserPointer(w);
 	if (s && s->game) s->game->onKey(key, action);
+}
+
+// Route GLFW pointer input to CEF only while the overlay is active.
+void cursorPosCb(GLFWwindow* w, double x, double y) {
+	auto* s = (Shell*)glfwGetWindowUserPointer(w);
+	if (s && s->cef && s->cefActive && s->cefActive->load())
+		s->cef->sendMouseMove((int)x, (int)y);
+}
+void mouseBtnCb(GLFWwindow* w, int button, int action, int /*mods*/) {
+	auto* s = (Shell*)glfwGetWindowUserPointer(w);
+	if (!s || !s->cef || !s->cefActive || !s->cefActive->load()) return;
+	int b = (button == GLFW_MOUSE_BUTTON_RIGHT) ? 2
+	       : (button == GLFW_MOUSE_BUTTON_MIDDLE) ? 1 : 0;
+	double x, y; glfwGetCursorPos(w, &x, &y);
+	s->cef->sendMouseClick((int)x, (int)y, b, action == GLFW_PRESS);
 }
 
 // Ctrl-C in the terminal running `make game` used to orphan child processes
@@ -89,6 +111,13 @@ int main(int argc, char** argv) {
 	bool skipMenu    = false;
 	bool logOnly     = false;
 	bool debugBehaviorMode = false;   // --debug-behavior: dump per-entity log list at exit
+	bool cefMenu     = false;         // --cef-menu: spin up an OSR CEF browser at startup
+	std::string cefUrl;               // optional explicit URL override
+	int  cefMouseX = -1, cefMouseY = -1;  // --cef-mouse=X,Y: synthetic hover after 4s
+	int  cefClickX = -1, cefClickY = -1;  // --cef-click=X,Y: synthetic click 1s after hover
+	// Toggled false by the action callback to dismiss the overlay so the user
+	// sees the native menu/game underneath (demos the bridge controlling state).
+	std::atomic<bool> cefOverlayActive{true};
 	std::string host = "127.0.0.1"; // --host: server hostname
 	int  port = 0;                  // --port: server port (0 = spawn local)
 	int  templateIndex = 0;         // --template: world template (default village)
@@ -147,6 +176,17 @@ int main(int argc, char** argv) {
 			agentCfg.decideMaxCooldownSec = (float)std::atof(argv[++i]);
 		else if (strcmp(argv[i], "--decide-backoff-base") == 0 && i + 1 < argc)
 			agentCfg.decideBackoffBase = (float)std::atof(argv[++i]);
+		else if (strcmp(argv[i], "--cef-menu") == 0) cefMenu = true;
+		else if (strcmp(argv[i], "--cef-url") == 0 && i + 1 < argc) {
+			cefMenu = true;
+			cefUrl = argv[++i];
+		}
+		else if (strcmp(argv[i], "--cef-mouse") == 0 && i + 1 < argc) {
+			std::sscanf(argv[++i], "%d,%d", &cefMouseX, &cefMouseY);
+		}
+		else if (strcmp(argv[i], "--cef-click") == 0 && i + 1 < argc) {
+			std::sscanf(argv[++i], "%d,%d", &cefClickX, &cefClickY);
+		}
 		else if (strcmp(argv[i], "--debug-behavior") == 0) {
 			// Compose the isolated-villager debug preset. See the testing-plan
 			// skill for what each piece buys you; this shorthand just keeps
@@ -160,6 +200,85 @@ int main(int argc, char** argv) {
 		}
 	}
 
+	// CRITICAL: GameLogger init opens /tmp/civcraft_game.log at FD 3. Chromium
+	// expects FDs 3 and 4 to be free at CefInitialize so its child FD layout
+	// (--field-trial-handle=3, --metrics-shmem-handle=4) lands at the right
+	// slots. Holding FD 3 here causes the subprocess GlobalDescriptors lookup
+	// to fail with "Failed global descriptor lookup: 7" and OnPaint never
+	// fires. We move GameLogger init to AFTER CefInitialize.
+
+	// FD-table snapshot before CefInitialize. Helps diagnose subprocess
+	// "Failed global descriptor lookup" errors: the parent posix_spawns
+	// children with dup2 actions on these FDs, and any unexpected open
+	// file descriptor in this slot (3, 4, 7) breaks the handoff.
+	{
+		FILE* fp = std::fopen("/tmp/civcraft_cef_parent_fds.txt", "w");
+		if (fp) {
+			std::fprintf(fp, "pid=%d\n", (int)getpid());
+			DIR* d = opendir("/proc/self/fd");
+			if (d) {
+				while (struct dirent* e = readdir(d)) {
+					if (e->d_name[0] == '.') continue;
+					char src[128];
+					std::snprintf(src, sizeof(src), "/proc/self/fd/%s", e->d_name);
+					char dst[512] = "?";
+					ssize_t n = readlink(src, dst, sizeof(dst) - 1);
+					if (n >= 0) dst[n] = 0;
+					std::fprintf(fp, "fd %s -> %s\n", e->d_name, dst);
+				}
+				closedir(d);
+			}
+			std::fclose(fp);
+		}
+	}
+
+	// ── CEF init (must run before any GLFW/Vulkan init) ──────────────────
+	// We initialize CEF unconditionally so the browser-host class can be
+	// created on demand by gameplay code (handbook, dialog, future menus).
+	// `--cef-menu` only gates whether we *create* a browser at startup.
+	//
+	// browser_subprocess_path points at our companion ./civcraft-cef-subprocess
+	// binary so renderer/GPU/utility children don't re-enter civcraft-ui-vk
+	// (which would re-init Python, GLFW, audio, the LLM sidecars).
+	//
+	// root_cache_path MUST be set to a unique per-app directory. Without it,
+	// Chromium uses ~/.config/cef_user_data which collides with any other
+	// CEF or Chromium instance — the second instance hits the user-data-dir
+	// singleton lock and CefInitialize silently fails. We use the build dir.
+	std::unique_ptr<civcraft::vk::CefHost> cefHost;
+	bool cefInitOk = false;
+	{
+		CefMainArgs cefMain(argc, argv);
+		CefSettings cs;
+		cs.no_sandbox = true;        // dev mode — skip chrome-sandbox SUID dance
+		cs.windowless_rendering_enabled = true;
+		// Let CEF own its UI thread. Single-threaded (false) requires us to
+		// drive CefDoMessageLoopWork at a steady cadence — a pattern that
+		// has produced zero OnPaint deliveries in our embedding for reasons
+		// we haven't fully tracked down yet (likely FD-table contention with
+		// GLFW/Vulkan/Python). Multi-threaded sidesteps that entirely.
+		cs.multi_threaded_message_loop = true;
+		cs.log_severity = LOGSEVERITY_WARNING;
+		CefString(&cs.log_file) = "/tmp/civcraft_cef.log";
+		std::string subPath = execDir + "/civcraft-cef-subprocess";
+		CefString(&cs.browser_subprocess_path) = subPath;
+		std::string cachePath = execDir + "/cef_cache";
+		std::filesystem::create_directories(cachePath);
+		CefString(&cs.root_cache_path) = cachePath;
+
+		CefRefPtr<CefApp> app = civcraft::vk::makeOsrApp();
+		cefInitOk = CefInitialize(cefMain, cs, app,
+		                          /*windows_sandbox_info=*/nullptr);
+		if (!cefInitOk) {
+			fprintf(stderr, "[cef] CefInitialize failed — continuing without CEF\n");
+		} else {
+			printf("[cef] initialized (subprocess=%s, cache=%s)\n",
+			       subPath.c_str(), cachePath.c_str());
+		}
+	}
+
+	// Now safe to open log files; CEF has already snapshotted the FD layout
+	// it needs for child processes.
 	civcraft::GameLogger::instance().init(/*echoStdout=*/logOnly);
 
 	if (!glfwInit()) { fprintf(stderr, "glfwInit failed\n"); return 1; }
@@ -226,12 +345,85 @@ int main(int argc, char** argv) {
 	}
 	if (skipMenu) game.skipMenu();
 
-	Shell shell{ rhi.get(), &game };
+	// Bring up the demo CEF browser if requested. We embed a tiny menu page
+	// directly in a data: URL so the smoke path needs no server, no asset
+	// staging, and no civ:// scheme handler — those come in phase 2.
+	if (cefMenu && cefInitOk) {
+		if (cefUrl.empty()) {
+			// Body is transparent so the game (menu plaza, loading screen,
+			// gameplay) shows through. A subtle dark vignette behind the
+			// title + buttons keeps text readable without obscuring the scene.
+			cefUrl =
+				"data:text/html,"
+				"<html><head><style>"
+				"html,body{margin:0;height:100vh;background:transparent;"
+				"color:%23f0e0c0;font-family:Georgia,serif;"
+				"display:flex;flex-direction:column;align-items:center;justify-content:center}"
+				"body{background:radial-gradient(ellipse at center,"
+				"rgba(16,8,10,0.55) 0%%,rgba(16,8,10,0) 60%%)}"
+				"h1{color:%23f3c44c;font-size:96px;letter-spacing:10px;margin:0;"
+				"text-shadow:0 4px 24px rgba(0,0,0,0.85),0 0 18px rgba(243,196,76,0.35)}"
+				".tag{font-size:18px;letter-spacing:4px;opacity:0.85;margin:8px 0 60px;"
+				"text-transform:uppercase;text-shadow:0 2px 6px rgba(0,0,0,0.85)}"
+				".btn{display:block;width:280px;margin:8px 0;padding:14px 0;font-size:20px;"
+				"background:rgba(26,18,11,0.78);color:%23f3c44c;"
+				"border:1px solid %23b88838;font-family:inherit;cursor:pointer;"
+				"letter-spacing:3px;backdrop-filter:blur(2px);"
+				"transition:background 0.15s,transform 0.15s}"
+				".btn:hover{background:rgba(94,67,30,0.92);transform:scale(1.02)}"
+				".version{position:fixed;bottom:20px;right:30px;font-size:13px;opacity:0.6;"
+				"text-shadow:0 1px 3px rgba(0,0,0,0.85)}"
+				"</style></head><body>"
+				"<h1>CivCraft</h1>"
+				"<div class='tag'>A voxel sandbox civilization</div>"
+				"<button class='btn' onclick=\"send('singleplayer')\">Singleplayer</button>"
+				"<button class='btn' onclick=\"send('multiplayer')\">Multiplayer</button>"
+				"<button class='btn' onclick=\"send('settings')\">Settings</button>"
+				"<button class='btn' onclick=\"send('quit')\">Quit</button>"
+				"<div id='s' style='margin-top:24px;font-size:16px;color:%23b88838;letter-spacing:2px;min-height:20px;text-shadow:0 1px 3px rgba(0,0,0,0.85)'></div>"
+				"<div class='version'>v0.2.0 / CEF 146</div>"
+				"<script>function send(a){"
+				"document.getElementById('s').textContent='action: '+a;"
+				"window.cefQuery({request:'action:'+a,onSuccess:()=>{},onFailure:()=>{}});"
+				"}</script>"
+				"</body></html>";
+		}
+		cefHost = std::make_unique<civcraft::vk::CefHost>(fbw, fbh);
+		// CEF overlay is replacing the native menu UI for this run.
+		game.setCefMenuActive(true);
+		cefHost->setActionCallback([win, &game,
+		                            &cefOverlayActive = cefOverlayActive](
+		                              const std::string& action) {
+			std::printf("[cef] action: %s\n", action.c_str());
+			if (action == "quit") {
+				glfwSetWindowShouldClose(win, GLFW_TRUE);
+			} else if (action == "singleplayer") {
+				// Kick the engine into its Connecting → Playing flow.
+				game.skipMenu();
+				cefOverlayActive.store(false);
+				game.setCefMenuActive(false);
+			} else if (action == "multiplayer" || action == "settings") {
+				// Stub: hand off to native UI underneath.
+				cefOverlayActive.store(false);
+				game.setCefMenuActive(false);
+			}
+		});
+		if (!cefHost->start(cefUrl)) {
+			fprintf(stderr, "[cef] host start failed — disabling --cef-menu\n");
+			cefHost.reset();
+		}
+	}
+
+	Shell shell{ rhi.get(), &game, cefHost.get(), &cefOverlayActive };
 	glfwSetWindowUserPointer(win, &shell);
 	glfwSetFramebufferSizeCallback(win, resizeCb);
 	glfwSetScrollCallback(win, scrollCb);
 	glfwSetCharCallback(win, charCb);
 	glfwSetKeyCallback(win, keyCb);
+	if (cefHost) {
+		glfwSetCursorPosCallback(win, cursorPosCb);
+		glfwSetMouseButtonCallback(win, mouseBtnCb);
+	}
 
 	// 200 fps ceiling — matches the swapchain's MAILBOX/IMMEDIATE mode so
 	// render rate isn't pinned to vsync while also not melting the GPU on
@@ -262,6 +454,39 @@ int main(int argc, char** argv) {
 			break;
 		}
 
+		// CEF: stage latest pixels while the overlay is active; otherwise
+		// disable RHI overlay drawing.
+		if (cefHost) {
+			static int kick = 0;
+			if (cefOverlayActive.load()) {
+				if (++kick % 30 == 0) cefHost->invalidate();
+				static std::vector<uint8_t> cefBuf;
+				int cw = 0, ch = 0;
+				uint64_t f = cefHost->snapshotPixels(cefBuf, cw, ch);
+				if (f > 0 && cw > 0 && ch > 0)
+					rhi->blitCefImage(cefBuf.data(), cw, ch);
+
+				// Synthetic input for headless verification.
+				static bool didHover = false, didClick = false;
+				if (!didHover && cefMouseX >= 0 && wallTime > 4.0f) {
+					cefHost->sendMouseMove(cefMouseX, cefMouseY);
+					cefHost->invalidate();
+					didHover = true;
+					std::printf("[cef] synth hover at (%d,%d)\n", cefMouseX, cefMouseY);
+				}
+				if (!didClick && cefClickX >= 0 && wallTime > 6.0f) {
+					cefHost->sendMouseMove(cefClickX, cefClickY);
+					cefHost->sendMouseClick(cefClickX, cefClickY, 0, true);
+					cefHost->sendMouseClick(cefClickX, cefClickY, 0, false);
+					didClick = true;
+					std::printf("[cef] synth click at (%d,%d)\n", cefClickX, cefClickY);
+				}
+				if (didClick && kick % 5 == 0) cefHost->invalidate();
+			} else {
+				rhi->blitCefImage(nullptr, 0, 0);
+			}
+		}
+
 		game.runOneFrame(dt, wallTime);
 
 		auto tAfter = std::chrono::steady_clock::now();
@@ -274,6 +499,16 @@ int main(int argc, char** argv) {
 
 	game.shutdown();
 	if (net) net->disconnect();
+
+	// Tear down the CEF browser, drain its message queue, then call CefShutdown.
+	// Order matters: hosts must be gone (their CefBrowser refs released)
+	// before CefShutdown or it will deadlock waiting for cleanup callbacks.
+	if (cefHost) cefHost->shutdown();
+	cefHost.reset();
+	if (cefInitOk) {
+		// Multi-threaded loop manages its own draining; just call shutdown.
+		CefShutdown();
+	}
 	rhi->shutdown();
 	glfwDestroyWindow(win);
 	glfwTerminate();

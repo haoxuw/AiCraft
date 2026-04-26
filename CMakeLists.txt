@@ -67,6 +67,30 @@ FetchContent_MakeAvailable(pybind11)
 
 find_package(Vulkan REQUIRED)
 
+# --- Assimp (GLB importer for voxel_earth pipeline) ---
+# System libassimp-dev (>= 5.3) ships with KHR_draco_mesh_compression support
+# enabled, which is what Photorealistic 3D Tiles use.
+find_package(assimp REQUIRED)
+
+# --- Chromium Embedded Framework (CEF) ---
+# Vendored binary distribution at third_party/cef/ (gitignored, ~1.4 GB).
+# Populate via `make cef_setup`. Linux x64 only today; macOS/Windows would
+# require a different distribution tarball + helper-app layout (see
+# docs/CEF_UI_PLAN.md §2). The CEF cmake module gives us libcef_dll_wrapper
+# and the CEF_BINARY_FILES / CEF_RESOURCE_FILES lists for POST_BUILD copies.
+set(CEF_ROOT "${CMAKE_SOURCE_DIR}/third_party/cef")
+if(NOT EXISTS "${CEF_ROOT}/Release/libcef.so")
+	message(FATAL_ERROR
+		"CEF binary distribution not found at ${CEF_ROOT}.\n"
+		"Run `make cef_setup` to download it.")
+endif()
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CEF_ROOT}/cmake")
+# The minimal dist ships only Release/. CEF's cmake module picks Debug/ when
+# CMAKE_BUILD_TYPE=Debug, so we always reference CEF_BINARY_DIR_RELEASE
+# directly when copying or linking.
+find_package(CEF REQUIRED)
+add_subdirectory(${CEF_LIBCEF_DLL_WRAPPER_PATH} libcef_dll_wrapper)
+
 # --- Engine sources ---
 # Header-only except for the .cpp files listed explicitly.
 set(PLATFORM_SERVER_SOURCES
@@ -91,6 +115,11 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/agent/jitter.h
 	src/platform/client/path_executor.h
 	src/platform/client/path_executor.cpp
+	# voxel_earth: server runtime needs region.cpp for VEAR file loading.
+	# The decode/voxelize/texture stages stay confined to the bake CLI.
+	src/platform/server/voxel_earth/region.h
+	src/platform/server/voxel_earth/region.cpp
+	src/platform/server/voxel_earth/palette.h
 )
 
 set(PLATFORM_CLIENT_SOURCES
@@ -150,6 +179,8 @@ set(VK_SHADER_SOURCES
 	${VK_SHADER_SRC_DIR}/ghost_box.frag
 	${VK_SHADER_SRC_DIR}/text2d.vert
 	${VK_SHADER_SRC_DIR}/text2d.frag
+	${VK_SHADER_SRC_DIR}/cef_overlay.vert
+	${VK_SHADER_SRC_DIR}/cef_overlay.frag
 	${VK_SHADER_SRC_DIR}/chunk_terrain.vert
 	${VK_SHADER_SRC_DIR}/chunk_terrain.frag
 	${VK_SHADER_SRC_DIR}/shadow_chunk.vert
@@ -203,6 +234,10 @@ add_executable(civcraft-ui-vk
 	src/platform/client/game_vk_renderer_inventory.cpp
 	src/platform/client/handbook_panel.h
 	src/platform/client/handbook_panel.cpp
+	src/platform/client/cef_browser_host.h
+	src/platform/client/cef_browser_host.cpp
+	src/platform/client/cef_app.h
+	src/platform/client/cef_app.cpp
 	src/platform/client/loading_screen.h
 	src/platform/client/loading_screen.cpp
 	src/platform/client/menu_plaza.h
@@ -217,12 +252,14 @@ add_executable(civcraft-ui-vk
 	${PLATFORM_SERVER_SOURCES}
 	${PLATFORM_LLM_SOURCES}
 )
-target_include_directories(civcraft-ui-vk PRIVATE ${GAME_INCLUDE_DIRS})
+target_include_directories(civcraft-ui-vk PRIVATE ${GAME_INCLUDE_DIRS} ${CEF_ROOT})
 target_compile_definitions(civcraft-ui-vk PRIVATE AICRAFT_RHI_VK)
 target_link_libraries(civcraft-ui-vk PRIVATE
 	glfw glm::glm Vulkan::Vulkan
 	Python3::Python pybind11::embed
 	libzstd_static
+	libcef_dll_wrapper
+	"${CEF_BINARY_DIR_RELEASE}/libcef.so"
 )
 add_dependencies(civcraft-ui-vk vk_shaders)
 
@@ -234,6 +271,56 @@ add_custom_command(TARGET civcraft-ui-vk POST_BUILD
 	COMMAND cp -ru ${CMAKE_SOURCE_DIR}/src/resources $<TARGET_FILE_DIR:civcraft-ui-vk>/
 )
 stage_runtime_assets(civcraft-ui-vk)
+
+# CEF runtime files must sit alongside civcraft-ui-vk: libcef.so itself plus
+# Chromium's GPU-process fallback ICD (libvk_swiftshader.so + libvulkan.so.1
+# + vk_swiftshader_icd.json). Without the SwiftShader bundle, OnPaint fires
+# but every buffer is empty — Chromium's GPU subprocess can't initialize a
+# rasterizer. Side-effect: this directory now ships its own libvulkan.so.1
+# that would shadow our system NVIDIA driver unless the RUNPATH below is set
+# correctly.
+COPY_FILES(civcraft-ui-vk "${CEF_BINARY_FILES}"
+	"${CEF_BINARY_DIR_RELEASE}" "$<TARGET_FILE_DIR:civcraft-ui-vk>")
+COPY_FILES(civcraft-ui-vk "${CEF_RESOURCE_FILES}"
+	"${CEF_RESOURCE_DIR}" "$<TARGET_FILE_DIR:civcraft-ui-vk>")
+
+# RUNPATH order matters: ld searches it left-to-right before ld.so.cache.
+# We list /usr/lib/x86_64-linux-gnu first so libvulkan.so.1 resolves to the
+# system NVIDIA driver (what civcraft-ui-vk's renderer needs), not the
+# SwiftShader copy that ships next to libcef.so. $ORIGIN stays in the path
+# so libcef.so + its non-Vulkan peers still load.
+set_target_properties(civcraft-ui-vk PROPERTIES
+	BUILD_RPATH   "/usr/lib/x86_64-linux-gnu:\$ORIGIN"
+	INSTALL_RPATH "/usr/lib/x86_64-linux-gnu:\$ORIGIN"
+	BUILD_WITH_INSTALL_RPATH TRUE
+)
+
+# === CEF subprocess shim ===
+# Chromium re-execs the binary path passed in CefSettings.browser_subprocess_path
+# for every renderer/GPU/utility child. If we used civcraft-ui-vk for that,
+# each child would re-init Python/GLFW/audio/LLM. Instead we ship a tiny binary
+# whose only job is to call CefExecuteProcess and return.
+add_executable(civcraft-cef-subprocess
+	src/platform/client/cef_subprocess_main.cpp
+	src/platform/client/cef_app.h
+	src/platform/client/cef_app.cpp
+)
+target_include_directories(civcraft-cef-subprocess PRIVATE ${CEF_ROOT} ${GAME_INCLUDE_DIRS})
+target_link_libraries(civcraft-cef-subprocess PRIVATE
+	libcef_dll_wrapper
+	"${CEF_BINARY_DIR_RELEASE}/libcef.so"
+)
+# Subprocess sits in the same directory as the main binary so a single
+# rpath of $ORIGIN finds libcef.so for both. Force the same TARGET_FILE_DIR
+# and pin rpath to keep the SwiftShader libs (if anyone re-adds them) from
+# hijacking our Vulkan, same as civcraft-ui-vk above.
+set_target_properties(civcraft-cef-subprocess PROPERTIES
+	RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:civcraft-ui-vk>"
+	BUILD_RPATH   "\$ORIGIN"
+	INSTALL_RPATH "\$ORIGIN"
+	BUILD_WITH_INSTALL_RPATH TRUE
+)
+add_dependencies(civcraft-ui-vk civcraft-cef-subprocess)
 
 # === Dedicated server (headless) ===
 add_executable(civcraft-server
@@ -313,3 +400,44 @@ add_executable(civcraft-mux-smoke
 	src/platform/llm/tts_sidecar.h
 )
 target_include_directories(civcraft-mux-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+
+# === Voxel Earth GLB loader smoke test (phase-2) ===
+# Loads one cached Photorealistic 3D Tile and prints mesh stats. Verifies
+# Assimp + Draco decode end-to-end before we wire voxelization in.
+set(VOXEL_EARTH_SOURCES
+	src/platform/server/voxel_earth/glb_loader.h
+	src/platform/server/voxel_earth/glb_loader.cpp
+	src/platform/server/voxel_earth/rotate.h
+	src/platform/server/voxel_earth/rotate.cpp
+	src/platform/server/voxel_earth/texture.h
+	src/platform/server/voxel_earth/texture.cpp
+	src/platform/server/voxel_earth/voxelizer.h
+	src/platform/server/voxel_earth/voxelizer.cpp
+	src/platform/server/voxel_earth/region.h
+	src/platform/server/voxel_earth/region.cpp
+)
+
+add_executable(civcraft-voxel-smoke
+	src/platform/server/voxel_earth/voxel_smoke.cpp
+	${VOXEL_EARTH_SOURCES}
+)
+target_include_directories(civcraft-voxel-smoke PRIVATE
+	${GAME_INCLUDE_DIRS}
+	${CMAKE_SOURCE_DIR}/third_party/stb
+)
+target_link_libraries(civcraft-voxel-smoke PRIVATE assimp::assimp)
+
+# === Voxel Earth bake CLI (phase-4) ===
+# Reads ~/.voxel/google/glb/*.glb, voxelizes them under a shared ECEF origin,
+# writes a single VEAR-format region file ready for in-server lookup.
+add_executable(civcraft-voxel-bake
+	src/platform/server/voxel_earth/voxel_bake.cpp
+	${VOXEL_EARTH_SOURCES}
+)
+target_include_directories(civcraft-voxel-bake PRIVATE
+	${GAME_INCLUDE_DIRS}
+	${CMAKE_SOURCE_DIR}/third_party/stb
+)
+target_link_libraries(civcraft-voxel-bake PRIVATE assimp::assimp)
+target_include_directories(civcraft-voxel-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+target_link_libraries(civcraft-voxel-smoke PRIVATE assimp::assimp)

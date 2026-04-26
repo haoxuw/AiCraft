@@ -158,5 +158,6 @@ If not, it needs to move to an artifact.
 
 ## Commit guidelines
 
+- Keep source code comments concise
 - Present tense, capital first letter, under 70 chars
 - Area prefix: `server:`, `client:`, `agent:`, `logic:`, `net:`, `artifacts:`, `content:`, `repo:`, etc.

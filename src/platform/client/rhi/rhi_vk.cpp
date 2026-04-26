@@ -2137,8 +2137,9 @@ void VkRhi::drawBoxModel(const SceneParams& scene, const float* boxes, uint32_t 
 bool VkRhi::screenshot(const char* path) {
 	if (!m_frameActive) return false;
 
-	// End pass so we can copy from the swapchain image.
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
+	beginSwapchainPass();
+	recordCefOverlay(cb);
 	vkCmdEndRenderPass(cb);
 
 	uint32_t w = m_swapExtent.width, h = m_swapExtent.height;
@@ -3928,6 +3929,9 @@ bool VkRhi::beginFrame() {
 	VkCommandBufferBeginInfo bi{}; bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	vkBeginCommandBuffer(cb, &bi);
 
+	// CEF upload runs before any render pass (transfer op can't be inside one).
+	recordCefUpload(cb);
+
 	// No pass begun here — shadow pass may run before main. First lit draw
 	// lazily opens main via ensureMainPass().
 	m_frameActive = true;
@@ -3942,9 +3946,343 @@ bool VkRhi::beginFrame() {
 	return true;
 }
 
+// Stage CEF's BGRA pixels for next-frame upload. Called every frame while
+// the overlay is active; nullptr disables further overlay draws.
+void VkRhi::blitCefImage(const uint8_t* bgra, int width, int height) {
+	if (!bgra || width <= 0 || height <= 0) {
+		m_cefBlitPending = false;
+		m_cefOverlayEnabled = false;
+		return;
+	}
+	m_cefOverlayEnabled = true;
+	const VkDeviceSize need = (VkDeviceSize)width * height * 4u;
+
+	// Lazy (re-)create staging if too small for this frame's slot.
+	if (m_cefStagingCap[m_frame] < need) {
+		if (m_cefStaging[m_frame]) {
+			vkUnmapMemory(m_device, m_cefStagingMem[m_frame]);
+			vkDestroyBuffer(m_device, m_cefStaging[m_frame], nullptr);
+			vkFreeMemory(m_device, m_cefStagingMem[m_frame], nullptr);
+		}
+		VkBufferCreateInfo bci{};
+		bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bci.size = need;
+		bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+		bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		if (vkCreateBuffer(m_device, &bci, nullptr, &m_cefStaging[m_frame]) != VK_SUCCESS)
+			return;
+		VkMemoryRequirements mr;
+		vkGetBufferMemoryRequirements(m_device, m_cefStaging[m_frame], &mr);
+		VkMemoryAllocateInfo mai{};
+		mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		mai.allocationSize = mr.size;
+		mai.memoryTypeIndex = findMemType(mr.memoryTypeBits,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		if (vkAllocateMemory(m_device, &mai, nullptr, &m_cefStagingMem[m_frame]) != VK_SUCCESS)
+			return;
+		vkBindBufferMemory(m_device, m_cefStaging[m_frame], m_cefStagingMem[m_frame], 0);
+		vkMapMemory(m_device, m_cefStagingMem[m_frame], 0, mr.size, 0,
+			&m_cefStagingMapped[m_frame]);
+		m_cefStagingCap[m_frame] = mr.size;
+	}
+
+	memcpy(m_cefStagingMapped[m_frame], bgra, need);
+	m_cefBlitW = width;
+	m_cefBlitH = height;
+	m_cefBlitPending = true;
+}
+
+// (Re-)create the sampled image, sampler, descriptor set, and pipeline used by
+// the overlay draw. Sized to whatever blitCefImage last received. Cheap to
+// call every frame: returns immediately if dims haven't changed.
+bool VkRhi::ensureCefResources() {
+	if (m_cefBlitW <= 0 || m_cefBlitH <= 0) return false;
+
+	// First call: build pipeline + sampler + descriptor layout (size-agnostic).
+	if (m_cefPipeline == VK_NULL_HANDLE) {
+		VkSamplerCreateInfo sci{};
+		sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		sci.magFilter = VK_FILTER_LINEAR;
+		sci.minFilter = VK_FILTER_LINEAR;
+		sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+		sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		if (vkCreateSampler(m_device, &sci, nullptr, &m_cefSampler) != VK_SUCCESS)
+			return false;
+
+		VkDescriptorSetLayoutBinding bind{};
+		bind.binding = 0;
+		bind.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		bind.descriptorCount = 1;
+		bind.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		VkDescriptorSetLayoutCreateInfo slci{};
+		slci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		slci.bindingCount = 1; slci.pBindings = &bind;
+		if (vkCreateDescriptorSetLayout(m_device, &slci, nullptr, &m_cefDescLayout) != VK_SUCCESS)
+			return false;
+
+		VkDescriptorPoolSize ps{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+		VkDescriptorPoolCreateInfo dpci{};
+		dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		dpci.poolSizeCount = 1; dpci.pPoolSizes = &ps; dpci.maxSets = 1;
+		if (vkCreateDescriptorPool(m_device, &dpci, nullptr, &m_cefDescPool) != VK_SUCCESS)
+			return false;
+
+		VkDescriptorSetAllocateInfo dsai{};
+		dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		dsai.descriptorPool = m_cefDescPool;
+		dsai.descriptorSetCount = 1;
+		dsai.pSetLayouts = &m_cefDescLayout;
+		if (vkAllocateDescriptorSets(m_device, &dsai, &m_cefDescSet) != VK_SUCCESS)
+			return false;
+
+		VkPipelineLayoutCreateInfo plci{};
+		plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		plci.setLayoutCount = 1; plci.pSetLayouts = &m_cefDescLayout;
+		if (vkCreatePipelineLayout(m_device, &plci, nullptr, &m_cefPipeLayout) != VK_SUCCESS)
+			return false;
+
+		auto vsCode = readFile("shaders/vk/cef_overlay.vert.spv");
+		auto fsCode = readFile("shaders/vk/cef_overlay.frag.spv");
+		if (vsCode.empty() || fsCode.empty()) return false;
+		VkShaderModule vs = makeModule(m_device, vsCode);
+		VkShaderModule fs = makeModule(m_device, fsCode);
+
+		VkPipelineShaderStageCreateInfo stages[2]{};
+		stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = vs; stages[0].pName = "main";
+		stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = fs; stages[1].pName = "main";
+
+		VkPipelineVertexInputStateCreateInfo vi{};
+		vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+		VkPipelineInputAssemblyStateCreateInfo ia{};
+		ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+		VkViewport vp{}; VkRect2D sc{};
+		VkPipelineViewportStateCreateInfo vps{};
+		vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		vps.viewportCount = 1; vps.pViewports = &vp;
+		vps.scissorCount = 1; vps.pScissors = &sc;
+
+		VkPipelineRasterizationStateCreateInfo rs{};
+		rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rs.polygonMode = VK_POLYGON_MODE_FILL;
+		rs.cullMode = VK_CULL_MODE_NONE;
+		rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+		rs.lineWidth = 1.0f;
+
+		VkPipelineMultisampleStateCreateInfo ms{};
+		ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+		VkPipelineDepthStencilStateCreateInfo ds{};
+		ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		ds.depthTestEnable = VK_FALSE;
+		ds.depthWriteEnable = VK_FALSE;
+
+		// CEF emits PREMULTIPLIED alpha for OSR with transparent background:
+		// out = src.rgb + dst.rgb*(1-src.a). Verified empirically: a button
+		// with rgba(26,18,11,0.78) lands as (9,14,20,199) ≈ (R*0.78, G*0.78,
+		// B*0.78, 199) — i.e. color already multiplied by alpha at source.
+		VkPipelineColorBlendAttachmentState ba{};
+		ba.blendEnable = VK_TRUE;
+		ba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+		ba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		ba.colorBlendOp = VK_BLEND_OP_ADD;
+		ba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+		ba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		ba.alphaBlendOp = VK_BLEND_OP_ADD;
+		ba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+		                  | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		VkPipelineColorBlendStateCreateInfo cb{};
+		cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		cb.attachmentCount = 1; cb.pAttachments = &ba;
+
+		VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+		VkPipelineDynamicStateCreateInfo dsi{};
+		dsi.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dsi.dynamicStateCount = 2; dsi.pDynamicStates = dyn;
+
+		VkGraphicsPipelineCreateInfo gpi{};
+		gpi.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		gpi.stageCount = 2; gpi.pStages = stages;
+		gpi.pVertexInputState = &vi;
+		gpi.pInputAssemblyState = &ia;
+		gpi.pViewportState = &vps;
+		gpi.pRasterizationState = &rs;
+		gpi.pMultisampleState = &ms;
+		gpi.pDepthStencilState = &ds;
+		gpi.pColorBlendState = &cb;
+		gpi.pDynamicState = &dsi;
+		gpi.layout = m_cefPipeLayout;
+		gpi.renderPass = m_renderPass;
+		gpi.subpass = 0;
+		VkResult r = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1,
+			&gpi, nullptr, &m_cefPipeline);
+		vkDestroyShaderModule(m_device, vs, nullptr);
+		vkDestroyShaderModule(m_device, fs, nullptr);
+		if (r != VK_SUCCESS) return false;
+	}
+
+	// Image: (re-)create on size change.
+	if (m_cefImage == VK_NULL_HANDLE
+	    || m_cefImageW != m_cefBlitW || m_cefImageH != m_cefBlitH) {
+		if (m_cefImage) {
+			vkDeviceWaitIdle(m_device);
+			vkDestroyImageView(m_device, m_cefImageView, nullptr);
+			vkDestroyImage(m_device, m_cefImage, nullptr);
+			vkFreeMemory(m_device, m_cefImageMem, nullptr);
+			m_cefImageView = VK_NULL_HANDLE;
+			m_cefImage = VK_NULL_HANDLE;
+			m_cefImageMem = VK_NULL_HANDLE;
+		}
+		VkImageCreateInfo ici{};
+		ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		ici.imageType = VK_IMAGE_TYPE_2D;
+		ici.format = VK_FORMAT_B8G8R8A8_UNORM;
+		ici.extent = { (uint32_t)m_cefBlitW, (uint32_t)m_cefBlitH, 1 };
+		ici.mipLevels = 1; ici.arrayLayers = 1;
+		ici.samples = VK_SAMPLE_COUNT_1_BIT;
+		ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+		ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		if (vkCreateImage(m_device, &ici, nullptr, &m_cefImage) != VK_SUCCESS)
+			return false;
+		VkMemoryRequirements mr;
+		vkGetImageMemoryRequirements(m_device, m_cefImage, &mr);
+		VkMemoryAllocateInfo mai{};
+		mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		mai.allocationSize = mr.size;
+		mai.memoryTypeIndex = findMemType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		if (vkAllocateMemory(m_device, &mai, nullptr, &m_cefImageMem) != VK_SUCCESS)
+			return false;
+		vkBindImageMemory(m_device, m_cefImage, m_cefImageMem, 0);
+
+		VkImageViewCreateInfo vci{};
+		vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		vci.image = m_cefImage;
+		vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		vci.format = VK_FORMAT_B8G8R8A8_UNORM;
+		vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		if (vkCreateImageView(m_device, &vci, nullptr, &m_cefImageView) != VK_SUCCESS)
+			return false;
+
+		m_cefImageW = m_cefBlitW;
+		m_cefImageH = m_cefBlitH;
+		m_cefImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+		// Update descriptor set to point at the new image view.
+		VkDescriptorImageInfo ii{};
+		ii.sampler = m_cefSampler;
+		ii.imageView = m_cefImageView;
+		ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		VkWriteDescriptorSet wd{};
+		wd.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		wd.dstSet = m_cefDescSet;
+		wd.dstBinding = 0;
+		wd.descriptorCount = 1;
+		wd.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		wd.pImageInfo = &ii;
+		vkUpdateDescriptorSets(m_device, 1, &wd, 0, nullptr);
+	}
+	return true;
+}
+
+// Run BEFORE vkCmdBeginRenderPass each frame: copy this frame's CEF staging
+// buffer into the sampled image. Transitions: prev layout → TRANSFER_DST →
+// SHADER_READ_ONLY. Cheap when no new pixels are pending.
+void VkRhi::recordCefUpload(VkCommandBuffer cb) {
+	if (!m_cefBlitPending) return;
+	if (!ensureCefResources()) return;
+
+	VkImageMemoryBarrier toDst{};
+	toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	toDst.oldLayout = m_cefImageLayout;
+	toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	toDst.image = m_cefImage;
+	toDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+	toDst.srcAccessMask = (m_cefImageLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		? VK_ACCESS_SHADER_READ_BIT : 0;
+	toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	vkCmdPipelineBarrier(cb,
+		VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+	VkBufferImageCopy copy{};
+	copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+	copy.imageExtent = { (uint32_t)m_cefBlitW, (uint32_t)m_cefBlitH, 1 };
+	vkCmdCopyBufferToImage(cb, m_cefStaging[m_frame],
+		m_cefImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+	VkImageMemoryBarrier toShader = toDst;
+	toShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	toShader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	toShader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	toShader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	vkCmdPipelineBarrier(cb,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		0, 0, nullptr, 0, nullptr, 1, &toShader);
+
+	m_cefImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	m_cefBlitPending = false;
+}
+
+// Run INSIDE the swapchain render pass after game/HUD draws but before
+// vkCmdEndRenderPass. Draws a fullscreen triangle sampling the CEF image
+// with alpha blending, so transparent HTML pixels reveal the game underneath.
+void VkRhi::recordCefOverlay(VkCommandBuffer cb) {
+	if (!m_cefOverlayEnabled) return;
+	if (m_cefImage == VK_NULL_HANDLE
+	    || m_cefImageLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+		static bool warned = false;
+		if (!warned) {
+			std::fprintf(stderr,
+				"[cef-overlay] skipped: image=%p layout=%d (need SHADER_READ_ONLY=%d)\n",
+				(void*)m_cefImage, (int)m_cefImageLayout,
+				(int)VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			warned = true;
+		}
+		return;
+	}
+	static bool firstDraw = true;
+	if (firstDraw) {
+		std::fprintf(stderr, "[cef-overlay] first draw: %dx%d pipeline=%p\n",
+			m_cefImageW, m_cefImageH, (void*)m_cefPipeline);
+		firstDraw = false;
+	}
+
+	VkViewport vp{};
+	vp.x = 0; vp.y = 0;
+	vp.width = (float)m_swapExtent.width;
+	vp.height = (float)m_swapExtent.height;
+	vp.minDepth = 0; vp.maxDepth = 1;
+	vkCmdSetViewport(cb, 0, 1, &vp);
+	VkRect2D sc{ { 0, 0 }, m_swapExtent };
+	vkCmdSetScissor(cb, 0, 1, &sc);
+
+	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, m_cefPipeline);
+	vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		m_cefPipeLayout, 0, 1, &m_cefDescSet, 0, nullptr);
+	vkCmdDraw(cb, 3, 1, 0, 0);
+}
+
 void VkRhi::endFrame() {
 	if (!m_frameActive) return;
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
+	// Always force the swapchain pass open: composites the offscreen world
+	// onto the swap image (otherwise present has nothing to show). UI draws
+	// used to do this lazily, but with native menu/loading suppressed there
+	// can be zero UI draws in a frame.
+	beginSwapchainPass();
+	recordCefOverlay(cb);
 	vkCmdEndRenderPass(cb);
 	vkEndCommandBuffer(cb);
 
@@ -4084,10 +4422,23 @@ void VkRhi::shutdown() {
 	if (m_fontView) vkDestroyImageView(m_device, m_fontView, nullptr);
 	if (m_fontImage) vkDestroyImage(m_device, m_fontImage, nullptr);
 	if (m_fontMem) vkFreeMemory(m_device, m_fontMem, nullptr);
+	// CEF overlay resources.
+	if (m_cefPipeline) vkDestroyPipeline(m_device, m_cefPipeline, nullptr);
+	if (m_cefPipeLayout) vkDestroyPipelineLayout(m_device, m_cefPipeLayout, nullptr);
+	if (m_cefDescPool) vkDestroyDescriptorPool(m_device, m_cefDescPool, nullptr);
+	if (m_cefDescLayout) vkDestroyDescriptorSetLayout(m_device, m_cefDescLayout, nullptr);
+	if (m_cefSampler) vkDestroySampler(m_device, m_cefSampler, nullptr);
+	if (m_cefImageView) vkDestroyImageView(m_device, m_cefImageView, nullptr);
+	if (m_cefImage) vkDestroyImage(m_device, m_cefImage, nullptr);
+	if (m_cefImageMem) vkFreeMemory(m_device, m_cefImageMem, nullptr);
 	for (int f = 0; f < kFramesInFlight; f++) {
 		if (m_uiVtxMapped[f]) vkUnmapMemory(m_device, m_uiVtxMem[f]);
 		if (m_uiVtxBuf[f]) vkDestroyBuffer(m_device, m_uiVtxBuf[f], nullptr);
 		if (m_uiVtxMem[f]) vkFreeMemory(m_device, m_uiVtxMem[f], nullptr);
+		// CEF blit staging.
+		if (m_cefStagingMapped[f]) vkUnmapMemory(m_device, m_cefStagingMem[f]);
+		if (m_cefStaging[f]) vkDestroyBuffer(m_device, m_cefStaging[f], nullptr);
+		if (m_cefStagingMem[f]) vkFreeMemory(m_device, m_cefStagingMem[f], nullptr);
 		// Drain final-frame deferred-destroy queues (safe after WaitIdle).
 		for (auto& p : m_pendingBufDestroy[f]) {
 			if (p.buf) vkDestroyBuffer(m_device, p.buf, nullptr);

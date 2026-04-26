@@ -201,6 +201,11 @@ public:
 		}
 	}
 
+	// While true, skip drawing the native bitmap-font menu UI — the CEF HTML
+	// overlay (composited in the RHI) is providing the menu instead.
+	void setCefMenuActive(bool on) { m_cefMenuActive = on; }
+	bool cefMenuActive() const { return m_cefMenuActive; }
+
 	// Poll input, step sim, render one frame.
 	void runOneFrame(float dt, float wallTime);
 
@@ -310,6 +315,7 @@ private:
 	WorldRenderer     m_worldRenderer    { *this };
 	HudRenderer       m_hudRenderer      { *this };
 	MenuRenderer      m_menuRenderer     { *this };
+	bool              m_cefMenuActive    = false;
 	PanelRenderer     m_panelRenderer    { *this };
 	EntityUiRenderer  m_entityUiRenderer { *this };
 

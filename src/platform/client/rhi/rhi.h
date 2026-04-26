@@ -195,6 +195,10 @@ public:
 	                      int mode,
 	                      const float rgba[4]) = 0;
 
+	// Stage a BGRA8 buffer and blit it onto the current swap image before
+	// present. w/h must match swapchain. nullptr clears.
+	virtual void blitCefImage(const uint8_t* bgra, int width, int height) = 0;
+
 	// CPU-tessellation wrappers over drawUi2D (rhi_ui.cpp).
 	// scale 1.0 ≈ 24 px at 900p.
 	void drawText2D(const char* text, float x, float y, float scale,
