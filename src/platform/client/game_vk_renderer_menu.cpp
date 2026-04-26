@@ -196,8 +196,31 @@ void MenuRenderer::renderMenu() {
 
 	switch (g.m_menuScreen) {
 	case MenuScreen::Main:
-	case MenuScreen::Connecting:
 		return;  // CEF-owned
+
+	case MenuScreen::Connecting: {
+		// Native loading bar — CEF gets dismissed when "play" fires so the
+		// world becomes visible behind, but the loading-progress chrome
+		// (chunk count, agent ready, etc.) renders here on top.
+		drawLoadingBar(R, g.m_loading, g.m_wallTime);
+		// Bail-outs — lost connection / welcome timeout. Kick back to the
+		// CEF char-select page so the user can try again.
+		if (g.m_server && !g.m_server->isConnected()) {
+			const std::string& err = g.m_server->lastError();
+			g.m_connectError = err.empty() ? "connection lost" : err;
+			g.m_connecting = false;
+			g.m_menuScreen = MenuScreen::Main;
+			g.setCefMenuActive(true);
+		} else if (!g.m_server->pollWelcome() &&
+		           g.m_wallTime - g.m_connectStartTime > 60.0f) {
+			if (g.m_server) g.m_server->disconnect();
+			g.m_connectError = "timeout waiting for welcome (60s)";
+			g.m_connecting = false;
+			g.m_menuScreen = MenuScreen::Main;
+			g.setCefMenuActive(true);
+		}
+		return;
+	}
 
 	case MenuScreen::CharacterSelect: {
 		g.m_shell.title = "Choose Your Character";

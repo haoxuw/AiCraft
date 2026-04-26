@@ -925,6 +925,16 @@ int main(int argc, char** argv) {
 				cefUrl = sHand; game.setMenuScreen(MS::Handbook);
 			} else if (boot && std::string(boot) == "chars") {
 				cefUrl = sChar; game.setMenuScreen(MS::CharacterSelect);
+				// Mirror what the "singleplayer" action does so beginConnectAs
+				// has a previewId to commit when the user clicks Begin Game.
+				for (auto* e : game.artifactRegistry().byCategory("living")) {
+					auto it = e->fields.find("playable");
+					if (it == e->fields.end()) continue;
+					if (it->second == "True" || it->second == "true") {
+						game.setPreviewId(e->id);
+						break;
+					}
+				}
 			} else if (boot && std::string(boot) == "settings") {
 				cefUrl = sSett;
 			} else {
