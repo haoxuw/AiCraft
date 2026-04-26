@@ -91,12 +91,12 @@ define run_under_perf
 	if [ "$$can_perf" = "0" ]; then \
 	    echo "[make]   for crash-debug:  make game GDB=1"; \
 	    echo "[make] launching bare — log: $(GAME_LOG)"; \
-	    ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG); \
+	    ./civcraft-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG); \
 	else \
 	    rm -f $(PERF_DATA); \
 	    echo "[make] launching under perf — data: $(PERF_DATA), log: $(GAME_LOG)"; \
 	    perf record -F 99 --call-graph dwarf -o $(PERF_DATA) \
-	        -- ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG); \
+	        -- ./civcraft-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG); \
 	    echo; echo "=========== perf report (top-30) ==========="; \
 	    perf report --stdio --no-children -g none -i $(PERF_DATA) 2>/dev/null | head -60 | tee $(PERF_REPORT); \
 	    if command -v flamegraph.pl >/dev/null && command -v stackcollapse-perf.pl >/dev/null; then \
@@ -178,14 +178,14 @@ define run_under_gdb
 	    -ex 'disassemble' \
 	    -ex 'info registers' \
 	    -ex 'quit' \
-	    --args ./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG)
+	    --args ./civcraft-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG)
 endef
 
 # Bare invocation for PROFILE=none.
 define run_bare
 	cd $(GAME_BUILD_DIR) && \
 	echo "[make] launching bare — log: $(GAME_LOG)" && \
-	./civcraft-ui-vk --skip-menu $(1) 2>&1 | tee $(GAME_LOG)
+	./civcraft-ui-vk --skip-menu --cef-menu $(1) 2>&1 | tee $(GAME_LOG)
 endef
 
 # Router: GDB=1 → gdb wrapper; PROFILE=none → bare; else → perf record.
@@ -275,12 +275,12 @@ ITEM      := base:sword
 CLIP      :=
 
 character_views: build
-	cd $(BUILD_DIR) && ./civcraft-ui-vk --skip-menu \
+	cd $(BUILD_DIR) && ./civcraft-ui-vk --skip-menu --cef-menu \
 	    --debug-scenario character_views --debug-character $(CHARACTER) \
 	    $(if $(CLIP),--debug-clip $(CLIP))
 
 item_views: build
-	cd $(BUILD_DIR) && ./civcraft-ui-vk --skip-menu \
+	cd $(BUILD_DIR) && ./civcraft-ui-vk --skip-menu --cef-menu \
 	    --debug-scenario item_views --debug-item $(ITEM)
 
 SAMPLE_DIR := /tmp/civcraft_samples
@@ -310,7 +310,7 @@ animation_sweep: build
 	    echo "=== $$char / $$clip$${hand:+ +$$hand} ==="; \
 	    pgrep -x civcraft-server 2>/dev/null | xargs -r kill -9 ; \
 	    rm -f /tmp/debug_*.ppm; \
-	    ( cd $(BUILD_DIR) && timeout 30 ./civcraft-ui-vk --skip-menu \
+	    ( cd $(BUILD_DIR) && timeout 30 ./civcraft-ui-vk --skip-menu --cef-menu \
 	      --debug-scenario character_views --debug-character base:$$char \
 	      --debug-clip $$clip \
 	      $${hand:+--debug-hand-item $$hand} ) >/dev/null 2>&1 || true; \
@@ -395,7 +395,7 @@ define run_perf_session
 	@sleep 1
 	@echo "[$(1)] running civcraft-ui-vk (template=$(PERF_TEMPLATE)) for $(PERF_DURATION)s..."
 	@cd $(GAME_BUILD_DIR) && timeout $(PERF_DURATION) \
-	    ./civcraft-ui-vk --skip-menu --log-only --template $(PERF_TEMPLATE) \
+	    ./civcraft-ui-vk --skip-menu --cef-menu --log-only --template $(PERF_TEMPLATE) \
 	    > /tmp/civcraft_perf_$(1).stdout 2> /tmp/civcraft_perf_$(1).stderr ; \
 	    true
 	@-pgrep -x civcraft-ui-vk  2>/dev/null | xargs -r kill ; true
