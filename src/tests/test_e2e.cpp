@@ -2032,8 +2032,8 @@ static std::string nav2_group_formation() {
 	p->position = {0, 9.0f, -30.0f};
 
 	// Spawn 2 more entities nearby in the clear area
-	EntityId e2 = gs->world().entities.spawn("knight", p->position + glm::vec3(2, 0, 0));
-	EntityId e3 = gs->world().entities.spawn("knight", p->position + glm::vec3(-2, 0, 0));
+	EntityId e2 = gs->world().entities.spawn("guy", p->position + glm::vec3(2, 0, 0));
+	EntityId e3 = gs->world().entities.spawn("guy", p->position + glm::vec3(-2, 0, 0));
 	Entity* ent2 = gs->world().entities.get(e2);
 	Entity* ent3 = gs->world().entities.get(e3);
 	if (!ent2 || !ent3) return "failed to spawn test entities";
@@ -2835,7 +2835,7 @@ static std::string s04_cross_seat_cannot_control() {
 	EntityId p1 = ts->localPlayerId();
 	ClientId c2 = 2;
 	SeatId   s2 = 2;
-	EntityId p2 = srv->addClient(c2, s2, "knight");
+	EntityId p2 = srv->addClient(c2, s2, "guy");
 	if (p2 == ENTITY_NONE || p2 == p1) return "addClient did not return distinct entity";
 
 	// Sanity: each client controls its own player.
@@ -2915,7 +2915,7 @@ static std::string s07_disconnect_snapshot_rejoin_restore() {
 		     + std::to_string(srv->ownedEntities().seatCount());
 
 	// Rejoin same seat: restore path fires (not a fresh template spawn).
-	EntityId pNew = srv->addClient(/*clientId*/1, /*seatId*/1, "knight");
+	EntityId pNew = srv->addClient(/*clientId*/1, /*seatId*/1, "guy");
 	if (pNew == ENTITY_NONE) return "addClient after reconnect failed";
 
 	// After restore + one tick, count + find the shoved NPC by position.
@@ -3179,12 +3179,12 @@ static std::string s06_living_spawn_requires_owner() {
 	// 1. overrides variant without Prop::Owner → Living lands at owner=0.
 	//    (Spawn path prints a WARN; we verify the state the warn triggers on.)
 	EntityId unowned = srv->world().entities.spawn(
-		"knight", glm::vec3(0, 10, 0),
+		"guy", glm::vec3(0, 10, 0),
 		std::unordered_map<std::string, PropValue>{});
-	if (unowned == ENTITY_NONE) return "spawn(overrides) returned ENTITY_NONE for 'knight'";
+	if (unowned == ENTITY_NONE) return "spawn(overrides) returned ENTITY_NONE for 'guy'";
 	Entity* eu = srv->world().entities.get(unowned);
-	if (!eu) return "spawned 'knight' not findable by id";
-	if (!eu->def().isLiving()) return "'knight' unexpectedly not Living in this build";
+	if (!eu) return "spawned 'guy' not findable by id";
+	if (!eu->def().isLiving()) return "'guy' unexpectedly not Living in this build";
 	int owner0 = eu->getProp<int>(Prop::Owner, 0);
 	if (owner0 != 0)
 		return "Living spawned with empty overrides has owner=" + std::to_string(owner0)
@@ -3192,11 +3192,11 @@ static std::string s06_living_spawn_requires_owner() {
 
 	// 2. overrides variant with Prop::Owner threaded → honored verbatim.
 	EntityId owned = srv->world().entities.spawn(
-		"knight", glm::vec3(4, 10, 0),
+		"guy", glm::vec3(4, 10, 0),
 		{{Prop::Owner, (int)99}});
-	if (owned == ENTITY_NONE) return "spawn(overrides) returned ENTITY_NONE for owned 'knight'";
+	if (owned == ENTITY_NONE) return "spawn(overrides) returned ENTITY_NONE for owned 'guy'";
 	Entity* eo = srv->world().entities.get(owned);
-	if (!eo) return "owned 'knight' not findable by id";
+	if (!eo) return "owned 'guy' not findable by id";
 	int ownerN = eo->getProp<int>(Prop::Owner, 0);
 	if (ownerN != 99)
 		return "Living spawned with Prop::Owner=99 reports owner="

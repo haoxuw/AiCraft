@@ -13,7 +13,7 @@ attachment points, head flag) are preserved elsewhere:
     can merge by name.
 
 Usage:
-    src/model_editor/bbmodel_export.py src/artifacts/models/base/knight.py
+    src/model_editor/bbmodel_export.py src/artifacts/models/base/guy.py
     src/model_editor/bbmodel_export.py <model.py> <out.bbmodel>
 """
 

@@ -152,7 +152,7 @@ All map to the server's 4 action types: Move, Convert, Relocate, Interact.
 |   Living (moves, has HP, has inventory)                                 |
 |     Player    — just a Living with playable=true                        |
 |     Crewmate  — NPC, controlled by AgentClient                         |
-|     Knight    — NPC, controlled by AgentClient                         |
+|     Guy    — NPC, controlled by AgentClient                         |
 |     Chicken   — animal, controlled by AgentClient                      |
 |     Pig       — animal, controlled by AgentClient                      |
 |                                                                          |

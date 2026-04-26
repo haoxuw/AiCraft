@@ -201,7 +201,7 @@ DB layer (not yet implemented) — there is no on-disk writable tier.
 | `blocks/` | Hardness, color, drops, transparency | terrain.py |
 | `models/` | Box model geometry + animations | pig.py, sword.py |
 | `effects/` | Combat/status effects | damage.py, poison.py |
-| `characters/` | Player skins + appearance | knight.py, mage.py |
+| `characters/` | Player skins + appearance | guy.py, mage.py |
 | `worlds/` | World gen: terrain, villages, mobs | village.py |
 | `actions/` | Custom action types | *(planned)* |
 | `resources/` | Audio/visual metadata | creature_sounds.py |

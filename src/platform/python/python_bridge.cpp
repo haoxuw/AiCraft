@@ -358,7 +358,7 @@ PYBIND11_EMBEDDED_MODULE(civcraft_engine, m) {
 	living.attr("Villager")     = LivingName::Villager;
 	living.attr("Cat")          = LivingName::Cat;
 	living.attr("BraveChicken") = LivingName::BraveChicken;
-	living.attr("Knight")       = LivingName::Knight;
+	living.attr("Guy")       = LivingName::Guy;
 	living.attr("Mage")         = LivingName::Mage;
 	living.attr("Skeleton")     = LivingName::Skeleton;
 	living.attr("Giant")        = LivingName::Giant;

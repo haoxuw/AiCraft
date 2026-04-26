@@ -25,7 +25,7 @@ namespace LivingName {
 	constexpr const char* Dog          = "dog";
 	constexpr const char* Cat          = "cat";
 	constexpr const char* Villager     = "villager";
-	constexpr const char* Knight       = "knight";
+	constexpr const char* Guy       = "guy";
 	constexpr const char* Mage         = "mage";
 	constexpr const char* Skeleton     = "skeleton";
 	constexpr const char* Giant        = "giant";

@@ -172,7 +172,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	// Playable humanoids — only the identity + hunger/HP/inventory slots come
 	// from C++. Physics (walk/run speed, collision box, eye height, gravity)
 	// AND default behavior are filled in by EntityManager::applyLivingStats()
-	// from Python artifacts, so `artifacts/living/base/knight.py` is the single
+	// from Python artifacts, so `artifacts/living/base/guy.py` is the single
 	// source of truth. The "wander" bootstrap below guarantees headless tools
 	// (no artifact merge) still produce livings with a decide() loop.
 	auto humanoid = [&](const char* id, const char* name, const char* model,
@@ -200,7 +200,7 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		entities.registerType(def);
 	};
 
-	humanoid(LivingName::Knight,   "Knight",   "knight",   {0.85f,0.70f,0.55f});
+	humanoid(LivingName::Guy,   "Guy",   "guy",   {0.85f,0.70f,0.55f});
 	humanoid(LivingName::Villager, "Villager", "villager", {0.85f,0.75f,0.60f});
 	humanoid(LivingName::Mage,     "Mage",     "mage",     {0.85f,0.70f,0.55f});
 	humanoid(LivingName::Skeleton, "Skeleton", "skeleton", {0.90f,0.88f,0.80f});

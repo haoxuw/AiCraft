@@ -1,4 +1,4 @@
-"""Knight — 2 blocks tall, hero silhouette with red cape and leather belt.
+"""Guy — 2 blocks tall, hero silhouette with red cape and leather belt.
 
 A playable humanoid. Arms and legs swing opposite when walking. Right and
 left arm are ``name``-tagged so held items attach at the hand grip and
@@ -11,7 +11,7 @@ Optional animation: pivot, swing_axis, amplitude (degrees), phase (radians), spe
 import math
 
 model = {
-    "id": "knight",
+    "id": "guy",
     "hand_r": [0.5875, 0.875, -0.15],
     "hand_l": [-0.5875, 0.875, -0.15],
     "pivot_r": [0.4625, 1.75, 0.0],

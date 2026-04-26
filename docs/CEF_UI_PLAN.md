@@ -106,7 +106,7 @@ civ.emit("menu.pick", { item: "quit" })
 // Character select
 civ.emit("char.pick", { id: "base:villager" })
 // Handbook
-civ.emit("hb.select", { category: "living", id: "base:knight" })
+civ.emit("hb.select", { category: "living", id: "base:guy" })
 civ.emit("hb.voice.play", { voice: "en_US-amy-medium" })
 // Dialog
 civ.emit("dlg.send", { text: "Hello, villager." })

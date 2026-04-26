@@ -320,7 +320,7 @@ struct EntityState {
 	float yaw;
 	bool onGround;
 	std::string goalText;
-	std::string characterSkin; // visual override (e.g., "knight")
+	std::string characterSkin; // visual override (e.g., "guy")
 	int hp;
 	int maxHp;
 	int owner = 0;  // owning player EntityId; 0 = unowned

@@ -86,7 +86,7 @@ struct Tuning {
 
 	// Player — speed and jump live on the Living artifact (def.walk_speed /
 	// def.jump_velocity); kTune used to mirror them but that broke SST. See
-	// artifacts/living/base/knight.py.
+	// artifacts/living/base/guy.py.
 	int   playerMaxHP   = 100;
 	float playerHPRegen = 6.0f;   // hp/s when out of combat for hpRegenDelay
 	float hpRegenDelay  = 3.0f;   // s since last damage before regen starts

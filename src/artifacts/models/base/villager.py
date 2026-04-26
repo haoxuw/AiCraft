@@ -1,7 +1,7 @@
 """Villager — steel-trimmed plate armor, cape, pauldrons.
 
-Stout settler in steel-trimmed plate. Formerly the knight look; villagers
-now inherit the armored silhouette because knight is a playable creature.
+Stout settler in steel-trimmed plate. Formerly the guy look; villagers
+now inherit the armored silhouette because guy is a playable creature.
 STR 4  STA 4  AGI 2  INT 2
 
 Each part: offset=[x,y,z] (center), size=[w,h,d] (full size), color=[r,g,b,a]

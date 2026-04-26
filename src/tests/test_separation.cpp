@@ -60,7 +60,7 @@ static BlockSolidFn singleBlockAt(int bx, int by, int bz) {
 	};
 }
 
-// ── Defaults that match the live Knight ────────────────────────────────────
+// ── Defaults that match the live Guy ────────────────────────────────────
 static constexpr float kRadius     = 0.35f;
 static constexpr float kHeight     = 2.0f;
 static constexpr float kWalkSpeed  = 6.0f;

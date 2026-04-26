@@ -519,10 +519,10 @@ public:
 				printf("[Server] '%s' is not a playable living — falling back to default.\n",
 				       chosenType.c_str());
 			chosenType.clear();
-			// Prefer "knight" as the stable default, else the alphabetically
+			// Prefer "guy" as the stable default, else the alphabetically
 			// first playable (deterministic across unordered_map orderings).
-			if (isPlayable(LivingName::Knight)) {
-				chosenType = LivingName::Knight;
+			if (isPlayable(LivingName::Guy)) {
+				chosenType = LivingName::Guy;
 			} else {
 				std::vector<std::string> playables;
 				m_world->entities.forEachDef([&](const std::string& id, const EntityDef& d) {
