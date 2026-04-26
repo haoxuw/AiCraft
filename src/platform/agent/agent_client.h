@@ -851,29 +851,37 @@ private:
 		}
 	}
 
-	// ── phaseReactSeparation — sleeping-NPC shuffle reflex ───────────────
+	// ── phaseReactSeparation — idle-NPC cluster reflex ───────────────────
 	//
 	// Idle NPCs don't go through sendMove, so the asymmetric separation
-	// table (w_self=0 when self is idle) leaves them as obstacles even when
-	// a player or another NPC walks straight at them. This phase fills that
-	// gap: a cheap O(A) sweep over owned agents, each one running a TTC
-	// scan against moving neighbors, emits a one-shot Move kick when a
-	// collision is imminent. See docs/29_ENTITY_SEPARATION.md §7.
+	// table (w_self=0 when self is idle) leaves them as obstacles. This
+	// phase emits one-shot Move kicks for two cases (docs/29 §7):
 	//
-	// One kick per kReactCooldownSec per agent — server physics carries the
-	// shuffle for that many ticks before the next opportunity. Behavior-
-	// driven walks (vSq > kIdleVelSq) are left alone; the agent owns its
-	// velocity in that case.
+	//   case 1 — overlap: any pair-wise overlap (two clustered idle units,
+	//   or a unit standing in another's collision box) gets a small kick
+	//   proportional to the overlap depth. Pure geometry, fires regardless
+	//   of who's moving — this is what gives clusters the SC2 "liquid
+	//   spread" feel.
+	//
+	//   case 2 — incoming pusher: an idle self with a moving neighbor on a
+	//   near-term collision course shuffles aside. Kick magnitude is a
+	//   fraction (kTransferFrac) of the PUSHER's speed, so a slow walker
+	//   nudges gently while a sprinter shoves harder. Chains naturally:
+	//   once recipient has velocity, recipient becomes the next pusher.
+	//
+	// Sweep is O(A·N) and rate-limited to kPhasePeriod; per-agent kick
+	// cooldown is kReactCooldownSec.
 	void phaseReactSeparation(float dt) {
 		constexpr float kIdleVelSq        = 0.04f;   // (0.2 m/s)²
 		constexpr float kReactCooldownSec = 0.4f;
-		constexpr float kReactSpeedFrac   = 0.5f;
 		constexpr float kQueryRadius      = 6.0f;
 		constexpr float kPhasePeriod      = 0.1f;    // 10 Hz; reflex doesn't need 60 Hz
 
-		// Phase-level throttle — accumulates dt, fires the inner sweep once
-		// per period. The render frame is still 60 Hz, but the reflex's
-		// O(A·N) entity scan is only paid 10× per second.
+		// Force constants (case-specific).
+		constexpr float kOverlapForce    = 6.0f;     // kick = depth_m × force ≈ m/s
+		constexpr float kTransferFrac    = 0.3f;     // kick = pusher_speed × frac
+
+		// Phase-level throttle.
 		m_reactSepPhaseAccum += dt;
 		if (m_reactSepPhaseAccum < kPhasePeriod) return;
 		float windowDt = m_reactSepPhaseAccum;
@@ -894,16 +902,36 @@ private:
 			if (cd > 0)                        continue;
 
 			auto neighbors = gatherSepNeighbors(m_server, *self, kQueryRadius);
-			glm::vec3 dir = computeReactKick(
-				eid, self->position, sepRadiusOf(self->def()), neighbors);
-			if (dir.x == 0.0f && dir.z == 0.0f) continue;
+			float selfRadius = sepRadiusOf(self->def());
 
-			float speed = self->def().walk_speed > 0
-			            ? self->def().walk_speed : 4.0f;
+			// case 1: overlap → push proportional to depth. Wins over case 2
+			// because an existing overlap is geometrically more urgent than
+			// an anticipated one.
+			glm::vec3 overlapVec = computeOverlapKick(
+				eid, self->position, selfRadius, neighbors);
+			float overlapMag = std::sqrt(overlapVec.x * overlapVec.x
+			                           + overlapVec.z * overlapVec.z);
+			glm::vec3 kick = {0, 0, 0};
+			if (overlapMag > 1e-4f) {
+				glm::vec3 dir = overlapVec / overlapMag;
+				kick = dir * (overlapMag * kOverlapForce);
+			} else {
+				// case 2: TTC react. computeReactKick returns dir × pusherSpeed.
+				glm::vec3 reactVec = computeReactKick(
+					eid, self->position, selfRadius, neighbors);
+				float reactMag = std::sqrt(reactVec.x * reactVec.x
+				                         + reactVec.z * reactVec.z);
+				if (reactMag > 1e-4f) {
+					glm::vec3 dir = reactVec / reactMag;
+					kick = dir * (reactMag * kTransferFrac);
+				}
+			}
+			if (kick.x == 0.0f && kick.z == 0.0f) continue;
+
 			ActionProposal p;
 			p.type       = ActionProposal::Move;
 			p.actorId    = eid;
-			p.desiredVel = dir * (speed * kReactSpeedFrac);
+			p.desiredVel = kick;
 			m_server.sendAction(p);
 
 			cd = kReactCooldownSec;

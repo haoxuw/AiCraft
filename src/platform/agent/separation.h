@@ -217,15 +217,63 @@ inline glm::vec3 applySeparation(
 	return {v_new.x, selfVelIntent.y, v_new.y};
 }
 
-// React-kick for sleeping NPCs. Mirrors §7 of the math doc — when self is at
-// rest but a moving neighbor is on a near-term collision course, return a unit
-// XZ direction the NPC should shuffle in. {0,0,0} = no kick needed.
+// Geometric overlap kick (case 1 of the cluster-spread design).
 //
-// Caller multiplies by a desired kick speed (e.g. 0.5 · walk_speed) and feeds
-// into sendMove. This is intentionally separate from applySeparation: the
-// asymmetric-weight table says w_self=0 when self is idle, so applySeparation
-// returns no force in that case. This function fills the "shuffle out of the
-// way" gap that the asymmetric table deliberately leaves open.
+// Pure geometry: scans `neighbors` for the largest overlap with self and
+// returns a vector whose direction = unit-XZ away from that neighbor and
+// magnitude = overlap depth in metres. {0,0,0} = no overlap.
+//
+// Caller multiplies by a transfer constant (e.g. `kOverlapForce`) to convert
+// the depth into a one-shot Move velocity. Fires regardless of who's moving,
+// which is the whole point — two idle clustered units would otherwise stay
+// locked together because applySeparation's idle early-return skips them.
+inline glm::vec3 computeOverlapKick(
+	EntityId                       selfEid,
+	glm::vec3                      selfPos,
+	float                          selfRadius,
+	const std::vector<SepNeighbor>& neighbors,
+	float                          slack = 0.05f)
+{
+	const glm::vec2 p_i = {selfPos.x, selfPos.z};
+	glm::vec2 bestVec  = {0, 0};
+	float     bestOverlap = 0.0f;
+
+	for (const SepNeighbor& n : neighbors) {
+		if (n.eid == selfEid) continue;
+		glm::vec2 p_j = {n.pos.x, n.pos.z};
+		glm::vec2 d   = p_i - p_j;
+		float R   = selfRadius + n.radius + slack;
+		float dd  = d.x * d.x + d.y * d.y;
+		if (dd >= R * R) continue;                 // not overlapping
+
+		float dist    = std::sqrt(std::max(dd, 1e-8f));
+		float overlap = R - dist;
+		if (overlap <= bestOverlap) continue;
+		glm::vec2 dir = (dist > 1e-4f)
+			? d / dist
+			: ((selfEid & 1u) ? glm::vec2(1, 0) : glm::vec2(0, 1));
+		bestVec     = dir * overlap;
+		bestOverlap = overlap;
+	}
+	return {bestVec.x, 0.0f, bestVec.y};
+}
+
+// React-kick for idle NPCs (case 2 — momentum transfer).
+//
+// When self is at rest but a moving neighbor is on a near-term collision
+// course, return a vector whose direction = unit-XZ n_τ (the side self
+// should slip toward at the predicted contact) and magnitude = pusher's
+// horizontal speed. {0,0,0} = no kick needed.
+//
+// The magnitude carries pusher's speed so the caller can transfer a
+// percentage of it (e.g. `result × kTransferFrac`). This implements the
+// SC2-feel "moving units bump idle ones forward" — and chains naturally,
+// because once the recipient has velocity, the recipient becomes the
+// "pusher" for its own neighbors next tick.
+//
+// This is intentionally separate from applySeparation: the asymmetric-weight
+// table sets w_self=0 when self is idle, so applySeparation returns no
+// force in that case. This function fills the "shuffle out of the way" gap.
 inline glm::vec3 computeReactKick(
 	EntityId                       selfEid,
 	glm::vec3                      selfPos,
@@ -236,8 +284,9 @@ inline glm::vec3 computeReactKick(
 	float                          slack = 0.05f)
 {
 	const glm::vec2 p_i = {selfPos.x, selfPos.z};
-	float bestTau = tauReact;
-	glm::vec2 bestKick = {0, 0};
+	float bestTau         = tauReact;
+	glm::vec2 bestDir     = {0, 0};
+	float     bestPusher  = 0.0f;
 	float idleSq = idleVelEps * idleVelEps;
 
 	for (const SepNeighbor& n : neighbors) {
@@ -252,15 +301,19 @@ inline glm::vec3 computeReactKick(
 		float R   = selfRadius + n.radius + slack;
 		float dd  = d.x * d.x + d.y * d.y;
 		float c   = dd - R * R;
+		float pusherSpeed = std::sqrt(vMagSq);
 
 		// Already overlapping → kick straight away from neighbor's current pos.
+		// Overlap is handled by computeOverlapKick too, but we still emit a
+		// full pusher-speed kick here so case 2's magnitude propagates.
 		if (c <= 0.0f) {
 			float dist = std::sqrt(std::max(dd, 1e-8f));
 			glm::vec2 dir = (dist > 1e-4f) ? d / dist
 			                               : ((selfEid & 1u) ? glm::vec2(1, 0)
 			                                                 : glm::vec2(0, 1));
-			bestKick = dir;
-			bestTau  = 0.0f;
+			bestDir    = dir;
+			bestPusher = pusherSpeed;
+			bestTau    = 0.0f;
 			continue;
 		}
 
@@ -276,11 +329,15 @@ inline glm::vec3 computeReactKick(
 		glm::vec2 contact = d + v * tau;
 		float cMag = std::sqrt(contact.x * contact.x + contact.y * contact.y);
 		if (cMag < 1e-4f) continue;
-		bestKick = contact / cMag;                 // unit n_τ
+		bestDir    = contact / cMag;               // unit n_τ
+		bestPusher = pusherSpeed;
 		bestTau  = tau;
 	}
 
-	return {bestKick.x, 0.0f, bestKick.y};
+	// Direction × magnitude: magnitude = pusher's horizontal speed; caller
+	// multiplies by kTransferFrac for the actual kick velocity.
+	glm::vec2 v = bestDir * bestPusher;
+	return {v.x, 0.0f, v.y};
 }
 
 // Drain a SepStats into the perf registry. Zero-cost when CIVCRAFT_PERF is off.

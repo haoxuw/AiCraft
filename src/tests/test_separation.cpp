@@ -351,18 +351,59 @@ static std::string s14_lpf_smoothing() {
 	return "";
 }
 
-static std::string s16_two_idle_overlap_spreads() {
-	// Two idle units overlapping (e.g. spawned on top of each other, or pressed
-	// together by a moving group that then stopped). User requirement: clustered
-	// units should "work like liquid" and spread apart even when nobody is
-	// moving. Expectation: dv pushes self in -x (away from neighbor at +x).
+// Case 1: computeOverlapKick — pure geometry, no velocity needed. Two idle
+// clustered units must produce a non-zero push proportional to overlap.
+static std::string s16_overlap_kick_idle_pair() {
+	// Two units at gap 0.4; R = 0.35+0.35+0.05 = 0.75 → overlap = 0.35 m.
 	std::vector<SepNeighbor> nbrs = {
-		N(2, {0.4f, 0, 0}, {0, 0, 0}),  // idle, overlapping (R = 0.75; gap = 0.4)
+		N(2, {0.4f, 0, 0}, {0, 0, 0}),
 	};
-	auto r = runSep(1, {0, 0, 0}, /*intent=*/{0, 0, 0}, nbrs, noWalls());
-	if (r.vOut.x >= -1e-3f)
-		return "idle overlap did not spread (out.x=" + std::to_string(r.vOut.x) +
-		       "; expected < 0)";
+	glm::vec3 v = computeOverlapKick(/*selfEid=*/1, /*selfPos=*/{0, 0, 0},
+	                                  kRadius, nbrs);
+	float mag = std::sqrt(v.x*v.x + v.z*v.z);
+	if (mag <= 1e-4f) return "overlap kick produced no displacement";
+	if (v.x >= 0.0f)  return "overlap kick wrong direction (x=" +
+	                          std::to_string(v.x) + "; expected < 0)";
+	// Magnitude should equal overlap depth ≈ 0.35.
+	if (std::fabs(mag - 0.35f) > 0.05f)
+		return "overlap kick magnitude wrong (mag=" + std::to_string(mag) +
+		       "; want ≈0.35)";
+	return "";
+}
+
+// Case 2: computeReactKick magnitude must equal the pusher's horizontal
+// speed (so the caller can transfer a percentage of it).
+static std::string s17_react_kick_velocity_transfer() {
+	// Pusher at +x walking -x at 6 m/s into idle self at origin.
+	std::vector<SepNeighbor> nbrs = {
+		N(2, {2.0f, 0, 0}, {-6.0f, 0, 0}),
+	};
+	glm::vec3 v = computeReactKick(/*selfEid=*/1, /*selfPos=*/{0, 0, 0},
+	                                kRadius, nbrs);
+	float mag = std::sqrt(v.x*v.x + v.z*v.z);
+	if (mag <= 1e-4f) return "react kick produced nothing";
+	// Magnitude should be ≈ pusher speed (6.0).
+	if (std::fabs(mag - 6.0f) > 0.1f)
+		return "react kick magnitude ≠ pusher speed (mag=" + std::to_string(mag) +
+		       "; want ≈6.0)";
+	// Direction should be -x (self should move away from pusher coming from +x).
+	if (v.x >= 0.0f)
+		return "react kick wrong direction (x=" + std::to_string(v.x) + ")";
+	return "";
+}
+
+// Idle units that DON'T overlap should still produce no kick (don't fire on
+// "near" — only on actual overlap).
+static std::string s18_overlap_kick_no_overlap() {
+	// Gap 1.5 m; R = 0.75 → no overlap.
+	std::vector<SepNeighbor> nbrs = {
+		N(2, {1.5f, 0, 0}, {0, 0, 0}),
+	};
+	glm::vec3 v = computeOverlapKick(1, {0, 0, 0}, kRadius, nbrs);
+	float mag = std::sqrt(v.x*v.x + v.z*v.z);
+	if (mag > 1e-4f)
+		return "non-overlapping pair produced spurious kick (mag=" +
+		       std::to_string(mag) + ")";
 	return "";
 }
 
@@ -404,7 +445,9 @@ int main() {
 	run("S13 group-of-three",           s13_group_of_three);
 	run("S14 lpf-smoothing",            s14_lpf_smoothing);
 	run("S15 wall-vs-pair",             s15_wall_vs_pair);
-	run("S16 two-idle-overlap-spreads", s16_two_idle_overlap_spreads);
+	run("S16 overlap-kick-idle-pair",   s16_overlap_kick_idle_pair);
+	run("S17 react-kick-vel-transfer",  s17_react_kick_velocity_transfer);
+	run("S18 overlap-kick-no-overlap",  s18_overlap_kick_no_overlap);
 
 	int passed = 0;
 	for (auto& r : g_results) if (r.passed) passed++;
