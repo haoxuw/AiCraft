@@ -34,6 +34,7 @@
 #include "python/python_bridge.h"
 #include "agent/agent.h"
 #include "agent/decide_worker.h"
+#include "agent/separation.h"
 
 #include <algorithm>
 #include <chrono>
@@ -158,6 +159,7 @@ public:
 		if (m_executorEnabled) {
 			phaseExecute(dt);
 			emitMovementSignals();
+			phaseReactSeparation(dt);
 		}
 		scanInterrupts(dt);
 		auto t3 = Clock::now();
@@ -400,6 +402,7 @@ private:
 				m_decideGen.erase(it->first);
 				m_decideBackoff.forget(it->first);
 				m_decidePacer.forget(it->first);
+				m_reactSepCooldown.erase(it->first);
 				it = m_agents.erase(it);
 			} else {
 				++it;
@@ -848,6 +851,66 @@ private:
 		}
 	}
 
+	// ── phaseReactSeparation — sleeping-NPC shuffle reflex ───────────────
+	//
+	// Idle NPCs don't go through sendMove, so the asymmetric separation
+	// table (w_self=0 when self is idle) leaves them as obstacles even when
+	// a player or another NPC walks straight at them. This phase fills that
+	// gap: a cheap O(A) sweep over owned agents, each one running a TTC
+	// scan against moving neighbors, emits a one-shot Move kick when a
+	// collision is imminent. See docs/29_ENTITY_SEPARATION.md §7.
+	//
+	// One kick per kReactCooldownSec per agent — server physics carries the
+	// shuffle for that many ticks before the next opportunity. Behavior-
+	// driven walks (vSq > kIdleVelSq) are left alone; the agent owns its
+	// velocity in that case.
+	void phaseReactSeparation(float dt) {
+		constexpr float kIdleVelSq        = 0.04f;   // (0.2 m/s)²
+		constexpr float kReactCooldownSec = 0.4f;
+		constexpr float kReactSpeedFrac   = 0.5f;
+		constexpr float kQueryRadius      = 6.0f;
+		constexpr float kPhasePeriod      = 0.1f;    // 10 Hz; reflex doesn't need 60 Hz
+
+		// Phase-level throttle — accumulates dt, fires the inner sweep once
+		// per period. The render frame is still 60 Hz, but the reflex's
+		// O(A·N) entity scan is only paid 10× per second.
+		m_reactSepPhaseAccum += dt;
+		if (m_reactSepPhaseAccum < kPhasePeriod) return;
+		float windowDt = m_reactSepPhaseAccum;
+		m_reactSepPhaseAccum = 0.0f;
+
+		for (auto& [eid, agent] : m_agents) {
+			Entity* self = m_server.getEntity(eid);
+			if (!self || self->removed)        continue;
+			if (!self->def().isLiving())       continue;
+
+			// Behavior is moving the entity — leave it alone.
+			float vSq = self->velocity.x * self->velocity.x
+			          + self->velocity.z * self->velocity.z;
+			if (vSq > kIdleVelSq)              continue;
+
+			float& cd = m_reactSepCooldown[eid];
+			cd -= windowDt;
+			if (cd > 0)                        continue;
+
+			auto neighbors = gatherSepNeighbors(m_server, *self, kQueryRadius);
+			glm::vec3 dir = computeReactKick(
+				eid, self->position, sepRadiusOf(self->def()), neighbors);
+			if (dir.x == 0.0f && dir.z == 0.0f) continue;
+
+			float speed = self->def().walk_speed > 0
+			            ? self->def().walk_speed : 4.0f;
+			ActionProposal p;
+			p.type       = ActionProposal::Move;
+			p.actorId    = eid;
+			p.desiredVel = dir * (speed * kReactSpeedFrac);
+			m_server.sendAction(p);
+
+			cd = kReactCooldownSec;
+			PERF_COUNT("client.steering.react_kicks");
+		}
+	}
+
 	// ── helpers ──────────────────────────────────────────────────────────
 	// Generic exponential-backoff gate for Python-side failures that would
 	// otherwise spam once per decide sweep (missing behavior id, Python
@@ -991,6 +1054,8 @@ private:
 
 	DecideWorker                           m_decideWorker;
 	std::unordered_map<EntityId, uint32_t> m_decideGen;
+	std::unordered_map<EntityId, float>    m_reactSepCooldown;  // §7 reflex pacer
+	float                                  m_reactSepPhaseAccum = 0.0f;
 };
 
 } // namespace civcraft

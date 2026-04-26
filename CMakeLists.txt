@@ -274,6 +274,17 @@ target_link_libraries(civcraft-test-pathfinding PRIVATE
 )
 stage_runtime_assets(civcraft-test-pathfinding)
 
+# === Separation regression tests ===
+# Pure-function tests for src/platform/agent/separation.h. No TestServer —
+# scenarios drive applySeparation with curated inputs and assert outputs.
+add_executable(civcraft-test-separation
+	src/tests/test_separation.cpp
+)
+target_include_directories(civcraft-test-separation PRIVATE ${GAME_INCLUDE_DIRS})
+target_link_libraries(civcraft-test-separation PRIVATE
+	glm::glm
+)
+
 # === Whisper smoke test (phase-2 STT) ===
 # Tiny one-shot: WAV → whisper-server → stdout. Not shipped; only for
 # verifying WhisperClient outside the GUI client.

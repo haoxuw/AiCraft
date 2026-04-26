@@ -84,9 +84,9 @@ struct Tuning {
 	// Physics
 	float gravity       = -20.0f;
 
-	// Player
-	float playerSpeed   = 6.0f;
-	float playerJumpV   = 8.0f;
+	// Player — speed and jump live on the Living artifact (def.walk_speed /
+	// def.jump_velocity); kTune used to mirror them but that broke SST. See
+	// artifacts/living/base/knight.py.
 	int   playerMaxHP   = 100;
 	float playerHPRegen = 6.0f;   // hp/s when out of combat for hpRegenDelay
 	float hpRegenDelay  = 3.0f;   // s since last damage before regen starts
@@ -491,6 +491,9 @@ private:
 	// Client-only physics/animation state (not on Entity).
 	bool         m_onGround  = false;
 	float        m_walkDist  = 0.0f;  // animation swing phase
+	// applySeparation LPF state for the local player. Zero on first call,
+	// carried across frames; cleared by applySeparation when player is idle.
+	glm::vec2    m_playerSepDvPrev{0.0f, 0.0f};
 	float        m_attackCD  = 0.0f;  // cooldown until next swing
 	float        m_placeCD   = 0.0f;  // cooldown until next RMB block place
 	float        m_regenIdle = 0.0f;  // seconds since last damage

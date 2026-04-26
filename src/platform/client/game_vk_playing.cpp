@@ -15,6 +15,7 @@
 #include "logic/block_shape.h"
 #include "logic/material_values.h"
 #include "agent/agent_client.h"
+#include "agent/separation.h"
 
 namespace civcraft::vk {
 
@@ -450,8 +451,13 @@ void Game::tickPlayer(float dt) {
 	bool space = glfwGetKey(m_window, GLFW_KEY_SPACE) == GLFW_PRESS;
 	m_spaceLast = space;
 
-	// Horizontal velocity: direct (arcade feel).
-	float speed = kTune.playerSpeed * (boost ? 1.6f : 1.0f);
+	// MoveParams from EntityDef — must match server's makeMoveParams.
+	const auto& def = me->def();
+
+	// Horizontal velocity: direct (arcade feel). Speed comes from the
+	// Living artifact (def.walk_speed) — single source of truth.
+	float walkSpeed = def.walk_speed > 0 ? def.walk_speed : 6.0f;
+	float speed     = walkSpeed * (boost ? 1.6f : 1.0f);
 
 	{
 		auto& chunks = m_server->chunks();
@@ -461,8 +467,6 @@ void Game::tickPlayer(float dt) {
 			return bd.solid ? bd.collision_height : 0.0f;
 		};
 
-		// MoveParams from EntityDef — must match server's makeMoveParams.
-		const auto& def = me->def();
 		civcraft::MoveParams mp = civcraft::makeMoveParams(
 			def.collision_box_min, def.collision_box_max,
 			def.gravity_scale, def.isLiving(), m_flyMode);
@@ -481,8 +485,31 @@ void Game::tickPlayer(float dt) {
 		a.type         = civcraft::ActionProposal::Move;
 		a.actorId      = m_server->localPlayerId();
 		a.desiredVel   = { moveDir.x * speed, 0, moveDir.z * speed };
+
+		// Soft separation — push around stationary NPCs / other players and
+		// hard-stop at walls. Modifies XZ only; preserves the y component
+		// (jump/fly velocity is filled in below). docs/29_ENTITY_SEPARATION.md
+		// Skip when the player isn't pressing a move key — applySeparation
+		// is a no-op for idle self, and the neighbor gather is the only cost.
+		float playerIntentSq = a.desiredVel.x * a.desiredVel.x
+		                     + a.desiredVel.z * a.desiredVel.z;
+		if (playerIntentSq > 0.04f) {
+			auto neighbors = civcraft::gatherSepNeighbors(*m_server, *me, 8.0f);
+			civcraft::SepStats stats;
+			a.desiredVel = civcraft::applySeparation(
+				m_server->localPlayerId(), me->position, a.desiredVel,
+				civcraft::sepRadiusOf(def),
+				walkSpeed,
+				civcraft::sepHeightOf(def),
+				mp.stepHeight,
+				neighbors, isSolid, m_playerSepDvPrev,
+				civcraft::SepConfig{}, &stats);
+			civcraft::recordSepPerf(stats);
+		} else {
+			m_playerSepDvPrev = {0.0f, 0.0f};
+		}
 		a.sprint       = boost;
-		a.jumpVelocity = kTune.playerJumpV;
+		a.jumpVelocity = def.jump_velocity > 0 ? def.jump_velocity : 8.0f;
 		a.fly          = m_flyMode;
 		a.lookYaw      = m_cam.lookYaw;
 		a.lookPitch    = m_cam.lookPitch;
@@ -507,7 +534,7 @@ void Game::tickPlayer(float dt) {
 			if (m_flyMode) {
 				localVel.y = a.desiredVel.y;
 			} else if (a.jump && m_onGround) {
-				localVel.y = kTune.playerJumpV;
+				localVel.y = a.jumpVelocity;
 			}
 
 			glm::vec3 prePos = me->position;

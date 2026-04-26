@@ -21,6 +21,12 @@
 
 namespace civcraft {
 
+// World-scale: how many real-world meters one block edge represents. Used by
+// any system that needs to convert engine units (blocks/s, blocks) into a
+// fixed-scale physical quantity (m/s, m). For now a placeholder; a separate
+// world-scale project will replace this with a per-template value.
+inline constexpr float kBlockMeters = 1.0f;
+
 // Per-instance state for active blocks (TNT fuse, wheat stage, wire power).
 struct BlockStateKey {
 	int x, y, z;

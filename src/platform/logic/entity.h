@@ -99,6 +99,7 @@ struct EntityDef {
 	float gravity_scale = 1.0f;
 	float walk_speed = 0.0f;
 	float run_speed = 0.0f;
+	float jump_velocity = 0.0f;
 
 	// Living / Creature fields
 	int max_hp = 0;

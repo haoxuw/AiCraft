@@ -35,8 +35,9 @@ public:
 	}
 
 	// Overlay Python-sourced stats on top of C++-registered EntityDefs.
-	// Duck-typed: Stats must expose `id`, `walk_speed`, `run_speed`, `eye_height`,
-	// `gravity`, `has_box`, `box_min_{x,y,z}`, `box_max_{x,y,z}`.
+	// Duck-typed: Stats must expose `id`, `walk_speed`, `run_speed`,
+	// `jump_velocity`, `eye_height`, `gravity`, `has_box`,
+	// `box_min_{x,y,z}`, `box_max_{x,y,z}`.
 	// NaN scalars mean "keep builtin default". Avoids coupling this header to
 	// ArtifactRegistry (which lives in logic/).
 	template <class Stats>
@@ -50,10 +51,11 @@ public:
 			auto setIfFinite = [&](float v, float& dst) {
 				if (std::isfinite(v)) { dst = v; any = true; }
 			};
-			setIfFinite(s.walk_speed, d.walk_speed);
-			setIfFinite(s.run_speed,  d.run_speed);
-			setIfFinite(s.eye_height, d.eye_height);
-			setIfFinite(s.gravity,    d.gravity_scale);
+			setIfFinite(s.walk_speed,    d.walk_speed);
+			setIfFinite(s.run_speed,     d.run_speed);
+			setIfFinite(s.jump_velocity, d.jump_velocity);
+			setIfFinite(s.eye_height,    d.eye_height);
+			setIfFinite(s.gravity,       d.gravity_scale);
 			if (s.has_box) {
 				d.collision_box_min = {s.box_min_x, s.box_min_y, s.box_min_z};
 				d.collision_box_max = {s.box_max_x, s.box_max_y, s.box_max_z};

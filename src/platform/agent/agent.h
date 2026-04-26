@@ -32,6 +32,7 @@
 #include "python/python_bridge.h"  // BehaviorHandle
 #include "agent/outcome.h"
 #include "agent/pathfind.h"        // WorldView, DoorOracle, GridPlanner
+#include "agent/separation.h"      // applySeparation() — soft entity-vs-entity push
 #include "client/path_executor.h"  // Navigator (facade over unified PathExecutor)
 #include "agent/pathlog.h"         // PATHLOG(...) — gated by CIVCRAFT_PATHFINDING_DEBUG
 #include "debug/move_stuck_log.h"
@@ -980,6 +981,36 @@ private:
 	// ── Move emission + stuck telemetry ──────────────────────────────────
 	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server,
 	              const char* source) {
+		// Soft separation — bias `vel` away from nearby Living and hard-stop
+		// at walls. Skip the O(N) neighbor gather when the requested vel is
+		// below idle; applySeparation is a no-op for idle self anyway (and
+		// clears the LPF state on its own when called from this branch).
+		// docs/29_ENTITY_SEPARATION.md.
+		float intentSq = vel.x * vel.x + vel.z * vel.z;
+		if (intentSq > 0.04f) {
+			auto& chunks = server.chunks();
+			auto& blocks = server.blockRegistry();
+			BlockSolidFn isSolid = [&](int x, int y, int z) -> float {
+				const auto& bd = blocks.get(chunks.getBlock(x, y, z));
+				return bd.solid ? bd.collision_height : 0.0f;
+			};
+			auto neighbors = gatherSepNeighbors(server, e, /*queryRadius=*/8.0f);
+			SepStats stats;
+			MoveParams mp = makeMoveParams(
+				e.def().collision_box_min, e.def().collision_box_max,
+				e.def().gravity_scale, e.def().isLiving(), /*canFly=*/false);
+			vel = applySeparation(
+				m_eid, e.position, vel,
+				sepRadiusOf(e.def()),
+				e.def().walk_speed > 0 ? e.def().walk_speed : 4.0f,
+				sepHeightOf(e.def()),
+				mp.stepHeight,
+				neighbors, isSolid, m_sepDvPrev, SepConfig{}, &stats);
+			recordSepPerf(stats);
+		} else {
+			m_sepDvPrev = {0.0f, 0.0f};
+		}
+
 		PATHLOG(m_eid,
 			"steer: source=%s vel=(%.2f,%.2f,%.2f) pos=(%.2f,%.2f,%.2f) "
 			"entVel=(%.2f,%.2f,%.2f)",
@@ -1077,6 +1108,11 @@ private:
 	// Smoothed XZ heading last sent in a nav-waypoint Move — fed back into
 	// rotateTowardXZ next tick so desiredVel stays C¹-continuous on pops.
 	glm::vec3 m_lastMoveDir{0, 0, 0};
+
+	// applySeparation LPF state (per-eid). Zero on first call, updated each
+	// time. Cleared inside applySeparation when self goes idle so a new
+	// movement starts with a fresh push budget. docs/29_ENTITY_SEPARATION.md.
+	glm::vec2 m_sepDvPrev{0.0f, 0.0f};
 
 	// Schedule flags.
 	bool        m_needsDecide    = false;

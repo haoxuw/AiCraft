@@ -115,10 +115,11 @@ public:
 	struct LivingStats {
 		std::string id;
 		std::string behavior;       // Python behavior module id (e.g. "wander", "woodcutter")
-		float walk_speed = std::nanf("");
-		float run_speed  = std::nanf("");
-		float eye_height = std::nanf("");
-		float gravity    = std::nanf("");
+		float walk_speed    = std::nanf("");
+		float run_speed     = std::nanf("");
+		float jump_velocity = std::nanf("");
+		float eye_height    = std::nanf("");
+		float gravity       = std::nanf("");
 		bool  has_box = false;
 		float box_min_x = 0, box_min_y = 0, box_min_z = 0;
 		float box_max_x = 0, box_max_y = 0, box_max_z = 0;
@@ -137,10 +138,11 @@ public:
 					try { out = std::stof(it->second); } catch (...) {}
 				}
 			};
-			asFloat("walk_speed", s.walk_speed);
-			asFloat("run_speed",  s.run_speed);
-			asFloat("eye_height", s.eye_height);
-			asFloat("gravity",    s.gravity);
+			asFloat("walk_speed",    s.walk_speed);
+			asFloat("run_speed",     s.run_speed);
+			asFloat("jump_velocity", s.jump_velocity);
+			asFloat("eye_height",    s.eye_height);
+			asFloat("gravity",       s.gravity);
 			auto mnX = e.fields.find("collision_min_x");
 			auto mxX = e.fields.find("collision_max_x");
 			if (mnX != e.fields.end() && mxX != e.fields.end()) {
