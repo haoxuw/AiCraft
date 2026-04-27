@@ -33,7 +33,11 @@ constexpr float kCharHNdc = 0.032f;
 }
 
 // ── Named HUD colors ────────────────────────────────────────────────────
-static constexpr glm::vec4 kCrosshair   {1.0f, 1.0f, 1.0f, 0.65f};
+// Brass-tinted crosshair to match the menu palette. Hitmarker flashes
+// override (orange on damage, red on kill) — the resting tone is what
+// you see 99% of the time.
+static constexpr glm::vec4 kCrosshair   {0.95f, 0.78f, 0.35f, 0.85f};
+static constexpr glm::vec4 kCrosshairShadow {0.0f, 0.0f, 0.0f, 0.55f};
 static constexpr glm::vec4 kTypeLabel   {0.70f, 0.70f, 0.70f, 0.65f};
 
 void HudRenderer::renderHUD() {
@@ -68,8 +72,17 @@ void HudRenderer::renderHUD() {
 				glm::mix(1.0f, flash.b, blend),
 				0.9f + blend * 0.1f);
 		}
+		// Drop shadow first (0.0015 NDC offset down-right) so the cross
+		// reads cleanly against bright sky AND dark caves. Center dot
+		// for precision (1.5px @ 1080p).
+		g.m_rhi->drawRect2D(cx - 0.003f + 0.0015f, cy - 0.006f - 0.0015f,
+			0.006f, 0.012f, &kCrosshairShadow.x);
+		g.m_rhi->drawRect2D(cx - 0.010f + 0.0015f, cy - 0.0015f - 0.0015f,
+			0.020f, 0.003f, &kCrosshairShadow.x);
 		g.m_rhi->drawRect2D(cx - 0.003f, cy - 0.006f,  0.006f, 0.012f, &chColor.x);
 		g.m_rhi->drawRect2D(cx - 0.010f, cy - 0.0015f, 0.020f, 0.003f, &chColor.x);
+		// Center dot — small bright pip so the exact aim point reads.
+		g.m_rhi->drawRect2D(cx - 0.0015f, cy - 0.0015f, 0.003f, 0.003f, &chColor.x);
 	}
 
 	// ── Entity lightbulb + goal label + HP bar + type label ─────────────

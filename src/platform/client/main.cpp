@@ -970,6 +970,28 @@ int main(int argc, char** argv) {
 				"</body></html>";
 		};
 
+		// Death overlay — same chrome as Pause but with "You Died" header
+		// and Respawn / Main Menu buttons. Shown over the world from
+		// Game::enterDead when a CefHost is wired.
+		auto deathPage = [&]() -> std::string {
+			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
+				"body{justify-content:center;align-items:center;"
+				"background:radial-gradient(ellipse at center,"
+				"rgba(80,10,10,0.55) 0%%,rgba(20,5,5,0.30) 60%%)}"
+				"h1{font-size:72px;letter-spacing:10px;margin:0 0 14px;"
+				"color:%23e85a4a;text-shadow:0 4px 18px rgba(0,0,0,0.85),"
+				"0 0 24px rgba(232,90,74,0.45)}"
+				".tag{margin:0 0 32px;color:%23e85a4a;opacity:0.85}"
+				".btn{width:280px}"
+				"</style></head><body>"
+				"<h1>You Died</h1>"
+				"<div class='tag'>Pick yourself up, traveller</div>"
+				"<button class='btn' onclick=\"send('respawn')\">Respawn</button>"
+				"<button class='btn' onclick=\"send('main_menu')\">Main Menu</button>" +
+				kVersion + kJs +
+				"</body></html>";
+		};
+
 		// In-game ESC pause page. Renders over the running world (the world
 		// keeps rendering behind because we don't change m_state). Static
 		// buttons → simple 4-line action wiring.
@@ -1616,6 +1638,7 @@ int main(int argc, char** argv) {
 		static std::string sHand  = handbookPage();
 		static std::string sWorld = worldPickerPage();
 		static std::string sPause = pausePage();
+		static std::string sDeath = deathPage();
 		static std::string sMpHub = multiplayerHubPage();
 		static std::string sLobby = lobbyPage();
 		// settingsPage rebuilt fresh each click — captures live values
@@ -1669,6 +1692,8 @@ int main(int argc, char** argv) {
 				cefUrl = modManagerPage();
 			} else if (boot && std::string(boot) == "lobby") {
 				cefUrl = sLobby;
+			} else if (boot && std::string(boot) == "death") {
+				cefUrl = sDeath;
 			} else {
 				cefUrl = sMain;
 			}
@@ -1685,6 +1710,7 @@ int main(int argc, char** argv) {
 		game.setCefHost(hostRaw);
 		game.setCefHandbookUrl(sHand);
 		game.setCefPauseUrl(sPause);
+		game.setCefDeathUrl(sDeath);
 		game.setCefMainUrl(sMain);
 		// multiplayerPage is captured by value so the lambda owns its own
 		// copy — local 'multiplayerPage' in this block goes out of scope
@@ -1713,9 +1739,14 @@ int main(int argc, char** argv) {
 				// the overlay and hand control back to the world.
 				game.setCefMenuActive(false);
 			} else if (action == "main_menu") {
-				// Pause-menu "Main Menu" — disconnect, kill any hosted
-				// subprocess, rewind to the title.
+				// Pause-menu / Death "Main Menu" — disconnect, kill any
+				// hosted subprocess, rewind to the title.
 				game.returnToMainMenu();
+			} else if (action == "respawn") {
+				// Death overlay Respawn button. Drop CEF; Game::respawn
+				// transitions Dead → Playing.
+				game.setCefMenuActive(false);
+				game.respawn();
 			} else if (action == "back") {
 				// Back from a CEF sub-screen has two meanings:
 				//   * Boot flow (Menu state) — return to the main title.

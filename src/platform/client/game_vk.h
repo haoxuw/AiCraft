@@ -252,6 +252,13 @@ public:
 	// wires the URL at boot via setCefPauseUrl.
 	void openCefPause();
 	void setCefPauseUrl(std::string u) { m_cefPauseUrl = std::move(u); }
+	// Death overlay (CEF). Same machinery as openCefPause but for the
+	// Dead state — Respawn / Main Menu over a "You Died" panel.
+	void openCefDeath();
+	void setCefDeathUrl(std::string u) { m_cefDeathUrl = std::move(u); }
+	// Public so the CEF "respawn" action can fire it (private was fine
+	// while the only caller was the bitmap-font death menu).
+	void respawn();
 	// Disconnect, drop any hosted subprocess, and rewind to the CEF main
 	// title. Used by the pause menu's "Main Menu" action.
 	void returnToMainMenu();
@@ -361,7 +368,6 @@ private:
 	void openGameMenu();
 	void closeGameMenu();
 	void enterDead(const char* cause);
-	void respawn();
 
 	// ── Sim phases (playing) ──────────────────────────────────────────────
 	void processInput(float dt);
@@ -851,6 +857,7 @@ private:
 	std::string       m_cefHandbookUrl;
 	std::string       m_cefPauseUrl;
 	std::string       m_cefMainUrl;       // for returnToMainMenu
+	std::string       m_cefDeathUrl;
 	solarium::ArtifactRegistry m_artifactRegistry;
 
 	// ── Hotbar + Inventory UI ────────────────────────────────────────────

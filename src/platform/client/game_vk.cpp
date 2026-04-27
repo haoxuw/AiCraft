@@ -542,6 +542,18 @@ void Game::exitCoordPeek() {
 	m_cam.resetMouseTracking();
 }
 
+void Game::openCefDeath() {
+	if (!m_cefHost || m_cefDeathUrl.empty()) return;
+	m_shell.previewId.clear();
+	m_shell.previewClip.clear();
+	if (m_window) {
+		glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+	}
+	m_mouseCaptured = false;
+	setCefMenuActive(true);
+	m_cefHost->loadUrl(m_cefDeathUrl);
+}
+
 void Game::openCefPause() {
 	if (!m_cefHost || m_cefPauseUrl.empty()) return;
 	// Pause overlay is not a "preview" screen — drop any pinned camera so
@@ -795,6 +807,8 @@ void Game::enterDead(const char* cause) {
 		glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 		m_mouseCaptured = false;
 	}
+	// CEF overlay if available; native renderDeath fallback otherwise.
+	if (m_cefHost) openCefDeath();
 }
 
 void Game::respawn() { enterPlaying(); }
@@ -1107,7 +1121,8 @@ void Game::runOneFrame(float dt, float wallTime) {
 		m_worldRenderer.renderWorld(wallTime);
 		m_worldRenderer.renderEffects(wallTime);
 		m_hudRenderer.renderHUD();       // still show world state behind the veil
-		m_menuRenderer.renderDeath();
+		// Native renderDeath only when CEF isn't covering the screen.
+		if (!cefMenuActive()) m_menuRenderer.renderDeath();
 	}
 
 	// F2 / file-trigger screenshot — must run mid-frame (needs active render
