@@ -755,6 +755,20 @@ int main(int argc, char** argv) {
 				".tile .id{font-size:11px;color:%23b88838;font-family:monospace;"
 				"letter-spacing:1px;margin-bottom:8px;display:block;opacity:0.7}"
 				".tile p{margin:0;font-size:13px;line-height:1.45;opacity:0.88}"
+				".opts{display:flex;gap:18px;align-items:center;margin-top:28px;"
+				"padding:14px 22px;background:rgba(26,18,11,0.6);"
+				"border:1px solid rgba(184,136,56,0.5)}"
+				".opts label{font-size:12px;letter-spacing:2px;color:%23b88838;"
+				"text-transform:uppercase;display:flex;align-items:center;gap:10px}"
+				".opts input{background:rgba(40,30,20,0.95);color:%23f3c44c;"
+				"border:1px solid %23b88838;font-family:monospace;font-size:13px;"
+				"padding:6px 8px;width:90px}"
+				".opts input[type='range']{width:160px;accent-color:%23f3c44c}"
+				".opts .val{font-family:monospace;color:%23f3c44c;min-width:32px;"
+				"text-align:right}"
+				".opts button{padding:6px 12px;background:rgba(94,67,30,0.85);"
+				"color:%23f3c44c;border:1px solid %23b88838;font-family:inherit;"
+				"font-size:11px;cursor:pointer;letter-spacing:1px}"
 				".back{margin-top:24px;width:160px}"
 				"</style></head><body>"
 				"<h1>Choose World</h1>"
@@ -780,8 +794,28 @@ int main(int argc, char** argv) {
 				        "</button>";
 			}
 			html += "</div>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
-				kVersion + kJs +
+				"<div class='opts'>"
+				"<label>Seed<input type='number' id='wseed' value='42' min='0' max='99999'></label>"
+				"<button onclick=\"document.getElementById('wseed').value="
+				"Math.floor(Math.random()*99999)\">Randomise</button>"
+				"<label>Villagers<input type='range' id='wvill' min='0' max='100' value='0'>"
+				"<span class='val' id='wvillv'>auto</span></label>"
+				"</div>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>"
+				"<script>"
+				"function send(a){window.cefQuery({request:'action:'+a,"
+				"onSuccess:()=>{},onFailure:()=>{}});}"
+				"document.getElementById('wvill').addEventListener('input',e=>{"
+				"document.getElementById('wvillv').textContent="
+				"e.target.value==='0'?'auto':e.target.value;});"
+				// Hijack tile clicks: append seed + villagers to the action.
+				"document.querySelectorAll('.tile').forEach(t=>{"
+				"const id=t.getAttribute('onclick').match(/world:([\\w_]+)/)[1];"
+				"t.onclick=()=>{const s=document.getElementById('wseed').value||'42';"
+				"const v=document.getElementById('wvill').value;"
+				"send('world:'+id+':'+s+':'+v);};});"
+				"</script>" +
+				kVersion +
 				"</body></html>";
 			return html;
 		};
@@ -1331,10 +1365,21 @@ int main(int argc, char** argv) {
 				hostRaw->loadUrl(sWorld);
 			}
 			else if (action.rfind("world:", 0) == 0) {
-				// "world:village" — resolve to templateIndex via the shared
-				// registry (logic/world_templates.h), spawn the server, then
-				// roll into character select with the wave-preview clip.
-				std::string id = action.substr(6);
+				// "world:<id>" or "world:<id>:<seed>:<villagers>" — the picker
+				// hijacks tile clicks to append slider values, so today's
+				// picker always sends the long form. Plain form kept for
+				// SOLARIUM_BOOT_PAGE=worlds and any future caller that just
+				// wants defaults.
+				const std::string body = action.substr(6);
+				auto parts = std::vector<std::string>{};
+				size_t p = 0;
+				while (p <= body.size()) {
+					auto q = body.find(':', p);
+					parts.push_back(body.substr(p, q == std::string::npos ? std::string::npos : q - p));
+					if (q == std::string::npos) break;
+					p = q + 1;
+				}
+				const std::string& id = parts[0];
 				int idx = solarium::worldTemplateIndexOf(id);
 				if (idx < 0) {
 					std::fprintf(stderr,
@@ -1342,9 +1387,11 @@ int main(int argc, char** argv) {
 					return;
 				}
 				solarium::AgentManager::Config cfg;
-				cfg.seed = 42;
 				cfg.templateIndex = idx;
 				cfg.execDir = game.execDir();
+				cfg.seed              = parts.size() > 1 ? std::atoi(parts[1].c_str()) : 42;
+				cfg.villagersOverride = parts.size() > 2 ? std::atoi(parts[2].c_str()) : 0;
+				if (cfg.seed <= 0) cfg.seed = 42;
 				if (!game.hostLocalServer(cfg)) {
 					std::fprintf(stderr,
 						"[cef] world:%s — hostLocalServer failed\n", id.c_str());
