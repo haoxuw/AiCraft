@@ -13,6 +13,7 @@
 #include "client/model_loader.h"
 #include "client/network_server.h"
 #include "client/raycast.h"
+#include "client/weather_effects.h"
 #include "net/server_interface.h"
 #include "logic/action.h"
 #include "logic/block_shape.h"
@@ -529,32 +530,15 @@ void WorldRenderer::renderWorld(float wallTime) {
 		g.m_rhi->renderBoxShadows(&shadowVP[0][0], charBoxes.data(), charBoxCount);
 	}
 
-	// Sky — sun direction, strength, timeSec, seasonPhase, and overcast drive
-	// the procedural shader (per-season palette + cloud density, sunrise bleed,
-	// stars + moon at night, storm dome under rain/snow).
+	// Sky — blue dome + stylized cumulus puffs. cameraPos anchors clouds to
+	// world XZ (so they don't scroll with the player), and skyTime drives
+	// slow wind drift (server time, not wallTime — keeps drift identical
+	// across all connected clients).
 	glm::mat4 vp = g.viewProj();
 	glm::mat4 invVP = glm::inverse(vp);
-	// Pass worldTime (in "day units") as the shader's animated phase — drives
-	// star twinkle and cloud drift. Using server time (not wallTime) keeps
-	// cloud motion consistent across all connected clients.
-	float skyTime = tod * 24.0f;  // hours since midnight, purely for animation phase
-	// Season + weather → sky shader. seasonPhase is the same continuous 0..4
-	// the terrain palette uses; overcast is gated on actual rain/snow so
-	// "lots of clouds" stays bright (Rule 5: server doesn't pick visuals).
-	float seasonP = solarium::seasonPhase(
-		g.m_server ? g.m_server->dayCount() : 0u, tod);
-	if (g.m_state == solarium::vk::GameState::Menu) {
-		seasonP = 0.5f;  // late spring — friendly, recognizable backdrop
-	}
-	float overcast = 0.0f;
-	if (g.m_server) {
-		const std::string& wk = g.m_server->weatherKind();
-		float wi = glm::clamp(g.m_server->weatherIntensity(), 0.0f, 1.0f);
-		if      (wk == "rain") overcast = wi;
-		else if (wk == "snow") overcast = wi * 0.85f;  // snow lets a touch more light through
-	}
 	float camPosArr[3] = { g.m_cam.position.x, g.m_cam.position.y, g.m_cam.position.z };
-	g.m_rhi->drawSky(&invVP[0][0], &sunDir.x, sunStr, skyTime, seasonP, overcast, camPosArr);
+	float skyTime = tod * 24.0f;  // hours since midnight, used for cloud drift
+	g.m_rhi->drawSky(&invVP[0][0], &sunDir.x, sunStr, camPosArr, skyTime);
 
 	// Terrain — one drawChunkMeshOpaque per loaded chunk. The mesher
 	// already trimmed hidden faces / applied AO + per-face shade, so this
@@ -810,99 +794,32 @@ void WorldRenderer::renderEffects(float wallTime) {
 		particles.push_back(a);
 	};
 	// ── Weather particles ─────────────────────────────────────────────
-	// Rain streaks / snowflakes / drifting leaves, sampled in a cylinder
-	// around the camera so they move with the player and only live near
-	// the view frustum. Server-broadcast weather kind + intensity drive
-	// count and palette; wind vector tilts the fall direction.
+	// Each kind (rain/snow/leaves/…) is a WeatherEffect subclass with its
+	// own activation predicate (see client/weather_effects.h). LeavesEffect,
+	// for example, activates only in autumn AND when at least one leaf
+	// block is within 30 blocks of the camera — which is why summer
+	// stays leaf-free even if the markov rolls a "leaves" wind state.
 	if (g.m_server) {
-		const std::string& wkind = g.m_server->weatherKind();
-		float wi = glm::clamp(g.m_server->weatherIntensity(), 0.0f, 1.0f);
-		glm::vec2 wind = g.m_server->weatherWind();
-		glm::vec3 eyeP = g.m_cam.position;
+		// sunStr — derive from server worldTime, same formula as the sky pass
+		// (renderWorld lines ~134-147). Used by FirefliesEffect to gate on night.
+		float tod = g.m_server->worldTime();
+		float sunAngle = tod * 6.2831853f - 1.5707963f;
+		float sunY = std::sin(sunAngle);
+		float effSunStr = glm::smoothstep(-0.10f, 0.22f, sunY);
 
-		// Collision: skip particles whose world cell is a solid block. The
-		// ChunkSource lookup is cheap (hash into loaded chunks) and prevents
-		// raindrops from streaking through the floor at the cost of one
-		// getBlock() call per particle.
-		solarium::ChunkSource& cs = g.m_server->chunks();
-		const solarium::BlockRegistry& reg = cs.blockRegistry();
-		auto insideSolid = [&](const glm::vec3& p) -> bool {
-			int bx = (int)std::floor(p.x);
-			int by = (int)std::floor(p.y);
-			int bz = (int)std::floor(p.z);
-			solarium::BlockId bid = cs.getBlock(bx, by, bz);
-			if (bid == 0) return false;
-			return reg.get(bid).solid;
-		};
+		WeatherCtx wctx;
+		wctx.kind       = g.m_server->weatherKind();
+		wctx.intensity  = glm::clamp(g.m_server->weatherIntensity(), 0.0f, 1.0f);
+		wctx.wind       = g.m_server->weatherWind();
+		wctx.cameraPos  = g.m_cam.position;
+		wctx.season     = solarium::seasonFromDay(g.m_server->dayCount());
+		wctx.chunks     = &g.m_server->chunks();
+		wctx.blockReg   = &wctx.chunks->blockRegistry();
+		wctx.wallTime   = wallTime;
+		wctx.sunStr     = effSunStr;
 
-		// Cylinder extent: R horizontal, from eye.y+hiY down to eye.y+loY.
-		auto addWeatherPart = [&](int count, float R, float hiY, float loY,
-		                          float fallSpeed, glm::vec3 color, float size,
-		                          float alpha, bool tumble) {
-			float span = hiY - loY;
-			float period = span / std::max(fallSpeed, 0.1f);
-			for (int k = 0; k < count; k++) {
-				float seed = (float)k;
-				float ang  = std::fmod(seed * 2.3998f, 6.2831853f);
-				float rad  = R * std::sqrt(std::fmod(seed * 0.137f, 1.0f));
-				float phase  = std::fmod(seed * 0.091f, 1.0f);
-				float t      = std::fmod(wallTime / period + phase, 1.0f);
-				float y      = hiY - t * span;
-				// Wind: accumulated displacement grows with fall time, so a
-				// particle near the ground has been blown further than one
-				// just spawned near the top (matches real raindrop streaks).
-				float wShift = t * period;
-				float tumbleX = tumble
-				              ? std::sin(wallTime * 1.3f + seed * 4.7f) * 0.6f
-				              : 0.0f;
-				float tumbleZ = tumble
-				              ? std::cos(wallTime * 1.1f + seed * 3.1f) * 0.6f
-				              : 0.0f;
-				glm::vec3 p = eyeP + glm::vec3(
-					std::cos(ang) * rad + wind.x * wShift + tumbleX,
-					y,
-					std::sin(ang) * rad + wind.y * wShift + tumbleZ);
-				if (insideSolid(p)) continue;
-				pushP(p, size, color, alpha);
-			}
-		};
-
-		if (wkind == "rain" && wi > 0.01f) {
-			int count = (int)(320.0f * wi);
-			glm::vec3 col(0.55f, 0.70f, 0.95f);
-			addWeatherPart(count, 22.0f, 20.0f, -4.0f, 22.0f, col,
-			               0.05f, 0.55f * wi, /*tumble*/ false);
-		} else if (wkind == "snow" && wi > 0.01f) {
-			int count = (int)(240.0f * wi);
-			glm::vec3 col(1.10f, 1.15f, 1.25f);
-			addWeatherPart(count, 20.0f, 18.0f, -4.0f, 3.5f, col,
-			               0.09f, 0.70f * wi, /*tumble*/ true);
-		} else if (wkind == "leaves" && wi > 0.01f) {
-			int count = (int)(140.0f * wi);
-			// Warm autumn palette — split across three tints based on seed.
-			float span   = 22.0f;
-			float period = span / 2.0f;
-			for (int k = 0; k < count; k++) {
-				float seed = (float)k;
-				int   tint = (int)std::fmod(seed * 7.17f, 3.0f);
-				glm::vec3 col = (tint == 0) ? glm::vec3(2.2f, 1.1f, 0.25f)
-				              : (tint == 1) ? glm::vec3(2.5f, 0.7f, 0.20f)
-				                            : glm::vec3(1.8f, 1.4f, 0.45f);
-				float ang  = std::fmod(seed * 2.3998f, 6.2831853f);
-				float rad  = 18.0f * std::sqrt(std::fmod(seed * 0.137f, 1.0f));
-				float phase = std::fmod(seed * 0.091f, 1.0f);
-				float t     = std::fmod(wallTime / period + phase, 1.0f);
-				float y     = 18.0f - t * span;
-				float wShift = t * period;
-				float tumbleX = std::sin(wallTime * 0.9f + seed * 3.7f) * 1.2f;
-				float tumbleZ = std::cos(wallTime * 0.8f + seed * 2.3f) * 1.2f;
-				glm::vec3 p = eyeP + glm::vec3(
-					std::cos(ang) * rad + wind.x * wShift + tumbleX,
-					y,
-					std::sin(ang) * rad + wind.y * wShift + tumbleZ);
-				if (insideSolid(p)) continue;
-				pushP(p, 0.12f, col, 0.55f * wi);
-			}
+		for (const auto& effect : allWeatherEffects()) {
+			if (effect->shouldActivate(wctx)) effect->emit(wctx, particles);
 		}
 	}
 

@@ -2281,8 +2281,9 @@ bool VkRhi::createSkyPipeline() {
 	dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
 	dynState.dynamicStateCount = 2; dynState.pDynamicStates = dyn;
 
-	// PC: invVP(mat4) + sunDir(vec4) + skyParams(vec4) = 96B.
-	// skyParams.x = timeSec (cloud/star anim); yzw reserved.
+	// PC: invVP(mat4) + sunDir(vec4) + cloudParams(vec4) = 96 B. Within the
+	// 128 B Vulkan minimum guarantee. cloudParams = (camX, camY, camZ, time);
+	// shader uses camPos to anchor clouds in world space and time for drift.
 	VkPushConstantRange pcr{};
 	pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	pcr.size = sizeof(float) * (16 + 4 + 4);
@@ -3753,9 +3754,10 @@ void VkRhi::drawUi2D(const float* vertsPosUV, uint32_t vertCount,
 void VkRhi::drawSky(const float invVP[16],
                     const float sunDir[3],
                     float sunStrength,
+                    const float cameraPos[3],
                     float time) {
-	// All sky gradients derived in-shader from sunDir + sunStrength; time
-	// drives star twinkle + cloud drift.
+	// Sky dome + stylized puff cumulus. cameraPos anchors clouds in world
+	// space; time drives slow wind advection.
 	if (!m_frameActive || !m_skyPipeline) return;
 	ensureMainPass();
 	VkCommandBuffer cb = m_cmdBufs[m_frame];
@@ -3772,16 +3774,16 @@ void VkRhi::drawSky(const float invVP[16],
 
 	struct {
 		float invVP[16];
-		float sunDir[4];     // xyz + sunStr
-		float skyParams[4];  // x=timeSec, yzw reserved
+		float sunDir[4];       // xyz + sunStr
+		float cloudParams[4];  // camX, camY, camZ, time
 	} pc;
 	memcpy(pc.invVP, invVP, sizeof(float)*16);
 	pc.sunDir[0] = sunDir[0]; pc.sunDir[1] = sunDir[1]; pc.sunDir[2] = sunDir[2];
 	pc.sunDir[3] = sunStrength;
-	pc.skyParams[0] = time;
-	pc.skyParams[1] = 0.0f;
-	pc.skyParams[2] = 0.0f;
-	pc.skyParams[3] = 0.0f;
+	pc.cloudParams[0] = cameraPos[0];
+	pc.cloudParams[1] = cameraPos[1];
+	pc.cloudParams[2] = cameraPos[2];
+	pc.cloudParams[3] = time;
 	vkCmdPushConstants(cb, m_skyLayout,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		0, sizeof(pc), &pc);

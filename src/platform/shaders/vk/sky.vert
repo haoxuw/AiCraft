@@ -1,23 +1,22 @@
 #version 450
 
+// Pass NDC linearly across the triangle. The fragment shader reconstructs the
+// world-space ray direction per pixel from invVP — the perspective divide
+// makes the world ray non-linear in NDC, so we cannot pre-compute it here.
+
 layout(push_constant) uniform PC {
 	mat4 invVP;
-	vec4 sunDir;    // xyz = sunDir, w = sunStrength
-	vec4 skyParams; // x = timeSec, yzw reserved (weather/season)
+	vec4 sunDir;       // xyz + sunStr
+	vec4 cloudParams;  // camX, camY, camZ, time
 } pc;
 
-layout(location = 0) out vec3 vRayDir;
+layout(location = 0) out vec2 vNDC;
 
 void main() {
 	// Fullscreen triangle: 3 vertices cover clip space without a VBO.
+	// All vertices share gl_Position.w = 1, so vNDC interpolates linearly
+	// (and exactly equals the screen NDC) at every fragment.
 	vec2 pos = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2) * 2.0 - 1.0;
 	gl_Position = vec4(pos, 0.999, 1.0);
-
-	// Ray direction in world space = far - near, not just world-pos normalized
-	// from the origin. The old path broke when the camera was off-origin (all
-	// screen pixels produced near-identical directions, killing the cloud noise
-	// spatial variation).
-	vec4 nearW = pc.invVP * vec4(pos, 0.0, 1.0);
-	vec4 farW  = pc.invVP * vec4(pos, 1.0, 1.0);
-	vRayDir    = normalize(farW.xyz / farW.w - nearW.xyz / nearW.w);
+	vNDC = pos;
 }

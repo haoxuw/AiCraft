@@ -25,6 +25,7 @@ public:
 	void drawSky(const float invVP[16],
 	             const float sunDir[3],
 	             float sunStrength,
+	             const float cameraPos[3],
 	             float time) override;
 	void drawVoxels(const SceneParams& scene,
 	                const float* instances,

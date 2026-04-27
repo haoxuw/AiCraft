@@ -73,11 +73,13 @@ public:
 	};
 	static_assert(sizeof(GradingParams) == 32, "GradingParams must be 32 bytes");
 
-	// Fullscreen sky: VS reconstructs ray dir from invVP; colors derived
-	// in-shader from sunDir + sunStrength.
+	// Fullscreen sky: blue dome + stylized cumulus puffs. cameraPos anchors
+	// clouds to world XZ so they don't scroll with the player; time drives
+	// slow wind drift.
 	virtual void drawSky(const float invVP[16],
 	                     const float sunDir[3],
 	                     float sunStrength,
+	                     const float cameraPos[3],
 	                     float time) = 0;
 
 	// Call BEFORE endFrame (UBO read at swapchain-pass start).
