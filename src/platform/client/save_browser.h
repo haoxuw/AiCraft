@@ -32,6 +32,7 @@ struct SaveEntry {
 	int         templateIndex = 0;
 	int         seed = 42;
 	std::string lastPlayed;    // ISO timestamp from world.json
+	std::string disabledMods;  // comma-joined namespace ids snapshotted at save time
 };
 
 // Create a fresh save dir + world.json with the given metadata. Returns
@@ -42,7 +43,8 @@ struct SaveEntry {
 inline std::string createSave(const std::string& savesDir,
                               const std::string& name,
                               int seed, int templateIndex,
-                              const std::string& templateName) {
+                              const std::string& templateName,
+                              const std::string& disabledMods = "") {
 	namespace fs = std::filesystem;
 	std::error_code ec;
 	fs::create_directories(savesDir, ec);
@@ -86,6 +88,15 @@ inline std::string createSave(const std::string& savesDir,
 	f << "  \"lastPlayed\": \""    << timeBuf << "\",\n";
 	f << "  \"version\": 1\n";
 	f << "}\n";
+
+	// Per-save mod list lives in a sibling file because the server
+	// rewrites world.json on shutdown (saveWorldIfNeeded) and only
+	// knows about its own metadata fields. Keeping mods.json separate
+	// means the client can persist + read it without server cooperation.
+	std::ofstream mf(path + "/mods.json");
+	if (mf.is_open()) {
+		mf << "{ \"disabledMods\": \"" << disabledMods << "\" }\n";
+	}
 	return path;
 }
 
@@ -143,6 +154,24 @@ inline std::vector<SaveEntry> scanSaves(const std::string& savesDir) {
 		e.lastPlayed   = extract("lastPlayed");
 		try { e.templateIndex = std::stoi(extract("templateIndex")); } catch (...) {}
 		try { e.seed          = std::stoi(extract("seed")); } catch (...) {}
+
+		// mods.json sits alongside world.json so the server doesn't clobber
+		// it on shutdown. Same flat-JSON shape, single field today.
+		std::ifstream mf(p + "/mods.json");
+		if (mf.is_open()) {
+			std::stringstream ms; ms << mf.rdbuf();
+			std::string mtext = ms.str();
+			std::string needle = "\"disabledMods\"";
+			auto mpos = mtext.find(needle);
+			if (mpos != std::string::npos) {
+				mpos = mtext.find('"', mpos + needle.size() + 1);
+				if (mpos != std::string::npos) {
+					auto end = mtext.find('"', mpos + 1);
+					if (end != std::string::npos)
+						e.disabledMods = mtext.substr(mpos + 1, end - mpos - 1);
+				}
+			}
+		}
 		out.push_back(std::move(e));
 	}
 	// Newest first.

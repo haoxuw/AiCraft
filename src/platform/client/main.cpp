@@ -1589,6 +1589,17 @@ int main(int argc, char** argv) {
 				solarium::AgentManager::Config cfg;
 				cfg.execDir   = game.execDir();
 				cfg.worldPath = path;
+				// Per-save mod list — read disabledMods out of the save's
+				// world.json so this save plays with the same namespace
+				// set it was created/last played with, regardless of what
+				// the global Mod Manager toggle is today.
+				auto saves = solarium::vk::scanSaves("saves");
+				for (const auto& s : saves) {
+					if (s.path == path) {
+						cfg.disabledMods = s.disabledMods;
+						break;
+					}
+				}
 				if (!game.hostLocalServer(cfg)) {
 					std::fprintf(stderr,
 						"[cef] load:%s — hostLocalServer failed\n", path.c_str());
@@ -1650,8 +1661,13 @@ int main(int argc, char** argv) {
 				}
 				std::string templateName =
 					solarium::worldTemplateIdAt(idx);  // e.g. "village"
+				// Snapshot the user's current mod toggles into the save's
+				// world.json so this save plays consistently next time even
+				// if they later disable/enable mods globally.
 				cfg.worldPath = solarium::vk::createSave(
-					"saves", name, cfg.seed, idx, templateName);
+					"saves", name, cfg.seed, idx, templateName,
+					game.settings().disabled_mods);
+				cfg.disabledMods = game.settings().disabled_mods;
 				if (cfg.worldPath.empty()) {
 					std::fprintf(stderr, "[cef] world:%s — createSave failed\n", id.c_str());
 					return;
