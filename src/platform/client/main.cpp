@@ -663,32 +663,152 @@ int main(int argc, char** argv) {
 			return html;
 		};
 
-		auto settingsPage = [&]() -> std::string {
+		// Interactive settings — sliders/toggles persist via the `set:<k>:<v>`
+		// action which mutates Game::settings() and writes settings.json.
+		// Tabs: Audio (live-applied to AudioManager), Network (host-broadcast
+		// toggle, takes effect next host), Controls (cheat sheet, rebinding
+		// is a later milestone). Captures live values from the current
+		// Settings struct each time the page is built so reopening Settings
+		// shows what's actually persisted.
+		//
+		// Value-capture of kCss/kJs/kVersion: this lambda is invoked from the
+		// action callback long after the surrounding block returns; a [&]
+		// capture would dangle (same trap as multiplayerPage hit earlier).
+		auto settingsPage = [kCss, kJs, kVersion, &game]() -> std::string {
+			const auto& s = game.settings();
+			auto boolStr = [](bool b) { return b ? "true" : "false"; };
+			char buf[64];
 			std::string html = "data:text/html,<html><head><style>" + kCss +
-				"table{border-collapse:collapse;margin-bottom:32px}"
-				"td{padding:8px 24px;font-size:18px;letter-spacing:1px;"
+				"body{justify-content:flex-start;padding:48px 0 60px;align-items:center;"
+				"height:auto;min-height:100vh;box-sizing:border-box}"
+				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
+				".tag{margin:0 0 24px}"
+				".tabs{display:flex;gap:6px;margin-bottom:24px}"
+				".tabs button{padding:8px 18px;font-size:13px;letter-spacing:2px;"
+				"background:rgba(26,18,11,0.8);color:%23b88838;border:1px solid %23b88838;"
+				"font-family:inherit;cursor:pointer;text-transform:uppercase}"
+				".tabs button.on{background:rgba(94,67,30,0.95);color:%23f3c44c}"
+				".pane{display:none;width:680px;max-width:90%%}"
+				".pane.on{display:block}"
+				".row{display:flex;align-items:center;justify-content:space-between;"
+				"padding:14px 20px;background:rgba(26,18,11,0.6);"
+				"border:1px solid rgba(184,136,56,0.4);margin-bottom:8px}"
+				".row .lbl{font-size:14px;letter-spacing:2px;color:%23f0e0c0}"
+				".row .ctl{display:flex;align-items:center;gap:12px;min-width:220px;"
+				"justify-content:flex-end}"
+				".row input[type='range']{width:180px;accent-color:%23f3c44c}"
+				".row .val{font-family:monospace;color:%23f3c44c;font-size:13px;"
+				"min-width:42px;text-align:right}"
+				".tog{position:relative;width:44px;height:22px;background:rgba(40,30,20,0.9);"
+				"border:1px solid %23b88838;border-radius:11px;cursor:pointer;"
+				"transition:background 0.15s}"
+				".tog::after{content:'';position:absolute;left:3px;top:2px;"
+				"width:14px;height:14px;border-radius:50%%;background:%23b88838;"
+				"transition:left 0.15s,background 0.15s}"
+				".tog.on{background:rgba(94,67,30,0.95)}"
+				".tog.on::after{left:25px;background:%23f3c44c}"
+				".kvtbl{border-collapse:collapse;margin:0 auto}"
+				".kvtbl td{padding:6px 18px;font-size:14px;letter-spacing:1px;"
 				"border-bottom:1px solid rgba(184,136,56,0.25)}"
-				"td:first-child{color:%23b88838;text-align:right;width:200px}"
-				"td:last-child{color:%23f0e0c0;font-family:monospace}"
+				".kvtbl td:first-child{color:%23b88838;text-align:right;width:220px}"
+				".kvtbl td:last-child{color:%23f0e0c0;font-family:monospace}"
+				".back{margin-top:24px;width:160px}"
 				"</style></head><body>"
 				"<h1>Settings</h1>"
-				"<div class='tag'>Controls reference</div>"
-				"<table>";
-			struct KV { const char* k; const char* v; };
-			static const KV kvs[] = {
-				{"Move",           "WASD"},        {"Jump",           "Space"},
-				{"Sprint",         "Shift"},       {"Look",           "Mouse"},
-				{"Attack / Place", "LMB / RMB"},   {"Drop",           "Q"},
-				{"Inventory",      "Tab"},         {"Handbook",       "H"},
-				{"Camera",         "V"},           {"Pause",          "Esc"},
-				{"Debug / Tuning", "F3 / F6"},     {"Screenshot",     "F2"},
-			};
-			for (auto& kv : kvs)
-				html += std::string("<tr><td>") + kv.k + "</td><td>" + kv.v + "</td></tr>";
-			html += std::string("</table>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>") +
-				kVersion + kJs +
-				"</body></html>";
+				"<div class='tag'>Audio | Network | Controls</div>"
+				"<div class='tabs'>"
+				"<button class='on' onclick=\"tab(0)\">Audio</button>"
+				"<button onclick=\"tab(1)\">Network</button>"
+				"<button onclick=\"tab(2)\">Controls</button>"
+				"</div>"
+				// ── Audio pane ──
+				"<div class='pane on' id='p0'>"
+				"<div class='row'><span class='lbl'>Master Volume</span>"
+				"<span class='ctl'><input type='range' min='0' max='1' step='0.05' "
+				"value='";
+			std::snprintf(buf, sizeof(buf), "%.2f", s.master_volume);
+			html += buf;
+			html += "' oninput=\"slider(this,'master_volume')\">"
+				"<span class='val' id='v_master_volume'>";
+			std::snprintf(buf, sizeof(buf), "%.0f%%", s.master_volume * 100);
+			html += buf;
+			html += "</span></span></div>"
+				"<div class='row'><span class='lbl'>Music Volume</span>"
+				"<span class='ctl'><input type='range' min='0' max='1' step='0.05' "
+				"value='";
+			std::snprintf(buf, sizeof(buf), "%.2f", s.music_volume);
+			html += buf;
+			html += "' oninput=\"slider(this,'music_volume')\">"
+				"<span class='val' id='v_music_volume'>";
+			std::snprintf(buf, sizeof(buf), "%.0f%%", s.music_volume * 100);
+			html += buf;
+			html += "</span></span></div>"
+				"<div class='row'><span class='lbl'>Music Enabled</span>"
+				"<span class='ctl'><div class='tog";
+			html += s.music_enabled ? " on" : "";
+			html += "' onclick=\"toggle(this,'music_enabled')\"></div></span></div>"
+				"<div class='row'><span class='lbl'>Footsteps</span>"
+				"<span class='ctl'><div class='tog";
+			html += s.footsteps_muted ? "" : " on";  // inverted: "on" = audible
+			html += "' onclick=\"toggleInv(this,'footsteps_muted')\"></div></span></div>"
+				"<div class='row'><span class='lbl'>Effects (combat / dig / pickup)</span>"
+				"<span class='ctl'><div class='tog";
+			html += s.effects_muted ? "" : " on";
+			html += "' onclick=\"toggleInv(this,'effects_muted')\"></div></span></div>"
+				"</div>"
+				// ── Network pane ──
+				"<div class='pane' id='p1'>"
+				"<div class='row'><span class='lbl'>Visible to LAN</span>"
+				"<span class='ctl'><div class='tog";
+			html += s.lan_visible ? " on" : "";
+			html += "' onclick=\"toggle(this,'lan_visible')\"></div></span></div>"
+				"<div class='row' style='opacity:0.6'><span class='lbl'>"
+				"Sim speed cap</span><span class='ctl'><span class='val'>";
+			std::snprintf(buf, sizeof(buf), "%.1fx", s.sim_speed_cap);
+			html += buf;
+			html += "</span></span></div>"
+				"</div>"
+				// ── Controls pane (read-only cheat sheet) ──
+				"<div class='pane' id='p2'>"
+				"<table class='kvtbl'>"
+				"<tr><td>Move</td><td>WASD</td></tr>"
+				"<tr><td>Jump</td><td>Space</td></tr>"
+				"<tr><td>Sprint</td><td>Shift</td></tr>"
+				"<tr><td>Look</td><td>Mouse</td></tr>"
+				"<tr><td>Attack / Place</td><td>LMB / RMB</td></tr>"
+				"<tr><td>Drop</td><td>Q</td></tr>"
+				"<tr><td>Inventory</td><td>Tab</td></tr>"
+				"<tr><td>Handbook</td><td>H</td></tr>"
+				"<tr><td>Camera</td><td>V</td></tr>"
+				"<tr><td>Pause</td><td>Esc</td></tr>"
+				"<tr><td>Debug / Tuning</td><td>F3 / F6</td></tr>"
+				"<tr><td>Screenshot</td><td>F2</td></tr>"
+				"</table></div>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
+				kVersion +
+				"<script>"
+				"function send(a){window.cefQuery({request:'action:'+a,"
+				"onSuccess:()=>{},onFailure:()=>{}});}"
+				"function tab(i){"
+				"document.querySelectorAll('.tabs button').forEach((b,j)=>"
+				"b.classList.toggle('on',j==i));"
+				"document.querySelectorAll('.pane').forEach((p,j)=>"
+				"p.classList.toggle('on',j==i));}"
+				"function slider(el,key){"
+				"const v=parseFloat(el.value);"
+				"document.getElementById('v_'+key).textContent="
+				"Math.round(v*100)+'%25';"
+				"send('set:'+key+':'+v);}"
+				"function toggle(el,key){"
+				"const on=!el.classList.contains('on');"
+				"el.classList.toggle('on',on);"
+				"send('set:'+key+':'+(on?'true':'false'));}"
+				"function toggleInv(el,key){"  // UI-on means feature ENABLED → key (muted) is false
+				"const on=!el.classList.contains('on');"
+				"el.classList.toggle('on',on);"
+				"send('set:'+key+':'+(on?'false':'true'));}"
+				"</script></body></html>";
+			(void)boolStr;
 			return html;
 		};
 
@@ -969,8 +1089,9 @@ int main(int argc, char** argv) {
 		static std::string sMain  = mainPage();
 		static std::string sChar  = charSelectPage();
 		static std::string sHand  = handbookPage();
-		static std::string sSett  = settingsPage();
 		static std::string sWorld = worldPickerPage();
+		// settingsPage rebuilt fresh each click — captures live values
+		// (master_volume, footsteps_muted, …) so reopening shows current state.
 
 		// Test hook: SOLARIUM_BOOT_PAGE=handbook|chars|settings|main lets a
 		// dev land directly on a non-main page for screenshot iteration.
@@ -1007,7 +1128,7 @@ int main(int argc, char** argv) {
 						std::fprintf(stderr, "[boot] hostLocalServer failed\n");
 				}
 			} else if (boot && std::string(boot) == "settings") {
-				cefUrl = sSett;
+				cefUrl = settingsPage();
 			} else if (boot && std::string(boot) == "worlds") {
 				cefUrl = sWorld;
 			} else {
@@ -1026,7 +1147,7 @@ int main(int argc, char** argv) {
 		// copy — local 'multiplayerPage' in this block goes out of scope
 		// once init returns. Same for the enc helper inside it.
 		cefHost->setActionCallback(
-			[win, &game, hostRaw, multiplayerPage](const std::string& action) {
+			[win, &game, hostRaw, multiplayerPage, settingsPage](const std::string& action) {
 			std::printf("[cef] action: %s\n", action.c_str());
 			using MS = solarium::vk::MenuScreen;
 			// First playable id, used as default char-select pick. Cached
@@ -1109,7 +1230,27 @@ int main(int argc, char** argv) {
 				game.setPreviewClip("");
 				hostRaw->loadUrl(sHand);
 			} else if (action == "settings") {
-				hostRaw->loadUrl(sSett);
+				hostRaw->loadUrl(settingsPage());
+			} else if (action.rfind("set:", 0) == 0) {
+				// "set:master_volume:0.5" / "set:footsteps_muted:true" — mutate
+				// Settings, persist to disk, and live-apply to AudioManager so
+				// the slider effect is audible while the page is still open.
+				const std::string body = action.substr(4);
+				auto colon = body.find(':');
+				if (colon == std::string::npos) return;
+				std::string key = body.substr(0, colon);
+				std::string val = body.substr(colon + 1);
+				bool b = (val == "true" || val == "1");
+				float f = (float)std::atof(val.c_str());
+				auto& s = game.settings();
+				if      (key == "master_volume")   { s.master_volume   = f; game.audio().setMasterVolume(f); }
+				else if (key == "music_volume")    { s.music_volume    = f; game.audio().setMusicVolume(f); }
+				else if (key == "music_enabled")   { s.music_enabled   = b; if (!b) game.audio().stopMusic(); }
+				else if (key == "footsteps_muted") { s.footsteps_muted = b; game.audio().setFootstepsMuted(b); }
+				else if (key == "effects_muted")   { s.effects_muted   = b; game.audio().setEffectsMuted(b); }
+				else if (key == "lan_visible")     { s.lan_visible     = b; }
+				else { std::fprintf(stderr, "[set] unknown key: %s\n", key.c_str()); return; }
+				s.save();
 			} else if (action.rfind("pick:", 0) == 0) {
 				// Preview-only: swap the plaza-injected model. Camera pin in
 				// game_vk.cpp keeps framing it. No connect yet.

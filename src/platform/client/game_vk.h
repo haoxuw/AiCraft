@@ -993,6 +993,7 @@ private:
 public:
 	const solarium::Settings& settings() const { return m_settings; }
 	solarium::Settings&       settings()       { return m_settings; }
+	solarium::AudioManager&   audio()          { return m_audio; }
 private:
 	int   m_lastWalkStep    = 0;  // integer floor of m_walkDist at last footstep
 	float m_footstepCooldown = 0.0f;
