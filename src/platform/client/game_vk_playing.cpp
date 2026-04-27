@@ -1199,11 +1199,17 @@ void Game::processEscapeKey() {
 		} else if (m_inspectedEntity != 0) {
 			m_inspectedEntity = 0;
 		} else if (cefMenuActive() && m_state == GameState::Playing) {
-			// In-game CEF (handbook today, settings later) → ESC dismisses
-			// without invoking the pause menu. CEF's own back-button handler
-			// in main.cpp's action callback also routes to this path.
+			// In-game CEF (handbook, settings, pause) → ESC dismisses without
+			// stacking another pause. CEF's own back/Resume handlers in
+			// main.cpp's action callback also route to this path.
 			setCefMenuActive(false);
-		} else if (m_state == GameState::Playing) openGameMenu();
+		} else if (m_state == GameState::Playing) {
+			// First ESC in-game opens the CEF pause page (Resume/Settings/
+			// Main Menu/Quit). The native renderGameMenu still exists as a
+			// fallback when --cef-menu wasn't passed; cefHost will be null
+			// in that case and openCefPause silently no-ops.
+			if (m_cefHost) openCefPause(); else openGameMenu();
+		}
 		else if (m_state == GameState::GameMenu) closeGameMenu();
 	}
 	m_escLast = esc;

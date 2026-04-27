@@ -613,6 +613,26 @@ int main(int argc, char** argv) {
 		// canonical id ↔ templateIndex source the server also uses. Clicking
 		// a tile fires action `world:<id>`, which the C++ callback resolves
 		// to a templateIndex and hands to Game::hostLocalServer.
+		// In-game ESC pause page. Renders over the running world (the world
+		// keeps rendering behind because we don't change m_state). Static
+		// buttons → simple 4-line action wiring.
+		auto pausePage = [&]() -> std::string {
+			return "data:text/html,<html><head><style>" + kCss +
+				"body{justify-content:center;align-items:center;"
+				"background:radial-gradient(ellipse at center,"
+				"rgba(10,5,5,0.65) 0%%,rgba(10,5,5,0.25) 60%%)}"
+				"h1{font-size:64px;letter-spacing:8px;margin:0 0 24px}"
+				".btn{width:280px}"
+				"</style></head><body>"
+				"<h1>Paused</h1>"
+				"<button class='btn' onclick=\"send('resume')\">Resume</button>"
+				"<button class='btn' onclick=\"send('settings')\">Settings</button>"
+				"<button class='btn' onclick=\"send('main_menu')\">Main Menu</button>"
+				"<button class='btn' onclick=\"send('quit')\">Quit</button>" +
+				kVersion + kJs +
+				"</body></html>";
+		};
+
 		auto worldPickerPage = [&]() -> std::string {
 			std::string html = "data:text/html,<html><head><style>" + kCss +
 				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
@@ -1090,6 +1110,7 @@ int main(int argc, char** argv) {
 		static std::string sChar  = charSelectPage();
 		static std::string sHand  = handbookPage();
 		static std::string sWorld = worldPickerPage();
+		static std::string sPause = pausePage();
 		// settingsPage rebuilt fresh each click — captures live values
 		// (master_volume, footsteps_muted, …) so reopening shows current state.
 
@@ -1131,6 +1152,8 @@ int main(int argc, char** argv) {
 				cefUrl = settingsPage();
 			} else if (boot && std::string(boot) == "worlds") {
 				cefUrl = sWorld;
+			} else if (boot && std::string(boot) == "pause") {
+				cefUrl = sPause;
 			} else {
 				cefUrl = sMain;
 			}
@@ -1143,6 +1166,8 @@ int main(int argc, char** argv) {
 		// future ESC pause Settings) can re-show CEF over the running game.
 		game.setCefHost(hostRaw);
 		game.setCefHandbookUrl(sHand);
+		game.setCefPauseUrl(sPause);
+		game.setCefMainUrl(sMain);
 		// multiplayerPage is captured by value so the lambda owns its own
 		// copy — local 'multiplayerPage' in this block goes out of scope
 		// once init returns. Same for the enc helper inside it.
@@ -1165,6 +1190,14 @@ int main(int argc, char** argv) {
 			}
 			if (action == "quit") {
 				glfwSetWindowShouldClose(win, GLFW_TRUE);
+			} else if (action == "resume") {
+				// Pause-menu Resume — same as ESC-while-CEF-up: just drop
+				// the overlay and hand control back to the world.
+				game.setCefMenuActive(false);
+			} else if (action == "main_menu") {
+				// Pause-menu "Main Menu" — disconnect, kill any hosted
+				// subprocess, rewind to the title.
+				game.returnToMainMenu();
 			} else if (action == "back") {
 				// Back from a CEF sub-screen has two meanings:
 				//   * Boot flow (Menu state) — return to the main title.

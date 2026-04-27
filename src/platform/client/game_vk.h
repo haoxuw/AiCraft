@@ -234,12 +234,22 @@ public:
 	// --cef-menu wasn't passed; the H key becomes a no-op in that case.
 	void setCefHost(class CefHost* h) { m_cefHost = h; }
 	void setCefHandbookUrl(std::string url) { m_cefHandbookUrl = std::move(url); }
+	void setCefMainUrl(std::string url)     { m_cefMainUrl     = std::move(url); }
 
 	// Re-show the CEF handbook over the running game (or boot plaza). Sets
 	// menuScreen so the camera pin treats this as a preview screen, flips
 	// cefMenuActive on so input routes to the browser, and loads the page.
 	// ESC dismisses (handled in onKey).
 	void openCefHandbook();
+	// In-game ESC pause: brings up the CEF pause page (Resume / Settings /
+	// Main Menu / Quit) over the running game. Same overlay machinery as
+	// openCefHandbook — flips cefMenuActive, loads m_cefPauseUrl. main.cpp
+	// wires the URL at boot via setCefPauseUrl.
+	void openCefPause();
+	void setCefPauseUrl(std::string u) { m_cefPauseUrl = std::move(u); }
+	// Disconnect, drop any hosted subprocess, and rewind to the CEF main
+	// title. Used by the pause menu's "Main Menu" action.
+	void returnToMainMenu();
 
 	// CEF action callback uses this to jump from the CEF main title to a
 	// native sub-screen (CharacterSelect / Multiplayer / Handbook / Settings).
@@ -800,6 +810,8 @@ private:
 	// when --cef-menu is on; null/empty means the H key is a no-op.
 	class CefHost*    m_cefHost = nullptr;
 	std::string       m_cefHandbookUrl;
+	std::string       m_cefPauseUrl;
+	std::string       m_cefMainUrl;       // for returnToMainMenu
 	solarium::ArtifactRegistry m_artifactRegistry;
 
 	// ── Hotbar + Inventory UI ────────────────────────────────────────────

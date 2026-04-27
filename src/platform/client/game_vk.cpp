@@ -519,6 +519,42 @@ void Game::exitCoordPeek() {
 	m_cam.resetMouseTracking();
 }
 
+void Game::openCefPause() {
+	if (!m_cefHost || m_cefPauseUrl.empty()) return;
+	// Pause overlay is not a "preview" screen — drop any pinned camera so
+	// the orbit/menu handler doesn't fight us. Stay in MenuScreen::Main
+	// (or whatever) so the world keeps rendering behind the overlay.
+	m_shell.previewId.clear();
+	m_shell.previewClip.clear();
+	if (m_window) {
+		// Free the cursor so the user can click pause-menu items, like
+		// openGameMenu used to do.
+		glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+	}
+	m_mouseCaptured = false;
+	setCefMenuActive(true);
+	m_cefHost->loadUrl(m_cefPauseUrl);
+}
+
+void Game::returnToMainMenu() {
+	// Used by the pause menu's "Main Menu" action. Tear down the active
+	// session and rewind to the CEF title. AgentManager's destructor reaps
+	// the subprocess we hosted (if any); we call stopAll explicitly so the
+	// quit-and-rejoin path doesn't leak a server.
+	if (m_server && m_server->isConnected()) m_server->disconnect();
+	m_connecting = false;
+	if (m_hosting) { m_agentMgr.stopAll(); m_hosting = false; }
+	m_state = GameState::Menu;
+	m_menuScreen = MenuScreen::Main;
+	m_shell.previewId.clear();
+	m_shell.previewClip.clear();
+	enterMenu();
+	if (m_cefHost && !m_cefMainUrl.empty()) {
+		setCefMenuActive(true);
+		m_cefHost->loadUrl(m_cefMainUrl);
+	}
+}
+
 void Game::openCefHandbook() {
 	// No-op when --cef-menu wasn't passed (e.g. perf_fps headless run) — H
 	// key just doesn't do anything in that mode rather than crashing.
