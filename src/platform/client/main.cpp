@@ -1194,26 +1194,35 @@ int main(int argc, char** argv) {
 		// action callback long after this scope returns — a `[&]` capture
 		// would dangle and produce a corrupted data: URL (we hit this).
 		auto multiplayerPage = [kCss, kJs, kVersion, &game]() -> std::string {
+			constexpr const char* kClientVer = "0.2.0";
 			std::string html = "data:text/html,<html><head><style>" + kCss +
-				".srv{display:flex;justify-content:space-between;align-items:center;"
-				"width:480px;padding:14px 24px;margin:6px 0;"
-				"background:rgba(26,18,11,0.78);border:1px solid %23b88838;"
-				"color:%23f3c44c;font-size:16px;letter-spacing:1px;"
-				"font-family:monospace;cursor:pointer;"
+				".srv{display:grid;grid-template-columns:1fr auto auto auto;"
+				"column-gap:18px;align-items:center;width:680px;padding:12px 22px;"
+				"margin:5px 0;background:rgba(26,18,11,0.78);"
+				"border:1px solid %23b88838;color:%23f3c44c;font-size:14px;"
+				"letter-spacing:1px;font-family:monospace;cursor:pointer;"
 				"transition:background 0.15s,transform 0.15s}"
-				".srv:hover{background:rgba(94,67,30,0.92);transform:scale(1.02)}"
+				".srv.mismatch{opacity:0.55;border-color:rgba(184,136,56,0.4)}"
+				".srv:hover{background:rgba(94,67,30,0.92);transform:scale(1.01)}"
 				".srv .ip{color:%23f3c44c}"
-				".srv .pl{color:%23b88838;font-size:13px}"
+				".srv .world{color:%23f0e0c0;font-size:12px;text-transform:uppercase;"
+				"letter-spacing:2px}"
+				".srv .ver{color:%23b88838;font-size:11px;letter-spacing:1px}"
+				".srv .pl{color:%23b88838;font-size:13px;text-align:right;min-width:90px}"
+				".filters{display:flex;gap:18px;align-items:center;margin-bottom:12px;"
+				"font-size:12px;letter-spacing:2px;color:%23b88838;text-transform:uppercase}"
+				".filters label{display:flex;align-items:center;gap:8px;cursor:pointer}"
+				".filters input[type='checkbox']{accent-color:%23f3c44c}"
 				".empty{opacity:0.5;font-style:italic;margin:24px 0}"
 				"</style></head><body>"
 				"<h1>Multiplayer</h1>"
 				"<div class='tag'>";
 			if (!game.lanBrowser().listening()) {
-				html += "Could not bind UDP 7778 — try --host HOST --port PORT";
+				html += "Could not bind UDP 7778 - try --host HOST --port PORT";
 			} else {
 				const auto& srvs = game.lanBrowser().servers();
 				if (srvs.empty()) {
-					html += "Scanning UDP 7778…";
+					html += "Scanning UDP 7778...";
 				} else {
 					char hdr[64];
 					std::snprintf(hdr, sizeof(hdr), "%zu LAN server%s",
@@ -1221,20 +1230,39 @@ int main(int argc, char** argv) {
 					html += hdr;
 				}
 			}
-			html += "</div>";
+			html += "</div>"
+				"<div class='filters'>"
+				"<label><input type='checkbox' id='fver' checked>"
+				"Hide version mismatches</label>"
+				"</div>";
 			for (const auto& s : game.lanBrowser().servers()) {
-				char row[160];
+				bool match = (s.version == kClientVer);
+				char row[400];
 				std::snprintf(row, sizeof(row),
-					"<div class='srv' onclick=\"send('join:%s:%d')\">"
+					"<div class='srv%s' data-match='%d' "
+					"onclick=\"send('join:%s:%d')\">"
 					"<span class='ip'>%s:%d</span>"
+					"<span class='world'>%s</span>"
+					"<span class='ver'>v%s</span>"
 					"<span class='pl'>%d player%s</span></div>",
+					match ? "" : " mismatch", match ? 1 : 0,
 					s.ip.c_str(), s.port,
 					s.ip.c_str(), s.port,
+					s.world.empty()   ? "?" : s.world.c_str(),
+					s.version.empty() ? "?" : s.version.c_str(),
 					s.humans, s.humans == 1 ? "" : "s");
 				html += row;
 			}
-			html += std::string("<button class='btn' onclick=\"send('multiplayer')\">Refresh</button>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>") +
+			html += std::string(
+				"<button class='btn' onclick=\"send('multiplayer')\">Refresh</button>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>"
+				"<script>"
+				"document.getElementById('fver').addEventListener('change',e=>{"
+				"const hide=e.target.checked;"
+				"document.querySelectorAll('.srv').forEach(r=>{"
+				"r.style.display=(hide && r.dataset.match==='0')?'none':'';});});"
+				"document.getElementById('fver').dispatchEvent(new Event('change'));"
+				"</script>") +
 				kVersion + kJs +
 				"</body></html>";
 			return html;
@@ -1292,6 +1320,8 @@ int main(int argc, char** argv) {
 				cefUrl = sWorld;
 			} else if (boot && std::string(boot) == "pause") {
 				cefUrl = sPause;
+			} else if (boot && std::string(boot) == "mp") {
+				cefUrl = multiplayerPage();
 			} else {
 				cefUrl = sMain;
 			}

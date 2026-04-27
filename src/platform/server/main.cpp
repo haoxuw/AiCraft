@@ -344,6 +344,8 @@ int main(int argc, char** argv) {
 	solarium::ClientManager clients(server);
 	clients.setPort(args.config.port);
 	clients.setLanVisible(args.config.lanVisible);
+	clients.setAnnounceVersion("0.2.0");
+	clients.setAnnounceWorld(solarium::worldTemplateIdAt(args.config.templateIndex));
 	server.setCallbacks(makeServerCallbacks(clients));
 
 	// Main-loop pacing: how often a tick fires on the wall clock. At

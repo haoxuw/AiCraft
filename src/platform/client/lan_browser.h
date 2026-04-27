@@ -24,6 +24,8 @@ public:
 		std::string ip;
 		int port   = 0;
 		int humans = 0;
+		std::string version;   // "0.2.0" / unknown ⇒ "?"
+		std::string world;     // world template id
 		float firstSeen = 0.0f;
 		float lastSeen  = 0.0f;
 	};
@@ -48,18 +50,31 @@ public:
 		net::UdpSocket::Packet pkt;
 		while (m_udp.tryRecv(pkt)) {
 			int port = 0, humans = 0;
-			if (std::sscanf(pkt.data.c_str(), "SOLARIUM %d %d", &port, &humans) != 2)
-				continue;
+			char ver[32]   = "?";
+			char world[32] = "?";
+			// Old format ("SOLARIUM <port> <humans>") gracefully missing
+			// trailing tokens — sscanf fills as many as it can. Both
+			// modern (n=4) and legacy (n=2) packets accepted.
+			int n = std::sscanf(pkt.data.c_str(), "SOLARIUM %d %d %31s %31s",
+			                    &port, &humans, ver, world);
+			if (n < 2) continue;
 			if (port <= 0 || port > 65535) continue;
 
 			auto it = std::find_if(m_servers.begin(), m_servers.end(),
 				[&](const Server& s) { return s.ip == pkt.senderIp && s.port == port; });
 			if (it == m_servers.end()) {
-				m_servers.push_back({pkt.senderIp, port, humans, wallTime, wallTime});
-				std::printf("[LAN] Discovered %s:%d (%d player%s)\n",
-					pkt.senderIp.c_str(), port, humans, humans == 1 ? "" : "s");
+				Server s;
+				s.ip = pkt.senderIp; s.port = port; s.humans = humans;
+				s.version = ver; s.world = world;
+				s.firstSeen = wallTime; s.lastSeen = wallTime;
+				m_servers.push_back(std::move(s));
+				std::printf("[LAN] Discovered %s:%d (%d player%s, %s/%s)\n",
+					pkt.senderIp.c_str(), port, humans, humans == 1 ? "" : "s",
+					ver, world);
 			} else {
 				it->humans   = humans;
+				it->version  = ver;
+				it->world    = world;
 				it->lastSeen = wallTime;
 			}
 		}

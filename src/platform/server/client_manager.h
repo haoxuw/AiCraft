@@ -689,7 +689,9 @@ public:
 		statusTimer = 0;
 	}
 
-	void setLanVisible(bool v) { m_lanVisible = v; }
+	void setLanVisible(bool v)             { m_lanVisible = v; }
+	void setAnnounceVersion(const char* v) { m_announceVersion = v; }
+	void setAnnounceWorld(const char* w)   { m_announceWorld   = w; }
 
 	// LAN discovery broadcast.
 	void announceOnLAN(float dt) {
@@ -706,8 +708,16 @@ public:
 
 		int humans = (int)m_clients.size();
 
-		char msg[64];
-		snprintf(msg, sizeof(msg), "SOLARIUM %d %d", m_port, humans);
+		// Format: "SOLARIUM <port> <humans> <version> <world_id>" — extra
+		// fields are space-delimited, no quoting (version/world ids are
+		// short ASCII tokens). Older clients sscanf'd the first two ints
+		// only and ignored the trailing tokens — newer clients pull them
+		// to filter the server browser.
+		char msg[128];
+		snprintf(msg, sizeof(msg), "SOLARIUM %d %d %s %s",
+		         m_port, humans,
+		         m_announceVersion.empty() ? "?" : m_announceVersion.c_str(),
+		         m_announceWorld.empty()   ? "?" : m_announceWorld.c_str());
 		m_announceUdp.broadcast(msg, (int)strlen(msg), SOLARIUM_DISCOVER_PORT);
 	}
 
@@ -1356,6 +1366,8 @@ private:
 	net::UdpSocket m_announceUdp;
 	float m_announceTimer = 0.0f;
 	bool  m_lanVisible    = false;
+	std::string m_announceVersion;  // build version string (set by server main)
+	std::string m_announceWorld;    // world template id (e.g. "village")
 };
 
 } // namespace solarium
