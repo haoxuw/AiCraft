@@ -1519,6 +1519,17 @@ void Game::registerDebugTriggers() {
 		openCefHandbook();
 		std::printf("[vk-game] [trigger] handbook OPEN (CEF)\n");
 	});
+	// Force-dismiss the loading screen for headless smoke tests. The
+	// normal dismiss path needs a key/mouse press; CI / screenshot
+	// scripts can touch this file instead. No-op outside Connecting.
+	m_debugTriggers.addTrigger("/tmp/solarium_vk_dismiss_loading", [this] {
+		if (m_state == GameState::Menu &&
+		    m_menuScreen == MenuScreen::Connecting && m_connecting) {
+			m_connecting = false;
+			enterPlaying();
+			std::printf("[vk-game] [trigger] loading dismissed\n");
+		}
+	});
 	m_debugTriggers.addTrigger("/tmp/solarium_vk_inventory_request", [this] {
 		m_invOpen = !m_invOpen;
 		std::printf("[vk-game] [trigger] inventory %s\n", m_invOpen ? "OPEN" : "CLOSED");

@@ -13,6 +13,7 @@
 #include "client/model_loader.h"
 #include "client/network_server.h"
 #include "client/raycast.h"
+#include "client/ui_kit.h"
 #include "net/server_interface.h"
 #include "logic/action.h"
 #include "logic/block_registry.h"
@@ -227,6 +228,24 @@ void HudRenderer::renderHUD() {
 	{
 		auto* me = g.playerEntity();
 
+		// Bottom-left HUD cluster: a subtle backdrop panel under the HP/
+		// mode/FPS rows so the text reads against bright terrain. Same
+		// brass palette as the CEF menus.
+		{
+			const float panelX = -0.985f, panelY = -1.000f;
+			const float panelW = 0.430f,  panelH = 0.135f;
+			const float panelFill[4]   = {0.07f, 0.06f, 0.06f, 0.62f};
+			const float panelBorder[4] = {0.72f, 0.54f, 0.22f, 0.55f};
+			const float panelHi[4]     = {0.95f, 0.78f, 0.35f, 0.18f};
+			g.m_rhi->drawRect2D(panelX, panelY, panelW, panelH, panelFill);
+			// 1-px brass border at top + bottom (rectangular thin rules)
+			// for "stamped metal" feel without busy chrome.
+			g.m_rhi->drawRect2D(panelX, panelY + panelH - 0.0018f, panelW, 0.0018f, panelBorder);
+			g.m_rhi->drawRect2D(panelX, panelY,                    panelW, 0.0018f, panelBorder);
+			// Top inner highlight pinstripe, mirrors the .btn bevel.
+			g.m_rhi->drawRect2D(panelX, panelY + panelH - 0.0034f, panelW, 0.0008f, panelHi);
+		}
+
 		// Row: HP bar with numeric overlay. Drawn first so the bar sits
 		// above the other rows.
 		if (me) {
@@ -247,11 +266,16 @@ void HudRenderer::renderHUD() {
 			float fillB = 0.20f;
 			const float fill[4] = {fillR, fillG, fillB, 0.92f};
 			g.m_rhi->drawRect2D(barX, barY, barW * frac, barH, fill);
-			const float edge[4] = {0.0f, 0.0f, 0.0f, 0.55f};
-			g.m_rhi->drawRect2D(barX,                  barY, barW, 0.0022f, edge);
-			g.m_rhi->drawRect2D(barX,                  barY + barH - 0.0022f, barW, 0.0022f, edge);
-			g.m_rhi->drawRect2D(barX,                  barY, 0.0022f, barH, edge);
-			g.m_rhi->drawRect2D(barX + barW - 0.0022f, barY, 0.0022f, barH, edge);
+			// Brass border + top inner highlight, matching .btn bevel.
+			const float brass[4] = {0.72f, 0.54f, 0.22f, 0.85f};
+			const float brassHi[4] = {0.95f, 0.78f, 0.35f, 0.55f};
+			g.m_rhi->drawRect2D(barX,                  barY,                    barW,    0.0022f, brass);
+			g.m_rhi->drawRect2D(barX,                  barY + barH - 0.0022f,   barW,    0.0022f, brass);
+			g.m_rhi->drawRect2D(barX,                  barY,                    0.0022f, barH,    brass);
+			g.m_rhi->drawRect2D(barX + barW - 0.0022f, barY,                    0.0022f, barH,    brass);
+			// Top inner highlight — 1-px warm pinstripe just below the
+			// brass border (drawn last so it sits above the fill).
+			g.m_rhi->drawRect2D(barX + 0.0022f,        barY + barH - 0.0042f,   barW - 0.0044f, 0.0008f, brassHi);
 
 			char hpBuf[32];
 			std::snprintf(hpBuf, sizeof(hpBuf), "HP %d / %d", hp, max);
@@ -272,11 +296,12 @@ void HudRenderer::renderHUD() {
 
 			char buf[128];
 			std::snprintf(buf, sizeof(buf), "%s  |  %s", modeName, heldName);
-			const float c[4] = {0.85f, 0.82f, 0.72f, 0.85f};
+			// Match menu palette: ink text against the brass-bordered panel.
+			const float c[4] = {0.94f, 0.88f, 0.75f, 0.92f};
 			g.m_rhi->drawText2D(buf, -0.96f, -0.945f, 0.60f, c);
 		}
 
-		// Row: FPS / pos / counts (original diag line, now dimmed).
+		// Row: FPS / pos / counts (dimmed, brass-mid).
 		{
 			char buf[128];
 			glm::vec3 fpsPos = me ? me->position : glm::vec3(0);
@@ -285,7 +310,7 @@ void HudRenderer::renderHUD() {
 				fpsPos.x, fpsPos.y, fpsPos.z,
 				g.m_server->entityCount(),
 				g.m_chunkMeshes.size());
-			const float dim[4] = {0.45f, 0.42f, 0.50f, 0.65f};
+			const float dim[4] = {0.72f, 0.54f, 0.22f, 0.78f};
 			g.m_rhi->drawText2D(buf, -0.96f, -0.99f, 0.55f, dim);
 		}
 	}
@@ -349,7 +374,7 @@ void HudRenderer::renderHUD() {
 		const float scrim[4] = {0.0f, 0.0f, 0.0f, 0.55f};
 		g.m_rhi->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, scrim);
 		const float fill[4]   = {0.08f, 0.07f, 0.06f, 0.96f};
-		const float brass[4]  = {0.72f, 0.54f, 0.22f, 1.0f};
+		const auto& brass     = ui::color::kBrassMid;
 		g.m_rhi->drawRect2D(px, py, panelW, panelH, fill);
 		g.m_rhi->drawRect2D(px, py, panelW, 0.003f, brass);
 		g.m_rhi->drawRect2D(px, py + panelH - 0.003f, panelW, 0.003f, brass);
