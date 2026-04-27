@@ -350,6 +350,9 @@ int main(int argc, char** argv) {
 			cfg.execDir = execDir;
 			cfg.villagersOverride = villagersOverride;
 			cfg.simSpeed = simSpeed;
+			// Honour settings.lan_visible — fast-path users with LAN
+			// hosting on get broadcast on UDP 7778 without the wizard.
+			game.setNextHostLanVisible(game.settings().lan_visible);
 			if (!game.hostLocalServer(cfg)) {
 				fprintf(stderr, "[vk] failed to launch solarium-server\n");
 				return 1;
