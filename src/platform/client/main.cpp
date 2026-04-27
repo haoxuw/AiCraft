@@ -9,6 +9,7 @@
 #include "client/local_world.h"
 #include "client/network_server.h"
 #include "logic/artifact_registry.h"
+#include "logic/world_templates.h"
 #include "client/process_manager.h"
 #include "client/game_vk.h"
 #include "client/cef_browser_host.h"
@@ -607,6 +608,61 @@ int main(int argc, char** argv) {
 			return html;
 		};
 
+		// Singleplayer flow: pick a world before going to character select.
+		// Tile grid driven by kWorldTemplates (logic/world_templates.h) — the
+		// canonical id ↔ templateIndex source the server also uses. Clicking
+		// a tile fires action `world:<id>`, which the C++ callback resolves
+		// to a templateIndex and hands to Game::hostLocalServer.
+		auto worldPickerPage = [&]() -> std::string {
+			std::string html = "data:text/html,<html><head><style>" + kCss +
+				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
+				"min-height:100vh;box-sizing:border-box;align-items:center}"
+				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
+				".tag{margin:0 0 32px}"
+				".tiles{display:grid;grid-template-columns:repeat(auto-fill,"
+				"minmax(320px,1fr));gap:16px;width:100%%;max-width:1100px}"
+				".tile{background:rgba(26,18,11,0.85);border:1px solid %23b88838;"
+				"padding:22px 24px;cursor:pointer;font-family:inherit;color:inherit;"
+				"text-align:left;transition:background 0.15s,transform 0.15s,"
+				"box-shadow 0.15s}"
+				".tile:hover{background:rgba(94,67,30,0.95);transform:translateY(-2px);"
+				"box-shadow:0 6px 20px rgba(0,0,0,0.5)}"
+				".tile h3{margin:0 0 6px;color:%23f3c44c;font-size:22px;"
+				"letter-spacing:2px;font-weight:400}"
+				".tile .id{font-size:11px;color:%23b88838;font-family:monospace;"
+				"letter-spacing:1px;margin-bottom:8px;display:block;opacity:0.7}"
+				".tile p{margin:0;font-size:13px;line-height:1.45;opacity:0.88}"
+				".back{margin-top:24px;width:160px}"
+				"</style></head><body>"
+				"<h1>Choose World</h1>"
+				"<div class='tag'>Pick where your story begins</div>"
+				"<div class='tiles'>";
+			for (size_t i = 0; i < solarium::kWorldTemplateCount; ++i) {
+				const auto& t = solarium::kWorldTemplates[i];
+				// Pull display name + description from the artifact registry
+				// when present (lets the .py be the source of truth); fall
+				// back to the constexpr table.
+				std::string name = t.fallbackName;
+				std::string desc;
+				if (auto* e = game.artifactRegistry().findById(t.id)) {
+					if (!e->name.empty())        name = e->name;
+					if (!e->description.empty()) desc = e->description;
+				}
+				html += "<button class='tile' onclick=\"send('world:" +
+				        std::string(t.id) + "')\">"
+				        "<h3>" + enc(compact(name, 80)) + "</h3>"
+				        "<span class='id'>" + std::string(t.id) + "</span>"
+				        "<p>" + enc(desc.empty() ? "(no description)"
+				                                 : compact(desc, 220)) + "</p>"
+				        "</button>";
+			}
+			html += "</div>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
+				kVersion + kJs +
+				"</body></html>";
+			return html;
+		};
+
 		auto settingsPage = [&]() -> std::string {
 			std::string html = "data:text/html,<html><head><style>" + kCss +
 				"table{border-collapse:collapse;margin-bottom:32px}"
@@ -910,10 +966,11 @@ int main(int argc, char** argv) {
 		// Captured by ref in the action callback. Static so they live across
 		// lambda invocations. Built once at startup; multiplayer is rebuilt
 		// per click below to pick up new LAN servers.
-		static std::string sMain = mainPage();
-		static std::string sChar = charSelectPage();
-		static std::string sHand = handbookPage();
-		static std::string sSett = settingsPage();
+		static std::string sMain  = mainPage();
+		static std::string sChar  = charSelectPage();
+		static std::string sHand  = handbookPage();
+		static std::string sSett  = settingsPage();
+		static std::string sWorld = worldPickerPage();
 
 		// Test hook: SOLARIUM_BOOT_PAGE=handbook|chars|settings|main lets a
 		// dev land directly on a non-main page for screenshot iteration.
@@ -951,6 +1008,8 @@ int main(int argc, char** argv) {
 				}
 			} else if (boot && std::string(boot) == "settings") {
 				cefUrl = sSett;
+			} else if (boot && std::string(boot) == "worlds") {
+				cefUrl = sWorld;
 			} else {
 				cefUrl = sMain;
 			}
@@ -1002,20 +1061,34 @@ int main(int argc, char** argv) {
 					hostRaw->loadUrl(sMain);
 				}
 			} else if (action == "singleplayer") {
-				// Lazy server spawn: launch solarium-server with the default
-				// world (village template). Once the world picker (#40) lands
-				// this becomes "go to world picker"; for now host immediately
-				// so the user reaches char-select with a real server warming
-				// in the background. Spawn happens on the CEF UI thread, but
-				// AgentManager::launchServer is fast (it fork+execs and waits
-				// for a /tmp ready file with a 30s budget — usually <2s).
+				// Singleplayer = host locally, but first the user picks
+				// which world. The actual server-spawn fires on `world:<id>`
+				// once we know what to host. Picker → world: → host →
+				// char-select; world picker isn't a "preview-style" screen
+				// so clear shell.previewId to drop the camera pin.
+				game.setMenuScreen(MS::Main);
+				game.setPreviewId("");
+				game.setPreviewClip("");
+				hostRaw->loadUrl(sWorld);
+			}
+			else if (action.rfind("world:", 0) == 0) {
+				// "world:village" — resolve to templateIndex via the shared
+				// registry (logic/world_templates.h), spawn the server, then
+				// roll into character select with the wave-preview clip.
+				std::string id = action.substr(6);
+				int idx = solarium::worldTemplateIndexOf(id);
+				if (idx < 0) {
+					std::fprintf(stderr,
+						"[cef] world:%s — unknown template\n", id.c_str());
+					return;
+				}
 				solarium::AgentManager::Config cfg;
 				cfg.seed = 42;
-				cfg.templateIndex = 0;  // village
+				cfg.templateIndex = idx;
 				cfg.execDir = game.execDir();
 				if (!game.hostLocalServer(cfg)) {
 					std::fprintf(stderr,
-						"[cef] singleplayer: hostLocalServer failed\n");
+						"[cef] world:%s — hostLocalServer failed\n", id.c_str());
 					return;
 				}
 				game.setMenuScreen(MS::CharacterSelect);
