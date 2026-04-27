@@ -384,18 +384,44 @@ int main(int argc, char** argv) {
 			"html,body{margin:0;height:100vh;background:transparent;"
 			"color:var(--ink);font-family:Georgia,serif;"
 			"display:flex;flex-direction:column;align-items:center;justify-content:center}"
-			"body{background:radial-gradient(ellipse at center,"
-			"rgba(16,8,10,0.55) 0%%,rgba(16,8,10,0) 60%%)}"
+			// Body backdrop = scrim radial-gradient + paper-grain texture
+			// (two diagonal repeating gradients at low alpha simulate woven
+			// fibre + uneven ink absorption). Pure CSS — no inline image.
+			"body{background:"
+			"radial-gradient(ellipse at center,"
+			"rgba(16,8,10,0.55) 0%%,rgba(16,8,10,0) 60%%),"
+			"repeating-linear-gradient(45deg,transparent 0 5px,"
+			"rgba(255,255,255,0.012) 5px 6px),"
+			"repeating-linear-gradient(-45deg,transparent 0 7px,"
+			"rgba(0,0,0,0.025) 7px 8px)}"
+			// h1 with bracketing hairline rules — small ornamental flourish
+			// on either side, emphasising the title without an SVG payload.
 			"h1{color:var(--accent-hi);font-size:72px;letter-spacing:8px;margin:0 0 8px;"
-			"text-shadow:0 4px 24px rgba(0,0,0,0.85),0 0 18px rgba(243,196,76,0.35)}"
+			"text-shadow:0 4px 24px rgba(0,0,0,0.85),0 0 18px rgba(243,196,76,0.35);"
+			"position:relative;display:inline-block;padding:0 56px}"
+			"h1::before,h1::after{content:'';position:absolute;top:50%%;"
+			"width:36px;height:1px;background:linear-gradient(to right,"
+			"transparent,var(--accent-mid));opacity:0.7}"
+			"h1::before{left:0}"
+			"h1::after{right:0;background:linear-gradient(to left,"
+			"transparent,var(--accent-mid))}"
 			".tag{font-size:16px;letter-spacing:4px;opacity:0.85;margin:0 0 40px;"
 			"text-transform:uppercase;text-shadow:0 2px 6px rgba(0,0,0,0.85)}"
 			".btn{display:block;width:280px;margin:6px 0;padding:12px 0;font-size:18px;"
 			"background:rgba(26,18,11,0.78);color:var(--accent-hi);"
 			"border:1px solid var(--accent-mid);font-family:inherit;cursor:pointer;"
 			"letter-spacing:2px;backdrop-filter:blur(2px);"
-			"transition:background 0.15s,transform 0.15s}"
-			".btn:hover{background:rgba(94,67,30,0.92);transform:scale(1.02)}"
+			"transition:background 0.15s,transform 0.15s;"
+			// Bevel: top highlight + bottom shadow via inset box-shadow,
+			// gives every button a subtle "stamped metal" depth without
+			// needing pseudo-elements (which would conflict with content).
+			"box-shadow:inset 0 1px 0 rgba(255,235,180,0.12),"
+			"inset 0 -2px 4px rgba(0,0,0,0.35),"
+			"0 1px 2px rgba(0,0,0,0.4)}"
+			".btn:hover{background:rgba(94,67,30,0.92);transform:scale(1.02);"
+			"box-shadow:inset 0 1px 0 rgba(255,235,180,0.20),"
+			"inset 0 -2px 4px rgba(0,0,0,0.40),"
+			"0 4px 12px rgba(0,0,0,0.5)}"
 			".back{margin-top:32px;width:160px;font-size:14px;opacity:0.85}"
 			".version{position:fixed;bottom:20px;right:30px;font-size:13px;opacity:0.6;"
 			"text-shadow:0 1px 3px rgba(0,0,0,0.85)}";
