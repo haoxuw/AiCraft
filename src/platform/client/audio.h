@@ -68,6 +68,13 @@ public:
 	void setEffectsMuted(bool muted) { m_effectsMuted = muted; }
 	bool effectsMuted() const { return m_effectsMuted; }
 
+	// Per-category mute. play() filters by group prefix — groups whose name
+	// starts with "step_" are footsteps, etc. Set independently of the
+	// master effects mute so a player can keep combat sound but kill the
+	// constant footstep noise (default-on per user request).
+	void setFootstepsMuted(bool muted) { m_footstepsMuted = muted; }
+	bool footstepsMuted() const { return m_footstepsMuted; }
+
 	struct SoundInfo {
 		std::string name;
 		std::string path;
@@ -93,6 +100,7 @@ private:
 	bool m_initialized = false;
 	bool m_muted = false;
 	bool m_effectsMuted = false;
+	bool m_footstepsMuted = true;  // default-on; toggle in Settings
 	float m_masterVolume = 0.5f;
 
 	struct SoundGroup {

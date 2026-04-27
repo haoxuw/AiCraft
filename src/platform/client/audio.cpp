@@ -239,6 +239,9 @@ void AudioManager::registerDefaultGroups(const std::string& basePath) {
 
 void AudioManager::play(const std::string& group, glm::vec3 worldPos, float volume) {
 	if (!m_initialized || m_muted || m_effectsMuted) return;
+	// Footstep gate: groups named "step_*" are walking sounds. Defaults
+	// to muted because "constant clop-clop" was the #1 complaint pre-launch.
+	if (m_footstepsMuted && group.rfind("step_", 0) == 0) return;
 
 	auto it = m_groups.find(group);
 	if (it == m_groups.end() || it->second.files.empty()) return;

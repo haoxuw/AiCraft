@@ -18,6 +18,7 @@
 
 #include "client/rhi/rhi.h"
 #include "client/audio.h"
+#include "client/settings.h"
 #include "client/audio_capture.h"
 #include "client/camera.h"
 #include "client/debug_triggers.h"
@@ -970,6 +971,14 @@ private:
 	// client-side from the TCP stream (Rule 5). Listener follows the camera
 	// each frame in tickPlayer.
 	solarium::AudioManager m_audio;
+	// Persisted user settings (audio, network, sim). Loaded once at boot
+	// from ~/.solarium/settings.json; mutated by the Settings page in CEF
+	// and saved back via settings().save().
+	solarium::Settings     m_settings;
+public:
+	const solarium::Settings& settings() const { return m_settings; }
+	solarium::Settings&       settings()       { return m_settings; }
+private:
 	int   m_lastWalkStep    = 0;  // integer floor of m_walkDist at last footstep
 	float m_footstepCooldown = 0.0f;
 

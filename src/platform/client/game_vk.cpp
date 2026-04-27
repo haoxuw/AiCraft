@@ -120,15 +120,28 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	m_menuPlaza = std::make_unique<MenuPlaza>();
 	m_menuPlaza->init(m_artifactRegistry, *m_behaviorStore);
 
+	// Persisted user settings. Load before audio init so the master volume
+	// + footstep mute are applied on the very first sound emit. First run
+	// writes defaults back so the user has a discoverable file to edit
+	// (and a Real Settings page can mutate it later via cefQuery).
+	m_settings = solarium::Settings::load();
+	if (!std::filesystem::exists(solarium::Settings::path())) m_settings.save();
+	std::printf("[vk-game] settings: %s\n", solarium::Settings::path().c_str());
+
 	// Spatial audio. loadSoundsFrom walks resources/sounds/*/*.ogg|wav and
 	// registers each subdirectory as a sound-group name (step_grass,
 	// dig_stone, door_open, hit_sword, …). Non-fatal on failure — the game
 	// just runs silent.
 	if (m_audio.init()) {
 		m_audio.loadSoundsFrom("resources/sounds");
-		m_audio.setMasterVolume(0.6f);
-		std::printf("[vk-game] audio up — %zu sound groups registered\n",
-			m_audio.groupNames().size());
+		m_audio.setMasterVolume(m_settings.master_volume);
+		m_audio.setMusicVolume(m_settings.music_volume);
+		m_audio.setEffectsMuted(m_settings.effects_muted);
+		m_audio.setFootstepsMuted(m_settings.footsteps_muted);
+		std::printf("[vk-game] audio up — %zu sound groups registered "
+			"(master=%.2f footsteps=%s)\n",
+			m_audio.groupNames().size(), m_settings.master_volume,
+			m_settings.footsteps_muted ? "muted" : "on");
 	} else {
 		std::printf("[vk-game] audio init failed — running silent\n");
 	}

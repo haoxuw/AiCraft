@@ -129,6 +129,8 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/audio_capture.cpp
 	src/platform/client/camera.h
 	src/platform/client/camera.cpp
+	src/platform/client/settings.h
+	src/platform/client/settings.cpp
 	src/platform/client/chunk_mesher.h
 	src/platform/client/chunk_mesher.cpp
 	src/platform/logic/block_shape.h
