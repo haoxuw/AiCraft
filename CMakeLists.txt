@@ -236,6 +236,8 @@ add_executable(solarium-ui-vk
 	src/platform/client/game_vk_renderer_panel.cpp
 	src/platform/client/game_vk_renderer_entity_ui.cpp
 	src/platform/client/game_vk_renderer_inventory.cpp
+	src/platform/client/weather_effects.h
+	src/platform/client/weather_effects.cpp
 	src/platform/client/cef_browser_host.h
 	src/platform/client/cef_browser_host.cpp
 	src/platform/client/cef_app.h

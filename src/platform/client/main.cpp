@@ -10,6 +10,7 @@
 #include "client/network_server.h"
 #include "logic/artifact_registry.h"
 #include "logic/world_templates.h"
+#include "client/save_browser.h"
 #include "client/process_manager.h"
 #include "client/game_vk.h"
 #include "client/cef_browser_host.h"
@@ -688,6 +689,60 @@ int main(int argc, char** argv) {
 			return html;
 		};
 
+		// Save slot picker — shown after Singleplayer click, before the world
+		// picker. Lists every saves/<dir>/world.json entry plus a "New
+		// World" tile. Click an existing save → load it. Click New World →
+		// world picker → fresh save dir.
+		// Value-capture (kCss/kJs/kVersion + enc/compact) so the lambda is
+		// safe to invoke from the action callback after this scope ends.
+		auto saveSlotsPage = [kCss, kJs, kVersion, enc, compact]() -> std::string {
+			auto saves = solarium::vk::scanSaves("saves");
+			std::string html = "data:text/html,<html><head><style>" + kCss +
+				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
+				"min-height:100vh;box-sizing:border-box;align-items:center}"
+				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
+				".tag{margin:0 0 32px}"
+				".tiles{display:grid;grid-template-columns:repeat(auto-fill,"
+				"minmax(320px,1fr));gap:16px;width:100%%;max-width:1100px}"
+				".tile{background:rgba(26,18,11,0.85);border:1px solid %23b88838;"
+				"padding:22px 24px;cursor:pointer;font-family:inherit;color:inherit;"
+				"text-align:left;transition:background 0.15s,transform 0.15s,"
+				"box-shadow 0.15s}"
+				".tile:hover{background:rgba(94,67,30,0.95);transform:translateY(-2px);"
+				"box-shadow:0 6px 20px rgba(0,0,0,0.5)}"
+				".tile h3{margin:0 0 6px;color:%23f3c44c;font-size:22px;"
+				"letter-spacing:2px;font-weight:400}"
+				".tile .meta{font-size:12px;color:%23b88838;font-family:monospace;"
+				"letter-spacing:1px;margin-bottom:6px;display:block;opacity:0.7}"
+				".tile .when{font-size:11px;color:%23b88838;opacity:0.6}"
+				".tile.new{background:rgba(94,67,30,0.5);"
+				"border:2px dashed %23b88838}"
+				".tile.new h3{color:%23f3c44c}"
+				".back{margin-top:24px;width:160px}"
+				"</style></head><body>"
+				"<h1>Choose Save</h1>"
+				"<div class='tag'>Continue an old world or start fresh</div>"
+				"<div class='tiles'>"
+				"<button class='tile new' onclick=\"send('new_world')\">"
+				"<h3>New World</h3>"
+				"<span class='meta'>pick a template + seed</span></button>";
+			for (const auto& s : saves) {
+				html += "<button class='tile' onclick=\"send('load:" +
+				        s.path + "')\">"
+				        "<h3>" + enc(compact(s.name, 80)) + "</h3>"
+				        "<span class='meta'>" +
+				        enc(compact(s.templateName, 60)) + "</span>"
+				        "<span class='when'>" +
+				        enc(compact(s.lastPlayed, 40)) + "</span>"
+				        "</button>";
+			}
+			html += "</div>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
+				kVersion + kJs +
+				"</body></html>";
+			return html;
+		};
+
 		// Singleplayer flow: pick a world before going to character select.
 		// Tile grid driven by kWorldTemplates (logic/world_templates.h) — the
 		// canonical id ↔ templateIndex source the server also uses. Clicking
@@ -1322,6 +1377,8 @@ int main(int argc, char** argv) {
 				cefUrl = sPause;
 			} else if (boot && std::string(boot) == "mp") {
 				cefUrl = multiplayerPage();
+			} else if (boot && std::string(boot) == "saves") {
+				cefUrl = saveSlotsPage();
 			} else {
 				cefUrl = sMain;
 			}
@@ -1343,7 +1400,7 @@ int main(int argc, char** argv) {
 		// copy — local 'multiplayerPage' in this block goes out of scope
 		// once init returns. Same for the enc helper inside it.
 		cefHost->setActionCallback(
-			[win, &game, hostRaw, multiplayerPage, settingsPage](const std::string& action) {
+			[win, &game, hostRaw, multiplayerPage, settingsPage, saveSlotsPage](const std::string& action) {
 			std::printf("[cef] action: %s\n", action.c_str());
 			using MS = solarium::vk::MenuScreen;
 			// First playable id, used as default char-select pick. Cached
@@ -1386,16 +1443,40 @@ int main(int argc, char** argv) {
 					hostRaw->loadUrl(sMain);
 				}
 			} else if (action == "singleplayer") {
-				// Singleplayer = host locally, but first the user picks
-				// which world. The actual server-spawn fires on `world:<id>`
-				// once we know what to host. Picker → world: → host →
-				// char-select; world picker isn't a "preview-style" screen
-				// so clear shell.previewId to drop the camera pin.
+				// Singleplayer = host locally. Three-step flow now:
+				//   1) save slots → pick existing OR "New World"
+				//   2) (new path only) world picker → choose template
+				//   3) char-select → Begin Game → connect
+				// The server-spawn fires on `load:<path>` (existing) or
+				// `world:<id>` (new). Both end up in char-select.
 				game.setMenuScreen(MS::Main);
 				game.setPreviewId("");
 				game.setPreviewClip("");
 				game.setNextHostLanVisible(false);  // private session
+				// Rebuild fresh — picks up newly-created saves.
+				hostRaw->loadUrl(saveSlotsPage());
+			}
+			else if (action == "new_world") {
 				hostRaw->loadUrl(sWorld);
+			}
+			else if (action.rfind("load:", 0) == 0) {
+				// "load:saves/foo" — host with cfg.worldPath set; the
+				// solarium-server `--world PATH` codepath restores the
+				// saved world instead of generating fresh.
+				const std::string path = action.substr(5);
+				solarium::AgentManager::Config cfg;
+				cfg.execDir   = game.execDir();
+				cfg.worldPath = path;
+				if (!game.hostLocalServer(cfg)) {
+					std::fprintf(stderr,
+						"[cef] load:%s — hostLocalServer failed\n", path.c_str());
+					return;
+				}
+				game.setMenuScreen(MS::CharacterSelect);
+				game.setPreviewClip("wave");
+				if (!firstPlayableId.empty())
+					game.setPreviewId(firstPlayableId);
+				hostRaw->loadUrl(sChar);
 			}
 			else if (action.rfind("world:", 0) == 0) {
 				// "world:<id>" or "world:<id>:<seed>:<villagers>" — the picker
