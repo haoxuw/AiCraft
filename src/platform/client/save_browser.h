@@ -11,8 +11,11 @@
 // Used by the Singleplayer flow: list existing saves on the slot picker,
 // or fall through to the World picker for "New World".
 
+#include <cctype>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -30,6 +33,68 @@ struct SaveEntry {
 	int         seed = 42;
 	std::string lastPlayed;    // ISO timestamp from world.json
 };
+
+// Create a fresh save dir + world.json with the given metadata. Returns
+// the resolved path on success ("saves/<sanitised_name>"), or empty on
+// failure. The directory is empty otherwise (no chunks yet) — the server
+// runs procgen from the seed/template the first time and persists the
+// modified chunks back on shutdown via saveWorldIfNeeded.
+inline std::string createSave(const std::string& savesDir,
+                              const std::string& name,
+                              int seed, int templateIndex,
+                              const std::string& templateName) {
+	namespace fs = std::filesystem;
+	std::error_code ec;
+	fs::create_directories(savesDir, ec);
+
+	// Sanitise: alnum + underscore + dash only. Avoids slash injection
+	// and weird filesystem chars across platforms.
+	std::string slug;
+	for (char c : name) {
+		if (std::isalnum((unsigned char)c)) slug += c;
+		else if (c == ' ' || c == '_' || c == '-') slug += '_';
+	}
+	if (slug.empty()) slug = "world";
+
+	// Disambiguate: if the dir already exists, append _2, _3, ...
+	std::string base = savesDir + "/" + slug;
+	std::string path = base;
+	int n = 2;
+	while (fs::exists(path, ec)) {
+		path = base + "_" + std::to_string(n++);
+		if (n > 9999) return "";  // pathological
+	}
+
+	if (!fs::create_directories(path, ec)) return "";
+
+	std::ofstream f(path + "/world.json");
+	if (!f.is_open()) return "";
+
+	std::time_t now = std::time(nullptr);
+	char timeBuf[64];
+	std::strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%dT%H:%M:%S",
+	              std::localtime(&now));
+
+	f << "{\n";
+	f << "  \"name\": \""          << name << "\",\n";
+	f << "  \"seed\": "            << seed << ",\n";
+	f << "  \"templateIndex\": "   << templateIndex << ",\n";
+	f << "  \"templateName\": \""  << templateName << "\",\n";
+	f << "  \"gameMode\": \"survival\",\n";
+	f << "  \"worldTime\": 0.25,\n";
+	f << "  \"spawnPos\": [30, 5, 30],\n";
+	f << "  \"lastPlayed\": \""    << timeBuf << "\",\n";
+	f << "  \"version\": 1\n";
+	f << "}\n";
+	return path;
+}
+
+// Remove a save directory recursively. Returns the number of entries
+// removed (0 = path didn't exist).
+inline std::uintmax_t deleteSave(const std::string& path) {
+	std::error_code ec;
+	return std::filesystem::remove_all(path, ec);
+}
 
 inline std::vector<SaveEntry> scanSaves(const std::string& savesDir) {
 	namespace fs = std::filesystem;

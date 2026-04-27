@@ -816,6 +816,15 @@ int main(int argc, char** argv) {
 				".tile.new{background:rgba(94,67,30,0.5);"
 				"border:2px dashed %23b88838}"
 				".tile.new h3{color:%23f3c44c}"
+				".tile.save{position:relative}"
+				".tile .del{position:absolute;top:8px;right:8px;"
+				"padding:4px 10px;font-size:10px;letter-spacing:1px;"
+				"background:rgba(120,30,20,0.85);color:%23f0e0c0;"
+				"border:1px solid rgba(184,80,60,0.7);font-family:inherit;"
+				"cursor:pointer;text-transform:uppercase;opacity:0.4;"
+				"transition:opacity 0.15s}"
+				".tile.save:hover .del{opacity:1}"
+				".tile .del:hover{background:rgba(160,40,30,0.95)}"
 				".back{margin-top:24px;width:160px}"
 				"</style></head><body>"
 				"<h1>Choose Save</h1>"
@@ -825,14 +834,22 @@ int main(int argc, char** argv) {
 				"<h3>New World</h3>"
 				"<span class='meta'>pick a template + seed</span></button>";
 			for (const auto& s : saves) {
-				html += "<button class='tile' onclick=\"send('load:" +
+				// Two clickable elements in one tile: the tile itself loads
+				// the save; the X button (top-right) deletes it. stopPropagation
+				// in the delete onclick keeps the load from firing too.
+				html += "<div class='tile save' onclick=\"send('load:" +
 				        s.path + "')\">"
+				        "<button class='del' "
+				        "onclick=\"event.stopPropagation();"
+				        "if(confirm('Delete &quot;" + enc(compact(s.name, 40)) +
+				        "&quot;?'))send('delete_save:" + s.path + "')\">"
+				        "Delete</button>"
 				        "<h3>" + enc(compact(s.name, 80)) + "</h3>"
 				        "<span class='meta'>" +
 				        enc(compact(s.templateName, 60)) + "</span>"
 				        "<span class='when'>" +
 				        enc(compact(s.lastPlayed, 40)) + "</span>"
-				        "</button>";
+				        "</div>";
 			}
 			html += "</div>"
 				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
@@ -948,6 +965,8 @@ int main(int argc, char** argv) {
 			}
 			html += "</div>"
 				"<div class='opts'>"
+				"<label>Name<input type='text' id='wname' "
+				"placeholder='My World' maxlength='32' style='width:160px'></label>"
 				"<label>Seed<input type='number' id='wseed' value='42' min='0' max='99999'></label>"
 				"<button onclick=\"document.getElementById('wseed').value="
 				"Math.floor(Math.random()*99999)\">Randomise</button>"
@@ -961,12 +980,15 @@ int main(int argc, char** argv) {
 				"document.getElementById('wvill').addEventListener('input',e=>{"
 				"document.getElementById('wvillv').textContent="
 				"e.target.value==='0'?'auto':e.target.value;});"
-				// Hijack tile clicks: append seed + villagers to the action.
+				// Hijack tile clicks: append seed + villagers + name to the
+				// action. Encode name to dodge ':' as a separator (URI-encode).
 				"document.querySelectorAll('.tile').forEach(t=>{"
 				"const id=t.getAttribute('onclick').match(/world:([\\w_]+)/)[1];"
 				"t.onclick=()=>{const s=document.getElementById('wseed').value||'42';"
 				"const v=document.getElementById('wvill').value;"
-				"send('world:'+id+':'+s+':'+v);};});"
+				"const n=encodeURIComponent("
+				"document.getElementById('wname').value.trim()||'My World');"
+				"send('world:'+id+':'+s+':'+v+':'+n);};});"
 				"</script>" +
 				kVersion +
 				"</body></html>";
@@ -1579,11 +1601,10 @@ int main(int argc, char** argv) {
 				hostRaw->loadUrl(sChar);
 			}
 			else if (action.rfind("world:", 0) == 0) {
-				// "world:<id>" or "world:<id>:<seed>:<villagers>" — the picker
-				// hijacks tile clicks to append slider values, so today's
-				// picker always sends the long form. Plain form kept for
-				// SOLARIUM_BOOT_PAGE=worlds and any future caller that just
-				// wants defaults.
+				// "world:<id>[:<seed>:<villagers>[:<urlencoded-name>]]" — the
+				// picker hijacks tile clicks to append the option strip's
+				// values. Plain form kept for SOLARIUM_BOOT_PAGE=worlds and
+				// any future caller that just wants defaults.
 				const std::string body = action.substr(6);
 				auto parts = std::vector<std::string>{};
 				size_t p = 0;
@@ -1606,6 +1627,38 @@ int main(int argc, char** argv) {
 				cfg.seed              = parts.size() > 1 ? std::atoi(parts[1].c_str()) : 42;
 				cfg.villagersOverride = parts.size() > 2 ? std::atoi(parts[2].c_str()) : 0;
 				if (cfg.seed <= 0) cfg.seed = 42;
+
+				// URL-decode name and create a save dir BEFORE spawning the
+				// server. The save dir's path becomes --world PATH, so when
+				// the server shuts down it persists chunks/entities back
+				// (saveWorldIfNeeded). Without this, "Continue" later would
+				// have nothing to load.
+				std::string name = parts.size() > 3 ? parts[3] : std::string("My World");
+				{
+					std::string decoded; decoded.reserve(name.size());
+					for (size_t i = 0; i < name.size(); ++i) {
+						if (name[i] == '%' && i + 2 < name.size()) {
+							int v = 0;
+							if (std::sscanf(name.c_str() + i + 1, "%2x", &v) == 1) {
+								decoded += (char)v; i += 2; continue;
+							}
+						}
+						if (name[i] == '+') { decoded += ' '; continue; }
+						decoded += name[i];
+					}
+					name = decoded;
+				}
+				std::string templateName =
+					solarium::worldTemplateIdAt(idx);  // e.g. "village"
+				cfg.worldPath = solarium::vk::createSave(
+					"saves", name, cfg.seed, idx, templateName);
+				if (cfg.worldPath.empty()) {
+					std::fprintf(stderr, "[cef] world:%s — createSave failed\n", id.c_str());
+					return;
+				}
+				std::printf("[cef] new save at %s (\"%s\")\n",
+					cfg.worldPath.c_str(), name.c_str());
+
 				if (!game.hostLocalServer(cfg)) {
 					std::fprintf(stderr,
 						"[cef] world:%s — hostLocalServer failed\n", id.c_str());
@@ -1616,6 +1669,15 @@ int main(int argc, char** argv) {
 				if (!firstPlayableId.empty())
 					game.setPreviewId(firstPlayableId);
 				hostRaw->loadUrl(sChar);
+			}
+			else if (action.rfind("delete_save:", 0) == 0) {
+				// "delete_save:saves/foo" — rm -rf the dir, then refresh
+				// the picker.
+				const std::string path = action.substr(12);
+				std::uintmax_t n = solarium::vk::deleteSave(path);
+				std::printf("[cef] deleted save %s (%ju entries)\n",
+					path.c_str(), (uintmax_t)n);
+				hostRaw->loadUrl(saveSlotsPage());
 			} else if (action == "multiplayer") {
 				// Multiplayer hub: Host vs Join split.
 				game.setMenuScreen(MS::Main);
