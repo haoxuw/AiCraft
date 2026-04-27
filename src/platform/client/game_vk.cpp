@@ -1021,6 +1021,13 @@ void Game::runOneFrame(float dt, float wallTime) {
 		                || m_menuScreen == MenuScreen::Connecting
 		                || m_menuScreen == MenuScreen::Handbook)
 		               && !m_shell.previewId.empty();
+		// Char-select clip cycle — alternate "wave" and "dance" every 4s
+		// so the preview reads as alive. Handbook keeps its static pose.
+		if (m_menuScreen == MenuScreen::CharacterSelect &&
+		    (m_shell.previewClip == "wave" || m_shell.previewClip == "dance")) {
+			int phase = (int)(m_wallTime / 4.0f) & 1;
+			m_shell.previewClip = phase ? "dance" : "wave";
+		}
 		if (previewing) {
 			// Pinned plaza-level camera: the preview character stands at world
 			// (0, 1, 0) (top of the grass slab). Aim-point is shifted LEFT of
