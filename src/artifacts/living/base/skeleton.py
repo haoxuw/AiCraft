@@ -11,13 +11,13 @@ living = {
     "model": "skeleton",
     "behavior": "wander",
 
-    # Physics
-    "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 1.85, 0.3]},
-    "walk_speed": 2.2,
-    "run_speed": 4.8,
+    # Physics — standardised on Guy.
+    "collision": {"min": [-0.35, 0, -0.35], "max": [0.35, 2.0, 0.35]},
+    "walk_speed": 6.0,
+    "run_speed": 9.6,
     "gravity": 1.0,
-    "eye_height": 1.60,
-    "jump_velocity": 12.4,
+    "eye_height": 1.70,
+    "jump_velocity": 8.0,
 
     "stats": {"strength": 3, "stamina": 2, "agility": 4, "intelligence": 3},
 

@@ -24,13 +24,13 @@ living = {
     "model": "villager",
     "behavior": "woodcutter",
 
-    # Physics
-    "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 1.8, 0.3]},
-    "walk_speed": 2.5,
-    "run_speed": 5.0,
+    # Physics — standardised on Guy.
+    "collision": {"min": [-0.35, 0, -0.35], "max": [0.35, 2.0, 0.35]},
+    "walk_speed": 6.0,
+    "run_speed": 9.6,
     "gravity": 1.0,
-    "eye_height": 1.5,
-    "jump_velocity": 11.2,
+    "eye_height": 1.70,
+    "jump_velocity": 8.0,
 
     # Character stats (humanoids only — animals omit this)
     "stats": {"strength": 2, "stamina": 3, "agility": 3, "intelligence": 3},

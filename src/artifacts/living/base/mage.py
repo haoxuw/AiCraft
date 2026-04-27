@@ -11,13 +11,13 @@ living = {
     "model": "mage",
     "behavior": "wander",
 
-    # Physics
-    "collision": {"min": [-0.3, 0, -0.3], "max": [0.3, 1.95, 0.3]},
-    "walk_speed": 2.0,
-    "run_speed": 4.0,
+    # Physics — standardised on Guy.
+    "collision": {"min": [-0.35, 0, -0.35], "max": [0.35, 2.0, 0.35]},
+    "walk_speed": 6.0,
+    "run_speed": 9.6,
     "gravity": 1.0,
-    "eye_height": 1.65,
-    "jump_velocity": 14.0,
+    "eye_height": 1.70,
+    "jump_velocity": 8.0,
 
     "stats": {"strength": 1, "stamina": 2, "agility": 3, "intelligence": 5},
 

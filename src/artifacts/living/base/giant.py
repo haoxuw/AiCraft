@@ -11,13 +11,15 @@ living = {
     "model": "giant",
     "behavior": "wander",
 
-    # Physics
-    "collision": {"min": [-0.6, 0, -0.6], "max": [0.6, 3.2, 0.6]},
-    "walk_speed": 1.4,
-    "run_speed": 3.0,
+    # Physics — standardised on Guy. Same hitbox + speed across every
+    # playable so PvP and group-pacing stay fair. Visual scale still
+    # differs via the box-model file.
+    "collision": {"min": [-0.35, 0, -0.35], "max": [0.35, 2.0, 0.35]},
+    "walk_speed": 6.0,
+    "run_speed": 9.6,
     "gravity": 1.0,
-    "eye_height": 2.80,
-    "jump_velocity": 9.0,
+    "eye_height": 1.70,
+    "jump_velocity": 8.0,
 
     "stats": {"strength": 5, "stamina": 5, "agility": 1, "intelligence": 2},
 
