@@ -25,6 +25,7 @@
 #include "client/debug_triggers.h"
 #include "client/dialog_panel.h"
 #include "client/entity_raycast.h"
+#include "client/raycast.h"
 #include "client/path_executor.h"
 #include "logic/artifact_registry.h"
 #include "llm/llm_client.h"
@@ -407,6 +408,13 @@ private:
 	// (camera is already inside the player's collision capsule).
 	void clampCameraCollision();
 
+	// Camera-aimed block raycast, clipped to the player's reach. Hides
+	// the FPS-vs-far-TPS-cam difference: in TPS the cam is far behind,
+	// so we extend the raycast to span the cam→player gap, then reject
+	// hits beyond `reachDist` from the player. RPG/RTS unproject the
+	// screen cursor instead of using camera-forward.
+	std::optional<solarium::RayHit> aimedBlockHit(float reachDist) const;
+
 	// World mutation (right-click + headless file trigger).
 	void digInFront();
 	// Server-mode block placement: raycast → place at adjacent air cell.
@@ -506,6 +514,14 @@ public:
 	bool nextHostLanVisible() const    { return m_nextHostLanVisible; }
 private:
 	bool                       m_nextHostLanVisible = false;
+	// True for the duration of a hosting session that's actually
+	// broadcasting on LAN (i.e. cfg.lanVisible was true at host time).
+	// CEF play-action uses this to route into the lobby page instead of
+	// straight into Connecting, so the host can wait for joiners.
+public:
+	bool isLanHost() const { return m_isLanHost; }
+private:
+	bool                       m_isLanHost = false;
 	// Agents run inside this process now (server stopped spawning solarium-agent
 	// children). One BehaviorStore + one AgentClient drives every NPC the
 	// server hands us. unique_ptr so we can defer construction until after the

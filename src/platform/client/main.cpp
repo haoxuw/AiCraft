@@ -889,6 +889,35 @@ int main(int argc, char** argv) {
 				"</body></html>";
 		};
 
+		// Multiplayer lobby — host-side only (v1). After the host picks a
+		// character we route here instead of straight into Connecting; the
+		// host clicks "Start Game" when ready. Joiners enter the world
+		// immediately on HELLO/WELCOME — proper "wait for host" protocol
+		// work is a v2 item (server-side lobby state + S_LOBBY opcode).
+		auto lobbyPage = [&]() -> std::string {
+			return "data:text/html,<html><head><style>" + kCss +
+				"body{justify-content:center;align-items:center}"
+				"h1{font-size:56px;letter-spacing:8px;margin:0 0 12px}"
+				".tag{margin:0 0 32px;font-size:14px;letter-spacing:2px;"
+				"color:%23b88838}"
+				".players{display:flex;flex-direction:column;gap:6px;"
+				"width:380px;margin-bottom:24px}"
+				".player{padding:12px 18px;background:rgba(26,18,11,0.78);"
+				"border:1px solid %23b88838;color:%23f3c44c;"
+				"font-family:monospace;font-size:14px;letter-spacing:1px}"
+				".btn{width:280px}"
+				"</style></head><body>"
+				"<h1>Lobby</h1>"
+				"<div class='tag'>Your LAN game is live - joiners can find you on UDP 7778</div>"
+				"<div class='players'>"
+				"<div class='player'>You (host)</div>"
+				"</div>"
+				"<button class='btn' onclick=\"send('lobby_start')\">Start Game</button>"
+				"<button class='btn back' onclick=\"send('main_menu')\">Cancel</button>" +
+				kVersion + kJs +
+				"</body></html>";
+		};
+
 		// In-game ESC pause page. Renders over the running world (the world
 		// keeps rendering behind because we don't change m_state). Static
 		// buttons → simple 4-line action wiring.
@@ -1455,6 +1484,7 @@ int main(int argc, char** argv) {
 		static std::string sWorld = worldPickerPage();
 		static std::string sPause = pausePage();
 		static std::string sMpHub = multiplayerHubPage();
+		static std::string sLobby = lobbyPage();
 		// settingsPage rebuilt fresh each click — captures live values
 		// (master_volume, footsteps_muted, …) so reopening shows current state.
 
@@ -1504,6 +1534,8 @@ int main(int argc, char** argv) {
 				cefUrl = saveSlotsPage();
 			} else if (boot && std::string(boot) == "mods") {
 				cefUrl = modManagerPage();
+			} else if (boot && std::string(boot) == "lobby") {
+				cefUrl = sLobby;
 			} else {
 				cefUrl = sMain;
 			}
@@ -1790,8 +1822,23 @@ int main(int argc, char** argv) {
 				// game_vk.cpp keeps framing it. No connect yet.
 				game.setPreviewId(action.substr(5));
 			} else if (action == "play") {
-				// Commit the current preview. previewId was set by an earlier
-				// "pick:" or by the "singleplayer" default.
+				// Commit the current preview. For LAN hosts, route through
+				// the lobby first so they can wait for friends to discover
+				// + join. Singleplayer + joiners go straight to Connecting.
+				const std::string id = game.previewId();
+				if (id.empty()) return;
+				if (game.isLanHost()) {
+					// Stash the picked id (CEF lobby Start re-fires "play"
+					// — we'd need a second action — easier to just re-use
+					// previewId, which is preserved across the lobby).
+					hostRaw->loadUrl(sLobby);
+				} else if (game.beginConnectAs(id)) {
+					game.setMenuScreen(MS::Connecting);
+					game.setCefMenuActive(false);
+				}
+			} else if (action == "lobby_start") {
+				// Host clicked Start in the lobby — fire the deferred
+				// connect with the pre-picked character.
 				const std::string id = game.previewId();
 				if (!id.empty() && game.beginConnectAs(id)) {
 					game.setMenuScreen(MS::Connecting);

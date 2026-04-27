@@ -567,6 +567,7 @@ void Game::returnToMainMenu() {
 	if (m_server && m_server->isConnected()) m_server->disconnect();
 	m_connecting = false;
 	if (m_hosting) { m_agentMgr.stopAll(); m_hosting = false; }
+	m_isLanHost = false;
 	m_plazaAnim.reset(m_menuPlaza.get());
 	m_state = GameState::Menu;
 	m_menuScreen = MenuScreen::Main;
@@ -624,6 +625,7 @@ bool Game::hostLocalServer(const solarium::AgentManager::Config& cfg) {
 	// pointing somewhere new.
 	if (auto* net = dynamic_cast<solarium::NetworkServer*>(m_server))
 		net->setTarget("127.0.0.1", port);
+	m_isLanHost = cfgWithFlag.lanVisible;
 	std::printf("[Game] hostLocalServer: template=%d seed=%d port=%d lanVisible=%d\n",
 		cfgWithFlag.templateIndex, cfgWithFlag.seed, port,
 		cfgWithFlag.lanVisible ? 1 : 0);
@@ -827,6 +829,8 @@ void Game::onScroll(double xoff, double yoff) {
 	case solarium::CameraMode::FirstPerson:
 		break;
 	case solarium::CameraMode::ThirdPerson:
+		m_cam.tpsCamDistanceTarget = std::clamp(m_cam.tpsCamDistanceTarget - y, 2.0f, 14.0f);
+		break;
 	case solarium::CameraMode::RPG:
 		m_cam.godDistanceTarget = std::clamp(m_cam.godDistanceTarget - y * 2.0f, 3.0f, 50.0f);
 		break;
