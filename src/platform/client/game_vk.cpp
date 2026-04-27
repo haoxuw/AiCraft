@@ -107,6 +107,29 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	// Register file-triggered debug helpers (respawn, dig, camera, …).
 	registerDebugTriggers();
 
+	// Load settings before the artifact registry so the disabled-mods list
+	// (Mod Manager UI persists this) gets honoured at load time. The
+	// settings load is otherwise idempotent — it'll be loaded again below
+	// before audio init.
+	m_settings = solarium::Settings::load();
+	{
+		// Split comma-joined "namespaceA,namespaceB" into a vector and
+		// hand to the registry. Empty entries trimmed.
+		std::vector<std::string> disabled;
+		const std::string& s = m_settings.disabled_mods;
+		size_t p = 0;
+		while (p < s.size()) {
+			size_t q = s.find(',', p);
+			std::string tok = s.substr(p, q == std::string::npos ? std::string::npos : q - p);
+			while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+			while (!tok.empty() && tok.back() == ' ')  tok.pop_back();
+			if (!tok.empty()) disabled.push_back(tok);
+			if (q == std::string::npos) break;
+			p = q + 1;
+		}
+		m_artifactRegistry.setDisabledNamespaces(disabled);
+	}
+
 	m_artifactRegistry.loadAll("artifacts");
 
 	// Load Python-defined BoxModels (one .py per creature/item under
@@ -580,6 +603,12 @@ bool Game::hostLocalServer(const solarium::AgentManager::Config& cfg) {
 	auto cfgWithFlag = cfg;
 	cfgWithFlag.lanVisible = m_nextHostLanVisible;
 	m_nextHostLanVisible = false;
+	// Mod toggles are always passed: the spawned server's artifact registry
+	// must agree with the client's filtered set, otherwise entity-type
+	// lookups for server-spawned NPCs (especially mod-defined ones) miss
+	// on the client side.
+	if (cfgWithFlag.disabledMods.empty())
+		cfgWithFlag.disabledMods = m_settings.disabled_mods;
 	int port = m_agentMgr.launchServer(cfgWithFlag);
 	if (port < 0) {
 		m_connectError = "failed to launch solarium-server";
@@ -702,12 +731,8 @@ void Game::enterPlaying() {
 	// monument instead of snapping to a different direction.
 	m_cam.player.yaw = 90.0f;
 	m_cam.lookYaw = 90.0f;
-	m_cam.orbitYaw = 90.0f;
-	m_cam.orbitPitch = 25.0f;
 	m_cam.godOrbitYaw = 90.0f;
 	m_cam.rtsOrbitYaw = 90.0f;
-	m_cam.orbitDistanceTarget = kTune.camDistance;
-	m_cam.orbitDistance = kTune.camDistance;
 	m_cam.farPlane = 500.0f;
 	m_cam.rtsCenter = spawnPos;
 	m_cam.resetSmoothing();
@@ -802,8 +827,6 @@ void Game::onScroll(double xoff, double yoff) {
 	case solarium::CameraMode::FirstPerson:
 		break;
 	case solarium::CameraMode::ThirdPerson:
-		m_cam.orbitDistanceTarget = std::clamp(m_cam.orbitDistanceTarget - y, 2.0f, 20.0f);
-		break;
 	case solarium::CameraMode::RPG:
 		m_cam.godDistanceTarget = std::clamp(m_cam.godDistanceTarget - y * 2.0f, 3.0f, 50.0f);
 		break;
@@ -1427,15 +1450,15 @@ void Game::registerDebugTriggers() {
 		std::printf("[vk-game] [trigger] camera → %s\n", names[(int)m_cam.mode]);
 	});
 	m_debugTriggers.addTrigger("/tmp/solarium_vk_lookup_request", [this] {
-		m_cam.lookPitch  = 55.0f;   // FPS / ThirdPerson free-look
-		m_cam.orbitPitch = -40.0f;  // TPS orbit (negative = view aims up)
-		std::printf("[vk-game] [trigger] look up (lookPitch=55, orbitPitch=-40)\n");
+		m_cam.lookPitch  = 55.0f;   // FPS free-look
+		m_cam.godAngle   = 70.0f;   // TPS/RPG orbit — high overhead
+		std::printf("[vk-game] [trigger] look up (lookPitch=55, godAngle=70)\n");
 	});
 	m_debugTriggers.addTrigger("/tmp/solarium_vk_face_east_request", [this] {
-		m_cam.lookYaw    = 0.0f;    // +X (toward sunrise)
-		m_cam.lookPitch  = 35.0f;   // horizon slightly low, most of frame = sky + clouds
-		m_cam.orbitYaw   = 0.0f;
-		m_cam.orbitPitch = -25.0f;
+		m_cam.lookYaw     = 0.0f;    // +X (toward sunrise)
+		m_cam.lookPitch   = 35.0f;   // horizon slightly low, most of frame = sky + clouds
+		m_cam.godOrbitYaw = 0.0f;
+		m_cam.godAngle    = 25.0f;
 		m_cam.resetSmoothing();
 		std::printf("[vk-game] [trigger] face east (sunrise view)\n");
 	});

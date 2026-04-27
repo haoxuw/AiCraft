@@ -436,6 +436,7 @@ int main(int argc, char** argv) {
 				"<button class='btn' onclick=\"send('singleplayer')\">Singleplayer</button>"
 				"<button class='btn' onclick=\"send('multiplayer')\">Multiplayer</button>"
 				"<button class='btn' onclick=\"send('handbook')\">Handbook</button>"
+				"<button class='btn' onclick=\"send('mods')\">Mods</button>"
 				"<button class='btn' onclick=\"send('settings')\">Settings</button>"
 				"<button class='btn' onclick=\"send('quit')\">Quit</button>" +
 				kVersion + kJs +
@@ -685,6 +686,103 @@ int main(int argc, char** argv) {
 				"send('pick:'+id);}"
 				"render('" + (playables.empty() ? "" : playables[0].id) + "');"
 				"</script>"
+				"</body></html>";
+			return html;
+		};
+
+		// Mod Manager — lists distinct namespaces under artifacts/<cat>/* with
+		// per-namespace enable toggles. Toggles update Settings.disabled_mods
+		// (comma-joined ids); changes apply on the NEXT launch since the
+		// artifact registry is loaded once at boot.
+		// Value-capture matches settingsPage: invoked from the action callback
+		// after this scope ends, so [&] would dangle.
+		auto modManagerPage = [kCss, kVersion, &game, enc]() -> std::string {
+			auto namespaces = game.artifactRegistry().discoverNamespaces("artifacts");
+			std::sort(namespaces.begin(), namespaces.end());
+			// Per-namespace artifact count for display.
+			std::unordered_map<std::string, int> nsCount;
+			for (const auto& e : game.artifactRegistry().entries()) {
+				// e.filePath = "artifacts/<cat>/<ns>/<file>.py"
+				auto p = std::filesystem::path(e.filePath);
+				if (p.has_parent_path()) {
+					std::string ns = p.parent_path().filename().string();
+					nsCount[ns]++;
+				}
+			}
+			// Disabled set from current settings.
+			std::set<std::string> disabled;
+			{
+				const std::string& s = game.settings().disabled_mods;
+				size_t pos = 0;
+				while (pos < s.size()) {
+					size_t q = s.find(',', pos);
+					std::string tok = s.substr(pos, q == std::string::npos ? std::string::npos : q - pos);
+					while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+					while (!tok.empty() && tok.back() == ' ')  tok.pop_back();
+					if (!tok.empty()) disabled.insert(tok);
+					if (q == std::string::npos) break;
+					pos = q + 1;
+				}
+			}
+
+			std::string html = "data:text/html,<html><head><style>" + kCss +
+				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
+				"min-height:100vh;box-sizing:border-box;align-items:center}"
+				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
+				".tag{margin:0 0 24px}"
+				".note{margin:0 0 24px;font-size:12px;color:%23b88838;"
+				"letter-spacing:2px;text-transform:uppercase}"
+				".list{display:flex;flex-direction:column;gap:8px;width:680px}"
+				".row{display:flex;align-items:center;justify-content:space-between;"
+				"padding:14px 22px;background:rgba(26,18,11,0.78);"
+				"border:1px solid %23b88838}"
+				".row.off{opacity:0.55}"
+				".row .nm{font-size:18px;color:%23f3c44c;letter-spacing:2px;"
+				"font-family:monospace}"
+				".row .ct{font-size:11px;color:%23b88838;letter-spacing:1px;"
+				"font-family:monospace;margin-left:12px}"
+				".tog{position:relative;width:44px;height:22px;"
+				"background:rgba(40,30,20,0.9);border:1px solid %23b88838;"
+				"border-radius:11px;cursor:pointer;transition:background 0.15s}"
+				".tog::after{content:'';position:absolute;left:3px;top:2px;"
+				"width:14px;height:14px;border-radius:50%%;background:%23b88838;"
+				"transition:left 0.15s,background 0.15s}"
+				".tog.on{background:rgba(94,67,30,0.95)}"
+				".tog.on::after{left:25px;background:%23f3c44c}"
+				".back{margin-top:24px;width:160px}"
+				"</style></head><body>"
+				"<h1>Mod Manager</h1>"
+				"<div class='tag'>Enable / disable artifact namespaces</div>"
+				"<div class='note'>Changes apply on next launch</div>"
+				"<div class='list'>";
+
+			if (namespaces.empty()) {
+				html += "<div class='row'><span class='nm'>(none found)</span>"
+				        "<span class='ct'>0 entries</span></div>";
+			}
+			for (const auto& ns : namespaces) {
+				bool isOff = disabled.count(ns) > 0;
+				int  ct    = nsCount.count(ns) ? nsCount[ns] : 0;
+				html += "<div class='row" + std::string(isOff ? " off" : "") +
+				        "'><span><span class='nm'>" + enc(ns) +
+				        "</span><span class='ct'>" + std::to_string(ct) +
+				        " entries</span></span>"
+				        "<div class='tog" + std::string(isOff ? "" : " on") +
+				        "' onclick=\"tog(this,'" + enc(ns) + "')\"></div>"
+				        "</div>";
+			}
+			html += "</div>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>"
+				"<script>"
+				"function send(a){window.cefQuery({request:'action:'+a,"
+				"onSuccess:()=>{},onFailure:()=>{}});}"
+				"function tog(el,ns){"
+				"const on=!el.classList.contains('on');"
+				"el.classList.toggle('on',on);"
+				"el.parentElement.classList.toggle('off',!on);"
+				"send('mod:'+ns+':'+(on?'on':'off'));}"
+				"</script>" +
+				kVersion +
 				"</body></html>";
 			return html;
 		};
@@ -1379,6 +1477,8 @@ int main(int argc, char** argv) {
 				cefUrl = multiplayerPage();
 			} else if (boot && std::string(boot) == "saves") {
 				cefUrl = saveSlotsPage();
+			} else if (boot && std::string(boot) == "mods") {
+				cefUrl = modManagerPage();
 			} else {
 				cefUrl = sMain;
 			}
@@ -1400,7 +1500,7 @@ int main(int argc, char** argv) {
 		// copy — local 'multiplayerPage' in this block goes out of scope
 		// once init returns. Same for the enc helper inside it.
 		cefHost->setActionCallback(
-			[win, &game, hostRaw, multiplayerPage, settingsPage, saveSlotsPage](const std::string& action) {
+			[win, &game, hostRaw, multiplayerPage, settingsPage, saveSlotsPage, modManagerPage](const std::string& action) {
 			std::printf("[cef] action: %s\n", action.c_str());
 			using MS = solarium::vk::MenuScreen;
 			// First playable id, used as default char-select pick. Cached
@@ -1543,6 +1643,47 @@ int main(int argc, char** argv) {
 				hostRaw->loadUrl(sHand);
 			} else if (action == "settings") {
 				hostRaw->loadUrl(settingsPage());
+			} else if (action == "mods") {
+				hostRaw->loadUrl(modManagerPage());
+			} else if (action.rfind("mod:", 0) == 0) {
+				// "mod:<ns>:on" / "mod:<ns>:off" — toggle a namespace in
+				// Settings.disabled_mods (comma-joined). Changes take effect
+				// on next launch (registry loads once at boot).
+				const std::string body = action.substr(4);
+				auto colon = body.rfind(':');
+				if (colon == std::string::npos) return;
+				std::string ns = body.substr(0, colon);
+				std::string state = body.substr(colon + 1);
+				bool wantOn = (state == "on");
+				// Parse current list, add/remove ns, re-join.
+				auto& s = game.settings();
+				std::vector<std::string> toks;
+				size_t pos = 0;
+				while (pos < s.disabled_mods.size()) {
+					size_t q = s.disabled_mods.find(',', pos);
+					std::string tok = s.disabled_mods.substr(
+						pos, q == std::string::npos ? std::string::npos : q - pos);
+					while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+					while (!tok.empty() && tok.back() == ' ')  tok.pop_back();
+					if (!tok.empty()) toks.push_back(tok);
+					if (q == std::string::npos) break;
+					pos = q + 1;
+				}
+				auto it = std::find(toks.begin(), toks.end(), ns);
+				if (wantOn) {
+					if (it != toks.end()) toks.erase(it);
+				} else {
+					if (it == toks.end()) toks.push_back(ns);
+				}
+				std::string joined;
+				for (size_t i = 0; i < toks.size(); ++i) {
+					if (i) joined += ",";
+					joined += toks[i];
+				}
+				s.disabled_mods = joined;
+				s.save();
+				std::printf("[mods] %s %s (disabled now: '%s')\n",
+					wantOn ? "enabled" : "disabled", ns.c_str(), joined.c_str());
 			} else if (action.rfind("set:", 0) == 0) {
 				// "set:master_volume:0.5" / "set:footsteps_muted:true" — mutate
 				// Settings, persist to disk, and live-apply to AudioManager so

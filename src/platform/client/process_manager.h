@@ -29,6 +29,7 @@ public:
 		bool lanVisible = false; // true → announce on UDP 7778 (multiplayer host)
 		std::string worldPath;   // empty = new world
 		std::string execDir;
+		std::string disabledMods;  // comma-joined namespace ids to skip
 	};
 
 	~AgentManager() { stopAll(); }
@@ -72,6 +73,10 @@ public:
 		}
 
 		if (cfg.lanVisible) args.push_back("--lan-visible");
+		if (!cfg.disabledMods.empty()) {
+			args.push_back("--disabled-mods");
+			args.push_back(cfg.disabledMods);
+		}
 
 		// nullptr = inherit GUI stdout/stderr so server + its spawned agents log here.
 		m_serverPid = spawnProcess(args, nullptr);

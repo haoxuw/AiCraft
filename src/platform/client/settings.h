@@ -29,6 +29,12 @@ struct Settings {
 	// Sim
 	float sim_speed_cap   = 1.0f;   // host: clamp sim multiplier (≥1)
 
+	// Mods — comma-joined namespace ids that the artifact registry should
+	// skip on next launch (no hot-reload). Empty = all enabled. The Mod
+	// Manager UI mutates this string; ArtifactRegistry::setDisabledNamespaces
+	// turns it into a vector.
+	std::string disabled_mods;
+
 	// Path resolution: $XDG_CONFIG_HOME/solarium/settings.json,
 	// falling back to $HOME/.solarium/settings.json.
 	static const std::string& path();

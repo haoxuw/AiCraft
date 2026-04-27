@@ -122,6 +122,7 @@ struct ServerCliArgs {
 	std::string            worldPath;
 	bool                   interactive = true;
 	int                    logPort     = 7777;
+	std::vector<std::string> disabledMods;
 };
 
 // Print --help text and exit(0). Kept as a function so both the arg
@@ -168,6 +169,17 @@ ServerCliArgs parseServerArgs(int argc, char** argv) {
 		}
 		else if (strcmp(argv[i], "--lan-visible") == 0) {
 			out.config.lanVisible = true;
+		}
+		else if (strcmp(argv[i], "--disabled-mods") == 0 && i + 1 < argc) {
+			std::string s = argv[++i];
+			size_t p = 0;
+			while (p < s.size()) {
+				size_t q = s.find(',', p);
+				std::string tok = s.substr(p, q == std::string::npos ? std::string::npos : q - p);
+				if (!tok.empty()) out.disabledMods.push_back(tok);
+				if (q == std::string::npos) break;
+				p = q + 1;
+			}
 		}
 	}
 	return out;
@@ -216,8 +228,10 @@ bool initServerFromArgs(solarium::GameServer& server,
 
 // Read artifact metadata (feature tags, living stats, annotation
 // spawn rules) and hand them to the server. Runs once after init.
-void applyArtifactData(solarium::GameServer& server) {
+void applyArtifactData(solarium::GameServer& server,
+                        const std::vector<std::string>& disabledMods) {
 	solarium::ArtifactRegistry artifacts;
+	artifacts.setDisabledNamespaces(disabledMods);
 	artifacts.loadAll("artifacts");
 	server.mergeArtifactTags(artifacts.livingTags());
 	server.applyLivingStats(artifacts.livingStats());
@@ -325,7 +339,7 @@ int main(int argc, char** argv) {
 
 	solarium::GameServer server;
 	initServerFromArgs(server, args, templates);
-	applyArtifactData(server);
+	applyArtifactData(server, args.disabledMods);
 
 	solarium::net::TcpServer listener;
 	if (!listener.listen(args.config.port)) {

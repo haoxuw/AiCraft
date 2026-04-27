@@ -7,6 +7,7 @@
 
 #include <string>
 #include <vector>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <filesystem>
@@ -32,6 +33,33 @@ struct ArtifactEntry {
 
 class ArtifactRegistry {
 public:
+	// Per-namespace skip list. Settings UI lets the user disable mod
+	// namespaces (e.g. "userMod1") without removing the .py files; the
+	// registry just skips matching subdirectories on next loadAll.
+	void setDisabledNamespaces(const std::vector<std::string>& disabled) {
+		m_disabledNamespaces = disabled;
+	}
+
+	// Scan `artifacts/<cat>/*` for distinct namespace dirs. Used by the Mod
+	// Manager UI to enumerate available mods (today: usually just "base").
+	std::vector<std::string> discoverNamespaces(
+	        const std::string& basePath = "artifacts") const {
+		namespace fs = std::filesystem;
+		std::set<std::string> ns;
+		const char* cats[] = { "living", "items", "blocks", "behaviors",
+		                        "effects", "resources", "worlds",
+		                        "annotations", "structures", "models" };
+		for (auto* cat : cats) {
+			std::string p = basePath + "/" + cat;
+			std::error_code ec;
+			if (!fs::exists(p, ec)) continue;
+			for (auto& sub : fs::directory_iterator(p, ec)) {
+				if (sub.is_directory()) ns.insert(sub.path().filename().string());
+			}
+		}
+		return std::vector<std::string>(ns.begin(), ns.end());
+	}
+
 	void loadAll(const std::string& basePath = "artifacts") {
 		m_entries.clear();
 		m_basePath = basePath;
@@ -173,9 +201,27 @@ public:
 
 private:
 	void loadCategory(const std::string& dirName, const std::string& category) {
-		std::string path = m_basePath + "/" + dirName + "/base";
-		if (!std::filesystem::exists(path)) return;
+		// Walk every namespace subdirectory under artifacts/<cat>/, not just
+		// /base. This is the multi-mod load path: any directory you drop
+		// alongside `base/` (e.g. `mymod/`) becomes its own namespace whose
+		// files are parsed identically. The Mod Manager UI persists a
+		// per-namespace disable list (Settings.disabled_mods) which we
+		// honour here by skipping matching dirs.
+		std::string catPath = m_basePath + "/" + dirName;
+		if (!std::filesystem::exists(catPath)) return;
+		for (auto& nsDir : std::filesystem::directory_iterator(catPath)) {
+			if (!nsDir.is_directory()) continue;
+			std::string nsName = nsDir.path().filename().string();
+			bool disabled = std::find(m_disabledNamespaces.begin(),
+			                          m_disabledNamespaces.end(),
+			                          nsName) != m_disabledNamespaces.end();
+			if (disabled) continue;
+			loadCategoryNamespace(nsDir.path().string(), category);
+		}
+	}
 
+	void loadCategoryNamespace(const std::string& path,
+	                           const std::string& category) {
 		for (auto& entry : std::filesystem::directory_iterator(path)) {
 			if (entry.path().extension() != ".py") continue;
 			if (entry.path().filename().string()[0] == '_') continue; // skip __init__.py
@@ -552,6 +598,7 @@ private:
 
 	std::string m_basePath;
 	std::vector<ArtifactEntry> m_entries;
+	std::vector<std::string>   m_disabledNamespaces;
 };
 
 } // namespace solarium
