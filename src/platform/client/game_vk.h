@@ -18,6 +18,7 @@
 
 #include "client/rhi/rhi.h"
 #include "client/audio.h"
+#include "client/plaza_animator.h"
 #include "client/settings.h"
 #include "client/audio_capture.h"
 #include "client/camera.h"
@@ -218,6 +219,9 @@ public:
 		if (beginConnectAs("")) {
 			m_state = GameState::Menu;
 			m_menuScreen = MenuScreen::Connecting;
+			// Drop CEF — the loading screen is native, and leaving the
+			// main-title page composited over it just hides the world.
+			setCefMenuActive(false);
 		}
 	}
 
@@ -513,6 +517,16 @@ private:
 	// world. Ticked while m_state == Menu; idle once the user enters the
 	// real game. See client/menu_plaza.h for the Rule 3 exception note.
 	std::unique_ptr<MenuPlaza>               m_menuPlaza;
+	// Loading-screen plaza animation. The menu plaza shows just 2 trees by
+	// default; while in Connecting (any world's loading screen), the
+	// animator advances a stage counter as load progress climbs and emits
+	// one new piece of scenery + one puff cloud per step. State resets on
+	// entering Connecting (beginConnectAs) and on returning to title
+	// (returnToMainMenu) so each loading entry replays the show.
+	PlazaAnimator                m_plazaAnim;
+public:
+	const PlazaAnimator& plazaAnim() const { return m_plazaAnim; }
+private:
 	// Populated from CLI flags before the AgentClient is constructed — see
 	// client/main.cpp `--decide-base-cooldown` / `--decide-max-cooldown` /
 	// `--decide-backoff-base`. Stays at struct defaults when the flags are

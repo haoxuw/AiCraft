@@ -96,12 +96,24 @@ MenuPlaza::~MenuPlaza() {
 	}
 }
 
-void MenuPlaza::init(ArtifactRegistry& artifacts, BehaviorStore& behaviors) {
+void MenuPlaza::init(ArtifactRegistry& artifacts, BehaviorStore& /*behaviors*/) {
 	if (m_ready) return;
 	registerEntityTypes(artifacts);
-	spawnAllMascots(behaviors);
+	// Mascots no longer spawn at boot — the plaza shows just two trees
+	// until the user enters a loading screen, at which point Game spawns
+	// them progressively via spawnMascotById() with a puff effect each.
 	m_ready = true;
-	std::printf("[MenuPlaza] %zu mascots spawned\n", m_entities.size());
+	std::printf("[MenuPlaza] ready (lazy-spawn mascots)\n");
+}
+
+void MenuPlaza::spawnMascotById(const std::string& typeId, glm::vec3 pos,
+                                 float yaw, BehaviorStore& behaviors) {
+	spawnMascot(typeId, pos, yaw, behaviors);
+}
+
+void MenuPlaza::clearMascots() {
+	m_entities.clear();
+	m_agents.clear();
 }
 
 void MenuPlaza::registerEntityTypes(ArtifactRegistry& artifacts) {

@@ -544,6 +544,7 @@ void Game::returnToMainMenu() {
 	if (m_server && m_server->isConnected()) m_server->disconnect();
 	m_connecting = false;
 	if (m_hosting) { m_agentMgr.stopAll(); m_hosting = false; }
+	m_plazaAnim.reset(m_menuPlaza.get());
 	m_state = GameState::Menu;
 	m_menuScreen = MenuScreen::Main;
 	m_shell.previewId.clear();
@@ -635,8 +636,9 @@ bool Game::beginConnectAs(const std::string& creatureType) {
 	m_connecting = true;
 	m_connectStartTime = m_wallTime;
 	// Fresh attempt → clear any progress from a previous run so the
-	// checklist starts empty.
+	// checklist starts empty, and replay the plaza scenery animation.
 	m_loading.reset();
+	m_plazaAnim.reset(m_menuPlaza.get());
 	m_chunkQuiesceAccum    = 0.0f;
 	m_chunkMeshesLastSeen  = 0;
 	m_chunkStreamPeak      = 0.0f;
@@ -869,6 +871,11 @@ void Game::runOneFrame(float dt, float wallTime) {
 	    m_menuScreen == MenuScreen::Connecting &&
 	    m_connecting) {
 		updateLoadingGate(dt);
+		// Drive the plaza scenery animation. PlazaAnimator advances its
+		// stage from real loading progress, emits a puff cloud per step,
+		// and lazy-spawns mascots into the menu plaza.
+		m_plazaAnim.tick(m_loading.aggregateDisplay(), m_wallTime,
+		                 m_menuPlaza.get(), m_behaviorStore.get());
 		if (m_loading.ready() && m_loading.pollDismiss(m_window)) {
 			m_connecting = false;
 			enterPlaying();

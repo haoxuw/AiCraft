@@ -414,11 +414,45 @@ void WorldRenderer::renderWorld(float wallTime) {
 				}
 			}
 		};
+		// Two trees always — the menu plaza's baseline scenery. Three more
+		// (and the dog/cat/bee mascots) get progressively spawned during
+		// the Connecting loading screen, gated by PlazaAnimator::stage().
 		emitTree(-7.0f, -5.0f, 1.0f);
 		emitTree( 6.0f, -6.0f, 1.1f);
-		emitTree( 8.0f,  4.0f, 0.9f);
-		emitTree(-5.0f,  7.0f, 1.0f);
-		emitTree(-9.0f,  1.0f, 0.8f);
+		const int stage = g.plazaAnim().stage();
+		if (stage >= 1) emitTree( 8.0f,  4.0f, 0.9f);
+		if (stage >= 2) emitTree(-5.0f,  7.0f, 1.0f);
+		if (stage >= 3) emitTree(-9.0f,  1.0f, 0.8f);
+
+		// Puff clouds — small clusters of white boxes that grow + fade
+		// over ~0.8s after a spawn. PlazaAnimator pushes one Puff per
+		// stage transition; the renderer just draws them (entries drop
+		// out of view naturally via the age gate below).
+		const float kPuffLife = 0.8f;
+		const glm::vec3 cloud(0.95f, 0.95f, 0.97f);
+		for (const auto& p : g.plazaAnim().puffs()) {
+			float age = g.m_wallTime - p.birthTime;
+			if (age < 0.0f || age > kPuffLife) continue;
+			float t = age / kPuffLife;            // 0..1
+			float size  = 0.30f + 0.55f * t;       // grows
+			float lift  = 0.20f + 1.10f * t;       // rises
+			// 7 boxes in a small ring around the spawn point. Even count
+			// ⇒ no center box at the spawn itself, so the model emerges
+			// "through" the puff rather than being hidden by it.
+			const int n = 7;
+			for (int i = 0; i < n; ++i) {
+				float ang = (float)i / n * 6.2832f;
+				float dx  = std::cos(ang) * (0.45f + 0.30f * t);
+				float dz  = std::sin(ang) * (0.45f + 0.30f * t);
+				float dy  = ((i & 1) ? 0.0f : 0.20f);
+				solarium::emitAABox(charBoxes,
+					glm::vec3(p.pos.x + dx - size * 0.5f,
+					          p.pos.y + lift + dy,
+					          p.pos.z + dz - size * 0.5f),
+					glm::vec3(size, size, size),
+					cloud);
+			}
+		}
 
 		// Three mascots — dog, cat, bee — pulled live from the in-process
 		// menu plaza (client/menu_plaza.h). Each is a real Entity with
@@ -495,15 +529,32 @@ void WorldRenderer::renderWorld(float wallTime) {
 		g.m_rhi->renderBoxShadows(&shadowVP[0][0], charBoxes.data(), charBoxCount);
 	}
 
-	// Sky — sun direction, strength, and timeSec drive the procedural shader
-	// (LUT-driven zenith/horizon, sunrise bleed, stars + moon at night).
+	// Sky — sun direction, strength, timeSec, seasonPhase, and overcast drive
+	// the procedural shader (per-season palette + cloud density, sunrise bleed,
+	// stars + moon at night, storm dome under rain/snow).
 	glm::mat4 vp = g.viewProj();
 	glm::mat4 invVP = glm::inverse(vp);
 	// Pass worldTime (in "day units") as the shader's animated phase — drives
 	// star twinkle and cloud drift. Using server time (not wallTime) keeps
 	// cloud motion consistent across all connected clients.
 	float skyTime = tod * 24.0f;  // hours since midnight, purely for animation phase
-	g.m_rhi->drawSky(&invVP[0][0], &sunDir.x, sunStr, skyTime);
+	// Season + weather → sky shader. seasonPhase is the same continuous 0..4
+	// the terrain palette uses; overcast is gated on actual rain/snow so
+	// "lots of clouds" stays bright (Rule 5: server doesn't pick visuals).
+	float seasonP = solarium::seasonPhase(
+		g.m_server ? g.m_server->dayCount() : 0u, tod);
+	if (g.m_state == solarium::vk::GameState::Menu) {
+		seasonP = 0.5f;  // late spring — friendly, recognizable backdrop
+	}
+	float overcast = 0.0f;
+	if (g.m_server) {
+		const std::string& wk = g.m_server->weatherKind();
+		float wi = glm::clamp(g.m_server->weatherIntensity(), 0.0f, 1.0f);
+		if      (wk == "rain") overcast = wi;
+		else if (wk == "snow") overcast = wi * 0.85f;  // snow lets a touch more light through
+	}
+	float camPosArr[3] = { g.m_cam.position.x, g.m_cam.position.y, g.m_cam.position.z };
+	g.m_rhi->drawSky(&invVP[0][0], &sunDir.x, sunStr, skyTime, seasonP, overcast, camPosArr);
 
 	// Terrain — one drawChunkMeshOpaque per loaded chunk. The mesher
 	// already trimmed hidden faces / applied AO + per-face shade, so this

@@ -78,6 +78,15 @@ public:
 	void forEachMascot(const std::function<void(const Entity&)>& fn) const;
 	bool ready() const { return m_ready; }
 
+	// Lazy spawn API used by the loading-screen puff sequence. Pushes one
+	// new mascot at the given pose; behaviors handle is resolved from the
+	// shared BehaviorStore.
+	void spawnMascotById(const std::string& typeId, glm::vec3 pos, float yaw,
+	                      BehaviorStore& behaviors);
+	// Drop everything. Used by Game on transitioning back to the title so
+	// the next loading screen restarts the spawn animation from zero.
+	void clearMascots();
+
 	// ── ServerInterface — live methods used by Agent / PythonBridge ──
 	bool createGame(int, int, const WorldGenConfig&) override { return true; }
 	void disconnect() override {}

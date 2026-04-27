@@ -1328,7 +1328,10 @@ int main(int argc, char** argv) {
 		}
 
 		cefHost = std::make_unique<solarium::vk::CefHost>(fbw, fbh);
-		game.setCefMenuActive(true);
+		// Don't force CEF on if --skip-menu already moved us into Connecting
+		// — we want the user to see the loading-screen animation instead of
+		// the title page composited over it.
+		if (!skipMenu) game.setCefMenuActive(true);
 		auto* hostRaw = cefHost.get();
 		// Hand the CefHost + handbook URL to Game so the in-game H key (and
 		// future ESC pause Settings) can re-show CEF over the running game.
