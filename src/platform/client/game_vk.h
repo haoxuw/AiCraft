@@ -50,6 +50,7 @@
 #include "client/menu_plaza.h"
 #include "client/screen_shell.h"
 #include "agent/agent_client.h"
+#include "client/process_manager.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -178,6 +179,25 @@ public:
 	void setAgentConfig(const solarium::AgentClient::Config& cfg) {
 		m_agentCfg = cfg;
 	}
+
+	// Where to find the solarium-server binary. Set by main() once it has
+	// resolved exec path; consumed by hostLocalServer when it builds the
+	// AgentManager::Config. Stored in Game so the CEF action callback can
+	// host without main.cpp re-deriving it.
+	void               setExecDir(const std::string& d) { m_execDir = d; }
+	const std::string& execDir() const                  { return m_execDir; }
+
+	// Lazy server spawn: launches a solarium-server subprocess with the
+	// given world spec and points the network transport at it. Idempotent
+	// — repeated calls kill the prior subprocess first. Used by both
+	// Singleplayer (host with broadcast off) and Multiplayer→Host. Returns
+	// false if launch failed (e.g. binary missing, port exhausted).
+	bool hostLocalServer(const solarium::AgentManager::Config& cfg);
+
+	// Point the network transport at an already-running remote server.
+	// Used by --port CLI flag and the Multiplayer→Join browser row click.
+	// No subprocess spawn.
+	void joinRemoteServer(const std::string& host, int port);
 
 	// Send C_HELLO with the chosen creatureType (empty ⇒ server-default).
 	// Blocking: busy-waits for S_WELCOME. Only safe for one-shot startup
@@ -442,6 +462,13 @@ private:
 	GameState    m_state  = GameState::Menu;
 	bool         m_shouldQuit = false;
 	solarium::ServerInterface* m_server = nullptr;  // non-owning; always set
+	// Owns the lazily-spawned solarium-server subprocess (host flow only).
+	// Empty / dormant for join-remote flows or before the user picks a world.
+	// Destructor stops every spawned child — Game's lifetime brackets the
+	// hosted server's, so the user can host → quit cleanly.
+	solarium::AgentManager     m_agentMgr;
+	bool                       m_hosting = false;
+	std::string                m_execDir;
 	// Agents run inside this process now (server stopped spawning solarium-agent
 	// children). One BehaviorStore + one AgentClient drives every NPC the
 	// server hands us. unique_ptr so we can defer construction until after the

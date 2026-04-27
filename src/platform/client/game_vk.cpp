@@ -506,6 +506,38 @@ void Game::exitCoordPeek() {
 	m_cam.resetMouseTracking();
 }
 
+bool Game::hostLocalServer(const solarium::AgentManager::Config& cfg) {
+	// Idempotent: if we already hosted, tear it down first. Avoids two
+	// subprocesses bound to different ports if the user picks a world,
+	// changes their mind, picks a different one. AgentManager::stopAll
+	// sends SIGTERM and reaps; safe to call when nothing's running.
+	if (m_hosting) m_agentMgr.stopAll();
+	int port = m_agentMgr.launchServer(cfg);
+	if (port < 0) {
+		m_connectError = "failed to launch solarium-server";
+		return false;
+	}
+	m_hosting = true;
+	// Record the world spec so beginConnectAs sends the right HELLO and
+	// the loading screen can show it.
+	m_pendingSeed     = cfg.seed;
+	m_pendingTemplate = cfg.templateIndex;
+	// Re-target the network transport at the freshly-spawned port. Keeps the
+	// existing NetworkServer instance — it's the same TCP transport, just
+	// pointing somewhere new.
+	if (auto* net = dynamic_cast<solarium::NetworkServer*>(m_server))
+		net->setTarget("127.0.0.1", port);
+	std::printf("[Game] hostLocalServer: template=%d seed=%d port=%d\n",
+		cfg.templateIndex, cfg.seed, port);
+	return true;
+}
+
+void Game::joinRemoteServer(const std::string& host, int port) {
+	if (auto* net = dynamic_cast<solarium::NetworkServer*>(m_server))
+		net->setTarget(host, port);
+	std::printf("[Game] joinRemoteServer: %s:%d\n", host.c_str(), port);
+}
+
 bool Game::connectAs(const std::string& creatureType) {
 	if (!m_server) { m_connectError = "no server"; return false; }
 	if (m_server->isConnected()) return true;  // already connected (skipMenu re-entry)

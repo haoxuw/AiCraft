@@ -307,10 +307,11 @@ int main(int argc, char** argv) {
 	ii.enableValidation = !noValidation;
 	if (!rhi->init(ii)) return 1;
 
-	// Spawn a solarium-server (if --port absent) and connect over TCP, handing
-	// the NetworkServer to Game BEFORE init() so chunks stream from the server
-	// rather than being generated client-side.
-	solarium::AgentManager agentMgr;
+	// Lazy server spawn: the NetworkServer is constructed with no target; the
+	// menu flow calls Game::hostLocalServer (Singleplayer/Host) or Game::
+	// joinRemoteServer (LAN row) to set host:port, then character pick fires
+	// the HELLO handshake. The agent-side AgentManager lives inside Game so
+	// quitting the client tears down whatever server we spawned.
 	solarium::LocalWorld localWorld;
 	{
 		solarium::ArtifactRegistry artifacts;
@@ -318,40 +319,42 @@ int main(int argc, char** argv) {
 		localWorld.entityDefs().mergeArtifactTags(artifacts.livingTags());
 		localWorld.entityDefs().applyLivingStats(artifacts.livingStats());
 	}
-	std::unique_ptr<solarium::NetworkServer> net;
-	{
-		int connectPort = port;
-		if (connectPort <= 0) {
+	auto net = std::make_unique<solarium::NetworkServer>(host, /*port=*/0, localWorld);
+
+	solarium::vk::Game game;
+	game.setServer(net.get());  // must precede init()
+	game.setPendingConnect(42, templateIndex);  // overridden by hostLocalServer
+	game.setAgentConfig(agentCfg);              // DecidePacer knobs — must precede init()
+	game.setExecDir(execDir);                   // hostLocalServer needs it for the server-binary path
+	if (!game.init(rhi.get(), win)) {
+		fprintf(stderr, "game.init failed\n");
+		return 1;
+	}
+
+	// Boot routing — three paths:
+	//   1) --port N  → join a remote server at host:N, no local subprocess.
+	//   2) --skip-menu → host locally with the CLI-supplied template
+	//      (matches `make game`, `make toronto`, `make test-*`).
+	//   3) Default    → wait for the CEF menu to drive Singleplayer/Multiplayer.
+	if (port > 0) {
+		game.joinRemoteServer(host, port);
+	}
+	if (skipMenu) {
+		// skipMenu requires a server target; if --port wasn't given, host one.
+		if (port <= 0) {
 			solarium::AgentManager::Config cfg;
 			cfg.seed = 42;
 			cfg.templateIndex = templateIndex;
 			cfg.execDir = execDir;
 			cfg.villagersOverride = villagersOverride;
 			cfg.simSpeed = simSpeed;
-			connectPort = agentMgr.launchServer(cfg);
-			if (connectPort < 0) {
+			if (!game.hostLocalServer(cfg)) {
 				fprintf(stderr, "[vk] failed to launch solarium-server\n");
 				return 1;
 			}
 		}
-		net = std::make_unique<solarium::NetworkServer>(host, connectPort, localWorld);
-		// Handshake (C_HELLO) is deferred until the menu's character-select
-		// completes — we need the chosen creatureType before sending HELLO.
-		// --skip-menu calls Game::skipMenu() which connects immediately as
-		// the server-default playable.
-		printf("[vk] solarium-server ready at %s:%d (awaiting character pick)\n",
-		       host.c_str(), connectPort);
+		game.skipMenu();
 	}
-
-	solarium::vk::Game game;
-	game.setServer(net.get());  // must precede init()
-	game.setPendingConnect(42, templateIndex);  // seed+template used on character-select confirm
-	game.setAgentConfig(agentCfg);              // DecidePacer knobs — must precede init()
-	if (!game.init(rhi.get(), win)) {
-		fprintf(stderr, "game.init failed\n");
-		return 1;
-	}
-	if (skipMenu) game.skipMenu();
 
 	// `--template N` means "boot straight into that world template" (this is
 	// what `make toronto`, `make test-dog`, etc. do). There's no main menu to
@@ -934,6 +937,18 @@ int main(int argc, char** argv) {
 						break;
 					}
 				}
+				// Lazy spawn: char-select is reached, server needs to exist
+				// for Begin Game to work. Skip if --port (joining remote).
+				if (port <= 0) {
+					solarium::AgentManager::Config cfg;
+					cfg.seed = 42;
+					cfg.templateIndex = templateIndex;
+					cfg.execDir = execDir;
+					cfg.villagersOverride = villagersOverride;
+					cfg.simSpeed = simSpeed;
+					if (!game.hostLocalServer(cfg))
+						std::fprintf(stderr, "[boot] hostLocalServer failed\n");
+				}
 			} else if (boot && std::string(boot) == "settings") {
 				cefUrl = sSett;
 			} else {
@@ -972,11 +987,22 @@ int main(int argc, char** argv) {
 				game.setPreviewClip("");
 				hostRaw->loadUrl(sMain);
 			} else if (action == "singleplayer") {
-				// Open char-select with a default preview so the plaza shows
-				// a model immediately (no "blank picker" flicker). The page's
-				// JS marks the first row as `.on`; we mirror that here.
-				// "wave" animation makes the preview feel alive vs. static
-				// mining pose.
+				// Lazy server spawn: launch solarium-server with the default
+				// world (village template). Once the world picker (#40) lands
+				// this becomes "go to world picker"; for now host immediately
+				// so the user reaches char-select with a real server warming
+				// in the background. Spawn happens on the CEF UI thread, but
+				// AgentManager::launchServer is fast (it fork+execs and waits
+				// for a /tmp ready file with a 30s budget — usually <2s).
+				solarium::AgentManager::Config cfg;
+				cfg.seed = 42;
+				cfg.templateIndex = 0;  // village
+				cfg.execDir = game.execDir();
+				if (!game.hostLocalServer(cfg)) {
+					std::fprintf(stderr,
+						"[cef] singleplayer: hostLocalServer failed\n");
+					return;
+				}
 				game.setMenuScreen(MS::CharacterSelect);
 				game.setPreviewClip("wave");
 				if (!firstPlayableId.empty())
@@ -1009,24 +1035,20 @@ int main(int argc, char** argv) {
 					game.setCefMenuActive(false);
 				}
 			} else if (action.rfind("join:", 0) == 0) {
-				// "join:192.168.1.5:7777" — re-target the network transport
-				// at the chosen LAN server, then go to character select so
-				// the player picks who to join as. ServerInterface's actual
-				// type is NetworkServer here (singleplayer spawn path);
-				// dynamic_cast lets us call setTarget() without leaking the
-				// concrete type into the menu code.
+				// "join:192.168.1.5:7777" — point the network transport at
+				// the chosen LAN host (no local server spawn) and go to
+				// character select.
 				const std::string rest = action.substr(5);
 				auto colon = rest.rfind(':');
 				if (colon != std::string::npos) {
 					std::string ip = rest.substr(0, colon);
 					int port = std::atoi(rest.substr(colon + 1).c_str());
-					if (auto* net = dynamic_cast<solarium::NetworkServer*>(game.server())) {
-						net->setTarget(ip, port);
-						game.setMenuScreen(MS::CharacterSelect);
-						if (!firstPlayableId.empty())
-							game.setPreviewId(firstPlayableId);
-						hostRaw->loadUrl(sChar);
-					}
+					game.joinRemoteServer(ip, port);
+					game.setMenuScreen(MS::CharacterSelect);
+					game.setPreviewClip("wave");
+					if (!firstPlayableId.empty())
+						game.setPreviewId(firstPlayableId);
+					hostRaw->loadUrl(sChar);
 				}
 			}
 		});
