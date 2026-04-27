@@ -540,7 +540,24 @@ int main(int argc, char** argv) {
 		};
 
 		auto charSelectPage = [&]() -> std::string {
-			struct PlayableItem { std::string id, name, desc; };
+			struct PlayableItem {
+				std::string id, name, desc;
+				int str=0, sta=0, agi=0, intl=0;     // 0–5 stat bars
+				float walk=0, run=0;                  // m/s
+				std::string features;                 // " · "-joined tag list
+			};
+			auto readF = [](const solarium::ArtifactEntry& e,
+			                const char* k) -> float {
+				auto it = e.fields.find(k);
+				if (it == e.fields.end()) return 0.0f;
+				return (float)std::atof(it->second.c_str());
+			};
+			auto readI = [](const solarium::ArtifactEntry& e,
+			                const char* k) -> int {
+				auto it = e.fields.find(k);
+				if (it == e.fields.end()) return 0;
+				return std::atoi(it->second.c_str());
+			};
 			std::vector<PlayableItem> playables;
 			for (auto* e : game.artifactRegistry().byCategory("living")) {
 				auto it = e->fields.find("playable");
@@ -549,12 +566,47 @@ int main(int argc, char** argv) {
 				std::string desc;
 				auto dit = e->fields.find("description");
 				if (dit != e->fields.end()) desc = dit->second;
-				playables.push_back({e->id, e->name.empty() ? e->id : e->name, desc});
+				PlayableItem p;
+				p.id   = e->id;
+				p.name = e->name.empty() ? e->id : e->name;
+				p.desc = desc;
+				p.str  = readI(*e, "stats_strength");
+				p.sta  = readI(*e, "stats_stamina");
+				p.agi  = readI(*e, "stats_agility");
+				p.intl = readI(*e, "stats_intelligence");
+				p.walk = readF(*e, "walk_speed");
+				p.run  = readF(*e, "run_speed");
+				// "features" is a string-list in the artifact loader output;
+				// it lands as a comma-joined string. Show as-is.
+				auto fit = e->fields.find("features");
+				if (fit != e->fields.end()) p.features = fit->second;
+				playables.push_back(std::move(p));
 			}
 			std::sort(playables.begin(), playables.end(),
 				[](const PlayableItem& a, const PlayableItem& b){return a.name < b.name;});
 
 			std::string html = "data:text/html,<html><head><style>" + kDexCss +
+				".stats{display:grid;grid-template-columns:auto 1fr auto;"
+				"column-gap:14px;row-gap:6px;margin-top:18px;max-width:520px;"
+				"font-size:12px;align-items:center}"
+				".stats .lbl{color:%23b88838;text-transform:uppercase;"
+				"letter-spacing:2px;font-family:monospace}"
+				".stats .bar{height:10px;background:rgba(40,30,20,0.85);"
+				"border:1px solid rgba(184,136,56,0.5);position:relative;"
+				"box-sizing:border-box}"
+				".stats .bar .fill{position:absolute;top:0;left:0;bottom:0;"
+				"background:linear-gradient(90deg,%23b88838,%23f3c44c)}"
+				".stats .num{color:%23f3c44c;font-family:monospace;font-size:13px;"
+				"min-width:24px;text-align:right}"
+				".speed{display:flex;gap:24px;margin-top:14px;font-size:12px;"
+				"color:%23b88838;font-family:monospace;letter-spacing:1px;"
+				"text-transform:uppercase}"
+				".speed b{color:%23f3c44c;font-weight:400;font-size:14px;"
+				"margin-left:6px}"
+				".features{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px}"
+				".features span{padding:4px 10px;font-size:11px;"
+				"background:rgba(94,67,30,0.5);border:1px solid %23b88838;"
+				"color:%23f3c44c;letter-spacing:1px}"
 				"</style></head><body>"
 				"<aside class='sidebar'>"
 				"<div class='sb-head'><h1>Choose Character</h1>"
@@ -582,16 +634,44 @@ int main(int argc, char** argv) {
 			for (size_t i = 0; i < playables.size(); ++i) {
 				const auto& p = playables[i];
 				if (i) html += ",";
+				char buf[64];
+				std::snprintf(buf, sizeof(buf), "%.1f", p.walk);
+				std::string walkS = buf;
+				std::snprintf(buf, sizeof(buf), "%.1f", p.run);
+				std::string runS  = buf;
 				html += "'" + p.id + "':{name:'" + enc(compact(p.name, 80)) +
-				        "',desc:'" + enc(compact(p.desc, 400)) + "'}";
+				        "',desc:'" + enc(compact(p.desc, 400)) +
+				        "',str:" + std::to_string(p.str) +
+				        ",sta:" + std::to_string(p.sta) +
+				        ",agi:" + std::to_string(p.agi) +
+				        ",intl:" + std::to_string(p.intl) +
+				        ",walk:'" + walkS + "',run:'" + runS +
+				        "',feat:'" + enc(compact(p.features, 200)) + "'}";
 			}
 			html += "};"
+				"function bar(label,n){"
+				// 5 is the per-stat ceiling shown in artifacts; clamp anything
+				// silly to 100% so the bar never overflows visually.
+				"const pct=Math.min(100,Math.max(0,n*20));"
+				"return \"<span class='lbl'>\"+label+\"</span>\"+"
+				"\"<span class='bar'><span class='fill' style='width:\"+pct+\"%25'></span></span>\"+"
+				"\"<span class='num'>\"+n+\"</span>\";}"
 				"function render(id){"
 				"const e=ENTRIES[id];if(!e)return;"
 				"let h=\"<span class='badge'>Living</span>\"+"
 				"\"<span class='badge'>\"+id+\"</span>\"+"
 				"\"<h2>\"+e.name+\"</h2>\";"
 				"if(e.desc)h+=\"<div class='desc'>\"+e.desc+\"</div>\";"
+				"if(e.str||e.sta||e.agi||e.intl){"
+				"h+=\"<div class='stats'>\"+bar('STR',e.str)+bar('STA',e.sta)+"
+				"bar('AGI',e.agi)+bar('INT',e.intl)+\"</div>\";}"
+				"if(e.walk||e.run){"
+				"h+=\"<div class='speed'>walk<b>\"+e.walk+\"</b>m/s\";"
+				"if(e.run!=='0.0')h+=\"  run<b>\"+e.run+\"</b>m/s\";"
+				"h+=\"</div>\";}"
+				"if(e.feat){const tags=e.feat.split(',').map(s=>s.trim()).filter(Boolean);"
+				"if(tags.length){h+=\"<div class='features'>\"+"
+				"tags.map(t=>'<span>'+t+'</span>').join('')+\"</div>\";}}"
 				"document.getElementById('card').innerHTML=h;}"
 				"function send(a){window.cefQuery({request:'action:'+a,"
 				"onSuccess:()=>{},onFailure:()=>{}});}"
