@@ -1760,7 +1760,7 @@ int main(int argc, char** argv) {
 				auto& s = game.settings();
 				if      (key == "master_volume")   { s.master_volume   = f; game.audio().setMasterVolume(f); }
 				else if (key == "music_volume")    { s.music_volume    = f; game.audio().setMusicVolume(f); }
-				else if (key == "music_enabled")   { s.music_enabled   = b; if (!b) game.audio().stopMusic(); }
+				else if (key == "music_enabled")   { s.music_enabled   = b; if (b) game.audio().startMusic(); else game.audio().stopMusic(); }
 				else if (key == "footsteps_muted") { s.footsteps_muted = b; game.audio().setFootstepsMuted(b); }
 				else if (key == "effects_muted")   { s.effects_muted   = b; game.audio().setEffectsMuted(b); }
 				else if (key == "lan_visible")     { s.lan_visible     = b; }
