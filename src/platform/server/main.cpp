@@ -11,6 +11,7 @@
 #include "net/net_protocol.h"
 #include "python/python_bridge.h"
 #include "logic/artifact_registry.h"
+#include "logic/world_templates.h"
 #include "debug/perf_registry.h"
 #include <cstdio>
 #include <cstring>
@@ -183,18 +184,16 @@ FILE* openServerLog(int port) {
 }
 
 // Build the ordered template list the world-select + save-load code
-// indexes by integer. One place to register a new template.
+// indexes by integer. The order comes from kWorldTemplates (logic/
+// world_templates.h) so the client picker resolves id → templateIndex
+// against the same authoritative table.
 std::vector<std::shared_ptr<solarium::WorldTemplate>> buildWorldTemplates() {
 	using T = solarium::ConfigurableWorldTemplate;
-	return {
-		std::make_shared<T>("artifacts/worlds/base/village.py"),
-		std::make_shared<T>("artifacts/worlds/base/test_behaviors.py"),
-		std::make_shared<T>("artifacts/worlds/base/test_dog.py"),
-		std::make_shared<T>("artifacts/worlds/base/test_villager.py"),
-		std::make_shared<T>("artifacts/worlds/base/test_chicken.py"),
-		std::make_shared<T>("artifacts/worlds/base/perf_stress.py"),
-		std::make_shared<T>("artifacts/worlds/base/toronto.py"),   // --template 6
-	};
+	std::vector<std::shared_ptr<solarium::WorldTemplate>> out;
+	out.reserve(solarium::kWorldTemplateCount);
+	for (const auto& info : solarium::kWorldTemplates)
+		out.push_back(std::make_shared<T>(info.artifactPath));
+	return out;
 }
 
 // Initialise GameServer from either a saved world on disk or a fresh
