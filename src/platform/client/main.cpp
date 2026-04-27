@@ -682,11 +682,15 @@ int main(int argc, char** argv) {
 				"onSuccess:()=>{},onFailure:()=>{}});}"
 				"function setActive(el){document.querySelectorAll('.sb-row')"
 				".forEach(b=>b.classList.remove('on'));el.classList.add('on');}"
-				"let lastHover='';"
-				"function hover(id,el){if(id===lastHover)return;lastHover=id;"
+				// Sticky selection: hover previews while clickedId is null;
+				// once the user clicks, that row is stuck — further hovers
+				// are no-ops, only another click swaps the preview.
+				"let lastHover='';let clickedId=null;"
+				"function hover(id,el){if(clickedId)return;"
+				"if(id===lastHover)return;lastHover=id;"
 				"setActive(el);render(id);send('pick:'+id);}"
-				"function pick(id,el){lastHover=id;setActive(el);render(id);"
-				"send('pick:'+id);}"
+				"function pick(id,el){clickedId=id;lastHover=id;"
+				"setActive(el);render(id);send('pick:'+id);}"
 				"render('" + (playables.empty() ? "" : playables[0].id) + "');"
 				"</script>"
 				"</body></html>";
@@ -1371,10 +1375,14 @@ int main(int argc, char** argv) {
 				"function setActive(el){document.querySelectorAll('.sb-row')"
 				".forEach(b=>b.classList.remove('on'));el.classList.add('on');}"
 				"function togGrp(h){h.parentElement.classList.toggle('collapsed');}"
-				"let lastKey='';"
-				"function hover(el){const k=el.dataset.key;if(k===lastKey)return;"
+				// Sticky selection: hover previews until first click; after
+				// that, only another click swaps the stuck preview.
+				"let lastKey='';let clickedKey=null;"
+				"function hover(el){if(clickedKey)return;"
+				"const k=el.dataset.key;if(k===lastKey)return;"
 				"lastKey=k;setActive(el);render(k);send('pick:'+el.dataset.id);}"
-				"function pick(el){const k=el.dataset.key;lastKey=k;"
+				"function pick(el){const k=el.dataset.key;"
+				"clickedKey=k;lastKey=k;"
 				"setActive(el);render(k);send('pick:'+el.dataset.id);}"
 				"function dexfilter(q){q=q.toLowerCase();"
 				"const grps=document.querySelectorAll('.sb-grp');"
