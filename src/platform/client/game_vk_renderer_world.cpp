@@ -119,6 +119,33 @@ void fillMobAnim(const solarium::Entity& e, float globalTime,
 	}
 }
 
+// Time-of-day → sun direction + strength. Server worldTime is the truth
+// (Rule 3 — server owns time-of-day); the Menu state forces a flattering
+// mid-morning so the main-menu backdrop isn't a pre-dawn silhouette.
+// Used by both the sky pass (renderWorld) and ambient effects like
+// fireflies (renderEffects), so consolidating it here keeps the two
+// passes from drifting apart.
+struct SunState {
+	float     tod;       // 0..1 — server worldTime (or menu override)
+	glm::vec3 dir;       // unit vector
+	float     strength;  // 0 deep night … 1 full day
+};
+
+SunState computeSunState(Game& g) {
+	auto* srv = g.server();
+	float tod = srv ? srv->worldTime() : 0.5f;
+	if (g.state() == solarium::vk::GameState::Menu) {
+		tod = 0.42f;  // mid-morning: warm slant light, sun above horizon
+	}
+	float sunAngle = tod * 6.2831853f - 1.5707963f;     // 2π·tod − π/2
+	glm::vec3 dir = glm::normalize(glm::vec3(
+		std::cos(sunAngle),
+		std::sin(sunAngle),
+		0.35f));                                         // slight lateral offset
+	float strength = glm::smoothstep(-0.10f, 0.22f, dir.y);
+	return {tod, dir, strength};
+}
+
 } // namespace
 
 
@@ -130,22 +157,11 @@ void WorldRenderer::renderWorld(float wallTime) {
 	g.m_rhi->setGrading(g.m_grading);
 
 	// Sun trajectory driven by server worldTime (Rule 3 — server is the sole
-	// owner of time-of-day). worldTime ∈ [0,1): 0=midnight, 0.25=dawn,
-	// 0.5=noon, 0.75=dusk. Angle convention puts the sun overhead at noon.
-	float tod      = g.m_server ? g.m_server->worldTime() : 0.5f;
-	// Menu force-lights the backdrop to a bright mid-morning regardless of
-	// the live server's time-of-day — the main-menu scene (trees, plaza,
-	// character preview) shouldn't be a black silhouette at dawn/dusk.
-	if (g.m_state == solarium::vk::GameState::Menu) {
-		tod = 0.42f;  // mid-morning: sun well above horizon, warm slant light
-	}
-	float sunAngle = tod * 6.2831853f - 1.5707963f;   // 2π·tod − π/2
-	glm::vec3 sunDir = glm::normalize(glm::vec3(
-		std::cos(sunAngle),
-		std::sin(sunAngle),
-		0.35f));                                       // slight lateral offset for variety
-	// sunStr: 0 at deep night, 1 at full day. Smooth ramp across the horizon.
-	float sunStr = glm::smoothstep(-0.10f, 0.22f, sunDir.y);
+	// owner of time-of-day).
+	const SunState sunSt = computeSunState(g);
+	const float tod      = sunSt.tod;
+	const glm::vec3 sunDir = sunSt.dir;
+	const float sunStr   = sunSt.strength;
 
 	// Shadow pass (terrain + entities share the same depth map).
 	auto* me = g.playerEntity();
@@ -781,10 +797,10 @@ void WorldRenderer::renderEffects(float wallTime) {
 	scene.camPos[0] = eye.x; scene.camPos[1] = eye.y; scene.camPos[2] = eye.z;
 	scene.time = wallTime;
 
-	// Particle buffer. Weather (rain/snow/leaves) and entity-owned FX (e.g.
-	// Monument flame ribbon) push into this below. The world has NO ambient
-	// flames, fireflies, or dust motes — those belong to specific entities
-	// that emit them, not to the scene at large.
+	// Particle buffer. Weather effects (rain/snow/leaves/fireflies) and
+	// entity-owned FX (e.g. Monument flame ribbon) both push into this. The
+	// `pushP` lambda is used only by the entity FX below; weather effects
+	// have their own internal pushP via WeatherEffect::emit.
 	auto& particles = g.m_scratch.particles;
 	particles.clear();
 	auto pushP = [&](glm::vec3 p, float size, glm::vec3 rgb, float a) {
@@ -793,20 +809,15 @@ void WorldRenderer::renderEffects(float wallTime) {
 		particles.push_back(rgb.x); particles.push_back(rgb.y); particles.push_back(rgb.z);
 		particles.push_back(a);
 	};
-	// ── Weather particles ─────────────────────────────────────────────
-	// Each kind (rain/snow/leaves/…) is a WeatherEffect subclass with its
-	// own activation predicate (see client/weather_effects.h). LeavesEffect,
-	// for example, activates only in autumn AND when at least one leaf
-	// block is within 30 blocks of the camera — which is why summer
-	// stays leaf-free even if the markov rolls a "leaves" wind state.
+	// ── Weather + ambient effects ────────────────────────────────────
+	// Each kind (rain/snow/leaves/fireflies/…) is a WeatherEffect subclass
+	// with its own activation predicate (see client/weather_effects.h).
+	// LeavesEffect activates only in autumn near a tree; FirefliesEffect
+	// activates only on warm-season nights near a tree — that's why summer
+	// stays leaf-free and winter stays firefly-free even when the conditions
+	// the server broadcasts would otherwise suggest them.
 	if (g.m_server) {
-		// sunStr — derive from server worldTime, same formula as the sky pass
-		// (renderWorld lines ~134-147). Used by FirefliesEffect to gate on night.
-		float tod = g.m_server->worldTime();
-		float sunAngle = tod * 6.2831853f - 1.5707963f;
-		float sunY = std::sin(sunAngle);
-		float effSunStr = glm::smoothstep(-0.10f, 0.22f, sunY);
-
+		const SunState fxSun = computeSunState(g);
 		WeatherCtx wctx;
 		wctx.kind       = g.m_server->weatherKind();
 		wctx.intensity  = glm::clamp(g.m_server->weatherIntensity(), 0.0f, 1.0f);
@@ -816,7 +827,7 @@ void WorldRenderer::renderEffects(float wallTime) {
 		wctx.chunks     = &g.m_server->chunks();
 		wctx.blockReg   = &wctx.chunks->blockRegistry();
 		wctx.wallTime   = wallTime;
-		wctx.sunStr     = effSunStr;
+		wctx.sunStr     = fxSun.strength;
 
 		for (const auto& effect : allWeatherEffects()) {
 			if (effect->shouldActivate(wctx)) effect->emit(wctx, particles);

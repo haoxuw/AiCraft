@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 
 namespace solarium::vk {
 
@@ -29,6 +30,70 @@ bool insideSolid(const WeatherCtx& ctx, const glm::vec3& p) {
 	solarium::BlockId bid = ctx.chunks->getBlock(bx, by, bz);
 	if (bid == 0) return false;
 	return ctx.blockReg->get(bid).solid;
+}
+
+// ── Shared falling-particle field ──────────────────────────────────────
+// Rain, snow, and leaves all share the same cylinder-around-camera layout:
+// deterministic per-seed angle/radius placement, time-modulo fall from hiY
+// down to loY at fallSpeed, wind drift, optional XZ tumble. Only their
+// counts, sizes, colors, and tumble parameters differ — captured here in
+// FallingFieldSpec. Fireflies are NOT a falling field (they hover) so they
+// keep their own loop.
+struct FallingFieldSpec {
+	int       count       = 0;
+	float     radius      = 18.0f;   // horizontal extent around camera
+	float     hiY         = 18.0f;   // top of the spawn band (relative to eye)
+	float     loY         = -4.0f;   // bottom — particle wraps when it crosses
+	float     fallSpeed   = 5.0f;    // m/s — drives the time-modulo period
+	float     size        = 0.08f;   // particle radius in world units
+	float     alpha       = 0.50f;   // already-multiplied-by-intensity alpha
+	float     tumbleAmp   = 0.0f;    // 0 = no tumble; else XZ jitter amplitude
+	glm::vec2 tumbleFreq  {1.3f, 1.1f};  // angular freq for X / Z
+	glm::vec2 tumbleSeedF {4.7f, 3.1f};  // per-seed phase factor for X / Z
+};
+
+// Emit a falling-particle cylinder around the camera. Color picked from
+// `palette` by deterministic seed: single-element palette → constant color;
+// multi-element → per-particle hash pick (used by leaves' three tints).
+void emitFallingField(const WeatherCtx& ctx, const FallingFieldSpec& s,
+                      std::initializer_list<glm::vec3> palette,
+                      std::vector<float>& out) {
+	const float span   = s.hiY - s.loY;
+	const float period = span / std::max(s.fallSpeed, 0.1f);
+	const glm::vec3 eye = ctx.cameraPos;
+	const auto* paletteData = palette.begin();
+	const int   paletteN    = (int)palette.size();
+
+	for (int k = 0; k < s.count; k++) {
+		float seed   = (float)k;
+		float ang    = std::fmod(seed * 2.3998f, 6.2831853f);
+		float rad    = s.radius * std::sqrt(std::fmod(seed * 0.137f, 1.0f));
+		float phase  = std::fmod(seed * 0.091f, 1.0f);
+		float t      = std::fmod(ctx.wallTime / period + phase, 1.0f);
+		float y      = s.hiY - t * span;
+		float wShift = t * period;
+
+		float tumbleX = 0.0f, tumbleZ = 0.0f;
+		if (s.tumbleAmp > 0.0f) {
+			tumbleX = std::sin(ctx.wallTime * s.tumbleFreq.x + seed * s.tumbleSeedF.x) * s.tumbleAmp;
+			tumbleZ = std::cos(ctx.wallTime * s.tumbleFreq.y + seed * s.tumbleSeedF.y) * s.tumbleAmp;
+		}
+
+		glm::vec3 p = eye + glm::vec3(
+			std::cos(ang) * rad + ctx.wind.x * wShift + tumbleX,
+			y,
+			std::sin(ang) * rad + ctx.wind.y * wShift + tumbleZ);
+		if (insideSolid(ctx, p)) continue;
+
+		glm::vec3 col;
+		if (paletteN == 1) {
+			col = paletteData[0];
+		} else {
+			int idx = (int)std::fmod(seed * 7.17f, (float)paletteN);
+			col = paletteData[idx];
+		}
+		pushP(out, p, s.size, col, s.alpha);
+	}
 }
 
 // "leaves", "leaves_red", "leaves_gold", … all start with "leaves" in
@@ -92,30 +157,17 @@ bool RainEffect::shouldActivate(const WeatherCtx& ctx) const {
 }
 
 void RainEffect::emit(const WeatherCtx& ctx, std::vector<float>& out) const {
-	const int   count     = (int)(320.0f * ctx.intensity);
-	const float R         = 22.0f;
-	const float hiY       = 20.0f, loY = -4.0f;
-	const float span      = hiY - loY;
-	const float fallSpeed = 22.0f;
-	const float period    = span / std::max(fallSpeed, 0.1f);
-	const glm::vec3 col(0.55f, 0.70f, 0.95f);
-	const glm::vec3 eye = ctx.cameraPos;
-
-	for (int k = 0; k < count; k++) {
-		float seed   = (float)k;
-		float ang    = std::fmod(seed * 2.3998f, 6.2831853f);
-		float rad    = R * std::sqrt(std::fmod(seed * 0.137f, 1.0f));
-		float phase  = std::fmod(seed * 0.091f, 1.0f);
-		float t      = std::fmod(ctx.wallTime / period + phase, 1.0f);
-		float y      = hiY - t * span;
-		float wShift = t * period;
-		glm::vec3 p  = eye + glm::vec3(
-			std::cos(ang) * rad + ctx.wind.x * wShift,
-			y,
-			std::sin(ang) * rad + ctx.wind.y * wShift);
-		if (insideSolid(ctx, p)) continue;
-		pushP(out, p, 0.05f, col, 0.55f * ctx.intensity);
-	}
+	const FallingFieldSpec spec{
+		.count     = (int)(320.0f * ctx.intensity),
+		.radius    = 22.0f,
+		.hiY       = 20.0f,
+		.loY       = -4.0f,
+		.fallSpeed = 22.0f,
+		.size      = 0.05f,
+		.alpha     = 0.55f * ctx.intensity,
+		// no tumble — rain falls straight
+	};
+	emitFallingField(ctx, spec, { glm::vec3(0.55f, 0.70f, 0.95f) }, out);
 }
 
 // ── Snow ───────────────────────────────────────────────────────────────
@@ -125,32 +177,19 @@ bool SnowEffect::shouldActivate(const WeatherCtx& ctx) const {
 }
 
 void SnowEffect::emit(const WeatherCtx& ctx, std::vector<float>& out) const {
-	const int   count     = (int)(240.0f * ctx.intensity);
-	const float R         = 20.0f;
-	const float hiY       = 18.0f, loY = -4.0f;
-	const float span      = hiY - loY;
-	const float fallSpeed = 3.5f;
-	const float period    = span / std::max(fallSpeed, 0.1f);
-	const glm::vec3 col(1.10f, 1.15f, 1.25f);
-	const glm::vec3 eye = ctx.cameraPos;
-
-	for (int k = 0; k < count; k++) {
-		float seed     = (float)k;
-		float ang      = std::fmod(seed * 2.3998f, 6.2831853f);
-		float rad      = R * std::sqrt(std::fmod(seed * 0.137f, 1.0f));
-		float phase    = std::fmod(seed * 0.091f, 1.0f);
-		float t        = std::fmod(ctx.wallTime / period + phase, 1.0f);
-		float y        = hiY - t * span;
-		float wShift   = t * period;
-		float tumbleX  = std::sin(ctx.wallTime * 1.3f + seed * 4.7f) * 0.6f;
-		float tumbleZ  = std::cos(ctx.wallTime * 1.1f + seed * 3.1f) * 0.6f;
-		glm::vec3 p    = eye + glm::vec3(
-			std::cos(ang) * rad + ctx.wind.x * wShift + tumbleX,
-			y,
-			std::sin(ang) * rad + ctx.wind.y * wShift + tumbleZ);
-		if (insideSolid(ctx, p)) continue;
-		pushP(out, p, 0.09f, col, 0.70f * ctx.intensity);
-	}
+	const FallingFieldSpec spec{
+		.count       = (int)(240.0f * ctx.intensity),
+		.radius      = 20.0f,
+		.hiY         = 18.0f,
+		.loY         = -4.0f,
+		.fallSpeed   = 3.5f,
+		.size        = 0.09f,
+		.alpha       = 0.70f * ctx.intensity,
+		.tumbleAmp   = 0.6f,
+		.tumbleFreq  = {1.3f, 1.1f},
+		.tumbleSeedF = {4.7f, 3.1f},
+	};
+	emitFallingField(ctx, spec, { glm::vec3(1.10f, 1.15f, 1.25f) }, out);
 }
 
 // ── Leaves ─────────────────────────────────────────────────────────────
@@ -163,34 +202,25 @@ bool LeavesEffect::shouldActivate(const WeatherCtx& ctx) const {
 }
 
 void LeavesEffect::emit(const WeatherCtx& ctx, std::vector<float>& out) const {
-	// Reduced count: was 140 × intensity, now 60 × intensity.
-	const int   count   = (int)(60.0f * ctx.intensity);
-	const float span    = 22.0f;
-	const float period  = span / 2.0f;
-	const glm::vec3 eye = ctx.cameraPos;
-
-	for (int k = 0; k < count; k++) {
-		float seed   = (float)k;
-		int   tint   = (int)std::fmod(seed * 7.17f, 3.0f);
-		// Tones brought into LDR (was 2.2, 2.5, 1.8 in red — bloomed to flares)
-		glm::vec3 col = (tint == 0) ? glm::vec3(1.10f, 0.55f, 0.15f)
-		             : (tint == 1) ? glm::vec3(1.20f, 0.40f, 0.12f)
-		                           : glm::vec3(0.95f, 0.70f, 0.25f);
-		float ang     = std::fmod(seed * 2.3998f, 6.2831853f);
-		float rad     = 18.0f * std::sqrt(std::fmod(seed * 0.137f, 1.0f));
-		float phase   = std::fmod(seed * 0.091f, 1.0f);
-		float t       = std::fmod(ctx.wallTime / period + phase, 1.0f);
-		float y       = 18.0f - t * span;
-		float wShift  = t * period;
-		float tumbleX = std::sin(ctx.wallTime * 0.9f + seed * 3.7f) * 1.2f;
-		float tumbleZ = std::cos(ctx.wallTime * 0.8f + seed * 2.3f) * 1.2f;
-		glm::vec3 p   = eye + glm::vec3(
-			std::cos(ang) * rad + ctx.wind.x * wShift + tumbleX,
-			y,
-			std::sin(ang) * rad + ctx.wind.y * wShift + tumbleZ);
-		if (insideSolid(ctx, p)) continue;
-		pushP(out, p, 0.12f, col, 0.55f * ctx.intensity);
-	}
+	// Reduced count: was 140 × intensity, now 60 × intensity. Tones in LDR
+	// (was 2.2, 2.5, 1.8 in red — used to bloom into glowing flares).
+	const FallingFieldSpec spec{
+		.count       = (int)(60.0f * ctx.intensity),
+		.radius      = 18.0f,
+		.hiY         = 18.0f,
+		.loY         = -4.0f,
+		.fallSpeed   = 2.0f,
+		.size        = 0.12f,
+		.alpha       = 0.55f * ctx.intensity,
+		.tumbleAmp   = 1.2f,
+		.tumbleFreq  = {0.9f, 0.8f},
+		.tumbleSeedF = {3.7f, 2.3f},
+	};
+	emitFallingField(ctx, spec, {
+		glm::vec3(1.10f, 0.55f, 0.15f),  // amber-orange
+		glm::vec3(1.20f, 0.40f, 0.12f),  // deep red-orange
+		glm::vec3(0.95f, 0.70f, 0.25f),  // gold
+	}, out);
 }
 
 // ── Fireflies ──────────────────────────────────────────────────────────
