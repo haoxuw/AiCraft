@@ -689,9 +689,14 @@ public:
 		statusTimer = 0;
 	}
 
+	void setLanVisible(bool v) { m_lanVisible = v; }
+
 	// LAN discovery broadcast.
 	void announceOnLAN(float dt) {
 		if (m_port <= 0) return;
+		// Multiplayer-host opts in via --lan-visible; singleplayer leaves
+		// it off so the local server doesn't show up in everyone's LAN list.
+		if (!m_lanVisible) return;
 		m_announceTimer += dt;
 		if (m_announceTimer < 2.0f) return;
 		m_announceTimer = 0.0f;
@@ -1350,6 +1355,7 @@ private:
 
 	net::UdpSocket m_announceUdp;
 	float m_announceTimer = 0.0f;
+	bool  m_lanVisible    = false;
 };
 
 } // namespace solarium

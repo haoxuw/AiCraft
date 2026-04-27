@@ -693,6 +693,29 @@ int main(int argc, char** argv) {
 		// canonical id ↔ templateIndex source the server also uses. Clicking
 		// a tile fires action `world:<id>`, which the C++ callback resolves
 		// to a templateIndex and hands to Game::hostLocalServer.
+		// Multiplayer hub — split between hosting your own LAN game and
+		// joining someone else's. Host routes through the world picker
+		// (same UI as Singleplayer) but with the next-host-visible flag
+		// set, so the spawned solarium-server announces on UDP 7778.
+		auto multiplayerHubPage = [&]() -> std::string {
+			return "data:text/html,<html><head><style>" + kCss +
+				"h1{font-size:48px;letter-spacing:6px;margin:0 0 4px}"
+				".tag{margin:0 0 28px}"
+				".btn{width:340px}"
+				".btn small{display:block;font-size:12px;opacity:0.65;"
+				"margin-top:6px;letter-spacing:1px}"
+				"</style></head><body>"
+				"<h1>Multiplayer</h1>"
+				"<div class='tag'>Host a session, or join one on your network</div>"
+				"<button class='btn' onclick=\"send('mp_host')\">"
+				"Host New Game<small>visible to LAN players</small></button>"
+				"<button class='btn' onclick=\"send('mp_join')\">"
+				"Join LAN Game<small>browse servers on UDP 7778</small></button>"
+				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
+				kVersion + kJs +
+				"</body></html>";
+		};
+
 		// In-game ESC pause page. Renders over the running world (the world
 		// keeps rendering behind because we don't change m_state). Static
 		// buttons → simple 4-line action wiring.
@@ -1191,6 +1214,7 @@ int main(int argc, char** argv) {
 		static std::string sHand  = handbookPage();
 		static std::string sWorld = worldPickerPage();
 		static std::string sPause = pausePage();
+		static std::string sMpHub = multiplayerHubPage();
 		// settingsPage rebuilt fresh each click — captures live values
 		// (master_volume, footsteps_muted, …) so reopening shows current state.
 
@@ -1303,6 +1327,7 @@ int main(int argc, char** argv) {
 				game.setMenuScreen(MS::Main);
 				game.setPreviewId("");
 				game.setPreviewClip("");
+				game.setNextHostLanVisible(false);  // private session
 				hostRaw->loadUrl(sWorld);
 			}
 			else if (action.rfind("world:", 0) == 0) {
@@ -1331,7 +1356,20 @@ int main(int argc, char** argv) {
 					game.setPreviewId(firstPlayableId);
 				hostRaw->loadUrl(sChar);
 			} else if (action == "multiplayer") {
-				// Rebuild fresh each click — picks up newly-discovered LAN servers.
+				// Multiplayer hub: Host vs Join split.
+				game.setMenuScreen(MS::Main);
+				game.setPreviewId("");
+				game.setPreviewClip("");
+				game.setNextHostLanVisible(false);
+				hostRaw->loadUrl(sMpHub);
+			} else if (action == "mp_host") {
+				// Host flow: world picker, then hostLocalServer with broadcast on.
+				game.setNextHostLanVisible(true);
+				hostRaw->loadUrl(sWorld);
+			} else if (action == "mp_join") {
+				// Join flow: existing LAN browser. Rebuild fresh each click —
+				// picks up newly-discovered LAN servers.
+				game.setNextHostLanVisible(false);
 				hostRaw->loadUrl(multiplayerPage());
 			} else if (action == "handbook") {
 				// Hand the camera pin a screen we treat as preview-style; the

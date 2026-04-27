@@ -573,7 +573,13 @@ bool Game::hostLocalServer(const solarium::AgentManager::Config& cfg) {
 	// changes their mind, picks a different one. AgentManager::stopAll
 	// sends SIGTERM and reaps; safe to call when nothing's running.
 	if (m_hosting) m_agentMgr.stopAll();
-	int port = m_agentMgr.launchServer(cfg);
+	// The CEF flow flips this true on Multiplayer→Host; consume it here so
+	// a subsequent Singleplayer host (from pause→Main Menu→Singleplayer)
+	// reverts to the no-broadcast default.
+	auto cfgWithFlag = cfg;
+	cfgWithFlag.lanVisible = m_nextHostLanVisible;
+	m_nextHostLanVisible = false;
+	int port = m_agentMgr.launchServer(cfgWithFlag);
 	if (port < 0) {
 		m_connectError = "failed to launch solarium-server";
 		return false;
@@ -588,8 +594,9 @@ bool Game::hostLocalServer(const solarium::AgentManager::Config& cfg) {
 	// pointing somewhere new.
 	if (auto* net = dynamic_cast<solarium::NetworkServer*>(m_server))
 		net->setTarget("127.0.0.1", port);
-	std::printf("[Game] hostLocalServer: template=%d seed=%d port=%d\n",
-		cfg.templateIndex, cfg.seed, port);
+	std::printf("[Game] hostLocalServer: template=%d seed=%d port=%d lanVisible=%d\n",
+		cfgWithFlag.templateIndex, cfgWithFlag.seed, port,
+		cfgWithFlag.lanVisible ? 1 : 0);
 	return true;
 }
 

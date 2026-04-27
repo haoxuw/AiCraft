@@ -131,6 +131,7 @@ struct ServerConfig {
 	int seed = 42;
 	int templateIndex = 0;  // VillageWorld (has trees)
 	int port = 7777;
+	bool lanVisible = false;  // announce on UDP 7778 (multiplayer host)
 	float hpRegenInterval = ServerTuning::hpRegenInterval;
 	WorldGenConfig worldGenConfig;
 };

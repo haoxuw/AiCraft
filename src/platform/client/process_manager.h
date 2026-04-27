@@ -26,6 +26,7 @@ public:
 		int port = 0;            // 0 = auto-pick in [7800, 7900)
 		int villagersOverride = 0;  // >0 → SOLARIUM_VILLAGERS=N inherited by server
 		float simSpeed = 1.0f;   // >0; passed to spawned server as --sim-speed
+		bool lanVisible = false; // true → announce on UDP 7778 (multiplayer host)
 		std::string worldPath;   // empty = new world
 		std::string execDir;
 	};
@@ -69,6 +70,8 @@ public:
 			std::snprintf(buf, sizeof(buf), "%g", cfg.simSpeed);
 			args.push_back(buf);
 		}
+
+		if (cfg.lanVisible) args.push_back("--lan-visible");
 
 		// nullptr = inherit GUI stdout/stderr so server + its spawned agents log here.
 		m_serverPid = spawnProcess(args, nullptr);

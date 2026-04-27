@@ -493,6 +493,15 @@ private:
 	solarium::AgentManager     m_agentMgr;
 	bool                       m_hosting = false;
 	std::string                m_execDir;
+	// Transient: true when the next hostLocalServer should broadcast on UDP
+	// 7778 (multiplayer-host flow). Singleplayer leaves this false. Reset
+	// after each host so a subsequent New Game from the pause menu doesn't
+	// inherit a stale flag.
+public:
+	void setNextHostLanVisible(bool v) { m_nextHostLanVisible = v; }
+	bool nextHostLanVisible() const    { return m_nextHostLanVisible; }
+private:
+	bool                       m_nextHostLanVisible = false;
 	// Agents run inside this process now (server stopped spawning solarium-agent
 	// children). One BehaviorStore + one AgentClient drives every NPC the
 	// server hands us. unique_ptr so we can defer construction until after the

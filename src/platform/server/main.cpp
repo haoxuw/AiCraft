@@ -166,6 +166,9 @@ ServerCliArgs parseServerArgs(int argc, char** argv) {
 			float s = (float)atof(argv[++i]);
 			if (s > 0.0f) solarium::ServerTuning::simSpeed = s;
 		}
+		else if (strcmp(argv[i], "--lan-visible") == 0) {
+			out.config.lanVisible = true;
+		}
 	}
 	return out;
 }
@@ -340,6 +343,7 @@ int main(int argc, char** argv) {
 
 	solarium::ClientManager clients(server);
 	clients.setPort(args.config.port);
+	clients.setLanVisible(args.config.lanVisible);
 	server.setCallbacks(makeServerCallbacks(clients));
 
 	// Main-loop pacing: how often a tick fires on the wall clock. At
