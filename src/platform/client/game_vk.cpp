@@ -1,4 +1,5 @@
 #include "client/game_vk.h"
+#include "client/cef_browser_host.h"
 
 #include <GLFW/glfw3.h>
 
@@ -165,7 +166,6 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		} else if (s == "multiplayer") {
 			m_menuScreen = MenuScreen::Multiplayer;
 		} else if (s == "handbook") {
-			m_handbook.reset();
 			m_menuScreen = MenuScreen::Handbook;
 		} else if (s == "connecting") {
 			m_menuScreen = MenuScreen::Connecting;
@@ -517,6 +517,18 @@ void Game::exitCoordPeek() {
 	m_peekSavedCam.reset();
 	m_peekActive = false;
 	m_cam.resetMouseTracking();
+}
+
+void Game::openCefHandbook() {
+	// No-op when --cef-menu wasn't passed (e.g. perf_fps headless run) — H
+	// key just doesn't do anything in that mode rather than crashing.
+	if (!m_cefHost || m_cefHandbookUrl.empty()) return;
+	// Re-use the existing camera-pin handler: setting MenuScreen::Handbook
+	// makes game_vk_renderer_world treat the screen as preview-style.
+	m_menuScreen = MenuScreen::Handbook;
+	m_shell.previewClip.clear();  // static "mine" pose
+	setCefMenuActive(true);
+	m_cefHost->loadUrl(m_cefHandbookUrl);
 }
 
 bool Game::hostLocalServer(const solarium::AgentManager::Config& cfg) {
@@ -990,7 +1002,7 @@ void Game::runOneFrame(float dt, float wallTime) {
 		if (m_inspectedEntity != 0) m_entityUiRenderer.renderEntityInspect();
 		if (m_showDebug) m_panelRenderer.renderDebugOverlay();
 		if (m_showTuning) m_panelRenderer.renderTuningPanel();
-		if (m_handbookOpen) m_panelRenderer.renderHandbook();
+		// (in-game handbook is now drawn by CEF; H key calls openCefHandbook)
 		if (m_dialogPanel.isOpen()) m_dialogPanel.render(m_rhi, m_aspect);
 		m_entityUiRenderer.renderRTSSelect();
 		m_entityUiRenderer.renderRTSDragCommand();
@@ -1420,8 +1432,8 @@ void Game::registerDebugTriggers() {
 		}
 	});
 	m_debugTriggers.addTrigger("/tmp/solarium_vk_handbook_request", [this] {
-		m_handbookOpen = !m_handbookOpen;
-		std::printf("[vk-game] [trigger] handbook %s\n", m_handbookOpen ? "OPEN" : "CLOSED");
+		openCefHandbook();
+		std::printf("[vk-game] [trigger] handbook OPEN (CEF)\n");
 	});
 	m_debugTriggers.addTrigger("/tmp/solarium_vk_inventory_request", [this] {
 		m_invOpen = !m_invOpen;

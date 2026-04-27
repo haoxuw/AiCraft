@@ -959,6 +959,10 @@ int main(int argc, char** argv) {
 		cefHost = std::make_unique<solarium::vk::CefHost>(fbw, fbh);
 		game.setCefMenuActive(true);
 		auto* hostRaw = cefHost.get();
+		// Hand the CefHost + handbook URL to Game so the in-game H key (and
+		// future ESC pause Settings) can re-show CEF over the running game.
+		game.setCefHost(hostRaw);
+		game.setCefHandbookUrl(sHand);
 		// multiplayerPage is captured by value so the lambda owns its own
 		// copy — local 'multiplayerPage' in this block goes out of scope
 		// once init returns. Same for the enc helper inside it.
@@ -982,10 +986,21 @@ int main(int argc, char** argv) {
 			if (action == "quit") {
 				glfwSetWindowShouldClose(win, GLFW_TRUE);
 			} else if (action == "back") {
-				game.setMenuScreen(MS::Main);
-				game.setPreviewId("");
-				game.setPreviewClip("");
-				hostRaw->loadUrl(sMain);
+				// Back from a CEF sub-screen has two meanings:
+				//   * Boot flow (Menu state) — return to the main title.
+				//   * In-game (Playing state, H opened the handbook over
+				//     the world) — just dismiss CEF; don't drop the player
+				//     back to the title.
+				if (game.state() == solarium::vk::GameState::Playing) {
+					game.setCefMenuActive(false);
+					game.setPreviewId("");
+					game.setPreviewClip("");
+				} else {
+					game.setMenuScreen(MS::Main);
+					game.setPreviewId("");
+					game.setPreviewClip("");
+					hostRaw->loadUrl(sMain);
+				}
 			} else if (action == "singleplayer") {
 				// Lazy server spawn: launch solarium-server with the default
 				// world (village template). Once the world picker (#40) lands

@@ -375,7 +375,11 @@ void MenuRenderer::renderMenu() {
 	}
 
 	case MenuScreen::Handbook:
-		g.m_handbook.render(g);
+		// CEF owns this screen now. The native renderMenu only runs when
+		// cefMenuActive() is false (gated by the call site); reaching this
+		// case via that path is a programmer error — bounce to Main.
+		g.m_menuScreen = MenuScreen::Main;
+		g.setCefMenuActive(true);
 		break;
 
 	case MenuScreen::Settings: {

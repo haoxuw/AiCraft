@@ -78,7 +78,6 @@ public:
 	explicit PanelRenderer(Game& g) : game_(g) {}
 	void renderDebugOverlay();
 	void renderTuningPanel();
-	void renderHandbook();
 private:
 	Game& game_;
 };

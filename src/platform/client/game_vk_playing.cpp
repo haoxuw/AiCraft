@@ -179,10 +179,11 @@ void Game::processInput(float dt) {
 	if (f6 && !m_f6Last) m_showTuning = !m_showTuning;
 	m_f6Last = f6;
 
-	// H: handbook (artifact browser).
+	// H: open the CEF handbook over the running game. ESC dismisses (the
+	// "back" action handler in main.cpp checks GameState and just drops
+	// the overlay when in-game rather than going to Main menu).
 	bool hKey = glfwGetKey(m_window, GLFW_KEY_H) == GLFW_PRESS;
-	if (hKey && !m_hLast)
-		m_handbookOpen = !m_handbookOpen;
+	if (hKey && !m_hLast) openCefHandbook();
 	m_hLast = hKey;
 
 	// T: talk to humanoid NPC under cursor / crosshair.
@@ -294,8 +295,9 @@ void Game::processInput(float dt) {
 	// ── Cursor mode ───────────────────────────────────────────────────────
 	// FPS/TPS: cursor captured for mouse look.
 	// RPG/RTS: cursor free; right-click-drag = orbit camera.
-	// UI overlays (handbook, inspector, tuning) always show cursor.
-	m_uiWantsCursor = m_handbookOpen || m_inspectedEntity != 0 || m_showTuning
+	// UI overlays (CEF handbook, inspector, tuning) always show cursor.
+	// CEF handbook → cefMenuActive() while Playing.
+	m_uiWantsCursor = cefMenuActive() || m_inspectedEntity != 0 || m_showTuning
 	                || m_invOpen || m_dialogPanel.isOpen();
 
 	bool wantCapture = (m_cam.mode == solarium::CameraMode::FirstPerson ||
@@ -1196,8 +1198,11 @@ void Game::processEscapeKey() {
 			m_invOther = 0;
 		} else if (m_inspectedEntity != 0) {
 			m_inspectedEntity = 0;
-		} else if (m_handbookOpen) {
-			m_handbookOpen = false;
+		} else if (cefMenuActive() && m_state == GameState::Playing) {
+			// In-game CEF (handbook today, settings later) → ESC dismisses
+			// without invoking the pause menu. CEF's own back-button handler
+			// in main.cpp's action callback also routes to this path.
+			setCefMenuActive(false);
 		} else if (m_state == GameState::Playing) openGameMenu();
 		else if (m_state == GameState::GameMenu) closeGameMenu();
 	}

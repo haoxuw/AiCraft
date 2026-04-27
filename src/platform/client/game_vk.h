@@ -44,7 +44,6 @@
 #include "client/box_model.h"
 #include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
-#include "client/handbook_panel.h"
 #include "client/hotbar.h"
 #include "client/lan_browser.h"
 #include "client/loading_screen.h"
@@ -227,6 +226,21 @@ public:
 	void setCefMenuActive(bool on) { m_cefMenuActive.store(on); }
 	bool cefMenuActive() const { return m_cefMenuActive.load(); }
 
+	GameState state() const { return m_state; }
+
+	// Wire-up for in-game CEF triggers (H key for handbook, future ESC pause
+	// reusing the CEF Settings page). Game stores non-owning pointers/strings
+	// the input handlers and ESC routing reach through. cefHost is null when
+	// --cef-menu wasn't passed; the H key becomes a no-op in that case.
+	void setCefHost(class CefHost* h) { m_cefHost = h; }
+	void setCefHandbookUrl(std::string url) { m_cefHandbookUrl = std::move(url); }
+
+	// Re-show the CEF handbook over the running game (or boot plaza). Sets
+	// menuScreen so the camera pin treats this as a preview screen, flips
+	// cefMenuActive on so input routes to the browser, and loads the page.
+	// ESC dismisses (handled in onKey).
+	void openCefHandbook();
+
 	// CEF action callback uses this to jump from the CEF main title to a
 	// native sub-screen (CharacterSelect / Multiplayer / Handbook / Settings).
 	void setMenuScreen(MenuScreen s) { m_menuScreen = s; }
@@ -353,7 +367,6 @@ private:
 	friend class MenuRenderer;
 	friend class PanelRenderer;
 	friend class EntityUiRenderer;
-	friend class HandbookPanel;
 	WorldRenderer     m_worldRenderer    { *this };
 	HudRenderer       m_hudRenderer      { *this };
 	MenuRenderer      m_menuRenderer     { *this };
@@ -782,9 +795,11 @@ public:
 	double perfSessionStart() const { return m_perfSessionStart; }
 private:
 
-	// H handbook panel
-	bool         m_handbookOpen = false;
-	HandbookPanel m_handbook;
+	// H key opens the CEF handbook (over game world while Playing, over the
+	// menu plaza while in Menu). cefHost+url are wired by main.cpp at boot
+	// when --cef-menu is on; null/empty means the H key is a no-op.
+	class CefHost*    m_cefHost = nullptr;
+	std::string       m_cefHandbookUrl;
 	solarium::ArtifactRegistry m_artifactRegistry;
 
 	// ── Hotbar + Inventory UI ────────────────────────────────────────────

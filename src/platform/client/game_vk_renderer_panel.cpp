@@ -212,22 +212,4 @@ void PanelRenderer::renderTuningPanel() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// H handbook — in-game overlay variant
-//
-// The full panel lives in HandbookPanel (handbook_panel.cpp) and is shared
-// with the main-menu Handbook screen. In-game we darken the play field
-// behind it so the shell's translucent bars read clearly over terrain.
-// 3D preview injection is gated to MenuScreen in the world renderer, so
-// the preview card here falls back to text-only — good enough for "what
-// is this block/item?" lookups without hijacking the world render.
-// ─────────────────────────────────────────────────────────────────────────
-void PanelRenderer::renderHandbook() {
-	Game& g = game_;
-	rhi::IRhi* r = g.m_rhi;
-	using namespace ui::color;
-
-	r->drawRect2D(-1.0f, -1.0f, 2.0f, 2.0f, kScrim);
-	g.m_handbook.render(g);
-}
-
 } // namespace solarium::vk
