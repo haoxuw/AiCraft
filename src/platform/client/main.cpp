@@ -382,17 +382,17 @@ int main(int argc, char** argv) {
 		// the overlay so the loading screen / world becomes visible.
 		const std::string kCss =
 			"html,body{margin:0;height:100vh;background:transparent;"
-			"color:%23f0e0c0;font-family:Georgia,serif;"
+			"color:var(--ink);font-family:Georgia,serif;"
 			"display:flex;flex-direction:column;align-items:center;justify-content:center}"
 			"body{background:radial-gradient(ellipse at center,"
 			"rgba(16,8,10,0.55) 0%%,rgba(16,8,10,0) 60%%)}"
-			"h1{color:%23f3c44c;font-size:72px;letter-spacing:8px;margin:0 0 8px;"
+			"h1{color:var(--accent-hi);font-size:72px;letter-spacing:8px;margin:0 0 8px;"
 			"text-shadow:0 4px 24px rgba(0,0,0,0.85),0 0 18px rgba(243,196,76,0.35)}"
 			".tag{font-size:16px;letter-spacing:4px;opacity:0.85;margin:0 0 40px;"
 			"text-transform:uppercase;text-shadow:0 2px 6px rgba(0,0,0,0.85)}"
 			".btn{display:block;width:280px;margin:6px 0;padding:12px 0;font-size:18px;"
-			"background:rgba(26,18,11,0.78);color:%23f3c44c;"
-			"border:1px solid %23b88838;font-family:inherit;cursor:pointer;"
+			"background:rgba(26,18,11,0.78);color:var(--accent-hi);"
+			"border:1px solid var(--accent-mid);font-family:inherit;cursor:pointer;"
 			"letter-spacing:2px;backdrop-filter:blur(2px);"
 			"transition:background 0.15s,transform 0.15s}"
 			".btn:hover{background:rgba(94,67,30,0.92);transform:scale(1.02)}"
@@ -407,6 +407,28 @@ int main(int argc, char** argv) {
 		// Bottom-right version label, identical across every page.
 		const std::string kVersion =
 			"<div class='version'>v0.2.0 / CEF 146</div>";
+
+		// Theme palette — three preset CSS variable sets driven by Settings
+		// .theme_id. The string is prepended to every page's <style> so
+		// var(--accent-hi)/var(--accent-mid)/var(--ink) refs throughout
+		// kCss / kDexCss / per-page CSS resolve to the chosen theme.
+		// Adding a new theme is one new branch here + one tile on the
+		// Settings → Theme tab. Hex literals stay URL-encoded (%23) so
+		// the data: URL parser doesn't trip over '#'.
+		auto themeRoot = [&]() -> std::string {
+			const std::string& id = game.settings().theme_id;
+			if (id == "cobalt") {
+				return ":root{--accent-hi:%237eb8e8;--accent-mid:%233a6890;"
+				       "--ink:%23dde6ed}";
+			}
+			if (id == "lichen") {
+				return ":root{--accent-hi:%23d4cf9f;--accent-mid:%238a9970;"
+				       "--ink:%23ede5d0}";
+			}
+			// "brass" (default) — also the catch-all for unknown ids.
+			return ":root{--accent-hi:%23f3c44c;--accent-mid:%23b88838;"
+			       "--ink:%23f0e0c0}";
+		};
 
 		// HTML-escape the bare minimum: ", <, >, &, %, ', #. Pages are passed
 		// as `data:text/html,<…>` so any '%' that isn't part of a percent-
@@ -432,7 +454,7 @@ int main(int argc, char** argv) {
 		};
 
 		auto mainPage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + kCss +
+			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				"</style></head><body>"
 				"<h1>Solarium</h1>"
 				"<div class='tag'>A voxel sandbox civilization</div>"
@@ -456,65 +478,65 @@ int main(int argc, char** argv) {
 		const std::string kDexCss =
 			"body{display:block;align-items:initial;justify-content:initial;"
 			"background:transparent;padding:0;margin:0;min-height:100vh;"
-			"font-family:Georgia,serif;color:%23f0e0c0}"
+			"font-family:Georgia,serif;color:var(--ink)}"
 			".sidebar{position:fixed;left:0;top:0;bottom:0;width:300px;"
-			"background:rgba(16,8,10,0.88);border-right:1px solid %23b88838;"
+			"background:rgba(16,8,10,0.88);border-right:1px solid var(--accent-mid);"
 			"display:flex;flex-direction:column;box-sizing:border-box}"
 			".sb-head{padding:22px 22px 12px;border-bottom:1px solid rgba(184,136,56,0.4)}"
-			".sb-head h1{font-size:24px;letter-spacing:4px;margin:0;color:%23f3c44c;"
+			".sb-head h1{font-size:24px;letter-spacing:4px;margin:0;color:var(--accent-hi);"
 			"font-weight:400;text-shadow:0 2px 8px rgba(0,0,0,0.8)}"
-			".sb-head .sub{font-size:11px;letter-spacing:2px;color:%23b88838;"
+			".sb-head .sub{font-size:11px;letter-spacing:2px;color:var(--accent-mid);"
 			"text-transform:uppercase;margin-top:4px}"
 			".sb-search{margin:14px 22px 8px;padding:8px 12px;width:auto;"
-			"background:rgba(26,18,11,0.78);color:%23f0e0c0;border:1px solid %23b88838;"
+			"background:rgba(26,18,11,0.78);color:var(--ink);border:1px solid var(--accent-mid);"
 			"font-family:inherit;font-size:13px;letter-spacing:1px;box-sizing:border-box}"
 			".sb-list{flex:1;overflow-y:auto;padding:6px 0}"
 			".sb-grp{padding:14px 22px 4px;font-size:11px;letter-spacing:3px;"
-			"color:%23b88838;text-transform:uppercase}"
+			"color:var(--accent-mid);text-transform:uppercase}"
 			".sb-row{display:block;padding:9px 22px;cursor:pointer;"
-			"font-size:14px;letter-spacing:1px;color:%23f0e0c0;"
+			"font-size:14px;letter-spacing:1px;color:var(--ink);"
 			"border-left:3px solid transparent;background:transparent;border-top:0;"
 			"border-right:0;border-bottom:0;text-align:left;width:100%%;"
 			"font-family:inherit}"
 			".sb-row:hover{background:rgba(94,67,30,0.45);"
-			"border-left-color:%23b88838;color:%23f3c44c}"
-			".sb-row.on{background:rgba(94,67,30,0.92);color:%23f3c44c;"
-			"border-left-color:%23f3c44c}"
-			".sb-row .id{display:block;font-size:10px;color:%23b88838;"
+			"border-left-color:var(--accent-mid);color:var(--accent-hi)}"
+			".sb-row.on{background:rgba(94,67,30,0.92);color:var(--accent-hi);"
+			"border-left-color:var(--accent-hi)}"
+			".sb-row .id{display:block;font-size:10px;color:var(--accent-mid);"
 			"font-family:monospace;letter-spacing:1px;margin-top:2px;opacity:0.7}"
 			".sb-foot{padding:14px 22px;border-top:1px solid rgba(184,136,56,0.4);"
 			"display:flex;flex-direction:column;gap:8px}"
 			".sb-foot button{padding:10px 0;background:rgba(26,18,11,0.78);"
-			"color:%23f3c44c;border:1px solid %23b88838;font-family:inherit;"
+			"color:var(--accent-hi);border:1px solid var(--accent-mid);font-family:inherit;"
 			"font-size:14px;letter-spacing:2px;cursor:pointer;"
 			"transition:background 0.15s}"
 			".sb-foot button:hover{background:rgba(94,67,30,0.95)}"
-			".sb-foot .primary{color:%23f3c44c;font-size:16px;padding:14px 0;"
-			"box-shadow:0 0 0 1px %23f3c44c inset}"
+			".sb-foot .primary{color:var(--accent-hi);font-size:16px;padding:14px 0;"
+			"box-shadow:0 0 0 1px var(--accent-hi) inset}"
 			".detail{margin-left:300px;min-height:100vh;position:relative}"
 			".detail-card{position:fixed;bottom:0;left:300px;right:0;"
 			"padding:32px 60px 36px;"
 			"background:linear-gradient(to top,"
 			"rgba(10,5,5,0.92) 0%%,rgba(10,5,5,0.78) 60%%,rgba(10,5,5,0) 100%%);"
 			"max-height:60vh;overflow-y:auto}"
-			".detail-card h2{font-size:56px;letter-spacing:6px;color:%23f3c44c;"
+			".detail-card h2{font-size:56px;letter-spacing:6px;color:var(--accent-hi);"
 			"margin:0 0 4px;font-weight:400;"
 			"text-shadow:0 4px 18px rgba(0,0,0,0.85)}"
 			".detail-card .badge{display:inline-block;font-size:11px;"
-			"letter-spacing:3px;color:%23b88838;text-transform:uppercase;"
+			"letter-spacing:3px;color:var(--accent-mid);text-transform:uppercase;"
 			"font-family:monospace;margin-right:16px}"
 			".detail-card .desc{font-size:15px;line-height:1.55;max-width:780px;"
-			"color:%23f0e0c0;margin:14px 0 0;opacity:0.92}"
+			"color:var(--ink);margin:14px 0 0;opacity:0.92}"
 			".detail-card .attrs{display:grid;"
 			"grid-template-columns:auto 1fr;column-gap:20px;row-gap:4px;"
 			"margin-top:18px;max-width:780px;font-size:12px;font-family:monospace;"
 			"max-height:200px;overflow-y:auto;padding-right:12px}"
-			".detail-card .k{color:%23b88838;text-transform:uppercase;"
+			".detail-card .k{color:var(--accent-mid);text-transform:uppercase;"
 			"letter-spacing:1px;white-space:nowrap}"
-			".detail-card .v{color:%23f0e0c0;word-break:break-word;"
+			".detail-card .v{color:var(--ink);word-break:break-word;"
 			"overflow-wrap:anywhere}"
 			".version{position:fixed;bottom:8px;right:14px;font-size:11px;"
-			"color:%23b88838;opacity:0.5;letter-spacing:1px}";
+			"color:var(--accent-mid);opacity:0.5;letter-spacing:1px}";
 
 		// Compact a multi-line / oversized field value for handbook attrs.
 		// Strips control chars (newlines, CRs, tabs) and non-ASCII bytes,
@@ -590,28 +612,28 @@ int main(int argc, char** argv) {
 			std::sort(playables.begin(), playables.end(),
 				[](const PlayableItem& a, const PlayableItem& b){return a.name < b.name;});
 
-			std::string html = "data:text/html,<html><head><style>" + kDexCss +
+			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kDexCss +
 				".stats{display:grid;grid-template-columns:auto 1fr auto;"
 				"column-gap:14px;row-gap:6px;margin-top:18px;max-width:520px;"
 				"font-size:12px;align-items:center}"
-				".stats .lbl{color:%23b88838;text-transform:uppercase;"
+				".stats .lbl{color:var(--accent-mid);text-transform:uppercase;"
 				"letter-spacing:2px;font-family:monospace}"
 				".stats .bar{height:10px;background:rgba(40,30,20,0.85);"
 				"border:1px solid rgba(184,136,56,0.5);position:relative;"
 				"box-sizing:border-box}"
 				".stats .bar .fill{position:absolute;top:0;left:0;bottom:0;"
-				"background:linear-gradient(90deg,%23b88838,%23f3c44c)}"
-				".stats .num{color:%23f3c44c;font-family:monospace;font-size:13px;"
+				"background:linear-gradient(90deg,var(--accent-mid),var(--accent-hi))}"
+				".stats .num{color:var(--accent-hi);font-family:monospace;font-size:13px;"
 				"min-width:24px;text-align:right}"
 				".speed{display:flex;gap:24px;margin-top:14px;font-size:12px;"
-				"color:%23b88838;font-family:monospace;letter-spacing:1px;"
+				"color:var(--accent-mid);font-family:monospace;letter-spacing:1px;"
 				"text-transform:uppercase}"
-				".speed b{color:%23f3c44c;font-weight:400;font-size:14px;"
+				".speed b{color:var(--accent-hi);font-weight:400;font-size:14px;"
 				"margin-left:6px}"
 				".features{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px}"
 				".features span{padding:4px 10px;font-size:11px;"
-				"background:rgba(94,67,30,0.5);border:1px solid %23b88838;"
-				"color:%23f3c44c;letter-spacing:1px}"
+				"background:rgba(94,67,30,0.5);border:1px solid var(--accent-mid);"
+				"color:var(--accent-hi);letter-spacing:1px}"
 				"</style></head><body>"
 				"<aside class='sidebar'>"
 				"<div class='sb-head'><h1>Choose Character</h1>"
@@ -703,7 +725,7 @@ int main(int argc, char** argv) {
 		// artifact registry is loaded once at boot.
 		// Value-capture matches settingsPage: invoked from the action callback
 		// after this scope ends, so [&] would dangle.
-		auto modManagerPage = [kCss, kVersion, &game, enc]() -> std::string {
+		auto modManagerPage = [kCss, kVersion, &game, enc, themeRoot]() -> std::string {
 			auto namespaces = game.artifactRegistry().discoverNamespaces("artifacts");
 			std::sort(namespaces.begin(), namespaces.end());
 			// Per-namespace artifact count for display.
@@ -732,30 +754,30 @@ int main(int argc, char** argv) {
 				}
 			}
 
-			std::string html = "data:text/html,<html><head><style>" + kCss +
+			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
 				"min-height:100vh;box-sizing:border-box;align-items:center}"
 				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
 				".tag{margin:0 0 24px}"
-				".note{margin:0 0 24px;font-size:12px;color:%23b88838;"
+				".note{margin:0 0 24px;font-size:12px;color:var(--accent-mid);"
 				"letter-spacing:2px;text-transform:uppercase}"
 				".list{display:flex;flex-direction:column;gap:8px;width:680px}"
 				".row{display:flex;align-items:center;justify-content:space-between;"
 				"padding:14px 22px;background:rgba(26,18,11,0.78);"
-				"border:1px solid %23b88838}"
+				"border:1px solid var(--accent-mid)}"
 				".row.off{opacity:0.55}"
-				".row .nm{font-size:18px;color:%23f3c44c;letter-spacing:2px;"
+				".row .nm{font-size:18px;color:var(--accent-hi);letter-spacing:2px;"
 				"font-family:monospace}"
-				".row .ct{font-size:11px;color:%23b88838;letter-spacing:1px;"
+				".row .ct{font-size:11px;color:var(--accent-mid);letter-spacing:1px;"
 				"font-family:monospace;margin-left:12px}"
 				".tog{position:relative;width:44px;height:22px;"
-				"background:rgba(40,30,20,0.9);border:1px solid %23b88838;"
+				"background:rgba(40,30,20,0.9);border:1px solid var(--accent-mid);"
 				"border-radius:11px;cursor:pointer;transition:background 0.15s}"
 				".tog::after{content:'';position:absolute;left:3px;top:2px;"
-				"width:14px;height:14px;border-radius:50%%;background:%23b88838;"
+				"width:14px;height:14px;border-radius:50%%;background:var(--accent-mid);"
 				"transition:left 0.15s,background 0.15s}"
 				".tog.on{background:rgba(94,67,30,0.95)}"
-				".tog.on::after{left:25px;background:%23f3c44c}"
+				".tog.on::after{left:25px;background:var(--accent-hi)}"
 				".back{margin-top:24px;width:160px}"
 				"</style></head><body>"
 				"<h1>Mod Manager</h1>"
@@ -800,33 +822,33 @@ int main(int argc, char** argv) {
 		// world picker → fresh save dir.
 		// Value-capture (kCss/kJs/kVersion + enc/compact) so the lambda is
 		// safe to invoke from the action callback after this scope ends.
-		auto saveSlotsPage = [kCss, kJs, kVersion, enc, compact]() -> std::string {
+		auto saveSlotsPage = [kCss, kJs, kVersion, enc, compact, themeRoot]() -> std::string {
 			auto saves = solarium::vk::scanSaves("saves");
-			std::string html = "data:text/html,<html><head><style>" + kCss +
+			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
 				"min-height:100vh;box-sizing:border-box;align-items:center}"
 				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
 				".tag{margin:0 0 32px}"
 				".tiles{display:grid;grid-template-columns:repeat(auto-fill,"
 				"minmax(320px,1fr));gap:16px;width:100%%;max-width:1100px}"
-				".tile{background:rgba(26,18,11,0.85);border:1px solid %23b88838;"
+				".tile{background:rgba(26,18,11,0.85);border:1px solid var(--accent-mid);"
 				"padding:22px 24px;cursor:pointer;font-family:inherit;color:inherit;"
 				"text-align:left;transition:background 0.15s,transform 0.15s,"
 				"box-shadow 0.15s}"
 				".tile:hover{background:rgba(94,67,30,0.95);transform:translateY(-2px);"
 				"box-shadow:0 6px 20px rgba(0,0,0,0.5)}"
-				".tile h3{margin:0 0 6px;color:%23f3c44c;font-size:22px;"
+				".tile h3{margin:0 0 6px;color:var(--accent-hi);font-size:22px;"
 				"letter-spacing:2px;font-weight:400}"
-				".tile .meta{font-size:12px;color:%23b88838;font-family:monospace;"
+				".tile .meta{font-size:12px;color:var(--accent-mid);font-family:monospace;"
 				"letter-spacing:1px;margin-bottom:6px;display:block;opacity:0.7}"
-				".tile .when{font-size:11px;color:%23b88838;opacity:0.6}"
+				".tile .when{font-size:11px;color:var(--accent-mid);opacity:0.6}"
 				".tile.new{background:rgba(94,67,30,0.5);"
-				"border:2px dashed %23b88838}"
-				".tile.new h3{color:%23f3c44c}"
+				"border:2px dashed var(--accent-mid)}"
+				".tile.new h3{color:var(--accent-hi)}"
 				".tile.save{position:relative}"
 				".tile .del{position:absolute;top:8px;right:8px;"
 				"padding:4px 10px;font-size:10px;letter-spacing:1px;"
-				"background:rgba(120,30,20,0.85);color:%23f0e0c0;"
+				"background:rgba(120,30,20,0.85);color:var(--ink);"
 				"border:1px solid rgba(184,80,60,0.7);font-family:inherit;"
 				"cursor:pointer;text-transform:uppercase;opacity:0.4;"
 				"transition:opacity 0.15s}"
@@ -875,7 +897,7 @@ int main(int argc, char** argv) {
 		// (same UI as Singleplayer) but with the next-host-visible flag
 		// set, so the spawned solarium-server announces on UDP 7778.
 		auto multiplayerHubPage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + kCss +
+			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				"h1{font-size:48px;letter-spacing:6px;margin:0 0 4px}"
 				".tag{margin:0 0 28px}"
 				".btn{width:340px}"
@@ -899,15 +921,15 @@ int main(int argc, char** argv) {
 		// immediately on HELLO/WELCOME — proper "wait for host" protocol
 		// work is a v2 item (server-side lobby state + S_LOBBY opcode).
 		auto lobbyPage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + kCss +
+			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				"body{justify-content:center;align-items:center}"
 				"h1{font-size:56px;letter-spacing:8px;margin:0 0 12px}"
 				".tag{margin:0 0 32px;font-size:14px;letter-spacing:2px;"
-				"color:%23b88838}"
+				"color:var(--accent-mid)}"
 				".players{display:flex;flex-direction:column;gap:6px;"
 				"width:380px;margin-bottom:24px}"
 				".player{padding:12px 18px;background:rgba(26,18,11,0.78);"
-				"border:1px solid %23b88838;color:%23f3c44c;"
+				"border:1px solid var(--accent-mid);color:var(--accent-hi);"
 				"font-family:monospace;font-size:14px;letter-spacing:1px}"
 				".btn{width:280px}"
 				"</style></head><body>"
@@ -926,7 +948,7 @@ int main(int argc, char** argv) {
 		// keeps rendering behind because we don't change m_state). Static
 		// buttons → simple 4-line action wiring.
 		auto pausePage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + kCss +
+			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				"body{justify-content:center;align-items:center;"
 				"background:radial-gradient(ellipse at center,"
 				"rgba(10,5,5,0.65) 0%%,rgba(10,5,5,0.25) 60%%)}"
@@ -943,37 +965,37 @@ int main(int argc, char** argv) {
 		};
 
 		auto worldPickerPage = [&]() -> std::string {
-			std::string html = "data:text/html,<html><head><style>" + kCss +
+			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
 				"min-height:100vh;box-sizing:border-box;align-items:center}"
 				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
 				".tag{margin:0 0 32px}"
 				".tiles{display:grid;grid-template-columns:repeat(auto-fill,"
 				"minmax(320px,1fr));gap:16px;width:100%%;max-width:1100px}"
-				".tile{background:rgba(26,18,11,0.85);border:1px solid %23b88838;"
+				".tile{background:rgba(26,18,11,0.85);border:1px solid var(--accent-mid);"
 				"padding:22px 24px;cursor:pointer;font-family:inherit;color:inherit;"
 				"text-align:left;transition:background 0.15s,transform 0.15s,"
 				"box-shadow 0.15s}"
 				".tile:hover{background:rgba(94,67,30,0.95);transform:translateY(-2px);"
 				"box-shadow:0 6px 20px rgba(0,0,0,0.5)}"
-				".tile h3{margin:0 0 6px;color:%23f3c44c;font-size:22px;"
+				".tile h3{margin:0 0 6px;color:var(--accent-hi);font-size:22px;"
 				"letter-spacing:2px;font-weight:400}"
-				".tile .id{font-size:11px;color:%23b88838;font-family:monospace;"
+				".tile .id{font-size:11px;color:var(--accent-mid);font-family:monospace;"
 				"letter-spacing:1px;margin-bottom:8px;display:block;opacity:0.7}"
 				".tile p{margin:0;font-size:13px;line-height:1.45;opacity:0.88}"
 				".opts{display:flex;gap:18px;align-items:center;margin-top:28px;"
 				"padding:14px 22px;background:rgba(26,18,11,0.6);"
 				"border:1px solid rgba(184,136,56,0.5)}"
-				".opts label{font-size:12px;letter-spacing:2px;color:%23b88838;"
+				".opts label{font-size:12px;letter-spacing:2px;color:var(--accent-mid);"
 				"text-transform:uppercase;display:flex;align-items:center;gap:10px}"
-				".opts input{background:rgba(40,30,20,0.95);color:%23f3c44c;"
-				"border:1px solid %23b88838;font-family:monospace;font-size:13px;"
+				".opts input{background:rgba(40,30,20,0.95);color:var(--accent-hi);"
+				"border:1px solid var(--accent-mid);font-family:monospace;font-size:13px;"
 				"padding:6px 8px;width:90px}"
-				".opts input[type='range']{width:160px;accent-color:%23f3c44c}"
-				".opts .val{font-family:monospace;color:%23f3c44c;min-width:32px;"
+				".opts input[type='range']{width:160px;accent-color:var(--accent-hi)}"
+				".opts .val{font-family:monospace;color:var(--accent-hi);min-width:32px;"
 				"text-align:right}"
 				".opts button{padding:6px 12px;background:rgba(94,67,30,0.85);"
-				"color:%23f3c44c;border:1px solid %23b88838;font-family:inherit;"
+				"color:var(--accent-hi);border:1px solid var(--accent-mid);font-family:inherit;"
 				"font-size:11px;cursor:pointer;letter-spacing:1px}"
 				".back{margin-top:24px;width:160px}"
 				"</style></head><body>"
@@ -1042,52 +1064,70 @@ int main(int argc, char** argv) {
 		// Value-capture of kCss/kJs/kVersion: this lambda is invoked from the
 		// action callback long after the surrounding block returns; a [&]
 		// capture would dangle (same trap as multiplayerPage hit earlier).
-		auto settingsPage = [kCss, kJs, kVersion, &game]() -> std::string {
+		auto settingsPage = [kCss, kJs, kVersion, &game, themeRoot]() -> std::string {
 			const auto& s = game.settings();
 			auto boolStr = [](bool b) { return b ? "true" : "false"; };
 			char buf[64];
-			std::string html = "data:text/html,<html><head><style>" + kCss +
+			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				"body{justify-content:flex-start;padding:48px 0 60px;align-items:center;"
 				"height:auto;min-height:100vh;box-sizing:border-box}"
 				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
 				".tag{margin:0 0 24px}"
 				".tabs{display:flex;gap:6px;margin-bottom:24px}"
 				".tabs button{padding:8px 18px;font-size:13px;letter-spacing:2px;"
-				"background:rgba(26,18,11,0.8);color:%23b88838;border:1px solid %23b88838;"
+				"background:rgba(26,18,11,0.8);color:var(--accent-mid);border:1px solid var(--accent-mid);"
 				"font-family:inherit;cursor:pointer;text-transform:uppercase}"
-				".tabs button.on{background:rgba(94,67,30,0.95);color:%23f3c44c}"
+				".tabs button.on{background:rgba(94,67,30,0.95);color:var(--accent-hi)}"
 				".pane{display:none;width:680px;max-width:90%%}"
 				".pane.on{display:block}"
 				".row{display:flex;align-items:center;justify-content:space-between;"
 				"padding:14px 20px;background:rgba(26,18,11,0.6);"
 				"border:1px solid rgba(184,136,56,0.4);margin-bottom:8px}"
-				".row .lbl{font-size:14px;letter-spacing:2px;color:%23f0e0c0}"
+				".row .lbl{font-size:14px;letter-spacing:2px;color:var(--ink)}"
 				".row .ctl{display:flex;align-items:center;gap:12px;min-width:220px;"
 				"justify-content:flex-end}"
-				".row input[type='range']{width:180px;accent-color:%23f3c44c}"
-				".row .val{font-family:monospace;color:%23f3c44c;font-size:13px;"
+				".row input[type='range']{width:180px;accent-color:var(--accent-hi)}"
+				".row .val{font-family:monospace;color:var(--accent-hi);font-size:13px;"
 				"min-width:42px;text-align:right}"
 				".tog{position:relative;width:44px;height:22px;background:rgba(40,30,20,0.9);"
-				"border:1px solid %23b88838;border-radius:11px;cursor:pointer;"
+				"border:1px solid var(--accent-mid);border-radius:11px;cursor:pointer;"
 				"transition:background 0.15s}"
 				".tog::after{content:'';position:absolute;left:3px;top:2px;"
-				"width:14px;height:14px;border-radius:50%%;background:%23b88838;"
+				"width:14px;height:14px;border-radius:50%%;background:var(--accent-mid);"
 				"transition:left 0.15s,background 0.15s}"
 				".tog.on{background:rgba(94,67,30,0.95)}"
-				".tog.on::after{left:25px;background:%23f3c44c}"
+				".tog.on::after{left:25px;background:var(--accent-hi)}"
 				".kvtbl{border-collapse:collapse;margin:0 auto}"
 				".kvtbl td{padding:6px 18px;font-size:14px;letter-spacing:1px;"
 				"border-bottom:1px solid rgba(184,136,56,0.25)}"
-				".kvtbl td:first-child{color:%23b88838;text-align:right;width:220px}"
-				".kvtbl td:last-child{color:%23f0e0c0;font-family:monospace}"
+				".kvtbl td:first-child{color:var(--accent-mid);text-align:right;width:220px}"
+				".kvtbl td:last-child{color:var(--ink);font-family:monospace}"
 				".back{margin-top:24px;width:160px}"
+				".theme-grid{display:grid;grid-template-columns:repeat(auto-fill,"
+				"minmax(220px,1fr));gap:14px;width:680px;max-width:90%%}"
+				".theme-card{background:rgba(26,18,11,0.75);"
+				"border:1px solid var(--accent-mid);padding:16px 18px;"
+				"cursor:pointer;transition:background 0.15s,transform 0.15s,"
+				"border-color 0.15s;font-family:inherit;color:inherit;"
+				"text-align:left}"
+				".theme-card:hover{background:rgba(94,67,30,0.85);transform:translateY(-2px);"
+				"border-color:var(--accent-hi)}"
+				".theme-card.on{box-shadow:0 0 0 2px var(--accent-hi) inset}"
+				".theme-card .swatches{display:flex;gap:6px;margin-bottom:10px}"
+				".theme-card .swatches span{display:block;width:32px;height:24px;"
+				"border:1px solid rgba(0,0,0,0.4)}"
+				".theme-card h3{margin:0 0 6px;color:var(--accent-hi);"
+				"font-size:16px;letter-spacing:2px;font-weight:400}"
+				".theme-card p{margin:0;font-size:11px;line-height:1.4;"
+				"opacity:0.78}"
 				"</style></head><body>"
 				"<h1>Settings</h1>"
-				"<div class='tag'>Audio | Network | Controls</div>"
+				"<div class='tag'>Audio | Network | Controls | Theme</div>"
 				"<div class='tabs'>"
 				"<button class='on' onclick=\"tab(0)\">Audio</button>"
 				"<button onclick=\"tab(1)\">Network</button>"
 				"<button onclick=\"tab(2)\">Controls</button>"
+				"<button onclick=\"tab(3)\">Theme</button>"
 				"</div>"
 				// ── Audio pane ──
 				"<div class='pane on' id='p0'>"
@@ -1152,6 +1192,44 @@ int main(int argc, char** argv) {
 				"<tr><td>Debug / Tuning</td><td>F3 / F6</td></tr>"
 				"<tr><td>Screenshot</td><td>F2</td></tr>"
 				"</table></div>"
+				// ── Theme pane ── three preset cards. Hover → live-preview
+				// via JS-side document.documentElement.style.setProperty;
+				// click → persist via `set:theme:<id>` (page reload not
+				// strictly needed since the var swap is live, but a reload
+				// rebakes the active class on the right card).
+				"<div class='pane' id='p3'>"
+				"<div class='theme-grid'>"
+				"<div class='theme-card' data-id='brass' "
+				"data-hi='%23f3c44c' data-mid='%23b88838' data-ink='%23f0e0c0' "
+				"onmouseenter=\"thHover(this)\" onmouseleave=\"thLeave()\" "
+				"onclick=\"thPick(this)\">"
+				"<div class='swatches'>"
+				"<span style='background:%23f3c44c'></span>"
+				"<span style='background:%23b88838'></span>"
+				"<span style='background:%23f0e0c0'></span>"
+				"</div><h3>Brass &amp; Deep Wood</h3>"
+				"<p>The default. Civ6-sepia.</p></div>"
+				"<div class='theme-card' data-id='cobalt' "
+				"data-hi='%237eb8e8' data-mid='%233a6890' data-ink='%23dde6ed' "
+				"onmouseenter=\"thHover(this)\" onmouseleave=\"thLeave()\" "
+				"onclick=\"thPick(this)\">"
+				"<div class='swatches'>"
+				"<span style='background:%237eb8e8'></span>"
+				"<span style='background:%233a6890'></span>"
+				"<span style='background:%23dde6ed'></span>"
+				"</div><h3>Cobalt &amp; Steel</h3>"
+				"<p>Cool blues. Reads like a UI pattern guide.</p></div>"
+				"<div class='theme-card' data-id='lichen' "
+				"data-hi='%23d4cf9f' data-mid='%238a9970' data-ink='%23ede5d0' "
+				"onmouseenter=\"thHover(this)\" onmouseleave=\"thLeave()\" "
+				"onclick=\"thPick(this)\">"
+				"<div class='swatches'>"
+				"<span style='background:%23d4cf9f'></span>"
+				"<span style='background:%238a9970'></span>"
+				"<span style='background:%23ede5d0'></span>"
+				"</div><h3>Bone &amp; Lichen</h3>"
+				"<p>Dusty ranger. Forest scout vibes.</p></div>"
+				"</div></div>"
 				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
 				kVersion +
 				"<script>"
@@ -1175,6 +1253,27 @@ int main(int argc, char** argv) {
 				"const on=!el.classList.contains('on');"
 				"el.classList.toggle('on',on);"
 				"send('set:'+key+':'+(on?'false':'true'));}"
+				// Theme handlers — hover sets the CSS vars on :root for an
+				// instant preview; leave restores the active theme. Pick
+				// commits the choice (server-side write happens via the
+				// `set:theme:<id>` action handler in main.cpp).
+				"function applyTheme(hi,mid,ink){"
+				"const r=document.documentElement.style;"
+				"r.setProperty('--accent-hi',hi);"
+				"r.setProperty('--accent-mid',mid);"
+				"r.setProperty('--ink',ink);}"
+				"function thHover(c){applyTheme(c.dataset.hi,c.dataset.mid,c.dataset.ink);}"
+				"function thLeave(){const c=document.querySelector('.theme-card.on');"
+				"if(c)applyTheme(c.dataset.hi,c.dataset.mid,c.dataset.ink);}"
+				"function thPick(c){"
+				"document.querySelectorAll('.theme-card').forEach(x=>x.classList.remove('on'));"
+				"c.classList.add('on');"
+				"applyTheme(c.dataset.hi,c.dataset.mid,c.dataset.ink);"
+				"send('set:theme:'+c.dataset.id);}"
+				"(()=>{const id=" + std::string("'") + game.settings().theme_id + "';"
+				"const c=document.querySelector('.theme-card[data-id=\"'+id+'\"]')||"
+				"document.querySelector('.theme-card[data-id=\"brass\"]');"
+				"if(c)c.classList.add('on');})();"
 				"</script></body></html>";
 			(void)boolStr;
 			return html;
@@ -1262,17 +1361,17 @@ int main(int argc, char** argv) {
 				for (auto& it : groupItems) items.push_back(std::move(it));
 			}
 
-			std::string html = "data:text/html,<html><head><style>" + kDexCss +
+			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kDexCss +
 				".sb-grp-h{padding:12px 22px 6px;font-size:12px;letter-spacing:3px;"
-				"color:%23f3c44c;text-transform:uppercase;cursor:pointer;"
+				"color:var(--accent-hi);text-transform:uppercase;cursor:pointer;"
 				"border-top:1px solid rgba(184,136,56,0.25);user-select:none;"
 				"display:flex;justify-content:space-between;align-items:center}"
-				".sb-grp-h:hover{color:%23ffe28a}"
+				".sb-grp-h:hover{color:var(--accent-hi)}"
 				".sb-grp-h .arr{font-size:10px;opacity:0.6;transition:transform 0.15s}"
 				".sb-grp.collapsed .sb-grp-h .arr{transform:rotate(-90deg)}"
 				".sb-grp.collapsed .sb-grp-body{display:none}"
 				".sb-sub{padding:8px 22px 2px;font-size:10px;letter-spacing:2px;"
-				"color:%23b88838;text-transform:uppercase;opacity:0.78}"
+				"color:var(--accent-mid);text-transform:uppercase;opacity:0.78}"
 				".sb-grp .sb-row{padding-left:30px}"
 				"</style></head><body>"
 				"<aside class='sidebar'>"
@@ -1408,26 +1507,26 @@ int main(int argc, char** argv) {
 		// kCss captured by value because this lambda is invoked from the
 		// action callback long after this scope returns — a `[&]` capture
 		// would dangle and produce a corrupted data: URL (we hit this).
-		auto multiplayerPage = [kCss, kJs, kVersion, &game]() -> std::string {
+		auto multiplayerPage = [kCss, kJs, kVersion, &game, themeRoot]() -> std::string {
 			constexpr const char* kClientVer = "0.2.0";
-			std::string html = "data:text/html,<html><head><style>" + kCss +
+			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				".srv{display:grid;grid-template-columns:1fr auto auto auto;"
 				"column-gap:18px;align-items:center;width:680px;padding:12px 22px;"
 				"margin:5px 0;background:rgba(26,18,11,0.78);"
-				"border:1px solid %23b88838;color:%23f3c44c;font-size:14px;"
+				"border:1px solid var(--accent-mid);color:var(--accent-hi);font-size:14px;"
 				"letter-spacing:1px;font-family:monospace;cursor:pointer;"
 				"transition:background 0.15s,transform 0.15s}"
 				".srv.mismatch{opacity:0.55;border-color:rgba(184,136,56,0.4)}"
 				".srv:hover{background:rgba(94,67,30,0.92);transform:scale(1.01)}"
-				".srv .ip{color:%23f3c44c}"
-				".srv .world{color:%23f0e0c0;font-size:12px;text-transform:uppercase;"
+				".srv .ip{color:var(--accent-hi)}"
+				".srv .world{color:var(--ink);font-size:12px;text-transform:uppercase;"
 				"letter-spacing:2px}"
-				".srv .ver{color:%23b88838;font-size:11px;letter-spacing:1px}"
-				".srv .pl{color:%23b88838;font-size:13px;text-align:right;min-width:90px}"
+				".srv .ver{color:var(--accent-mid);font-size:11px;letter-spacing:1px}"
+				".srv .pl{color:var(--accent-mid);font-size:13px;text-align:right;min-width:90px}"
 				".filters{display:flex;gap:18px;align-items:center;margin-bottom:12px;"
-				"font-size:12px;letter-spacing:2px;color:%23b88838;text-transform:uppercase}"
+				"font-size:12px;letter-spacing:2px;color:var(--accent-mid);text-transform:uppercase}"
 				".filters label{display:flex;align-items:center;gap:8px;cursor:pointer}"
-				".filters input[type='checkbox']{accent-color:%23f3c44c}"
+				".filters input[type='checkbox']{accent-color:var(--accent-hi)}"
 				".empty{opacity:0.5;font-style:italic;margin:24px 0}"
 				"</style></head><body>"
 				"<h1>Multiplayer</h1>"
@@ -1823,6 +1922,12 @@ int main(int argc, char** argv) {
 				else if (key == "footsteps_muted") { s.footsteps_muted = b; game.audio().setFootstepsMuted(b); }
 				else if (key == "effects_muted")   { s.effects_muted   = b; game.audio().setEffectsMuted(b); }
 				else if (key == "lan_visible")     { s.lan_visible     = b; }
+				else if (key == "theme") {
+					// "set:theme:<id>" — store the id, persist. Live preview
+					// already happened JS-side; the persisted value lets the
+					// next page-load bake it into themeRoot().
+					s.theme_id = val;
+				}
 				else { std::fprintf(stderr, "[set] unknown key: %s\n", key.c_str()); return; }
 				s.save();
 			} else if (action.rfind("pick:", 0) == 0) {

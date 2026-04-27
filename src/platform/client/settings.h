@@ -35,6 +35,12 @@ struct Settings {
 	// turns it into a vector.
 	std::string disabled_mods;
 
+	// Theme — drives the CEF page palette via CSS variables. Three preset
+	// ids today: "brass" (default), "cobalt", "lichen". Other ids fall back
+	// to brass at theme-resolve time. Live-applied via page reload — no
+	// engine restart needed.
+	std::string theme_id = "brass";
+
 	// Path resolution: $XDG_CONFIG_HOME/solarium/settings.json,
 	// falling back to $HOME/.solarium/settings.json.
 	static const std::string& path();

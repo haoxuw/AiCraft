@@ -133,6 +133,7 @@ Settings Settings::load() {
 		else if (key == "effects_muted"   && t == ValType::Bool)   s.effects_muted   = b;
 		else if (key == "lan_visible"     && t == ValType::Bool)   s.lan_visible     = b;
 		else if (key == "disabled_mods"   && t == ValType::String) s.disabled_mods   = str;
+		else if (key == "theme_id"        && t == ValType::String) s.theme_id        = str;
 
 		L.skipWs();
 		if (L.match(',')) continue;
@@ -163,7 +164,8 @@ bool Settings::save() const {
 	f << "  \"effects_muted\": "   << (effects_muted   ? "true" : "false") << ",\n";
 	f << "  \"lan_visible\": "     << (lan_visible     ? "true" : "false") << ",\n";
 	f << "  \"sim_speed_cap\": "   << sim_speed_cap << ",\n";
-	f << "  \"disabled_mods\": \"" << disabled_mods   << "\"\n";
+	f << "  \"disabled_mods\": \"" << disabled_mods   << "\",\n";
+	f << "  \"theme_id\": \""      << theme_id        << "\"\n";
 	f << "}\n";
 	f.close();
 	if (!f) {
