@@ -109,13 +109,14 @@ void ChunkGenService::workerLoop() {
 
 void ChunkGenService::buildMessage(const Chunk& chunk, ChunkPos pos, bool useZstd,
                                    std::vector<uint8_t>& out) const {
-	// Payload: [i32 cx][i32 cy][i32 cz][u32×CHUNK_VOLUME][u8×CHUNK_VOLUME appearance]
+	// Payload: [i32 cx][i32 cy][i32 cz][u8 zone][u32×CHUNK_VOLUME][u8×CHUNK_VOLUME appearance]
 	// — matches ClientManager::queueChunk. Annotation tail (if any) is appended
-	// by the caller, after the appearance block.
+	// by the caller, after the appearance block. Zone byte added in protocol v10.
 	net::WriteBuffer cb;
 	cb.writeI32(pos.x);
 	cb.writeI32(pos.y);
 	cb.writeI32(pos.z);
+	cb.writeU8(static_cast<uint8_t>(chunk.zone()));
 	for (int i = 0; i < CHUNK_VOLUME; i++)
 		cb.writeU32(((uint32_t)chunk.getRawParam2(i) << 16) | chunk.getRaw(i));
 	for (int i = 0; i < CHUNK_VOLUME; i++)

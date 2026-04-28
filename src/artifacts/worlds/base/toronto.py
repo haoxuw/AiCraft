@@ -3,16 +3,18 @@
 Built from Google Photorealistic 3D Tiles via the voxel_earth pipeline:
 
   1. python -m voxel_earth set-key <YOUR_KEY>
-  2. python -m voxel_earth download --location "Toronto" --radius 100
+  2. python -m voxel_earth download --location "CN Tower, Toronto" \\
+                                    --radius 800 --height 1200
   3. ./build/solarium-voxel-bake \\
         --glb-dir ~/.voxel/google/glb \\
         --out     ~/.voxel/regions/toronto/blocks.bin \\
         --voxel-size 1.0
   4. ./build/solarium-server --template 6
 
-The bake step writes a single VEAR-format file containing the full region
-(228k voxels for the 100m default). The server reads that file at boot;
-chunks come straight from voxel lookups, no Perlin and no villages.
+Radius 800 m reaches Lake Ontario from the CN Tower; height 1200 m clears
+the spire at 553 m with margin. The bake step writes a single VEAR file
+containing the full region; the server reads it at boot and chunks come
+straight from voxel lookups (no Perlin, no villages).
 """
 
 import os

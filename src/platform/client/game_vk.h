@@ -47,6 +47,7 @@
 #include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
 #include "client/hotbar.h"
+#include "client/zone_indicator.h"
 #include "client/lan_browser.h"
 #include "client/loading_screen.h"
 #include "client/menu_plaza.h"
@@ -868,6 +869,10 @@ private:
 	solarium::Hotbar m_hotbar;
 	std::string      m_hotbarSavePath;  // set after login; empty before.
 	bool             m_hotbarSeeded = false;  // false until first S_INVENTORY.
+
+	// Camera-driven zone indicator. Polled each HUD frame with m_cam.position
+	// (the actual camera world pos, not player) so RTS pans show the right zone.
+	solarium::ZoneIndicator m_zoneIndicator;
 
 	// Tab opens the inventory panel. When m_invOther != 0, renders a second
 	// pane for that entity (chest/NPC). Sort mode cycles via a UI button.

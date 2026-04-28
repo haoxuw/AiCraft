@@ -4,10 +4,27 @@
 //   solarium-voxel-bake --glb-dir <dir> --out <region.bin>
 //                       [--voxel-size 1.0]
 //                       [--origin x,y,z]
+//                       [--no-fill]                   # skip interior fill
+//                       [--fill-stone-depth 8]        # stone band thickness
 //
 // Picks a shared ECEF origin from the first .glb in the directory unless
 // --origin is provided. Uses 1m voxels by default. Multiple tiles writing
 // to the same cell: first tile wins.
+//
+// Interior fill (default ON):
+//   Google 3D Tiles deliver surface meshes only — building interiors are
+//   hollow. The bake follows up the voxelisation with a 6-neighbour BFS
+//   flood-fill from the bbox boundary, marking every reachable empty cell
+//   as "exterior". Cells that are neither original voxels nor exterior are
+//   "interior" and get filled with Stone (top --fill-stone-depth blocks of
+//   the column) or Dirt (deeper). Filled voxels carry alpha sentinels:
+//     a=254 -> stone-fill
+//     a=253 -> dirt-fill
+//   so the chunk-fill classifier can pick the right block at any height
+//   without the colour palette getting confused.
+//
+// Water columns (topmost voxel reads as blue) are skipped so lakes don't
+// get buried.
 
 #include "server/voxel_earth/glb_loader.h"
 #include "server/voxel_earth/region.h"
@@ -21,6 +38,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -36,6 +54,8 @@ struct Args {
 	float       voxel_size = 1.0f;
 	bool        have_origin = false;
 	std::array<double, 3> origin { 0, 0, 0 };
+	bool        do_fill = true;
+	int         fill_stone_depth = 8;
 };
 
 static bool parse_args(int argc, char** argv, Args& a) {
@@ -50,7 +70,10 @@ static bool parse_args(int argc, char** argv, Args& a) {
 			if (!v) return false;
 			if (std::sscanf(v, "%lf,%lf,%lf", &a.origin[0], &a.origin[1], &a.origin[2]) != 3) return false;
 			a.have_origin = true;
-		} else if (k == "--help" || k == "-h") {
+		}
+		else if (k == "--no-fill")          { a.do_fill = false; }
+		else if (k == "--fill-stone-depth") { if (auto v = next()) a.fill_stone_depth = std::atoi(v); else return false; }
+		else if (k == "--help" || k == "-h") {
 			return false;
 		} else {
 			std::fprintf(stderr, "unknown arg: %s\n", k.c_str());
@@ -154,6 +177,139 @@ int main(int argc, char** argv) {
 	if (combined.empty()) {
 		std::fprintf(stderr, "no voxels produced\n");
 		return 1;
+	}
+
+	// ── Interior fill pass ──────────────────────────────────────────────
+	// Flood-fill exterior from the bbox boundary, then write Stone/Dirt
+	// voxels into every empty interior cell so players can't fall through
+	// hollow buildings.
+	size_t fill_stone_count = 0;
+	size_t fill_dirt_count  = 0;
+	if (a.do_fill) {
+		const auto t_fill0 = std::chrono::steady_clock::now();
+		const int64_t nx = (int64_t)gmax_x - gmin_x + 1;
+		const int64_t ny = (int64_t)gmax_y - gmin_y + 1;
+		const int64_t nz = (int64_t)gmax_z - gmin_z + 1;
+		const int64_t total_cells = nx * ny * nz;
+		const int64_t words = (total_cells + 63) / 64;
+
+		std::printf("\ninterior fill: bbox %lldx%lldx%lld = %.2fGcells, %lluMB/bitmap\n",
+		            (long long)nx, (long long)ny, (long long)nz,
+		            (double)total_cells / 1e9,
+		            (unsigned long long)((words * 8) / (1024*1024)));
+
+		std::vector<uint64_t> bmFilled(words, 0);
+		std::vector<uint64_t> bmExterior(words, 0);
+
+		auto idx = [&](int x, int y, int z) -> int64_t {
+			return (int64_t)(x - gmin_x)
+			     + nx * ((int64_t)(y - gmin_y) + ny * (int64_t)(z - gmin_z));
+		};
+		auto getbit = [&](const std::vector<uint64_t>& bm, int64_t i) -> bool {
+			return (bm[i >> 6] >> (i & 63)) & 1ull;
+		};
+		auto setbit = [&](std::vector<uint64_t>& bm, int64_t i) {
+			bm[i >> 6] |= (uint64_t)1 << (i & 63);
+		};
+
+		// 1. Mark filled.
+		for (auto& kv : combined) setbit(bmFilled, idx(kv.second.x, kv.second.y, kv.second.z));
+
+		// 2. BFS flood-fill exterior from boundary. std::deque<> rather than a
+		// vector-as-stack so memory tracks the active frontier (~surface area)
+		// instead of growing to the worst-case path length: with DFS the
+		// vector capacity blows past 2 GB on a 1700×630×2300 bbox and the
+		// kernel OOM-kills the bake.
+		std::deque<int64_t> queue;
+		auto pushIfAir = [&](int x, int y, int z) {
+			if (x < gmin_x || x > gmax_x ||
+			    y < gmin_y || y > gmax_y ||
+			    z < gmin_z || z > gmax_z) return;
+			int64_t i = idx(x, y, z);
+			if (getbit(bmFilled, i) || getbit(bmExterior, i)) return;
+			setbit(bmExterior, i);
+			queue.push_back(i);
+		};
+
+		// Seed all six faces.
+		for (int y = gmin_y; y <= gmax_y; ++y)
+			for (int z = gmin_z; z <= gmax_z; ++z) {
+				pushIfAir(gmin_x, y, z); pushIfAir(gmax_x, y, z);
+			}
+		for (int x = gmin_x; x <= gmax_x; ++x)
+			for (int z = gmin_z; z <= gmax_z; ++z) {
+				pushIfAir(x, gmin_y, z); pushIfAir(x, gmax_y, z);
+			}
+		for (int x = gmin_x; x <= gmax_x; ++x)
+			for (int y = gmin_y; y <= gmax_y; ++y) {
+				pushIfAir(x, y, gmin_z); pushIfAir(x, y, gmax_z);
+			}
+
+		size_t bfs_visits = 0;
+		size_t bfs_peak_q = 0;
+		while (!queue.empty()) {
+			int64_t i = queue.front(); queue.pop_front();
+			int64_t r = i;
+			int x = gmin_x + (int)(r % nx); r /= nx;
+			int y = gmin_y + (int)(r % ny); r /= ny;
+			int z = gmin_z + (int)r;
+			pushIfAir(x - 1, y, z); pushIfAir(x + 1, y, z);
+			pushIfAir(x, y - 1, z); pushIfAir(x, y + 1, z);
+			pushIfAir(x, y, z - 1); pushIfAir(x, y, z + 1);
+			if (queue.size() > bfs_peak_q) bfs_peak_q = queue.size();
+			if ((++bfs_visits & ((1 << 24) - 1)) == 0)
+				std::printf("  bfs visited %.0fM (queue=%.1fM peak=%.1fM)\n",
+				            (double)bfs_visits / 1e6,
+				            (double)queue.size() / 1e6,
+				            (double)bfs_peak_q / 1e6);
+		}
+		std::printf("  bfs done: visits=%zu peak_queue=%zu\n", bfs_visits, bfs_peak_q);
+
+		// 3. Per-(x,z) topmost voxel + water-column detection.
+		auto packxz = [](int32_t x, int32_t z) -> uint64_t {
+			return ((uint64_t)(uint32_t)x) | ((uint64_t)(uint32_t)z << 32);
+		};
+		struct ColTop { int32_t y_top; bool is_water; };
+		std::unordered_map<uint64_t, ColTop> column_top;
+		column_top.reserve(combined.size());
+		for (auto& kv : combined) {
+			const auto& rec = kv.second;
+			auto k = packxz(rec.x, rec.z);
+			auto it = column_top.find(k);
+			const bool blue = (int)rec.b > std::max((int)rec.r, (int)rec.g) + 20;
+			if (it == column_top.end()) column_top.emplace(k, ColTop{ rec.y, blue });
+			else if (rec.y > it->second.y_top) it->second = { rec.y, blue };
+		}
+
+		// 4. Insert fill voxels for interior cells.
+		constexpr uint8_t kStoneR = 145, kStoneG = 145, kStoneB = 145, kStoneA = 254;
+		constexpr uint8_t kDirtR  = 110, kDirtG  =  80, kDirtB  =  55, kDirtA  = 253;
+		size_t skipped_water_columns = 0;
+		for (auto& [k, ct] : column_top) {
+			if (ct.is_water) { ++skipped_water_columns; continue; }
+			int32_t cx = (int32_t)(uint32_t)(k & 0xFFFFFFFFull);
+			int32_t cz = (int32_t)(uint32_t)(k >> 32);
+			for (int y = gmin_y; y < ct.y_top; ++y) {
+				int64_t i = idx(cx, y, cz);
+				if (getbit(bmFilled, i) || getbit(bmExterior, i)) continue;
+				const int depth = ct.y_top - y;
+				ve::VoxelRecord rec;
+				rec.x = cx; rec.y = y; rec.z = cz;
+				if (depth <= a.fill_stone_depth) {
+					rec.r = kStoneR; rec.g = kStoneG; rec.b = kStoneB; rec.a = kStoneA;
+					++fill_stone_count;
+				} else {
+					rec.r = kDirtR; rec.g = kDirtG; rec.b = kDirtB; rec.a = kDirtA;
+					++fill_dirt_count;
+				}
+				combined.emplace(pack(cx, y, cz), rec);
+				gmin_y = std::min(gmin_y, y);
+			}
+		}
+		const auto t_fill1 = std::chrono::steady_clock::now();
+		const double t_fill = std::chrono::duration<double>(t_fill1 - t_fill0).count();
+		std::printf("interior fill: stone=%zu dirt=%zu, water columns skipped=%zu, %.2fs\n",
+		            fill_stone_count, fill_dirt_count, skipped_water_columns, t_fill);
 	}
 
 	ve::VoxelRegion region;

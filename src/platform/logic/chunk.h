@@ -2,6 +2,7 @@
 
 #include "logic/types.h"
 #include "logic/block_registry.h"
+#include "logic/zone.h"
 #include <array>
 #include <memory>
 
@@ -80,6 +81,13 @@ public:
 
 	bool isDirty() const { return m_dirty; }
 	void clearDirty() { m_dirty = false; }
+
+	// Zone — gameplay tag for the whole chunk (Wilderness, City, Water, …).
+	// Set once by the WorldTemplate at generate time, sent once on the wire,
+	// never updated at runtime (see logic/zone.h). Independent of Lite/Full
+	// chunk classification — homogeneous chunks still carry a zone byte.
+	Zone zone() const { return m_zone; }
+	void setZone(Zone z) { m_zone = z; }
 
 	// --- Mode introspection (for save/load, net, mesher cull) ---
 	Mode mode() const { return m_blocks ? Mode::Full : Mode::Lite; }
@@ -176,6 +184,9 @@ private:
 	// Lite tuple — also valid in Full mode but ignored.
 	BlockId m_liteBid = BLOCK_AIR;
 	uint8_t m_liteApp = 0;
+
+	// Chunk-level zone tag; constant after WorldTemplate::generate().
+	Zone m_zone = Zone::Unknown;
 
 	// Full mode storage; nullptr ⇒ Lite.
 	std::unique_ptr<std::array<BlockId, CHUNK_VOLUME>> m_blocks;

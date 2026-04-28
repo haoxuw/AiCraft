@@ -67,7 +67,11 @@ namespace solarium::net {
 //     the orientation at placement time (Tab/MMB-scroll) instead of the
 //     server hardcoding it. Mixed-version chatter isn't supported — the
 //     field's position is load-bearing for rehydrating the Interact tail.
-static constexpr uint32_t PROTOCOL_VERSION = 9;
+// v10: S_CHUNK / S_CHUNK_Z carry a u8 zone byte right after the chunk
+//     position (cx, cy, cz), before the packed-block payload. Server emits;
+//     client mirrors into Chunk::zone(). HUD reads the chunk under the
+//     camera (not the player) to drive the zone indicator.
+static constexpr uint32_t PROTOCOL_VERSION = 10;
 
 // S_REMOVE trailing byte. Server writes it unconditionally (from v8); a v7
 // client stops reading after the entity id, so appending a byte is safe.

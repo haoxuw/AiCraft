@@ -95,6 +95,14 @@ public:
 		return id;
 	}
 
+	// Replace an already-registered block's appearance palette. Used by
+	// voxel_earth at world-load time to attach a per-region tint palette
+	// to Stone / Glass / Wood / Leaves / etc., so each voxel keeps its
+	// source RGB (tint × base = source) without changing the BlockId.
+	void setAppearancePalette(BlockId id, std::vector<AppearanceEntry> palette) {
+		if (id < m_defs.size()) m_defs[id].appearance_palette = std::move(palette);
+	}
+
 	const BlockDef& get(BlockId id) const {
 		if (id >= m_defs.size()) return m_defs[0]; // fallback to Air
 		return m_defs[id];

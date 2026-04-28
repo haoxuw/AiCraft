@@ -43,6 +43,20 @@ public:
 	// (Writers record themselves inside their scoped lock helper.)
 	virtual void recordReaderAcquire(uint64_t /*waitNs*/, uint64_t /*holdNs*/) {}
 
+	// Zone for the chunk-column at world-coords (x, z). Zone is a per-chunk
+	// property (see logic/zone.h), uniform across the column, so we need any
+	// loaded chunk at that XZ; we try common y-slices around the player and
+	// fall back to Zone::Unknown if no chunk at this XZ has been streamed in.
+	virtual Zone zoneAt(int x, int z) {
+		auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+		const int cx = div(x, CHUNK_SIZE);
+		const int cz = div(z, CHUNK_SIZE);
+		for (int cy : { 0, 1, 2, 3, -1, 4, 5, -2, 6, 7 }) {
+			if (Chunk* c = getChunkIfLoaded({cx, cy, cz})) return c->zone();
+		}
+		return Zone::Unknown;
+	}
+
 	// Appearance lookup — default forwards to the underlying chunk's storage.
 	// Override only if you need to intercept (e.g. tests). Returns 0 for
 	// unloaded chunks or out-of-range coords.

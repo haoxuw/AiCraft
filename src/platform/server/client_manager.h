@@ -1294,10 +1294,11 @@ private:
 		Chunk* chunk = m_server.world().getChunk(pos);
 		if (!chunk) return;
 
-		// Payload: [i32 cx][i32 cy][i32 cz][u32×4096][u8×4096 appearance] (v5+)
+		// Payload: [i32 cx][i32 cy][i32 cz][u8 zone][u32×4096][u8×4096 appearance] (v10+)
 		//          [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N
 		net::WriteBuffer cb;
 		cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
+		cb.writeU8(static_cast<uint8_t>(chunk->zone()));
 		for (int i = 0; i < CHUNK_VOLUME; i++)
 			cb.writeU32(((uint32_t)chunk->getRawParam2(i) << 16) | chunk->getRaw(i));
 		for (int i = 0; i < CHUNK_VOLUME; i++)

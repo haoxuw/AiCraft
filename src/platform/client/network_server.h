@@ -749,6 +749,7 @@ private:
 			int cx = rb.readI32(), cy = rb.readI32(), cz = rb.readI32();
 			ChunkPos cp = {cx, cy, cz};
 			auto chunk = std::make_unique<Chunk>();
+			chunk->setZone(static_cast<Zone>(rb.readU8()));   // v10+
 			for (int ly = 0; ly < CHUNK_SIZE; ly++)
 				for (int lz = 0; lz < CHUNK_SIZE; lz++)
 					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
@@ -786,6 +787,7 @@ private:
 			net::ReadBuffer zrb(decomp.data(), actual);
 			ChunkPos cp = {zrb.readI32(), zrb.readI32(), zrb.readI32()};
 			auto chunk = std::make_unique<Chunk>();
+			chunk->setZone(static_cast<Zone>(zrb.readU8()));   // v10+
 			for (int ly = 0; ly < CHUNK_SIZE; ly++)
 				for (int lz = 0; lz < CHUNK_SIZE; lz++)
 					for (int lx = 0; lx < CHUNK_SIZE; lx++) {

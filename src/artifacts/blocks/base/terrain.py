@@ -58,7 +58,7 @@ blocks = [
         "name": "Sandstone",
         "solid": True,
         "hardness": 3.0,
-        "color": [0.80, 0.72, 0.48],
+        "color": [0.72, 0.66, 0.55],
     },
     {
         "id": "sand",

@@ -55,6 +55,9 @@ public:
 		: m_seed(seed), m_templateIndex(templateIndex),
 		  m_template(tmpl ? tmpl : std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/village.py")) {
 		registerAllBuiltins(blocks, entities);
+		// Templates with region-derived appearance palettes (voxel_earth) need
+		// to install per-block tint tables now that the registry is populated.
+		m_template->onBlockRegistryReady(blocks);
 	}
 
 	WorldTemplate& getTemplate() { return *m_template; }

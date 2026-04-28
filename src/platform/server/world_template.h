@@ -4,12 +4,17 @@
 #include "logic/chunk.h"
 #include "logic/block_registry.h"
 #include "logic/constants.h"
+#include "logic/zone.h"
+#include "logic/zone_provider.h"
 #include "server/noise.h"
 #include "server/world_gen_config.h"
 #include "python/python_bridge.h"
 #include "server/world_accessibility.h"
+#include "server/voxel_earth/landuse.h"
+#include "server/voxel_earth/osm_zone_provider.h"
 #include "server/voxel_earth/palette.h"
 #include "server/voxel_earth/region.h"
+#include "server/voxel_earth/voxel_palette.h"
 #include <string>
 #include <cmath>
 #include <memory>
@@ -36,6 +41,19 @@ public:
 
 	virtual std::string name()        const = 0;
 	virtual std::string description() const = 0;
+
+	// Source of zone classification for this template. Default returns the
+	// engine-wide NullZoneProvider (everything is Zone::Unknown); voxel_earth
+	// templates override to return an OsmZoneProvider backed by landuse.json.
+	// Used by generate() to tag every chunk and by HUD / AI to query the
+	// player's surroundings.
+	virtual const ZoneProvider& zones() const { return NullZoneProvider::instance(); }
+
+	// Called once per World, immediately after registerAllBuiltins(). Hook for
+	// templates that need to mutate the BlockRegistry — e.g. attaching a
+	// per-region appearance palette to voxel_earth blocks (see
+	// ConfigurableWorldTemplate::onBlockRegistryReady). Default: no-op.
+	virtual void onBlockRegistryReady(BlockRegistry& /*blocks*/) {}
 
 	// pendingSpawns (optional): populated with structure entities that should
 	// be spawned after the chunk is stored. Pass nullptr to discard.
@@ -96,7 +114,63 @@ public:
 				       m_py.voxelEarthRegion.c_str(), err.c_str());
 				m_region.reset();
 			}
+
+			// Optional landuse.json sibling — per-chunk OSM category map.
+			// Absence is fine; chunk gen just leaves Zone::Unknown everywhere.
+			if (m_region) {
+				auto lu_path = m_py.voxelEarthRegion;
+				const auto slash = lu_path.find_last_of('/');
+				lu_path = (slash == std::string::npos ? "" : lu_path.substr(0, slash + 1))
+				          + "landuse.json";
+				std::string lu_err;
+				voxel_earth::LanduseGrid grid;
+				if (voxel_earth::read_landuse(lu_path, grid, &lu_err)) {
+					auto provider = std::make_unique<voxel_earth::OsmZoneProvider>(
+						std::move(grid),
+						m_py.voxelEarthOffsetX,
+						m_py.voxelEarthOffsetZ);
+					provider->logHistogram(lu_path);
+					m_zones = std::move(provider);
+				} else {
+					printf("[VoxelEarth] no zone map (%s — chunks default to Zone::Unknown)\n",
+					       lu_err.c_str());
+				}
+
+				// Quantise the source RGBs into a 256-entry tint palette.
+				// onBlockRegistryReady() will install per-block normalised
+				// versions once the BlockRegistry is built (constructor here
+				// runs before builtins).
+				m_voxelPalette.build(*m_region);
+			}
 		}
+	}
+
+	const ZoneProvider& zones() const override {
+		if (m_zones) return *m_zones;
+		return NullZoneProvider::instance();
+	}
+
+	void onBlockRegistryReady(BlockRegistry& blocks) override {
+		if (!m_voxelPalette.built) return;
+		// Every voxel-earth block we might pick by material rules registers the
+		// SAME 256-entry palette, but each entry is normalised by THIS block's
+		// base colour so `mesher.color *= tint` always restores the source RGB.
+		// Index 0 is identity (1,1,1) → fill voxels render with the natural
+		// block tone instead of an arbitrary tint.
+		static constexpr const char* kVoxelEarthBlocks[] = {
+			BlockType::Stone,      BlockType::Cobblestone, BlockType::Granite,
+			BlockType::Marble,     BlockType::Sandstone,   BlockType::Dirt,
+			BlockType::Grass,      BlockType::Sand,        BlockType::Water,
+			BlockType::Snow,       BlockType::Glass,       BlockType::Wood,
+			BlockType::Log,        BlockType::Leaves,
+		};
+		for (const char* type_id : kVoxelEarthBlocks) {
+			const BlockId id = blocks.getId(type_id);
+			if (id == BLOCK_AIR) continue;   // not registered (e.g. headless test build)
+			blocks.setAppearancePalette(id, m_voxelPalette.as_palette_for(blocks.get(id).color_side));
+		}
+		printf("[VoxelEarth] appearance palette installed on %zu blocks\n",
+		       sizeof(kVoxelEarthBlocks) / sizeof(kVoxelEarthBlocks[0]));
 	}
 
 	std::string name()        const override { return m_py.name.empty() ? "World" : m_py.name; }
@@ -129,10 +203,28 @@ public:
 					top_y = v.y; top_x = v.x; top_z = v.z;
 				}
 			}
-			const int spawn_rx = top_x + 15;   // 15m offset from the tower
+			// Step east column-by-column past the landmark's footprint until the
+			// column is short enough to be clearly street, then spawn on the
+			// FIRST filled voxel scanning up — that's the road surface, not a
+			// rooftop or an interior basement.
+			constexpr int kMaxStreetHeight = 25;   // a column ≤ this is sidewalk/road
+			constexpr int kMaxScan         = 120;  // bail-out if we never find one
+			int spawn_rx = top_x + 30;             // fallback: clear the SkyPod radius
 			const int spawn_rz = top_z;
+			for (int dx = 5; dx <= kMaxScan; ++dx) {
+				const int rx = top_x + dx;
+				int col_top = m_region->bbox_min[1];
+				for (int y = m_region->bbox_max[1]; y >= m_region->bbox_min[1]; --y) {
+					if (m_region->lookup(rx, y, spawn_rz)) { col_top = y; break; }
+				}
+				const int col_height = col_top - m_region->bbox_min[1];
+				if (col_height > 0 && col_height <= kMaxStreetHeight) {
+					spawn_rx = rx;
+					break;
+				}
+			}
 			int ground_ry = m_region->bbox_min[1];
-			for (int y = m_region->bbox_max[1]; y >= m_region->bbox_min[1]; --y) {
+			for (int y = m_region->bbox_min[1]; y <= m_region->bbox_max[1]; ++y) {
 				if (m_region->lookup(spawn_rx, y, spawn_rz)) { ground_ry = y; break; }
 			}
 			return {
@@ -306,6 +398,13 @@ public:
 	void generate(Chunk& chunk, ChunkPos cpos, int seed,
 	              const BlockRegistry& blocks,
 	              std::vector<PendingStructureSpawn>* pendingSpawns = nullptr) override {
+		// Tag the chunk with its zone before any path runs — every chunk in
+		// the world gets a zone byte, even Lite/AIR-only ones. The provider
+		// is sourced once per world (m_zones) and called with chunk-centre
+		// world coords; column-uniform so chunk_y doesn't matter.
+		chunk.setZone(zones().zoneAt(cpos.x * CHUNK_SIZE + CHUNK_SIZE / 2,
+		                             cpos.z * CHUNK_SIZE + CHUNK_SIZE / 2));
+
 		// Voxel-earth chunks read straight from the baked region; no Perlin,
 		// no village stamping. Bedrock (stone) below the region floor, air above.
 		if (m_py.terrainType == "voxel_earth" && m_region) {
@@ -604,8 +703,10 @@ private:
 
 	// voxel_earth state — null when terrainType != "voxel_earth".
 	std::unique_ptr<voxel_earth::VoxelRegion> m_region;
+	std::unique_ptr<ZoneProvider>              m_zones;        // null → NullZoneProvider
 	mutable voxel_earth::ResolvedPalette       m_palette;
 	mutable bool                               m_paletteResolved = false;
+	voxel_earth::VoxelPalette                  m_voxelPalette; // per-region 256-entry tint
 
 	void generateVoxelEarthChunk(Chunk& chunk, ChunkPos cpos, const BlockRegistry& blocks) const {
 		if (!m_paletteResolved) {
@@ -630,7 +731,19 @@ private:
 					const int rz = wz - m_py.voxelEarthOffsetZ;
 					const auto* v = m_region->lookup(rx, ry, rz);
 					if (!v) continue;  // air
-					chunk.set(lx, ly, lz, voxel_earth::nearest_block_id(m_palette, v->r, v->g, v->b));
+					const int hAboveGround = ry - m_region->bbox_min[1];
+					chunk.set(lx, ly, lz,
+					          voxel_earth::block_for_voxel(m_palette, v->r, v->g, v->b, v->a,
+					                                       hAboveGround));
+					// Real GLB voxels (a==255) carry the source RGB into a tint;
+					// fill voxels (a sentinels) leave appearance=0 so the block
+					// renders with its natural colour.
+					if (m_voxelPalette.built &&
+					    v->a != voxel_earth::kAlphaFillStone &&
+					    v->a != voxel_earth::kAlphaFillDirt) {
+						chunk.setAppearance(lx, ly, lz,
+						                    m_voxelPalette.nearest(v->r, v->g, v->b));
+					}
 				}
 			}
 		}
