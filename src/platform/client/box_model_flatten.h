@@ -121,11 +121,13 @@ inline void appendBoxModel(std::vector<float>& out,
 		if (it != model.clips.end()) activeClip = &it->second;
 	}
 
-	// Pre-compute bone pose if a rig is bound. Empty when no rig — the
-	// per-part path below short-circuits the bone branch in that case.
-	std::vector<glm::mat4> rigPose;
+	// Per-frame bone pose. Thread-local cache keeps the vector's allocation
+	// alive across calls so a 100-entity scene doesn't churn the heap.
+	thread_local std::vector<glm::mat4> rigPose;
 	if (rig != nullptr) {
-		rigPose = computeRigPose(*rig, anim.currentClip, anim.time);
+		computeRigPose(*rig, anim.currentClip, anim.time, rigPose);
+	} else {
+		rigPose.clear();
 	}
 
 	glm::mat4 rightHandFrame(1.0f);
@@ -135,44 +137,33 @@ inline void appendBoxModel(std::vector<float>& out,
 
 	for (const auto& part : model.parts) {
 		glm::mat4 partMat = root;
+		bool boneDriven = false;
 
-		// Bone-driven branch: short-circuit the sin-driver / clip-override /
-		// attack-special-case path. The bone's pose already encodes its
-		// rest position + parent chain + active clip's keyframe rotations.
-		// `part.offset` is interpreted as bone-local (relative to the bone's
-		// origin, not the model origin) — the editor is responsible for
+		// Bone-driven path: the bone's accumulated transform encodes rest
+		// position + parent chain + active clip's keyframe rotations. When
+		// taken, skip the legacy sin-driver / clip-override / attack
+		// special-case branches. `part.offset` is interpreted as bone-local
+		// (relative to the bone's origin) — the editor is responsible for
 		// converting model-space offsets into bone-local at bind time.
 		if (rig != nullptr && !part.bone.empty()) {
 			int boneIdx = findBone(*rig, part.bone);
-			if (boneIdx >= 0 && boneIdx < (int)rigPose.size()) {
+			if (boneIdx >= 0) {
 				partMat = root * rigPose[boneIdx];
-
-				// Hand-frame capture + head-tracking still apply for held
-				// items + look-at, identical to the legacy path below.
-				if (!gotRightHand && part.name == "right_hand") {
-					rightHandFrame = partMat;
-					gotRightHand = true;
+				boneDriven = true;
+			} else {
+				// Once-per-(rigId, boneName) warning. Silent degradation
+				// would mask binding typos forever; we'd rather see them.
+				static thread_local std::unordered_map<std::string, char> warned;
+				std::string key = rig->id + "::" + part.bone;
+				if (warned.emplace(key, 1).second) {
+					std::fprintf(stderr,
+						"[rig] %s: part bone '%s' not found in rig — falling back to legacy path\n",
+						rig->id.c_str(), part.bone.c_str());
 				}
-				if (!gotLeftHand && part.name == "left_hand") {
-					leftHandFrame = partMat;
-					gotLeftHand = true;
-				}
-				if (part.isHead
-				    && (std::abs(anim.lookYaw) > 0.001f
-				        || std::abs(anim.lookPitch) > 0.001f)) {
-					partMat = glm::translate(partMat, model.headPivot);
-					partMat = glm::rotate(partMat, anim.lookYaw,   glm::vec3(0, 1, 0));
-					partMat = glm::rotate(partMat, anim.lookPitch, glm::vec3(1, 0, 0));
-					partMat = glm::translate(partMat, -model.headPivot);
-				}
-
-				glm::mat4 finalMat = detail::partUnitCubeToWorld(partMat, part);
-				detail::emitBox(out, finalMat, glm::vec3(part.color));
-				continue;
 			}
-			// Bone name didn't resolve — fall through to legacy path so the
-			// part still renders (silent degradation).
 		}
+
+		if (!boneDriven) {
 
 		glm::vec3 swingAxis = part.swingAxis;
 		float swingAmp   = part.swingAmplitude;
@@ -243,6 +234,8 @@ inline void appendBoxModel(std::vector<float>& out,
 				partMat = glm::translate(partMat, -part.pivot);
 			}
 		}
+
+		}  // end if (!boneDriven) — fall through to shared post-transform
 
 		if (!gotRightHand && part.name == "right_hand") {
 			rightHandFrame = partMat;
