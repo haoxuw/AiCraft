@@ -60,6 +60,35 @@ class Sphere:
         return math.sqrt(dx * dx + dy * dy + dz * dz) < self.r + other.r
 
 
+@dataclass(frozen=True)
+class Cylinder:
+    """ECEF cylinder with axis along the local geodetic up at its centre.
+    Used to cull 3D-Tiles candidate boxes vertically without over-fetching
+    horizontally — the natural shape for tall narrow features like CN Tower.
+    A cylinder with half_height == radius_xz behaves like the old spherical
+    cull (modulo the corner regions, which we conservatively keep)."""
+    cx: float
+    cy: float
+    cz: float
+    radius_xz: float       # horizontal radius (perpendicular to local up)
+    half_height: float     # vertical half-extent (along local up)
+
+    def intersects(self, sphere: "Sphere") -> bool:
+        cn = math.sqrt(self.cx * self.cx + self.cy * self.cy + self.cz * self.cz)
+        if cn < 1e-9:
+            return False
+        ux, uy, uz = self.cx / cn, self.cy / cn, self.cz / cn
+
+        dx, dy, dz = sphere.cx - self.cx, sphere.cy - self.cy, sphere.cz - self.cz
+        along  = dx * ux + dy * uy + dz * uz                  # signed along-axis
+        d_sq   = dx * dx + dy * dy + dz * dz
+        perp_sq = max(0.0, d_sq - along * along)
+
+        if abs(along) > self.half_height + sphere.r:
+            return False
+        return perp_sq < (self.radius_xz + sphere.r) ** 2
+
+
 def obb_to_sphere(box: list[float]) -> Sphere:
     """3D Tiles boundingVolume.box → enclosing sphere (no transform; coarse cull)."""
     cx, cy, cz = box[0], box[1], box[2]
@@ -113,23 +142,32 @@ def _resolve(child_uri: str, base_url: str) -> str:
     return urllib.parse.urljoin(base_url, child_uri)
 
 
-def discover(api_key: str, lat: float, lng: float, radius: float,
-             *, elevation: float = 0.0, timeout: float = 30.0,
+def discover(api_key: str, lat: float, lng: float, radius_xz: float,
+             *, height: Optional[float] = None,
+             elevation: float = 0.0, timeout: float = 30.0,
              cache: Optional[VoxelCache] = None,
              use_cache: bool = True) -> list[Tile]:
-    """BFS the tileset, return Tile(url, obb) for each leaf intersecting the
-    search sphere. The OBB gives a session-stable identity for caching;
-    Google's URL paths embed the session token and rotate on each visit.
+    """BFS the tileset, return Tile(url, obb) for each leaf intersecting a
+    cylindrical search volume centred at (lat, lng, elevation). The cylinder's
+    axis is local geodetic up; `radius_xz` is the horizontal radius and
+    `height` is the full vertical extent (defaults to 2·radius_xz for
+    backward compatibility with the old spherical cull).
 
-    If a discover cache exists for (lat, lng, radius) AND every cached OBB
-    already has its GLB on disk, this returns immediately with URL="" tiles
-    — caller's downloader skips them as cache hits, so zero Google calls fire.
+    The OBB gives a session-stable identity for caching; Google's URL paths
+    embed the session token and rotate on each visit.
+
+    If a discover cache exists for (lat, lng, radius_xz, height) AND every
+    cached OBB already has its GLB on disk, this returns immediately with
+    URL="" tiles — caller's downloader skips them as cache hits, so zero
+    Google calls fire.
     """
+    if height is None:
+        height = 2.0 * radius_xz
     cache = cache or VoxelCache()
 
     # Fast path: replay a previous discover. Tile.url stays empty; download_all
     # only follows URLs for misses, so a fully cached region costs zero calls.
-    dpath = cache.discover_path(lat, lng, radius)
+    dpath = cache.discover_path(lat, lng, radius_xz, height)
     if use_cache and dpath.is_file():
         try:
             entries = json.loads(dpath.read_text(encoding="utf-8"))
@@ -148,7 +186,7 @@ def discover(api_key: str, lat: float, lng: float, radius: float,
             pass  # fall through to live BFS
 
     cx, cy, cz = cartesian_from_degrees(lng, lat, elevation)
-    region = Sphere(cx, cy, cz, radius)
+    region = Cylinder(cx, cy, cz, radius_xz=radius_xz, half_height=height * 0.5)
     session = _SessionRef(None)  # root.json rejects session=; capture it from child URLs
 
     tiles: list[Tile] = []

@@ -247,17 +247,18 @@ void CefHost::loadUrl(const std::string& url) {
 	if (frame) frame->LoadURL(url);
 }
 
-void CefHost::sendMouseMove(int x, int y, bool mouseLeave) {
+void CefHost::sendMouseMove(int x, int y, bool mouseLeave, int modifiers) {
 	if (!m_browser) return;
 	CefMouseEvent ev;
-	ev.x = x; ev.y = y; ev.modifiers = 0;
+	ev.x = x; ev.y = y; ev.modifiers = modifiers;
 	m_browser->GetHost()->SendMouseMoveEvent(ev, mouseLeave);
 }
 
-void CefHost::sendMouseClick(int x, int y, int button, bool down, int clickCount) {
+void CefHost::sendMouseClick(int x, int y, int button, bool down,
+                             int clickCount, int modifiers) {
 	if (!m_browser) return;
 	CefMouseEvent ev;
-	ev.x = x; ev.y = y; ev.modifiers = 0;
+	ev.x = x; ev.y = y; ev.modifiers = modifiers;
 	cef_mouse_button_type_t btn = MBT_LEFT;
 	if (button == 1) btn = MBT_MIDDLE;
 	else if (button == 2) btn = MBT_RIGHT;

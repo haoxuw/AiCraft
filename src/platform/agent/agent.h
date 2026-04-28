@@ -32,11 +32,11 @@
 #include "python/python_bridge.h"  // BehaviorHandle
 #include "agent/outcome.h"
 #include "agent/pathfind.h"        // WorldView, DoorOracle, GridPlanner
-#include "agent/separation.h"      // applySeparation() — soft entity-vs-entity push
+#include "agent/move_emit.h"       // emitMoveAction — single source for Move + sep + stuck (also pulls separation.h transitively)
 #include "client/path_executor.h"  // Navigator (facade over unified PathExecutor)
 #include "agent/pathlog.h"         // PATHLOG(...) — gated by SOLARIUM_PATHFINDING_DEBUG
-#include "debug/move_stuck_log.h"
-#include "debug/entity_log.h"      // still pulled in for logMoveStuck paths
+// Move stuck-watchdog telemetry (logMoveStuck) lives inside emitMoveAction
+// now — both headers reach Agent transitively through agent/move_emit.h.
 
 #include <glm/glm.hpp>
 #include <algorithm>
@@ -126,7 +126,7 @@ public:
 		p.stepIndex          = m_stepIndex;
 		p.totalSteps         = (int)m_plan.size();
 		p.decideRatePerMin   = m_rate.emaPerMin;
-		p.stuckAccum         = m_stuckAccum;
+		p.stuckAccum         = m_moveCtx.stuckAccum;
 		p.overridePauseTimer = m_overridePauseTimer;
 		return p;
 	}
@@ -748,8 +748,10 @@ private:
 
 		// driveTick = predicate/pop + status update + Move/Interact/Stop
 		// emission, all via the unified PathExecutor pipeline. Same flow
-		// RTS units use; the smoothing+clamp lives in one place.
-		Navigator::Step step = m_navigator->driveTick(e, server);
+		// RTS units use; the clamp + emit pipeline (separation, stuck,
+		// goalText, e.velocity) lives in exactly one place — emitMoveAction
+		// (agent/move_emit.h). RTS = NPC, identical bytes downstream.
+		Navigator::Step step = m_navigator->driveTick(e, server, m_goalText);
 		Navigator::Status st = m_navigator->status();
 
 		// Single source of truth for F3 viz: mirror what the PathExecutor is
@@ -947,96 +949,15 @@ private:
 		return resolved;
 	}
 
-	// ── Move emission + stuck telemetry ──────────────────────────────────
+	// ── Move emission ────────────────────────────────────────────────────
+	// Thin wrapper around emitMoveAction (agent/move_emit.h) — same helper
+	// that PathExecutor::driveOne calls. Keeps Agent's per-call MoveContext
+	// in sync with whatever fields the helper reads/writes (sep LPF, stuck
+	// watchdog, goalText) without duplicating the body here.
 	void sendMove(Entity& e, glm::vec3 vel, ServerInterface& server,
 	              const char* source) {
-		// Soft separation — bias `vel` away from nearby Living and hard-stop
-		// at walls. Skip the O(N) neighbor gather when the requested vel is
-		// below idle; applySeparation is a no-op for idle self anyway (and
-		// clears the LPF state on its own when called from this branch).
-		// docs/29_ENTITY_SEPARATION.md.
-		float intentSq = vel.x * vel.x + vel.z * vel.z;
-		if (intentSq > 0.04f) {
-			auto& chunks = server.chunks();
-			auto& blocks = server.blockRegistry();
-			BlockSolidFn isSolid = [&](int x, int y, int z) -> float {
-				const auto& bd = blocks.get(chunks.getBlock(x, y, z));
-				return bd.solid ? bd.collision_height : 0.0f;
-			};
-			auto neighbors = gatherSepNeighbors(server, e, /*queryRadius=*/8.0f);
-			SepStats stats;
-			MoveParams mp = makeMoveParams(
-				e.def().collision_box_min, e.def().collision_box_max,
-				e.def().gravity_scale, e.def().isLiving(), /*canFly=*/false);
-			vel = applySeparation(
-				m_eid, e.position, vel,
-				sepRadiusOf(e.def()),
-				e.def().walk_speed > 0 ? e.def().walk_speed : 4.0f,
-				sepHeightOf(e.def()),
-				mp.stepHeight,
-				neighbors, isSolid, m_sepDvPrev, SepConfig{}, &stats);
-			recordSepPerf(stats);
-		} else {
-			m_sepDvPrev = {0.0f, 0.0f};
-		}
-
-		PATHLOG(m_eid,
-			"steer: source=%s vel=(%.2f,%.2f,%.2f) pos=(%.2f,%.2f,%.2f) "
-			"entVel=(%.2f,%.2f,%.2f)",
-			source ? source : "?",
-			vel.x, vel.y, vel.z,
-			e.position.x, e.position.y, e.position.z,
-			e.velocity.x, e.velocity.y, e.velocity.z);
-
-		e.velocity.x = vel.x;
-		e.velocity.z = vel.z;
-
-		float intent = std::sqrt(vel.x * vel.x + vel.z * vel.z);
-		float moved  = glm::length(glm::vec2(e.position.x, e.position.z) -
-		                           glm::vec2(m_stuckLastSampledPos.x,
-		                                     m_stuckLastSampledPos.z));
-		constexpr float kIntentThresh = 0.2f;
-		constexpr float kMoveThresh   = 0.05f;
-		constexpr float kStuckWindow  = 1.5f;
-		const float dt = 1.0f / 60.0f;
-
-		if (intent > kIntentThresh && moved < kMoveThresh) {
-			m_stuckAccum += dt;
-			if (m_stuckAccum >= kStuckWindow && !m_stuckLogged) {
-				char detail[192];
-				std::snprintf(detail, sizeof(detail),
-					"pos=(%.2f,%.2f,%.2f) intent=(%.2f,%.2f) goal=\"%s\" "
-					"held=%.1fs",
-					e.position.x, e.position.y, e.position.z,
-					vel.x, vel.z, m_goalText.c_str(), m_stuckAccum);
-				logMoveStuck(m_eid, "Agent-Stuck",
-					"agent held non-zero velocity but entity failed to "
-					"displace (likely server collision clamp or "
-					"client/server pos delta)",
-					detail);
-				m_stuckLogged = true;
-			}
-		} else {
-			if (m_stuckLogged) {
-				char detail[96];
-				std::snprintf(detail, sizeof(detail),
-					"pos=(%.2f,%.2f,%.2f)",
-					e.position.x, e.position.y, e.position.z);
-				logMoveStuck(m_eid, "Agent-Unstuck",
-					"entity resumed displacement after prior Agent-Stuck",
-					detail);
-			}
-			m_stuckAccum  = 0.0f;
-			m_stuckLogged = false;
-		}
-		m_stuckLastSampledPos = e.position;
-
-		ActionProposal p;
-		p.type       = ActionProposal::Move;
-		p.actorId    = m_eid;
-		p.desiredVel = vel;
-		p.goalText   = m_goalText;
-		server.sendAction(p);
+		m_moveCtx.goalText = m_goalText;
+		emitMoveAction(m_eid, e, vel, server, m_moveCtx, source);
 	}
 
 	void sendStopMove(Entity& e, ServerInterface& server, const char* source) {
@@ -1073,14 +994,13 @@ private:
 
 	int m_prevHp = 0;
 
-	// (Removed: m_lastMoveDir. The smoothed-heading state now lives on the
-	// per-Unit lastMoveDir inside the Navigator's PathExecutor — driveTick
-	// owns smoothing through the unified pipeline.)
-
-	// applySeparation LPF state (per-eid). Zero on first call, updated each
-	// time. Cleared inside applySeparation when self goes idle so a new
-	// movement starts with a fresh push budget. docs/29_ENTITY_SEPARATION.md.
-	glm::vec2 m_sepDvPrev{0.0f, 0.0f};
+	// Per-call state for Move emission — separation LPF, stuck watchdog,
+	// goalText forwarded to the proposal. Owned and mutated by
+	// emitMoveAction (agent/move_emit.h). One MoveContext lives here on
+	// Agent (used by non-pathed callers — chase / direct steer / harvest-
+	// straight / attack-chase). PathExecutor::Unit holds its own MoveContext
+	// for pathed callers. Same struct, same helper — Rule 7.
+	MoveContext m_moveCtx;
 
 	// Schedule flags.
 	bool        m_needsDecide    = false;
@@ -1104,11 +1024,6 @@ private:
 	std::string m_dirtyKind;
 	std::vector<std::pair<std::string, std::string>> m_dirtyPayload;
 	float       m_reactCooldown = 0.0f;
-
-	// "Wants to move, not moving" → [MoveStuck:Agent-Stuck].
-	glm::vec3 m_stuckLastSampledPos = glm::vec3(0.0f);
-	float     m_stuckAccum          = 0.0f;
-	bool      m_stuckLogged         = false;
 
 	// Seconds until the next harvest swing is allowed. Lives on the agent,
 	// not on PlanStep, so a re-plan mid-chop doesn't grant a free swing.

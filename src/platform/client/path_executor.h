@@ -5,28 +5,38 @@
 // backed RtsExecutor.
 //
 // Design:
-//   * ONE class handles both single-entity navigation (NPC behaviors via
-//     Navigator, player click-to-move for a possessed unit) and multi-entity
-//     RTS group commands. Each tracked entity gets its own pop-front Path
-//     queue; group commands are sugar around GridPlanner::planBatch + N
-//     setPath() calls.
-//   * Pop-front arrival with strict in-cell containment: the entity must
-//     actually enter each waypoint's XZ cell to retire it — no arrive ring,
-//     no segment projection. A scan-forward per tick pops every waypoint up
-//     through the deepest one the entity is currently inside, which handles
-//     both normal single-cell advance AND multi-cell overshoot (teleport,
-//     collision push-out, clientPos snap-back) in one pass.
+//   * ONE class handles every pathed-movement caller: NPC behaviors (via
+//     Navigator), player click-to-move, RTS group commands. Each tracked
+//     entity gets its own pop-front Path queue; group commands are sugar
+//     around GridPlanner::planBatch + N setPath() calls.
+//   * Pop predicate: segment-crossing on (prevPos, pos) per tick. A
+//     waypoint retires when the entity's last-tick movement crossed the
+//     perpendicular plane through its center, OR the entity is standing
+//     on the center within kSnapRadius. Multi-cell overshoot (teleport,
+//     collision push-out, clientPos snap-back) drains via the bounded
+//     while-loop (kMaxPopsPerTick).
+//   * Per-tick driver: PathExecutor::driveOne is the single per-entity
+//     routine. Velocity is the RAW direction toward the front (no
+//     smoothing) clamped to one tick's worth of motion; visual body
+//     rotation is decoupled (server's smoothYawTowardsVelocity, 20 rad/s)
+//     so 90° corners produce a brief sideways "strafe" while body catches
+//     up. Move emission goes through agent/move_emit.h::emitMoveAction —
+//     the shared helper Agent::sendMove also calls for non-pathed steering.
+//   * Convergence watchdog: every tick measures distance to the front
+//     waypoint; if no new minimum is reached within kConvergeStallTicks,
+//     g_pathConvergenceFailures bumps. Tests assert against the counter.
 //   * Doors are first-class. A DoorOracle installed at construction is
-//     consulted for every tracked entity, so RTS units don't treat closed
-//     doors as walls.
-//   * Async planning for groups: detached std::thread runs planBatch; poll()
-//     swaps paths in when the worker reports back. Single-entity callers
-//     plan synchronously via Navigator.
+//     consulted for every tracked entity. passedDoors auto-close fires
+//     once the entity has stepped clear of every slab it walked through.
+//   * Async planning for groups: detached std::thread runs planBatch;
+//     poll() swaps paths in when the worker reports back.
 //
 // Rule 0: emits only Move / Interact ActionProposals.
 // Rule 4: intelligence runs on the agent-client side; this class is it.
+// Rule 7: emit pipeline lives in exactly one place (emitMoveAction).
 
 #include "agent/pathfind.h"
+#include "agent/move_emit.h"            // MoveContext + emitMoveAction (shared with Agent)
 #include "logic/action.h"
 #include "logic/block_registry.h"
 #include "logic/chunk_source.h"
@@ -35,6 +45,7 @@
 
 #include <glm/glm.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <cmath>
@@ -85,12 +96,9 @@ struct ChunkDoorOracle : public DoorOracle {
 // against each entity's XZ. Y is ignored (a doorway is conceptually a 2D
 // gap on the map even though slabs span 2 blocks vertically).
 //
-// `ownerEid` is the real entity id of whoever owns this oracle (i.e. the
-// NPC whose Navigator we belong to). Navigator hands the executor a
-// kSelfEid sentinel internally, so the `selfId` arg from the executor is
-// not the right "self" to exclude — we ignore it and exclude `ownerEid`.
-// In multi-unit RTS mode (different code path) the executor passes real
-// ids, but RTS doesn't currently install a proximity oracle.
+// `ownerEid` is the real entity id this oracle belongs to (the NPC whose
+// Navigator owns it). Used to exclude self from the politeness check —
+// we shouldn't defer closing the door because we're standing in it.
 struct ServerEntityProximityOracle : public EntityProximityOracle {
 	ServerInterface& server;
 	EntityId         ownerEid;
@@ -113,29 +121,6 @@ struct ServerEntityProximityOracle : public EntityProximityOracle {
 	}
 };
 
-// Rotate `cur` toward `des` in XZ by at most `maxRad` radians. Used to
-// cap per-tick velocity-heading change so waypoint pops don't snap the
-// direction. Zero `cur` snaps to `des` (first tick). Returns unit XZ.
-inline glm::vec3 rotateTowardXZ(glm::vec3 cur, glm::vec3 des, float maxRad) {
-	cur.y = 0; des.y = 0;
-	float cl2 = cur.x * cur.x + cur.z * cur.z;
-	float dl2 = des.x * des.x + des.z * des.z;
-	if (dl2 < 1e-8f) return {0, 0, 0};            // no desired heading
-	glm::vec3 d = des / std::sqrt(dl2);
-	if (cl2 < 1e-8f) return d;                     // first tick — snap
-	glm::vec3 c = cur / std::sqrt(cl2);
-	float dot  = c.x * d.x + c.z * d.z;
-	if (dot >  1.0f) dot =  1.0f;
-	if (dot < -1.0f) dot = -1.0f;
-	float ang = std::acos(dot);
-	if (ang <= maxRad) return d;                   // target within cap
-	float crossY = c.x * d.z - c.z * d.x;           // rotation sign
-	float sign   = (crossY >= 0.0f) ? 1.0f : -1.0f;
-	float sn     = std::sin(maxRad) * sign;
-	float cs     = std::cos(maxRad);
-	return { c.x * cs - c.z * sn, 0, c.x * sn + c.z * cs };
-}
-
 // Walk: cancel if unreachable. Build (long-press): enter experimental builder
 // mode (Phase 1 jump-climb; Phase 2+ stack blocks to bridge gaps).
 enum class CommandKind { Walk, Build };
@@ -155,6 +140,18 @@ public:
 	static constexpr float kSnapRadius    = 0.10f; // standing-on-waypoint at zero motion
 	static constexpr float kArriveRadius  = 0.9f;  // slot arrival only
 	static constexpr float kArriveY       = 1.0f;  // waypoint Y tolerance
+	// Predict-arrival pop: retire the front wp once XZ distance to its
+	// center is below this radius. Sized comfortably above one tick at
+	// walkSpeed=4 (0.067m) so even a separation-deflected approach is
+	// caught before the segment-cross predicate (which a curved approach
+	// can miss entirely → orbit-until-stall-pop, observed as ratio>>3 in
+	// `seg:` logs).
+	//
+	// Heading auto-corrects the off-axis residual: the next tick's vel is
+	// direction(curPos → next_wp_center), so a parallel-offset entry into
+	// the next segment is pulled back toward the ideal axis as it travels.
+	// No teleport, no clientPos plumbing; the predicate change is the fix.
+	static constexpr float kPredictArrivalRadius = 0.30f;
 	static constexpr float kDoorReachXZ   = 2.0f;
 	// Defensive cap on the per-tick pop while-loop (replaces the old O(N)
 	// forward-scan). Multi-cell teleport / snap-back drains this many steps
@@ -163,33 +160,13 @@ public:
 	// 25 cells per tick on a straight, well under this cap.
 	static constexpr int   kMaxPopsPerTick = 256;
 
-	// Per-tick XZ direction-change cap. ~10°/tick @ 60 Hz → 90° corner
-	// takes ~9 ticks, keeping dv/dt smooth across pops.
-	static constexpr float kMaxTurnRate      = 10.0f;
-	static constexpr float kMaxTurnPerTick60 = 0.17f;
-
-	// ── Speed clamp / approach ramp (used by driveRemote) ─────────────
-	// All three constants are derived from the predicate's geometry, so
-	// changing kCorridorSlack or kMaxTurnPerTick60 propagates correctly.
-	//
-	// kCornerSafeSpeed: the orbit threshold. Smoothed-heading curve radius
-	//   v/ω must fit inside kCorridorSlack so the segment-crossing
-	//   predicate fires at corners. Safety factor 0.6 gives margin for
-	//   numeric jitter and rotation lag.
-	//     = kCorridorSlack · ω · 0.6     (ω = kMaxTurnPerTick60 · 60 Hz)
-	static constexpr float kCornerSafetyFactor = 0.6f;
-	static constexpr float kCornerSafeSpeed =
-		kCorridorSlack * (kMaxTurnPerTick60 * 60.0f) * kCornerSafetyFactor;
-	// kDecelTime: seconds to bleed walkSpeed → kCornerSafeSpeed over the
-	//   approach ramp. Derived from a 90° turn time (π/2 / ω) with 2×
-	//   headroom so rotation completes before arrival.
-	//     = π / ω
-	static constexpr float kDecelTime =
-		3.14159265f / (kMaxTurnPerTick60 * 60.0f);
-	// kMinRamp: floor on ramp distance. At low walkSpeed, walkSpeed·kDecelTime
-	//   shrinks below a cell width — kMinRamp keeps a sensible approach
-	//   window even for slow units.
-	static constexpr float kMinRamp = 1.5f;
+	// Convergence watchdog threshold — see Unit::nonConvergeTicks. ~1.5 s
+	// at 60 Hz, generous enough to survive brief slide-around-obstacle
+	// excursions, but tight enough that a stable orbit is caught quickly.
+	// Cooperates with stall-pop (kStallTicks=30) by giving stall-pop first
+	// crack at "stuck in place" before convergence-fail flags "moving but
+	// going nowhere."
+	static constexpr int   kConvergeStallTicks = 90;
 
 	// Wall-slide: deflect toward the best standable cardinal neighbour when
 	// the desired XZ direction would clip a solid cell. Hysteresis keeps
@@ -236,24 +213,6 @@ public:
 		std::vector<glm::ivec3> interactPos;
 	};
 
-	// Single source of truth for the speed-clamp used by every smoothed-
-	// heading consumer (driveRemote for RTS/click-to-move, Agent::
-	// navigateApproach for NPC AI, P17 in the test suite). Returns the
-	// clamped speed magnitude:
-	//   • Speed-scaled approach ramp: bleed walkSpeed → kCornerSafeSpeed
-	//     over `ramp = max(kMinRamp, walkSpeed · kDecelTime)`. Keeps the
-	//     curve radius v/ω < kCorridorSlack at corners so the segment-
-	//     crossing pop predicate fires.
-	//   • Hard backstop: vel·serverDt ≤ distToTarget. Catches teleport /
-	//     push-out / weird residual cases where the ramp didn't engage.
-	//   • Skipped (returns walkSpeed unchanged) on Jump/Descend cells —
-	//     those need full XZ velocity for the ballistic arc.
-	// Sync risk eliminated: previous bug had clamp inlined in driveRemote
-	// only, navigateApproach silently emitted full walkSpeed, villagers
-	// orbited corners despite a passing test.
-	static float clampApproachSpeed(float walkSpeed, float distToTarget,
-	                                MoveKind frontKind);
-
 	// Disable to make Build fall back to Walk. Phase 1 = jump-climb only.
 	static constexpr bool kExperimentalPathBuilder = true;
 	struct BuilderConfig {
@@ -285,6 +244,10 @@ public:
 	bool   done(EntityId eid) const;
 	bool   has(EntityId eid)  const { return m_units.count(eid) > 0; }
 	void   cancel(EntityId eid);
+	// Mutable access to a tracked Unit's MoveContext — used by Navigator to
+	// forward Agent-side goalText into the per-Unit emit pipeline. Caller
+	// is responsible for has(eid) check.
+	MoveContext& unitMoveCtx(EntityId eid) { return m_units.at(eid).moveCtx; }
 	// Remaining (unconsumed) waypoints — F3 viz + tests read this.
 	const Path& path(EntityId eid) const;
 
@@ -300,15 +263,20 @@ public:
 	// Convenience: returns tick(eid, pos).target if kind is Move, else nullopt.
 	// Used by player-possessed-unit steering in game_vk_playing.cpp.
 	std::optional<glm::vec3> steerTargetFor(EntityId eid, const glm::vec3& pos);
-	// Single per-entity-per-tick routine: predicate/pop + smoothed heading +
-	// approach clamp + ActionProposal::Move emission. The unified entry point
-	// that ALL pathed-movement callers route through — RTS group commands
-	// (driveRemote loops this), NPC AI (Navigator::driveTick calls this),
-	// click-to-move possessed units. Returns false when the entity is no
-	// longer drivable (despawned, no path) — caller should drop tracking.
-	bool driveOne(EntityId eid, ServerInterface& server,
-	              float walkSpeedFallback = 2.0f,
-	              float jumpVelocity      = 8.3f);
+	// Single per-entity-per-tick routine. THIS IS THE ONLY PLACE pathed
+	// movement emission happens — both the RTS multi-entity loop
+	// (driveRemote) and NPC AI (Navigator::driveTick) route through here.
+	// Calls tick() once, dispatches by Intent kind:
+	//   • Move      → emitMoveAction (sep, stuck, e.velocity, ActionProposal)
+	//   • Interact  → one ActionProposal::Interact per slab + a stop Move
+	//                 so server halts residual velocity while the door swings
+	//   • None      → if formationSlot is set (RTS async pending or builder
+	//                 mode), naive steer toward slot. Else emit a stop.
+	// Returns the Intent so callers can read the kind and update higher-
+	// level status (Navigator::Status, RTS done-marker, etc.).
+	Intent driveOne(EntityId eid, ServerInterface& server,
+	                float walkSpeedFallback = 2.0f,
+	                float jumpVelocity      = 8.3f);
 	// Emit Move ActionProposals for every tracked entity except excludedId
 	// (the possessed player, which is driven by input directly). Thin loop
 	// over driveOne. Builder mode jumps are picked up inside driveOne.
@@ -350,9 +318,6 @@ private:
 		// (keyed by ±X / ±Z), so the next obstructed tick prefers the same
 		// side. {0,0,0} = no active slide.
 		glm::ivec3        slideLockDir{0, 0, 0};
-		// Smoothed XZ heading last emitted — fed back into rotateTowardXZ
-		// next tick so desiredVel stays C¹-continuous across pops.
-		glm::vec3         lastMoveDir{0, 0, 0};
 		int               interactCooldown = 0;
 		// Slabs we walked *through* (not just opened) — anyone closes any
 		// door behind them. Filled by the pop loop when the popped cell is
@@ -365,6 +330,43 @@ private:
 		// a sentinel value can't trigger a spurious pop on a huge fake seg.
 		glm::vec3         prevPos{0, 0, 0};
 		bool              hasPrevPos = false;
+
+		// ── Convergence watchdog ─────────────────────────────────────────
+		// Per-tick invariant: distance to the current front waypoint must
+		// reach a new minimum within kConvergeStallTicks of the front
+		// becoming the front. Otherwise the entity is orbiting / sweeping
+		// past in a curve that never crosses the corridor — same symptom
+		// the speed-clamp is supposed to prevent. Stall-pop catches "stuck
+		// in place"; this catches "moving but not making progress."
+		//
+		// minDistToFront: smallest XZ distance to centerOf(front) seen
+		//   since this front took the slot.
+		// nonConvergeTicks: consecutive ticks where current dist >= minDist.
+		// lastFrontWp: detect front change → reset trackers.
+		// lastConvergePos: dedupes intra-frame double-tick (driveTick →
+		//   driveOne → steerTargetFor → tick is two tick() calls per frame).
+		glm::ivec3        lastFrontWp{INT_MIN, INT_MIN, INT_MIN};
+		float             minDistToFront = 1e30f;
+		int               nonConvergeTicks = 0;
+		glm::vec3         lastConvergePos{0, 0, 0};
+		bool              hasLastConvergePos = false;
+
+		// ── Per-segment timing + arc tracking (waypoint cadence + orbit) ──
+		// `seg:` log per pop reports dist (direct), arc (sum of |Δpos|), and
+		// ratio = arc/direct. Healthy straight Walk: ratio ≈ 1. Orbit (sep
+		// or other deflection redirecting velocity sideways): ratio >> 1
+		// even when minDistToFront stays > kSnapRadius — that's the signal.
+		glm::vec3         lastPopPos{0, 0, 0};
+		bool              hasLastPopPos = false;
+		int               ticksSinceLastPop = 0;
+		glm::vec3         lastTickPos{0, 0, 0};
+		bool              hasLastTickPos = false;
+		float             arcLengthInSeg = 0.0f;
+
+		// Per-call state for the shared Move emit pipeline (separation LPF,
+		// stuck watchdog, goalText). Same struct Agent holds for non-pathed
+		// callers — emitMoveAction is the single helper that mutates this.
+		MoveContext       moveCtx;
 	};
 
 	struct PendingPlan {
@@ -415,7 +417,15 @@ private:
 	                                         const glm::vec3& pos);
 	bool                  stepDetectStall   (Unit& u, const glm::vec3& pos);
 	std::optional<Intent> stepDoorScanProbe (Unit& u, const glm::vec3& pos);
-	void                  stepPopReached    (Unit& u, const glm::vec3& pos);
+	void                  stepPopReached    (EntityId eid, Unit& u,
+	                                         const glm::vec3& pos);
+	// Convergence watchdog — see Unit::nonConvergeTicks. Called once per
+	// tick (deduped against intra-frame double-tick). Per-tick PATHLOG of
+	// (front, dist, minDist, stagnant-tick-count) for log inspection;
+	// counts a failure into the test-readable g_pathConvergenceFailures
+	// when stagnation exceeds the threshold.
+	void                  stepConvergenceWatchdog(EntityId eid, Unit& u,
+	                                              const glm::vec3& pos);
 	std::optional<Intent> stepFrontDoorHandshake(Unit& u, const glm::vec3& pos);
 	glm::vec3             stepComputeMoveTarget (Unit& u, const glm::vec3& pos);
 	bool builderTickFor(EntityId eid, const glm::vec3& pos,
@@ -446,10 +456,8 @@ public:
 		std::vector<glm::ivec3> interactPos;
 	};
 
-	// `eid` is the agent's real entity id; it's used both as the executor's
-	// per-Unit key and as the actorId on emitted ActionProposals. (The old
-	// kSelfEid sentinel is gone — there's no reason to obscure the real id
-	// now that driveTick emits via the unified PathExecutor pipeline.)
+	// `eid` is the agent's real entity id — used both as the executor's
+	// per-Unit key and as the actorId on emitted ActionProposals.
 	Navigator(EntityId eid, const WorldView& world,
 	          const DoorOracle* doors = nullptr);
 
@@ -458,17 +466,15 @@ public:
 	// Returns false if planner gave up (partial or empty path).
 	bool setGoal(glm::ivec3 goal);
 
-	// Advance one tick. Returns the step to take (Move/Interact/None). When
-	// status() == Arrived or Failed, the caller should pick a new goal.
-	// Note: tick() is the predicate/pop + status update only; it does NOT
-	// emit Move actions. Callers that want emission too should use driveTick.
-	Step tick(const glm::vec3& entityPos);
-
-	// Predicate/pop + status + Move/Interact/Stop emission, all via the
-	// unified PathExecutor pipeline. This is the single per-frame entry
-	// point for NPC pathed movement — Agent::navigateApproach calls this.
-	// Returns the same Step as tick() so callers can log waypoint progress.
+	// Single per-frame entry for NPC pathed movement. ALL emission lives
+	// inside PathExecutor::driveOne (path_executor.cpp). Navigator owns
+	// the lazy-plan + status translation; PathExecutor owns the predicate,
+	// clamp, and Move / Interact / Stop emission. Agent::navigateApproach
+	// calls this once per tick; `goalText` is forwarded to the Unit's
+	// MoveContext so the emitted ActionProposal carries it. Returns the
+	// Step (kind / target / interactPos) for the agent's logging layer.
 	Step driveTick(Entity& e, ServerInterface& server,
+	               const std::string& goalText,
 	               float walkSpeedFallback = 2.0f,
 	               float jumpVelocity      = 8.3f);
 
@@ -501,6 +507,11 @@ public:
 	}
 
 private:
+	// Lazy plan with sub-cell-edge correction. Called by driveTick on the
+	// first tick after setGoal. Returns true on success (path installed in
+	// m_exec); false on planner give-up — caller sets m_status = Failed.
+	bool lazyPlanIfNeeded(const glm::vec3& entityPos);
+
 	const EntityId    m_eid;            // real entity id; key into m_exec.m_units
 	const WorldView&  m_world;
 	const DoorOracle* m_doors;
@@ -512,6 +523,13 @@ private:
 	Status            m_status  = Status::Idle;
 	std::string       m_failureReason;
 };
+
+// Test-readable counter for convergence-watchdog hits. ALWAYS available
+// (not gated on SOLARIUM_PATHFINDING_DEBUG) so headless tests can read it
+// without changing build mode. The watchdog logic itself is also always-on
+// (it's cheap — three floats + a comparison per tick per entity); only the
+// stderr emit is debug-gated.
+extern std::atomic<int> g_pathConvergenceFailures;
 
 inline const char* toString(Navigator::Status s) {
 	switch (s) {

@@ -101,6 +101,66 @@ public:
 			printf("[ArtifactRegistry] %d artifact(s) missing model files!\n", warnings);
 	}
 
+	// Overlay user-authored forks from a per-user directory
+	// (e.g. ~/.solarium/forks). Same on-disk shape as artifacts/:
+	// <forksRoot>/<dirName>/<id>.py. A fork replaces any base entry with
+	// the same (category, id), so the in-game source editor's "Save"
+	// always wins over a checked-in base file.
+	//
+	// TODO(cloud): forks are local-only today. The next step is a per-
+	// account cloud store: on save, push to the user's profile; on launch,
+	// pull and merge before this overlay runs. Keeps the game playable
+	// offline while letting edits travel between devices.
+	// Per-user forks live alongside the rest of the user-data tree
+	// (~/.solarium/...). Returns empty string if HOME is unset, in which
+	// case loadForks() is a no-op.
+	static std::string defaultForksRoot() {
+		const char* home = std::getenv("HOME");
+		if (!home || !*home) return {};
+		return std::string(home) + "/.solarium/forks";
+	}
+
+	void loadForks(const std::string& forksRoot) {
+		namespace fs = std::filesystem;
+		if (!fs::exists(forksRoot)) return;
+		size_t before = m_entries.size();
+		size_t replaced = 0;
+		auto overlay = [&](const std::string& dirName,
+		                   const std::string& category) {
+			fs::path p = fs::path(forksRoot) / dirName;
+			if (!fs::exists(p)) return;
+			std::vector<ArtifactEntry> staged;
+			std::swap(staged, m_entries);   // park current
+			loadCategoryNamespace(p.string(), category);  // → m_entries
+			std::vector<ArtifactEntry> forks;
+			std::swap(forks, m_entries);    // pop forks
+			std::swap(staged, m_entries);   // restore
+			for (auto& fork : forks) {
+				auto it = std::find_if(m_entries.begin(), m_entries.end(),
+					[&](const ArtifactEntry& e){
+						return e.category == fork.category && e.id == fork.id;
+					});
+				if (it != m_entries.end()) { *it = fork; ++replaced; }
+				else m_entries.push_back(std::move(fork));
+			}
+		};
+		overlay("living",      "living");
+		overlay("items",       "item");
+		overlay("blocks",      "block");
+		overlay("behaviors",   "behavior");
+		overlay("effects",     "effect");
+		overlay("resources",   "resource");
+		overlay("worlds",      "world");
+		overlay("annotations", "annotation");
+		overlay("structures",  "structure");
+		overlay("models",      "model");
+		size_t added = m_entries.size() - before;
+		if (added || replaced) {
+			printf("[ArtifactRegistry] forks: %zu replaced, %zu added (root=%s)\n",
+			       replaced, added, forksRoot.c_str());
+		}
+	}
+
 	const std::vector<ArtifactEntry>& entries() const { return m_entries; }
 
 	std::vector<const ArtifactEntry*> byCategory(const std::string& cat) const {

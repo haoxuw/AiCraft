@@ -84,9 +84,13 @@ class VoxelCache:
     def glb_path(self, obb_box: list[float] | tuple[float, ...]) -> Path:
         return self.root / "google" / "glb" / f"{obb_sha1(obb_box)}.glb"
 
-    def discover_path(self, lat: float, lng: float, radius: float) -> Path:
+    def discover_path(self, lat: float, lng: float,
+                      radius_xz: float, height: float) -> Path:
         # 6 decimals ≈ 11 cm at the equator — finer than Google's tile granularity.
-        return self.root / "discover" / f"{lat:.6f}_{lng:.6f}_{int(round(radius))}.json"
+        # Filename includes both axes so a taller bake doesn't collide with a
+        # shorter one at the same lat/lng.
+        return (self.root / "discover" /
+                f"{lat:.6f}_{lng:.6f}_xz{int(round(radius_xz))}_h{int(round(height))}.json")
 
     def elevation_path(self, lat: float, lng: float) -> Path:
         return self.root / "elevation" / f"{lat:.4f}_{lng:.4f}.json"

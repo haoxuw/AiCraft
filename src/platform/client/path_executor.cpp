@@ -11,6 +11,8 @@
 
 namespace solarium {
 
+std::atomic<int> g_pathConvergenceFailures{0};
+
 // ─── Per-entity primitive ──────────────────────────────────────────────────
 
 void PathExecutor::setPath(EntityId eid, Path p) {
@@ -21,10 +23,17 @@ void PathExecutor::setPath(EntityId eid, Path p) {
 	u.stallTicks   = 0;
 	u.stallLastPos = glm::vec3(-1e9f);   // sentinel — first tick treats as "moved"
 	u.slideLockDir = glm::ivec3(0);
-	u.lastMoveDir  = glm::vec3(0);       // first smoothed-dir call snaps
 	u.interactCooldown = 0;
 	u.passedDoors.clear();
 	u.hasPrevPos   = false;              // lazy-init prevPos on first tick
+	u.lastFrontWp        = glm::ivec3(INT_MIN, INT_MIN, INT_MIN);
+	u.minDistToFront     = 1e30f;
+	u.nonConvergeTicks   = 0;
+	u.hasLastConvergePos = false;
+	u.hasLastPopPos      = false;
+	u.ticksSinceLastPop  = 0;
+	u.hasLastTickPos     = false;
+	u.arcLengthInSeg     = 0.0f;
 }
 
 void PathExecutor::cancel(EntityId eid) {
@@ -307,26 +316,161 @@ std::optional<PathExecutor::Intent> PathExecutor::stepDoorScanProbe(
 	return std::nullopt;
 }
 
+// Convergence watchdog — see Unit::nonConvergeTicks. Runs once per real
+// tick (deduped: tick() is called twice per frame on the NPC path because
+// driveTick → driveOne → steerTargetFor → tick. The second call has the
+// same entityPos and is skipped.)
+//
+// Invariant: distance to centerOf(front) must reach a new minimum within
+// kConvergeStallTicks of the front becoming the front. Orbits, sweep-past
+// curves, and overshoot-without-recovery all violate this and are flagged
+// even though stall-pop (position-stagnation) wouldn't catch them — those
+// pathologies have the entity moving plenty, just not toward the target.
+//
+// Test hook: every flag bumps g_pathConvergenceFailures (always-on atomic).
+// Headless tests assert it stays at 0 over a known-good scenario; if it
+// climbs, the orbit/overshoot bug is back.
+void PathExecutor::stepConvergenceWatchdog(EntityId eid, Unit& u,
+                                           const glm::vec3& entityPos) {
+	PERF_SCOPE("path.executor.convergence_watchdog_ms");
+
+	// Dedupe: tick() runs twice per frame on the NPC path. Same entityPos
+	// on both calls — skip the second.
+	if (u.hasLastConvergePos
+	    && u.lastConvergePos.x == entityPos.x
+	    && u.lastConvergePos.z == entityPos.z) return;
+	u.lastConvergePos    = entityPos;
+	u.hasLastConvergePos = true;
+
+	if (u.path.steps.empty()) {
+		u.lastFrontWp      = glm::ivec3(INT_MIN, INT_MIN, INT_MIN);
+		u.minDistToFront   = 1e30f;
+		u.nonConvergeTicks = 0;
+		return;
+	}
+
+	const glm::ivec3 frontPos = u.path.steps.front().pos;
+	if (frontPos != u.lastFrontWp) {
+		u.lastFrontWp      = frontPos;
+		u.minDistToFront   = 1e30f;
+		u.nonConvergeTicks = 0;
+	}
+	const glm::vec3 frontC = centerOf(u.path.steps.front());
+	const float fdx = entityPos.x - frontC.x;
+	const float fdz = entityPos.z - frontC.z;
+	const float fdist = std::sqrt(fdx * fdx + fdz * fdz);
+	if (fdist + 1e-3f < u.minDistToFront) {
+		u.minDistToFront   = fdist;
+		u.nonConvergeTicks = 0;
+	} else {
+		u.nonConvergeTicks++;
+	}
+
+#ifdef SOLARIUM_PATHFINDING_DEBUG
+	if (u.nonConvergeTicks > kConvergeStallTicks) {
+		std::fprintf(stderr,
+			"[CONV-FAIL] eid=%llu front=(%d,%d,%d) dist=%.2f minDist=%.2f "
+			"stag=%d ticks (orbit/overshoot — distance not improving)\n",
+			(unsigned long long)eid, frontPos.x, frontPos.y, frontPos.z,
+			fdist, u.minDistToFront, u.nonConvergeTicks);
+		g_pathConvergenceFailures.fetch_add(1, std::memory_order_relaxed);
+		// Reset to avoid log spam — caller decides whether the increment is fatal.
+		u.minDistToFront   = fdist;
+		u.nonConvergeTicks = 0;
+	}
+#else
+	(void)eid;
+	if (u.nonConvergeTicks > kConvergeStallTicks) {
+		g_pathConvergenceFailures.fetch_add(1, std::memory_order_relaxed);
+		u.minDistToFront   = fdist;
+		u.nonConvergeTicks = 0;
+	}
+#endif
+}
+
 // Pop-front consumer. While-loop on the front using passedThisTick(prev,pos):
 // pops one waypoint per iteration, stops on the first one that hasn't been
 // crossed. Multi-cell teleport / snap-back drains many in one tick. Closed
 // doors halt the loop — entry is gated by the Interact handshake. When a
 // popped cell is currently isOpenDoor, BFS the open cluster around it and
 // record into passedDoors so anyone (not just the opener) closes behind.
-void PathExecutor::stepPopReached(Unit& u, const glm::vec3& entityPos) {
+void PathExecutor::stepPopReached(EntityId eid, Unit& u,
+                                  const glm::vec3& entityPos) {
 	PERF_SCOPE("path.executor.pop_reached_ms");
+
+	// Per-segment timing + arc accumulator — increment once per real frame
+	// (deduped against intra-frame double-tick via lastConvergePos, which
+	// the watchdog sets in the SAME tick AFTER us, so on the second call
+	// this frame it'll already match entityPos).
+	const bool freshFrame = !u.hasLastConvergePos
+	    || u.lastConvergePos.x != entityPos.x
+	    || u.lastConvergePos.z != entityPos.z;
+	if (freshFrame) {
+		if (!u.hasLastPopPos) {
+			u.lastPopPos    = entityPos;
+			u.hasLastPopPos = true;
+		}
+		// Arc length: sum of |Δpos| across ticks within this segment.
+		// arc/direct ratio reveals orbits — straight Walk = ~1, orbit > 3.
+		if (u.hasLastTickPos) {
+			const float adx = entityPos.x - u.lastTickPos.x;
+			const float adz = entityPos.z - u.lastTickPos.z;
+			u.arcLengthInSeg += std::sqrt(adx * adx + adz * adz);
+		}
+		u.lastTickPos    = entityPos;
+		u.hasLastTickPos = true;
+		u.ticksSinceLastPop++;
+	}
+
 	const glm::vec3 prev = u.hasPrevPos ? u.prevPos : entityPos;
 	int popsLeft = kMaxPopsPerTick;
 	while (popsLeft-- > 0 && !u.path.steps.empty()) {
 		const Waypoint& front = u.path.steps.front();
 		// Don't auto-pop through a closed door — handshake gates it.
 		if (m_doors && m_doors->isClosedDoor(front.pos)) break;
-		if (!passedThisTick(prev, entityPos, front)) break;
+
+		const bool crossed = passedThisTick(prev, entityPos, front);
+		// Predict-arrival pop: retire the front while still ε short of its
+		// center. Without this, a curved approach can miss the segment-cross
+		// predicate entirely and orbit until stall-pop fires (~0.5s).
+		// Y must be within kArriveY (Jump/Descend slack) so we don't pop
+		// mid-air on a Jump.
+		bool predictPop = false;
+		if (!crossed && std::abs(entityPos.y - (float)front.pos.y) < kArriveY) {
+			const float pdx = entityPos.x - ((float)front.pos.x + 0.5f);
+			const float pdz = entityPos.z - ((float)front.pos.z + 0.5f);
+			predictPop =
+				(pdx * pdx + pdz * pdz) <
+				kPredictArrivalRadius * kPredictArrivalRadius;
+		}
+		if (!crossed && !predictPop) break;
 		// Record passed open-door cluster before erasing.
 		if (m_doors && m_doors->isOpenDoor(front.pos)) {
 			recordPassedDoors(u,
 				findConnectedDoorSlabs(front.pos, /*wantClosed=*/false));
 		}
+		// Per-segment receipt before erasing the wp from the front.
+		// `dist` = direct displacement from last pop (or path start).
+		// `arc`  = total |Δpos| accumulated tick-by-tick across the segment.
+		// `ratio` = arc / dist; ~1 = straight, >3 = orbit / heavy deflection.
+		const float dx = entityPos.x - u.lastPopPos.x;
+		const float dz = entityPos.z - u.lastPopPos.z;
+		const float dist = std::sqrt(dx * dx + dz * dz);
+		const float secs = u.ticksSinceLastPop * (1.0f / 60.0f);
+		const float speed = secs > 0.0f ? dist / secs : 0.0f;
+		const float ratio = dist > 0.01f ? (u.arcLengthInSeg / dist) : 0.0f;
+		PATHLOG(eid,
+			"seg: wp=(%d,%d,%d) %s dist=%.2fm arc=%.2fm ratio=%.2f "
+			"ticks=%d speed=%.2fm/s%s",
+			front.pos.x, front.pos.y, front.pos.z, toString(front.kind),
+			dist, u.arcLengthInSeg, ratio,
+			u.ticksSinceLastPop, speed,
+			predictPop ? " [snap]" : "");
+
+		u.lastPopPos        = entityPos;
+		u.ticksSinceLastPop = 0;
+		u.arcLengthInSeg    = 0.0f;
+
 		u.path.steps.erase(u.path.steps.begin());
 		u.waitOpen = false;
 	}
@@ -410,7 +554,8 @@ PathExecutor::Intent PathExecutor::tick(EntityId eid,
 		if (auto i = stepDoorScanProbe(u, entityPos)) return finish(*i);
 	}
 
-	stepPopReached(u, entityPos);
+	stepPopReached(eid, u, entityPos);
+	stepConvergenceWatchdog(eid, u, entityPos);
 	if (u.path.steps.empty()) return finish(Intent{});
 
 	if (auto i = stepFrontDoorHandshake(u, entityPos)) return finish(*i);
@@ -578,75 +723,125 @@ std::optional<glm::vec3> PathExecutor::steerTargetFor(EntityId eid,
 	return intent.target;
 }
 
-// Per-entity, per-tick path-following routine. Returns false when the entity
-// can no longer be driven (despawned, no path, no formation slot) so the
-// caller can drop it from tracking.
+// Single per-entity-per-tick path-execution routine. The ONE place all
+// pathed-movement emission happens. Calls tick() once, dispatches Move /
+// Interact / Stop based on the returned Intent. Returns the Intent so
+// callers can read the kind for status tracking.
 //
-// THIS IS THE ONE PLACE all pathed movement emits a Move action from — both
-// the RTS multi-entity loop (driveRemote) and NPC AI (Navigator::driveTick)
-// route through here. Adding a new caller? Don't reinvent the smoothing or
-// the clamp; just call driveOne.
-bool PathExecutor::driveOne(EntityId eid, ServerInterface& server,
-                            float walkSpeedFallback, float jumpVelocity) {
+// Adding a new caller? Don't reinvent the predicate, clamp, or emission;
+// just call driveOne and check the returned Intent.kind.
+PathExecutor::Intent PathExecutor::driveOne(EntityId eid,
+                                            ServerInterface& server,
+                                            float walkSpeedFallback,
+                                            float jumpVelocity) {
 	auto it = m_units.find(eid);
-	if (it == m_units.end()) return false;
+	if (it == m_units.end()) return Intent{};
 	Unit& u = it->second;
 
 	Entity* e = server.getEntity(eid);
-	if (!e) return false;
-
-	auto steer = steerTargetFor(eid, e->position);
-	if (!steer) return false;
+	if (!e) return Intent{};
 
 	float walkSpeed = e->def().walk_speed;
 	if (walkSpeed <= 0) walkSpeed = walkSpeedFallback;
 
-	glm::vec3 d = *steer - e->position;
-	d.y = 0;
-	float len = std::sqrt(d.x * d.x + d.z * d.z);
-	if (len < 0.001f) return true;
-	d /= len;
+	auto sendStop = [&]() {
+		ActionProposal stop;
+		stop.type         = ActionProposal::Move;
+		stop.actorId      = eid;
+		stop.desiredVel   = {0, 0, 0};
+		stop.lookPitch    = e->lookPitch;
+		stop.lookYaw      = e->lookYaw;
+		stop.goalText     = u.moveCtx.goalText;
+		server.sendAction(stop);
+	};
 
-	// C¹-smooth heading — cap per-tick rotation (60 Hz preset, no dt here).
-	d = rotateTowardXZ(u.lastMoveDir, d, kMaxTurnPerTick60);
-	u.lastMoveDir = d;
+	// Run the predicate / pop / convergence-watchdog / segment-timing pass.
+	Intent intent = tick(eid, e->position);
 
-	// Speed-clamp + speed-scaled approach ramp. Curve radius v/ω must fit
-	// inside kCorridorSlack at corners or the segment-crossing pop predicate
-	// can't fire and the entity orbits the waypoint (P17). The ramp scales
-	// with walkSpeed (Mach-10 entity starts braking 30+ m out, not 1.5 m).
-	// Hard min(speed, dist/dt) ensures one tick never overshoots. Skipped
-	// on Jump/Descend — ballistic arc needs full XZ velocity.
-	const bool isJumpOrDescend = !u.path.steps.empty()
-	    && u.path.steps.front().kind != MoveKind::Walk;
-	float clamped = walkSpeed;
-	if (!isJumpOrDescend) {
-		const float ramp = std::max(kMinRamp, walkSpeed * kDecelTime);
-		if (walkSpeed > kCornerSafeSpeed && len < ramp) {
-			const float t = len / ramp;             // 0 at target, 1 at edge
-			clamped = kCornerSafeSpeed + (walkSpeed - kCornerSafeSpeed) * t;
+	// ── Slot-fallback (RTS async-plan-pending / builder naive drive) ──
+	// Path is empty but the unit has a formation slot — steer naively toward
+	// the slot until A* lands or builder phase 2 takes over. Skips when
+	// already arrived (kArriveRadius round the slot).
+	if (intent.kind == Intent::None
+	    && u.formationSlot.x != INT_MIN && !u.arrived) {
+		const glm::vec3 slotC{u.formationSlot.x + 0.5f,
+		                      (float)u.formationSlot.y,
+		                      u.formationSlot.z + 0.5f};
+		const float sdx = slotC.x - e->position.x;
+		const float sdz = slotC.z - e->position.z;
+		const float sdist = std::sqrt(sdx * sdx + sdz * sdz);
+		if (sdist < kArriveRadius) {
+			u.arrived = true;
+			sendStop();
+			return Intent{};
 		}
-		constexpr float kServerDt = 1.0f / 60.0f;
-		clamped = std::min(clamped, len / kServerDt);
+		const glm::vec3 dir = {sdx / sdist, 0.0f, sdz / sdist};
+		bool wantsJump = false;
+		if (m_builderMode) {
+			ChunkWorldView view(server.chunks(), server.blockRegistry());
+			wantsJump = builderTickFor(eid, e->position, dir, view);
+		}
+		const glm::vec3 vel = {dir.x * walkSpeed, 0.0f, dir.z * walkSpeed};
+		emitMoveAction(eid, *e, vel, server, u.moveCtx, "drive-slot",
+		               wantsJump, jumpVelocity);
+		return Intent{Intent::Move, slotC, {}};
 	}
 
-	bool wantsJump = false;
-	if (m_builderMode) {
-		ChunkWorldView view(server.chunks(), server.blockRegistry());
-		wantsJump = builderTickFor(eid, e->position, d, view);
+	if (intent.kind == Intent::Move) {
+		// Velocity is the RAW direction toward the (slide-deflected) target.
+		// Body yaw is decoupled — server's smoothYawTowardsVelocity (20 rad/s,
+		// logic/physics.h) lerps Entity::yaw toward vel direction, so a 90°
+		// corner produces a "strafe" (entity walks sideways while the body
+		// model catches up). Same mechanism player RPG-mode uses.
+		//
+		// Speed clamp: hard one-tick backstop. Without smoothing there's no
+		// curve to fit inside any slack — just don't overshoot in one tick.
+		// Skipped on Jump/Descend (ballistic arc needs full XZ velocity).
+		glm::vec3 d = intent.target - e->position;
+		d.y = 0;
+		const float len = std::sqrt(d.x * d.x + d.z * d.z);
+		if (len < 0.001f) return intent;
+		d /= len;
+		const bool isJumpOrDescend = !u.path.steps.empty()
+		    && u.path.steps.front().kind != MoveKind::Walk;
+		float clamped = walkSpeed;
+		if (!isJumpOrDescend) {
+			constexpr float kServerDt = 1.0f / 60.0f;
+			clamped = std::min(walkSpeed, len / kServerDt);
+		}
+		bool wantsJump = false;
+		if (m_builderMode) {
+			ChunkWorldView view(server.chunks(), server.blockRegistry());
+			wantsJump = builderTickFor(eid, e->position, d, view);
+		}
+		const glm::vec3 vel = {d.x * clamped, 0.0f, d.z * clamped};
+		emitMoveAction(eid, *e, vel, server, u.moveCtx, "drive",
+		               wantsJump, jumpVelocity);
+		return intent;
 	}
 
-	ActionProposal move;
-	move.type         = ActionProposal::Move;
-	move.actorId      = eid;
-	move.desiredVel   = {d.x * clamped, 0, d.z * clamped};
-	move.hasClientPos = false;
-	move.lookPitch    = e->lookPitch;
-	move.lookYaw      = e->lookYaw;
-	move.jump         = wantsJump;
-	move.jumpVelocity = jumpVelocity;
-	server.sendAction(move);
-	return true;
+	if (intent.kind == Intent::Interact) {
+		// One ActionProposal::Interact per connected door slab — server fans
+		// the toggle vertically through the door pillar; we cover the
+		// horizontal cluster.
+		for (auto pos : intent.interactPos) {
+			ActionProposal p;
+			p.type          = ActionProposal::Interact;
+			p.actorId       = eid;
+			p.blockPos      = pos;
+			p.appearanceIdx = -1;     // legacy toggle (door)
+			server.sendAction(p);
+		}
+		// Halt while the door swings — next tick's pop loop retires the
+		// door cell once it flips open.
+		sendStop();
+		return intent;
+	}
+
+	// Intent::None — path complete or no path/slot. Send a stop so the
+	// server doesn't keep applying any prior desired velocity.
+	sendStop();
+	return intent;
 }
 
 void PathExecutor::driveRemote(ServerInterface& server, EntityId excludedId,
@@ -656,8 +851,9 @@ void PathExecutor::driveRemote(ServerInterface& server, EntityId excludedId,
 	for (auto& [eid, u] : m_units) {
 		(void)u;
 		if (eid == excludedId) continue;
-		if (!driveOne(eid, server, walkSpeedFallback, jumpVelocity))
-			done.push_back(eid);
+		Intent intent = driveOne(eid, server, walkSpeedFallback, jumpVelocity);
+		// None means: no path AND no slot (or arrived at slot). Drop tracking.
+		if (intent.kind == Intent::None) done.push_back(eid);
 	}
 	for (auto eid : done) cancel(eid);
 }
@@ -800,62 +996,74 @@ std::string fmt_coord(glm::ivec3 p) {
 }
 }  // namespace
 
-Navigator::Step Navigator::tick(const glm::vec3& entityPos) {
+// Lazy plan with sub-cell-edge correction. Called by driveTick on the first
+// tick after setGoal so the start cell is fresh against the actual position.
+// Returns true on success (path installed in m_exec); false on planner give-
+// up (caller sets m_status=Failed and the failure reason).
+bool Navigator::lazyPlanIfNeeded(const glm::vec3& entityPos) {
+	if (!m_path.steps.empty()) return true;
+	glm::ivec3 start{
+		(int)std::floor(entityPos.x),
+		(int)std::floor(entityPos.y),
+		(int)std::floor(entityPos.z)};
+	// Sub-cell-edge correction: physics permits an entity to straddle a
+	// cell boundary — its AABB sits mostly in the adjacent air cell while
+	// floor(pos) lands on the solid block it's brushing against. A* would
+	// then plan *from inside the block* and find no standable neighbors.
+	// If the computed feet cell is solid, snap to the adjacent cell whose
+	// center is closest to the entity's actual XZ position, preferring a
+	// *standable* cell (floor-solid + body/head air) so A* can immediately
+	// expand neighbors. Falls back to any air cell if none stand, and to
+	// the original start if every candidate is solid (let A* report Failed
+	// with a coherent reason).
+	if (m_world.isSolid(start)) {
+		float fx = entityPos.x - (float)start.x;
+		float fz = entityPos.z - (float)start.z;
+		int   dx = (fx >= 0.5f) ? +1 : -1;
+		int   dz = (fz >= 0.5f) ? +1 : -1;
+		glm::ivec3 cands[3] = {
+			{start.x + dx, start.y, start.z     },
+			{start.x,      start.y, start.z + dz},
+			{start.x + dx, start.y, start.z + dz},
+		};
+		glm::ivec3 bestAir = start;
+		bool       haveAir = false;
+		for (auto c : cands) {
+			if (isStandable(m_world, c))        { start = c; haveAir = true; break; }
+			if (!haveAir && !m_world.isSolid(c)){ bestAir = c; haveAir = true; }
+		}
+		if (m_world.isSolid(start) && haveAir) start = bestAir;
+	}
+	m_path = m_planner.plan(start, m_goal);
+	if (m_path.steps.empty()) {
+		m_failureReason = "no path from " + fmt_coord(start)
+		                + " to " + fmt_coord(m_goal);
+		return false;
+	}
+	m_exec.setPath(m_eid, m_path);
+	return true;
+}
+
+// Single per-frame entry for NPC pathed movement. ALL emission (Move,
+// Interact, Stop) lives in PathExecutor::driveOne — Navigator just owns
+// the lazy-plan + status-from-Intent translation layer. RTS (driveRemote)
+// and NPC (this) hit driveOne identically; same predicate, same clamp,
+// same emit.
+Navigator::Step Navigator::driveTick(Entity& e, ServerInterface& server,
+                                     const std::string& goalText,
+                                     float walkSpeedFallback,
+                                     float jumpVelocity) {
 	Step out;
 	if (!m_hasGoal) { m_status = Status::Idle; return out; }
 
-	// Lazy plan: first tick after setGoal. Plan once — if empty, or if the
-	// executor drains a partial path, the caller sees Failed + reason and
-	// handles it (go home to complain, drop item, idle). We don't replan.
-	// A partial path is still executed for goals inside solid blocks
-	// (chests, monuments, any "interact-with" target) — the planner can
-	// never stand on the goal cell, so partial=true is the norm. Walking
-	// to the best-seen standable neighbor is what the caller wants; they
-	// check range on arrival and issue Interact/Store/etc.
-	if (m_path.steps.empty()) {
-		glm::ivec3 start{
-			(int)std::floor(entityPos.x),
-			(int)std::floor(entityPos.y),
-			(int)std::floor(entityPos.z)};
-		// Sub-cell-edge correction: physics permits an entity to straddle a
-		// cell boundary — its AABB sits mostly in the adjacent air cell while
-		// floor(pos) lands on the solid block it's brushing against. A* would
-		// then plan *from inside the block* and find no standable neighbors.
-		// If the computed feet cell is solid, snap to the adjacent cell whose
-		// center is closest to the entity's actual XZ position, preferring a
-		// *standable* cell (floor-solid + body/head air) so A* can immediately
-		// expand neighbors. Falls back to any air cell if none stand, and to
-		// the original start if every candidate is solid (let A* report Failed
-		// with a coherent reason).
-		if (m_world.isSolid(start)) {
-			float fx = entityPos.x - (float)start.x;
-			float fz = entityPos.z - (float)start.z;
-			int   dx = (fx >= 0.5f) ? +1 : -1;
-			int   dz = (fz >= 0.5f) ? +1 : -1;
-			glm::ivec3 cands[3] = {
-				{start.x + dx, start.y, start.z     },
-				{start.x,      start.y, start.z + dz},
-				{start.x + dx, start.y, start.z + dz},
-			};
-			glm::ivec3 bestAir = start;
-			bool       haveAir = false;
-			for (auto c : cands) {
-				if (isStandable(m_world, c))        { start = c; haveAir = true; break; }
-				if (!haveAir && !m_world.isSolid(c)){ bestAir = c; haveAir = true; }
-			}
-			if (m_world.isSolid(start) && haveAir) start = bestAir;
-		}
-		m_path = m_planner.plan(start, m_goal);
-		if (m_path.steps.empty()) {
-			m_status        = Status::Failed;
-			m_failureReason = "no path from " + fmt_coord(start)
-			                + " to " + fmt_coord(m_goal);
-			m_hasGoal = false;
-			return out;
-		}
-		m_exec.setPath(m_eid, m_path);
+	if (!lazyPlanIfNeeded(e.position)) {
+		m_status  = Status::Failed;
+		m_hasGoal = false;
+		return out;
 	}
 
+	// Detect "executor drained the path" before we drive — that's an arrival
+	// (or Failed if the original plan was partial / goal in solid block).
 	if (m_exec.done(m_eid)) {
 		if (m_path.partial) {
 			m_status        = Status::Failed;
@@ -867,7 +1075,18 @@ Navigator::Step Navigator::tick(const glm::vec3& entityPos) {
 		return out;
 	}
 
-	auto intent = m_exec.tick(m_eid, entityPos);
+	// Forward goalText to the Unit's MoveContext so emitMoveAction puts it
+	// on the ActionProposal. Same field Agent::sendMove sets via its own
+	// MoveContext for non-pathed callers — single source of truth.
+	if (m_exec.has(m_eid)) {
+		m_exec.unitMoveCtx(m_eid).goalText = goalText;
+	}
+
+	// Drive: tick + emit (Move / Interact / Stop) all happen inside driveOne.
+	PathExecutor::Intent intent =
+		m_exec.driveOne(m_eid, server, walkSpeedFallback, jumpVelocity);
+
+	// Translate Intent → Navigator::Status + Step for the agent's layer.
 	if (intent.kind == PathExecutor::Intent::Move) {
 		m_status       = Status::Walking;
 		out.kind       = Step::Move;
@@ -878,62 +1097,11 @@ Navigator::Step Navigator::tick(const glm::vec3& entityPos) {
 		out.moveTarget  = intent.target;
 		out.interactPos = std::move(intent.interactPos);
 	} else {
-		m_status  = Status::Arrived;
+		// Path drained mid-driveOne (final waypoint just popped).
+		m_status  = m_path.partial ? Status::Failed : Status::Arrived;
 		m_hasGoal = false;
 	}
 	return out;
-}
-
-// Single per-frame entry for NPC pathed movement. Drives the entity through
-// the SAME PathExecutor::driveOne pipeline that RTS units use — same
-// smoothing, same clamp, same emit. Predicate/pop runs once per frame here
-// (via tick), then dispatches:
-//   • Move      → driveOne (which re-runs tick internally; the second call
-//                 is idempotent on the just-popped state)
-//   • Interact  → emit one ActionProposal::Interact per door slab
-//   • Arrived/Failed → emit a stop Move so server stops applying any
-//                       residual desired velocity from the previous tick
-//
-// Returns the Step from tick() so the Agent can log waypoint progress
-// without re-running predicate logic.
-Navigator::Step Navigator::driveTick(Entity& e, ServerInterface& server,
-                                     float walkSpeedFallback,
-                                     float jumpVelocity) {
-	Step step = tick(e.position);
-
-	auto sendStop = [&]() {
-		ActionProposal p;
-		p.type       = ActionProposal::Move;
-		p.actorId    = m_eid;
-		p.desiredVel = {0, 0, 0};
-		server.sendAction(p);
-	};
-
-	if (step.kind == Step::Move) {
-		// Unified pipeline: driveOne does smoothing + clamp + send.
-		// driveOne re-runs tick internally; on a freshly-popped state the
-		// second call returns the same target without further pop, so this
-		// is functionally idempotent (~3 µs of duplicated predicate work).
-		m_exec.driveOne(m_eid, server, walkSpeedFallback, jumpVelocity);
-	} else if (step.kind == Step::Interact) {
-		// One Interact per connected door slab — server fans toggle vertically
-		// through the pillar; we cover the horizontal cluster.
-		for (auto pos : step.interactPos) {
-			ActionProposal p;
-			p.type          = ActionProposal::Interact;
-			p.actorId       = m_eid;
-			p.blockPos      = pos;
-			p.appearanceIdx = -1;     // legacy toggle (door)
-			server.sendAction(p);
-		}
-		// Stop walking while the door swings — next tick's pop loop will
-		// retire the door cell once it's open.
-		sendStop();
-	} else {
-		// Arrived / Failed / Idle — send stop so any prior velocity halts.
-		sendStop();
-	}
-	return step;
 }
 
 }  // namespace solarium

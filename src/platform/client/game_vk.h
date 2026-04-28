@@ -227,6 +227,13 @@ public:
 		}
 	}
 
+	// --log-only / headless mode: window is hidden so pollDismiss can't see
+	// any keypress, and the loading screen would never advance to Playing.
+	// Setting this true causes the loading-screen check to auto-advance the
+	// moment it's ready (no key required) so AgentClient::phaseExecute can
+	// actually run for NPCs.
+	void setLogOnly(bool on) { m_logOnly = on; }
+
 	// While true, skip drawing the native bitmap-font menu UI — the CEF HTML
 	// overlay (composited in the RHI) is providing the menu instead.
 	void setCefMenuActive(bool on) { m_cefMenuActive.store(on); }
@@ -574,6 +581,8 @@ private:
 	// Connecting → Playing handoff controller (gate + smoothing + sticky
 	// ready + any-key dismiss). Fed per-frame by updateLoadingGate().
 	LoadingScreen m_loading;
+	// --log-only / headless: bypass keypress dismiss so executor enables.
+	bool         m_logOnly = false;
 	// Chunk-quiesce tracker — watches m_chunkMeshes.size() during the loading
 	// phase. When it stops growing for m_chunkQuiesceWindow AND there's nothing
 	// pending, ChunksLoaded hits 1.0.

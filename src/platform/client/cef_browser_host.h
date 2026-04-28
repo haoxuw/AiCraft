@@ -70,9 +70,13 @@ public:
 
 	// Forward GLFW input to the browser. (x,y) are pixel coords inside the
 	// view. mouseLeave=true issues an OnMouseMove with leaveBoundary=true.
-	void sendMouseMove(int x, int y, bool mouseLeave = false);
+	// modifiers carries cef_event_flags_t bits (held mouse buttons / shift /
+	// ctrl / alt) — required for drags: a move with no LMB bit set reads as
+	// a hover, and Chromium will not advance scrollbar thumbs on hover.
+	void sendMouseMove(int x, int y, bool mouseLeave = false, int modifiers = 0);
 	// button: 0 = left, 1 = middle, 2 = right.
-	void sendMouseClick(int x, int y, int button, bool down, int clickCount = 1);
+	void sendMouseClick(int x, int y, int button, bool down,
+	                    int clickCount = 1, int modifiers = 0);
 	void sendMouseWheel(int x, int y, int deltaX, int deltaY);
 
 	// JS bridge: HTML calls window.cefQuery({request:"action:foo"}) and `cb`

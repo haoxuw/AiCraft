@@ -26,11 +26,13 @@ void Game::clampCameraCollision() {
 	// RTS: commander view flies through walls by design; clamp would jerk it.
 	if (m_cam.mode == solarium::CameraMode::RTS) return;
 
-	// Orbit target (TPS/RPG head anchor).
+	// Collision target = body anchor for the cam→pull-in raycast. TPS uses
+	// player.eye (cam floats along the look ray from there); RPG uses chest.
 	float feetY = m_cam.smoothedFeetPos().y;
-	glm::vec3 target(m_cam.player.feetPos.x,
-	                 feetY + m_cam.player.eyeHeight * 0.8f,
-	                 m_cam.player.feetPos.z);
+	float anchorY = (m_cam.mode == solarium::CameraMode::ThirdPerson)
+	    ? feetY + m_cam.player.eyeHeight
+	    : feetY + m_cam.player.eyeHeight * 0.8f;
+	glm::vec3 target(m_cam.player.feetPos.x, anchorY, m_cam.player.feetPos.z);
 
 	glm::vec3 delta = m_cam.position - target;
 	float dist = glm::length(delta);
@@ -107,7 +109,7 @@ void Game::processInput(float dt) {
 			m_modeHintsShown |= bit;
 			const char* hints[] = {
 				"WASD move · mouse look · LMB attack · RMB place",
-				"WASD move · mouse orbits · LMB attack · RMB place",
+				"WASD move · mouse aim · LMB attack · RMB place · scroll zooms",
 				"RMB-drag orbits · click ground to move · drag to box-select",
 				"WASD pan · RMB-drag orbit · LMB box-select · LMB-hold=Build",
 			};
@@ -697,27 +699,51 @@ void Game::tickPlayer(float dt) {
 	processMmbInput();
 }
 
-void Game::digInFront() {
-	if (!m_rhi) return;
+std::optional<solarium::RayHit> Game::aimedBlockHit(float reachDist) const {
+	if (!m_server) return std::nullopt;
+	auto* me = m_server->getEntity(m_server->localPlayerId());
+	if (!me) return std::nullopt;
+
+	// Raycast from the CAMERA in cam-forward — that's the ray the
+	// crosshair (screen-centre) actually represents, so the block under
+	// the crosshair is what gets hit. Reach is then measured against
+	// the player's position so a far crosshair past the player's reach
+	// doesn't break anything.
 	glm::vec3 eye = m_cam.position;
 	glm::vec3 dir = m_cam.front();
+
+	// RPG/RTS: free cursor → unproject mouse NDC instead of camera-forward.
 	if (m_cam.mode == solarium::CameraMode::RPG ||
 	    m_cam.mode == solarium::CameraMode::RTS) {
-		double mx, my;
+		double mx = 0, my = 0;
 		glfwGetCursorPos(m_window, &mx, &my);
-		int ww = m_fbW, wh = m_fbH;
-		if (ww > 0 && wh > 0) {
-			float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
-			float ndcY = 1.0f - (float)(my / wh) * 2.0f;
+		if (m_fbW > 0 && m_fbH > 0) {
+			float ndcX = (float)(mx / m_fbW) * 2.0f - 1.0f;
+			float ndcY = 1.0f - (float)(my / m_fbH) * 2.0f;
 			glm::mat4 invVP = glm::inverse(viewProj());
-			glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
-			glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
-			dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
+			glm::vec4 nW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nW /= nW.w;
+			glm::vec4 fW = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); fW /= fW.w;
+			eye = glm::vec3(nW);
+			dir = glm::normalize(glm::vec3(fW) - eye);
 		}
 	}
-	auto& chunks = m_server->chunks();
-	auto hit = solarium::raycastBlocks(chunks, eye, dir, 16.0f);
+
+	// Reach is measured from the player; the raycast itself must be long
+	// enough to span the cam→player gap so a TPS far cam still finds the
+	// block under the crosshair.
+	float maxDist = reachDist + glm::distance(eye, me->position) + 2.0f;
+	auto hit = solarium::raycastBlocks(m_server->chunks(), eye, dir, maxDist);
+	if (!hit) return std::nullopt;
+	glm::vec3 hitCenter = glm::vec3(hit->blockPos) + glm::vec3(0.5f);
+	if (glm::distance(hitCenter, me->position) > reachDist) return std::nullopt;
+	return hit;
+}
+
+void Game::digInFront() {
+	if (!m_rhi) return;
+	auto hit = aimedBlockHit(16.0f);
 	if (!hit) return;
+	auto& chunks = m_server->chunks();
 	const auto& reg = m_server->blockRegistry();
 	const auto& bdef = reg.get(hit->blockId);
 	solarium::ActionProposal p;
@@ -764,24 +790,7 @@ void Game::syncRemeshBlock(glm::ivec3 wpos) {
 }
 
 void Game::placeBlock() {
-	glm::vec3 eye = m_cam.position;
-	glm::vec3 dir = m_cam.front();
-	if (m_cam.mode == solarium::CameraMode::RPG ||
-	    m_cam.mode == solarium::CameraMode::RTS) {
-		double mx, my;
-		glfwGetCursorPos(m_window, &mx, &my);
-		int ww = m_fbW, wh = m_fbH;
-		if (ww > 0 && wh > 0) {
-			float ndcX = (float)(mx / ww) * 2.0f - 1.0f;
-			float ndcY = 1.0f - (float)(my / wh) * 2.0f;
-			glm::mat4 invVP = glm::inverse(viewProj());
-			glm::vec4 nearW = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f); nearW /= nearW.w;
-			glm::vec4 farW  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f); farW  /= farW.w;
-			dir = glm::normalize(glm::vec3(farW) - glm::vec3(nearW));
-		}
-	}
-	auto& chunks = m_server->chunks();
-	auto hit = solarium::raycastBlocks(chunks, eye, dir, 8.0f);
+	auto hit = aimedBlockHit(8.0f);
 	if (!hit) return;
 
 	auto* me = playerEntity();
@@ -1597,7 +1606,7 @@ void Game::processLmbInput(float dt) {
 					});
 					auto eHit = solarium::raycastEntities(ents, eye, dir, 20.0f, myId);
 					if (eHit) {
-						auto blockHit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+						auto blockHit = aimedBlockHit(6.0f);
 						bool entityCloser = !blockHit || eHit->distance <= blockHit->distance;
 						if (entityCloser) {
 							entityAttacked = true;
@@ -1622,7 +1631,7 @@ void Game::processLmbInput(float dt) {
 						digInFront();
 						m_breakCD = 0.15f;
 					} else {
-						auto hit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+						auto hit = aimedBlockHit(6.0f);
 						if (hit) {
 							glm::ivec3 bp = hit->blockPos;
 							if (m_breaking.active && m_breaking.target == bp) {
@@ -1806,9 +1815,7 @@ void Game::processRmbInput(float dt) {
 	// now and clear. Re-raycast and require the same target so dragging off
 	// the door before lifting cancels the interact (matches click semantics).
 	if (rmbReleaseEdge && m_rmbInteractPending) {
-		glm::vec3 eye = m_cam.position;
-		glm::vec3 dir = m_cam.front();
-		auto bHit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+		auto bHit = aimedBlockHit(6.0f);
 		if (bHit) {
 			glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
 			if (bp == m_rmbInteractTarget) {
@@ -1872,7 +1879,7 @@ void Game::processRmbInput(float dt) {
 			});
 			auto eHit = solarium::raycastEntities(ents, eye, dir, 20.0f, myId);
 			if (eHit) {
-				auto blockHit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+				auto blockHit = aimedBlockHit(6.0f);
 				bool entityCloser = !blockHit || eHit->distance < blockHit->distance;
 				if (entityCloser) {
 					m_inspectedEntity = eHit->entityId;
@@ -1887,7 +1894,7 @@ void Game::processRmbInput(float dt) {
 		// buttons go through Interact. Anything else falls to placeBlock().
 		if (!inspectTriggered) {
 			bool consumed = false;
-			auto bHit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 6.0f);
+			auto bHit = aimedBlockHit(6.0f);
 			if (bHit) {
 				glm::ivec3 bp = bHit->hasInteract ? bHit->interactPos : bHit->blockPos;
 				BlockId bid = bHit->hasInteract ? bHit->interactBlockId : bHit->blockId;
@@ -1943,9 +1950,7 @@ void Game::processMmbInput() {
 			m_mmbLast = mmbNow;
 			return;
 		}
-		glm::vec3 eye = m_cam.position;
-		glm::vec3 dir = m_cam.front();
-		auto hit = solarium::raycastBlocks(m_server->chunks(), eye, dir, 16.0f);
+		auto hit = aimedBlockHit(16.0f);
 		if (hit) {
 			const auto& bdef = m_server->blockRegistry().get(hit->blockId);
 			// MMB eyedropper: select the hotbar slot that holds this block

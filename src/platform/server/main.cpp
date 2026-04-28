@@ -233,6 +233,11 @@ void applyArtifactData(solarium::GameServer& server,
 	solarium::ArtifactRegistry artifacts;
 	artifacts.setDisabledNamespaces(disabledMods);
 	artifacts.loadAll("artifacts");
+	// Singleplayer spawns the server with the same HOME, so the user's
+	// in-game source-editor forks layer in here too. For multiplayer the
+	// dedicated server has its own HOME and forks live elsewhere — see
+	// the cloud-sync TODO in ArtifactRegistry::loadForks.
+	artifacts.loadForks(solarium::ArtifactRegistry::defaultForksRoot());
 	server.mergeArtifactTags(artifacts.livingTags());
 	server.applyLivingStats(artifacts.livingStats());
 
