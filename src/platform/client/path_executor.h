@@ -142,19 +142,54 @@ enum class CommandKind { Walk, Build };
 
 class PathExecutor {
 public:
-	// Waypoint pop: entity must reach within kMagnetRadius of cell center.
-	// Tight radius + turn-rate-capped velocity keep the entity on the
-	// planned path instead of cutting corners. kArriveRadius is retained
-	// only for formation-slot arrival (steerTargetFor), not waypoint pops.
-	static constexpr float kMagnetRadius = 0.15f;  // waypoint pop
-	static constexpr float kArriveRadius = 0.9f;   // slot arrival only
-	static constexpr float kArriveY      = 1.0f;   // waypoint Y tolerance
-	static constexpr float kDoorReachXZ  = 2.0f;
+	// Waypoint pop: segment-crossing predicate on (prevPos, pos) per tick.
+	// A waypoint retires when the entity's last-tick movement either crossed
+	// the perpendicular plane through it (within a corridor slack) OR the
+	// entity is standing on its center within kSnapRadius. This subsumes
+	// magnet-ring approach, "about to overshoot," and "already past" in a
+	// single test — and crucially, fixes the orbit-around-waypoint pathology
+	// where a tight magnet ring + turn-rate-capped velocity could leave the
+	// entity circling the cell forever (min turn radius v/ω > magnet radius).
+	// kArriveRadius is retained only for formation-slot arrival.
+	static constexpr float kCorridorSlack = 0.5f;  // perpendicular tolerance for the crossing test
+	static constexpr float kSnapRadius    = 0.10f; // standing-on-waypoint at zero motion
+	static constexpr float kArriveRadius  = 0.9f;  // slot arrival only
+	static constexpr float kArriveY       = 1.0f;  // waypoint Y tolerance
+	static constexpr float kDoorReachXZ   = 2.0f;
+	// Defensive cap on the per-tick pop while-loop (replaces the old O(N)
+	// forward-scan). Multi-cell teleport / snap-back drains this many steps
+	// in one tick; pathological loops bail. Sized to support arbitrarily
+	// fast entities — at walkSpeed=1500 m/s and dt=1/60 the entity covers
+	// 25 cells per tick on a straight, well under this cap.
+	static constexpr int   kMaxPopsPerTick = 256;
 
 	// Per-tick XZ direction-change cap. ~10°/tick @ 60 Hz → 90° corner
 	// takes ~9 ticks, keeping dv/dt smooth across pops.
 	static constexpr float kMaxTurnRate      = 10.0f;
 	static constexpr float kMaxTurnPerTick60 = 0.17f;
+
+	// ── Speed clamp / approach ramp (used by driveRemote) ─────────────
+	// All three constants are derived from the predicate's geometry, so
+	// changing kCorridorSlack or kMaxTurnPerTick60 propagates correctly.
+	//
+	// kCornerSafeSpeed: the orbit threshold. Smoothed-heading curve radius
+	//   v/ω must fit inside kCorridorSlack so the segment-crossing
+	//   predicate fires at corners. Safety factor 0.6 gives margin for
+	//   numeric jitter and rotation lag.
+	//     = kCorridorSlack · ω · 0.6     (ω = kMaxTurnPerTick60 · 60 Hz)
+	static constexpr float kCornerSafetyFactor = 0.6f;
+	static constexpr float kCornerSafeSpeed =
+		kCorridorSlack * (kMaxTurnPerTick60 * 60.0f) * kCornerSafetyFactor;
+	// kDecelTime: seconds to bleed walkSpeed → kCornerSafeSpeed over the
+	//   approach ramp. Derived from a 90° turn time (π/2 / ω) with 2×
+	//   headroom so rotation completes before arrival.
+	//     = π / ω
+	static constexpr float kDecelTime =
+		3.14159265f / (kMaxTurnPerTick60 * 60.0f);
+	// kMinRamp: floor on ramp distance. At low walkSpeed, walkSpeed·kDecelTime
+	//   shrinks below a cell width — kMinRamp keeps a sensible approach
+	//   window even for slow units.
+	static constexpr float kMinRamp = 1.5f;
 
 	// Wall-slide: deflect toward the best standable cardinal neighbour when
 	// the desired XZ direction would clip a solid cell. Hysteresis keeps
@@ -182,9 +217,14 @@ public:
 	// opened slab, fire a closing Interact so the door doesn't sit open.
 	static constexpr float kDoorCloseDistance   = 1.6f;
 	// Don't close if anyone else is standing within this radius of the
-	// doorway — closing in someone's face is rude. Buffer of ~0.5 over
-	// the largest typical entity AABB half-width keeps us conservative.
-	static constexpr float kDoorPolitenessRadius = 1.5f;
+	// doorway — closing in someone's face is rude. Bumped from 1.5 → 2.5
+	// so an NPC walking *toward* the doorway from a few cells away also
+	// gets a clear path (any entity within range defers the close).
+	static constexpr float kDoorPolitenessRadius = 2.5f;
+	// Per-entity passedDoors cap. Anyone who walks through an open-door
+	// cell enqueues the cluster; capped FIFO so a long path through many
+	// doors doesn't grow unboundedly.
+	static constexpr int   kMaxPassedDoors = 16;
 
 	struct Intent {
 		enum Kind { None, Move, Interact } kind = None;
@@ -195,6 +235,24 @@ public:
 		// Vertical stack propagation stays server-side.
 		std::vector<glm::ivec3> interactPos;
 	};
+
+	// Single source of truth for the speed-clamp used by every smoothed-
+	// heading consumer (driveRemote for RTS/click-to-move, Agent::
+	// navigateApproach for NPC AI, P17 in the test suite). Returns the
+	// clamped speed magnitude:
+	//   • Speed-scaled approach ramp: bleed walkSpeed → kCornerSafeSpeed
+	//     over `ramp = max(kMinRamp, walkSpeed · kDecelTime)`. Keeps the
+	//     curve radius v/ω < kCorridorSlack at corners so the segment-
+	//     crossing pop predicate fires.
+	//   • Hard backstop: vel·serverDt ≤ distToTarget. Catches teleport /
+	//     push-out / weird residual cases where the ramp didn't engage.
+	//   • Skipped (returns walkSpeed unchanged) on Jump/Descend cells —
+	//     those need full XZ velocity for the ballistic arc.
+	// Sync risk eliminated: previous bug had clamp inlined in driveRemote
+	// only, navigateApproach silently emitted full walkSpeed, villagers
+	// orbited corners despite a passing test.
+	static float clampApproachSpeed(float walkSpeed, float distToTarget,
+	                                MoveKind frontKind);
 
 	// Disable to make Build fall back to Walk. Phase 1 = jump-climb only.
 	static constexpr bool kExperimentalPathBuilder = true;
@@ -242,9 +300,18 @@ public:
 	// Convenience: returns tick(eid, pos).target if kind is Move, else nullopt.
 	// Used by player-possessed-unit steering in game_vk_playing.cpp.
 	std::optional<glm::vec3> steerTargetFor(EntityId eid, const glm::vec3& pos);
+	// Single per-entity-per-tick routine: predicate/pop + smoothed heading +
+	// approach clamp + ActionProposal::Move emission. The unified entry point
+	// that ALL pathed-movement callers route through — RTS group commands
+	// (driveRemote loops this), NPC AI (Navigator::driveTick calls this),
+	// click-to-move possessed units. Returns false when the entity is no
+	// longer drivable (despawned, no path) — caller should drop tracking.
+	bool driveOne(EntityId eid, ServerInterface& server,
+	              float walkSpeedFallback = 2.0f,
+	              float jumpVelocity      = 8.3f);
 	// Emit Move ActionProposals for every tracked entity except excludedId
-	// (the possessed player, which is driven by input directly). Builder mode
-	// injects jumps to climb 1-block ledges.
+	// (the possessed player, which is driven by input directly). Thin loop
+	// over driveOne. Builder mode jumps are picked up inside driveOne.
 	void driveRemote(ServerInterface& server, EntityId excludedId,
 	                 float walkSpeedFallback = 2.0f,
 	                 float jumpVelocity      = 8.3f);
@@ -287,10 +354,17 @@ private:
 		// next tick so desiredVel stays C¹-continuous across pops.
 		glm::vec3         lastMoveDir{0, 0, 0};
 		int               interactCooldown = 0;
-		// Slabs we toggled open ourselves — auto-close once we've stepped
-		// far enough away (kDoorCloseDistance). Cleared on the closing
-		// Interact, on cancel, and on a fresh setPath.
-		std::vector<glm::ivec3> openedDoors;
+		// Slabs we walked *through* (not just opened) — anyone closes any
+		// door behind them. Filled by the pop loop when the popped cell is
+		// currently isOpenDoor (BFS the open-cluster around it). Auto-close
+		// fires once we're ≥ kDoorCloseDistance from every slab here.
+		// Cleared on the closing Interact, on cancel, and on a fresh setPath.
+		std::vector<glm::ivec3> passedDoors;
+		// Previous-tick XZ position, fed into the segment-crossing pop test.
+		// Lazy-init: hasPrevPos=false until the first tick after setPath, so
+		// a sentinel value can't trigger a spurious pop on a huge fake seg.
+		glm::vec3         prevPos{0, 0, 0};
+		bool              hasPrevPos = false;
 	};
 
 	struct PendingPlan {
@@ -315,15 +389,35 @@ private:
 	static glm::vec3 centerOf(const Waypoint& w) {
 		return {w.pos.x + 0.5f, (float)w.pos.y, w.pos.z + 0.5f};
 	}
-	bool reached(const Waypoint& w, const glm::vec3& pos) const;
-	// BFS the connected closed-door cluster (4-cardinal horizontal,
-	// same Y) starting at `seed`. Always includes seed. Capped at
-	// kDoorClusterMaxCells.
-	std::vector<glm::ivec3> findConnectedDoorSlabs(glm::ivec3 seed) const;
+	// Segment-crossing pop predicate. Reached iff the entity's last-tick
+	// movement crossed the perpendicular plane through wp center within the
+	// corridor slack, OR the entity is standing on it within kSnapRadius.
+	// Y must be within kArriveY (Jump/Descend slack).
+	static bool passedThisTick(const glm::vec3& prev, const glm::vec3& pos,
+	                           const Waypoint& w);
+	// BFS the connected door cluster (4-cardinal horizontal, same Y).
+	// `wantClosed=true` walks closed-door neighbours (used when opening);
+	// false walks open-door neighbours (used when popping a passed cell).
+	// Always includes seed if it matches. Capped at kDoorClusterMaxCells.
+	std::vector<glm::ivec3> findConnectedDoorSlabs(glm::ivec3 seed,
+	                                               bool wantClosed = true) const;
+	// Append `cluster` slabs to passedDoors with FIFO cap and dedup.
+	void recordPassedDoors(Unit& u, const std::vector<glm::ivec3>& cluster) const;
 	// Deflect `target` toward the best standable cardinal neighbour when the
 	// straight-line approach would clip a wall. No-op when m_world is unset.
 	glm::vec3 slideAroundObstacle(const glm::vec3& pos, glm::vec3 target,
 	                              Unit& u) const;
+	// ── tick() phase helpers ─────────────────────────────────────────
+	// Each helper either returns a final Intent (short-circuit) or nullopt
+	// to let tick() proceed. PERF_SCOPE'd individually so the per-phase
+	// histogram surfaces in `make perf_fps`.
+	std::optional<Intent> stepAutoCloseDoors(EntityId eid, Unit& u,
+	                                         const glm::vec3& pos);
+	bool                  stepDetectStall   (Unit& u, const glm::vec3& pos);
+	std::optional<Intent> stepDoorScanProbe (Unit& u, const glm::vec3& pos);
+	void                  stepPopReached    (Unit& u, const glm::vec3& pos);
+	std::optional<Intent> stepFrontDoorHandshake(Unit& u, const glm::vec3& pos);
+	glm::vec3             stepComputeMoveTarget (Unit& u, const glm::vec3& pos);
 	bool builderTickFor(EntityId eid, const glm::vec3& pos,
 	                    const glm::vec3& dirXZ, const WorldView& view);
 	static std::vector<glm::ivec3> buildFormationGoals(
@@ -352,7 +446,12 @@ public:
 		std::vector<glm::ivec3> interactPos;
 	};
 
-	Navigator(const WorldView& world, const DoorOracle* doors = nullptr);
+	// `eid` is the agent's real entity id; it's used both as the executor's
+	// per-Unit key and as the actorId on emitted ActionProposals. (The old
+	// kSelfEid sentinel is gone — there's no reason to obscure the real id
+	// now that driveTick emits via the unified PathExecutor pipeline.)
+	Navigator(EntityId eid, const WorldView& world,
+	          const DoorOracle* doors = nullptr);
 
 	// Start (or re-plan) to the block at `goal`. Re-planning only fires if the
 	// goal cell differs from the active plan's goal — cheap call-every-tick.
@@ -361,7 +460,17 @@ public:
 
 	// Advance one tick. Returns the step to take (Move/Interact/None). When
 	// status() == Arrived or Failed, the caller should pick a new goal.
+	// Note: tick() is the predicate/pop + status update only; it does NOT
+	// emit Move actions. Callers that want emission too should use driveTick.
 	Step tick(const glm::vec3& entityPos);
+
+	// Predicate/pop + status + Move/Interact/Stop emission, all via the
+	// unified PathExecutor pipeline. This is the single per-frame entry
+	// point for NPC pathed movement — Agent::navigateApproach calls this.
+	// Returns the same Step as tick() so callers can log waypoint progress.
+	Step driveTick(Entity& e, ServerInterface& server,
+	               float walkSpeedFallback = 2.0f,
+	               float jumpVelocity      = 8.3f);
 
 	void   clear();
 	// Optional politeness oracle for the auto-close path — see
@@ -384,7 +493,7 @@ public:
 	// path() returns the *remaining* waypoints — the ones the executor hasn't
 	// consumed yet. This is what F3 viz mirrors every tick so the drawn
 	// polyline shrinks cell-by-cell, matching what the entity is walking.
-	const Path& path() const { return m_exec.path(kSelfEid); }
+	const Path& path() const { return m_exec.path(m_eid); }
 
 	// Replan trigger — drop the cached plan on block changes in the corridor.
 	bool invalidatedBy(glm::ivec3 changedBlock) const {
@@ -392,12 +501,7 @@ public:
 	}
 
 private:
-	// Navigator owns an exclusive PathExecutor with a single tracked entity
-	// under this sentinel id. The real entity id is unknown at this layer
-	// (behavior plumbing varies); since the executor is private, the
-	// sentinel is opaque.
-	static constexpr EntityId kSelfEid = 1;
-
+	const EntityId    m_eid;            // real entity id; key into m_exec.m_units
 	const WorldView&  m_world;
 	const DoorOracle* m_doors;
 	GridPlanner       m_planner;

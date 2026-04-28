@@ -1035,275 +1035,15 @@ static std::string p11_perf_scaling() {
 	return "";
 }
 
-// ── P12 — PathExecutor must not flip moveTarget 180° between ticks ─────
-//
-// The invariant: for any sensible path, driving an entity via
-// `vel = normalize(PathExecutor::tick(...).target - pos) * walk_speed`
-// must never produce a direction vector that reverses more than 120°
-// from one agent tick to the next. A 180° reversal is the "spin in
-// place" symptom observed in /tmp/solarium_entity_2407.log — the
-// entity gets pushed back and forth across a waypoint center it's
-// already inside.
-//
-// We don't hard-code any single path. Instead, we run the same invariant
-// against a family of synthetic shapes (straight / L / staircase of
-// turns / real recorded plan), using realistic entity coasting between
-// agent ticks. The coast is what exposes the bug: with no overshoot
-// an entity never crosses a cell center, so cursor advance is trivial.
-struct AirWorld : WorldView {
-	bool isSolid(glm::ivec3 p) const override { return p.y < 0; }
-};
-
-// Run one scenario: drive PathExecutor over `path` for at most maxTicks
-// agent ticks, coasting at walk_speed between decisions. Reports (tick,
-// prevRow, flipRow, worstDot). If no flip occurs, firstFlipT == -1.
-struct FlipReport {
-	int       firstFlipT = -1;
-	float     worstDot   = 2.0f;
-	int       totalTicks = 0;
-	glm::vec3 prevPos{}, prevTarget{};
-	glm::vec2 prevDir{};
-	glm::vec3 flipPos{}, flipTarget{};
-	glm::vec2 flipDir{};
-};
-
-static FlipReport runScenario(const Path& path, glm::vec3 startPos,
-                              int physPerAgent = 2, int maxTicks = 2000) {
-	FlipReport rep;
-	AirWorld world;
-	(void)world;  // No-op for AirWorld — unified PathExecutor doesn't consult it.
-	constexpr EntityId kTestEid = 42;
-	PathExecutor exec;
-	exec.setPath(kTestEid, path);
-
-	constexpr float speed  = 2.5f;
-	constexpr float physDt = 1.0f / 60.0f;
-	const float     agentDt = physDt * physPerAgent;
-
-	// Build a y-for-x lookup from the path so coasting keeps entity Y
-	// near waypoint Y (the kArriveY=1.0 guard is real physics, not the
-	// bug under test — a falling entity will naturally line up with the
-	// floor). Use the nearest same-plane waypoint's Y.
-	auto nearestY = [&](glm::vec3 p) {
-		int bestIdx = 0;
-		float bestD2 = 1e30f;
-		for (size_t i = 0; i < path.steps.size(); ++i) {
-			float dx = p.x - (path.steps[i].pos.x + 0.5f);
-			float dz = p.z - (path.steps[i].pos.z + 0.5f);
-			float d2 = dx*dx + dz*dz;
-			if (d2 < bestD2) { bestD2 = d2; bestIdx = (int)i; }
-		}
-		return (float)path.steps[bestIdx].pos.y;
-	};
-
-	glm::vec3 pos = startPos;
-	glm::vec3 vel{0, 0, 0};
-	glm::vec2 prevDir{0, 0};
-	glm::vec3 prevPos{}, prevTarget{};
-	bool havePrev = false;
-
-	// Pop-front model — no cursor state; record the remaining waypoint count
-	// instead so the flip dump still shows which waypoint the executor was
-	// driving toward.
-	struct TickLog {
-		int t = -1;
-		int remaining = -1;
-		glm::vec3 pos{}, target{};
-		glm::vec2 dir{};
-		bool nearWaypoint = false;
-	};
-	constexpr int kWindow = 8;
-	TickLog window[kWindow];
-	int winHead = 0;
-	auto pushLog = [&](const TickLog& e) {
-		window[winHead] = e;
-		winHead = (winHead + 1) % kWindow;
-	};
-	bool dumped = false;
-	auto dumpWindow = [&](int flipT) {
-		if (dumped) return; dumped = true;
-		printf("\n      ── tick trace (last %d ticks before flip@%d) ──\n",
-		       kWindow, flipT);
-		for (int k = 0; k < kWindow; ++k) {
-			const TickLog& e = window[(winHead + k) % kWindow];
-			if (e.t < 0) continue;
-			printf("      t=%4d rem=%3d pos=(%7.3f,%7.3f) tgt=(%6.2f,%6.2f)"
-			       " dir=(%+6.3f,%+6.3f)%s\n",
-			       e.t, e.remaining,
-			       e.pos.x, e.pos.z,
-			       e.target.x, e.target.z,
-			       e.dir.x, e.dir.y,
-			       e.nearWaypoint ? "  near" : "");
-		}
-		printf("      remaining waypoints:");
-		int dumpN = std::min((int)exec.path(kTestEid).steps.size(), 8);
-		for (int i = 0; i < dumpN; ++i) {
-			const auto& w = exec.path(kTestEid).steps[i];
-			printf(" %d:(%d,%d,%d)%s", i, w.pos.x, w.pos.y, w.pos.z,
-			       i == 0 ? "*" : "");
-		}
-		printf("\n");
-	};
-
-	for (int t = 0; t < maxTicks && !exec.done(kTestEid); ++t) {
-		pos.x += vel.x * agentDt;
-		pos.z += vel.z * agentDt;
-		pos.y  = nearestY(pos);
-
-		auto intent = exec.tick(kTestEid, pos);
-		auto mkLog = [&](int tt, glm::vec3 p, glm::vec3 tg, glm::vec2 d, bool near) {
-			return TickLog{tt, (int)exec.path(kTestEid).steps.size(), p, tg, d, near};
-		};
-		if (intent.kind != PathExecutor::Intent::Move) {
-			vel = glm::vec3(0);
-			continue;
-		}
-		glm::vec2 delta{intent.target.x - pos.x, intent.target.z - pos.z};
-		float len = std::sqrt(delta.x*delta.x + delta.y*delta.y);
-		if (len < 0.01f) {
-			// `nav-near-waypoint` tick in agent.h — velocity zeroed for
-			// this frame. Don't reset havePrev: a flip can straddle it.
-			vel = glm::vec3(0);
-			pushLog(mkLog(t, pos, intent.target, {0,0}, true));
-			continue;
-		}
-		glm::vec2 dir = delta / len;
-
-		if (havePrev) {
-			float dot = prevDir.x*dir.x + prevDir.y*dir.y;
-			if (dot < rep.worstDot) rep.worstDot = dot;
-			if (dot < -0.5f && rep.firstFlipT < 0) {
-				rep.firstFlipT = t;
-				rep.prevPos    = prevPos;
-				rep.prevTarget = prevTarget;
-				rep.prevDir    = prevDir;
-				rep.flipPos    = pos;
-				rep.flipTarget = intent.target;
-				rep.flipDir    = dir;
-				pushLog(mkLog(t, pos, intent.target, dir, false));
-				dumpWindow(t);
-			}
-		}
-		if (!dumped) pushLog(mkLog(t, pos, intent.target, dir, false));
-		prevDir    = dir;
-		prevPos    = pos;
-		prevTarget = intent.target;
-		havePrev   = true;
-
-		vel.x = dir.x * speed;
-		vel.z = dir.y * speed;
-		rep.totalTicks = t + 1;
-	}
-	return rep;
-}
-
-static Path makeStraightPath(int fromX, int toX, int y, int z) {
-	Path p;
-	int step = fromX < toX ? 1 : -1;
-	for (int x = fromX; x != toX + step; x += step)
-		p.steps.push_back({{x, y, z}, MoveKind::Walk});
-	return p;
-}
-
-static Path makeLPath() {
-	// Walk west then north — turn at the elbow is where overshoot is likely.
-	Path p;
-	for (int x = 10; x >= 0;  --x) p.steps.push_back({{x, 0, 0}, MoveKind::Walk});
-	for (int z = -1; z >= -10; --z) p.steps.push_back({{0, 0, z}, MoveKind::Walk});
-	return p;
-}
-
-static Path makeZigzagPath() {
-	// Alternating 2-cell N-W segments — forces look-ahead to break at
-	// every other waypoint.
-	Path p;
-	int x = 10, z = 0;
-	for (int i = 0; i < 10; ++i) {
-		p.steps.push_back({{x,   0, z}, MoveKind::Walk});
-		p.steps.push_back({{x-1, 0, z}, MoveKind::Walk});
-		x -= 1;
-		p.steps.push_back({{x, 0, z-1}, MoveKind::Walk});
-		z -= 1;
-	}
-	return p;
-}
-
-// Exact 86-waypoint plan from /tmp/solarium_entity_2407.log's heartbeat.
-static Path makeRecordedPath() {
-	const glm::ivec3 wps[] = {
-		{13,1,-42},{12,0,-42},{11,0,-42},{11,0,-41},{10,0,-41},{9,0,-41},
-		{9,0,-40},{9,0,-39},{9,0,-38},{8,0,-38},{8,0,-37},{7,0,-37},
-		{6,0,-37},{5,0,-37},{4,0,-37},{3,0,-37},{2,0,-37},{1,0,-37},
-		{0,0,-37},{-1,0,-37},{-2,0,-37},{-3,0,-37},{-3,0,-36},{-4,0,-36},
-		{-5,0,-36},{-6,0,-36},{-7,0,-36},{-8,0,-36},{-9,0,-36},{-10,0,-36},
-		{-11,0,-36},{-12,0,-36},{-13,0,-36},{-13,0,-35},{-14,0,-35},
-		{-14,0,-34},{-15,0,-34},{-15,0,-33},{-16,0,-33},{-17,0,-33},
-		{-17,0,-32},{-18,0,-32},{-18,0,-31},{-18,0,-30},{-19,0,-30},
-		{-19,0,-29},{-20,0,-29},{-21,0,-29},{-22,0,-29},{-22,0,-28},
-		{-23,0,-28},{-23,0,-27},{-23,0,-26},{-23,0,-25},{-23,0,-24},
-		{-23,0,-23},{-23,0,-22},{-23,0,-21},{-23,0,-20},{-23,0,-19},
-		{-24,0,-19},{-25,0,-19},{-26,0,-19},{-27,0,-19},{-28,0,-19},
-		{-29,0,-19},{-29,0,-18},{-29,0,-17},{-29,0,-16},{-29,0,-15},
-		{-30,0,-15},{-31,1,-15},{-32,1,-15},{-33,1,-15},{-34,1,-15},
-		{-35,1,-15},{-36,1,-15},{-37,1,-15},{-38,1,-15},{-39,1,-15},
-		{-40,1,-15},{-41,1,-15},{-42,1,-15},{-42,1,-14},{-42,1,-13},
-		{-42,1,-12},
-	};
-	Path p;
-	for (size_t i = 0; i < sizeof(wps)/sizeof(wps[0]); ++i) {
-		MoveKind k = MoveKind::Walk;
-		if (i > 0 && wps[i].y < wps[i-1].y)      k = MoveKind::Descend;
-		else if (i > 0 && wps[i].y > wps[i-1].y) k = MoveKind::Jump;
-		p.steps.push_back({wps[i], k});
-	}
-	return p;
-}
-
-static std::string p12_no_opposite_movetargets() {
-	struct Case { const char* name; Path path; glm::vec3 start; };
-	std::vector<Case> cases = {
-		{"straight-west",   makeStraightPath(10, -10, 0,  0), {10.5f, 0.0f,  0.5f}},
-		{"straight-east",   makeStraightPath(-10, 10, 0,  5), {-9.5f, 0.0f,  5.5f}},
-		{"L-turn",          makeLPath(),                      {10.5f, 0.0f,  0.5f}},
-		{"zigzag",          makeZigzagPath(),                 {10.5f, 0.0f,  0.5f}},
-		{"recorded-2407",   makeRecordedPath(),               {14.07f, 1.01f, -41.43f}},
-	};
-
-	int failed = 0;
-	std::string firstError;
-	for (auto& c : cases) {
-		FlipReport r = runScenario(c.path, c.start);
-		printf("\n    %-16s ticks=%d worstDot=%+.3f",
-		       c.name, r.totalTicks, r.worstDot);
-		if (r.firstFlipT >= 0) {
-			printf("  FLIP@%d\n", r.firstFlipT);
-			printf("      prev: pos=(%7.3f,%7.3f) tgt=(%6.2f,%6.2f) "
-			       "dir=(%+6.3f,%+6.3f)\n",
-			       r.prevPos.x, r.prevPos.z,
-			       r.prevTarget.x, r.prevTarget.z,
-			       r.prevDir.x, r.prevDir.y);
-			printf("      flip: pos=(%7.3f,%7.3f) tgt=(%6.2f,%6.2f) "
-			       "dir=(%+6.3f,%+6.3f)\n",
-			       r.flipPos.x, r.flipPos.z,
-			       r.flipTarget.x, r.flipTarget.z,
-			       r.flipDir.x, r.flipDir.y);
-			if (firstError.empty()) {
-				char buf[300];
-				snprintf(buf, sizeof(buf),
-					"[%s] direction flipped >120° at tick %d "
-					"(worstDot=%.3f)",
-					c.name, r.firstFlipT, r.worstDot);
-				firstError = buf;
-			}
-			failed++;
-		} else {
-			printf("  OK\n");
-		}
-	}
-	printf("\n    %d/%zu scenarios OK\n",
-	       (int)cases.size() - failed, cases.size());
-	return firstError;
-}
+// ── P12 deleted ──────────────────────────────────────────────────────────
+// Previously "no opposite moveTargets back-to-back": drove PathExecutor
+// directly with `vel = normalize(target - pos) * speed` (instant heading
+// snap). That bypasses driveRemote's rotateTowardXZ smoothing and constant
+// walkSpeed*dt integration, which is exactly where high-speed overshoot
+// and orbit pathologies originate. The test passed while the real game
+// still spun around waypoints — predicate-level success masking driver-
+// level breakage. A replacement living in test_e2e (real driveRemote loop
+// over a real server tick) would catch this; not adding here.
 
 // ── P13 — Half-plane retire: teleport past the front must not stall ────
 // Drives entity to (0.5), then teleports forward to (4.5) in a single tick
@@ -1359,6 +1099,147 @@ static std::string p13_teleport_past_front() {
 			"path did not shrink enough after teleport: remaining=%zu (want ≤ 6)",
 			rem);
 		return b;
+	}
+	return "";
+}
+
+// ── P17 — High-speed corner overshoot (real driveRemote integration) ─────
+// Drives PathExecutor through a sharp 90° L-turn using the EXACT smoothed-
+// heading + per-tick integration that PathExecutor::driveRemote applies in
+// production:
+//
+//   d   = rotateTowardXZ(lastMoveDir, normalize(target - pos), kMaxTurnPerTick60)
+//   pos += d * walkSpeed * dt          (server moveAndCollide on flat ground)
+//
+// Bug under test: at fast walkSpeed the minimum turn radius v/ω exceeds
+// kCorridorSlack (0.5 m). On the corner, the entity curves around at radius
+// ≥ r_min — the segment-crossing predicate's perpendicular slack is never
+// met, the waypoint never pops, and only stall-pop (30 ticks) advances the
+// path. At walkSpeed=8, r_min=0.78, well past the slack.
+//
+// The slow case (walkSpeed=2, r_min=0.19) is the control: it MUST pass.
+// If the slow case fails, the test driver itself is broken — not the bug.
+//
+// CAUTION: the smoothing+integration block below MUST stay in sync with
+// PathExecutor::driveRemote (path_executor.cpp ~line 470). If you change
+// rotateTowardXZ or the move loop in driveRemote, mirror it here.
+//
+// WHY THIS TEST EXISTS: the deleted P12 drove with `vel = dir * speed`
+// (instant heading snap), bypassing the smoothing where the orbit lives.
+// It passed while the real game still spun. This one routes through the
+// real smoothing so a green PASS actually means the game is fixed.
+static std::string p17_high_speed_corner_overshoot() {
+	struct R { int arriveTick; float distXZ; int worstStall; size_t remaining; };
+	auto runAtSpeed = [](float walkSpeed, int maxTicks) -> R {
+		constexpr EntityId kEid = 17;
+		// 9 east, 8 north — sharp 90° turn at corner cell (8,0,0) → (8,0,1).
+		Path p;
+		for (int x = 0; x <= 8; ++x) p.steps.push_back({{x, 0, 0}, MoveKind::Walk});
+		for (int z = 1; z <= 8; ++z) p.steps.push_back({{8, 0, z}, MoveKind::Walk});
+
+		PathExecutor exec;
+		exec.setPath(kEid, p);
+
+		glm::vec3 pos{0.5f, 0.0f, 0.5f};
+		glm::vec3 lastMoveDir{0, 0, 0};
+		constexpr float dt = 1.0f / 60.0f;
+
+		size_t lastRem = p.steps.size();
+		int    stallTicks = 0;
+		int    worstStall = 0;
+		int    arriveTick = -1;
+
+		for (int t = 0; t < maxTicks; ++t) {
+			if (exec.done(kEid)) { arriveTick = t; break; }
+			auto intent = exec.tick(kEid, pos);
+			if (intent.kind == PathExecutor::Intent::None) {
+				arriveTick = t; break;
+			}
+			// Mirror driveRemote (path_executor.cpp ~line 605-625).
+			glm::vec3 d = intent.target - pos;
+			d.y = 0;
+			float len = std::sqrt(d.x * d.x + d.z * d.z);
+			if (len < 1e-3f) continue;
+			d /= len;
+			d = rotateTowardXZ(lastMoveDir, d, PathExecutor::kMaxTurnPerTick60);
+			lastMoveDir = d;
+
+			// Speed-clamp + speed-scaled approach ramp (mirror driveRemote).
+			// Pulls constants directly from PathExecutor — no hardcoding,
+			// so tuning the predicate auto-rescales this too.
+			const float ramp = std::max(PathExecutor::kMinRamp,
+			                            walkSpeed * PathExecutor::kDecelTime);
+			float clamped = walkSpeed;
+			if (walkSpeed > PathExecutor::kCornerSafeSpeed && len < ramp) {
+				const float u = len / ramp;
+				clamped = PathExecutor::kCornerSafeSpeed
+				        + (walkSpeed - PathExecutor::kCornerSafeSpeed) * u;
+			}
+			clamped = std::min(clamped, len / dt);
+			pos.x += d.x * clamped * dt;
+			pos.z += d.z * clamped * dt;
+
+			// Per-cell pop-latency tracker — orbits surface as a tall worstStall.
+			size_t rem = exec.path(kEid).steps.size();
+			if (rem == lastRem) {
+				if (++stallTicks > worstStall) worstStall = stallTicks;
+			} else {
+				stallTicks = 0; lastRem = rem;
+			}
+		}
+
+		glm::vec3 goalC{8.5f, 0.0f, 8.5f};
+		float dx = pos.x - goalC.x, dz = pos.z - goalC.z;
+		return R{ arriveTick, std::sqrt(dx*dx + dz*dz), worstStall,
+		          exec.path(kEid).steps.size() };
+	};
+
+	auto slow = runAtSpeed(2.0f, 1500);
+	printf("    slow(walkSpeed=2):  arriveTick=%d distXZ=%.2f worstStall=%d remaining=%zu\n",
+	       slow.arriveTick, slow.distXZ, slow.worstStall, slow.remaining);
+	if (slow.arriveTick < 0) {
+		return "SLOW CONTROL FAILED: entity didn't arrive at 2 m/s — test driver bug, not the overshoot bug under test";
+	}
+
+	// Budget-based arrival check. With the speed-clamp engaged, effective
+	// speed is bounded above by ~2·kCornerSafeSpeed for paths shorter than
+	// the ramp distance — pretending we run the whole path at walkSpeed
+	// underbudgets fast probes. So we cap the assumed average speed at
+	// 2·kCornerSafeSpeed (≈6 m/s) when walkSpeed exceeds that.
+	auto budgetTicks = [](float walkSpeed) -> int {
+		constexpr float pathLen = 16.0f;
+		constexpr float dt      = 1.0f / 60.0f;
+		const float cap = 2.0f * PathExecutor::kCornerSafeSpeed;
+		const float effective = std::min(walkSpeed, cap);
+		return (int)((pathLen * 3.0f) / (effective * dt));
+	};
+
+	// Sweep across a range to validate "arbitrarily fast." Each speed should
+	// arrive within its own scaled budget — orbit at any speed blows it.
+	struct Probe { float walkSpeed; int budget; };
+	const Probe probes[] = {
+		{   8.0f, budgetTicks(8.0f)   },     // just past orbit threshold
+		{  50.0f, budgetTicks(50.0f)  },     // 10× safe
+		{ 500.0f, budgetTicks(500.0f) },     // Mach-ish
+	};
+	for (auto pr : probes) {
+		// Budget under ~kMinRamp/dt is unreasonably tight (path is < 1 ramp
+		// long) — floor it so the budget itself doesn't false-fail.
+		int budget = std::max(pr.budget, 60);
+		auto r = runAtSpeed(pr.walkSpeed, budget * 4);
+		printf("    fast(walkSpeed=%6.1f): arriveTick=%d distXZ=%.2f "
+		       "worstStall=%d remaining=%zu  (budget=%d)\n",
+		       pr.walkSpeed, r.arriveTick, r.distXZ, r.worstStall,
+		       r.remaining, budget);
+		if (r.arriveTick < 0 || r.arriveTick > budget) {
+			char buf[300];
+			snprintf(buf, sizeof(buf),
+				"walkSpeed=%.1f: orbit/overshoot — arriveTick=%d (budget=%d) "
+				"distXZ=%.2f remaining=%zu worstStall=%d",
+				pr.walkSpeed, r.arriveTick, budget,
+				r.distXZ, r.remaining, r.worstStall);
+			return buf;
+		}
 	}
 	return "";
 }
@@ -1612,7 +1493,7 @@ static std::string p15_multi_slab_open_and_autoclose() {
 	if (closeEmits == 0)
 		return "no close Interact after entity walked past — auto-close regressed";
 	if (closeCluster < 2)
-		return "close cluster < 2 — second slab not in openedDoors";
+		return "close cluster < 2 — second slab not in passedDoors";
 	if (!bothInClose)
 		return "close cluster missing one of the 2-wide slabs";
 	if (doors.open)
@@ -1734,7 +1615,7 @@ static std::string p16_autoclose_waits_for_blocker() {
 		if (intent.kind == PathExecutor::Intent::None) {
 			// If we've finished walking but the close hasn't fired yet
 			// (e.g. blocker still standing there), let the executor keep
-			// ticking. setPath is exhausted but openedDoors stays set.
+			// ticking. setPath is exhausted but passedDoors stays set.
 			if (closeTick < 0) continue;
 			break;
 		}
@@ -1817,9 +1698,11 @@ int main() {
 	printf("\n--- Perf scaling (N=1..1000) ---\n");
 	run("P11: planGroup time at scale                 ", p11_perf_scaling);
 
-	printf("\n--- PathExecutor direction stability ---\n");
-	run("P12: no opposite moveTargets back-to-back    ", p12_no_opposite_movetargets);
+	printf("\n--- PathExecutor predicate ---\n");
 	run("P13: half-plane retire on teleport-forward   ", p13_teleport_past_front);
+
+	printf("\n--- PathExecutor real-driver overshoot ---\n");
+	run("P17: high-speed corner overshoot (8 m/s L-turn)", p17_high_speed_corner_overshoot);
 
 	printf("\n--- Door handling ---\n");
 	run("P14: stall-scan opens off-path closed door   ", p14_closed_door_straight_corridor);

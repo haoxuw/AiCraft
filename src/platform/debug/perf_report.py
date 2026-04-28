@@ -37,6 +37,25 @@ CLIENT = {
                     "client.frames.dropped_33ms"),
 }
 
+PATH_EXEC = {
+    "title":  "PATH EXECUTOR — per-tick AI nav cost (PathExecutor::tick phases, all entities)",
+    "total":  "path.executor.tick_ms",
+    "prefix": "path.executor.",
+    "suffix": "_ms",
+    "order": [
+        "auto_close_doors", "detect_stall", "door_scan_probe",
+        "pop_reached", "front_door_handshake", "slide_obstacle",
+    ],
+    "cat": {
+        "auto_close_doors":     "auto-close passedDoors (politeness + cooldown gate)",
+        "detect_stall":         "stall counter (kStallTicks pop / kDoorScanTicks probe)",
+        "door_scan_probe":      "stall-triggered hidden-door BFS + Interact emit",
+        "pop_reached":          "segment-crossing pop while-loop (was O(N) scan)",
+        "front_door_handshake": "approach + Interact handshake on closed front cell",
+        "slide_obstacle":       "wall-slide deflection of Move target",
+    },
+}
+
 SERVER_FRAME = {
     "title":  "SERVER FRAME BREAKDOWN — one outer loop iteration (~1 ms sleep between)",
     "total":  "server.frame.total_ms",
@@ -162,6 +181,11 @@ def main():
     metrics = parse(path)
     if mode == "client":
         print(format_section(metrics, CLIENT))
+        # PathExecutor is a client-side concern (Rule 4: AI on agent clients).
+        # Only print if any path.executor.* samples exist this run — otherwise
+        # we'd dump an empty section every time someone ran without AI ticks.
+        if any(k.startswith("path.executor.") for k in metrics):
+            print(format_section(metrics, PATH_EXEC))
     else:
         print(format_section(metrics, SERVER_FRAME))
         print(format_section(metrics, SERVER_TICK))
