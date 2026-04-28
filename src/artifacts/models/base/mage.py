@@ -7,8 +7,6 @@ Each part: offset=[x,y,z] (center), size=[w,h,d] (full size), color=[r,g,b,a]
 Optional animation: pivot, swing_axis, amplitude (degrees), phase (radians), speed
 """
 
-import math
-
 model = {
     "id": "mage",
     "hand_r": [0.52, 0.82, -0.12],

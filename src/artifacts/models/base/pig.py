@@ -21,8 +21,6 @@ Palette (for human reference only — kept in sync with inline literals below):
     TAIL_T  [0.62, 0.25, 0.30, 1]   # tail tip
 """
 
-import math
-
 model = {
     "id": "pig",
     "head_pivot": [0.0, 0.6875, -0.3125],

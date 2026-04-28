@@ -18,7 +18,7 @@ GAME := solarium
 # the command line, e.g. `make build PAR=8` or `make build PAR=1`.
 PAR := $(shell nproc 2>/dev/null | awk '{n=int($$1/2); print (n<1)?1:n}')
 
-.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken toronto world debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox solarium crafter bbmodel sample pathfinding_test perf_fps perf_server flamegraph llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop ai_setup ai_stop ai_clean cef_setup cef_clean cef_demo demo
+.PHONY: game game-build game-configure build configure clean server client stop test_e2e proxy test-dog test-villager test-chicken toronto world debug_villager profiler killservers character_views item_views model-editor model-snap animation_sweep test_animation download_music jukebox solarium crafter bbmodel sample pathfinding_test perf_fps perf_server flamegraph llm_setup llm_server llm_stop llm_clean whisper_setup whisper_server whisper_stop tts_setup tts_server tts_stop imageto3d_setup imageto3d_smoke imageto3d_stop imageto3d_clean ai_setup ai_stop ai_clean cef_setup cef_clean cef_demo demo
 
 # ── Native (Solarium) ───────────────────────────────────────
 #
@@ -232,10 +232,11 @@ test-villager: game-build
 test-chicken: game-build
 	$(call launch,--template 4)
 
-# Voxel Earth demo: walk around a baked slab of Toronto.
+# Voxel Earth demo: walk around a baked slab of Toronto. See docs/VOXEL_EARTH.md.
 # First-time setup (one-off):
 #   python -m voxel_earth set-key <YOUR_GOOGLE_MAPS_KEY>
-#   python -m voxel_earth download --location "Toronto" --radius 100
+#   python -m voxel_earth download --location "CN Tower, Toronto" \
+#                                  --radius 800 --height 1200
 #   ./build/solarium-voxel-bake --glb-dir ~/.voxel/google/glb \
 #                                --out     ~/.voxel/regions/toronto/blocks.bin
 # Then: `make toronto` (or its alias `make world`).
@@ -650,6 +651,41 @@ cef_clean:
 	rm -rf $(CEF_DIR) $(CEF_CACHE)
 	@echo "[cef] removed $(CEF_DIR) and tarball cache."
 
+# ── Monaco editor (in-game code editor for Handbook + Inspect tabs) ─────
+#
+# Source lives at third_party/monaco-editor/ as a git submodule. The
+# pre-built distribution is NOT committed; this target runs the upstream
+# build to produce min/vs/ which the CEF pages reference via file://.
+#
+# `make monaco_setup` is idempotent (skips if min/vs/loader.js exists).
+# Re-run after a submodule bump.
+MONACO_DIR := third_party/monaco-editor
+# Build output lives under out/monaco-editor/{dev,min}/vs/. We reference
+# min/vs in the CEF page (smaller, gzipped sources).
+MONACO_OUT := $(MONACO_DIR)/out/monaco-editor/min/vs/loader.js
+.PHONY: monaco_setup monaco_clean
+monaco_setup:
+	@if [ ! -d $(MONACO_DIR) ] || [ -z "$$(ls $(MONACO_DIR))" ]; then \
+		echo "[monaco] submodule empty — initialising…"; \
+		git submodule update --init --depth 1 $(MONACO_DIR); \
+	fi
+	@if [ -f $(MONACO_OUT) ]; then \
+		echo "[monaco] already built at $(MONACO_DIR)/min/ — skipping"; exit 0; \
+	fi
+	@echo "[monaco] npm install (may take 1-2 min)…"
+	@cd $(MONACO_DIR) && npm install --no-audit --no-fund
+	@echo "[monaco] npm run build (may take 2-3 min)…"
+	@cd $(MONACO_DIR) && npm run build
+	@if [ ! -f $(MONACO_OUT) ]; then \
+		echo "[monaco] build did not produce $(MONACO_OUT) — check upstream README" >&2; \
+		exit 1; \
+	fi
+	@echo "[monaco] setup done — built dist at $(MONACO_DIR)/min/."
+
+monaco_clean:
+	@cd $(MONACO_DIR) && rm -rf min release out node_modules 2>/dev/null
+	@echo "[monaco] cleaned dist + node_modules."
+
 # ── Whisper.cpp sidecar (speech-to-text for dialog input) ───────────────────
 #
 # `make whisper_setup` builds whisper.cpp's HTTP server binary and downloads
@@ -790,6 +826,140 @@ tts_server:
 tts_stop:
 	@-pgrep -x piper 2>/dev/null | xargs -r kill ; true
 	@echo "[tts] piper stopped."
+
+# ── InstantMesh sidecar (image → 3D mesh) ──────────────────────────────────
+#
+# TencentARC InstantMesh — single image → textured GLB in ~10 s on a CUDA
+# GPU with ≥ 8 GB VRAM. Apache 2.0. Per-request subprocess (no daemon)
+# because it pins 8 GB of VRAM while loaded and we run it occasionally.
+#
+# First-time `imageto3d_smoke` downloads ~5 GB of model weights from
+# HuggingFace into HF cache. Subsequent runs are fast.
+#
+# Pipeline: photo.png → InstantMesh → GLB → voxel_earth/voxelizer →
+#           Solarium box-list model.py. See docs/MODEL_PIPELINE.md.
+INSTANTMESH_DIR  := $(LLM_DIR)/imageto3d
+INSTANTMESH_REPO := https://github.com/TencentARC/InstantMesh
+INSTANTMESH_VENV := $(INSTANTMESH_DIR)/venv
+INSTANTMESH_OUT  := /tmp/imageto3d
+
+imageto3d_setup:
+	@if ! command -v python3 >/dev/null 2>&1; then \
+		echo "[imageto3d] python3 not found" >&2; exit 1; \
+	fi
+	@if ! command -v nvidia-smi >/dev/null 2>&1; then \
+		echo "[imageto3d] WARNING: nvidia-smi not found — InstantMesh requires CUDA."; \
+		echo "[imageto3d]          Setup will proceed but smoke test will fail."; \
+	else \
+		echo "[imageto3d] GPU detected:"; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | sed 's/^/[imageto3d]   /'; \
+	fi
+	@mkdir -p $(LLM_DIR)
+	@if [ ! -d $(INSTANTMESH_DIR)/.git ]; then \
+		echo "[imageto3d] cloning InstantMesh into $(INSTANTMESH_DIR)…"; \
+		git clone --depth 1 $(INSTANTMESH_REPO) $(INSTANTMESH_DIR); \
+	else \
+		echo "[imageto3d] InstantMesh already cloned — skipping"; \
+	fi
+	@if [ ! -f $(INSTANTMESH_VENV)/bin/activate ]; then \
+		if [ -d $(INSTANTMESH_VENV) ]; then \
+			echo "[imageto3d] venv directory exists but is incomplete — recreating"; \
+			rm -rf $(INSTANTMESH_VENV); \
+		fi; \
+		if [ -n "$$VIRTUAL_ENV" ]; then \
+			echo "[imageto3d] note: detected active venv ($$VIRTUAL_ENV) — unsetting VIRTUAL_ENV for clean creation"; \
+		fi; \
+		echo "[imageto3d] creating venv at $(INSTANTMESH_VENV)…"; \
+		unset VIRTUAL_ENV PYTHONHOME && python3 -m venv $(INSTANTMESH_VENV) \
+			|| (echo "[imageto3d] venv creation failed — install python3-venv (e.g. apt install python3-venv)" >&2; exit 1); \
+		if [ ! -f $(INSTANTMESH_VENV)/bin/activate ]; then \
+			echo "[imageto3d] venv created but activate script missing — likely venv-in-venv bug." >&2; \
+			echo "[imageto3d]   try 'deactivate' first, then re-run 'make imageto3d_setup'." >&2; \
+			exit 1; \
+		fi; \
+		. $(INSTANTMESH_VENV)/bin/activate && pip install --upgrade pip wheel; \
+	else \
+		echo "[imageto3d] venv already present — skipping"; \
+	fi
+	@if ! command -v nvcc >/dev/null 2>&1; then \
+		echo "[imageto3d] ERROR: nvcc not found." >&2; \
+		echo "[imageto3d]   nvdiffrast (an InstantMesh dep) compiles CUDA from source and needs nvcc." >&2; \
+		echo "[imageto3d]   Install with: sudo apt install nvidia-cuda-toolkit  (~3 GB, gets CUDA 12.0)" >&2; \
+		echo "[imageto3d]   Then re-run 'make imageto3d_setup'." >&2; \
+		exit 1; \
+	fi
+	@echo "[imageto3d] nvcc detected: $$(nvcc --version | tail -1)"
+	@if [ ! -x /usr/bin/g++-12 ]; then \
+		echo "[imageto3d] ERROR: g++-12 not found at /usr/bin/g++-12." >&2; \
+		echo "[imageto3d]   CUDA 12.0 rejects g++ >= 13 as a host compiler. Ubuntu 24.04 ships g++-13" >&2; \
+		echo "[imageto3d]   by default, so we need g++-12 on the side just for nvdiffrast's nvcc invocation." >&2; \
+		echo "[imageto3d]   Install with: sudo apt install g++-12  (~80 MB)" >&2; \
+		echo "[imageto3d]   Then re-run 'make imageto3d_setup'." >&2; \
+		exit 1; \
+	fi
+	@echo "[imageto3d] installing dependencies (cu126 PyTorch wheel — keeps Pascal sm_61 support)…"
+	@echo "[imageto3d]   override: set INSTANTMESH_TORCH_INDEX before re-running"
+	@echo "[imageto3d]   PyTorch wheels: cu121 dropped from index, cu128/cu130 dropped sm_61, cu126 keeps both"
+	@. $(INSTANTMESH_VENV)/bin/activate && \
+		pip install --index-url $${INSTANTMESH_TORCH_INDEX:-https://download.pytorch.org/whl/cu126} \
+			torch torchvision && \
+		echo "[imageto3d] freezing torch versions as constraints to prevent transitive upgrade…" && \
+		pip freeze | grep -E '^(torch|torchvision)==' > $(INSTANTMESH_DIR)/.torch_constraints.txt && \
+		grep -v '^git+.*nvdiffrast' $(INSTANTMESH_DIR)/requirements.txt | \
+			pip install -c $(INSTANTMESH_DIR)/.torch_constraints.txt -r /dev/stdin && \
+		echo "[imageto3d] pinning accelerate to the era-contemporary 0.24.0 (transformers 4.34.1 forces hub 0.17, which modern accelerate cannot use)…" && \
+		pip install -c $(INSTANTMESH_DIR)/.torch_constraints.txt 'accelerate==0.24.0' && \
+		echo "[imageto3d] installing onnxruntime (rembg runtime dep, not in requirements.txt)…" && \
+		pip install onnxruntime && \
+		echo "[imageto3d] compiling nvdiffrast against installed torch (no build isolation, g++-12 host)…" && \
+		CUDAHOSTCXX=/usr/bin/g++-12 CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 \
+			pip install --no-build-isolation 'git+https://github.com/NVlabs/nvdiffrast/'
+	@echo ""
+	@echo "[imageto3d] setup done."
+	@echo "[imageto3d] First 'make imageto3d_smoke' downloads ~5 GB of weights from HuggingFace."
+
+imageto3d_smoke:
+	@if [ ! -d $(INSTANTMESH_VENV) ]; then \
+		echo "[imageto3d] venv missing — run 'make imageto3d_setup' first" >&2; exit 1; \
+	fi
+	@if [ ! -f $(INSTANTMESH_DIR)/examples/hatsune_miku.png ]; then \
+		echo "[imageto3d] smoke input examples/hatsune_miku.png missing — bad clone?" >&2; exit 1; \
+	fi
+	@if pgrep -x llama-server >/dev/null 2>&1; then \
+		echo "[imageto3d] llama-server is running — VRAM contention likely."; \
+		echo "[imageto3d]   stop it first with 'make llm_stop' if smoke OOMs."; \
+	fi
+	@mkdir -p $(INSTANTMESH_OUT)
+	@echo "[imageto3d] running InstantMesh on examples/hatsune_miku.png …"
+	@echo "[imageto3d]   config: $${INSTANTMESH_CONFIG:-instant-nerf-base}.yaml"
+	@echo "[imageto3d]   ('-mesh-large' wants 15 GiB at FlexiCubes — too big for 11 GiB GPUs;"
+	@echo "[imageto3d]    '-mesh-base' wants ~11 GiB peak — too tight for the 1080 Ti;"
+	@echo "[imageto3d]    '-nerf-base' uses NeRF + marching cubes, fits in ~10 GiB. Default for now.)"
+	@echo "[imageto3d]   --export_texmap disabled by default (adds 2-3 GiB peak; voxelizer"
+	@echo "[imageto3d]    averages texels into voxels anyway). Set INSTANTMESH_TEXMAP=1 to opt in."
+	@cd $(INSTANTMESH_DIR) && . venv/bin/activate && \
+		PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+		python run.py configs/$${INSTANTMESH_CONFIG:-instant-nerf-base}.yaml \
+		    examples/hatsune_miku.png \
+		    --output_path $(INSTANTMESH_OUT)/smoke \
+		    $${INSTANTMESH_TEXMAP:+--export_texmap}
+	@MESHES=$$(find $(INSTANTMESH_OUT)/smoke -type f \( -name '*.glb' -o -name '*.obj' -o -name '*.ply' \) 2>/dev/null); \
+	if [ -n "$$MESHES" ]; then \
+		echo "[imageto3d] smoke OK. Output under $(INSTANTMESH_OUT)/smoke/:"; \
+		echo "$$MESHES" | xargs -I{} ls -lh {} | awk '{print "[imageto3d]   " $$5 "  " $$NF}'; \
+		ANY=$$(echo "$$MESHES" | head -1); \
+		echo "[imageto3d] inspect with: blender $$ANY"; \
+	else \
+		echo "[imageto3d] smoke FAILED — no mesh produced. Check output above." >&2; exit 1; \
+	fi
+
+imageto3d_stop:
+	@-pgrep -f "InstantMesh.*run.py" 2>/dev/null | xargs -r kill ; true
+	@echo "[imageto3d] any running InstantMesh subprocess killed."
+
+imageto3d_clean:
+	rm -rf $(INSTANTMESH_DIR)
+	rm -rf $(INSTANTMESH_OUT)
+	@echo "[imageto3d] removed $(INSTANTMESH_DIR) and $(INSTANTMESH_OUT)."
 
 # ── Bundled AI setup (all three sidecars) ──────────────────────────────────
 # Single command to prepare a dialog-capable game: chat LLM, whisper STT,

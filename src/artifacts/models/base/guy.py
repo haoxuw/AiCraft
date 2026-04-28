@@ -8,8 +8,6 @@ Each part: offset=[x,y,z] (center), size=[w,h,d] (full size), color=[r,g,b,a]
 Optional animation: pivot, swing_axis, amplitude (degrees), phase (radians), speed
 """
 
-import math
-
 model = {
     "id": "guy",
     "hand_r": [0.5875, 0.875, -0.15],

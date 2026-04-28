@@ -14,8 +14,6 @@ Rigging model (see docs/22_BEHAVIORS.md and client/box_model.h):
   - Torso has a tiny Y-axis counter-twist during walk (secondary motion).
 """
 
-import math
-
 model = {
     "id": "villager",
     "head_pivot": [0.0, 1.5, 0.0],

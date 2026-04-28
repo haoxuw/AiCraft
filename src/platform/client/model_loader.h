@@ -204,6 +204,10 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 	if (auto* v = dictGet(d, "walk_bob"))  m.walkBobAmount = (float)v->getNum(0.03);
 	if (auto* v = dictGet(d, "idle_bob_speed")) m.idleBobSpeed = (float)v->getNum(1.5);
 
+	// Optional rig template reference (e.g. "base:humanoid"). Existing models
+	// without `rig:` continue using the sin-driver clip path.
+	if (auto* v = dictGet(d, "rig")) m.rigId = v->getStr();
+
 	auto* parts = dictGet(d, "parts");
 	if (!parts || parts->type != Value::LIST) return m;
 
@@ -231,6 +235,10 @@ inline BoxModel dictToBoxModel(const Dict& d) {
 		if (auto* v = dictGet(pd, "speed"))       part.swingSpeed = (float)v->getNum(1.0);
 
 		if (auto* v = dictGet(pd, "head")) part.isHead = (v->getNum(0.0) != 0.0);
+
+		// Optional bone reference (e.g. "head", "l_arm_upper"). Empty = the
+		// per-part swing/pivot path drives this box.
+		if (auto* v = dictGet(pd, "bone")) part.bone = v->getStr();
 
 		m.parts.push_back(part);
 	}

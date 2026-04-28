@@ -114,7 +114,7 @@ void PanelRenderer::renderTuningPanel() {
 
 	const float shadow[4] = {0.00f, 0.00f, 0.00f, 0.55f};
 	const float fill[4]   = {0.08f, 0.07f, 0.08f, 0.96f};
-	const float brass[4]  = {0.65f, 0.48f, 0.20f, 1.00f};
+	const auto& brass     = ui::color::kBrassDeep;
 	ui::drawShadowPanel(r, panelX, panelY, panelW, panelH,
 		shadow, fill, brass, 0.003f);
 

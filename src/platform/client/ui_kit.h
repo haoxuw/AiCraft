@@ -127,7 +127,11 @@ float drawPeekableText(rhi::IRhi* r, const PeekableTextInput& in,
 
 // Shared palette. Keep menus / tooltips / overlays consistent.
 namespace color {
-extern const float kBrass[4];      // title warm
+extern const float kBrass[4];      // title warm (lightest)
+extern const float kBrassHi[4];    // panel upper-edge highlight
+extern const float kBrassMid[4];   // hud / menu frame border
+extern const float kBrassDeep[4];  // panel / inventory border (dark)
+extern const float kPanelFill[4];  // dark menu/panel fill (alpha 0.94)
 extern const float kRed[4];        // danger title
 extern const float kText[4];       // bright body
 extern const float kTextDim[4];    // secondary label

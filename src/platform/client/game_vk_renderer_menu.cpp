@@ -40,9 +40,9 @@ struct MenuListInput {
 void drawMenuFrame(rhi::IRhi* r, float x, float y, float w, float h,
                    const char* title) {
 	const float shadow[4]    = {0.00f, 0.00f, 0.00f, 0.60f};
-	const float fill[4]      = {0.07f, 0.06f, 0.06f, 0.94f};
-	const float brass[4]     = {0.72f, 0.54f, 0.22f, 1.00f};
-	const float brassIn[4]   = {0.95f, 0.78f, 0.35f, 0.85f};
+	const auto& fill         = ui::color::kPanelFill;
+	const auto& brass        = ui::color::kBrassMid;
+	const float brassIn[4]   = {0.95f, 0.78f, 0.35f, 0.85f};  // softer kBrassHi
 	const float titleFill[4] = {0.14f, 0.10f, 0.07f, 0.95f};
 	const float titleCol[4]  = {1.00f, 0.86f, 0.45f, 1.00f};
 

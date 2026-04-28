@@ -598,8 +598,8 @@ void HudRenderer::renderInventoryPanel() {
 	const float shadow [4] = {0.00f, 0.00f, 0.00f, 0.40f};
 	const float frameOut[4]= {0.08f, 0.06f, 0.04f, 0.98f};
 	const float fill   [4] = {0.11f, 0.09f, 0.08f, 0.96f};
-	const float brass  [4] = {0.65f, 0.48f, 0.20f, 1.00f};
-	const float brassHi[4] = {0.95f, 0.78f, 0.35f, 1.00f};
+	const auto& brass      = ui::color::kBrassDeep;
+	const auto& brassHi    = ui::color::kBrassHi;
 
 	// Grid-area bounds reserved up-front so the bands can wrap them.
 	const float gridReserveTop    = 0.300f;   // title+tabs+stats band height
@@ -916,8 +916,8 @@ void HudRenderer::renderOtherInventoryPane() {
 	const float shadow [4] = {0.00f, 0.00f, 0.00f, 0.40f};
 	const float frameOut[4]= {0.08f, 0.06f, 0.04f, 0.98f};
 	const float fill   [4] = {0.11f, 0.09f, 0.08f, 0.96f};
-	const float brass  [4] = {0.65f, 0.48f, 0.20f, 1.00f};
-	const float brassHi[4] = {0.95f, 0.78f, 0.35f, 1.00f};
+	const auto& brass      = ui::color::kBrassDeep;
+	const auto& brassHi    = ui::color::kBrassHi;
 
 	r->drawRect2D(panelX + 0.015f, panelY - 0.020f, panelW, panelH, shadow);
 	{

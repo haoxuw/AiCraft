@@ -17,8 +17,6 @@ Roles used here:
 The loader emits `cat#0` .. `cat#3`; render picks by hash(entity_id) % 4.
 """
 
-import math
-
 model = {
     "id": "cat",
     "head_pivot": [0.0, 0.68, -0.36],

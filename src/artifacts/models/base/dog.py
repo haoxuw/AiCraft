@@ -6,8 +6,6 @@ Each part: offset=[x,y,z] (center), size=[w,h,d] (full size), color=[r,g,b,a]
 Optional animation: pivot, swing_axis, amplitude (degrees), phase (radians), speed
 """
 
-import math
-
 model = {
     "id": "dog",
     "head_pivot": [0.0, 0.715, -0.3146],

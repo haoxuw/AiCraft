@@ -4,8 +4,6 @@ Each part: offset=[x,y,z] (center), size=[w,h,d] (full size), color=[r,g,b,a]
 Optional animation: pivot, swing_axis, amplitude (degrees), phase (radians), speed
 """
 
-import math
-
 model = {
     "id": "raccoon",
     "head_pivot": [0.0, 0.7644, -0.3276],

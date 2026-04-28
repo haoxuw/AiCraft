@@ -422,6 +422,33 @@ void HudRenderer::renderHUD() {
 			y -= rowH;
 		}
 	}
+
+	// ── Zone indicator (top-centre fade-pill) ──────────────────────────────
+	// Polled with the *camera* world position (not the player) so RTS pans
+	// or third-person orbits past a zone boundary still update the label.
+	g.m_zoneIndicator.update(g.m_frameDt, g.m_cam.position, g.m_server->chunks());
+	if (g.m_zoneIndicator.visible()) {
+		const Zone z = g.m_zoneIndicator.displayedZone();
+		const float a = g.m_zoneIndicator.alpha();
+		const char* label = zoneName(z);
+		// Brass-ink palette to match HUD pills below.
+		const float text[4] = { 0.96f, 0.88f, 0.55f, a };
+		const float bg[4]   = { 0.05f, 0.05f, 0.07f, 0.55f * a };
+		const float border[4] = { 0.55f, 0.42f, 0.18f, 0.85f * a };
+		const float pillW = 0.30f, pillH = 0.060f;
+		const float pillX = -pillW * 0.5f, pillY = 0.86f;
+		g.m_rhi->drawRect2D(pillX, pillY, pillW, pillH, bg);
+		// Top + bottom 1-px borders by drawing thin rects.
+		g.m_rhi->drawRect2D(pillX, pillY,                  pillW, 0.003f, border);
+		g.m_rhi->drawRect2D(pillX, pillY + pillH - 0.003f, pillW, 0.003f, border);
+		// Centre the text — character cell width is ~0.018 NDC at 1.0 scale.
+		const float scale = 0.85f;
+		const float textW = (float)std::strlen(label) * 0.018f * scale;
+		g.m_rhi->drawText2D(label,
+		                    -textW * 0.5f,
+		                    pillY + pillH * 0.5f - 0.032f * scale * 0.5f,
+		                    scale, text);
+	}
 }
 
 } // namespace solarium::vk

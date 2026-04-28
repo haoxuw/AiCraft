@@ -120,6 +120,12 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/server/voxel_earth/region.h
 	src/platform/server/voxel_earth/region.cpp
 	src/platform/server/voxel_earth/palette.h
+	src/platform/server/voxel_earth/landuse.h
+	src/platform/server/voxel_earth/landuse.cpp
+	src/platform/server/voxel_earth/voxel_palette.h
+	src/platform/server/voxel_earth/voxel_palette.cpp
+	src/platform/server/voxel_earth/osm_zone_provider.h
+	src/platform/server/voxel_earth/osm_zone_provider.cpp
 )
 
 set(PLATFORM_CLIENT_SOURCES
@@ -135,6 +141,8 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/plaza_animator.cpp
 	src/platform/client/chunk_mesher.h
 	src/platform/client/chunk_mesher.cpp
+	src/platform/client/zone_indicator.h
+	src/platform/client/zone_indicator.cpp
 	src/platform/logic/block_shape.h
 	src/platform/logic/block_shape.cpp
 )
@@ -404,6 +412,19 @@ add_executable(solarium-mux-smoke
 	src/platform/llm/tts_sidecar.h
 )
 target_include_directories(solarium-mux-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+
+# === Rig template loader smoke test (phase-1, model pipeline) ===
+# Loads src/artifacts/rigs/<ns>/*.py via RigRegistry and prints bones + clips
+# per rig. Verifies the model_loader tokenizer survives the deeper nesting in
+# keyframe channels (list-of-dict-of-list-of-dict). See docs/MODEL_PIPELINE.md.
+add_executable(solarium-rig-smoke
+	src/platform/client/rig_smoke.cpp
+	src/platform/client/rig.h
+	src/platform/client/rig_loader.h
+	src/platform/client/rig_registry.h
+)
+target_include_directories(solarium-rig-smoke PRIVATE ${GAME_INCLUDE_DIRS})
+target_link_libraries(solarium-rig-smoke PRIVATE glm)
 
 # === Voxel Earth GLB loader smoke test (phase-2) ===
 # Loads one cached Photorealistic 3D Tile and prints mesh stats. Verifies

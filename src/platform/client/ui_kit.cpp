@@ -9,6 +9,10 @@ namespace solarium::vk::ui {
 
 namespace color {
 const float kBrass[4]     = { 0.96f, 0.82f, 0.40f, 1.00f };
+const float kBrassHi[4]   = { 0.95f, 0.78f, 0.35f, 1.00f };
+const float kBrassMid[4]  = { 0.72f, 0.54f, 0.22f, 1.00f };
+const float kBrassDeep[4] = { 0.65f, 0.48f, 0.20f, 1.00f };
+const float kPanelFill[4] = { 0.07f, 0.06f, 0.06f, 0.94f };
 const float kRed[4]       = { 1.00f, 0.35f, 0.30f, 1.00f };
 const float kText[4]      = { 0.92f, 0.90f, 0.88f, 1.00f };
 const float kTextDim[4]   = { 0.65f, 0.62f, 0.60f, 0.90f };

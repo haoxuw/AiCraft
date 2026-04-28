@@ -26,6 +26,12 @@ struct BodyPart {
 	bool isHead = false;           // rotates around BoxModel.headPivot via AnimState.look*
 
 	unsigned int texture = 0;      // 0 = flat color
+
+	// If non-empty AND BoxModel.rigId is non-empty AND a Rig is resolved at
+	// render time, this part follows the named bone's accumulated transform
+	// instead of (or in addition to) the per-part swing path. See
+	// docs/MODEL_PIPELINE.md and client/rig.h. Empty = legacy behavior.
+	std::string bone;
 };
 
 // Active clip overrides replace a part's default swing params.
@@ -54,6 +60,11 @@ struct BoxModel {
 	float walkBobAmount = 0.03f;
 
 	glm::vec3 headPivot = {0, 1.45f, 0};  // pivot for isHead parts; roughly base of neck
+
+	// Optional reference to a Rig template (e.g. "base:humanoid"). Resolution
+	// to a Rig* happens at render time via a registry — empty = no rig, the
+	// part-level sin-driver path (per-part pivot/swing/clips) runs as before.
+	std::string rigId;
 
 	std::unordered_map<std::string, AnimClip> clips;
 
