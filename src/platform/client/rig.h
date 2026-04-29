@@ -16,6 +16,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -98,28 +99,35 @@ inline float evalKeyframeChannel(const KeyframeChannel& ch, float t,
 }
 
 // Compute world-from-bone-origin transforms for every bone, given an active
-// clip name and time. Returns one mat4 per bone, indexed parallel to
-// rig.bones. Bones are processed in declaration order; **parents must
-// appear before children** in the rig file (humanoid.py respects this).
+// clip name and time. Fills `pose` with one mat4 per bone, indexed parallel
+// to `rig.bones`. Pose is cleared on entry — caller may reuse a thread-local
+// scratch vector to avoid per-frame heap churn (see box_model_flatten.h).
+//
+// Bones are processed in declaration order. A bone whose `parent` name
+// resolves to a *later* index in the bone array (forward reference) gets
+// treated as a root, with a one-shot stderr warning per (rig, bone) pair —
+// silent misrender would otherwise mask authoring mistakes. Bones whose
+// `parent` doesn't resolve at all warn the same way.
 //
 // If `clipName` doesn't match any clip, every bone gets only its
-// translate(defaultPos) — i.e. the rest pose. Bones whose `parent` doesn't
-// resolve to an earlier bone are treated as roots (silent fallback so a
-// malformed rig still renders).
-//
-// Returns an empty vector if the rig has no bones.
-inline std::vector<glm::mat4> computeRigPose(const Rig& rig,
-                                              const std::string& clipName,
-                                              float time) {
-	std::vector<glm::mat4> pose;
+// translate(defaultPos) — i.e. the rest pose.
+inline void computeRigPose(const Rig& rig,
+                            const std::string& clipName,
+                            float time,
+                            std::vector<glm::mat4>& pose) {
+	pose.clear();
 	pose.reserve(rig.bones.size());
 
 	const KeyframeClip* clip = nullptr;
 	if (auto it = rig.clips.find(clipName); it != rig.clips.end())
 		clip = &it->second;
 
-	// Single forward pass; parent index is found by name lookup over the
-	// already-processed prefix. O(N²) worst case in bone count, fine at 16.
+	// One name→idx pass instead of an O(N²) inner scan per parent lookup.
+	std::unordered_map<std::string, int> nameToIdx;
+	nameToIdx.reserve(rig.bones.size());
+	for (size_t i = 0; i < rig.bones.size(); ++i)
+		nameToIdx.emplace(rig.bones[i].name, (int)i);
+
 	for (size_t i = 0; i < rig.bones.size(); ++i) {
 		const Bone& b = rig.bones[i];
 
@@ -137,14 +145,22 @@ inline std::vector<glm::mat4> computeRigPose(const Rig& rig,
 			pose.push_back(local);
 			continue;
 		}
-		int parentIdx = -1;
-		for (int j = 0; j < (int)i; ++j) {
-			if (rig.bones[j].name == b.parent) { parentIdx = j; break; }
+		auto it = nameToIdx.find(b.parent);
+		if (it == nameToIdx.end() || it->second >= (int)i) {
+			static thread_local std::unordered_map<std::string, char> warned;
+			std::string key = rig.id + "::" + b.name;
+			if (warned.emplace(key, 1).second) {
+				std::fprintf(stderr,
+					"[rig] %s: bone '%s' has %s parent '%s' — treated as root\n",
+					rig.id.c_str(), b.name.c_str(),
+					it == nameToIdx.end() ? "unresolved" : "forward-declared",
+					b.parent.c_str());
+			}
+			pose.push_back(local);
+		} else {
+			pose.push_back(pose[it->second] * local);
 		}
-		pose.push_back(parentIdx < 0 ? local : pose[parentIdx] * local);
 	}
-
-	return pose;
 }
 
 } // namespace solarium
