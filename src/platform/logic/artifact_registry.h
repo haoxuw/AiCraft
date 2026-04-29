@@ -14,6 +14,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <cmath>
 #include <algorithm>
 
 namespace solarium {
@@ -29,6 +30,37 @@ struct ArtifactEntry {
 	std::string source;       // raw .py
 	std::unordered_map<std::string, std::string> fields;
 	std::vector<std::string> tags;
+
+	// ── Typed accessors ────────────────────────────────────────────
+	// All field reads should go through these — they're the single trap
+	// for typos in field-key strings. `fields.find("whtever")` would
+	// silently return end(); these methods centralise the key vocabulary
+	// and let the compiler catch dead consumers when a key is renamed.
+	bool hasField(const std::string& key) const {
+		return fields.find(key) != fields.end();
+	}
+	std::string text(const std::string& key,
+	                 const std::string& fallback = "") const {
+		auto it = fields.find(key);
+		return it != fields.end() ? it->second : fallback;
+	}
+	// Truthy-string flag: empty / "0" / "false" / "False" → false; else true.
+	// Matches the Python-side convention: any non-empty value not explicitly
+	// false counts as enabled. Same semantics every consumer used to inline.
+	bool flag(const std::string& key) const {
+		auto it = fields.find(key);
+		if (it == fields.end()) return false;
+		const std::string& v = it->second;
+		if (v.empty() || v == "0" || v == "false" || v == "False") return false;
+		return true;
+	}
+	// Numeric: returns NaN on missing/unparseable so callers can `isfinite`-check
+	// and fall back. Beats per-site try/catch around std::stof.
+	float numeric(const std::string& key) const {
+		auto it = fields.find(key);
+		if (it == fields.end()) return std::nanf("");
+		try { return std::stof(it->second); } catch (...) { return std::nanf(""); }
+	}
 };
 
 class ArtifactRegistry {
@@ -203,6 +235,7 @@ public:
 	struct LivingStats {
 		std::string id;
 		std::string behavior;       // Python behavior module id (e.g. "wander", "woodcutter")
+		std::string idle_clip;      // Renderer's default clip when not actively walking.
 		float walk_speed    = std::nanf("");
 		float run_speed     = std::nanf("");
 		float jump_velocity = std::nanf("");
@@ -220,6 +253,8 @@ public:
 			s.id = e.id;
 			auto bIt = e.fields.find("behavior");
 			if (bIt != e.fields.end()) s.behavior = bIt->second;
+			auto cIt = e.fields.find("idle_clip");
+			if (cIt != e.fields.end()) s.idle_clip = cIt->second;
 			auto asFloat = [&](const char* key, float& out) {
 				auto it = e.fields.find(key);
 				if (it != e.fields.end()) {
@@ -509,6 +544,12 @@ private:
 
 		std::string behavior = extract("behavior");
 		if (!behavior.empty()) e.fields["behavior"] = behavior;
+
+		// Idle / hover clip — renderer hint for non-walking entities.
+		// Empty leaves builtin default. Drives "fly" off the C++ side
+		// so a flyer artifact can name its clip "hover", "soar", etc.
+		std::string idleClip = extract("idle_clip");
+		if (!idleClip.empty()) e.fields["idle_clip"] = idleClip;
 
 		// Dialog persona — opt-in chat persona for humanoid NPCs. Consumed by
 		// the client's DialogPanel; server never sees it (Rule 5).

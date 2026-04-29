@@ -24,7 +24,8 @@ public:
 		int seed = 42;
 		int templateIndex = 0;
 		int port = 0;            // 0 = auto-pick in [7800, 7900)
-		int villagersOverride = 0;  // >0 → SOLARIUM_VILLAGERS=N inherited by server
+		int debugMobCount = 0;      // >0 → SOLARIUM_DEBUG_MOB_COUNT=N (caps each
+		                             // mob type's spawn count; debug log clarity).
 		float simSpeed = 1.0f;   // >0; passed to spawned server as --sim-speed
 		bool lanVisible = false; // true → announce on UDP 7778 (multiplayer host)
 		std::string worldPath;   // empty = new world
@@ -56,13 +57,13 @@ public:
 			args.push_back(std::to_string(cfg.templateIndex));
 		}
 
-		// Client-chosen villager override: env var inherits across fork() into
-		// the spawned server, which reads it in spawnMobsForClient (mirrors
-		// the existing SOLARIUM_STRESS_MULT pattern). Keeps the server host
-		// agnostic — the client decides the population.
-		if (cfg.villagersOverride > 0) {
-			setenv("SOLARIUM_VILLAGERS",
-			       std::to_string(cfg.villagersOverride).c_str(), 1);
+		// Debug mob-count cap: env var inherits across fork() into the
+		// spawned server, which clamps every mob-type count in the
+		// template (no typeId hardcode — Rule 1). Mirrors the existing
+		// SOLARIUM_STRESS_MULT pattern; the server host stays agnostic.
+		if (cfg.debugMobCount > 0) {
+			setenv("SOLARIUM_DEBUG_MOB_COUNT",
+			       std::to_string(cfg.debugMobCount).c_str(), 1);
 		}
 
 		if (cfg.simSpeed > 0.0f && cfg.simSpeed != 1.0f) {

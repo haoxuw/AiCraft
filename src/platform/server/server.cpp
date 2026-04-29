@@ -1,4 +1,5 @@
 #include "server/server.h"
+#include "server/server_tuning.h"
 #include "logic/material_values.h"
 #include "debug/move_stuck_log.h"
 #include <cassert>
@@ -99,10 +100,14 @@ void GameServer::resolveMoveAction(ActionProposal p) {
 			// post-physics Y would desync vertically.
 			if (inCooldown) p.hasClientPos = false;
 
-			// Anti-cheat: sprint 2.5x, fly uncapped, tolerance 3.5x walk.
+			// Anti-cheat: cap proposed speed against EntityDef::walk_speed
+			// scaled by a tuning mul. Both knobs live in server_tuning.h so
+			// mods can widen / tighten the window without touching this code.
 			float maxSpeed = e->def().walk_speed;
 			if (maxSpeed > 0) {
-				float speedCap = maxSpeed * (p.sprint ? 3.5f : 1.5f);
+				float speedCap = maxSpeed * (p.sprint
+				                              ? ServerTuning::sprintSpeedCapMul
+				                              : ServerTuning::walkSpeedCapMul);
 				float len = glm::length(glm::vec2(p.desiredVel.x, p.desiredVel.z));
 				if (len > speedCap) {
 					float scale = speedCap / len;
@@ -197,7 +202,9 @@ void GameServer::resolveRelocateAction(const ActionProposal& p,
 				glm::vec3 fwd = xzLen > 0.01f ? xzDir / xzLen
 				                              : glm::vec3(std::cos(glm::radians(actor->yaw)), 0,
 				                                          std::sin(glm::radians(actor->yaw)));
-				glm::vec3 dropPos = actor->position + fwd * 1.5f + glm::vec3(0, 1.2f, 0);
+				glm::vec3 dropPos = actor->position
+				                 + fwd * ServerTuning::dropForwardOffset
+				                 + glm::vec3(0, ServerTuning::dropUpOffset, 0);
 				EntityId itemEntityId = m_world->entities.spawn(ItemName::ItemEntity, dropPos,
 					{{Prop::ItemType, dropType}, {Prop::Count, count}, {Prop::Age, 0.0f}});
 				Entity* ie = m_world->entities.get(itemEntityId);

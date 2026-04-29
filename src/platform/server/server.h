@@ -7,6 +7,7 @@
 #include "server/world.h"
 #include "server/entity_manager.h"
 #include "server/world_gen_config.h"
+#include <cassert>
 #include "logic/action.h"
 #include "logic/constants.h"
 #include "logic/physics.h"
@@ -316,32 +317,24 @@ public:
 				printf("[Server] SOLARIUM_STRESS_MULT=%d applied to mob spawns\n", mult);
 			}
 		}
-		// Client-chosen villager override (Rule 1: client hosts the world, decides
-		// population). Debug use: strips ALL non-villager mobs so the log is a
-		// clean single-species trace — no dogs/cats/bees churning DECIDE lines
-		// while you're debugging one villager's path. Template villager count
-		// becomes `n` regardless of the original value.
-		if (const char* vc = std::getenv("SOLARIUM_VILLAGERS")) {
+		// Debug-only mob-count cap (Rule 1: no typeId hardcoding — any
+		// creature can be the focus). Caps each declared mob type's
+		// spawn count at `n` so a `--debug-behavior` run gets a small,
+		// readable log universe regardless of which species the modder
+		// has populated the template with. Inherited from the spawning
+		// client via env (process_manager forwards --villagers / --mobs).
+		if (const char* vc = std::getenv("SOLARIUM_DEBUG_MOB_COUNT")) {
 			int n = std::atoi(vc);
 			if (n > 0) {
-				mobList.erase(std::remove_if(mobList.begin(), mobList.end(),
-					[](const MobSpawn& m) {
-						return m.typeId != "villager" &&
-						       m.typeId != "base:villager";
-					}), mobList.end());
-				bool found = false;
-				for (auto& m : mobList) {
-					if (m.typeId == "villager" || m.typeId == "base:villager") {
-						m.count = n;
-						found = true;
-					}
-				}
-				if (!found) {
-					mobList.push_back({"villager", n, wgc.mobSpawnRadius,
-					                   SpawnAnchor::VillageCenter, 0.0f, {}});
-				}
-				printf("[Server] SOLARIUM_VILLAGERS=%d — non-villager mobs "
-				       "stripped for clean debug log\n", n);
+				for (auto& m : mobList) m.count = std::min(m.count, n);
+				// Invariant: cap shouldn't zero the world — every template
+				// declares at least one mob type with count>=1. Asserts
+				// here would catch a template misconfig (or n<=0 leaking
+				// past the guard above), without polluting the log.
+				bool any = false;
+				for (auto& m : mobList) if (m.count > 0) { any = true; break; }
+				assert(any && "SOLARIUM_DEBUG_MOB_COUNT zeroed the mob list — empty template?");
+				(void)any;  // release-build no-op
 			}
 		}
 

@@ -17,6 +17,7 @@
 #include "logic/entity.h"
 #include "logic/physics.h"            // makeMoveParams, BlockSolidFn
 #include "net/server_interface.h"
+#include "server/server_tuning.h"
 
 #include <glm/glm.hpp>
 #include <cmath>
@@ -150,20 +151,19 @@ inline void emitMoveAction(EntityId eid, Entity& e, glm::vec3 vel,
 	e.velocity.x = vel.x;
 	e.velocity.z = vel.z;
 
-	// Stuck-watchdog: agent held a non-zero intent over kStuckWindow seconds
+	// Stuck-watchdog: agent held a non-zero intent over stuckWindow seconds
 	// but the entity didn't actually displace. Logs Agent-Stuck once per
-	// stuck episode, Agent-Unstuck once on recovery.
+	// stuck episode, Agent-Unstuck once on recovery. Thresholds live in
+	// ServerTuning so a mod can tune sensitivity without touching emit.
 	const float intent = std::sqrt(vel.x * vel.x + vel.z * vel.z);
 	const float moved  = glm::length(glm::vec2(e.position.x, e.position.z) -
 	                                 glm::vec2(ctx.stuckLastSampledPos.x,
 	                                           ctx.stuckLastSampledPos.z));
-	constexpr float kIntentThresh = 0.2f;
-	constexpr float kMoveThresh   = 0.05f;
-	constexpr float kStuckWindow  = 1.5f;
-	constexpr float kDt           = 1.0f / 60.0f;
-	if (intent > kIntentThresh && moved < kMoveThresh) {
+	const float kDt = ServerTuning::tickRate;
+	if (intent > ServerTuning::stuckIntentThreshold &&
+	    moved  < ServerTuning::stuckMoveThreshold) {
 		ctx.stuckAccum += kDt;
-		if (ctx.stuckAccum >= kStuckWindow && !ctx.stuckLogged) {
+		if (ctx.stuckAccum >= ServerTuning::stuckWindow && !ctx.stuckLogged) {
 			char detail[192];
 			std::snprintf(detail, sizeof(detail),
 				"pos=(%.2f,%.2f,%.2f) intent=(%.2f,%.2f) goal=\"%s\" "

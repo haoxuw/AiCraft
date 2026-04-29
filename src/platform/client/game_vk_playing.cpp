@@ -1264,10 +1264,7 @@ void Game::processTalkKey() {
 				// `dialog_voice`; empty/missing → mux picks default).
 				solarium::llm::TtsClient* voice = nullptr;
 				if (m_ttsMux) {
-					std::string v;
-					auto vIt = art->fields.find("dialog_voice");
-					if (vIt != art->fields.end()) v = vIt->second;
-					voice = m_ttsMux->clientFor(v);
+					voice = m_ttsMux->clientFor(art->text("dialog_voice"));
 				}
 				if (!m_dialogPanel.open(hit->entityId, name, *art, *m_llmClient,
 				                        m_audioCapture.get(), m_whisperClient.get(),

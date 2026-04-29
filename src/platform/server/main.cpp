@@ -14,6 +14,7 @@
 #include "logic/world_templates.h"
 #include "debug/perf_registry.h"
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <chrono>
 #include <ctime>
@@ -244,15 +245,14 @@ void applyArtifactData(solarium::GameServer& server,
 	for (auto* e : artifacts.byCategory("annotation")) {
 		solarium::World::AnnotationSpawnRule rule;
 		rule.typeId = e->id;
-		if (auto sIt = e->fields.find("slot"); sIt != e->fields.end()) {
-			if      (sIt->second == "top")    rule.slot = solarium::AnnotationSlot::Top;
-			else if (sIt->second == "bottom") rule.slot = solarium::AnnotationSlot::Bottom;
-			else if (sIt->second == "around") rule.slot = solarium::AnnotationSlot::Around;
-		}
-		if (auto chIt = e->fields.find("spawn_chance"); chIt != e->fields.end())
-			rule.chance = (float)std::atof(chIt->second.c_str());
-		if (auto onIt = e->fields.find("spawn_on"); onIt != e->fields.end()) {
-			const std::string& s = onIt->second;
+		const std::string slot = e->text("slot");
+		if      (slot == "top")    rule.slot = solarium::AnnotationSlot::Top;
+		else if (slot == "bottom") rule.slot = solarium::AnnotationSlot::Bottom;
+		else if (slot == "around") rule.slot = solarium::AnnotationSlot::Around;
+		float ch = e->numeric("spawn_chance");
+		if (std::isfinite(ch)) rule.chance = ch;
+		if (e->hasField("spawn_on")) {
+			const std::string s = e->text("spawn_on");
 			for (size_t start = 0; start < s.size(); ) {
 				size_t comma = s.find(',', start);
 				std::string tok = s.substr(start,

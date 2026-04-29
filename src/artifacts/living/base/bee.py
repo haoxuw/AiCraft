@@ -14,6 +14,7 @@ living = {
 
     "model": "bee",
     "behavior": "flyer_wander",
+    "idle_clip": "fly",      # render hint — keeps wings flapping when hovering
 
     "collision": {"min": [-0.1, 0, -0.1], "max": [0.1, 0.3, 0.1]},
     "walk_speed": 4.0,

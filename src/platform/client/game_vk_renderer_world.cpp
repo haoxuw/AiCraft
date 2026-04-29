@@ -485,7 +485,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 				const float speedXZ = std::sqrt(e.velocity.x * e.velocity.x +
 				                                 e.velocity.z * e.velocity.z);
 				anim.speed = speedXZ;
-				if (e.def().gravity_scale <= 0.0f) anim.currentClip = "fly";
+				if (!e.def().idle_clip.empty()) anim.currentClip = e.def().idle_clip;
 				solarium::appendBoxModel(charBoxes, *mit,
 				                         e.position, e.yaw, anim);
 			});
@@ -505,10 +505,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 		const solarium::ArtifactEntry* entry =
 		    g.m_artifactRegistry.findById(g.m_shell.previewId);
 		if (entry) {
-			std::string key;
-			auto mit = entry->fields.find("model");
-			if (mit != entry->fields.end() && !mit->second.empty()) key = mit->second;
-			else key = entry->id;
+			std::string key = entry->text("model", entry->id);
 			auto dot = key.rfind('.');
 			if (dot != std::string::npos) key = key.substr(0, dot);
 			const solarium::BoxModel* it = g.m_modelMgr.boxModel(key);

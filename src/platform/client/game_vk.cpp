@@ -193,9 +193,7 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 		if (s == "character" || s == "characterselect") {
 			m_menuScreen = MenuScreen::CharacterSelect;
 			for (auto* e : m_artifactRegistry.byCategory("living")) {
-				auto it = e->fields.find("playable");
-				if (it == e->fields.end()) continue;
-				if (it->second != "True" && it->second != "true") continue;
+				if (!e->flag("playable")) continue;
 				m_shell.previewId = e->id;
 				break;
 			}

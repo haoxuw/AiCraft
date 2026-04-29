@@ -40,4 +40,25 @@ namespace solarium::ServerTuning {
 	constexpr float decisionSweepInterval  = 5.0f;
 	constexpr float proximityRadius        = 16.0f;   // blocks
 	constexpr float proximityCheckInterval = 0.5f;
+
+	// Anti-cheat speed cap (server-side enforcement of player Move proposals).
+	// Multiplied against EntityDef::walk_speed; sprint widens the window so
+	// network jitter doesn't trip a clean sprint. Tunable here so a mod can
+	// raise/lower the headroom without recompiling the resolveMoveAction path.
+	constexpr float walkSpeedCapMul        = 1.5f;
+	constexpr float sprintSpeedCapMul      = 3.5f;
+
+	// Item-drop placement (Convert→Ground / inventory drop). Forward distance
+	// in front of the actor + vertical lift so the item doesn't clip into
+	// the actor's AABB at spawn.
+	constexpr float dropForwardOffset      = 1.5f;
+	constexpr float dropUpOffset           = 1.2f;
+
+	// Stuck-watchdog (agent move emit). Triggers Agent-Stuck telemetry when
+	// the entity holds non-zero intent but fails to displace for longer
+	// than `stuckWindow` sim-seconds. Tuned so a brief collision push or
+	// separation deflection doesn't false-positive.
+	constexpr float stuckIntentThreshold   = 0.2f;    // m/s — below = idle, no watchdog
+	constexpr float stuckMoveThreshold     = 0.05f;   // m/tick — below = "didn't move"
+	constexpr float stuckWindow            = 1.5f;    // sim-seconds before flag
 }

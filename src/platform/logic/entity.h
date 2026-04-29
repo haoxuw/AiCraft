@@ -101,6 +101,14 @@ struct EntityDef {
 	float run_speed = 0.0f;
 	float jump_velocity = 0.0f;
 
+	// Idle animation clip — name the renderer should use when the entity
+	// is alive but not actively moving (or always-on, for flyers). Empty
+	// means "renderer picks the default" (typically the "" name resolves
+	// to the model's first clip). Drives `gravity_scale<=0 → "fly"` style
+	// hardcodes out of the renderer so a modder-declared flyer can name
+	// its clip "hover", "soar", whatever — single source on the artifact.
+	std::string idle_clip;
+
 	// Living / Creature fields
 	int max_hp = 0;
 	float eye_height = 0.0f;     // 0 = use collision_box_max.y * 0.75

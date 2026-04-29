@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
 	int  port = 0;                  // --port: server port (0 = spawn local)
 	int  templateIndex = 0;         // --template: world template (default village)
 	bool templateExplicit = false;  // true iff --template was passed on the command line
-	int  villagersOverride = 0;     // --villagers: override villager count (0 = leave template as-is)
+	int  debugMobCount = 0;         // --villagers / --mobs: cap each mob-type spawn count (0 = leave template as-is)
 	float simSpeed = 1.0f;          // --sim-speed: server sim multiplier (1=real, 4=4× faster)
 	// --terminate-after: seconds; ≤0 = run forever. After the deadline the
 	// main loop exits naturally — same path as the menu's Quit button — so
@@ -215,7 +215,9 @@ int main(int argc, char** argv) {
 			templateIndex = std::atoi(argv[++i]);
 			templateExplicit = true;
 		}
-		else if (strcmp(argv[i], "--villagers") == 0 && i + 1 < argc) villagersOverride = std::atoi(argv[++i]);
+		else if ((strcmp(argv[i], "--villagers") == 0 ||
+		          strcmp(argv[i], "--mobs") == 0) && i + 1 < argc)
+			debugMobCount = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--sim-speed") == 0 && i + 1 < argc) simSpeed = (float)std::atof(argv[++i]);
 		else if (strcmp(argv[i], "--terminate-after") == 0 && i + 1 < argc) terminateAfterSec = (float)std::atof(argv[++i]);
 		else if (strcmp(argv[i], "--decide-base-cooldown") == 0 && i + 1 < argc)
@@ -242,7 +244,7 @@ int main(int argc, char** argv) {
 			skipMenu = true;
 			logOnly = true;
 			templateIndex = 1;         // test_behaviors (walled arena, dense trees)
-			if (villagersOverride <= 0) villagersOverride = 1;
+			if (debugMobCount <= 0) debugMobCount = 1;
 			if (simSpeed == 1.0f)       simSpeed = 4.0f;
 			debugBehaviorMode = true;
 		}
@@ -384,7 +386,7 @@ int main(int argc, char** argv) {
 			cfg.seed = 42;
 			cfg.templateIndex = templateIndex;
 			cfg.execDir = execDir;
-			cfg.villagersOverride = villagersOverride;
+			cfg.debugMobCount = debugMobCount;
 			cfg.simSpeed = simSpeed;
 			// Honour settings.lan_visible — fast-path users with LAN
 			// hosting on get broadcast on UDP 7778 without the wizard.
@@ -529,26 +531,19 @@ int main(int argc, char** argv) {
 			};
 			std::vector<PlayableItem> playables;
 			for (auto* e : game.artifactRegistry().byCategory("living")) {
-				auto it = e->fields.find("playable");
-				if (it == e->fields.end()) continue;
-				if (it->second != "True" && it->second != "true") continue;
-				std::string desc;
-				auto dit = e->fields.find("description");
-				if (dit != e->fields.end()) desc = dit->second;
+				if (!e->flag("playable")) continue;
 				PlayableItem p;
 				p.id   = e->id;
 				p.name = e->name.empty() ? e->id : e->name;
-				p.desc = desc;
+				p.desc = e->text("description");
 				p.str  = readI(*e, "stats_strength");
 				p.sta  = readI(*e, "stats_stamina");
 				p.agi  = readI(*e, "stats_agility");
 				p.intl = readI(*e, "stats_intelligence");
 				p.walk = readF(*e, "walk_speed");
 				p.run  = readF(*e, "run_speed");
-				// "features" is a string-list in the artifact loader output;
-				// it lands as a comma-joined string. Show as-is.
-				auto fit = e->fields.find("features");
-				if (fit != e->fields.end()) p.features = fit->second;
+				// "features" is a comma-joined string in the artifact loader.
+				p.features = e->text("features");
 				playables.push_back(std::move(p));
 			}
 			std::sort(playables.begin(), playables.end(),
@@ -1264,10 +1259,7 @@ int main(int argc, char** argv) {
 			// Helper: pick the section bucket within a top-level group based
 			// on artifact fields. Falls back to subcategory or "Other".
 			auto livingBucket = [](Entry e) -> const char* {
-				auto pit = e->fields.find("playable");
-				if (pit != e->fields.end() &&
-				    (pit->second == "True" || pit->second == "true"))
-					return "Heroes";
+				if (e->flag("playable")) return "Heroes";
 				const std::string& sc = e->subcategory;
 				if (sc == "humanoid")  return "Villagers";
 				if (sc == "hostile" || sc == "predator")  return "Hostile";
@@ -1683,9 +1675,7 @@ int main(int argc, char** argv) {
 				// Mirror what the "singleplayer" action does so beginConnectAs
 				// has a previewId to commit when the user clicks Begin Game.
 				for (auto* e : game.artifactRegistry().byCategory("living")) {
-					auto it = e->fields.find("playable");
-					if (it == e->fields.end()) continue;
-					if (it->second == "True" || it->second == "true") {
+					if (e->flag("playable")) {
 						game.setPreviewId(e->id);
 						break;
 					}
@@ -1697,7 +1687,7 @@ int main(int argc, char** argv) {
 					cfg.seed = 42;
 					cfg.templateIndex = templateIndex;
 					cfg.execDir = execDir;
-					cfg.villagersOverride = villagersOverride;
+					cfg.debugMobCount = debugMobCount;
 					cfg.simSpeed = simSpeed;
 					if (!game.hostLocalServer(cfg))
 						std::fprintf(stderr, "[boot] hostLocalServer failed\n");
@@ -1756,9 +1746,7 @@ int main(int argc, char** argv) {
 			static std::string firstPlayableId;
 			if (firstPlayableId.empty()) {
 				for (auto* e : game.artifactRegistry().byCategory("living")) {
-					auto it = e->fields.find("playable");
-					if (it == e->fields.end()) continue;
-					if (it->second == "True" || it->second == "true") {
+					if (e->flag("playable")) {
 						firstPlayableId = e->id;
 						break;
 					}
@@ -1948,7 +1936,7 @@ int main(int argc, char** argv) {
 				cfg.templateIndex = idx;
 				cfg.execDir = game.execDir();
 				cfg.seed              = parts.size() > 1 ? std::atoi(parts[1].c_str()) : 42;
-				cfg.villagersOverride = parts.size() > 2 ? std::atoi(parts[2].c_str()) : 0;
+				cfg.debugMobCount     = parts.size() > 2 ? std::atoi(parts[2].c_str()) : 0;
 				if (cfg.seed <= 0) cfg.seed = 42;
 
 				// URL-decode name and create a save dir BEFORE spawning the

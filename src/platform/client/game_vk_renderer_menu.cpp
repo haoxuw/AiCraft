@@ -229,9 +229,7 @@ void MenuRenderer::renderMenu() {
 		struct PlayableItem { std::string id, name; };
 		std::vector<PlayableItem> playables;
 		for (auto* e : g.m_artifactRegistry.byCategory("living")) {
-			auto it = e->fields.find("playable");
-			if (it == e->fields.end()) continue;
-			if (it->second != "True" && it->second != "true") continue;
+			if (!e->flag("playable")) continue;
 			playables.push_back({e->id, e->name});
 		}
 		std::sort(playables.begin(), playables.end(),

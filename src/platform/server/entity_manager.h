@@ -67,6 +67,13 @@ public:
 				d.default_props[Prop::BehaviorId] = s.behavior;
 				any = true;
 			}
+			// Idle clip name (renderer-side hint). Empty in artifact = leave
+			// builtin default; non-empty wins. Lets a flyer artifact say
+			// idle_clip="hover" without renderer hardcoding "fly".
+			if (!s.idle_clip.empty()) {
+				d.idle_clip = s.idle_clip;
+				any = true;
+			}
 			if (any) overridden++;
 		}
 		if (overridden > 0)

@@ -22,6 +22,7 @@
 #include "llm/whisper_client.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -51,27 +52,18 @@ public:
 	          solarium::llm::WhisperClient* whisper = nullptr,
 	          solarium::llm::TtsClient* tts = nullptr,
 	          solarium::AudioManager* audioOut = nullptr) {
-		auto sysIt = artifact.fields.find("dialog_system_prompt");
-		if (sysIt == artifact.fields.end() || sysIt->second.empty()) return false;
+		std::string sys = artifact.text("dialog_system_prompt");
+		if (sys.empty()) return false;
 
 		float temp = 0.7f;
-		auto tIt = artifact.fields.find("dialog_temperature");
-		if (tIt != artifact.fields.end() && !tIt->second.empty()) {
-			float v = std::atof(tIt->second.c_str());
-			if (v > 0.0f && v < 2.0f) temp = v;
-		}
-		std::string greeting;
-		auto gIt = artifact.fields.find("dialog_greeting");
-		if (gIt != artifact.fields.end()) greeting = gIt->second;
+		float v = artifact.numeric("dialog_temperature");
+		if (std::isfinite(v) && v > 0.0f && v < 2.0f) temp = v;
 
-		m_session  = std::make_unique<solarium::llm::LlmSession>(client, sysIt->second, temp);
-		m_target   = target;
-		m_npcName  = npcName;
-		{
-			auto vIt = artifact.fields.find("dialog_voice");
-			m_voiceName = (vIt != artifact.fields.end()) ? vIt->second : std::string();
-		}
-		m_greeting = std::move(greeting);
+		m_session   = std::make_unique<solarium::llm::LlmSession>(client, sys, temp);
+		m_target    = target;
+		m_npcName   = npcName;
+		m_voiceName = artifact.text("dialog_voice");
+		m_greeting  = artifact.text("dialog_greeting");
 		m_input.clear();
 		m_display.clear();
 		if (!m_greeting.empty()) m_display.push_back({Role::Npc, m_greeting});

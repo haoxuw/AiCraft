@@ -14,6 +14,7 @@ living = {
 
     "model": "owl",
     "behavior": "flyer_wander",
+    "idle_clip": "fly",      # render hint — keeps wings flapping when hovering
 
     "collision": {"min": [-0.2, 0, -0.2], "max": [0.2, 0.8, 0.2]},
     "walk_speed": 3.0,

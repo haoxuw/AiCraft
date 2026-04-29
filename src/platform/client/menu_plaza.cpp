@@ -135,10 +135,12 @@ void MenuPlaza::spawnMascot(const std::string& typeId, glm::vec3 pos, float yaw,
 	e->onGround = true;
 
 	// Behavior id lives on the EntityDef as a default prop (applyLivingStats
-	// writes it from the artifact's "behavior" field). Fallback to "wander"
-	// keeps the mascot animated even if the artifact hasn't declared one.
-	std::string bid = e->getProp<std::string>(Prop::BehaviorId, "wander");
-	BehaviorHandle handle = resolveHandle(bid, behaviors);
+	// writes it from the artifact's "behavior" field). No runtime fallback —
+	// Rule 1: any entity can have any behavior, including none. A mascot
+	// without a declared behavior simply stands still, which is preferable
+	// to baking a "wander" assumption into C++.
+	std::string bid = e->getProp<std::string>(Prop::BehaviorId, "");
+	BehaviorHandle handle = bid.empty() ? -1 : resolveHandle(bid, behaviors);
 
 	auto agent = std::make_unique<Agent>(eid, bid, handle);
 	m_entities.push_back(std::move(e));
