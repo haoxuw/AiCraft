@@ -49,6 +49,7 @@
 #include "server/entity_manager.h"
 #include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
+#include "client/chunk_availability_checker.h"
 #include "client/hotbar.h"
 #include "client/zone_indicator.h"
 #include "client/lan_browser.h"
@@ -895,6 +896,15 @@ private:
 	// Camera-driven zone indicator. Polled each HUD frame with m_cam.position
 	// (the actual camera world pos, not player) so RTS pans show the right zone.
 	solarium::ZoneIndicator m_zoneIndicator;
+
+	// Watchdog: each tick verifies the player's 3×3×3 chunk neighbourhood
+	// (= the physics + AI scan range — see CLAUDE.md "load 9 chunks, 1 on
+	// each side") is fully loaded. Trips assert + dumps a per-cy occupancy
+	// grid if any chunk stays missing past the grace window. Radius matches
+	// the server's prep window (preloadRadiusChunks horizontally, dy ∈
+	// [-1, +2] vertically) — anything tighter and we'd also need the
+	// streaming pipeline widened.
+	solarium::ChunkAvailabilityChecker m_chunkAvail { 1, 3.0f };
 
 	// Tab opens the inventory panel. When m_invOther != 0, renders a second
 	// pane for that entity (chest/NPC). Sort mode cycles via a UI button.

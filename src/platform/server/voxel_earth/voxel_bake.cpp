@@ -384,6 +384,34 @@ int main(int argc, char** argv) {
 		const double t_fill = std::chrono::duration<double>(t_fill1 - t_fill0).count();
 		std::printf("interior fill: stone=%zu dirt=%zu, water columns skipped=%zu, %.2fs\n",
 		            fill_stone_count, fill_dirt_count, skipped_water_columns, t_fill);
+
+		// 5. Empty-column ground extrapolation. Google Photorealistic 3D Tiles
+		//    only delivers mesh where there's geometric detail; flat asphalt /
+		//    grass / lake-edge tiles often produce ZERO voxels for whole (x,z)
+		//    columns inside the bake bbox. The result is visible holes ("void
+		//    next to the player"). Walk every column inside the bbox and, for
+		//    columns with no voxels, inject a Dirt record at the median ground
+		//    elevation so the world has a floor everywhere.
+		int64_t med_sum = 0; size_t med_n = 0;
+		for (auto& [k, ct] : column_top) {
+			if (ct.is_water) continue;
+			med_sum += ct.y_top;
+			++med_n;
+		}
+		const int32_t ground_y = med_n ? (int32_t)(med_sum / (int64_t)med_n) : gmin_y;
+		size_t synth_ground_count = 0;
+		for (int32_t cx = gmin_x; cx <= gmax_x; ++cx) {
+			for (int32_t cz = gmin_z; cz <= gmax_z; ++cz) {
+				if (column_top.count(packxz(cx, cz))) continue;  // already has content
+				ve::VoxelRecord rec;
+				rec.x = cx; rec.y = ground_y; rec.z = cz;
+				rec.r = kDirtR; rec.g = kDirtG; rec.b = kDirtB; rec.a = kDirtA;
+				combined.emplace(pack(cx, ground_y, cz), rec);
+				++synth_ground_count;
+			}
+		}
+		std::printf("ground synth: %zu empty columns filled at y=%d (median surface)\n",
+		            synth_ground_count, ground_y);
 	}
 
 	ve::VoxelRegion region;

@@ -103,14 +103,13 @@ void ChunkGenService::workerLoop() {
 			if (m_cancelled.count(job.cid)) continue;
 		}
 
-		// Default-fill chunks (AIR-Lite at cy>=0, DIRT-Lite below) aren't sent;
-		// client falls back to defaultBlock(cy) on lookup miss. Empty `msg`
-		// with the same Result.pos signals "treat as sent, no bytes" to the
-		// drain path so the prep counter still advances.
+		// Every chunk in the player's load radius travels on the wire
+		// (Lite ≈ 10 bytes, Full ≈ 20 KB) so the client always has a
+		// real Chunk* in m_chunks. The previous skip-on-default
+		// optimisation broke the chunk-availability watchdog by silently
+		// dropping below-floor chunks the mesher needs.
 		std::vector<uint8_t> msg;
-		if (m_world.isInteresting(job.pos)) {
-			buildMessage(*chunk, job.pos, job.useZstd, msg);
-		}
+		buildMessage(*chunk, job.pos, job.useZstd, msg);
 
 		std::lock_guard<std::mutex> lk(m_resultMu);
 		m_results.push_back(Result{job.cid, job.pos, std::move(msg)});
@@ -119,18 +118,26 @@ void ChunkGenService::workerLoop() {
 
 void ChunkGenService::buildMessage(const Chunk& chunk, ChunkPos pos, bool useZstd,
                                    std::vector<uint8_t>& out) const {
-	// Payload: [i32 cx][i32 cy][i32 cz][u8 zone][u32×CHUNK_VOLUME][u8×CHUNK_VOLUME appearance]
-	// — matches ClientManager::queueChunk. Annotation tail (if any) is appended
-	// by the caller, after the appearance block. Zone byte added in protocol v10.
+	// Payload (v11): [i32 cx][i32 cy][i32 cz][u8 zone][u8 mode]
+	//   mode=0 (Lite): [u16 lite_bid][u8 lite_app]
+	//   mode=1 (Full): [u32×CHUNK_VOLUME packed][u8×CHUNK_VOLUME appearance]
+	//   Annotation tail (if any) is appended by the caller after this.
 	net::WriteBuffer cb;
 	cb.writeI32(pos.x);
 	cb.writeI32(pos.y);
 	cb.writeI32(pos.z);
 	cb.writeU8(static_cast<uint8_t>(chunk.zone()));
-	for (int i = 0; i < CHUNK_VOLUME; i++)
-		cb.writeU32(((uint32_t)chunk.getRawParam2(i) << 16) | chunk.getRaw(i));
-	for (int i = 0; i < CHUNK_VOLUME; i++)
-		cb.writeU8(chunk.getRawAppearance(i));
+	const bool lite = chunk.isLite();
+	cb.writeU8(lite ? 0 : 1);
+	if (lite) {
+		cb.writeU16(static_cast<uint16_t>(chunk.liteBid()));
+		cb.writeU8(chunk.liteAppearance());
+	} else {
+		for (int i = 0; i < CHUNK_VOLUME; i++)
+			cb.writeU32(((uint32_t)chunk.getRawParam2(i) << 16) | chunk.getRaw(i));
+		for (int i = 0; i < CHUNK_VOLUME; i++)
+			cb.writeU8(chunk.getRawAppearance(i));
+	}
 
 	std::vector<uint8_t> payload;
 	net::MsgType msgType = net::S_CHUNK;

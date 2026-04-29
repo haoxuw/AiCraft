@@ -71,7 +71,19 @@ namespace solarium::net {
 //     position (cx, cy, cz), before the packed-block payload. Server emits;
 //     client mirrors into Chunk::zone(). HUD reads the chunk under the
 //     camera (not the player) to drive the zone indicator.
-static constexpr uint32_t PROTOCOL_VERSION = 10;
+// v11: S_CHUNK / S_CHUNK_Z gain a u8 mode byte after the zone byte.
+//     mode = 0 (Lite) → 3-byte payload [u16 lite_bid][u8 lite_app] —
+//             every cell is implicitly that bid. Used for sky chunks
+//             (Lite-AIR), bedrock (Lite-DIRT), and any uniform interior
+//             that the engine synthesises from per-column metadata.
+//     mode = 1 (Full) → legacy [u32×4096 packed][u8×4096 appearance].
+//     Annotation tail still follows. The change replaces the old
+//     "skip-default-chunks" optimisation: every chunk in the player's
+//     load radius now travels on the wire — Lite as ~10 bytes, Full as
+//     the existing ~20 KB — so the client always has a real Chunk* in
+//     m_chunks and the chunk-availability watchdog can assert hard
+//     when one's missing.
+static constexpr uint32_t PROTOCOL_VERSION = 11;
 
 // S_REMOVE trailing byte. Server writes it unconditionally (from v8); a v7
 // client stops reading after the entity id, so appending a byte is safe.

@@ -96,18 +96,6 @@ public:
 	BlockId liteBid() const { return m_liteBid; }
 	uint8_t liteAppearance() const { return m_liteApp; }
 
-	// "Default" = matches the engine policy for chunks at this y (AIR above
-	// world-y 0, DIRT below; see logic/chunk_default.h). The server skips
-	// streaming default chunks; clients fall back to the same policy on
-	// lookup miss, so the wire saves ~75% of S_CHUNKs in voxel-earth bakes
-	// (sky chunks above bbox top, underground below floor).
-	bool isDefault(int cy, const DefaultFill& d) const {
-		if (!isLite())              return false;
-		if (m_liteApp != 0)         return false;
-		if (m_zone != Zone::Unknown) return false;
-		return m_liteBid == d.forChunkY(cy);
-	}
-
 	// Force Lite mode with a uniform fill. Drops any allocated arrays.
 	// Used by deserialization when the wire/disk format declares Lite.
 	void resetLite(BlockId bid, uint8_t app = 0) {

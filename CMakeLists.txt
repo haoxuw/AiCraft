@@ -130,6 +130,8 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/server/voxel_earth/tile_shard.cpp
 	src/platform/server/voxel_earth/tile_cache.h
 	src/platform/server/voxel_earth/tile_cache.cpp
+	src/platform/server/voxel_earth/block_picker.h
+	src/platform/server/voxel_earth/block_picker.cpp
 )
 
 set(PLATFORM_CLIENT_SOURCES
@@ -145,6 +147,8 @@ set(PLATFORM_CLIENT_SOURCES
 	src/platform/client/plaza_animator.cpp
 	src/platform/client/chunk_mesher.h
 	src/platform/client/chunk_mesher.cpp
+	src/platform/client/chunk_availability_checker.h
+	src/platform/client/chunk_availability_checker.cpp
 	src/platform/client/zone_indicator.h
 	src/platform/client/zone_indicator.cpp
 	src/platform/logic/block_shape.h

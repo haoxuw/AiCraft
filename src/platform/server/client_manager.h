@@ -1303,24 +1303,29 @@ private:
 		Chunk* chunk = m_server.world().getChunk(pos);
 		if (!chunk) return;
 
-		// Skip default-fill chunks: AIR-Lite above world-y 0, DIRT-Lite below.
-		// Client falls back to defaultBlock(cy) on lookup miss, so the absence
-		// of an S_CHUNK is the signal — no protocol bump needed. Mark the
-		// chunk as "sent" anyway so we don't keep re-checking it next tick.
-		if (!m_server.world().isInteresting(pos)) {
-			cc.sentChunks.insert(pos);
-			return;
-		}
-
-		// Payload: [i32 cx][i32 cy][i32 cz][u8 zone][u32×4096][u8×4096 appearance] (v10+)
-		//          [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N
+		// Payload (v11):
+		//   [i32 cx][i32 cy][i32 cz][u8 zone][u8 mode]
+		//   mode=0 (Lite): [u16 lite_bid][u8 lite_app] — 3 bytes
+		//   mode=1 (Full): [u32×4096 packed][u8×4096 appearance]
+		//   [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N
+		// Lite is the wire shape for sky / bedrock / uniform interior; Full
+		// for everything else. Every chunk in the player's load radius goes
+		// on the wire — no skip-on-default optimisation, so the client
+		// always has a real Chunk* and the availability watchdog can fire.
 		net::WriteBuffer cb;
 		cb.writeI32(pos.x); cb.writeI32(pos.y); cb.writeI32(pos.z);
 		cb.writeU8(static_cast<uint8_t>(chunk->zone()));
-		for (int i = 0; i < CHUNK_VOLUME; i++)
-			cb.writeU32(((uint32_t)chunk->getRawParam2(i) << 16) | chunk->getRaw(i));
-		for (int i = 0; i < CHUNK_VOLUME; i++)
-			cb.writeU8(chunk->getRawAppearance(i));
+		const bool lite = chunk->isLite();
+		cb.writeU8(lite ? 0 : 1);
+		if (lite) {
+			cb.writeU16(static_cast<uint16_t>(chunk->liteBid()));
+			cb.writeU8(chunk->liteAppearance());
+		} else {
+			for (int i = 0; i < CHUNK_VOLUME; i++)
+				cb.writeU32(((uint32_t)chunk->getRawParam2(i) << 16) | chunk->getRaw(i));
+			for (int i = 0; i < CHUNK_VOLUME; i++)
+				cb.writeU8(chunk->getRawAppearance(i));
+		}
 
 		// Annotations piggyback on S_CHUNK so decorations render immediately.
 		auto annots = m_server.world().annotationsInChunk(pos);

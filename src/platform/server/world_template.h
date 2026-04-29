@@ -10,6 +10,7 @@
 #include "server/world_gen_config.h"
 #include "python/python_bridge.h"
 #include "server/world_accessibility.h"
+#include "server/voxel_earth/block_picker.h"
 #include "server/voxel_earth/landuse.h"
 #include "server/voxel_earth/osm_zone_provider.h"
 #include "server/voxel_earth/palette.h"
@@ -721,14 +722,14 @@ private:
 	std::unique_ptr<voxel_earth::VoxelRegion> m_region;
 	mutable std::unique_ptr<voxel_earth::TileCache> m_tileCache; // shard reader
 	std::unique_ptr<ZoneProvider>              m_zones;        // null → NullZoneProvider
-	mutable voxel_earth::ResolvedPalette       m_palette;
-	mutable bool                               m_paletteResolved = false;
+	mutable voxel_earth::BlockPicker           m_blockPicker;  // CIEDE2000-nearest
+	mutable bool                               m_pickerReady = false;
 	voxel_earth::VoxelPalette                  m_voxelPalette; // per-region 256-entry tint
 
 	void generateVoxelEarthChunk(Chunk& chunk, ChunkPos cpos, const BlockRegistry& blocks) const {
-		if (!m_paletteResolved) {
-			m_palette.resolve(blocks);
-			m_paletteResolved = true;
+		if (!m_pickerReady) {
+			m_blockPicker.rebuild(blocks);
+			m_pickerReady = true;
 		}
 		const int ox = cpos.x * CHUNK_SIZE;
 		const int oy = cpos.y * CHUNK_SIZE;
@@ -761,12 +762,10 @@ private:
 			if (wy < oy || wy >= oy + CHUNK_SIZE) return;
 			if (wz < oz || wz >= oz + CHUNK_SIZE) return;
 			const int lx = wx - ox, ly = wy - oy, lz = wz - oz;
-			const int hAboveGround = m_region
-				? (v.y - m_region->bbox_min[1])
-				: (v.y);   // tile-only: rely on alpha sentinels for fill semantics
-			chunk.set(lx, ly, lz,
-			          voxel_earth::block_for_voxel(m_palette, v.r, v.g, v.b, v.a,
-			                                       hAboveGround));
+			chunk.set(lx, ly, lz, m_blockPicker.pick(v.r, v.g, v.b, v.a));
+			// Real GLB voxels (a==255) carry the source RGB into a tint;
+			// fill voxels (a sentinels) leave appearance=0 so the block
+			// renders with its natural colour.
 			if (m_voxelPalette.built &&
 			    v.a != voxel_earth::kAlphaFillStone &&
 			    v.a != voxel_earth::kAlphaFillDirt) {

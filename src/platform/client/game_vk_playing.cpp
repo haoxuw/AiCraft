@@ -369,6 +369,19 @@ void Game::tickPlayer(float dt) {
 	solarium::Entity* me = playerEntity();
 	if (!me) return;
 
+	// Watch for missing chunks in the player's 5×5×5 neighbourhood. Trips
+	// assert + dumps an occupancy grid on first violation; suppresses
+	// further dumps for the same chunk to avoid log spam.
+	{
+		auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
+		const ChunkPos cp {
+			div((int)std::floor(me->position.x), CHUNK_SIZE),
+			div((int)std::floor(me->position.y), CHUNK_SIZE),
+			div((int)std::floor(me->position.z), CHUNK_SIZE),
+		};
+		m_chunkAvail.tick(cp, m_server->chunks(), dt);
+	}
+
 	// RTS: WASD pans camera, not player. Player walks only when box-selected
 	// + issued a group Move order (Rule 2). Local steering uses steerTargetFor
 	// over the client-prediction path.

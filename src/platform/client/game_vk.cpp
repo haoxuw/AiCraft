@@ -720,6 +720,11 @@ void Game::enterPlaying() {
 	// loading screen held the executor off so NPCs stayed put during warmup;
 	// enable it now so the first Playing frame sees live entities.
 	if (m_agentClient) m_agentClient->setExecutorEnabled(true);
+	// Arm the chunk-availability watchdog now that the player is actually
+	// in-world. reset() drops any stale "expected but missing" entries from
+	// the previous session so we don't fire on death/respawn artifacts.
+	m_chunkAvail.reset();
+	m_chunkAvail.setEnabled(true);
 	// Hotbar persistence path, keyed by spawn seed so two worlds on the same
 	// machine don't share a layout. Flushed on every drag and on shutdown.
 	{

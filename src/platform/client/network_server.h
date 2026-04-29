@@ -751,15 +751,20 @@ private:
 			int cx = rb.readI32(), cy = rb.readI32(), cz = rb.readI32();
 			ChunkPos cp = {cx, cy, cz};
 			auto chunk = std::make_unique<Chunk>();
-			chunk->setZone(static_cast<Zone>(rb.readU8()));   // v10+
-			for (int ly = 0; ly < CHUNK_SIZE; ly++)
-				for (int lz = 0; lz < CHUNK_SIZE; lz++)
-					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-						uint32_t v = rb.readU32();
-						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
-					}
-			// v5+: [u8×CHUNK_VOLUME] appearance array, before annotations.
-			if (rb.remaining() >= (size_t)CHUNK_VOLUME) {
+			chunk->setZone(static_cast<Zone>(rb.readU8()));
+			const uint8_t mode = rb.readU8();
+			if (mode == 0) {
+				// Lite — uniform fill described by 3 bytes.
+				BlockId bid = (BlockId)rb.readU16();
+				uint8_t app = rb.readU8();
+				chunk->resetLite(bid, app);
+			} else {
+				for (int ly = 0; ly < CHUNK_SIZE; ly++)
+					for (int lz = 0; lz < CHUNK_SIZE; lz++)
+						for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+							uint32_t v = rb.readU32();
+							chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
+						}
 				for (int ly = 0; ly < CHUNK_SIZE; ly++)
 					for (int lz = 0; lz < CHUNK_SIZE; lz++)
 						for (int lx = 0; lx < CHUNK_SIZE; lx++)
@@ -789,14 +794,19 @@ private:
 			net::ReadBuffer zrb(decomp.data(), actual);
 			ChunkPos cp = {zrb.readI32(), zrb.readI32(), zrb.readI32()};
 			auto chunk = std::make_unique<Chunk>();
-			chunk->setZone(static_cast<Zone>(zrb.readU8()));   // v10+
-			for (int ly = 0; ly < CHUNK_SIZE; ly++)
-				for (int lz = 0; lz < CHUNK_SIZE; lz++)
-					for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-						uint32_t v = zrb.readU32();
-						chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
-					}
-			if (zrb.remaining() >= (size_t)CHUNK_VOLUME) {
+			chunk->setZone(static_cast<Zone>(zrb.readU8()));
+			const uint8_t mode = zrb.readU8();
+			if (mode == 0) {
+				BlockId bid = (BlockId)zrb.readU16();
+				uint8_t app = zrb.readU8();
+				chunk->resetLite(bid, app);
+			} else {
+				for (int ly = 0; ly < CHUNK_SIZE; ly++)
+					for (int lz = 0; lz < CHUNK_SIZE; lz++)
+						for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+							uint32_t v = zrb.readU32();
+							chunk->set(lx, ly, lz, (BlockId)(v & 0xFFFF), (uint8_t)((v >> 16) & 0xFF));
+						}
 				for (int ly = 0; ly < CHUNK_SIZE; ly++)
 					for (int lz = 0; lz < CHUNK_SIZE; lz++)
 						for (int lx = 0; lx < CHUNK_SIZE; lx++)
