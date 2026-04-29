@@ -58,7 +58,6 @@ static bool fillSnapshot(ChunkSource& world, ChunkPos cpos,
 			for (int dx = -1; dx <= 1; dx++) {
 				if (dx == 0 && dy == 0 && dz == 0) continue;
 				Chunk* nc = neighborhood[(dy+1)*9 + (dz+1)*3 + (dx+1)];
-				if (!nc) continue;
 
 				int xmin = (dx == -1) ? -1 : (dx == 1) ? CHUNK_SIZE : 0;
 				int xmax = (dx == -1) ? -1 : (dx == 1) ? CHUNK_SIZE : CHUNK_SIZE - 1;
@@ -66,6 +65,22 @@ static bool fillSnapshot(ChunkSource& world, ChunkPos cpos,
 				int ymax = (dy == -1) ? -1 : (dy == 1) ? CHUNK_SIZE : CHUNK_SIZE - 1;
 				int zmin = (dz == -1) ? -1 : (dz == 1) ? CHUNK_SIZE : 0;
 				int zmax = (dz == -1) ? -1 : (dz == 1) ? CHUNK_SIZE : CHUNK_SIZE - 1;
+
+				// Unloaded neighbour: paint the ring cells with the default
+				// fill for that neighbour's chunk-y so face culling matches
+				// "absent S_CHUNK = AIR above, DIRT below". Without this, the
+				// top face of every loaded dirt chunk emits against the
+				// unloaded chunk above, drawing useless geometry; or worse,
+				// the bottom of every loaded surface chunk emits a
+				// dirt-coloured face into the void.
+				if (!nc) {
+					const BlockId fill = world.defaultBlock(cpos.y + dy);
+					for (int y = ymin; y <= ymax; y++)
+						for (int z = zmin; z <= zmax; z++)
+							for (int x = xmin; x <= xmax; x++)
+								out.blocks[padIdx(x, y, z)] = fill;
+					continue;
+				}
 
 				for (int y = ymin; y <= ymax; y++)
 					for (int z = zmin; z <= zmax; z++)

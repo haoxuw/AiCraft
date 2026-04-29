@@ -55,6 +55,10 @@ public:
 		: m_seed(seed), m_templateIndex(templateIndex),
 		  m_template(tmpl ? tmpl : std::make_shared<ConfigurableWorldTemplate>("artifacts/worlds/base/village.py")) {
 		registerAllBuiltins(blocks, entities);
+		// Resolve the default-fill BlockIds (Air, Dirt) now that the registry
+		// is populated. ChunkSource::getBlock falls back to these for any
+		// chunk that hasn't been streamed in.
+		setDefaults(blocks);
 		// Templates with region-derived appearance palettes (voxel_earth) need
 		// to install per-block tint tables now that the registry is populated.
 		m_template->onBlockRegistryReady(blocks);
@@ -121,7 +125,7 @@ public:
 	BlockId getBlock(int wx, int wy, int wz) override {
 		ChunkPos cp = worldToChunk(wx, wy, wz);
 		Chunk* chunk = getChunk(cp);
-		if (!chunk) return BLOCK_AIR;
+		if (!chunk) return defaultBlock(cp.y);   // unloaded → AIR above 0, DIRT below
 		int lx = ((wx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 		int ly = ((wy % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 		int lz = ((wz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;

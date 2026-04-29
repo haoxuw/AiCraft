@@ -34,6 +34,9 @@ class LocalWorld : public ChunkSource {
 public:
 	LocalWorld() {
 		registerAllBuiltins(m_blocks, m_entityDefs);
+		// Resolve default-fill BlockIds (Air, Dirt) so getBlock() falls back
+		// to dirt for unloaded underground chunks instead of leaving holes.
+		setDefaults(m_blocks);
 	}
 
 	// --- ChunkSource overrides ----------------------------------------------
@@ -67,7 +70,7 @@ public:
 		auto div = [](int a, int b) { return (a >= 0) ? a / b : (a - b + 1) / b; };
 		ChunkPos cp = {div(x, CHUNK_SIZE), div(y, CHUNK_SIZE), div(z, CHUNK_SIZE)};
 		Chunk* c = getChunk(cp);
-		if (!c) return BLOCK_AIR;
+		if (!c) return defaultBlock(cp.y);   // unloaded → AIR above 0, DIRT below
 		int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 		int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 		int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;

@@ -5,6 +5,7 @@
 
 #include "logic/types.h"
 #include "logic/chunk.h"
+#include "logic/chunk_default.h"
 #include "logic/block_registry.h"
 #include <array>
 #include <shared_mutex>
@@ -29,6 +30,14 @@ public:
 	virtual Chunk* getChunkIfLoaded(ChunkPos pos) = 0;
 	virtual BlockId getBlock(int x, int y, int z) = 0;
 	virtual const BlockRegistry& blockRegistry() const = 0;
+
+	// Default block id for an unloaded chunk at chunk-y `cy`. See
+	// logic/chunk_default.h for the policy. Concrete sources should call
+	// m_default.resolve(blocks) once at boot, and use forChunkY() in their
+	// getBlock fallback so digging past the streamed shell hits dirt
+	// instead of falling forever.
+	BlockId defaultBlock(int cy) const { return m_default.forChunkY(cy); }
+	void    setDefaults(const BlockRegistry& reg) { m_default.resolve(reg); }
 
 	// Off-main-thread long scans (e.g. DecideWorker.scan_blocks) must hold
 	// a shared_lock on this mutex for the entire scan. Main-thread reads
@@ -89,6 +98,9 @@ public:
 	virtual void ensureChunksAround(ChunkPos center, int radius) { (void)center; (void)radius; }
 
 	virtual void unloadDistantChunks(ChunkPos center, int keepRadius) { (void)center; (void)keepRadius; }
+
+protected:
+	DefaultFill m_default;
 };
 
 } // namespace solarium
