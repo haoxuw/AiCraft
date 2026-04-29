@@ -34,6 +34,7 @@
 #include "python/python_bridge.h"
 #include "agent/agent.h"
 #include "agent/decide_worker.h"
+#include "agent/cluster_spread.h"
 #include "agent/separation.h"
 
 #include <algorithm>
@@ -159,7 +160,17 @@ public:
 		if (m_executorEnabled) {
 			phaseExecute(dt);
 			emitMovementSignals();
-			phaseReactSeparation(dt);
+			// Cluster-spread reflex — overlap kicks + incoming-pusher
+			// shuffle for idle agents the behavior layer isn't moving.
+			// Self-throttled (10 Hz inside ClusterSpread); cheap to call
+			// every tick.
+			m_clusterSpread.tick(dt, m_server,
+				[this](auto&& visit) {
+					for (auto& [eid, agent] : m_agents) {
+						(void)agent;
+						visit(eid);
+					}
+				});
 		}
 		scanInterrupts(dt);
 		auto t3 = Clock::now();
@@ -402,7 +413,7 @@ private:
 				m_decideGen.erase(it->first);
 				m_decideBackoff.forget(it->first);
 				m_decidePacer.forget(it->first);
-				m_reactSepCooldown.erase(it->first);
+				m_clusterSpread.forget(it->first);
 				it = m_agents.erase(it);
 			} else {
 				++it;
@@ -856,94 +867,6 @@ private:
 		}
 	}
 
-	// ── phaseReactSeparation — idle-NPC cluster reflex ───────────────────
-	//
-	// Idle NPCs don't go through sendMove, so the asymmetric separation
-	// table (w_self=0 when self is idle) leaves them as obstacles. This
-	// phase emits one-shot Move kicks for two cases (docs/29 §7):
-	//
-	//   case 1 — overlap: any pair-wise overlap (two clustered idle units,
-	//   or a unit standing in another's collision box) gets a small kick
-	//   proportional to the overlap depth. Pure geometry, fires regardless
-	//   of who's moving — this is what gives clusters the SC2 "liquid
-	//   spread" feel.
-	//
-	//   case 2 — incoming pusher: an idle self with a moving neighbor on a
-	//   near-term collision course shuffles aside. Kick magnitude is a
-	//   fraction (kTransferFrac) of the PUSHER's speed, so a slow walker
-	//   nudges gently while a sprinter shoves harder. Chains naturally:
-	//   once recipient has velocity, recipient becomes the next pusher.
-	//
-	// Sweep is O(A·N) and rate-limited to kPhasePeriod; per-agent kick
-	// cooldown is kReactCooldownSec.
-	void phaseReactSeparation(float dt) {
-		constexpr float kIdleVelSq        = 0.04f;   // (0.2 m/s)²
-		constexpr float kReactCooldownSec = 0.4f;
-		constexpr float kQueryRadius      = 6.0f;
-		constexpr float kPhasePeriod      = 0.1f;    // 10 Hz; reflex doesn't need 60 Hz
-
-		// Force constants (case-specific).
-		constexpr float kOverlapForce    = 6.0f;     // kick = depth_m × force ≈ m/s
-		constexpr float kTransferFrac    = 0.3f;     // kick = pusher_speed × frac
-
-		// Phase-level throttle.
-		m_reactSepPhaseAccum += dt;
-		if (m_reactSepPhaseAccum < kPhasePeriod) return;
-		float windowDt = m_reactSepPhaseAccum;
-		m_reactSepPhaseAccum = 0.0f;
-
-		for (auto& [eid, agent] : m_agents) {
-			Entity* self = m_server.getEntity(eid);
-			if (!self || self->removed)        continue;
-			if (!self->def().isLiving())       continue;
-
-			// Behavior is moving the entity — leave it alone.
-			float vSq = self->velocity.x * self->velocity.x
-			          + self->velocity.z * self->velocity.z;
-			if (vSq > kIdleVelSq)              continue;
-
-			float& cd = m_reactSepCooldown[eid];
-			cd -= windowDt;
-			if (cd > 0)                        continue;
-
-			auto neighbors = gatherSepNeighbors(m_server, *self, kQueryRadius);
-			float selfRadius = sepRadiusOf(self->def());
-
-			// case 1: overlap → push proportional to depth. Wins over case 2
-			// because an existing overlap is geometrically more urgent than
-			// an anticipated one.
-			glm::vec3 overlapVec = computeOverlapKick(
-				eid, self->position, selfRadius, neighbors);
-			float overlapMag = std::sqrt(overlapVec.x * overlapVec.x
-			                           + overlapVec.z * overlapVec.z);
-			glm::vec3 kick = {0, 0, 0};
-			if (overlapMag > 1e-4f) {
-				glm::vec3 dir = overlapVec / overlapMag;
-				kick = dir * (overlapMag * kOverlapForce);
-			} else {
-				// case 2: TTC react. computeReactKick returns dir × pusherSpeed.
-				glm::vec3 reactVec = computeReactKick(
-					eid, self->position, selfRadius, neighbors);
-				float reactMag = std::sqrt(reactVec.x * reactVec.x
-				                         + reactVec.z * reactVec.z);
-				if (reactMag > 1e-4f) {
-					glm::vec3 dir = reactVec / reactMag;
-					kick = dir * (reactMag * kTransferFrac);
-				}
-			}
-			if (kick.x == 0.0f && kick.z == 0.0f) continue;
-
-			ActionProposal p;
-			p.type       = ActionProposal::Move;
-			p.actorId    = eid;
-			p.desiredVel = kick;
-			m_server.sendAction(p);
-
-			cd = kReactCooldownSec;
-			PERF_COUNT("client.steering.react_kicks");
-		}
-	}
-
 	// ── helpers ──────────────────────────────────────────────────────────
 	// Generic exponential-backoff gate for Python-side failures that would
 	// otherwise spam once per decide sweep (missing behavior id, Python
@@ -1087,8 +1010,9 @@ private:
 
 	DecideWorker                           m_decideWorker;
 	std::unordered_map<EntityId, uint32_t> m_decideGen;
-	std::unordered_map<EntityId, float>    m_reactSepCooldown;  // §7 reflex pacer
-	float                                  m_reactSepPhaseAccum = 0.0f;
+	// Owns its own state (phase accum + per-agent cooldown). Tunable via
+	// m_clusterSpread.config(). See agent/cluster_spread.h.
+	ClusterSpread                          m_clusterSpread;
 };
 
 } // namespace solarium
