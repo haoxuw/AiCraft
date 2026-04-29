@@ -137,4 +137,16 @@ uint8_t TileCache::zoneAtBlock(int32_t wx, int32_t wz) {
 	return t->shard.zones[idx];
 }
 
+int32_t TileCache::columnTopY(int32_t rx, int32_t rz) {
+	const int32_t tx = tile_x_of(rx);
+	const int32_t tz = tile_z_of(rz);
+	Tile* t = getTile(tx, tz);
+	if (!t) return COLUMN_TOP_Y_NONE;
+	const int32_t cxl = chunk_local_x(rx);
+	const int32_t czl = chunk_local_z(rz);
+	const size_t idx = (size_t)czl * TILE_CHUNK_SIDE + (size_t)cxl;
+	if (idx >= TILE_COLUMNS) return COLUMN_TOP_Y_NONE;
+	return t->shard.column_top_y[idx];
+}
+
 }  // namespace solarium::voxel_earth

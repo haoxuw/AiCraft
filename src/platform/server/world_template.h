@@ -787,6 +787,38 @@ private:
 			const int rzMax = rzMin + CHUNK_SIZE - 1;
 			m_tileCache->forEachInBox(rxMin, ryMin, rzMin, rxMax, ryMax, rzMax,
 			                          applyVoxel);
+
+			// Synthesise interior cells from per-column top_y metadata.
+			// Replaces the bake-time BFS interior fill: any cell at or
+			// below the column's top_y that's still AIR after the voxel
+			// pass is interior (Stone for the top 8 blocks, Dirt below).
+			// This is also what makes Lite-uniform interior chunks
+			// classify back to Lite once the per-cell pass is done —
+			// big building interiors stop allocating per-cell arrays.
+			const BlockId bStone = blocks.getId(BlockType::Stone);
+			const BlockId bDirt  = blocks.getId(BlockType::Dirt);
+			constexpr int kStoneBandDepth = 8;
+			for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
+				for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
+					const int rx = rxMin + lx;
+					const int rz = rzMin + lz;
+					const int32_t top_y = m_tileCache->columnTopY(rx, rz);
+					if (top_y == voxel_earth::COLUMN_TOP_Y_NONE) continue;
+					for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
+						const int ry = ryMin + ly;
+						if (ry > top_y) continue;                  // above surface → AIR
+						if (chunk.get(lx, ly, lz) != BLOCK_AIR) continue;  // real voxel kept
+						const int depth = top_y - ry;
+						chunk.set(lx, ly, lz,
+						          (depth <= kStoneBandDepth) ? bStone : bDirt);
+					}
+				}
+			}
+
+			// Demote uniform chunks back to Lite — frees the per-cell
+			// arrays, lets Chunk::isDefault skip the wire send for any
+			// chunk that ends up matching the cy default.
+			chunk.classify();
 			return;
 		}
 

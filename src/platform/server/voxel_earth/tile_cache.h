@@ -75,6 +75,12 @@ public:
 	// Returns 0 (Unknown) if no shard is loaded for this column.
 	uint8_t zoneAtBlock(int32_t wx, int32_t wz);
 
+	// Highest real voxel y in the column at regional-frame coords (rx, rz),
+	// or COLUMN_TOP_Y_NONE if no voxel is recorded for that column. The
+	// engine uses this to synthesise interior fill (Stone for the top 8
+	// blocks, Dirt below) without the bake emitting the cells explicitly.
+	int32_t columnTopY(int32_t rx, int32_t rz);
+
 	bool empty() const { return m_emptyOnDisk && m_tiles.empty(); }
 	size_t tilesLoaded() const { return m_tiles.size(); }
 	const std::string& root() const { return m_root; }
