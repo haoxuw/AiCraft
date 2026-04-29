@@ -36,6 +36,23 @@ inline bool isStandable(const WorldView& w, glm::ivec3 p) {
 	       !w.isSolid({p.x, p.y + 1, p.z});
 }
 
+// Walk-only line-of-sight on the XZ plane at fixed y. The "swept disk"
+// of body radius `bodyRadius` along the segment must not intersect any
+// solid cell at body y-level, AND every grid cell the line crosses
+// must have a solid floor (y-1) — i.e. the entity can walk the line
+// without falling and without grazing a wall corner.
+//
+// Body radius (= half the entity's XZ collision box) controls corner
+// clearance: any solid cell within this distance of the line rejects
+// the LOS. With bodyRadius=0.375 (default Living half-width, matches
+// physics.h's makeMoveParams), the smoother won't pull a path tight
+// around a sharp wall corner.
+//
+// Endpoints share y — Jump/Descend can't be LOS-smoothed (the arc
+// crosses cells whose Y differs from the planner's anchors).
+bool lineOfSightWalk(const WorldView& w, glm::ivec3 a, glm::ivec3 b,
+                     float bodyRadius = 0.375f);
+
 // Adjacent-cell primitives (subset of [Baritone] MovementType).
 enum class MoveKind : uint8_t {
 	Walk,
@@ -105,12 +122,20 @@ public:
 		// 0=hug walls; 0.15=soft clearance; 0.3+=strong detour. Walk only —
 		// Y constraints on Jump/Descend are physical, not cosmetic.
 		float wallClearancePenalty = 0.25f;
+		// Half the entity's XZ collision box (matches physics.h's
+		// MoveParams::halfWidth). Drives corner clearance in
+		// lineOfSightWalk: a smoothed line is rejected if it passes
+		// within this distance of any solid cell at body y-level.
+		// Set per-entity by Navigator (cached from def() on first
+		// driveTick); 0 = point-particle (used by tests).
+		float bodyRadius = 0.375f;
 	};
 
 	explicit GridPlanner(const WorldView& world) : m_world(world) {}
 	GridPlanner(const WorldView& world, Config cfg) : m_world(world), m_cfg(cfg) {}
 
 	const Config& config() const { return m_cfg; }  // tests only
+	void setBodyRadius(float r) { m_cfg.bodyRadius = r; }
 
 	// [HNR 1968] single-unit A*. Over-budget → best-seen partial. Doors passable; executor toggles.
 	Path plan(glm::ivec3 start, glm::ivec3 goal);

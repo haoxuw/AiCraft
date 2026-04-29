@@ -10,6 +10,7 @@
 #include "client/entity_reconciler.h"
 #include "client/client_identity.h"
 #include "client/local_world.h"
+#include "server/entity_manager.h"
 #include "debug/perf_registry.h"
 #include <array>
 #ifndef __EMSCRIPTEN__
@@ -32,8 +33,9 @@ namespace solarium {
 
 class NetworkServer : public ServerInterface {
 public:
-	NetworkServer(const std::string& host, int port, LocalWorld& world)
-		: m_host(host), m_port(port), m_world(world) {
+	NetworkServer(const std::string& host, int port,
+	              LocalWorldManager& world, const EntityManager& defs)
+		: m_host(host), m_port(port), m_world(world), m_entityDefs(defs) {
 		m_clientUUID = loadOrCreateClientUuid();
 		printf("[Net] Client UUID: %s\n", m_clientUUID.c_str());
 	}
@@ -402,7 +404,7 @@ private:
 	void applyEntityState(const net::EntityState& es) {
 		auto it = m_entities.find(es.id);
 		if (it == m_entities.end()) {
-			const EntityDef* def = m_world.entityDefs().getTypeDef(es.typeId);
+			const EntityDef* def = m_entityDefs.getTypeDef(es.typeId);
 			if (!def) {
 				printf("[Net] WARNING: unknown entity type '%s' (id=%u), using default def\n",
 				       es.typeId.c_str(), es.id);
@@ -1000,7 +1002,8 @@ private:
 	std::string m_lastError;
 
 	std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
-	LocalWorld& m_world;
+	LocalWorldManager&   m_world;
+	const EntityManager& m_entityDefs;
 
 	// Per-entity smoothing + drift correction between 20Hz broadcasts.
 	EntityReconciler m_reconciler;

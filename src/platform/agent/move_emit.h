@@ -117,12 +117,7 @@ inline void emitMoveAction(EntityId eid, Entity& e, glm::vec3 vel,
 		const float intentMag = std::sqrt(intentSq);
 		const glm::vec2 intentDir{vel.x / intentMag, vel.z / intentMag};
 
-		auto& chunks = server.chunks();
-		auto& blocks = server.blockRegistry();
-		BlockSolidFn isSolid = [&](int x, int y, int z) -> float {
-			const auto& bd = blocks.get(chunks.getBlock(x, y, z));
-			return bd.solid ? bd.collision_height : 0.0f;
-		};
+		BlockSolidFn isSolid = server.chunks().solidFn();
 		auto neighbors = gatherSepNeighbors(server, e, /*queryRadius=*/8.0f);
 		SepStats stats;
 		MoveParams mp = makeMoveParams(

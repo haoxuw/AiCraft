@@ -44,6 +44,9 @@
 #include "logic/block_registry.h"
 #include "logic/chunk_source.h"
 #include "client/box_model.h"
+#include "client/local_world.h"
+#include "client/model_manager.h"
+#include "server/entity_manager.h"
 #include "client/async_chunk_mesher.h"
 #include "client/game_vk_renderers.h"
 #include "client/hotbar.h"
@@ -280,6 +283,16 @@ public:
 	const solarium::ArtifactRegistry& artifactRegistry() const { return m_artifactRegistry; }
 	const solarium::LanBrowser&       lanBrowser()       const { return m_lanBrowser; }
 	solarium::ServerInterface*        server()                 { return m_server; }
+
+	// Sibling-manager accessors — main.cpp uses these to wire up
+	// NetworkServer with refs into the trio Game owns. Mutable refs
+	// because the constructor of NetworkServer wants the real
+	// LocalWorldManager (it writes chunks) and the EntityManager
+	// is read-only on the network side but stays non-const for the
+	// rest of the codebase that still mutates it post-init.
+	solarium::LocalWorldManager& localWorld()  { return m_localWorld; }
+	solarium::EntityManager&     entityMgr()   { return m_entityMgr;  }
+	solarium::ModelManager&      modelMgr()    { return m_modelMgr;   }
 
 	// Preview on the menu plaza. When set + menuScreen is CharacterSelect /
 	// Connecting / Handbook, the world renderer injects this artifact's model
@@ -917,11 +930,20 @@ private:
 	// Active drag-and-drop (inventory↔hotbar + drop-to-world).
 	DragState    m_drag;
 
-	// Python-defined BoxModels for all entities + items, loaded once at
-	// startup via model_loader::loadAllModels. Keyed by model stem (e.g.
-	// "pig", "sword"). Used by the box-model flattener to render oriented
-	// parts with walk/clip/held-item animation.
-	std::unordered_map<std::string, solarium::BoxModel> m_models;
+	// Sibling managers — Game composites these three. Each is independent
+	// (does not own the others); references flow as needed:
+	//   * m_localWorld — chunks, blocks, annotations (the ChunkSource).
+	//   * m_entityMgr  — EntityDefs (collision_box, walk_speed, model key, …)
+	//   * m_modelMgr   — BoxModel registry + per-typeId ResolvedModel cache.
+	//                    Built eagerly from m_entityMgr at init time.
+	// All three feed renderers, agent client, and pathfinding without any
+	// of them knowing about each other's lifetime. NetworkServer (owned
+	// outside Game by main.cpp) holds non-owning refs to m_localWorld
+	// and m_entityMgr so the client-side reconciler can resolve typeIds
+	// and write chunks.
+	solarium::LocalWorldManager m_localWorld;
+	solarium::EntityManager     m_entityMgr;
+	solarium::ModelManager      m_modelMgr;
 
 	// RTS box selection + long-press (Walk vs Build command)
 	struct RTSSelection {

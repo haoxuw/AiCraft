@@ -232,11 +232,9 @@ void HudRenderer::renderInventoryItems3D() {
 		std::string stem = s.itemId;
 		auto colon = stem.find(':');
 		if (colon != std::string::npos) stem = stem.substr(colon + 1);
-		auto it = g.m_models.find(stem);
-		if (it == g.m_models.end()) {
-			it = g.m_models.find(s.itemId);
-		}
-		if (it == g.m_models.end()) {
+		const solarium::BoxModel* it = g.m_modelMgr.boxModel(stem);
+		if (!it) it = g.m_modelMgr.boxModel(s.itemId);
+		if (!it) {
 			warnMissingOnce(kMissingWarned, s.itemId, stem);
 			emitQuestionMarkPlaceholder(boxes, s, g.m_wallTime,
 			                             camPos, camFwd, camRight, camUp,
@@ -252,7 +250,7 @@ void HudRenderer::renderInventoryItems3D() {
 
 		float slotWorldH = s.ndcH * halfH;
 
-		solarium::BoxModel m = it->second;
+		solarium::BoxModel m = *it;
 
 		// Per-item auto-fit: scale each item so its longest axis fills
 		// 70% of the slot, regardless of true world size. The inventory

@@ -46,6 +46,78 @@ struct OpenEntry {
 
 } // namespace
 
+// LOS for a 2-tall entity walking on the XZ plane at fixed y. Two
+// independent rejections:
+//   1) Body-clip: any solid cell at body y-level (y or y+1) within
+//      `bodyRadius` of the line segment fails — the swept disk of the
+//      entity's body would intersect that cell. Scans the bbox of the
+//      segment expanded by bodyRadius and checks distance from line
+//      segment to each solid cell's box. Catches "graze the wall
+//      corner" cases that simple Bresenham would let through.
+//   2) Floor support: every cell the Bresenham of the line segment
+//      crosses must have a solid floor at y-1. The body's center
+//      walks these cells; without floor it'd fall.
+// bodyRadius=0 → degenerate point-particle: skip body-clip, only do
+// the floor-support walk (used by tests on ideal point entities).
+bool lineOfSightWalk(const WorldView& w, glm::ivec3 a, glm::ivec3 b,
+                     float bodyRadius) {
+	if (a.y != b.y) return false;
+	const int y = a.y;
+
+	// Endpoints in continuous coords (cell centers).
+	const float ax = (float)a.x + 0.5f, az = (float)a.z + 0.5f;
+	const float bx = (float)b.x + 0.5f, bz = (float)b.z + 0.5f;
+	const float lx = bx - ax,            lz = bz - az;
+	const float len2 = lx * lx + lz * lz;
+
+	// 1) Body-clip rejection. Skip when bodyRadius<=0 (point particle).
+	if (bodyRadius > 0.0f) {
+		const int xMin = (int)std::floor(std::min(ax, bx) - bodyRadius);
+		const int xMax = (int)std::floor(std::max(ax, bx) + bodyRadius);
+		const int zMin = (int)std::floor(std::min(az, bz) - bodyRadius);
+		const int zMax = (int)std::floor(std::max(az, bz) + bodyRadius);
+		const float r2 = bodyRadius * bodyRadius;
+		for (int x = xMin; x <= xMax; ++x) {
+			for (int z = zMin; z <= zMax; ++z) {
+				const bool bodyHit = w.isSolid({x, y,     z}) ||
+				                     w.isSolid({x, y + 1, z});
+				if (!bodyHit) continue;
+				// Closest point on segment to cell center, then closest
+				// point in cell box to that segment point.
+				const float fcx = (float)x + 0.5f, fcz = (float)z + 0.5f;
+				float t = (len2 > 1e-9f)
+				    ? std::min(1.0f, std::max(0.0f,
+				          ((fcx - ax) * lx + (fcz - az) * lz) / len2))
+				    : 0.0f;
+				const float px = ax + lx * t, pz = az + lz * t;
+				const float qx = std::min(std::max(px, (float)x),
+				                          (float)(x + 1));
+				const float qz = std::min(std::max(pz, (float)z),
+				                          (float)(z + 1));
+				const float ddx = px - qx, ddz = pz - qz;
+				if (ddx * ddx + ddz * ddz < r2) return false;
+			}
+		}
+	}
+
+	// 2) Floor support along the Bresenham line cells. The body walks
+	// these — every one must be standable (floor solid, body+head air).
+	int x0 = a.x, z0 = a.z, x1 = b.x, z1 = b.z;
+	int dx = std::abs(x1 - x0), dz = std::abs(z1 - z0);
+	int sx = x0 < x1 ? 1 : -1;
+	int sz = z0 < z1 ? 1 : -1;
+	int err = dx - dz;
+	int x = x0, z = z0;
+	if (!isStandable(w, {x, y, z})) return false;
+	while (x != x1 || z != z1) {
+		const int e2 = 2 * err;
+		if (e2 > -dz) { err -= dz; x += sx; }
+		if (e2 <  dx) { err += dx; z += sz; }
+		if (!isStandable(w, {x, y, z})) return false;
+	}
+	return true;
+}
+
 // [Baritone]-style A* over Walk/Jump/Descend primitives.
 Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 	// Manhattan + |dy|. Admissible under 4-cardinal expansion.
@@ -130,28 +202,55 @@ Path GridPlanner::plan(glm::ivec3 start, glm::ivec3 goal) {
 	}
 	std::vector<Waypoint> raw(rev.rbegin(), rev.rend());
 
-	// Collinear-Walk compression. A 56-block straight corridor ships 1 waypoint
-	// (the end), not 56. Rule: keep wp[i] iff it is the last, or its kind is
-	// not Walk, or the next step's kind is not Walk (preserve the "takeoff"
-	// anchor before a Jump/Descend), or the XZ step direction changes from the
-	// preceding to the following step. PathExecutor now pops from the front
-	// and drives straight to the next kept center — fewer cells ⇒ no cursor
-	// jitter + readable F3 viz.
+	// LOS-Walk smoothing (any-angle string-pulling). Replaces the older
+	// Collinear-Walk compression — that one only collapsed *identical*
+	// XZ-direction runs, leaving L-shapes and staircases for diagonal
+	// goals on open ground. This walks each maximal run of consecutive
+	// Walk waypoints and keeps only the FURTHEST waypoint in the run
+	// the anchor has line-of-sight to, then advances the anchor and
+	// repeats. Result: a 10x10 open square produces 1 wp at the goal,
+	// not a 5-corner staircase. Jump/Descend anchors are kept verbatim
+	// (LOS doesn't model the jump arc — those are transitions, not
+	// straight walks). Body radius corner-cut handled in lineOfSightWalk.
 	out.steps.reserve(raw.size());
-	for (size_t i = 0; i < raw.size(); ++i) {
-		if (i + 1 == raw.size()) { out.steps.push_back(raw[i]); continue; }
-		const Waypoint& w  = raw[i];
-		const Waypoint& nx = raw[i + 1];
-		if (w.kind  != MoveKind::Walk) { out.steps.push_back(w); continue; }
-		if (nx.kind != MoveKind::Walk) { out.steps.push_back(w); continue; }
-		// Compare incoming vs outgoing XZ direction. "Incoming" for i==0 uses
-		// `start` as the anchor so the very first cell only survives when it
-		// changes heading (usually it doesn't — drop it).
-		glm::ivec3 pv = (i == 0) ? start : raw[i - 1].pos;
-		int inX  = w.pos.x  - pv.x,  inZ  = w.pos.z  - pv.z;
-		int outX = nx.pos.x - w.pos.x, outZ = nx.pos.z - w.pos.z;
-		if (inX != outX || inZ != outZ) { out.steps.push_back(w); continue; }
-		// collinear Walk run — drop this step
+	const auto isWalk = [](const Waypoint& w) { return w.kind == MoveKind::Walk; };
+	size_t i = 0;
+	glm::ivec3 anchor = start;
+	while (i < raw.size()) {
+		if (!isWalk(raw[i])) {
+			// Non-Walk wp: emit and re-anchor on it (next Walk run starts here).
+			out.steps.push_back(raw[i]);
+			anchor = raw[i].pos;
+			++i;
+			continue;
+		}
+		// Walk run [i .. j) where raw[k].kind == Walk for all i ≤ k < j.
+		size_t j = i;
+		while (j < raw.size() && isWalk(raw[j])) ++j;
+		// Any-angle smoothing within [i, j). Greedy farthest-LOS.
+		size_t cur = i;
+		while (cur < j) {
+			size_t best = cur;
+			for (size_t k = cur + 1; k < j; ++k) {
+				if (lineOfSightWalk(m_world, anchor, raw[k].pos,
+				                    m_cfg.bodyRadius)) best = k;
+				else break;   // LOS is monotone over a continuous Walk run on
+				              // a uniform plane — once it drops, further wps
+				              // along the same run are also blocked by the
+				              // same obstacle, so we can early-out.
+			}
+			if (best == cur) {
+				// LOS only to raw[cur] (the immediate next wp). Emit and step.
+				out.steps.push_back(raw[cur]);
+				anchor = raw[cur].pos;
+				cur = cur + 1;
+			} else {
+				out.steps.push_back(raw[best]);
+				anchor = raw[best].pos;
+				cur = best + 1;
+			}
+		}
+		i = j;
 	}
 	if (auto it = gScore.find(bestSeen); it != gScore.end()) out.cost = it->second;
 	return out;

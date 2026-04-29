@@ -7,7 +7,7 @@
 
 namespace solarium {
 
-void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
+void registerBlockBuiltins(BlockRegistry& blocks) {
 	namespace BT = BlockType;
 	namespace SN = Sound;
 	namespace PR = Prop;
@@ -162,6 +162,12 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 	blocks.registerBlock({BT::Torch, "Torch", {0.95f,0.75f,0.20f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f}, false,false, "",64,8, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 0.0f, MeshType::Torch, Param2Type::FourDir});
 	blocks.registerBlock({BT::Door, "Door", {0.60f,0.44f,0.24f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f}, true,false, "",1,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 1.0f, MeshType::Door});
 	blocks.registerBlock({BT::DoorOpen, "Door (Open)", {0.60f,0.44f,0.24f},{0.55f,0.40f,0.20f},{0.55f,0.40f,0.20f}, false,false, BT::Door,1,0, "",SN::DigWood,SN::StepWood, BlockBehavior::Passive, {}, "", 0.0f, MeshType::DoorOpen});
+}
+
+void registerEntityBuiltins(EntityManager& entities) {
+	namespace BT = BlockType;
+	namespace SN = Sound;
+	namespace PR = Prop;
 
 	// Entities
 
@@ -334,6 +340,11 @@ void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
 		};
 		entities.registerType(def);
 	}
+}
+
+void registerAllBuiltins(BlockRegistry& blocks, EntityManager& entities) {
+	registerBlockBuiltins(blocks);
+	registerEntityBuiltins(entities);
 }
 
 } // namespace solarium

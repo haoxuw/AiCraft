@@ -611,7 +611,12 @@ private:
 			auto guard = acquireShared(chunks);
 			ChunkPos cp = worldToChunk(x, y, z);
 			auto* chunk = chunks.getChunkIfLoaded(cp);
-			if (!chunk) return "air";
+			if (!chunk) {
+				// Unloaded chunk: honour the engine default-fill policy
+				// (AIR above world-y 0, DIRT below) so AI scans see the same
+				// world the physics engine + renderer agree on.
+				return srv->blockRegistry().get(chunks.defaultBlock(cp.y)).string_id;
+			}
 			int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 			int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 			int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
@@ -624,7 +629,7 @@ private:
 			auto guard = acquireShared(chunks);
 			ChunkPos cp = worldToChunk(x, y, z);
 			auto* chunk = chunks.getChunkIfLoaded(cp);
-			if (!chunk) return 0;
+			if (!chunk) return 0;   // default fill carries no per-cell tint
 			int lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 			int ly = ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
 			int lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;

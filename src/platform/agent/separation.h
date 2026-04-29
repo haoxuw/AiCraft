@@ -355,14 +355,11 @@ inline void recordSepPerf(const SepStats& s) {
 // `selfRadius` and per-neighbor radius. Items/structures pass through here too;
 // callers filter them out before calling applySeparation.
 inline float sepRadiusOf(const EntityDef& def) {
-	float rx = (def.collision_box_max.x - def.collision_box_min.x) * 0.5f;
 	float rz = (def.collision_box_max.z - def.collision_box_min.z) * 0.5f;
-	return std::max(rx, rz);
+	return std::max(def.bodyRadius(), rz);
 }
 
-inline float sepHeightOf(const EntityDef& def) {
-	return def.collision_box_max.y - def.collision_box_min.y;
-}
+inline float sepHeightOf(const EntityDef& def) { return def.bodyHeight(); }
 
 // Linear scan over the entity table; only Living entities push. queryRadius
 // should be ≥ tauMax · (selfWalkSpeed + neighborMaxSpeed) + radii — 8 m is

@@ -32,7 +32,7 @@
 #include <vector>
 
 namespace solarium {
-class ArtifactRegistry;
+class ModelManager;
 } // namespace solarium
 
 namespace solarium::vk {
@@ -67,9 +67,9 @@ public:
 	MenuPlaza();
 	~MenuPlaza() override;
 
-	// One-time setup. Call AFTER pythonBridge().init() and after
-	// ArtifactRegistry::loadAll. BehaviorStore must already be init'd.
-	void init(ArtifactRegistry& artifacts, BehaviorStore& behaviors);
+	// One-time setup. Call AFTER Game has populated EntityManager +
+	// ModelManager (plaza shares them rather than holding its own copies).
+	void init(EntityManager& entityMgr, ModelManager& modelMgr);
 
 	// Per-frame tick — drives decide + execute + physics for all mascots.
 	void tickFrame(float dt);
@@ -111,8 +111,6 @@ public:
 
 private:
 	// ── Setup helpers ────────────────────────────────────────────────
-	void registerEntityTypes(ArtifactRegistry& artifacts);
-	void spawnAllMascots(BehaviorStore& behaviors);
 	void spawnMascot(const std::string& typeId, glm::vec3 pos, float yaw,
 	                 BehaviorStore& behaviors);
 	BehaviorHandle resolveHandle(const std::string& behaviorId,
@@ -130,7 +128,9 @@ private:
 
 	// ── State ────────────────────────────────────────────────────────
 	PlazaChunks                          m_chunks;
-	EntityManager                        m_entityMgr;
+	// Non-owning refs to Game's siblings — set by init().
+	EntityManager*                       m_entityMgr = nullptr;
+	ModelManager*                        m_modelMgr  = nullptr;
 	std::vector<std::unique_ptr<Entity>> m_entities;
 	std::vector<std::unique_ptr<Agent>>  m_agents;       // 1:1 with m_entities
 	std::unordered_map<std::string, BehaviorHandle> m_handleCache;

@@ -188,10 +188,7 @@ public:
 		float sx = rawSpawn.x, sz = rawSpawn.z;
 
 		// Escape any structure/tree at spawn by scanning up.
-		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
-			const auto& def = m_world->blocks.get(m_world->getBlock(x, y, z));
-			return def.solid ? def.collision_height : 0.0f;
-		};
+		BlockSolidFn solidFn = m_world->solidFn();
 		int spawnY = (int)std::round(rawSpawn.y);
 		for (int scan = 0; scan < 24; scan++) {
 			bool clear = solidFn((int)sx, spawnY,     (int)sz) <= 0.0f &&
@@ -433,8 +430,7 @@ public:
 
 		auto halfWidthOf = [&](const std::string& typeId) -> float {
 			const EntityDef* d = m_world->entities.getTypeDef(typeId);
-			if (!d) return 0.4f;
-			return (d->collision_box_max.x - d->collision_box_min.x) * 0.5f;
+			return d ? d->bodyRadius() : 0.4f;
 		};
 
 		auto candidateOk = [&](glm::vec2 cand, float hw) -> bool {
@@ -829,10 +825,7 @@ public:
 		auto markPhase = [](double&) {};  // compiler elides
 #endif
 
-		BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
-			const auto& def = m_world->blocks.get(m_world->getBlock(x, y, z));
-			return def.solid ? def.collision_height : 0.0f;
-		};
+		BlockSolidFn solidFn = m_world->solidFn();
 
 		// Drain worldgen queue: tree/structure entities spawned lazily as chunks
 		// stream in. Cheap no-op when the queue is empty.

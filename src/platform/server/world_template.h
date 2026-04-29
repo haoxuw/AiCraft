@@ -713,19 +713,34 @@ private:
 			m_palette.resolve(blocks);
 			m_paletteResolved = true;
 		}
-		const BlockId bStone = blocks.getId(BlockType::Stone);
 		const int ox = cpos.x * CHUNK_SIZE;
 		const int oy = cpos.y * CHUNK_SIZE;
 		const int oz = cpos.z * CHUNK_SIZE;
 		const int floor_y = m_py.voxelEarthOffsetY + m_region->bbox_min[1];
+
+		// Whole chunk below the bake floor → emit a Lite chunk that matches
+		// the engine default for this cy (DIRT below world-y 0 per
+		// chunk_default.h). World::isInteresting() then returns false so
+		// the streaming path skips the wire send; client falls back to the
+		// same default on lookup miss. Has to be Lite-DIRT specifically,
+		// not the engine-default Lite-AIR — Chunk::isDefault demands an
+		// exact bid match against d.forChunkY(cy) and cy<0 → DIRT.
+		if (oy + CHUNK_SIZE - 1 < floor_y) {
+			chunk.resetLite(blocks.getId(BlockType::Dirt), 0);
+			return;
+		}
+
 		for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
 			for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
 				for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
 					const int wx = ox + lx;
 					const int wy = oy + ly;
 					const int wz = oz + lz;
-					// Below the region: solid stone so the player has ground to stand on.
-					if (wy < floor_y) { chunk.set(lx, ly, lz, bStone); continue; }
+					// Cells below the bake floor in a partially-below chunk
+					// stay AIR-Lite locally; client gets DIRT from the default
+					// fallback for the chunk-y. (Mostly hits the boundary
+					// chunk straddling floor_y.)
+					if (wy < floor_y) continue;
 					const int rx = wx - m_py.voxelEarthOffsetX;
 					const int ry = wy - m_py.voxelEarthOffsetY;
 					const int rz = wz - m_py.voxelEarthOffsetZ;

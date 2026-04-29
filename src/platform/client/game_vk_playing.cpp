@@ -464,12 +464,7 @@ void Game::tickPlayer(float dt) {
 	float speed     = walkSpeed * (boost ? 1.6f : 1.0f);
 
 	{
-		auto& chunks = m_server->chunks();
-		auto& blocks = m_server->blockRegistry();
-		solarium::BlockSolidFn isSolid = [&](int x, int y, int z) -> float {
-			const auto& bd = blocks.get(chunks.getBlock(x, y, z));
-			return bd.solid ? bd.collision_height : 0.0f;
-		};
+		solarium::BlockSolidFn isSolid = m_server->chunks().solidFn();
 
 		solarium::MoveParams mp = solarium::makeMoveParams(
 			def.collision_box_min, def.collision_box_max,
@@ -482,7 +477,7 @@ void Game::tickPlayer(float dt) {
 		int fy = (int)std::floor(me->position.y) - 1;
 		int fz = (int)std::floor(me->position.z);
 		solarium::ChunkPos fp = { fx >> 4, fy >> 4, fz >> 4 };
-		bool feetReady = chunks.getChunkIfLoaded(fp) != nullptr;
+		bool feetReady = m_server->chunks().getChunkIfLoaded(fp) != nullptr;
 
 		// Build Move proposal (horizontal from input, Y filled later).
 		solarium::ActionProposal a;

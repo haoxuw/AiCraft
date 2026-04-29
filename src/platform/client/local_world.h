@@ -3,13 +3,16 @@
 // Client's single ChunkSource: owns chunk storage, block registry, annotations.
 // Populated by NetworkServer from S_CHUNK/S_BLOCK/S_ANNOTATION_SET.
 // See docs/10_CLIENT_SERVER_PHYSICS.md.
+//
+// Sibling-only: this class deliberately does NOT own EntityManager or
+// ModelManager. Game composes the three managers as siblings; each
+// holds non-owning refs to the others where it needs them.
 
 #include "logic/chunk.h"
 #include "logic/block_registry.h"
 #include "logic/chunk_source.h"
 #include "logic/annotation.h"
 #include "logic/physics.h"
-#include "server/entity_manager.h"
 #include "server/builtin.h"
 #include <atomic>
 #include <chrono>
@@ -22,7 +25,7 @@
 
 namespace solarium {
 
-// LocalWorld chunk-store rule (see docs/10_CLIENT_SERVER_PHYSICS.md):
+// LocalWorldManager chunk-store rule (see docs/10_CLIENT_SERVER_PHYSICS.md):
 //   * Writers (S_CHUNK / S_BLOCK / S_CHUNK_EVICT / S_ANNOTATION_SET) run on
 //     the main thread and take a unique_lock inside each mutator.
 //   * Main-thread readers (physics, mesher snapshot, render, raycast) don't
@@ -30,10 +33,10 @@ namespace solarium {
 //   * Off-main-thread readers (DecideWorker scan_blocks) must grab a
 //     shared_lock on mutex() for the ENTIRE scan, not per-block; otherwise a
 //     removeChunk mid-loop frees the Chunk they're walking.
-class LocalWorld : public ChunkSource {
+class LocalWorldManager : public ChunkSource {
 public:
-	LocalWorld() {
-		registerAllBuiltins(m_blocks, m_entityDefs);
+	LocalWorldManager() {
+		registerBlockBuiltins(m_blocks);
 		// Resolve default-fill BlockIds (Air, Dirt) so getBlock() falls back
 		// to dirt for unloaded underground chunks instead of leaving holes.
 		setDefaults(m_blocks);
@@ -148,28 +151,17 @@ public:
 		return it != m_annotations.end() ? &it->second : nullptr;
 	}
 
-	// Unloaded chunks return 0 (air).
-	BlockSolidFn solidFn() const {
-		return [this](int x, int y, int z) -> float {
-			BlockId bid = const_cast<LocalWorld*>(this)->getBlock(x, y, z);
-			const auto& bd = m_blocks.get(bid);
-			return bd.solid ? bd.collision_height : 0.0f;
-		};
-	}
-
 	BlockRegistry& blockRegistryMut() { return m_blocks; }
-	EntityManager& entityDefs() { return m_entityDefs; }
-	const EntityManager& entityDefs() const { return m_entityDefs; }
 	size_t chunkCount() const { return m_chunks.size(); }
 
 private:
 	// RAII: times wait-to-acquire (from ctor entry to lock held) and hold
 	// duration (from acquire to dtor), bumping atomic counters on release.
 	struct ScopedWrite {
-		LocalWorld& w;
+		LocalWorldManager& w;
 		std::unique_lock<std::shared_mutex> lk;
 		std::chrono::steady_clock::time_point held;
-		explicit ScopedWrite(LocalWorld& wr) : w(wr) {
+		explicit ScopedWrite(LocalWorldManager& wr) : w(wr) {
 			auto t0 = std::chrono::steady_clock::now();
 			lk = std::unique_lock<std::shared_mutex>(wr.m_mtx);
 			held = std::chrono::steady_clock::now();
@@ -195,7 +187,6 @@ private:
 	                    std::vector<std::pair<glm::ivec3, Annotation>>,
 	                    ChunkPosHash> m_annotations;
 	BlockRegistry m_blocks;
-	EntityManager m_entityDefs;
 };
 
 } // namespace solarium

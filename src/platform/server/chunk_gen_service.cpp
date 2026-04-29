@@ -99,8 +99,14 @@ void ChunkGenService::workerLoop() {
 			if (m_cancelled.count(job.cid)) continue;
 		}
 
+		// Default-fill chunks (AIR-Lite at cy>=0, DIRT-Lite below) aren't sent;
+		// client falls back to defaultBlock(cy) on lookup miss. Empty `msg`
+		// with the same Result.pos signals "treat as sent, no bytes" to the
+		// drain path so the prep counter still advances.
 		std::vector<uint8_t> msg;
-		buildMessage(*chunk, job.pos, job.useZstd, msg);
+		if (m_world.isInteresting(job.pos)) {
+			buildMessage(*chunk, job.pos, job.useZstd, msg);
+		}
 
 		std::lock_guard<std::mutex> lk(m_resultMu);
 		m_results.push_back(Result{job.cid, job.pos, std::move(msg)});

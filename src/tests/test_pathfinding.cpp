@@ -766,6 +766,72 @@ static std::string p20_separation_orbit_real_code() {
 	return "";
 }
 
+// ── P21 — Open-square diagonal collapses to a single waypoint ───────────
+// Open 10x10 air slab over solid ground. Plan (0,0,0) → (9,0,9). With the
+// any-angle LOS-Walk smoothing, the only kept Walk wp is the goal itself —
+// the entity walks one diagonal segment instead of an east-then-north L
+// or staircase. This is the positive receipt for the LOS smoother.
+static std::string p21_open_square_diagonal() {
+	struct FlatWorld : public WorldView {
+		bool isSolid(glm::ivec3 p) const override { return p.y <= -1; }
+	};
+	FlatWorld   world;
+	GridPlanner planner(world);
+	Path path = planner.plan({0, 0, 0}, {9, 0, 9});
+	if (path.partial)        return "planner gave up on open square";
+	if (path.steps.empty())  return "planner returned 0 wps";
+	if (path.steps.back().pos != glm::ivec3{9, 0, 9})
+		return "last wp is not the goal";
+
+	printf("\n    plan: steps=%zu (expect 1 — any-angle diagonal)\n",
+	       path.steps.size());
+	if (path.steps.size() != 1) {
+		char buf[160];
+		snprintf(buf, sizeof(buf),
+			"open-square diagonal compressed to %zu wps (expected 1) — "
+			"LOS-Walk smoothing not collapsing the staircase.",
+			path.steps.size());
+		return buf;
+	}
+	return "";
+}
+
+// ── P22 — Wall detour preserved (negative receipt for LOS smoother) ─────
+// Same 10x10 slab but with a vertical wall at x=5, z∈[0..4] blocking LOS
+// from (0,0,0) → (9,0,9). Smoother must NOT collapse to 1 wp — the
+// entity has to round the wall's bottom end. Asserts ≥2 kept wps and
+// that the path is non-partial. This is the negative-test counterpart
+// to P21: if smoothing ever forgets to LOS-check, P21 passes for the
+// wrong reason while P22 fails.
+static std::string p22_wall_detour_preserved() {
+	struct WallWorld : public WorldView {
+		bool isSolid(glm::ivec3 p) const override {
+			if (p.y <= -1) return true;                    // floor
+			if (p.x == 5 && p.y >= 0 && p.y <= 1
+			    && p.z >= 0 && p.z <= 4) return true;      // 2-tall wall
+			return false;
+		}
+	};
+	WallWorld   world;
+	GridPlanner planner(world);
+	Path path = planner.plan({0, 0, 0}, {9, 0, 9});
+	if (path.partial)        return "wall detour planner partial (should reach)";
+	if (path.steps.empty())  return "wall detour returned 0 wps";
+	if (path.steps.back().pos != glm::ivec3{9, 0, 9})
+		return "last wp is not the goal";
+
+	printf("\n    plan: steps=%zu (expect ≥2 — must round wall x=5,z=[0..4])\n",
+	       path.steps.size());
+	if (path.steps.size() < 2) {
+		char buf[160];
+		snprintf(buf, sizeof(buf),
+			"wall detour compressed to %zu wps — LOS-Walk skipped the "
+			"wall check (corner-cut bug).", path.steps.size());
+		return buf;
+	}
+	return "";
+}
+
 // ── P14 — Closed door off-path (regression) ───────────────────────────────
 // Collinear-Walk compression drops intermediate waypoints on a straight
 // corridor, so a closed door mid-corridor is never a Path step. The
@@ -925,6 +991,10 @@ int main() {
 	run("P17: high-speed corner overshoot (8 m/s L-turn)", p17_high_speed_corner_overshoot);
 	run("P19: small-dist hard-backstop one-tick arrival  ", p19_small_dist_one_tick_arrival);
 	run("P20: separation orbit — real applySeparation     ", p20_separation_orbit_real_code);
+
+	printf("\n--- Planner LOS-Walk smoothing ---\n");
+	run("P21: open-square diagonal collapses to 1 wp ", p21_open_square_diagonal);
+	run("P22: wall detour preserved (≥2 wps)        ", p22_wall_detour_preserved);
 
 	printf("\n--- Door handling ---\n");
 	run("P15: 2-wide door open cluster + auto-close   ", p15_multi_slab_open_and_autoclose);

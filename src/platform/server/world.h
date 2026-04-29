@@ -382,6 +382,23 @@ private:
 		return ptr;
 	}
 
+public:
+	// Has this chunk been generated AND contains non-default content? Streaming
+	// path consults this to skip default chunks; client deduces "absent S_CHUNK
+	// at cy = AIR if cy>=0, DIRT if cy<0".
+	//
+	// NOTE: also re-checks the chunk in case it transitioned default ↔
+	// interesting after a player edit (dug a hole in a default-DIRT chunk;
+	// reverted a chunk back to homogeneous default). m_interestingChunks is a
+	// hint populated at gen time; the chunk itself is the source of truth.
+	bool isInteresting(ChunkPos pos) {
+		Chunk* c = getChunkIfLoaded(pos);
+		if (!c) return false;
+		return !c->isDefault(pos.y, m_default);
+	}
+
+private:
+
 	// Run every AnnotationSpawnRule against the top surface of this chunk.
 	// Deterministic per (seed, pos) — a chunk re-generated with the same seed
 	// gets the same flower layout.

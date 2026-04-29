@@ -133,17 +133,29 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	m_artifactRegistry.loadAll("artifacts");
 	m_artifactRegistry.loadForks(solarium::ArtifactRegistry::defaultForksRoot());
 
-	// Load Python-defined BoxModels (one .py per creature/item under
-	// artifacts/models/) — sword has 14 parts, pig has legs, beaver has
-	// a tail, etc.
-	m_models = solarium::model_loader::loadAllModels("artifacts");
-	std::printf("[vk-game] Loaded %zu box models\n", m_models.size());
+	// Sibling-manager init (one bigger commit per the design plan):
+	//   1. Populate EntityManager from base C++ types + Python livings.
+	//      Block builtins are already registered by LocalWorldManager's
+	//      ctor — splitting the builtin entry points (registerBlockBuiltins
+	//      vs registerEntityBuiltins) keeps us from a wasted scratch-
+	//      BlockRegistry redo here.
+	//   2. Eager-build ModelManager from artifacts/models/*.py + the just-
+	//      populated EntityManager. ResolvedModel cache (bodyRadius etc)
+	//      is ready before the first frame.
+	solarium::registerEntityBuiltins(m_entityMgr);
+	m_entityMgr.mergeArtifactTags(m_artifactRegistry.livingTags());
+	m_entityMgr.applyLivingStats(m_artifactRegistry.livingStats());
+	m_modelMgr.loadAll("artifacts", m_entityMgr);
+	std::printf("[vk-game] Loaded %zu box models, resolved %zu entity types\n",
+	            m_modelMgr.modelCount(), m_modelMgr.resolvedCount());
 
 	// In-process menu plaza — 3 mascots wandering on a tiny client-only
 	// world that the menu camera looks at. Init order is load-bearing:
-	// pythonBridge + behaviorStore + artifactRegistry must already exist.
+	// pythonBridge + behaviorStore + artifactRegistry must already exist,
+	// and m_entityMgr / m_modelMgr must be populated above (plaza shares
+	// the Game's siblings rather than holding its own copies).
 	m_menuPlaza = std::make_unique<MenuPlaza>();
-	m_menuPlaza->init(m_artifactRegistry, *m_behaviorStore);
+	m_menuPlaza->init(m_entityMgr, m_modelMgr);
 
 	// Persisted user settings. Load before audio init so the master volume
 	// + footstep mute are applied on the very first sound emit. First run

@@ -352,17 +352,14 @@ int main(int argc, char** argv) {
 	// joinRemoteServer (LAN row) to set host:port, then character pick fires
 	// the HELLO handshake. The agent-side AgentManager lives inside Game so
 	// quitting the client tears down whatever server we spawned.
-	solarium::LocalWorld localWorld;
-	{
-		solarium::ArtifactRegistry artifacts;
-		artifacts.loadAll("artifacts");
-		artifacts.loadForks(solarium::ArtifactRegistry::defaultForksRoot());
-		localWorld.entityDefs().mergeArtifactTags(artifacts.livingTags());
-		localWorld.entityDefs().applyLivingStats(artifacts.livingStats());
-	}
-	auto net = std::make_unique<solarium::NetworkServer>(host, /*port=*/0, localWorld);
-
+	// Game now composites all three siblings: LocalWorldManager,
+	// EntityManager, ModelManager. main.cpp wires NetworkServer with
+	// refs INTO Game so artifact loading + entity-def population happens
+	// in exactly one place (Game::init), no duplication with main.
 	solarium::vk::Game game;
+	auto net = std::make_unique<solarium::NetworkServer>(
+		host, /*port=*/0, game.localWorld(), game.entityMgr());
+
 	game.setServer(net.get());  // must precede init()
 	game.setPendingConnect(42, templateIndex);  // overridden by hostLocalServer
 	game.setAgentConfig(agentCfg);              // DecidePacer knobs — must precede init()
@@ -480,190 +477,9 @@ int main(int argc, char** argv) {
 		};
 
 		// Pokédex / Civ6 Civilopedia chrome — shared by Character Select and
-		// Handbook. Sidebar pinned to the left edge holds the list; the right
-		// area is mostly transparent so the live plaza preview shows through,
-		// with a translucent detail panel pinned to the bottom-right for the
-		// selected entry's name + description + attribute table.
-		// Hover or click on a row fires `pick:<id>` so the 3D preview swaps
-		// in real time without a click commit.
-		const std::string kDexCss =
-			"body{display:block;align-items:initial;justify-content:initial;"
-			"background:transparent;padding:0;margin:0;min-height:100vh;"
-			"font-family:Georgia,serif;color:var(--ink)}"
-			".sidebar{position:fixed;left:0;top:0;bottom:0;width:300px;"
-			"background:rgba(16,8,10,0.88);border-right:1px solid var(--accent-mid);"
-			"display:flex;flex-direction:column;box-sizing:border-box}"
-			".sb-head{padding:22px 22px 12px;border-bottom:1px solid rgba(184,136,56,0.4)}"
-			".sb-head h1{font-size:24px;letter-spacing:4px;margin:0;color:var(--accent-hi);"
-			"font-weight:400;text-shadow:0 2px 8px rgba(0,0,0,0.8)}"
-			".sb-head .sub{font-size:11px;letter-spacing:2px;color:var(--accent-mid);"
-			"text-transform:uppercase;margin-top:4px}"
-			".sb-search{margin:14px 22px 8px;padding:8px 12px;width:auto;"
-			"background:rgba(20,13,8,0.97);color:var(--ink);border:1px solid var(--accent-mid);"
-			"font-family:inherit;font-size:13px;letter-spacing:1px;box-sizing:border-box}"
-			".sb-list{flex:1;overflow-y:auto;padding:6px 0}"
-			".sb-grp{padding:14px 22px 4px;font-size:11px;letter-spacing:3px;"
-			"color:var(--accent-mid);text-transform:uppercase}"
-			".sb-row{display:block;padding:9px 22px;cursor:pointer;"
-			"font-size:14px;letter-spacing:1px;color:var(--ink);"
-			"border-left:3px solid transparent;background:transparent;border-top:0;"
-			"border-right:0;border-bottom:0;text-align:left;width:100%%;"
-			"font-family:inherit}"
-			".sb-row:hover{background:rgba(94,67,30,0.45);"
-			"border-left-color:var(--accent-mid);color:var(--accent-hi)}"
-			".sb-row.on{background:rgba(94,67,30,0.92);color:var(--accent-hi);"
-			"border-left-color:var(--accent-hi)}"
-			".sb-row .id{display:block;font-size:10px;color:var(--accent-mid);"
-			"font-family:monospace;letter-spacing:1px;margin-top:2px;opacity:0.7}"
-			".sb-foot{padding:14px 22px;border-top:1px solid rgba(184,136,56,0.4);"
-			"display:flex;flex-direction:column;gap:8px}"
-			".sb-foot button{padding:10px 0;background:rgba(20,13,8,0.97);"
-			"color:var(--accent-hi);border:1px solid var(--accent-mid);font-family:inherit;"
-			"font-size:14px;letter-spacing:2px;cursor:pointer;"
-			"transition:background 0.15s}"
-			".sb-foot button:hover{background:rgba(94,67,30,0.95)}"
-			".sb-foot .primary{color:var(--accent-hi);font-size:16px;padding:14px 0;"
-			"box-shadow:0 0 0 1px var(--accent-hi) inset}"
-			".detail{margin-left:300px;min-height:100vh;position:relative}"
-			// Detail card itself is now just a positioning shell — the
-			// heading floats over the world preview, and `.card-body`
-			// below it is the actual readable panel.
-			// Card claims a fixed share of the viewport. The headline
-			// keeps padding on its left so it lines up with the rest of
-			// the page, but the bottom panel itself flushes to the
-			// sidebar on the left and the screen edge on the right —
-			// it's the floor of the menu, not a floating tile.
-			// ~48vh = roughly half the screen for the panel (description +
-			// stats + EDIT button) and roughly half for the live 3D
-			// preview above. The headline floats at the top of the card
-			// area so the model and the heading share the upper half.
-			".detail-card{position:fixed;bottom:0;left:300px;right:0;"
-			"height:48vh;display:flex;flex-direction:column;"
-			"justify-content:flex-end}"
-			".detail-card .headline{padding:0 60px;margin:0 0 14px;"
-			"max-width:820px}"
-			".detail-card .badge{display:inline-block;font-size:11px;"
-			"letter-spacing:3px;color:var(--accent-hi);text-transform:uppercase;"
-			"font-family:monospace;margin-right:12px;padding:3px 9px;"
-			"background:rgba(0,0,0,0.6);"
-			"border:1px solid rgba(184,136,56,0.5)}"
-			".detail-card h2{font-size:56px;letter-spacing:6px;color:var(--accent-hi);"
-			"margin:8px 0 0;font-weight:400;"
-			"text-shadow:0 4px 18px rgba(0,0,0,0.95),"
-			"0 1px 0 rgba(0,0,0,0.9)}"
-			// One unified bottom panel — description on top, divider,
-			// stats below. Spans full width from sidebar to screen edge
-			// so it reads as the floor of the menu rather than a tile
-			// drifting in the middle. Brass border lives only on the top
-			// edge (the floor's "horizon line"); side/bottom borders are
-			// implicit (sidebar + screen edge) so the panel feels
-			// architecturally connected to the chrome.
-			".detail-card .card-body{background:rgba(8,5,5,0.94);"
-			"border-top:1px solid var(--accent-mid);border-left:0;"
-			"border-right:0;border-bottom:0;"
-			"box-shadow:inset 0 1px 0 rgba(243,196,76,0.18),"
-			"0 -8px 24px rgba(0,0,0,0.75);"
-			"padding:22px 60px;display:flex;"
-			"flex-direction:column;gap:12px;flex:1;min-height:0;"
-			"overflow:hidden}"
-			".detail-card .desc{font-size:14px;line-height:1.55;"
-			"color:var(--ink);margin:0;opacity:0.95}"
-			".detail-card .div{height:1px;background:rgba(184,136,56,0.35);"
-			"margin:2px 0;border:0}"
-			".detail-card .attrs{display:grid;"
-			"grid-template-columns:auto 1fr;column-gap:20px;row-gap:5px;"
-			"font-size:12px;font-family:monospace;"
-			"flex:1;overflow-y:auto;padding-right:8px}"
-			".detail-card .k{color:var(--accent-hi);text-transform:uppercase;"
-			"letter-spacing:1px;white-space:nowrap;opacity:0.85}"
-			".detail-card .v{color:var(--ink);word-break:break-word;"
-			"overflow-wrap:anywhere}"
-			".detail-card .headline{margin:0 0 10px;max-width:820px}"
-			".detail-card .actions{margin-top:12px;display:flex;gap:10px}"
-			".detail-card .edit-btn{padding:9px 22px;font-size:12px;"
-			"letter-spacing:3px;background:rgba(94,67,30,0.85);"
-			"color:var(--accent-hi);border:1px solid var(--accent-mid);"
-			"cursor:pointer;font-family:inherit;text-transform:uppercase;"
-			// Beveled retro button — bright top edge, dark bottom edge.
-			"box-shadow:inset 0 1px 0 rgba(243,196,76,0.4),"
-			"inset 0 -1px 0 rgba(0,0,0,0.5)}"
-			".detail-card .edit-btn:hover{background:rgba(94,67,30,1);"
-			"color:%23fff3c8}"
-			// Artistic scrollbar — recessed groove track + cast-brass
-			// thumb with metallic vertical gradient and three horizontal
-			// "grip" notches at the centre. Applies to every overflow:auto
-			// region in the page (sidebar list + attrs panel).
-			//
-			// %23 = '#' (bare # would terminate the data: URL as fragment).
-			"::-webkit-scrollbar{width:14px;height:14px}"
-			// Track: dark recessed channel with brass hairlines on each
-			// side. The repeating linear-gradient adds a 1-px vertical
-			// guide rail down the centre so the empty track reads as a
-			// machined groove rather than a flat bar.
-			"::-webkit-scrollbar-track{"
-			"background:"
-			"linear-gradient(to right,"
-			"rgba(184,136,56,0.55) 0,rgba(184,136,56,0.55) 1px,"
-			"rgba(0,0,0,0.92) 1px,rgba(0,0,0,0.92) 6px,"
-			"rgba(184,136,56,0.18) 6px,rgba(184,136,56,0.18) 8px,"
-			"rgba(0,0,0,0.92) 8px,rgba(0,0,0,0.92) 13px,"
-			"rgba(184,136,56,0.55) 13px,rgba(184,136,56,0.55) 14px);"
-			"box-shadow:inset 0 0 6px rgba(0,0,0,0.85)}"
-			// Thumb: stacked gradients = (a) cast-brass vertical sheen,
-			// (b) horizontal grip notches at the middle. Outer border +
-			// inset highlights/shadows give it the cast-metal bevel.
-			"::-webkit-scrollbar-thumb{"
-			"background:"
-			"linear-gradient(to bottom,transparent calc(50%% - 8px),"
-			"rgba(0,0,0,0.55) calc(50%% - 8px),rgba(0,0,0,0.55) calc(50%% - 7px),"
-			"rgba(243,196,76,0.5) calc(50%% - 7px),rgba(243,196,76,0.5) calc(50%% - 6px),"
-			"transparent calc(50%% - 6px),transparent calc(50%% - 1px),"
-			"rgba(0,0,0,0.55) calc(50%% - 1px),rgba(0,0,0,0.55) calc(50%%),"
-			"rgba(243,196,76,0.5) calc(50%%),rgba(243,196,76,0.5) calc(50%% + 1px),"
-			"transparent calc(50%% + 1px),transparent calc(50%% + 6px),"
-			"rgba(0,0,0,0.55) calc(50%% + 6px),rgba(0,0,0,0.55) calc(50%% + 7px),"
-			"rgba(243,196,76,0.5) calc(50%% + 7px),rgba(243,196,76,0.5) calc(50%% + 8px),"
-			"transparent calc(50%% + 8px)),"
-			"linear-gradient(to bottom,"
-			"%23c08a3a 0%%,%23a07526 18%%,%236d4f1f 50%%,"
-			"%234a3415 82%%,%23745525 100%%);"
-			"border:1px solid %23b88838;"
-			"box-shadow:inset 0 1px 0 rgba(243,196,76,0.85),"
-			"inset 0 -1px 0 rgba(0,0,0,0.85),"
-			"inset 1px 0 0 rgba(243,196,76,0.35),"
-			"inset -1px 0 0 rgba(0,0,0,0.55),"
-			"0 0 4px rgba(0,0,0,0.65)}"
-			"::-webkit-scrollbar-thumb:hover{"
-			"background:linear-gradient(to bottom,"
-			"%23e0a64a 0%%,%23b88838 18%%,%23805d24 50%%,"
-			"%2358391a 82%%,%238b6a2f 100%%);"
-			"border-color:%23f3c44c}"
-			"::-webkit-scrollbar-thumb:active{"
-			"background:linear-gradient(to bottom,"
-			"%23805d24 0%%,%2358391a 50%%,%234a3415 100%%)}"
-			// Buttons: small brass caps at top/bottom with engraved arrows.
-			"::-webkit-scrollbar-button{height:14px;width:14px;"
-			"background:linear-gradient(to bottom,%23a07526 0%%,%235e431e 100%%);"
-			"border:1px solid %23b88838;"
-			"box-shadow:inset 0 1px 0 rgba(243,196,76,0.5),"
-			"inset 0 -1px 0 rgba(0,0,0,0.7)}"
-			"::-webkit-scrollbar-button:vertical:start{"
-			"background-image:"
-			"linear-gradient(135deg,transparent 0 5px,%23f3c44c 5px 6px,transparent 6px 7px),"
-			"linear-gradient(45deg,transparent 0 5px,%23f3c44c 5px 6px,transparent 6px 7px),"
-			"linear-gradient(to bottom,%23a07526 0%%,%235e431e 100%%)}"
-			"::-webkit-scrollbar-button:vertical:end{"
-			"background-image:"
-			"linear-gradient(45deg,%23f3c44c 0 1px,transparent 1px 2px),"
-			"linear-gradient(135deg,%23f3c44c 0 1px,transparent 1px 2px),"
-			"linear-gradient(to bottom,%23a07526 0%%,%235e431e 100%%)}"
-			"::-webkit-scrollbar-button:hover{"
-			"background:linear-gradient(to bottom,%23b88838 0%%,%237a5928 100%%)}"
-			"::-webkit-scrollbar-corner{"
-			"background:linear-gradient(135deg,rgba(0,0,0,0.92),rgba(184,136,56,0.4))}"
-			".version{position:fixed;bottom:8px;right:14px;font-size:11px;"
-			"color:var(--accent-mid);opacity:0.5;letter-spacing:1px}";
-
+		// Handbook. The CSS lives in client/ui/components.h::dexCss so both
+		// pages stay in lockstep when the design changes.
+		const std::string kDexCss = solarium::ui::dexCss();
 		// Compact a multi-line / oversized field value for handbook attrs.
 		// Strips control chars (newlines, CRs, tabs) and non-ASCII bytes,
 		// because the result is embedded in JS string literals inside the

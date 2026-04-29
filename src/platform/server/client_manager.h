@@ -200,6 +200,14 @@ public:
 			if (it == m_clients.end()) continue; // client disconnected
 			auto& c = it->second;
 			if (c.sentChunks.count(r.pos)) continue; // dedup (shouldn't happen in prep)
+			if (r.message.empty()) {
+				// Default-fill chunk — no bytes go on the wire, but it counts
+				// toward prep completion (the client gets it for free via the
+				// defaultBlock(cy) fallback in getBlock).
+				c.sentChunks.insert(r.pos);
+				c.chunksCompletedForPrep++;
+				continue;
+			}
 			c.transport.pendingChunks.push_back({r.pos, std::move(r.message)});
 			c.sentChunks.insert(r.pos);
 			// chunksCompletedForPrep is bumped in sendPendingChunks (after wire send)
@@ -1293,6 +1301,15 @@ private:
 		if (cc.sentChunks.count(pos)) return;
 		Chunk* chunk = m_server.world().getChunk(pos);
 		if (!chunk) return;
+
+		// Skip default-fill chunks: AIR-Lite above world-y 0, DIRT-Lite below.
+		// Client falls back to defaultBlock(cy) on lookup miss, so the absence
+		// of an S_CHUNK is the signal — no protocol bump needed. Mark the
+		// chunk as "sent" anyway so we don't keep re-checking it next tick.
+		if (!m_server.world().isInteresting(pos)) {
+			cc.sentChunks.insert(pos);
+			return;
+		}
 
 		// Payload: [i32 cx][i32 cy][i32 cz][u8 zone][u32×4096][u8×4096 appearance] (v10+)
 		//          [u32 annotCount]{[i32 dx][i32 dy][i32 dz][str typeId][u8 slot]}×N

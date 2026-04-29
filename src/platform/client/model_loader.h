@@ -299,11 +299,6 @@ inline bool loadModelFile(const std::string& path, BoxModel& out) {
 	return !out.parts.empty();
 }
 
-inline bool loadModel(const std::string& artifactsDir, const std::string& name, BoxModel& out) {
-	std::string basePath = artifactsDir + "/models/base/" + name + ".py";
-	return loadModelFile(basePath, out);
-}
-
 // Clone base, apply color overrides by role, drop parts in hide list.
 // Variant dict: { "fur": [rgba], "stripe": [rgba], "hide": ["stripe"] }
 inline BoxModel bakeVariant(const BoxModel& base, const Dict& variant) {

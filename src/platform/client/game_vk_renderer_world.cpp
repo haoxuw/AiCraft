@@ -205,7 +205,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 			auto dot = key.rfind('.');
 			if (dot != std::string::npos) key = key.substr(0, dot);
 		}
-		int n = solarium::model_loader::countVariants(g.m_models, key);
+		int n = g.m_modelMgr.countVariants(key);
 		if (n > 0) {
 			uint64_t h = (uint64_t)e.id() * 2654435761u;
 			return key + "#" + std::to_string((int)(h % (uint64_t)n));
@@ -219,14 +219,13 @@ void WorldRenderer::renderWorld(float wallTime) {
 		std::string key = itemId;
 		auto colon = key.find(':');
 		if (colon != std::string::npos) key = key.substr(colon + 1);
-		auto it = g.m_models.find(key);
-		return (it != g.m_models.end()) ? &it->second : nullptr;
+		return g.m_modelMgr.boxModel(key);
 	};
 
 	// Local player body — skip in FPS so the body doesn't eclipse the camera.
 	if (me && g.m_cam.mode != solarium::CameraMode::FirstPerson) {
-		auto pit = g.m_models.find(resolveModelKey(*me));
-		if (pit != g.m_models.end()) {
+		const solarium::BoxModel* pit = g.m_modelMgr.boxModel(resolveModelKey(*me));
+		if (pit) {
 			solarium::AnimState anim{};
 			anim.walkDistance = g.m_walkDist;
 			{
@@ -261,7 +260,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 
 			glm::vec3 bodyPos(me->position.x, visualPlayerY(me->position.y),
 			                  me->position.z);
-			solarium::appendBoxModel(charBoxes, pit->second, bodyPos,
+			solarium::appendBoxModel(charBoxes, *pit, bodyPos,
 			                         glm::degrees(g.m_playerBodyYaw),
 			                         anim, &held);
 		}
@@ -300,13 +299,13 @@ void WorldRenderer::renderWorld(float wallTime) {
 				float oz = (((h >> 8) & 0xFF) / 255.0f - 0.5f) * 0.3f;
 				float spinYawDeg = g.m_wallTime * 90.0f + e.id() * 47.0f;
 
-				auto imIt = g.m_models.find(modelKey);
-				if (imIt != g.m_models.end()) {
+				const solarium::BoxModel* imIt = g.m_modelMgr.boxModel(modelKey);
+				if (imIt) {
 					// Render at the model's intrinsic size — matches in-hand.
 					// Sizes are absolute world-block units in the artifact.
 					solarium::AnimState anim{};
 					anim.time = g.m_wallTime;
-					solarium::appendBoxModel(charBoxes, imIt->second,
+					solarium::appendBoxModel(charBoxes, *imIt,
 					    e.position + glm::vec3(ox, bob + bounce + 0.3f, oz),
 					    spinYawDeg, anim);
 				} else {
@@ -326,8 +325,8 @@ void WorldRenderer::renderWorld(float wallTime) {
 			if (!def.isLiving()) return;   // unknown kind — don't guess
 
 			std::string mkey = resolveModelKey(e);
-			auto mit = g.m_models.find(mkey);
-			if (mit == g.m_models.end()) return;
+			const solarium::BoxModel* mit = g.m_modelMgr.boxModel(mkey);
+			if (!mit) return;
 
 			solarium::AnimState anim{};
 			float bodyYaw;
@@ -344,7 +343,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 			anim.speed = sm.speed;
 			bodyYaw    = sm.bodyYawDeg;
 
-			solarium::appendBoxModel(charBoxes, mit->second,
+			solarium::appendBoxModel(charBoxes, *mit,
 			                         e.position, bodyYaw, anim);
 		});
 
@@ -478,8 +477,8 @@ void WorldRenderer::renderWorld(float wallTime) {
 		// matches the in-game flyer_wander goalText convention.
 		if (g.m_menuPlaza && g.m_menuPlaza->ready()) {
 			g.m_menuPlaza->forEachMascot([&](const solarium::Entity& e) {
-				auto mit = g.m_models.find(e.typeId());
-				if (mit == g.m_models.end()) return;
+				const solarium::BoxModel* mit = g.m_modelMgr.boxModel(e.typeId());
+				if (!mit) return;
 				solarium::AnimState anim{};
 				anim.time         = g.m_wallTime;
 				anim.walkDistance = g.m_wallTime * 1.2f;
@@ -487,7 +486,7 @@ void WorldRenderer::renderWorld(float wallTime) {
 				                                 e.velocity.z * e.velocity.z);
 				anim.speed = speedXZ;
 				if (e.def().gravity_scale <= 0.0f) anim.currentClip = "fly";
-				solarium::appendBoxModel(charBoxes, mit->second,
+				solarium::appendBoxModel(charBoxes, *mit,
 				                         e.position, e.yaw, anim);
 			});
 		}
@@ -512,14 +511,14 @@ void WorldRenderer::renderWorld(float wallTime) {
 			else key = entry->id;
 			auto dot = key.rfind('.');
 			if (dot != std::string::npos) key = key.substr(0, dot);
-			auto it = g.m_models.find(key);
-			if (it != g.m_models.end()) {
+			const solarium::BoxModel* it = g.m_modelMgr.boxModel(key);
+			if (it) {
 				solarium::AnimState anim{};
 				anim.time = g.m_wallTime;
 				anim.currentClip = g.m_shell.previewClip.empty()
 				    ? "mine" : g.m_shell.previewClip;
 				float spinYaw = g.m_wallTime * 30.0f + g.m_shell.previewYaw;
-				solarium::appendBoxModel(charBoxes, it->second,
+				solarium::appendBoxModel(charBoxes, *it,
 				                         glm::vec3(0.0f, 1.0f, 0.0f),
 				                         spinYaw, anim);
 			}

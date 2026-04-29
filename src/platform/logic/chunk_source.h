@@ -7,7 +7,9 @@
 #include "logic/chunk.h"
 #include "logic/chunk_default.h"
 #include "logic/block_registry.h"
+#include "logic/physics.h"   // BlockSolidFn
 #include <array>
+#include <functional>
 #include <shared_mutex>
 
 namespace solarium {
@@ -38,6 +40,20 @@ public:
 	// instead of falling forever.
 	BlockId defaultBlock(int cy) const { return m_default.forChunkY(cy); }
 	void    setDefaults(const BlockRegistry& reg) { m_default.resolve(reg); }
+
+	// Canonical "is this voxel solid?" predicate for physics + LOS callers.
+	// Returns the block's collision_height (0 = not solid). Single helper —
+	// every consumer (server resolveMoveAction, agent emitMove, client
+	// player physics, separation wall probe) used to inline this; now they
+	// all go through here. Captures `this` so the lambda survives across
+	// ticks, but always re-fetches the BlockRegistry on each call so chunk
+	// sources that hot-swap their registry are honoured.
+	BlockSolidFn solidFn() {
+		return [this](int x, int y, int z) -> float {
+			const auto& bd = blockRegistry().get(getBlock(x, y, z));
+			return bd.solid ? bd.collision_height : 0.0f;
+		};
+	}
 
 	// Off-main-thread long scans (e.g. DecideWorker.scan_blocks) must hold
 	// a shared_lock on this mutex for the entire scan. Main-thread reads

@@ -77,11 +77,7 @@ void GameServer::resolveMoveAction(ActionProposal p) {
 					MoveParams mp = makeMoveParams(
 						def.collision_box_min, def.collision_box_max,
 						def.gravity_scale, def.isLiving(), p.fly);
-					BlockSolidFn solidFn = [&](int x, int y, int z) -> float {
-						const auto& bd = m_world->blocks.get(
-							m_world->getBlock(x, y, z));
-						return bd.solid ? bd.collision_height : 0.0f;
-					};
+					BlockSolidFn solidFn = m_world->solidFn();
 					if (!isPositionBlocked(solidFn, p.clientPos,
 					                       mp.halfWidth, mp.height)) {
 						e->position = p.clientPos;
@@ -667,7 +663,7 @@ void GameServer::resolveConvertAction(ActionProposal p,
 				// Don't let actor place inside their own body.
 				if (actor) {
 					auto& fp = actor->position;
-					float hw = (actor->def().collision_box_max.x - actor->def().collision_box_min.x) * 0.5f;
+					float hw = actor->def().bodyRadius();
 					float ph = actor->def().collision_box_max.y;
 					bool inside = pp.x >= (int)std::floor(fp.x - hw) &&
 					              pp.x <= (int)std::floor(fp.x + hw) &&

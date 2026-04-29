@@ -120,6 +120,17 @@ struct EntityDef {
 	bool isItem()      const { return kind == EntityKind::Item; }
 	bool isStructure() const { return kind == EntityKind::Structure; }
 
+	// Half the XZ collision box — the entity's body radius for separation,
+	// pickup, hit-test, LOS-Walk corner clearance. Single source matches
+	// physics.h::makeMoveParams.halfWidth and ModelManager's cached value.
+	float bodyRadius() const {
+		return (collision_box_max.x - collision_box_min.x) * 0.5f;
+	}
+	// Body height — used by separation's wall probe and combat reach.
+	float bodyHeight() const {
+		return collision_box_max.y - collision_box_min.y;
+	}
+
 	// Orthogonal flags from Python artifacts. Canonical names: FeatureTag in constants.h.
 	std::vector<std::string> tags;
 

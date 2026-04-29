@@ -96,9 +96,13 @@ MenuPlaza::~MenuPlaza() {
 	}
 }
 
-void MenuPlaza::init(ArtifactRegistry& artifacts, BehaviorStore& /*behaviors*/) {
+void MenuPlaza::init(EntityManager& entityMgr, ModelManager& modelMgr) {
 	if (m_ready) return;
-	registerEntityTypes(artifacts);
+	// Plaza shares Game's already-populated siblings — no separate
+	// EntityManager copy, no second registerAllBuiltins/applyLivingStats
+	// pass. Game::init has already done the merge once.
+	m_entityMgr = &entityMgr;
+	m_modelMgr  = &modelMgr;
 	// Mascots no longer spawn at boot — the plaza shows just two trees
 	// until the user enters a loading screen, at which point Game spawns
 	// them progressively via spawnMascotById() with a puff effect each.
@@ -116,27 +120,9 @@ void MenuPlaza::clearMascots() {
 	m_agents.clear();
 }
 
-void MenuPlaza::registerEntityTypes(ArtifactRegistry& artifacts) {
-	// Reuse the canonical builtin defs (matches server) then overlay the
-	// artifact-declared walk_speed / behavior / collision box. Keeps the
-	// menu plaza in sync with whatever Python tweaks the modder applied.
-	BlockRegistry scratch;
-	registerAllBuiltins(scratch, m_entityMgr);
-	m_entityMgr.applyLivingStats(artifacts.livingStats());
-}
-
-void MenuPlaza::spawnAllMascots(BehaviorStore& behaviors) {
-	// Visual layout matches the previous static decorative block — dog
-	// front-right, cat back-left, bee floating. Yaws roughly toward the
-	// orbiting menu camera.
-	spawnMascot("dog", { 2.5f, 1.0f,  2.5f},   0.0f, behaviors);
-	spawnMascot("cat", {-2.5f, 1.0f, -2.0f},  90.0f, behaviors);
-	spawnMascot("bee", { 0.0f, 2.5f, -3.5f}, 180.0f, behaviors);
-}
-
 void MenuPlaza::spawnMascot(const std::string& typeId, glm::vec3 pos, float yaw,
                             BehaviorStore& behaviors) {
-	const EntityDef* def = m_entityMgr.getTypeDef(typeId);
+	const EntityDef* def = m_entityMgr ? m_entityMgr->getTypeDef(typeId) : nullptr;
 	if (!def) {
 		std::printf("[MenuPlaza] unknown mascot type '%s' — skipped\n", typeId.c_str());
 		return;
@@ -273,11 +259,7 @@ void MenuPlaza::integrateOne(Entity& e, float dt) {
 	const bool canFly = def.gravity_scale <= 0.0f;
 	MoveParams mp = makeMoveParams(def.collision_box_min, def.collision_box_max,
 	                                def.gravity_scale, def.isLiving(), canFly);
-	BlockSolidFn isSolid = [this](int x, int y, int z) -> float {
-		BlockId b = m_chunks.getBlock(x, y, z);
-		const BlockDef& bd = m_chunks.blockRegistry().get(b);
-		return bd.solid ? 1.0f : 0.0f;
-	};
+	BlockSolidFn isSolid = m_chunks.solidFn();
 	MoveResult r = moveAndCollide(isSolid, e.position, e.velocity, dt, mp,
 	                              e.onGround);
 	e.position = r.position;
