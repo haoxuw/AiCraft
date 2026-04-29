@@ -8,6 +8,7 @@
 // scale: artifacts express geometry directly via part offset/size.
 
 #include "client/box_model.h"
+#include "client/rig.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -69,12 +70,20 @@ inline void emitHeldItem(std::vector<float>& out,
 // instead of building one from feetPos+yaw. Lets HUD callers orient items
 // fully along the camera basis (right/up/back) so slot items stay upright
 // at any camera pitch, not just yaw.
+// `rig`: optional rig template resolved by the caller from `model.rigId` via
+// the RigRegistry. When non-null AND a part has `part.bone` set, that part
+// follows the bone's accumulated parent-chain transform via `computeRigPose`
+// instead of running the per-part sin-driver / clip-override / attack
+// special-case path. Parts without `bone:` are unaffected. If `rig` is null,
+// every part runs the legacy path — existing creatures see no behavior
+// change.
 inline void appendBoxModel(std::vector<float>& out,
                            const BoxModel& model,
                            glm::vec3 feetPos, float yaw,
                            const AnimState& anim,
                            const HeldItems* held = nullptr,
-                           const glm::mat4* rootOverride = nullptr) {
+                           const glm::mat4* rootOverride = nullptr,
+                           const Rig* rig = nullptr) {
 	constexpr float TWO_PI = 6.28318530718f;
 
 	float walkPhase = anim.walkDistance * model.walkCycleSpeed;
@@ -112,6 +121,13 @@ inline void appendBoxModel(std::vector<float>& out,
 		if (it != model.clips.end()) activeClip = &it->second;
 	}
 
+	// Pre-compute bone pose if a rig is bound. Empty when no rig — the
+	// per-part path below short-circuits the bone branch in that case.
+	std::vector<glm::mat4> rigPose;
+	if (rig != nullptr) {
+		rigPose = computeRigPose(*rig, anim.currentClip, anim.time);
+	}
+
 	glm::mat4 rightHandFrame(1.0f);
 	glm::mat4 leftHandFrame(1.0f);
 	bool gotRightHand = false;
@@ -119,6 +135,44 @@ inline void appendBoxModel(std::vector<float>& out,
 
 	for (const auto& part : model.parts) {
 		glm::mat4 partMat = root;
+
+		// Bone-driven branch: short-circuit the sin-driver / clip-override /
+		// attack-special-case path. The bone's pose already encodes its
+		// rest position + parent chain + active clip's keyframe rotations.
+		// `part.offset` is interpreted as bone-local (relative to the bone's
+		// origin, not the model origin) — the editor is responsible for
+		// converting model-space offsets into bone-local at bind time.
+		if (rig != nullptr && !part.bone.empty()) {
+			int boneIdx = findBone(*rig, part.bone);
+			if (boneIdx >= 0 && boneIdx < (int)rigPose.size()) {
+				partMat = root * rigPose[boneIdx];
+
+				// Hand-frame capture + head-tracking still apply for held
+				// items + look-at, identical to the legacy path below.
+				if (!gotRightHand && part.name == "right_hand") {
+					rightHandFrame = partMat;
+					gotRightHand = true;
+				}
+				if (!gotLeftHand && part.name == "left_hand") {
+					leftHandFrame = partMat;
+					gotLeftHand = true;
+				}
+				if (part.isHead
+				    && (std::abs(anim.lookYaw) > 0.001f
+				        || std::abs(anim.lookPitch) > 0.001f)) {
+					partMat = glm::translate(partMat, model.headPivot);
+					partMat = glm::rotate(partMat, anim.lookYaw,   glm::vec3(0, 1, 0));
+					partMat = glm::rotate(partMat, anim.lookPitch, glm::vec3(1, 0, 0));
+					partMat = glm::translate(partMat, -model.headPivot);
+				}
+
+				glm::mat4 finalMat = detail::partUnitCubeToWorld(partMat, part);
+				detail::emitBox(out, finalMat, glm::vec3(part.color));
+				continue;
+			}
+			// Bone name didn't resolve — fall through to legacy path so the
+			// part still renders (silent degradation).
+		}
 
 		glm::vec3 swingAxis = part.swingAxis;
 		float swingAmp   = part.swingAmplitude;
