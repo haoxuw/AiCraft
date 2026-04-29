@@ -1199,7 +1199,8 @@ private:
 			client.chunksCompletedForPrep = 0;
 			client.lastProgressSent       = -1.0f;
 			for (auto& p : required)
-				m_chunkGen->submit(client.id, p, client.supportsZstd);
+				m_chunkGen->submit(client.id, p, client.supportsZstd,
+				                   client.lastChunkPos);
 
 			{
 				net::WriteBuffer wb;

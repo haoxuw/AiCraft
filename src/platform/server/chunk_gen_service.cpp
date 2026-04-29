@@ -40,10 +40,14 @@ ChunkGenService::~ChunkGenService() {
 		if (t.joinable()) t.join();
 }
 
-void ChunkGenService::submit(ClientId cid, ChunkPos pos, bool useZstd) {
+void ChunkGenService::submit(ClientId cid, ChunkPos pos, bool useZstd, ChunkPos clientChunk) {
+	const int64_t dx = (int64_t)pos.x - clientChunk.x;
+	const int64_t dy = (int64_t)pos.y - clientChunk.y;
+	const int64_t dz = (int64_t)pos.z - clientChunk.z;
+	const int64_t distSq = dx*dx + dy*dy + dz*dz;
 	{
 		std::lock_guard<std::mutex> lk(m_jobMu);
-		m_jobs.push(Job{cid, pos, useZstd});
+		m_jobs.push(Job{cid, pos, useZstd, distSq});
 	}
 	m_jobCv.notify_one();
 }
@@ -80,7 +84,7 @@ void ChunkGenService::workerLoop() {
 			std::unique_lock<std::mutex> lk(m_jobMu);
 			m_jobCv.wait(lk, [this] { return m_stop.load() || !m_jobs.empty(); });
 			if (m_stop.load() && m_jobs.empty()) return;
-			job = m_jobs.front();
+			job = m_jobs.top();   // priority_queue: smallest distSq first
 			m_jobs.pop();
 		}
 

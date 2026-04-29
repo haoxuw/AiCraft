@@ -34,7 +34,13 @@ public:
 	ChunkGenService(const ChunkGenService&) = delete;
 	ChunkGenService& operator=(const ChunkGenService&) = delete;
 
-	void submit(ClientId cid, ChunkPos pos, bool useZstd);
+	// `clientChunk` is the requesting client's current chunk position. Used
+	// to score this job's priority — smaller squared distance pops first
+	// — so chunks the player is standing in arrive before chunks they
+	// might walk to. Distance is frozen at enqueue time; if the player
+	// teleports, the existing queue drains in old order but new submits
+	// reflect the new position.
+	void submit(ClientId cid, ChunkPos pos, bool useZstd, ChunkPos clientChunk);
 
 	// Invalidates pending + in-flight + undrained results for the client.
 	void cancelClient(ClientId cid);
@@ -49,6 +55,15 @@ private:
 		ClientId cid;
 		ChunkPos pos;
 		bool useZstd;
+		int64_t distSq;   // (cx-px)^2 + (cy-py)^2 + (cz-pz)^2 at enqueue time
+	};
+
+	// Min-heap on distSq (smallest distance pops first). priority_queue's
+	// default comparator gives a max-heap, so we invert.
+	struct JobByDistance {
+		bool operator()(const Job& a, const Job& b) const {
+			return a.distSq > b.distSq;
+		}
 	};
 
 	void workerLoop();
@@ -60,7 +75,7 @@ private:
 
 	mutable std::mutex m_jobMu;
 	std::condition_variable m_jobCv;
-	std::queue<Job> m_jobs;
+	std::priority_queue<Job, std::vector<Job>, JobByDistance> m_jobs;
 
 	mutable std::mutex m_resultMu;
 	std::vector<Result> m_results;
