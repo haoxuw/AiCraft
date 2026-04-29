@@ -32,6 +32,12 @@ inline constexpr WorldTemplateInfo kWorldTemplates[] = {
 	{ "test_chicken",    "artifacts/worlds/base/test_chicken.py",    "Test Chicken" },
 	{ "perf_stress",     "artifacts/worlds/base/perf_stress.py",     "Perf Stress" },
 	{ "toronto",         "artifacts/worlds/base/toronto.py",         "Toronto (Voxel Earth)" },
+	// Dynamic voxel-earth world driven by SOLARIUM_VOXEL_* env vars; used
+	// by `make world LAT=… LNG=… RADIUS=…` (and aliases like `make wonderland`)
+	// to load any location Google has 3D Tiles for without adding a new
+	// hardcoded artifact each time. toronto.py stays as-is so existing
+	// saves keep their templateIndex.
+	{ "voxel_earth",     "artifacts/worlds/base/voxel_earth_dynamic.py", "Voxel Earth" },
 };
 
 inline constexpr size_t kWorldTemplateCount =

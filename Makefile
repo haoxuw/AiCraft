@@ -238,23 +238,47 @@ test-villager: game-build
 test-chicken: game-build
 	$(call launch,--template 4)
 
-# Voxel Earth demo: walk around a baked slab of Toronto. See docs/VOXEL_EARTH.md.
-# First-time setup (one-off):
+# Voxel Earth demo: walk around any place Google has 3D Tiles for. See
+# docs/VOXEL_EARTH.md. Pipeline: geocode → cache key (lat_lng_radius) →
+# download GLBs → bake → landuse → exec the engine. Cache hits skip the
+# expensive steps so re-launching the same area is instant.
+#
+# One-off setup:
 #   python -m voxel_earth set-key <YOUR_GOOGLE_MAPS_KEY>
-#   python -m voxel_earth download --location "CN Tower, Toronto" \
-#                                  --radius 800 --height 1200
-#   ./build/solarium-voxel-bake --glb-dir ~/.voxel/google/glb \
-#                                --out     ~/.voxel/regions/toronto/blocks.bin
-# Then: `make toronto` (or its alias `make world`).
-toronto: game-build
-	@if [ ! -f $(HOME)/.voxel/regions/toronto/blocks.bin ]; then \
-	  echo "[toronto] missing $(HOME)/.voxel/regions/toronto/blocks.bin"; \
-	  echo "          run the bake recipe at the top of the toronto: target."; \
-	  exit 1; \
-	fi
-	$(call launch,--template 6)
+#
+# General form:
+#   make world LAT=43.842 LNG=-79.539 RADIUS=1200 HEIGHT=300
+#   make world LOCATION="Eiffel Tower" RADIUS=400
+#
+# Aliases below pre-fill LOCATION + RADIUS for hand-tuned regions.
+LOCATION ?=
+LAT      ?=
+LNG      ?=
+RADIUS   ?= 800
+HEIGHT   ?= 0
+NAME     ?=
+WORLD_FORCE ?= 0
 
-world: toronto
+world: game-build
+	@if [ -z "$(LOCATION)" ] && { [ -z "$(LAT)" ] || [ -z "$(LNG)" ]; }; then \
+	  echo "make world: pass LOCATION=\"...\" or LAT=... LNG=..." ; exit 1 ; \
+	fi
+	@PYTHONPATH=src/python python3 -m voxel_earth world \
+	  --build-dir $(GAME_BUILD_DIR) \
+	  --radius $(RADIUS) \
+	  $(if $(LOCATION),--location "$(LOCATION)",--lat $(LAT) --lng $(LNG)) \
+	  $(if $(filter-out 0,$(HEIGHT)),--height $(HEIGHT)) \
+	  $(if $(NAME),--name "$(NAME)") \
+	  $(if $(filter 1,$(WORLD_FORCE)),--force)
+
+# Pre-tuned aliases. Same `make world` flow, just with the location +
+# radius pinned. First run downloads + bakes (5 min, ~$20-40 in Google
+# API spend); subsequent runs hit the cache and launch instantly.
+toronto:
+	$(MAKE) world LOCATION="CN Tower, Toronto" RADIUS=800 HEIGHT=1200 NAME="Toronto"
+
+wonderland:
+	$(MAKE) world LOCATION="Canada's Wonderland, Vaughan" RADIUS=1200 HEIGHT=300 NAME="Wonderland"
 
 # Isolated single-villager behavior smoke: 1 villager, village world, 4× sim,
 # hidden window, tee event stream to /tmp/solarium_game.log. Use for

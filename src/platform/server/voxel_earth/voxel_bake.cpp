@@ -40,6 +40,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -50,6 +51,7 @@ namespace fs = std::filesystem;
 
 struct Args {
 	std::string glb_dir;
+	std::string glb_list;       // file with one GLB path per line; overrides --glb-dir
 	std::string out_path;
 	float       voxel_size = 1.0f;
 	bool        have_origin = false;
@@ -63,6 +65,7 @@ static bool parse_args(int argc, char** argv, Args& a) {
 		std::string k = argv[i];
 		auto next = [&]() -> const char* { return (i + 1 < argc) ? argv[++i] : nullptr; };
 		if (k == "--glb-dir")          { if (auto v = next()) a.glb_dir  = v; else return false; }
+		else if (k == "--glb-list")    { if (auto v = next()) a.glb_list = v; else return false; }
 		else if (k == "--out")         { if (auto v = next()) a.out_path = v; else return false; }
 		else if (k == "--voxel-size")  { if (auto v = next()) a.voxel_size = std::atof(v); else return false; }
 		else if (k == "--origin") {
@@ -80,7 +83,9 @@ static bool parse_args(int argc, char** argv, Args& a) {
 			return false;
 		}
 	}
-	return !a.glb_dir.empty() && !a.out_path.empty();
+	if (a.out_path.empty()) return false;
+	if (a.glb_dir.empty() && a.glb_list.empty()) return false;
+	return true;
 }
 
 int main(int argc, char** argv) {
@@ -94,15 +99,40 @@ int main(int argc, char** argv) {
 	}
 
 	std::vector<fs::path> glbs;
-	for (const auto& e : fs::directory_iterator(a.glb_dir)) {
-		if (e.is_regular_file() && e.path().extension() == ".glb") glbs.push_back(e.path());
+	if (!a.glb_list.empty()) {
+		// Per-location filter: one GLB path per line. Skips Toronto's 5729
+		// tiles when we asked for Wonderland's 199 — without this the bbox
+		// spans both bakes and the interior-fill bitmaps blow past 27 GB.
+		std::ifstream f(a.glb_list);
+		if (!f) {
+			std::fprintf(stderr, "cannot open --glb-list %s\n", a.glb_list.c_str());
+			return 1;
+		}
+		std::string line;
+		while (std::getline(f, line)) {
+			// trim
+			while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+			size_t i = 0;
+			while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+			if (i == line.size() || line[i] == '#') continue;
+			glbs.emplace_back(line.substr(i));
+		}
+		if (glbs.empty()) {
+			std::fprintf(stderr, "--glb-list %s contained no paths\n", a.glb_list.c_str());
+			return 1;
+		}
+		std::printf("baking %zu tiles from %s\n", glbs.size(), a.glb_list.c_str());
+	} else {
+		for (const auto& e : fs::directory_iterator(a.glb_dir)) {
+			if (e.is_regular_file() && e.path().extension() == ".glb") glbs.push_back(e.path());
+		}
+		std::sort(glbs.begin(), glbs.end());
+		if (glbs.empty()) {
+			std::fprintf(stderr, "no .glb files in %s\n", a.glb_dir.c_str());
+			return 1;
+		}
+		std::printf("baking %zu tiles from %s\n", glbs.size(), a.glb_dir.c_str());
 	}
-	std::sort(glbs.begin(), glbs.end());
-	if (glbs.empty()) {
-		std::fprintf(stderr, "no .glb files in %s\n", a.glb_dir.c_str());
-		return 1;
-	}
-	std::printf("baking %zu tiles from %s\n", glbs.size(), a.glb_dir.c_str());
 
 	if (!a.have_origin) {
 		ve::Glb first;

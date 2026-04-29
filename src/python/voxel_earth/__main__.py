@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -139,6 +142,120 @@ def cmd_landuse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _slug_lat_lng(lat: float, lng: float, radius_m: float) -> str:
+    """Stable cache key from coords. Pure-coords (no place name) so the
+    same lat/lng always hits the same shard regardless of how the user
+    specified it; rounded to 4 decimals (~11 m) so trivial geocode jitter
+    doesn't fragment the cache."""
+    return f"lat{lat:.4f}_lng{lng:.4f}_r{int(round(radius_m))}"
+
+
+def cmd_world(args: argparse.Namespace) -> int:
+    """End-to-end: geocode → cache key → bake-if-missing → exec the engine.
+
+    `make world LAT=… LNG=… RADIUS=…` calls this. Toronto / Wonderland
+    Makefile aliases just pre-fill --location.
+    """
+    cache = VoxelCache()
+    api = GoogleApi(cache)
+    try:
+        if args.location:
+            lat, lng = api.geocode(args.location)
+            print(f"[world] resolved {args.location!r} → {lat:.6f},{lng:.6f}")
+        else:
+            lat, lng = args.lat, args.lng
+    except (ApiKeyMissing, GoogleApiError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    slug = _slug_lat_lng(lat, lng, args.radius)
+    region_dir = cache.root / "regions" / slug
+    region_path = region_dir / "blocks.bin"
+    landuse_path = region_dir / "landuse.json"
+
+    bake_bin = Path(args.build_dir) / "solarium-voxel-bake"
+    game_bin = Path(args.build_dir) / "solarium-ui-vk"
+    if not game_bin.exists():
+        print(f"error: {game_bin} not found — run `make build` first",
+              file=sys.stderr)
+        return 1
+
+    # 1. Download GLBs (skipped silently if cache covers).
+    if not region_path.exists() or args.force:
+        height = args.height if args.height else 2.0 * args.radius
+        try:
+            elev = api.elevation(lat, lng) if args.elevation else 0.0
+            tiles = _dl.discover(cache.read_api_key(), lat, lng, args.radius,
+                                 height=height, elevation=elev, cache=cache)
+        except (ApiKeyMissing, GoogleApiError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        if not tiles:
+            print(f"error: discover returned 0 tiles for ({lat},{lng}) "
+                  f"r={args.radius}", file=sys.stderr)
+            return 1
+        print(f"[world] downloading {len(tiles)} tiles "
+              f"(radius={args.radius:g}m height={height:g}m)…")
+        _dl.download_all(tiles, cache, parallel=args.parallel)
+
+        # 2. Bake — pass an explicit GLB list so the bake processes ONLY
+        # this location's tiles. Without this the bake scans the entire
+        # ~/.voxel/google/glb/ directory and the bbox spans every location
+        # ever downloaded (Toronto + Wonderland → 17 km × 20 km, 27 GB
+        # interior-fill bitmaps, OOM).
+        if not bake_bin.exists():
+            print(f"error: {bake_bin} not found — run `make build` first",
+                  file=sys.stderr)
+            return 1
+        region_dir.mkdir(parents=True, exist_ok=True)
+        glb_list_path = region_dir / "glb_list.txt"
+        with glb_list_path.open("w") as f:
+            f.write(f"# {len(tiles)} GLB tiles for ({lat},{lng}) r={args.radius}\n")
+            for t in tiles:
+                f.write(str(cache.glb_path(list(t.obb))) + "\n")
+        bake_cmd = [str(bake_bin),
+                    "--glb-list", str(glb_list_path),
+                    "--out", str(region_path),
+                    "--voxel-size", str(args.voxel_size)]
+        print(f"[world] {' '.join(bake_cmd)}")
+        rc = subprocess.call(bake_cmd)
+        if rc != 0:
+            print(f"error: bake failed with exit {rc}", file=sys.stderr)
+            return rc
+
+    # 3. Landuse (skipped if file already there).
+    if not landuse_path.exists() or args.force:
+        rc = subprocess.call([sys.executable, "-m", "voxel_earth", "landuse",
+                              "--region", str(region_path),
+                              "--lat", str(lat), "--lng", str(lng)])
+        if rc != 0:
+            print(f"warning: landuse step failed (exit {rc}); "
+                  "continuing without zone map", file=sys.stderr)
+
+    # 4. Auto-offset Y so the bake floor sits just above world-y 0. Reading
+    # the VEAR header is the cheapest way to know the bake's vertical extent
+    # without parsing the whole file.
+    h = _read_vear_header(region_path)
+    bake_floor = h["bbox_min"][1]
+    offset_y = -bake_floor + 10  # 10-block headroom under the bake floor
+
+    # 5. Exec the engine. Env vars drive voxel_earth_dynamic.py.
+    template_index = args.template_index
+    env = os.environ.copy()
+    env["SOLARIUM_VOXEL_REGION"] = str(region_path)
+    env["SOLARIUM_VOXEL_OFFSET_Y"] = str(offset_y)
+    env["SOLARIUM_VOXEL_NAME"] = args.name or args.location or slug
+
+    cmd = [str(game_bin.resolve()), "--skip-menu",
+           "--cef-menu", "--template", str(template_index)]
+    print(f"[world] launching: {' '.join(cmd)}")
+    print(f"[world]   region={region_path}")
+    print(f"[world]   offset_y={offset_y}")
+    # cwd matters: the engine resolves artifacts/ relative to cwd; spawn
+    # from the build dir so artifacts are next to the binary.
+    return subprocess.call(cmd, cwd=str(game_bin.parent), env=env)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="voxel_earth")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -177,17 +294,41 @@ def main(argv: list[str] | None = None) -> int:
     p_lu.add_argument("--chunk-size", type=int, default=16,
                       help="chunk side in blocks (must match engine CHUNK_SIZE)")
 
+    p_w = sub.add_parser("world", help="end-to-end: geocode → bake-if-missing "
+                                       "→ exec the engine. `make world` calls this.")
+    p_w.add_argument("--location", help='geocoded place name; alternative to --lat/--lng')
+    p_w.add_argument("--lat", type=float)
+    p_w.add_argument("--lng", type=float)
+    p_w.add_argument("--radius", type=float, default=800.0,
+                     help="horizontal radius in metres (default 800)")
+    p_w.add_argument("--height", type=float, default=0.0,
+                     help="vertical extent in metres (default 2·radius)")
+    p_w.add_argument("--elevation", action="store_true",
+                     help="fetch ground elevation (extra Elevation API call)")
+    p_w.add_argument("--parallel", type=int, default=10)
+    p_w.add_argument("--voxel-size", type=float, default=1.0)
+    p_w.add_argument("--build-dir", default="build-perf",
+                     help="where solarium-ui-vk + solarium-voxel-bake live")
+    p_w.add_argument("--template-index", type=int, default=7,
+                     help="kWorldTemplates index for voxel_earth_dynamic.py")
+    p_w.add_argument("--name", help="display name shown in HUD")
+    p_w.add_argument("--force", action="store_true",
+                     help="re-bake even if a cached region exists")
+
     args = p.parse_args(argv)
     if args.cmd == "download" and not args.location and (args.lat is None or args.lng is None):
         p.error("download: pass either --location or both --lat and --lng")
     if args.cmd == "landuse" and not args.location and (args.lat is None or args.lng is None):
         p.error("landuse: pass either --location or both --lat and --lng")
+    if args.cmd == "world" and not args.location and (args.lat is None or args.lng is None):
+        p.error("world: pass either --location or both --lat and --lng")
     return {
         "init":     cmd_init,
         "set-key":  cmd_set_key,
         "geocode":  cmd_geocode,
         "download": cmd_download,
         "landuse":  cmd_landuse,
+        "world":    cmd_world,
     }[args.cmd](args)
 
 
