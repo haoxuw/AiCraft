@@ -45,6 +45,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ve = solarium::voxel_earth;
@@ -147,15 +148,45 @@ int main(int argc, char** argv) {
 	}
 
 	if (!a.have_origin) {
-		ve::Glb first;
-		std::string err;
-		if (!ve::load_glb(glbs.front().string(), first, &err)) {
-			std::fprintf(stderr, "failed to read first tile for origin: %s\n", err.c_str());
-			return 1;
+		// If a previous bake already populated this regional tile dir,
+		// inherit its ECEF origin. That keeps voxels from successive bakes
+		// in the same regional frame so their tiles overlap correctly and
+		// the writer can union into existing shards. Without this, every
+		// bake picks its own first-GLB origin → cross-bake merge gives
+		// stuttered voxels at tile-boundary collisions.
+		bool inherited = false;
+		if (a.have_region && !a.tile_out.empty()) {
+			const std::string region_dir =
+				a.tile_out + "/r" + std::to_string(a.region_lat) +
+				"_" + std::to_string(a.region_lng);
+			std::error_code ec;
+			for (auto& entry :
+			     fs::directory_iterator(region_dir, ec)) {
+				if (!entry.is_regular_file()) continue;
+				if (entry.path().extension() != ".vtil") continue;
+				ve::TileShard sh;
+				std::string serr;
+				if (ve::read_shard(entry.path().string(), sh, &serr)) {
+					a.origin = sh.origin_ecef;
+					inherited = true;
+					std::printf("origin (inherited from %s): %.3f, %.3f, %.3f\n",
+					            entry.path().filename().string().c_str(),
+					            a.origin[0], a.origin[1], a.origin[2]);
+				}
+				break;  // any shard works — they all share the regional origin
+			}
 		}
-		a.origin = ve::origin_from_root(first);
-		std::printf("origin (from first tile): %.3f, %.3f, %.3f\n",
-		            a.origin[0], a.origin[1], a.origin[2]);
+		if (!inherited) {
+			ve::Glb first;
+			std::string err;
+			if (!ve::load_glb(glbs.front().string(), first, &err)) {
+				std::fprintf(stderr, "failed to read first tile for origin: %s\n", err.c_str());
+				return 1;
+			}
+			a.origin = ve::origin_from_root(first);
+			std::printf("origin (from first tile): %.3f, %.3f, %.3f\n",
+			            a.origin[0], a.origin[1], a.origin[2]);
+		}
 	}
 
 	// Combined voxels keyed by (x, y, z) — first writer wins per cell.
@@ -411,11 +442,44 @@ int main(int argc, char** argv) {
 			}
 			sh.voxels.push_back(v);
 		}
-		size_t written = 0;
+		// Cross-bake merge: if a shard for this tile already exists on
+		// disk, union the existing voxels with the new ones (new wins on
+		// (x, y, z) collision). The shared regional ECEF origin (above)
+		// guarantees the coord frames match, so the union is a plain
+		// dedupe on the voxel key.
+		size_t written = 0, merged_existing = 0;
 		for (auto& [_, sh] : tiles) {
 			const std::string p = ve::shard_path(a.tile_out,
 			                                     sh.region_lat, sh.region_lng,
 			                                     sh.tile_x, sh.tile_z);
+			ve::TileShard prev;
+			std::string rerr;
+			if (ve::read_shard(p, prev, &rerr)) {
+				// Index this bake's voxels for O(1) collision check.
+				std::unordered_set<uint64_t> mineKeys;
+				mineKeys.reserve(sh.voxels.size());
+				for (const auto& v : sh.voxels) mineKeys.insert(pack(v.x, v.y, v.z));
+				size_t kept = 0;
+				for (const auto& v : prev.voxels) {
+					if (mineKeys.count(pack(v.x, v.y, v.z))) continue;  // new wins
+					sh.voxels.push_back(v);
+					if (v.x < sh.bbox_min[0]) sh.bbox_min[0] = v.x;
+					if (v.y < sh.bbox_min[1]) sh.bbox_min[1] = v.y;
+					if (v.z < sh.bbox_min[2]) sh.bbox_min[2] = v.z;
+					if (v.x > sh.bbox_max[0]) sh.bbox_max[0] = v.x;
+					if (v.y > sh.bbox_max[1]) sh.bbox_max[1] = v.y;
+					if (v.z > sh.bbox_max[2]) sh.bbox_max[2] = v.z;
+					++kept;
+				}
+				// Carry over any zone bytes the prior bake recorded that
+				// this bake didn't (this bake leaves zones=0; landuse pass
+				// will fill them in a later step).
+				for (size_t i = 0; i < ve::TILE_COLUMNS; ++i)
+					if (sh.zones[i] == 0 && prev.zones[i] != 0)
+						sh.zones[i] = prev.zones[i];
+				++merged_existing;
+				(void)kept;
+			}
 			std::string serr;
 			if (!ve::write_shard(p, sh, &serr)) {
 				std::fprintf(stderr, "shard write failed: %s\n", serr.c_str());
@@ -425,8 +489,8 @@ int main(int argc, char** argv) {
 		}
 		const auto t_sh1 = std::chrono::steady_clock::now();
 		const double t_sh = std::chrono::duration<double>(t_sh1 - t_sh0).count();
-		std::printf("tile shards: %zu files in %s (%.2fs)\n",
-		            written, a.tile_out.c_str(), t_sh);
+		std::printf("tile shards: %zu files in %s (%zu merged with existing, %.2fs)\n",
+		            written, a.tile_out.c_str(), merged_existing, t_sh);
 	}
 
 	std::printf("\n");
