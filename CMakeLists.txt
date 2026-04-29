@@ -128,6 +128,8 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/server/voxel_earth/osm_zone_provider.cpp
 	src/platform/server/voxel_earth/tile_shard.h
 	src/platform/server/voxel_earth/tile_shard.cpp
+	src/platform/server/voxel_earth/tile_cache.h
+	src/platform/server/voxel_earth/tile_cache.cpp
 )
 
 set(PLATFORM_CLIENT_SOURCES

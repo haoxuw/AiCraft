@@ -14,6 +14,7 @@
 #include "server/voxel_earth/osm_zone_provider.h"
 #include "server/voxel_earth/palette.h"
 #include "server/voxel_earth/region.h"
+#include "server/voxel_earth/tile_cache.h"
 #include "server/voxel_earth/voxel_palette.h"
 #include <string>
 #include <cmath>
@@ -96,6 +97,21 @@ public:
 		m_tp.detailAmplitude    = m_py.detailAmplitude;
 		m_tp.microScale         = m_py.microScale;
 		m_tp.microAmplitude     = m_py.microAmplitude;
+
+		// Tile-shard path (preferred): lazy-load .vtil shards on chunk-fill
+		// miss. Coexists with the legacy VoxelRegion path; if both are
+		// configured, the tile cache wins for chunk lookups but the region
+		// is still loaded for spawn-anchor and palette-building until the
+		// shard format carries those bits natively.
+		if (m_py.terrainType == "voxel_earth" && !m_py.voxelEarthTileDir.empty()) {
+			m_tileCache = std::make_unique<voxel_earth::TileCache>(
+				m_py.voxelEarthTileDir,
+				m_py.voxelEarthRegionLat,
+				m_py.voxelEarthRegionLng);
+			printf("[VoxelEarth] tile cache root=%s region=(%d,%d)\n",
+			       m_py.voxelEarthTileDir.c_str(),
+			       m_py.voxelEarthRegionLat, m_py.voxelEarthRegionLng);
+		}
 
 		// Eager-load voxel_earth region (one read per world). The same template
 		// instance is reused for every chunk request, so this stays cached.
@@ -703,6 +719,7 @@ private:
 
 	// voxel_earth state — null when terrainType != "voxel_earth".
 	std::unique_ptr<voxel_earth::VoxelRegion> m_region;
+	mutable std::unique_ptr<voxel_earth::TileCache> m_tileCache; // shard reader
 	std::unique_ptr<ZoneProvider>              m_zones;        // null → NullZoneProvider
 	mutable voxel_earth::ResolvedPalette       m_palette;
 	mutable bool                               m_paletteResolved = false;
@@ -716,7 +733,12 @@ private:
 		const int ox = cpos.x * CHUNK_SIZE;
 		const int oy = cpos.y * CHUNK_SIZE;
 		const int oz = cpos.z * CHUNK_SIZE;
-		const int floor_y = m_py.voxelEarthOffsetY + m_region->bbox_min[1];
+		// Use the region's known floor when available; with the tile-cache
+		// path we don't preload the whole region so we just trust the
+		// engine-wide chunk-default (cy<0 → DIRT) without a fast-skip.
+		const int floor_y = m_region
+			? m_py.voxelEarthOffsetY + m_region->bbox_min[1]
+			: m_py.voxelEarthOffsetY;
 
 		// Whole chunk below the bake floor → emit a Lite chunk that matches
 		// the engine default for this cy (DIRT below world-y 0 per
@@ -730,35 +752,58 @@ private:
 			return;
 		}
 
+		// Helper: write one regional-frame voxel into this chunk.
+		auto applyVoxel = [&](const voxel_earth::VoxelRecord& v) {
+			const int wx = v.x + m_py.voxelEarthOffsetX;
+			const int wy = v.y + m_py.voxelEarthOffsetY;
+			const int wz = v.z + m_py.voxelEarthOffsetZ;
+			if (wx < ox || wx >= ox + CHUNK_SIZE) return;
+			if (wy < oy || wy >= oy + CHUNK_SIZE) return;
+			if (wz < oz || wz >= oz + CHUNK_SIZE) return;
+			const int lx = wx - ox, ly = wy - oy, lz = wz - oz;
+			const int hAboveGround = m_region
+				? (v.y - m_region->bbox_min[1])
+				: (v.y);   // tile-only: rely on alpha sentinels for fill semantics
+			chunk.set(lx, ly, lz,
+			          voxel_earth::block_for_voxel(m_palette, v.r, v.g, v.b, v.a,
+			                                       hAboveGround));
+			if (m_voxelPalette.built &&
+			    v.a != voxel_earth::kAlphaFillStone &&
+			    v.a != voxel_earth::kAlphaFillDirt) {
+				chunk.setAppearance(lx, ly, lz,
+				                    m_voxelPalette.nearest(v.r, v.g, v.b));
+			}
+		};
+
+		// Tile-cache path: iterate only the voxels that fall inside this
+		// chunk's regional-frame bbox. Loads the parent shard on first
+		// touch and caches it.
+		if (m_tileCache) {
+			const int rxMin = ox - m_py.voxelEarthOffsetX;
+			const int ryMin = oy - m_py.voxelEarthOffsetY;
+			const int rzMin = oz - m_py.voxelEarthOffsetZ;
+			const int rxMax = rxMin + CHUNK_SIZE - 1;
+			const int ryMax = ryMin + CHUNK_SIZE - 1;
+			const int rzMax = rzMin + CHUNK_SIZE - 1;
+			m_tileCache->forEachInBox(rxMin, ryMin, rzMin, rxMax, ryMax, rzMax,
+			                          applyVoxel);
+			return;
+		}
+
+		// Legacy VoxelRegion path: per-cell hash lookup.
 		for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
 			for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
 				for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
 					const int wx = ox + lx;
 					const int wy = oy + ly;
 					const int wz = oz + lz;
-					// Cells below the bake floor in a partially-below chunk
-					// stay AIR-Lite locally; client gets DIRT from the default
-					// fallback for the chunk-y. (Mostly hits the boundary
-					// chunk straddling floor_y.)
 					if (wy < floor_y) continue;
 					const int rx = wx - m_py.voxelEarthOffsetX;
 					const int ry = wy - m_py.voxelEarthOffsetY;
 					const int rz = wz - m_py.voxelEarthOffsetZ;
 					const auto* v = m_region->lookup(rx, ry, rz);
-					if (!v) continue;  // air
-					const int hAboveGround = ry - m_region->bbox_min[1];
-					chunk.set(lx, ly, lz,
-					          voxel_earth::block_for_voxel(m_palette, v->r, v->g, v->b, v->a,
-					                                       hAboveGround));
-					// Real GLB voxels (a==255) carry the source RGB into a tint;
-					// fill voxels (a sentinels) leave appearance=0 so the block
-					// renders with its natural colour.
-					if (m_voxelPalette.built &&
-					    v->a != voxel_earth::kAlphaFillStone &&
-					    v->a != voxel_earth::kAlphaFillDirt) {
-						chunk.setAppearance(lx, ly, lz,
-						                    m_voxelPalette.nearest(v->r, v->g, v->b));
-					}
+					if (!v) continue;
+					applyVoxel(*v);
 				}
 			}
 		}

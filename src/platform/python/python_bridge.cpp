@@ -961,9 +961,15 @@ bool loadWorldConfig(const std::string& filePath, WorldPyConfig& out) {
 			py::dict t = w["terrain"].cast<py::dict>();
 			out.terrainType      = getStr(t, "type",               out.terrainType);
 			out.surfaceY         = getFloat(t, "surface_y",         out.surfaceY);
-			// voxel_earth terrain: optional inline region_file + offsets.
+			// voxel_earth terrain: either monolithic VEAR file (legacy
+			// region_file) or a directory of independent .vtil shards
+			// (tile_dir + region_lat/region_lng — preferred).
 			if (t.contains("region_file"))
 				out.voxelEarthRegion = t["region_file"].cast<std::string>();
+			if (t.contains("tile_dir"))
+				out.voxelEarthTileDir = t["tile_dir"].cast<std::string>();
+			out.voxelEarthRegionLat = getInt(t, "region_lat", out.voxelEarthRegionLat);
+			out.voxelEarthRegionLng = getInt(t, "region_lng", out.voxelEarthRegionLng);
 			out.voxelEarthOffsetX = getInt(t, "offset_x", out.voxelEarthOffsetX);
 			out.voxelEarthOffsetY = getInt(t, "offset_y", out.voxelEarthOffsetY);
 			out.voxelEarthOffsetZ = getInt(t, "offset_z", out.voxelEarthOffsetZ);

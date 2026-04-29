@@ -27,6 +27,13 @@ struct WorldPyConfig {
 	// voxel_earth only: absolute path to a baked VEAR region file (see
 	// solarium-voxel-bake). Coords inside the file are voxel cells = 1 block.
 	std::string voxelEarthRegion;
+	// Alternative to voxelEarthRegion: directory of independent .vtil
+	// shards (one per 16×16-chunk tile). When set, the engine streams
+	// chunks from the shards on demand instead of mmap-ing the monolithic
+	// blocks.bin. region_lat/region_lng pin the regional ENU frame.
+	std::string voxelEarthTileDir;
+	int  voxelEarthRegionLat = 0;
+	int  voxelEarthRegionLng = 0;
 	// World-block offset added when looking up voxels. lets you shift the
 	// region's (0,0,0) anywhere in Solarium world space.
 	int voxelEarthOffsetX        = 0;
