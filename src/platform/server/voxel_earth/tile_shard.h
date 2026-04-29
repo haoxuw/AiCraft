@@ -59,8 +59,14 @@ namespace solarium::voxel_earth {
 constexpr int TILE_CHUNK_SIDE = 16;
 constexpr int TILE_BLOCK_SIDE = TILE_CHUNK_SIDE * CHUNK_SIZE;
 constexpr int TILE_COLUMNS    = TILE_CHUNK_SIDE * TILE_CHUNK_SIDE;
-constexpr uint32_t TILE_SHARD_VERSION = 1;
-constexpr uint32_t TILE_SHARD_HEADER_BYTES = 320;
+// v2 added column_top_y[TILE_COLUMNS] so the engine can synthesise interior
+// cells (Stone for the top 8, Dirt below) without the bake having to emit
+// explicit fill voxels. v1 readers see column_top_y as zeros and fall back
+// to no-fill behaviour (hollow buildings).
+constexpr uint32_t TILE_SHARD_VERSION = 2;
+// Sentinel for "no real voxel in this column" — chunk-fill treats the
+// column as fully open (no interior synthesis).
+constexpr int32_t  COLUMN_TOP_Y_NONE  = INT32_MIN;
 
 // Map a (block_x, block_z) world coord in the regional frame to its tile coord.
 inline int32_t tile_x_of(int32_t bx) {
@@ -97,8 +103,17 @@ struct TileShard {
 	std::array<double, 3>  origin_ecef { 0, 0, 0 };
 	std::array<int32_t, 3> bbox_min { 0, 0, 0 };
 	std::array<int32_t, 3> bbox_max { 0, 0, 0 };
-	std::array<uint8_t, TILE_COLUMNS> zones {};   // per-column zone byte
+	std::array<uint8_t, TILE_COLUMNS> zones {};                // per-column zone byte
+	// v2: highest voxel y per column in regional-frame coords. Engine
+	// synthesises interior fill (Stone top 8, Dirt below) for cells at or
+	// under top_y that have no explicit voxel. COLUMN_TOP_Y_NONE = no
+	// voxels in this column — leave it open.
+	std::array<int32_t, TILE_COLUMNS> column_top_y { };
 	std::vector<VoxelRecord>          voxels;
+
+	TileShard() {
+		for (auto& y : column_top_y) y = COLUMN_TOP_Y_NONE;
+	}
 };
 
 // Construct the canonical shard path under `root`. Layout:

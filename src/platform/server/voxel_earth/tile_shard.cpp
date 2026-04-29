@@ -24,18 +24,16 @@ struct OnDiskHeader {
 	int32_t  bbox_min[3];
 	int32_t  bbox_max[3];
 	uint8_t  zones[TILE_COLUMNS];
-	// Pad with zeros to TILE_SHARD_HEADER_BYTES so future fields can be
-	// added without breaking on-disk compatibility for v1.
-	// computed: 4+4+4+4+4+4+4+4+24+12+12+256 = 340. Hmm let me compute…
-	//   magic(4) + version(4) + 4*4(region_lat,lng,tile_x,tile_z) +
-	//   uint32(voxel_size_mm) + uint32(voxel_count) + 24(origin double[3]) +
-	//   12(bbox_min) + 12(bbox_max) + 256(zones) = 4+4+16+4+4+24+12+12+256 = 336
-	// We'll pad up to 384 for round numbers.
-	uint8_t  reserved[384 - (4+4+16+4+4+24+12+12+TILE_COLUMNS)];
+	int32_t  column_top_y[TILE_COLUMNS];   // v2: synth-fill metadata
+	// Field byte count:
+	//   4(magic) + 4(version) + 16(region+tile coords) + 4+4(sizes) +
+	//   24(origin) + 12+12(bbox) + 256(zones) + 1024(column_top_y) = 1360
+	// Pad to a round 1408 so we have 48 bytes of v3 headroom.
+	uint8_t  reserved[1408 - (4+4+16+4+4+24+12+12+TILE_COLUMNS+TILE_COLUMNS*4)];
 };
 #pragma pack(pop)
 
-static_assert(sizeof(OnDiskHeader) == 384, "tile shard header size drift");
+static_assert(sizeof(OnDiskHeader) == 1408, "tile shard header size drift");
 static_assert(sizeof(VoxelRecord) == 16, "VoxelRecord layout drifted");
 
 }  // namespace
@@ -73,6 +71,7 @@ bool write_shard(const std::string& path, const TileShard& shard,
 	for (int i = 0; i < 3; ++i) h.bbox_min[i] = shard.bbox_min[i];
 	for (int i = 0; i < 3; ++i) h.bbox_max[i] = shard.bbox_max[i];
 	std::memcpy(h.zones, shard.zones.data(), TILE_COLUMNS);
+	for (int i = 0; i < TILE_COLUMNS; ++i) h.column_top_y[i] = shard.column_top_y[i];
 	f.write(reinterpret_cast<const char*>(&h), sizeof(h));
 	if (!shard.voxels.empty()) {
 		f.write(reinterpret_cast<const char*>(shard.voxels.data()),
@@ -97,11 +96,29 @@ bool read_shard(const std::string& path, TileShard& shard, std::string* error) {
 		if (error) *error = "cannot open " + path + " for read";
 		return false;
 	}
+	// v1 shards have a smaller header (384 bytes, no column_top_y). Peek
+	// the magic + version first and only read the fields that exist.
+	char m[4];
+	uint32_t version;
+	f.read(m, 4);
+	f.read(reinterpret_cast<char*>(&version), 4);
+	if (!f || std::memcmp(m, "VTIL", 4) != 0 ||
+	    (version != 1 && version != TILE_SHARD_VERSION)) {
+		if (error) *error = "not a VTIL v1/v2 file: " + path;
+		return false;
+	}
 	OnDiskHeader h{};
-	f.read(reinterpret_cast<char*>(&h), sizeof(h));
-	if (!f || std::memcmp(h.magic, "VTIL", 4) != 0 ||
-	    h.version != TILE_SHARD_VERSION) {
-		if (error) *error = "not a VTIL v1 file: " + path;
+	std::memcpy(h.magic, m, 4);
+	h.version = version;
+	if (version == TILE_SHARD_VERSION) {
+		f.read(reinterpret_cast<char*>(&h) + 8, sizeof(h) - 8);
+	} else {
+		// v1: header was 384 bytes total → fields[8..384) are 376 bytes
+		// of legacy layout. column_top_y stays at COLUMN_TOP_Y_NONE.
+		f.read(reinterpret_cast<char*>(&h) + 8, 384 - 8);
+	}
+	if (!f) {
+		if (error) *error = "truncated VTIL header: " + path;
 		return false;
 	}
 	shard.region_lat    = h.region_lat;
@@ -113,6 +130,10 @@ bool read_shard(const std::string& path, TileShard& shard, std::string* error) {
 	shard.bbox_min      = { h.bbox_min[0], h.bbox_min[1], h.bbox_min[2] };
 	shard.bbox_max      = { h.bbox_max[0], h.bbox_max[1], h.bbox_max[2] };
 	std::memcpy(shard.zones.data(), h.zones, TILE_COLUMNS);
+	if (version == TILE_SHARD_VERSION) {
+		for (int i = 0; i < TILE_COLUMNS; ++i)
+			shard.column_top_y[i] = h.column_top_y[i];
+	}
 	shard.voxels.resize(h.voxel_count);
 	if (h.voxel_count > 0) {
 		f.read(reinterpret_cast<char*>(shard.voxels.data()),

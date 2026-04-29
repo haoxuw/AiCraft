@@ -27,6 +27,7 @@
 // get buried.
 
 #include "server/voxel_earth/glb_loader.h"
+#include "server/voxel_earth/palette.h"     // kAlphaFillStone / kAlphaFillDirt
 #include "server/voxel_earth/region.h"
 #include "server/voxel_earth/rotate.h"
 #include "server/voxel_earth/texture.h"
@@ -419,11 +420,18 @@ int main(int argc, char** argv) {
 		auto packTile = [](int32_t tx, int32_t tz) -> uint64_t {
 			return ((uint64_t)(uint32_t)tx) | ((uint64_t)(uint32_t)tz << 32);
 		};
+		// Skip interior-fill voxels in the shard pass — the engine
+		// synthesises them on chunk-fill from the column_top_y metadata
+		// we record below. Real GLB-derived voxels (a == 255) are the
+		// only ones that need to ride along on disk + on the wire.
 		for (const auto& v : region.voxels) {
+			const bool is_fill = (v.a == ve::kAlphaFillStone) ||
+			                     (v.a == ve::kAlphaFillDirt);
 			const int32_t tx = ve::tile_x_of(v.x);
 			const int32_t tz = ve::tile_z_of(v.z);
 			auto& sh = tiles[packTile(tx, tz)];
-			if (sh.voxels.empty()) {
+			if (sh.voxels.empty() && sh.bbox_min == sh.bbox_max
+			    && sh.bbox_min[0] == 0 && sh.bbox_min[1] == 0 && sh.bbox_min[2] == 0) {
 				sh.region_lat    = a.region_lat;
 				sh.region_lng    = a.region_lng;
 				sh.tile_x        = tx;
@@ -440,7 +448,19 @@ int main(int argc, char** argv) {
 				if (v.y > sh.bbox_max[1]) sh.bbox_max[1] = v.y;
 				if (v.z > sh.bbox_max[2]) sh.bbox_max[2] = v.z;
 			}
-			sh.voxels.push_back(v);
+			// Update per-column top_y for synth-fill (covers BOTH real
+			// voxels and the BFS-emitted fill — fill is dropped from the
+			// shard's voxel array, but its y still defines the column's
+			// surface for engine-side reconstruction).
+			const int32_t cxl = ve::chunk_local_x(v.x);
+			const int32_t czl = ve::chunk_local_z(v.z);
+			const size_t  ci  = (size_t)czl * ve::TILE_CHUNK_SIDE + (size_t)cxl;
+			if (ci < ve::TILE_COLUMNS &&
+			    (sh.column_top_y[ci] == ve::COLUMN_TOP_Y_NONE ||
+			     v.y > sh.column_top_y[ci])) {
+				sh.column_top_y[ci] = v.y;
+			}
+			if (!is_fill) sh.voxels.push_back(v);
 		}
 		// Cross-bake merge: if a shard for this tile already exists on
 		// disk, union the existing voxels with the new ones (new wins on
@@ -477,6 +497,15 @@ int main(int argc, char** argv) {
 				for (size_t i = 0; i < ve::TILE_COLUMNS; ++i)
 					if (sh.zones[i] == 0 && prev.zones[i] != 0)
 						sh.zones[i] = prev.zones[i];
+				// Take the max of column_top_y so a taller bake's surface
+				// wins over a shorter overlapping bake. Either side may be
+				// COLUMN_TOP_Y_NONE for columns it didn't touch.
+				for (size_t i = 0; i < ve::TILE_COLUMNS; ++i) {
+					if (prev.column_top_y[i] == ve::COLUMN_TOP_Y_NONE) continue;
+					if (sh.column_top_y[i] == ve::COLUMN_TOP_Y_NONE ||
+					    prev.column_top_y[i] > sh.column_top_y[i])
+						sh.column_top_y[i] = prev.column_top_y[i];
+				}
 				++merged_existing;
 				(void)kept;
 			}
