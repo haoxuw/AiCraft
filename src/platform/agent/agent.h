@@ -695,7 +695,7 @@ private:
 			m_navProx = std::make_unique<ServerEntityProximityOracle>(
 				server, m_eid);
 			m_navigator = std::make_unique<Navigator>(
-				*m_navWorldView, m_navDoors.get());
+				m_eid, *m_navWorldView, m_navDoors.get());
 			m_navigator->setEntityProximityOracle(m_navProx.get());
 			m_navLastGoal    = glm::ivec3(INT_MIN);
 			m_navPrevStatus  = Navigator::Status::Idle;
@@ -746,7 +746,10 @@ private:
 			m_execLoggedFirstWaypoint = false;
 		}
 
-		Navigator::Step step = m_navigator->tick(e.position);
+		// driveTick = predicate/pop + status update + Move/Interact/Stop
+		// emission, all via the unified PathExecutor pipeline. Same flow
+		// RTS units use; the smoothing+clamp lives in one place.
+		Navigator::Step step = m_navigator->driveTick(e, server);
 		Navigator::Status st = m_navigator->status();
 
 		// Single source of truth for F3 viz: mirror what the PathExecutor is
@@ -839,44 +842,10 @@ private:
 			m_navLastWalkLog = {};
 		}
 
-		if (st == Navigator::Status::Failed) {
-			sendStopMove(e, server, "nav-failed");
-			return NavTickResult::Failed;
-		}
-		if (st == Navigator::Status::Arrived) {
-			sendStopMove(e, server, "nav-arrived");
-			return NavTickResult::Arrived;
-		}
-
-		if (step.kind == Navigator::Step::Move) {
-			glm::vec3 delta = step.moveTarget - e.position;
-			delta.y = 0;
-			float dist = glm::length(delta);
-			if (dist < 0.01f) {
-				sendStopMove(e, server, "nav-near-waypoint");
-				return NavTickResult::Walking;
-			}
-			glm::vec3 desired = delta / dist;
-			// Cap per-tick rotation so pops don't snap the heading.
-			glm::vec3 dir = rotateTowardXZ(m_lastMoveDir, desired,
-			                               PathExecutor::kMaxTurnPerTick60);
-			m_lastMoveDir = dir;
-			sendMove(e, dir * e.def().walk_speed, server, "nav-waypoint");
-		} else if (step.kind == Navigator::Step::Interact) {
-			// One Interact per connected door slab — server fans toggle
-			// vertically through the pillar; we cover the horizontal cluster.
-			for (auto pos : step.interactPos) {
-				ActionProposal p;
-				p.type          = ActionProposal::Interact;
-				p.actorId       = m_eid;
-				p.blockPos      = pos;
-				p.appearanceIdx = -1;  // legacy toggle (door)
-				server.sendAction(p);
-			}
-			sendStopMove(e, server, "nav-interact");
-		} else {
-			sendStopMove(e, server, "nav-unknown");
-		}
+		// Emission already happened inside driveTick above; just translate
+		// the Navigator status into the PlanStep outcome the caller wants.
+		if (st == Navigator::Status::Failed)  return NavTickResult::Failed;
+		if (st == Navigator::Status::Arrived) return NavTickResult::Arrived;
 		return NavTickResult::Walking;
 	}
 
@@ -1072,7 +1041,6 @@ private:
 
 	void sendStopMove(Entity& e, ServerInterface& server, const char* source) {
 		sendMove(e, {0, 0, 0}, server, source);
-		m_lastMoveDir = glm::vec3(0);   // next nav leg snaps to new heading
 	}
 
 	void rebuildViz() {
@@ -1105,9 +1073,9 @@ private:
 
 	int m_prevHp = 0;
 
-	// Smoothed XZ heading last sent in a nav-waypoint Move — fed back into
-	// rotateTowardXZ next tick so desiredVel stays C¹-continuous on pops.
-	glm::vec3 m_lastMoveDir{0, 0, 0};
+	// (Removed: m_lastMoveDir. The smoothed-heading state now lives on the
+	// per-Unit lastMoveDir inside the Navigator's PathExecutor — driveTick
+	// owns smoothing through the unified pipeline.)
 
 	// applySeparation LPF state (per-eid). Zero on first call, updated each
 	// time. Cleared inside applySeparation when self goes idle so a new
