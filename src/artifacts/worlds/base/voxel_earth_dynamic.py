@@ -1,24 +1,26 @@
 """Voxel Earth — dynamic location.
 
 Same engine pipeline as toronto.py, but every location-specific knob
-(region file path, world-block offsets, display name) comes from
-environment variables. This is what `make world LAT=… LNG=… RADIUS=…`
+(region file path / tile dir, world-block offsets, display name) comes
+from environment variables. This is what `make world LAT=… LNG=… RADIUS=…`
 invokes — `python -m voxel_earth world` orchestrates the bake/landuse
 pipeline, sets these env vars, then exec's the engine. Toronto and
 Wonderland are Makefile aliases that just pre-fill the location.
 
-Env vars (all optional except SOLARIUM_VOXEL_REGION):
-  SOLARIUM_VOXEL_REGION    — absolute path to blocks.bin (REQUIRED)
-  SOLARIUM_VOXEL_OFFSET_X  — world-block offset X (default 0)
-  SOLARIUM_VOXEL_OFFSET_Y  — world-block offset Y (default 60)
-  SOLARIUM_VOXEL_OFFSET_Z  — world-block offset Z (default 0)
-  SOLARIUM_VOXEL_NAME      — display name shown in HUD/picker
+Env vars (set at least one of REGION or TILE_DIR):
+  SOLARIUM_VOXEL_REGION       — absolute path to legacy blocks.bin
+  SOLARIUM_VOXEL_TILE_DIR     — root dir for shared .vtil shards
+  SOLARIUM_VOXEL_REGION_LAT   — regional anchor latitude (floor of bake lat)
+  SOLARIUM_VOXEL_REGION_LNG   — regional anchor longitude (floor of bake lng)
+  SOLARIUM_VOXEL_OFFSET_X/Y/Z — world-block offsets (default 0/60/0)
+  SOLARIUM_VOXEL_NAME         — display name shown in HUD/picker
 """
 
 import os
 
-_region = os.environ.get("SOLARIUM_VOXEL_REGION", "")
-_name   = os.environ.get("SOLARIUM_VOXEL_NAME", "Voxel Earth (dynamic)")
+_region   = os.environ.get("SOLARIUM_VOXEL_REGION", "")
+_tile_dir = os.environ.get("SOLARIUM_VOXEL_TILE_DIR", "")
+_name     = os.environ.get("SOLARIUM_VOXEL_NAME", "Voxel Earth (dynamic)")
 
 world = {
     "id":          "voxel_earth",
@@ -33,6 +35,9 @@ world = {
     "terrain": {
         "type":        "voxel_earth",
         "region_file": _region,
+        "tile_dir":    _tile_dir,
+        "region_lat":  int(os.environ.get("SOLARIUM_VOXEL_REGION_LAT", "0")),
+        "region_lng":  int(os.environ.get("SOLARIUM_VOXEL_REGION_LNG", "0")),
         "offset_x":    int(os.environ.get("SOLARIUM_VOXEL_OFFSET_X", "0")),
         "offset_y":    int(os.environ.get("SOLARIUM_VOXEL_OFFSET_Y", "60")),
         "offset_z":    int(os.environ.get("SOLARIUM_VOXEL_OFFSET_Z", "0")),

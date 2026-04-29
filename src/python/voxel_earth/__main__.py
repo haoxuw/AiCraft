@@ -254,10 +254,16 @@ def cmd_world(args: argparse.Namespace) -> int:
 
     # 5. Exec the engine. Env vars drive voxel_earth_dynamic.py.
     template_index = args.template_index
+    import math
+    rlat = int(math.floor(lat))
+    rlng = int(math.floor(lng))
     env = os.environ.copy()
-    env["SOLARIUM_VOXEL_REGION"] = str(region_path)
-    env["SOLARIUM_VOXEL_OFFSET_Y"] = str(offset_y)
-    env["SOLARIUM_VOXEL_NAME"] = args.name or args.location or slug
+    env["SOLARIUM_VOXEL_REGION"]     = str(region_path)
+    env["SOLARIUM_VOXEL_TILE_DIR"]   = str(cache.root / "tiles")
+    env["SOLARIUM_VOXEL_REGION_LAT"] = str(rlat)
+    env["SOLARIUM_VOXEL_REGION_LNG"] = str(rlng)
+    env["SOLARIUM_VOXEL_OFFSET_Y"]   = str(offset_y)
+    env["SOLARIUM_VOXEL_NAME"]       = args.name or args.location or slug
 
     cmd = [str(game_bin.resolve()), "--skip-menu",
            "--cef-menu", "--template", str(template_index)]
