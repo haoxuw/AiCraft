@@ -131,6 +131,7 @@ bool Game::init(rhi::IRhi* rhi, GLFWwindow* window) {
 	}
 
 	m_artifactRegistry.loadAll("artifacts");
+	m_artifactRegistry.loadForks(solarium::ArtifactRegistry::defaultForksRoot());
 
 	// Load Python-defined BoxModels (one .py per creature/item under
 	// artifacts/models/) — sword has 14 parts, pig has legs, beaver has
@@ -917,7 +918,13 @@ void Game::runOneFrame(float dt, float wallTime) {
 		// and lazy-spawns mascots into the menu plaza.
 		m_plazaAnim.tick(m_loading.aggregateDisplay(), m_wallTime,
 		                 m_menuPlaza.get(), m_behaviorStore.get());
-		if (m_loading.ready() && m_loading.pollDismiss(m_window)) {
+		// Headless / log-only: window is hidden so pollDismiss can't see any
+		// keypress. Auto-advance the moment loading is ready. Without this,
+		// `--log-only` runs sit forever in the loading screen with the
+		// AgentClient executor disabled — every NPC just receives plans and
+		// never executes them.
+		bool autoDismiss = m_logOnly && m_loading.ready();
+		if (m_loading.ready() && (autoDismiss || m_loading.pollDismiss(m_window))) {
 			m_connecting = false;
 			enterPlaying();
 		}

@@ -5,6 +5,7 @@
 
 #include "client/rhi/rhi.h"
 #include "client/rhi/rhi_vk.h"
+#include "client/ui/components.h"
 #include "client/game_logger.h"
 #include "client/local_world.h"
 #include "client/network_server.h"
@@ -32,8 +33,10 @@
 #include <cstring>
 #include <dirent.h>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -46,6 +49,10 @@ struct Shell {
 	solarium::rhi::IRhi*       rhi = nullptr;
 	solarium::vk::Game*        game = nullptr;
 	solarium::vk::CefHost*     cef = nullptr;  // optional; null when --cef-menu absent
+	// LMB=0x1, MMB=0x2, RMB=0x4 — passed in mouse-move modifiers so CEF
+	// recognises a click-and-drag as a drag (otherwise the thumb of the
+	// scrollbar can be clicked but never moved).
+	uint32_t                   mouseButtonsHeld = 0;
 };
 
 void resizeCb(GLFWwindow* w, int width, int height) {
@@ -55,7 +62,18 @@ void resizeCb(GLFWwindow* w, int width, int height) {
 
 void scrollCb(GLFWwindow* w, double xoff, double yoff) {
 	auto* s = (Shell*)glfwGetWindowUserPointer(w);
-	if (s && s->game) s->game->onScroll(xoff, yoff);
+	if (!s) return;
+	// Route the wheel to the CEF overlay when it's active so the handbook
+	// stat panel scrolls; otherwise fall through to the game (camera zoom).
+	if (s->cef && s->game && s->game->cefMenuActive()) {
+		double x, y; glfwGetCursorPos(w, &x, &y);
+		// Chromium expects wheel deltas in "pixels of scroll" — match the
+		// browser default of 100 px per notch (×3 for horizontal trackpads).
+		s->cef->sendMouseWheel((int)x, (int)y,
+			(int)(xoff * 100), (int)(yoff * 100));
+		return;
+	}
+	if (s->game) s->game->onScroll(xoff, yoff);
 }
 
 void charCb(GLFWwindow* w, unsigned int codepoint) {
@@ -69,18 +87,38 @@ void keyCb(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) {
 }
 
 // Route GLFW pointer input to CEF only while the overlay is active.
+//
+// Mouse-button state must be carried into every move event for drags
+// (scrollbar thumb, slider) to work — Chromium uses the modifiers field
+// to distinguish "hovering" from "dragging". Keep a tiny held-button
+// bitmask on Shell and pass it through.
+namespace {
+inline int cefModifiersFor(uint32_t held) {
+	int m = 0;
+	if (held & 0x1) m |= 1 << 4;  // EVENTFLAG_LEFT_MOUSE_BUTTON
+	if (held & 0x2) m |= 1 << 5;  // EVENTFLAG_MIDDLE_MOUSE_BUTTON
+	if (held & 0x4) m |= 1 << 6;  // EVENTFLAG_RIGHT_MOUSE_BUTTON
+	return m;
+}
+} // namespace
+
 void cursorPosCb(GLFWwindow* w, double x, double y) {
 	auto* s = (Shell*)glfwGetWindowUserPointer(w);
 	if (s && s->cef && s->game && s->game->cefMenuActive())
-		s->cef->sendMouseMove((int)x, (int)y);
+		s->cef->sendMouseMove((int)x, (int)y, false,
+			cefModifiersFor(s->mouseButtonsHeld));
 }
 void mouseBtnCb(GLFWwindow* w, int button, int action, int /*mods*/) {
 	auto* s = (Shell*)glfwGetWindowUserPointer(w);
 	if (!s || !s->cef || !s->game || !s->game->cefMenuActive()) return;
 	int b = (button == GLFW_MOUSE_BUTTON_RIGHT) ? 2
 	       : (button == GLFW_MOUSE_BUTTON_MIDDLE) ? 1 : 0;
+	uint32_t bit = (b == 0) ? 0x1 : (b == 1) ? 0x2 : 0x4;
+	if (action == GLFW_PRESS) s->mouseButtonsHeld |= bit;
+	else                       s->mouseButtonsHeld &= ~bit;
 	double x, y; glfwGetCursorPos(w, &x, &y);
-	s->cef->sendMouseClick((int)x, (int)y, b, action == GLFW_PRESS);
+	s->cef->sendMouseClick((int)x, (int)y, b, action == GLFW_PRESS, 1,
+		cefModifiersFor(s->mouseButtonsHeld));
 }
 
 // Ctrl-C in the terminal running `make game` used to orphan child processes
@@ -318,6 +356,7 @@ int main(int argc, char** argv) {
 	{
 		solarium::ArtifactRegistry artifacts;
 		artifacts.loadAll("artifacts");
+		artifacts.loadForks(solarium::ArtifactRegistry::defaultForksRoot());
 		localWorld.entityDefs().mergeArtifactTags(artifacts.livingTags());
 		localWorld.entityDefs().applyLivingStats(artifacts.livingStats());
 	}
@@ -360,6 +399,7 @@ int main(int argc, char** argv) {
 		}
 		game.skipMenu();
 	}
+	if (logOnly) game.setLogOnly(true);
 
 	// `--template N` means "boot straight into that world template" (this is
 	// what `make toronto`, `make test-dog`, etc. do). There's no main menu to
@@ -380,51 +420,11 @@ int main(int argc, char** argv) {
 		// loadUrl() navigates between them rather than dismissing. Only when
 		// the player picks a character (action "play:<id>") do we dismiss
 		// the overlay so the loading screen / world becomes visible.
-		const std::string kCss =
-			"html,body{margin:0;height:100vh;background:transparent;"
-			"color:var(--ink);font-family:Georgia,serif;"
-			"display:flex;flex-direction:column;align-items:center;justify-content:center}"
-			// Body backdrop = scrim radial-gradient + paper-grain texture
-			// (two diagonal repeating gradients at low alpha simulate woven
-			// fibre + uneven ink absorption). Pure CSS — no inline image.
-			"body{background:"
-			"radial-gradient(ellipse at center,"
-			"rgba(16,8,10,0.55) 0%%,rgba(16,8,10,0) 60%%),"
-			"repeating-linear-gradient(45deg,transparent 0 5px,"
-			"rgba(255,255,255,0.012) 5px 6px),"
-			"repeating-linear-gradient(-45deg,transparent 0 7px,"
-			"rgba(0,0,0,0.025) 7px 8px)}"
-			// h1 with bracketing hairline rules — small ornamental flourish
-			// on either side, emphasising the title without an SVG payload.
-			"h1{color:var(--accent-hi);font-size:72px;letter-spacing:8px;margin:0 0 8px;"
-			"text-shadow:0 4px 24px rgba(0,0,0,0.85),0 0 18px rgba(243,196,76,0.35);"
-			"position:relative;display:inline-block;padding:0 56px}"
-			"h1::before,h1::after{content:'';position:absolute;top:50%%;"
-			"width:36px;height:1px;background:linear-gradient(to right,"
-			"transparent,var(--accent-mid));opacity:0.7}"
-			"h1::before{left:0}"
-			"h1::after{right:0;background:linear-gradient(to left,"
-			"transparent,var(--accent-mid))}"
-			".tag{font-size:16px;letter-spacing:4px;opacity:0.85;margin:0 0 40px;"
-			"text-transform:uppercase;text-shadow:0 2px 6px rgba(0,0,0,0.85)}"
-			".btn{display:block;width:280px;margin:6px 0;padding:12px 0;font-size:18px;"
-			"background:rgba(26,18,11,0.78);color:var(--accent-hi);"
-			"border:1px solid var(--accent-mid);font-family:inherit;cursor:pointer;"
-			"letter-spacing:2px;backdrop-filter:blur(2px);"
-			"transition:background 0.15s,transform 0.15s;"
-			// Bevel: top highlight + bottom shadow via inset box-shadow,
-			// gives every button a subtle "stamped metal" depth without
-			// needing pseudo-elements (which would conflict with content).
-			"box-shadow:inset 0 1px 0 rgba(255,235,180,0.12),"
-			"inset 0 -2px 4px rgba(0,0,0,0.35),"
-			"0 1px 2px rgba(0,0,0,0.4)}"
-			".btn:hover{background:rgba(94,67,30,0.92);transform:scale(1.02);"
-			"box-shadow:inset 0 1px 0 rgba(255,235,180,0.20),"
-			"inset 0 -2px 4px rgba(0,0,0,0.40),"
-			"0 4px 12px rgba(0,0,0,0.5)}"
-			".back{margin-top:32px;width:160px;font-size:14px;opacity:0.85}"
-			".version{position:fixed;bottom:20px;right:30px;font-size:13px;opacity:0.6;"
-			"text-shadow:0 1px 3px rgba(0,0,0,0.85)}";
+		// Common CSS now lives in client/ui/components.h. Reuses the same
+		// brass theme + chamfered-corner buttons + artistic scrollbar
+		// across every page; per-page CSS only adds layout-specific
+		// overrides.
+		const std::string kCss = solarium::ui::baseCss();
 		const std::string kJs =
 			"<script>function send(a){"
 			"window.cefQuery({request:'action:'+a,onSuccess:()=>{},onFailure:()=>{}});"
@@ -434,26 +434,11 @@ int main(int argc, char** argv) {
 		const std::string kVersion =
 			"<div class='version'>v0.2.0 / CEF 146</div>";
 
-		// Theme palette — three preset CSS variable sets driven by Settings
-		// .theme_id. The string is prepended to every page's <style> so
-		// var(--accent-hi)/var(--accent-mid)/var(--ink) refs throughout
-		// kCss / kDexCss / per-page CSS resolve to the chosen theme.
-		// Adding a new theme is one new branch here + one tile on the
-		// Settings → Theme tab. Hex literals stay URL-encoded (%23) so
-		// the data: URL parser doesn't trip over '#'.
+		// Theme palette is owned by ui::themeRoot. Wrap with a settings-
+		// aware lambda so closures capture only `game`, matching the
+		// previous signature.
 		auto themeRoot = [&]() -> std::string {
-			const std::string& id = game.settings().theme_id;
-			if (id == "cobalt") {
-				return ":root{--accent-hi:%237eb8e8;--accent-mid:%233a6890;"
-				       "--ink:%23dde6ed}";
-			}
-			if (id == "lichen") {
-				return ":root{--accent-hi:%23d4cf9f;--accent-mid:%238a9970;"
-				       "--ink:%23ede5d0}";
-			}
-			// "brass" (default) — also the catch-all for unknown ids.
-			return ":root{--accent-hi:%23f3c44c;--accent-mid:%23b88838;"
-			       "--ink:%23f0e0c0}";
+			return solarium::ui::themeRoot(game.settings().theme_id);
 		};
 
 		// HTML-escape the bare minimum: ", <, >, &, %, ', #. Pages are passed
@@ -514,7 +499,7 @@ int main(int argc, char** argv) {
 			".sb-head .sub{font-size:11px;letter-spacing:2px;color:var(--accent-mid);"
 			"text-transform:uppercase;margin-top:4px}"
 			".sb-search{margin:14px 22px 8px;padding:8px 12px;width:auto;"
-			"background:rgba(26,18,11,0.78);color:var(--ink);border:1px solid var(--accent-mid);"
+			"background:rgba(20,13,8,0.97);color:var(--ink);border:1px solid var(--accent-mid);"
 			"font-family:inherit;font-size:13px;letter-spacing:1px;box-sizing:border-box}"
 			".sb-list{flex:1;overflow-y:auto;padding:6px 0}"
 			".sb-grp{padding:14px 22px 4px;font-size:11px;letter-spacing:3px;"
@@ -532,7 +517,7 @@ int main(int argc, char** argv) {
 			"font-family:monospace;letter-spacing:1px;margin-top:2px;opacity:0.7}"
 			".sb-foot{padding:14px 22px;border-top:1px solid rgba(184,136,56,0.4);"
 			"display:flex;flex-direction:column;gap:8px}"
-			".sb-foot button{padding:10px 0;background:rgba(26,18,11,0.78);"
+			".sb-foot button{padding:10px 0;background:rgba(20,13,8,0.97);"
 			"color:var(--accent-hi);border:1px solid var(--accent-mid);font-family:inherit;"
 			"font-size:14px;letter-spacing:2px;cursor:pointer;"
 			"transition:background 0.15s}"
@@ -540,27 +525,142 @@ int main(int argc, char** argv) {
 			".sb-foot .primary{color:var(--accent-hi);font-size:16px;padding:14px 0;"
 			"box-shadow:0 0 0 1px var(--accent-hi) inset}"
 			".detail{margin-left:300px;min-height:100vh;position:relative}"
+			// Detail card itself is now just a positioning shell — the
+			// heading floats over the world preview, and `.card-body`
+			// below it is the actual readable panel.
+			// Card claims a fixed share of the viewport. The headline
+			// keeps padding on its left so it lines up with the rest of
+			// the page, but the bottom panel itself flushes to the
+			// sidebar on the left and the screen edge on the right —
+			// it's the floor of the menu, not a floating tile.
+			// ~48vh = roughly half the screen for the panel (description +
+			// stats + EDIT button) and roughly half for the live 3D
+			// preview above. The headline floats at the top of the card
+			// area so the model and the heading share the upper half.
 			".detail-card{position:fixed;bottom:0;left:300px;right:0;"
-			"padding:32px 60px 36px;"
-			"background:linear-gradient(to top,"
-			"rgba(10,5,5,0.92) 0%%,rgba(10,5,5,0.78) 60%%,rgba(10,5,5,0) 100%%);"
-			"max-height:60vh;overflow-y:auto}"
-			".detail-card h2{font-size:56px;letter-spacing:6px;color:var(--accent-hi);"
-			"margin:0 0 4px;font-weight:400;"
-			"text-shadow:0 4px 18px rgba(0,0,0,0.85)}"
+			"height:48vh;display:flex;flex-direction:column;"
+			"justify-content:flex-end}"
+			".detail-card .headline{padding:0 60px;margin:0 0 14px;"
+			"max-width:820px}"
 			".detail-card .badge{display:inline-block;font-size:11px;"
-			"letter-spacing:3px;color:var(--accent-mid);text-transform:uppercase;"
-			"font-family:monospace;margin-right:16px}"
-			".detail-card .desc{font-size:15px;line-height:1.55;max-width:780px;"
-			"color:var(--ink);margin:14px 0 0;opacity:0.92}"
+			"letter-spacing:3px;color:var(--accent-hi);text-transform:uppercase;"
+			"font-family:monospace;margin-right:12px;padding:3px 9px;"
+			"background:rgba(0,0,0,0.6);"
+			"border:1px solid rgba(184,136,56,0.5)}"
+			".detail-card h2{font-size:56px;letter-spacing:6px;color:var(--accent-hi);"
+			"margin:8px 0 0;font-weight:400;"
+			"text-shadow:0 4px 18px rgba(0,0,0,0.95),"
+			"0 1px 0 rgba(0,0,0,0.9)}"
+			// One unified bottom panel — description on top, divider,
+			// stats below. Spans full width from sidebar to screen edge
+			// so it reads as the floor of the menu rather than a tile
+			// drifting in the middle. Brass border lives only on the top
+			// edge (the floor's "horizon line"); side/bottom borders are
+			// implicit (sidebar + screen edge) so the panel feels
+			// architecturally connected to the chrome.
+			".detail-card .card-body{background:rgba(8,5,5,0.94);"
+			"border-top:1px solid var(--accent-mid);border-left:0;"
+			"border-right:0;border-bottom:0;"
+			"box-shadow:inset 0 1px 0 rgba(243,196,76,0.18),"
+			"0 -8px 24px rgba(0,0,0,0.75);"
+			"padding:22px 60px;display:flex;"
+			"flex-direction:column;gap:12px;flex:1;min-height:0;"
+			"overflow:hidden}"
+			".detail-card .desc{font-size:14px;line-height:1.55;"
+			"color:var(--ink);margin:0;opacity:0.95}"
+			".detail-card .div{height:1px;background:rgba(184,136,56,0.35);"
+			"margin:2px 0;border:0}"
 			".detail-card .attrs{display:grid;"
-			"grid-template-columns:auto 1fr;column-gap:20px;row-gap:4px;"
-			"margin-top:18px;max-width:780px;font-size:12px;font-family:monospace;"
-			"max-height:200px;overflow-y:auto;padding-right:12px}"
-			".detail-card .k{color:var(--accent-mid);text-transform:uppercase;"
-			"letter-spacing:1px;white-space:nowrap}"
+			"grid-template-columns:auto 1fr;column-gap:20px;row-gap:5px;"
+			"font-size:12px;font-family:monospace;"
+			"flex:1;overflow-y:auto;padding-right:8px}"
+			".detail-card .k{color:var(--accent-hi);text-transform:uppercase;"
+			"letter-spacing:1px;white-space:nowrap;opacity:0.85}"
 			".detail-card .v{color:var(--ink);word-break:break-word;"
 			"overflow-wrap:anywhere}"
+			".detail-card .headline{margin:0 0 10px;max-width:820px}"
+			".detail-card .actions{margin-top:12px;display:flex;gap:10px}"
+			".detail-card .edit-btn{padding:9px 22px;font-size:12px;"
+			"letter-spacing:3px;background:rgba(94,67,30,0.85);"
+			"color:var(--accent-hi);border:1px solid var(--accent-mid);"
+			"cursor:pointer;font-family:inherit;text-transform:uppercase;"
+			// Beveled retro button — bright top edge, dark bottom edge.
+			"box-shadow:inset 0 1px 0 rgba(243,196,76,0.4),"
+			"inset 0 -1px 0 rgba(0,0,0,0.5)}"
+			".detail-card .edit-btn:hover{background:rgba(94,67,30,1);"
+			"color:%23fff3c8}"
+			// Artistic scrollbar — recessed groove track + cast-brass
+			// thumb with metallic vertical gradient and three horizontal
+			// "grip" notches at the centre. Applies to every overflow:auto
+			// region in the page (sidebar list + attrs panel).
+			//
+			// %23 = '#' (bare # would terminate the data: URL as fragment).
+			"::-webkit-scrollbar{width:14px;height:14px}"
+			// Track: dark recessed channel with brass hairlines on each
+			// side. The repeating linear-gradient adds a 1-px vertical
+			// guide rail down the centre so the empty track reads as a
+			// machined groove rather than a flat bar.
+			"::-webkit-scrollbar-track{"
+			"background:"
+			"linear-gradient(to right,"
+			"rgba(184,136,56,0.55) 0,rgba(184,136,56,0.55) 1px,"
+			"rgba(0,0,0,0.92) 1px,rgba(0,0,0,0.92) 6px,"
+			"rgba(184,136,56,0.18) 6px,rgba(184,136,56,0.18) 8px,"
+			"rgba(0,0,0,0.92) 8px,rgba(0,0,0,0.92) 13px,"
+			"rgba(184,136,56,0.55) 13px,rgba(184,136,56,0.55) 14px);"
+			"box-shadow:inset 0 0 6px rgba(0,0,0,0.85)}"
+			// Thumb: stacked gradients = (a) cast-brass vertical sheen,
+			// (b) horizontal grip notches at the middle. Outer border +
+			// inset highlights/shadows give it the cast-metal bevel.
+			"::-webkit-scrollbar-thumb{"
+			"background:"
+			"linear-gradient(to bottom,transparent calc(50%% - 8px),"
+			"rgba(0,0,0,0.55) calc(50%% - 8px),rgba(0,0,0,0.55) calc(50%% - 7px),"
+			"rgba(243,196,76,0.5) calc(50%% - 7px),rgba(243,196,76,0.5) calc(50%% - 6px),"
+			"transparent calc(50%% - 6px),transparent calc(50%% - 1px),"
+			"rgba(0,0,0,0.55) calc(50%% - 1px),rgba(0,0,0,0.55) calc(50%%),"
+			"rgba(243,196,76,0.5) calc(50%%),rgba(243,196,76,0.5) calc(50%% + 1px),"
+			"transparent calc(50%% + 1px),transparent calc(50%% + 6px),"
+			"rgba(0,0,0,0.55) calc(50%% + 6px),rgba(0,0,0,0.55) calc(50%% + 7px),"
+			"rgba(243,196,76,0.5) calc(50%% + 7px),rgba(243,196,76,0.5) calc(50%% + 8px),"
+			"transparent calc(50%% + 8px)),"
+			"linear-gradient(to bottom,"
+			"%23c08a3a 0%%,%23a07526 18%%,%236d4f1f 50%%,"
+			"%234a3415 82%%,%23745525 100%%);"
+			"border:1px solid %23b88838;"
+			"box-shadow:inset 0 1px 0 rgba(243,196,76,0.85),"
+			"inset 0 -1px 0 rgba(0,0,0,0.85),"
+			"inset 1px 0 0 rgba(243,196,76,0.35),"
+			"inset -1px 0 0 rgba(0,0,0,0.55),"
+			"0 0 4px rgba(0,0,0,0.65)}"
+			"::-webkit-scrollbar-thumb:hover{"
+			"background:linear-gradient(to bottom,"
+			"%23e0a64a 0%%,%23b88838 18%%,%23805d24 50%%,"
+			"%2358391a 82%%,%238b6a2f 100%%);"
+			"border-color:%23f3c44c}"
+			"::-webkit-scrollbar-thumb:active{"
+			"background:linear-gradient(to bottom,"
+			"%23805d24 0%%,%2358391a 50%%,%234a3415 100%%)}"
+			// Buttons: small brass caps at top/bottom with engraved arrows.
+			"::-webkit-scrollbar-button{height:14px;width:14px;"
+			"background:linear-gradient(to bottom,%23a07526 0%%,%235e431e 100%%);"
+			"border:1px solid %23b88838;"
+			"box-shadow:inset 0 1px 0 rgba(243,196,76,0.5),"
+			"inset 0 -1px 0 rgba(0,0,0,0.7)}"
+			"::-webkit-scrollbar-button:vertical:start{"
+			"background-image:"
+			"linear-gradient(135deg,transparent 0 5px,%23f3c44c 5px 6px,transparent 6px 7px),"
+			"linear-gradient(45deg,transparent 0 5px,%23f3c44c 5px 6px,transparent 6px 7px),"
+			"linear-gradient(to bottom,%23a07526 0%%,%235e431e 100%%)}"
+			"::-webkit-scrollbar-button:vertical:end{"
+			"background-image:"
+			"linear-gradient(45deg,%23f3c44c 0 1px,transparent 1px 2px),"
+			"linear-gradient(135deg,%23f3c44c 0 1px,transparent 1px 2px),"
+			"linear-gradient(to bottom,%23a07526 0%%,%235e431e 100%%)}"
+			"::-webkit-scrollbar-button:hover{"
+			"background:linear-gradient(to bottom,%23b88838 0%%,%237a5928 100%%)}"
+			"::-webkit-scrollbar-corner{"
+			"background:linear-gradient(135deg,rgba(0,0,0,0.92),rgba(184,136,56,0.4))}"
 			".version{position:fixed;bottom:8px;right:14px;font-size:11px;"
 			"color:var(--accent-mid);opacity:0.5;letter-spacing:1px}";
 
@@ -658,7 +758,7 @@ int main(int argc, char** argv) {
 				"margin-left:6px}"
 				".features{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px}"
 				".features span{padding:4px 10px;font-size:11px;"
-				"background:rgba(94,67,30,0.5);border:1px solid var(--accent-mid);"
+				"background:rgba(94,67,30,0.88);border:1px solid var(--accent-mid);"
 				"color:var(--accent-hi);letter-spacing:1px}"
 				"</style></head><body>"
 				"<aside class='sidebar'>"
@@ -785,11 +885,17 @@ int main(int argc, char** argv) {
 				"min-height:100vh;box-sizing:border-box;align-items:center}"
 				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
 				".tag{margin:0 0 24px}"
-				".note{margin:0 0 24px;font-size:12px;color:var(--accent-mid);"
-				"letter-spacing:2px;text-transform:uppercase}"
+				// Match the .tag chip — small dark scrim so the line reads
+				// against the world preview behind every menu page.
+				".note{display:inline-block;margin:0 0 24px;font-size:12px;"
+				"color:var(--accent-mid);letter-spacing:2px;"
+				"text-transform:uppercase;padding:5px 14px;"
+				"background:rgba(6,4,3,0.7);"
+				"border:1px solid rgba(184,136,56,0.35);"
+				"text-shadow:0 1px 2px rgba(0,0,0,0.85)}"
 				".list{display:flex;flex-direction:column;gap:8px;width:680px}"
 				".row{display:flex;align-items:center;justify-content:space-between;"
-				"padding:14px 22px;background:rgba(26,18,11,0.78);"
+				"padding:14px 22px;background:rgba(20,13,8,0.97);"
 				"border:1px solid var(--accent-mid)}"
 				".row.off{opacity:0.55}"
 				".row .nm{font-size:18px;color:var(--accent-hi);letter-spacing:2px;"
@@ -857,7 +963,7 @@ int main(int argc, char** argv) {
 				".tag{margin:0 0 32px}"
 				".tiles{display:grid;grid-template-columns:repeat(auto-fill,"
 				"minmax(320px,1fr));gap:16px;width:100%%;max-width:1100px}"
-				".tile{background:rgba(26,18,11,0.85);border:1px solid var(--accent-mid);"
+				".tile{background:rgba(20,13,8,0.97);border:1px solid var(--accent-mid);"
 				"padding:22px 24px;cursor:pointer;font-family:inherit;color:inherit;"
 				"text-align:left;transition:background 0.15s,transform 0.15s,"
 				"box-shadow 0.15s}"
@@ -868,18 +974,22 @@ int main(int argc, char** argv) {
 				".tile .meta{font-size:12px;color:var(--accent-mid);font-family:monospace;"
 				"letter-spacing:1px;margin-bottom:6px;display:block;opacity:0.7}"
 				".tile .when{font-size:11px;color:var(--accent-mid);opacity:0.6}"
-				".tile.new{background:rgba(94,67,30,0.5);"
+				".tile.new{background:rgba(94,67,30,0.88);"
 				"border:2px dashed var(--accent-mid)}"
 				".tile.new h3{color:var(--accent-hi)}"
 				".tile.save{position:relative}"
+				// Destructive action — keep brass chrome, signal danger via
+				// a deeper rust tone on hover instead of the screaming red
+				// that clashed with the brass theme.
 				".tile .del{position:absolute;top:8px;right:8px;"
 				"padding:4px 10px;font-size:10px;letter-spacing:1px;"
-				"background:rgba(120,30,20,0.85);color:var(--ink);"
-				"border:1px solid rgba(184,80,60,0.7);font-family:inherit;"
-				"cursor:pointer;text-transform:uppercase;opacity:0.4;"
-				"transition:opacity 0.15s}"
+				"background:rgba(20,13,8,0.92);color:var(--accent-mid);"
+				"border:1px solid var(--accent-mid);font-family:inherit;"
+				"cursor:pointer;text-transform:uppercase;opacity:0.45;"
+				"transition:opacity 0.15s,background 0.15s,color 0.15s}"
 				".tile.save:hover .del{opacity:1}"
-				".tile .del:hover{background:rgba(160,40,30,0.95)}"
+				".tile .del:hover{background:rgba(96,28,18,0.95);"
+				"color:%23f0d8b8;border-color:%23a04030}"
 				".back{margin-top:24px;width:160px}"
 				"</style></head><body>"
 				"<h1>Choose Save</h1>"
@@ -954,7 +1064,7 @@ int main(int argc, char** argv) {
 				"color:var(--accent-mid)}"
 				".players{display:flex;flex-direction:column;gap:6px;"
 				"width:380px;margin-bottom:24px}"
-				".player{padding:12px 18px;background:rgba(26,18,11,0.78);"
+				".player{padding:12px 18px;background:rgba(20,13,8,0.97);"
 				"border:1px solid var(--accent-mid);color:var(--accent-hi);"
 				"font-family:monospace;font-size:14px;letter-spacing:1px}"
 				".btn{width:280px}"
@@ -1020,7 +1130,7 @@ int main(int argc, char** argv) {
 				".tag{margin:0 0 32px}"
 				".tiles{display:grid;grid-template-columns:repeat(auto-fill,"
 				"minmax(320px,1fr));gap:16px;width:100%%;max-width:1100px}"
-				".tile{background:rgba(26,18,11,0.85);border:1px solid var(--accent-mid);"
+				".tile{background:rgba(20,13,8,0.97);border:1px solid var(--accent-mid);"
 				"padding:22px 24px;cursor:pointer;font-family:inherit;color:inherit;"
 				"text-align:left;transition:background 0.15s,transform 0.15s,"
 				"box-shadow 0.15s}"
@@ -1032,7 +1142,7 @@ int main(int argc, char** argv) {
 				"letter-spacing:1px;margin-bottom:8px;display:block;opacity:0.7}"
 				".tile p{margin:0;font-size:13px;line-height:1.45;opacity:0.88}"
 				".opts{display:flex;gap:18px;align-items:center;margin-top:28px;"
-				"padding:14px 22px;background:rgba(26,18,11,0.6);"
+				"padding:14px 22px;background:rgba(20,13,8,0.97);"
 				"border:1px solid rgba(184,136,56,0.5)}"
 				".opts label{font-size:12px;letter-spacing:2px;color:var(--accent-mid);"
 				"text-transform:uppercase;display:flex;align-items:center;gap:10px}"
@@ -1123,13 +1233,13 @@ int main(int argc, char** argv) {
 				".tag{margin:0 0 24px}"
 				".tabs{display:flex;gap:6px;margin-bottom:24px}"
 				".tabs button{padding:8px 18px;font-size:13px;letter-spacing:2px;"
-				"background:rgba(26,18,11,0.8);color:var(--accent-mid);border:1px solid var(--accent-mid);"
+				"background:rgba(20,13,8,0.97);color:var(--accent-mid);border:1px solid var(--accent-mid);"
 				"font-family:inherit;cursor:pointer;text-transform:uppercase}"
 				".tabs button.on{background:rgba(94,67,30,0.95);color:var(--accent-hi)}"
 				".pane{display:none;width:680px;max-width:90%%}"
 				".pane.on{display:block}"
 				".row{display:flex;align-items:center;justify-content:space-between;"
-				"padding:14px 20px;background:rgba(26,18,11,0.6);"
+				"padding:14px 20px;background:rgba(20,13,8,0.97);"
 				"border:1px solid rgba(184,136,56,0.4);margin-bottom:8px}"
 				".row .lbl{font-size:14px;letter-spacing:2px;color:var(--ink)}"
 				".row .ctl{display:flex;align-items:center;gap:12px;min-width:220px;"
@@ -1153,7 +1263,7 @@ int main(int argc, char** argv) {
 				".back{margin-top:24px;width:160px}"
 				".theme-grid{display:grid;grid-template-columns:repeat(auto-fill,"
 				"minmax(220px,1fr));gap:14px;width:680px;max-width:90%%}"
-				".theme-card{background:rgba(26,18,11,0.75);"
+				".theme-card{background:rgba(20,13,8,0.97);"
 				"border:1px solid var(--accent-mid);padding:16px 18px;"
 				"cursor:pointer;transition:background 0.15s,transform 0.15s,"
 				"border-color 0.15s;font-family:inherit;color:inherit;"
@@ -1506,16 +1616,28 @@ int main(int argc, char** argv) {
 			html += "};"
 				"function render(key){"
 				"const e=ENTRIES[key];if(!e)return;"
-				"let h=\"<span class='badge'>\"+e.cat+\"</span>\"+"
+				// Headline (badges + name) sits over the world preview.
+				"let h=\"<div class='headline'>\"+"
+				"\"<span class='badge'>\"+e.cat+\"</span>\"+"
 				"\"<span class='badge'>\"+e.sub+\"</span>\"+"
 				"\"<span class='badge'>\"+key.split(':')[1]+\"</span>\"+"
-				"\"<h2>\"+e.name+\"</h2>\";"
+				"\"<h2>\"+e.name+\"</h2></div>\";"
+				// Bottom panel: description + divider + stats live together
+				// inside one opaque container, so neither sits on the bare
+				// world preview.
+				"h+=\"<div class='card-body'>\";"
 				"if(e.desc)h+=\"<div class='desc'>\"+e.desc+\"</div>\";"
+				"if(e.desc&&e.attrs.length)h+=\"<hr class='div'/>\";"
 				"if(e.attrs.length){h+=\"<div class='attrs'>\";"
 				"for(const[k,v] of e.attrs)"
 				"h+=\"<span class='k'>\"+k+\"</span>"
 				"<span class='v'>\"+v+\"</span>\";"
 				"h+=\"</div>\";}"
+				// Edit button — opens Monaco-backed source editor for this artifact.
+				"h+=\"<div class='actions'>"
+				"<button class='edit-btn' onclick=\\\"send('edit:\"+key+\"')\\\">"
+				"Edit Source</button></div>\";"
+				"h+=\"</div>\";"
 				"document.getElementById('card').innerHTML=h;}"
 				"function send(a){window.cefQuery({request:'action:'+a,"
 				"onSuccess:()=>{},onFailure:()=>{}});}"
@@ -1560,7 +1682,7 @@ int main(int argc, char** argv) {
 			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
 				".srv{display:grid;grid-template-columns:1fr auto auto auto;"
 				"column-gap:18px;align-items:center;width:680px;padding:12px 22px;"
-				"margin:5px 0;background:rgba(26,18,11,0.78);"
+				"margin:5px 0;background:rgba(20,13,8,0.97);"
 				"border:1px solid var(--accent-mid);color:var(--accent-hi);font-size:14px;"
 				"letter-spacing:1px;font-family:monospace;cursor:pointer;"
 				"transition:background 0.15s,transform 0.15s}"
@@ -1571,8 +1693,14 @@ int main(int argc, char** argv) {
 				"letter-spacing:2px}"
 				".srv .ver{color:var(--accent-mid);font-size:11px;letter-spacing:1px}"
 				".srv .pl{color:var(--accent-mid);font-size:13px;text-align:right;min-width:90px}"
-				".filters{display:flex;gap:18px;align-items:center;margin-bottom:12px;"
-				"font-size:12px;letter-spacing:2px;color:var(--accent-mid);text-transform:uppercase}"
+				// Filters chip — same scrim/border treatment as .tag so the
+				// "Hide version mismatches" toggle reads against the world.
+				".filters{display:inline-flex;gap:18px;align-items:center;"
+				"margin-bottom:12px;padding:8px 14px;"
+				"background:rgba(6,4,3,0.7);"
+				"border:1px solid rgba(184,136,56,0.35);"
+				"font-size:12px;letter-spacing:2px;color:var(--accent-mid);"
+				"text-transform:uppercase}"
 				".filters label{display:flex;align-items:center;gap:8px;cursor:pointer}"
 				".filters input[type='checkbox']{accent-color:var(--accent-hi)}"
 				".empty{opacity:0.5;font-style:italic;margin:24px 0}"
@@ -1628,6 +1756,86 @@ int main(int argc, char** argv) {
 				kVersion + kJs +
 				"</body></html>";
 			return html;
+		};
+
+		// Build a file:// URL pointing at the Monaco-backed editor for
+		// <cat>:<id>. Returns empty string if the artifact isn't found.
+		// Used by both the "edit:" action handler and SOLARIUM_BOOT_EDIT.
+		auto editorUrlFor = [&game](const std::string& cat,
+		                            const std::string& id) -> std::string {
+			const solarium::ArtifactEntry* e = game.artifactRegistry().findById(id);
+			if (!e || e->category != cat) {
+				std::fprintf(stderr, "[edit] unknown %s:%s\n", cat.c_str(), id.c_str());
+				return "";
+			}
+			std::ifstream src(e->filePath);
+			std::stringstream sb; sb << src.rdbuf();
+			std::string code = sb.str();
+			auto jsEscape = [](const std::string& s) {
+				std::string o; o.reserve(s.size() + 16);
+				for (char c : s) {
+					if (c == '\\' || c == '`') { o += '\\'; o += c; }
+					else if (c == '$')         { o += "\\$"; }
+					else                        o += c;
+				}
+				return o;
+			};
+			std::filesystem::path mvs = std::filesystem::absolute(
+				std::filesystem::path(game.execDir()) /
+				".." / "third_party" / "monaco-editor" / "out" /
+				"monaco-editor" / "min" / "vs");
+			std::string vsPath = mvs.string();
+			std::ostringstream html;
+			html << "<!doctype html><html><head><meta charset='utf-8'>"
+			     << "<title>Edit " << id << "</title>"
+			     << "<style>"
+			     << "html,body{margin:0;height:100vh;background:#0a0703;"
+			     << "color:#f0e0c0;font-family:Georgia,serif;display:flex;"
+			     << "flex-direction:column}"
+			     << ".bar{display:flex;align-items:center;gap:14px;"
+			     << "padding:10px 18px;background:rgba(20,13,8,0.97);"
+			     << "border-bottom:1px solid #b88838}"
+			     << ".bar h2{margin:0;font-size:18px;letter-spacing:3px;"
+			     << "color:#f3c44c;font-weight:400}"
+			     << ".bar .id{font-size:11px;color:#b88838;"
+			     << "font-family:monospace;letter-spacing:1px;opacity:0.7}"
+			     << ".bar .grow{flex:1}"
+			     << ".bar button{padding:8px 18px;font-size:13px;"
+			     << "letter-spacing:2px;background:rgba(94,67,30,0.85);"
+			     << "color:#f3c44c;border:1px solid #b88838;cursor:pointer;"
+			     << "font-family:inherit;text-transform:uppercase}"
+			     << ".bar button:hover{background:rgba(94,67,30,1)}"
+			     << "#editor{flex:1}"
+			     << "</style></head><body>"
+			     << "<div class='bar'>"
+			     << "<h2>" << (e->name.empty() ? id : e->name) << "</h2>"
+			     << "<span class='id'>" << cat << "/" << id << "</span>"
+			     << "<span class='grow'></span>"
+			     << "<button onclick=\"saveAndBack()\">Save</button>"
+			     << "<button onclick=\"send('back')\">Cancel</button>"
+			     << "</div>"
+			     << "<div id='editor'></div>"
+			     << "<script src='file://" << vsPath << "/loader.js'></script>"
+			     << "<script>"
+			     << "function send(a){window.cefQuery({request:'action:'+a,"
+			     << "onSuccess:()=>{},onFailure:()=>{}});}"
+			     << "let ed;"
+			     << "require.config({paths:{vs:'file://" << vsPath << "'}});"
+			     << "require(['vs/editor/editor.main'],function(){"
+			     << "ed=monaco.editor.create(document.getElementById('editor'),{"
+			     << "value:`" << jsEscape(code) << "`,"
+			     << "language:'python',theme:'vs-dark',automaticLayout:true,"
+			     << "minimap:{enabled:true},fontSize:14});});"
+			     << "function saveAndBack(){"
+			     << "if(!ed)return;"
+			     << "const t=ed.getValue();"
+			     << "send('save_artifact:" << cat << ":" << id << ":'+btoa(unescape(encodeURIComponent(t))));}"
+			     << "</script></body></html>";
+			std::string path = "/tmp/solarium_editor.html";
+			std::ofstream f(path);
+			f << html.str();
+			f.close();
+			return std::string("file://") + path;
 		};
 
 		// Captured by ref in the action callback. Static so they live across
@@ -1694,6 +1902,14 @@ int main(int argc, char** argv) {
 				cefUrl = sLobby;
 			} else if (boot && std::string(boot) == "death") {
 				cefUrl = sDeath;
+			} else if (boot && std::string(boot) == "editor") {
+				// SOLARIUM_BOOT_EDIT=cat:id (default living:guy).
+				const char* tgt = std::getenv("SOLARIUM_BOOT_EDIT");
+				std::string spec = tgt ? tgt : "living:guy";
+				auto col = spec.find(':');
+				std::string url = (col == std::string::npos) ? "" :
+					editorUrlFor(spec.substr(0, col), spec.substr(col + 1));
+				cefUrl = url.empty() ? sMain : url;
 			} else {
 				cefUrl = sMain;
 			}
@@ -1716,7 +1932,7 @@ int main(int argc, char** argv) {
 		// copy — local 'multiplayerPage' in this block goes out of scope
 		// once init returns. Same for the enc helper inside it.
 		cefHost->setActionCallback(
-			[win, &game, hostRaw, multiplayerPage, settingsPage, saveSlotsPage, modManagerPage](const std::string& action) {
+			[win, &game, hostRaw, multiplayerPage, settingsPage, saveSlotsPage, modManagerPage, editorUrlFor](const std::string& action) {
 			std::printf("[cef] action: %s\n", action.c_str());
 			using MS = solarium::vk::MenuScreen;
 			// First playable id, used as default char-select pick. Cached
@@ -1747,6 +1963,87 @@ int main(int argc, char** argv) {
 				// transitions Dead → Playing.
 				game.setCefMenuActive(false);
 				game.respawn();
+			} else if (action.rfind("edit:", 0) == 0) {
+				// "edit:<cat>:<id>" — open the artifact in a Monaco-backed
+				// editor. We can't host Monaco from a data: URL (its AMD
+				// loader fetches sibling files), so write a temp HTML to
+				// /tmp and loadUrl as file:// — same-origin grants the
+				// editor access to third_party/monaco-editor/out/.
+				const std::string body = action.substr(5);
+				auto colon = body.find(':');
+				if (colon == std::string::npos) return;
+				std::string url = editorUrlFor(body.substr(0, colon),
+				                               body.substr(colon + 1));
+				if (!url.empty()) hostRaw->loadUrl(url);
+			} else if (action.rfind("save_artifact:", 0) == 0) {
+				// "save_artifact:<cat>:<id>:<base64-source>"
+				const std::string body = action.substr(14);
+				auto c1 = body.find(':');
+				if (c1 == std::string::npos) return;
+				auto c2 = body.find(':', c1 + 1);
+				if (c2 == std::string::npos) return;
+				std::string cat   = body.substr(0, c1);
+				std::string id    = body.substr(c1 + 1, c2 - c1 - 1);
+				std::string b64   = body.substr(c2 + 1);
+				// Tiny base64 decoder (no external dep) — bounded loop below.
+				std::string src;
+				int v = 0, bits = 0;
+				for (char c : b64) {
+					if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
+					int d = -1;
+					if (c >= 'A' && c <= 'Z') d = c - 'A';
+					else if (c >= 'a' && c <= 'z') d = c - 'a' + 26;
+					else if (c >= '0' && c <= '9') d = c - '0' + 52;
+					else if (c == '+') d = 62;
+					else if (c == '/') d = 63;
+					else continue;
+					v = (v << 6) | d;
+					bits += 6;
+					if (bits >= 8) {
+						bits -= 8;
+						src += (char)((v >> bits) & 0xff);
+					}
+				}
+				// Save as a fork in the user's persistent registry overlay
+				// (~/.solarium/forks/<dirName>/<id>.py). This survives
+				// rebuilds and is layered on top of artifacts/ at load
+				// time — see ArtifactRegistry::loadForks.
+				//
+				// TODO(cloud): mirror this write to a per-account cloud
+				// store so forks travel between devices and (eventually)
+				// can be shared/published.
+				// `cat` is singular ("item"); folders are plural ("items").
+				std::string dirName = (cat == "item")     ? "items" :
+				                       (cat == "block")    ? "blocks" :
+				                       (cat == "behavior") ? "behaviors" :
+				                       (cat == "effect")   ? "effects" :
+				                       (cat == "resource") ? "resources" :
+				                       (cat == "world")    ? "worlds" :
+				                       (cat == "annotation")? "annotations" :
+				                       (cat == "structure")? "structures" :
+				                       (cat == "model")    ? "models" : cat;
+				std::string forksRoot =
+					solarium::ArtifactRegistry::defaultForksRoot();
+				if (forksRoot.empty()) {
+					std::fprintf(stderr, "[edit] HOME unset; cannot save fork\n");
+					return;
+				}
+				std::string outDir = forksRoot + "/" + dirName;
+				std::error_code ec;
+				std::filesystem::create_directories(outDir, ec);
+				std::string outPath = outDir + "/" + id + ".py";
+				std::ofstream of(outPath);
+				of << src; of.close();
+				std::printf("[edit] fork %s (%zu bytes)\n",
+					outPath.c_str(), src.size());
+				// Hot-reload — base scan + fork overlay.
+				auto& reg = const_cast<solarium::ArtifactRegistry&>(
+					game.artifactRegistry());
+				reg.loadAll("artifacts");
+				reg.loadForks(forksRoot);
+				// Return to handbook (rebuild fresh so changes show up).
+				game.setMenuScreen(MS::Handbook);
+				hostRaw->loadUrl(sHand);
 			} else if (action == "back") {
 				// Back from a CEF sub-screen has two meanings:
 				//   * Boot flow (Menu state) — return to the main title.

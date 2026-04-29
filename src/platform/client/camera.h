@@ -33,16 +33,18 @@ public:
 	float nearPlane = 0.1f;
 	float farPlane = 500.0f;
 
-	// TPS/RPG/RTS share 45° look-down; mode switch feels like zoom, not teleport.
-	// All three use "camera looks +x at yaw=0" (see updateRTS position formula).
-	float orbitDistance = 16.0f;
-	float orbitDistanceTarget = 16.0f;
-	float orbitYaw = -90.0f;
-	float orbitPitch = 45.0f;
+	// TPS — FPS aim model: mouse drives lookYaw/lookPitch and the body is
+	// locked to view yaw. Camera floats `tpsCamDistance` behind the orbit
+	// pivot along the look ray. Pivot is anchored to the character's
+	// front-top so the body sits in the lower portion of the screen and
+	// the crosshair points at world along the same ray as FPS.
+	float tpsCamDistance = 6.0f;
+	float tpsCamDistanceTarget = 6.0f;
 
-	float godDistance = 12.0f;
-	float godDistanceTarget = 12.0f;
-	float godAngle = 45.0f;
+	// RPG orbit (free-look around a chest pivot). RTS owns its own state.
+	float godDistance = 16.0f;
+	float godDistanceTarget = 16.0f;
+	float godAngle = 30.0f;
 	float godOrbitYaw = -90.0f;
 
 	glm::vec3 godCameraForward() const;

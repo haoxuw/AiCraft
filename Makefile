@@ -155,6 +155,12 @@ define run_under_perf
 	    echo "  entity logs ($$count files):"; \
 	    ls -1 /tmp/solarium_entity_*.log | sed 's/^/    /'; \
 	fi; \
+	dump=$$(ls -t /tmp/solarium_perf_client_*.txt 2>/dev/null | head -1); \
+	if [ -n "$$dump" ] && grep -q "^path.executor.tick_ms" "$$dump"; then \
+	    echo; \
+	    python3 $(PERF_REPORT_PY) client "$$dump" 2>/dev/null | \
+	        awk '/^── PATH EXECUTOR/{p=1} p{print} /^unaccounted/{if(p){p=0;exit}}'; \
+	fi; \
 	}
 endef
 

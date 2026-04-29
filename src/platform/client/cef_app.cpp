@@ -30,6 +30,13 @@ public:
 	void OnBeforeCommandLineProcessing(const CefString& /*processType*/,
 	                                   CefRefPtr<CefCommandLine> cmd) override {
 		cmd->AppendSwitch("no-zygote");
+		// In-game code editor loads Monaco from a local file:// URL. The
+		// AMD loader fetches sibling modules (vs/editor/editor.main.js,
+		// language workers, …) and Chromium's default file:// origin is
+		// "null", which blocks those sub-fetches. These switches grant
+		// file:// pages access to other file:// resources so Monaco boots.
+		cmd->AppendSwitch("allow-file-access-from-files");
+		cmd->AppendSwitch("disable-web-security");
 	}
 
 	// ── Renderer process — install MessageRouter so window.cefQuery exists ──

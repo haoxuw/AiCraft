@@ -81,6 +81,45 @@ the engine (physics, networking, rendering).**
   and raycasting.
 - **Share pysics `moveAndCollide()`** Client and server both call it, over LocalWorld and World respectively
 
+### Rule 7: Single Source of Truth — Logic AND Data
+
+**Same logic in two places drifts. Same data in two places desyncs. Both are
+silent bugs waiting to happen.**
+
+- **Logic**: any algorithm, predicate, or pipeline (smoothing, clamping,
+  separation, validation, …) lives in exactly ONE function. If two callers
+  need it, both call the one function — never copy-paste with "must stay in
+  sync" comments. Past bug: speed-clamp was inlined in `driveRemote` and
+  silently absent from `Agent::navigateApproach`; villagers orbited corners
+  while the test (which mirrored only `driveRemote`) stayed green.
+- **Data**: per-entity state (smoothed-heading, separation LPF, stuck
+  watchdog, etc.) lives in exactly ONE struct, owned by one component. Two
+  copies of the "same" field on different objects WILL desync.
+- **Tests**: when a test driver mirrors production logic, that's the same
+  duplication trap. Either route the test through the production function,
+  or extract a shared helper both callers use.
+
+### Rule 8: Bug-Fix Workflow — assert, fix, verify, negative-test
+
+When fixing a runtime bug, the four-step receipt is non-negotiable:
+
+1. **Add an in-code assert (or an atomic counter the test reads) that
+   triggers on the buggy state.** Not a log line — an assertion or counter
+   inside the production code path. This is the *positive* receipt: bug
+   reproduces deterministically.
+2. **Fix the bug.**
+3. **Re-run; verify the assert no longer triggers.** This is the fix
+   receipt — the assert was firing, now it isn't.
+4. **Build a negative test that deliberately re-triggers the assert.**
+   Without this, a future change that breaks the assert itself (dedupe
+   wrong, threshold mistuned, counter never incremented) leaves the
+   positive test green for the wrong reason. The negative test proves the
+   detection mechanism actually runs.
+
+Example pair: `P17` (positive — clamp engaged → `convergeFails == 0`) and
+`P18` (negative — no clamp → `convergeFails > 0`). If either drifts, the
+other catches it.
+
 ## Architecture
 
 Singleplayer: `solarium-ui-vk` spawns `solarium-server` as a child process then connects

@@ -56,3 +56,6 @@ src/builtin/
 
 # Vendored CEF binary distribution — 1.4 GB extracted, populated by make cef_setup.
 /third_party/cef/
+
+# Voxel-earth tile cache — downloaded on demand, not committed.
+/cache/
