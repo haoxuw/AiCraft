@@ -126,6 +126,8 @@ set(PLATFORM_SERVER_SOURCES
 	src/platform/server/voxel_earth/voxel_palette.cpp
 	src/platform/server/voxel_earth/osm_zone_provider.h
 	src/platform/server/voxel_earth/osm_zone_provider.cpp
+	src/platform/server/voxel_earth/tile_shard.h
+	src/platform/server/voxel_earth/tile_shard.cpp
 )
 
 set(PLATFORM_CLIENT_SOURCES
@@ -440,6 +442,8 @@ set(VOXEL_EARTH_SOURCES
 	src/platform/server/voxel_earth/voxelizer.cpp
 	src/platform/server/voxel_earth/region.h
 	src/platform/server/voxel_earth/region.cpp
+	src/platform/server/voxel_earth/tile_shard.h
+	src/platform/server/voxel_earth/tile_shard.cpp
 )
 
 add_executable(solarium-voxel-smoke

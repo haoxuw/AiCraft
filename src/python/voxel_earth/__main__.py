@@ -213,10 +213,23 @@ def cmd_world(args: argparse.Namespace) -> int:
             f.write(f"# {len(tiles)} GLB tiles for ({lat},{lng}) r={args.radius}\n")
             for t in tiles:
                 f.write(str(cache.glb_path(list(t.obb))) + "\n")
+        # Tile shards land in the SHARED ~/.voxel/tiles/ tree, keyed by
+        # regional anchor (floor(lat), floor(lng)) so two bakes whose
+        # centres fall in the same 1° square write to the same files.
+        # Independent shards: any subset can be copied/shared. Region
+        # anchor in v1 is informational; voxel coords stay in this bake's
+        # own ECEF frame until the cross-bake-merge change lands (commit
+        # 4 of the tile-shard plan).
+        tile_out = cache.root / "tiles"
+        rlat = int(__import__("math").floor(lat))
+        rlng = int(__import__("math").floor(lng))
         bake_cmd = [str(bake_bin),
                     "--glb-list", str(glb_list_path),
                     "--out", str(region_path),
-                    "--voxel-size", str(args.voxel_size)]
+                    "--voxel-size", str(args.voxel_size),
+                    "--tile-out", str(tile_out),
+                    "--region-lat", str(rlat),
+                    "--region-lng", str(rlng)]
         print(f"[world] {' '.join(bake_cmd)}")
         rc = subprocess.call(bake_cmd)
         if rc != 0:

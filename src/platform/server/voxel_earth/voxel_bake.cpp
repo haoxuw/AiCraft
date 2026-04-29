@@ -30,6 +30,7 @@
 #include "server/voxel_earth/region.h"
 #include "server/voxel_earth/rotate.h"
 #include "server/voxel_earth/texture.h"
+#include "server/voxel_earth/tile_shard.h"
 #include "server/voxel_earth/voxelizer.h"
 
 #include <algorithm>
@@ -53,6 +54,10 @@ struct Args {
 	std::string glb_dir;
 	std::string glb_list;       // file with one GLB path per line; overrides --glb-dir
 	std::string out_path;
+	std::string tile_out;       // optional dir for per-tile .vtil shards
+	int         region_lat = 0; // regional ENU frame anchor (1° grid)
+	int         region_lng = 0;
+	bool        have_region = false;
 	float       voxel_size = 1.0f;
 	bool        have_origin = false;
 	std::array<double, 3> origin { 0, 0, 0 };
@@ -76,6 +81,13 @@ static bool parse_args(int argc, char** argv, Args& a) {
 		}
 		else if (k == "--no-fill")          { a.do_fill = false; }
 		else if (k == "--fill-stone-depth") { if (auto v = next()) a.fill_stone_depth = std::atoi(v); else return false; }
+		else if (k == "--tile-out")         { if (auto v = next()) a.tile_out = v; else return false; }
+		else if (k == "--region-lat") {
+			if (auto v = next()) { a.region_lat = std::atoi(v); a.have_region = true; } else return false;
+		}
+		else if (k == "--region-lng") {
+			if (auto v = next()) { a.region_lng = std::atoi(v); a.have_region = true; } else return false;
+		}
 		else if (k == "--help" || k == "-h") {
 			return false;
 		} else {
@@ -361,6 +373,60 @@ int main(int argc, char** argv) {
 	if (!ve::write_region(a.out_path, region, &werr)) {
 		std::fprintf(stderr, "write failed: %s\n", werr.c_str());
 		return 1;
+	}
+
+	// Optional: also emit per-tile VTIL shards. Each tile holds 16×16
+	// chunk-columns of voxels (= 256 m × 256 m × full-Y). Independent files,
+	// keyed by their (tile_x, tile_z) in the file name — copy any subset
+	// across machines and the engine slots them in by name. v1 uses the
+	// bake's own ECEF origin; the shared-frame migration (commit 4) will
+	// switch to floor(lat)/floor(lng) anchors so two bakes whose centres
+	// land in the same 1° square write to the SAME shards.
+	if (!a.tile_out.empty()) {
+		const auto t_sh0 = std::chrono::steady_clock::now();
+		std::unordered_map<uint64_t, ve::TileShard> tiles;
+		auto packTile = [](int32_t tx, int32_t tz) -> uint64_t {
+			return ((uint64_t)(uint32_t)tx) | ((uint64_t)(uint32_t)tz << 32);
+		};
+		for (const auto& v : region.voxels) {
+			const int32_t tx = ve::tile_x_of(v.x);
+			const int32_t tz = ve::tile_z_of(v.z);
+			auto& sh = tiles[packTile(tx, tz)];
+			if (sh.voxels.empty()) {
+				sh.region_lat    = a.region_lat;
+				sh.region_lng    = a.region_lng;
+				sh.tile_x        = tx;
+				sh.tile_z        = tz;
+				sh.voxel_size_mm = region.voxel_size_mm;
+				sh.origin_ecef   = region.origin_ecef;
+				sh.bbox_min      = { v.x, v.y, v.z };
+				sh.bbox_max      = { v.x, v.y, v.z };
+			} else {
+				if (v.x < sh.bbox_min[0]) sh.bbox_min[0] = v.x;
+				if (v.y < sh.bbox_min[1]) sh.bbox_min[1] = v.y;
+				if (v.z < sh.bbox_min[2]) sh.bbox_min[2] = v.z;
+				if (v.x > sh.bbox_max[0]) sh.bbox_max[0] = v.x;
+				if (v.y > sh.bbox_max[1]) sh.bbox_max[1] = v.y;
+				if (v.z > sh.bbox_max[2]) sh.bbox_max[2] = v.z;
+			}
+			sh.voxels.push_back(v);
+		}
+		size_t written = 0;
+		for (auto& [_, sh] : tiles) {
+			const std::string p = ve::shard_path(a.tile_out,
+			                                     sh.region_lat, sh.region_lng,
+			                                     sh.tile_x, sh.tile_z);
+			std::string serr;
+			if (!ve::write_shard(p, sh, &serr)) {
+				std::fprintf(stderr, "shard write failed: %s\n", serr.c_str());
+				return 1;
+			}
+			++written;
+		}
+		const auto t_sh1 = std::chrono::steady_clock::now();
+		const double t_sh = std::chrono::duration<double>(t_sh1 - t_sh0).count();
+		std::printf("tile shards: %zu files in %s (%.2fs)\n",
+		            written, a.tile_out.c_str(), t_sh);
 	}
 
 	std::printf("\n");
