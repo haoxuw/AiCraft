@@ -361,6 +361,10 @@ void Game::processInput(float dt) {
 		}
 	}
 
+	// --cam-pitch override (headless screenshots only). Stomp the pitch
+	// after camera input so mouse-look + RTS-pitch math don't drift.
+	if (m_forcedPitchOn) m_cam.lookPitch = m_forcedPitchDeg;
+
 	clampCameraCollision();
 }
 

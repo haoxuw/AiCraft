@@ -452,6 +452,8 @@ void HudRenderer::renderInventoryPanel() {
 			g.m_drag.count    = src.count;
 			g.m_drag.srcKind  = src.kind;
 			g.m_drag.srcIndex = src.index;
+			std::printf("[inv-drag] BEGIN srcKind=%d srcIdx=%d %dx%s\n",
+				(int)src.kind, src.index, src.count, src.itemId.c_str());
 		}
 	}
 	if (g.m_mouseLReleased && g.m_drag.active) {
@@ -460,6 +462,9 @@ void HudRenderer::renderInventoryPanel() {
 		// Don't count self-on-self as a drop.
 		if (tgt && tgt->kind == g.m_drag.srcKind && tgt->index == g.m_drag.srcIndex)
 			tgt = nullptr;
+		std::printf("[inv-drag] END srcKind=%d srcIdx=%d → tgtKind=%d tgtIdx=%d (invOther=%u)\n",
+			(int)g.m_drag.srcKind, g.m_drag.srcIndex,
+			tgt ? (int)tgt->kind : -1, tgt ? tgt->index : -1, g.m_invOther);
 
 		// Drop resolution matrix, inlined so the friend relationship (HudRenderer
 		// is friend of Game) gives access to private m_hotbar / m_server. A free
@@ -473,7 +478,10 @@ void HudRenderer::renderInventoryPanel() {
 		// one request and let the server cap. A single tick caps the
 		// transfer count; the user can drag again for the remainder.
 		auto sendStoreToOther = [&]() {
-			if (g.m_invOther == 0) return;
+			if (g.m_invOther == 0) {
+				std::printf("[inv-drag] sendStoreToOther skipped (m_invOther=0)\n");
+				return;
+			}
 			solarium::ActionProposal p;
 			p.type         = solarium::ActionProposal::Relocate;
 			p.actorId      = g.m_server->localPlayerId();
@@ -481,10 +489,15 @@ void HudRenderer::renderInventoryPanel() {
 			p.relocateTo   = solarium::Container::entity(g.m_invOther);
 			p.itemId       = g.m_drag.itemId;
 			p.itemCount    = g.m_drag.count;
+			std::printf("[inv-drag] STORE %dx%s → entity #%u\n",
+				g.m_drag.count, g.m_drag.itemId.c_str(), g.m_invOther);
 			g.m_server->sendAction(p);
 		};
 		auto sendTakeFromOther = [&]() {
-			if (g.m_invOther == 0) return;
+			if (g.m_invOther == 0) {
+				std::printf("[inv-drag] sendTakeFromOther skipped (m_invOther=0)\n");
+				return;
+			}
 			solarium::ActionProposal p;
 			p.type         = solarium::ActionProposal::Relocate;
 			p.actorId      = g.m_server->localPlayerId();
@@ -492,6 +505,8 @@ void HudRenderer::renderInventoryPanel() {
 			p.relocateTo   = solarium::Container::self();
 			p.itemId       = g.m_drag.itemId;
 			p.itemCount    = g.m_drag.count;
+			std::printf("[inv-drag] TAKE %dx%s ← entity #%u\n",
+				g.m_drag.count, g.m_drag.itemId.c_str(), g.m_invOther);
 			g.m_server->sendAction(p);
 		};
 		if (tgt && tgt->kind == K::Hotbar) {

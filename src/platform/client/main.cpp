@@ -6,6 +6,8 @@
 #include "client/rhi/rhi.h"
 #include "client/rhi/rhi_vk.h"
 #include "client/ui/components.h"
+#include "client/ui/pages.h"
+#include "client/ui/action_router.h"
 #include "client/game_logger.h"
 #include "client/local_world.h"
 #include "client/network_server.h"
@@ -172,6 +174,17 @@ int main(int argc, char** argv) {
 	// main loop exits naturally — same path as the menu's Quit button — so
 	// game.shutdown(), client perf dump, and server save all fire as usual.
 	float terminateAfterSec = 0.0f;
+	// --auto-screenshot: drop a single screenshot to <path> as soon as CEF
+	// has composited a few stable frames, then quit. The whole point is
+	// headless smoke tests (src/tests/ui_smoke.sh) that boot one page,
+	// capture proof, and tear down — no leftover process holding the cef
+	// cache lock or hogging FDs across runs.
+	std::string autoScreenshotPath;
+	int         autoScreenshotMinFrames = 30;  // ~0.5 s at 60 FPS
+	// --cam-pitch DEG: clamp camera lookPitch each frame so the screenshot
+	// captures a tilted-down view. Headless polish only.
+	bool        camPitchOn  = false;
+	float       camPitchDeg = 0.0f;
 	solarium::AgentClient::Config agentCfg;  // DecidePacer cooldown knobs
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -187,6 +200,13 @@ int main(int argc, char** argv) {
 			       "  --villagers N     Spawn N villagers (override template count; local server only)\n"
 			       "  --sim-speed N     Sim-time multiplier (default 1; 4 = 4× faster; local server only)\n"
 			       "  --terminate-after SEC  Self-quit after SEC seconds via the Quit-button path\n"
+		       "  --auto-screenshot PATH  Once CEF has composited, write a screenshot\n"
+		       "                          to PATH and exit cleanly. Headless smoke-test\n"
+		       "                          hook — pairs with SOLARIUM_BOOT_PAGE=<page>.\n"
+		       "  --auto-screenshot-min-frames N  Frames to wait after first paint\n"
+		       "                                  (default 30 ~ 0.5s).\n"
+		       "  --cam-pitch DEG   Clamp camera lookPitch each frame (degrees;\n"
+		       "                    -30 tilts down for cinematic frames).\n"
 			       "                         (perf summary + save fire normally; ≤0 = run forever)\n"
 			       "  --decide-base-cooldown SEC  Base Decide dispatch cooldown (default 0.10s)\n"
 			       "  --decide-max-cooldown SEC   Max cooldown after repeated failures (default 10s)\n"
@@ -220,6 +240,12 @@ int main(int argc, char** argv) {
 			debugMobCount = std::atoi(argv[++i]);
 		else if (strcmp(argv[i], "--sim-speed") == 0 && i + 1 < argc) simSpeed = (float)std::atof(argv[++i]);
 		else if (strcmp(argv[i], "--terminate-after") == 0 && i + 1 < argc) terminateAfterSec = (float)std::atof(argv[++i]);
+		else if (strcmp(argv[i], "--auto-screenshot") == 0 && i + 1 < argc) autoScreenshotPath = argv[++i];
+		else if (strcmp(argv[i], "--auto-screenshot-min-frames") == 0 && i + 1 < argc) autoScreenshotMinFrames = std::atoi(argv[++i]);
+		else if (strcmp(argv[i], "--cam-pitch") == 0 && i + 1 < argc) {
+			camPitchOn  = true;
+			camPitchDeg = (float)std::atof(argv[++i]);
+		}
 		else if (strcmp(argv[i], "--decide-base-cooldown") == 0 && i + 1 < argc)
 			agentCfg.decideBaseCooldownSec = (float)std::atof(argv[++i]);
 		else if (strcmp(argv[i], "--decide-max-cooldown") == 0 && i + 1 < argc)
@@ -336,7 +362,7 @@ int main(int argc, char** argv) {
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	if (logOnly) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-	GLFWwindow* win = glfwCreateWindow(1280, 800, "Solarium (Vulkan)", nullptr, nullptr);
+	GLFWwindow* win = glfwCreateWindow(1280, 800, "Solarium", nullptr, nullptr);
 	if (!win) { glfwTerminate(); return 1; }
 
 	int fbw = 0, fbh = 0;
@@ -366,6 +392,7 @@ int main(int argc, char** argv) {
 	game.setPendingConnect(42, templateIndex);  // overridden by hostLocalServer
 	game.setAgentConfig(agentCfg);              // DecidePacer knobs — must precede init()
 	game.setExecDir(execDir);                   // hostLocalServer needs it for the server-binary path
+	if (camPitchOn) game.setForcedCameraPitch(camPitchDeg);
 	if (!game.init(rhi.get(), win)) {
 		fprintf(stderr, "game.init failed\n");
 		return 1;
@@ -374,7 +401,7 @@ int main(int argc, char** argv) {
 	// Boot routing — three paths:
 	//   1) --port N  → join a remote server at host:N, no local subprocess.
 	//   2) --skip-menu → host locally with the CLI-supplied template
-	//      (matches `make game`, `make toronto`, `make test-*`).
+	//      (matches `make game`, `make test-*`).
 	//   3) Default    → wait for the CEF menu to drive Singleplayer/Multiplayer.
 	if (port > 0) {
 		game.joinRemoteServer(host, port);
@@ -401,7 +428,7 @@ int main(int argc, char** argv) {
 	if (logOnly) game.setLogOnly(true);
 
 	// `--template N` means "boot straight into that world template" (this is
-	// what `make toronto`, `make test-dog`, etc. do). There's no main menu to
+	// what `make test-dog`, etc. do). There's no main menu to
 	// host in that flow, so suppress --cef-menu — otherwise CEF composites an
 	// empty Chromium surface over the loading screen and the player sees what
 	// looks like a stray browser pop-up. `make game` (no --template) still
@@ -420,1245 +447,12 @@ int main(int argc, char** argv) {
 		// the player picks a character (action "play:<id>") do we dismiss
 		// the overlay so the loading screen / world becomes visible.
 		// Common CSS now lives in client/ui/components.h. Reuses the same
-		// brass theme + chamfered-corner buttons + artistic scrollbar
-		// across every page; per-page CSS only adds layout-specific
-		// overrides.
-		const std::string kCss = solarium::ui::baseCss();
-		const std::string kJs =
-			"<script>function send(a){"
-			"window.cefQuery({request:'action:'+a,onSuccess:()=>{},onFailure:()=>{}});"
-			"}</script>";
-
-		// Bottom-right version label, identical across every page.
-		const std::string kVersion =
-			"<div class='version'>v0.2.0 / CEF 146</div>";
-
-		// Theme palette is owned by ui::themeRoot. Wrap with a settings-
-		// aware lambda so closures capture only `game`, matching the
-		// previous signature.
-		auto themeRoot = [&]() -> std::string {
-			return solarium::ui::themeRoot(game.settings().theme_id);
-		};
-
-		// HTML-escape the bare minimum: ", <, >, &, %, ', #. Pages are passed
-		// as `data:text/html,<…>` so any '%' that isn't part of a percent-
-		// escape will look malformed — URL-encode it explicitly. Use `&apos;`
-		// (not `&#39;`) for the apostrophe so the HTML entity itself contains
-		// no `#` — a bare `#` in the URL terminates the data: payload as a
-		// fragment marker, truncating the script.
-		auto enc = [](const std::string& s) -> std::string {
-			std::string o; o.reserve(s.size() + 16);
-			for (char c : s) {
-				switch (c) {
-					case '"': o += "&quot;"; break;
-					case '<': o += "&lt;";   break;
-					case '>': o += "&gt;";   break;
-					case '&': o += "&amp;";  break;
-					case '\'':o += "&apos;"; break;
-					case '%': o += "%25";    break;  // data: URL escape
-					case '#': o += "%23";    break;  // data: URL fragment guard
-					default:  o += c;
-				}
-			}
-			return o;
-		};
-
-		auto mainPage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"</style></head><body>"
-				"<h1>Solarium</h1>"
-				"<div class='tag'>A voxel sandbox civilization</div>"
-				"<button class='btn' onclick=\"send('singleplayer')\">Singleplayer</button>"
-				"<button class='btn' onclick=\"send('multiplayer')\">Multiplayer</button>"
-				"<button class='btn' onclick=\"send('handbook')\">Handbook</button>"
-				"<button class='btn' onclick=\"send('mods')\">Mods</button>"
-				"<button class='btn' onclick=\"send('settings')\">Settings</button>"
-				"<button class='btn' onclick=\"send('quit')\">Quit</button>" +
-				kVersion + kJs +
-				"</body></html>";
-		};
-
-		// Pokédex / Civ6 Civilopedia chrome — shared by Character Select and
-		// Handbook. The CSS lives in client/ui/components.h::dexCss so both
-		// pages stay in lockstep when the design changes.
-		const std::string kDexCss = solarium::ui::dexCss();
-		// Compact a multi-line / oversized field value for handbook attrs.
-		// Strips control chars (newlines, CRs, tabs) and non-ASCII bytes,
-		// because the result is embedded in JS string literals inside the
-		// data: URL — a raw newline is a parse error, and CEF's data: URL
-		// decoder has been observed to mangle UTF-8 multi-byte sequences
-		// in ways that fail to parse cleanly. Backslashes are escaped.
-		auto compact = [](const std::string& s, size_t kMax = 220) -> std::string {
-			std::string out;
-			out.reserve(std::min(s.size(), kMax + 1));
-			for (unsigned char c : s) {
-				if (c == '\n' || c == '\r') {
-					if (!out.empty() && out.back() != ' ') out += " / ";
-				} else if (c == '\t') {
-					out += ' ';
-				} else if (c == '\\') {
-					out += "\\\\";
-				} else if (c < 0x20 || c >= 0x7F) {
-					// drop control + non-ASCII; common cases (em-dash,
-					// ellipsis) end up as nothing rather than mojibake.
-					continue;
-				} else {
-					out += (char)c;
-				}
-				if (out.size() >= kMax) { out += "..."; break; }
-			}
-			return out;
-		};
-
-		auto charSelectPage = [&]() -> std::string {
-			struct PlayableItem {
-				std::string id, name, desc;
-				int str=0, sta=0, agi=0, intl=0;     // 0–5 stat bars
-				float walk=0, run=0;                  // m/s
-				std::string features;                 // " · "-joined tag list
-			};
-			auto readF = [](const solarium::ArtifactEntry& e,
-			                const char* k) -> float {
-				auto it = e.fields.find(k);
-				if (it == e.fields.end()) return 0.0f;
-				return (float)std::atof(it->second.c_str());
-			};
-			auto readI = [](const solarium::ArtifactEntry& e,
-			                const char* k) -> int {
-				auto it = e.fields.find(k);
-				if (it == e.fields.end()) return 0;
-				return std::atoi(it->second.c_str());
-			};
-			std::vector<PlayableItem> playables;
-			for (auto* e : game.artifactRegistry().byCategory("living")) {
-				if (!e->flag("playable")) continue;
-				PlayableItem p;
-				p.id   = e->id;
-				p.name = e->name.empty() ? e->id : e->name;
-				p.desc = e->text("description");
-				p.str  = readI(*e, "stats_strength");
-				p.sta  = readI(*e, "stats_stamina");
-				p.agi  = readI(*e, "stats_agility");
-				p.intl = readI(*e, "stats_intelligence");
-				p.walk = readF(*e, "walk_speed");
-				p.run  = readF(*e, "run_speed");
-				// "features" is a comma-joined string in the artifact loader.
-				p.features = e->text("features");
-				playables.push_back(std::move(p));
-			}
-			std::sort(playables.begin(), playables.end(),
-				[](const PlayableItem& a, const PlayableItem& b){return a.name < b.name;});
-
-			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kDexCss +
-				".stats{display:grid;grid-template-columns:auto 1fr auto;"
-				"column-gap:14px;row-gap:6px;margin-top:18px;max-width:520px;"
-				"font-size:12px;align-items:center}"
-				".stats .lbl{color:var(--accent-mid);text-transform:uppercase;"
-				"letter-spacing:2px;font-family:monospace}"
-				".stats .bar{height:10px;background:rgba(40,30,20,0.85);"
-				"border:1px solid rgba(184,136,56,0.5);position:relative;"
-				"box-sizing:border-box}"
-				".stats .bar .fill{position:absolute;top:0;left:0;bottom:0;"
-				"background:linear-gradient(90deg,var(--accent-mid),var(--accent-hi))}"
-				".stats .num{color:var(--accent-hi);font-family:monospace;font-size:13px;"
-				"min-width:24px;text-align:right}"
-				".speed{display:flex;gap:24px;margin-top:14px;font-size:12px;"
-				"color:var(--accent-mid);font-family:monospace;letter-spacing:1px;"
-				"text-transform:uppercase}"
-				".speed b{color:var(--accent-hi);font-weight:400;font-size:14px;"
-				"margin-left:6px}"
-				".features{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px}"
-				".features span{padding:4px 10px;font-size:11px;"
-				"background:rgba(94,67,30,0.88);border:1px solid var(--accent-mid);"
-				"color:var(--accent-hi);letter-spacing:1px}"
-				"</style></head><body>"
-				"<aside class='sidebar'>"
-				"<div class='sb-head'><h1>Choose Character</h1>"
-				"<div class='sub'>" + std::to_string(playables.size()) +
-				" playable" + (playables.size() == 1 ? "" : "s") + "</div></div>"
-				"<div class='sb-list'>";
-			for (size_t i = 0; i < playables.size(); ++i) {
-				const auto& p = playables[i];
-				html += "<button class='sb-row" + std::string(i == 0 ? " on" : "") +
-				        "' data-id='" + p.id + "' "
-				        "onclick=\"pick('" + p.id + "',this)\" "
-				        "onmouseenter=\"hover('" + p.id + "',this)\">" +
-				        p.name + "<span class='id'>" + p.id + "</span></button>";
-			}
-			html += "</div>"
-				"<div class='sb-foot'>"
-				"<button class='primary' onclick=\"send('play')\">Begin Game</button>"
-				"<button onclick=\"send('back')\">Back</button>"
-				"</div></aside>"
-				"<main class='detail'>"
-				"<div class='detail-card' id='card'></div></main>" +
-				kVersion +
-				"<script>"
-				"const ENTRIES={";
-			for (size_t i = 0; i < playables.size(); ++i) {
-				const auto& p = playables[i];
-				if (i) html += ",";
-				char buf[64];
-				std::snprintf(buf, sizeof(buf), "%.1f", p.walk);
-				std::string walkS = buf;
-				std::snprintf(buf, sizeof(buf), "%.1f", p.run);
-				std::string runS  = buf;
-				html += "'" + p.id + "':{name:'" + enc(compact(p.name, 80)) +
-				        "',desc:'" + enc(compact(p.desc, 400)) +
-				        "',str:" + std::to_string(p.str) +
-				        ",sta:" + std::to_string(p.sta) +
-				        ",agi:" + std::to_string(p.agi) +
-				        ",intl:" + std::to_string(p.intl) +
-				        ",walk:'" + walkS + "',run:'" + runS +
-				        "',feat:'" + enc(compact(p.features, 200)) + "'}";
-			}
-			html += "};"
-				"function bar(label,n){"
-				// 5 is the per-stat ceiling shown in artifacts; clamp anything
-				// silly to 100% so the bar never overflows visually.
-				"const pct=Math.min(100,Math.max(0,n*20));"
-				"return \"<span class='lbl'>\"+label+\"</span>\"+"
-				"\"<span class='bar'><span class='fill' style='width:\"+pct+\"%25'></span></span>\"+"
-				"\"<span class='num'>\"+n+\"</span>\";}"
-				"function render(id){"
-				"const e=ENTRIES[id];if(!e)return;"
-				"let h=\"<span class='badge'>Living</span>\"+"
-				"\"<span class='badge'>\"+id+\"</span>\"+"
-				"\"<h2>\"+e.name+\"</h2>\";"
-				"if(e.desc)h+=\"<div class='desc'>\"+e.desc+\"</div>\";"
-				"if(e.str||e.sta||e.agi||e.intl){"
-				"h+=\"<div class='stats'>\"+bar('STR',e.str)+bar('STA',e.sta)+"
-				"bar('AGI',e.agi)+bar('INT',e.intl)+\"</div>\";}"
-				"if(e.walk||e.run){"
-				"h+=\"<div class='speed'>walk<b>\"+e.walk+\"</b>m/s\";"
-				"if(e.run!=='0.0')h+=\"  run<b>\"+e.run+\"</b>m/s\";"
-				"h+=\"</div>\";}"
-				"if(e.feat){const tags=e.feat.split(',').map(s=>s.trim()).filter(Boolean);"
-				"if(tags.length){h+=\"<div class='features'>\"+"
-				"tags.map(t=>'<span>'+t+'</span>').join('')+\"</div>\";}}"
-				"document.getElementById('card').innerHTML=h;}"
-				"function send(a){window.cefQuery({request:'action:'+a,"
-				"onSuccess:()=>{},onFailure:()=>{}});}"
-				"function setActive(el){document.querySelectorAll('.sb-row')"
-				".forEach(b=>b.classList.remove('on'));el.classList.add('on');}"
-				// Sticky selection: hover previews while clickedId is null;
-				// once the user clicks, that row is stuck — further hovers
-				// are no-ops, only another click swaps the preview.
-				"let lastHover='';let clickedId=null;"
-				"function hover(id,el){if(clickedId)return;"
-				"if(id===lastHover)return;lastHover=id;"
-				"setActive(el);render(id);send('pick:'+id);}"
-				"function pick(id,el){clickedId=id;lastHover=id;"
-				"setActive(el);render(id);send('pick:'+id);}"
-				"render('" + (playables.empty() ? "" : playables[0].id) + "');"
-				"</script>"
-				"</body></html>";
-			return html;
-		};
-
-		// Mod Manager — lists distinct namespaces under artifacts/<cat>/* with
-		// per-namespace enable toggles. Toggles update Settings.disabled_mods
-		// (comma-joined ids); changes apply on the NEXT launch since the
-		// artifact registry is loaded once at boot.
-		// Value-capture matches settingsPage: invoked from the action callback
-		// after this scope ends, so [&] would dangle.
-		auto modManagerPage = [kCss, kVersion, &game, enc, themeRoot]() -> std::string {
-			auto namespaces = game.artifactRegistry().discoverNamespaces("artifacts");
-			std::sort(namespaces.begin(), namespaces.end());
-			// Per-namespace artifact count for display.
-			std::unordered_map<std::string, int> nsCount;
-			for (const auto& e : game.artifactRegistry().entries()) {
-				// e.filePath = "artifacts/<cat>/<ns>/<file>.py"
-				auto p = std::filesystem::path(e.filePath);
-				if (p.has_parent_path()) {
-					std::string ns = p.parent_path().filename().string();
-					nsCount[ns]++;
-				}
-			}
-			// Disabled set from current settings.
-			std::set<std::string> disabled;
-			{
-				const std::string& s = game.settings().disabled_mods;
-				size_t pos = 0;
-				while (pos < s.size()) {
-					size_t q = s.find(',', pos);
-					std::string tok = s.substr(pos, q == std::string::npos ? std::string::npos : q - pos);
-					while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
-					while (!tok.empty() && tok.back() == ' ')  tok.pop_back();
-					if (!tok.empty()) disabled.insert(tok);
-					if (q == std::string::npos) break;
-					pos = q + 1;
-				}
-			}
-
-			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
-				"min-height:100vh;box-sizing:border-box;align-items:center}"
-				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
-				".tag{margin:0 0 24px}"
-				// Match the .tag chip — small dark scrim so the line reads
-				// against the world preview behind every menu page.
-				".note{display:inline-block;margin:0 0 24px;font-size:12px;"
-				"color:var(--accent-mid);letter-spacing:2px;"
-				"text-transform:uppercase;padding:5px 14px;"
-				"background:rgba(6,4,3,0.7);"
-				"border:1px solid rgba(184,136,56,0.35);"
-				"text-shadow:0 1px 2px rgba(0,0,0,0.85)}"
-				".list{display:flex;flex-direction:column;gap:8px;width:680px}"
-				".row{display:flex;align-items:center;justify-content:space-between;"
-				"padding:14px 22px;background:rgba(20,13,8,0.97);"
-				"border:1px solid var(--accent-mid)}"
-				".row.off{opacity:0.55}"
-				".row .nm{font-size:18px;color:var(--accent-hi);letter-spacing:2px;"
-				"font-family:monospace}"
-				".row .ct{font-size:11px;color:var(--accent-mid);letter-spacing:1px;"
-				"font-family:monospace;margin-left:12px}"
-				".tog{position:relative;width:44px;height:22px;"
-				"background:rgba(40,30,20,0.9);border:1px solid var(--accent-mid);"
-				"border-radius:11px;cursor:pointer;transition:background 0.15s}"
-				".tog::after{content:'';position:absolute;left:3px;top:2px;"
-				"width:14px;height:14px;border-radius:50%%;background:var(--accent-mid);"
-				"transition:left 0.15s,background 0.15s}"
-				".tog.on{background:rgba(94,67,30,0.95)}"
-				".tog.on::after{left:25px;background:var(--accent-hi)}"
-				".back{margin-top:24px;width:160px}"
-				"</style></head><body>"
-				"<h1>Mod Manager</h1>"
-				"<div class='tag'>Enable / disable artifact namespaces</div>"
-				"<div class='note'>Changes apply on next launch</div>"
-				"<div class='list'>";
-
-			if (namespaces.empty()) {
-				html += "<div class='row'><span class='nm'>(none found)</span>"
-				        "<span class='ct'>0 entries</span></div>";
-			}
-			for (const auto& ns : namespaces) {
-				bool isOff = disabled.count(ns) > 0;
-				int  ct    = nsCount.count(ns) ? nsCount[ns] : 0;
-				html += "<div class='row" + std::string(isOff ? " off" : "") +
-				        "'><span><span class='nm'>" + enc(ns) +
-				        "</span><span class='ct'>" + std::to_string(ct) +
-				        " entries</span></span>"
-				        "<div class='tog" + std::string(isOff ? "" : " on") +
-				        "' onclick=\"tog(this,'" + enc(ns) + "')\"></div>"
-				        "</div>";
-			}
-			html += "</div>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>"
-				"<script>"
-				"function send(a){window.cefQuery({request:'action:'+a,"
-				"onSuccess:()=>{},onFailure:()=>{}});}"
-				"function tog(el,ns){"
-				"const on=!el.classList.contains('on');"
-				"el.classList.toggle('on',on);"
-				"el.parentElement.classList.toggle('off',!on);"
-				"send('mod:'+ns+':'+(on?'on':'off'));}"
-				"</script>" +
-				kVersion +
-				"</body></html>";
-			return html;
-		};
-
-		// Save slot picker — shown after Singleplayer click, before the world
-		// picker. Lists every saves/<dir>/world.json entry plus a "New
-		// World" tile. Click an existing save → load it. Click New World →
-		// world picker → fresh save dir.
-		// Value-capture (kCss/kJs/kVersion + enc/compact) so the lambda is
-		// safe to invoke from the action callback after this scope ends.
-		auto saveSlotsPage = [kCss, kJs, kVersion, enc, compact, themeRoot]() -> std::string {
-			auto saves = solarium::vk::scanSaves("saves");
-			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
-				"min-height:100vh;box-sizing:border-box;align-items:center}"
-				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
-				".tag{margin:0 0 32px}"
-				".tiles{display:grid;grid-template-columns:repeat(auto-fill,"
-				"minmax(320px,1fr));gap:16px;width:100%%;max-width:1100px}"
-				".tile{background:rgba(20,13,8,0.97);border:1px solid var(--accent-mid);"
-				"padding:22px 24px;cursor:pointer;font-family:inherit;color:inherit;"
-				"text-align:left;transition:background 0.15s,transform 0.15s,"
-				"box-shadow 0.15s}"
-				".tile:hover{background:rgba(94,67,30,0.95);transform:translateY(-2px);"
-				"box-shadow:0 6px 20px rgba(0,0,0,0.5)}"
-				".tile h3{margin:0 0 6px;color:var(--accent-hi);font-size:22px;"
-				"letter-spacing:2px;font-weight:400}"
-				".tile .meta{font-size:12px;color:var(--accent-mid);font-family:monospace;"
-				"letter-spacing:1px;margin-bottom:6px;display:block;opacity:0.7}"
-				".tile .when{font-size:11px;color:var(--accent-mid);opacity:0.6}"
-				".tile.new{background:rgba(94,67,30,0.88);"
-				"border:2px dashed var(--accent-mid)}"
-				".tile.new h3{color:var(--accent-hi)}"
-				".tile.save{position:relative}"
-				// Destructive action — keep brass chrome, signal danger via
-				// a deeper rust tone on hover instead of the screaming red
-				// that clashed with the brass theme.
-				".tile .del{position:absolute;top:8px;right:8px;"
-				"padding:4px 10px;font-size:10px;letter-spacing:1px;"
-				"background:rgba(20,13,8,0.92);color:var(--accent-mid);"
-				"border:1px solid var(--accent-mid);font-family:inherit;"
-				"cursor:pointer;text-transform:uppercase;opacity:0.45;"
-				"transition:opacity 0.15s,background 0.15s,color 0.15s}"
-				".tile.save:hover .del{opacity:1}"
-				".tile .del:hover{background:rgba(96,28,18,0.95);"
-				"color:%23f0d8b8;border-color:%23a04030}"
-				".back{margin-top:24px;width:160px}"
-				"</style></head><body>"
-				"<h1>Choose Save</h1>"
-				"<div class='tag'>Continue an old world or start fresh</div>"
-				"<div class='tiles'>"
-				"<button class='tile new' onclick=\"send('new_world')\">"
-				"<h3>New World</h3>"
-				"<span class='meta'>pick a template + seed</span></button>";
-			for (const auto& s : saves) {
-				// Two clickable elements in one tile: the tile itself loads
-				// the save; the X button (top-right) deletes it. stopPropagation
-				// in the delete onclick keeps the load from firing too.
-				html += "<div class='tile save' onclick=\"send('load:" +
-				        s.path + "')\">"
-				        "<button class='del' "
-				        "onclick=\"event.stopPropagation();"
-				        "if(confirm('Delete &quot;" + enc(compact(s.name, 40)) +
-				        "&quot;?'))send('delete_save:" + s.path + "')\">"
-				        "Delete</button>"
-				        "<h3>" + enc(compact(s.name, 80)) + "</h3>"
-				        "<span class='meta'>" +
-				        enc(compact(s.templateName, 60)) + "</span>"
-				        "<span class='when'>" +
-				        enc(compact(s.lastPlayed, 40)) + "</span>"
-				        "</div>";
-			}
-			html += "</div>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
-				kVersion + kJs +
-				"</body></html>";
-			return html;
-		};
-
-		// Singleplayer flow: pick a world before going to character select.
-		// Tile grid driven by kWorldTemplates (logic/world_templates.h) — the
-		// canonical id ↔ templateIndex source the server also uses. Clicking
-		// a tile fires action `world:<id>`, which the C++ callback resolves
-		// to a templateIndex and hands to Game::hostLocalServer.
-		// Multiplayer hub — split between hosting your own LAN game and
-		// joining someone else's. Host routes through the world picker
-		// (same UI as Singleplayer) but with the next-host-visible flag
-		// set, so the spawned solarium-server announces on UDP 7778.
-		auto multiplayerHubPage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"h1{font-size:48px;letter-spacing:6px;margin:0 0 4px}"
-				".tag{margin:0 0 28px}"
-				".btn{width:340px}"
-				".btn small{display:block;font-size:12px;opacity:0.65;"
-				"margin-top:6px;letter-spacing:1px}"
-				"</style></head><body>"
-				"<h1>Multiplayer</h1>"
-				"<div class='tag'>Host a session, or join one on your network</div>"
-				"<button class='btn' onclick=\"send('mp_host')\">"
-				"Host New Game<small>visible to LAN players</small></button>"
-				"<button class='btn' onclick=\"send('mp_join')\">"
-				"Join LAN Game<small>browse servers on UDP 7778</small></button>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
-				kVersion + kJs +
-				"</body></html>";
-		};
-
-		// Multiplayer lobby — host-side only (v1). After the host picks a
-		// character we route here instead of straight into Connecting; the
-		// host clicks "Start Game" when ready. Joiners enter the world
-		// immediately on HELLO/WELCOME — proper "wait for host" protocol
-		// work is a v2 item (server-side lobby state + S_LOBBY opcode).
-		auto lobbyPage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"body{justify-content:center;align-items:center}"
-				"h1{font-size:56px;letter-spacing:8px;margin:0 0 12px}"
-				".tag{margin:0 0 32px;font-size:14px;letter-spacing:2px;"
-				"color:var(--accent-mid)}"
-				".players{display:flex;flex-direction:column;gap:6px;"
-				"width:380px;margin-bottom:24px}"
-				".player{padding:12px 18px;background:rgba(20,13,8,0.97);"
-				"border:1px solid var(--accent-mid);color:var(--accent-hi);"
-				"font-family:monospace;font-size:14px;letter-spacing:1px}"
-				".btn{width:280px}"
-				"</style></head><body>"
-				"<h1>Lobby</h1>"
-				"<div class='tag'>Your LAN game is live - joiners can find you on UDP 7778</div>"
-				"<div class='players'>"
-				"<div class='player'>You (host)</div>"
-				"</div>"
-				"<button class='btn' onclick=\"send('lobby_start')\">Start Game</button>"
-				"<button class='btn back' onclick=\"send('main_menu')\">Cancel</button>" +
-				kVersion + kJs +
-				"</body></html>";
-		};
-
-		// Death overlay — same chrome as Pause but with "You Died" header
-		// and Respawn / Main Menu buttons. Shown over the world from
-		// Game::enterDead when a CefHost is wired.
-		auto deathPage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"body{justify-content:center;align-items:center;"
-				"background:radial-gradient(ellipse at center,"
-				"rgba(80,10,10,0.55) 0%%,rgba(20,5,5,0.30) 60%%)}"
-				"h1{font-size:72px;letter-spacing:10px;margin:0 0 14px;"
-				"color:%23e85a4a;text-shadow:0 4px 18px rgba(0,0,0,0.85),"
-				"0 0 24px rgba(232,90,74,0.45)}"
-				".tag{margin:0 0 32px;color:%23e85a4a;opacity:0.85}"
-				".btn{width:280px}"
-				"</style></head><body>"
-				"<h1>You Died</h1>"
-				"<div class='tag'>Pick yourself up, traveller</div>"
-				"<button class='btn' onclick=\"send('respawn')\">Respawn</button>"
-				"<button class='btn' onclick=\"send('main_menu')\">Main Menu</button>" +
-				kVersion + kJs +
-				"</body></html>";
-		};
-
-		// In-game ESC pause page. Renders over the running world (the world
-		// keeps rendering behind because we don't change m_state). Static
-		// buttons → simple 4-line action wiring.
-		auto pausePage = [&]() -> std::string {
-			return "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"body{justify-content:center;align-items:center;"
-				"background:radial-gradient(ellipse at center,"
-				"rgba(10,5,5,0.65) 0%%,rgba(10,5,5,0.25) 60%%)}"
-				"h1{font-size:64px;letter-spacing:8px;margin:0 0 24px}"
-				".btn{width:280px}"
-				"</style></head><body>"
-				"<h1>Paused</h1>"
-				"<button class='btn' onclick=\"send('resume')\">Resume</button>"
-				"<button class='btn' onclick=\"send('settings')\">Settings</button>"
-				"<button class='btn' onclick=\"send('main_menu')\">Main Menu</button>"
-				"<button class='btn' onclick=\"send('quit')\">Quit</button>" +
-				kVersion + kJs +
-				"</body></html>";
-		};
-
-		auto worldPickerPage = [&]() -> std::string {
-			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"body{justify-content:flex-start;padding:60px 60px 60px;height:auto;"
-				"min-height:100vh;box-sizing:border-box;align-items:center}"
-				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
-				".tag{margin:0 0 32px}"
-				".tiles{display:grid;grid-template-columns:repeat(auto-fill,"
-				"minmax(320px,1fr));gap:16px;width:100%%;max-width:1100px}"
-				".tile{background:rgba(20,13,8,0.97);border:1px solid var(--accent-mid);"
-				"padding:22px 24px;cursor:pointer;font-family:inherit;color:inherit;"
-				"text-align:left;transition:background 0.15s,transform 0.15s,"
-				"box-shadow 0.15s}"
-				".tile:hover{background:rgba(94,67,30,0.95);transform:translateY(-2px);"
-				"box-shadow:0 6px 20px rgba(0,0,0,0.5)}"
-				".tile h3{margin:0 0 6px;color:var(--accent-hi);font-size:22px;"
-				"letter-spacing:2px;font-weight:400}"
-				".tile .id{font-size:11px;color:var(--accent-mid);font-family:monospace;"
-				"letter-spacing:1px;margin-bottom:8px;display:block;opacity:0.7}"
-				".tile p{margin:0;font-size:13px;line-height:1.45;opacity:0.88}"
-				".opts{display:flex;gap:18px;align-items:center;margin-top:28px;"
-				"padding:14px 22px;background:rgba(20,13,8,0.97);"
-				"border:1px solid rgba(184,136,56,0.5)}"
-				".opts label{font-size:12px;letter-spacing:2px;color:var(--accent-mid);"
-				"text-transform:uppercase;display:flex;align-items:center;gap:10px}"
-				".opts input{background:rgba(40,30,20,0.95);color:var(--accent-hi);"
-				"border:1px solid var(--accent-mid);font-family:monospace;font-size:13px;"
-				"padding:6px 8px;width:90px}"
-				".opts input[type='range']{width:160px;accent-color:var(--accent-hi)}"
-				".opts .val{font-family:monospace;color:var(--accent-hi);min-width:32px;"
-				"text-align:right}"
-				".opts button{padding:6px 12px;background:rgba(94,67,30,0.85);"
-				"color:var(--accent-hi);border:1px solid var(--accent-mid);font-family:inherit;"
-				"font-size:11px;cursor:pointer;letter-spacing:1px}"
-				".back{margin-top:24px;width:160px}"
-				"</style></head><body>"
-				"<h1>Choose World</h1>"
-				"<div class='tag'>Pick where your story begins</div>"
-				"<div class='tiles'>";
-			for (size_t i = 0; i < solarium::kWorldTemplateCount; ++i) {
-				const auto& t = solarium::kWorldTemplates[i];
-				// Pull display name + description from the artifact registry
-				// when present (lets the .py be the source of truth); fall
-				// back to the constexpr table.
-				std::string name = t.fallbackName;
-				std::string desc;
-				if (auto* e = game.artifactRegistry().findById(t.id)) {
-					if (!e->name.empty())        name = e->name;
-					if (!e->description.empty()) desc = e->description;
-				}
-				html += "<button class='tile' onclick=\"send('world:" +
-				        std::string(t.id) + "')\">"
-				        "<h3>" + enc(compact(name, 80)) + "</h3>"
-				        "<span class='id'>" + std::string(t.id) + "</span>"
-				        "<p>" + enc(desc.empty() ? "(no description)"
-				                                 : compact(desc, 220)) + "</p>"
-				        "</button>";
-			}
-			html += "</div>"
-				"<div class='opts'>"
-				"<label>Name<input type='text' id='wname' "
-				"placeholder='My World' maxlength='32' style='width:160px'></label>"
-				"<label>Seed<input type='number' id='wseed' value='42' min='0' max='99999'></label>"
-				"<button onclick=\"document.getElementById('wseed').value="
-				"Math.floor(Math.random()*99999)\">Randomise</button>"
-				"<label>Villagers<input type='range' id='wvill' min='0' max='100' value='0'>"
-				"<span class='val' id='wvillv'>auto</span></label>"
-				"</div>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>"
-				"<script>"
-				"function send(a){window.cefQuery({request:'action:'+a,"
-				"onSuccess:()=>{},onFailure:()=>{}});}"
-				"document.getElementById('wvill').addEventListener('input',e=>{"
-				"document.getElementById('wvillv').textContent="
-				"e.target.value==='0'?'auto':e.target.value;});"
-				// Hijack tile clicks: append seed + villagers + name to the
-				// action. Encode name to dodge ':' as a separator (URI-encode).
-				"document.querySelectorAll('.tile').forEach(t=>{"
-				"const id=t.getAttribute('onclick').match(/world:([\\w_]+)/)[1];"
-				"t.onclick=()=>{const s=document.getElementById('wseed').value||'42';"
-				"const v=document.getElementById('wvill').value;"
-				"const n=encodeURIComponent("
-				"document.getElementById('wname').value.trim()||'My World');"
-				"send('world:'+id+':'+s+':'+v+':'+n);};});"
-				"</script>" +
-				kVersion +
-				"</body></html>";
-			return html;
-		};
-
-		// Interactive settings — sliders/toggles persist via the `set:<k>:<v>`
-		// action which mutates Game::settings() and writes settings.json.
-		// Tabs: Audio (live-applied to AudioManager), Network (host-broadcast
-		// toggle, takes effect next host), Controls (cheat sheet, rebinding
-		// is a later milestone). Captures live values from the current
-		// Settings struct each time the page is built so reopening Settings
-		// shows what's actually persisted.
-		//
-		// Value-capture of kCss/kJs/kVersion: this lambda is invoked from the
-		// action callback long after the surrounding block returns; a [&]
-		// capture would dangle (same trap as multiplayerPage hit earlier).
-		auto settingsPage = [kCss, kJs, kVersion, &game, themeRoot]() -> std::string {
-			const auto& s = game.settings();
-			auto boolStr = [](bool b) { return b ? "true" : "false"; };
-			char buf[64];
-			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				"body{justify-content:flex-start;padding:48px 0 60px;align-items:center;"
-				"height:auto;min-height:100vh;box-sizing:border-box}"
-				"h1{font-size:48px;letter-spacing:6px;margin:0 0 8px}"
-				".tag{margin:0 0 24px}"
-				".tabs{display:flex;gap:6px;margin-bottom:24px}"
-				".tabs button{padding:8px 18px;font-size:13px;letter-spacing:2px;"
-				"background:rgba(20,13,8,0.97);color:var(--accent-mid);border:1px solid var(--accent-mid);"
-				"font-family:inherit;cursor:pointer;text-transform:uppercase}"
-				".tabs button.on{background:rgba(94,67,30,0.95);color:var(--accent-hi)}"
-				".pane{display:none;width:680px;max-width:90%%}"
-				".pane.on{display:block}"
-				".row{display:flex;align-items:center;justify-content:space-between;"
-				"padding:14px 20px;background:rgba(20,13,8,0.97);"
-				"border:1px solid rgba(184,136,56,0.4);margin-bottom:8px}"
-				".row .lbl{font-size:14px;letter-spacing:2px;color:var(--ink)}"
-				".row .ctl{display:flex;align-items:center;gap:12px;min-width:220px;"
-				"justify-content:flex-end}"
-				".row input[type='range']{width:180px;accent-color:var(--accent-hi)}"
-				".row .val{font-family:monospace;color:var(--accent-hi);font-size:13px;"
-				"min-width:42px;text-align:right}"
-				".tog{position:relative;width:44px;height:22px;background:rgba(40,30,20,0.9);"
-				"border:1px solid var(--accent-mid);border-radius:11px;cursor:pointer;"
-				"transition:background 0.15s}"
-				".tog::after{content:'';position:absolute;left:3px;top:2px;"
-				"width:14px;height:14px;border-radius:50%%;background:var(--accent-mid);"
-				"transition:left 0.15s,background 0.15s}"
-				".tog.on{background:rgba(94,67,30,0.95)}"
-				".tog.on::after{left:25px;background:var(--accent-hi)}"
-				".kvtbl{border-collapse:collapse;margin:0 auto}"
-				".kvtbl td{padding:6px 18px;font-size:14px;letter-spacing:1px;"
-				"border-bottom:1px solid rgba(184,136,56,0.25)}"
-				".kvtbl td:first-child{color:var(--accent-mid);text-align:right;width:220px}"
-				".kvtbl td:last-child{color:var(--ink);font-family:monospace}"
-				".back{margin-top:24px;width:160px}"
-				".theme-grid{display:grid;grid-template-columns:repeat(auto-fill,"
-				"minmax(220px,1fr));gap:14px;width:680px;max-width:90%%}"
-				".theme-card{background:rgba(20,13,8,0.97);"
-				"border:1px solid var(--accent-mid);padding:16px 18px;"
-				"cursor:pointer;transition:background 0.15s,transform 0.15s,"
-				"border-color 0.15s;font-family:inherit;color:inherit;"
-				"text-align:left}"
-				".theme-card:hover{background:rgba(94,67,30,0.85);transform:translateY(-2px);"
-				"border-color:var(--accent-hi)}"
-				".theme-card.on{box-shadow:0 0 0 2px var(--accent-hi) inset}"
-				".theme-card .swatches{display:flex;gap:6px;margin-bottom:10px}"
-				".theme-card .swatches span{display:block;width:32px;height:24px;"
-				"border:1px solid rgba(0,0,0,0.4)}"
-				".theme-card h3{margin:0 0 6px;color:var(--accent-hi);"
-				"font-size:16px;letter-spacing:2px;font-weight:400}"
-				".theme-card p{margin:0;font-size:11px;line-height:1.4;"
-				"opacity:0.78}"
-				"</style></head><body>"
-				"<h1>Settings</h1>"
-				"<div class='tag'>Audio | Network | Controls | Theme</div>"
-				"<div class='tabs'>"
-				"<button class='on' onclick=\"tab(0)\">Audio</button>"
-				"<button onclick=\"tab(1)\">Network</button>"
-				"<button onclick=\"tab(2)\">Controls</button>"
-				"<button onclick=\"tab(3)\">Theme</button>"
-				"</div>"
-				// ── Audio pane ──
-				"<div class='pane on' id='p0'>"
-				"<div class='row'><span class='lbl'>Master Volume</span>"
-				"<span class='ctl'><input type='range' min='0' max='1' step='0.05' "
-				"value='";
-			std::snprintf(buf, sizeof(buf), "%.2f", s.master_volume);
-			html += buf;
-			html += "' oninput=\"slider(this,'master_volume')\">"
-				"<span class='val' id='v_master_volume'>";
-			std::snprintf(buf, sizeof(buf), "%.0f%%", s.master_volume * 100);
-			html += buf;
-			html += "</span></span></div>"
-				"<div class='row'><span class='lbl'>Music Volume</span>"
-				"<span class='ctl'><input type='range' min='0' max='1' step='0.05' "
-				"value='";
-			std::snprintf(buf, sizeof(buf), "%.2f", s.music_volume);
-			html += buf;
-			html += "' oninput=\"slider(this,'music_volume')\">"
-				"<span class='val' id='v_music_volume'>";
-			std::snprintf(buf, sizeof(buf), "%.0f%%", s.music_volume * 100);
-			html += buf;
-			html += "</span></span></div>"
-				"<div class='row'><span class='lbl'>Music Enabled</span>"
-				"<span class='ctl'><div class='tog";
-			html += s.music_enabled ? " on" : "";
-			html += "' onclick=\"toggle(this,'music_enabled')\"></div></span></div>"
-				"<div class='row'><span class='lbl'>Footsteps</span>"
-				"<span class='ctl'><div class='tog";
-			html += s.footsteps_muted ? "" : " on";  // inverted: "on" = audible
-			html += "' onclick=\"toggleInv(this,'footsteps_muted')\"></div></span></div>"
-				"<div class='row'><span class='lbl'>Effects (combat / dig / pickup)</span>"
-				"<span class='ctl'><div class='tog";
-			html += s.effects_muted ? "" : " on";
-			html += "' onclick=\"toggleInv(this,'effects_muted')\"></div></span></div>"
-				"</div>"
-				// ── Network pane ──
-				"<div class='pane' id='p1'>"
-				"<div class='row'><span class='lbl'>Visible to LAN</span>"
-				"<span class='ctl'><div class='tog";
-			html += s.lan_visible ? " on" : "";
-			html += "' onclick=\"toggle(this,'lan_visible')\"></div></span></div>"
-				"<div class='row' style='opacity:0.6'><span class='lbl'>"
-				"Sim speed cap</span><span class='ctl'><span class='val'>";
-			std::snprintf(buf, sizeof(buf), "%.1fx", s.sim_speed_cap);
-			html += buf;
-			html += "</span></span></div>"
-				"</div>"
-				// ── Controls pane (read-only cheat sheet) ──
-				"<div class='pane' id='p2'>"
-				"<table class='kvtbl'>"
-				"<tr><td>Move</td><td>WASD</td></tr>"
-				"<tr><td>Jump</td><td>Space</td></tr>"
-				"<tr><td>Sprint</td><td>Shift</td></tr>"
-				"<tr><td>Look</td><td>Mouse</td></tr>"
-				"<tr><td>Attack / Place</td><td>LMB / RMB</td></tr>"
-				"<tr><td>Drop</td><td>Q</td></tr>"
-				"<tr><td>Inventory</td><td>Tab</td></tr>"
-				"<tr><td>Handbook</td><td>H</td></tr>"
-				"<tr><td>Camera</td><td>V</td></tr>"
-				"<tr><td>Pause</td><td>Esc</td></tr>"
-				"<tr><td>Debug / Tuning</td><td>F3 / F6</td></tr>"
-				"<tr><td>Screenshot</td><td>F2</td></tr>"
-				"</table></div>"
-				// ── Theme pane ── three preset cards. Hover → live-preview
-				// via JS-side document.documentElement.style.setProperty;
-				// click → persist via `set:theme:<id>` (page reload not
-				// strictly needed since the var swap is live, but a reload
-				// rebakes the active class on the right card).
-				"<div class='pane' id='p3'>"
-				"<div class='theme-grid'>"
-				"<div class='theme-card' data-id='brass' "
-				"data-hi='%23f3c44c' data-mid='%23b88838' data-ink='%23f0e0c0' "
-				"onmouseenter=\"thHover(this)\" onmouseleave=\"thLeave()\" "
-				"onclick=\"thPick(this)\">"
-				"<div class='swatches'>"
-				"<span style='background:%23f3c44c'></span>"
-				"<span style='background:%23b88838'></span>"
-				"<span style='background:%23f0e0c0'></span>"
-				"</div><h3>Brass &amp; Deep Wood</h3>"
-				"<p>The default. Civ6-sepia.</p></div>"
-				"<div class='theme-card' data-id='cobalt' "
-				"data-hi='%237eb8e8' data-mid='%233a6890' data-ink='%23dde6ed' "
-				"onmouseenter=\"thHover(this)\" onmouseleave=\"thLeave()\" "
-				"onclick=\"thPick(this)\">"
-				"<div class='swatches'>"
-				"<span style='background:%237eb8e8'></span>"
-				"<span style='background:%233a6890'></span>"
-				"<span style='background:%23dde6ed'></span>"
-				"</div><h3>Cobalt &amp; Steel</h3>"
-				"<p>Cool blues. Reads like a UI pattern guide.</p></div>"
-				"<div class='theme-card' data-id='lichen' "
-				"data-hi='%23d4cf9f' data-mid='%238a9970' data-ink='%23ede5d0' "
-				"onmouseenter=\"thHover(this)\" onmouseleave=\"thLeave()\" "
-				"onclick=\"thPick(this)\">"
-				"<div class='swatches'>"
-				"<span style='background:%23d4cf9f'></span>"
-				"<span style='background:%238a9970'></span>"
-				"<span style='background:%23ede5d0'></span>"
-				"</div><h3>Bone &amp; Lichen</h3>"
-				"<p>Dusty ranger. Forest scout vibes.</p></div>"
-				"</div></div>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>" +
-				kVersion +
-				"<script>"
-				"function send(a){window.cefQuery({request:'action:'+a,"
-				"onSuccess:()=>{},onFailure:()=>{}});}"
-				"function tab(i){"
-				"document.querySelectorAll('.tabs button').forEach((b,j)=>"
-				"b.classList.toggle('on',j==i));"
-				"document.querySelectorAll('.pane').forEach((p,j)=>"
-				"p.classList.toggle('on',j==i));}"
-				"function slider(el,key){"
-				"const v=parseFloat(el.value);"
-				"document.getElementById('v_'+key).textContent="
-				"Math.round(v*100)+'%25';"
-				"send('set:'+key+':'+v);}"
-				"function toggle(el,key){"
-				"const on=!el.classList.contains('on');"
-				"el.classList.toggle('on',on);"
-				"send('set:'+key+':'+(on?'true':'false'));}"
-				"function toggleInv(el,key){"  // UI-on means feature ENABLED → key (muted) is false
-				"const on=!el.classList.contains('on');"
-				"el.classList.toggle('on',on);"
-				"send('set:'+key+':'+(on?'false':'true'));}"
-				// Theme handlers — hover sets the CSS vars on :root for an
-				// instant preview; leave restores the active theme. Pick
-				// commits the choice (server-side write happens via the
-				// `set:theme:<id>` action handler in main.cpp).
-				"function applyTheme(hi,mid,ink){"
-				"const r=document.documentElement.style;"
-				"r.setProperty('--accent-hi',hi);"
-				"r.setProperty('--accent-mid',mid);"
-				"r.setProperty('--ink',ink);}"
-				"function thHover(c){applyTheme(c.dataset.hi,c.dataset.mid,c.dataset.ink);}"
-				"function thLeave(){const c=document.querySelector('.theme-card.on');"
-				"if(c)applyTheme(c.dataset.hi,c.dataset.mid,c.dataset.ink);}"
-				"function thPick(c){"
-				"document.querySelectorAll('.theme-card').forEach(x=>x.classList.remove('on'));"
-				"c.classList.add('on');"
-				"applyTheme(c.dataset.hi,c.dataset.mid,c.dataset.ink);"
-				"send('set:theme:'+c.dataset.id);}"
-				"(()=>{const id=" + std::string("'") + game.settings().theme_id + "';"
-				"const c=document.querySelector('.theme-card[data-id=\"'+id+'\"]')||"
-				"document.querySelector('.theme-card[data-id=\"brass\"]');"
-				"if(c)c.classList.add('on');})();"
-				"</script></body></html>";
-			(void)boolStr;
-			return html;
-		};
-
-		// Civ6 Civilopedia-style handbook. Top-level groups expand/collapse;
-		// each group splits its entries by the artifact's `subcategory` (or
-		// a derived key for living/playable). Right detail panel swaps on
-		// hover/click; preview area is transparent so the live plaza model
-		// (set via shell.previewId) shows through for renderable types.
-		auto handbookPage = [&]() -> std::string {
-			using Entry = const solarium::ArtifactEntry*;
-
-			// Helper: pick the section bucket within a top-level group based
-			// on artifact fields. Falls back to subcategory or "Other".
-			auto livingBucket = [](Entry e) -> const char* {
-				if (e->flag("playable")) return "Heroes";
-				const std::string& sc = e->subcategory;
-				if (sc == "humanoid")  return "Villagers";
-				if (sc == "hostile" || sc == "predator")  return "Hostile";
-				if (sc == "animal" || sc == "livestock")  return "Animals";
-				return "Wildlife";
-			};
-			auto resourceBucket = [](Entry e) -> const char* {
-				const std::string& id = e->id;
-				if (id.find("footstep") != std::string::npos) return "Footsteps";
-				if (id.find("combat") != std::string::npos)   return "Combat";
-				if (id.find("music") != std::string::npos)    return "Music";
-				if (id.find("ambient") != std::string::npos)  return "Ambient";
-				if (id.find("ui") != std::string::npos)       return "UI";
-				if (id.find("creature") != std::string::npos) return "Creatures";
-				if (id.find("block") != std::string::npos ||
-				    id.find("door") != std::string::npos)     return "Blocks";
-				if (id.find("explosion") != std::string::npos ||
-				    id.find("spell") != std::string::npos)    return "Spells";
-				return "Misc";
-			};
-			auto subOrOther = [](Entry e) -> const char* {
-				return e->subcategory.empty() ? "Other" : e->subcategory.c_str();
-			};
-
-			using Bucketer = std::function<const char*(Entry)>;
-			struct Group {
-				const char*              label;
-				std::vector<const char*> cats;
-				Bucketer                 bucketer;
-			};
-			std::vector<Group> groups = {
-				{"Heroes & Creatures", {"living"},                livingBucket},
-				{"Items & Equipment",  {"item"},                  subOrOther},
-				{"Spells & Effects",   {"effect"},                subOrOther},
-				{"Blocks",             {"block"},                 subOrOther},
-				{"Structures",         {"structure"},             subOrOther},
-				{"Worlds & Maps",      {"world", "annotation"},   subOrOther},
-				{"AI Behaviors",       {"behavior"},              subOrOther},
-				{"Audio Library",      {"resource"},              resourceBucket},
-				{"Modding",            {"model"},                 subOrOther},
-			};
-
-			// Per-group items, sorted by (bucket, displayName) so buckets render
-			// as contiguous blocks with alpha order inside.
-			struct Item { int groupIdx; std::string bucket; Entry e; const char* cat; };
-			std::vector<Item> items;
-			size_t totalCount = 0;
-			for (size_t gi = 0; gi < groups.size(); ++gi) {
-				std::vector<Item> groupItems;
-				const char* primaryCat = groups[gi].cats.empty()
-				    ? "" : groups[gi].cats[0];
-				for (const char* cat : groups[gi].cats) {
-					for (auto* e : game.artifactRegistry().byCategory(cat)) {
-						groupItems.push_back({(int)gi, groups[gi].bucketer(e), e, primaryCat});
-					}
-				}
-				std::sort(groupItems.begin(), groupItems.end(),
-					[](const Item& a, const Item& b){
-						if (a.bucket != b.bucket) return a.bucket < b.bucket;
-						std::string an = a.e->name.empty() ? a.e->id : a.e->name;
-						std::string bn = b.e->name.empty() ? b.e->id : b.e->name;
-						return an < bn;
-					});
-				totalCount += groupItems.size();
-				for (auto& it : groupItems) items.push_back(std::move(it));
-			}
-
-			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kDexCss +
-				".sb-grp-h{padding:12px 22px 6px;font-size:12px;letter-spacing:3px;"
-				"color:var(--accent-hi);text-transform:uppercase;cursor:pointer;"
-				"border-top:1px solid rgba(184,136,56,0.25);user-select:none;"
-				"display:flex;justify-content:space-between;align-items:center}"
-				".sb-grp-h:hover{color:var(--accent-hi)}"
-				".sb-grp-h .arr{font-size:10px;opacity:0.6;transition:transform 0.15s}"
-				".sb-grp.collapsed .sb-grp-h .arr{transform:rotate(-90deg)}"
-				".sb-grp.collapsed .sb-grp-body{display:none}"
-				".sb-sub{padding:8px 22px 2px;font-size:10px;letter-spacing:2px;"
-				"color:var(--accent-mid);text-transform:uppercase;opacity:0.78}"
-				".sb-grp .sb-row{padding-left:30px}"
-				"</style></head><body>"
-				"<aside class='sidebar'>"
-				"<div class='sb-head'><h1>Handbook</h1>"
-				"<div class='sub'>" + std::to_string(totalCount) +
-				" entries</div></div>"
-				"<input class='sb-search' id='dexq' placeholder='filter...' "
-				"oninput=\"dexfilter(this.value)\">"
-				"<div class='sb-list' id='dexlist'>";
-
-			// Render groups in order, splitting each into buckets.
-			for (size_t gi = 0; gi < groups.size(); ++gi) {
-				int groupCount = 0;
-				for (const auto& it : items) if (it.groupIdx == (int)gi) ++groupCount;
-				if (groupCount == 0) continue;
-				const bool isFirst = (gi == 0);
-				html += "<div class='sb-grp" +
-				        std::string(isFirst ? "" : " collapsed") +
-				        "' data-grp='" + std::to_string(gi) + "'>"
-				        "<div class='sb-grp-h' onclick=\"togGrp(this)\">"
-				        "<span>" + enc(groups[gi].label) +
-				        " <span style='opacity:0.6'>(" +
-				        std::to_string(groupCount) + ")</span></span>"
-				        "<span class='arr'>v</span></div>"
-				        "<div class='sb-grp-body'>";
-				std::string lastBucket;
-				for (const auto& it : items) {
-					if (it.groupIdx != (int)gi) continue;
-					if (it.bucket != lastBucket) {
-						html += "<div class='sb-sub'>" + enc(it.bucket) + "</div>";
-						lastBucket = it.bucket;
-					}
-					std::string display = it.e->name.empty() ? it.e->id : it.e->name;
-					std::string key = std::string(it.cat) + ":" + it.e->id;
-					std::string q = display + " " + it.e->id + " " + it.bucket;
-					std::transform(q.begin(), q.end(), q.begin(),
-						[](unsigned char c){ return std::tolower(c); });
-					// data-key carries the composite ENTRIES lookup key; the
-					// bare id goes into pick:<id> so the C++ preview lookup
-					// hits the artifact registry's findById.
-					html += "<button class='sb-row' data-key='" + enc(key) +
-					        "' data-id='" + enc(it.e->id) +
-					        "' data-q='" + enc(q) + "' "
-					        "onclick=\"pick(this)\" onmouseenter=\"hover(this)\">" +
-					        enc(display) + "<span class='id'>" +
-					        enc(it.e->id) + "</span></button>";
-				}
-				html += "</div></div>";
-			}
-			html += "</div>"
-				"<div class='sb-foot'>"
-				"<button onclick=\"send('back')\">Back</button>"
-				"</div></aside>"
-				"<main class='detail'>"
-				"<div class='detail-card' id='card'></div></main>" +
-				kVersion +
-				"<script>const ENTRIES={";
-			for (size_t i = 0; i < items.size(); ++i) {
-				const auto& it = items[i];
-				if (i) html += ",";
-				std::string display = it.e->name.empty() ? it.e->id : it.e->name;
-				html += "'" + std::string(it.cat) + ":" + it.e->id +
-				        "':{name:'" + enc(compact(display, 80)) +
-				        "',cat:'" + enc(it.cat) +
-				        "',sub:'" + enc(it.bucket) +
-				        "',desc:'" + enc(compact(it.e->description, 400)) +
-				        "',attrs:[";
-				std::vector<std::pair<std::string, std::string>> attrs;
-				for (auto& kv : it.e->fields) {
-					if (kv.first == "description") continue;
-					if (kv.second.empty()) continue;
-					attrs.emplace_back(kv.first, kv.second);
-				}
-				std::sort(attrs.begin(), attrs.end());
-				if (!it.e->subcategory.empty() && it.e->subcategory != it.bucket)
-					attrs.insert(attrs.begin(), {"subcategory", it.e->subcategory});
-				for (size_t j = 0; j < attrs.size(); ++j) {
-					if (j) html += ",";
-					html += "['" + enc(attrs[j].first) + "','" +
-					        enc(compact(attrs[j].second)) + "']";
-				}
-				html += "]}";
-			}
-			html += "};"
-				"function render(key){"
-				"const e=ENTRIES[key];if(!e)return;"
-				// Headline (badges + name) sits over the world preview.
-				"let h=\"<div class='headline'>\"+"
-				"\"<span class='badge'>\"+e.cat+\"</span>\"+"
-				"\"<span class='badge'>\"+e.sub+\"</span>\"+"
-				"\"<span class='badge'>\"+key.split(':')[1]+\"</span>\"+"
-				"\"<h2>\"+e.name+\"</h2></div>\";"
-				// Bottom panel: description + divider + stats live together
-				// inside one opaque container, so neither sits on the bare
-				// world preview.
-				"h+=\"<div class='card-body'>\";"
-				"if(e.desc)h+=\"<div class='desc'>\"+e.desc+\"</div>\";"
-				"if(e.desc&&e.attrs.length)h+=\"<hr class='div'/>\";"
-				"if(e.attrs.length){h+=\"<div class='attrs'>\";"
-				"for(const[k,v] of e.attrs)"
-				"h+=\"<span class='k'>\"+k+\"</span>"
-				"<span class='v'>\"+v+\"</span>\";"
-				"h+=\"</div>\";}"
-				// Edit button — opens Monaco-backed source editor for this artifact.
-				"h+=\"<div class='actions'>"
-				"<button class='edit-btn' onclick=\\\"send('edit:\"+key+\"')\\\">"
-				"Edit Source</button></div>\";"
-				"h+=\"</div>\";"
-				"document.getElementById('card').innerHTML=h;}"
-				"function send(a){window.cefQuery({request:'action:'+a,"
-				"onSuccess:()=>{},onFailure:()=>{}});}"
-				"function setActive(el){document.querySelectorAll('.sb-row')"
-				".forEach(b=>b.classList.remove('on'));el.classList.add('on');}"
-				"function togGrp(h){h.parentElement.classList.toggle('collapsed');}"
-				// Sticky selection: hover previews until first click; after
-				// that, only another click swaps the stuck preview.
-				"let lastKey='';let clickedKey=null;"
-				"function hover(el){if(clickedKey)return;"
-				"const k=el.dataset.key;if(k===lastKey)return;"
-				"lastKey=k;setActive(el);render(k);send('pick:'+el.dataset.id);}"
-				"function pick(el){const k=el.dataset.key;"
-				"clickedKey=k;lastKey=k;"
-				"setActive(el);render(k);send('pick:'+el.dataset.id);}"
-				"function dexfilter(q){q=q.toLowerCase();"
-				"const grps=document.querySelectorAll('.sb-grp');"
-				"if(q)grps.forEach(g=>g.classList.remove('collapsed'));"
-				// '%23' decodes to '#' after the URL parser runs — written
-				// literally as '#' here would terminate the data: URL early
-				// (treated as fragment start) and truncate the script.
-				"document.querySelectorAll('%23dexlist .sb-row').forEach(r=>{"
-				"r.style.display=(!q||r.dataset.q.indexOf(q)>=0)?'':'none';});"
-				"document.querySelectorAll('.sb-sub').forEach(h=>{"
-				"let n=h.nextElementSibling,any=false;"
-				"while(n&&n.classList.contains('sb-row')){"
-				"if(n.style.display!=='none')any=true;n=n.nextElementSibling;}"
-				"h.style.display=any?'':'none';});}"
-				"const _f=document.querySelector('.sb-row');"
-				"if(_f){_f.classList.add('on');lastKey=_f.dataset.key;"
-				"render(_f.dataset.key);send('pick:'+_f.dataset.id);}"
-				"</script>"
-				"</body></html>";
-			return html;
-		};
-
-		// kCss captured by value because this lambda is invoked from the
-		// action callback long after this scope returns — a `[&]` capture
-		// would dangle and produce a corrupted data: URL (we hit this).
-		auto multiplayerPage = [kCss, kJs, kVersion, &game, themeRoot]() -> std::string {
-			constexpr const char* kClientVer = "0.2.0";
-			std::string html = "data:text/html,<html><head><style>" + themeRoot() + kCss +
-				".srv{display:grid;grid-template-columns:1fr auto auto auto;"
-				"column-gap:18px;align-items:center;width:680px;padding:12px 22px;"
-				"margin:5px 0;background:rgba(20,13,8,0.97);"
-				"border:1px solid var(--accent-mid);color:var(--accent-hi);font-size:14px;"
-				"letter-spacing:1px;font-family:monospace;cursor:pointer;"
-				"transition:background 0.15s,transform 0.15s}"
-				".srv.mismatch{opacity:0.55;border-color:rgba(184,136,56,0.4)}"
-				".srv:hover{background:rgba(94,67,30,0.92);transform:scale(1.01)}"
-				".srv .ip{color:var(--accent-hi)}"
-				".srv .world{color:var(--ink);font-size:12px;text-transform:uppercase;"
-				"letter-spacing:2px}"
-				".srv .ver{color:var(--accent-mid);font-size:11px;letter-spacing:1px}"
-				".srv .pl{color:var(--accent-mid);font-size:13px;text-align:right;min-width:90px}"
-				// Filters chip — same scrim/border treatment as .tag so the
-				// "Hide version mismatches" toggle reads against the world.
-				".filters{display:inline-flex;gap:18px;align-items:center;"
-				"margin-bottom:12px;padding:8px 14px;"
-				"background:rgba(6,4,3,0.7);"
-				"border:1px solid rgba(184,136,56,0.35);"
-				"font-size:12px;letter-spacing:2px;color:var(--accent-mid);"
-				"text-transform:uppercase}"
-				".filters label{display:flex;align-items:center;gap:8px;cursor:pointer}"
-				".filters input[type='checkbox']{accent-color:var(--accent-hi)}"
-				".empty{opacity:0.5;font-style:italic;margin:24px 0}"
-				"</style></head><body>"
-				"<h1>Multiplayer</h1>"
-				"<div class='tag'>";
-			if (!game.lanBrowser().listening()) {
-				html += "Could not bind UDP 7778 - try --host HOST --port PORT";
-			} else {
-				const auto& srvs = game.lanBrowser().servers();
-				if (srvs.empty()) {
-					html += "Scanning UDP 7778...";
-				} else {
-					char hdr[64];
-					std::snprintf(hdr, sizeof(hdr), "%zu LAN server%s",
-						srvs.size(), srvs.size() == 1 ? "" : "s");
-					html += hdr;
-				}
-			}
-			html += "</div>"
-				"<div class='filters'>"
-				"<label><input type='checkbox' id='fver' checked>"
-				"Hide version mismatches</label>"
-				"</div>";
-			for (const auto& s : game.lanBrowser().servers()) {
-				bool match = (s.version == kClientVer);
-				char row[400];
-				std::snprintf(row, sizeof(row),
-					"<div class='srv%s' data-match='%d' "
-					"onclick=\"send('join:%s:%d')\">"
-					"<span class='ip'>%s:%d</span>"
-					"<span class='world'>%s</span>"
-					"<span class='ver'>v%s</span>"
-					"<span class='pl'>%d player%s</span></div>",
-					match ? "" : " mismatch", match ? 1 : 0,
-					s.ip.c_str(), s.port,
-					s.ip.c_str(), s.port,
-					s.world.empty()   ? "?" : s.world.c_str(),
-					s.version.empty() ? "?" : s.version.c_str(),
-					s.humans, s.humans == 1 ? "" : "s");
-				html += row;
-			}
-			html += std::string(
-				"<button class='btn' onclick=\"send('multiplayer')\">Refresh</button>"
-				"<button class='btn back' onclick=\"send('back')\">Back</button>"
-				"<script>"
-				"document.getElementById('fver').addEventListener('change',e=>{"
-				"const hide=e.target.checked;"
-				"document.querySelectorAll('.srv').forEach(r=>{"
-				"r.style.display=(hide && r.dataset.match==='0')?'none':'';});});"
-				"document.getElementById('fver').dispatchEvent(new Event('change'));"
-				"</script>") +
-				kVersion + kJs +
-				"</body></html>";
-			return html;
-		};
-
-		// Build a file:// URL pointing at the Monaco-backed editor for
-		// <cat>:<id>. Returns empty string if the artifact isn't found.
-		// Used by both the "edit:" action handler and SOLARIUM_BOOT_EDIT.
-		auto editorUrlFor = [&game](const std::string& cat,
-		                            const std::string& id) -> std::string {
-			const solarium::ArtifactEntry* e = game.artifactRegistry().findById(id);
-			if (!e || e->category != cat) {
-				std::fprintf(stderr, "[edit] unknown %s:%s\n", cat.c_str(), id.c_str());
-				return "";
-			}
-			std::ifstream src(e->filePath);
-			std::stringstream sb; sb << src.rdbuf();
-			std::string code = sb.str();
-			auto jsEscape = [](const std::string& s) {
-				std::string o; o.reserve(s.size() + 16);
-				for (char c : s) {
-					if (c == '\\' || c == '`') { o += '\\'; o += c; }
-					else if (c == '$')         { o += "\\$"; }
-					else                        o += c;
-				}
-				return o;
-			};
-			std::filesystem::path mvs = std::filesystem::absolute(
-				std::filesystem::path(game.execDir()) /
-				".." / "third_party" / "monaco-editor" / "out" /
-				"monaco-editor" / "min" / "vs");
-			std::string vsPath = mvs.string();
-			std::ostringstream html;
-			html << "<!doctype html><html><head><meta charset='utf-8'>"
-			     << "<title>Edit " << id << "</title>"
-			     << "<style>"
-			     << "html,body{margin:0;height:100vh;background:#0a0703;"
-			     << "color:#f0e0c0;font-family:Georgia,serif;display:flex;"
-			     << "flex-direction:column}"
-			     << ".bar{display:flex;align-items:center;gap:14px;"
-			     << "padding:10px 18px;background:rgba(20,13,8,0.97);"
-			     << "border-bottom:1px solid #b88838}"
-			     << ".bar h2{margin:0;font-size:18px;letter-spacing:3px;"
-			     << "color:#f3c44c;font-weight:400}"
-			     << ".bar .id{font-size:11px;color:#b88838;"
-			     << "font-family:monospace;letter-spacing:1px;opacity:0.7}"
-			     << ".bar .grow{flex:1}"
-			     << ".bar button{padding:8px 18px;font-size:13px;"
-			     << "letter-spacing:2px;background:rgba(94,67,30,0.85);"
-			     << "color:#f3c44c;border:1px solid #b88838;cursor:pointer;"
-			     << "font-family:inherit;text-transform:uppercase}"
-			     << ".bar button:hover{background:rgba(94,67,30,1)}"
-			     << "#editor{flex:1}"
-			     << "</style></head><body>"
-			     << "<div class='bar'>"
-			     << "<h2>" << (e->name.empty() ? id : e->name) << "</h2>"
-			     << "<span class='id'>" << cat << "/" << id << "</span>"
-			     << "<span class='grow'></span>"
-			     << "<button onclick=\"saveAndBack()\">Save</button>"
-			     << "<button onclick=\"send('back')\">Cancel</button>"
-			     << "</div>"
-			     << "<div id='editor'></div>"
-			     << "<script src='file://" << vsPath << "/loader.js'></script>"
-			     << "<script>"
-			     << "function send(a){window.cefQuery({request:'action:'+a,"
-			     << "onSuccess:()=>{},onFailure:()=>{}});}"
-			     << "let ed;"
-			     << "require.config({paths:{vs:'file://" << vsPath << "'}});"
-			     << "require(['vs/editor/editor.main'],function(){"
-			     << "ed=monaco.editor.create(document.getElementById('editor'),{"
-			     << "value:`" << jsEscape(code) << "`,"
-			     << "language:'python',theme:'vs-dark',automaticLayout:true,"
-			     << "minimap:{enabled:true},fontSize:14});});"
-			     << "function saveAndBack(){"
-			     << "if(!ed)return;"
-			     << "const t=ed.getValue();"
-			     << "send('save_artifact:" << cat << ":" << id << ":'+btoa(unescape(encodeURIComponent(t))));}"
-			     << "</script></body></html>";
-			std::string path = "/tmp/solarium_editor.html";
-			std::ofstream f(path);
-			f << html.str();
-			f.close();
-			return std::string("file://") + path;
-		};
-
-		// Captured by ref in the action callback. Static so they live across
-		// lambda invocations. Built once at startup; multiplayer is rebuilt
-		// per click below to pick up new LAN servers.
-		static std::string sMain  = mainPage();
-		static std::string sChar  = charSelectPage();
-		static std::string sHand  = handbookPage();
-		static std::string sWorld = worldPickerPage();
-		static std::string sPause = pausePage();
-		static std::string sDeath = deathPage();
-		static std::string sMpHub = multiplayerHubPage();
-		static std::string sLobby = lobbyPage();
-		// settingsPage rebuilt fresh each click — captures live values
-		// (master_volume, footsteps_muted, …) so reopening shows current state.
+		// All page builders + their action handlers live in
+		// client/ui/pages.cpp. Build the static-page cache once at boot
+		// (each call allocates ~50 KB of HTML); pages with live state
+		// (saveSlots / multiplayer / settings / mods) are rebuilt per
+		// click via solarium::ui::xxxPage(game) directly.
+		static solarium::ui::PageCache pageCache(game);
 
 		// Test hook: SOLARIUM_BOOT_PAGE=handbook|chars|settings|main lets a
 		// dev land directly on a non-main page for screenshot iteration.
@@ -1667,18 +461,18 @@ int main(int argc, char** argv) {
 		if (cefUrl.empty()) {
 			const char* boot = std::getenv("SOLARIUM_BOOT_PAGE");
 			using MS = solarium::vk::MenuScreen;
-			if (boot && std::string(boot) == "handbook") {
-				cefUrl = sHand; game.setMenuScreen(MS::Handbook);
-			} else if (boot && std::string(boot) == "chars") {
-				cefUrl = sChar; game.setMenuScreen(MS::CharacterSelect);
+			std::string b = boot ? boot : "";
+			if (b == "handbook") {
+				cefUrl = pageCache.handbook;
+				game.setMenuScreen(MS::Handbook);
+			} else if (b == "chars") {
+				cefUrl = pageCache.chars;
+				game.setMenuScreen(MS::CharacterSelect);
 				game.setPreviewClip("wave");
 				// Mirror what the "singleplayer" action does so beginConnectAs
 				// has a previewId to commit when the user clicks Begin Game.
 				for (auto* e : game.artifactRegistry().byCategory("living")) {
-					if (e->flag("playable")) {
-						game.setPreviewId(e->id);
-						break;
-					}
+					if (e->flag("playable")) { game.setPreviewId(e->id); break; }
 				}
 				// Lazy spawn: char-select is reached, server needs to exist
 				// for Begin Game to work. Skip if --port (joining remote).
@@ -1692,33 +486,25 @@ int main(int argc, char** argv) {
 					if (!game.hostLocalServer(cfg))
 						std::fprintf(stderr, "[boot] hostLocalServer failed\n");
 				}
-			} else if (boot && std::string(boot) == "settings") {
-				cefUrl = settingsPage();
-			} else if (boot && std::string(boot) == "worlds") {
-				cefUrl = sWorld;
-			} else if (boot && std::string(boot) == "pause") {
-				cefUrl = sPause;
-			} else if (boot && std::string(boot) == "mp") {
-				cefUrl = multiplayerPage();
-			} else if (boot && std::string(boot) == "saves") {
-				cefUrl = saveSlotsPage();
-			} else if (boot && std::string(boot) == "mods") {
-				cefUrl = modManagerPage();
-			} else if (boot && std::string(boot) == "lobby") {
-				cefUrl = sLobby;
-			} else if (boot && std::string(boot) == "death") {
-				cefUrl = sDeath;
-			} else if (boot && std::string(boot) == "editor") {
+			} else if (b == "settings") cefUrl = solarium::ui::settingsPage(game);
+			else if (b == "worlds")    cefUrl = pageCache.worldPicker;
+			else if (b == "pause")     cefUrl = pageCache.pause;
+			else if (b == "mp")        cefUrl = solarium::ui::multiplayerPage(game);
+			else if (b == "saves")     cefUrl = solarium::ui::saveSlotsPage(game);
+			else if (b == "mods")      cefUrl = solarium::ui::modManagerPage(game);
+			else if (b == "lobby")     cefUrl = pageCache.lobby;
+			else if (b == "death")     cefUrl = pageCache.death;
+			else if (b == "editor") {
 				// SOLARIUM_BOOT_EDIT=cat:id (default living:guy).
 				const char* tgt = std::getenv("SOLARIUM_BOOT_EDIT");
 				std::string spec = tgt ? tgt : "living:guy";
 				auto col = spec.find(':');
 				std::string url = (col == std::string::npos) ? "" :
-					editorUrlFor(spec.substr(0, col), spec.substr(col + 1));
-				cefUrl = url.empty() ? sMain : url;
-			} else {
-				cefUrl = sMain;
+					solarium::ui::editorUrlFor(game,
+						spec.substr(0, col), spec.substr(col + 1));
+				cefUrl = url.empty() ? pageCache.main : url;
 			}
+			else cefUrl = pageCache.main;
 		}
 
 		cefHost = std::make_unique<solarium::vk::CefHost>(fbw, fbh);
@@ -1730,408 +516,27 @@ int main(int argc, char** argv) {
 		// Hand the CefHost + handbook URL to Game so the in-game H key (and
 		// future ESC pause Settings) can re-show CEF over the running game.
 		game.setCefHost(hostRaw);
-		game.setCefHandbookUrl(sHand);
-		game.setCefPauseUrl(sPause);
-		game.setCefDeathUrl(sDeath);
-		game.setCefMainUrl(sMain);
-		// multiplayerPage is captured by value so the lambda owns its own
-		// copy — local 'multiplayerPage' in this block goes out of scope
-		// once init returns. Same for the enc helper inside it.
-		cefHost->setActionCallback(
-			[win, &game, hostRaw, multiplayerPage, settingsPage, saveSlotsPage, modManagerPage, editorUrlFor](const std::string& action) {
+		game.setCefHandbookUrl(pageCache.handbook);
+		game.setCefPauseUrl(pageCache.pause);
+		game.setCefDeathUrl(pageCache.death);
+		game.setCefMainUrl(pageCache.main);
+		// ── Action routing ──────────────────────────────────────────────
+		// All 24 page-action handlers live in client/ui/pages.cpp so each
+		// handler co-locates with the page it belongs to. main() just
+		// builds the page cache, computes the boot-time defaults, and
+		// hands them to ui::registerActions.
+		const std::string firstPlayableId = [&]() -> std::string {
+			for (auto* e : game.artifactRegistry().byCategory("living"))
+				if (e->flag("playable")) return e->id;
+			return {};
+		}();
+		static solarium::ui::ActionRouter router;
+		solarium::ui::registerActions(router, game, hostRaw, win,
+		                              pageCache, firstPlayableId);
+		cefHost->setActionCallback([](const std::string& action) {
 			std::printf("[cef] action: %s\n", action.c_str());
-			using MS = solarium::vk::MenuScreen;
-			// First playable id, used as default char-select pick. Cached
-			// on first lookup; the artifact registry is immutable post-init.
-			static std::string firstPlayableId;
-			if (firstPlayableId.empty()) {
-				for (auto* e : game.artifactRegistry().byCategory("living")) {
-					if (e->flag("playable")) {
-						firstPlayableId = e->id;
-						break;
-					}
-				}
-			}
-			if (action == "quit") {
-				glfwSetWindowShouldClose(win, GLFW_TRUE);
-			} else if (action == "resume") {
-				// Pause-menu Resume — same as ESC-while-CEF-up: just drop
-				// the overlay and hand control back to the world.
-				game.setCefMenuActive(false);
-			} else if (action == "main_menu") {
-				// Pause-menu / Death "Main Menu" — disconnect, kill any
-				// hosted subprocess, rewind to the title.
-				game.returnToMainMenu();
-			} else if (action == "respawn") {
-				// Death overlay Respawn button. Drop CEF; Game::respawn
-				// transitions Dead → Playing.
-				game.setCefMenuActive(false);
-				game.respawn();
-			} else if (action.rfind("edit:", 0) == 0) {
-				// "edit:<cat>:<id>" — open the artifact in a Monaco-backed
-				// editor. We can't host Monaco from a data: URL (its AMD
-				// loader fetches sibling files), so write a temp HTML to
-				// /tmp and loadUrl as file:// — same-origin grants the
-				// editor access to third_party/monaco-editor/out/.
-				const std::string body = action.substr(5);
-				auto colon = body.find(':');
-				if (colon == std::string::npos) return;
-				std::string url = editorUrlFor(body.substr(0, colon),
-				                               body.substr(colon + 1));
-				if (!url.empty()) hostRaw->loadUrl(url);
-			} else if (action.rfind("save_artifact:", 0) == 0) {
-				// "save_artifact:<cat>:<id>:<base64-source>"
-				const std::string body = action.substr(14);
-				auto c1 = body.find(':');
-				if (c1 == std::string::npos) return;
-				auto c2 = body.find(':', c1 + 1);
-				if (c2 == std::string::npos) return;
-				std::string cat   = body.substr(0, c1);
-				std::string id    = body.substr(c1 + 1, c2 - c1 - 1);
-				std::string b64   = body.substr(c2 + 1);
-				// Tiny base64 decoder (no external dep) — bounded loop below.
-				std::string src;
-				int v = 0, bits = 0;
-				for (char c : b64) {
-					if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
-					int d = -1;
-					if (c >= 'A' && c <= 'Z') d = c - 'A';
-					else if (c >= 'a' && c <= 'z') d = c - 'a' + 26;
-					else if (c >= '0' && c <= '9') d = c - '0' + 52;
-					else if (c == '+') d = 62;
-					else if (c == '/') d = 63;
-					else continue;
-					v = (v << 6) | d;
-					bits += 6;
-					if (bits >= 8) {
-						bits -= 8;
-						src += (char)((v >> bits) & 0xff);
-					}
-				}
-				// Save as a fork in the user's persistent registry overlay
-				// (~/.solarium/forks/<dirName>/<id>.py). This survives
-				// rebuilds and is layered on top of artifacts/ at load
-				// time — see ArtifactRegistry::loadForks.
-				//
-				// TODO(cloud): mirror this write to a per-account cloud
-				// store so forks travel between devices and (eventually)
-				// can be shared/published.
-				// `cat` is singular ("item"); folders are plural ("items").
-				std::string dirName = (cat == "item")     ? "items" :
-				                       (cat == "block")    ? "blocks" :
-				                       (cat == "behavior") ? "behaviors" :
-				                       (cat == "effect")   ? "effects" :
-				                       (cat == "resource") ? "resources" :
-				                       (cat == "world")    ? "worlds" :
-				                       (cat == "annotation")? "annotations" :
-				                       (cat == "structure")? "structures" :
-				                       (cat == "model")    ? "models" : cat;
-				std::string forksRoot =
-					solarium::ArtifactRegistry::defaultForksRoot();
-				if (forksRoot.empty()) {
-					std::fprintf(stderr, "[edit] HOME unset; cannot save fork\n");
-					return;
-				}
-				std::string outDir = forksRoot + "/" + dirName;
-				std::error_code ec;
-				std::filesystem::create_directories(outDir, ec);
-				std::string outPath = outDir + "/" + id + ".py";
-				std::ofstream of(outPath);
-				of << src; of.close();
-				std::printf("[edit] fork %s (%zu bytes)\n",
-					outPath.c_str(), src.size());
-				// Hot-reload — base scan + fork overlay.
-				auto& reg = const_cast<solarium::ArtifactRegistry&>(
-					game.artifactRegistry());
-				reg.loadAll("artifacts");
-				reg.loadForks(forksRoot);
-				// Return to handbook (rebuild fresh so changes show up).
-				game.setMenuScreen(MS::Handbook);
-				hostRaw->loadUrl(sHand);
-			} else if (action == "back") {
-				// Back from a CEF sub-screen has two meanings:
-				//   * Boot flow (Menu state) — return to the main title.
-				//   * In-game (Playing state, H opened the handbook over
-				//     the world) — just dismiss CEF; don't drop the player
-				//     back to the title.
-				if (game.state() == solarium::vk::GameState::Playing) {
-					game.setCefMenuActive(false);
-					game.setPreviewId("");
-					game.setPreviewClip("");
-				} else {
-					game.setMenuScreen(MS::Main);
-					game.setPreviewId("");
-					game.setPreviewClip("");
-					hostRaw->loadUrl(sMain);
-				}
-			} else if (action == "singleplayer") {
-				// Singleplayer = host locally. Three-step flow now:
-				//   1) save slots → pick existing OR "New World"
-				//   2) (new path only) world picker → choose template
-				//   3) char-select → Begin Game → connect
-				// The server-spawn fires on `load:<path>` (existing) or
-				// `world:<id>` (new). Both end up in char-select.
-				game.setMenuScreen(MS::Main);
-				game.setPreviewId("");
-				game.setPreviewClip("");
-				game.setNextHostLanVisible(false);  // private session
-				// Rebuild fresh — picks up newly-created saves.
-				hostRaw->loadUrl(saveSlotsPage());
-			}
-			else if (action == "new_world") {
-				hostRaw->loadUrl(sWorld);
-			}
-			else if (action.rfind("load:", 0) == 0) {
-				// "load:saves/foo" — host with cfg.worldPath set; the
-				// solarium-server `--world PATH` codepath restores the
-				// saved world instead of generating fresh.
-				const std::string path = action.substr(5);
-				solarium::AgentManager::Config cfg;
-				cfg.execDir   = game.execDir();
-				cfg.worldPath = path;
-				// Per-save mod list — read disabledMods out of the save's
-				// world.json so this save plays with the same namespace
-				// set it was created/last played with, regardless of what
-				// the global Mod Manager toggle is today.
-				auto saves = solarium::vk::scanSaves("saves");
-				for (const auto& s : saves) {
-					if (s.path == path) {
-						cfg.disabledMods = s.disabledMods;
-						break;
-					}
-				}
-				if (!game.hostLocalServer(cfg)) {
-					std::fprintf(stderr,
-						"[cef] load:%s — hostLocalServer failed\n", path.c_str());
-					return;
-				}
-				game.setMenuScreen(MS::CharacterSelect);
-				game.setPreviewClip("wave");
-				if (!firstPlayableId.empty())
-					game.setPreviewId(firstPlayableId);
-				hostRaw->loadUrl(sChar);
-			}
-			else if (action.rfind("world:", 0) == 0) {
-				// "world:<id>[:<seed>:<villagers>[:<urlencoded-name>]]" — the
-				// picker hijacks tile clicks to append the option strip's
-				// values. Plain form kept for SOLARIUM_BOOT_PAGE=worlds and
-				// any future caller that just wants defaults.
-				const std::string body = action.substr(6);
-				auto parts = std::vector<std::string>{};
-				size_t p = 0;
-				while (p <= body.size()) {
-					auto q = body.find(':', p);
-					parts.push_back(body.substr(p, q == std::string::npos ? std::string::npos : q - p));
-					if (q == std::string::npos) break;
-					p = q + 1;
-				}
-				const std::string& id = parts[0];
-				int idx = solarium::worldTemplateIndexOf(id);
-				if (idx < 0) {
-					std::fprintf(stderr,
-						"[cef] world:%s — unknown template\n", id.c_str());
-					return;
-				}
-				solarium::AgentManager::Config cfg;
-				cfg.templateIndex = idx;
-				cfg.execDir = game.execDir();
-				cfg.seed              = parts.size() > 1 ? std::atoi(parts[1].c_str()) : 42;
-				cfg.debugMobCount     = parts.size() > 2 ? std::atoi(parts[2].c_str()) : 0;
-				if (cfg.seed <= 0) cfg.seed = 42;
-
-				// URL-decode name and create a save dir BEFORE spawning the
-				// server. The save dir's path becomes --world PATH, so when
-				// the server shuts down it persists chunks/entities back
-				// (saveWorldIfNeeded). Without this, "Continue" later would
-				// have nothing to load.
-				std::string name = parts.size() > 3 ? parts[3] : std::string("My World");
-				{
-					std::string decoded; decoded.reserve(name.size());
-					for (size_t i = 0; i < name.size(); ++i) {
-						if (name[i] == '%' && i + 2 < name.size()) {
-							int v = 0;
-							if (std::sscanf(name.c_str() + i + 1, "%2x", &v) == 1) {
-								decoded += (char)v; i += 2; continue;
-							}
-						}
-						if (name[i] == '+') { decoded += ' '; continue; }
-						decoded += name[i];
-					}
-					name = decoded;
-				}
-				std::string templateName =
-					solarium::worldTemplateIdAt(idx);  // e.g. "village"
-				// Snapshot the user's current mod toggles into the save's
-				// world.json so this save plays consistently next time even
-				// if they later disable/enable mods globally.
-				cfg.worldPath = solarium::vk::createSave(
-					"saves", name, cfg.seed, idx, templateName,
-					game.settings().disabled_mods);
-				cfg.disabledMods = game.settings().disabled_mods;
-				if (cfg.worldPath.empty()) {
-					std::fprintf(stderr, "[cef] world:%s — createSave failed\n", id.c_str());
-					return;
-				}
-				std::printf("[cef] new save at %s (\"%s\")\n",
-					cfg.worldPath.c_str(), name.c_str());
-
-				if (!game.hostLocalServer(cfg)) {
-					std::fprintf(stderr,
-						"[cef] world:%s — hostLocalServer failed\n", id.c_str());
-					return;
-				}
-				game.setMenuScreen(MS::CharacterSelect);
-				game.setPreviewClip("wave");
-				if (!firstPlayableId.empty())
-					game.setPreviewId(firstPlayableId);
-				hostRaw->loadUrl(sChar);
-			}
-			else if (action.rfind("delete_save:", 0) == 0) {
-				// "delete_save:saves/foo" — rm -rf the dir, then refresh
-				// the picker.
-				const std::string path = action.substr(12);
-				std::uintmax_t n = solarium::vk::deleteSave(path);
-				std::printf("[cef] deleted save %s (%ju entries)\n",
-					path.c_str(), (uintmax_t)n);
-				hostRaw->loadUrl(saveSlotsPage());
-			} else if (action == "multiplayer") {
-				// Multiplayer hub: Host vs Join split.
-				game.setMenuScreen(MS::Main);
-				game.setPreviewId("");
-				game.setPreviewClip("");
-				game.setNextHostLanVisible(false);
-				hostRaw->loadUrl(sMpHub);
-			} else if (action == "mp_host") {
-				// Host flow: world picker, then hostLocalServer with broadcast on.
-				game.setNextHostLanVisible(true);
-				hostRaw->loadUrl(sWorld);
-			} else if (action == "mp_join") {
-				// Join flow: existing LAN browser. Rebuild fresh each click —
-				// picks up newly-discovered LAN servers.
-				game.setNextHostLanVisible(false);
-				hostRaw->loadUrl(multiplayerPage());
-			} else if (action == "handbook") {
-				// Hand the camera pin a screen we treat as preview-style; the
-				// JS-side render() fires a pick: for the first entry on load
-				// to seed shell.previewId. Clear previewClip so the static
-				// "mine" pose is used (reads more like an encyclopedia entry
-				// than the lively wave on char-select).
-				game.setMenuScreen(MS::Handbook);
-				game.setPreviewClip("");
-				hostRaw->loadUrl(sHand);
-			} else if (action == "settings") {
-				hostRaw->loadUrl(settingsPage());
-			} else if (action == "mods") {
-				hostRaw->loadUrl(modManagerPage());
-			} else if (action.rfind("mod:", 0) == 0) {
-				// "mod:<ns>:on" / "mod:<ns>:off" — toggle a namespace in
-				// Settings.disabled_mods (comma-joined). Changes take effect
-				// on next launch (registry loads once at boot).
-				const std::string body = action.substr(4);
-				auto colon = body.rfind(':');
-				if (colon == std::string::npos) return;
-				std::string ns = body.substr(0, colon);
-				std::string state = body.substr(colon + 1);
-				bool wantOn = (state == "on");
-				// Parse current list, add/remove ns, re-join.
-				auto& s = game.settings();
-				std::vector<std::string> toks;
-				size_t pos = 0;
-				while (pos < s.disabled_mods.size()) {
-					size_t q = s.disabled_mods.find(',', pos);
-					std::string tok = s.disabled_mods.substr(
-						pos, q == std::string::npos ? std::string::npos : q - pos);
-					while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
-					while (!tok.empty() && tok.back() == ' ')  tok.pop_back();
-					if (!tok.empty()) toks.push_back(tok);
-					if (q == std::string::npos) break;
-					pos = q + 1;
-				}
-				auto it = std::find(toks.begin(), toks.end(), ns);
-				if (wantOn) {
-					if (it != toks.end()) toks.erase(it);
-				} else {
-					if (it == toks.end()) toks.push_back(ns);
-				}
-				std::string joined;
-				for (size_t i = 0; i < toks.size(); ++i) {
-					if (i) joined += ",";
-					joined += toks[i];
-				}
-				s.disabled_mods = joined;
-				s.save();
-				std::printf("[mods] %s %s (disabled now: '%s')\n",
-					wantOn ? "enabled" : "disabled", ns.c_str(), joined.c_str());
-			} else if (action.rfind("set:", 0) == 0) {
-				// "set:master_volume:0.5" / "set:footsteps_muted:true" — mutate
-				// Settings, persist to disk, and live-apply to AudioManager so
-				// the slider effect is audible while the page is still open.
-				const std::string body = action.substr(4);
-				auto colon = body.find(':');
-				if (colon == std::string::npos) return;
-				std::string key = body.substr(0, colon);
-				std::string val = body.substr(colon + 1);
-				bool b = (val == "true" || val == "1");
-				float f = (float)std::atof(val.c_str());
-				auto& s = game.settings();
-				if      (key == "master_volume")   { s.master_volume   = f; game.audio().setMasterVolume(f); }
-				else if (key == "music_volume")    { s.music_volume    = f; game.audio().setMusicVolume(f); }
-				else if (key == "music_enabled")   { s.music_enabled   = b; if (b) game.audio().startMusic(); else game.audio().stopMusic(); }
-				else if (key == "footsteps_muted") { s.footsteps_muted = b; game.audio().setFootstepsMuted(b); }
-				else if (key == "effects_muted")   { s.effects_muted   = b; game.audio().setEffectsMuted(b); }
-				else if (key == "lan_visible")     { s.lan_visible     = b; }
-				else if (key == "theme") {
-					// "set:theme:<id>" — store the id, persist. Live preview
-					// already happened JS-side; the persisted value lets the
-					// next page-load bake it into themeRoot().
-					s.theme_id = val;
-				}
-				else { std::fprintf(stderr, "[set] unknown key: %s\n", key.c_str()); return; }
-				s.save();
-			} else if (action.rfind("pick:", 0) == 0) {
-				// Preview-only: swap the plaza-injected model. Camera pin in
-				// game_vk.cpp keeps framing it. No connect yet.
-				game.setPreviewId(action.substr(5));
-			} else if (action == "play") {
-				// Commit the current preview. For LAN hosts, route through
-				// the lobby first so they can wait for friends to discover
-				// + join. Singleplayer + joiners go straight to Connecting.
-				const std::string id = game.previewId();
-				if (id.empty()) return;
-				if (game.isLanHost()) {
-					// Stash the picked id (CEF lobby Start re-fires "play"
-					// — we'd need a second action — easier to just re-use
-					// previewId, which is preserved across the lobby).
-					hostRaw->loadUrl(sLobby);
-				} else if (game.beginConnectAs(id)) {
-					game.setMenuScreen(MS::Connecting);
-					game.setCefMenuActive(false);
-				}
-			} else if (action == "lobby_start") {
-				// Host clicked Start in the lobby — fire the deferred
-				// connect with the pre-picked character.
-				const std::string id = game.previewId();
-				if (!id.empty() && game.beginConnectAs(id)) {
-					game.setMenuScreen(MS::Connecting);
-					game.setCefMenuActive(false);
-				}
-			} else if (action.rfind("join:", 0) == 0) {
-				// "join:192.168.1.5:7777" — point the network transport at
-				// the chosen LAN host (no local server spawn) and go to
-				// character select.
-				const std::string rest = action.substr(5);
-				auto colon = rest.rfind(':');
-				if (colon != std::string::npos) {
-					std::string ip = rest.substr(0, colon);
-					int port = std::atoi(rest.substr(colon + 1).c_str());
-					game.joinRemoteServer(ip, port);
-					game.setMenuScreen(MS::CharacterSelect);
-					game.setPreviewClip("wave");
-					if (!firstPlayableId.empty())
-						game.setPreviewId(firstPlayableId);
-					hostRaw->loadUrl(sChar);
-				}
-			}
+			if (!router.dispatch(action))
+				std::fprintf(stderr, "[cef] unhandled action: %s\n", action.c_str());
 		});
 		if (!cefHost->start(cefUrl)) {
 			fprintf(stderr, "[cef] host start failed — disabling --cef-menu\n");
@@ -2215,6 +620,44 @@ int main(int argc, char** argv) {
 		}
 
 		game.runOneFrame(dt, wallTime);
+
+		// --auto-screenshot: queue a screenshot path on Game once enough
+		// frames have rendered (CEF compositing if --cef-menu, plain
+		// game frames otherwise). The in-
+		// frame screenshot block inside game_vk.cpp consumes it (RHI
+		// screenshot only works mid-frame). Once Game reports the shot
+		// was taken, break the loop — game.shutdown() runs normally, no
+		// leftover process. Used by src/tests/ui_smoke.sh.
+		if (!autoScreenshotPath.empty()) {
+			static int qualifyingFrames = 0;
+			static bool requested = false;
+			bool ready;
+			if (cefHost && game.cefMenuActive()) {
+				// CEF mode: wait for the overlay to actually paint.
+				ready = (cefHost->frameCounter() > 0);
+			} else if (game.state() == solarium::vk::GameState::Playing) {
+				// Best case: in-world, post-loading.
+				ready = true;
+			} else {
+				// Loading / Menu states still draw real frames; allow the
+				// screenshot once the wall clock has had time to settle so
+				// we capture the loading screen if the world's still
+				// streaming.
+				ready = (wallTime > 5.0f);
+			}
+			if (ready) ++qualifyingFrames;
+			if (!requested && qualifyingFrames >= autoScreenshotMinFrames) {
+				game.setPendingScreenshotPath(autoScreenshotPath);
+				requested = true;
+			}
+			if (requested && game.consumeScreenshotTaken()) {
+				std::fprintf(stderr,
+					"[main] --auto-screenshot %s (after %d qualifying frames, state=%d)\n",
+					autoScreenshotPath.c_str(), qualifyingFrames,
+					(int)game.state());
+				break;
+			}
+		}
 
 		auto tAfter = std::chrono::steady_clock::now();
 		double elapsed = std::chrono::duration<double>(tAfter - tNow).count();

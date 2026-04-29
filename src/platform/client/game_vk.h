@@ -194,6 +194,24 @@ public:
 	void               setExecDir(const std::string& d) { m_execDir = d; }
 	const std::string& execDir() const                  { return m_execDir; }
 
+	// Headless-test hook for `--auto-screenshot`. main.cpp queues a path
+	// here once CEF has composited; the existing in-frame screenshot
+	// block in game_vk.cpp consumes it (RHI screenshot only works mid-
+	// frame, between beginFrame/endFrame). After consumption the path
+	// is cleared and `m_screenshotTaken` flips, so main.cpp can poll
+	// for completion and exit cleanly.
+	void               setPendingScreenshotPath(const std::string& p) { m_pendingScreenshotPath = p; }
+	bool               consumeScreenshotTaken() {
+		bool t = m_screenshotTaken; m_screenshotTaken = false; return t;
+	}
+	// Headless screenshot polish: clamp the camera's lookPitch to a
+	// fixed value once `enable` is true. Used by `--cam-pitch` to tilt
+	// the view down for cinematic captures. Repeated each frame because
+	// the player's mouse-look would otherwise stomp it.
+	void  setForcedCameraPitch(float deg)   { m_forcedPitchDeg = deg; m_forcedPitchOn = true; }
+	bool  hasForcedCameraPitch()      const { return m_forcedPitchOn; }
+	float forcedCameraPitch()         const { return m_forcedPitchDeg; }
+
 	// Lazy server spawn: launches a solarium-server subprocess with the
 	// given world spec and points the network transport at it. Idempotent
 	// — repeated calls kill the prior subprocess first. Used by both
@@ -485,6 +503,10 @@ private:
 	void enqueueMeshBuild(solarium::ChunkPos cp);
 	// Drain worker results and upload verts to the RHI. Main-thread only.
 	void drainAsyncMeshes();
+	// Build LOD heightmap meshes for any (cx, cz) in m_dirtyLODs and upload
+	// them via createChunkMesh. Main-thread; runs on a per-frame budget so a
+	// fresh handshake doesn't blow the frame.
+	void drainDirtyLODs();
 	// Apply one finished mesh (create or update the GPU buffer).
 	void applyMeshResult(solarium::AsyncChunkMesher::Result&& r);
 	// Synchronously rebuild the chunk containing `wpos` on the main thread
@@ -533,6 +555,10 @@ private:
 	solarium::AgentManager     m_agentMgr;
 	bool                       m_hosting = false;
 	std::string                m_execDir;
+	std::string                m_pendingScreenshotPath;
+	bool                       m_screenshotTaken = false;
+	float                      m_forcedPitchDeg = 0.0f;
+	bool                       m_forcedPitchOn  = false;
 	// Transient: true when the next hostLocalServer should broadcast on UDP
 	// 7778 (multiplayer-host flow). Singleplayer leaves this false. Reset
 	// after each host so a subsequent New Game from the pause menu doesn't
@@ -622,6 +648,20 @@ private:
 	// Chunks the server has marked dirty (initial delivery or block change).
 	// Drained by streamServerChunks() each frame.
 	std::unordered_set<solarium::ChunkPos, solarium::ChunkPosHash> m_serverDirtyChunks;
+
+	// Tier-4 LOD mesh handles, keyed by (cx, cz) — one per chunk-column.
+	// Built lazily from the column summary on m_dirtyLODs flush; rendered
+	// past STREAM_FAR_R as a flat heightmap silhouette. REPLACE refinement
+	// in the render pass skips a tile when its visible cy band is fully
+	// covered by Tier-1 chunks.
+	using LodKey = std::pair<int, int>;
+	struct LodKeyHash {
+		size_t operator()(const LodKey& k) const {
+			return std::hash<int>()(k.first) ^ (std::hash<int>()(k.second) << 16);
+		}
+	};
+	std::unordered_map<LodKey, rhi::IRhi::MeshHandle, LodKeyHash> m_lodMeshes;
+	std::unordered_set<LodKey, LodKeyHash> m_dirtyLODs;
 	// Chunks currently queued on the async mesher worker pool. Keeps Pass 1/
 	// Pass 2 from double-enqueuing and lets dirty events wait for the in-flight
 	// build to land before re-queueing.
